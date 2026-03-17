@@ -345,6 +345,203 @@ function TagEditor({ video }) {
   );
 }
 
+
+function UploadTab() {
+  const videoRef = useRef(null);
+  const csvRef = useRef(null);
+  const xmlRef = useRef(null);
+  const [videos, setVideos] = useState([]);
+  const [csvFile, setCsvFile] = useState(null);
+  const [xmlFile, setXmlFile] = useState(null);
+  const [csvRows, setCsvRows] = useState(null);
+  const [xmlSummary, setXmlSummary] = useState(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [status, setStatus] = useState("");
+
+  const handleVideos = (files) => {
+    const valid = Array.from(files).filter(f =>
+      f.type.startsWith("video/") || /\.(mp4|mov|mts|avi|mkv|m4v|MOV|MP4)$/i.test(f.name)
+    );
+    if (!valid.length) { setStatus("No valid video files found. Accepted: MP4, MOV, MTS, AVI."); return; }
+    setVideos(prev => [...prev, ...valid.map(f => ({
+      id: Math.random().toString(36).slice(2),
+      file: f,
+      name: f.name,
+      size: f.size,
+      url: URL.createObjectURL(f),
+      duration: null,
+    }))]);
+    setStatus(`${valid.length} video${valid.length > 1 ? "s" : ""} added`);
+  };
+
+  const handleCsv = (file) => {
+    if (!file) return;
+    setCsvFile(file);
+    setProcessing(true);
+    setStatus("Parsing log file...");
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const lines = e.target.result.replace(/\r/g, "").split("\n").filter(l => l.trim());
+        let count = 0;
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].split(",");
+          if (cols.length > 12 && parseFloat(cols[4]) > 0.05) count++;
+        }
+        setCsvRows(count);
+        setStatus(`Log file parsed: ${count.toLocaleString()} valid data rows`);
+      } catch (err) {
+        setStatus(`CSV parse error: ${err.message}`);
+      }
+      setProcessing(false);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleXml = (file) => {
+    if (!file) return;
+    setXmlFile(file);
+    setProcessing(true);
+    setStatus("Parsing event file...");
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const doc = new DOMParser().parseFromString(e.target.result, "text/xml");
+        const boat = doc.querySelector("boat")?.getAttribute("val") || "Unknown";
+        const location = doc.querySelector("location")?.getAttribute("val") || "Unknown";
+        const date = doc.querySelector("date")?.getAttribute("val") || "Unknown";
+        const tacks = doc.getElementsByTagName("tackjibe").length;
+        const marks = doc.getElementsByTagName("markrounding").length;
+        const events = doc.getElementsByTagName("event").length;
+        const phases = doc.getElementsByTagName("phase").length;
+        setXmlSummary({ boat, location, date, tacks, marks, events, phases });
+        setStatus(`Event file parsed: ${boat} · ${location} · ${tacks} tack/gybes · ${marks} mark roundings`);
+      } catch (err) {
+        setStatus(`XML parse error: ${err.message}`);
+      }
+      setProcessing(false);
+    };
+    reader.readAsText(file);
+  };
+
+  const fmtSize = (bytes) => bytes > 1e9 ? `${(bytes/1e9).toFixed(1)} GB` : `${(bytes/1e6).toFixed(0)} MB`;
+
+  const statBox = (label, value, color = "#06B6D4") => (
+    <div key={label} style={{ background: "#071624", borderRadius: 8, padding: "10px 14px", flex: 1, minWidth: 90 }}>
+      <div style={{ fontSize: 10, color: "#475569", letterSpacing: 2, textTransform: "uppercase", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color, fontFamily: "monospace" }}>{value}</div>
+    </div>
+  );
+
+  return (
+    <div style={{ flex: 1, padding: 24, overflowY: "auto" }}>
+      <div style={{ maxWidth: 680, margin: "0 auto", display: "flex", flexDirection: "column", gap: 20 }}>
+
+        {/* Videos */}
+        <div style={{ background: "#0A1929", border: "1px solid #1E3A5A", borderRadius: 12, padding: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#94A3B8", letterSpacing: 2, textTransform: "uppercase", marginBottom: 14 }}>Video Files</div>
+          <input ref={videoRef} type="file" accept="video/*,.mov,.mp4,.mts,.avi,.mkv,.m4v" multiple style={{ display: "none" }}
+            onChange={e => handleVideos(e.target.files)} />
+          <div
+            onClick={() => videoRef.current?.click()}
+            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={e => { e.preventDefault(); setDragOver(false); handleVideos(e.dataTransfer.files); }}
+            style={{
+              border: `2px dashed ${dragOver ? "#06B6D4" : "#1E3A5A"}`,
+              borderRadius: 12, padding: "36px 24px", textAlign: "center",
+              cursor: "pointer", background: dragOver ? "#071E30" : "#071624",
+              transition: "all 0.15s", marginBottom: videos.length ? 14 : 0
+            }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>📹</div>
+            <div style={{ fontSize: 14, color: "#94A3B8", marginBottom: 4 }}>Drop videos here or click to browse</div>
+            <div style={{ fontSize: 12, color: "#475569" }}>MP4 · MOV · MTS · multiple cameras supported</div>
+          </div>
+          {videos.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {videos.map(v => (
+                <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#071624", borderRadius: 8, padding: "8px 12px" }}>
+                  <video src={v.url} style={{ width: 60, height: 38, borderRadius: 4, objectFit: "cover", background: "#0A1929" }} muted
+                    onLoadedMetadata={e => setVideos(p => p.map(x => x.id === v.id ? { ...x, duration: Math.round(e.target.duration) } : x))} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#E2E8F0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</div>
+                    <div style={{ fontSize: 11, color: "#475569" }}>{fmtSize(v.size)}{v.duration ? ` · ${Math.floor(v.duration/60)}:${String(v.duration%60).padStart(2,"0")}` : ""}</div>
+                  </div>
+                  <button onClick={() => setVideos(p => p.filter(x => x.id !== v.id))}
+                    style={{ background: "none", border: "none", color: "#EF4444", cursor: "pointer", fontSize: 18, padding: "0 4px" }}>×</button>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: "#06B6D4", textAlign: "right" }}>{videos.length} file{videos.length > 1 ? "s" : ""} · {fmtSize(videos.reduce((s,v) => s+v.size, 0))} total</div>
+            </div>
+          )}
+        </div>
+
+        {/* Data files */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+
+          {/* CSV */}
+          <div style={{ background: "#0A1929", border: `1px solid ${csvFile ? "#1D9E75" : "#1E3A5A"}`, borderRadius: 12, padding: 18 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#94A3B8", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>Expedition Log</div>
+            <input ref={csvRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
+              onChange={e => handleCsv(e.target.files[0])} />
+            <button onClick={() => csvRef.current?.click()}
+              style={{ width: "100%", background: csvFile ? "#0F3D2A" : "#071624", border: `1px solid ${csvFile ? "#1D9E75" : "#1E3A5A"}`, borderRadius: 8, padding: "10px 0", color: csvFile ? "#1D9E75" : "#7DD3FC", cursor: "pointer", fontSize: 12, marginBottom: csvFile ? 12 : 0 }}>
+              {csvFile ? "✓ " + csvFile.name : "Choose CSV file"}
+            </button>
+            {csvFile && csvRows !== null && (
+              <div style={{ display: "flex", gap: 6 }}>
+                {statBox("Rows", csvRows.toLocaleString(), "#1D9E75")}
+                {statBox("Size", fmtSize(csvFile.size), "#1D9E75")}
+              </div>
+            )}
+          </div>
+
+          {/* XML */}
+          <div style={{ background: "#0A1929", border: `1px solid ${xmlFile ? "#8B5CF6" : "#1E3A5A"}`, borderRadius: 12, padding: 18 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#94A3B8", letterSpacing: 2, textTransform: "uppercase", marginBottom: 10 }}>Event File (XML)</div>
+            <input ref={xmlRef} type="file" accept=".xml,text/xml,application/xml" style={{ display: "none" }}
+              onChange={e => handleXml(e.target.files[0])} />
+            <button onClick={() => xmlRef.current?.click()}
+              style={{ width: "100%", background: xmlFile ? "#1E1040" : "#071624", border: `1px solid ${xmlFile ? "#8B5CF6" : "#1E3A5A"}`, borderRadius: 8, padding: "10px 0", color: xmlFile ? "#8B5CF6" : "#7DD3FC", cursor: "pointer", fontSize: 12, marginBottom: xmlFile ? 12 : 0 }}>
+              {xmlFile ? "✓ " + xmlFile.name : "Choose XML file"}
+            </button>
+            {xmlFile && xmlSummary && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ fontSize: 12, color: "#8B5CF6", fontWeight: 600 }}>{xmlSummary.boat} · {xmlSummary.location}</div>
+                <div style={{ fontSize: 11, color: "#475569" }}>{xmlSummary.date}</div>
+                <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                  {statBox("Tack/Gybes", xmlSummary.tacks, "#8B5CF6")}
+                  {statBox("Marks", xmlSummary.marks, "#EF4444")}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Status */}
+        {status && (
+          <div style={{ background: "#071624", border: "1px solid #1E3A5A", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: processing ? "#F59E0B" : "#1D9E75" }}>
+            {processing ? "⏳ " : "✓ "}{status}
+          </div>
+        )}
+
+        {/* Upload button */}
+        {(videos.length > 0 || csvFile || xmlFile) && (
+          <button
+            onClick={() => setStatus("Upload to Cloudflare R2 requires Supabase + R2 integration — coming in Phase 2. Files are loaded locally and ready to use in the library.")}
+            style={{ background: "#06B6D4", border: "none", borderRadius: 10, padding: "14px 0", color: "#000", fontWeight: 700, fontSize: 14, cursor: "pointer", width: "100%" }}>
+            Import {videos.length > 0 ? `${videos.length} video${videos.length > 1 ? "s" : ""}` : ""}
+            {csvFile ? (videos.length ? " + log" : "log file") : ""}
+            {xmlFile ? " + events" : ""}
+          </button>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ──────────────────────────────────────────────────────────────
 export default function SmartSailingAnalytics() {
   const [activeTab, setActiveTab] = useState("library");
@@ -706,35 +903,7 @@ Always respond with ONLY valid JSON, no markdown.`,
           )}
 
           {activeTab === "upload" && (
-            <div style={{ flex: 1, padding: 24, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              <div style={{ maxWidth: 500, width: "100%", textAlign: "center" }}>
-                <div style={{ fontSize: 64, marginBottom: 16 }}>📹</div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: "#E2E8F0", marginBottom: 8 }}>Upload Videos</div>
-                <div style={{ fontSize: 13, color: "#64748B", marginBottom: 32 }}>iPhone MOV · GoPro MP4 · Multiple files supported</div>
-                <div style={{
-                  border: "2px dashed #1E3A5A",
-                  borderRadius: 16,
-                  padding: "48px 32px",
-                  background: "#071624",
-                  marginBottom: 24,
-                  cursor: "pointer"
-                }}>
-                  <div style={{ fontSize: 40, marginBottom: 12 }}>⬆️</div>
-                  <div style={{ fontSize: 14, color: "#64748B" }}>Drop videos here or click to browse</div>
-                  <div style={{ fontSize: 12, color: "#334155", marginTop: 8 }}>Max 4GB per file · Uploads directly to Cloudflare R2</div>
-                </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <div style={{ flex: 1, background: "#0A1929", border: "1px solid #1E3A5A", borderRadius: 10, padding: "14px 16px", textAlign: "left" }}>
-                    <div style={{ fontSize: 12, color: "#64748B", marginBottom: 6 }}>Log File (NMEA / CSV)</div>
-                    <button style={{ background: "#1E3A5A", border: "none", borderRadius: 6, padding: "6px 12px", color: "#7DD3FC", fontSize: 12, cursor: "pointer" }}>Choose File</button>
-                  </div>
-                  <div style={{ flex: 1, background: "#0A1929", border: "1px solid #1E3A5A", borderRadius: 10, padding: "14px 16px", textAlign: "left" }}>
-                    <div style={{ fontSize: 12, color: "#64748B", marginBottom: 6 }}>Event File (XML)</div>
-                    <button style={{ background: "#1E3A5A", border: "none", borderRadius: 6, padding: "6px 12px", color: "#7DD3FC", fontSize: 12, cursor: "pointer" }}>Choose File</button>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <UploadTab />
           )}
 
           {activeTab === "admin" && (
