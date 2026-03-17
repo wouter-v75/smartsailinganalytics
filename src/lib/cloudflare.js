@@ -2,6 +2,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SmartSailingAnalytics — Cloudflare R2 + Stream integration
 //
+//
 // All functions are safe to call when cloud is not configured — they return
 // null / false silently so Phase 1 (local-only) keeps working unchanged.
 //
