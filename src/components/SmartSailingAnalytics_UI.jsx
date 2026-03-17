@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from "react";
 
+
 // ─── Mock Data ──────────────────────────────────────────────────────────────
 const VIDEOS = [
   { id: 1, title: "Race 3 — Start Sequence", event: "Cowes Week 2024", date: "2024-08-06", duration: "4:32", tws: 18.2, twa: 42, sog: 9.1, heel: 24, tags: ["start", "starboard-tack", "J1"], manoeuvre: "start", thumbnail: "🌊", camera: "GoPro" },
