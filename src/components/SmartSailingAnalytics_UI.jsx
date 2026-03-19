@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from "react";
-import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced } from "../lib/localStore";
+import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced, getSyncOffsets, saveSyncOffset } from "../lib/localStore";
 import { checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady } from "../lib/bunny";
 
 const ROLES = {
@@ -13,7 +13,7 @@ const ROLES = {
 
 function parseNmea(s){const p=s.trim().split(/\s+/);if(p.length<2)return{lat:0,lon:0};const f=(str,d)=>{const h=str.slice(-1),n=str.slice(0,-1);const v=parseFloat(n.slice(0,d))+parseFloat(n.slice(d))/60;return h==="S"||h==="W"?-v:v;};try{return{lat:f(p[0],2),lon:f(p[1],3)};}catch{return{lat:0,lon:0};}}
 function expToUtc(ds,ts){const[d,m,y]=ds.split("/").map(Number);const yr=y<50?2000+y:1900+y;const[h,mn,sc]=ts.split(":").map(Number);return Date.UTC(yr,m-1,d,h,mn,sc);}
-function parseCsvLog(text){const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());const rows=[];for(let i=1;i<lines.length;i++){const c=lines[i].split(",");if(c.length<27)continue;const bsp=parseFloat(c[4])||0,tws=parseFloat(c[12])||0;if(bsp<0.05&&tws<0.3)continue;const ds=c[1]?.trim(),ts=c[2]?.trim();if(!ds?.includes("/")||!ts?.includes(":"))continue;const utc=expToUtc(ds,ts);if(isNaN(utc))continue;const pos=parseNmea(c[0]);rows.push({utc,lat:pos.lat,lon:pos.lon,heel:parseFloat(c[3])||0,bsp,twa:parseFloat(c[11])||0,tws,sog:parseFloat(c[20])||0,vmg:parseFloat(c[19])||0,vsTargPct:parseFloat(c[23])||0,rudder:parseFloat(c[52])||0});}return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};}
+function parseCsvLog(text){const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());const rows=[];for(let i=1;i<lines.length;i++){const c=lines[i].split(",");if(c.length<27)continue;const bsp=parseFloat(c[4])||0,tws=parseFloat(c[12])||0;if(bsp<0.05&&tws<0.3)continue;const ds=c[1]?.trim(),ts=c[2]?.trim();if(!ds?.includes("/")||!ts?.includes(":"))continue;const utc=expToUtc(ds,ts);if(isNaN(utc))continue;const pos=parseNmea(c[0]);rows.push({utc,lat:pos.lat,lon:pos.lon,heel:parseFloat(c[3])||0,bsp,twa:parseFloat(c[11])||0,tws,sog:parseFloat(c[20])||0,vmg:parseFloat(c[19])||0,vsTargPct:parseFloat(c[23])||0,vsPerfPct:parseFloat(c[26])||0,rudder:parseFloat(c[52])||0});}return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};}
 function isoUtc(s){return new Date(s.trim().replace(" ","T")+"Z").getTime();}
 function parseXmlEvents(text){const doc=new DOMParser().parseFromString(text,"text/xml");const ga=(el,a,d="")=>el?.getAttribute(a)??d;const meta={boat:ga(doc.querySelector("boat"),"val"),location:ga(doc.querySelector("location"),"val"),date:ga(doc.querySelector("date"),"val")};const sailsUpEvents=[];for(const ev of doc.getElementsByTagName("event")){const utc=isoUtc(`${ga(ev,"date")} ${ga(ev,"time")}`);const type=ga(ev,"type"),attr=ga(ev,"attribute");if(type==="SailsUp"){const sails=attr.split(";").map(s=>s.trim()).filter(Boolean);sailsUpEvents.push({utc,sails,label:sails.join(" + ")||"Sails"});}}const markRoundings=Array.from(doc.getElementsByTagName("markrounding")).map(mr=>({utc:isoUtc(ga(mr,"datetime")),isTop:ga(mr,"istopmark")==="true",isValid:ga(mr,"isvalid")==="true",label:ga(mr,"istopmark")==="true"?"Top mark":"Leeward gate",color:ga(mr,"istopmark")==="true"?"#EF4444":"#8B5CF6"}));const tackJibes=Array.from(doc.getElementsByTagName("tackjibe")).map(tj=>({utc:isoUtc(ga(tj,"datetime")),isTack:ga(tj,"istack")==="true",isValid:ga(tj,"isvalidperf")==="true",label:ga(tj,"istack")==="true"?"Tack":"Gybe",color:ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD"}));return{meta,sailsUpEvents,markRoundings,tackJibes};}
 
@@ -23,7 +23,30 @@ const fmtUtc=u=>u?new Date(u).toISOString().slice(11,19):"--:--:--";
 const TODAY=()=>new Date().toISOString().slice(0,10);
 const fmtSize=b=>b>1e9?`${(b/1e9).toFixed(1)} GB`:`${(b/1e6).toFixed(0)} MB`;
 function nearestRow(rows,utc){if(!rows?.length)return null;let lo=0,hi=rows.length-1;while(lo<hi){const mid=(lo+hi)>>1;if(rows[mid].utc<utc)lo=mid+1;else hi=mid;}if(lo>0&&Math.abs(rows[lo-1].utc-utc)<Math.abs(rows[lo].utc-utc))lo--;return Math.abs(rows[lo].utc-utc)<120000?rows[lo]:null;}
-function enrichVideo(v,log){if(!log?.rows?.length||!v.startUtc)return v;const w=log.rows.filter(r=>r.utc>=v.startUtc&&r.utc<=v.startUtc+(v.duration||0)*1000);if(!w.length)return v;const avg=f=>w.reduce((s,r)=>s+(r[f]||0),0)/w.length;return{...v,twsAvg:avg("tws"),sogAvg:avg("sog"),heelAvg:avg("heel")};}
+function enrichVideo(v,log){
+  if(!log?.rows?.length||!v.startUtc)return v;
+  const w=log.rows.filter(r=>r.utc>=v.startUtc&&r.utc<=v.startUtc+(v.duration||0)*1000);
+  if(!w.length)return v;
+  const avg=f=>w.reduce((s,r)=>s+(r[f]||0),0)/w.length;
+  const avgFiltered=(f,lo,hi)=>{const valid=w.filter(r=>r[f]>lo&&r[f]<hi);return valid.length?valid.reduce((s,r)=>s+r[f],0)/valid.length:null;};
+  const max=f=>w.reduce((mx,r)=>Math.max(mx,r[f]||0),0);
+  return{
+    ...v,
+    // ── 5 primary clip fields ──
+    twsAvg:   avg("tws"),                          // avg true wind speed (kn)
+    twaAvg:   avg("twa"),                          // avg true wind angle (°, signed: + stbd, - port)
+    vmgAvg:   avg("vmg"),                          // avg velocity made good (kn)
+    polpercAvg: avgFiltered("vsPerfPct",5,200),    // avg % of polar speed (Vs_perf%, col 26)
+    vsTargPercAvg: avgFiltered("vsTargPct",5,200), // avg % of target speed (Vs_targ%, col 23)
+    // ── secondary (for cards / sorting) ──
+    sogAvg:   avg("sog"),
+    sogMax:   max("sog"),
+    twsMax:   max("tws"),
+    heelAvg:  avg("heel"),
+    bspAvg:   avg("bsp"),
+    logRows:  w,
+  };
+}
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
 function Gauge({label,value,unit,color="#06B6D4"}){return<div style={{background:"rgba(0,0,0,0.75)",border:`1px solid ${color}40`,borderRadius:7,padding:"7px 11px",minWidth:76}}><div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:2}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"'Courier New',monospace",lineHeight:1}}>{value}</div><div style={{fontSize:10,color:"#475569",marginTop:1}}>{unit}</div></div>;}
@@ -111,7 +134,23 @@ function VideoCard({video,selected,onClick}){
       <div style={{padding:"9px 11px"}}>
         <div style={{fontSize:11,fontWeight:600,color:"#E2E8F0",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
         <div style={{fontSize:10,color:"#334155",marginBottom:6}}>{video.sessionDate}</div>
-        {video.twsAvg!=null&&<div style={{display:"flex",gap:4,marginBottom:6}}>{[["TWS",video.twsAvg,"kt"],["SOG",video.sogAvg,"kt"],["Heel",video.heelAvg,"°"]].map(([l,v,u])=><div key={l} style={{flex:1,background:"#071624",borderRadius:4,padding:"3px 0",textAlign:"center"}}><div style={{fontSize:8,color:"#334155"}}>{l}</div><div style={{fontSize:11,fontWeight:700,color:"#06B6D4",fontFamily:"monospace"}}>{R(v)}</div><div style={{fontSize:8,color:"#334155"}}>{u}</div></div>)}</div>}
+        {video.twsAvg!=null&&(
+          <div style={{display:"flex",gap:3,marginBottom:6,flexWrap:"wrap"}}>
+            {[
+              ["TWS", video.twsAvg,    "kt",  "#06B6D4"],
+              ["TWA", video.twaAvg,    "°",   "#8B5CF6"],
+              ["VMG", video.vmgAvg,    "kt",  "#10B981"],
+              ["Pol", video.polpercAvg,"%",   "#F59E0B"],
+              ["Tgt", video.vsTargPercAvg,"%","#EF4444"],
+            ].map(([l,val,u,c])=>(
+              <div key={l} style={{flex:"1 1 0",background:"#071624",borderRadius:4,padding:"3px 0",textAlign:"center",minWidth:30}}>
+                <div style={{fontSize:7,color:"#334155"}}>{l}</div>
+                <div style={{fontSize:10,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val)+"":"--"}</div>
+                <div style={{fontSize:7,color:"#334155"}}>{u}</div>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{display:"flex",flexWrap:"wrap",gap:3}}>{[...manTags,...extraTags].slice(0,5).map(t=><span key={t} style={{background:"#1E3A5A",color:"#7DD3FC",fontSize:9,borderRadius:3,padding:"1px 4px",fontFamily:"monospace"}}>#{t}</span>)}{(video.tags||[]).length>5&&<span style={{fontSize:9,color:"#334155"}}>+{video.tags.length-5}</span>}</div>
       </div>
     </div>
@@ -277,7 +316,7 @@ function UploadTab({role,cloudStatus,onImported}){
 
   const pushCloud=async()=>{
     if(!cloudStatus?.available||!perms.canSync||!savedDate)return;
-    setPhase("syncing");addLog("Starting Cloudflare R2 + Stream upload…");
+    setPhase("syncing");addLog("Starting Bunny Storage + Stream upload…");
     savedVids.forEach(v=>setStreamStatus(p=>({...p,[v.id]:{state:"queued"}})));
     await syncSessionToCloud(savedDate,getLogData(savedDate),getXmlData(savedDate),savedVids,msg=>{
       addLog(msg);
@@ -285,7 +324,7 @@ function UploadTab({role,cloudStatus,onImported}){
       const match=msg.match(/Stream \(([a-f0-9]+)\)/);
       if(match){const sid=match[1];const vid=savedVids.find(v=>v.name&&msg.includes(v.name));if(vid)setStreamStatus(p=>({...p,[vid.id]:{state:"processing",streamId:sid}}));}
     });
-    setPhase("done");addLog("R2 sync complete. Stream videos processing in background…");
+    setPhase("done");addLog("Bunny sync complete. Stream videos processing in background…");
     // Poll each video's stream status
     savedVids.forEach(async v=>{
       const st=streamStatus[v.id];if(!st?.streamId)return;
@@ -310,7 +349,7 @@ function UploadTab({role,cloudStatus,onImported}){
         <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"12px 14px",display:"flex",gap:16}}>
           <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="local"/><span style={{fontSize:11,fontWeight:600,color:"#06B6D4"}}>① Local — instant</span></div><div style={{fontSize:10,color:"#475569"}}>Saved to browser IndexedDB + localStorage. Available in Library immediately. Coach/Admin only.</div></div>
           <div style={{width:1,background:"#1E3A5A"}}/>
-          <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="cloud"/><span style={{fontSize:11,fontWeight:600,color:"#8B5CF6"}}>② Cloud — background</span></div><div style={{fontSize:10,color:"#475569"}}>Log + events → Cloudflare R2. Videos → Stream (HLS). Accessible to all team roles.</div></div>
+          <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="cloud"/><span style={{fontSize:11,fontWeight:600,color:"#8B5CF6"}}>② Cloud — background</span></div><div style={{fontSize:10,color:"#475569"}}>Log + events → Bunny Storage. Videos → Bunny Stream (HLS). Accessible to all team roles.</div></div>
         </div>
 
         {phase==="idle"||phase==="saving"?(
@@ -365,7 +404,7 @@ function UploadTab({role,cloudStatus,onImported}){
             <div style={{borderTop:"1px solid #1E3A5A",paddingTop:14}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
                 <SrcBadge source={phase==="done"?"cloud":"processing"}/>
-                <span style={{fontSize:11,fontWeight:600,color:phase==="done"?"#8B5CF6":"#F59E0B"}}>Cloudflare R2 + Stream</span>
+                <span style={{fontSize:11,fontWeight:600,color:phase==="done"?"#8B5CF6":"#F59E0B"}}>Bunny Storage + Stream</span>
                 {!cloudStatus?.available&&<span style={{fontSize:9,color:"#EF4444",background:"#EF444415",border:"1px solid #EF444430",borderRadius:3,padding:"1px 5px"}}>Not configured</span>}
                 {!perms.canSync&&<span style={{fontSize:9,color:"#F59E0B",background:"#F59E0B15",border:"1px solid #F59E0B30",borderRadius:3,padding:"1px 5px"}}>Coach required</span>}
               </div>
@@ -375,7 +414,7 @@ function UploadTab({role,cloudStatus,onImported}){
                   <button onClick={pushCloud} style={{background:"#8B5CF6",border:"none",borderRadius:8,padding:"11px 0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",width:"100%"}}>② Push to Cloud — {savedVids.length} video{savedVids.length!==1?"s":""} + log + events</button>
                 </div>
               )}
-              {phase==="saved"&&!cloudStatus?.available&&<div style={{fontSize:10,color:"#334155",background:"#071624",borderRadius:6,padding:"8px 10px"}}>Cloud not configured. Set Cloudflare env vars in Vercel to enable sync. Session is fully usable from local storage.</div>}
+              {phase==="saved"&&!cloudStatus?.available&&<div style={{fontSize:10,color:"#334155",background:"#071624",borderRadius:6,padding:"8px 10px"}}>Cloud not configured. Set Bunny env vars in Vercel to enable sync. Session is fully usable from local storage.</div>}
               {(phase==="syncing"||phase==="done")&&savedVids.length>0&&(
                 <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:10}}>
                   {savedVids.map(v=>{const st=streamStatus[v.id];return(
@@ -399,6 +438,358 @@ function UploadTab({role,cloudStatus,onImported}){
 }
 
 // Main App
+// ─── ANALYTICS CHARTS (pure SVG, no dependencies) ────────────────────────────
+
+// Thin line chart: array of {x,y} normalised 0-1, with axis labels
+function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",xLabel="",yMin,yMax,yLines=[]}){
+  if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
+  const pad={t:10,r:8,b:28,l:36};
+  const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
+  const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
+  const x0=Math.min(...xs),x1=Math.max(...xs);
+  const y0=yMin??Math.min(...ys),y1=yMax??Math.max(...ys);
+  const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
+  const py=y=>pad.t+H-((y-y0)/(y1-y0||1))*H;
+  const d=points.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
+  // x-axis ticks: 5 evenly spaced
+  const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
+  const yTicks=Array.from({length:4},(_,i)=>y0+(y1-y0)*i/3);
+  return(
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
+      {/* Grid lines */}
+      {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
+      {yLines.map((y,i)=><line key={"r"+i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={color} strokeWidth="0.5" strokeDasharray="3,3" opacity="0.5"/>)}
+      {/* Axes */}
+      <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+      <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+      {/* Data line */}
+      <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/>
+      {/* Y ticks */}
+      {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(y<10?1:0)}</text>)}
+      {/* X ticks */}
+      {xTicks.map((x,i)=>{const dt=new Date(x);return<text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{dt.toISOString().slice(11,16)}</text>;})}
+      {/* Labels */}
+      {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
+    </svg>
+  );
+}
+
+// Scatter polar chart: TWA (0-180 each side) vs BSP
+function SpeedPolar({rows,width=320,height=320}){
+  if(!rows?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No log data</div>;
+  const cx=width/2, cy=height/2, maxR=cx-24;
+  const maxBsp=Math.max(...rows.map(r=>r.bsp||0),12);
+  // Bin by TWA (0-180) and TWS range
+  const colors={"0-8":"#7DD3FC","8-12":"#06B6D4","12-16":"#8B5CF6","16-20":"#F59E0B","20+":"#EF4444"};
+  const twsBin=tws=>tws<8?"0-8":tws<12?"8-12":tws<16?"12-16":tws<20?"16-20":"20+";
+  const dots=rows.filter(r=>r.bsp>0.5&&r.twa!=null).map(r=>{
+    const twa=Math.abs(r.twa)*Math.PI/180;
+    const r2=(r.bsp/maxBsp)*maxR;
+    const side=r.twa>=0?1:-1;
+    return{x:cx+side*Math.sin(twa)*r2, y:cy-Math.cos(twa)*r2, bin:twsBin(r.tws)};
+  });
+  // Rings
+  const rings=[0.25,0.5,0.75,1].map(f=>f*maxBsp);
+  return(
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`}>
+      {/* Rings */}
+      {rings.map((b,i)=><circle key={i} cx={cx} cy={cy} r={(b/maxBsp)*maxR} fill="none" stroke="#0F2030" strokeWidth="1"/>)}
+      {rings.map((b,i)=><text key={i} x={cx+4} y={cy-(b/maxBsp)*maxR-2} fontSize="7" fill="#334155">{b.toFixed(0)}kt</text>)}
+      {/* Axes */}
+      <line x1={cx} x2={cx} y1={8} y2={height-8} stroke="#1E3A5A" strokeWidth="0.5"/>
+      <line x1={8} x2={width-8} y1={cy} y2={cy} stroke="#1E3A5A" strokeWidth="0.5"/>
+      {/* Angle lines */}
+      {[45,90,135].map(a=>{const r=a*Math.PI/180;return(<g key={a}><line x1={cx} y1={cy} x2={cx+Math.sin(r)*maxR} y2={cy-Math.cos(r)*maxR} stroke="#0F2030" strokeWidth="0.5"/><line x1={cx} y1={cy} x2={cx-Math.sin(r)*maxR} y2={cy-Math.cos(r)*maxR} stroke="#0F2030" strokeWidth="0.5"/><text x={cx+Math.sin(r)*(maxR+12)} y={cy-Math.cos(r)*(maxR+12)} textAnchor="middle" fontSize="8" fill="#334155">{a}°</text></g>);})}
+      {/* Data points */}
+      {dots.map((d,i)=><circle key={i} cx={d.x} cy={d.y} r="1.2" fill={colors[d.bin]} opacity="0.6"/>)}
+      {/* Labels */}
+      <text x={cx} y={12} textAnchor="middle" fontSize="8" fill="#475569">0° (head)</text>
+      <text x={cx} y={height-4} textAnchor="middle" fontSize="8" fill="#475569">180° (run)</text>
+      {/* Legend */}
+      {Object.entries(colors).map(([k,c],i)=><g key={k}><rect x={8} y={height-60+i*10} width="8" height="6" fill={c} rx="1"/><text x={19} y={height-55+i*10} fontSize="7" fill="#475569">{k} kn</text></g>)}
+    </svg>
+  );
+}
+
+// Bar chart for tack/gybe quality
+function ManoeuvreChart({tackJibes,logRows,width=400,height=140}){
+  if(!tackJibes?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No manoeuvre data</div>;
+  const valid=tackJibes.filter(t=>t.isValid!==false);
+  const tacks=valid.filter(t=>t.isTack).length;
+  const gybes=valid.filter(t=>!t.isTack).length;
+  const invalid=tackJibes.length-valid.length;
+  const pad={t:14,r:12,b:30,l:40};
+  const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
+  // TWS at each manoeuvre
+  const twsBins={"<8":0,"8-12":0,"12-16":0,"16-20":0,"20+":0};
+  if(logRows?.length){
+    valid.forEach(tj=>{
+      const nearest=logRows.reduce((a,b)=>Math.abs(b.utc-tj.utc)<Math.abs(a.utc-tj.utc)?b:a,logRows[0]);
+      const tws=nearest?.tws||0;
+      if(tws<8)twsBins["<8"]++;else if(tws<12)twsBins["8-12"]++;else if(tws<16)twsBins["12-16"]++;else if(tws<20)twsBins["16-20"]++;else twsBins["20+"]++;
+    });
+  }
+  const bins=Object.entries(twsBins);
+  const maxVal=Math.max(...bins.map(([,v])=>v),1);
+  const bw=W/bins.length-4;
+  return(
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`}>
+      {/* Summary text */}
+      <text x={pad.l} y={10} fontSize="9" fill="#06B6D4">{tacks} tacks</text>
+      <text x={pad.l+60} y={10} fontSize="9" fill="#8B5CF6">{gybes} gybes</text>
+      {invalid>0&&<text x={pad.l+120} y={10} fontSize="9" fill="#EF4444">{invalid} invalid</text>}
+      {/* Bars */}
+      {bins.map(([label,val],i)=>{
+        const x=pad.l+i*(bw+4);
+        const barH=(val/maxVal)*H;
+        return(<g key={label}>
+          <rect x={x} y={pad.t+H-barH} width={bw} height={barH} fill="#06B6D4" rx="2" opacity="0.8"/>
+          <text x={x+bw/2} y={pad.t+H+10} textAnchor="middle" fontSize="8" fill="#475569">{label}</text>
+          {val>0&&<text x={x+bw/2} y={pad.t+H-barH-3} textAnchor="middle" fontSize="8" fill="#06B6D4">{val}</text>}
+        </g>);
+      })}
+      <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+      <text x={pad.l+W/2} y={height-2} textAnchor="middle" fontSize="8" fill="#475569">TWS at manoeuvre (kn)</text>
+    </svg>
+  );
+}
+
+// Performance charts: polar % and target % over time
+function PerfChart({rows,width=400,height=110}){
+  if(!rows?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
+  const validPol=rows.filter(r=>r.vsPerfPct>5&&r.vsPerfPct<200);
+  const validTgt=rows.filter(r=>r.vsTargPct>5&&r.vsTargPct<200);
+  if(!validPol.length&&!validTgt.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No performance data in log</div>;
+  const step=Math.max(1,Math.floor(rows.length/300));
+  const polPts=validPol.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.vsPerfPct}));
+  const tgtPts=validTgt.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.vsTargPct}));
+  // Render both lines on one SVG
+  const pad={t:14,r:8,b:28,l:36};
+  const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
+  const allPts=[...polPts,...tgtPts];
+  if(!allPts.length)return null;
+  const x0=Math.min(...allPts.map(p=>p.x)),x1=Math.max(...allPts.map(p=>p.x));
+  const y0=50,y1=150;
+  const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
+  const py=y=>pad.t+H-((y-y0)/(y1-y0))*H;
+  const line=(pts,color)=>pts.length<2?"":pts.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
+  const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
+  const yTicks=[60,80,100,120,140];
+  return(
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
+      {yTicks.map(y=><line key={y} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={y===100?"#475569":"#0F2030"} strokeWidth={y===100?"1":"0.5"} strokeDasharray={y===100?"4,2":"none"}/>)}
+      <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+      <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+      {polPts.length>1&&<path d={line(polPts,"#F59E0B")} fill="none" stroke="#F59E0B" strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>}
+      {tgtPts.length>1&&<path d={line(tgtPts,"#10B981")} fill="none" stroke="#10B981" strokeWidth="1.5" strokeLinejoin="round" opacity="0.7"/>}
+      {yTicks.map(y=><text key={y} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y}</text>)}
+      {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
+      {/* Legend */}
+      {polPts.length>0&&<><rect x={pad.l+4} y={4} width="8" height="5" fill="#F59E0B" rx="1"/><text x={pad.l+15} y={9} fontSize="8" fill="#F59E0B">Polar %</text></>}
+      {tgtPts.length>0&&<><rect x={pad.l+60} y={4} width="8" height="5" fill="#10B981" rx="1"/><text x={pad.l+71} y={9} fontSize="8" fill="#10B981">Target %</text></>}
+    </svg>
+  );
+}
+
+// Main Analytics component
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab}){
+  const [activeSession,setActiveSession]=useState(null); // null = use logData passed in
+
+  // Use either the logData for the current session or picked session
+  const rows=logData?.rows||[];
+  const noData=!rows.length;
+
+  // Downsample rows for timeline charts
+  const step=Math.max(1,Math.floor(rows.length/400));
+  const twsPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.tws}));
+  const sogPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.sog}));
+  const heelPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:Math.abs(r.heel)}));
+
+  // Session stats
+  const twsAvg=rows.length?rows.reduce((s,r)=>s+r.tws,0)/rows.length:0;
+  const sogAvg=rows.length?rows.reduce((s,r)=>s+r.sog,0)/rows.length:0;
+  const sogMax=rows.length?Math.max(...rows.map(r=>r.sog)):0;
+  const twsMax=rows.length?Math.max(...rows.map(r=>r.tws)):0;
+  const vsTargRows=rows.filter(r=>r.vsTargPct>5&&r.vsTargPct<200);
+  const vsTargAvg=vsTargRows.length?vsTargRows.reduce((s,r)=>s+r.vsTargPct,0)/vsTargRows.length:null;
+  const vsPerfRows=rows.filter(r=>r.vsPerfPct>5&&r.vsPerfPct<200);
+  const vsPerfAvg=vsPerfRows.length?vsPerfRows.reduce((s,r)=>s+r.vsPerfPct,0)/vsPerfRows.length:null;
+
+  // Manoeuvre stats
+  const tacks=(xmlData?.tackJibes||[]).filter(t=>t.isTack&&t.isValid!==false).length;
+  const gybes=(xmlData?.tackJibes||[]).filter(t=>!t.isTack&&t.isValid!==false).length;
+  const marks=(xmlData?.markRoundings||[]).filter(m=>m.isValid!==false).length;
+  const topMarks=(xmlData?.markRoundings||[]).filter(m=>m.isTop&&m.isValid!==false).length;
+  const durationH=rows.length?(rows[rows.length-1].utc-rows[0].utc)/3600000:0;
+
+  const card=(label,val,unit,color)=>(
+    <div style={{background:"#0A1929",border:`1px solid ${color}25`,borderRadius:8,padding:"12px 14px"}}>
+      <div style={{fontSize:9,color:"#334155",letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>{label}</div>
+      <div style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace"}}>{val}<span style={{fontSize:11,color:"#475569",marginLeft:3}}>{unit}</span></div>
+    </div>
+  );
+
+  const section=(title,children)=>(
+    <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
+      <div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>{title}</div>
+      {children}
+    </div>
+  );
+
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:16}}>
+      <div style={{maxWidth:900,margin:"0 auto"}}>
+
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+          <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0"}}>Analytics</div>
+          {logData&&<span style={{fontSize:10,color:logData.source==="local"?"#1D9E75":"#8B5CF6",background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,borderRadius:3,padding:"2px 7px"}}>
+            {logData.source==="local"?"● Local":"● Cloud"} log · {rows.length.toLocaleString()} rows · {durationH.toFixed(1)}h
+          </span>}
+          {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — select a session in Library</span>}
+          <div style={{flex:1}}/>
+          <button onClick={()=>setActiveTab("library")} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:5,padding:"3px 10px",color:"#475569",cursor:"pointer",fontSize:10}}>← Library</button>
+        </div>
+
+        {noData ? (
+          <div style={{textAlign:"center",padding:"60px 20px",color:"#334155"}}>
+            <div style={{fontSize:32,marginBottom:12,opacity:0.3}}>📊</div>
+            <div style={{fontSize:13,color:"#475569",marginBottom:6}}>No session data loaded</div>
+            <div style={{fontSize:11,marginBottom:16}}>Select a session in the Library sidebar to load its log data, then come back here.</div>
+            <button onClick={()=>setActiveTab("library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Library</button>
+          </div>
+        ) : (
+          <>
+            {/* KPI row */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
+              {card("Avg TWS",R(twsAvg),"kn","#06B6D4")}
+              {card("Max TWS",R(twsMax),"kn","#7DD3FC")}
+              {card("Avg SOG",R(sogAvg),"kn","#10B981")}
+              {card("Max SOG",R(sogMax),"kn","#34D399")}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
+              {card("Tacks",tacks,"","#1D9E75")}
+              {card("Gybes",gybes,"","#7F77DD")}
+              {card("Polar %",vsPerfAvg?R(vsPerfAvg)+"%":"--","","#F59E0B")}
+              {card("Target %",vsTargAvg?R(vsTargAvg)+"%":"--","","#EF4444")}
+            </div>
+
+            {/* TWS + SOG timeline */}
+            {section("Wind & boat speed timeline",(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div>
+                  <LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn"/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div>
+                  <LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn"/>
+                </div>
+              </div>
+            ))}
+
+            {/* Heel timeline + performance vs target */}
+            {section("Heel & performance",(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div>
+                  <LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °"/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED % OF TARGET</div>
+                  <PerfChart rows={rows} height={110}/>
+                </div>
+              </div>
+            ))}
+
+            {/* Speed polar */}
+            {section("Speed polar — TWA vs BSP by wind range",(
+              <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
+                <SpeedPolar rows={rows} width={280} height={280}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:10}}>
+                    Each dot is one second of sailing. The radial distance = boat speed (BSP), the angle = true wind angle. Colour shows wind strength band.
+                  </div>
+                  {/* Polar summary by TWA zone */}
+                  {[["Upwind (30-60°)",30,60],["Beam (60-120°)",60,120],["Downwind (120-180°)",120,180]].map(([label,lo,hi])=>{
+                    const zone=rows.filter(r=>Math.abs(r.twa)>=lo&&Math.abs(r.twa)<hi);
+                    const avgBsp=zone.length?zone.reduce((s,r)=>s+r.bsp,0)/zone.length:0;
+                    const avgTws=zone.length?zone.reduce((s,r)=>s+r.tws,0)/zone.length:0;
+                    const pct=rows.length?(zone.length/rows.length*100):0;
+                    return(
+                      <div key={label} style={{background:"#071624",borderRadius:6,padding:"8px 10px",marginBottom:6}}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                          <span style={{fontSize:10,color:"#94A3B8"}}>{label}</span>
+                          <span style={{fontSize:9,color:"#475569"}}>{pct.toFixed(0)}% of session</span>
+                        </div>
+                        <div style={{display:"flex",gap:16}}>
+                          <span style={{fontSize:11,fontFamily:"monospace",color:"#10B981"}}>BSP {R(avgBsp)} kn</span>
+                          <span style={{fontSize:11,fontFamily:"monospace",color:"#06B6D4"}}>TWS {R(avgTws)} kn</span>
+                          <span style={{fontSize:11,fontFamily:"monospace",color:"#475569"}}>{zone.length.toLocaleString()} pts</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+
+            {/* Tack/gybe analysis */}
+            {xmlData?.tackJibes?.length>0&&section(`Manoeuvre analysis — ${xmlData.tackJibes.length} total`,(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>MANOEUVRES BY WIND STRENGTH</div>
+                  <ManoeuvreChart tackJibes={xmlData.tackJibes} logRows={rows} width={360} height={130}/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:10,letterSpacing:1}}>MANOEUVRE BREAKDOWN</div>
+                  {[
+                    ["Valid tacks",tacks,"#1D9E75"],
+                    ["Valid gybes",gybes,"#7F77DD"],
+                    ["Top mark roundings",topMarks,"#EF4444"],
+                    ["Leeward gates",marks-topMarks,"#8B5CF6"],
+                    ["Invalid / flagged",(xmlData.tackJibes.length-tacks-gybes),"#475569"],
+                  ].map(([label,val,color])=>(
+                    <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid #0F2030"}}>
+                      <span style={{fontSize:11,color:"#94A3B8"}}>{label}</span>
+                      <span style={{fontSize:13,fontWeight:700,fontFamily:"monospace",color}}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {/* Clips linked to this session */}
+            {allVideos.filter(v=>v.twsAvg!=null).length>0&&section("Clips with instrument data",(
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {allVideos.filter(v=>v.twsAvg!=null).map(v=>(
+                  <div key={v.id} onClick={()=>{onSelectVideo(v);setActiveTab("library");}}
+                    style={{display:"flex",alignItems:"center",gap:10,background:"#071624",borderRadius:6,padding:"7px 10px",cursor:"pointer",border:"1px solid #1E3A5A"}}>
+                    <div style={{fontSize:10,color:"#E2E8F0",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
+                    {[
+                      ["TWS", v.twsAvg,        "kt",  "#06B6D4"],
+                      ["TWA", v.twaAvg,         "°",  "#8B5CF6"],
+                      ["VMG", v.vmgAvg,         "kt", "#10B981"],
+                      ["Pol", v.polpercAvg,     "%",  "#F59E0B"],
+                      ["Tgt", v.vsTargPercAvg,  "%",  "#EF4444"],
+                    ].map(([l,val,u,c])=>(
+                      <div key={l} style={{textAlign:"center",minWidth:42}}>
+                        <div style={{fontSize:8,color:"#334155"}}>{l}</div>
+                        <div style={{fontSize:11,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}{u}</div>
+                      </div>
+                    ))}
+                    <div style={{fontSize:9,color:"#334155"}}>→</div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SmartSailingAnalytics(){
   const[role,setRole]=useState("coach");
   const[activeTab,setActiveTab]=useState("library");
@@ -406,7 +797,7 @@ export default function SmartSailingAnalytics(){
   const[logData,setLogData]=useState(null);
   const[xmlData,setXmlData]=useState(null);
   const[selectedVideo,setSelectedVideo]=useState(null);
-  const[syncOffsets,setSyncOffsets]=useState({});
+  const[syncOffsets,setSyncOffsets]=useState(()=>getSyncOffsets());
   const[selectedTags,setSelectedTags]=useState([]);
   const[searchQuery,setSearchQuery]=useState("");
   const[sortBy,setSortBy]=useState("date");
@@ -494,8 +885,22 @@ export default function SmartSailingAnalytics(){
     if(!aiQuery.trim()||!allVideos.length)return;
     setAiLoading(true);setAiResult(null);
     try{
-      const vl=allVideos.map(v=>({id:v.id,title:v.title,tags:v.tags,tws:v.twsAvg,sog:v.sogAvg,date:v.sessionDate,source:v.source}));
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system:`You are the AI for SmartSailingAnalytics. Library: ${JSON.stringify(vl)}\nReturn ONLY valid JSON: {"matches":[],"explanation":"","insight":""}`,messages:[{role:"user",content:aiQuery}]})});
+      const vl=allVideos.map(v=>({
+        id:v.id, title:v.title, date:v.sessionDate, source:v.source,
+        tags:v.tags||[],
+        tws:v.twsAvg!=null?+R(v.twsAvg):null,
+        twa:v.twaAvg!=null?+R(v.twaAvg,0):null,
+        vmg:v.vmgAvg!=null?+R(v.vmgAvg):null,
+        polperc:v.polpercAvg!=null?+R(v.polpercAvg,0):null,
+        vsTargPerc:v.vsTargPercAvg!=null?+R(v.vsTargPercAvg,0):null,
+        sog:v.sogAvg!=null?+R(v.sogAvg):null,
+      }));
+      const systemPrompt=`You are the AI assistant for SmartSailingAnalytics, a sailing video library.
+Fields per clip: id, title, date, tags (manoeuvre/sail tags), tws (avg true wind speed kn), twa (avg true wind angle °), vmg (avg velocity made good kn), polperc (avg % of polar boat speed), vsTargPerc (avg % of target speed), sog (avg speed over ground kn). Null means no instrument data.
+Library: ${JSON.stringify(vl)}
+Return ONLY valid JSON (no markdown): {"matches":[],"explanation":"","insight":""}
+matches = array of video ids. explanation = brief natural language summary. insight = one actionable sailing coaching insight.`;
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system:systemPrompt,messages:[{role:"user",content:aiQuery}]})});
       const data=await res.json();const text=data.content?.find(b=>b.type==="text")?.text||"{}";
       setAiResult(JSON.parse(text.replace(/```json|```/g,"").trim()));
     }catch{setAiResult({matches:[],explanation:"Search unavailable.",insight:""});}
@@ -505,7 +910,7 @@ export default function SmartSailingAnalytics(){
   const aiIds=new Set(aiResult?.matches||[]);
   const displayed=(aiResult?allVideos.filter(v=>aiIds.has(v.id)):allVideos)
     .filter(v=>{const ok=selectedTags.length===0||selectedTags.every(t=>(v.tags||[]).includes(t));const q=searchQuery.toLowerCase();return ok&&(!q||v.title?.toLowerCase().includes(q)||(v.tags||[]).some(t=>t.includes(q)));})
-    .sort((a,b)=>sortBy==="tws"?(b.twsAvg||0)-(a.twsAvg||0):sortBy==="sog"?(b.sogAvg||0)-(a.sogAvg||0):(b.addedAt||0)-(a.addedAt||0));
+    .sort((a,b)=>sortBy==="tws"?(b.twsAvg||0)-(a.twsAvg||0):sortBy==="twa"?(Math.abs(a.twaAvg||0))-(Math.abs(b.twaAvg||0)):sortBy==="vmg"?(b.vmgAvg||0)-(a.vmgAvg||0):sortBy==="polar"?(b.polpercAvg||0)-(a.polpercAvg||0):(b.addedAt||0)-(a.addedAt||0));
 
   const allTags=[...new Set(allVideos.flatMap(v=>v.tags||[]))].sort();
   const isManTag=t=>["tack","gybe","top-mark","leeward-gate","upwind","downwind","reaching"].includes(t);
@@ -571,7 +976,7 @@ export default function SmartSailingAnalytics(){
             <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
             <div style={{padding:"0 11px 8px"}}>
               <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search clips…" style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7}}/>
-              {["date","tws","sog"].map(s=><button key={s} onClick={()=>setSortBy(s)} style={{display:"block",width:"100%",textAlign:"left",background:sortBy===s?"#1E3A5A":"none",border:"none",borderRadius:4,padding:"3px 6px",color:sortBy===s?"#06B6D4":"#334155",cursor:"pointer",fontSize:10,marginBottom:1}}>{sortBy===s?"▸ ":"  "}{s==="date"?"Date":s==="tws"?"Wind (TWS)":"Speed (SOG)"}</button>)}
+              {["date","tws","twa","vmg","polar"].map(s=><button key={s} onClick={()=>setSortBy(s)} style={{display:"block",width:"100%",textAlign:"left",background:sortBy===s?"#1E3A5A":"none",border:"none",borderRadius:4,padding:"3px 6px",color:sortBy===s?"#06B6D4":"#334155",cursor:"pointer",fontSize:10,marginBottom:1}}>{sortBy===s?"▸ ":"  "}{s==="date"?"Date":s==="tws"?"Wind (TWS)":s==="twa"?"Wind angle":s==="vmg"?"VMG":"Polar %"}</button>)}
             </div>
             {allTags.length>0&&<div style={{padding:"0 11px",flex:1}}>
               <div style={{fontSize:8,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:5}}>Filter</div>
@@ -612,21 +1017,46 @@ export default function SmartSailingAnalytics(){
                       <SrcBadge source={selectedVideo.source||"local"}/>
                     </div>
                     <div style={{fontSize:10,color:"#334155",marginBottom:12}}>{selectedVideo.sessionDate} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
-                    {selectedVideo.twsAvg!=null&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7,marginBottom:12}}>
-                      {[["Avg TWS",selectedVideo.twsAvg,"kt","#06B6D4"],["Avg SOG",selectedVideo.sogAvg,"kt","#10B981"],["Avg Heel",selectedVideo.heelAvg,"°","#F59E0B"]].map(([l,v,u,c])=>(
-                        <div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div><div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>{R(v)}<span style={{fontSize:10}}> {u}</span></div></div>
-                      ))}
-                    </div>}
-                    <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>setSyncOffsets(p=>({...p,[selectedVideo.id]:v}))}/></div>
+                    {selectedVideo.twsAvg!=null&&(
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
+                        {[
+                          ["Avg TWS",       selectedVideo.twsAvg,        "kt",  "#06B6D4"],
+                          ["Avg TWA",       selectedVideo.twaAvg,        "°",   "#8B5CF6"],
+                          ["Avg VMG",       selectedVideo.vmgAvg,        "kt",  "#10B981"],
+                          ["Polar %",       selectedVideo.polpercAvg,    "%",   "#F59E0B"],
+                          ["Target %",      selectedVideo.vsTargPercAvg, "%",   "#EF4444"],
+                          ["Avg SOG",       selectedVideo.sogAvg,        "kt",  "#34D399"],
+                        ].map(([l,val,u,c])=>(
+                          <div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}>
+                            <div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div>
+                            <div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>
+                              {val!=null?R(val):"--"}<span style={{fontSize:10,marginLeft:2}}>{u}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{
+                      saveSyncOffset(selectedVideo.id,v);
+                      setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));
+                    }}/></div>
                     <div style={{marginBottom:12}}>
                       <StartTimeEditor
                         video={selectedVideo}
                         logData={logData}
                         onSave={async(id,startUtc)=>{
                           await updateVideoStartUtc(id,startUtc);
-                          // Update in state so VideoPlayer and enrichVideo both see new startUtc immediately
-                          setAllVideos(p=>p.map(v=>v.id===id?enrichVideo({...v,startUtc},logData):v));
-                          setSelectedVideo(p=>enrichVideo({...p,startUtc},logData));
+                          // Recompute auto-tags now that we have a real startUtc
+                          const updatedVideo={...selectedVideo,startUtc};
+                          const autoTags=computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0);
+                          // Merge: keep any manually added tags, add new auto-tags
+                          const manualTags=(selectedVideo.tags||[]).filter(t=>!t.startsWith("tws-")&&!["upwind","reaching","downwind","tack","gybe","top-mark","leeward-gate","training","today"].includes(t)&&!xmlData?.meta?.location?.includes(t));
+                          const mergedTags=[...new Set([...autoTags,...manualTags])];
+                          await updateVideoTags(id,mergedTags);
+                          // Update state — enrich with new startUtc so gauges & averages refresh
+                          const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData);
+                          setAllVideos(p=>p.map(v=>v.id===id?enriched:v));
+                          setSelectedVideo(enriched);
                         }}
                       />
                     </div>
@@ -639,15 +1069,7 @@ export default function SmartSailingAnalytics(){
 
           {/* ANALYTICS */}
           {activeTab==="analytics"&&(
-            <div style={{flex:1,padding:20,overflowY:"auto"}}>
-              <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0",marginBottom:18}}>Analytics</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:11,marginBottom:18}}>
-                {[["Clips",allVideos.length,"","#06B6D4"],["Sessions",sessions.length,"days","#8B5CF6"],["Avg TWS",allVideos.filter(v=>v.twsAvg).length?R(allVideos.reduce((s,v)=>s+(v.twsAvg||0),0)/allVideos.filter(v=>v.twsAvg).length):"--","kn","#1D9E75"],["Avg SOG",allVideos.filter(v=>v.sogAvg).length?R(allVideos.reduce((s,v)=>s+(v.sogAvg||0),0)/allVideos.filter(v=>v.sogAvg).length):"--","kn","#F59E0B"]].map(([l,v,u,c])=>(
-                  <div key={l} style={{background:"#0A1929",border:`1px solid ${c}25`,borderRadius:10,padding:14}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:3}}>{l}</div><div style={{fontSize:26,fontWeight:700,color:c,fontFamily:"monospace"}}>{v}</div>{u&&<div style={{fontSize:10,color:"#1E3A5A"}}>{u}</div>}</div>
-                ))}
-              </div>
-              <div style={{background:"#0A1929",borderRadius:10,border:"2px dashed #1E3A5A",padding:36,textAlign:"center"}}><div style={{fontSize:10,color:"#1E3A5A"}}>Grafana dashboards — add NEXT_PUBLIC_GRAFANA_URL in Vercel env vars</div></div>
-            </div>
+            <AnalyticsTab logData={logData} xmlData={xmlData} allVideos={allVideos} sessions={sessions} selectedVideo={selectedVideo} onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab} />
           )}
 
           {activeTab==="upload"&&<UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/>}
@@ -658,7 +1080,7 @@ export default function SmartSailingAnalytics(){
               <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0",marginBottom:18}}>Admin</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 {[
-                  {title:"Data tiers",items:["Tier 1 · Local: IndexedDB (blobs) + localStorage (log/events)","Tier 2 · Cloud: R2 (JSON) + Cloudflare Stream (HLS)","Today = always local  ·  Older = local → cloud fallback",`Unsynced items: ${unsyncedCount}`]},
+                  {title:"Data tiers",items:["Tier 1 · Local: IndexedDB (blobs) + localStorage (log/events)","Tier 2 · Cloud: Bunny Storage (JSON) + Bunny Stream (HLS)","Today = always local  ·  Older = local → cloud fallback",`Unsynced items: ${unsyncedCount}`]},
                   {title:"Cloud status (Bunny.net)",items:[`Storage: ${cloudStatus?.storage?"Connected ✓":"Not configured"}`,`Stream: ${cloudStatus?.stream?"Connected ✓":"Not configured"}`,`Zone: ${cloudStatus?.zone||"—"} · Region: ${cloudStatus?.region||"de"}`,"Env vars: BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_ZONE, BUNNY_STORAGE_REGION, BUNNY_STREAM_API_KEY, BUNNY_STREAM_LIBRARY_ID, BUNNY_CDN_HOSTNAME"]},
                   {title:"Roles (testing — NextAuth in Phase 2)",items:["Admin/Coach → local import + cloud sync + older sessions","Crew → local import today + cloud older (read-only)","Viewer/Consultant → cloud only, no import","Switch roles with the header dropdown"]},
                   {title:"Sessions",items:sessions.length>0?sessions.map(s=>`${s.date===TODAY()?"Today":s.date} · ${s.source||"local"} · ${s.videoCount||0}v${s.hasLog?" + log":""}${s.hasXml?" + events":""}${s.location?` · ${s.location}`:""}`):[" No sessions yet — import in Upload tab"]},

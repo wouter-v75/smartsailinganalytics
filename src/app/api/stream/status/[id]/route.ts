@@ -31,9 +31,9 @@ export async function GET(
 
     const v = await res.json();
 
-    // Bunny Stream status: 0=queued, 1=processing, 2=encoding, 3=finished, 4=error, 5=uploading
-    const ready = v.status === 4; // 4 = finished/ready (Bunny uses 4 for "ready")
-    // Note: Bunny encodeProgress goes 0–100; status 4 means fully processed
+    // Bunny Stream status codes (official):
+    // 0=Created, 1=Uploaded, 2=Processing, 3=Transcoding, 4=Finished, 5=Error, 6=UploadFailed
+    const ready = v.status === 4; // 4 = Finished = fully transcoded and ready to stream
 
     // HLS playback URL pattern for Bunny Stream
     const pullZone = CDN_HOST || `${v.videoLibraryId}.b-cdn.net`;
@@ -41,7 +41,7 @@ export async function GET(
     const thumbnailUrl = ready ? `https://${pullZone}/${id}/thumbnail.jpg` : null;
 
     const statusLabel = (
-      { 0: "queued", 1: "processing", 2: "encoding", 3: "uploading", 4: "ready", 5: "error" } as Record<number, string>
+      { 0: "created", 1: "uploaded", 2: "processing", 3: "transcoding", 4: "ready", 5: "error", 6: "upload_failed" } as Record<number, string>
     )[v.status as number] ?? "processing";
 
     return NextResponse.json({
