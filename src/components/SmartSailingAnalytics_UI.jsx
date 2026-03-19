@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from "react";
-import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced } from "../lib/localStore";
+import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced } from "../lib/localStore";
 import { checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady } from "../lib/bunny";
 
 const ROLES = {
@@ -159,6 +159,59 @@ function SyncControl({offset,onChange}){
   );
 }
 
+// StartTimeEditor — the key link between video timeline and log/event data
+function StartTimeEditor({video, logData, onSave}){
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState("");
+  const toLocal = utc => utc ? new Date(utc).toISOString().slice(0,19) : "";
+  const fromLocal = s => s ? new Date(s+"Z").getTime() : null;
+  const suggested = video.startUtc
+    ? toLocal(video.startUtc)
+    : logData?.startUtc ? toLocal(logData.startUtc) : "";
+  const open = () => { setVal(suggested); setEditing(true); };
+  const save = () => { const utc=fromLocal(val); if(utc&&!isNaN(utc)) onSave(video.id,utc); setEditing(false); };
+  const hasStart = !!video.startUtc;
+  const inLog = hasStart && logData?.rows?.length &&
+    video.startUtc >= logData.startUtc &&
+    video.startUtc <= logData.endUtc;
+  return (
+    <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:`1px solid ${!hasStart?"#EF444440":inLog?"#1D9E7540":"#F59E0B40"}`,marginBottom:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:3}}>Video start time (UTC)</div>
+          {hasStart
+            ? <div style={{fontSize:11,fontFamily:"monospace",color:inLog?"#1D9E75":"#F59E0B"}}>
+                {new Date(video.startUtc).toISOString().slice(11,19)} UTC
+                <span style={{fontSize:9,marginLeft:6}}>{inLog?"✓ within log":logData?"⚠ outside log — adjust":"(no log)"}</span>
+              </div>
+            : <div style={{fontSize:10,color:"#EF4444"}}>Not set — instruments and events won't show</div>
+          }
+        </div>
+        <button onClick={editing?save:open} style={{background:editing?"#1D9E75":"#1E3A5A",border:"none",borderRadius:4,padding:"3px 9px",color:editing?"#fff":"#94A3B8",cursor:"pointer",fontSize:10,fontWeight:editing?700:400,marginLeft:8,flexShrink:0}}>
+          {editing?"Save":"Edit"}
+        </button>
+      </div>
+      {editing && (
+        <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+          <input type="datetime-local" step="1" value={val} onChange={e=>setVal(e.target.value)}
+            style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,fontFamily:"monospace",outline:"none",width:"100%",boxSizing:"border-box"}}/>
+          {logData?.startUtc && (
+            <div style={{display:"flex",gap:5}}>
+              <button onClick={()=>setVal(toLocal(logData.startUtc))} style={{flex:1,background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,padding:"4px 0",color:"#7DD3FC",cursor:"pointer",fontSize:10}}>
+                Log start {new Date(logData.startUtc).toISOString().slice(11,16)}
+              </button>
+              {logData.endUtc && <button onClick={()=>setVal(toLocal(Math.round((logData.startUtc+logData.endUtc)/2)))} style={{flex:1,background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,padding:"4px 0",color:"#7DD3FC",cursor:"pointer",fontSize:10}}>
+                Midpoint
+              </button>}
+            </div>
+          )}
+          <div style={{fontSize:9,color:"#334155"}}>Enter when this clip started recording (UTC). Most cameras set file time = end of clip, so start ≈ file time − duration.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Upload tab — two-step: local save → cloud push
 function UploadTab({role,cloudStatus,onImported}){
   const perms=ROLES[role];
@@ -180,7 +233,16 @@ function UploadTab({role,cloudStatus,onImported}){
   const handleVids=useCallback(files=>{
     const valid=Array.from(files).filter(f=>f.type.startsWith("video/")||/\.(mp4|mov|mts|avi|mkv|m4v)$/i.test(f.name));
     if(!valid.length){addLog("✕ No video files found. MP4/MOV/MTS/AVI accepted.");return;}
-    setPendingVids(p=>[...p,...valid.map(f=>({id:Math.random().toString(36).slice(2),file:f,name:f.name,size:f.size,url:URL.createObjectURL(f),duration:null}))]);
+    setPendingVids(p=>[...p,...valid.map(f=>({
+      id:Math.random().toString(36).slice(2),
+      file:f, name:f.name, size:f.size,
+      url:URL.createObjectURL(f),
+      duration:null,
+      // lastModified is end-of-recording on most cameras; startUtc = lastModified - duration
+      // We store lastModified now and compute startUtc once duration is known
+      lastModified: f.lastModified || null,
+      startUtc: null,
+    }))]);
     addLog(`✓ ${valid.length} video${valid.length>1?"s":""} queued`);
   },[]);
 
@@ -204,7 +266,7 @@ function UploadTab({role,cloudStatus,onImported}){
     const saved=[];
     for(const pv of pendingVids){
       const tags=computeAutoTags(null,pv.duration,csvParsed,xmlParsed);
-      try{const s=await saveVideo(pv.file,{duration:pv.duration,tags,title:pv.name.replace(/\.[^.]+$/,"").replace(/[_-]/g," "),sessionDate:date});saved.push({...s,file:pv.file});addLog(`✓ ${pv.name} → IndexedDB (${fmtSize(pv.size)})`);}
+      try{const s=await saveVideo(pv.file,{duration:pv.duration,startUtc:pv.startUtc,tags,title:pv.name.replace(/\.[^.]+$/,"").replace(/[_-]/g," "),sessionDate:date});saved.push({...s,file:pv.file});addLog(`✓ ${pv.name} → IndexedDB${pv.startUtc?` · starts ${new Date(pv.startUtc).toISOString().slice(11,19)} UTC`:" · no start time"}`);}
       catch(e){addLog(`✕ ${pv.name}: ${e.message}`);}
     }
     setSavedDate(date);setSavedVids(saved);
@@ -264,7 +326,12 @@ function UploadTab({role,cloudStatus,onImported}){
               </div>
               {pendingVids.map(v=>(
                 <div key={v.id} style={{display:"flex",alignItems:"center",gap:9,padding:"5px 0",borderBottom:"1px solid #0F2030"}}>
-                  <video src={v.url} style={{width:52,height:33,borderRadius:3,objectFit:"cover",background:"#071624",flexShrink:0}} muted preload="metadata" onLoadedMetadata={e=>setPendingVids(p=>p.map(x=>x.id===v.id?{...x,duration:Math.round(e.target.duration)}:x))}/>
+                  <video src={v.url} style={{width:52,height:33,borderRadius:3,objectFit:"cover",background:"#071624",flexShrink:0}} muted preload="metadata" onLoadedMetadata={e=>{
+                    const dur=Math.round(e.target.duration);
+                    // startUtc = lastModified (end of clip) minus duration in ms
+                    const startUtc=v.lastModified?v.lastModified-dur*1000:null;
+                    setPendingVids(p=>p.map(x=>x.id===v.id?{...x,duration:dur,startUtc}:x));
+                  }}/>
                   <div style={{flex:1,minWidth:0}}><div style={{fontSize:11,fontWeight:500,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div><div style={{fontSize:10,color:"#475569"}}>{fmtSize(v.size)}{v.duration?` · ${fmtT(v.duration)}`:""}</div></div>
                   <button onClick={()=>setPendingVids(p=>p.filter(x=>x.id!==v.id))} style={{background:"none",border:"none",color:"#EF4444",cursor:"pointer",fontSize:15}}>×</button>
                 </div>
@@ -551,6 +618,18 @@ export default function SmartSailingAnalytics(){
                       ))}
                     </div>}
                     <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>setSyncOffsets(p=>({...p,[selectedVideo.id]:v}))}/></div>
+                    <div style={{marginBottom:12}}>
+                      <StartTimeEditor
+                        video={selectedVideo}
+                        logData={logData}
+                        onSave={async(id,startUtc)=>{
+                          await updateVideoStartUtc(id,startUtc);
+                          // Update in state so VideoPlayer and enrichVideo both see new startUtc immediately
+                          setAllVideos(p=>p.map(v=>v.id===id?enrichVideo({...v,startUtc},logData):v));
+                          setSelectedVideo(p=>enrichVideo({...p,startUtc},logData));
+                        }}
+                      />
+                    </div>
                     {perms.canImport&&<TagEditor video={selectedVideo} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
                   </div>
                 </div>
