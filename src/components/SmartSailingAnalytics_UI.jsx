@@ -204,7 +204,7 @@ function UploadTab({role,cloudStatus,onImported}){
     const saved=[];
     for(const pv of pendingVids){
       const tags=computeAutoTags(null,pv.duration,csvParsed,xmlParsed);
-      try{const s=await saveVideo(pv.file,{duration:pv.duration,tags,title:pv.name.replace(/\.[^.]+$/,"").replace(/[_-]/g," ")});saved.push({...s,file:pv.file});addLog(`✓ ${pv.name} → IndexedDB (${fmtSize(pv.size)})`);}
+      try{const s=await saveVideo(pv.file,{duration:pv.duration,tags,title:pv.name.replace(/\.[^.]+$/,"").replace(/[_-]/g," "),sessionDate:date});saved.push({...s,file:pv.file});addLog(`✓ ${pv.name} → IndexedDB (${fmtSize(pv.size)})`);}
       catch(e){addLog(`✕ ${pv.name}: ${e.message}`);}
     }
     setSavedDate(date);setSavedVids(saved);
@@ -357,12 +357,25 @@ export default function SmartSailingAnalytics(){
     async function boot(){
       const today=TODAY();
       const localSessions=getSessions();setSessions(localSessions);
-      const localLog=getLogData(today);const localXml=getXmlData(today);
-      if(localLog)setLogData({...localLog,source:"local"});
-      if(localXml)setXmlData({...localXml,source:"local"});
+
+      // Load ALL videos from IndexedDB regardless of date
       const vids=await getAllVideos();
-      const enriched=vids.map(v=>enrichVideo(v,localLog));
-      setAllVideos(enriched);if(enriched.length>0)setSelectedVideo(enriched[0]);
+
+      // Enrich each video with the log data for its own session date
+      const enriched=vids.map(v=>{
+        const log=getLogData(v.sessionDate||today);
+        return enrichVideo(v,log);
+      });
+      setAllVideos(enriched);
+      if(enriched.length>0)setSelectedVideo(enriched[0]);
+
+      // Load log/xml for the most recent session (or today if no sessions)
+      const latestDate=localSessions[0]?.date||today;
+      const latestLog=getLogData(latestDate);
+      const latestXml=getXmlData(latestDate);
+      if(latestLog)setLogData({...latestLog,source:"local"});
+      if(latestXml)setXmlData({...latestXml,source:"local"});
+      setActiveDate(latestDate);
       setUnsyncedCount(getUnsyncedCount());setLoaded(true);
       const cs=await checkCloudStatus();setCloudStatus(cs);
       if(cs?.available){
@@ -384,7 +397,14 @@ export default function SmartSailingAnalytics(){
     if(localXml){setXmlData({...localXml,source:"local"});}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);setXmlData(r2?.xmlData?{...r2.xmlData,source:"cloud"}:null);}
     else setXmlData(null);
+
+    // Try exact date first, then fall back to all local videos filtered by date
     let vids=await getVideosForDate(date);
+    if(!vids.length){
+      // Videos may have been saved under a different date key — search all
+      const all=await getAllVideos();
+      vids=all.filter(v=>v.sessionDate===date);
+    }
     if(!vids.length&&cloudStatus?.available){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
     const log=getLogData(date);
     setAllVideos(vids.map(v=>enrichVideo(v,log)));
@@ -394,8 +414,13 @@ export default function SmartSailingAnalytics(){
   function handleImported({date,videos,logData:ld,xmlData:xd}){
     if(ld)setLogData({...ld,source:"local"});if(xd)setXmlData({...xd,source:"local"});
     setSessions(getSessions());setUnsyncedCount(getUnsyncedCount());
-    getVideosForDate(date).then(vids=>{const e=vids.map(v=>enrichVideo(v,ld));setAllVideos(e);if(e.length>0)setSelectedVideo(e[0]);});
+    getVideosForDate(date).then(vids=>{
+      const e=vids.map(v=>enrichVideo(v,ld));
+      setAllVideos(e);
+      if(e.length>0)setSelectedVideo(e[0]);
+    });
     setActiveDate(date);
+    setActiveTab("library");  // switch to library so user can see the imported clips
   }
 
   async function runAiQuery(){
