@@ -39,6 +39,7 @@ export async function GET() {
       bucket: BUCKET, accountId: ACCOUNT_ID,
     });
   } catch (e) {
-    return NextResponse.json({ available: false, r2: false, stream: false, reason: e.message });
+    const msg = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ available: false, r2: false, stream: false, reason: msg });
   }
 }
