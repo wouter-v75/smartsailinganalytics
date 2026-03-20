@@ -190,11 +190,12 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0}){
 
   return(
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
-      <div style={{position:"relative",background:"#000",height:440,display:"flex",alignItems:"center",justifyContent:"center"}}>
-        {video.objectUrl?<video ref={vidRef} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>setDur(e.target.duration)}/>:
-         video.source==="processing"?<div style={{textAlign:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
-         <div style={{color:"#334155",textAlign:"center"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
-        {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",width:52,height:52,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:18}}>▶</div>}
+      {/* Video — aspect-ratio container fills available width at 16:9 */}
+      <div style={{position:"relative",background:"#000",aspectRatio:"16/9",width:"100%",overflow:"hidden",borderRadius:"12px 12px 0 0"}}>
+        {video.objectUrl?<video ref={vidRef} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration);}}/>:
+         video.source==="processing"?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
+         <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
+        {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
         {row&&<div style={{position:"absolute",top:10,left:10,display:"flex",gap:5}}><Gauge label="TWS" value={R(row.tws)} unit="kn" color="#06B6D4"/><Gauge label="TWA" value={`${R(row.twa,0)}°`} unit="true" color="#8B5CF6"/><Gauge label="BSP" value={R(row.bsp)} unit="kn" color="#10B981"/><Gauge label="Heel" value={`${R(row.heel,0)}°`} unit="°" color="#F59E0B"/></div>}
         {upcoming.length>0&&<div style={{position:"absolute",top:10,right:10,display:"flex",flexDirection:"column",gap:4}}>{upcoming.map((m,i)=><div key={i} style={{background:"rgba(0,0,0,0.8)",borderRadius:5,padding:"3px 7px",fontSize:10,color:m.color,border:`1px solid ${m.color}40`}}>{m.label} in {Math.round(m.vidSec-curTime)}s</div>)}</div>}
         <div style={{position:"absolute",bottom:8,left:8}}><SrcBadge source={video.source||"local"}/></div>
@@ -253,8 +254,8 @@ function VideoCard({video,selected,onClick}){
 
   return(
     <div onClick={onClick} style={{background:selected?"#0F2A45":"#0A1929",border:`2px solid ${selected?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
-      {/* Thumbnail — ~50% smaller: was 108px, now 54px */}
-      <div style={{height:54,background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
+      {/* Thumbnail — 16:9 aspect ratio */}
+      <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
         {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
          video.objectUrl&&video.source!=="cloud"?<video src={video.objectUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
          video.source==="processing"?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
@@ -1722,7 +1723,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
           {/* LIBRARY */}
           {activeTab==="library"&&(
             <>
-              <div style={{flex:1,overflowY:"auto",padding:12}}>
+              <div style={{width:280,minWidth:280,overflowY:"auto",padding:"10px 8px",flexShrink:0,borderRight:"1px solid #0F2030"}}>
                 {(logData||xmlData)&&<div style={{display:"flex",gap:7,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
                   {logData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,color:logData.source==="local"?"#1D9E75":"#8B5CF6"}}>{logData.source==="local"?"● Local":"● Cloud"} log · {logData.rows?.length?.toLocaleString()} rows</span>}
                   {xmlData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:"#8B5CF610",border:"1px solid #8B5CF630",color:"#8B5CF6"}}>{xmlData.source==="local"?"● Local":"● Cloud"} events · {xmlData.tackJibes?.length} manoeuvres</span>}
@@ -1831,7 +1832,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
                 })()}
               </div>
               {selectedVideo&&(
-                <div style={{width:520,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:14,flexShrink:0}}>
+                <div style={{flex:1,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:16,minWidth:400}}>
                   <VideoPlayer video={selectedVideo} logData={logData} xmlData={xmlData} syncOffset={syncOffsets[selectedVideo.id]||0} sessionTzOffset={sessionTzOffset}/>
                   <div style={{marginTop:12}}>
                     {/* Title row */}
