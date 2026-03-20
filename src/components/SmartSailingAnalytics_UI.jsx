@@ -65,7 +65,7 @@ const DEFAULT_TZ = 120; // CEST — CET summer time
 // ── CSV parser — offsetMin converts local time to UTC ─────────────────────────
 function expToUtc(ds,ts,offsetMin=0){
   const[d,m,y]=ds.split("/").map(Number);
-  const yr=y<50?2000+y:1900+y;
+  const yr=y>99?y:(y<50?2000+y:1900+y); // handles dd/mm/yyyy AND dd/mm/yy
   const[h,mn,sc]=ts.split(":").map(Number);
   return Date.UTC(yr,m-1,d,h,mn,sc) - offsetMin*60000;
 }
