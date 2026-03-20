@@ -446,9 +446,26 @@ function UploadTab({role,cloudStatus,onImported}){
 // ─── ANALYTICS CHARTS (pure SVG, no dependencies) ────────────────────────────
 
 // Thin line chart: array of {x,y} normalised 0-1, with axis labels
-function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",xLabel="",yMin,yMax,yLines=[]}){
+// ─── CHART PRIMITIVES ────────────────────────────────────────────────────────
+
+// Linear regression: returns {slope, intercept, r2}
+function linReg(pts){
+  const n=pts.length; if(n<2)return null;
+  const mx=pts.reduce((s,p)=>s+p.x,0)/n;
+  const my=pts.reduce((s,p)=>s+p.y,0)/n;
+  const num=pts.reduce((s,p)=>s+(p.x-mx)*(p.y-my),0);
+  const den=pts.reduce((s,p)=>s+(p.x-mx)**2,0);
+  if(!den)return null;
+  const slope=num/den, intercept=my-slope*mx;
+  const ssTot=pts.reduce((s,p)=>s+(p.y-my)**2,0);
+  const ssRes=pts.reduce((s,p)=>s+(p.y-(slope*p.x+intercept))**2,0);
+  return{slope,intercept,r2:ssTot?1-ssRes/ssTot:0};
+}
+
+// Time-series line chart with optional trend line overlay
+function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,yMax,yLines=[],showTrend=false}){
   if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
-  const pad={t:10,r:8,b:28,l:36};
+  const pad={t:14,r:8,b:28,l:36};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
   const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
   const x0=Math.min(...xs),x1=Math.max(...xs);
@@ -456,27 +473,127 @@ function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",xLabel
   const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
   const py=y=>pad.t+H-((y-y0)/(y1-y0||1))*H;
   const d=points.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
-  // x-axis ticks: 5 evenly spaced
   const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
   const yTicks=Array.from({length:4},(_,i)=>y0+(y1-y0)*i/3);
+  // Trend line using normalised x to avoid float precision issues
+  const reg=showTrend?linReg(points.map(p=>({x:(p.x-x0)/(x1-x0||1),y:p.y}))):null;
+  const ty=t=>reg?reg.slope*t+reg.intercept:0;
   return(
     <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
-      {/* Grid lines */}
       {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
       {yLines.map((y,i)=><line key={"r"+i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={color} strokeWidth="0.5" strokeDasharray="3,3" opacity="0.5"/>)}
-      {/* Axes */}
       <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
       <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-      {/* Data line */}
-      <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round"/>
-      {/* Y ticks */}
+      <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>
+      {reg&&<line x1={px(x0)} y1={py(ty(0))} x2={px(x1)} y2={py(ty(1))} stroke="#fff" strokeWidth="1" strokeDasharray="4,3" opacity="0.5"/>}
+      {reg&&<text x={pad.l+W-2} y={pad.t+6} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
       {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(y<10?1:0)}</text>)}
-      {/* X ticks */}
-      {xTicks.map((x,i)=>{const dt=new Date(x);return<text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{dt.toISOString().slice(11,16)}</text>;})}
-      {/* Labels */}
+      {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
       {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
     </svg>
   );
+}
+
+// X-Y scatter plot with optional trend line — the core of goal 2
+function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200,showTrend=true,title=""}){
+  if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
+  const pad={t:title?20:10,r:8,b:28,l:36};
+  const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
+  const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
+  const x0=Math.min(...xs),x1=Math.max(...xs);
+  const y0=Math.min(...ys),y1=Math.max(...ys);
+  const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
+  const py=y=>pad.t+H-((y-y0)/(y1-y0||1))*H;
+  // Downsample dots for rendering (max 800)
+  const step=Math.max(1,Math.floor(points.length/800));
+  const dots=points.filter((_,i)=>i%step===0);
+  const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
+  const yTicks=Array.from({length:4},(_,i)=>y0+(y1-y0)*i/3);
+  const reg=showTrend?linReg(points):null;
+  const ty=x=>reg?reg.slope*x+reg.intercept:0;
+  return(
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
+      {title&&<text x={pad.l+W/2} y={10} textAnchor="middle" fontSize="9" fill="#64748B" fontWeight="600">{title}</text>}
+      {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
+      <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+      <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+      {dots.map((p,i)=><circle key={i} cx={px(p.x)} cy={py(p.y)} r="1.5" fill={color} opacity="0.5"/>)}
+      {reg&&<line x1={px(x0)} y1={py(ty(x0))} x2={px(x1)} y2={py(ty(x1))} stroke="#fff" strokeWidth="1.5" strokeDasharray="5,3" opacity="0.7"/>}
+      {reg&&<text x={pad.l+W-2} y={pad.t+10} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
+      {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(1)}</text>)}
+      {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{x.toFixed(1)}</text>)}
+      {xLabel&&<text x={pad.l+W/2} y={height-1} textAnchor="middle" fontSize="8" fill="#475569">{xLabel}</text>}
+      {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
+    </svg>
+  );
+}
+
+// Render a chart spec returned by AI — goal 3
+// spec: { type:"xy"|"line"|"bar", title, xField, yField, xLabel, yLabel, color, filter }
+function AIChart({spec,rows,allVideos}){
+  if(!spec)return null;
+  const c=spec.color||"#8B5CF6";
+
+  if(spec.type==="xy"&&rows?.length){
+    // Scatter plot of two log fields
+    const xf=spec.xField, yf=spec.yField;
+    const pts=rows
+      .filter(r=>r[xf]!=null&&r[yf]!=null&&(spec.filter?eval(`(r)=>${spec.filter}`)(r):true))
+      .map(r=>({x:r[xf],y:r[yf]}));
+    return(
+      <div style={{background:"#0A1929",border:`1px solid ${c}30`,borderRadius:10,padding:14,marginBottom:10}}>
+        <XYPlot points={pts} xLabel={spec.xLabel||xf} yLabel={spec.yLabel||yf} color={c} width={520} height={200} title={spec.title} showTrend/>
+      </div>
+    );
+  }
+
+  if(spec.type==="line"&&rows?.length){
+    const yf=spec.yField;
+    const step=Math.max(1,Math.floor(rows.length/400));
+    const pts=rows.filter((_,i)=>i%step===0).filter(r=>r[yf]!=null).map(r=>({x:r.utc,y:r[yf]}));
+    return(
+      <div style={{background:"#0A1929",border:`1px solid ${c}30`,borderRadius:10,padding:14,marginBottom:10}}>
+        <div style={{fontSize:10,color:c,fontWeight:600,marginBottom:6}}>{spec.title}</div>
+        <LineChart points={pts} color={c} height={130} yLabel={spec.yLabel||yf} showTrend/>
+      </div>
+    );
+  }
+
+  if(spec.type==="bar"&&allVideos?.length){
+    // Bar chart across clips — e.g. twsAvg or polpercAvg per clip
+    const field=spec.xField||"twsAvg";
+    const clips=allVideos.filter(v=>v[field]!=null).slice(0,12);
+    if(!clips.length)return<div style={{fontSize:10,color:"#334155"}}>No clip data for this field</div>;
+    const maxV=Math.max(...clips.map(v=>v[field]));
+    const W=520,H=160,pad={t:16,r:8,b:40,l:40};
+    const bw=(W-pad.l-pad.r)/clips.length-3;
+    return(
+      <div style={{background:"#0A1929",border:`1px solid ${c}30`,borderRadius:10,padding:14,marginBottom:10}}>
+        <div style={{fontSize:10,color:c,fontWeight:600,marginBottom:6}}>{spec.title}</div>
+        <svg width="100%" viewBox={`0 0 ${W} ${H}`}>
+          {clips.map((v,i)=>{
+            const bh=((v[field]||0)/maxV)*(H-pad.t-pad.b);
+            const x=pad.l+i*(bw+3);
+            return(<g key={v.id}>
+              <rect x={x} y={H-pad.b-bh} width={bw} height={bh} fill={c} rx="2" opacity="0.8"/>
+              <text x={x+bw/2} y={H-pad.b+12} textAnchor="middle" fontSize="7" fill="#475569"
+                transform={`rotate(-35,${x+bw/2},${H-pad.b+12})`}>
+                {v.title?.slice(0,10)}
+              </text>
+              <text x={x+bw/2} y={H-pad.b-bh-3} textAnchor="middle" fontSize="8" fill={c}>
+                {R(v[field])}
+              </text>
+            </g>);
+          })}
+          <line x1={pad.l} x2={W-pad.r} y1={H-pad.b} y2={H-pad.b} stroke="#1E3A5A" strokeWidth="1"/>
+          <text x={pad.l+((W-pad.l-pad.r)/2)} y={H-2} textAnchor="middle" fontSize="8" fill="#475569">{spec.xLabel}</text>
+          <text x={8} y={(H-pad.t-pad.b)/2+pad.t} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${(H-pad.t-pad.b)/2+pad.t})`}>{spec.yLabel}</text>
+        </svg>
+      </div>
+    );
+  }
+
+  return<div style={{fontSize:10,color:"#EF4444"}}>Chart type "{spec.type}" not recognised</div>;
 }
 
 // Scatter polar chart: TWA (0-180 each side) vs BSP
@@ -596,6 +713,139 @@ function PerfChart({rows,width=400,height=110}){
   );
 }
 
+// ─── AI CHART CHAT ────────────────────────────────────────────────────────────
+// Sends natural language questions to Claude; Claude returns a chart spec + text.
+// Available log fields: tws, twa, bsp, sog, vmg, heel, vsTargPct, vsPerfPct, rudder
+// Available clip fields: twsAvg, twaAvg, vmgAvg, polpercAvg, vsTargPercAvg, sogAvg
+
+const LOG_FIELDS = "tws (true wind speed kn), twa (true wind angle °), bsp (boat speed kn), sog (speed over ground kn), vmg (velocity made good kn), heel (heel angle °), vsTargPct (% of target speed col23), vsPerfPct (% of polar speed col26), rudder (rudder angle °)";
+const CLIP_FIELDS = "twsAvg, twaAvg, vmgAvg, polpercAvg, vsTargPercAvg, sogAvg, heelAvg";
+
+const CHART_SYSTEM = `You are a sailing data analyst AI for SmartSailingAnalytics.
+The user has log data (1 Hz rows with fields: ${LOG_FIELDS}) and clip summaries (fields: ${CLIP_FIELDS}).
+When the user asks a question, respond with JSON ONLY — no markdown, no explanation outside JSON.
+Return: {
+  "answer": "brief natural language answer (1-3 sentences)",
+  "chart": {                   // optional — omit if no chart is useful
+    "type": "xy" | "line" | "bar",
+    "title": "chart title",
+    "xField": "field name for X axis",   // for xy: log field; for bar: clip field
+    "yField": "field name for Y axis",   // for xy and line: log field
+    "xLabel": "axis label",
+    "yLabel": "axis label",
+    "color": "#hexcolor"
+  },
+  "insight": "one actionable coaching insight"
+}
+For "xy" charts use log row fields. For "bar" charts use clip fields (xField = clip field name).
+For "line" charts yField is a log field plotted over time (x=utc is automatic).
+Only produce a chart if it genuinely answers the question.`;
+
+function AIChatPanel({rows, allVideos}){
+  const [messages, setMessages] = useState([]);
+  const [input, setInput]       = useState("");
+  const [loading, setLoading]   = useState(false);
+  const bottomRef = useRef(null);
+
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[messages]);
+
+  const ask = async () => {
+    const q = input.trim(); if(!q) return;
+    setMessages(p=>[...p,{role:"user",text:q}]);
+    setInput(""); setLoading(true);
+
+    const history = messages.map(m=>({
+      role: m.role==="user"?"user":"assistant",
+      content: m.rawJson ? JSON.stringify(m.rawJson) : m.text,
+    }));
+
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:1000,
+          system: CHART_SYSTEM,
+          messages:[...history,{role:"user",content:q}],
+        }),
+      });
+      const data = await res.json();
+      const text = data.content?.find(b=>b.type==="text")?.text||"{}";
+      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
+      setMessages(p=>[...p,{role:"assistant",text:parsed.answer||"",chart:parsed.chart,insight:parsed.insight,rawJson:parsed}]);
+    } catch(e) {
+      setMessages(p=>[...p,{role:"assistant",text:`Error: ${e.message}`}]);
+    }
+    setLoading(false);
+  };
+
+  const hasData = rows?.length > 0 || allVideos?.some(v=>v.twsAvg!=null);
+
+  return(
+    <div style={{background:"#0A1929",border:"1px solid #8B5CF640",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+        <span style={{fontSize:14,color:"#8B5CF6"}}>✦</span>
+        <div style={{fontSize:11,fontWeight:600,color:"#94A3B8",letterSpacing:1,textTransform:"uppercase"}}>Ask AI — get an answer + chart</div>
+        {!hasData&&<span style={{fontSize:9,color:"#EF4444",marginLeft:"auto"}}>Load a session first</span>}
+      </div>
+
+      {/* Suggestion pills */}
+      {messages.length===0&&(
+        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:12}}>
+          {[
+            "Plot TWS vs SOG",
+            "How does heel change with wind?",
+            "Show polar % over time",
+            "Compare VMG across clips",
+            "Which TWA gives best VMG?",
+            "Show rudder vs heel scatter",
+          ].map(s=>(
+            <button key={s} onClick={()=>{setInput(s);}} style={{background:"#071624",border:"1px solid #8B5CF640",borderRadius:5,padding:"4px 10px",color:"#8B5CF6",cursor:"pointer",fontSize:10}}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Message thread */}
+      {messages.length>0&&(
+        <div style={{maxHeight:480,overflowY:"auto",marginBottom:10,display:"flex",flexDirection:"column",gap:10}}>
+          {messages.map((m,i)=>(
+            <div key={i}>
+              {m.role==="user"&&(
+                <div style={{display:"flex",justifyContent:"flex-end"}}>
+                  <div style={{background:"#1E3A5A",borderRadius:"8px 8px 2px 8px",padding:"6px 10px",fontSize:11,color:"#E2E8F0",maxWidth:"70%"}}>{m.text}</div>
+                </div>
+              )}
+              {m.role==="assistant"&&(
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {m.text&&<div style={{background:"#071624",borderRadius:"8px 8px 8px 2px",padding:"8px 12px",fontSize:11,color:"#E2E8F0",lineHeight:1.5,maxWidth:"85%"}}>{m.text}</div>}
+                  {m.chart&&<AIChart spec={m.chart} rows={rows} allVideos={allVideos}/>}
+                  {m.insight&&<div style={{fontSize:10,color:"#475569",padding:"4px 8px",borderLeft:"2px solid #8B5CF640"}}>💡 {m.insight}</div>}
+                </div>
+              )}
+            </div>
+          ))}
+          {loading&&<div style={{fontSize:10,color:"#8B5CF6",padding:"4px 8px"}}>Thinking…</div>}
+          <div ref={bottomRef}/>
+        </div>
+      )}
+
+      {/* Input */}
+      <div style={{display:"flex",gap:6}}>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!loading&&ask()}
+          placeholder={hasData?"Ask about your sailing data e.g. 'plot TWS vs SOG'…":"Load a session in Library first"}
+          disabled={!hasData||loading}
+          style={{flex:1,background:"#071624",border:"1px solid #8B5CF640",borderRadius:6,padding:"7px 11px",color:"#E2E8F0",fontSize:11,outline:"none",opacity:hasData?1:0.4}}/>
+        <button onClick={ask} disabled={!hasData||loading||!input.trim()}
+          style={{background:loading||!input.trim()?"#1E3A5A":"#8B5CF6",border:"none",borderRadius:6,padding:"7px 14px",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>
+          {loading?"…":"Ask"}
+        </button>
+        {messages.length>0&&<button onClick={()=>setMessages([])} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 10px",color:"#475569",cursor:"pointer",fontSize:10}}>Clear</button>}
+      </div>
+    </div>
+  );
+}
+
 // Main Analytics component
 function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab}){
   const [activeSession,setActiveSession]=useState(null); // null = use logData passed in
@@ -684,25 +934,45 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <div>
                   <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div>
-                  <LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn"/>
+                  <LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn" showTrend/>
                 </div>
                 <div>
                   <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div>
-                  <LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn"/>
+                  <LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn" showTrend/>
                 </div>
               </div>
             ))}
 
-            {/* Heel timeline + performance vs target */}
             {section("Heel & performance",(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <div>
                   <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div>
-                  <LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °"/>
+                  <LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °" showTrend/>
                 </div>
                 <div>
-                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED % OF TARGET</div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div>
                   <PerfChart rows={rows} height={110}/>
+                </div>
+              </div>
+            ))}
+
+            {rows.length>50&&section("X-Y plots — correlations & trends",(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TWS vs SOG</div>
+                  <XYPlot points={rows.filter((_,i)=>i%3===0).filter(r=>r.tws>0&&r.sog>0).map(r=>({x:r.tws,y:r.sog}))} xLabel="TWS (kn)" yLabel="SOG (kn)" color="#06B6D4" height={170} showTrend/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TWS vs Heel</div>
+                  <XYPlot points={rows.filter((_,i)=>i%3===0).filter(r=>r.tws>0).map(r=>({x:r.tws,y:Math.abs(r.heel)}))} xLabel="TWS (kn)" yLabel="Heel (°)" color="#F59E0B" height={170} showTrend/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TWS vs Polar %</div>
+                  <XYPlot points={rows.filter((_,i)=>i%3===0).filter(r=>r.tws>0&&r.vsPerfPct>5&&r.vsPerfPct<200).map(r=>({x:r.tws,y:r.vsPerfPct}))} xLabel="TWS (kn)" yLabel="Polar %" color="#8B5CF6" height={170} showTrend/>
+                </div>
+                <div>
+                  <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TWA vs VMG</div>
+                  <XYPlot points={rows.filter((_,i)=>i%3===0).filter(r=>r.vmg>0&&r.twa!=null).map(r=>({x:Math.abs(r.twa),y:r.vmg}))} xLabel="TWA (°)" yLabel="VMG (kn)" color="#10B981" height={170} showTrend/>
                 </div>
               </div>
             ))}
@@ -788,6 +1058,9 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 ))}
               </div>
             ))}
+
+            {/* AI chart chat — goal 3 */}
+            <AIChatPanel rows={rows} allVideos={allVideos}/>
           </>
         )}
       </div>
