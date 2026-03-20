@@ -212,18 +212,15 @@ export function saveXmlData(date, parsed, fileName) {
 
 export function getXmlData(date) { return lsGet(`ssa:xml:${date}`); }
 
-// ── Auto-tag from log + XML ───────────────────────────────────────────────────
-// ── Auto-tag a video from log + event data ────────────────────────────────────
+// ── Auto-tag from log + XML ────────────────────────────────────────────────────
 //
-// Primary event tag — the single event that best describes the clip:
-//   Priority:  top-mark (10) > leeward-gate (9) > race-start (8)
-//              > gybe (5) > tack (3)
-//   Tie-break: closest to the video midpoint wins
-//   Source:    events within the clip window OR within 60s outside it
-//              (clips rarely start exactly at the event timestamp)
-//
-// Secondary tags — everything present in the clip:
-//   all event types, TWS band, point-of-sail, active sails, location
+// Tag groups:
+//   1. Session context  — boat, location, dayType (XML meta)
+//   2. Instrument       — TWS band + point-of-sail from TWA
+//   3. Sails            — individual sail names from most recent SailsUp event
+//   4. Mark roundings   — "mark"/"topmark" + pos-of-sail at rounding time
+//   5. Primary manoeuvre — best event near clip midpoint (race-start > gybe > tack)
+//   6. Secondary events — all other event types + count tags
 //
 export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, offsetSec = 0) {
   const tags = [];
@@ -234,100 +231,110 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
   const winEnd   = winStart + (durationSec || 0) * 1000;
   const midpoint = (winStart + winEnd) / 2;
 
-  // ── Instrument-based tags from log ──────────────────────────────────────────
+  // ── 1. Session context from XML meta ────────────────────────────────────────
+  if (xmlData?.meta) {
+    const { boat, location, dayType } = xmlData.meta;
+    if (boat)     tags.push(boat.toLowerCase().replace(/\s+/g, "-"));
+    if (location) tags.push(location.toLowerCase().replace(/\s+/g, "-"));
+    if (dayType)  tags.push(dayType.toLowerCase().replace(/\s+/g, "-"));
+  }
+
+  // ── 2. Instrument tags ──────────────────────────────────────────────────────
+  const posOfSail = twa => {
+    const a = Math.abs(twa);
+    return a < 60 ? "upwind" : a < 110 ? "reach" : "downwind";
+  };
+
   if (logData?.rows?.length) {
     const win = logData.rows.filter(r => r.utc >= winStart && r.utc <= winEnd);
     if (win.length > 0) {
       const avg = f => win.reduce((s, r) => s + (r[f] || 0), 0) / win.length;
-      const twsAvg = avg("tws");
-      // TWS band tag
+      const tws = avg("tws");
+      const twa = avg("twa");
       tags.push(`tws-${
-        twsAvg <  8 ? "0-8"   :
-        twsAvg < 12 ? "8-12"  :
-        twsAvg < 16 ? "12-16" :
-        twsAvg < 20 ? "16-20" :
-        twsAvg < 25 ? "20-25" : "25+"
+        tws <  8 ? "0-8"   :
+        tws < 12 ? "8-12"  :
+        tws < 16 ? "12-16" :
+        tws < 20 ? "16-20" :
+        tws < 25 ? "20-25" : "25+"
       }kn`);
-      // Point of sail
-      const twaAvg = Math.abs(avg("twa"));
-      tags.push(twaAvg < 60 ? "upwind" : twaAvg < 110 ? "reaching" : "downwind");
+      tags.push(posOfSail(twa));
     }
   }
 
   if (!xmlData) return [...new Set(tags)];
 
-  // ── Build a unified event list with priority scores ──────────────────────────
-  // Search window: clip + 60 s buffer each side (in case clip starts just before event)
-  const BUFFER = 60_000;
-  const searchStart = winStart - BUFFER;
-  const searchEnd   = winEnd   + BUFFER;
+  const BUFFER_MS = 60_000;
 
-  const allEvents = [];
-
-  // Mark roundings — highest priority
-  for (const m of (xmlData.markRoundings || [])) {
-    if (m.utc < searchStart || m.utc > searchEnd) continue;
-    allEvents.push({
-      utc:      m.utc,
-      tag:      m.isTop ? "top-mark" : "leeward-gate",
-      label:    m.label,
-      priority: m.isTop ? 10 : 9,
-      valid:    m.isValid !== false,
-    });
-  }
-
-  // Race start guns
-  for (const g of (xmlData.raceGuns || [])) {
-    if (g.utc < searchStart || g.utc > searchEnd) continue;
-    allEvents.push({ utc:g.utc, tag:"race-start", label:g.label, priority:8, valid:true });
-  }
-
-  // Gybes
-  for (const tj of (xmlData.tackJibes || []).filter(t => !t.isTack)) {
-    if (tj.utc < searchStart || tj.utc > searchEnd) continue;
-    allEvents.push({ utc:tj.utc, tag:"gybe", label:"Gybe", priority:5, valid:tj.isValid !== false });
-  }
-
-  // Tacks
-  for (const tj of (xmlData.tackJibes || []).filter(t => t.isTack)) {
-    if (tj.utc < searchStart || tj.utc > searchEnd) continue;
-    allEvents.push({ utc:tj.utc, tag:"tack", label:"Tack", priority:3, valid:tj.isValid !== false });
-  }
-
-  // ── Primary tag: highest priority, closest to midpoint as tie-break ──────────
-  if (allEvents.length > 0) {
-    const best = allEvents
-      .filter(e => e.valid)                          // prefer valid events
-      .sort((a, b) => {
-        if (b.priority !== a.priority) return b.priority - a.priority;   // priority first
-        return Math.abs(a.utc - midpoint) - Math.abs(b.utc - midpoint);  // proximity second
-      })[0];
-
-    if (best) tags.push(best.tag);
-
-    // ── Secondary tags: all distinct event types in clip window ─────────────────
-    const inWindow = allEvents.filter(e => e.utc >= winStart && e.utc <= winEnd);
-    const countByTag = {};
-    for (const e of inWindow) countByTag[e.tag] = (countByTag[e.tag] || 0) + 1;
-
-    // Add count tags for secondary events (skip primary if already added)
-    for (const [tag, count] of Object.entries(countByTag)) {
-      if (tag === best?.tag) continue;       // already the primary tag
-      tags.push(tag);                        // e.g. "tack" alongside "top-mark"
-      if (count > 1) tags.push(`${count}x-${tag}`);  // e.g. "3x-tack"
-    }
-  }
-
-  // ── Sail configuration — most recent SailsUp before clip end ────────────────
+  // ── 3. Sails — each individual sail from most recent SailsUp ≤ clip end ──────
   const sailEv = [...(xmlData.sailsUpEvents || [])]
     .filter(s => s.utc <= winEnd)
     .sort((a, b) => b.utc - a.utc)[0];
-  if (sailEv) sailEv.sails.forEach(s => tags.push(s));
+  if (sailEv) {
+    sailEv.sails.forEach(s => tags.push(s.trim().toLowerCase()));
+  }
 
-  // ── Session context ──────────────────────────────────────────────────────────
-  const hasRace = (xmlData.raceGuns || []).length > 0;
-  tags.push(hasRace ? "race" : "training");
-  if (xmlData.meta?.location) tags.push(xmlData.meta.location);
+  // ── 4. Mark roundings in clip window ─────────────────────────────────────────
+  const marks = (xmlData.markRoundings || []).filter(
+    m => m.utc >= winStart - BUFFER_MS && m.utc <= winEnd + BUFFER_MS
+  );
+  for (const m of marks) {
+    tags.push(m.isTop ? "topmark" : "mark");
+    // Point of sail at the rounding using nearest log row
+    if (logData?.rows?.length) {
+      const nearest = logData.rows.reduce((best, r) =>
+        Math.abs(r.utc - m.utc) < Math.abs(best.utc - m.utc) ? r : best,
+        logData.rows[0]
+      );
+      if (Math.abs(nearest.utc - m.utc) < 300_000) {
+        tags.push(posOfSail(nearest.twa));
+      }
+    }
+  }
+
+  // ── 5 & 6. Manoeuvre events ───────────────────────────────────────────────────
+  const searchStart = winStart - BUFFER_MS;
+  const searchEnd   = winEnd   + BUFFER_MS;
+  const allEvents   = [];
+
+  for (const g of (xmlData.raceGuns || [])) {
+    if (g.utc < searchStart || g.utc > searchEnd) continue;
+    allEvents.push({ utc:g.utc, tag:"race-start", priority:8, valid:true });
+  }
+  for (const tj of (xmlData.tackJibes || []).filter(t => !t.isTack)) {
+    if (tj.utc < searchStart || tj.utc > searchEnd) continue;
+    allEvents.push({ utc:tj.utc, tag:"gybe", priority:5, valid:tj.isValid !== false });
+  }
+  for (const tj of (xmlData.tackJibes || []).filter(t => t.isTack)) {
+    if (tj.utc < searchStart || tj.utc > searchEnd) continue;
+    allEvents.push({ utc:tj.utc, tag:"tack", priority:3, valid:tj.isValid !== false });
+  }
+
+  if (allEvents.length > 0) {
+    const best = allEvents
+      .filter(e => e.valid)
+      .sort((a, b) =>
+        b.priority !== a.priority
+          ? b.priority - a.priority
+          : Math.abs(a.utc - midpoint) - Math.abs(b.utc - midpoint)
+      )[0];
+
+    if (best) tags.push(best.tag);
+
+    const inWin  = allEvents.filter(e => e.utc >= winStart && e.utc <= winEnd);
+    const seen   = new Set([best?.tag]);
+    const counts = {};
+    for (const e of inWin) {
+      if (!seen.has(e.tag)) { tags.push(e.tag); seen.add(e.tag); }
+      counts[e.tag] = (counts[e.tag] || 0) + 1;
+    }
+    for (const [tag, n] of Object.entries(counts)) {
+      if (n > 1) tags.push(`${n}x-${tag}`);
+    }
+  }
+
+  // ── Race vs training ──────────────────────────────────────────────────────────
+  tags.push((xmlData.raceGuns || []).length > 0 ? "race" : "training");
 
   return [...new Set(tags)];
 }
