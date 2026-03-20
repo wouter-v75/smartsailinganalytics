@@ -190,12 +190,12 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0}){
 
   return(
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
-      <div style={{position:"relative",background:"#000",height:290,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{position:"relative",background:"#000",height:440,display:"flex",alignItems:"center",justifyContent:"center"}}>
         {video.objectUrl?<video ref={vidRef} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>setDur(e.target.duration)}/>:
          video.source==="processing"?<div style={{textAlign:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{color:"#334155",textAlign:"center"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",width:52,height:52,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:18}}>▶</div>}
-        {row&&<div style={{position:"absolute",top:10,left:10,display:"flex",gap:5}}><Gauge label="TWS" value={R(row.tws)} unit="kn" color="#06B6D4"/><Gauge label="TWA" value={`${R(row.twa,0)}°`} unit="true" color="#8B5CF6"/><Gauge label="SOG" value={R(row.sog)} unit="kn" color="#10B981"/><Gauge label="Heel" value={`${R(row.heel,0)}°`} unit="°" color="#F59E0B"/></div>}
+        {row&&<div style={{position:"absolute",top:10,left:10,display:"flex",gap:5}}><Gauge label="TWS" value={R(row.tws)} unit="kn" color="#06B6D4"/><Gauge label="TWA" value={`${R(row.twa,0)}°`} unit="true" color="#8B5CF6"/><Gauge label="BSP" value={R(row.bsp)} unit="kn" color="#10B981"/><Gauge label="Heel" value={`${R(row.heel,0)}°`} unit="°" color="#F59E0B"/></div>}
         {upcoming.length>0&&<div style={{position:"absolute",top:10,right:10,display:"flex",flexDirection:"column",gap:4}}>{upcoming.map((m,i)=><div key={i} style={{background:"rgba(0,0,0,0.8)",borderRadius:5,padding:"3px 7px",fontSize:10,color:m.color,border:`1px solid ${m.color}40`}}>{m.label} in {Math.round(m.vidSec-curTime)}s</div>)}</div>}
         <div style={{position:"absolute",bottom:8,left:8}}><SrcBadge source={video.source||"local"}/></div>
         <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
@@ -221,40 +221,57 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0}){
 
 // Video card
 function VideoCard({video,selected,onClick}){
-  const manTags=(video.tags||[]).filter(t=>["tack","gybe","top-mark","leeward-gate","upwind","downwind","reaching"].includes(t));
-  const extraTags=(video.tags||[]).filter(t=>!["tack","gybe","top-mark","leeward-gate","upwind","downwind","reaching","local","cloud","training","today"].includes(t)&&!t.startsWith("tws-")).slice(0,2);
+  const tags = video.tags||[];
+
+  // Tag display priority:
+  // 1. Event tags: race-start, topmark, mark  (high-value events)
+  // 2. Boat name (first non-generic word tag)
+  // 3. Point of sail: upwind / reach / downwind
+  // 4. Sails: exclude mainsail variants (main*, msail, mainsail)
+  // 5. Manoeuvres: tack / gybe — only if they came from isvalidperf=true
+  const EVENT_TAGS   = ["race-start","topmark","mark"];
+  const SAIL_SKIP    = /^(main|msail|mainsail|main-)/;
+  const POS_TAGS     = ["upwind","reach","downwind"];
+  const MANO_TAGS    = ["tack","gybe"];
+  const SKIP_ALWAYS  = new Set(["local","cloud","training","race","today","topmark","mark","race-start","upwind","reach","downwind","tack","gybe"]);
+
+  const eventTags  = tags.filter(t=>EVENT_TAGS.includes(t));
+  const posTags    = tags.filter(t=>POS_TAGS.includes(t)).slice(0,1);
+  const sailTags   = tags.filter(t=>!SAIL_SKIP.test(t)&&!SKIP_ALWAYS.has(t)&&!t.startsWith("tws-")&&!t.startsWith("north")&&!/^[0-9]/.test(t)).slice(0,3);
+  const manoTags   = tags.filter(t=>MANO_TAGS.includes(t));
+  // Boat name: first tag that looks like a vessel name (not a generic keyword)
+  const boatTag    = tags.find(t=>!SKIP_ALWAYS.has(t)&&!t.startsWith("tws-")&&!POS_TAGS.includes(t)&&!MANO_TAGS.includes(t)&&!EVENT_TAGS.includes(t)&&!SAIL_SKIP.test(t)&&t.length>2&&!/^[0-9]/.test(t)&&!t.startsWith("j")&&!t.includes("-20"))||null;
+
+  const displayTags = [...new Set([...eventTags, boatTag, ...posTags, ...sailTags.slice(0,2), ...manoTags])].filter(Boolean).slice(0,6);
+
+  const tagColor = t => {
+    if(EVENT_TAGS.includes(t))  return{bg:"#EF444420",bd:"#EF444440",c:"#EF4444"};
+    if(POS_TAGS.includes(t))    return{bg:"#06B6D420",bd:"#06B6D440",c:"#06B6D4"};
+    if(MANO_TAGS.includes(t))   return{bg:"#1D9E7520",bd:"#1D9E7540",c:"#1D9E75"};
+    return                            {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
+  };
+
   return(
-    <div onClick={onClick} style={{background:selected?"#0F2A45":"#0A1929",border:`2px solid ${selected?"#06B6D4":"#1E3A5A"}`,borderRadius:12,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
-      <div style={{height:108,background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
+    <div onClick={onClick} style={{background:selected?"#0F2A45":"#0A1929",border:`2px solid ${selected?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
+      {/* Thumbnail — ~50% smaller: was 108px, now 54px */}
+      <div style={{height:54,background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
         {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
          video.objectUrl&&video.source!=="cloud"?<video src={video.objectUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
-         video.source==="processing"?<div style={{color:"#F59E0B",textAlign:"center",fontSize:11}}><div style={{fontSize:20,marginBottom:4}}>⏳</div>Processing</div>:
-         <div style={{color:"#1E3A5A",textAlign:"center",fontSize:10}}><div style={{fontSize:24,marginBottom:4,opacity:0.3}}>📹</div>{video.source==="cloud"?"Stream":""}</div>}
-        <div style={{position:"absolute",bottom:5,right:5,background:"rgba(0,0,0,0.75)",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
-        <div style={{position:"absolute",top:5,right:5}}><SrcBadge source={video.source||"local"}/></div>
-        {video.camera&&<div style={{position:"absolute",top:5,left:5,background:"rgba(0,0,0,0.7)",borderRadius:3,padding:"1px 4px",fontSize:9,color:"#475569"}}>{video.camera}</div>}
+         video.source==="processing"?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
+         <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
+        <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
+        <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={video.source||"local"}/></div>
       </div>
-      <div style={{padding:"9px 11px"}}>
-        <div style={{fontSize:11,fontWeight:600,color:"#E2E8F0",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
-        <div style={{fontSize:10,color:"#334155",marginBottom:6}}>{fmtDate(video.sessionDate)}</div>
-        {video.twsAvg!=null&&(
-          <div style={{display:"flex",gap:3,marginBottom:6,flexWrap:"wrap"}}>
-            {[
-              ["TWS", video.twsAvg,    "kt",  "#06B6D4"],
-              ["TWA", video.twaAvg,    "°",   "#8B5CF6"],
-              ["VMG", video.vmgAvg,    "kt",  "#10B981"],
-              ["Pol", video.polpercAvg,"%",   "#F59E0B"],
-              ["Tgt", video.vsTargPercAvg,"%","#EF4444"],
-            ].map(([l,val,u,c])=>(
-              <div key={l} style={{flex:"1 1 0",background:"#071624",borderRadius:4,padding:"3px 0",textAlign:"center",minWidth:30}}>
-                <div style={{fontSize:7,color:"#334155"}}>{l}</div>
-                <div style={{fontSize:10,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val)+"":"--"}</div>
-                <div style={{fontSize:7,color:"#334155"}}>{u}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        <div style={{display:"flex",flexWrap:"wrap",gap:3}}>{[...manTags,...extraTags].slice(0,5).map(t=><span key={t} style={{background:"#1E3A5A",color:"#7DD3FC",fontSize:9,borderRadius:3,padding:"1px 4px",fontFamily:"monospace"}}>#{t}</span>)}{(video.tags||[]).length>5&&<span style={{fontSize:9,color:"#334155"}}>+{video.tags.length-5}</span>}</div>
+      {/* Info */}
+      <div style={{padding:"6px 9px"}}>
+        <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
+        <div style={{fontSize:9,color:"#334155",marginBottom:4}}>{fmtDate(video.sessionDate)}{video.twsAvg!=null?` · TWS ${R(video.twsAvg)}kt`:""}{video.twaAvg!=null?` · TWA ${R(video.twaAvg,0)}°`:""}</div>
+        {/* Smart tag row */}
+        <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+          {displayTags.map(t=>{const{bg,bd,c}=tagColor(t);return(
+            <span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>
+          );})}
+        </div>
       </div>
     </div>
   );
@@ -1741,7 +1758,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
                   <div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>
                   {perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}
                 </div>}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(192px, 1fr))",gap:11}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(150px, 1fr))",gap:11}}>
                   {displayed.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)}/>)}
                 </div>
               </div>
@@ -1774,7 +1791,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
                           ["Avg VMG",       selectedVideo.vmgAvg,        "kt",  "#10B981"],
                           ["Polar %",       selectedVideo.polpercAvg,    "%",   "#F59E0B"],
                           ["Target %",      selectedVideo.vsTargPercAvg, "%",   "#EF4444"],
-                          ["Avg SOG",       selectedVideo.sogAvg,        "kt",  "#34D399"],
+                          ["Avg BSP",       selectedVideo.bspAvg,        "kt",  "#34D399"],
                         ].map(([l,val,u,c])=>(
                           <div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}>
                             <div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div>
