@@ -1686,7 +1686,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
         {/* SIDEBAR */}
         {activeTab==="library"&&(
-          <aside style={{width:198,background:"#050E1C",borderRight:"1px solid #1E3A5A",display:"flex",flexDirection:"column",overflowY:"auto",flexShrink:0}}>
+          <aside style={{width:160,background:"#050E1C",borderRight:"1px solid #1E3A5A",display:"flex",flexDirection:"column",overflowY:"auto",flexShrink:0}}>
             <div style={{padding:"12px 11px 6px"}}>
               <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Sessions</div>
               {sessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
@@ -1758,12 +1758,80 @@ matches = array of video ids. explanation = brief natural language summary. insi
                   <div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>
                   {perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}
                 </div>}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(150px, 1fr))",gap:11}}>
-                  {displayed.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)}/>)}
-                </div>
+                {/* Date-grouped clip sections */}
+                {(()=>{
+                  // Group displayed clips by sessionDate
+                  const groups = [];
+                  const seen   = new Map();
+                  for(const v of displayed){
+                    const d = v.sessionDate||"unknown";
+                    if(!seen.has(d)){ seen.set(d,[]); groups.push(d); }
+                    seen.get(d).push(v);
+                  }
+                  const EVENT_TAGS  = ["race-start","topmark","mark"];
+                  const POS_TAGS    = ["upwind","reach","downwind"];
+                  // Pick a representative event label for the section header
+                  const sectionEvent = (vids) => {
+                    for(const v of vids){
+                      const ev = (v.tags||[]).find(t=>EVENT_TAGS.includes(t));
+                      if(ev) return ev;
+                    }
+                    const pos = (vids[0]?.tags||[]).find(t=>POS_TAGS.includes(t));
+                    return pos || null;
+                  };
+                  const eventLabel = tag => {
+                    if(!tag) return null;
+                    if(tag==="race-start") return{label:"Race start",  color:"#EF4444"};
+                    if(tag==="topmark")    return{label:"Top mark",    color:"#EF4444"};
+                    if(tag==="mark")       return{label:"Mark",        color:"#8B5CF6"};
+                    if(tag==="upwind")     return{label:"Upwind",      color:"#06B6D4"};
+                    if(tag==="reach")      return{label:"Reach",       color:"#10B981"};
+                    if(tag==="downwind")   return{label:"Downwind",    color:"#F59E0B"};
+                    return null;
+                  };
+                  return groups.map(date=>{
+                    const vids = seen.get(date);
+                    const evTag = sectionEvent(vids);
+                    const evInfo = eventLabel(evTag);
+                    // Boat name from first video with tags
+                    const boat = (vids[0]?.tags||[]).find(t=>
+                      !["race-start","topmark","mark","upwind","reach","downwind","tack","gybe","race","training"].includes(t)
+                      &&!t.startsWith("tws-")&&!t.startsWith("main")&&!t.includes("-20")&&t.length>2
+                    );
+                    return(
+                      <div key={date} style={{marginBottom:18}}>
+                        {/* Section header */}
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,paddingBottom:5,borderBottom:"1px solid #0F2030"}}>
+                          <div style={{fontSize:11,fontWeight:700,color:"#64748B",fontFamily:"monospace"}}>
+                            {date===TODAY()?"Today":fmtDate(date)}
+                          </div>
+                          {evInfo&&(
+                            <span style={{fontSize:9,padding:"1px 6px",borderRadius:3,
+                              background:`${evInfo.color}20`,border:`1px solid ${evInfo.color}40`,
+                              color:evInfo.color,fontWeight:600,letterSpacing:0.5}}>
+                              {evInfo.label}
+                            </span>
+                          )}
+                          {boat&&(
+                            <span style={{fontSize:9,color:"#334155",fontFamily:"monospace"}}>
+                              {boat}
+                            </span>
+                          )}
+                          <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>
+                            {vids.length} clip{vids.length!==1?"s":""}
+                          </span>
+                        </div>
+                        {/* 3-column grid */}
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8}}>
+                          {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)}/>)}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
               {selectedVideo&&(
-                <div style={{width:408,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:12,flexShrink:0}}>
+                <div style={{width:520,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:14,flexShrink:0}}>
                   <VideoPlayer video={selectedVideo} logData={logData} xmlData={xmlData} syncOffset={syncOffsets[selectedVideo.id]||0} sessionTzOffset={sessionTzOffset}/>
                   <div style={{marginTop:12}}>
                     {/* Title row */}
