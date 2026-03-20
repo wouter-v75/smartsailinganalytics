@@ -48,16 +48,45 @@ const ROLES = {
 };
 
 function parseNmea(s){const p=s.trim().split(/\s+/);if(p.length<2)return{lat:0,lon:0};const f=(str,d)=>{const h=str.slice(-1),n=str.slice(0,-1);const v=parseFloat(n.slice(0,d))+parseFloat(n.slice(d))/60;return h==="S"||h==="W"?-v:v;};try{return{lat:f(p[0],2),lon:f(p[1],3)};}catch{return{lat:0,lon:0};}}
-function expToUtc(ds,ts){const[d,m,y]=ds.split("/").map(Number);const yr=y<50?2000+y:1900+y;const[h,mn,sc]=ts.split(":").map(Number);return Date.UTC(yr,m-1,d,h,mn,sc);}
-function parseCsvLog(text){const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());const rows=[];for(let i=1;i<lines.length;i++){const c=lines[i].split(",");if(c.length<27)continue;const bsp=parseFloat(c[4])||0,tws=parseFloat(c[12])||0;if(bsp<0.05&&tws<0.3)continue;const ds=c[1]?.trim(),ts=c[2]?.trim();if(!ds?.includes("/")||!ts?.includes(":"))continue;const utc=expToUtc(ds,ts);if(isNaN(utc))continue;const pos=parseNmea(c[0]);rows.push({utc,lat:pos.lat,lon:pos.lon,heel:parseFloat(c[3])||0,bsp,twa:parseFloat(c[11])||0,tws,sog:parseFloat(c[20])||0,vmg:parseFloat(c[19])||0,vsTargPct:parseFloat(c[23])||0,vsPerfPct:parseFloat(c[26])||0,rudder:parseFloat(c[52])||0});}return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};}
-function isoUtc(s){return new Date(s.trim().replace(" ","T")+"Z").getTime();}
-function parseXmlEvents(text){
+// ─── TIMEZONES ────────────────────────────────────────────────────────────────
+// Offset in minutes from UTC. Local time - offsetMin = UTC.
+const TZ_OPTIONS = [
+  { label:"UTC+0  (UTC / UK winter / Portugal summer)", offsetMin: 0   },
+  { label:"UTC+1  (CET / BST / UK summer / W.Europe winter)", offsetMin: 60  },
+  { label:"UTC+2  (CEST / Central Europe summer — default)", offsetMin: 120 },
+  { label:"UTC+3  (EEST / Eastern Europe summer)", offsetMin: 180 },
+  { label:"UTC-1  (Azores summer)", offsetMin: -60  },
+  { label:"UTC-3  (Brazil / Argentina)", offsetMin: -180 },
+  { label:"UTC-4  (US Eastern summer / AST)", offsetMin: -240 },
+  { label:"UTC-5  (US Eastern winter / EST)", offsetMin: -300 },
+];
+const DEFAULT_TZ = 120; // CEST — CET summer time
+
+// ── CSV parser — offsetMin converts local time to UTC ─────────────────────────
+function expToUtc(ds,ts,offsetMin=0){
+  const[d,m,y]=ds.split("/").map(Number);
+  const yr=y<50?2000+y:1900+y;
+  const[h,mn,sc]=ts.split(":").map(Number);
+  return Date.UTC(yr,m-1,d,h,mn,sc) - offsetMin*60000;
+}
+function parseCsvLog(text,offsetMin=0){
+  const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());const rows=[];
+  for(let i=1;i<lines.length;i++){const c=lines[i].split(",");if(c.length<27)continue;const bsp=parseFloat(c[4])||0,tws=parseFloat(c[12])||0;if(bsp<0.05&&tws<0.3)continue;const ds=c[1]?.trim(),ts=c[2]?.trim();if(!ds?.includes("/")||!ts?.includes(":"))continue;const utc=expToUtc(ds,ts,offsetMin);if(isNaN(utc))continue;const pos=parseNmea(c[0]);rows.push({utc,lat:pos.lat,lon:pos.lon,heel:parseFloat(c[3])||0,bsp,twa:parseFloat(c[11])||0,tws,sog:parseFloat(c[20])||0,vmg:parseFloat(c[19])||0,vsTargPct:parseFloat(c[23])||0,vsPerfPct:parseFloat(c[26])||0,rudder:parseFloat(c[52])||0});}
+  return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};
+}
+
+// ── XML parser — offsetMin converts local event times to UTC ──────────────────
+function isoUtc(s,offsetMin=0){
+  // s is "YYYY-MM-DD HH:MM:SS" in local time — append Z then subtract offset
+  return new Date(s.trim().replace(" ","T")+"Z").getTime() - offsetMin*60000;
+}
+function parseXmlEvents(text,offsetMin=0){
   const doc=new DOMParser().parseFromString(text,"text/xml");
   const ga=(el,a,d="")=>el?.getAttribute(a)??d;
   const meta={boat:ga(doc.querySelector("boat"),"val"),location:ga(doc.querySelector("location"),"val"),date:ga(doc.querySelector("date"),"val")};
   const sailsUpEvents=[],raceGuns=[];
   for(const ev of doc.getElementsByTagName("event")){
-    const utc=isoUtc(`${ga(ev,"date")} ${ga(ev,"time")}`);
+    const utc=isoUtc(`${ga(ev,"date")} ${ga(ev,"time")}`,offsetMin);
     const type=ga(ev,"type"),attr=ga(ev,"attribute");
     if(type==="SailsUp"){
       const sails=attr.split(";").map(s=>s.trim()).filter(Boolean);
@@ -67,12 +96,12 @@ function parseXmlEvents(text){
     }
   }
   const markRoundings=Array.from(doc.getElementsByTagName("markrounding")).map(mr=>({
-    utc:isoUtc(ga(mr,"datetime")),isTop:ga(mr,"istopmark")==="true",isValid:ga(mr,"isvalid")==="true",
+    utc:isoUtc(ga(mr,"datetime"),offsetMin),isTop:ga(mr,"istopmark")==="true",isValid:ga(mr,"isvalid")==="true",
     label:ga(mr,"istopmark")==="true"?"Top mark":"Leeward gate",
     color:ga(mr,"istopmark")==="true"?"#EF4444":"#8B5CF6",
   }));
   const tackJibes=Array.from(doc.getElementsByTagName("tackjibe")).map(tj=>({
-    utc:isoUtc(ga(tj,"datetime")),isTack:ga(tj,"istack")==="true",isValid:ga(tj,"isvalidperf")==="true",
+    utc:isoUtc(ga(tj,"datetime"),offsetMin),isTack:ga(tj,"istack")==="true",isValid:ga(tj,"isvalidperf")==="true",
     label:ga(tj,"istack")==="true"?"Tack":"Gybe",
     color:ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD",
   }));
@@ -332,8 +361,26 @@ function UploadTab({role,cloudStatus,onImported}){
   const[savedDate,setSavedDate]=useState(null);
   const[savedVids,setSavedVids]=useState([]);
   const[streamStatus,setStreamStatus]=useState({});
+  // ── Per-source timezone offsets (minutes east of UTC) ──────────────────────
+  const[csvTz, setCsvTz] =useState(DEFAULT_TZ);  // Expedition log local time
+  const[xmlTz, setXmlTz] =useState(DEFAULT_TZ);  // Event file local time
+  const[vidTz, setVidTz] =useState(0);            // Video: MP4 creation_time is UTC by spec
 
   const addLog=msg=>setLog(p=>[...p.slice(-30),msg]);
+
+  // Reusable timezone selector widget
+  const TzSelect=({value,onChange,label})=>(
+    <div style={{marginTop:8}}>
+      <div style={{fontSize:9,color:"#475569",letterSpacing:1,marginBottom:3}}>{label}</div>
+      <select value={value} onChange={e=>onChange(Number(e.target.value))}
+        style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,
+          padding:"5px 7px",color:"#94A3B8",fontSize:10,cursor:"pointer"}}>
+        {TZ_OPTIONS.map(o=>(
+          <option key={o.offsetMin} value={o.offsetMin}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
 
   const handleVids=useCallback(files=>{
     const valid=Array.from(files).filter(f=>f.type.startsWith("video/")||/\.(mp4|mov|mts|avi|mkv|m4v)$/i.test(f.name));
@@ -343,42 +390,80 @@ function UploadTab({role,cloudStatus,onImported}){
       file:f, name:f.name, size:f.size,
       url:URL.createObjectURL(f),
       duration:null,
-      startUtc:null,      // filled by extractVideoCreationTime below
-      tsSource:null,      // "mp4-meta" | "lastmodified" | null
+      startUtc:null,
+      tsSource:null,
     }))]);
     addLog(`✓ ${valid.length} video${valid.length>1?"s":""} queued — reading timestamps…`);
-    // Extract creation_time from each file's MP4/MOV atom (async, non-blocking)
     valid.forEach(async f=>{
-      const id=f.name+f.size; // temporary key to match
       const mp4ts=await extractVideoCreationTime(f);
       setPendingVids(p=>p.map(v=>{
         if(v.file!==f)return v;
         if(mp4ts){
-          addLog(`✓ ${f.name}: camera timestamp ${fmtDateTime(mp4ts)} UTC`);
-          return{...v,startUtc:mp4ts,tsSource:"mp4-meta"};
+          // Apply video timezone offset (0 by default — spec says creation_time is UTC)
+          // User can change vidTz if their camera writes local time instead
+          const adjusted=mp4ts - vidTz*60000;
+          addLog(`✓ ${f.name}: camera timestamp ${fmtDateTime(adjusted)} UTC`);
+          return{...v,startUtc:adjusted,tsSource:"mp4-meta"};
         }
-        // Fallback: file.lastModified — reliable on iOS/GoPro SD cards when copied
-        // but unreliable if file was downloaded or sent via messaging app
         if(f.lastModified&&v.duration){
-          const ts=f.lastModified-v.duration*1000;
-          addLog(`✓ ${f.name}: using file modified time (camera metadata not found)`);
+          const ts=f.lastModified-v.duration*1000 - vidTz*60000;
+          addLog(`✓ ${f.name}: using file modified time (no MP4 metadata)`);
           return{...v,startUtc:ts,tsSource:"lastmodified"};
         }
-        addLog(`⚠ ${f.name}: no timestamp found — set manually in Library`);
+        addLog(`⚠ ${f.name}: no timestamp — set manually in Library`);
         return v;
       }));
     });
-  },[]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[vidTz]);
 
-  const handleCsv=useCallback(file=>{
+  // Re-parse CSV when file or timezone changes
+  const parseCsvWithTz=useCallback((file,tz)=>{
     if(!file)return;setCsvFile(file);
-    const r=new FileReader();r.onload=e=>{try{const p=parseCsvLog(e.target.result);setCsvParsed(p);addLog(`✓ Log: ${p.rows.length.toLocaleString()} rows · ${file.name}`);}catch(err){addLog(`✕ CSV: ${err.message}`);}};r.readAsText(file);
+    const r=new FileReader();
+    r.onload=e=>{
+      try{
+        const p=parseCsvLog(e.target.result,tz);
+        setCsvParsed(p);
+        const tzLabel=TZ_OPTIONS.find(o=>o.offsetMin===tz)?.label||`UTC+${tz/60}`;
+        addLog(`✓ Log: ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzLabel}`);
+      }catch(err){addLog(`✕ CSV: ${err.message}`);}
+    };
+    r.readAsText(file);
   },[]);
 
-  const handleXml=useCallback(file=>{
+  // Re-parse XML when file or timezone changes
+  const parseXmlWithTz=useCallback((file,tz)=>{
     if(!file)return;setXmlFile(file);
-    const r=new FileReader();r.onload=e=>{try{const p=parseXmlEvents(e.target.result);setXmlParsed(p);addLog(`✓ Events: ${p.tackJibes.length} tack/gybes · ${p.markRoundings.length} marks · ${file.name}`);}catch(err){addLog(`✕ XML: ${err.message}`);}};r.readAsText(file);
+    const r=new FileReader();
+    r.onload=e=>{
+      try{
+        const p=parseXmlEvents(e.target.result,tz);
+        setXmlParsed(p);
+        const tzLabel=TZ_OPTIONS.find(o=>o.offsetMin===tz)?.label||`UTC+${tz/60}`;
+        addLog(`✓ Events: ${p.tackJibes.length} T/G · ${p.markRoundings.length} marks · ${file.name} · ${tzLabel}`);
+      }catch(err){addLog(`✕ XML: ${err.message}`);}
+    };
+    r.readAsText(file);
   },[]);
+
+  const handleCsv=useCallback(file=>{parseCsvWithTz(file,csvTz);},[csvTz,parseCsvWithTz]);
+  const handleXml=useCallback(file=>{parseXmlWithTz(file,xmlTz);},[xmlTz,parseXmlWithTz]);
+
+  // Re-parse when timezone selector changes (if file already loaded)
+  const onCsvTzChange=tz=>{setCsvTz(tz);if(csvFile)parseCsvWithTz(csvFile,tz);};
+  const onXmlTzChange=tz=>{setXmlTz(tz);if(xmlFile)parseXmlWithTz(xmlFile,tz);};
+  const onVidTzChange=tz=>{
+    setVidTz(tz);
+    // Re-apply offset to already-queued videos
+    setPendingVids(p=>p.map(v=>{
+      if(!v.startUtc||!v.tsSource)return v;
+      // Undo old offset, apply new one
+      const rawUtc=v.startUtc+vidTz*60000; // undo old
+      const adjusted=rawUtc-tz*60000;      // apply new
+      return{...v,startUtc:adjusted};
+    }));
+  };
 
   const saveLocal=async()=>{
     if(!pendingVids.length&&!csvParsed&&!xmlParsed)return;
@@ -420,7 +505,7 @@ function UploadTab({role,cloudStatus,onImported}){
     });
   };
 
-  const reset=()=>{setPendingVids([]);setCsvParsed(null);setXmlParsed(null);setCsvFile(null);setXmlFile(null);setPhase("idle");setLog([]);setSavedDate(null);setSavedVids([]);setStreamStatus({});};
+  const reset=()=>{setPendingVids([]);setCsvParsed(null);setXmlParsed(null);setCsvFile(null);setXmlFile(null);setPhase("idle");setLog([]);setSavedDate(null);setSavedVids([]);setStreamStatus({});setCsvTz(DEFAULT_TZ);setXmlTz(DEFAULT_TZ);setVidTz(0);};
 
   if(!perms.canImport)return(
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
@@ -467,19 +552,39 @@ function UploadTab({role,cloudStatus,onImported}){
                 </div>
               ))}
             </div>
-            {/* CSV + XML */}
+            {/* CSV + XML with per-source timezone selectors */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-              {[{label:"Expedition log (CSV)",ref:csvRef,file:csvFile,parsed:csvParsed,accept:".csv,text/csv",onChange:e=>handleCsv(e.target.files[0]),detail:csvParsed?`${csvParsed.rows.length.toLocaleString()} rows`:null,color:"#1D9E75"},
-                {label:"Event file (XML)",ref:xmlRef,file:xmlFile,parsed:xmlParsed,accept:".xml,text/xml",onChange:e=>handleXml(e.target.files[0]),detail:xmlParsed?`${xmlParsed.tackJibes.length} T/G · ${xmlParsed.markRoundings.length} marks`:null,color:"#8B5CF6"}]
-                .map(({label,ref,file,parsed,accept,onChange,detail,color})=>(
-                  <div key={label} style={{background:"#0A1929",border:`1px solid ${parsed?color:"#1E3A5A"}`,borderRadius:10,padding:14}}>
-                    <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>{label}</div>
-                    <input ref={ref} type="file" accept={accept} style={{display:"none"}} onChange={onChange}/>
-                    <button onClick={()=>ref.current?.click()} style={{width:"100%",background:parsed?`${color}12`:"#071624",border:`1px solid ${parsed?color:"#1E3A5A"}`,borderRadius:6,padding:"9px 0",color:parsed?color:"#7DD3FC",cursor:"pointer",fontSize:11}}>{parsed?`✓ ${file.name}`:"Choose file"}</button>
-                    {detail&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{detail}</div>}
-                  </div>
-                ))}
+              {/* Log file */}
+              <div style={{background:"#0A1929",border:`1px solid ${csvParsed?"#1D9E75":"#1E3A5A"}`,borderRadius:10,padding:14}}>
+                <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Expedition log (CSV)</div>
+                <input ref={csvRef} type="file" accept=".csv,text/csv" style={{display:"none"}} onChange={e=>handleCsv(e.target.files[0])}/>
+                <button onClick={()=>csvRef.current?.click()} style={{width:"100%",background:csvParsed?"#1D9E7512":"#071624",border:`1px solid ${csvParsed?"#1D9E75":"#1E3A5A"}`,borderRadius:6,padding:"9px 0",color:csvParsed?"#1D9E75":"#7DD3FC",cursor:"pointer",fontSize:11}}>
+                  {csvParsed?`✓ ${csvFile.name}`:"Choose file"}
+                </button>
+                {csvParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{csvParsed.rows.length.toLocaleString()} rows</div>}
+                <TzSelect value={csvTz} onChange={onCsvTzChange} label="Log file timezone (times are local)"/>
+              </div>
+              {/* Event file */}
+              <div style={{background:"#0A1929",border:`1px solid ${xmlParsed?"#8B5CF6":"#1E3A5A"}`,borderRadius:10,padding:14}}>
+                <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Event file (XML)</div>
+                <input ref={xmlRef} type="file" accept=".xml,text/xml" style={{display:"none"}} onChange={e=>handleXml(e.target.files[0])}/>
+                <button onClick={()=>xmlRef.current?.click()} style={{width:"100%",background:xmlParsed?"#8B5CF612":"#071624",border:`1px solid ${xmlParsed?"#8B5CF6":"#1E3A5A"}`,borderRadius:6,padding:"9px 0",color:xmlParsed?"#8B5CF6":"#7DD3FC",cursor:"pointer",fontSize:11}}>
+                  {xmlParsed?`✓ ${xmlFile.name}`:"Choose file"}
+                </button>
+                {xmlParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{xmlParsed.tackJibes.length} T/G · {xmlParsed.markRoundings.length} marks</div>}
+                <TzSelect value={xmlTz} onChange={onXmlTzChange} label="Event file timezone (times are local)"/>
+              </div>
             </div>
+            {/* Video timezone — shown when videos are queued */}
+            {pendingVids.length>0&&(
+              <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"12px 14px"}}>
+                <TzSelect value={vidTz} onChange={onVidTzChange} label="Video timestamp timezone — MP4 creation_time is UTC by spec; change only if your camera writes local time"/>
+                <div style={{fontSize:9,color:"#334155",marginTop:5}}>
+                  GoPro and iPhone write UTC. Older cameras and some Android devices write local time.
+                  Default is UTC (offset 0). Check the displayed timestamps above to verify.
+                </div>
+              </div>
+            )}
             {(pendingVids.length>0||csvParsed||xmlParsed)&&(
               <button onClick={saveLocal} disabled={phase==="saving"} style={{background:phase==="saving"?"#1E3A5A":"#06B6D4",border:"none",borderRadius:10,padding:"13px",color:phase==="saving"?"#64748B":"#000",fontWeight:700,fontSize:14,cursor:phase==="saving"?"default":"pointer",width:"100%"}}>
                 {phase==="saving"?"Saving to local storage…":`① Save locally — ${pendingVids.length>0?`${pendingVids.length} video${pendingVids.length>1?"s":""}`:""} ${csvParsed?"+ log":""} ${xmlParsed?"+ events":""}`}
