@@ -117,7 +117,7 @@ const fmtDate=d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2
 // European datetime from UTC ms: DD/MM/YYYY HH:MM
 const fmtDateTime=u=>{if(!u)return"";const dt=new Date(u);const dd=String(dt.getUTCDate()).padStart(2,"0");const mm=String(dt.getUTCMonth()+1).padStart(2,"0");const yyyy=dt.getUTCFullYear();const hh=String(dt.getUTCHours()).padStart(2,"0");const mi=String(dt.getUTCMinutes()).padStart(2,"0");return`${dd}/${mm}/${yyyy} ${hh}:${mi}`;};
 const fmtSize=b=>b>1e9?`${(b/1e9).toFixed(1)} GB`:`${(b/1e6).toFixed(0)} MB`;
-function nearestRow(rows,utc){if(!rows?.length)return null;let lo=0,hi=rows.length-1;while(lo<hi){const mid=(lo+hi)>>1;if(rows[mid].utc<utc)lo=mid+1;else hi=mid;}if(lo>0&&Math.abs(rows[lo-1].utc-utc)<Math.abs(rows[lo].utc-utc))lo--;return Math.abs(rows[lo].utc-utc)<120000?rows[lo]:null;}
+function nearestRow(rows,utc){if(!rows?.length)return null;let lo=0,hi=rows.length-1;while(lo<hi){const mid=(lo+hi)>>1;if(rows[mid].utc<utc)lo=mid+1;else hi=mid;}if(lo>0&&Math.abs(rows[lo-1].utc-utc)<Math.abs(rows[lo].utc-utc))lo--;return Math.abs(rows[lo].utc-utc)<300000?rows[lo]:null;}
 function enrichVideo(v,log){
   if(!log?.rows?.length||!v.startUtc)return v;
   const w=log.rows.filter(r=>r.utc>=v.startUtc&&r.utc<=v.startUtc+(v.duration||0)*1000);
@@ -147,7 +147,7 @@ function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D4
 function Gauge({label,value,unit,color="#06B6D4"}){return<div style={{background:"rgba(0,0,0,0.75)",border:`1px solid ${color}40`,borderRadius:7,padding:"7px 11px",minWidth:76}}><div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:2}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"'Courier New',monospace",lineHeight:1}}>{value}</div><div style={{fontSize:10,color:"#475569",marginTop:1}}>{unit}</div></div>;}
 
 // Video player — handles local blob OR HLS stream from Cloudflare Stream
-function VideoPlayer({video,logData,xmlData,syncOffset}){
+function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0}){
   const vidRef=useRef(null),hlsRef=useRef(null);
   const[curTime,setCurTime]=useState(0);
   const[playing,setPlaying]=useState(false);
@@ -190,7 +190,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset}){
         {row&&<div style={{position:"absolute",top:10,left:10,display:"flex",gap:5}}><Gauge label="TWS" value={R(row.tws)} unit="kn" color="#06B6D4"/><Gauge label="TWA" value={`${R(row.twa,0)}°`} unit="true" color="#8B5CF6"/><Gauge label="SOG" value={R(row.sog)} unit="kn" color="#10B981"/><Gauge label="Heel" value={`${R(row.heel,0)}°`} unit="°" color="#F59E0B"/></div>}
         {upcoming.length>0&&<div style={{position:"absolute",top:10,right:10,display:"flex",flexDirection:"column",gap:4}}>{upcoming.map((m,i)=><div key={i} style={{background:"rgba(0,0,0,0.8)",borderRadius:5,padding:"3px 7px",fontSize:10,color:m.color,border:`1px solid ${m.color}40`}}>{m.label} in {Math.round(m.vidSec-curTime)}s</div>)}</div>}
         <div style={{position:"absolute",bottom:8,left:8}}><SrcBadge source={video.source||"local"}/></div>
-        <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc?`  ${fmtUtc(logUtc)}`:""}</div>
+        <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
       </div>
       <div style={{padding:"8px 12px 0"}}>
         <div style={{position:"relative",height:26,background:"#071624",borderRadius:4,cursor:"pointer",overflow:"hidden"}} onClick={seek}>
@@ -322,9 +322,11 @@ function StartTimeEditor({video, logData, onSave, sessionTzOffset=0}){
   const save = () => { const utc=fromInputLocal(val); if(utc&&!isNaN(utc)) onSave(video.id,utc); setEditing(false); };
 
   const hasStart = !!video.startUtc;
+  // Use a 5-minute buffer: video can start slightly before log start (e.g. during startup)
+  const BUFFER_MS = 300_000;
   const inLog = hasStart && logData?.rows?.length &&
-    video.startUtc >= logData.startUtc &&
-    video.startUtc <= logData.endUtc;
+    video.startUtc >= (logData.startUtc - BUFFER_MS) &&
+    video.startUtc <= (logData.endUtc   + BUFFER_MS);
 
   return (
     <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:`1px solid ${!hasStart?"#EF444440":inLog?"#1D9E7540":"#F59E0B40"}`,marginBottom:8}}>
@@ -393,7 +395,7 @@ function UploadTab({role,cloudStatus,onImported}){
   // ── Per-source timezone offsets (minutes east of UTC) ──────────────────────
   const[csvTz, setCsvTz] =useState(DEFAULT_TZ);  // Expedition log local time
   const[xmlTz, setXmlTz] =useState(DEFAULT_TZ);  // Event file local time
-  const[vidTz, setVidTz] =useState(0);            // Video: MP4 creation_time is UTC by spec
+  const[vidTz, setVidTz] =useState(DEFAULT_TZ);   // Video: default matches log TZ (most cameras write local time)
 
   const addLog=msg=>setLog(p=>[...p.slice(-30),msg]);
 
@@ -534,7 +536,7 @@ function UploadTab({role,cloudStatus,onImported}){
     });
   };
 
-  const reset=()=>{setPendingVids([]);setCsvParsed(null);setXmlParsed(null);setCsvFile(null);setXmlFile(null);setPhase("idle");setLog([]);setSavedDate(null);setSavedVids([]);setStreamStatus({});setCsvTz(DEFAULT_TZ);setXmlTz(DEFAULT_TZ);setVidTz(0);};
+  const reset=()=>{setPendingVids([]);setCsvParsed(null);setXmlParsed(null);setCsvFile(null);setXmlFile(null);setPhase("idle");setLog([]);setSavedDate(null);setSavedVids([]);setStreamStatus({});setCsvTz(DEFAULT_TZ);setXmlTz(DEFAULT_TZ);setVidTz(DEFAULT_TZ);};
 
   if(!perms.canImport)return(
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
@@ -607,10 +609,11 @@ function UploadTab({role,cloudStatus,onImported}){
             {/* Video timezone — shown when videos are queued */}
             {pendingVids.length>0&&(
               <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"12px 14px"}}>
-                <TzSelect value={vidTz} onChange={onVidTzChange} label="Video timestamp timezone — MP4 creation_time is UTC by spec; change only if your camera writes local time"/>
+                <TzSelect value={vidTz} onChange={onVidTzChange} label="Video timestamp timezone"/>
                 <div style={{fontSize:9,color:"#334155",marginTop:5}}>
-                  GoPro and iPhone write UTC. Older cameras and some Android devices write local time.
-                  Default is UTC (offset 0). Check the displayed timestamps above to verify.
+                  Most cameras (GoPro, Garmin, older iPhones) write <strong style={{color:"#475569"}}>local time</strong> in the video file.
+                  Newer iPhones write UTC. Default matches the log timezone ({TZ_OPTIONS.find(o=>o.offsetMin===DEFAULT_TZ)?.label}).
+                  If video gauges are off by a fixed amount, adjust here.
                 </div>
               </div>
             )}
@@ -1631,7 +1634,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
               </div>
               {selectedVideo&&(
                 <div style={{width:408,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:12,flexShrink:0}}>
-                  <VideoPlayer video={selectedVideo} logData={logData} xmlData={xmlData} syncOffset={syncOffsets[selectedVideo.id]||0}/>
+                  <VideoPlayer video={selectedVideo} logData={logData} xmlData={xmlData} syncOffset={syncOffsets[selectedVideo.id]||0} sessionTzOffset={sessionTzOffset}/>
                   <div style={{marginTop:12}}>
                     {/* Title row */}
                     <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:2}}>
