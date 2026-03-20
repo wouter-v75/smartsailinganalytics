@@ -266,12 +266,34 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
 
   const BUFFER_MS = 60_000;
 
-  // ── 3. Sails — each individual sail from most recent SailsUp ≤ clip end ──────
-  const sailEv = [...(xmlData.sailsUpEvents || [])]
-    .filter(s => s.utc <= winEnd)
-    .sort((a, b) => b.utc - a.utc)[0];
-  if (sailEv) {
-    sailEv.sails.forEach(s => tags.push(s.trim().toLowerCase()));
+  // ── 3. Sails — union of all sails active during the clip ─────────────────────
+  // Strategy:
+  //   a) The config IN EFFECT at clip start = most recent SailsUp with utc <= winStart
+  //   b) Any SailsUp events DURING the clip may add new sails
+  //   c) Take the union so all sails seen during the clip are tagged
+  {
+    const allSailEvents = xmlData.sailsUpEvents || [];
+    const activeSails   = new Set();
+
+    // Config at clip start: last SailsUp before or at winStart
+    const beforeClip = allSailEvents
+      .filter(s => s.utc <= winStart)
+      .sort((a, b) => b.utc - a.utc)[0];
+    if (beforeClip) beforeClip.sails.forEach(s => activeSails.add(s.trim().toLowerCase()));
+
+    // Any config changes during the clip
+    allSailEvents
+      .filter(s => s.utc > winStart && s.utc <= winEnd)
+      .forEach(ev => ev.sails.forEach(s => activeSails.add(s.trim().toLowerCase())));
+
+    // If still nothing (e.g. all SailsUp events are AFTER clip start),
+    // fall back to the very first SailsUp anywhere in the session
+    if (activeSails.size === 0) {
+      const firstEver = allSailEvents.sort((a, b) => a.utc - b.utc)[0];
+      if (firstEver) firstEver.sails.forEach(s => activeSails.add(s.trim().toLowerCase()));
+    }
+
+    activeSails.forEach(s => { if (s) tags.push(s); });
   }
 
   // ── 4. Mark roundings in clip window ─────────────────────────────────────────
@@ -377,7 +399,21 @@ export function markCloudSynced(date) {
   if (idx >= 0) { sessions[idx].cloudSynced = true; lsSet("ssa:sessions", sessions); }
 }
 
-// ── Sync offsets — persist per video across reloads ───────────────────────────
+// ── Session tag list — persisted, user-editable, seeded from sailsUsed ────────
+// Keyed by session date so each day has its own vocabulary.
+export function getTagList(date) {
+  return lsGet(`ssa:taglist:${date}`) || [];
+}
+
+export function saveTagList(date, list) {
+  lsSet(`ssa:taglist:${date}`, [...new Set(list.filter(Boolean))].sort());
+}
+
+export function mergeTagList(date, newTags) {
+  const existing = getTagList(date);
+  saveTagList(date, [...existing, ...newTags]);
+  return getTagList(date);
+}
 const OFFSET_KEY = "ssa:syncOffsets";
 
 export function getSyncOffsets() {

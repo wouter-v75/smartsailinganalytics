@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from "react";
-import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced } from "../lib/localStore";
+import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
 import { deleteStreamVideo } from "../lib/bunny";
 
 // Sync offset persistence — inline to avoid module resolution issues
@@ -84,10 +84,13 @@ function parseXmlEvents(text,offsetMin=0){
   const doc=new DOMParser().parseFromString(text,"text/xml");
   const ga=(el,a,d="")=>el?.getAttribute(a)??d;
   const meta={
-    boat:    ga(doc.querySelector("boat"),    "val"),
-    location:ga(doc.querySelector("location"),"val"),
-    date:    ga(doc.querySelector("date"),    "val"),
-    dayType: ga(doc.querySelector("daytypestr"),"val"),
+    boat:      ga(doc.querySelector("boat"),      "val"),
+    location:  ga(doc.querySelector("location"),  "val"),
+    date:      ga(doc.querySelector("date"),      "val"),
+    dayType:   ga(doc.querySelector("daytypestr"),"val"),
+    // All sails inventoried for the day (semicolon-separated in <sailsused val="..."/>)
+    sailsUsed: ga(doc.querySelector("sailsused"), "val")
+                 .split(";").map(s=>s.trim()).filter(Boolean),
   };
   const sailsUpEvents=[],raceGuns=[];
   for(const ev of doc.getElementsByTagName("event")){
@@ -258,26 +261,119 @@ function VideoCard({video,selected,onClick}){
 }
 
 // Tag editor
-function TagEditor({video,onSave}){
-  const[tags,setTags]=useState(video.tags||[]);const[input,setInput]=useState("");const[dirty,setDirty]=useState(false);
+// TagEditor — video tag editing with session tag list management
+function TagEditor({video, onSave, tagList=[], sessionDate, onTagListChange}){
+  const[tags,    setTags]    = useState(video.tags||[]);
+  const[input,   setInput]   = useState("");
+  const[dirty,   setDirty]   = useState(false);
+  const[listMode,setListMode]= useState(false); // show the "manage tag list" panel
+
   useEffect(()=>{setTags(video.tags||[]);setDirty(false);},[video.id]);
-  const add=()=>{if(input.trim()&&!tags.includes(input.trim())){setTags(p=>[...p,input.trim()]);setInput("");setDirty(true);}};
-  const rem=t=>{setTags(p=>p.filter(x=>x!==t));setDirty(true);};
-  const save=async()=>{await updateVideoTags(video.id,tags);onSave(video.id,tags);setDirty(false);};
+
+  // Add a tag to the video (also adds to session tag list if new)
+  const addTag = tag => {
+    const t = tag.trim().toLowerCase();
+    if(!t || tags.includes(t)) return;
+    const next = [...tags, t];
+    setTags(next); setDirty(true);
+    // If not already in the list, add it
+    if(!tagList.includes(t)) onTagListChange?.([...tagList, t].sort());
+  };
+
+  const remTag = t => { setTags(p=>p.filter(x=>x!==t)); setDirty(true); };
+
+  const save = async () => {
+    await updateVideoTags(video.id, tags);
+    onSave(video.id, tags);
+    setDirty(false);
+  };
+
+  // Delete a tag from the session tag list (not from videos)
+  const deleteFromList = tag => {
+    onTagListChange?.(tagList.filter(t => t !== tag));
+  };
+
+  // Tags in the list not yet on this video — shown as suggestions
+  const suggestions = tagList.filter(t => !tags.includes(t));
+
   return(
-    <div>
+    <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A"}}>
+
+      {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
         <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase"}}>Tags</div>
-        {dirty&&<button onClick={save} style={{background:"#1D9E75",border:"none",borderRadius:4,padding:"2px 9px",color:"#fff",fontSize:10,cursor:"pointer",fontWeight:700}}>Save</button>}
+        <div style={{display:"flex",gap:5}}>
+          {dirty&&<button onClick={save} style={{background:"#1D9E75",border:"none",borderRadius:4,padding:"2px 9px",color:"#fff",fontSize:10,cursor:"pointer",fontWeight:700}}>Save</button>}
+          <button onClick={()=>setListMode(p=>!p)} style={{background:listMode?"#1E3A5A":"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 8px",color:"#64748B",fontSize:9,cursor:"pointer"}}>
+            {listMode?"✕ Close":"☰ Tag list"}
+          </button>
+        </div>
       </div>
+
+      {/* Current tags on this video */}
       <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8,minHeight:24}}>
-        {tags.map(t=><span key={t} onClick={()=>rem(t)} style={{background:"#1E3A5A",color:"#7DD3FC",fontSize:10,borderRadius:4,padding:"2px 7px",cursor:"pointer",display:"flex",gap:3,alignItems:"center"}}>#{t}<span style={{color:"#EF4444",fontSize:9}}>×</span></span>)}
-        {!tags.length&&<span style={{fontSize:10,color:"#334155"}}>No tags</span>}
+        {tags.map(t=>(
+          <span key={t} onClick={()=>remTag(t)}
+            style={{background:"#1E3A5A",color:"#7DD3FC",fontSize:10,borderRadius:4,
+              padding:"2px 7px",cursor:"pointer",display:"flex",gap:3,alignItems:"center"}}>
+            #{t}<span style={{color:"#EF4444",fontSize:9}}>×</span>
+          </span>
+        ))}
+        {!tags.length&&<span style={{fontSize:10,color:"#334155"}}>No tags — click a suggestion or type below</span>}
       </div>
+
+      {/* Suggestion row — items from tag list not yet on the video */}
+      {suggestions.length>0&&(
+        <div style={{marginBottom:8}}>
+          <div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:4}}>TAP TO ADD</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+            {suggestions.map(t=>(
+              <button key={t} onClick={()=>addTag(t)}
+                style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,
+                  padding:"2px 7px",color:"#475569",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>
+                +{t}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Manual input */}
       <div style={{display:"flex",gap:5}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Add tag…" style={{flex:1,background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,fontFamily:"monospace",outline:"none"}}/>
-        <button onClick={add} style={{background:"#06B6D4",border:"none",borderRadius:5,padding:"5px 11px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>+</button>
+        <input value={input} onChange={e=>setInput(e.target.value)}
+          onKeyDown={e=>{ if(e.key==="Enter"){addTag(input);setInput("");} }}
+          placeholder="Type a tag + Enter…"
+          style={{flex:1,background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,
+            padding:"5px 8px",color:"#E2E8F0",fontSize:11,fontFamily:"monospace",outline:"none"}}/>
+        <button onClick={()=>{addTag(input);setInput("");}}
+          style={{background:"#06B6D4",border:"none",borderRadius:5,padding:"5px 11px",
+            color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>+</button>
       </div>
+
+      {/* Tag list management panel */}
+      {listMode&&(
+        <div style={{marginTop:10,borderTop:"1px solid #1E3A5A",paddingTop:10}}>
+          <div style={{fontSize:9,color:"#475569",letterSpacing:1,marginBottom:6}}>
+            SESSION TAG LIST — click × to remove from list
+          </div>
+          {tagList.length===0&&(
+            <div style={{fontSize:10,color:"#334155"}}>
+              Empty — import an event file with &lt;sailsused&gt; to auto-populate, or add tags above.
+            </div>
+          )}
+          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+            {tagList.map(t=>(
+              <span key={t}
+                style={{display:"flex",alignItems:"center",gap:3,background:"#0A1929",
+                  border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#94A3B8"}}>
+                {t}
+                <span onClick={()=>deleteFromList(t)}
+                  style={{color:"#EF4444",fontSize:9,cursor:"pointer",marginLeft:2}}>×</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -507,7 +603,16 @@ function UploadTab({role,cloudStatus,onImported}){
     const date=csvParsed?.startUtc?new Date(csvParsed.startUtc).toISOString().slice(0,10):xmlParsed?.meta?.date||TODAY();
     addLog(`Saving session ${fmtDate(date)} to local storage…`);
     if(csvParsed){await saveLogData(date,csvParsed.rows,csvFile.name,csvParsed.startUtc,csvParsed.endUtc,csvTz);addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows)`);}
-    if(xmlParsed){saveXmlData(date,xmlParsed,xmlFile.name);addLog("✓ Events saved");}
+    if(xmlParsed){
+      saveXmlData(date,xmlParsed,xmlFile.name);
+      // Seed session tag list from <sailsused> inventory
+      if(xmlParsed.meta?.sailsUsed?.length){
+        mergeTagList(date, xmlParsed.meta.sailsUsed.map(s=>s.toLowerCase()));
+        addLog(`✓ Events saved · ${xmlParsed.meta.sailsUsed.length} sails in tag list`);
+      } else {
+        addLog("✓ Events saved");
+      }
+    }
     const saved=[];
     for(const pv of pendingVids){
       const tags=computeAutoTags(pv.startUtc,pv.duration,csvParsed,xmlParsed);
@@ -1398,6 +1503,7 @@ export default function SmartSailingAnalytics(){
   const[allVideos,setAllVideos]=useState([]);
   const[logData,setLogData]=useState(null);
   const[sessionTzOffset,setSessionTzOffset]=useState(DEFAULT_TZ);
+  const[sessionTagList,setSessionTagList]=useState([]);
   const[xmlData,setXmlData]=useState(null);
   const[selectedVideo,setSelectedVideo]=useState(null);
   const[syncOffsets,setSyncOffsets]=useState(()=>getSyncOffsets());
@@ -1437,6 +1543,7 @@ export default function SmartSailingAnalytics(){
       if(latestLog){setLogData({...latestLog,source:"local"});setSessionTzOffset(latestLog.tzOffset??DEFAULT_TZ);}
       if(latestXml)setXmlData({...latestXml,source:"local"});
       setActiveDate(latestDate);
+      setSessionTagList(getTagList(latestDate));
       const latestSession=localSessions.find(s=>s.date===latestDate);
       if(latestSession?.tzOffset!=null)setSessionTzOffset(latestSession.tzOffset);
       setUnsyncedCount(getUnsyncedCount());setLoaded(true);
@@ -1457,6 +1564,7 @@ export default function SmartSailingAnalytics(){
     if(localLog){setLogData({...localLog,source:"local"});setSessionTzOffset(localLog.tzOffset??DEFAULT_TZ);}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);setLogData(r2?.logData?{...r2.logData,source:"cloud"}:null);}
     else setLogData(null);
+    setSessionTagList(getTagList(date));
     if(localXml){setXmlData({...localXml,source:"local"});}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);setXmlData(r2?.xmlData?{...r2.xmlData,source:"cloud"}:null);}
     else setXmlData(null);
@@ -1699,7 +1807,13 @@ matches = array of video ids. explanation = brief natural language summary. insi
                         }}
                       />
                     </div>
-                    {perms.canImport&&<TagEditor video={selectedVideo} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
+                    {perms.canImport&&<TagEditor
+                      video={selectedVideo}
+                      tagList={sessionTagList}
+                      sessionDate={activeDate}
+                      onTagListChange={updated=>{saveTagList(activeDate,updated);setSessionTagList(updated);}}
+                      onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}
+                    />}
 
                     {/* Delete section */}
                     {perms.canImport&&(
