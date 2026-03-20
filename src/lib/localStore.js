@@ -181,13 +181,14 @@ export async function deleteVideo(id) {
 
 // ── Log (CSV) store ───────────────────────────────────────────────────────────
 // ── Log (CSV) store — IndexedDB to avoid 5 MB localStorage limit ─────────────
-export async function saveLogData(date, rows, fileName, startUtc, endUtc) {
+export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffset=0) {
   const db = await openDb();
   await idbPut(db, "log_data", {
     date, rows, fileName, startUtc, endUtc,
+    tzOffset,
     addedAt: Date.now(), synced: false,
   });
-  upsertSession(date, { hasLog: true, logFile: fileName });
+  upsertSession(date, { hasLog: true, logFile: fileName, tzOffset });
   // Remove old localStorage entry if it exists (free up space)
   lsDel(`ssa:log:${date}`);
 }
