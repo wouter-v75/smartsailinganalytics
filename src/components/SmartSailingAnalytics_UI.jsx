@@ -224,31 +224,32 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0}){
 function VideoCard({video,selected,onClick}){
   const tags = video.tags||[];
 
-  // Tag display priority:
-  // 1. Event tags: race-start, topmark, mark  (high-value events)
-  // 2. Boat name (first non-generic word tag)
-  // 3. Point of sail: upwind / reach / downwind
-  // 4. Sails: exclude mainsail variants (main*, msail, mainsail)
-  // 5. Manoeuvres: tack / gybe — only if they came from isvalidperf=true
+  // Tag display:
+  // Row 1 (top): event, point-of-sail, manoeuvre (no location)
+  // Row 2 (bottom): non-mainsail sail names
   const EVENT_TAGS   = ["race-start","topmark","mark"];
   const SAIL_SKIP    = /^(main|msail|mainsail|main-)/;
   const POS_TAGS     = ["upwind","reach","downwind"];
   const MANO_TAGS    = ["tack","gybe"];
   const SKIP_ALWAYS  = new Set(["local","cloud","training","race","today","topmark","mark","race-start","upwind","reach","downwind","tack","gybe"]);
+  // Tags that are location-like (contain dashes or spaces, not sails/events) — excluded from tag row
+  const isLocationTag = t => !SKIP_ALWAYS.has(t)&&!t.startsWith("tws-")&&!SAIL_SKIP.test(t)&&!t.includes("-20")&&!t.includes("x-")&&t.includes("-")&&!EVENT_TAGS.includes(t)&&!POS_TAGS.includes(t)&&!MANO_TAGS.includes(t);
 
   const eventTags  = tags.filter(t=>EVENT_TAGS.includes(t));
   const posTags    = tags.filter(t=>POS_TAGS.includes(t)).slice(0,1);
-  const sailTags   = tags.filter(t=>!SAIL_SKIP.test(t)&&!SKIP_ALWAYS.has(t)&&!t.startsWith("tws-")&&!t.startsWith("north")&&!/^[0-9]/.test(t)).slice(0,3);
   const manoTags   = tags.filter(t=>MANO_TAGS.includes(t));
-  // Boat name: first tag that looks like a vessel name (not a generic keyword)
-  const boatTag    = tags.find(t=>!SKIP_ALWAYS.has(t)&&!t.startsWith("tws-")&&!POS_TAGS.includes(t)&&!MANO_TAGS.includes(t)&&!EVENT_TAGS.includes(t)&&!SAIL_SKIP.test(t)&&t.length>2&&!/^[0-9]/.test(t)&&!t.startsWith("j")&&!t.includes("-20"))||null;
+  // Sails: not mainsail, not location-like, not generic keywords — shown in second row
+  const sailTags   = tags.filter(t=>!SAIL_SKIP.test(t)&&!SKIP_ALWAYS.has(t)&&!isLocationTag(t)&&!t.startsWith("tws-")&&!t.startsWith("north")&&!/^[0-9]/.test(t)&&!EVENT_TAGS.includes(t)&&!POS_TAGS.includes(t)&&!MANO_TAGS.includes(t)&&t.includes("-")&&t.includes("20")||t.includes("23")||false).filter(Boolean);
+  // Simpler sail detection: has year pattern like -2023 or -2024
+  const realSailTags = tags.filter(t=>/-20\d{2}$/.test(t)&&!SAIL_SKIP.test(t));
 
-  const displayTags = [...new Set([...eventTags, boatTag, ...posTags, ...sailTags.slice(0,2), ...manoTags])].filter(Boolean).slice(0,6);
+  const topRowTags  = [...new Set([...eventTags, ...posTags, ...manoTags])].filter(Boolean);
 
   const tagColor = t => {
     if(EVENT_TAGS.includes(t))  return{bg:"#EF444420",bd:"#EF444440",c:"#EF4444"};
     if(POS_TAGS.includes(t))    return{bg:"#06B6D420",bd:"#06B6D440",c:"#06B6D4"};
     if(MANO_TAGS.includes(t))   return{bg:"#1D9E7520",bd:"#1D9E7540",c:"#1D9E75"};
+    if(/-20\d{2}$/.test(t))     return{bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
     return                            {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
   };
 
@@ -267,12 +268,21 @@ function VideoCard({video,selected,onClick}){
       <div style={{padding:"6px 9px"}}>
         <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
         <div style={{fontSize:9,color:"#334155",marginBottom:4}}>{fmtDate(video.sessionDate)}{video.twsAvg!=null?` · TWS ${R(video.twsAvg)}kt`:""}{video.twaAvg!=null?` · TWA ${R(video.twaAvg,0)}°`:""}</div>
-        {/* Smart tag row */}
-        <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
-          {displayTags.map(t=>{const{bg,bd,c}=tagColor(t);return(
-            <span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>
-          );})}
-        </div>
+        {/* Tag rows */}
+        {topRowTags.length>0&&(
+          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:realSailTags.length?3:0}}>
+            {topRowTags.map(t=>{const{bg,bd,c}=tagColor(t);return(
+              <span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>
+            );})}
+          </div>
+        )}
+        {realSailTags.length>0&&(
+          <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+            {realSailTags.map(t=>{const{bg,bd,c}=tagColor(t);return(
+              <span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>
+            );})}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -814,7 +824,7 @@ function linReg(pts){
 }
 
 // Time-series line chart with optional trend line overlay
-function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,yMax,yLines=[],showTrend=false}){
+function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,yMax,yLines=[],showTrend=false,events=[]}){
   if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
   const pad={t:14,r:8,b:28,l:36};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
@@ -826,9 +836,9 @@ function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,y
   const d=points.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
   const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
   const yTicks=Array.from({length:4},(_,i)=>y0+(y1-y0)*i/3);
-  // Trend line using normalised x to avoid float precision issues
   const reg=showTrend?linReg(points.map(p=>({x:(p.x-x0)/(x1-x0||1),y:p.y}))):null;
   const ty=t=>reg?reg.slope*t+reg.intercept:0;
+  const visEvents=events.filter(e=>e.utc>=x0&&e.utc<=x1);
   return(
     <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
       {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
@@ -841,6 +851,18 @@ function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,y
       {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(y<10?1:0)}</text>)}
       {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
       {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
+      {visEvents.map((e,i)=>{
+        const ex=px(e.utc);
+        const anchor=ex>pad.l+W*0.7?"end":"start";
+        const lw=(e.label||"").length*4.5+4;
+        return(
+          <g key={"ev"+i}>
+            <line x1={ex} x2={ex} y1={pad.t} y2={pad.t+H} stroke={e.color||"#64748B"} strokeWidth="1" strokeDasharray="3,2" opacity="0.8"/>
+            <rect x={anchor==="start"?ex+2:ex-2-lw} y={pad.t+1} width={lw} height="10" rx="2" fill="rgba(3,15,26,0.9)"/>
+            <text x={anchor==="start"?ex+4:ex-4} y={pad.t+9} textAnchor={anchor} fontSize="7" fill={e.color||"#94A3B8"} fontFamily="monospace">{e.label}</text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -1211,6 +1233,19 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const sogPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.sog}));
   const heelPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:Math.abs(r.heel)}));
 
+  // Build event overlay for timeline charts
+  const chartEvents = xmlData ? [
+    ...(xmlData.markRoundings||[]).filter(m=>m.isValid!==false).map(m=>({
+      utc:m.utc, label:m.isTop?"⬆ top":"⬇ gate", color:m.isTop?"#EF4444":"#8B5CF6"
+    })),
+    ...(xmlData.raceGuns||[]).map(g=>({
+      utc:g.utc, label:"🚩 start", color:"#EF4444"
+    })),
+    ...(xmlData.tackJibes||[]).filter(t=>t.isValid!==false).map(t=>({
+      utc:t.utc, label:t.isTack?"T":"G", color:t.isTack?"#1D9E75":"#7F77DD"
+    })),
+  ] : [];
+
   // Session stats
   const twsAvg=rows.length?rows.reduce((s,r)=>s+r.tws,0)/rows.length:0;
   const sogAvg=rows.length?rows.reduce((s,r)=>s+r.sog,0)/rows.length:0;
@@ -1293,11 +1328,11 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <div>
                   <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div>
-                  <LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn" showTrend/>
+                  <LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn" showTrend events={chartEvents}/>
                 </div>
                 <div>
                   <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div>
-                  <LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn" showTrend/>
+                  <LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn" showTrend events={chartEvents}/>
                 </div>
               </div>
             ))}
@@ -1306,7 +1341,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <div>
                   <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div>
-                  <LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °" showTrend/>
+                  <LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °" showTrend events={chartEvents}/>
                 </div>
                 <div>
                   <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div>
@@ -1792,25 +1827,27 @@ matches = array of video ids. explanation = brief natural language summary. insi
                   };
                   return groups.map(date=>{
                     const vids = seen.get(date);
-                    const evTag = sectionEvent(vids);
-                    const evInfo = eventLabel(evTag);
-                    // Boat name from first video with tags
+                    // Location: first tag that looks like a location (has hyphens, not a sail year)
+                    const SKIP_HDR = new Set(["race-start","topmark","mark","upwind","reach","downwind","tack","gybe","race","training"]);
+                    const location = (vids[0]?.tags||[]).find(t=>
+                      !SKIP_HDR.has(t)&&t.includes("-")&&!t.startsWith("tws-")&&!/-20\d{2}$/.test(t)&&t.length>3&&!/^\d/.test(t)
+                    )||null;
+                    // Boat: first tag without hyphens that isn't a generic keyword
                     const boat = (vids[0]?.tags||[]).find(t=>
-                      !["race-start","topmark","mark","upwind","reach","downwind","tack","gybe","race","training"].includes(t)
-                      &&!t.startsWith("tws-")&&!t.startsWith("main")&&!t.includes("-20")&&t.length>2
-                    );
+                      !SKIP_HDR.has(t)&&!t.startsWith("tws-")&&!t.includes("-")&&t.length>2&&!/^\d/.test(t)
+                    )||null;
                     return(
                       <div key={date} style={{marginBottom:18}}>
-                        {/* Section header */}
+                        {/* Section header: date · location · boat · clip count */}
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,paddingBottom:5,borderBottom:"1px solid #0F2030"}}>
                           <div style={{fontSize:11,fontWeight:700,color:"#64748B",fontFamily:"monospace"}}>
                             {date===TODAY()?"Today":fmtDate(date)}
                           </div>
-                          {evInfo&&(
+                          {location&&(
                             <span style={{fontSize:9,padding:"1px 6px",borderRadius:3,
-                              background:`${evInfo.color}20`,border:`1px solid ${evInfo.color}40`,
-                              color:evInfo.color,fontWeight:600,letterSpacing:0.5}}>
-                              {evInfo.label}
+                              background:"#06B6D420",border:"1px solid #06B6D440",
+                              color:"#06B6D4",fontWeight:600}}>
+                              {location}
                             </span>
                           )}
                           {boat&&(
