@@ -242,3 +242,16 @@ export async function fetchCloudSession(date) {
     videos,
   };
 }
+
+// ── Delete a video from Bunny Stream ─────────────────────────────────────────
+export async function deleteStreamVideo(streamId) {
+  if (!streamId) return true; // nothing to delete
+  try {
+    const res = await fetch("/api/stream/delete", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId }),
+    });
+    return res.ok;
+  } catch { return false; }
+}

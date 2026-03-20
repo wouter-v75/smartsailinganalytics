@@ -1,12 +1,43 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from "react";
-import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced } from "../lib/localStore";
+import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced } from "../lib/localStore";
+import { deleteStreamVideo } from "../lib/bunny";
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
 function getSyncOffsets() { try { const v=localStorage.getItem(OFFSET_KEY); return v?JSON.parse(v):{};} catch{return{};} }
 function saveSyncOffset(videoId, secs) { try { const o=getSyncOffsets(); if(secs===0){delete o[videoId];}else{o[videoId]=secs;} localStorage.setItem(OFFSET_KEY,JSON.stringify(o));} catch{} }
 import { checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady } from "../lib/bunny";
+
+// ─── VIDEO CREATION TIME ─────────────────────────────────────────────────────
+// Reads the MP4/MOV 'mvhd' atom — set by the camera at record time.
+// NOT affected by file copy/transfer unlike file.lastModified.
+async function extractVideoCreationTime(file) {
+  try {
+    const buf  = await file.slice(0, 524288).arrayBuffer(); // first 512 KB
+    const view = new DataView(buf);
+    const u8   = new Uint8Array(buf);
+    for (let i = 0; i < u8.length - 12; i++) {
+      // Look for 'mvhd' box (0x6d766864)
+      if (u8[i]===0x6d&&u8[i+1]===0x76&&u8[i+2]===0x68&&u8[i+3]===0x64) {
+        const version = view.getUint8(i+4);
+        let secs;
+        if (version===1) {
+          // 64-bit: read hi+lo (JS loses precision above 2^53 but dates fit fine)
+          const hi = view.getUint32(i+8);
+          const lo = view.getUint32(i+12);
+          secs = hi * 4294967296 + lo;
+        } else {
+          secs = view.getUint32(i+8); // 32-bit
+        }
+        // MP4 epoch: 1904-01-01. Unix epoch offset = 2082844800 s
+        const unix = secs - 2082844800;
+        if (unix > 0 && unix < 4102444800) return unix * 1000; // ms, sanity 1970-2100
+      }
+    }
+  } catch {}
+  return null;
+}
 
 const ROLES = {
   admin:      { label:"Admin",      canImport:true,  canSync:true,  seeLocal:true },
@@ -20,7 +51,33 @@ function parseNmea(s){const p=s.trim().split(/\s+/);if(p.length<2)return{lat:0,l
 function expToUtc(ds,ts){const[d,m,y]=ds.split("/").map(Number);const yr=y<50?2000+y:1900+y;const[h,mn,sc]=ts.split(":").map(Number);return Date.UTC(yr,m-1,d,h,mn,sc);}
 function parseCsvLog(text){const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());const rows=[];for(let i=1;i<lines.length;i++){const c=lines[i].split(",");if(c.length<27)continue;const bsp=parseFloat(c[4])||0,tws=parseFloat(c[12])||0;if(bsp<0.05&&tws<0.3)continue;const ds=c[1]?.trim(),ts=c[2]?.trim();if(!ds?.includes("/")||!ts?.includes(":"))continue;const utc=expToUtc(ds,ts);if(isNaN(utc))continue;const pos=parseNmea(c[0]);rows.push({utc,lat:pos.lat,lon:pos.lon,heel:parseFloat(c[3])||0,bsp,twa:parseFloat(c[11])||0,tws,sog:parseFloat(c[20])||0,vmg:parseFloat(c[19])||0,vsTargPct:parseFloat(c[23])||0,vsPerfPct:parseFloat(c[26])||0,rudder:parseFloat(c[52])||0});}return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};}
 function isoUtc(s){return new Date(s.trim().replace(" ","T")+"Z").getTime();}
-function parseXmlEvents(text){const doc=new DOMParser().parseFromString(text,"text/xml");const ga=(el,a,d="")=>el?.getAttribute(a)??d;const meta={boat:ga(doc.querySelector("boat"),"val"),location:ga(doc.querySelector("location"),"val"),date:ga(doc.querySelector("date"),"val")};const sailsUpEvents=[];for(const ev of doc.getElementsByTagName("event")){const utc=isoUtc(`${ga(ev,"date")} ${ga(ev,"time")}`);const type=ga(ev,"type"),attr=ga(ev,"attribute");if(type==="SailsUp"){const sails=attr.split(";").map(s=>s.trim()).filter(Boolean);sailsUpEvents.push({utc,sails,label:sails.join(" + ")||"Sails"});}}const markRoundings=Array.from(doc.getElementsByTagName("markrounding")).map(mr=>({utc:isoUtc(ga(mr,"datetime")),isTop:ga(mr,"istopmark")==="true",isValid:ga(mr,"isvalid")==="true",label:ga(mr,"istopmark")==="true"?"Top mark":"Leeward gate",color:ga(mr,"istopmark")==="true"?"#EF4444":"#8B5CF6"}));const tackJibes=Array.from(doc.getElementsByTagName("tackjibe")).map(tj=>({utc:isoUtc(ga(tj,"datetime")),isTack:ga(tj,"istack")==="true",isValid:ga(tj,"isvalidperf")==="true",label:ga(tj,"istack")==="true"?"Tack":"Gybe",color:ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD"}));return{meta,sailsUpEvents,markRoundings,tackJibes};}
+function parseXmlEvents(text){
+  const doc=new DOMParser().parseFromString(text,"text/xml");
+  const ga=(el,a,d="")=>el?.getAttribute(a)??d;
+  const meta={boat:ga(doc.querySelector("boat"),"val"),location:ga(doc.querySelector("location"),"val"),date:ga(doc.querySelector("date"),"val")};
+  const sailsUpEvents=[],raceGuns=[];
+  for(const ev of doc.getElementsByTagName("event")){
+    const utc=isoUtc(`${ga(ev,"date")} ${ga(ev,"time")}`);
+    const type=ga(ev,"type"),attr=ga(ev,"attribute");
+    if(type==="SailsUp"){
+      const sails=attr.split(";").map(s=>s.trim()).filter(Boolean);
+      sailsUpEvents.push({utc,sails,label:sails.join(" + ")||"Sails changed"});
+    } else if(type==="RaceStartGun"){
+      raceGuns.push({utc,raceNum:parseInt(attr)||0,label:`Race ${attr||"?"} start`,color:"#EF4444"});
+    }
+  }
+  const markRoundings=Array.from(doc.getElementsByTagName("markrounding")).map(mr=>({
+    utc:isoUtc(ga(mr,"datetime")),isTop:ga(mr,"istopmark")==="true",isValid:ga(mr,"isvalid")==="true",
+    label:ga(mr,"istopmark")==="true"?"Top mark":"Leeward gate",
+    color:ga(mr,"istopmark")==="true"?"#EF4444":"#8B5CF6",
+  }));
+  const tackJibes=Array.from(doc.getElementsByTagName("tackjibe")).map(tj=>({
+    utc:isoUtc(ga(tj,"datetime")),isTack:ga(tj,"istack")==="true",isValid:ga(tj,"isvalidperf")==="true",
+    label:ga(tj,"istack")==="true"?"Tack":"Gybe",
+    color:ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD",
+  }));
+  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes};
+}
 
 const R=(n,d=1)=>(n==null||isNaN(n))?"--":Number(n).toFixed(d);
 const fmtT=s=>{const x=Math.max(0,Math.floor(s));return`${String(Math.floor(x/60)).padStart(2,"0")}:${String(x%60).padStart(2,"0")}`;};
@@ -282,12 +339,31 @@ function UploadTab({role,cloudStatus,onImported}){
       file:f, name:f.name, size:f.size,
       url:URL.createObjectURL(f),
       duration:null,
-      // lastModified is end-of-recording on most cameras; startUtc = lastModified - duration
-      // We store lastModified now and compute startUtc once duration is known
-      lastModified: f.lastModified || null,
-      startUtc: null,
+      startUtc:null,      // filled by extractVideoCreationTime below
+      tsSource:null,      // "mp4-meta" | "lastmodified" | null
     }))]);
-    addLog(`✓ ${valid.length} video${valid.length>1?"s":""} queued`);
+    addLog(`✓ ${valid.length} video${valid.length>1?"s":""} queued — reading timestamps…`);
+    // Extract creation_time from each file's MP4/MOV atom (async, non-blocking)
+    valid.forEach(async f=>{
+      const id=f.name+f.size; // temporary key to match
+      const mp4ts=await extractVideoCreationTime(f);
+      setPendingVids(p=>p.map(v=>{
+        if(v.file!==f)return v;
+        if(mp4ts){
+          addLog(`✓ ${f.name}: camera timestamp ${new Date(mp4ts).toISOString().slice(11,19)} UTC`);
+          return{...v,startUtc:mp4ts,tsSource:"mp4-meta"};
+        }
+        // Fallback: file.lastModified — reliable on iOS/GoPro SD cards when copied
+        // but unreliable if file was downloaded or sent via messaging app
+        if(f.lastModified&&v.duration){
+          const ts=f.lastModified-v.duration*1000;
+          addLog(`✓ ${f.name}: using file modified time (camera metadata not found)`);
+          return{...v,startUtc:ts,tsSource:"lastmodified"};
+        }
+        addLog(`⚠ ${f.name}: no timestamp found — set manually in Library`);
+        return v;
+      }));
+    });
   },[]);
 
   const handleCsv=useCallback(file=>{
@@ -309,8 +385,9 @@ function UploadTab({role,cloudStatus,onImported}){
     if(xmlParsed){saveXmlData(date,xmlParsed,xmlFile.name);addLog("✓ Events saved");}
     const saved=[];
     for(const pv of pendingVids){
-      const tags=computeAutoTags(null,pv.duration,csvParsed,xmlParsed);
-      try{const s=await saveVideo(pv.file,{duration:pv.duration,startUtc:pv.startUtc,tags,title:pv.name.replace(/\.[^.]+$/,"").replace(/[_-]/g," "),sessionDate:date});saved.push({...s,file:pv.file});addLog(`✓ ${pv.name} → IndexedDB${pv.startUtc?` · starts ${new Date(pv.startUtc).toISOString().slice(11,19)} UTC`:" · no start time"}`);}
+      const tags=computeAutoTags(pv.startUtc,pv.duration,csvParsed,xmlParsed);
+      const tsLabel=pv.tsSource==="mp4-meta"?"📷 camera meta":pv.tsSource==="lastmodified"?"⚠ file mtime":"❌ no timestamp";
+      try{const s=await saveVideo(pv.file,{duration:pv.duration,startUtc:pv.startUtc,tsSource:pv.tsSource,tags,title:pv.name.replace(/\.[^.]+$/,"").replace(/[_-]/g," "),sessionDate:date});saved.push({...s,file:pv.file});addLog(`✓ ${pv.name} · ${tsLabel}${pv.startUtc?` · ${new Date(pv.startUtc).toISOString().slice(11,19)} UTC`:""}`);}
       catch(e){addLog(`✕ ${pv.name}: ${e.message}`);}
     }
     setSavedDate(date);setSavedVids(saved);
@@ -372,9 +449,14 @@ function UploadTab({role,cloudStatus,onImported}){
                 <div key={v.id} style={{display:"flex",alignItems:"center",gap:9,padding:"5px 0",borderBottom:"1px solid #0F2030"}}>
                   <video src={v.url} style={{width:52,height:33,borderRadius:3,objectFit:"cover",background:"#071624",flexShrink:0}} muted preload="metadata" onLoadedMetadata={e=>{
                     const dur=Math.round(e.target.duration);
-                    // startUtc = lastModified (end of clip) minus duration in ms
-                    const startUtc=v.lastModified?v.lastModified-dur*1000:null;
-                    setPendingVids(p=>p.map(x=>x.id===v.id?{...x,duration:dur,startUtc}:x));
+                    setPendingVids(p=>p.map(x=>{
+                      if(x.id!==v.id)return x;
+                      // If we already have a good mp4-meta timestamp, just update duration
+                      if(x.tsSource==="mp4-meta")return{...x,duration:dur};
+                      // lastModified fallback: only reliable if tsSource not yet set
+                      const ts=x.file?.lastModified?x.file.lastModified-dur*1000:null;
+                      return{...x,duration:dur,startUtc:x.startUtc||ts,tsSource:x.tsSource||(ts?"lastmodified":null)};
+                    }));
                   }}/>
                   <div style={{flex:1,minWidth:0}}><div style={{fontSize:11,fontWeight:500,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div><div style={{fontSize:10,color:"#475569"}}>{fmtSize(v.size)}{v.duration?` · ${fmtT(v.duration)}`:""}</div></div>
                   <button onClick={()=>setPendingVids(p=>p.filter(x=>x.id!==v.id))} style={{background:"none",border:"none",color:"#EF4444",cursor:"pointer",fontSize:15}}>×</button>
@@ -1076,6 +1158,94 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   );
 }
 
+// ─── DELETE BUTTON ────────────────────────────────────────────────────────────
+// Handles deletion from local IndexedDB and optionally from Bunny Stream.
+// Two-step confirm: first click arms it, second click executes.
+function DeleteButton({video, cloudStatus, onDeleted}){
+  const[armed,  setArmed]   = useState(false);
+  const[deleting,setDeleting]= useState(false);
+  const[status, setStatus]  = useState(null);
+
+  const hasStream = !!video.streamId;
+  const isLocal   = !video.source || video.source === "local";
+
+  const execute = async (deleteCloud) => {
+    setDeleting(true);
+    setStatus("Deleting…");
+    try {
+      // 1. Delete from Bunny Stream if requested and streamId exists
+      if (deleteCloud && hasStream) {
+        setStatus("Removing from Bunny Stream…");
+        const ok = await deleteStreamVideo(video.streamId);
+        if (!ok) {
+          setStatus("⚠ Stream delete failed — removing locally only");
+          await new Promise(r => setTimeout(r, 1500));
+        }
+      }
+      // 2. Delete from IndexedDB (only if local blob exists)
+      if (isLocal) {
+        await deleteVideo(video.id);
+      }
+      setStatus("✓ Deleted");
+      await new Promise(r => setTimeout(r, 600));
+      onDeleted(video.id);
+    } catch(e) {
+      setStatus(`Error: ${e.message}`);
+      setDeleting(false);
+    }
+  };
+
+  if (deleting) return(
+    <div style={{background:"#071624",borderRadius:7,padding:"10px 12px",marginTop:14,
+      border:"1px solid #EF444430",fontSize:11,color:"#EF4444",textAlign:"center"}}>
+      {status}
+    </div>
+  );
+
+  if (!armed) return(
+    <button onClick={()=>setArmed(true)}
+      style={{width:"100%",marginTop:14,background:"none",border:"1px solid #EF444430",
+        borderRadius:7,padding:"8px 0",color:"#EF4444",cursor:"pointer",fontSize:11,
+        opacity:0.6}}>
+      🗑 Delete clip
+    </button>
+  );
+
+  // Armed state — show options
+  return(
+    <div style={{background:"#0A1929",border:"1px solid #EF444440",borderRadius:7,
+      padding:"12px 14px",marginTop:14}}>
+      <div style={{fontSize:11,color:"#EF4444",fontWeight:600,marginBottom:4}}>
+        Delete "{video.title}"?
+      </div>
+      <div style={{fontSize:10,color:"#475569",marginBottom:12}}>
+        {isLocal && "Removes video blob from your browser (IndexedDB). "}
+        {hasStream && "Choose whether to also remove from Bunny Stream. "}
+        {!isLocal && !hasStream && "This is a cloud-only entry — no local blob to remove."}
+      </div>
+      <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+        {isLocal && hasStream && cloudStatus?.available && (
+          <button onClick={()=>execute(true)}
+            style={{flex:1,background:"#EF444420",border:"1px solid #EF444450",
+              borderRadius:6,padding:"7px 0",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:600}}>
+            Delete local + cloud
+          </button>
+        )}
+        <button onClick={()=>execute(false)}
+          style={{flex:1,background:"#1E3A5A",border:"1px solid #2D4A6A",
+            borderRadius:6,padding:"7px 0",color:"#94A3B8",cursor:"pointer",fontSize:11}}>
+          {hasStream && cloudStatus?.available ? "Local only" : "Confirm delete"}
+        </button>
+        <button onClick={()=>setArmed(false)}
+          style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,
+            padding:"7px 10px",color:"#475569",cursor:"pointer",fontSize:11}}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function SmartSailingAnalytics(){
   const[role,setRole]=useState("coach");
   const[activeTab,setActiveTab]=useState("library");
@@ -1283,6 +1453,30 @@ matches = array of video ids. explanation = brief natural language summary. insi
                   {logData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,color:logData.source==="local"?"#1D9E75":"#8B5CF6"}}>{logData.source==="local"?"● Local":"● Cloud"} log · {logData.rows?.length?.toLocaleString()} rows</span>}
                   {xmlData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:"#8B5CF610",border:"1px solid #8B5CF630",color:"#8B5CF6"}}>{xmlData.source==="local"?"● Local":"● Cloud"} events · {xmlData.tackJibes?.length} manoeuvres</span>}
                   <span style={{fontSize:10,color:"#1E3A5A"}}>{displayed.length} clip{displayed.length!==1?"s":""}</span>
+                  <div style={{flex:1}}/>
+                  {xmlData&&allVideos.length>0&&perms.canImport&&(
+                    <button onClick={async()=>{
+                      // Re-tag all clips in this session using the new priority logic
+                      let count=0;
+                      const updated=await Promise.all(allVideos.map(async v=>{
+                        if(!v.startUtc)return v;
+                        const newTags=computeAutoTags(v.startUtc,v.duration,logData,xmlData,syncOffsets[v.id]||0);
+                        // Keep any purely manual tags (not generated by auto-tag)
+                        const autoTagPatterns=/^(tws-|upwind|reaching|downwind|tack|gybe|top-mark|leeward-gate|race-start|race|training|\d+x-)|\.(Porto|location)/;
+                        const manualTags=(v.tags||[]).filter(t=>!autoTagPatterns.test(t)&&!xmlData?.meta?.location?.includes(t));
+                        const merged=[...new Set([...newTags,...manualTags])];
+                        await updateVideoTags(v.id,merged);
+                        count++;
+                        return{...v,tags:merged};
+                      }));
+                      setAllVideos(updated);
+                      if(selectedVideo){const u=updated.find(v=>v.id===selectedVideo.id);if(u)setSelectedVideo(u);}
+                      alert(`Re-tagged ${count} clip${count!==1?"s":""} using event data.`);
+                    }}
+                    style={{background:"#8B5CF620",border:"1px solid #8B5CF640",borderRadius:5,padding:"3px 10px",color:"#8B5CF6",cursor:"pointer",fontSize:10,fontWeight:600}}>
+                      ⚡ Re-tag {allVideos.filter(v=>v.startUtc).length} clips
+                    </button>
+                  )}
                 </div>}
                 {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}>
                   <div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div>
@@ -1298,11 +1492,23 @@ matches = array of video ids. explanation = brief natural language summary. insi
                 <div style={{width:408,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:12,flexShrink:0}}>
                   <VideoPlayer video={selectedVideo} logData={logData} xmlData={xmlData} syncOffset={syncOffsets[selectedVideo.id]||0}/>
                   <div style={{marginTop:12}}>
+                    {/* Title row */}
                     <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:2}}>
                       <div style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,marginRight:8}}>{selectedVideo.title}</div>
                       <SrcBadge source={selectedVideo.source||"local"}/>
                     </div>
-                    <div style={{fontSize:10,color:"#334155",marginBottom:12}}>{selectedVideo.sessionDate} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
+                    {/* Meta row with timestamp source */}
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+                      <div style={{fontSize:10,color:"#334155"}}>{selectedVideo.sessionDate} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
+                      {selectedVideo.tsSource&&(
+                        <span style={{fontSize:9,padding:"1px 5px",borderRadius:3,
+                          background:selectedVideo.tsSource==="mp4-meta"?"#1D9E7515":"#F59E0B15",
+                          border:`1px solid ${selectedVideo.tsSource==="mp4-meta"?"#1D9E7530":"#F59E0B30"}`,
+                          color:selectedVideo.tsSource==="mp4-meta"?"#1D9E75":"#F59E0B"}}>
+                          {selectedVideo.tsSource==="mp4-meta"?"📷 camera metadata":"⚠ file modified time"}
+                        </span>
+                      )}
+                    </div>
                     {selectedVideo.twsAvg!=null&&(
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
                         {[
@@ -1332,14 +1538,11 @@ matches = array of video ids. explanation = brief natural language summary. insi
                         logData={logData}
                         onSave={async(id,startUtc)=>{
                           await updateVideoStartUtc(id,startUtc);
-                          // Recompute auto-tags now that we have a real startUtc
                           const updatedVideo={...selectedVideo,startUtc};
                           const autoTags=computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0);
-                          // Merge: keep any manually added tags, add new auto-tags
                           const manualTags=(selectedVideo.tags||[]).filter(t=>!t.startsWith("tws-")&&!["upwind","reaching","downwind","tack","gybe","top-mark","leeward-gate","training","today"].includes(t)&&!xmlData?.meta?.location?.includes(t));
                           const mergedTags=[...new Set([...autoTags,...manualTags])];
                           await updateVideoTags(id,mergedTags);
-                          // Update state — enrich with new startUtc so gauges & averages refresh
                           const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData);
                           setAllVideos(p=>p.map(v=>v.id===id?enriched:v));
                           setSelectedVideo(enriched);
@@ -1347,6 +1550,19 @@ matches = array of video ids. explanation = brief natural language summary. insi
                       />
                     </div>
                     {perms.canImport&&<TagEditor video={selectedVideo} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
+
+                    {/* Delete section */}
+                    {perms.canImport&&(
+                      <DeleteButton
+                        video={selectedVideo}
+                        cloudStatus={cloudStatus}
+                        onDeleted={id=>{
+                          setAllVideos(p=>p.filter(v=>v.id!==id));
+                          setSelectedVideo(null);
+                          saveSyncOffset(id,0); // clean up offset
+                        }}
+                      />
+                    )}
                   </div>
                 </div>
               )}

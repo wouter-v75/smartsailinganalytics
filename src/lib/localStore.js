@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_NAME = "ssa-db";
-const DB_VER  = 1;
+const DB_VER  = 2;          // bumped: adds log_data store
 const TODAY   = () => new Date().toISOString().slice(0, 10);
 
 // ── IndexedDB bootstrap ──────────────────────────────────────────────────────
@@ -28,6 +28,10 @@ function openDb() {
         store.createIndex("sessionDate", "sessionDate", { unique: false });
         store.createIndex("addedAt",     "addedAt",     { unique: false });
         store.createIndex("synced",      "syncedToDb",  { unique: false });
+      }
+      // log_data: keyed by session date — no row limit, no 5 MB cap
+      if (!db.objectStoreNames.contains("log_data")) {
+        db.createObjectStore("log_data", { keyPath: "date" });
       }
     };
     req.onsuccess = e => resolve(e.target.result);
@@ -112,7 +116,8 @@ function upsertSession(date, patch) {
 // ── Video store ───────────────────────────────────────────────────────────────
 export async function saveVideo(file, parsedMeta) {
   const db   = await openDb();
-  const date = TODAY();
+  // Use caller-supplied sessionDate (from CSV/XML) or fall back to today
+  const date = parsedMeta.sessionDate || TODAY();
   const id   = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
   // Revoke any previous objectURL for same file if re-importing
@@ -121,7 +126,9 @@ export async function saveVideo(file, parsedMeta) {
     name:        file.name,
     size:        file.size,
     duration:    parsedMeta.duration || null,
-    blob:        file,                          // stored as Blob in IndexedDB
+    startUtc:    parsedMeta.startUtc  || null,   // UTC ms when recording started
+    tsSource:    parsedMeta.tsSource  || null,   // "mp4-meta" | "lastmodified" | null
+    blob:        file,
     addedAt:     Date.now(),
     sessionDate: date,
     tags:        parsedMeta.tags || [],
@@ -161,19 +168,39 @@ export async function updateVideoTags(id, tags) {
   if (entry) { entry.tags = tags; entry.syncedToDb = false; await idbPut(db, "videos", entry); }
 }
 
+export async function updateVideoStartUtc(id, startUtc) {
+  const db    = await openDb();
+  const entry = await idbGet(db, "videos", id);
+  if (entry) { entry.startUtc = startUtc; entry.syncedToDb = false; await idbPut(db, "videos", entry); }
+}
+
 export async function deleteVideo(id) {
   const db = await openDb();
   await idbDelete(db, "videos", id);
 }
 
 // ── Log (CSV) store ───────────────────────────────────────────────────────────
-export function saveLogData(date, rows, fileName, startUtc, endUtc) {
-  const key = `ssa:log:${date}`;
-  lsSet(key, { rows, fileName, startUtc, endUtc, addedAt: Date.now(), synced: false });
+// ── Log (CSV) store — IndexedDB to avoid 5 MB localStorage limit ─────────────
+export async function saveLogData(date, rows, fileName, startUtc, endUtc) {
+  const db = await openDb();
+  await idbPut(db, "log_data", {
+    date, rows, fileName, startUtc, endUtc,
+    addedAt: Date.now(), synced: false,
+  });
   upsertSession(date, { hasLog: true, logFile: fileName });
+  // Remove old localStorage entry if it exists (free up space)
+  lsDel(`ssa:log:${date}`);
 }
 
-export function getLogData(date) { return lsGet(`ssa:log:${date}`); }
+export async function getLogData(date) {
+  try {
+    const db    = await openDb();
+    const entry = await idbGet(db, "log_data", date);
+    if (entry) return entry;
+  } catch {}
+  // Fallback: old localStorage format for sessions imported before this change
+  return lsGet(`ssa:log:${date}`);
+}
 
 // ── XML (event) store ─────────────────────────────────────────────────────────
 export function saveXmlData(date, parsed, fileName) {
@@ -185,44 +212,121 @@ export function saveXmlData(date, parsed, fileName) {
 export function getXmlData(date) { return lsGet(`ssa:xml:${date}`); }
 
 // ── Auto-tag from log + XML ───────────────────────────────────────────────────
+// ── Auto-tag a video from log + event data ────────────────────────────────────
+//
+// Primary event tag — the single event that best describes the clip:
+//   Priority:  top-mark (10) > leeward-gate (9) > race-start (8)
+//              > gybe (5) > tack (3)
+//   Tie-break: closest to the video midpoint wins
+//   Source:    events within the clip window OR within 60s outside it
+//              (clips rarely start exactly at the event timestamp)
+//
+// Secondary tags — everything present in the clip:
+//   all event types, TWS band, point-of-sail, active sails, location
+//
 export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, offsetSec = 0) {
   const tags = [];
   if (!videoStartUtc) return tags;
-  const syncMs  = offsetSec * 1000;
-  const winStart = videoStartUtc + syncMs;
-  const winEnd   = winStart + durationSec * 1000;
 
+  const syncMs   = offsetSec * 1000;
+  const winStart = videoStartUtc + syncMs;
+  const winEnd   = winStart + (durationSec || 0) * 1000;
+  const midpoint = (winStart + winEnd) / 2;
+
+  // ── Instrument-based tags from log ──────────────────────────────────────────
   if (logData?.rows?.length) {
-    const window = logData.rows.filter(r => r.utc >= winStart && r.utc <= winEnd);
-    if (window.length > 0) {
-      const avg = f => window.reduce((s, r) => s + (r[f] || 0), 0) / window.length;
+    const win = logData.rows.filter(r => r.utc >= winStart && r.utc <= winEnd);
+    if (win.length > 0) {
+      const avg = f => win.reduce((s, r) => s + (r[f] || 0), 0) / win.length;
       const twsAvg = avg("tws");
-      tags.push(`tws-${twsAvg < 8 ? "0-8" : twsAvg < 12 ? "8-12" : twsAvg < 16 ? "12-16" : twsAvg < 20 ? "16-20" : twsAvg < 25 ? "20-25" : "25+"}kn`);
+      // TWS band tag
+      tags.push(`tws-${
+        twsAvg <  8 ? "0-8"   :
+        twsAvg < 12 ? "8-12"  :
+        twsAvg < 16 ? "12-16" :
+        twsAvg < 20 ? "16-20" :
+        twsAvg < 25 ? "20-25" : "25+"
+      }kn`);
+      // Point of sail
       const twaAvg = Math.abs(avg("twa"));
-      tags.push(twaAvg < 60 ? "upwind" : twaAvg < 100 ? "reaching" : "downwind");
+      tags.push(twaAvg < 60 ? "upwind" : twaAvg < 110 ? "reaching" : "downwind");
     }
   }
 
-  if (xmlData) {
-    const tacks  = (xmlData.tackJibes || []).filter(t => t.isTack  && t.utc >= winStart && t.utc <= winEnd);
-    const gybes  = (xmlData.tackJibes || []).filter(t => !t.isTack && t.utc >= winStart && t.utc <= winEnd);
-    const marks  = (xmlData.markRoundings || []).filter(m => m.utc >= winStart && m.utc <= winEnd);
-    if (tacks.length)  tags.push("tack");
-    if (gybes.length)  tags.push("gybe");
-    if (marks.some(m => m.isTop))  tags.push("top-mark");
-    if (marks.some(m => !m.isTop)) tags.push("leeward-gate");
+  if (!xmlData) return [...new Set(tags)];
 
-    // Active sails — find most recent SailsUp before window end
-    const sailEv = [...(xmlData.sailsUpEvents || [])]
-      .filter(s => s.utc <= winEnd)
-      .sort((a, b) => b.utc - a.utc)[0];
-    if (sailEv) sailEv.sails.forEach(s => tags.push(s));
+  // ── Build a unified event list with priority scores ──────────────────────────
+  // Search window: clip + 60 s buffer each side (in case clip starts just before event)
+  const BUFFER = 60_000;
+  const searchStart = winStart - BUFFER;
+  const searchEnd   = winEnd   + BUFFER;
 
-    // Race vs training
-    const sessionType = xmlData.meta?.date === TODAY() ? "today" : "training";
-    tags.push(sessionType);
-    if (xmlData.meta?.location) tags.push(xmlData.meta.location);
+  const allEvents = [];
+
+  // Mark roundings — highest priority
+  for (const m of (xmlData.markRoundings || [])) {
+    if (m.utc < searchStart || m.utc > searchEnd) continue;
+    allEvents.push({
+      utc:      m.utc,
+      tag:      m.isTop ? "top-mark" : "leeward-gate",
+      label:    m.label,
+      priority: m.isTop ? 10 : 9,
+      valid:    m.isValid !== false,
+    });
   }
+
+  // Race start guns
+  for (const g of (xmlData.raceGuns || [])) {
+    if (g.utc < searchStart || g.utc > searchEnd) continue;
+    allEvents.push({ utc:g.utc, tag:"race-start", label:g.label, priority:8, valid:true });
+  }
+
+  // Gybes
+  for (const tj of (xmlData.tackJibes || []).filter(t => !t.isTack)) {
+    if (tj.utc < searchStart || tj.utc > searchEnd) continue;
+    allEvents.push({ utc:tj.utc, tag:"gybe", label:"Gybe", priority:5, valid:tj.isValid !== false });
+  }
+
+  // Tacks
+  for (const tj of (xmlData.tackJibes || []).filter(t => t.isTack)) {
+    if (tj.utc < searchStart || tj.utc > searchEnd) continue;
+    allEvents.push({ utc:tj.utc, tag:"tack", label:"Tack", priority:3, valid:tj.isValid !== false });
+  }
+
+  // ── Primary tag: highest priority, closest to midpoint as tie-break ──────────
+  if (allEvents.length > 0) {
+    const best = allEvents
+      .filter(e => e.valid)                          // prefer valid events
+      .sort((a, b) => {
+        if (b.priority !== a.priority) return b.priority - a.priority;   // priority first
+        return Math.abs(a.utc - midpoint) - Math.abs(b.utc - midpoint);  // proximity second
+      })[0];
+
+    if (best) tags.push(best.tag);
+
+    // ── Secondary tags: all distinct event types in clip window ─────────────────
+    const inWindow = allEvents.filter(e => e.utc >= winStart && e.utc <= winEnd);
+    const countByTag = {};
+    for (const e of inWindow) countByTag[e.tag] = (countByTag[e.tag] || 0) + 1;
+
+    // Add count tags for secondary events (skip primary if already added)
+    for (const [tag, count] of Object.entries(countByTag)) {
+      if (tag === best?.tag) continue;       // already the primary tag
+      tags.push(tag);                        // e.g. "tack" alongside "top-mark"
+      if (count > 1) tags.push(`${count}x-${tag}`);  // e.g. "3x-tack"
+    }
+  }
+
+  // ── Sail configuration — most recent SailsUp before clip end ────────────────
+  const sailEv = [...(xmlData.sailsUpEvents || [])]
+    .filter(s => s.utc <= winEnd)
+    .sort((a, b) => b.utc - a.utc)[0];
+  if (sailEv) sailEv.sails.forEach(s => tags.push(s));
+
+  // ── Session context ──────────────────────────────────────────────────────────
+  const hasRace = (xmlData.raceGuns || []).length > 0;
+  tags.push(hasRace ? "race" : "training");
+  if (xmlData.meta?.location) tags.push(xmlData.meta.location);
 
   return [...new Set(tags)];
 }
@@ -240,10 +344,11 @@ export function getUnsyncedCount() {
   const sessions = getSessions();
   let count = 0;
   for (const s of sessions) {
-    const log = s.hasLog ? lsGet(`ssa:log:${s.date}`) : null;
+    // XML stays in localStorage
     const xml = s.hasXml ? lsGet(`ssa:xml:${s.date}`) : null;
-    if (log && !log.synced)  count++;
-    if (xml && !xml.synced)  count++;
+    if (xml && !xml.synced) count++;
+    // Log synced flag is tracked in session index
+    if (s.hasLog && !s.logSynced) count++;
   }
   return count;
 }
@@ -262,4 +367,21 @@ export function markCloudSynced(date) {
   const sessions = getSessions();
   const idx = sessions.findIndex(s => s.date === date);
   if (idx >= 0) { sessions[idx].cloudSynced = true; lsSet("ssa:sessions", sessions); }
+}
+
+// ── Sync offsets — persist per video across reloads ───────────────────────────
+const OFFSET_KEY = "ssa:syncOffsets";
+
+export function getSyncOffsets() {
+  return lsGet(OFFSET_KEY) || {};
+}
+
+export function saveSyncOffset(videoId, offsetSeconds) {
+  const offsets = getSyncOffsets();
+  if (offsetSeconds === 0) {
+    delete offsets[videoId];
+  } else {
+    offsets[videoId] = offsetSeconds;
+  }
+  lsSet(OFFSET_KEY, offsets);
 }
