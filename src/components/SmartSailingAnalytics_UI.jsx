@@ -83,6 +83,10 @@ const R=(n,d=1)=>(n==null||isNaN(n))?"--":Number(n).toFixed(d);
 const fmtT=s=>{const x=Math.max(0,Math.floor(s));return`${String(Math.floor(x/60)).padStart(2,"0")}:${String(x%60).padStart(2,"0")}`;};
 const fmtUtc=u=>u?new Date(u).toISOString().slice(11,19):"--:--:--";
 const TODAY=()=>new Date().toISOString().slice(0,10);
+// European date format: YYYY-MM-DD → DD/MM/YYYY
+const fmtDate=d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
+// European datetime from UTC ms: DD/MM/YYYY HH:MM
+const fmtDateTime=u=>{if(!u)return"";const dt=new Date(u);const dd=String(dt.getUTCDate()).padStart(2,"0");const mm=String(dt.getUTCMonth()+1).padStart(2,"0");const yyyy=dt.getUTCFullYear();const hh=String(dt.getUTCHours()).padStart(2,"0");const mi=String(dt.getUTCMinutes()).padStart(2,"0");return`${dd}/${mm}/${yyyy} ${hh}:${mi}`;};
 const fmtSize=b=>b>1e9?`${(b/1e9).toFixed(1)} GB`:`${(b/1e6).toFixed(0)} MB`;
 function nearestRow(rows,utc){if(!rows?.length)return null;let lo=0,hi=rows.length-1;while(lo<hi){const mid=(lo+hi)>>1;if(rows[mid].utc<utc)lo=mid+1;else hi=mid;}if(lo>0&&Math.abs(rows[lo-1].utc-utc)<Math.abs(rows[lo].utc-utc))lo--;return Math.abs(rows[lo].utc-utc)<120000?rows[lo]:null;}
 function enrichVideo(v,log){
@@ -195,7 +199,7 @@ function VideoCard({video,selected,onClick}){
       </div>
       <div style={{padding:"9px 11px"}}>
         <div style={{fontSize:11,fontWeight:600,color:"#E2E8F0",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
-        <div style={{fontSize:10,color:"#334155",marginBottom:6}}>{video.sessionDate}</div>
+        <div style={{fontSize:10,color:"#334155",marginBottom:6}}>{fmtDate(video.sessionDate)}</div>
         {video.twsAvg!=null&&(
           <div style={{display:"flex",gap:3,marginBottom:6,flexWrap:"wrap"}}>
             {[
@@ -282,7 +286,7 @@ function StartTimeEditor({video, logData, onSave}){
           <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:3}}>Video start time (UTC)</div>
           {hasStart
             ? <div style={{fontSize:11,fontFamily:"monospace",color:inLog?"#1D9E75":"#F59E0B"}}>
-                {new Date(video.startUtc).toISOString().slice(11,19)} UTC
+                {fmtDateTime(video.startUtc)} UTC
                 <span style={{fontSize:9,marginLeft:6}}>{inLog?"✓ within log":logData?"⚠ outside log — adjust":"(no log)"}</span>
               </div>
             : <div style={{fontSize:10,color:"#EF4444"}}>Not set — instruments and events won't show</div>
@@ -350,7 +354,7 @@ function UploadTab({role,cloudStatus,onImported}){
       setPendingVids(p=>p.map(v=>{
         if(v.file!==f)return v;
         if(mp4ts){
-          addLog(`✓ ${f.name}: camera timestamp ${new Date(mp4ts).toISOString().slice(11,19)} UTC`);
+          addLog(`✓ ${f.name}: camera timestamp ${fmtDateTime(mp4ts)} UTC`);
           return{...v,startUtc:mp4ts,tsSource:"mp4-meta"};
         }
         // Fallback: file.lastModified — reliable on iOS/GoPro SD cards when copied
@@ -380,7 +384,7 @@ function UploadTab({role,cloudStatus,onImported}){
     if(!pendingVids.length&&!csvParsed&&!xmlParsed)return;
     setPhase("saving");setLog([]);
     const date=csvParsed?.startUtc?new Date(csvParsed.startUtc).toISOString().slice(0,10):xmlParsed?.meta?.date||TODAY();
-    addLog(`Saving session ${date} to local storage…`);
+    addLog(`Saving session ${fmtDate(date)} to local storage…`);
     if(csvParsed){await saveLogData(date,csvParsed.rows,csvFile.name,csvParsed.startUtc,csvParsed.endUtc);addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows)`);}
     if(xmlParsed){saveXmlData(date,xmlParsed,xmlFile.name);addLog("✓ Events saved");}
     const saved=[];
@@ -485,7 +489,7 @@ function UploadTab({role,cloudStatus,onImported}){
         ):(
           <div style={{background:"#0A1929",border:"1px solid #1D9E7540",borderRadius:12,padding:18}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
-              <SrcBadge source="local"/><span style={{fontSize:12,fontWeight:600,color:"#1D9E75"}}>Session {savedDate} saved locally</span>
+              <SrcBadge source="local"/><span style={{fontSize:12,fontWeight:600,color:"#1D9E75"}}>Session {fmtDate(savedDate)} saved locally</span>
               <span style={{flex:1}}/><button onClick={reset} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:5,padding:"2px 8px",color:"#475569",cursor:"pointer",fontSize:10}}>New import</button>
             </div>
             <div style={{borderTop:"1px solid #1E3A5A",paddingTop:14}}>
@@ -929,7 +933,7 @@ function AIChatPanel({rows, allVideos}){
 }
 
 // Main Analytics component
-function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab}){
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate}){
   const [activeSession,setActiveSession]=useState(null); // null = use logData passed in
 
   // Use either the logData for the current session or picked session
@@ -981,7 +985,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
           <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0"}}>Analytics</div>
           {logData&&<span style={{fontSize:10,color:logData.source==="local"?"#1D9E75":"#8B5CF6",background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,borderRadius:3,padding:"2px 7px"}}>
-            {logData.source==="local"?"● Local":"● Cloud"} log · {rows.length.toLocaleString()} rows · {durationH.toFixed(1)}h
+            {logData.source==="local"?"● Local":"● Cloud"} log · {rows.length.toLocaleString()} rows · {durationH.toFixed(1)}h · {fmtDate(activeDate)}
           </span>}
           {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — select a session in Library</span>}
           <div style={{flex:1}}/>
@@ -1421,7 +1425,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
                 return(
                   <div key={s.date} onClick={()=>loadDate(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
                     <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}>
-                      <span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":s.date}</span>
+                      <span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span>
                       <SrcBadge source={isLocal?"local":"cloud"}/>
                     </div>
                     <div style={{fontSize:9,color:"#1E3A5A"}}>{s.videoCount||0}v{s.hasLog?" ·log":""}{s.hasXml?" ·ev":""}{s.location?` · ${s.location}`:""}</div>
@@ -1499,7 +1503,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
                     </div>
                     {/* Meta row with timestamp source */}
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-                      <div style={{fontSize:10,color:"#334155"}}>{selectedVideo.sessionDate} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
+                      <div style={{fontSize:10,color:"#334155"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
                       {selectedVideo.tsSource&&(
                         <span style={{fontSize:9,padding:"1px 5px",borderRadius:3,
                           background:selectedVideo.tsSource==="mp4-meta"?"#1D9E7515":"#F59E0B15",
@@ -1571,7 +1575,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
 
           {/* ANALYTICS */}
           {activeTab==="analytics"&&(
-            <AnalyticsTab logData={logData} xmlData={xmlData} allVideos={allVideos} sessions={sessions} selectedVideo={selectedVideo} onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab} />
+            <AnalyticsTab logData={logData} xmlData={xmlData} allVideos={allVideos} sessions={sessions} selectedVideo={selectedVideo} onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab} activeDate={activeDate}/>
           )}
 
           {activeTab==="upload"&&<UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/>}
@@ -1585,7 +1589,7 @@ matches = array of video ids. explanation = brief natural language summary. insi
                   {title:"Data tiers",items:["Tier 1 · Local: IndexedDB (blobs) + localStorage (log/events)","Tier 2 · Cloud: Bunny Storage (JSON) + Bunny Stream (HLS)","Today = always local  ·  Older = local → cloud fallback",`Unsynced items: ${unsyncedCount}`]},
                   {title:"Cloud status (Bunny.net)",items:[`Storage: ${cloudStatus?.storage?"Connected ✓":"Not configured"}`,`Stream: ${cloudStatus?.stream?"Connected ✓":"Not configured"}`,`Zone: ${cloudStatus?.zone||"—"} · Region: ${cloudStatus?.region||"de"}`,"Env vars: BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_ZONE, BUNNY_STORAGE_REGION, BUNNY_STREAM_API_KEY, BUNNY_STREAM_LIBRARY_ID, BUNNY_CDN_HOSTNAME"]},
                   {title:"Roles (testing — NextAuth in Phase 2)",items:["Admin/Coach → local import + cloud sync + older sessions","Crew → local import today + cloud older (read-only)","Viewer/Consultant → cloud only, no import","Switch roles with the header dropdown"]},
-                  {title:"Sessions",items:sessions.length>0?sessions.map(s=>`${s.date===TODAY()?"Today":s.date} · ${s.source||"local"} · ${s.videoCount||0}v${s.hasLog?" + log":""}${s.hasXml?" + events":""}${s.location?` · ${s.location}`:""}`):[" No sessions yet — import in Upload tab"]},
+                  {title:"Sessions",items:sessions.length>0?sessions.map(s=>`${s.date===TODAY()?"Today":fmtDate(s.date)} · ${s.source||"local"} · ${s.videoCount||0}v${s.hasLog?" + log":""}${s.hasXml?" + events":""}${s.location?` · ${s.location}`:""}`):[" No sessions yet — import in Upload tab"]},
                 ].map(c=>(
                   <div key={c.title} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:14}}>
                     <div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:8}}>{c.title}</div>
