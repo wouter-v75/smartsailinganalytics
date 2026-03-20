@@ -305,7 +305,7 @@ function UploadTab({role,cloudStatus,onImported}){
     setPhase("saving");setLog([]);
     const date=csvParsed?.startUtc?new Date(csvParsed.startUtc).toISOString().slice(0,10):xmlParsed?.meta?.date||TODAY();
     addLog(`Saving session ${date} to local storage…`);
-    if(csvParsed){saveLogData(date,csvParsed.rows,csvFile.name,csvParsed.startUtc,csvParsed.endUtc);addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows)`);}
+    if(csvParsed){await saveLogData(date,csvParsed.rows,csvFile.name,csvParsed.startUtc,csvParsed.endUtc);addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows)`);}
     if(xmlParsed){saveXmlData(date,xmlParsed,xmlFile.name);addLog("✓ Events saved");}
     const saved=[];
     for(const pv of pendingVids){
@@ -323,7 +323,7 @@ function UploadTab({role,cloudStatus,onImported}){
     if(!cloudStatus?.available||!perms.canSync||!savedDate)return;
     setPhase("syncing");addLog("Starting Bunny Storage + Stream upload…");
     savedVids.forEach(v=>setStreamStatus(p=>({...p,[v.id]:{state:"queued"}})));
-    await syncSessionToCloud(savedDate,getLogData(savedDate),getXmlData(savedDate),savedVids,msg=>{
+    await syncSessionToCloud(savedDate,await getLogData(savedDate),getXmlData(savedDate),savedVids,msg=>{
       addLog(msg);
       // Extract stream IDs from status messages to track per-video
       const match=msg.match(/Stream \(([a-f0-9]+)\)/);
@@ -907,11 +907,19 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
         </div>
 
         {noData ? (
-          <div style={{textAlign:"center",padding:"60px 20px",color:"#334155"}}>
+          <div style={{textAlign:"center",padding:"50px 20px",color:"#334155"}}>
             <div style={{fontSize:32,marginBottom:12,opacity:0.3}}>📊</div>
-            <div style={{fontSize:13,color:"#475569",marginBottom:6}}>No session data loaded</div>
-            <div style={{fontSize:11,marginBottom:16}}>Select a session in the Library sidebar to load its log data, then come back here.</div>
-            <button onClick={()=>setActiveTab("library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Library</button>
+            <div style={{fontSize:13,color:"#475569",marginBottom:6}}>No log data loaded</div>
+            <div style={{fontSize:11,color:"#334155",marginBottom:6}}>
+              Select a session in the Library sidebar — click any date to load its log and event data.
+            </div>
+            <div style={{fontSize:10,color:"#475569",marginBottom:16,maxWidth:360,margin:"0 auto 16px"}}>
+              If you just imported data and don't see it here, your log file may have been too large for the old storage system. Re-import your CSV in the Upload tab — it will now save correctly to IndexedDB.
+            </div>
+            <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+              <button onClick={()=>setActiveTab("library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Library</button>
+              <button onClick={()=>setActiveTab("upload")} style={{background:"#1E3A5A",border:"none",borderRadius:8,padding:"8px 20px",color:"#94A3B8",fontWeight:700,cursor:"pointer",fontSize:12}}>Re-import CSV</button>
+            </div>
           </div>
         ) : (
           <>
@@ -1098,16 +1106,16 @@ export default function SmartSailingAnalytics(){
       const vids=await getAllVideos();
 
       // Enrich each video with the log data for its own session date
-      const enriched=vids.map(v=>{
-        const log=getLogData(v.sessionDate||today);
+      const enriched=await Promise.all(vids.map(async v=>{
+        const log=await getLogData(v.sessionDate||today);
         return enrichVideo(v,log);
-      });
+      }));
       setAllVideos(enriched);
       if(enriched.length>0)setSelectedVideo(enriched[0]);
 
       // Load log/xml for the most recent session (or today if no sessions)
       const latestDate=localSessions[0]?.date||today;
-      const latestLog=getLogData(latestDate);
+      const latestLog=await getLogData(latestDate);
       const latestXml=getXmlData(latestDate);
       if(latestLog)setLogData({...latestLog,source:"local"});
       if(latestXml)setXmlData({...latestXml,source:"local"});
@@ -1126,7 +1134,7 @@ export default function SmartSailingAnalytics(){
 
   async function loadDate(date){
     setActiveDate(date);
-    const localLog=getLogData(date);const localXml=getXmlData(date);
+    const localLog=await getLogData(date);const localXml=getXmlData(date);
     if(localLog){setLogData({...localLog,source:"local"});}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);setLogData(r2?.logData?{...r2.logData,source:"cloud"}:null);}
     else setLogData(null);
@@ -1142,7 +1150,7 @@ export default function SmartSailingAnalytics(){
       vids=all.filter(v=>v.sessionDate===date);
     }
     if(!vids.length&&cloudStatus?.available){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
-    const log=getLogData(date);
+    const log=await getLogData(date);
     setAllVideos(vids.map(v=>enrichVideo(v,log)));
     setSelectedVideo(vids[0]||null);
   }
