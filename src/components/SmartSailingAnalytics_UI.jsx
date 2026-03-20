@@ -1,6 +1,11 @@
 'use client'
 import { useState, useEffect, useRef, useCallback } from "react";
-import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced, getSyncOffsets, saveSyncOffset } from "../lib/localStore";
+import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced } from "../lib/localStore";
+
+// Sync offset persistence — inline to avoid module resolution issues
+const OFFSET_KEY = "ssa:syncOffsets";
+function getSyncOffsets() { try { const v=localStorage.getItem(OFFSET_KEY); return v?JSON.parse(v):{};} catch{return{};} }
+function saveSyncOffset(videoId, secs) { try { const o=getSyncOffsets(); if(secs===0){delete o[videoId];}else{o[videoId]=secs;} localStorage.setItem(OFFSET_KEY,JSON.stringify(o));} catch{} }
 import { checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady } from "../lib/bunny";
 
 const ROLES = {
