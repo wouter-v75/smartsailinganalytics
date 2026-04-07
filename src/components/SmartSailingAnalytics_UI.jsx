@@ -2072,6 +2072,119 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 </div>
               </div>
             ))}
+
+            {/* ── Tacking analysis ──────────────────────────────────────────────── */}
+            {(()=>{
+              const validTacks=(xmlData?.tackJibes||[]).filter(t=>t.isTack&&t.isValid!==false);
+              if(!validTacks.length||!rows.length) return null;
+              const PRE=30, POST=60; // seconds before/after tack
+
+              // Build tack-aligned series: for each valid tack, extract a window of log rows
+              // Returns [{relSec, value}] arrays — one per tack
+              const buildSeries=(field,transform=(v)=>v)=>{
+                return validTacks.map(tk=>{
+                  // Binary-search nearest log row to tack UTC
+                  let lo=0,hi=rows.length-1;
+                  while(lo<hi){const mid=(lo+hi+1)>>1;if(rows[mid].utc<=tk.utc)lo=mid;else hi=mid-1;}
+                  const centre=lo;
+                  const window=[];
+                  // Walk backwards PRE seconds
+                  let i=centre;
+                  while(i>=0&&(rows[centre].utc-rows[i].utc)<PRE*1000) i--;
+                  i++;
+                  // Walk forwards POST seconds
+                  let j=centre;
+                  while(j<rows.length&&(rows[j].utc-rows[centre].utc)<POST*1000) j++;
+                  for(let k=i;k<j;k++){
+                    const relSec=(rows[k].utc-tk.utc)/1000;
+                    const v=transform(rows[k][field]);
+                    if(v!=null&&!isNaN(v)) window.push({x:relSec,y:v});
+                  }
+                  return window;
+                });
+              };
+
+              const tackSeries={
+                bsp:   buildSeries('bsp'),
+                rudder:buildSeries('rudder',v=>v!=null?Math.abs(v):null),
+                yawR:  buildSeries('yawR'),
+                twa:   buildSeries('twa',v=>v!=null?Math.abs(v):null),
+              };
+
+              // Multi-line SVG chart — one coloured line per tack
+              const TACK_COLORS=['#1D9E75','#06B6D4','#8B5CF6','#F59E0B','#EF4444','#EC4899','#34D399','#60A5FA','#A78BFA','#FCD34D'];
+              function TackChart({series,yLabel,color='#1D9E75',height=130,yLines=[],yMax:forcedYMax}){
+                if(!series?.length||series.every(s=>!s.length)) return(
+                  <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:10}}>No data</div>
+                );
+                const VB_W=400;
+                const pad={t:10,r:8,b:28,l:36};
+                const W=VB_W-pad.l-pad.r, H=height-pad.t-pad.b;
+                const xMin=-PRE, xMax=POST;
+                const allPts=series.flat();
+                const yMin=0;
+                const yMax=forcedYMax||Math.max(...allPts.map(p=>p.y))||1;
+                const px=x=>pad.l+((x-xMin)/(xMax-xMin))*W;
+                const py=y=>pad.t+H-((y-yMin)/(yMax-yMin||1))*H;
+                const xTicks=[-30,-20,-10,0,10,20,30,40,50,60].filter(x=>x>=xMin&&x<=xMax);
+                const yTicks=Array.from({length:4},(_,i)=>yMin+(yMax-yMin)*i/3);
+                return(
+                  <svg width="100%" viewBox={`0 0 ${VB_W} ${height}`} style={{overflow:"visible",display:"block"}}>
+                    {/* Grid */}
+                    {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
+                    {yLines.map((y,i)=><line key={'yl'+i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={color} strokeWidth="0.5" strokeDasharray="4,3" opacity="0.6"/>)}
+                    <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+                    <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+                    {/* Tack moment vertical line */}
+                    <line x1={px(0)} x2={px(0)} y1={pad.t} y2={pad.t+H} stroke="#EF4444" strokeWidth="1.5" strokeDasharray="4,2" opacity="0.8"/>
+                    <text x={px(0)+3} y={pad.t+9} fontSize="8" fill="#EF4444">tack</text>
+                    {/* One line per tack */}
+                    {series.map((pts,ti)=>{
+                      if(pts.length<2) return null;
+                      const c=TACK_COLORS[ti%TACK_COLORS.length];
+                      const d=pts.map((p,i)=>`${i===0?'M':'L'}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(' ');
+                      return<path key={ti} d={d} fill="none" stroke={c} strokeWidth="1.2" strokeLinejoin="round" opacity="0.75"/>;
+                    })}
+                    {/* Axes */}
+                    {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(y<10?1:0)}</text>)}
+                    {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill={x===0?"#EF4444":"#475569"}>{x}s</text>)}
+                    {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
+                  </svg>
+                );
+              }
+
+              return section(`Tacking analysis — ${validTacks.length} valid tacks  (−${PRE}s → +${POST}s)`,(
+                <>
+                  <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+                    {validTacks.map((tk,i)=>(
+                      <span key={i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9,fontFamily:"monospace",color:TACK_COLORS[i%TACK_COLORS.length]}}>
+                        <span style={{display:"inline-block",width:10,height:3,background:TACK_COLORS[i%TACK_COLORS.length],borderRadius:1}}/>
+                        {new Date(tk.utc).toISOString().slice(11,16)}
+                      </span>
+                    ))}
+                    <span style={{fontSize:9,color:"#334155",marginLeft:4}}>Red line = tack moment · x-axis = seconds relative to tack</span>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                    <div>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>a) BOAT SPEED (BSP kn)</div>
+                      <TackChart series={tackSeries.bsp} yLabel="BSP kn" color="#10B981" height={130}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>b) RUDDER ANGLE (|°|)</div>
+                      <TackChart series={tackSeries.rudder} yLabel="Rudder |°|" color="#F59E0B" height={130}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>c) RATE OF TURN (°/s  YawR)</div>
+                      <TackChart series={tackSeries.yawR} yLabel="YawR °/s" color="#8B5CF6" height={130}/>
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>d) TRUE WIND ANGLE (|°|)</div>
+                      <TackChart series={tackSeries.twa} yLabel="TWA |°|" color="#06B6D4" height={130}/>
+                    </div>
+                  </div>
+                </>
+              ));
+            })()}
             {allVideos.filter(v=>v.twsAvg!=null).length>0&&section("Clips with instrument data",(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {allVideos.filter(v=>v.twsAvg!=null).map(v=>(
@@ -2246,7 +2359,7 @@ export default function SmartSailingAnalytics(){
     .sort((a,b)=>sortBy==="tws"?(b.twsAvg||0)-(a.twsAvg||0):sortBy==="twa"?(Math.abs(a.twaAvg||0))-(Math.abs(b.twaAvg||0)):sortBy==="vmg"?(b.vmgAvg||0)-(a.vmgAvg||0):sortBy==="polar"?(b.polpercAvg||0)-(a.polpercAvg||0):(b.addedAt||0)-(a.addedAt||0));
 
   const allTags=[...new Set(allVideos.flatMap(v=>v.tags||[]))].sort();
-  const isManTag=t=>["tack","gybe","top-mark","leeward-gate","upwind","downwind","reaching"].includes(t);
+  const isManTag=t=>["tack","gybe","topmark","mark","race-start","upwind","reach","downwind"].includes(t);
   const toggleTag=t=>setSelectedTags(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
   const tabStyle=tab=>({padding:"6px 15px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600,border:"none",background:activeTab===tab?"#06B6D4":"transparent",color:activeTab===tab?"#000":"#64748B"});
 
