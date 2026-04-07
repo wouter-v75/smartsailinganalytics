@@ -2,19 +2,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SmartSailingAnalytics — local data layer
 //
-// Storage layout:
+// Storage layout (v3):
 //   IndexedDB  "ssa-db"
-//     store "videos"   — { id, name, size, duration, blob, objectUrl,
-//                          addedAt, tags, syncedToDb, sessionDate }
+//     store "videos"    — blobs + metadata
+//     store "log_data"  — CSV rows (keyed by date)
+//     store "xml_data"  — event file data (keyed by date) ← NEW in v3
 //   localStorage
-//     ssa:log:{date}   — { rows[], startUtc, endUtc, fileName, addedAt, synced }
-//     ssa:xml:{date}   — { meta, tackJibes[], markRoundings[], sailsUp[],
-//                          raceGuns[], fileName, addedAt, synced }
-//     ssa:sessions     — [{ date, videoCount, hasLog, hasXml }]  index
+//     ssa:sessions      — session index
+//     ssa:taglist:{date}
+//     ssa:syncOffsets
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_NAME = "ssa-db";
-const DB_VER  = 2;          // bumped: adds log_data store
+const DB_VER  = 3;          // v3: adds xml_data store
 const TODAY   = () => new Date().toISOString().slice(0, 10);
 
 // ── IndexedDB bootstrap ──────────────────────────────────────────────────────
@@ -29,9 +29,12 @@ function openDb() {
         store.createIndex("addedAt",     "addedAt",     { unique: false });
         store.createIndex("synced",      "syncedToDb",  { unique: false });
       }
-      // log_data: keyed by session date — no row limit, no 5 MB cap
       if (!db.objectStoreNames.contains("log_data")) {
         db.createObjectStore("log_data", { keyPath: "date" });
+      }
+      // v3: xml event data in IDB — no more 5 MB localStorage quota risk
+      if (!db.objectStoreNames.contains("xml_data")) {
+        db.createObjectStore("xml_data", { keyPath: "date" });
       }
     };
     req.onsuccess = e => resolve(e.target.result);
@@ -116,18 +119,15 @@ function upsertSession(date, patch) {
 // ── Video store ───────────────────────────────────────────────────────────────
 export async function saveVideo(file, parsedMeta) {
   const db   = await openDb();
-  // Use caller-supplied sessionDate (from CSV/XML) or fall back to today
   const date = parsedMeta.sessionDate || TODAY();
   const id   = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
-  // Revoke any previous objectURL for same file if re-importing
   const entry = {
     id,
     name:        file.name,
     size:        file.size,
     duration:    parsedMeta.duration || null,
-    startUtc:    parsedMeta.startUtc  || null,   // UTC ms when recording started
-    tsSource:    parsedMeta.tsSource  || null,   // "mp4-meta" | "lastmodified" | null
+    startUtc:    parsedMeta.startUtc  || null,
+    tsSource:    parsedMeta.tsSource  || null,
     blob:        file,
     addedAt:     Date.now(),
     sessionDate: date,
@@ -138,7 +138,6 @@ export async function saveVideo(file, parsedMeta) {
   };
   await idbPut(db, "videos", entry);
   upsertSession(date, { videoCount: (getSessions().find(s => s.date === date)?.videoCount || 0) + 1 });
-  // Return without the blob for React state (blob stays in IDB)
   return { ...entry, blob: undefined, objectUrl: URL.createObjectURL(file) };
 }
 
@@ -179,8 +178,7 @@ export async function deleteVideo(id) {
   await idbDelete(db, "videos", id);
 }
 
-// ── Log (CSV) store ───────────────────────────────────────────────────────────
-// ── Log (CSV) store — IndexedDB to avoid 5 MB localStorage limit ─────────────
+// ── Log (CSV) store — IndexedDB ───────────────────────────────────────────────
 export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffset=0) {
   const db = await openDb();
   await idbPut(db, "log_data", {
@@ -189,8 +187,7 @@ export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffs
     addedAt: Date.now(), synced: false,
   });
   upsertSession(date, { hasLog: true, logFile: fileName, tzOffset });
-  // Remove old localStorage entry if it exists (free up space)
-  lsDel(`ssa:log:${date}`);
+  lsDel(`ssa:log:${date}`); // clean up old localStorage entry
 }
 
 export async function getLogData(date) {
@@ -199,29 +196,37 @@ export async function getLogData(date) {
     const entry = await idbGet(db, "log_data", date);
     if (entry) return entry;
   } catch {}
-  // Fallback: old localStorage format for sessions imported before this change
-  return lsGet(`ssa:log:${date}`);
+  return lsGet(`ssa:log:${date}`); // fallback: pre-migration format
 }
 
-// ── XML (event) store ─────────────────────────────────────────────────────────
-export function saveXmlData(date, parsed, fileName) {
-  const key = `ssa:xml:${date}`;
-  lsSet(key, { ...parsed, fileName, addedAt: Date.now(), synced: false });
+// ── XML (event) store — IndexedDB (v3) ───────────────────────────────────────
+// Moved from localStorage to IDB to avoid the 5 MB quota limit.
+// Falls back to old localStorage key for sessions imported before v3.
+export async function saveXmlData(date, parsed, fileName) {
+  const db = await openDb();
+  await idbPut(db, "xml_data", {
+    date,
+    ...parsed,          // meta, sailsUpEvents, raceGuns, markRoundings,
+                        // tackJibes, dayStartUtc, dayStopUtc
+    fileName,
+    addedAt: Date.now(),
+    synced:  false,
+  });
   upsertSession(date, { hasXml: true, xmlFile: fileName });
+  lsDel(`ssa:xml:${date}`); // clean up old localStorage entry
 }
 
-export function getXmlData(date) { return lsGet(`ssa:xml:${date}`); }
+export async function getXmlData(date) {
+  try {
+    const db    = await openDb();
+    const entry = await idbGet(db, "xml_data", date);
+    if (entry) return entry;
+  } catch {}
+  // Fallback: old localStorage format (pre-v3 sessions)
+  return lsGet(`ssa:xml:${date}`);
+}
 
 // ── Auto-tag from log + XML ────────────────────────────────────────────────────
-//
-// Tag groups:
-//   1. Session context  — boat, location, dayType (XML meta)
-//   2. Instrument       — TWS band + point-of-sail from TWA
-//   3. Sails            — individual sail names from most recent SailsUp event
-//   4. Mark roundings   — "mark"/"topmark" + pos-of-sail at rounding time
-//   5. Primary manoeuvre — best event near clip midpoint (race-start > gybe > tack)
-//   6. Secondary events — all other event types + count tags
-//
 export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, offsetSec = 0) {
   const tags = [];
   if (!videoStartUtc) return tags;
@@ -231,7 +236,6 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
   const winEnd   = winStart + (durationSec || 0) * 1000;
   const midpoint = (winStart + winEnd) / 2;
 
-  // ── 1. Session context from XML meta ────────────────────────────────────────
   if (xmlData?.meta) {
     const { boat, location, dayType } = xmlData.meta;
     if (boat)     tags.push(boat.toLowerCase().replace(/\s+/g, "-"));
@@ -239,7 +243,6 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
     if (dayType)  tags.push(dayType.toLowerCase().replace(/\s+/g, "-"));
   }
 
-  // ── 2. Instrument tags ──────────────────────────────────────────────────────
   const posOfSail = twa => {
     const a = Math.abs(twa);
     return a < 60 ? "upwind" : a < 110 ? "reach" : "downwind";
@@ -266,55 +269,37 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
 
   const BUFFER_MS = 60_000;
 
-  // ── 3. Sails — union of all sails active during the clip ─────────────────────
-  // Strategy:
-  //   a) The config IN EFFECT at clip start = most recent SailsUp with utc <= winStart
-  //   b) Any SailsUp events DURING the clip may add new sails
-  //   c) Take the union so all sails seen during the clip are tagged
   {
-    const allSailEvents = xmlData.sailsUpEvents || [];
+    const allSailEvents = xmlData.sailsUpEvents || xmlData.sailsUp || [];
     const activeSails   = new Set();
-
-    // Config at clip start: last SailsUp before or at winStart
     const beforeClip = allSailEvents
       .filter(s => s.utc <= winStart)
       .sort((a, b) => b.utc - a.utc)[0];
     if (beforeClip) beforeClip.sails.forEach(s => activeSails.add(s.trim().toLowerCase()));
-
-    // Any config changes during the clip
     allSailEvents
       .filter(s => s.utc > winStart && s.utc <= winEnd)
       .forEach(ev => ev.sails.forEach(s => activeSails.add(s.trim().toLowerCase())));
-
-    // If still nothing (e.g. all SailsUp events are AFTER clip start),
-    // fall back to the very first SailsUp anywhere in the session
     if (activeSails.size === 0) {
       const firstEver = allSailEvents.sort((a, b) => a.utc - b.utc)[0];
       if (firstEver) firstEver.sails.forEach(s => activeSails.add(s.trim().toLowerCase()));
     }
-
     activeSails.forEach(s => { if (s) tags.push(s); });
   }
 
-  // ── 4. Mark roundings in clip window ─────────────────────────────────────────
   const marks = (xmlData.markRoundings || []).filter(
     m => m.utc >= winStart - BUFFER_MS && m.utc <= winEnd + BUFFER_MS
   );
   for (const m of marks) {
     tags.push(m.isTop ? "topmark" : "mark");
-    // Point of sail at the rounding using nearest log row
     if (logData?.rows?.length) {
       const nearest = logData.rows.reduce((best, r) =>
         Math.abs(r.utc - m.utc) < Math.abs(best.utc - m.utc) ? r : best,
         logData.rows[0]
       );
-      if (Math.abs(nearest.utc - m.utc) < 300_000) {
-        tags.push(posOfSail(nearest.twa));
-      }
+      if (Math.abs(nearest.utc - m.utc) < 300_000) tags.push(posOfSail(nearest.twa));
     }
   }
 
-  // ── 5 & 6. Manoeuvre events ───────────────────────────────────────────────────
   const searchStart = winStart - BUFFER_MS;
   const searchEnd   = winEnd   + BUFFER_MS;
   const allEvents   = [];
@@ -340,9 +325,7 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
           ? b.priority - a.priority
           : Math.abs(a.utc - midpoint) - Math.abs(b.utc - midpoint)
       )[0];
-
     if (best) tags.push(best.tag);
-
     const inWin  = allEvents.filter(e => e.utc >= winStart && e.utc <= winEnd);
     const seen   = new Set([best?.tag]);
     const counts = {};
@@ -355,9 +338,7 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
     }
   }
 
-  // ── Race vs training ──────────────────────────────────────────────────────────
   tags.push((xmlData.raceGuns || []).length > 0 ? "race" : "training");
-
   return [...new Set(tags)];
 }
 
@@ -369,15 +350,13 @@ function detectCamera(filename) {
   return "Camera";
 }
 
-// ── Sync status helpers ───────────────────────────────────────────────────────
+// ── Sync status ───────────────────────────────────────────────────────────────
 export function getUnsyncedCount() {
   const sessions = getSessions();
   let count = 0;
   for (const s of sessions) {
-    // XML stays in localStorage
     const xml = s.hasXml ? lsGet(`ssa:xml:${s.date}`) : null;
     if (xml && !xml.synced) count++;
-    // Log synced flag is tracked in session index
     if (s.hasLog && !s.logSynced) count++;
   }
   return count;
@@ -389,43 +368,27 @@ export function markSynced(date, type) {
   if (data) { data.synced = true; lsSet(key, data); }
 }
 
-// Alias used by UI after cloud sync completes
 export function markCloudSynced(date) {
   markSynced(date, "log");
   markSynced(date, "xml");
-  // Mark session as cloud-synced in the index
   const sessions = getSessions();
   const idx = sessions.findIndex(s => s.date === date);
   if (idx >= 0) { sessions[idx].cloudSynced = true; lsSet("ssa:sessions", sessions); }
 }
 
-// ── Session tag list — persisted, user-editable, seeded from sailsUsed ────────
-// Keyed by session date so each day has its own vocabulary.
-export function getTagList(date) {
-  return lsGet(`ssa:taglist:${date}`) || [];
-}
-
-export function saveTagList(date, list) {
-  lsSet(`ssa:taglist:${date}`, [...new Set(list.filter(Boolean))].sort());
-}
-
+// ── Session tag list ──────────────────────────────────────────────────────────
+export function getTagList(date)       { return lsGet(`ssa:taglist:${date}`) || []; }
+export function saveTagList(date, list){ lsSet(`ssa:taglist:${date}`, [...new Set(list.filter(Boolean))].sort()); }
 export function mergeTagList(date, newTags) {
-  const existing = getTagList(date);
-  saveTagList(date, [...existing, ...newTags]);
+  saveTagList(date, [...getTagList(date), ...newTags]);
   return getTagList(date);
 }
+
+// ── Sync offsets ──────────────────────────────────────────────────────────────
 const OFFSET_KEY = "ssa:syncOffsets";
-
-export function getSyncOffsets() {
-  return lsGet(OFFSET_KEY) || {};
-}
-
-export function saveSyncOffset(videoId, offsetSeconds) {
-  const offsets = getSyncOffsets();
-  if (offsetSeconds === 0) {
-    delete offsets[videoId];
-  } else {
-    offsets[videoId] = offsetSeconds;
-  }
-  lsSet(OFFSET_KEY, offsets);
+export function getSyncOffsets()              { return lsGet(OFFSET_KEY) || {}; }
+export function saveSyncOffset(videoId, secs) {
+  const o = getSyncOffsets();
+  if (secs === 0) delete o[videoId]; else o[videoId] = secs;
+  lsSet(OFFSET_KEY, o);
 }

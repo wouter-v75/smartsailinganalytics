@@ -692,7 +692,7 @@ function UploadTab({role,cloudStatus,onImported}){
     addLog(`Saving session ${fmtDate(date)} to local storage…`);
     if(csvParsed){await saveLogData(date,csvParsed.rows,csvFile.name,csvParsed.startUtc,csvParsed.endUtc,csvTz);addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows)`);}
     if(xmlParsed){
-      saveXmlData(date,xmlParsed,xmlFile.name);
+      await saveXmlData(date,xmlParsed,xmlFile.name);
       if(xmlParsed.meta?.sailsUsed?.length){mergeTagList(date, xmlParsed.meta.sailsUsed.map(s=>s.toLowerCase()));addLog(`✓ Events saved · ${xmlParsed.meta.sailsUsed.length} sails in tag list`);}
       else{addLog("✓ Events saved");}
     }
@@ -713,7 +713,7 @@ function UploadTab({role,cloudStatus,onImported}){
     if(!cloudStatus?.available||!perms.canSync||!savedDate)return;
     setPhase("syncing");addLog("Starting Bunny Storage + Stream upload…");
     savedVids.forEach(v=>setStreamStatus(p=>({...p,[v.id]:{state:"queued"}})));
-    await syncSessionToCloud(savedDate,await getLogData(savedDate),getXmlData(savedDate),savedVids,msg=>{
+    await syncSessionToCloud(savedDate,await getLogData(savedDate),await getXmlData(savedDate),savedVids,msg=>{
       addLog(msg);
       const match=msg.match(/Stream \(([a-f0-9]+)\)/);
       if(match){const sid=match[1];const vid=savedVids.find(v=>v.name&&msg.includes(v.name));if(vid)setStreamStatus(p=>({...p,[vid.id]:{state:"processing",streamId:sid}}));}
@@ -1259,52 +1259,64 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         .bindTooltip(`Day end  ${new Date(last.utc).toISOString().slice(11,16)} UTC`).addTo(map);
 
       if(xmlData){
+        // Safe UTC → "HH:MM" string — never throws, even on NaN/null
+        const fmtU = utc => {
+          try { const d=new Date(utc); return isNaN(d)?'--:--':d.toISOString().slice(11,16); } catch { return '--:--'; }
+        };
         const nearest = utc => filteredRows.reduce((a,b)=>Math.abs(b.utc-utc)<Math.abs(a.utc-utc)?b:a, filteredRows[0]);
 
         // ── Mark roundings ─────────────────────────────────────────────────
         for(const m of (xmlData.markRoundings||[])){
-          const nr=nearest(m.utc);
-          if(Math.abs(nr.utc-m.utc)>120000) continue;
-          L.circleMarker([nr.lat,nr.lon],{
-            radius:10, fillColor:m.isTop?"#EF4444":"#8B5CF6",
-            color:'#030F1A', weight:2, fillOpacity: m.isValid===false?0.3:1,
-          }).bindTooltip(`${m.label}${m.isValid===false?' (invalid)':''} · ${new Date(m.utc).toISOString().slice(11,16)}`).addTo(map);
-          L.marker([nr.lat,nr.lon],{
-            icon: L.divIcon({className:'',iconSize:[0,0],iconAnchor:[-5,-12],
-              html:`<span style="font-size:9px;font-weight:700;color:#fff;text-shadow:0 0 3px #000">${m.isTop?'▲':'▽'}</span>`})
-          }).addTo(map);
+          try {
+            const nr=nearest(m.utc);
+            if(Math.abs(nr.utc-m.utc)>120000) continue;
+            L.circleMarker([nr.lat,nr.lon],{
+              radius:10, fillColor:m.isTop?"#EF4444":"#8B5CF6",
+              color:'#030F1A', weight:2, fillOpacity: m.isValid===false?0.3:1,
+            }).bindTooltip(`${m.label||'Mark'}${m.isValid===false?' (invalid)':''} · ${fmtU(m.utc)}`).addTo(map);
+            L.marker([nr.lat,nr.lon],{
+              icon: L.divIcon({className:'',iconSize:[0,0],iconAnchor:[-5,-12],
+                html:`<span style="font-size:9px;font-weight:700;color:#fff;text-shadow:0 0 3px #000">${m.isTop?'▲':'▽'}</span>`})
+            }).addTo(map);
+          } catch(e) { console.warn('GPSTrackMap mark error',e); }
         }
 
         // ── Race guns ─────────────────────────────────────────────────────
         for(const g of (xmlData.raceGuns||[])){
-          const nr=nearest(g.utc);
-          if(Math.abs(nr.utc-g.utc)>120000) continue;
-          L.circleMarker([nr.lat,nr.lon],{radius:10,fillColor:'#EF4444',color:'#fff',weight:2,fillOpacity:1})
-            .bindTooltip(`${g.label} · ${new Date(g.utc).toISOString().slice(11,16)}`).addTo(map);
+          try {
+            const nr=nearest(g.utc);
+            if(Math.abs(nr.utc-g.utc)>120000) continue;
+            L.circleMarker([nr.lat,nr.lon],{radius:10,fillColor:'#EF4444',color:'#fff',weight:2,fillOpacity:1})
+              .bindTooltip(`${g.label||'Gun'} · ${fmtU(g.utc)}`).addTo(map);
+          } catch(e) { console.warn('GPSTrackMap gun error',e); }
         }
 
         // ── Valid tacks (green) & gybes (violet) ──────────────────────────
         for(const tj of (xmlData.tackJibes||[])){
-          const nr=nearest(tj.utc);
-          if(Math.abs(nr.utc-tj.utc)>60000) continue;
-          L.circleMarker([nr.lat,nr.lon],{
-            radius: tj.isValid===false ? 3 : 5,
-            fillColor: tj.isTack ? '#1D9E75' : '#7F77DD',
-            color:'transparent',
-            fillOpacity: tj.isValid===false ? 0.25 : 0.85,
-          }).bindTooltip(`${tj.label}${tj.isValid===false?' (invalid)':''} · ${new Date(tj.utc).toISOString().slice(11,16)}`).addTo(map);
+          try {
+            const nr=nearest(tj.utc);
+            if(Math.abs(nr.utc-tj.utc)>60000) continue;
+            L.circleMarker([nr.lat,nr.lon],{
+              radius: tj.isValid===false ? 3 : 5,
+              fillColor: tj.isTack ? '#1D9E75' : '#7F77DD',
+              color:'transparent',
+              fillOpacity: tj.isValid===false ? 0.25 : 0.85,
+            }).bindTooltip(`${tj.label||'T/G'}${tj.isValid===false?' (invalid)':''} · ${fmtU(tj.utc)}`).addTo(map);
+          } catch(e) { console.warn('GPSTrackMap tack/gybe error',e); }
         }
 
         // ── Sail change events (orange label chips) ───────────────────────
         for(const se of (xmlData.sailsUpEvents||[])){
-          const nr=nearest(se.utc);
-          if(Math.abs(nr.utc-se.utc)>120000) continue;
-          L.marker([nr.lat,nr.lon],{
-            icon: L.divIcon({
-              className:'', iconSize:[0,0], iconAnchor:[0,0],
-              html:`<div style="background:#F59E0B;border:1.5px solid #030F1A;border-radius:3px;padding:1px 4px;font-size:8px;font-weight:700;color:#000;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis">${se.sails.slice(0,2).join('·')}</div>`
-            })
-          }).bindTooltip(`${se.label} · ${new Date(se.utc).toISOString().slice(11,16)}`).addTo(map);
+          try {
+            const nr=nearest(se.utc);
+            if(Math.abs(nr.utc-se.utc)>120000) continue;
+            L.marker([nr.lat,nr.lon],{
+              icon: L.divIcon({
+                className:'', iconSize:[0,0], iconAnchor:[0,0],
+                html:`<div style="background:#F59E0B;border:1.5px solid #030F1A;border-radius:3px;padding:1px 4px;font-size:8px;font-weight:700;color:#000;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis">${(se.sails||[]).slice(0,2).join('·')||'Sail'}</div>`
+              })
+            }).bindTooltip(`${se.label||'Sail change'} · ${fmtU(se.utc)}`).addTo(map);
+          } catch(e) { console.warn('GPSTrackMap sail event error',e); }
         }
       }
 
@@ -1442,6 +1454,15 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
         <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
           <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0"}}>Analytics</div>
           {logData&&<span style={{fontSize:10,color:logData.source==="local"?"#1D9E75":"#8B5CF6",background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,borderRadius:3,padding:"2px 7px"}}>{logData.source==="local"?"● Local":"● Cloud"} log · {rows.length.toLocaleString()} rows · {durationH.toFixed(1)}h · {fmtDate(activeDate)}</span>}
+          {xmlData ? (
+            <span style={{fontSize:10,color:"#8B5CF6",background:"#8B5CF610",border:"1px solid #8B5CF630",borderRadius:3,padding:"2px 7px"}}>
+              ● Events · {(xmlData.tackJibes||[]).length} T/G · {(xmlData.markRoundings||[]).length} marks · {(xmlData.raceGuns||[]).length} guns · {(xmlData.sailsUpEvents||[]).length} sail chg
+            </span>
+          ) : (
+            <span style={{fontSize:10,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px"}}>
+              ⚠ No event file — select session in Library or re-import XML
+            </span>
+          )}
           {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — select a session in Library</span>}
           <div style={{flex:1}}/>
           <button onClick={()=>setActiveTab("library")} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:5,padding:"3px 10px",color:"#475569",cursor:"pointer",fontSize:10}}>← Library</button>
@@ -1605,7 +1626,7 @@ export default function SmartSailingAnalytics(){
       if(enriched.length>0)setSelectedVideo(enriched[0]);
       const latestDate=localSessions[0]?.date||today;
       const latestLog=await getLogData(latestDate);
-      const latestXml=getXmlData(latestDate);
+      const latestXml=await getXmlData(latestDate);
       if(latestLog){setLogData({...latestLog,source:"local"});setSessionTzOffset(latestLog.tzOffset??DEFAULT_TZ);}
       if(latestXml)setXmlData({...latestXml,source:"local"});
       setActiveDate(latestDate);
@@ -1626,7 +1647,7 @@ export default function SmartSailingAnalytics(){
 
   async function loadDate(date){
     setActiveDate(date);
-    const localLog=await getLogData(date);const localXml=getXmlData(date);
+    const localLog=await getLogData(date);const localXml=await getXmlData(date);
     if(localLog){setLogData({...localLog,source:"local"});setSessionTzOffset(localLog.tzOffset??DEFAULT_TZ);}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);setLogData(r2?.logData?{...r2.logData,source:"cloud"}:null);}
     else setLogData(null);
