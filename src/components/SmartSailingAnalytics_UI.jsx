@@ -77,8 +77,44 @@ function expToUtc(ds,ts,offsetMin=0){
   return Date.UTC(yr,m-1,d,h,mn,sc) - offsetMin*60000;
 }
 function parseCsvLog(text,offsetMin=0){
-  const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());const rows=[];
-  for(let i=1;i<lines.length;i++){const c=lines[i].split(",");if(c.length<27)continue;const bsp=parseFloat(c[4])||0,tws=parseFloat(c[12])||0;if(bsp<0.05&&tws<0.3)continue;const ds=c[1]?.trim(),ts=c[2]?.trim();if(!ds?.includes("/")||!ts?.includes(":"))continue;const utc=expToUtc(ds,ts,offsetMin);if(isNaN(utc))continue;const pos=parseNmea(c[0]);rows.push({utc,lat:pos.lat,lon:pos.lon,heel:parseFloat(c[3])||0,bsp,twa:parseFloat(c[11])||0,tws,sog:parseFloat(c[20])||0,vmg:parseFloat(c[19])||0,vsTargPct:parseFloat(c[23])||0,vsPerfPct:parseFloat(c[26])||0,rudder:parseFloat(c[52])||0});}
+  const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
+  const rows=[];
+  for(let i=1;i<lines.length;i++){
+    const c=lines[i].split(",");
+    if(c.length<57)continue; // need at least up to Rudder (col 56)
+    const bsp=parseFloat(c[4])||0, tws=parseFloat(c[12])||0;
+    if(bsp<0.05&&tws<0.3)continue;
+    const ds=c[1]?.trim(), ts=c[2]?.trim();
+    if(!ds?.includes("/")||!ts?.includes(":"))continue;
+    const utc=expToUtc(ds,ts,offsetMin);
+    if(isNaN(utc))continue;
+    const pos=parseNmea(c[0]);
+
+    // Starting data — null if zero/missing (Expedition outputs 0 when not applicable)
+    const dstLine = parseFloat(c[29])||null;  // nm, null when not on start line
+    const tmLine  = parseFloat(c[30])||null;  // seconds to line
+    const ttbPort = parseFloat(c[50])||null;  // time to burn, port approach
+    const ttbStbd = parseFloat(c[51])||null;  // time to burn, stbd approach
+    const ttbPin  = parseFloat(c[52])||null;  // time to burn, pin end
+    const ttbCB   = parseFloat(c[53])||null;  // time to burn, committee boat end
+    const timer1  = isNaN(parseFloat(c[55])) ? null : parseFloat(c[55]); // race timer (s); 0 = exactly at gun
+
+    rows.push({
+      utc, lat:pos.lat, lon:pos.lon,
+      heel:  parseFloat(c[3])||0,
+      bsp,
+      awa:   parseFloat(c[5])||0,   // AW_angle — apparent wind angle directly from log
+      twa:   parseFloat(c[11])||0,
+      tws,
+      sog:   parseFloat(c[20])||0,
+      vmg:   parseFloat(c[19])||0,
+      vsTargPct: parseFloat(c[23])||0,
+      vsPerfPct: parseFloat(c[26])||0,
+      dstLine, tmLine, ttbPort, ttbStbd, ttbPin, ttbCB, timer1,
+      rudder:parseFloat(c[56])||0,  // col 56 — was incorrectly at col 52
+      yawR:  parseFloat(c[41])||0,
+    });
+  }
   return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};
 }
 
@@ -156,8 +192,25 @@ function parseXmlEvents(text,offsetMin=0){
     color:  ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD",
   }));
 
-  console.log(`[parseXmlEvents] events:${byTag("event").length} sailsUp:${sailsUpEvents.length} guns:${raceGuns.length} marks:${markRoundings.length} T/G:${tackJibes.length}`);
-  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc};
+  // ── Start lines — matched by race number from mark names (S7/P7 → race 7) ──
+  const startLines={};
+  for(const m of byTag("mark")){
+    const mtype=ga(m,"marktype");
+    if(mtype!=="StartBoat"&&mtype!=="StartPin") continue;
+    const name=ga(m,"name");
+    const lat=parseFloat(ga(m,"lat")); const lon=parseFloat(ga(m,"lon"));
+    if(isNaN(lat)||isNaN(lon)) continue;
+    const nm=name.match(/(\d+)$/); const rn=nm?parseInt(nm[1]):0;
+    if(!startLines[rn]) startLines[rn]={};
+    if(mtype==="StartPin")  startLines[rn].pin ={lat,lon,name};
+    if(mtype==="StartBoat") startLines[rn].boat={lat,lon,name};
+  }
+  const startLineList=Object.entries(startLines)
+    .map(([rn,{pin,boat}])=>({raceNum:parseInt(rn),pin,boat}))
+    .filter(sl=>sl.pin&&sl.boat);
+
+  console.log(`[parseXmlEvents] events:${byTag("event").length} sailsUp:${sailsUpEvents.length} guns:${raceGuns.length} marks:${markRoundings.length} T/G:${tackJibes.length} startLines:${startLineList.length}`);
+  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc,startLines:startLineList};
 }
 
 // ─── POLAR (see src/lib/polarCalc.js) ──────────────────────────────────────
@@ -198,7 +251,63 @@ function enrichVideo(v,log){
 }
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
-function Gauge({label,value,unit,color="#06B6D4"}){return<div style={{background:"rgba(0,0,0,0.75)",border:`1px solid ${color}40`,borderRadius:7,padding:"7px 11px",minWidth:76}}><div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:2}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"'Courier New',monospace",lineHeight:1}}>{value}</div><div style={{fontSize:10,color:"#475569",marginTop:1}}>{unit}</div></div>;}
+function Gauge({label,value,unit,color="#06B6D4",size="md",highlight=false}){
+  const fs=size==="lg"?28:size==="sm"?16:22;
+  return(
+    <div style={{background:highlight?"rgba(239,68,68,0.18)":"rgba(0,0,0,0.75)",border:`1px solid ${highlight?"#EF4444":color}40`,borderRadius:7,padding:size==="sm"?"5px 9px":"7px 11px",minWidth:size==="lg"?90:size==="sm"?58:76}}>
+      <div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:2}}>{label}</div>
+      <div style={{fontSize:fs,fontWeight:700,color:highlight?"#EF4444":color,fontFamily:"'Courier New',monospace",lineHeight:1}}>{value}</div>
+      <div style={{fontSize:10,color:"#475569",marginTop:1}}>{unit}</div>
+    </div>
+  );
+}
+
+// Compute mode from video tags — determines which instrument overlay to show
+function getVideoMode(tags){
+  if(!tags?.length) return "upwind";
+  if(tags.includes("race-start")) return "start";
+  if(tags.includes("reach"))      return "reach";
+  if(tags.includes("upwind")||tags.includes("downwind")) return "upwind";
+  return "upwind";
+}
+
+// Apparent wind angle from true wind angle, true wind speed, boat speed
+function calcAWA(twa,tws,bsp){
+  if(twa==null||!tws||!bsp) return null;
+  const absA=Math.abs(twa)*Math.PI/180;
+  const fwd=bsp+tws*Math.cos(absA);
+  const lat=tws*Math.sin(absA);
+  const deg=Math.atan2(lat,fwd)*180/Math.PI;
+  return twa<0?-deg:deg;
+}
+
+// Perpendicular (signed) distance from point to start line in metres.
+// Positive = boat is on the pre-start side (has not crossed).
+// Negative = boat is over the line (OCS).
+// The "pre-start" side is determined by which side the wind comes from — we use
+// the fact that the course is upwind: the boat should approach from downwind,
+// so we check if the boat is on the downwind side of the line.
+function perpDistToLine(lat,lon,pin,boat){
+  if(!pin||!boat) return null;
+  const latRef=(pin.lat+boat.lat)/2;
+  const mLat=111319;
+  const mLon=111319*Math.cos(latRef*Math.PI/180);
+  const ax=0, ay=0;
+  const bx=(boat.lon-pin.lon)*mLon, by=(boat.lat-pin.lat)*mLat;
+  const cx=(lon-pin.lon)*mLon,       cy=(lat-pin.lat)*mLat;
+  const len=Math.sqrt(bx*bx+by*by);
+  if(len<1) return null;
+  // Signed cross product: positive = left of pin→boat vector (pre-start side
+  // when line runs roughly E-W and course is south / downwind is south)
+  return (bx*cy-by*cx)/len;
+}
+
+// Extract boat length in metres from name — e.g. "NORTHSTAR72" → 72 ft → 21.9 m
+function extractBoatLengthM(boatName){
+  const m=(boatName||"").match(/(\d+)/);
+  if(m){const n=parseInt(m[1]);if(n>=20&&n<=150)return n*0.3048;}
+  return 12; // fallback ~40 ft
+}
 
 function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc}){
   const vidRef=useRef(null),hlsRef=useRef(null);
@@ -206,7 +315,10 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const[playing,setPlaying]=useState(false);
   const[dur,setDur]=useState(video.duration||0);
   const isHls=video.source==="cloud"||video.objectUrl?.includes(".m3u8");
-  const lastUtcEmit=useRef(0); // throttle playUtc updates
+  const lastUtcEmit=useRef(0);
+
+  // Load polar for target BSP calculation
+  const polar=useMemo(()=>loadPolarFromLS(),[]);
 
   useEffect(()=>{
     if(!vidRef.current||!video.objectUrl)return;
@@ -226,14 +338,13 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     return()=>{if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}};
   },[video.id,video.objectUrl]);
 
-  // Emit current UTC to parent for GPS+chart sync — throttled to ~12 fps
-  const emitUtc = useCallback((t)=>{
-    if(!onPlayUtc || !video.startUtc) return;
-    const now = performance.now();
-    if(now - lastUtcEmit.current < 80) return;
-    lastUtcEmit.current = now;
-    onPlayUtc(video.startUtc + (t + (syncOffset||0)) * 1000);
-  },[onPlayUtc, video.startUtc, syncOffset]);
+  const emitUtc=useCallback((t)=>{
+    if(!onPlayUtc||!video.startUtc)return;
+    const now=performance.now();
+    if(now-lastUtcEmit.current<80)return;
+    lastUtcEmit.current=now;
+    onPlayUtc(video.startUtc+(t+(syncOffset||0))*1000);
+  },[onPlayUtc,video.startUtc,syncOffset]);
 
   const logUtc=video.startUtc?video.startUtc+(curTime+(syncOffset||0))*1000:0;
   const row=logData&&logUtc?nearestRow(logData.rows,logUtc):null;
@@ -242,21 +353,159 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const pct=dur>0?(curTime/dur)*100:0;
   const onUpdate=()=>{
     if(vidRef.current){
-      const t = vidRef.current.currentTime;
-      setCurTime(t);
-      setPlaying(!vidRef.current.paused);
-      emitUtc(t);
+      const t=vidRef.current.currentTime;
+      setCurTime(t);setPlaying(!vidRef.current.paused);emitUtc(t);
     }
   };
   const seek=e=>{
     const r=e.currentTarget.getBoundingClientRect();
     if(vidRef.current){
-      const t = ((e.clientX-r.left)/r.width)*dur;
+      const t=((e.clientX-r.left)/r.width)*dur;
       vidRef.current.currentTime=t;
-      // Emit immediately on seek (bypass throttle)
-      if(onPlayUtc && video.startUtc) onPlayUtc(video.startUtc+(t+(syncOffset||0))*1000);
+      if(onPlayUtc&&video.startUtc)onPlayUtc(video.startUtc+(t+(syncOffset||0))*1000);
     }
   };
+
+  // ── Mode-specific overlay ───────────────────────────────────────────────────
+  const mode=getVideoMode(video.tags);
+
+  // Pre-compute derived values
+  const targBsp  = (polar && row) ? polarInterp(polar, row.tws, Math.abs(row.twa||0)) : null;
+  const polPct   = (polar && row) ? polarPerf(polar, row.bsp, row.twa, row.tws)?.pct : null;
+
+  // ── Starting instruments — all values preferably from log columns ────────────
+  const guns       = xmlData?.raceGuns||[];
+  const startLines = xmlData?.startLines||[];
+  const boatLenM   = extractBoatLengthM(xmlData?.meta?.boat);
+
+  // GUN countdown — prefer Timer-1 from log (col 55), fall back to event UTC diff
+  const timerFromLog = row?.timer1;  // seconds; positive=before gun, 0=gun, negative=after
+  const nearestGun = guns.length&&logUtc
+    ? guns.filter(g=>Math.abs(g.utc-logUtc)<600000)
+          .sort((a,b)=>Math.abs(a.utc-logUtc)-Math.abs(b.utc-logUtc))[0]||null
+    : null;
+  const secToGunFallback = nearestGun ? Math.round((nearestGun.utc-logUtc)/1000) : null;
+  const secToGun   = timerFromLog ?? secToGunFallback;
+  const gunActive  = secToGun!=null;
+  const gunSrc     = timerFromLog!=null ? "log" : "event";  // for debugging
+
+  // DISTANCE TO LINE — from log DST_LINE (col 29, nautical miles)
+  // Positive = pre-start (haven't crossed), negative = OCS
+  // Fall back to GPS geometry only if log value absent
+  const dstLineNm  = (row?.dstLine!=null&&!isNaN(row.dstLine)) ? row.dstLine : null;
+  const activeLine = nearestGun
+    ? startLines.find(sl=>sl.raceNum===nearestGun.raceNum)||startLines[0]||null
+    : startLines[0]||null;
+  const distMGeom  = (!dstLineNm&&activeLine&&row?.lat&&row?.lon)
+    ? perpDistToLine(row.lat,row.lon,activeLine.pin,activeLine.boat) : null;
+  const distBL     = dstLineNm!=null
+    ? dstLineNm*1852/boatLenM
+    : (distMGeom!=null ? distMGeom/boatLenM : null);
+  const lineSrc    = dstLineNm!=null ? "log" : (distMGeom!=null ? "gps" : null);
+
+  // TIME TO LINE — from log TM_LINE (col 30, seconds)
+  const tmLine = (row?.tmLine!=null&&!isNaN(row.tmLine)&&row.tmLine>0) ? row.tmLine : null;
+
+  // TIME TO BURN — priority:
+  //   1. TTB_Port / TTB_Stbd from log (cols 50/51) — Expedition computes these directly
+  //   2. Calculated: timer1 − tmLine (as requested)
+  //   3. Calculated: secToGun − tmLine
+  const onPort = (row?.twa||0) < 0;
+  const ttbPort = (row?.ttbPort!=null&&!isNaN(row.ttbPort)&&row.ttbPort!==0) ? row.ttbPort : null;
+  const ttbStbd = (row?.ttbStbd!=null&&!isNaN(row.ttbStbd)&&row.ttbStbd!==0) ? row.ttbStbd : null;
+  const ttbLogDirect = onPort ? ttbPort : ttbStbd;        // tack-appropriate TTB from log
+  const ttbCalc = (secToGun!=null&&tmLine!=null) ? secToGun-tmLine : null;
+  const timeToBurn = ttbLogDirect ?? ttbCalc;
+  const burnSrc    = ttbLogDirect!=null ? "log" : (ttbCalc!=null ? "calc" : null);
+  // Also always compute both for display
+  const ttbPortFmt = ttbPort!=null ? ttbPort : (onPort ? ttbCalc : null);
+  const ttbStbdFmt = ttbStbd!=null ? ttbStbd : (!onPort ? ttbCalc : null);
+
+  // Formatters
+  const fmtGun = s=>{
+    if(s==null) return "--:--";
+    const abs=Math.abs(s);
+    return`${s>0?"-":"+"}${String(Math.floor(abs/60)).padStart(2,"0")}:${String(Math.floor(abs)%60).padStart(2,"0")}`;
+  };
+  const fmtBurn = s=>{
+    if(s==null) return "--:--";
+    const abs=Math.abs(s);
+    return`${s>0?"+":"-"}${String(Math.floor(abs/60)).padStart(2,"0")}:${String(Math.floor(abs)%60).padStart(2,"0")}`;
+  };
+  const fmtDist = d=>{
+    if(d==null) return "--";
+    return`${d<0?"OCS ":""}${Math.abs(d).toFixed(1)}`;
+  };
+
+  const overlay=row&&(()=>{
+    if(mode==="start") return(
+      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        {/* GUN — race timer */}
+        <Gauge label="GUN"
+               value={gunActive?fmtGun(secToGun):"--:--"}
+               unit={secToGun==null?"":secToGun>0?"to start":"after gun"}
+               color="#EF4444" size="lg"
+               highlight={gunActive&&secToGun!=null&&secToGun>0&&secToGun<=60}/>
+        {/* DIST TO LINE */}
+        <Gauge label="LINE"
+               value={fmtDist(distBL)}
+               unit={distBL==null?"BL":`BL · ${lineSrc||""}`}
+               color={distBL!=null&&distBL<0?"#EF4444":"#F59E0B"} size="lg"
+               highlight={distBL!=null&&distBL<0}/>
+        {/* TIME TO BURN — port */}
+        <Gauge label="TTB PORT"
+               value={ttbPortFmt!=null?fmtBurn(ttbPortFmt):"--:--"}
+               unit={ttbPortFmt==null?"":ttbPortFmt>0?"early":"late"}
+               color={ttbPortFmt!=null&&ttbPortFmt<0?"#EF4444":"#10B981"} size="lg"
+               highlight={ttbPortFmt!=null&&ttbPortFmt<-10}/>
+        {/* TIME TO BURN — stbd */}
+        <Gauge label="TTB STBD"
+               value={ttbStbdFmt!=null?fmtBurn(ttbStbdFmt):"--:--"}
+               unit={ttbStbdFmt==null?"":ttbStbdFmt>0?"early":"late"}
+               color={ttbStbdFmt!=null&&ttbStbdFmt<0?"#EF4444":"#10B981"} size="lg"
+               highlight={ttbStbdFmt!=null&&ttbStbdFmt<-10}/>
+        {/* Secondary */}
+        <Gauge label="BSP"  value={R(row.bsp)}         unit="kn"   color="#10B981" size="sm"/>
+        <Gauge label="SOG"  value={R(row.sog)}         unit="kn"   color="#34D399" size="sm"/>
+        <Gauge label="TWS"  value={R(row.tws)}         unit="kn"   color="#06B6D4" size="sm"/>
+        <Gauge label="TWA"  value={`${R(row.twa,0)}°`} unit="true" color="#8B5CF6" size="sm"/>
+        <Gauge label="Heel" value={`${R(row.heel,0)}°`}unit="°"    color="#F59E0B" size="sm"/>
+      </div>
+    );
+    if(mode==="reach") return(
+      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        <Gauge label="BSP"     value={R(row.bsp)}                          unit="kn"       color="#10B981"/>
+        <Gauge label="Polar %" value={polPct!=null?R(polPct,0)+"%":"--"}   unit="vs polar" color="#F59E0B"/>
+        <Gauge label="Tgt BSP" value={targBsp!=null?R(targBsp):"--"}       unit="kn"       color="#34D399" size="sm"/>
+        <Gauge label="TWA"     value={`${R(row.twa,0)}°`}                  unit="true"     color="#8B5CF6" size="sm"/>
+        <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"       color="#06B6D4" size="sm"/>
+        <Gauge label="AWA"     value={`${R(row.awa,0)}°`}                  unit="app"      color="#A78BFA" size="sm"/>
+        <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"        color="#F59E0B" size="sm"/>
+      </div>
+    );
+    // default: upwind / downwind
+    return(
+      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        <Gauge label="BSP"     value={R(row.bsp)}                          unit="kn"   color="#10B981"/>
+        <Gauge label="Tgt BSP" value={targBsp!=null?R(targBsp):"--"}       unit="kn"   color="#34D399" size="sm"/>
+        <Gauge label="VMG"     value={R(row.vmg)}                          unit="kn"   color="#22C55E" size="sm"/>
+        <Gauge label="TWA"     value={`${R(row.twa,0)}°`}                  unit="true" color="#8B5CF6" size="sm"/>
+        <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"   color="#06B6D4" size="sm"/>
+        <Gauge label="AWA"     value={`${R(row.awa,0)}°`}                  unit="app"  color="#A78BFA" size="sm"/>
+        <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"    color="#F59E0B" size="sm"/>
+      </div>
+    );
+  })();
+
+  // Mode label badge
+  const modeBadge=row&&(
+    <div style={{position:"absolute",top:10,right:upcoming.length>0?10:10,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+      <div style={{background:"rgba(0,0,0,0.7)",border:`1px solid ${mode==="start"?"#EF4444":mode==="reach"?"#8B5CF6":"#06B6D4"}40`,borderRadius:4,padding:"2px 7px",fontSize:8,color:mode==="start"?"#EF4444":mode==="reach"?"#A78BFA":"#06B6D4",fontWeight:700,letterSpacing:1}}>
+        {mode==="start"?"⚑ START":mode==="reach"?"↗ REACH":"⬆ UPWIND/DWN"}
+      </div>
+      {upcoming.map((m,i)=><div key={i} style={{background:"rgba(0,0,0,0.8)",borderRadius:5,padding:"3px 7px",fontSize:10,color:m.color,border:`1px solid ${m.color}40`}}>{m.label} in {Math.round(m.vidSec-curTime)}s</div>)}
+    </div>
+  );
 
   return(
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
@@ -265,8 +514,8 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
          video.source==="processing"?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
-        {row&&<div style={{position:"absolute",top:10,left:10,display:"flex",gap:5}}><Gauge label="TWS" value={R(row.tws)} unit="kn" color="#06B6D4"/><Gauge label="TWA" value={`${R(row.twa,0)}°`} unit="true" color="#8B5CF6"/><Gauge label="BSP" value={R(row.bsp)} unit="kn" color="#10B981"/><Gauge label="Heel" value={`${R(row.heel,0)}°`} unit="°" color="#F59E0B"/></div>}
-        {upcoming.length>0&&<div style={{position:"absolute",top:10,right:10,display:"flex",flexDirection:"column",gap:4}}>{upcoming.map((m,i)=><div key={i} style={{background:"rgba(0,0,0,0.8)",borderRadius:5,padding:"3px 7px",fontSize:10,color:m.color,border:`1px solid ${m.color}40`}}>{m.label} in {Math.round(m.vidSec-curTime)}s</div>)}</div>}
+        {overlay&&<div style={{position:"absolute",top:10,left:10}}>{overlay}</div>}
+        {modeBadge}
         <div style={{position:"absolute",bottom:8,left:8}}><SrcBadge source={video.source||"local"}/></div>
         <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
       </div>
@@ -283,6 +532,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <button onClick={()=>{if(vidRef.current)vidRef.current.currentTime=0;}} style={{background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 9px",color:"#94A3B8",cursor:"pointer"}}>⏹</button>
         <div style={{flex:1}}/>
         {row&&<span style={{fontSize:10,color:"#1D9E75"}}>● live instruments</span>}
+        {!polar&&row&&<span style={{fontSize:9,color:"#475569"}}>· upload polar for target BSP</span>}
         {isHls&&<span style={{fontSize:9,color:"#8B5CF6"}}>HLS · Stream</span>}
       </div>
     </div>
