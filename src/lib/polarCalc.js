@@ -1,3 +1,4 @@
+'use client'
 // src/lib/polarCalc.js
 // ─────────────────────────────────────────────────────────────────────────────
 // Polar file parsing, spline interpolation, VMG target calculation and
