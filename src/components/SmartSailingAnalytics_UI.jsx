@@ -1219,6 +1219,202 @@ function AIChatPanel({rows, allVideos}){
   );
 }
 
+// ─── GPS TRACK MAP ────────────────────────────────────────────────────────────
+// Pure SVG, web-Mercator projection. No external map tile dependency.
+// Shows full-day GPS track, highlights the selected video's timeframe.
+// events overlay: marks, race guns, tacks/gybes as coloured dots.
+
+function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, width=540, height=420}){
+  if(!rows?.length) return null;
+
+  // Filter to rows that have valid GPS
+  const gpsRows = rows.filter(r=>r.lat&&r.lon&&Math.abs(r.lat)>0.1&&Math.abs(r.lon)>0.1);
+  if(gpsRows.length < 2) return(
+    <div style={{height:200,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>
+      No GPS data in log
+    </div>
+  );
+
+  // Web-Mercator helpers
+  const toMX = lon => lon;
+  const toMY = lat => Math.log(Math.tan(Math.PI/4 + lat*Math.PI/360));
+
+  const mxs = gpsRows.map(r=>toMX(r.lon));
+  const mys = gpsRows.map(r=>toMY(r.lat));
+  const mx0=Math.min(...mxs), mx1=Math.max(...mxs);
+  const my0=Math.min(...mys), my1=Math.max(...mys);
+
+  const pad = 24;
+  const W = width - pad*2, H = height - pad*2;
+  const scaleX = W / (mx1-mx0||0.001);
+  const scaleY = H / (my1-my0||0.001);
+  const scale  = Math.min(scaleX, scaleY);
+  // Centre the track
+  const offX = pad + (W - (mx1-mx0)*scale) / 2;
+  const offY = pad + (H - (my1-my0)*scale) / 2;
+
+  const sx = lon => offX + (toMX(lon)-mx0)*scale;
+  const sy = lat => offY + (my1-toMY(lat))*scale;  // flip Y
+
+  // Downsample full track for rendering (max 1500 points)
+  const trackStep = Math.max(1, Math.floor(gpsRows.length/1500));
+  const trackPts  = gpsRows.filter((_,i)=>i%trackStep===0);
+
+  // Video highlight window
+  const winStart = videoStartUtc ? videoStartUtc + (syncOffset||0)*1000 : null;
+  const winEnd   = winStart ? winStart + (videoDurationSec||0)*1000 : null;
+  const hlRows   = winStart ? gpsRows.filter(r=>r.utc>=winStart&&r.utc<=winEnd) : [];
+  const hlStep   = Math.max(1, Math.floor(hlRows.length/600));
+  const hlPts    = hlRows.filter((_,i)=>i%hlStep===0);
+
+  // Polyline path helpers
+  const toPath = pts => pts.length<2?"":pts.map((r,i)=>`${i===0?"M":"L"}${sx(r.lon).toFixed(1)},${sy(r.lat).toFixed(1)}`).join(" ");
+
+  // Events to overlay
+  const evDots = [];
+  if(xmlData){
+    for(const m of (xmlData.markRoundings||[]).filter(x=>x.isValid!==false)){
+      const nr=gpsRows.reduce((a,b)=>Math.abs(b.utc-m.utc)<Math.abs(a.utc-m.utc)?b:a,gpsRows[0]);
+      if(Math.abs(nr.utc-m.utc)<120000) evDots.push({lat:nr.lat,lon:nr.lon,color:m.isTop?"#EF4444":"#8B5CF6",label:m.isTop?"T":"G",r:6});
+    }
+    for(const g of (xmlData.raceGuns||[])){
+      const nr=gpsRows.reduce((a,b)=>Math.abs(b.utc-g.utc)<Math.abs(a.utc-g.utc)?b:a,gpsRows[0]);
+      if(Math.abs(nr.utc-g.utc)<120000) evDots.push({lat:nr.lat,lon:nr.lon,color:"#EF4444",label:"S",r:7});
+    }
+    for(const tj of (xmlData.tackJibes||[]).filter(x=>x.isValid!==false)){
+      const nr=gpsRows.reduce((a,b)=>Math.abs(b.utc-tj.utc)<Math.abs(a.utc-tj.utc)?b:a,gpsRows[0]);
+      if(Math.abs(nr.utc-tj.utc)<60000) evDots.push({lat:nr.lat,lon:nr.lon,color:tj.isTack?"#1D9E75":"#7F77DD",label:tj.isTack?"T":"G",r:4});
+    }
+  }
+
+  // Start/end markers
+  const start = gpsRows[0];
+  const end   = gpsRows[gpsRows.length-1];
+
+  // Distance estimate (haversine, km)
+  const haversine = (a,b) => {
+    const R=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLon=(b.lon-a.lon)*Math.PI/180;
+    const x=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLon/2)**2;
+    return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+  };
+  let distKm=0;
+  for(let i=1;i<gpsRows.length;i++) distKm+=haversine(gpsRows[i-1],gpsRows[i]);
+
+  const compassBearing = (a,b) => {
+    const dLon=(b.lon-a.lon)*Math.PI/180;
+    const y=Math.sin(dLon)*Math.cos(b.lat*Math.PI/180);
+    const x=Math.cos(a.lat*Math.PI/180)*Math.sin(b.lat*Math.PI/180)-Math.sin(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.cos(dLon);
+    return (Math.atan2(y,x)*180/Math.PI+360)%360;
+  };
+
+  // Scale bar: choose a nice round number of km
+  const mapKmWidth = haversine({lat:(gpsRows[0].lat+gpsRows[gpsRows.length-1].lat)/2, lon:mx0+(mx1-mx0)*0.0},
+                                {lat:(gpsRows[0].lat+gpsRows[gpsRows.length-1].lat)/2, lon:mx0+(mx1-mx0)*1.0}) * (W/((mx1-mx0)*scale)) * (mx1-mx0) * scale / W;
+  const lonToKm = lon => haversine({lat:gpsRows[0].lat,lon:mx0},{lat:gpsRows[0].lat,lon:mx0+lon});
+  const kmPerPx = lonToKm(mx1-mx0) / (W * scale / scaleX);
+
+  // Pick a nice scale bar length (0.5, 1, 2, 5 nm)
+  const nmPerPx = kmPerPx / 1.852;
+  const niceNm  = [0.25,0.5,1,2,5,10].find(n=>(n/nmPerPx)>30&&(n/nmPerPx)<W*0.35)||1;
+  const barPx   = niceNm / nmPerPx;
+
+  return(
+    <div>
+      <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{background:"#030A14",borderRadius:10,overflow:"hidden"}}>
+        {/* Background */}
+        <rect width={width} height={height} fill="#030A14"/>
+
+        {/* Graticule — subtle grid lines every ~0.5° */}
+        {Array.from({length:20},(_,i)=>{
+          const lon=Math.ceil(mx0*2)/2+i*0.5;
+          if(lon>mx1) return null;
+          const x=sx(lon);
+          return<line key={"gl"+i} x1={x} x2={x} y1={pad} y2={pad+H} stroke="#0A1929" strokeWidth="0.5"/>;
+        })}
+        {Array.from({length:20},(_,i)=>{
+          const lat=Math.ceil((gpsRows[0].lat-2)*2)/2+i*0.5;
+          if(lat>gpsRows[0].lat+2) return null;
+          const y=sy(lat);
+          if(y<pad||y>pad+H) return null;
+          return<line key={"gl2"+i} x1={pad} x2={pad+W} y1={y} y2={y} stroke="#0A1929" strokeWidth="0.5"/>;
+        })}
+
+        {/* Full day track — thin dim line */}
+        <path d={toPath(trackPts)} fill="none" stroke="#1E3A5A" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
+
+        {/* Video highlight — thicker bright line */}
+        {hlPts.length>1&&(
+          <path d={toPath(hlPts)} fill="none" stroke="#06B6D4" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" opacity="0.9"/>
+        )}
+
+        {/* Video highlight endpoints */}
+        {hlRows.length>0&&<>
+          <circle cx={sx(hlRows[0].lon)} cy={sy(hlRows[0].lat)} r="5" fill="#06B6D4" stroke="#030A14" strokeWidth="1.5"/>
+          <circle cx={sx(hlRows[hlRows.length-1].lon)} cy={sy(hlRows[hlRows.length-1].lat)} r="5" fill="#06B6D4" stroke="#030A14" strokeWidth="1.5"/>
+        </>}
+
+        {/* Tack/gybe dots */}
+        {evDots.filter(e=>e.r===4).map((e,i)=>(
+          <circle key={"tj"+i} cx={sx(e.lon)} cy={sy(e.lat)} r={e.r} fill={e.color} opacity="0.7"/>
+        ))}
+
+        {/* Mark & gun event dots with label */}
+        {evDots.filter(e=>e.r>4).map((e,i)=>(
+          <g key={"ev"+i}>
+            <circle cx={sx(e.lon)} cy={sy(e.lat)} r={e.r} fill={e.color} stroke="#030A14" strokeWidth="1.5"/>
+            <text x={sx(e.lon)} y={sy(e.lat)+3} textAnchor="middle" fontSize="7" fill="#fff" fontWeight="bold">{e.label}</text>
+          </g>
+        ))}
+
+        {/* Start / end dots */}
+        <circle cx={sx(start.lon)} cy={sy(start.lat)} r="5" fill="#1D9E75" stroke="#030A14" strokeWidth="1.5"/>
+        <text x={sx(start.lon)+7} y={sy(start.lat)+4} fontSize="8" fill="#1D9E75">start</text>
+        <circle cx={sx(end.lon)} cy={sy(end.lat)} r="5" fill="#F59E0B" stroke="#030A14" strokeWidth="1.5"/>
+        <text x={sx(end.lon)+7} y={sy(end.lat)+4} fontSize="8" fill="#F59E0B">end</text>
+
+        {/* North arrow */}
+        <g transform={`translate(${width-28},${pad+16})`}>
+          <line x1="0" y1="10" x2="0" y2="-10" stroke="#475569" strokeWidth="1.5"/>
+          <polygon points="0,-12 -4,-4 4,-4" fill="#475569"/>
+          <text x="0" y="20" textAnchor="middle" fontSize="8" fill="#475569">N</text>
+        </g>
+
+        {/* Scale bar */}
+        <g transform={`translate(${pad+4},${pad+H-14})`}>
+          <line x1="0" y1="0" x2={barPx} y2="0" stroke="#475569" strokeWidth="1.5"/>
+          <line x1="0" y1="-3" x2="0" y2="3" stroke="#475569" strokeWidth="1"/>
+          <line x1={barPx} y1="-3" x2={barPx} y2="3" stroke="#475569" strokeWidth="1"/>
+          <text x={barPx/2} y="-4" textAnchor="middle" fontSize="8" fill="#475569">{niceNm} nm</text>
+        </g>
+
+        {/* Border */}
+        <rect x={pad} y={pad} width={W} height={H} fill="none" stroke="#0F2030" strokeWidth="1"/>
+      </svg>
+
+      {/* Legend + stats row */}
+      <div style={{display:"flex",gap:16,marginTop:7,flexWrap:"wrap"}}>
+        <div style={{fontSize:10,color:"#334155"}}>
+          Distance: <span style={{color:"#06B6D4",fontFamily:"monospace"}}>{(distKm/1.852).toFixed(1)} nm</span>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span style={{display:"inline-block",width:24,height:3,background:"#1E3A5A",borderRadius:2,verticalAlign:"middle"}}/>
+          <span style={{fontSize:9,color:"#334155"}}>Full day</span>
+          <span style={{display:"inline-block",width:24,height:4,background:"#06B6D4",borderRadius:2,verticalAlign:"middle",marginLeft:8}}/>
+          <span style={{fontSize:9,color:"#06B6D4"}}>Video clip</span>
+          {evDots.some(e=>e.r>4)&&<>
+            <span style={{display:"inline-block",width:8,height:8,background:"#EF4444",borderRadius:"50%",verticalAlign:"middle",marginLeft:8}}/>
+            <span style={{fontSize:9,color:"#334155"}}>Mark / Start</span>
+          </>}
+          {evDots.some(e=>e.r===4)&&<>
+            <span style={{display:"inline-block",width:6,height:6,background:"#1D9E75",borderRadius:"50%",verticalAlign:"middle",marginLeft:8}}/>
+            <span style={{fontSize:9,color:"#334155"}}>Tack/Gybe</span>
+          </>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Main Analytics component
 function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate}){
   const [activeSession,setActiveSession]=useState(null); // null = use logData passed in
@@ -1322,6 +1518,19 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               {card("Polar %",vsPerfAvg?R(vsPerfAvg)+"%":"--","","#F59E0B")}
               {card("Target %",vsTargAvg?R(vsTargAvg)+"%":"--","","#EF4444")}
             </div>
+
+            {/* GPS track map */}
+            {section("GPS track",(
+              <GPSTrackMap
+                rows={rows}
+                videoStartUtc={selectedVideo?.startUtc||null}
+                videoDurationSec={selectedVideo?.duration||0}
+                xmlData={xmlData}
+                syncOffset={0}
+                width={700}
+                height={420}
+              />
+            ))}
 
             {/* TWS + SOG timeline */}
             {section("Wind & boat speed timeline",(
