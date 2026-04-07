@@ -2018,8 +2018,19 @@ export default function SmartSailingAnalytics(){
   const playUtcThrottle=useRef(0);
   const perms=ROLES[role];
 
-  // Lazy-mount analytics on first visit; set initial playUtc from selected video
-  useEffect(()=>{ if(activeTab==="analytics") setHasMountedAnalytics(true); },[activeTab]);
+  // Mount analytics pane on first visit OR as soon as log data arrives
+  // (whichever comes first — avoids blank tab after upload without visiting first)
+  useEffect(()=>{
+    if(activeTab==="analytics"||logData) setHasMountedAnalytics(true);
+  },[activeTab, logData]);
+
+  // Safety: if user switches to Analytics and logData is missing, reload from IDB
+  useEffect(()=>{
+    if(activeTab==="analytics" && !logData && activeDate){
+      loadDate(activeDate);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[activeTab]);
   useEffect(()=>{ setPlayUtc(selectedVideo?.startUtc||null); },[selectedVideo?.id]);
 
   // Throttled callback passed to VideoPlayer — ~12 fps max to keep renders light
@@ -2080,8 +2091,8 @@ export default function SmartSailingAnalytics(){
   function handleImported({date,videos,logData:ld,xmlData:xd}){
     if(ld)setLogData({...ld,source:"local"});if(xd)setXmlData({...xd,source:"local"});
     setSessions(getSessions());setUnsyncedCount(getUnsyncedCount());
-    getVideosForDate(date).then(vids=>{const e=vids.map(v=>enrichVideo(v,ld));setAllVideos(e);if(e.length>0)setSelectedVideo(e[0]);});
-    setActiveDate(date);
+    // Also load from IDB to ensure state matches storage (catches second import race)
+    loadDate(date);
     setActiveTab("library");
   }
 
