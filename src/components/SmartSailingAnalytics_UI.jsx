@@ -193,7 +193,20 @@ function parseXmlEvents(text,offsetMin=0){
     color:  getAttr(tag,'istack')==='true'?'#1D9E75':'#7F77DD',
   }));
 
-  // ── Start lines — StartBoat/StartPin marks matched by race number ──────────
+  // ── Phases — 30/60s analysis windows with sailing mode ────────────────────
+  // sailingmode: 1=Upwind, 2=Reach, 4=Downwind, 8=Gybing/transitional
+  const phases=[];
+  // findTags matches self-closing <tag/> but phase has children — use a different approach
+  const phaseBlocks=t.match(/<phase\b[^>]*>[\s\S]*?<\/phase>/gi)||[];
+  for(const pb of phaseBlocks){
+    const dt  = getAttr(pb.match(/<startdatetime\b[^>]*/i)?.[0]||'','val');
+    const dur = getAttr(pb.match(/<duration\b[^>]*/i)?.[0]||'','val');
+    const sm  = getAttr(pb.match(/<sailingmode\b[^>]*/i)?.[0]||'','val');
+    if(!dt||!dur||!sm) continue;
+    const utc=isoUtc(dt, offsetMin);
+    if(utc) phases.push({utc, endUtc:utc+parseInt(dur)*1000, mode:parseInt(sm)});
+  }
+
   const startLinesMap={};
   for(const tag of findTags('mark')){
     const mtype=getAttr(tag,'marktype');
@@ -210,8 +223,8 @@ function parseXmlEvents(text,offsetMin=0){
     .map(([rn,{pin,boat}])=>({raceNum:parseInt(rn),pin,boat}))
     .filter(sl=>sl.pin&&sl.boat);
 
-  console.log(`[parseXmlEvents] sailsUp:${sailsUpEvents.length} guns:${raceGuns.length} marks:${markRoundings.length} T/G:${tackJibes.length} startLines:${startLines.length}`);
-  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc,startLines};
+  console.log(`[parseXmlEvents] sailsUp:${sailsUpEvents.length} guns:${raceGuns.length} marks:${markRoundings.length} T/G:${tackJibes.length} startLines:${startLines.length} phases:${phases.length}`);
+  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc,startLines,phases};
 }
 
 // ─── POLAR (see src/lib/polarCalc.js) ──────────────────────────────────────
@@ -1239,13 +1252,15 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
   );
 }
 
-function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200,showTrend=true,title=""}){
+function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200,showTrend=true,title="",yLines=[]}){
   if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
   const pad={t:title?20:10,r:8,b:28,l:36};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
   const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
   const x0=Math.min(...xs),x1=Math.max(...xs);
-  const y0=Math.min(...ys),y1=Math.max(...ys);
+  const rawY0=Math.min(...ys), rawY1=Math.max(...ys);
+  // Expand y range to include any yLines that fall outside the data range
+  const y0=Math.min(rawY0,...yLines), y1=Math.max(rawY1,...yLines);
   const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
   const py=y=>pad.t+H-((y-y0)/(y1-y0||1))*H;
   const step=Math.max(1,Math.floor(points.length/800));
@@ -1258,6 +1273,15 @@ function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200
     <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
       {title&&<text x={pad.l+W/2} y={10} textAnchor="middle" fontSize="9" fill="#64748B" fontWeight="600">{title}</text>}
       {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
+      {/* Reference lines (e.g. 100% target) */}
+      {yLines.map((y,i)=>{
+        const cy=py(y);
+        if(cy<pad.t||cy>pad.t+H) return null;
+        return(<g key={"yl"+i}>
+          <line x1={pad.l} x2={pad.l+W} y1={cy} y2={cy} stroke={color} strokeWidth="1" strokeDasharray="4,3" opacity="0.6"/>
+          <text x={pad.l+W-2} y={cy-3} textAnchor="end" fontSize="7" fill={color} opacity="0.8">{y}</text>
+        </g>);
+      })}
       <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
       <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
       {dots.map((p,i)=><circle key={i} cx={px(p.x)} cy={py(p.y)} r="1.5" fill={color} opacity="0.5"/>)}
@@ -1923,14 +1947,107 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 </div>
               </>
             ))}
-            {rows.length>50&&section("X-Y plots — correlations & trends",(
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TWS vs SOG</div><XYPlot points={rows.filter((_,i)=>i%3===0).filter(r=>r.tws>0&&r.sog>0).map(r=>({x:r.tws,y:r.sog}))} xLabel="TWS (kn)" yLabel="SOG (kn)" color="#06B6D4" height={170} showTrend/></div>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TWS vs Heel</div><XYPlot points={rows.filter((_,i)=>i%3===0).filter(r=>r.tws>0).map(r=>({x:r.tws,y:Math.abs(r.heel)}))} xLabel="TWS (kn)" yLabel="Heel (°)" color="#F59E0B" height={170} showTrend/></div>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TWS vs Polar %</div><XYPlot points={rows.filter((_,i)=>i%3===0).filter(r=>r.tws>0&&r.vsPerfPct>5&&r.vsPerfPct<200).map(r=>({x:r.tws,y:r.vsPerfPct}))} xLabel="TWS (kn)" yLabel="Polar %" color="#8B5CF6" height={170} showTrend/></div>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TWA vs VMG</div><XYPlot points={rows.filter((_,i)=>i%3===0).filter(r=>r.vmg>0&&r.twa!=null).map(r=>({x:Math.abs(r.twa),y:r.vmg}))} xLabel="TWA (°)" yLabel="VMG (kn)" color="#10B981" height={170} showTrend/></div>
-              </div>
-            ))}
+            {rows.length>50&&section("Upwind analysis — data filtered to upwind phases",(()=>{
+              // SailingPerformance sailingmode encoding observed from real data:
+              //   1 = Upwind starboard tack   2 = Upwind port tack
+              //   4 = Downwind/reach stbd     8 = Downwind/reach port
+              const allPhases = xmlData?.phases||[];
+              const upPhases  = allPhases.filter(p=>p.mode===1||p.mode===2);
+              const dnPhases  = allPhases.filter(p=>p.mode===4||p.mode===8);
+              const rcPhases  = allPhases.filter(p=>p.mode===16||p.mode===32);
+              const hasPhases = allPhases.length > 0;
+
+              // Binary-search membership: much faster than .some() for large row sets
+              const makeInFn = phases => {
+                if(!phases.length) return ()=>false;
+                const sorted = [...phases].sort((a,b)=>a.utc-b.utc);
+                return utc => {
+                  let lo=0, hi=sorted.length-1;
+                  while(lo<=hi){
+                    const mid=(lo+hi)>>1;
+                    if(utc>=sorted[mid].utc&&utc<sorted[mid].endUtc) return true;
+                    if(utc<sorted[mid].utc) hi=mid-1; else lo=mid+1;
+                  }
+                  return false;
+                };
+              };
+              const inUpwind  = hasPhases ? makeInFn(upPhases)  : ()=>true;
+
+              const upMin  = Math.round(upPhases.reduce((s,p)=>s+(p.endUtc-p.utc),0)/60000);
+              const dnMin  = Math.round(dnPhases.reduce((s,p)=>s+(p.endUtc-p.utc),0)/60000);
+              const rcMin  = Math.round(rcPhases.reduce((s,p)=>s+(p.endUtc-p.utc),0)/60000);
+
+              // Polar for target BSP
+              const upPolar = loadPolarFromLS();
+
+              // Sample rows inside upwind phases (max ~1200 pts for perf)
+              const step=Math.max(1,Math.floor(rows.length/1200));
+              const upRows=rows.filter((_,i)=>i%step===0)
+                .filter(r=>r.tws>0&&r.tws<50&&inUpwind(r.utc));
+
+              // a) VMG % of polar optimal upwind VMG
+              const vmgPts=upRows.filter(r=>r.vmg>0).map(r=>{
+                if(!upPolar) return null;
+                const t=polarVMGTarget(upPolar,r.tws);
+                const pct=t.upVMG>0.01?(r.vmg/t.upVMG)*100:null;
+                return (pct!=null&&pct>20&&pct<150)?{x:r.tws,y:pct}:null;
+              }).filter(Boolean);
+
+              // b) Target BSP % (Vs_targ% from log col 23)
+              const tgtPts=upRows.filter(r=>r.vsTargPct>20&&r.vsTargPct<150)
+                .map(r=>({x:r.tws,y:r.vsTargPct}));
+
+              // c) Rudder angle (absolute) vs TWS
+              const rudPts=upRows.filter(r=>r.rudder!=null&&Math.abs(r.rudder)<30&&Math.abs(r.rudder)>0.1)
+                .map(r=>({x:r.tws,y:Math.abs(r.rudder)}));
+
+              // d) Heel angle (absolute) vs TWS
+              const heelPts2=upRows.filter(r=>Math.abs(r.heel)>0.5&&Math.abs(r.heel)<60)
+                .map(r=>({x:r.tws,y:Math.abs(r.heel)}));
+
+              const noData=<div style={{height:170,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:10}}>No upwind data{!hasPhases?" — re-import event file":""}</div>;
+              return(
+                <>
+                  <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+                    {hasPhases ? <>
+                      <span style={{fontSize:9,color:"#8B5CF6",background:"#8B5CF610",border:"1px solid #8B5CF630",borderRadius:3,padding:"2px 7px"}}>
+                        ▲ {upPhases.length} upwind phases · {upMin} min
+                      </span>
+                      <span style={{fontSize:9,color:"#7F77DD",background:"#7F77DD10",border:"1px solid #7F77DD30",borderRadius:3,padding:"2px 7px"}}>
+                        ▽ {dnPhases.length} downwind · {dnMin} min
+                      </span>
+                      {rcPhases.length>0&&<span style={{fontSize:9,color:"#06B6D4",background:"#06B6D410",border:"1px solid #06B6D430",borderRadius:3,padding:"2px 7px"}}>
+                        ↗ {rcPhases.length} reaching · {rcMin} min
+                      </span>}
+                      <span style={{fontSize:9,color:"#475569"}}>{upRows.length.toLocaleString()} upwind pts</span>
+                    </> : (
+                      <span style={{fontSize:9,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px"}}>
+                        ⚠ No event file — showing all rows unfiltered
+                      </span>
+                    )}
+                    {!upPolar&&<span style={{fontSize:9,color:"#F59E0B",marginLeft:4}}>⚠ Upload polar for VMG% and target BSP%</span>}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                    <div>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>a) VMG % OF POLAR OPTIMAL — vs TWS</div>
+                      {vmgPts.length>5?<XYPlot points={vmgPts} xLabel="TWS (kn)" yLabel="VMG %" color="#22C55E" height={170} showTrend yLines={[100]}/>:noData}
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>b) TARGET BSP % (Vs_targ%) — vs TWS</div>
+                      {tgtPts.length>5?<XYPlot points={tgtPts} xLabel="TWS (kn)" yLabel="Target BSP %" color="#06B6D4" height={170} showTrend yLines={[100]}/>:noData}
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>c) RUDDER ANGLE (|°|) — vs TWS</div>
+                      {rudPts.length>5?<XYPlot points={rudPts} xLabel="TWS (kn)" yLabel="Rudder |°|" color="#F59E0B" height={170} showTrend/>:noData}
+                    </div>
+                    <div>
+                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>d) HEEL ANGLE (|°|) — vs TWS</div>
+                      {heelPts2.length>5?<XYPlot points={heelPts2} xLabel="TWS (kn)" yLabel="Heel |°|" color="#8B5CF6" height={170} showTrend/>:noData}
+                    </div>
+                  </div>
+                </>
+              );
+            })())}
             {section("Speed polar — TWA vs BSP by wind range",(
               <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
                 <SpeedPolar rows={rows} width={280} height={280}/>
