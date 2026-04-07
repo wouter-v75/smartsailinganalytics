@@ -2107,12 +2107,36 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 });
               };
 
+              const tackPolar = loadPolarFromLS();
               const tackSeries={
                 bsp:   buildSeries('bsp'),
                 rudder:buildSeries('rudder',v=>v!=null?Math.abs(v):null),
                 yawR:  buildSeries('yawR'),
                 twa:   buildSeries('twa',v=>v!=null?Math.abs(v):null),
+                vmgPct:buildSeries('vmg',v=>{
+                  // placeholder — overwritten per-row below with polar context
+                  return v;
+                }),
               };
+              // Rebuild vmgPct with polar context (needs tws per row, can't use buildSeries directly)
+              tackSeries.vmgPct = validTacks.map(tk=>{
+                let lo=0,hi=rows.length-1;
+                while(lo<hi){const mid=(lo+hi+1)>>1;if(rows[mid].utc<=tk.utc)lo=mid;else hi=mid-1;}
+                const centre=lo;
+                const window=[];
+                let i=centre; while(i>=0&&(rows[centre].utc-rows[i].utc)<PRE*1000) i--; i++;
+                let j=centre; while(j<rows.length&&(rows[j].utc-rows[centre].utc)<POST*1000) j++;
+                for(let k=i;k<j;k++){
+                  const r=rows[k];
+                  if(!tackPolar||!r.vmg||!r.tws) continue;
+                  const tgt=polarVMGTarget(tackPolar,r.tws);
+                  const optVMG=Math.abs(r.twa||0)<90?tgt.upVMG:tgt.downVMG;
+                  if(!optVMG||optVMG<0.01) continue;
+                  const pct=(r.vmg/optVMG)*100;
+                  if(pct>10&&pct<200) window.push({x:(r.utc-tk.utc)/1000, y:pct});
+                }
+                return window;
+              });
 
               // ── Cumulative VMG loss series ─────────────────────────────────────
               // Baseline VMG = mean of log rows from -60s to -20s before each tack.
@@ -2294,6 +2318,17 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                       <TackChart series={tackSeries.twa} yLabel="TWA |°|" color="#06B6D4" height={130}
                         selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
+                    {tackPolar&&tackSeries.vmgPct.some(s=>s.length>1)&&(
+                      <div style={{gridColumn:"1/-1"}}>
+                        <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>e) POLAR VMG % — relative to tack moment</div>
+                        <TackChart series={tackSeries.vmgPct} yLabel="VMG %" color="#22C55E" height={130}
+                          yLines={[100]} yMin={0}
+                          selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
+                      </div>
+                    )}
+                    {!tackPolar&&<div style={{gridColumn:"1/-1",fontSize:9,color:"#475569",padding:"8px 0"}}>
+                      ⚠ Upload polar file to enable VMG % chart
+                    </div>}
                   </div>
 
                   {/* ── Cumulative VMG loss ──────────────────────────────────────── */}
