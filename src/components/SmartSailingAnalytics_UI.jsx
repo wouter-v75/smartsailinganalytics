@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
 import { deleteStreamVideo } from "../lib/bunny";
 
@@ -110,6 +110,7 @@ function parseXmlEvents(text,offsetMin=0){
                  .split(";").map(s=>s.trim()).filter(Boolean),
   };
   const sailsUpEvents=[],raceGuns=[];
+  let dayStartUtc=null, dayStopUtc=null;
   for(const ev of doc.getElementsByTagName("event")){
     const utc=isoUtc(`${ga(ev,"date")} ${ga(ev,"time")}`,offsetMin);
     const type=ga(ev,"type"),attr=ga(ev,"attribute");
@@ -118,6 +119,10 @@ function parseXmlEvents(text,offsetMin=0){
       sailsUpEvents.push({utc,sails,label:sails.join(" + ")||"Sails changed"});
     } else if(type==="RaceStartGun"){
       raceGuns.push({utc,raceNum:parseInt(attr)||0,label:`Race ${attr||"?"} start`,color:"#EF4444"});
+    } else if(type==="DayStart"){
+      dayStartUtc=utc;
+    } else if(type==="DayStop"){
+      dayStopUtc=utc;
     }
   }
   const markRoundings=Array.from(doc.getElementsByTagName("markrounding")).map(mr=>({
@@ -130,7 +135,7 @@ function parseXmlEvents(text,offsetMin=0){
     label:ga(tj,"istack")==="true"?"Tack":"Gybe",
     color:ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD",
   }));
-  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes};
+  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc};
 }
 
 const R=(n,d=1)=>(n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -1237,203 +1242,157 @@ function AIChatPanel({rows, allVideos}){
 }
 
 // ─── GPS TRACK MAP ────────────────────────────────────────────────────────────
-// Pure SVG, web-Mercator projection. No external map tile dependency.
-// Shows full-day GPS track, highlights the selected video's timeframe.
-// events overlay: marks, race guns, tacks/gybes as coloured dots.
+// Leaflet-based map with OSM tiles, web-Mercator.
+// Full-day GPS track, video clip highlighted, event dots overlay.
+// Filters log rows to DayStart–DayStop window from event file.
 
-function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, width=540, height=420}){
+function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0}){
+  const containerRef = React.useRef(null);
+  const mapRef       = React.useRef(null);
+  const layersRef    = React.useRef({});
+
+  // Filter log rows to DayStart–DayStop window
+  const dayStart = xmlData?.dayStartUtc || null;
+  const dayStop  = xmlData?.dayStopUtc  || null;
+  const filteredRows = React.useMemo(()=>{
+    if(!rows?.length) return [];
+    let r = rows.filter(row=>
+      row.lat && row.lon &&
+      Math.abs(row.lat) > 0.01 && Math.abs(row.lat) < 90 &&
+      Math.abs(row.lon) > 0.01 && Math.abs(row.lon) < 180
+    );
+    if(dayStart) r = r.filter(row=>row.utc >= dayStart);
+    if(dayStop)  r = r.filter(row=>row.utc <= dayStop);
+    return r;
+  },[rows, dayStart, dayStop]);
+
+  const winStart = videoStartUtc ? videoStartUtc + (syncOffset||0)*1000 : null;
+  const winEnd   = winStart ? winStart + (videoDurationSec||0)*1000 : null;
+  const hlRows   = React.useMemo(()=>
+    winStart ? filteredRows.filter(r=>r.utc>=winStart&&r.utc<=winEnd) : []
+  ,[filteredRows, winStart, winEnd]);
+
+  // Load Leaflet once and initialise map
+  React.useEffect(()=>{
+    if(!containerRef.current) return;
+    if(filteredRows.length < 2) return;
+
+    const initMap = () => {
+      const L = window.L;
+      if(!L) return;
+
+      // Destroy existing map if any
+      if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; }
+
+      const centre = [
+        filteredRows.reduce((s,r)=>s+r.lat,0)/filteredRows.length,
+        filteredRows.reduce((s,r)=>s+r.lon,0)/filteredRows.length,
+      ];
+
+      const map = L.map(containerRef.current, {
+        center: centre,
+        zoom: 12,
+        zoomControl: true,
+        attributionControl: true,
+      });
+      mapRef.current = map;
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 18,
+      }).addTo(map);
+
+      // Downsample full track
+      const step = Math.max(1, Math.floor(filteredRows.length/2000));
+      const trackLatLngs = filteredRows.filter((_,i)=>i%step===0).map(r=>[r.lat,r.lon]);
+      const fullTrack = L.polyline(trackLatLngs, {color:'#1E3A5A', weight:2, opacity:0.8}).addTo(map);
+
+      // Highlight clip
+      if(hlRows.length > 1){
+        const hlStep = Math.max(1, Math.floor(hlRows.length/500));
+        const hlLatLngs = hlRows.filter((_,i)=>i%hlStep===0).map(r=>[r.lat,r.lon]);
+        L.polyline(hlLatLngs, {color:'#06B6D4', weight:5, opacity:0.9}).addTo(map);
+        // Clip endpoints
+        const circleOpts = {radius:8, fillOpacity:1, weight:2, color:'#030F1A'};
+        L.circleMarker([hlRows[0].lat,hlRows[0].lon], {...circleOpts, fillColor:'#06B6D4'})
+          .bindTooltip('Clip start').addTo(map);
+        L.circleMarker([hlRows[hlRows.length-1].lat,hlRows[hlRows.length-1].lon], {...circleOpts, fillColor:'#06B6D4'})
+          .bindTooltip('Clip end').addTo(map);
+      }
+
+      // Event dots
+      if(xmlData){
+        const nearest = utc => filteredRows.reduce((a,b)=>Math.abs(b.utc-utc)<Math.abs(a.utc-utc)?b:a, filteredRows[0]);
+        const dot = (lat,lon,color,label,tip) => {
+          L.circleMarker([lat,lon],{radius:7,fillColor:color,color:'#030F1A',weight:2,fillOpacity:1})
+            .bindTooltip(tip||label).addTo(map);
+        };
+        for(const m of (xmlData.markRoundings||[]).filter(x=>x.isValid!==false)){
+          const nr=nearest(m.utc);
+          if(Math.abs(nr.utc-m.utc)<120000) dot(nr.lat,nr.lon,m.isTop?"#EF4444":"#8B5CF6",m.isTop?"T":"G",m.label);
+        }
+        for(const g of (xmlData.raceGuns||[])){
+          const nr=nearest(g.utc);
+          if(Math.abs(nr.utc-g.utc)<120000) dot(nr.lat,nr.lon,"#EF4444","S",g.label);
+        }
+        for(const tj of (xmlData.tackJibes||[]).filter(x=>x.isValid!==false)){
+          const nr=nearest(tj.utc);
+          if(Math.abs(nr.utc-tj.utc)<60000){
+            L.circleMarker([nr.lat,nr.lon],{radius:4,fillColor:tj.isTack?"#1D9E75":"#7F77DD",color:'transparent',fillOpacity:0.7}).addTo(map);
+          }
+        }
+      }
+
+      // Fit to track bounds
+      map.fitBounds(fullTrack.getBounds(), {padding:[20,20]});
+    };
+
+    // Load Leaflet CSS + JS if not already loaded
+    if(!window.L){
+      if(!document.getElementById('leaflet-css')){
+        const css=document.createElement('link');
+        css.id='leaflet-css'; css.rel='stylesheet';
+        css.href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+        document.head.appendChild(css);
+      }
+      const js=document.createElement('script');
+      js.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
+      js.onload=initMap;
+      document.head.appendChild(js);
+    } else {
+      initMap();
+    }
+
+    return ()=>{ if(mapRef.current){mapRef.current.remove();mapRef.current=null;} };
+  },[filteredRows, hlRows, xmlData]);
+
   if(!rows?.length) return(
-    <div style={{padding:12,background:"#071624",borderRadius:8,color:"#EF4444",fontSize:10}}>No log rows passed to map</div>
+    <div style={{padding:12,background:"#071624",borderRadius:8,color:"#EF4444",fontSize:10}}>No log data</div>
   );
-
-  // Filter to rows that have valid GPS (non-zero, plausible lat/lon)
-  const gpsRows = rows.filter(r=>
-    r.lat && r.lon &&
-    Math.abs(r.lat) > 0.01 && Math.abs(r.lat) < 90 &&
-    Math.abs(r.lon) > 0.01 && Math.abs(r.lon) < 180
-  );
-
-  if(gpsRows.length < 2) return(
+  if(filteredRows.length < 2) return(
     <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>
-      No GPS data in log ({rows.length} rows checked).
-      First row: lat=<code>{rows[0]?.lat?.toFixed?.(4)??rows[0]?.lat}</code> lon=<code>{rows[0]?.lon?.toFixed?.(4)??rows[0]?.lon}</code>
+      No valid GPS in log ({rows.length} rows).
+      DayStart: {dayStart?new Date(dayStart).toISOString().slice(11,19):"none"}.
+      First lat={rows[0]?.lat?.toFixed?.(4)??rows[0]?.lat} lon={rows[0]?.lon?.toFixed?.(4)??rows[0]?.lon}
     </div>
   );
 
-  // Web-Mercator helpers
-  const toMX = lon => lon;
-  const toMY = lat => Math.log(Math.tan(Math.PI/4 + lat*Math.PI/360));
-
-  const mxs = gpsRows.map(r=>toMX(r.lon));
-  const mys = gpsRows.map(r=>toMY(r.lat));
-  const mx0=Math.min(...mxs), mx1=Math.max(...mxs);
-  const my0=Math.min(...mys), my1=Math.max(...mys);
-
-  const pad = 24;
-  const W = width - pad*2, H = height - pad*2;
-  const scaleX = W / (mx1-mx0||0.001);
-  const scaleY = H / (my1-my0||0.001);
-  const scale  = Math.min(scaleX, scaleY);
-  // Centre the track
-  const offX = pad + (W - (mx1-mx0)*scale) / 2;
-  const offY = pad + (H - (my1-my0)*scale) / 2;
-
-  const sx = lon => offX + (toMX(lon)-mx0)*scale;
-  const sy = lat => offY + (my1-toMY(lat))*scale;  // flip Y
-
-  // Downsample full track for rendering (max 1500 points)
-  const trackStep = Math.max(1, Math.floor(gpsRows.length/1500));
-  const trackPts  = gpsRows.filter((_,i)=>i%trackStep===0);
-
-  // Video highlight window
-  const winStart = videoStartUtc ? videoStartUtc + (syncOffset||0)*1000 : null;
-  const winEnd   = winStart ? winStart + (videoDurationSec||0)*1000 : null;
-  const hlRows   = winStart ? gpsRows.filter(r=>r.utc>=winStart&&r.utc<=winEnd) : [];
-  const hlStep   = Math.max(1, Math.floor(hlRows.length/600));
-  const hlPts    = hlRows.filter((_,i)=>i%hlStep===0);
-
-  // Polyline path helpers
-  const toPath = pts => pts.length<2?"":pts.map((r,i)=>`${i===0?"M":"L"}${sx(r.lon).toFixed(1)},${sy(r.lat).toFixed(1)}`).join(" ");
-
-  // Events to overlay
-  const evDots = [];
-  if(xmlData){
-    for(const m of (xmlData.markRoundings||[]).filter(x=>x.isValid!==false)){
-      const nr=gpsRows.reduce((a,b)=>Math.abs(b.utc-m.utc)<Math.abs(a.utc-m.utc)?b:a,gpsRows[0]);
-      if(Math.abs(nr.utc-m.utc)<120000) evDots.push({lat:nr.lat,lon:nr.lon,color:m.isTop?"#EF4444":"#8B5CF6",label:m.isTop?"T":"G",r:6});
-    }
-    for(const g of (xmlData.raceGuns||[])){
-      const nr=gpsRows.reduce((a,b)=>Math.abs(b.utc-g.utc)<Math.abs(a.utc-g.utc)?b:a,gpsRows[0]);
-      if(Math.abs(nr.utc-g.utc)<120000) evDots.push({lat:nr.lat,lon:nr.lon,color:"#EF4444",label:"S",r:7});
-    }
-    for(const tj of (xmlData.tackJibes||[]).filter(x=>x.isValid!==false)){
-      const nr=gpsRows.reduce((a,b)=>Math.abs(b.utc-tj.utc)<Math.abs(a.utc-tj.utc)?b:a,gpsRows[0]);
-      if(Math.abs(nr.utc-tj.utc)<60000) evDots.push({lat:nr.lat,lon:nr.lon,color:tj.isTack?"#1D9E75":"#7F77DD",label:tj.isTack?"T":"G",r:4});
-    }
-  }
-
-  // Start/end markers
-  const start = gpsRows[0];
-  const end   = gpsRows[gpsRows.length-1];
-
-  // Distance estimate (haversine, km)
-  const haversine = (a,b) => {
-    const R=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLon=(b.lon-a.lon)*Math.PI/180;
-    const x=Math.sin(dLat/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dLon/2)**2;
-    return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
-  };
-  let distKm=0;
-  for(let i=1;i<gpsRows.length;i++) distKm+=haversine(gpsRows[i-1],gpsRows[i]);
-
-  const compassBearing = (a,b) => {
-    const dLon=(b.lon-a.lon)*Math.PI/180;
-    const y=Math.sin(dLon)*Math.cos(b.lat*Math.PI/180);
-    const x=Math.cos(a.lat*Math.PI/180)*Math.sin(b.lat*Math.PI/180)-Math.sin(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.cos(dLon);
-    return (Math.atan2(y,x)*180/Math.PI+360)%360;
-  };
-
-  // Scale bar: choose a nice round number of km
-  const mapKmWidth = haversine({lat:(gpsRows[0].lat+gpsRows[gpsRows.length-1].lat)/2, lon:mx0+(mx1-mx0)*0.0},
-                                {lat:(gpsRows[0].lat+gpsRows[gpsRows.length-1].lat)/2, lon:mx0+(mx1-mx0)*1.0}) * (W/((mx1-mx0)*scale)) * (mx1-mx0) * scale / W;
-  const lonToKm = lon => haversine({lat:gpsRows[0].lat,lon:mx0},{lat:gpsRows[0].lat,lon:mx0+lon});
-  const kmPerPx = lonToKm(mx1-mx0) / (W * scale / scaleX);
-
-  // Pick a nice scale bar length (0.5, 1, 2, 5 nm)
-  const nmPerPx = kmPerPx / 1.852;
-  const niceNm  = [0.25,0.5,1,2,5,10].find(n=>(n/nmPerPx)>30&&(n/nmPerPx)<W*0.35)||1;
-  const barPx   = niceNm / nmPerPx;
+  // Haversine distance
+  const haversine=(a,b)=>{const R=6371,dl=(b.lat-a.lat)*Math.PI/180,dn=(b.lon-a.lon)*Math.PI/180,x=Math.sin(dl/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dn/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));};
+  let distKm=0; for(let i=1;i<filteredRows.length;i++) distKm+=haversine(filteredRows[i-1],filteredRows[i]);
 
   return(
     <div>
-      <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{background:"#030A14",borderRadius:10,overflow:"hidden"}}>
-        {/* Background */}
-        <rect width={width} height={height} fill="#030A14"/>
-
-        {/* Graticule — subtle grid lines every ~0.5° */}
-        {Array.from({length:20},(_,i)=>{
-          const lon=Math.ceil(mx0*2)/2+i*0.5;
-          if(lon>mx1) return null;
-          const x=sx(lon);
-          return<line key={"gl"+i} x1={x} x2={x} y1={pad} y2={pad+H} stroke="#0A1929" strokeWidth="0.5"/>;
-        })}
-        {Array.from({length:20},(_,i)=>{
-          const lat=Math.ceil((gpsRows[0].lat-2)*2)/2+i*0.5;
-          if(lat>gpsRows[0].lat+2) return null;
-          const y=sy(lat);
-          if(y<pad||y>pad+H) return null;
-          return<line key={"gl2"+i} x1={pad} x2={pad+W} y1={y} y2={y} stroke="#0A1929" strokeWidth="0.5"/>;
-        })}
-
-        {/* Full day track — thin dim line */}
-        <path d={toPath(trackPts)} fill="none" stroke="#1E3A5A" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round"/>
-
-        {/* Video highlight — thicker bright line */}
-        {hlPts.length>1&&(
-          <path d={toPath(hlPts)} fill="none" stroke="#06B6D4" strokeWidth="4" strokeLinejoin="round" strokeLinecap="round" opacity="0.9"/>
-        )}
-
-        {/* Video highlight endpoints */}
-        {hlRows.length>0&&<>
-          <circle cx={sx(hlRows[0].lon)} cy={sy(hlRows[0].lat)} r="5" fill="#06B6D4" stroke="#030A14" strokeWidth="1.5"/>
-          <circle cx={sx(hlRows[hlRows.length-1].lon)} cy={sy(hlRows[hlRows.length-1].lat)} r="5" fill="#06B6D4" stroke="#030A14" strokeWidth="1.5"/>
-        </>}
-
-        {/* Tack/gybe dots */}
-        {evDots.filter(e=>e.r===4).map((e,i)=>(
-          <circle key={"tj"+i} cx={sx(e.lon)} cy={sy(e.lat)} r={e.r} fill={e.color} opacity="0.7"/>
-        ))}
-
-        {/* Mark & gun event dots with label */}
-        {evDots.filter(e=>e.r>4).map((e,i)=>(
-          <g key={"ev"+i}>
-            <circle cx={sx(e.lon)} cy={sy(e.lat)} r={e.r} fill={e.color} stroke="#030A14" strokeWidth="1.5"/>
-            <text x={sx(e.lon)} y={sy(e.lat)+3} textAnchor="middle" fontSize="7" fill="#fff" fontWeight="bold">{e.label}</text>
-          </g>
-        ))}
-
-        {/* Start / end dots */}
-        <circle cx={sx(start.lon)} cy={sy(start.lat)} r="5" fill="#1D9E75" stroke="#030A14" strokeWidth="1.5"/>
-        <text x={sx(start.lon)+7} y={sy(start.lat)+4} fontSize="8" fill="#1D9E75">start</text>
-        <circle cx={sx(end.lon)} cy={sy(end.lat)} r="5" fill="#F59E0B" stroke="#030A14" strokeWidth="1.5"/>
-        <text x={sx(end.lon)+7} y={sy(end.lat)+4} fontSize="8" fill="#F59E0B">end</text>
-
-        {/* North arrow */}
-        <g transform={`translate(${width-28},${pad+16})`}>
-          <line x1="0" y1="10" x2="0" y2="-10" stroke="#475569" strokeWidth="1.5"/>
-          <polygon points="0,-12 -4,-4 4,-4" fill="#475569"/>
-          <text x="0" y="20" textAnchor="middle" fontSize="8" fill="#475569">N</text>
-        </g>
-
-        {/* Scale bar */}
-        <g transform={`translate(${pad+4},${pad+H-14})`}>
-          <line x1="0" y1="0" x2={barPx} y2="0" stroke="#475569" strokeWidth="1.5"/>
-          <line x1="0" y1="-3" x2="0" y2="3" stroke="#475569" strokeWidth="1"/>
-          <line x1={barPx} y1="-3" x2={barPx} y2="3" stroke="#475569" strokeWidth="1"/>
-          <text x={barPx/2} y="-4" textAnchor="middle" fontSize="8" fill="#475569">{niceNm} nm</text>
-        </g>
-
-        {/* Border */}
-        <rect x={pad} y={pad} width={W} height={H} fill="none" stroke="#0F2030" strokeWidth="1"/>
-      </svg>
-
-      {/* Legend + stats row */}
-      <div style={{display:"flex",gap:16,marginTop:7,flexWrap:"wrap"}}>
-        <div style={{fontSize:10,color:"#334155"}}>
-          Distance: <span style={{color:"#06B6D4",fontFamily:"monospace"}}>{(distKm/1.852).toFixed(1)} nm</span>
-        </div>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <span style={{display:"inline-block",width:24,height:3,background:"#1E3A5A",borderRadius:2,verticalAlign:"middle"}}/>
-          <span style={{fontSize:9,color:"#334155"}}>Full day</span>
-          <span style={{display:"inline-block",width:24,height:4,background:"#06B6D4",borderRadius:2,verticalAlign:"middle",marginLeft:8}}/>
-          <span style={{fontSize:9,color:"#06B6D4"}}>Video clip</span>
-          {evDots.some(e=>e.r>4)&&<>
-            <span style={{display:"inline-block",width:8,height:8,background:"#EF4444",borderRadius:"50%",verticalAlign:"middle",marginLeft:8}}/>
-            <span style={{fontSize:9,color:"#334155"}}>Mark / Start</span>
-          </>}
-          {evDots.some(e=>e.r===4)&&<>
-            <span style={{display:"inline-block",width:6,height:6,background:"#1D9E75",borderRadius:"50%",verticalAlign:"middle",marginLeft:8}}/>
-            <span style={{fontSize:9,color:"#334155"}}>Tack/Gybe</span>
-          </>}
+      <div ref={containerRef} style={{width:"100%",height:460,borderRadius:10,overflow:"hidden",border:"1px solid #1E3A5A"}}/>
+      <div style={{display:"flex",gap:16,marginTop:7,flexWrap:"wrap",fontSize:10,color:"#475569"}}>
+        <span>GPS rows: <strong style={{color:"#06B6D4"}}>{filteredRows.length.toLocaleString()}</strong></span>
+        <span>Distance: <strong style={{color:"#06B6D4"}}>{(distKm/1.852).toFixed(1)} nm</strong></span>
+        {dayStart&&<span>DayStart: <strong style={{color:"#1D9E75"}}>{new Date(dayStart).toISOString().slice(11,16)}</strong></span>}
+        {dayStop&&<span>DayStop: <strong style={{color:"#F59E0B"}}>{new Date(dayStop).toISOString().slice(11,16)}</strong></span>}
+        {hlRows.length>0&&<span style={{color:"#06B6D4"}}>● Clip highlighted ({hlRows.length} pts)</span>}
+        <div style={{display:"flex",gap:8,alignItems:"center",marginLeft:"auto"}}>
+          <span style={{display:"inline-block",width:20,height:3,background:"#1E3A5A",borderRadius:2}}/>Full day
+          <span style={{display:"inline-block",width:20,height:4,background:"#06B6D4",borderRadius:2,marginLeft:6}}/>Clip
         </div>
       </div>
     </div>
