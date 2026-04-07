@@ -86,21 +86,48 @@ function isoUtc(s,offsetMin=0){
   return new Date(s.trim().replace(" ","T")+"Z").getTime() - offsetMin*60000;
 }
 function parseXmlEvents(text,offsetMin=0){
-  const doc=new DOMParser().parseFromString(text,"text/xml");
-  const ga=(el,a,d="")=>el?.getAttribute(a)??d;
-  const meta={
-    boat:      ga(doc.querySelector("boat"),      "val"),
-    location:  ga(doc.querySelector("location"),  "val"),
-    date:      ga(doc.querySelector("date"),      "val"),
-    dayType:   ga(doc.querySelector("daytypestr"),"val"),
-    sailsUsed: ga(doc.querySelector("sailsused"), "val")
-                 .split(";").map(s=>s.trim()).filter(Boolean),
+  // SailingPerformance files have a UTF-8 BOM (U+FEFF = \uFEFF) before <?xml.
+  // This makes DOMParser return a <parsererror> document in strict XML mode.
+  // Strip it unconditionally before parsing.
+  const clean = text.charCodeAt(0)===0xFEFF ? text.slice(1) : text;
+  const doc = new DOMParser().parseFromString(clean,"text/xml");
+
+  // Detect parseerror — browser returns a special error document when XML is invalid
+  const rootTag = doc.documentElement?.tagName||"";
+  if(rootTag==="parsererror"||rootTag.endsWith(":parsererror")){
+    throw new Error("XML parse failed: "+( doc.documentElement.textContent?.slice(0,120)||"unknown error"));
+  }
+
+  // Case-insensitive attribute getter
+  const ga=(el,a,d="")=>{
+    if(!el)return d;
+    const v=el.getAttribute(a); if(v!==null)return v;
+    for(const attr of (el.attributes||[])){if(attr.name.toLowerCase()===a.toLowerCase())return attr.value;}
+    return d;
   };
+
+  // Case-insensitive element finder (XML tag names are case-sensitive)
+  const byTag=tag=>{
+    const r=Array.from(doc.getElementsByTagName(tag));  if(r.length)return r;
+    const cap=tag[0].toUpperCase()+tag.slice(1);
+    const r2=Array.from(doc.getElementsByTagName(cap)); if(r2.length)return r2;
+    return Array.from(doc.getElementsByTagName("*")).filter(el=>el.tagName.toLowerCase()===tag.toLowerCase());
+  };
+
+  const meta={
+    boat:     ga(byTag("boat")[0],      "val"),
+    location: ga(byTag("location")[0],  "val"),
+    date:     ga(byTag("date")[0],      "val"),
+    dayType:  ga(byTag("daytypestr")[0],"val"),
+    sailsUsed:(ga(byTag("sailsused")[0],"val")).split(";").map(s=>s.trim()).filter(Boolean),
+  };
+
   const sailsUpEvents=[],raceGuns=[];
-  let dayStartUtc=null, dayStopUtc=null;
-  for(const ev of doc.getElementsByTagName("event")){
+  let dayStartUtc=null,dayStopUtc=null;
+
+  for(const ev of byTag("event")){
     const utc=isoUtc(`${ga(ev,"date")} ${ga(ev,"time")}`,offsetMin);
-    const type=ga(ev,"type"),attr=ga(ev,"attribute");
+    const type=ga(ev,"type"), attr=ga(ev,"attribute");
     if(type==="SailsUp"){
       const sails=attr.split(";").map(s=>s.trim()).filter(Boolean);
       sailsUpEvents.push({utc,sails,label:sails.join(" + ")||"Sails changed"});
@@ -112,16 +139,24 @@ function parseXmlEvents(text,offsetMin=0){
       dayStopUtc=utc;
     }
   }
-  const markRoundings=Array.from(doc.getElementsByTagName("markrounding")).map(mr=>({
-    utc:isoUtc(ga(mr,"datetime"),offsetMin),isTop:ga(mr,"istopmark")==="true",isValid:ga(mr,"isvalid")==="true",
-    label:ga(mr,"istopmark")==="true"?"Top mark":"Leeward gate",
-    color:ga(mr,"istopmark")==="true"?"#EF4444":"#8B5CF6",
+
+  const markRoundings=byTag("markrounding").map(mr=>({
+    utc:    isoUtc(ga(mr,"datetime"),offsetMin),
+    isTop:  ga(mr,"istopmark")==="true",
+    isValid:ga(mr,"isvalid")!=="false",
+    label:  ga(mr,"istopmark")==="true"?"Top mark":"Leeward gate",
+    color:  ga(mr,"istopmark")==="true"?"#EF4444":"#8B5CF6",
   }));
-  const tackJibes=Array.from(doc.getElementsByTagName("tackjibe")).map(tj=>({
-    utc:isoUtc(ga(tj,"datetime"),offsetMin),isTack:ga(tj,"istack")==="true",isValid:ga(tj,"isvalidperf")==="true",
-    label:ga(tj,"istack")==="true"?"Tack":"Gybe",
-    color:ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD",
+
+  const tackJibes=byTag("tackjibe").map(tj=>({
+    utc:    isoUtc(ga(tj,"datetime"),offsetMin),
+    isTack: ga(tj,"istack")==="true",
+    isValid:ga(tj,"isvalidperf")==="true",
+    label:  ga(tj,"istack")==="true"?"Tack":"Gybe",
+    color:  ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD",
   }));
+
+  console.log(`[parseXmlEvents] events:${byTag("event").length} sailsUp:${sailsUpEvents.length} guns:${raceGuns.length} marks:${markRoundings.length} T/G:${tackJibes.length}`);
   return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc};
 }
 
