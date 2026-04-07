@@ -735,56 +735,210 @@ function linReg(pts){
   return{slope,intercept,r2:ssTot?1-ssRes/ssTot:0};
 }
 
-function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,yMax,yLines=[],showTrend=false,events=[],playUtc=null}){
-  if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
+// ─── INTERACTIVE LINE CHART ───────────────────────────────────────────────────
+// viewRange = [utcMs, utcMs] | null (null = show all data)
+// onViewRange(newRange | null) — lifted state for cross-chart sync
+function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
+                   yLines=[],showTrend=false,events=[],playUtc=null,
+                   viewRange=null,onViewRange=null}){
+  const svgRef  = useRef(null);
+  const dragRef = useRef(null);   // {startSvgX, startVR:[x0,x1]} while dragging
+  const touchRef= useRef(null);   // touch state
+  // Stable unique id for clip path — avoids conflicts when multiple instances render
+  const clipId  = useRef('lc'+Math.random().toString(36).slice(2,8)).current;
+
+  if(!points?.length) return <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
+
+  const VB_W=400;  // logical viewBox width
   const pad={t:14,r:8,b:28,l:36};
-  const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
-  const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
-  const x0=Math.min(...xs),x1=Math.max(...xs);
-  const y0=yMin??Math.min(...ys),y1=yMax??Math.max(...ys);
-  const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
-  const py=y=>pad.t+H-((y-y0)/(y1-y0||1))*H;
-  const d=points.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
-  const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
+  const W=VB_W-pad.l-pad.r, H=height-pad.t-pad.b;
+
+  // Full data range
+  const allX0=points[0].x, allX1=points[points.length-1].x;
+  const fullSpan=allX1-allX0||1;
+
+  // Visible range
+  const [vx0,vx1] = viewRange ?? [allX0,allX1];
+  const span = vx1-vx0 || 1;
+
+  // Filter to visible + 5% buffer (keeps lines continuous at edges)
+  const buf=span*0.05;
+  const visPts = points.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf);
+
+  // y scale from visible data
+  const visY=visPts.map(p=>p.y);
+  const y0=yMin??(visY.length?Math.min(...visY):0);
+  const y1=yMax??(visY.length?Math.max(...visY)||1:1);
+
+  const px=x=>pad.l+((x-vx0)/span)*W;
+  const py=y=>pad.t+H-((y-y0)/((y1-y0)||1))*H;
+  const d=visPts.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
+
+  const xTicks=Array.from({length:5},(_,i)=>vx0+span*i/4);
   const yTicks=Array.from({length:4},(_,i)=>y0+(y1-y0)*i/3);
-  const reg=showTrend?linReg(points.map(p=>({x:(p.x-x0)/(x1-x0||1),y:p.y}))):null;
+
+  // Trend line from visible points only
+  const reg=showTrend&&visPts.length>1?linReg(visPts.map(p=>({x:(p.x-vx0)/span,y:p.y}))):null;
   const ty=t=>reg?reg.slope*t+reg.intercept:0;
-  const visEvents=events.filter(e=>e.utc>=x0&&e.utc<=x1);
+
+  const visEvents=events.filter(e=>e.utc>=vx0&&e.utc<=vx1);
+  const isZoomed=viewRange&&(vx0>allX0||vx1<allX1);
+
+  // ── Coordinate helpers ────────────────────────────────────────────────────
+  const getSvgX=e=>{
+    const rect=svgRef.current?.getBoundingClientRect();
+    if(!rect)return 0;
+    return ((e.clientX-rect.left)/rect.width)*VB_W;
+  };
+  const svgXtoUtc=svgX=>vx0+((svgX-pad.l)/W)*span;
+
+  // ── Mouse event handlers ──────────────────────────────────────────────────
+  const onWheel=e=>{
+    if(!onViewRange)return;
+    e.preventDefault();
+    const factor=e.deltaY>0?1.3:1/1.3;
+    const svgX=getSvgX(e);
+    const frac=Math.max(0,Math.min(1,(svgX-pad.l)/W));
+    const pivot=vx0+frac*span;
+    const newSpan=Math.max(60000,Math.min(fullSpan,span*factor));
+    let nx0=pivot-frac*newSpan;
+    let nx1=nx0+newSpan;
+    if(nx0<allX0){nx0=allX0;nx1=allX0+newSpan;}
+    if(nx1>allX1){nx1=allX1;nx0=allX1-newSpan;}
+    onViewRange(newSpan>=fullSpan*0.999?null:[nx0,nx1]);
+  };
+  const onMouseDown=e=>{
+    if(!onViewRange||e.button!==0)return;
+    dragRef.current={startSvgX:getSvgX(e),startVR:[vx0,vx1]};
+    e.currentTarget.style.cursor="grabbing";
+  };
+  const onMouseMove=e=>{
+    if(!dragRef.current||!onViewRange)return;
+    const {startSvgX,startVR}=dragRef.current;
+    const shift=-((getSvgX(e)-startSvgX)/W)*span;
+    const s=startVR[1]-startVR[0];
+    let nx0=startVR[0]+shift, nx1=startVR[1]+shift;
+    if(nx0<allX0){nx0=allX0;nx1=allX0+s;}
+    if(nx1>allX1){nx1=allX1;nx0=allX1-s;}
+    onViewRange([nx0,nx1]);
+  };
+  const onMouseUp=e=>{
+    dragRef.current=null;
+    if(e.currentTarget)e.currentTarget.style.cursor="grab";
+  };
+
+  // ── Touch handlers ────────────────────────────────────────────────────────
+  const onTouchStart=e=>{
+    if(!onViewRange)return;
+    if(e.touches.length===1){
+      touchRef.current={type:"pan",startX:e.touches[0].clientX,startVR:[vx0,vx1]};
+    } else if(e.touches.length===2){
+      const dist=Math.abs(e.touches[0].clientX-e.touches[1].clientX);
+      const midX=(e.touches[0].clientX+e.touches[1].clientX)/2;
+      const rect=svgRef.current?.getBoundingClientRect();
+      const svgMid=rect?((midX-rect.left)/rect.width)*VB_W:VB_W/2;
+      touchRef.current={type:"pinch",dist,startVR:[vx0,vx1],svgMid};
+    }
+  };
+  const onTouchMove=e=>{
+    if(!touchRef.current||!onViewRange)return;
+    e.preventDefault();
+    const rect=svgRef.current?.getBoundingClientRect();
+    if(!rect)return;
+    const ratio=VB_W/rect.width;
+    const {type,startVR}=touchRef.current;
+    const s=startVR[1]-startVR[0];
+    if(type==="pan"&&e.touches.length===1){
+      const dx=(e.touches[0].clientX-touchRef.current.startX)*ratio;
+      const shift=-(dx/W)*s;
+      let nx0=startVR[0]+shift, nx1=startVR[1]+shift;
+      if(nx0<allX0){nx0=allX0;nx1=allX0+s;}
+      if(nx1>allX1){nx1=allX1;nx0=allX1-s;}
+      onViewRange([nx0,nx1]);
+    } else if(type==="pinch"&&e.touches.length===2){
+      const dist=Math.abs(e.touches[0].clientX-e.touches[1].clientX);
+      const factor=touchRef.current.dist/(dist||1);
+      const newSpan=Math.max(60000,Math.min(fullSpan,s*factor));
+      const frac=(touchRef.current.svgMid-pad.l)/W;
+      const pivot=startVR[0]+frac*s;
+      let nx0=Math.max(allX0,pivot-frac*newSpan);
+      let nx1=Math.min(allX1,nx0+newSpan);
+      onViewRange(newSpan>=fullSpan*0.999?null:[nx0,nx1]);
+    }
+  };
+  const onTouchEnd=()=>{touchRef.current=null;};
+
   return(
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
-      {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
-      {yLines.map((y,i)=><line key={"r"+i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={color} strokeWidth="0.5" strokeDasharray="3,3" opacity="0.5"/>)}
-      <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-      <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-      <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>
-      {reg&&<line x1={px(x0)} y1={py(ty(0))} x2={px(x1)} y2={py(ty(1))} stroke="#fff" strokeWidth="1" strokeDasharray="4,3" opacity="0.5"/>}
-      {reg&&<text x={pad.l+W-2} y={pad.t+6} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
-      {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(y<10?1:0)}</text>)}
-      {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
-      {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
-      {visEvents.map((e,i)=>{
-        const ex=px(e.utc);
-        const anchor=ex>pad.l+W*0.7?"end":"start";
-        const lw=(e.label||"").length*4.5+4;
-        return(
-          <g key={"ev"+i}>
-            <line x1={ex} x2={ex} y1={pad.t} y2={pad.t+H} stroke={e.color||"#64748B"} strokeWidth="1" strokeDasharray="3,2" opacity="0.8"/>
-            <rect x={anchor==="start"?ex+2:ex-2-lw} y={pad.t+1} width={lw} height="10" rx="2" fill="rgba(3,15,26,0.9)"/>
-            <text x={anchor==="start"?ex+4:ex-4} y={pad.t+9} textAnchor={anchor} fontSize="7" fill={e.color||"#94A3B8"} fontFamily="monospace">{e.label}</text>
-          </g>
-        );
-      })}
-      {/* Playback cursor — amber vertical line + chevron */}
-      {playUtc&&playUtc>=x0&&playUtc<=x1&&(()=>{
-        const cx=px(playUtc);
-        return(
-          <g key="cursor">
-            <line x1={cx} x2={cx} y1={pad.t} y2={pad.t+H} stroke="#F59E0B" strokeWidth="1.5" opacity="0.9"/>
-            <polygon points={`${cx-4},${pad.t} ${cx+4},${pad.t} ${cx},${pad.t+7}`} fill="#F59E0B" opacity="0.9"/>
-          </g>
-        );
-      })()}
-    </svg>
+    <div style={{position:"relative",userSelect:"none"}}>
+      {isZoomed&&onViewRange&&(
+        <button onClick={()=>onViewRange(null)} style={{
+          position:"absolute",top:2,right:2,zIndex:2,
+          background:"#1E3A5A",border:"1px solid #2D4A6A",borderRadius:4,
+          padding:"2px 7px",color:"#94A3B8",fontSize:9,cursor:"pointer",fontFamily:"monospace"
+        }}>↩ all</button>
+      )}
+      <svg ref={svgRef} width="100%" viewBox={`0 0 ${VB_W} ${height}`}
+        style={{overflow:"visible",cursor:onViewRange?"grab":"default",display:"block"}}
+        onWheel={onViewRange?onWheel:undefined}
+        onMouseDown={onViewRange?onMouseDown:undefined}
+        onMouseMove={onViewRange?onMouseMove:undefined}
+        onMouseUp={onViewRange?onMouseUp:undefined}
+        onMouseLeave={onViewRange?onMouseUp:undefined}
+        onTouchStart={onViewRange?onTouchStart:undefined}
+        onTouchMove={onViewRange?onTouchMove:undefined}
+        onTouchEnd={onViewRange?onTouchEnd:undefined}
+      >
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={pad.l} y={pad.t-2} width={W} height={H+4}/>
+          </clipPath>
+        </defs>
+        {/* Grid lines */}
+        {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
+        {yLines.map((y,i)=><line key={"r"+i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={color} strokeWidth="0.5" strokeDasharray="3,3" opacity="0.5"/>)}
+        <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+        <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+        {/* Data — clipped so it never bleeds outside the plot area */}
+        <g clipPath={`url(#${clipId})`}>
+          <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>
+          {reg&&<line x1={px(vx0)} y1={py(ty(0))} x2={px(vx1)} y2={py(ty(1))} stroke="#fff" strokeWidth="1" strokeDasharray="4,3" opacity="0.5"/>}
+          {/* Playback cursor */}
+          {playUtc&&playUtc>=vx0&&playUtc<=vx1&&(()=>{
+            const cx=px(playUtc);
+            return(<g key="cursor">
+              <line x1={cx} x2={cx} y1={pad.t} y2={pad.t+H} stroke="#F59E0B" strokeWidth="1.5" opacity="0.9"/>
+              <polygon points={`${cx-4},${pad.t} ${cx+4},${pad.t} ${cx},${pad.t+7}`} fill="#F59E0B" opacity="0.9"/>
+            </g>);
+          })()}
+          {/* Event markers */}
+          {visEvents.map((e,i)=>{
+            const ex=px(e.utc);
+            const anchor=ex>pad.l+W*0.7?"end":"start";
+            const lw=(e.label||"").length*4.5+4;
+            return(<g key={"ev"+i}>
+              <line x1={ex} x2={ex} y1={pad.t} y2={pad.t+H} stroke={e.color||"#64748B"} strokeWidth="1" strokeDasharray="3,2" opacity="0.8"/>
+              <rect x={anchor==="start"?ex+2:ex-2-lw} y={pad.t+1} width={lw} height="10" rx="2" fill="rgba(3,15,26,0.9)"/>
+              <text x={anchor==="start"?ex+4:ex-4} y={pad.t+9} textAnchor={anchor} fontSize="7" fill={e.color||"#94A3B8"} fontFamily="monospace">{e.label}</text>
+            </g>);
+          })}
+        </g>
+        {/* Axis labels (outside clip) */}
+        {reg&&<text x={pad.l+W-2} y={pad.t+6} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
+        {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(y<10?1:0)}</text>)}
+        {xTicks.map((x,i)=><text key={i} x={Math.max(pad.l+2,Math.min(pad.l+W-2,px(x)))} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
+        {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
+        {/* Zoom-progress minimap bar at bottom */}
+        {isZoomed&&(()=>{
+          const bx=pad.l, bw=W, by=pad.t+H+22, bh=3;
+          const hx=bx+((vx0-allX0)/fullSpan)*bw;
+          const hw=((vx1-vx0)/fullSpan)*bw;
+          return(<g>
+            <rect x={bx} y={by} width={bw} height={bh} fill="#0F2030" rx="1"/>
+            <rect x={hx} y={by} width={Math.max(4,hw)} height={bh} fill={color} rx="1" opacity="0.7"/>
+          </g>);
+        })()}
+      </svg>
+    </div>
   );
 }
 
@@ -899,7 +1053,10 @@ function ManoeuvreChart({tackJibes,logRows,width=400,height=140}){
   );
 }
 
-function PerfChart({rows,width=400,height=110}){
+function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,playUtc=null}){
+  const svgRef=useRef(null);
+  const dragRef=useRef(null);
+  const clipId=useRef('pc'+Math.random().toString(36).slice(2,8)).current;
   if(!rows?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
   const validPol=rows.filter(r=>r.vsPerfPct>5&&r.vsPerfPct<200);
   const validTgt=rows.filter(r=>r.vsTargPct>5&&r.vsTargPct<200);
@@ -911,25 +1068,48 @@ function PerfChart({rows,width=400,height=110}){
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
   const allPts=[...polPts,...tgtPts];
   if(!allPts.length)return null;
-  const x0=Math.min(...allPts.map(p=>p.x)),x1=Math.max(...allPts.map(p=>p.x));
+  const allX0=Math.min(...allPts.map(p=>p.x)),allX1=Math.max(...allPts.map(p=>p.x));
+  const fullSpan=allX1-allX0||1;
+  const [vx0,vx1]=viewRange??[allX0,allX1];
+  const span=vx1-vx0||1;
+  const buf=span*0.05;
+  const visPol=polPts.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf);
+  const visTgt=tgtPts.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf);
   const y0=50,y1=150;
-  const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
+  const px=x=>pad.l+((x-vx0)/span)*W;
   const py=y=>pad.t+H-((y-y0)/(y1-y0))*H;
-  const line=(pts,color)=>pts.length<2?"":pts.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
-  const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
+  const mkLine=pts=>pts.length<2?"":pts.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
+  const xTicks=Array.from({length:5},(_,i)=>vx0+span*i/4);
   const yTicks=[60,80,100,120,140];
+  const isZoomed=viewRange&&(vx0>allX0||vx1<allX1);
+  // Reuse same pan/zoom logic as LineChart
+  const VB_W=width;
+  const getSvgX=e=>{const rect=svgRef.current?.getBoundingClientRect();if(!rect)return 0;return((e.clientX-rect.left)/rect.width)*VB_W;};
+  const onWheel=e=>{if(!onViewRange)return;e.preventDefault();const factor=e.deltaY>0?1.3:1/1.3;const svgX=getSvgX(e);const frac=Math.max(0,Math.min(1,(svgX-pad.l)/W));const pivot=vx0+frac*span;const newSpan=Math.max(60000,Math.min(fullSpan,span*factor));let nx0=pivot-frac*newSpan,nx1=nx0+newSpan;if(nx0<allX0){nx0=allX0;nx1=allX0+newSpan;}if(nx1>allX1){nx1=allX1;nx0=allX1-newSpan;}onViewRange(newSpan>=fullSpan*0.999?null:[nx0,nx1]);};
+  const onMouseDown=e=>{if(!onViewRange||e.button!==0)return;dragRef.current={startSvgX:getSvgX(e),startVR:[vx0,vx1]};e.currentTarget.style.cursor="grabbing";};
+  const onMouseMove=e=>{if(!dragRef.current||!onViewRange)return;const{startSvgX,startVR}=dragRef.current;const shift=-((getSvgX(e)-startSvgX)/W)*span;const s=startVR[1]-startVR[0];let nx0=startVR[0]+shift,nx1=startVR[1]+shift;if(nx0<allX0){nx0=allX0;nx1=allX0+s;}if(nx1>allX1){nx1=allX1;nx0=allX1-s;}onViewRange([nx0,nx1]);};
+  const onMouseUp=e=>{dragRef.current=null;if(e.currentTarget)e.currentTarget.style.cursor="grab";};
   return(
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
-      {yTicks.map(y=><line key={y} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={y===100?"#475569":"#0F2030"} strokeWidth={y===100?"1":"0.5"} strokeDasharray={y===100?"4,2":"none"}/>)}
-      <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-      <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-      {polPts.length>1&&<path d={line(polPts,"#F59E0B")} fill="none" stroke="#F59E0B" strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>}
-      {tgtPts.length>1&&<path d={line(tgtPts,"#10B981")} fill="none" stroke="#10B981" strokeWidth="1.5" strokeLinejoin="round" opacity="0.7"/>}
-      {yTicks.map(y=><text key={y} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y}</text>)}
-      {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
-      {polPts.length>0&&<><rect x={pad.l+4} y={4} width="8" height="5" fill="#F59E0B" rx="1"/><text x={pad.l+15} y={9} fontSize="8" fill="#F59E0B">Polar %</text></>}
-      {tgtPts.length>0&&<><rect x={pad.l+60} y={4} width="8" height="5" fill="#10B981" rx="1"/><text x={pad.l+71} y={9} fontSize="8" fill="#10B981">Target %</text></>}
-    </svg>
+    <div style={{position:"relative",userSelect:"none"}}>
+      {isZoomed&&onViewRange&&(<button onClick={()=>onViewRange(null)} style={{position:"absolute",top:2,right:2,zIndex:2,background:"#1E3A5A",border:"1px solid #2D4A6A",borderRadius:4,padding:"2px 7px",color:"#94A3B8",fontSize:9,cursor:"pointer",fontFamily:"monospace"}}>↩ all</button>)}
+      <svg ref={svgRef} width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible",cursor:onViewRange?"grab":"default",display:"block"}}
+        onWheel={onViewRange?onWheel:undefined} onMouseDown={onViewRange?onMouseDown:undefined} onMouseMove={onViewRange?onMouseMove:undefined} onMouseUp={onViewRange?onMouseUp:undefined} onMouseLeave={onViewRange?onMouseUp:undefined}>
+        <defs><clipPath id={clipId}><rect x={pad.l} y={pad.t-2} width={W} height={H+4}/></clipPath></defs>
+        {yTicks.map(y=><line key={y} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={y===100?"#475569":"#0F2030"} strokeWidth={y===100?"1":"0.5"} strokeDasharray={y===100?"4,2":"none"}/>)}
+        <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+        <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+        <g clipPath={`url(#${clipId})`}>
+          {visPol.length>1&&<path d={mkLine(visPol)} fill="none" stroke="#F59E0B" strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>}
+          {visTgt.length>1&&<path d={mkLine(visTgt)} fill="none" stroke="#10B981" strokeWidth="1.5" strokeLinejoin="round" opacity="0.7"/>}
+          {playUtc&&playUtc>=vx0&&playUtc<=vx1&&(()=>{const cx=px(playUtc);return(<g><line x1={cx} x2={cx} y1={pad.t} y2={pad.t+H} stroke="#F59E0B" strokeWidth="1.5" opacity="0.9"/><polygon points={`${cx-4},${pad.t} ${cx+4},${pad.t} ${cx},${pad.t+7}`} fill="#F59E0B" opacity="0.9"/></g>);})()}
+          {isZoomed&&(()=>{const bx=pad.l,bw=W,by=pad.t+H+22,bh=3;const hx=bx+((vx0-allX0)/fullSpan)*bw;const hw=((vx1-vx0)/fullSpan)*bw;return(<g><rect x={bx} y={by} width={bw} height={bh} fill="#0F2030" rx="1"/><rect x={hx} y={by} width={Math.max(4,hw)} height={bh} fill="#F59E0B" rx="1" opacity="0.7"/></g>);})()}
+        </g>
+        {yTicks.map(y=><text key={y} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y}</text>)}
+        {xTicks.map((x,i)=><text key={i} x={Math.max(pad.l+2,Math.min(pad.l+W-2,px(x)))} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
+        {polPts.length>0&&<><rect x={pad.l+4} y={4} width="8" height="5" fill="#F59E0B" rx="1"/><text x={pad.l+15} y={9} fontSize="8" fill="#F59E0B">Polar %</text></>}
+        {tgtPts.length>0&&<><rect x={pad.l+60} y={4} width="8" height="5" fill="#10B981" rx="1"/><text x={pad.l+71} y={9} fontSize="8" fill="#10B981">Target %</text></>}
+      </svg>
+    </div>
   );
 }
 
@@ -1237,6 +1417,22 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const twsPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.tws}));
   const sogPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.sog}));
   const heelPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:Math.abs(r.heel)}));
+
+  // Shared pan/zoom state for all timeseries — null = show full session
+  const [viewRange, setViewRange] = useState(null);
+  // Reset view when the session changes
+  useEffect(()=>{ setViewRange(null); }, [activeDate]);
+  // Auto-zoom to video clip range when video is selected and has a start time
+  useEffect(()=>{
+    if(selectedVideo?.startUtc && selectedVideo?.duration && rows.length){
+      const pad = selectedVideo.duration * 1000 * 0.15; // 15% padding
+      const nx0 = selectedVideo.startUtc - pad;
+      const nx1 = selectedVideo.startUtc + selectedVideo.duration * 1000 + pad;
+      const allX0 = rows[0].utc, allX1 = rows[rows.length-1].utc;
+      if(nx0 > allX0 || nx1 < allX1) setViewRange([Math.max(allX0,nx0), Math.min(allX1,nx1)]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedVideo?.id]);
   const chartEvents = xmlData ? [
     ...(xmlData.markRoundings||[]).filter(m=>m.isValid!==false).map(m=>({utc:m.utc,label:m.isTop?"⬆ top":"⬇ gate",color:m.isTop?"#EF4444":"#8B5CF6"})),
     ...(xmlData.raceGuns||[]).map(g=>({utc:g.utc,label:"🚩 start",color:"#EF4444"})),
@@ -1330,17 +1526,78 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — select a date in the Library first.</div>
               )
             ))}
-            {section("Wind & boat speed timeline",(
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div><LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn" showTrend events={chartEvents} playUtc={playUtc}/></div>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div><LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn" showTrend events={chartEvents} playUtc={playUtc}/></div>
-              </div>
-            ))}
-            {section("Heel & performance",(
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div><LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °" showTrend events={chartEvents} playUtc={playUtc}/></div>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div><PerfChart rows={rows} height={110}/></div>
-              </div>
+            {section("Wind & boat speed · heel · performance",(
+              <>
+                {/* ── Zoom / pan control bar ─────────────────────────────── */}
+                {rows.length>0&&(()=>{
+                  const allX0=rows[0].utc, allX1=rows[rows.length-1].utc;
+                  const fullSpan=allX1-allX0||1;
+                  const [vx0,vx1]=viewRange??[allX0,allX1];
+                  const span=vx1-vx0;
+                  const fmtUTC=u=>new Date(u).toISOString().slice(11,16);
+                  const fmtSpan=ms=>{const m=Math.round(ms/60000);return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`;};
+                  const zoom=(factor,center)=>{
+                    const [cvx0,cvx1]=viewRange??[allX0,allX1];
+                    const s=cvx1-cvx0;
+                    const pivot=center??((cvx0+cvx1)/2);
+                    const frac=(pivot-cvx0)/s;
+                    const newSpan=Math.max(60000,Math.min(fullSpan,s*factor));
+                    let nx0=pivot-frac*newSpan, nx1=nx0+newSpan;
+                    if(nx0<allX0){nx0=allX0;nx1=allX0+newSpan;}
+                    if(nx1>allX1){nx1=allX1;nx0=allX1-newSpan;}
+                    setViewRange(newSpan>=fullSpan*0.999?null:[nx0,nx1]);
+                  };
+                  const pan=dir=>{
+                    const [cvx0,cvx1]=viewRange??[allX0,allX1];
+                    const s=cvx1-cvx0;
+                    const shift=s*0.25*dir;
+                    let nx0=cvx0+shift, nx1=cvx1+shift;
+                    if(nx0<allX0){nx0=allX0;nx1=allX0+s;}
+                    if(nx1>allX1){nx1=allX1;nx0=allX1-s;}
+                    setViewRange([nx0,nx1]);
+                  };
+                  const btnStyle={background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"3px 9px",color:"#94A3B8",cursor:"pointer",fontSize:11,fontFamily:"monospace",lineHeight:1.4};
+                  const clipStart=selectedVideo?.startUtc;
+                  const clipEnd=clipStart?(clipStart+(selectedVideo?.duration||0)*1000):null;
+                  return(
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+                      <button style={btnStyle} onClick={()=>pan(-1)} title="Pan left 25%">◀</button>
+                      <button style={btnStyle} onClick={()=>zoom(1/2)} title="Zoom in 2×">＋</button>
+                      <button style={btnStyle} onClick={()=>zoom(2)} title="Zoom out 2×">－</button>
+                      <button style={btnStyle} onClick={()=>pan(1)} title="Pan right 25%">▶</button>
+                      {viewRange&&<button onClick={()=>setViewRange(null)} style={{...btnStyle,color:"#06B6D4",borderColor:"#06B6D440"}}>↩ Full session</button>}
+                      {clipStart&&clipEnd&&<button onClick={()=>{ const pad=(clipEnd-clipStart)*0.15; setViewRange([Math.max(allX0,clipStart-pad),Math.min(allX1,clipEnd+pad)]); }} style={{...btnStyle,color:"#F59E0B",borderColor:"#F59E0B40"}}>▶ Clip window</button>}
+                      <div style={{flex:1}}/>
+                      <span style={{fontSize:9,color:"#475569",fontFamily:"monospace"}}>
+                        {viewRange?`${fmtUTC(vx0)} – ${fmtUTC(vx1)} UTC · ${fmtSpan(span)}`:`Full session · ${fmtSpan(fullSpan)}`}
+                      </span>
+                      <span style={{fontSize:9,color:"#334155"}}>scroll to zoom · drag to pan</span>
+                    </div>
+                  );
+                })()}
+                {/* ── Charts row 1: TWS + SOG ─────────────────────────────── */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                  <div>
+                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div>
+                    <LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div>
+                    <LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                  </div>
+                </div>
+                {/* ── Charts row 2: Heel + Polar % ─────────────────────────── */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <div>
+                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div>
+                    <LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div>
+                    <PerfChart rows={rows} height={110} viewRange={viewRange} onViewRange={setViewRange} playUtc={playUtc}/>
+                  </div>
+                </div>
+              </>
             ))}
             {rows.length>50&&section("X-Y plots — correlations & trends",(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
