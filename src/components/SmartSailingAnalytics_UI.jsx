@@ -1219,6 +1219,9 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 
   const polar = React.useMemo(()=>loadPolarFromLS(),[]);
 
+  const playUtcRef = React.useRef(playUtc);
+  React.useEffect(()=>{ playUtcRef.current = playUtc; },[playUtc]);
+
   // ── Map init ─────────────────────────────────────────────────────────────────
   React.useEffect(()=>{
     if(!containerRef.current || filteredRows.length < 2) return;
@@ -1319,6 +1322,25 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         interactive: false,
       }).addTo(map);
       boatMarkerRef.current = boatMarker;
+
+      // Immediately position boat from current playUtc — avoids waiting for
+      // next [playUtc] effect which won't fire again just because the ref changed.
+      // Use requestAnimationFrame so Leaflet has had a tick to add the element to DOM.
+      requestAnimationFrame(()=>{
+        const inner = boatMarker.getElement()?.querySelector('.boat-inner');
+        const curUtc = playUtcRef.current;
+        if(!inner || !curUtc) return;
+        let lo=0, hi=filteredRows.length-1;
+        while(lo<hi){const mid=(lo+hi+1)>>1; if(filteredRows[mid].utc<=curUtc)lo=mid; else hi=mid-1;}
+        const row=filteredRows[lo];
+        if(!row||Math.abs(row.utc-curUtc)>60000)return;
+        boatMarker.setLatLng([row.lat,row.lon]);
+        const nxt=filteredRows[Math.min(lo+3,filteredRows.length-1)];
+        let hdg=0;
+        if(nxt&&nxt!==row){const dLon=(nxt.lon-row.lon)*Math.PI/180;const y=Math.sin(dLon)*Math.cos(nxt.lat*Math.PI/180);const x=Math.cos(row.lat*Math.PI/180)*Math.sin(nxt.lat*Math.PI/180)-Math.sin(row.lat*Math.PI/180)*Math.cos(nxt.lat*Math.PI/180)*Math.cos(dLon);hdg=(Math.atan2(y,x)*180/Math.PI+360)%360;}
+        inner.style.opacity='1';
+        inner.style.transform=`rotate(${hdg}deg)`;
+      });
 
       // ── Legends ─────────────────────────────────────────────────────────────
       if(polar){
@@ -1422,17 +1444,22 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const [viewRange, setViewRange] = useState(null);
   // Reset view when the session changes
   useEffect(()=>{ setViewRange(null); }, [activeDate]);
-  // Auto-zoom to video clip range when video is selected and has a start time
+  // Auto-zoom to video clip range when video is selected and has a start time.
+  // Depends on both selectedVideo?.id AND activeDate so it re-fires when a new
+  // session is loaded (rows might have been empty on the previous render).
   useEffect(()=>{
     if(selectedVideo?.startUtc && selectedVideo?.duration && rows.length){
-      const pad = selectedVideo.duration * 1000 * 0.15; // 15% padding
-      const nx0 = selectedVideo.startUtc - pad;
-      const nx1 = selectedVideo.startUtc + selectedVideo.duration * 1000 + pad;
+      const padMs = selectedVideo.duration * 1000 * 0.15; // 15% padding either side
+      const nx0 = selectedVideo.startUtc - padMs;
+      const nx1 = selectedVideo.startUtc + selectedVideo.duration * 1000 + padMs;
       const allX0 = rows[0].utc, allX1 = rows[rows.length-1].utc;
-      if(nx0 > allX0 || nx1 < allX1) setViewRange([Math.max(allX0,nx0), Math.min(allX1,nx1)]);
+      // Only zoom if the clip is narrower than the full session
+      if(nx0 > allX0 || nx1 < allX1){
+        setViewRange([Math.max(allX0, nx0), Math.min(allX1, nx1)]);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedVideo?.id]);
+  }, [selectedVideo?.id, activeDate]);
   const chartEvents = xmlData ? [
     ...(xmlData.markRoundings||[]).filter(m=>m.isValid!==false).map(m=>({utc:m.utc,label:m.isTop?"⬆ top":"⬇ gate",color:m.isTop?"#EF4444":"#8B5CF6"})),
     ...(xmlData.raceGuns||[]).map(g=>({utc:g.utc,label:"🚩 start",color:"#EF4444"})),
