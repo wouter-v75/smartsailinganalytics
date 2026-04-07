@@ -47,7 +47,24 @@ const ROLES = {
   consultant: { label:"Consultant", canImport:false, canSync:false, seeLocal:false },
 };
 
-function parseNmea(s){const p=s.trim().split(/\s+/);if(p.length<2)return{lat:0,lon:0};const f=(str,d)=>{const h=str.slice(-1),n=str.slice(0,-1);const v=parseFloat(n.slice(0,d))+parseFloat(n.slice(d))/60;return h==="S"||h==="W"?-v:v;};try{return{lat:f(p[0],2),lon:f(p[1],3)};}catch{return{lat:0,lon:0};}}
+function parseNmea(s){
+  if(!s||!s.trim())return{lat:0,lon:0};
+  // Format: "0934.8432N 11846.9507E" — ddmm.mmmm hemisphere pairs
+  const p=s.trim().split(/\s+/);
+  if(p.length<2)return{lat:0,lon:0};
+  const cvt=(str,degDigits)=>{
+    if(!str)return 0;
+    const hem=str.slice(-1);
+    const num=str.slice(0,-1);
+    const deg=parseFloat(num.slice(0,degDigits))||0;
+    const min=parseFloat(num.slice(degDigits))||0;
+    const v=deg+min/60;
+    return(hem==="S"||hem==="W")?-v:v;
+  };
+  try{
+    return{lat:cvt(p[0],2),lon:cvt(p[1],3)};
+  }catch{return{lat:0,lon:0};}
+}
 // ─── TIMEZONES ────────────────────────────────────────────────────────────────
 // Offset in minutes from UTC. Local time - offsetMin = UTC.
 const TZ_OPTIONS = [
@@ -1225,13 +1242,21 @@ function AIChatPanel({rows, allVideos}){
 // events overlay: marks, race guns, tacks/gybes as coloured dots.
 
 function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, width=540, height=420}){
-  if(!rows?.length) return null;
+  if(!rows?.length) return(
+    <div style={{padding:12,background:"#071624",borderRadius:8,color:"#EF4444",fontSize:10}}>No log rows passed to map</div>
+  );
 
-  // Filter to rows that have valid GPS
-  const gpsRows = rows.filter(r=>r.lat&&r.lon&&Math.abs(r.lat)>0.1&&Math.abs(r.lon)>0.1);
+  // Filter to rows that have valid GPS (non-zero, plausible lat/lon)
+  const gpsRows = rows.filter(r=>
+    r.lat && r.lon &&
+    Math.abs(r.lat) > 0.01 && Math.abs(r.lat) < 90 &&
+    Math.abs(r.lon) > 0.01 && Math.abs(r.lon) < 180
+  );
+
   if(gpsRows.length < 2) return(
-    <div style={{height:200,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>
-      No GPS data in log
+    <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>
+      No GPS data in log ({rows.length} rows checked).
+      First row: lat=<code>{rows[0]?.lat?.toFixed?.(4)??rows[0]?.lat}</code> lon=<code>{rows[0]?.lon?.toFixed?.(4)??rows[0]?.lon}</code>
     </div>
   );
 
@@ -1519,17 +1544,23 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               {card("Target %",vsTargAvg?R(vsTargAvg)+"%":"--","","#EF4444")}
             </div>
 
-            {/* GPS track map */}
+            {/* GPS track map — always render section so we can see diagnostics */}
             {section("GPS track",(
-              <GPSTrackMap
-                rows={rows}
-                videoStartUtc={selectedVideo?.startUtc||null}
-                videoDurationSec={selectedVideo?.duration||0}
-                xmlData={xmlData}
-                syncOffset={0}
-                width={700}
-                height={420}
-              />
+              rows.length > 0 ? (
+                <GPSTrackMap
+                  rows={rows}
+                  videoStartUtc={selectedVideo?.startUtc||null}
+                  videoDurationSec={selectedVideo?.duration||0}
+                  xmlData={xmlData}
+                  syncOffset={0}
+                  width={700}
+                  height={420}
+                />
+              ) : (
+                <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>
+                  Load a session with GPS data — select a date in the Library first.
+                </div>
+              )
             ))}
 
             {/* TWS + SOG timeline */}
