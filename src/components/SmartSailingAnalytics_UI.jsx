@@ -234,6 +234,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
 
 
 const R=(n,d=1)=>(n==null||isNaN(n))?"--":Number(n).toFixed(d);
+const TACK_COLORS=['#1D9E75','#06B6D4','#8B5CF6','#F59E0B','#EF4444','#EC4899','#34D399','#60A5FA','#A78BFA','#FCD34D'];
 const fmtT=s=>{const x=Math.max(0,Math.floor(s));return`${String(Math.floor(x/60)).padStart(2,"0")}:${String(x%60).padStart(2,"0")}`;};
 const fmtUtc=u=>u?new Date(u).toISOString().slice(11,19):"--:--:--";
 const TODAY=()=>new Date().toISOString().slice(0,10);
