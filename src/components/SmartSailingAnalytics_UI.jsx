@@ -92,13 +92,16 @@ function parseCsvLog(text,offsetMin=0){
 
     // Starting data — null if zero/missing (Expedition outputs 0 when not applicable)
     const opt=(i,zeroNull=true)=>{if(c.length<=i)return null;const v=parseFloat(c[i]);return(isNaN(v)||(zeroNull&&v===0))?null:v;};
-    const dstLine = opt(29);               // DST_LINE nm
-    const tmLine  = opt(30);               // TM_LINE seconds
-    const ttbPort = opt(50);               // TTB_Port seconds
-    const ttbStbd = opt(51);               // TTB_Stbd seconds
-    const ttbPin  = opt(52);               // TTB_Pin seconds
-    const ttbCB   = opt(53);               // TTB_CB seconds
-    const timer1  = opt(55,false);         // Timer-1: 0 = exactly at gun, keep it
+    const dstLine = opt(29);                 // DST_LINE nm — 0 = not in start zone
+    const tmLine  = opt(30);                 // TM_LINE seconds — 0 = not in start zone
+    const ttbPort = opt(50, false);          // TTB_Port seconds — keep 0 (perfectly timed start)
+    const ttbStbd = opt(51, false);          // TTB_Stbd seconds — keep 0
+    const ttbPin  = opt(52, false);          // TTB_Pin seconds
+    const ttbCB   = opt(53, false);          // TTB_CB seconds
+    // Timer-1: treat 0 as "sequence not active yet" → null so event-UTC fallback is used.
+    // Expedition only runs Timer-1 during the start sequence (last ~5 min before gun).
+    // A stored 0 means inactive, NOT that the gun has just fired.
+    const timer1  = opt(55, true);           // null when 0 → uses event-UTC diff as fallback
 
     rows.push({
       utc, lat:pos.lat, lon:pos.lon,
@@ -371,53 +374,64 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const targBsp  = (polar && row) ? polarInterp(polar, row.tws, Math.abs(row.twa||0)) : null;
   const polPct   = (polar && row) ? polarPerf(polar, row.bsp, row.twa, row.tws)?.pct : null;
 
-  // ── Starting instruments — all values preferably from log columns ────────────
+  // AWA: use log col 5 (AW_angle) directly; fall back to computed if 0/missing
+  const awaRaw = row?.awa;
+  const awa = (awaRaw && Math.abs(awaRaw) > 0.5)
+    ? awaRaw
+    : calcAWA(row?.twa, row?.tws, row?.bsp);
+
+  // VMG% vs polar optimal — for upwind/downwind overlay
+  const vmgTarget = (polar && row) ? polarVMGTarget(polar, row.tws) : null;
+  const absA = Math.abs(row?.twa||0);
+  const isUpwindAngle = absA < 90;
+  const optVMG = vmgTarget ? (isUpwindAngle ? vmgTarget.upVMG : vmgTarget.downVMG) : null;
+  const vmgPct = (optVMG && optVMG > 0.01 && row?.vmg != null)
+    ? Math.max(0, Math.min(200, (row.vmg / optVMG) * 100))
+    : null;
+
+  // ── Starting instruments ────────────────────────────────────────────────────
   const guns       = xmlData?.raceGuns||[];
   const startLines = xmlData?.startLines||[];
   const boatLenM   = extractBoatLengthM(xmlData?.meta?.boat);
 
-  // GUN countdown — prefer Timer-1 from log (col 55), fall back to event UTC diff
-  const timerFromLog = row?.timer1;  // seconds; positive=before gun, 0=gun, negative=after
+  // GUN — prefer Timer-1 (col 55), fall back to event UTC diff
+  const timerFromLog = row?.timer1;
   const nearestGun = guns.length&&logUtc
     ? guns.filter(g=>Math.abs(g.utc-logUtc)<600000)
           .sort((a,b)=>Math.abs(a.utc-logUtc)-Math.abs(b.utc-logUtc))[0]||null
     : null;
   const secToGunFallback = nearestGun ? Math.round((nearestGun.utc-logUtc)/1000) : null;
-  const secToGun   = timerFromLog ?? secToGunFallback;
-  const gunActive  = secToGun!=null;
-  const gunSrc     = timerFromLog!=null ? "log" : "event";  // for debugging
+  const secToGun = timerFromLog ?? secToGunFallback;
+  const gunActive = secToGun!=null;
+  const afterGun  = secToGun!=null && secToGun <= 0;  // gun has fired
 
-  // DISTANCE TO LINE — from log DST_LINE (col 29, nautical miles)
-  // Positive = pre-start (haven't crossed), negative = OCS
-  // Fall back to GPS geometry only if log value absent
-  const dstLineNm  = (row?.dstLine!=null&&!isNaN(row.dstLine)) ? row.dstLine : null;
+  // DISTANCE TO LINE — log DST_LINE (col 29, nm); geometry fallback
+  const dstLineNm = (row?.dstLine!=null&&!isNaN(row.dstLine)) ? row.dstLine : null;
   const activeLine = nearestGun
     ? startLines.find(sl=>sl.raceNum===nearestGun.raceNum)||startLines[0]||null
     : startLines[0]||null;
-  const distMGeom  = (!dstLineNm&&activeLine&&row?.lat&&row?.lon)
+  const distMGeom = (activeLine&&row?.lat&&row?.lon)
     ? perpDistToLine(row.lat,row.lon,activeLine.pin,activeLine.boat) : null;
-  const distBL     = dstLineNm!=null
+  const distBL = dstLineNm!=null
     ? dstLineNm*1852/boatLenM
     : (distMGeom!=null ? distMGeom/boatLenM : null);
-  const lineSrc    = dstLineNm!=null ? "log" : (distMGeom!=null ? "gps" : null);
+  const lineSrc = dstLineNm!=null ? "log" : (distMGeom!=null ? "gps" : null);
 
-  // TIME TO LINE — from log TM_LINE (col 30, seconds)
-  const tmLine = (row?.tmLine!=null&&!isNaN(row.tmLine)&&row.tmLine>0) ? row.tmLine : null;
+  // TIME TO LINE — log TM_LINE (col 30, seconds); geometry fallback from dist/SOG
+  const sogMs = (row?.sog||0)*0.5144;
+  const tmLineLog  = (row?.tmLine!=null&&!isNaN(row.tmLine)&&row.tmLine>0) ? row.tmLine : null;
+  const tmLineGeom = (distMGeom!=null&&sogMs>0.1) ? Math.abs(distMGeom)/sogMs : null;
+  const timeToLine = tmLineLog ?? tmLineGeom;
 
-  // TIME TO BURN — priority:
-  //   1. TTB_Port / TTB_Stbd from log (cols 50/51) — Expedition computes these directly
-  //   2. Calculated: timer1 − tmLine (as requested)
-  //   3. Calculated: secToGun − tmLine
-  const onPort = (row?.twa||0) < 0;
-  const ttbPort = (row?.ttbPort!=null&&!isNaN(row.ttbPort)&&row.ttbPort!==0) ? row.ttbPort : null;
-  const ttbStbd = (row?.ttbStbd!=null&&!isNaN(row.ttbStbd)&&row.ttbStbd!==0) ? row.ttbStbd : null;
-  const ttbLogDirect = onPort ? ttbPort : ttbStbd;        // tack-appropriate TTB from log
-  const ttbCalc = (secToGun!=null&&tmLine!=null) ? secToGun-tmLine : null;
-  const timeToBurn = ttbLogDirect ?? ttbCalc;
-  const burnSrc    = ttbLogDirect!=null ? "log" : (ttbCalc!=null ? "calc" : null);
-  // Also always compute both for display
-  const ttbPortFmt = ttbPort!=null ? ttbPort : (onPort ? ttbCalc : null);
-  const ttbStbdFmt = ttbStbd!=null ? ttbStbd : (!onPort ? ttbCalc : null);
+  // TIME TO BURN — log TTB_Port/Stbd (cols 50/51, opt keeps 0); fallback: gun timer − time to line
+  // Expedition only populates these during the active start sequence.
+  // opt(50, false) stored 0 = perfect start, null = not in sequence.
+  const ttbPort = row?.ttbPort;  // already null-cleaned by opt(50, false) in parseCsvLog
+  const ttbStbd = row?.ttbStbd;
+  const ttbCalc = (secToGun!=null&&timeToLine!=null) ? secToGun-timeToLine : null;
+  // Use log value when available (including 0 = perfect); otherwise calculated fallback
+  const ttbPortFmt = (ttbPort!=null) ? ttbPort : ttbCalc;
+  const ttbStbdFmt = (ttbStbd!=null) ? ttbStbd : ttbCalc;
 
   // Formatters
   const fmtGun = s=>{
@@ -438,31 +452,30 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const overlay=row&&(()=>{
     if(mode==="start") return(
       <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-        {/* GUN — race timer */}
+        {/* GUN: red counting down, green after gun fires */}
         <Gauge label="GUN"
                value={gunActive?fmtGun(secToGun):"--:--"}
                unit={secToGun==null?"":secToGun>0?"to start":"after gun"}
-               color="#EF4444" size="lg"
-               highlight={gunActive&&secToGun!=null&&secToGun>0&&secToGun<=60}/>
-        {/* DIST TO LINE */}
-        <Gauge label="LINE"
+               color={afterGun?"#10B981":"#EF4444"} size="lg"
+               highlight={gunActive&&!afterGun&&secToGun<=60}/>
+        {/* DIST TO LINE — log or GPS geometry */}
+        <Gauge label={`LINE·${lineSrc||"--"}`}
                value={fmtDist(distBL)}
-               unit={distBL==null?"BL":`BL · ${lineSrc||""}`}
+               unit={distBL==null?"BL":`BL`}
                color={distBL!=null&&distBL<0?"#EF4444":"#F59E0B"} size="lg"
                highlight={distBL!=null&&distBL<0}/>
-        {/* TIME TO BURN — port */}
-        <Gauge label="TTB PORT"
+        {/* TTB PORT */}
+        <Gauge label={`TTB·P${ttbPort!=null?"·log":"·calc"}`}
                value={ttbPortFmt!=null?fmtBurn(ttbPortFmt):"--:--"}
                unit={ttbPortFmt==null?"":ttbPortFmt>0?"early":"late"}
                color={ttbPortFmt!=null&&ttbPortFmt<0?"#EF4444":"#10B981"} size="lg"
                highlight={ttbPortFmt!=null&&ttbPortFmt<-10}/>
-        {/* TIME TO BURN — stbd */}
-        <Gauge label="TTB STBD"
+        {/* TTB STBD */}
+        <Gauge label={`TTB·S${ttbStbd!=null?"·log":"·calc"}`}
                value={ttbStbdFmt!=null?fmtBurn(ttbStbdFmt):"--:--"}
                unit={ttbStbdFmt==null?"":ttbStbdFmt>0?"early":"late"}
                color={ttbStbdFmt!=null&&ttbStbdFmt<0?"#EF4444":"#10B981"} size="lg"
                highlight={ttbStbdFmt!=null&&ttbStbdFmt<-10}/>
-        {/* Secondary */}
         <Gauge label="BSP"  value={R(row.bsp)}         unit="kn"   color="#10B981" size="sm"/>
         <Gauge label="SOG"  value={R(row.sog)}         unit="kn"   color="#34D399" size="sm"/>
         <Gauge label="TWS"  value={R(row.tws)}         unit="kn"   color="#06B6D4" size="sm"/>
@@ -477,19 +490,20 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <Gauge label="Tgt BSP" value={targBsp!=null?R(targBsp):"--"}       unit="kn"       color="#34D399" size="sm"/>
         <Gauge label="TWA"     value={`${R(row.twa,0)}°`}                  unit="true"     color="#8B5CF6" size="sm"/>
         <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"       color="#06B6D4" size="sm"/>
-        <Gauge label="AWA"     value={`${R(row.awa,0)}°`}                  unit="app"      color="#A78BFA" size="sm"/>
+        <Gauge label="AWA"     value={awa!=null?`${R(awa,0)}°`:"--"}       unit="app"      color="#A78BFA" size="sm"/>
         <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"        color="#F59E0B" size="sm"/>
       </div>
     );
-    // default: upwind / downwind
+    // upwind / downwind — VMG as % of polar optimal
+    const vmgColor = vmgPct==null?"#22C55E":vmgPct>=100?"#10B981":vmgPct>=90?"#22C55E":"#F59E0B";
     return(
       <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
         <Gauge label="BSP"     value={R(row.bsp)}                          unit="kn"   color="#10B981"/>
+        <Gauge label="VMG %"   value={vmgPct!=null?R(vmgPct,0)+"%":"--"}   unit={isUpwindAngle?"↑ opt":"↓ opt"} color={vmgColor}/>
         <Gauge label="Tgt BSP" value={targBsp!=null?R(targBsp):"--"}       unit="kn"   color="#34D399" size="sm"/>
-        <Gauge label="VMG"     value={R(row.vmg)}                          unit="kn"   color="#22C55E" size="sm"/>
         <Gauge label="TWA"     value={`${R(row.twa,0)}°`}                  unit="true" color="#8B5CF6" size="sm"/>
         <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"   color="#06B6D4" size="sm"/>
-        <Gauge label="AWA"     value={`${R(row.awa,0)}°`}                  unit="app"  color="#A78BFA" size="sm"/>
+        <Gauge label="AWA"     value={awa!=null?`${R(awa,0)}°`:"--"}       unit="app"  color="#A78BFA" size="sm"/>
         <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"    color="#F59E0B" size="sm"/>
       </div>
     );
