@@ -122,95 +122,92 @@ function isoUtc(s,offsetMin=0){
   return new Date(s.trim().replace(" ","T")+"Z").getTime() - offsetMin*60000;
 }
 function parseXmlEvents(text,offsetMin=0){
-  // SailingPerformance files have a UTF-8 BOM (U+FEFF = \uFEFF) before <?xml.
-  // This makes DOMParser return a <parsererror> document in strict XML mode.
-  // Strip it unconditionally before parsing.
-  const clean = text.charCodeAt(0)===0xFEFF ? text.slice(1) : text;
-  const doc = new DOMParser().parseFromString(clean,"text/xml");
+  // Strip UTF-8 BOM — must happen before any processing
+  const t = text.charCodeAt(0)===0xFEFF ? text.slice(1) : text;
 
-  // Detect parseerror — browser returns a special error document when XML is invalid
-  const rootTag = doc.documentElement?.tagName||"";
-  if(rootTag==="parsererror"||rootTag.endsWith(":parsererror")){
-    throw new Error("XML parse failed: "+( doc.documentElement.textContent?.slice(0,120)||"unknown error"));
-  }
+  // ── Pure text-based parsing — bypasses DOMParser entirely ─────────────────
+  // DOMParser for text/xml is fragile (BOM, undeclared entities, partial parse).
+  // Regex on the raw text is simpler and works on any well-structured XML.
 
-  // Case-insensitive attribute getter
-  const ga=(el,a,d="")=>{
-    if(!el)return d;
-    const v=el.getAttribute(a); if(v!==null)return v;
-    for(const attr of (el.attributes||[])){if(attr.name.toLowerCase()===a.toLowerCase())return attr.value;}
-    return d;
+  // Return named attribute value from a tag string, case-insensitive
+  const getAttr=(str,attr)=>{
+    const m=str.match(new RegExp(`\\b${attr}="([^"]*)"`, 'i'));
+    return m?m[1]:'';
   };
 
-  // Case-insensitive element finder (XML tag names are case-sensitive)
-  const byTag=tag=>{
-    const r=Array.from(doc.getElementsByTagName(tag));  if(r.length)return r;
-    const cap=tag[0].toUpperCase()+tag.slice(1);
-    const r2=Array.from(doc.getElementsByTagName(cap)); if(r2.length)return r2;
-    return Array.from(doc.getElementsByTagName("*")).filter(el=>el.tagName.toLowerCase()===tag.toLowerCase());
+  // Find all opening or self-closing tags named `name` → array of full tag strings
+  const findTags=name=>{
+    const rx=new RegExp(`<${name}\\b[^>]*?/?>`, 'gi');
+    return t.match(rx)||[];
   };
 
+  // Single val="..." metadata element
+  const getMeta=tag=>{
+    const m=t.match(new RegExp(`<${tag}\\b[^>]*?\\bval="([^"]*)"`, 'i'));
+    return m?m[1]:'';
+  };
+
+  // ── Metadata ───────────────────────────────────────────────────────────────
   const meta={
-    boat:     ga(byTag("boat")[0],      "val"),
-    location: ga(byTag("location")[0],  "val"),
-    date:     ga(byTag("date")[0],      "val"),
-    dayType:  ga(byTag("daytypestr")[0],"val"),
-    sailsUsed:(ga(byTag("sailsused")[0],"val")).split(";").map(s=>s.trim()).filter(Boolean),
+    boat:     getMeta('boat'),
+    location: getMeta('location'),
+    date:     getMeta('date'),
+    dayType:  getMeta('daytypestr'),
+    sailsUsed:getMeta('sailsused').split(';').map(s=>s.trim()).filter(Boolean),
   };
 
+  // ── Events ─────────────────────────────────────────────────────────────────
   const sailsUpEvents=[],raceGuns=[];
   let dayStartUtc=null,dayStopUtc=null;
-
-  for(const ev of byTag("event")){
-    const utc=isoUtc(`${ga(ev,"date")} ${ga(ev,"time")}`,offsetMin);
-    const type=ga(ev,"type"), attr=ga(ev,"attribute");
-    if(type==="SailsUp"){
-      const sails=attr.split(";").map(s=>s.trim()).filter(Boolean);
-      sailsUpEvents.push({utc,sails,label:sails.join(" + ")||"Sails changed"});
-    } else if(type==="RaceStartGun"){
-      raceGuns.push({utc,raceNum:parseInt(attr)||0,label:`Race ${attr||"?"} start`,color:"#EF4444"});
-    } else if(type==="DayStart"){
-      dayStartUtc=utc;
-    } else if(type==="DayStop"){
-      dayStopUtc=utc;
-    }
+  for(const tag of findTags('event')){
+    const utc=isoUtc(`${getAttr(tag,'date')} ${getAttr(tag,'time')}`,offsetMin);
+    const type=getAttr(tag,'type'), attr=getAttr(tag,'attribute');
+    if(type==='SailsUp'){
+      const sails=attr.split(';').map(s=>s.trim()).filter(Boolean);
+      sailsUpEvents.push({utc,sails,label:sails.join(' + ')||'Sails changed'});
+    } else if(type==='RaceStartGun'){
+      raceGuns.push({utc,raceNum:parseInt(attr)||0,label:`Race ${attr||'?'} start`,color:'#EF4444'});
+    } else if(type==='DayStart'){ dayStartUtc=utc; }
+    else if(type==='DayStop'){   dayStopUtc=utc; }
   }
 
-  const markRoundings=byTag("markrounding").map(mr=>({
-    utc:    isoUtc(ga(mr,"datetime"),offsetMin),
-    isTop:  ga(mr,"istopmark")==="true",
-    isValid:ga(mr,"isvalid")!=="false",
-    label:  ga(mr,"istopmark")==="true"?"Top mark":"Leeward gate",
-    color:  ga(mr,"istopmark")==="true"?"#EF4444":"#8B5CF6",
+  // ── Mark roundings ─────────────────────────────────────────────────────────
+  const markRoundings=findTags('markrounding').map(tag=>({
+    utc:    isoUtc(getAttr(tag,'datetime'),offsetMin),
+    isTop:  getAttr(tag,'istopmark')==='true',
+    isValid:getAttr(tag,'isvalid')!=='false',
+    label:  getAttr(tag,'istopmark')==='true'?'Top mark':'Leeward gate',
+    color:  getAttr(tag,'istopmark')==='true'?'#EF4444':'#8B5CF6',
   }));
 
-  const tackJibes=byTag("tackjibe").map(tj=>({
-    utc:    isoUtc(ga(tj,"datetime"),offsetMin),
-    isTack: ga(tj,"istack")==="true",
-    isValid:ga(tj,"isvalidperf")==="true",
-    label:  ga(tj,"istack")==="true"?"Tack":"Gybe",
-    color:  ga(tj,"istack")==="true"?"#1D9E75":"#7F77DD",
+  // ── Tack / jibes ───────────────────────────────────────────────────────────
+  const tackJibes=findTags('tackjibe').map(tag=>({
+    utc:    isoUtc(getAttr(tag,'datetime'),offsetMin),
+    isTack: getAttr(tag,'istack')==='true',
+    isValid:getAttr(tag,'isvalidperf')==='true',
+    label:  getAttr(tag,'istack')==='true'?'Tack':'Gybe',
+    color:  getAttr(tag,'istack')==='true'?'#1D9E75':'#7F77DD',
   }));
 
-  // ── Start lines — matched by race number from mark names (S7/P7 → race 7) ──
-  const startLines={};
-  for(const m of byTag("mark")){
-    const mtype=ga(m,"marktype");
-    if(mtype!=="StartBoat"&&mtype!=="StartPin") continue;
-    const name=ga(m,"name");
-    const lat=parseFloat(ga(m,"lat")); const lon=parseFloat(ga(m,"lon"));
+  // ── Start lines — StartBoat/StartPin marks matched by race number ──────────
+  const startLinesMap={};
+  for(const tag of findTags('mark')){
+    const mtype=getAttr(tag,'marktype');
+    if(mtype!=='StartBoat'&&mtype!=='StartPin') continue;
+    const name=getAttr(tag,'name');
+    const lat=parseFloat(getAttr(tag,'lat')); const lon=parseFloat(getAttr(tag,'lon'));
     if(isNaN(lat)||isNaN(lon)) continue;
     const nm=name.match(/(\d+)$/); const rn=nm?parseInt(nm[1]):0;
-    if(!startLines[rn]) startLines[rn]={};
-    if(mtype==="StartPin")  startLines[rn].pin ={lat,lon,name};
-    if(mtype==="StartBoat") startLines[rn].boat={lat,lon,name};
+    if(!startLinesMap[rn]) startLinesMap[rn]={};
+    if(mtype==='StartPin')  startLinesMap[rn].pin ={lat,lon,name};
+    if(mtype==='StartBoat') startLinesMap[rn].boat={lat,lon,name};
   }
-  const startLineList=Object.entries(startLines)
+  const startLines=Object.entries(startLinesMap)
     .map(([rn,{pin,boat}])=>({raceNum:parseInt(rn),pin,boat}))
     .filter(sl=>sl.pin&&sl.boat);
 
-  console.log(`[parseXmlEvents] events:${byTag("event").length} sailsUp:${sailsUpEvents.length} guns:${raceGuns.length} marks:${markRoundings.length} T/G:${tackJibes.length} startLines:${startLineList.length}`);
-  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc,startLines:startLineList};
+  console.log(`[parseXmlEvents] sailsUp:${sailsUpEvents.length} guns:${raceGuns.length} marks:${markRoundings.length} T/G:${tackJibes.length} startLines:${startLines.length}`);
+  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc,startLines};
 }
 
 // ─── POLAR (see src/lib/polarCalc.js) ──────────────────────────────────────
