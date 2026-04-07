@@ -204,13 +204,13 @@ function evalSpline(segs, xMin, xMax, x) {
 
 // Golden-section maximisation of f over [lo, hi] to within tol degrees
 function goldenMax(f, lo, hi, tol=0.1) {
-  const φ=(Math.sqrt(5)-1)/2;
+  const phi=(Math.sqrt(5)-1)/2;
   let a=lo, b=hi;
-  let x1=b-φ*(b-a), x2=a+φ*(b-a);
+  let x1=b-phi*(b-a), x2=a+phi*(b-a);
   let f1=f(x1), f2=f(x2);
   for(let i=0; i<80 && b-a>tol; i++){
-    if(f1<f2){a=x1; x1=x2; f1=f2; x2=a+φ*(b-a); f2=f(x2);}
-    else      {b=x2; x2=x1; f2=f1; x1=b-φ*(b-a); f1=f(x1);}
+    if(f1<f2){a=x1; x1=x2; f1=f2; x2=a+phi*(b-a); f2=f(x2);}
+    else      {b=x2; x2=x1; f2=f1; x1=b-phi*(b-a); f1=f(x1);}
   }
   return (a+b)/2;
 }
