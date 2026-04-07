@@ -1763,6 +1763,8 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
 
   // Shared pan/zoom state for all timeseries — null = show full session
   const [viewRange, setViewRange] = useState(null);
+  // Tacking analysis — highlighted tack index (null = none selected)
+  const [selectedTackIdx, setSelectedTackIdx] = useState(null);
   // Reset view when the session changes
   useEffect(()=>{ setViewRange(null); }, [activeDate]);
   // Auto-zoom to video clip range when video is selected and has a start time.
@@ -2160,7 +2162,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                   if(dt<=0||dt>10) continue; // skip gaps > 10s
                   const vmg=rows[k].vmg??0;
                   cumLossKnotSec+=(baseVMG-vmg)*dt;
-                  const cumLossBL=(cumLossKnotSec*0.5144)/boatLenM; // boat lengths
+                  const cumLossBL=-(cumLossKnotSec*0.5144)/boatLenM; // negative = loss
                   const relSec=(rows[k].utc-tk.utc)/1000;
                   pts.push({x:relSec, y:cumLossBL, baseVMG});
                 }
@@ -2169,11 +2171,12 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 return Object.assign(pts, {baseVMG, finalBL});
               }).filter(s=>s.length>1);
 
-              // Multi-line SVG chart — one coloured line per tack
-              const TACK_COLORS=['#1D9E75','#06B6D4','#8B5CF6','#F59E0B','#EF4444','#EC4899','#34D399','#60A5FA','#A78BFA','#FCD34D'];
-
-              // TackChart supports signed y-axis (yMin can be < 0 for VMG loss chart)
-              function TackChart({series,yLabel,color='#1D9E75',height=130,yLines=[],yMax:forcedYMax,yMin:forcedYMin,xMin:xMinProp,xMax:xMaxProp}){
+              // TackChart — interactive linked chart
+              // selectedTack: index of highlighted tack (null = all equal)
+              // onTackClick(i): called when a tack line is clicked; null = deselect
+              function TackChart({series,yLabel,color='#1D9E75',height=130,yLines=[],
+                                  yMax:forcedYMax,yMin:forcedYMin,xMin:xMinProp,xMax:xMaxProp,
+                                  selectedTack=null,onTackClick=null}){
                 if(!series?.length||series.every(s=>!s.length)) return(
                   <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:10}}>No data</div>
                 );
@@ -2194,26 +2197,50 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 const yStep=yRange>20?5:yRange>8?2:yRange>4?1:yRange>1?0.5:0.2;
                 const yTickMin=Math.ceil(yMin/yStep)*yStep;
                 const yTicks=Array.from({length:Math.ceil((yMax-yTickMin)/yStep)+1},(_,i)=>yTickMin+i*yStep).filter(y=>y>=yMin&&y<=yMax);
-                const zeroY=py(0);
+                const hasSelection=selectedTack!=null;
+
+                // Render order: unselected first, selected on top
+                const renderOrder=[...series.keys()].filter(i=>i!==selectedTack);
+                if(selectedTack!=null&&selectedTack<series.length) renderOrder.push(selectedTack);
+
                 return(
-                  <svg width="100%" viewBox={`0 0 ${VB_W} ${height}`} style={{overflow:"visible",display:"block"}}>
-                    {/* Grid lines */}
+                  <svg width="100%" viewBox={`0 0 ${VB_W} ${height}`} style={{overflow:"visible",display:"block",cursor:onTackClick?"pointer":"default"}}>
+                    {/* Grid */}
                     {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={y===0?"#1E3A5A":"#0F2030"} strokeWidth={y===0?1.5:1}/>)}
                     {yLines.map((y,i)=><line key={'yl'+i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={color} strokeWidth="0.5" strokeDasharray="4,3" opacity="0.6"/>)}
                     <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
                     <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-                    {/* Tack moment vertical line */}
+                    {/* Tack moment line */}
                     <line x1={px(0)} x2={px(0)} y1={pad.t} y2={pad.t+H} stroke="#EF4444" strokeWidth="1.5" strokeDasharray="4,2" opacity="0.8"/>
                     <text x={px(0)+3} y={pad.t+9} fontSize="8" fill="#EF4444">tack</text>
-                    {/* -20s vertical line (loss measurement start) */}
                     {xMin<=-20&&<line x1={px(-20)} x2={px(-20)} y1={pad.t} y2={pad.t+H} stroke="#475569" strokeWidth="0.8" strokeDasharray="3,3" opacity="0.5"/>}
-                    {/* One line per tack */}
-                    {series.map((pts,ti)=>{
-                      if(pts.length<2) return null;
+
+                    {/* Lines rendered in order (selected last = on top) */}
+                    {renderOrder.map(ti=>{
+                      const pts=series[ti];
+                      if(!pts||pts.length<2) return null;
+                      const isSel=ti===selectedTack;
                       const c=TACK_COLORS[ti%TACK_COLORS.length];
+                      const opacity=hasSelection?(isSel?1:0.15):0.75;
+                      const sw=isSel?2.5:1.2;
                       const d=pts.map((p,i)=>`${i===0?'M':'L'}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(' ');
-                      return<path key={ti} d={d} fill="none" stroke={c} strokeWidth="1.2" strokeLinejoin="round" opacity="0.75"/>;
+                      return(
+                        <g key={ti}>
+                          {/* Visible line */}
+                          <path d={d} fill="none" stroke={c} strokeWidth={sw} strokeLinejoin="round" opacity={opacity}/>
+                          {/* Dot at endpoint for the loss chart (xMin=LOSS_START) */}
+                          {xMin===LOSS_START&&pts.length>0&&(()=>{
+                            const last=pts[pts.length-1];
+                            return<circle cx={px(last.x)} cy={py(last.y)} r={isSel?5:3} fill={c} opacity={hasSelection?(isSel?1:0.2):0.8}/>;
+                          })()}
+                          {/* Invisible wide hit-zone for easy clicking */}
+                          {onTackClick&&<path d={d} fill="none" stroke="transparent" strokeWidth="14"
+                            style={{cursor:"pointer"}}
+                            onClick={()=>onTackClick(isSel?null:ti)}/>}
+                        </g>
+                      );
                     })}
+
                     {/* Axes */}
                     {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill={y===0?"#94A3B8":"#475569"}>{Number.isInteger(y)?y:y.toFixed(1)}</text>)}
                     {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill={x===0?"#EF4444":"#475569"}>{x}s</text>)}
@@ -2226,29 +2253,45 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 <>
                   <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
                     {validTacks.map((tk,i)=>(
-                      <span key={i} style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9,fontFamily:"monospace",color:TACK_COLORS[i%TACK_COLORS.length]}}>
+                      <span key={i}
+                        onClick={()=>setSelectedTackIdx(selectedTackIdx===i?null:i)}
+                        style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:9,fontFamily:"monospace",
+                          color:TACK_COLORS[i%TACK_COLORS.length],cursor:"pointer",
+                          padding:"2px 6px",borderRadius:4,
+                          background:selectedTackIdx===i?`${TACK_COLORS[i%TACK_COLORS.length]}25`:"transparent",
+                          border:`1px solid ${selectedTackIdx===i?TACK_COLORS[i%TACK_COLORS.length]:"transparent"}`}}>
                         <span style={{display:"inline-block",width:10,height:3,background:TACK_COLORS[i%TACK_COLORS.length],borderRadius:1}}/>
-                        {new Date(tk.utc).toISOString().slice(11,16)}
+                        T{i+1} {new Date(tk.utc).toISOString().slice(11,16)}
                       </span>
                     ))}
-                    <span style={{fontSize:9,color:"#334155",marginLeft:4}}>Red line = tack moment · x-axis = seconds relative to tack</span>
+                    {selectedTackIdx!=null&&(
+                      <button onClick={()=>setSelectedTackIdx(null)}
+                        style={{background:"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 8px",color:"#475569",cursor:"pointer",fontSize:9}}>
+                        ✕ clear
+                      </button>
+                    )}
+                    <span style={{fontSize:9,color:"#334155",marginLeft:4}}>Click line or legend to highlight · Red = tack moment</span>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>a) BOAT SPEED (BSP kn)</div>
-                      <TackChart series={tackSeries.bsp} yLabel="BSP kn" color="#10B981" height={130}/>
+                      <TackChart series={tackSeries.bsp} yLabel="BSP kn" color="#10B981" height={130}
+                        selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>b) RUDDER ANGLE (|°|)</div>
-                      <TackChart series={tackSeries.rudder} yLabel="Rudder |°|" color="#F59E0B" height={130}/>
+                      <TackChart series={tackSeries.rudder} yLabel="Rudder |°|" color="#F59E0B" height={130}
+                        selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>c) RATE OF TURN (°/s  YawR)</div>
-                      <TackChart series={tackSeries.yawR} yLabel="YawR °/s" color="#8B5CF6" height={130}/>
+                      <TackChart series={tackSeries.yawR} yLabel="YawR °/s" color="#8B5CF6" height={130}
+                        selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>d) TRUE WIND ANGLE (|°|)</div>
-                      <TackChart series={tackSeries.twa} yLabel="TWA |°|" color="#06B6D4" height={130}/>
+                      <TackChart series={tackSeries.twa} yLabel="TWA |°|" color="#06B6D4" height={130}
+                        selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                   </div>
 
@@ -2259,8 +2302,8 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                       e) ACCUMULATED VMG LOSS (boat lengths) — baseline: avg VMG {BASELINE_START}s → {BASELINE_END}s before tack
                     </div>
                     <div style={{fontSize:9,color:"#334155",marginBottom:8}}>
-                      Positive = lost distance vs baseline upwind VMG · Negative = briefly faster than baseline ·
-                      Final value at +{POST}s = total tack cost
+                      Negative = lost distance vs baseline upwind VMG · Positive = briefly faster than baseline ·
+                      Final value at +{POST}s = total tack cost (boat lengths below zero)
                     </div>
                     <TackChart
                       series={vmgLossSeries}
@@ -2270,6 +2313,8 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                       xMin={LOSS_START}
                       xMax={POST}
                       yLines={[0]}
+                      selectedTack={selectedTackIdx}
+                      onTackClick={setSelectedTackIdx}
                     />
                     {/* Summary table */}
                     <div style={{marginTop:12,overflowX:"auto"}}>
@@ -2286,13 +2331,19 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                         <tbody>
                           {vmgLossSeries.map((pts,i)=>{
                             const finalBL=pts[pts.length-1]?.y??0;
+                            const lossBL=Math.abs(finalBL);
                             const baseVMG=pts[0]?.baseVMG??0;
                             const color=TACK_COLORS[i%TACK_COLORS.length];
-                            const rating=finalBL<3?"★★★ excellent":finalBL<5?"★★ good":finalBL<8?"★ average":"slow";
-                            const rColor=finalBL<3?"#10B981":finalBL<5?"#22C55E":finalBL<8?"#F59E0B":"#EF4444";
+                            const rating=lossBL<3?"★★★ excellent":lossBL<5?"★★ good":lossBL<8?"★ average":"slow";
+                            const rColor=lossBL<3?"#10B981":lossBL<5?"#22C55E":lossBL<8?"#F59E0B":"#EF4444";
                             const tk=validTacks[i];
+                            const isSel=selectedTackIdx===i;
                             return(
-                              <tr key={i} style={{borderBottom:"1px solid #0F2030"}}>
+                              <tr key={i}
+                                onClick={()=>setSelectedTackIdx(isSel?null:i)}
+                                style={{borderBottom:"1px solid #0F2030",cursor:"pointer",
+                                  background:isSel?`${color}15`:"transparent",
+                                  outline:isSel?`1px solid ${color}40`:"none"}}>
                                 <td style={{padding:"5px 8px",color}}>
                                   <span style={{display:"inline-block",width:10,height:3,background:color,borderRadius:1,marginRight:6,verticalAlign:"middle"}}/>
                                   T{i+1}
@@ -2304,7 +2355,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                                   {R(baseVMG)} kn
                                 </td>
                                 <td style={{padding:"5px 8px",textAlign:"right",fontFamily:"monospace",fontWeight:700,color:rColor}}>
-                                  {finalBL.toFixed(1)} BL
+                                  {lossBL.toFixed(1)} BL
                                 </td>
                                 <td style={{padding:"5px 8px",textAlign:"right",color:rColor,fontSize:9}}>
                                   {rating}
@@ -2313,7 +2364,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                             );
                           })}
                           {vmgLossSeries.length>1&&(()=>{
-                            const avg=vmgLossSeries.reduce((s,pts)=>s+(pts[pts.length-1]?.y??0),0)/vmgLossSeries.length;
+                            const avg=vmgLossSeries.reduce((s,pts)=>s+Math.abs(pts[pts.length-1]?.y??0),0)/vmgLossSeries.length;
                             const rColor=avg<3?"#10B981":avg<5?"#22C55E":avg<8?"#F59E0B":"#EF4444";
                             return(
                               <tr style={{borderTop:"2px solid #1E3A5A",background:"#071624"}}>
