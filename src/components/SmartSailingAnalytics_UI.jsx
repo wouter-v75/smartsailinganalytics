@@ -125,196 +125,11 @@ function parseXmlEvents(text,offsetMin=0){
   return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc};
 }
 
-// ─── POLAR FILE SUPPORT ───────────────────────────────────────────────────────
-const POLAR_KEY = "ssa:polar";
-// savePolarToLS stores only raw entries (no closures/splines — those are recomputed on load)
-function savePolarToLS(filename, data) {
-  try { localStorage.setItem(POLAR_KEY, JSON.stringify({filename, entries:data.entries, tws:data.tws})); } catch{}
-}
-function loadPolarFromLS() {
-  try { const v=localStorage.getItem(POLAR_KEY); return v?preparePolar(JSON.parse(v)):null; } catch{return null;}
-}
+// ─── POLAR (see src/lib/polarCalc.js) ──────────────────────────────────────
+import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
+  buildSpline, evalSpline, goldenMax, preparePolar,
+  polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 
-// ── Parse Expedition polar format ─────────────────────────────────────────────
-// First line may start with ! (comment). Each data line:
-//   TWS  TWA1 BSP1  TWA2 BSP2 ...  (tab or space separated pairs)
-// e.g. "8.0  0.0 0.00  43.0 8.70  60.0 9.80  ..."
-function parsePolarFile(text) {
-  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l&&!l.startsWith('!')&&!l.startsWith('#'));
-  if(lines.length < 2) throw new Error('Polar file too short');
-  const entries = [];
-  for(const line of lines){
-    const vals = line.split(/[\t ,;]+/).map(Number);
-    if(vals.length < 4 || isNaN(vals[0]) || vals[0] <= 0) continue;
-    const tws = vals[0];
-    const points = [];
-    for(let i=1; i+1<vals.length; i+=2){
-      const twa=vals[i], bsp=vals[i+1];
-      if(!isNaN(twa)&&!isNaN(bsp)&&twa>=0&&twa<=180&&bsp>=0) points.push({twa,bsp});
-    }
-    if(points.length >= 2) entries.push({tws, points});
-  }
-  if(entries.length < 2) throw new Error('Need ≥2 TWS rows with (TWA,BSP) pairs');
-  entries.sort((a,b)=>a.tws-b.tws);
-  return preparePolar({entries, tws:entries.map(e=>e.tws)});
-}
-
-// ── Natural cubic spline ───────────────────────────────────────────────────────
-// Fits a C² spline through pts:[{x,y}] with natural (zero second-derivative)
-// end conditions. Returns segment array [{x0,a,b,c,d}] where
-//   y(x) ≈ a + b·dx + c·dx² + d·dx³,  dx = x − x0
-function buildSpline(pts) {
-  const n=pts.length;
-  if(n<2) return null;
-  const xs=pts.map(p=>p.x), ys=pts.map(p=>p.y);
-  if(n===2){
-    const b=(ys[1]-ys[0])/(xs[1]-xs[0]||1);
-    return [{x0:xs[0],a:ys[0],b,c:0,d:0}];
-  }
-  // Step sizes
-  const h=Array.from({length:n-1},(_,i)=>xs[i+1]-xs[i]);
-  // Right-hand side of the tridiagonal system
-  const alpha=Array(n).fill(0);
-  for(let i=1;i<n-1;i++)
-    alpha[i]=(3/h[i])*(ys[i+1]-ys[i])-(3/h[i-1])*(ys[i]-ys[i-1]);
-  // Thomas algorithm (natural BC: c[0]=c[n-1]=0)
-  const l=Array(n).fill(1), mu=Array(n).fill(0), z=Array(n).fill(0);
-  for(let i=1;i<n-1;i++){
-    l[i]=2*(xs[i+1]-xs[i-1])-h[i-1]*mu[i-1];
-    mu[i]=h[i]/l[i];
-    z[i]=(alpha[i]-h[i-1]*z[i-1])/l[i];
-  }
-  const c=Array(n).fill(0), b=Array(n-1).fill(0), d=Array(n-1).fill(0);
-  for(let j=n-2;j>=0;j--){
-    c[j]=z[j]-mu[j]*c[j+1];
-    b[j]=(ys[j+1]-ys[j])/h[j]-h[j]*(c[j+1]+2*c[j])/3;
-    d[j]=(c[j+1]-c[j])/(3*h[j]);
-  }
-  return xs.slice(0,n-1).map((x0,i)=>({x0,a:ys[i],b:b[i],c:c[i],d:d[i]}));
-}
-
-// Evaluate spline (clamped to data range, always ≥ 0)
-function evalSpline(segs, xMin, xMax, x) {
-  x=Math.max(xMin,Math.min(xMax,x));
-  let lo=0, hi=segs.length-1;
-  while(lo<hi){const mid=(lo+hi+1)>>1; if(segs[mid].x0<=x)lo=mid; else hi=mid-1;}
-  const {x0,a,b,c,d}=segs[lo]; const dx=x-x0;
-  return Math.max(0, a+b*dx+c*dx*dx+d*dx*dx*dx);
-}
-
-// Golden-section maximisation of f over [lo, hi] to within tol degrees
-function goldenMax(f, lo, hi, tol=0.1) {
-  const phi=(Math.sqrt(5)-1)/2;
-  let a=lo, b=hi;
-  let x1=b-phi*(b-a), x2=a+phi*(b-a);
-  let f1=f(x1), f2=f(x2);
-  for(let i=0; i<80 && b-a>tol; i++){
-    if(f1<f2){a=x1; x1=x2; f1=f2; x2=a+phi*(b-a); f2=f(x2);}
-    else      {b=x2; x2=x1; f2=f1; x1=b-phi*(b-a); f1=f(x1);}
-  }
-  return (a+b)/2;
-}
-
-// ── preparePolar ──────────────────────────────────────────────────────────────
-// Attaches a cubic spline, bspAt() evaluator, and pre-computed VMG target
-// angles to every entry. Called after parse AND after loading from localStorage.
-function preparePolar(raw) {
-  if(!raw?.entries?.length) return raw;
-  const enriched = raw.entries.map(entry=>{
-    const pts = entry.points.map(p=>({x:p.twa, y:p.bsp}));
-    const segs = buildSpline(pts);
-    const xMin = pts[0].x, xMax = pts[pts.length-1].x;
-    // Smooth BSP evaluator via spline; clamp at 0
-    const bspAt = twa => segs ? evalSpline(segs, xMin, xMax, Math.abs(twa)) : 0;
-    // Upwind VMG: maximise bsp(twa)·cos(twa°) over [first positive TWA .. 90°]
-    const twUp0 = pts.find(p=>p.x>0)?.x ?? 20;
-    const upTwa = goldenMax(twa => bspAt(twa)*Math.cos(twa*Math.PI/180), twUp0, Math.min(90, xMax));
-    // Downwind VMG: maximise bsp(twa)·cos(180°-twa°) over [90° .. last TWA]
-    const twDn1 = Math.max(90, xMin);
-    const downTwa = goldenMax(twa => bspAt(twa)*Math.cos((180-twa)*Math.PI/180), twDn1, xMax);
-    // Target VMG values (for percentage reference)
-    const upVMG   = bspAt(upTwa)  * Math.cos(upTwa  *Math.PI/180);
-    const downVMG = bspAt(downTwa)* Math.cos((180-downTwa)*Math.PI/180);
-    return {...entry, segs, pts, xMin, xMax, bspAt, upTwa, downTwa, upVMG, downVMG};
-  });
-  return {...raw, entries:enriched};
-}
-
-// ── Public polar API ──────────────────────────────────────────────────────────
-
-// BSP at (twsKt, twaDeg) — spline within TWS entry, linear blend between entries
-function polarInterp(polar, twsKt, twaDeg) {
-  if(!polar?.entries?.length) return null;
-  const {entries}=polar;
-  let hi=entries.findIndex(e=>e.tws>=twsKt);
-  if(hi<0) hi=entries.length-1;
-  if(hi===0) hi=1;
-  const lo=hi-1;
-  const ft=Math.max(0,Math.min(1,(twsKt-entries[lo].tws)/((entries[hi].tws-entries[lo].tws)||1)));
-  const bLo=entries[lo].bspAt ? entries[lo].bspAt(twaDeg) : 0;
-  const bHi=entries[hi].bspAt ? entries[hi].bspAt(twaDeg) : 0;
-  return Math.max(0, bLo+ft*(bHi-bLo));
-}
-
-// Optimal VMG tack angles — linearly interpolated between bracketing TWS entries
-// upTwa/downTwa were found by golden-section search through each entry's spline
-function polarVMGTarget(polar, twsKt) {
-  if(!polar?.entries?.length) return {up:45, down:145, upVMG:0, downVMG:0};
-  const {entries}=polar;
-  let hi=entries.findIndex(e=>e.tws>=twsKt);
-  if(hi<0) hi=entries.length-1;
-  if(hi===0) hi=1;
-  const lo=hi-1;
-  const ft=Math.max(0,Math.min(1,(twsKt-entries[lo].tws)/((entries[hi].tws-entries[lo].tws)||1)));
-  const lerp=(a,b)=>a+ft*(b-a);
-  return {
-    up:    lerp(entries[lo].upTwa,   entries[hi].upTwa),
-    down:  lerp(entries[lo].downTwa, entries[hi].downTwa),
-    upVMG: lerp(entries[lo].upVMG,   entries[hi].upVMG),
-    downVMG: lerp(entries[lo].downVMG, entries[hi].downVMG),
-  };
-}
-// Returns {mode:'vmg'|'reach', pct:0-150} — performance vs polar
-// VMG mode: |twa - twa_target| ≤ 20°  → compare actual VMG to spline-optimal VMG
-// Reach mode: otherwise               → compare actual BSP to spline BSP
-function polarPerf(polar, bsp, twa, tws) {
-  if(!polar||bsp==null||twa==null||tws==null||bsp<0.3) return null;
-  const absA=Math.abs(twa);
-  const target=polarVMGTarget(polar,tws);
-  const {up, down, upVMG, downVMG}=target;
-  const VMG_ZONE=20;
-  const nearUp=Math.abs(absA-up)<=VMG_ZONE;
-  const nearDn=Math.abs(absA-down)<=VMG_ZONE;
-  if(nearUp||nearDn){
-    // Compare actual VMG component to the pre-computed spline-optimal VMG
-    const targVMG = nearUp ? upVMG : downVMG;
-    const actVMG  = bsp*Math.cos((nearUp ? absA : 180-absA)*Math.PI/180);
-    const pct=targVMG>0.001?(actVMG/targVMG)*100:100;
-    return {mode:'vmg', pct:Math.max(0,Math.min(150,pct))};
-  }
-  const targBSP=polarInterp(polar,tws,absA)||0.01;
-  return {mode:'reach', pct:Math.max(0,Math.min(150,(bsp/targBSP)*100))};
-}
-// 3-stop colour scale: red(90%) → lightgreen(100%) → darkgreen(110%)
-function perfColor(pct) {
-  if(pct==null) return '#1E4080';
-  const stops=[
-    {p:70, r:127,g:0,  b:0  },
-    {p:90, r:239,g:68, b:68 },
-    {p:100,r:134,g:239,b:172},
-    {p:110,r:21, g:128,b:61 },
-    {p:130,r:21, g:128,b:61 },
-  ];
-  const c=Math.max(stops[0].p,Math.min(stops[stops.length-1].p,pct));
-  for(let i=1;i<stops.length;i++){
-    if(c<=stops[i].p){
-      const t=(c-stops[i-1].p)/(stops[i].p-stops[i-1].p);
-      const lr=(a,b)=>Math.round(a+(b-a)*t);
-      return `rgb(${lr(stops[i-1].r,stops[i].r)},${lr(stops[i-1].g,stops[i].g)},${lr(stops[i-1].b,stops[i].b)})`;
-    }
-  }
-  const s=stops[stops.length-1]; return `rgb(${s.r},${s.g},${s.b})`;
-}
 
 const R=(n,d=1)=>(n==null||isNaN(n))?"--":Number(n).toFixed(d);
 const fmtT=s=>{const x=Math.max(0,Math.floor(s));return`${String(Math.floor(x/60)).padStart(2,"0")}:${String(x%60).padStart(2,"0")}`;};
@@ -350,12 +165,13 @@ function enrichVideo(v,log){
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
 function Gauge({label,value,unit,color="#06B6D4"}){return<div style={{background:"rgba(0,0,0,0.75)",border:`1px solid ${color}40`,borderRadius:7,padding:"7px 11px",minWidth:76}}><div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:2}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"'Courier New',monospace",lineHeight:1}}>{value}</div><div style={{fontSize:10,color:"#475569",marginTop:1}}>{unit}</div></div>;}
 
-function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0}){
+function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc}){
   const vidRef=useRef(null),hlsRef=useRef(null);
   const[curTime,setCurTime]=useState(0);
   const[playing,setPlaying]=useState(false);
   const[dur,setDur]=useState(video.duration||0);
   const isHls=video.source==="cloud"||video.objectUrl?.includes(".m3u8");
+  const lastUtcEmit=useRef(0); // throttle playUtc updates
 
   useEffect(()=>{
     if(!vidRef.current||!video.objectUrl)return;
@@ -375,13 +191,37 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0}){
     return()=>{if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}};
   },[video.id,video.objectUrl]);
 
+  // Emit current UTC to parent for GPS+chart sync — throttled to ~12 fps
+  const emitUtc = useCallback((t)=>{
+    if(!onPlayUtc || !video.startUtc) return;
+    const now = performance.now();
+    if(now - lastUtcEmit.current < 80) return;
+    lastUtcEmit.current = now;
+    onPlayUtc(video.startUtc + (t + (syncOffset||0)) * 1000);
+  },[onPlayUtc, video.startUtc, syncOffset]);
+
   const logUtc=video.startUtc?video.startUtc+(curTime+(syncOffset||0))*1000:0;
   const row=logData&&logUtc?nearestRow(logData.rows,logUtc):null;
   const markers=xmlData&&video.startUtc?[...(xmlData.tackJibes||[]),...(xmlData.markRoundings||[]),...(xmlData.sailsUpEvents||[]).map(s=>({...s,color:"#F59E0B"}))].map(m=>({...m,vidSec:(m.utc-video.startUtc)/1000-(syncOffset||0)})).filter(m=>m.vidSec>=0&&m.vidSec<=dur):[];
   const upcoming=markers.filter(m=>m.vidSec>curTime&&m.vidSec<curTime+30).slice(0,2);
   const pct=dur>0?(curTime/dur)*100:0;
-  const onUpdate=()=>{if(vidRef.current){setCurTime(vidRef.current.currentTime);setPlaying(!vidRef.current.paused);}};
-  const seek=e=>{const r=e.currentTarget.getBoundingClientRect();if(vidRef.current)vidRef.current.currentTime=((e.clientX-r.left)/r.width)*dur;};
+  const onUpdate=()=>{
+    if(vidRef.current){
+      const t = vidRef.current.currentTime;
+      setCurTime(t);
+      setPlaying(!vidRef.current.paused);
+      emitUtc(t);
+    }
+  };
+  const seek=e=>{
+    const r=e.currentTarget.getBoundingClientRect();
+    if(vidRef.current){
+      const t = ((e.clientX-r.left)/r.width)*dur;
+      vidRef.current.currentTime=t;
+      // Emit immediately on seek (bypass throttle)
+      if(onPlayUtc && video.startUtc) onPlayUtc(video.startUtc+(t+(syncOffset||0))*1000);
+    }
+  };
 
   return(
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
@@ -895,7 +735,7 @@ function linReg(pts){
   return{slope,intercept,r2:ssTot?1-ssRes/ssTot:0};
 }
 
-function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,yMax,yLines=[],showTrend=false,events=[]}){
+function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,yMax,yLines=[],showTrend=false,events=[],playUtc=null}){
   if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
   const pad={t:14,r:8,b:28,l:36};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
@@ -934,6 +774,16 @@ function LineChart({points,color="#06B6D4",width=400,height=120,yLabel="",yMin,y
           </g>
         );
       })}
+      {/* Playback cursor — amber vertical line + chevron */}
+      {playUtc&&playUtc>=x0&&playUtc<=x1&&(()=>{
+        const cx=px(playUtc);
+        return(
+          <g key="cursor">
+            <line x1={cx} x2={cx} y1={pad.t} y2={pad.t+H} stroke="#F59E0B" strokeWidth="1.5" opacity="0.9"/>
+            <polygon points={`${cx-4},${pad.t} ${cx+4},${pad.t} ${cx},${pad.t+7}`} fill="#F59E0B" opacity="0.9"/>
+          </g>
+        );
+      })()}
     </svg>
   );
 }
@@ -1158,13 +1008,13 @@ function AIChatPanel({rows, allVideos}){
 }
 
 // ─── GPS TRACK MAP ────────────────────────────────────────────────────────────
-// Leaflet + OSM tiles. Track coloured by polar performance.
-// Red(90%) → lightgreen(100%) → darkgreen(110%) for VMG% when within 20° of target TWA,
-// or BSP% when reaching. Falls back to uniform blue if no polar loaded.
+// playUtc   — current video UTC for boat marker (null = no video playing)
+// visible   — whether the Analytics tab is currently shown (for Leaflet resize)
 
-function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0}){
+function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true}){
   const containerRef = React.useRef(null);
   const mapRef       = React.useRef(null);
+  const boatMarkerRef= React.useRef(null); // Leaflet marker for live boat position
 
   const dayStart = xmlData?.dayStartUtc || null;
   const dayStop  = xmlData?.dayStopUtc  || null;
@@ -1187,16 +1037,16 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
     winStart ? filteredRows.filter(r=>r.utc>=winStart&&r.utc<=winEnd) : []
   ,[filteredRows, winStart, winEnd]);
 
-  // Read polar from localStorage (updated whenever user uploads in Upload tab)
   const polar = React.useMemo(()=>loadPolarFromLS(),[]);
 
+  // ── Map init ─────────────────────────────────────────────────────────────────
   React.useEffect(()=>{
     if(!containerRef.current || filteredRows.length < 2) return;
 
     const initMap = () => {
       const L = window.L;
       if(!L) return;
-      if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; }
+      if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
 
       const centre = [
         filteredRows.reduce((s,r)=>s+r.lat,0)/filteredRows.length,
@@ -1209,11 +1059,9 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         attribution:'© OpenStreetMap contributors', maxZoom:18,
       }).addTo(map);
 
-      // ── Coloured performance track ─────────────────────────────────────────
-      // Sample ~1200 points; group consecutive same-colour points into polylines
+      // ── Coloured performance track ──────────────────────────────────────────
       const step = Math.max(1, Math.floor(filteredRows.length/1200));
       const sampled = filteredRows.filter((_,i)=>i%step===0);
-
       const segments = [];
       let seg = {color:null, pts:[]};
       for(let i=0;i<sampled.length;i++){
@@ -1221,173 +1069,138 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         const perf = polarPerf(polar, row.bsp, row.twa, row.tws);
         const color = perf ? perfColor(perf.pct) : '#1E4080';
         const pt = [row.lat, row.lon];
-        if(!seg.color){
-          seg = {color, pts:[pt]};
-        } else if(color !== seg.color){
-          seg.pts.push(pt); // bridge point for continuity
-          if(seg.pts.length>1) segments.push({...seg, pts:[...seg.pts]});
-          seg = {color, pts:[pt]};
-        } else {
-          seg.pts.push(pt);
-        }
+        if(!seg.color){ seg={color,pts:[pt]}; }
+        else if(color!==seg.color){ seg.pts.push(pt); if(seg.pts.length>1) segments.push({...seg,pts:[...seg.pts]}); seg={color,pts:[pt]}; }
+        else { seg.pts.push(pt); }
       }
       if(seg.pts.length>1) segments.push(seg);
-
       let allLatLngs = [];
       for(const s of segments){
-        L.polyline(s.pts, {color:s.color, weight:3, opacity:0.92, smoothFactor:1}).addTo(map);
-        allLatLngs = allLatLngs.concat(s.pts);
+        L.polyline(s.pts,{color:s.color,weight:3,opacity:0.92,smoothFactor:1}).addTo(map);
+        allLatLngs=allLatLngs.concat(s.pts);
       }
 
-      // ── Clip highlight (thicker cyan) ──────────────────────────────────────
-      if(hlRows.length > 1){
-        const hlStep = Math.max(1, Math.floor(hlRows.length/500));
-        const hlPts = hlRows.filter((_,i)=>i%hlStep===0).map(r=>[r.lat,r.lon]);
-        L.polyline(hlPts, {color:'#06B6D4', weight:6, opacity:0.85}).addTo(map);
-        const cOpts = {radius:8, fillOpacity:1, weight:2, color:'#030F1A'};
-        L.circleMarker([hlRows[0].lat,hlRows[0].lon], {...cOpts,fillColor:'#06B6D4'})
-          .bindTooltip('Clip start').addTo(map);
-        L.circleMarker([hlRows[hlRows.length-1].lat,hlRows[hlRows.length-1].lon], {...cOpts,fillColor:'#1D9E75'})
-          .bindTooltip('Clip end').addTo(map);
+      // ── Clip highlight ──────────────────────────────────────────────────────
+      if(hlRows.length>1){
+        const hlStep=Math.max(1,Math.floor(hlRows.length/500));
+        const hlPts=hlRows.filter((_,i)=>i%hlStep===0).map(r=>[r.lat,r.lon]);
+        L.polyline(hlPts,{color:'#06B6D4',weight:6,opacity:0.85}).addTo(map);
+        const cOpts={radius:8,fillOpacity:1,weight:2,color:'#030F1A'};
+        L.circleMarker([hlRows[0].lat,hlRows[0].lon],{...cOpts,fillColor:'#06B6D4'}).bindTooltip('Clip start').addTo(map);
+        L.circleMarker([hlRows[hlRows.length-1].lat,hlRows[hlRows.length-1].lon],{...cOpts,fillColor:'#1D9E75'}).bindTooltip('Clip end').addTo(map);
       }
 
-      // ── Day start (green) and end (grey) markers ──────────────────────────
-      const first = filteredRows[0], last = filteredRows[filteredRows.length-1];
-      L.circleMarker([first.lat,first.lon], {radius:9, fillColor:'#22C55E', color:'#fff', weight:2, fillOpacity:1})
-        .bindTooltip(`Day start  ${new Date(first.utc).toISOString().slice(11,16)} UTC`).addTo(map);
-      L.circleMarker([last.lat,last.lon], {radius:9, fillColor:'#94A3B8', color:'#fff', weight:2, fillOpacity:1})
-        .bindTooltip(`Day end  ${new Date(last.utc).toISOString().slice(11,16)} UTC`).addTo(map);
+      // ── Day start / end markers ─────────────────────────────────────────────
+      const fmtU=utc=>{try{const d=new Date(utc);return isNaN(d)?'--:--':d.toISOString().slice(11,16);}catch{return'--:--';}};
+      const first=filteredRows[0],last=filteredRows[filteredRows.length-1];
+      L.circleMarker([first.lat,first.lon],{radius:9,fillColor:'#22C55E',color:'#fff',weight:2,fillOpacity:1}).bindTooltip(`Day start ${fmtU(first.utc)} UTC`).addTo(map);
+      L.circleMarker([last.lat,last.lon],{radius:9,fillColor:'#94A3B8',color:'#fff',weight:2,fillOpacity:1}).bindTooltip(`Day end ${fmtU(last.utc)} UTC`).addTo(map);
 
+      // ── Event markers ───────────────────────────────────────────────────────
       if(xmlData){
-        // Safe UTC → "HH:MM" string — never throws, even on NaN/null
-        const fmtU = utc => {
-          try { const d=new Date(utc); return isNaN(d)?'--:--':d.toISOString().slice(11,16); } catch { return '--:--'; }
-        };
-        const nearest = utc => filteredRows.reduce((a,b)=>Math.abs(b.utc-utc)<Math.abs(a.utc-utc)?b:a, filteredRows[0]);
-
-        // ── Mark roundings ─────────────────────────────────────────────────
+        const nearest=utc=>filteredRows.reduce((a,b)=>Math.abs(b.utc-utc)<Math.abs(a.utc-utc)?b:a,filteredRows[0]);
         for(const m of (xmlData.markRoundings||[])){
-          try {
-            const nr=nearest(m.utc);
-            if(Math.abs(nr.utc-m.utc)>120000) continue;
-            L.circleMarker([nr.lat,nr.lon],{
-              radius:10, fillColor:m.isTop?"#EF4444":"#8B5CF6",
-              color:'#030F1A', weight:2, fillOpacity: m.isValid===false?0.3:1,
-            }).bindTooltip(`${m.label||'Mark'}${m.isValid===false?' (invalid)':''} · ${fmtU(m.utc)}`).addTo(map);
-            L.marker([nr.lat,nr.lon],{
-              icon: L.divIcon({className:'',iconSize:[0,0],iconAnchor:[-5,-12],
-                html:`<span style="font-size:9px;font-weight:700;color:#fff;text-shadow:0 0 3px #000">${m.isTop?'▲':'▽'}</span>`})
-            }).addTo(map);
-          } catch(e) { console.warn('GPSTrackMap mark error',e); }
+          try{const nr=nearest(m.utc);if(Math.abs(nr.utc-m.utc)>120000)continue;
+            L.circleMarker([nr.lat,nr.lon],{radius:10,fillColor:m.isTop?"#EF4444":"#8B5CF6",color:'#030F1A',weight:2,fillOpacity:m.isValid===false?0.3:1}).bindTooltip(`${m.label||'Mark'} · ${fmtU(m.utc)}`).addTo(map);
+            L.marker([nr.lat,nr.lon],{icon:L.divIcon({className:'',iconSize:[0,0],iconAnchor:[-5,-12],html:`<span style="font-size:9px;font-weight:700;color:#fff;text-shadow:0 0 3px #000">${m.isTop?'▲':'▽'}</span>`})}).addTo(map);
+          }catch(e){console.warn('mark err',e);}
         }
-
-        // ── Race guns ─────────────────────────────────────────────────────
         for(const g of (xmlData.raceGuns||[])){
-          try {
-            const nr=nearest(g.utc);
-            if(Math.abs(nr.utc-g.utc)>120000) continue;
-            L.circleMarker([nr.lat,nr.lon],{radius:10,fillColor:'#EF4444',color:'#fff',weight:2,fillOpacity:1})
-              .bindTooltip(`${g.label||'Gun'} · ${fmtU(g.utc)}`).addTo(map);
-          } catch(e) { console.warn('GPSTrackMap gun error',e); }
+          try{const nr=nearest(g.utc);if(Math.abs(nr.utc-g.utc)>120000)continue;
+            L.circleMarker([nr.lat,nr.lon],{radius:10,fillColor:'#EF4444',color:'#fff',weight:2,fillOpacity:1}).bindTooltip(`${g.label||'Gun'} · ${fmtU(g.utc)}`).addTo(map);
+          }catch(e){}
         }
-
-        // ── Valid tacks (green) & gybes (violet) ──────────────────────────
         for(const tj of (xmlData.tackJibes||[])){
-          try {
-            const nr=nearest(tj.utc);
-            if(Math.abs(nr.utc-tj.utc)>60000) continue;
-            L.circleMarker([nr.lat,nr.lon],{
-              radius: tj.isValid===false ? 3 : 5,
-              fillColor: tj.isTack ? '#1D9E75' : '#7F77DD',
-              color:'transparent',
-              fillOpacity: tj.isValid===false ? 0.25 : 0.85,
-            }).bindTooltip(`${tj.label||'T/G'}${tj.isValid===false?' (invalid)':''} · ${fmtU(tj.utc)}`).addTo(map);
-          } catch(e) { console.warn('GPSTrackMap tack/gybe error',e); }
+          try{const nr=nearest(tj.utc);if(Math.abs(nr.utc-tj.utc)>60000)continue;
+            L.circleMarker([nr.lat,nr.lon],{radius:tj.isValid===false?3:5,fillColor:tj.isTack?'#1D9E75':'#7F77DD',color:'transparent',fillOpacity:tj.isValid===false?0.25:0.85}).bindTooltip(`${tj.label||'T/G'} · ${fmtU(tj.utc)}`).addTo(map);
+          }catch(e){}
         }
-
-        // ── Sail change events (orange label chips) ───────────────────────
         for(const se of (xmlData.sailsUpEvents||[])){
-          try {
-            const nr=nearest(se.utc);
-            if(Math.abs(nr.utc-se.utc)>120000) continue;
-            L.marker([nr.lat,nr.lon],{
-              icon: L.divIcon({
-                className:'', iconSize:[0,0], iconAnchor:[0,0],
-                html:`<div style="background:#F59E0B;border:1.5px solid #030F1A;border-radius:3px;padding:1px 4px;font-size:8px;font-weight:700;color:#000;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis">${(se.sails||[]).slice(0,2).join('·')||'Sail'}</div>`
-              })
-            }).bindTooltip(`${se.label||'Sail change'} · ${fmtU(se.utc)}`).addTo(map);
-          } catch(e) { console.warn('GPSTrackMap sail event error',e); }
+          try{const nr=nearest(se.utc);if(Math.abs(nr.utc-se.utc)>120000)continue;
+            L.marker([nr.lat,nr.lon],{icon:L.divIcon({className:'',iconSize:[0,0],iconAnchor:[0,0],html:`<div style="background:#F59E0B;border:1.5px solid #030F1A;border-radius:3px;padding:1px 4px;font-size:8px;font-weight:700;color:#000;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis">${(se.sails||[]).slice(0,2).join('·')||'Sail'}</div>`})}).bindTooltip(`${se.label||'Sail'} · ${fmtU(se.utc)}`).addTo(map);
+          }catch(e){}
         }
       }
 
-      // ── Performance legend (bottom-right) ────────────────────────────────
+      // ── Boat position marker (for video sync) ───────────────────────────────
+      const boatMarker = L.marker(centre, {
+        icon: L.divIcon({
+          className: 'ssa-boat',
+          iconSize: [20, 26],
+          iconAnchor: [10, 13],
+          html: `<div class="boat-inner" style="opacity:0;transition:opacity 0.15s;width:20px;height:26px">
+            <svg width="20" height="26" viewBox="0 0 20 26" fill="none">
+              <path d="M10 2 L18 22 L10 17 L2 22 Z" fill="#F59E0B" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/>
+              <circle cx="10" cy="13" r="3" fill="#fff" fill-opacity="0.9"/>
+            </svg>
+          </div>`,
+        }),
+        zIndexOffset: 2000,
+        interactive: false,
+      }).addTo(map);
+      boatMarkerRef.current = boatMarker;
+
+      // ── Legends ─────────────────────────────────────────────────────────────
       if(polar){
-        const leg = L.control({position:'bottomright'});
-        leg.onAdd = () => {
-          const d = L.DomUtil.create('div','');
-          d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';
-          d.innerHTML=`
-            <div style="font-weight:700;color:#E2E8F0;margin-bottom:4px;font-size:10px">⬡ ${polar.filename||'Polar'} · ${polar.tws?.[0]}–${polar.tws?.[polar.tws.length-1]} kn</div>
-            <div><span style="display:inline-block;width:10px;height:5px;background:#EF4444;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≤ 90% VMG / BSP</div>
-            <div><span style="display:inline-block;width:10px;height:5px;background:#86EFAC;border-radius:1px;margin-right:5px;vertical-align:middle"></span>100% target</div>
-            <div><span style="display:inline-block;width:10px;height:5px;background:#15803D;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≥ 110%</div>
-            <div style="margin-top:4px;color:#475569;font-size:8px">VMG within ±20° of target TWA<br>BSP% elsewhere (reaching)</div>`;
-          return d;
-        };
+        const leg=L.control({position:'bottomright'});
+        leg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div style="font-weight:700;color:#E2E8F0;margin-bottom:4px;font-size:10px">⬡ ${polar.filename||'Polar'} · ${polar.tws?.[0]}–${polar.tws?.[polar.tws.length-1]} kn</div><div><span style="display:inline-block;width:10px;height:5px;background:#EF4444;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≤ 90%</div><div><span style="display:inline-block;width:10px;height:5px;background:#86EFAC;border-radius:1px;margin-right:5px;vertical-align:middle"></span>100%</div><div><span style="display:inline-block;width:10px;height:5px;background:#15803D;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≥ 110%</div><div style="margin-top:3px;color:#475569;font-size:8px">VMG ±20° target · BSP reaching</div>`;return d;};
         leg.addTo(map);
       }
-
-      // ── Event legend (bottom-left) ────────────────────────────────────────
-      const evLeg = L.control({position:'bottomleft'});
-      evLeg.onAdd = () => {
-        const d = L.DomUtil.create('div','');
-        d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';
-        d.innerHTML=`
-          <div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div>
-          <div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div>
-          <div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div>
-          <div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Leeward gate</div>
-          <div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack (valid)</div>
-          <div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe (valid)</div>
-          <div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div>
-          <div><span style="display:inline-block;width:14px;height:4px;background:#06B6D4;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Clip highlight</div>`;
-        return d;
-      };
+      const evLeg=L.control({position:'bottomleft'});
+      evLeg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div><div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div><div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div><div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gate</div><div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack</div><div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe</div><div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div><div><span style="display:inline-block;width:14px;height:4px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Boat position</div>`;return d;};
       evLeg.addTo(map);
 
-      // Fit to full track bounds
-      if(allLatLngs.length > 0){
-        try{ map.fitBounds(L.latLngBounds(allLatLngs), {padding:[24,24]}); }catch{}
-      }
+      if(allLatLngs.length>0){try{map.fitBounds(L.latLngBounds(allLatLngs),{padding:[24,24]});}catch{}}
     };
 
-    // Load Leaflet CSS + JS if not already present
     if(!window.L){
-      if(!document.getElementById('leaflet-css')){
-        const css=document.createElement('link');
-        css.id='leaflet-css'; css.rel='stylesheet';
-        css.href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
-        document.head.appendChild(css);
-      }
-      const js=document.createElement('script');
-      js.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
-      js.onload=initMap;
-      document.head.appendChild(js);
-    } else {
-      initMap();
-    }
-    return ()=>{ if(mapRef.current){mapRef.current.remove();mapRef.current=null;} };
+      if(!document.getElementById('leaflet-css')){const css=document.createElement('link');css.id='leaflet-css';css.rel='stylesheet';css.href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';document.head.appendChild(css);}
+      const js=document.createElement('script');js.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';js.onload=initMap;document.head.appendChild(js);
+    } else { initMap(); }
+    return()=>{ if(mapRef.current){mapRef.current.remove();mapRef.current=null;boatMarkerRef.current=null;} };
   },[filteredRows, hlRows, xmlData, polar]);
 
-  if(!rows?.length) return(
-    <div style={{padding:12,background:"#071624",borderRadius:8,color:"#EF4444",fontSize:10}}>No log data</div>
-  );
-  if(filteredRows.length < 2) return(
-    <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>
-      No valid GPS rows. DayStart={dayStart?new Date(dayStart).toISOString().slice(11,19):"none"}.
-      First row: lat={rows[0]?.lat?.toFixed?.(4)} lon={rows[0]?.lon?.toFixed?.(4)}
-    </div>
-  );
+  // ── Resize when tab becomes visible ──────────────────────────────────────────
+  React.useEffect(()=>{
+    if(visible && mapRef.current){
+      setTimeout(()=>{try{mapRef.current?.invalidateSize();}catch{}}, 60);
+    }
+  },[visible]);
+
+  // ── Live boat position from video playback ────────────────────────────────────
+  // Direct Leaflet API — no React re-render for position updates
+  React.useEffect(()=>{
+    const marker = boatMarkerRef.current;
+    if(!marker || !filteredRows?.length) return;
+    const inner = marker.getElement()?.querySelector('.boat-inner');
+    if(!playUtc){ if(inner) inner.style.opacity='0'; return; }
+
+    // Binary search for nearest row
+    let lo=0, hi=filteredRows.length-1;
+    while(lo<hi){const mid=(lo+hi+1)>>1; if(filteredRows[mid].utc<=playUtc)lo=mid; else hi=mid-1;}
+    const row=filteredRows[lo];
+    if(!row||Math.abs(row.utc-playUtc)>60000){ if(inner) inner.style.opacity='0'; return; }
+
+    // Update position
+    marker.setLatLng([row.lat,row.lon]);
+
+    // Compute bearing from next few rows
+    const nextRow=filteredRows[Math.min(lo+3,filteredRows.length-1)];
+    let hdg=0;
+    if(nextRow&&nextRow!==row){
+      const dLon=(nextRow.lon-row.lon)*Math.PI/180;
+      const y=Math.sin(dLon)*Math.cos(nextRow.lat*Math.PI/180);
+      const x=Math.cos(row.lat*Math.PI/180)*Math.sin(nextRow.lat*Math.PI/180)-Math.sin(row.lat*Math.PI/180)*Math.cos(nextRow.lat*Math.PI/180)*Math.cos(dLon);
+      hdg=(Math.atan2(y,x)*180/Math.PI+360)%360;
+    }
+    if(inner){
+      inner.style.opacity='1';
+      inner.style.transform=`rotate(${hdg}deg)`;
+    }
+  },[playUtc, filteredRows]);
+
+  if(!rows?.length) return(<div style={{padding:12,background:"#071624",borderRadius:8,color:"#EF4444",fontSize:10}}>No log data</div>);
+  if(filteredRows.length<2) return(<div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>No valid GPS rows. DayStart={dayStart?new Date(dayStart).toISOString().slice(11,19):"none"}. First row: lat={rows[0]?.lat?.toFixed?.(4)} lon={rows[0]?.lon?.toFixed?.(4)}</div>);
 
   const haversine=(a,b)=>{const R=6371,dl=(b.lat-a.lat)*Math.PI/180,dn=(b.lon-a.lon)*Math.PI/180,x=Math.sin(dl/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dn/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));};
   let distKm=0; for(let i=1;i<filteredRows.length;i++) distKm+=haversine(filteredRows[i-1],filteredRows[i]);
@@ -1395,18 +1208,13 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 
   return(
     <div>
-      {/* Polar status banner */}
       {polar ? (
         <div style={{marginBottom:6,display:"flex",alignItems:"center",gap:8,fontSize:9,color:"#F59E0B",flexWrap:"wrap"}}>
-          <span style={{background:"#F59E0B12",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px",fontWeight:600}}>
-            ⬡ {polar.filename} · TWS {polar.tws?.[0]}–{polar.tws?.[polar.tws.length-1]} kn
-          </span>
+          <span style={{background:"#F59E0B12",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px",fontWeight:600}}>⬡ {polar.filename} · TWS {polar.tws?.[0]}–{polar.tws?.[polar.tws.length-1]} kn</span>
           <span style={{color:"#475569"}}>coloured by VMG% (±20° of target TWA) · BSP% (reaching)</span>
         </div>
       ) : (
-        <div style={{marginBottom:6,fontSize:9,color:"#475569"}}>
-          No polar loaded — track shown in uniform blue. Upload a polar in the Uploads tab to enable performance colouring.
-        </div>
+        <div style={{marginBottom:6,fontSize:9,color:"#475569"}}>No polar loaded — track in uniform blue. Upload a polar in Uploads tab.</div>
       )}
       <div ref={containerRef} style={{width:"100%",height:460,borderRadius:10,overflow:"hidden",border:"1px solid #1E3A5A",background:"#071624"}}/>
       <div style={{display:"flex",gap:16,marginTop:6,flexWrap:"wrap",fontSize:10,color:"#475569",alignItems:"center"}}>
@@ -1415,13 +1223,14 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         {dayStart&&<span>Start: <strong style={{color:"#22C55E"}}>{new Date(dayStart).toISOString().slice(11,16)}</strong></span>}
         {dayStop&&<span>End: <strong style={{color:"#F59E0B"}}>{new Date(dayStop).toISOString().slice(11,16)}</strong></span>}
         {hlRows.length>0&&<span style={{color:"#06B6D4",marginLeft:"auto"}}>● Clip: {hlRows.length} pts</span>}
+        {playUtc&&<span style={{color:"#F59E0B",marginLeft:"auto"}}>▲ Live: {new Date(playUtc).toISOString().slice(11,16)} UTC</span>}
       </div>
     </div>
   );
 }
 
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
-function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate}){
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,playUtc=null,visible=true}){
   const rows=logData?.rows||[];
   const noData=!rows.length;
   const step=Math.max(1,Math.floor(rows.length/400));
@@ -1446,6 +1255,11 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const marks=(xmlData?.markRoundings||[]).filter(m=>m.isValid!==false).length;
   const topMarks=(xmlData?.markRoundings||[]).filter(m=>m.isTop&&m.isValid!==false).length;
   const durationH=rows.length?(rows[rows.length-1].utc-rows[0].utc)/3600000:0;
+
+  // Live row at current playback position
+  const liveRow = playUtc && rows.length ? nearestRow(rows, playUtc) : null;
+  const liveActive = liveRow && Math.abs(liveRow.utc - (playUtc||0)) < 60000;
+
   const card=(label,val,unit,color)=>(<div style={{background:"#0A1929",border:`1px solid ${color}25`,borderRadius:8,padding:"12px 14px"}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace"}}>{val}<span style={{fontSize:11,color:"#475569",marginLeft:3}}>{unit}</span></div></div>);
   const section=(title,children)=>(<div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"14px 16px",marginBottom:14}}><div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>{title}</div>{children}</div>);
   return(
@@ -1467,6 +1281,24 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
           <div style={{flex:1}}/>
           <button onClick={()=>setActiveTab("library")} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:5,padding:"3px 10px",color:"#475569",cursor:"pointer",fontSize:10}}>← Library</button>
         </div>
+
+        {/* ── Now Playing bar — live instrument data from video ── */}
+        {liveActive&&(
+          <div style={{background:"#0A1929",border:"1px solid #F59E0B40",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <span style={{fontSize:9,color:"#F59E0B",fontWeight:700,letterSpacing:1,textTransform:"uppercase",flexShrink:0}}>▶ Now playing</span>
+            <span style={{fontSize:11,fontFamily:"monospace",color:"#94A3B8"}}>{new Date(playUtc).toISOString().slice(11,19)} UTC</span>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              {[["TWS",liveRow.tws,"kn","#06B6D4"],["TWA",liveRow.twa,"°","#8B5CF6"],["BSP",liveRow.bsp,"kn","#10B981"],["SOG",liveRow.sog,"kn","#34D399"],["VMG",liveRow.vmg,"kn","#A78BFA"],["Heel",liveRow.heel,"°","#F59E0B"]].map(([l,v,u,c])=>(
+                <div key={l} style={{display:"flex",alignItems:"baseline",gap:3}}>
+                  <span style={{fontSize:9,color:"#334155"}}>{l}</span>
+                  <span style={{fontSize:13,fontWeight:700,fontFamily:"monospace",color:c}}>{R(v,l==="TWA"||l==="Heel"?0:1)}</span>
+                  <span style={{fontSize:9,color:"#475569"}}>{u}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {noData ? (
           <div style={{textAlign:"center",padding:"50px 20px",color:"#334155"}}>
             <div style={{fontSize:32,marginBottom:12,opacity:0.3}}>📊</div>
@@ -1493,20 +1325,20 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             </div>
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0}/>
+                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible}/>
               ) : (
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — select a date in the Library first.</div>
               )
             ))}
             {section("Wind & boat speed timeline",(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div><LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn" showTrend events={chartEvents}/></div>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div><LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn" showTrend events={chartEvents}/></div>
+                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div><LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn" showTrend events={chartEvents} playUtc={playUtc}/></div>
+                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div><LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn" showTrend events={chartEvents} playUtc={playUtc}/></div>
               </div>
             ))}
             {section("Heel & performance",(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div><LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °" showTrend events={chartEvents}/></div>
+                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div><LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °" showTrend events={chartEvents} playUtc={playUtc}/></div>
                 <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div><PerfChart rows={rows} height={110}/></div>
               </div>
             ))}
@@ -1614,7 +1446,22 @@ export default function SmartSailingAnalytics(){
   const[aiResult,setAiResult]=useState(null);
   const[aiLoading,setAiLoading]=useState(false);
   const[loaded,setLoaded]=useState(false);
+  const[playUtc,setPlayUtc]=useState(null);              // current video UTC for GPS+chart sync
+  const[hasMountedAnalytics,setHasMountedAnalytics]=useState(false); // lazy-mount analytics
+  const playUtcThrottle=useRef(0);
   const perms=ROLES[role];
+
+  // Lazy-mount analytics on first visit; set initial playUtc from selected video
+  useEffect(()=>{ if(activeTab==="analytics") setHasMountedAnalytics(true); },[activeTab]);
+  useEffect(()=>{ setPlayUtc(selectedVideo?.startUtc||null); },[selectedVideo?.id]);
+
+  // Throttled callback passed to VideoPlayer — ~12 fps max to keep renders light
+  const handlePlayUtc=useCallback(utc=>{
+    const now=performance.now();
+    if(now-playUtcThrottle.current<80) return;
+    playUtcThrottle.current=now;
+    setPlayUtc(utc);
+  },[]);
 
   useEffect(()=>{
     async function boot(){
@@ -1723,8 +1570,22 @@ export default function SmartSailingAnalytics(){
 
       {aiResult&&<div style={{background:"#0D1829",borderBottom:"1px solid #8B5CF620",padding:"7px 18px",display:"flex",gap:10,alignItems:"flex-start",flexShrink:0}}><span style={{color:"#8B5CF6",fontSize:12}}>✦</span><div style={{flex:1}}><div style={{fontSize:11,color:"#A78BFA",fontWeight:600,marginBottom:1}}>{aiResult.matches?.length||0} clips — {aiResult.explanation}</div>{aiResult.insight&&<div style={{fontSize:10,color:"#334155"}}>💡 {aiResult.insight}</div>}</div></div>}
 
-      <div style={{display:"flex",flex:1,overflow:"hidden"}}>
-        {activeTab==="library"&&(
+      {/* ── Tab panes ────────────────────────────────────────────────────────────
+          Library and Analytics stay mounted after first visit (visibility:hidden
+          rather than display:none) so the video element keeps playing and
+          Leaflet retains its map dimensions when switching between tabs.
+          Upload and Admin are cheap to remount on demand.
+      ─────────────────────────────────────────────────────────────────────── */}
+      <div style={{display:"flex",flex:1,overflow:"hidden",position:"relative"}}>
+
+        {/* ── LIBRARY PANE — always mounted ──────────────────────────────────── */}
+        <div style={{
+          position:"absolute",inset:0,display:"flex",overflow:"hidden",
+          visibility:activeTab==="library"?"visible":"hidden",
+          pointerEvents:activeTab==="library"?"auto":"none",
+          zIndex:activeTab==="library"?2:1,
+        }}>
+          {/* Sidebar */}
           <aside style={{width:160,background:"#050E1C",borderRight:"1px solid #1E3A5A",display:"flex",flexDirection:"column",overflowY:"auto",flexShrink:0}}>
             <div style={{padding:"12px 11px 6px"}}>
               <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Sessions</div>
@@ -1750,116 +1611,135 @@ export default function SmartSailingAnalytics(){
               {selectedTags.length>0&&<button onClick={()=>setSelectedTags([])} style={{background:"none",border:"1px solid #EF444440",borderRadius:4,padding:"2px 8px",color:"#EF4444",fontSize:9,cursor:"pointer",width:"100%",marginTop:6}}>Clear</button>}
             </div>}
           </aside>
+
+          {/* Library main content */}
+          <main style={{flex:1,display:"flex",overflow:"hidden"}}>
+            <div style={{width:280,minWidth:280,overflowY:"auto",padding:"10px 8px",flexShrink:0,borderRight:"1px solid #0F2030"}}>
+              {(logData||xmlData)&&<div style={{display:"flex",gap:7,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+                {logData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,color:logData.source==="local"?"#1D9E75":"#8B5CF6"}}>{logData.source==="local"?"● Local":"● Cloud"} log · {logData.rows?.length?.toLocaleString()} rows</span>}
+                {xmlData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:"#8B5CF610",border:"1px solid #8B5CF630",color:"#8B5CF6"}}>{xmlData.source==="local"?"● Local":"● Cloud"} events · {xmlData.tackJibes?.length} manoeuvres</span>}
+                <span style={{fontSize:10,color:"#1E3A5A"}}>{displayed.length} clip{displayed.length!==1?"s":""}</span>
+                <div style={{flex:1}}/>
+                {xmlData&&allVideos.length>0&&perms.canImport&&(
+                  <button onClick={async()=>{
+                    let count=0;
+                    const updated=await Promise.all(allVideos.map(async v=>{
+                      if(!v.startUtc)return v;
+                      const newTags=computeAutoTags(v.startUtc,v.duration,logData,xmlData,syncOffsets[v.id]||0);
+                      const autoTagPatterns=/^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
+                      const manualTags=(v.tags||[]).filter(t=>{if(autoTagPatterns.test(t))return false;const meta=xmlData?.meta;if(meta?.location&&t===meta.location.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.boat&&t===meta.boat.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.dayType&&t===meta.dayType.toLowerCase().replace(/\s+/g,"-"))return false;return true;});
+                      const merged=[...new Set([...newTags,...manualTags])];
+                      await updateVideoTags(v.id,merged);count++;return{...v,tags:merged};
+                    }));
+                    setAllVideos(updated);
+                    if(selectedVideo){const u=updated.find(v=>v.id===selectedVideo.id);if(u)setSelectedVideo(u);}
+                    alert(`Re-tagged ${count} clip${count!==1?"s":""} using event data.`);
+                  }} style={{background:"#8B5CF620",border:"1px solid #8B5CF640",borderRadius:5,padding:"3px 10px",color:"#8B5CF6",cursor:"pointer",fontSize:10,fontWeight:600}}>
+                    ⚡ Re-tag {allVideos.filter(v=>v.startUtc).length} clips
+                  </button>
+                )}
+              </div>}
+              {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
+              {(()=>{
+                const groups=[]; const seen=new Map();
+                for(const v of displayed){const d=v.sessionDate||"unknown";if(!seen.has(d)){seen.set(d,[]);groups.push(d);}seen.get(d).push(v);}
+                const SKIP_HDR=new Set(["race-start","topmark","mark","upwind","reach","downwind","tack","gybe","race","training"]);
+                return groups.map(date=>{
+                  const vids=seen.get(date);
+                  const location=(vids[0]?.tags||[]).find(t=>!SKIP_HDR.has(t)&&t.includes("-")&&!t.startsWith("tws-")&&!/-20\d{2}$/.test(t)&&t.length>3&&!/^\d/.test(t))||null;
+                  const boat=(vids[0]?.tags||[]).find(t=>!SKIP_HDR.has(t)&&!t.startsWith("tws-")&&!t.includes("-")&&t.length>2&&!/^\d/.test(t))||null;
+                  return(<div key={date} style={{marginBottom:18}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,paddingBottom:5,borderBottom:"1px solid #0F2030"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#64748B",fontFamily:"monospace"}}>{date===TODAY()?"Today":fmtDate(date)}</div>
+                      {location&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"#06B6D420",border:"1px solid #06B6D440",color:"#06B6D4",fontWeight:600}}>{location}</span>}
+                      {boat&&<span style={{fontSize:9,color:"#334155",fontFamily:"monospace"}}>{boat}</span>}
+                      <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{vids.length} clip{vids.length!==1?"s":""}</span>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8}}>
+                      {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)}/>)}
+                    </div>
+                  </div>);
+                });
+              })()}
+            </div>
+            {selectedVideo&&(
+              <div style={{flex:1,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:16,minWidth:400}}>
+                {/* onPlayUtc wires VideoPlayer → shared playUtc state → Analytics */}
+                <VideoPlayer video={selectedVideo} logData={logData} xmlData={xmlData} syncOffset={syncOffsets[selectedVideo.id]||0} sessionTzOffset={sessionTzOffset} onPlayUtc={handlePlayUtc}/>
+                <div style={{marginTop:12}}>
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:2}}>
+                    <div style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,marginRight:8}}>{selectedVideo.title}</div>
+                    <SrcBadge source={selectedVideo.source||"local"}/>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+                    <div style={{fontSize:10,color:"#334155"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
+                    {selectedVideo.tsSource&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:selectedVideo.tsSource==="mp4-meta"?"#1D9E7515":"#F59E0B15",border:`1px solid ${selectedVideo.tsSource==="mp4-meta"?"#1D9E7530":"#F59E0B30"}`,color:selectedVideo.tsSource==="mp4-meta"?"#1D9E75":"#F59E0B"}}>{selectedVideo.tsSource==="mp4-meta"?"📷 camera metadata":"⚠ file modified time"}</span>)}
+                  </div>
+                  {selectedVideo.twsAvg!=null&&(
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
+                      {[["Avg TWS",selectedVideo.twsAvg,"kt","#06B6D4"],["Avg TWA",selectedVideo.twaAvg,"°","#8B5CF6"],["Avg VMG",selectedVideo.vmgAvg,"kt","#10B981"],["Polar %",selectedVideo.polpercAvg,"%","#F59E0B"],["Target %",selectedVideo.vsTargPercAvg,"%","#EF4444"],["Avg BSP",selectedVideo.bspAvg,"kt","#34D399"]].map(([l,val,u,c])=>(<div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div><div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}<span style={{fontSize:10,marginLeft:2}}>{u}</span></div></div>))}
+                    </div>
+                  )}
+                  <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>
+                  <div style={{marginBottom:12}}>
+                    <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
+                      await updateVideoStartUtc(id,startUtc);
+                      const updatedVideo={...selectedVideo,startUtc};
+                      const autoTags=computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0);
+                      const autoTags2=new Set(computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0));const manualTags=(selectedVideo.tags||[]).filter(t=>!autoTags2.has(t));
+                      const mergedTags=[...new Set([...autoTags,...manualTags])];
+                      await updateVideoTags(id,mergedTags);
+                      const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData);
+                      setAllVideos(p=>p.map(v=>v.id===id?enriched:v));
+                      setSelectedVideo(enriched);
+                    }}/>
+                  </div>
+                  {perms.canImport&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={updated=>{saveTagList(activeDate,updated);setSessionTagList(updated);}} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
+                  {perms.canImport&&(<DeleteButton video={selectedVideo} cloudStatus={cloudStatus} onDeleted={id=>{setAllVideos(p=>p.filter(v=>v.id!==id));setSelectedVideo(null);saveSyncOffset(id,0);}}/>)}
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+
+        {/* ── ANALYTICS PANE — lazy-mounted on first visit, then kept alive ─── */}
+        {hasMountedAnalytics&&(
+          <div style={{
+            position:"absolute",inset:0,display:"flex",overflow:"hidden",
+            visibility:activeTab==="analytics"?"visible":"hidden",
+            pointerEvents:activeTab==="analytics"?"auto":"none",
+            zIndex:activeTab==="analytics"?2:1,
+          }}>
+            <AnalyticsTab
+              logData={logData} xmlData={xmlData} allVideos={allVideos}
+              sessions={sessions} selectedVideo={selectedVideo}
+              onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab}
+              activeDate={activeDate}
+              playUtc={playUtc}
+              visible={activeTab==="analytics"}
+            />
+          </div>
         )}
 
-        <main style={{flex:1,display:"flex",overflow:"hidden"}}>
-          {activeTab==="library"&&(
-            <>
-              <div style={{width:280,minWidth:280,overflowY:"auto",padding:"10px 8px",flexShrink:0,borderRight:"1px solid #0F2030"}}>
-                {(logData||xmlData)&&<div style={{display:"flex",gap:7,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
-                  {logData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,color:logData.source==="local"?"#1D9E75":"#8B5CF6"}}>{logData.source==="local"?"● Local":"● Cloud"} log · {logData.rows?.length?.toLocaleString()} rows</span>}
-                  {xmlData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:"#8B5CF610",border:"1px solid #8B5CF630",color:"#8B5CF6"}}>{xmlData.source==="local"?"● Local":"● Cloud"} events · {xmlData.tackJibes?.length} manoeuvres</span>}
-                  <span style={{fontSize:10,color:"#1E3A5A"}}>{displayed.length} clip{displayed.length!==1?"s":""}</span>
-                  <div style={{flex:1}}/>
-                  {xmlData&&allVideos.length>0&&perms.canImport&&(
-                    <button onClick={async()=>{
-                      let count=0;
-                      const updated=await Promise.all(allVideos.map(async v=>{
-                        if(!v.startUtc)return v;
-                        const newTags=computeAutoTags(v.startUtc,v.duration,logData,xmlData,syncOffsets[v.id]||0);
-                        const autoTagPatterns=/^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
-                        const manualTags=(v.tags||[]).filter(t=>{if(autoTagPatterns.test(t))return false;const meta=xmlData?.meta;if(meta?.location&&t===meta.location.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.boat&&t===meta.boat.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.dayType&&t===meta.dayType.toLowerCase().replace(/\s+/g,"-"))return false;return true;});
-                        const merged=[...new Set([...newTags,...manualTags])];
-                        await updateVideoTags(v.id,merged);count++;return{...v,tags:merged};
-                      }));
-                      setAllVideos(updated);
-                      if(selectedVideo){const u=updated.find(v=>v.id===selectedVideo.id);if(u)setSelectedVideo(u);}
-                      alert(`Re-tagged ${count} clip${count!==1?"s":""} using event data.`);
-                    }} style={{background:"#8B5CF620",border:"1px solid #8B5CF640",borderRadius:5,padding:"3px 10px",color:"#8B5CF6",cursor:"pointer",fontSize:10,fontWeight:600}}>
-                      ⚡ Re-tag {allVideos.filter(v=>v.startUtc).length} clips
-                    </button>
-                  )}
-                </div>}
-                {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
-                {(()=>{
-                  const groups=[]; const seen=new Map();
-                  for(const v of displayed){const d=v.sessionDate||"unknown";if(!seen.has(d)){seen.set(d,[]);groups.push(d);}seen.get(d).push(v);}
-                  const SKIP_HDR=new Set(["race-start","topmark","mark","upwind","reach","downwind","tack","gybe","race","training"]);
-                  return groups.map(date=>{
-                    const vids=seen.get(date);
-                    const location=(vids[0]?.tags||[]).find(t=>!SKIP_HDR.has(t)&&t.includes("-")&&!t.startsWith("tws-")&&!/-20\d{2}$/.test(t)&&t.length>3&&!/^\d/.test(t))||null;
-                    const boat=(vids[0]?.tags||[]).find(t=>!SKIP_HDR.has(t)&&!t.startsWith("tws-")&&!t.includes("-")&&t.length>2&&!/^\d/.test(t))||null;
-                    return(<div key={date} style={{marginBottom:18}}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,paddingBottom:5,borderBottom:"1px solid #0F2030"}}>
-                        <div style={{fontSize:11,fontWeight:700,color:"#64748B",fontFamily:"monospace"}}>{date===TODAY()?"Today":fmtDate(date)}</div>
-                        {location&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"#06B6D420",border:"1px solid #06B6D440",color:"#06B6D4",fontWeight:600}}>{location}</span>}
-                        {boat&&<span style={{fontSize:9,color:"#334155",fontFamily:"monospace"}}>{boat}</span>}
-                        <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{vids.length} clip{vids.length!==1?"s":""}</span>
-                      </div>
-                      <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8}}>
-                        {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)}/>)}
-                      </div>
-                    </div>);
-                  });
-                })()}
-              </div>
-              {selectedVideo&&(
-                <div style={{flex:1,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:16,minWidth:400}}>
-                  <VideoPlayer video={selectedVideo} logData={logData} xmlData={xmlData} syncOffset={syncOffsets[selectedVideo.id]||0} sessionTzOffset={sessionTzOffset}/>
-                  <div style={{marginTop:12}}>
-                    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:2}}>
-                      <div style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,marginRight:8}}>{selectedVideo.title}</div>
-                      <SrcBadge source={selectedVideo.source||"local"}/>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-                      <div style={{fontSize:10,color:"#334155"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
-                      {selectedVideo.tsSource&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:selectedVideo.tsSource==="mp4-meta"?"#1D9E7515":"#F59E0B15",border:`1px solid ${selectedVideo.tsSource==="mp4-meta"?"#1D9E7530":"#F59E0B30"}`,color:selectedVideo.tsSource==="mp4-meta"?"#1D9E75":"#F59E0B"}}>{selectedVideo.tsSource==="mp4-meta"?"📷 camera metadata":"⚠ file modified time"}</span>)}
-                    </div>
-                    {selectedVideo.twsAvg!=null&&(
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
-                        {[["Avg TWS",selectedVideo.twsAvg,"kt","#06B6D4"],["Avg TWA",selectedVideo.twaAvg,"°","#8B5CF6"],["Avg VMG",selectedVideo.vmgAvg,"kt","#10B981"],["Polar %",selectedVideo.polpercAvg,"%","#F59E0B"],["Target %",selectedVideo.vsTargPercAvg,"%","#EF4444"],["Avg BSP",selectedVideo.bspAvg,"kt","#34D399"]].map(([l,val,u,c])=>(<div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div><div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}<span style={{fontSize:10,marginLeft:2}}>{u}</span></div></div>))}
-                      </div>
-                    )}
-                    <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>
-                    <div style={{marginBottom:12}}>
-                      <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
-                        await updateVideoStartUtc(id,startUtc);
-                        const updatedVideo={...selectedVideo,startUtc};
-                        const autoTags=computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0);
-                        const autoTags2=new Set(computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0));const manualTags=(selectedVideo.tags||[]).filter(t=>!autoTags2.has(t));
-                        const mergedTags=[...new Set([...autoTags,...manualTags])];
-                        await updateVideoTags(id,mergedTags);
-                        const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData);
-                        setAllVideos(p=>p.map(v=>v.id===id?enriched:v));
-                        setSelectedVideo(enriched);
-                      }}/>
-                    </div>
-                    {perms.canImport&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={updated=>{saveTagList(activeDate,updated);setSessionTagList(updated);}} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
-                    {perms.canImport&&(<DeleteButton video={selectedVideo} cloudStatus={cloudStatus} onDeleted={id=>{setAllVideos(p=>p.filter(v=>v.id!==id));setSelectedVideo(null);saveSyncOffset(id,0);}}/>)}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {activeTab==="analytics"&&(<AnalyticsTab logData={logData} xmlData={xmlData} allVideos={allVideos} sessions={sessions} selectedVideo={selectedVideo} onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab} activeDate={activeDate}/>)}
-
-          {activeTab==="upload"&&<UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/>}
-
-          {activeTab==="admin"&&(
-            <div style={{flex:1,padding:20,overflowY:"auto"}}>
-              <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0",marginBottom:18}}>Admin</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                {[
-                  {title:"Data tiers",items:["Tier 1 · Local: IndexedDB (blobs) + localStorage (log/events)","Tier 2 · Cloud: Bunny Storage (JSON) + Bunny Stream (HLS)","Today = always local  ·  Older = local → cloud fallback",`Unsynced items: ${unsyncedCount}`]},
-                  {title:"Cloud status (Bunny.net)",items:[`Storage: ${cloudStatus?.storage?"Connected ✓":"Not configured"}`,`Stream: ${cloudStatus?.stream?"Connected ✓":"Not configured"}`,`Zone: ${cloudStatus?.zone||"—"} · Region: ${cloudStatus?.region||"de"}`,"Env vars: BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_ZONE, BUNNY_STORAGE_REGION, BUNNY_STREAM_API_KEY, BUNNY_STREAM_LIBRARY_ID, BUNNY_CDN_HOSTNAME"]},
-                  {title:"Roles (testing — NextAuth in Phase 2)",items:["Admin/Coach → local import + cloud sync + older sessions","Crew → local import today + cloud older (read-only)","Viewer/Consultant → cloud only, no import","Switch roles with the header dropdown"]},
-                  {title:"Sessions",items:sessions.length>0?sessions.map(s=>`${s.date===TODAY()?"Today":fmtDate(s.date)} · ${s.source||"local"} · ${s.videoCount||0}v${s.hasLog?" + log":""}${s.hasXml?" + events":""}${s.location?` · ${s.location}`:""}`):[" No sessions yet — import in Upload tab"]},
-                ].map(c=>(<div key={c.title} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:14}}><div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:8}}>{c.title}</div>{c.items.map((item,i)=><div key={i} style={{fontSize:10,color:"#334155",padding:"3px 0",borderBottom:"1px solid #0F2030"}}>{item}</div>)}</div>))}
-              </div>
+        {/* ── UPLOAD & ADMIN — standard conditional render ─────────────────── */}
+        {activeTab==="upload"&&(
+          <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
+            <UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/>
+          </div>
+        )}
+        {activeTab==="admin"&&(
+          <div style={{position:"absolute",inset:0,overflowY:"auto",padding:20,zIndex:2}}>
+            <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0",marginBottom:18}}>Admin</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              {[
+                {title:"Data tiers",items:["Tier 1 · Local: IndexedDB (videos + logs + events)","Tier 2 · Cloud: Bunny Storage (JSON) + Bunny Stream (HLS)","Today = always local  ·  Older = local → cloud fallback",`Unsynced items: ${unsyncedCount}`]},
+                {title:"Cloud status (Bunny.net)",items:[`Storage: ${cloudStatus?.storage?"Connected ✓":"Not configured"}`,`Stream: ${cloudStatus?.stream?"Connected ✓":"Not configured"}`,`Zone: ${cloudStatus?.zone||"—"} · Region: ${cloudStatus?.region||"de"}`,"Env vars: BUNNY_STORAGE_API_KEY, BUNNY_STORAGE_ZONE, BUNNY_STORAGE_REGION, BUNNY_STREAM_API_KEY, BUNNY_STREAM_LIBRARY_ID, BUNNY_CDN_HOSTNAME"]},
+                {title:"Roles (testing — NextAuth in Phase 2)",items:["Admin/Coach → local import + cloud sync + older sessions","Crew → local import today + cloud older (read-only)","Viewer/Consultant → cloud only, no import","Switch roles with the header dropdown"]},
+                {title:"Sessions",items:sessions.length>0?sessions.map(s=>`${s.date===TODAY()?"Today":fmtDate(s.date)} · ${s.source||"local"} · ${s.videoCount||0}v${s.hasLog?" + log":""}${s.hasXml?" + events":""}${s.location?` · ${s.location}`:""}`):[" No sessions yet — import in Upload tab"]},
+              ].map(c=>(<div key={c.title} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:14}}><div style={{fontSize:11,fontWeight:600,color:"#64748B",marginBottom:8}}>{c.title}</div>{c.items.map((item,i)=><div key={i} style={{fontSize:10,color:"#334155",padding:"3px 0",borderBottom:"1px solid #0F2030"}}>{item}</div>)}</div>))}
             </div>
-          )}
-        </main>
+          </div>
+        )}
       </div>
     </div>
   );
