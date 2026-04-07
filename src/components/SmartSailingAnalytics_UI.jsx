@@ -81,7 +81,7 @@ function parseCsvLog(text,offsetMin=0){
   const rows=[];
   for(let i=1;i<lines.length;i++){
     const c=lines[i].split(",");
-    if(c.length<57)continue; // need at least up to Rudder (col 56)
+    if(c.length<27)continue; // need at least up to Vs_perf% (col 26)
     const bsp=parseFloat(c[4])||0, tws=parseFloat(c[12])||0;
     if(bsp<0.05&&tws<0.3)continue;
     const ds=c[1]?.trim(), ts=c[2]?.trim();
@@ -91,13 +91,14 @@ function parseCsvLog(text,offsetMin=0){
     const pos=parseNmea(c[0]);
 
     // Starting data — null if zero/missing (Expedition outputs 0 when not applicable)
-    const dstLine = parseFloat(c[29])||null;  // nm, null when not on start line
-    const tmLine  = parseFloat(c[30])||null;  // seconds to line
-    const ttbPort = parseFloat(c[50])||null;  // time to burn, port approach
-    const ttbStbd = parseFloat(c[51])||null;  // time to burn, stbd approach
-    const ttbPin  = parseFloat(c[52])||null;  // time to burn, pin end
-    const ttbCB   = parseFloat(c[53])||null;  // time to burn, committee boat end
-    const timer1  = isNaN(parseFloat(c[55])) ? null : parseFloat(c[55]); // race timer (s); 0 = exactly at gun
+    const opt=(i,zeroNull=true)=>{if(c.length<=i)return null;const v=parseFloat(c[i]);return(isNaN(v)||(zeroNull&&v===0))?null:v;};
+    const dstLine = opt(29);               // DST_LINE nm
+    const tmLine  = opt(30);               // TM_LINE seconds
+    const ttbPort = opt(50);               // TTB_Port seconds
+    const ttbStbd = opt(51);               // TTB_Stbd seconds
+    const ttbPin  = opt(52);               // TTB_Pin seconds
+    const ttbCB   = opt(53);               // TTB_CB seconds
+    const timer1  = opt(55,false);         // Timer-1: 0 = exactly at gun, keep it
 
     rows.push({
       utc, lat:pos.lat, lon:pos.lon,
@@ -111,8 +112,8 @@ function parseCsvLog(text,offsetMin=0){
       vsTargPct: parseFloat(c[23])||0,
       vsPerfPct: parseFloat(c[26])||0,
       dstLine, tmLine, ttbPort, ttbStbd, ttbPin, ttbCB, timer1,
-      rudder:parseFloat(c[56])||0,  // col 56 — was incorrectly at col 52
-      yawR:  parseFloat(c[41])||0,
+      rudder:parseFloat(c[56]??0)||0,       // col 56 (was wrongly col 52)
+      yawR:  parseFloat(c[41]??0)||0,
     });
   }
   return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};
