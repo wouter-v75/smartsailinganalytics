@@ -2111,33 +2111,102 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 twa:   buildSeries('twa',v=>v!=null?Math.abs(v):null),
               };
 
+              // ── Cumulative VMG loss series ─────────────────────────────────────
+              // Baseline VMG = mean of log rows from -60s to -20s before each tack.
+              // Accumulated loss from t=-20s:
+              //   cumLoss(t) = Σ (baseline_vmg − actual_vmg) × Δt  [knot·s]
+              // Convert to boat lengths: cumLoss_m / boatLenM
+              // Negative = boat briefly exceeded baseline (e.g. pumping into tack).
+              // Positive = boat lost distance vs steady-state upwind sailing.
+              const boatLenM = extractBoatLengthM(xmlData?.meta?.boat);
+              const BASELINE_START=-60, BASELINE_END=-20;
+              const LOSS_START=-20;
+
+              const vmgLossSeries = validTacks.map(tk=>{
+                // Binary-search tack centre
+                let lo=0,hi=rows.length-1;
+                while(lo<hi){const mid=(lo+hi+1)>>1;if(rows[mid].utc<=tk.utc)lo=mid;else hi=mid-1;}
+                const centre=lo;
+
+                // Walk back to BASELINE_START
+                let bStart=centre;
+                while(bStart>0&&(rows[centre].utc-rows[bStart].utc)<Math.abs(BASELINE_START)*1000) bStart--;
+                // Walk back to BASELINE_END
+                let bEnd=centre;
+                while(bEnd>0&&(rows[centre].utc-rows[bEnd].utc)<Math.abs(BASELINE_END)*1000) bEnd--;
+
+                // Baseline: mean VMG in [BASELINE_START, BASELINE_END]
+                let bSum=0, bCount=0;
+                for(let k=bStart;k<=bEnd;k++){
+                  const v=rows[k].vmg;
+                  if(v!=null&&!isNaN(v)&&v>0){bSum+=v;bCount++;}
+                }
+                if(!bCount) return []; // no baseline data → skip tack
+                const baseVMG=bSum/bCount;
+
+                // Walk to LOSS_START index
+                let lStart=centre;
+                while(lStart>0&&(rows[centre].utc-rows[lStart].utc)<Math.abs(LOSS_START)*1000) lStart--;
+
+                // Walk to +POST seconds
+                let lEnd=centre;
+                while(lEnd<rows.length-1&&(rows[lEnd].utc-rows[centre].utc)<POST*1000) lEnd++;
+
+                // Integrate (baseVMG - vmg) × dt from LOSS_START → POST
+                let cumLossKnotSec=0;
+                const pts=[{x:LOSS_START, y:0, baseVMG}];
+                for(let k=lStart+1;k<=lEnd;k++){
+                  const dt=(rows[k].utc-rows[k-1].utc)/1000; // seconds
+                  if(dt<=0||dt>10) continue; // skip gaps > 10s
+                  const vmg=rows[k].vmg??0;
+                  cumLossKnotSec+=(baseVMG-vmg)*dt;
+                  const cumLossBL=(cumLossKnotSec*0.5144)/boatLenM; // boat lengths
+                  const relSec=(rows[k].utc-tk.utc)/1000;
+                  pts.push({x:relSec, y:cumLossBL, baseVMG});
+                }
+                // Final loss at +POST
+                const finalBL=pts[pts.length-1]?.y??0;
+                return Object.assign(pts, {baseVMG, finalBL});
+              }).filter(s=>s.length>1);
+
               // Multi-line SVG chart — one coloured line per tack
               const TACK_COLORS=['#1D9E75','#06B6D4','#8B5CF6','#F59E0B','#EF4444','#EC4899','#34D399','#60A5FA','#A78BFA','#FCD34D'];
-              function TackChart({series,yLabel,color='#1D9E75',height=130,yLines=[],yMax:forcedYMax}){
+
+              // TackChart supports signed y-axis (yMin can be < 0 for VMG loss chart)
+              function TackChart({series,yLabel,color='#1D9E75',height=130,yLines=[],yMax:forcedYMax,yMin:forcedYMin,xMin:xMinProp,xMax:xMaxProp}){
                 if(!series?.length||series.every(s=>!s.length)) return(
                   <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:10}}>No data</div>
                 );
                 const VB_W=400;
-                const pad={t:10,r:8,b:28,l:36};
+                const pad={t:10,r:8,b:28,l:42};
                 const W=VB_W-pad.l-pad.r, H=height-pad.t-pad.b;
-                const xMin=-PRE, xMax=POST;
+                const xMin=xMinProp??-PRE, xMax=xMaxProp??POST;
                 const allPts=series.flat();
-                const yMin=0;
-                const yMax=forcedYMax||Math.max(...allPts.map(p=>p.y))||1;
+                const rawYMin=Math.min(...allPts.map(p=>p.y));
+                const rawYMax=Math.max(...allPts.map(p=>p.y))||1;
+                const yMin=forcedYMin!==undefined?forcedYMin:Math.min(0,rawYMin);
+                const yMax=forcedYMax!==undefined?forcedYMax:Math.max(0,rawYMax)||1;
+                const ySpan=yMax-yMin||1;
                 const px=x=>pad.l+((x-xMin)/(xMax-xMin))*W;
-                const py=y=>pad.t+H-((y-yMin)/(yMax-yMin||1))*H;
-                const xTicks=[-30,-20,-10,0,10,20,30,40,50,60].filter(x=>x>=xMin&&x<=xMax);
-                const yTicks=Array.from({length:4},(_,i)=>yMin+(yMax-yMin)*i/3);
+                const py=y=>pad.t+H-((y-yMin)/ySpan)*H;
+                const xTicks=[-60,-50,-40,-30,-20,-10,0,10,20,30,40,50,60].filter(x=>x>=xMin&&x<=xMax);
+                const yRange=yMax-yMin;
+                const yStep=yRange>20?5:yRange>8?2:yRange>4?1:yRange>1?0.5:0.2;
+                const yTickMin=Math.ceil(yMin/yStep)*yStep;
+                const yTicks=Array.from({length:Math.ceil((yMax-yTickMin)/yStep)+1},(_,i)=>yTickMin+i*yStep).filter(y=>y>=yMin&&y<=yMax);
+                const zeroY=py(0);
                 return(
                   <svg width="100%" viewBox={`0 0 ${VB_W} ${height}`} style={{overflow:"visible",display:"block"}}>
-                    {/* Grid */}
-                    {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
+                    {/* Grid lines */}
+                    {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={y===0?"#1E3A5A":"#0F2030"} strokeWidth={y===0?1.5:1}/>)}
                     {yLines.map((y,i)=><line key={'yl'+i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={color} strokeWidth="0.5" strokeDasharray="4,3" opacity="0.6"/>)}
                     <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
                     <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
                     {/* Tack moment vertical line */}
                     <line x1={px(0)} x2={px(0)} y1={pad.t} y2={pad.t+H} stroke="#EF4444" strokeWidth="1.5" strokeDasharray="4,2" opacity="0.8"/>
                     <text x={px(0)+3} y={pad.t+9} fontSize="8" fill="#EF4444">tack</text>
+                    {/* -20s vertical line (loss measurement start) */}
+                    {xMin<=-20&&<line x1={px(-20)} x2={px(-20)} y1={pad.t} y2={pad.t+H} stroke="#475569" strokeWidth="0.8" strokeDasharray="3,3" opacity="0.5"/>}
                     {/* One line per tack */}
                     {series.map((pts,ti)=>{
                       if(pts.length<2) return null;
@@ -2146,7 +2215,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                       return<path key={ti} d={d} fill="none" stroke={c} strokeWidth="1.2" strokeLinejoin="round" opacity="0.75"/>;
                     })}
                     {/* Axes */}
-                    {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(y<10?1:0)}</text>)}
+                    {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill={y===0?"#94A3B8":"#475569"}>{Number.isInteger(y)?y:y.toFixed(1)}</text>)}
                     {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill={x===0?"#EF4444":"#475569"}>{x}s</text>)}
                     {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
                   </svg>
@@ -2182,6 +2251,82 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                       <TackChart series={tackSeries.twa} yLabel="TWA |°|" color="#06B6D4" height={130}/>
                     </div>
                   </div>
+
+                  {/* ── Cumulative VMG loss ──────────────────────────────────────── */}
+                  {vmgLossSeries.length>0&&<>
+                    <div style={{height:1,background:"#0F2030",margin:"16px 0 12px"}}/>
+                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>
+                      e) ACCUMULATED VMG LOSS (boat lengths) — baseline: avg VMG {BASELINE_START}s → {BASELINE_END}s before tack
+                    </div>
+                    <div style={{fontSize:9,color:"#334155",marginBottom:8}}>
+                      Positive = lost distance vs baseline upwind VMG · Negative = briefly faster than baseline ·
+                      Final value at +{POST}s = total tack cost
+                    </div>
+                    <TackChart
+                      series={vmgLossSeries}
+                      yLabel="BL loss"
+                      color="#EF4444"
+                      height={160}
+                      xMin={LOSS_START}
+                      xMax={POST}
+                      yLines={[0]}
+                    />
+                    {/* Summary table */}
+                    <div style={{marginTop:12,overflowX:"auto"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
+                        <thead>
+                          <tr style={{color:"#475569",letterSpacing:1}}>
+                            <th style={{textAlign:"left",padding:"4px 8px",borderBottom:"1px solid #1E3A5A",fontWeight:600,fontSize:9}}>TACK</th>
+                            <th style={{textAlign:"right",padding:"4px 8px",borderBottom:"1px solid #1E3A5A",fontWeight:600,fontSize:9}}>TIME (UTC)</th>
+                            <th style={{textAlign:"right",padding:"4px 8px",borderBottom:"1px solid #1E3A5A",fontWeight:600,fontSize:9}}>BASELINE VMG</th>
+                            <th style={{textAlign:"right",padding:"4px 8px",borderBottom:"1px solid #1E3A5A",fontWeight:600,fontSize:9}}>LOSS (BL)</th>
+                            <th style={{textAlign:"right",padding:"4px 8px",borderBottom:"1px solid #1E3A5A",fontWeight:600,fontSize:9}}>RATING</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {vmgLossSeries.map((pts,i)=>{
+                            const finalBL=pts[pts.length-1]?.y??0;
+                            const baseVMG=pts[0]?.baseVMG??0;
+                            const color=TACK_COLORS[i%TACK_COLORS.length];
+                            const rating=finalBL<3?"★★★ excellent":finalBL<5?"★★ good":finalBL<8?"★ average":"slow";
+                            const rColor=finalBL<3?"#10B981":finalBL<5?"#22C55E":finalBL<8?"#F59E0B":"#EF4444";
+                            const tk=validTacks[i];
+                            return(
+                              <tr key={i} style={{borderBottom:"1px solid #0F2030"}}>
+                                <td style={{padding:"5px 8px",color}}>
+                                  <span style={{display:"inline-block",width:10,height:3,background:color,borderRadius:1,marginRight:6,verticalAlign:"middle"}}/>
+                                  T{i+1}
+                                </td>
+                                <td style={{padding:"5px 8px",textAlign:"right",color:"#94A3B8",fontFamily:"monospace"}}>
+                                  {tk?new Date(tk.utc).toISOString().slice(11,16):"--"}
+                                </td>
+                                <td style={{padding:"5px 8px",textAlign:"right",color:"#06B6D4",fontFamily:"monospace"}}>
+                                  {R(baseVMG)} kn
+                                </td>
+                                <td style={{padding:"5px 8px",textAlign:"right",fontFamily:"monospace",fontWeight:700,color:rColor}}>
+                                  {finalBL.toFixed(1)} BL
+                                </td>
+                                <td style={{padding:"5px 8px",textAlign:"right",color:rColor,fontSize:9}}>
+                                  {rating}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {vmgLossSeries.length>1&&(()=>{
+                            const avg=vmgLossSeries.reduce((s,pts)=>s+(pts[pts.length-1]?.y??0),0)/vmgLossSeries.length;
+                            const rColor=avg<3?"#10B981":avg<5?"#22C55E":avg<8?"#F59E0B":"#EF4444";
+                            return(
+                              <tr style={{borderTop:"2px solid #1E3A5A",background:"#071624"}}>
+                                <td colSpan={3} style={{padding:"5px 8px",color:"#64748B",fontSize:9,letterSpacing:1}}>SESSION AVERAGE</td>
+                                <td style={{padding:"5px 8px",textAlign:"right",fontFamily:"monospace",fontWeight:700,color:rColor,fontSize:12}}>{avg.toFixed(1)} BL</td>
+                                <td style={{padding:"5px 8px",textAlign:"right",color:rColor,fontSize:9}}>{avg<3?"★★★":avg<5?"★★":avg<8?"★":""}</td>
+                              </tr>
+                            );
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>}
                 </>
               ));
             })()}
