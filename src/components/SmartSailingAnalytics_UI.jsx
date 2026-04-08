@@ -1284,32 +1284,45 @@ function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200
 
   const renderDot = (p, i) => {
     const port = isPort(p);
-    const stbd = !hasTwa || isStbd(p);
     const tack = hasTwa ? (port ? "port" : "stbd") : null;
-    const dimmed = hoveredTack && tack !== hoveredTack;
-    const highlighted = hoveredTack && tack === hoveredTack;
     const cx = px(p.x), cy = py(p.y);
-    const baseOp = hasTwa ? 0.65 : 0.5;
-    const op = dimmed ? 0.08 : highlighted ? 1.0 : baseOp;
-    const r = highlighted ? 2.8 : 2.0;
+    const r = 2.0;
 
     if(hasTwa && port){
-      // Upward triangle for port tack
       const h = r * 2.4;
       const pts = `${cx},${cy-h*0.65} ${cx-h*0.6},${cy+h*0.35} ${cx+h*0.6},${cy+h*0.35}`;
       return(
-        <polygon key={i} points={pts} fill={portColor} opacity={op}
+        <polygon key={i} points={pts} fill={portColor} opacity="0.75"
           style={{cursor:"pointer"}}
           onMouseEnter={()=>setHoveredTack("port")}
           onMouseLeave={()=>setHoveredTack(null)}/>
       );
     }
     return(
-      <circle key={i} cx={cx} cy={cy} r={r} fill={hasTwa?stbdColor:color} opacity={op}
+      <circle key={i} cx={cx} cy={cy} r={r} fill={hasTwa?stbdColor:color} opacity="0.65"
         style={{cursor:hasTwa?"pointer":"default"}}
         onMouseEnter={hasTwa?()=>setHoveredTack("stbd"):undefined}
         onMouseLeave={hasTwa?()=>setHoveredTack(null):undefined}/>
     );
+  };
+
+  // Highlighted group — same shapes but larger, rendered above the veil
+  const renderDotHL = (p, i) => {
+    const port = isPort(p);
+    const cx = px(p.x), cy = py(p.y);
+    const r = 3.5;
+    if(port){
+      const h = r * 2.4;
+      const pts = `${cx},${cy-h*0.65} ${cx-h*0.6},${cy+h*0.35} ${cx+h*0.6},${cy+h*0.35}`;
+      return <polygon key={"hl"+i} points={pts} fill={portColor}
+               stroke="#fff" strokeWidth="0.6" opacity="1"
+               onMouseEnter={()=>setHoveredTack("port")}
+               onMouseLeave={()=>setHoveredTack(null)} style={{cursor:"pointer"}}/>;
+    }
+    return <circle key={"hl"+i} cx={cx} cy={cy} r={r} fill={stbdColor}
+             stroke="#fff" strokeWidth="0.6" opacity="1"
+             onMouseEnter={()=>setHoveredTack("stbd")}
+             onMouseLeave={()=>setHoveredTack(null)} style={{cursor:"pointer"}}/>;
   };
 
   return(
@@ -1317,7 +1330,6 @@ function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200
       {hasTwa&&(
         <div style={{display:"flex",gap:10,marginBottom:3,fontSize:9,color:"#475569"}}>
           <span>
-            <polygon style={{display:"inline-block",width:8,height:8}} />
             <svg width="9" height="9" style={{verticalAlign:"middle",marginRight:3}}>
               <polygon points="4.5,0.5 0.5,8.5 8.5,8.5" fill={portColor} opacity="0.8"/>
             </svg>
@@ -1345,10 +1357,16 @@ function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200
         })}
         <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
         <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-        {/* Render stbd first, then port on top so triangles are always visible */}
+        {/* All dots at base opacity — colors preserved */}
         {hasTwa&&dots.filter(p=>!isPort(p)).map((p,i)=>renderDot(p,"s"+i))}
         {hasTwa&&dots.filter(isPort).map((p,i)=>renderDot(p,"p"+i))}
         {!hasTwa&&dots.map((p,i)=>renderDot(p,i))}
+        {/* Grey veil over non-hovered tack — color-preserving: sits above dots, hovered group rendered on top */}
+        {hoveredTack&&<rect x={pad.l} y={pad.t} width={W} height={H}
+          fill="#0A1929" opacity="0.62" style={{pointerEvents:"none"}}/>}
+        {/* Highlighted tack dots rendered above the veil — full color, larger, white outline */}
+        {hoveredTack==="stbd"&&dots.filter(p=>!isPort(p)).map((p,i)=>renderDotHL(p,i))}
+        {hoveredTack==="port"&&dots.filter(isPort).map((p,i)=>renderDotHL(p,i))}
         {reg&&<line x1={px(x0)} y1={py(ty(x0))} x2={px(x1)} y2={py(ty(x1))} stroke="#fff" strokeWidth="1.5" strokeDasharray="5,3" opacity="0.7"/>}
         {reg&&<text x={pad.l+W-2} y={pad.t+10} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
         {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(1)}</text>)}
@@ -1672,11 +1690,16 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         if(covRows.length<2) continue;
         const covStep=Math.max(1,Math.floor(covRows.length/300));
         const covPts=covRows.filter((_,i)=>i%covStep===0).map(r=>[r.lat,r.lon]);
-        L.polyline(covPts,{color:'#F472B6',weight:4,opacity:0.7,dashArray:'8,4'})
+        L.polyline(covPts,{
+          color:'#ffffff',
+          weight:8,
+          opacity:0.28,
+          smoothFactor:1,
+        })
           .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min`)
           .addTo(map);
         // Small dot at coverage start
-        L.circleMarker(covPts[0],{radius:5,fillColor:'#F472B6',color:'#030F1A',weight:1,fillOpacity:1})
+        L.circleMarker(covPts[0],{radius:5,fillColor:'#ffffff',color:'rgba(0,0,0,0.3)',weight:1,fillOpacity:0.5})
           .addTo(map);
       }
 
@@ -1756,7 +1779,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         leg.addTo(map);
       }
       const evLeg=L.control({position:'bottomleft'});
-      evLeg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div><div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div><div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div><div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gate</div><div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack</div><div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe</div><div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div><div><span style="display:inline-block;width:14px;height:4px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Boat position</div><div><span style="display:inline-block;width:14px;height:3px;background:#F472B6;border-radius:2px;margin-right:5px;vertical-align:middle;border-top:2px dashed #F472B6;background:none"></span>📹 Video coverage</div>`;return d;};
+      evLeg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div><div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div><div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div><div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gate</div><div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack</div><div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe</div><div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div><div><span style="display:inline-block;width:14px;height:4px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Boat position</div><div><span style="display:inline-block;width:14px;height:6px;background:rgba(255,255,255,0.3);border-radius:2px;margin-right:5px;vertical-align:middle;border:1px solid rgba(255,255,255,0.4)"></span>📹 Video coverage</div>`;return d;};
       evLeg.addTo(map);
 
       if(allLatLngs.length>0){try{map.fitBounds(L.latLngBounds(allLatLngs),{padding:[24,24]});}catch{}}
