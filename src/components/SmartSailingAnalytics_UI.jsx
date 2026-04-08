@@ -1254,13 +1254,15 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
 }
 
 function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200,showTrend=true,title="",yLines=[]}){
+  const [hoveredTack, setHoveredTack] = React.useState(null); // null | "port" | "stbd"
+
   if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
+  const hasTwa = points.some(p=>p.twa!=null);
   const pad={t:title?20:10,r:8,b:28,l:36};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
   const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
   const x0=Math.min(...xs),x1=Math.max(...xs);
   const rawY0=Math.min(...ys), rawY1=Math.max(...ys);
-  // Expand y range to include any yLines that fall outside the data range
   const y0=Math.min(rawY0,...yLines), y1=Math.max(rawY1,...yLines);
   const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
   const py=y=>pad.t+H-((y-y0)/(y1-y0||1))*H;
@@ -1270,29 +1272,91 @@ function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200
   const yTicks=Array.from({length:4},(_,i)=>y0+(y1-y0)*i/3);
   const reg=showTrend?linReg(points):null;
   const ty=x=>reg?reg.slope*x+reg.intercept:0;
+
+  // Port = twa < 0 (wind from port = starboard tack in sailing terms... 
+  // but Expedition: positive twa = starboard tack, negative = port tack)
+  const isPort = p => p.twa != null && p.twa < 0;
+  const isStbd = p => p.twa != null && p.twa >= 0;
+
+  // Triangle pointing up (▲) for port, circle for stbd
+  const portColor  = "#7DD3FC";   // light blue — port tack
+  const stbdColor  = color;        // chart color — stbd tack
+
+  const renderDot = (p, i) => {
+    const port = isPort(p);
+    const stbd = !hasTwa || isStbd(p);
+    const tack = hasTwa ? (port ? "port" : "stbd") : null;
+    const dimmed = hoveredTack && tack !== hoveredTack;
+    const highlighted = hoveredTack && tack === hoveredTack;
+    const cx = px(p.x), cy = py(p.y);
+    const baseOp = hasTwa ? 0.65 : 0.5;
+    const op = dimmed ? 0.08 : highlighted ? 1.0 : baseOp;
+    const r = highlighted ? 2.8 : 2.0;
+
+    if(hasTwa && port){
+      // Upward triangle for port tack
+      const h = r * 2.4;
+      const pts = `${cx},${cy-h*0.65} ${cx-h*0.6},${cy+h*0.35} ${cx+h*0.6},${cy+h*0.35}`;
+      return(
+        <polygon key={i} points={pts} fill={portColor} opacity={op}
+          style={{cursor:"pointer"}}
+          onMouseEnter={()=>setHoveredTack("port")}
+          onMouseLeave={()=>setHoveredTack(null)}/>
+      );
+    }
+    return(
+      <circle key={i} cx={cx} cy={cy} r={r} fill={hasTwa?stbdColor:color} opacity={op}
+        style={{cursor:hasTwa?"pointer":"default"}}
+        onMouseEnter={hasTwa?()=>setHoveredTack("stbd"):undefined}
+        onMouseLeave={hasTwa?()=>setHoveredTack(null):undefined}/>
+    );
+  };
+
   return(
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
-      {title&&<text x={pad.l+W/2} y={10} textAnchor="middle" fontSize="9" fill="#64748B" fontWeight="600">{title}</text>}
-      {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
-      {/* Reference lines (e.g. 100% target) */}
-      {yLines.map((y,i)=>{
-        const cy=py(y);
-        if(cy<pad.t||cy>pad.t+H) return null;
-        return(<g key={"yl"+i}>
-          <line x1={pad.l} x2={pad.l+W} y1={cy} y2={cy} stroke={color} strokeWidth="1" strokeDasharray="4,3" opacity="0.6"/>
-          <text x={pad.l+W-2} y={cy-3} textAnchor="end" fontSize="7" fill={color} opacity="0.8">{y}</text>
-        </g>);
-      })}
-      <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-      <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-      {dots.map((p,i)=><circle key={i} cx={px(p.x)} cy={py(p.y)} r="1.5" fill={color} opacity="0.5"/>)}
-      {reg&&<line x1={px(x0)} y1={py(ty(x0))} x2={px(x1)} y2={py(ty(x1))} stroke="#fff" strokeWidth="1.5" strokeDasharray="5,3" opacity="0.7"/>}
-      {reg&&<text x={pad.l+W-2} y={pad.t+10} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
-      {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(1)}</text>)}
-      {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{x.toFixed(1)}</text>)}
-      {xLabel&&<text x={pad.l+W/2} y={height-1} textAnchor="middle" fontSize="8" fill="#475569">{xLabel}</text>}
-      {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
-    </svg>
+    <div style={{position:"relative"}}>
+      {hasTwa&&(
+        <div style={{display:"flex",gap:10,marginBottom:3,fontSize:9,color:"#475569"}}>
+          <span>
+            <polygon style={{display:"inline-block",width:8,height:8}} />
+            <svg width="9" height="9" style={{verticalAlign:"middle",marginRight:3}}>
+              <polygon points="4.5,0.5 0.5,8.5 8.5,8.5" fill={portColor} opacity="0.8"/>
+            </svg>
+            Port tack
+          </span>
+          <span>
+            <svg width="9" height="9" style={{verticalAlign:"middle",marginRight:3}}>
+              <circle cx="4.5" cy="4.5" r="3.5" fill={color} opacity="0.8"/>
+            </svg>
+            Stbd tack
+          </span>
+          <span style={{color:"#334155"}}>· hover to highlight</span>
+        </div>
+      )}
+      <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
+        {title&&<text x={pad.l+W/2} y={10} textAnchor="middle" fontSize="9" fill="#64748B" fontWeight="600">{title}</text>}
+        {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
+        {yLines.map((y,i)=>{
+          const cy=py(y);
+          if(cy<pad.t||cy>pad.t+H) return null;
+          return(<g key={"yl"+i}>
+            <line x1={pad.l} x2={pad.l+W} y1={cy} y2={cy} stroke={color} strokeWidth="1" strokeDasharray="4,3" opacity="0.6"/>
+            <text x={pad.l+W-2} y={cy-3} textAnchor="end" fontSize="7" fill={color} opacity="0.8">{y}</text>
+          </g>);
+        })}
+        <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+        <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
+        {/* Render stbd first, then port on top so triangles are always visible */}
+        {hasTwa&&dots.filter(p=>!isPort(p)).map((p,i)=>renderDot(p,"s"+i))}
+        {hasTwa&&dots.filter(isPort).map((p,i)=>renderDot(p,"p"+i))}
+        {!hasTwa&&dots.map((p,i)=>renderDot(p,i))}
+        {reg&&<line x1={px(x0)} y1={py(ty(x0))} x2={px(x1)} y2={py(ty(x1))} stroke="#fff" strokeWidth="1.5" strokeDasharray="5,3" opacity="0.7"/>}
+        {reg&&<text x={pad.l+W-2} y={pad.t+10} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
+        {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(1)}</text>)}
+        {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{x.toFixed(1)}</text>)}
+        {xLabel&&<text x={pad.l+W/2} y={height-1} textAnchor="middle" fontSize="8" fill="#475569">{xLabel}</text>}
+        {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
+      </svg>
+    </div>
   );
 }
 
@@ -1513,7 +1577,7 @@ function AIChatPanel({rows, allVideos}){
 // playUtc   — current video UTC for boat marker (null = no video playing)
 // visible   — whether the Analytics tab is currently shown (for Leaflet resize)
 
-function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true}){
+function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[]}){
   const containerRef = React.useRef(null);
   const mapRef       = React.useRef(null);
   const boatMarkerRef= React.useRef(null); // Leaflet marker for live boat position
@@ -1585,7 +1649,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         allLatLngs=allLatLngs.concat(s.pts);
       }
 
-      // ── Clip highlight ──────────────────────────────────────────────────────
+      // ── Clip highlight (selected video) ────────────────────────────────────
       if(hlRows.length>1){
         const hlStep=Math.max(1,Math.floor(hlRows.length/500));
         const hlPts=hlRows.filter((_,i)=>i%hlStep===0).map(r=>[r.lat,r.lon]);
@@ -1593,6 +1657,27 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         const cOpts={radius:8,fillOpacity:1,weight:2,color:'#030F1A'};
         L.circleMarker([hlRows[0].lat,hlRows[0].lon],{...cOpts,fillColor:'#06B6D4'}).bindTooltip('Clip start').addTo(map);
         L.circleMarker([hlRows[hlRows.length-1].lat,hlRows[hlRows.length-1].lon],{...cOpts,fillColor:'#1D9E75'}).bindTooltip('Clip end').addTo(map);
+      }
+
+      // ── Video coverage — all clips with a startUtc ──────────────────────────
+      // Draw a bright magenta polyline over the GPS track for every clip's window,
+      // so coaches can see at a glance which manoeuvres were recorded.
+      const covVideos=(allVideos||[]).filter(v=>v.startUtc&&v.duration);
+      for(const vid of covVideos){
+        const vStart=vid.startUtc;
+        const vEnd=vStart+vid.duration*1000;
+        // Skip if this is the already-highlighted selected clip (avoid double render)
+        if(winStart&&Math.abs(vStart-winStart)<2000) continue;
+        const covRows=filteredRows.filter(r=>r.utc>=vStart&&r.utc<=vEnd);
+        if(covRows.length<2) continue;
+        const covStep=Math.max(1,Math.floor(covRows.length/300));
+        const covPts=covRows.filter((_,i)=>i%covStep===0).map(r=>[r.lat,r.lon]);
+        L.polyline(covPts,{color:'#F472B6',weight:4,opacity:0.7,dashArray:'8,4'})
+          .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min`)
+          .addTo(map);
+        // Small dot at coverage start
+        L.circleMarker(covPts[0],{radius:5,fillColor:'#F472B6',color:'#030F1A',weight:1,fillOpacity:1})
+          .addTo(map);
       }
 
       // ── Day start / end markers ─────────────────────────────────────────────
@@ -1671,7 +1756,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         leg.addTo(map);
       }
       const evLeg=L.control({position:'bottomleft'});
-      evLeg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div><div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div><div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div><div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gate</div><div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack</div><div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe</div><div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div><div><span style="display:inline-block;width:14px;height:4px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Boat position</div>`;return d;};
+      evLeg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div><div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div><div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div><div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gate</div><div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack</div><div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe</div><div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div><div><span style="display:inline-block;width:14px;height:4px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Boat position</div><div><span style="display:inline-block;width:14px;height:3px;background:#F472B6;border-radius:2px;margin-right:5px;vertical-align:middle;border-top:2px dashed #F472B6;background:none"></span>📹 Video coverage</div>`;return d;};
       evLeg.addTo(map);
 
       if(allLatLngs.length>0){try{map.fitBounds(L.latLngBounds(allLatLngs),{padding:[24,24]});}catch{}}
@@ -1682,7 +1767,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       const js=document.createElement('script');js.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';js.onload=initMap;document.head.appendChild(js);
     } else { initMap(); }
     return()=>{ if(mapRef.current){mapRef.current.remove();mapRef.current=null;boatMarkerRef.current=null;} };
-  },[filteredRows, hlRows, xmlData, polar]);
+  },[filteredRows, hlRows, xmlData, polar, allVideos]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
@@ -1872,7 +1957,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             </div>
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible}/>
+                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos}/>
               ) : (
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — select a date in the Library first.</div>
               )
@@ -1993,20 +2078,20 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 if(!upPolar) return null;
                 const t=polarVMGTarget(upPolar,r.tws);
                 const pct=t.upVMG>0.01?(r.vmg/t.upVMG)*100:null;
-                return (pct!=null&&pct>20&&pct<150)?{x:r.tws,y:pct}:null;
+                return (pct!=null&&pct>20&&pct<150)?{x:r.tws,y:pct,twa:r.twa}:null;
               }).filter(Boolean);
 
               // b) Target BSP % (Vs_targ% from log col 23)
               const tgtPts=upRows.filter(r=>r.vsTargPct>20&&r.vsTargPct<150)
-                .map(r=>({x:r.tws,y:r.vsTargPct}));
+                .map(r=>({x:r.tws,y:r.vsTargPct,twa:r.twa}));
 
               // c) Rudder angle (absolute) vs TWS
               const rudPts=upRows.filter(r=>r.rudder!=null&&Math.abs(r.rudder)<30&&Math.abs(r.rudder)>0.1)
-                .map(r=>({x:r.tws,y:Math.abs(r.rudder)}));
+                .map(r=>({x:r.tws,y:Math.abs(r.rudder),twa:r.twa}));
 
               // d) Heel angle (absolute) vs TWS
               const heelPts2=upRows.filter(r=>Math.abs(r.heel)>0.5&&Math.abs(r.heel)<60)
-                .map(r=>({x:r.tws,y:Math.abs(r.heel)}));
+                .map(r=>({x:r.tws,y:Math.abs(r.heel),twa:r.twa}));
 
               const noData=<div style={{height:170,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:10}}>No upwind data{!hasPhases?" — re-import event file":""}</div>;
               return(
