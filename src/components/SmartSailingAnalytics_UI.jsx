@@ -813,9 +813,11 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
       </div>
 
       {/* Per-item rows */}
-      {!compact&&(
+              {!compact&&(
         <div style={{display:"flex",flexDirection:"column",gap:4}}>
-          {items.map(it=>(
+          {items.map(it=>{
+            const badgeSrc=it.state==="done"?"cloud":it.state==="processing"?"processing":"local";
+            return(
             <div key={it.id} style={{display:"flex",alignItems:"center",gap:8,
               background:"#071624",borderRadius:6,padding:"5px 10px"}}>
               <span style={{fontSize:12,color:stateColor(it.state),width:14,textAlign:"center",flexShrink:0}}>
@@ -823,20 +825,22 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
               </span>
               <span style={{flex:1,fontSize:10,color:"#94A3B8",overflow:"hidden",
                 textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.label}</span>
-              {/* Per-item progress bar */}
-              {(it.state==="active"||it.state==="processing")&&(
-                <div style={{width:60,height:3,background:"#1E3A5A",borderRadius:2,overflow:"hidden",flexShrink:0}}>
-                  <div style={{height:"100%",background:stateColor(it.state),
-                    width:`${it.pct||0}%`,borderRadius:2,transition:"width 0.3s"}}/>
+              {(it.state==="active")&&(
+                <div style={{width:80,height:3,background:"#1E3A5A",borderRadius:2,overflow:"hidden",flexShrink:0}}>
+                  <div style={{height:"100%",background:"#06B6D4",
+                    width:`${it.pct||0}%`,borderRadius:2,transition:"width 0.4s ease"}}/>
                 </div>
+              )}
+              {(it.state==="processing")&&(
+                <span style={{fontSize:9,color:"#F59E0B",fontFamily:"monospace",flexShrink:0}}>encoding…</span>
               )}
               <span style={{fontSize:9,color:stateColor(it.state),fontFamily:"monospace",
                 width:32,textAlign:"right",flexShrink:0}}>
                 {it.state==="done"?"100%":it.pct>0?`${it.pct}%`:""}
               </span>
-              <SrcBadge source={it.state==="done"?"cloud":it.state==="processing"?"processing":"local"}/>
+              <SrcBadge source={badgeSrc}/>
             </div>
-          ))}
+          );})}
         </div>
       )}
 
@@ -986,87 +990,123 @@ function UploadTab({role,cloudStatus,onImported}){
     setPhase("syncing");
     syncAbortRef.current=false;
 
-    // Build item list: log + events + each video
+    // Build one item per upload action with exact labels for matching
     const items=[
-      {id:"log",  label:"Log & Events",    state:"pending", pct:0},
-      ...savedVids.map(v=>({id:v.id, label:v.name, state:"pending", pct:0, size:v.size}))
+      {id:"log",   label:"Log & Events",  state:"pending", pct:0},
+      ...savedVids.map(v=>({id:v.id, label:v.name||v.title, state:"pending", pct:0}))
     ];
-    const setItem=(id,patch)=>setSyncProgress(p=>{
-      if(!p)return p;
-      return{...p,items:p.items.map(it=>it.id===id?{...it,...patch}:it)};
-    });
-    const recalcOverall=()=>setSyncProgress(p=>{
-      if(!p)return p;
-      const done=p.items.filter(it=>it.state==="done").length;
-      const total=p.items.length;
-      const avg=p.items.reduce((s,it)=>s+(it.pct||0),0)/total;
-      return{...p,overall:Math.round(avg)};
-    });
+    // Helpers — use a local ref so setItem can be called from the sync callback
+    // without stale-closure issues
+    const progressRef={items:[...items], overall:0, elapsed:0, error:null};
+    const pushProgress=()=>setSyncProgress({...progressRef});
+    const setItem=(id,patch)=>{
+      const idx=progressRef.items.findIndex(it=>it.id===id);
+      if(idx===-1)return;
+      progressRef.items[idx]={...progressRef.items[idx],...patch};
+      const total=progressRef.items.length;
+      progressRef.overall=Math.round(progressRef.items.reduce((s,it)=>s+(it.pct||0),0)/total);
+      pushProgress();
+    };
 
     const startMs=Date.now();
-    syncTimerRef.current=setInterval(()=>setSyncProgress(p=>p?{...p,elapsed:Math.round((Date.now()-startMs)/1000)}:p),1000);
+    syncTimerRef.current=setInterval(()=>{
+      progressRef.elapsed=Math.round((Date.now()-startMs)/1000);
+      pushProgress();
+    },1000);
+    setSyncProgress({...progressRef});
 
-    setSyncProgress({items, overall:0, elapsed:0, error:null});
-
-    // Start log+events (first item)
-    setItem("log",{state:"active",pct:10});
+    setItem("log",{state:"active",pct:5});
     addLog("Starting Bunny Storage + Stream upload…");
-    savedVids.forEach(v=>setStreamStatus(p=>({...p,[v.id]:{state:"queued"}})));
 
     try{
       let currentVidId=null;
-      await syncSessionToCloud(savedDate,await getLogData(savedDate),await getXmlData(savedDate),savedVids,msg=>{
-        if(syncAbortRef.current)return;
-        addLog(msg);
 
-        // Log/events done
-        if(msg.includes("log")&&msg.includes("✓")){
-          setItem("log",{state:"done",pct:100});
+      const result=await syncSessionToCloud(
+        savedDate,
+        await getLogData(savedDate),
+        await getXmlData(savedDate),
+        savedVids,
+        msg=>{
+          if(syncAbortRef.current)return;
+          addLog(msg);
+
+          // ── Log & Events item ──────────────────────────────────────────────
+          // "Uploading log data to Bunny Storage…"
+          if(msg.includes("Uploading log data")) setItem("log",{state:"active",pct:20});
+          // "✓ Log data uploaded to Bunny Storage"
+          if(msg.includes("✓ Log data uploaded")) setItem("log",{state:"active",pct:50});
+          // "Uploading event data to Bunny Storage…"
+          if(msg.includes("Uploading event data")) setItem("log",{state:"active",pct:70});
+          // "✓ Event data uploaded to Bunny Storage"
+          if(msg.includes("✓ Event data uploaded")) setItem("log",{state:"done",pct:100});
+          // also mark done if log upload fails but we continue (no XML)
+          if(msg.includes("✓ Log data uploaded")&&!savedVids.length) setItem("log",{state:"done",pct:100});
+
+          // ── Per-video items ────────────────────────────────────────────────
+          // "Creating Bunny Stream video for {name}…"
+          if(msg.includes("Creating Bunny Stream video for ")){
+            const name=msg.replace("Creating Bunny Stream video for ","").replace("…","").trim();
+            const vid=savedVids.find(v=>(v.name||v.title)===name);
+            if(vid){currentVidId=vid.id;setItem(currentVidId,{state:"active",pct:5});}
+          }
+          // "Uploading {name} to Bunny Stream (X MB)…"
+          if(msg.includes("to Bunny Stream")&&!msg.startsWith("✓")){
+            if(currentVidId) setItem(currentVidId,{state:"active",pct:10});
+          }
+          // "Uploading {name}… {pct}%"  — live TUS progress
+          const progMatch=msg.match(/Uploading (.+?)… (\d+)%$/);
+          if(progMatch){
+            const name=progMatch[1].trim();
+            const pct=parseInt(progMatch[2]);
+            const vid=savedVids.find(v=>(v.name||v.title)===name);
+            const id=vid?.id||currentVidId;
+            if(id) setItem(id,{state:"active",pct:Math.max(10,Math.min(95,pct))});
+          }
+          // "✓ {name} uploaded to Stream (ID: {id}…)"
+          if(msg.startsWith("✓")&&msg.includes("uploaded to Stream")){
+            const name=msg.replace("✓ ","").split(" uploaded to Stream")[0].trim();
+            const vid=savedVids.find(v=>(v.name||v.title)===name);
+            const id=vid?.id||currentVidId;
+            if(id){
+              const sidMatch=msg.match(/ID: ([a-f0-9-]+)/i);
+              setItem(id,{state:"processing",pct:98,streamId:sidMatch?.[1]});
+              setStreamStatus(p=>({...p,[id]:{state:"processing",streamId:sidMatch?.[1]}}));
+            }
+            currentVidId=null;
+          }
+          // Upload failure
+          if(msg.includes("upload failed")||msg.includes("failed for")){
+            if(currentVidId) setItem(currentVidId,{state:"error",pct:0});
+          }
         }
-        // Video upload started
-        const vidStartMatch=savedVids.find(v=>msg.includes(v.name)&&msg.includes("Uploading"));
-        if(vidStartMatch){
-          currentVidId=vidStartMatch.id;
-          setItem(currentVidId,{state:"active",pct:5});
-        }
-        // Upload progress (bytes)
-        const pctMatch=msg.match(/(\d+)%/);
-        if(pctMatch&&currentVidId) setItem(currentVidId,{pct:parseInt(pctMatch[1])});
-        // Upload complete → Stream processing
-        if(msg.includes("Stream")&&currentVidId){
-          const sidMatch=msg.match(/Stream \(([a-f0-9-]+)\)/i);
-          setStreamStatus(p=>({...p,[currentVidId]:{state:"processing",streamId:sidMatch?.[1]}}));
-          setItem(currentVidId,{state:"processing",pct:95,label:savedVids.find(v=>v.id===currentVidId)?.name||currentVidId});
-        }
-        // Video done
-        if(msg.includes("✓")&&currentVidId&&msg.includes(savedVids.find(v=>v.id===currentVidId)?.name||"")){
-          setItem(currentVidId,{state:"done",pct:100});
-          currentVidId=null;
-        }
-        recalcOverall();
+      );
+
+      // Mark all successful videos as done using returned streamIds
+      Object.entries(result.streamIds||{}).forEach(([vidId,streamId])=>{
+        setItem(vidId,{state:"done",pct:100,streamId});
+        setStreamStatus(p=>({...p,[vidId]:{state:"processing",streamId}}));
       });
-
-      // Mark remaining as done
-      setSyncProgress(p=>p?{...p,overall:98,items:p.items.map(it=>({...it,pct:it.pct<100?95:it.pct}))}:p);
+      // Mark log done if not already (handles the case with no XML)
+      setItem("log",{state:"done",pct:100});
 
       setPhase("done");
       addLog("Bunny sync complete. Stream videos processing in background…");
-      setSyncProgress(p=>p?{...p,overall:100}:p);
+      progressRef.overall=100;pushProgress();
 
-      // Stream readiness polling
-      savedVids.forEach(async v=>{
-        const st=streamStatus[v.id];if(!st?.streamId)return;
-        const result=await waitForStreamReady(st.streamId,300000);
-        setStreamStatus(p=>({...p,[v.id]:{...p[v.id],state:result?"ready":"timeout",playbackUrl:result?.playbackUrl}}));
-        setItem(v.id,{state:result?"done":"error",pct:100});
-        addLog(result?`✓ ${v.name} ready — HLS available`:`⚠ ${v.name} stream timeout`);
+      // Poll for HLS readiness
+      Object.entries(result.streamIds||{}).forEach(async([vidId,streamId])=>{
+        const ready=await waitForStreamReady(streamId,300000);
+        setStreamStatus(p=>({...p,[vidId]:{state:ready?"ready":"timeout",streamId,playbackUrl:ready?.playbackUrl}}));
+        const vid=savedVids.find(v=>v.id===vidId);
+        setItem(vidId,{state:ready?"done":"error",pct:100});
+        addLog(ready?`✓ ${vid?.name} ready — HLS available`:`⚠ ${vid?.name} stream timeout`);
       });
 
-    } catch(e){
-      setSyncProgress(p=>p?{...p,error:String(e)}:p);
+    }catch(e){
+      setSyncProgress(p=>p?{...p,error:e instanceof Error?e.message:String(e)}:p);
       addLog(`✕ Sync error: ${e instanceof Error?e.message:String(e)}`);
       setPhase("saved");
-    } finally {
+    }finally{
       clearInterval(syncTimerRef.current);
     }
   };
