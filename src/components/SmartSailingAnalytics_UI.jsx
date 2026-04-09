@@ -70,6 +70,45 @@ const TZ_OPTIONS = [
 ];
 const DEFAULT_TZ = 120;
 
+// ─── MOBILE DETECTION ─────────────────────────────────────────────────────────
+// True when the device is a phone/tablet — drives a completely different UI shell.
+// We use both UA sniffing (reliable for iOS/Android) and screen width as fallback.
+function useIsMobile(){
+  const [mobile, setMobile] = React.useState(()=>{
+    if(typeof window==="undefined") return false;
+    const ua = navigator.userAgent||"";
+    const isPhone = /iPhone|Android.*Mobile|IEMobile|BlackBerry/i.test(ua);
+    const isTablet = /iPad|Android(?!.*Mobile)/i.test(ua);
+    return isPhone || isTablet || window.innerWidth < 768;
+  });
+  React.useEffect(()=>{
+    const mq = window.matchMedia("(max-width:767px)");
+    const handler = e => setMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return ()=>mq.removeEventListener("change", handler);
+  },[]);
+  return mobile;
+}
+
+// Inject mobile-specific CSS once (touch targets, overscroll, safe areas)
+let _mobileStyleInjected = false;
+function injectMobileCSS(){
+  if(_mobileStyleInjected||typeof document==="undefined") return;
+  _mobileStyleInjected = true;
+  const s = document.createElement("style");
+  s.textContent = `
+    .ssa-mobile { -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+    .ssa-mobile * { -webkit-overflow-scrolling:touch; }
+    .ssa-mobile input, .ssa-mobile button, .ssa-mobile select { font-size:16px !important; }
+    .ssa-mobile video { object-fit:contain; }
+    .ssa-mob-card { min-height:44px; }
+    @supports(padding:env(safe-area-inset-bottom)){
+      .ssa-mob-bottom-nav { padding-bottom:env(safe-area-inset-bottom); }
+    }
+  `;
+  document.head.appendChild(s);
+}
+
 function expToUtc(ds,ts,offsetMin=0){
   const[d,m,y]=ds.split("/").map(Number);
   const yr=y>99?y:(y<50?2000+y:1900+y);
@@ -2586,7 +2625,319 @@ function DeleteButton({video, cloudStatus, onDeleted}){
   );
 }
 
+
+// ─── MOBILE SHELL ─────────────────────────────────────────────────────────────
+// Receives the exact same props/state as the desktop shell but renders a
+// phone-optimised layout:
+//   • Sticky top bar  (logo + connection dot)
+//   • Full-height content area  (swipeable between panes)
+//   • Fixed bottom tab bar  (Library · Analytics · Upload · Admin)
+//   • Progressive load flag — on mobile, boot() only loads today + thumbnails;
+//     full log/event data loads lazily when Analytics tab is opened.
+
+function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedVideo,
+                        logData,xmlData,loadDate,syncOffsets,setSyncOffsets,
+                        sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
+                        selectedTags,toggleTag,allTags,isManTag,displayed,perms,
+                        setActiveTab,cloudStatus,updateVideoTagsFn,
+                        computeAutoTagsFn,sessionTagList,setSessionTagList,
+                        handlePlayUtc,onDeleted,role}){
+  const [view, setView]   = React.useState("clips"); // "clips" | "player" | "sessions"
+  const video = selectedVideo;
+  const fmtDate_ = d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}`:d;};
+
+  if(view==="sessions") return(
+    <div style={{flex:1,overflowY:"auto",background:"#030F1A"}}>
+      <div style={{padding:"12px 14px 6px",display:"flex",alignItems:"center",gap:10}}>
+        <button onClick={()=>setView("clips")} style={{background:"none",border:"none",color:"#06B6D4",fontSize:18,cursor:"pointer",padding:"4px 8px 4px 0"}}>←</button>
+        <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Sessions</span>
+      </div>
+      {sessions.map(s=>{
+        const isActive=activeDate===s.date;
+        const isLocal=!s.source||s.source==="local";
+        return(
+          <div key={s.date} onClick={()=>{loadDate(s.date);setView("clips");}}
+            style={{padding:"14px 16px",borderBottom:"1px solid #0F2030",
+              background:isActive?"#0F2A45":"transparent",display:"flex",alignItems:"center",gap:12}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:14,color:isActive?"#06B6D4":"#E2E8F0",fontWeight:600}}>
+                {s.date===TODAY()?"Today":fmtDate_(s.date)}
+              </div>
+              <div style={{fontSize:12,color:"#475569",marginTop:2}}>
+                {s.videoCount||0} clips{s.hasLog?" · log":""}{s.hasXml?" · events":""}
+                {s.location?` · ${s.location}`:""}
+              </div>
+            </div>
+            <SrcBadge source={isLocal?"local":"cloud"}/>
+            {isActive&&<span style={{color:"#06B6D4",fontSize:18}}>✓</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  if(view==="player"&&video) return(
+    <div style={{flex:1,overflowY:"auto",background:"#030F1A"}}>
+      <div style={{display:"flex",alignItems:"center",padding:"10px 14px 6px",gap:10}}>
+        <button onClick={()=>setView("clips")} style={{background:"none",border:"none",color:"#06B6D4",fontSize:18,cursor:"pointer",padding:"4px 8px 4px 0"}}>←</button>
+        <span style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</span>
+      </div>
+      <VideoPlayer video={video} logData={logData} xmlData={xmlData}
+        syncOffset={syncOffsets[video.id]||0} sessionTzOffset={sessionTzOffset}
+        onPlayUtc={handlePlayUtc}/>
+      <div style={{padding:"12px 16px"}}>
+        {video.twsAvg!=null&&(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
+            {[["TWS",video.twsAvg,"kt","#06B6D4"],["TWA",video.twaAvg,"°","#8B5CF6"],["VMG",video.vmgAvg,"kt","#10B981"],
+              ["Polar%",video.polpercAvg,"%","#F59E0B"],["Target%",video.vsTargPercAvg,"%","#EF4444"],["BSP",video.bspAvg,"kt","#34D399"]]
+              .map(([l,v,u,c])=>(
+                <div key={l} style={{background:"#0A1929",borderRadius:8,padding:"10px 10px",border:`1px solid ${c}20`,textAlign:"center"}}>
+                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{l}</div>
+                  <div style={{fontSize:18,fontWeight:700,color:c,fontFamily:"monospace"}}>{v!=null?R(v):"--"}<span style={{fontSize:10,marginLeft:1}}>{u}</span></div>
+                </div>
+              ))}
+          </div>
+        )}
+        {/* Sync offset */}
+        <div style={{marginBottom:12}}>
+          <SyncControl offset={syncOffsets[video.id]||0}
+            onChange={v=>{saveSyncOffset(video.id,v);setSyncOffsets(p=>({...p,[video.id]:v}));}}/>
+        </div>
+        {/* Tags */}
+        {perms.canImport&&<TagEditor video={video} tagList={sessionTagList} sessionDate={activeDate}
+          onTagListChange={t=>{saveTagList(activeDate,t);setSessionTagList(t);}}
+          onSave={(id,tags)=>{updateVideoTagsFn(id,tags);setSelectedVideo(p=>({...p,tags}));}}/>}
+      </div>
+    </div>
+  );
+
+  // Default: clip grid view
+  return(
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",background:"#030F1A"}}>
+      {/* Session selector row */}
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px 8px",borderBottom:"1px solid #0F2030",flexShrink:0}}>
+        <button onClick={()=>setView("sessions")}
+          style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,
+            padding:"6px 12px",color:"#06B6D4",fontSize:12,cursor:"pointer",fontWeight:600}}>
+          {activeDate===TODAY()?"Today":fmtDate_(activeDate)} ▾
+        </button>
+        <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
+          placeholder="Search…"
+          style={{flex:1,background:"#071624",border:"1px solid #1E3A5A",borderRadius:6,
+            padding:"8px 10px",color:"#E2E8F0",fontSize:14,outline:"none"}}/>
+        {selectedTags.length>0&&<button onClick={()=>setSelectedTags([])}
+          style={{background:"none",border:"1px solid #EF444440",borderRadius:5,padding:"6px 8px",
+            color:"#EF4444",fontSize:12,cursor:"pointer"}}>✕</button>}
+      </div>
+      {/* Tag filter pills */}
+      {allTags.filter(isManTag).length>0&&(
+        <div style={{display:"flex",gap:6,padding:"6px 14px",overflowX:"auto",flexShrink:0,borderBottom:"1px solid #0F2030"}}>
+          {allTags.filter(isManTag).map(t=>(
+            <button key={t} onClick={()=>toggleTag(t)}
+              style={{background:selectedTags.includes(t)?"#06B6D4":"#0A1929",
+                border:`1px solid ${selectedTags.includes(t)?"#06B6D4":"#1E3A5A"}`,
+                borderRadius:16,padding:"5px 12px",color:selectedTags.includes(t)?"#000":"#7DD3FC",
+                fontSize:12,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Clip grid */}
+      <div style={{flex:1,overflowY:"auto",padding:"10px 10px"}}>
+        {displayed.length===0&&(
+          <div style={{textAlign:"center",padding:"60px 20px",color:"#334155"}}>
+            <div style={{fontSize:40,marginBottom:12,opacity:0.3}}>📹</div>
+            <div style={{fontSize:14,color:"#475569"}}>No clips for this session</div>
+          </div>
+        )}
+        {(()=>{
+          const groups=[], seen=new Map();
+          for(const v of displayed){const d=v.sessionDate||"unknown";if(!seen.has(d)){seen.set(d,[]);groups.push(d);}seen.get(d).push(v);}
+          return groups.map(date=>{
+            const vids=seen.get(date);
+            return(
+              <div key={date} style={{marginBottom:20}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#475569",marginBottom:8,padding:"0 4px"}}>
+                  {date===TODAY()?"Today":fmtDate_(date)} · {vids.length} clip{vids.length!==1?"s":""}
+                </div>
+                {/* Mobile: single column list with horizontal thumb */}
+                {vids.map(v=>(
+                  <div key={v.id} onClick={()=>{setSelectedVideo(v);setView("player");}}
+                    style={{display:"flex",gap:10,background:selectedVideo?.id===v.id?"#0F2A45":"#0A1929",
+                      border:`1px solid ${selectedVideo?.id===v.id?"#06B6D4":"#1E3A5A"}`,
+                      borderRadius:10,overflow:"hidden",marginBottom:8,cursor:"pointer",
+                      minHeight:64,alignItems:"stretch"}}>
+                    {/* Thumbnail */}
+                    <div style={{width:96,flexShrink:0,background:"#071624",position:"relative",overflow:"hidden"}}>
+                      {v.thumbnailUrl
+                        ? <img src={v.thumbnailUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                        : v.objectUrl&&v.source!=="cloud"
+                          ? <video src={v.objectUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="none"/>
+                          : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:18}}>📹</div>}
+                      <div style={{position:"absolute",bottom:2,right:4,background:"rgba(0,0,0,0.8)",
+                        borderRadius:2,padding:"0 3px",fontSize:9,color:"#64748B",fontFamily:"monospace"}}>
+                        {v.duration?fmtT(v.duration):"--:--"}
+                      </div>
+                    </div>
+                    {/* Metadata */}
+                    <div style={{flex:1,padding:"8px 8px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+                      <div style={{fontSize:13,fontWeight:600,color:"#E2E8F0",marginBottom:4,
+                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
+                      {v.twsAvg!=null&&(
+                        <div style={{display:"flex",gap:10,fontSize:12}}>
+                          <span style={{color:"#06B6D4"}}>TWS {R(v.twsAvg)}kt</span>
+                          <span style={{color:"#8B5CF6"}}>TWA {R(v.twaAvg,0)}°</span>
+                          {v.polpercAvg!=null&&<span style={{color:"#F59E0B"}}>Pol {R(v.polpercAvg,0)}%</span>}
+                        </div>
+                      )}
+                      <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>
+                        {(v.tags||[]).slice(0,4).map(t=>(
+                          <span key={t} style={{background:"#1E3A5A",borderRadius:3,padding:"1px 5px",
+                            fontSize:10,color:"#7DD3FC"}}>{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",padding:"0 10px",color:"#334155",fontSize:18}}>›</div>
+                  </div>
+                ))}
+              </div>
+            );
+          });
+        })()}
+      </div>
+    </div>
+  );
+}
+
+function MobileShell(props){
+  const {activeTab, setActiveTab, ...rest} = props;
+  React.useEffect(()=>{ injectMobileCSS(); },[]);
+  const tabDefs=[
+    {id:"library",  icon:"📹", label:"Library"},
+    {id:"analytics",icon:"📊", label:"Analytics"},
+    {id:"upload",   icon:"⬆", label:"Upload"},
+    {id:"admin",    icon:"⚙",  label:"Admin"},
+  ];
+  return(
+    <div className="ssa-mobile" style={{display:"flex",flexDirection:"column",
+      height:"100dvh",background:"#030F1A",color:"#E2E8F0",
+      fontFamily:"'Segoe UI',system-ui,sans-serif",overflow:"hidden"}}>
+
+      {/* ── Top bar ──────────────────────────────────────────────────────── */}
+      <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",
+        padding:"0 14px",height:48,display:"flex",alignItems:"center",
+        gap:10,flexShrink:0,position:"relative",zIndex:50}}>
+        <span style={{fontSize:16}}>⚓</span>
+        <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Smart</span>
+        <span style={{fontSize:14,fontWeight:700,color:"#06B6D4"}}>Sailing</span>
+        <div style={{flex:1}}/>
+        {/* Connection dot */}
+        <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11}}>
+          <div style={{width:6,height:6,borderRadius:"50%",
+            background:props.cloudStatus?.available?"#1D9E75":props.cloudStatus===null?"#334155":"#F59E0B"}}/>
+          <span style={{color:"#475569"}}>{props.cloudStatus?.available?"Cloud":"Local"}</span>
+        </div>
+        {props.unsyncedCount>0&&(
+          <span style={{background:"#F59E0B",color:"#000",borderRadius:10,
+            padding:"1px 7px",fontSize:10,fontWeight:800}}>
+            {props.unsyncedCount}
+          </span>
+        )}
+      </header>
+
+      {/* ── Content area ─────────────────────────────────────────────────── */}
+      <div style={{flex:1,overflow:"hidden",position:"relative"}}>
+
+        {/* Library */}
+        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",
+          visibility:activeTab==="library"?"visible":"hidden",
+          pointerEvents:activeTab==="library"?"auto":"none",zIndex:activeTab==="library"?2:1}}>
+          <MobileLibrary {...rest} setActiveTab={setActiveTab}/>
+        </div>
+
+        {/* Analytics — lazy mount */}
+        {props.hasMountedAnalytics&&(
+          <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",
+            visibility:activeTab==="analytics"?"visible":"hidden",
+            pointerEvents:activeTab==="analytics"?"auto":"none",zIndex:activeTab==="analytics"?2:1}}>
+            <AnalyticsTab logData={props.logData} xmlData={props.xmlData}
+              allVideos={props.allVideos} sessions={props.sessions}
+              selectedVideo={props.selectedVideo} onSelectVideo={props.setSelectedVideo}
+              setActiveTab={setActiveTab} activeDate={props.activeDate}
+              playUtc={props.playUtc} visible={activeTab==="analytics"}/>
+          </div>
+        )}
+
+        {/* Upload */}
+        {activeTab==="upload"&&(
+          <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
+            <UploadTab role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported}/>
+          </div>
+        )}
+
+        {/* Admin */}
+        {activeTab==="admin"&&(
+          <div style={{position:"absolute",inset:0,overflowY:"auto",padding:"16px 14px",zIndex:2}}>
+            <div style={{fontSize:15,fontWeight:600,marginBottom:16}}>Admin</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {[
+                {title:"Data tiers",items:["Tier 1: IndexedDB (local)","Tier 2: Bunny Cloud (R2+Stream)",`Unsynced: ${props.unsyncedCount}`]},
+                {title:"Cloud",items:[`Storage: ${props.cloudStatus?.storage?"✓":"—"}`,`Stream: ${props.cloudStatus?.stream?"✓":"—"}`]},
+              ].map(c=>(
+                <div key={c.title} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:14}}>
+                  <div style={{fontSize:12,fontWeight:600,color:"#64748B",marginBottom:8}}>{c.title}</div>
+                  {c.items.map((item,i)=><div key={i} style={{fontSize:12,color:"#334155",padding:"4px 0",borderBottom:"1px solid #0F2030"}}>{item}</div>)}
+                </div>
+              ))}
+              {/* Storage management */}
+              <div style={{background:"#0A1929",border:"1px solid #EF444430",borderRadius:10,padding:14}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#EF4444",marginBottom:10}}>Storage</div>
+                <button onClick={()=>{
+                  const all=JSON.parse(localStorage.getItem("ssa:sessions")||"[]");
+                  const valid=all.filter(s=>{const y=parseInt((s.date||"").slice(0,4));return y>=2000&&y<=2100;});
+                  localStorage.setItem("ssa:sessions",JSON.stringify(valid));
+                  props.setSessions(valid);
+                  alert(`Removed ${all.length-valid.length} bad sessions.`);
+                }} style={{width:"100%",background:"#EF444415",border:"1px solid #EF444440",
+                  borderRadius:8,padding:"12px",color:"#EF4444",fontSize:14,cursor:"pointer",marginBottom:8}}>
+                  🗑 Remove bad-date sessions
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Bottom tab bar ────────────────────────────────────────────────── */}
+      <nav className="ssa-mob-bottom-nav" style={{background:"#050E1C",
+        borderTop:"1px solid #1E3A5A",display:"flex",flexShrink:0,zIndex:50}}>
+        {tabDefs.map(({id,icon,label})=>{
+          const active=activeTab===id;
+          const badge=id==="upload"&&props.unsyncedCount>0?props.unsyncedCount:null;
+          return(
+            <button key={id} onClick={()=>setActiveTab(id)}
+              style={{flex:1,background:"none",border:"none",cursor:"pointer",
+                padding:"8px 4px 6px",display:"flex",flexDirection:"column",
+                alignItems:"center",gap:2,color:active?"#06B6D4":"#475569",
+                position:"relative",minHeight:52}}>
+              <span style={{fontSize:20,lineHeight:1}}>{icon}</span>
+              <span style={{fontSize:10,fontWeight:active?700:400}}>{label}</span>
+              {badge&&<span style={{position:"absolute",top:4,right:"calc(50% - 16px)",
+                background:"#F59E0B",color:"#000",borderRadius:8,
+                padding:"0 5px",fontSize:9,fontWeight:800}}>{badge}</span>}
+              {active&&<div style={{position:"absolute",bottom:0,left:"20%",right:"20%",
+                height:2,background:"#06B6D4",borderRadius:1}}/>}
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
 export default function SmartSailingAnalytics(){
+  const isMobile = useIsMobile();
   const[role,setRole]=useState("coach");
   const[activeTab,setActiveTab]=useState("library");
   const[allVideos,setAllVideos]=useState([]);
@@ -2639,11 +2990,24 @@ export default function SmartSailingAnalytics(){
     async function boot(){
       const today=TODAY();
       const localSessions=getSessions();setSessions(localSessions);
+
+      // ── Mobile progressive load ───────────────────────────────────────────
+      // On mobile we only fetch full video blobs + log data for the latest session.
+      // Older sessions show thumbnail/metadata only — full data loads on-demand.
+      const latestDate=localSessions[0]?.date||today;
+      const isRecent=(date)=>date===today||date===latestDate;
+
       const vids=await getAllVideos();
-      const enriched=await Promise.all(vids.map(async v=>{const log=await getLogData(v.sessionDate||today);return enrichVideo(v,log);}));
+      // On mobile: skip expensive enrichVideo (requires full log read) for old sessions
+      const enriched=await Promise.all(vids.map(async v=>{
+        const d=v.sessionDate||today;
+        if(isMobile && !isRecent(d)) return v; // mobile: skip log read for old clips
+        const log=await getLogData(d);
+        return enrichVideo(v,log);
+      }));
       setAllVideos(enriched);
       if(enriched.length>0)setSelectedVideo(enriched[0]);
-      const latestDate=localSessions[0]?.date||today;
+
       const latestLog=await getLogData(latestDate);
       const latestXml=await getXmlData(latestDate);
       if(latestLog){setLogData({...latestLog,source:"local"});setSessionTzOffset(latestLog.tzOffset??DEFAULT_TZ);}
@@ -2653,15 +3017,21 @@ export default function SmartSailingAnalytics(){
       const latestSession=localSessions.find(s=>s.date===latestDate);
       if(latestSession?.tzOffset!=null)setSessionTzOffset(latestSession.tzOffset);
       setUnsyncedCount(getUnsyncedCount());setLoaded(true);
-      const cs=await checkCloudStatus();setCloudStatus(cs);
-      if(cs?.available){
-        const remote=await listR2Sessions();
-        const localDates=new Set(localSessions.map(s=>s.date));
-        const newR=remote.filter(s=>!localDates.has(s.date));
-        if(newR.length>0)setSessions(p=>[...p,...newR].sort((a,b)=>b.date.localeCompare(a.date)));
-      }
+
+      // Cloud check — on mobile defer until after paint
+      const doCloud=async()=>{
+        const cs=await checkCloudStatus();setCloudStatus(cs);
+        if(cs?.available){
+          const remote=await listR2Sessions();
+          const localDates=new Set(localSessions.map(s=>s.date));
+          const newR=remote.filter(s=>!localDates.has(s.date));
+          if(newR.length>0)setSessions(p=>[...p,...newR].sort((a,b)=>b.date.localeCompare(a.date)));
+        }
+      };
+      if(isMobile) setTimeout(doCloud,1500); else doCloud();
     }
     boot();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
   async function loadDate(date){
@@ -2714,6 +3084,34 @@ export default function SmartSailingAnalytics(){
   const tabStyle=tab=>({padding:"6px 15px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600,border:"none",background:activeTab===tab?"#06B6D4":"transparent",color:activeTab===tab?"#000":"#64748B"});
 
   if(!loaded)return<div style={{minHeight:"100vh",background:"#030F1A",display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:13}}>Loading SmartSailingAnalytics…</div>;
+
+  // ── Mobile render ────────────────────────────────────────────────────────────
+  if(isMobile) return(
+    <MobileShell
+      activeTab={activeTab} setActiveTab={setActiveTab}
+      role={role} perms={perms}
+      allVideos={allVideos} setAllVideos={setAllVideos}
+      sessions={sessions} setSessions={setSessions}
+      activeDate={activeDate} setActiveDate={setActiveDate}
+      selectedVideo={selectedVideo} setSelectedVideo={setSelectedVideo}
+      logData={logData} setLogData={setLogData}
+      xmlData={xmlData} setXmlData={setXmlData}
+      sessionTzOffset={sessionTzOffset}
+      sessionTagList={sessionTagList} setSessionTagList={setSessionTagList}
+      syncOffsets={syncOffsets} setSyncOffsets={setSyncOffsets}
+      cloudStatus={cloudStatus} unsyncedCount={unsyncedCount}
+      searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+      sortBy={sortBy} setSortBy={setSortBy}
+      selectedTags={selectedTags} setSelectedTags={setSelectedTags}
+      allTags={allTags} isManTag={isManTag} toggleTag={toggleTag}
+      displayed={displayed}
+      loadDate={loadDate} handleImported={handleImported}
+      handlePlayUtc={handlePlayUtc} playUtc={playUtc}
+      hasMountedAnalytics={hasMountedAnalytics}
+      updateVideoTagsFn={updateVideoTags}
+      computeAutoTagsFn={computeAutoTags}
+    />
+  );
 
   return(
     <div style={{minHeight:"100vh",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
