@@ -769,6 +769,85 @@ function StartTimeEditor({video, logData, onSave, sessionTzOffset=0}){
 }
 
 // ─── UPLOAD TAB ───────────────────────────────────────────────────────────────
+// ─── SYNC PROGRESS PANEL ─────────────────────────────────────────────────────
+// Shows an overall progress bar + per-item status rows.
+// Used both inside UploadTab (inline) and as a modal overlay from Library header.
+function SyncProgressPanel({progress, phase, onCancel, compact=false}){
+  if(!progress) return null;
+  const {items=[], overall=0, elapsed=0, error=null} = progress;
+  const done = phase==="done";
+
+  const stateIcon = s => s==="done"?"✓":s==="active"?"⟳":s==="processing"?"⌛":s==="error"?"✕":"·";
+  const stateColor = s => s==="done"?"#1D9E75":s==="active"?"#06B6D4":s==="processing"?"#F59E0B":s==="error"?"#EF4444":"#334155";
+  const fmtElapsed = s => s<60?`${s}s`:`${Math.floor(s/60)}m ${s%60}s`;
+
+  return(
+    <div style={{background:"#0A1929",border:`1px solid ${done?"#1D9E75":"#8B5CF6"}40`,borderRadius:10,padding:compact?"10px 12px":"14px 16px"}}>
+      {/* Header row */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <span style={{fontSize:compact?11:13,fontWeight:700,color:done?"#1D9E75":"#8B5CF6"}}>
+          {done?"✓ Sync complete":"⟳ Syncing to cloud…"}
+        </span>
+        <span style={{fontSize:10,color:"#475569",marginLeft:2}}>{fmtElapsed(elapsed)}</span>
+        <div style={{flex:1}}/>
+        <span style={{fontSize:11,fontWeight:700,color:done?"#1D9E75":"#06B6D4",fontFamily:"monospace"}}>
+          {overall}%
+        </span>
+        {!done&&onCancel&&(
+          <button onClick={onCancel}
+            style={{background:"none",border:"1px solid #EF444440",borderRadius:5,
+              padding:"2px 8px",color:"#EF4444",fontSize:10,cursor:"pointer"}}>
+            Cancel
+          </button>
+        )}
+      </div>
+
+      {/* Overall progress bar */}
+      <div style={{height:6,background:"#071624",borderRadius:3,overflow:"hidden",marginBottom:10}}>
+        <div style={{
+          height:"100%",borderRadius:3,
+          background:done?"#1D9E75":"linear-gradient(90deg,#8B5CF6,#06B6D4)",
+          width:`${overall}%`,
+          transition:"width 0.4s ease",
+        }}/>
+      </div>
+
+      {/* Per-item rows */}
+      {!compact&&(
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+          {items.map(it=>(
+            <div key={it.id} style={{display:"flex",alignItems:"center",gap:8,
+              background:"#071624",borderRadius:6,padding:"5px 10px"}}>
+              <span style={{fontSize:12,color:stateColor(it.state),width:14,textAlign:"center",flexShrink:0}}>
+                {stateIcon(it.state)}
+              </span>
+              <span style={{flex:1,fontSize:10,color:"#94A3B8",overflow:"hidden",
+                textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.label}</span>
+              {/* Per-item progress bar */}
+              {(it.state==="active"||it.state==="processing")&&(
+                <div style={{width:60,height:3,background:"#1E3A5A",borderRadius:2,overflow:"hidden",flexShrink:0}}>
+                  <div style={{height:"100%",background:stateColor(it.state),
+                    width:`${it.pct||0}%`,borderRadius:2,transition:"width 0.3s"}}/>
+                </div>
+              )}
+              <span style={{fontSize:9,color:stateColor(it.state),fontFamily:"monospace",
+                width:32,textAlign:"right",flexShrink:0}}>
+                {it.state==="done"?"100%":it.pct>0?`${it.pct}%`:""}
+              </span>
+              <SrcBadge source={it.state==="done"?"cloud":it.state==="processing"?"processing":"local"}/>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error&&(
+        <div style={{marginTop:8,fontSize:10,color:"#EF4444",background:"#EF444410",
+          borderRadius:5,padding:"6px 10px"}}>{error}</div>
+      )}
+    </div>
+  );
+}
+
 function UploadTab({role,cloudStatus,onImported}){
   const perms=ROLES[role];
   // ── Refs ──────────────────────────────────────────────────────────────────
@@ -791,6 +870,9 @@ function UploadTab({role,cloudStatus,onImported}){
   const[savedDate,setSavedDate]=useState(null);
   const[savedVids,setSavedVids]=useState([]);
   const[streamStatus,setStreamStatus]=useState({});
+  const[syncProgress,setSyncProgress]=useState(null);
+  const syncTimerRef=useRef(null);
+  const syncAbortRef=useRef(false);
   const[csvTz, setCsvTz] =useState(DEFAULT_TZ);
   const[xmlTz, setXmlTz] =useState(DEFAULT_TZ);
   const[vidTz, setVidTz] =useState(DEFAULT_TZ);
@@ -901,20 +983,92 @@ function UploadTab({role,cloudStatus,onImported}){
 
   const pushCloud=async()=>{
     if(!cloudStatus?.available||!perms.canSync||!savedDate)return;
-    setPhase("syncing");addLog("Starting Bunny Storage + Stream upload…");
+    setPhase("syncing");
+    syncAbortRef.current=false;
+
+    // Build item list: log + events + each video
+    const items=[
+      {id:"log",  label:"Log & Events",    state:"pending", pct:0},
+      ...savedVids.map(v=>({id:v.id, label:v.name, state:"pending", pct:0, size:v.size}))
+    ];
+    const setItem=(id,patch)=>setSyncProgress(p=>{
+      if(!p)return p;
+      return{...p,items:p.items.map(it=>it.id===id?{...it,...patch}:it)};
+    });
+    const recalcOverall=()=>setSyncProgress(p=>{
+      if(!p)return p;
+      const done=p.items.filter(it=>it.state==="done").length;
+      const total=p.items.length;
+      const avg=p.items.reduce((s,it)=>s+(it.pct||0),0)/total;
+      return{...p,overall:Math.round(avg)};
+    });
+
+    const startMs=Date.now();
+    syncTimerRef.current=setInterval(()=>setSyncProgress(p=>p?{...p,elapsed:Math.round((Date.now()-startMs)/1000)}:p),1000);
+
+    setSyncProgress({items, overall:0, elapsed:0, error:null});
+
+    // Start log+events (first item)
+    setItem("log",{state:"active",pct:10});
+    addLog("Starting Bunny Storage + Stream upload…");
     savedVids.forEach(v=>setStreamStatus(p=>({...p,[v.id]:{state:"queued"}})));
-    await syncSessionToCloud(savedDate,await getLogData(savedDate),await getXmlData(savedDate),savedVids,msg=>{
-      addLog(msg);
-      const match=msg.match(/Stream \(([a-f0-9]+)\)/);
-      if(match){const sid=match[1];const vid=savedVids.find(v=>v.name&&msg.includes(v.name));if(vid)setStreamStatus(p=>({...p,[vid.id]:{state:"processing",streamId:sid}}));}
-    });
-    setPhase("done");addLog("Bunny sync complete. Stream videos processing in background…");
-    savedVids.forEach(async v=>{
-      const st=streamStatus[v.id];if(!st?.streamId)return;
-      const result=await waitForStreamReady(st.streamId,300000);
-      setStreamStatus(p=>({...p,[v.id]:{...p[v.id],state:result?"ready":"timeout",playbackUrl:result?.playbackUrl}}));
-      addLog(result?`✓ ${v.name} ready — HLS available`:`⚠ ${v.name} stream timeout`);
-    });
+
+    try{
+      let currentVidId=null;
+      await syncSessionToCloud(savedDate,await getLogData(savedDate),await getXmlData(savedDate),savedVids,msg=>{
+        if(syncAbortRef.current)return;
+        addLog(msg);
+
+        // Log/events done
+        if(msg.includes("log")&&msg.includes("✓")){
+          setItem("log",{state:"done",pct:100});
+        }
+        // Video upload started
+        const vidStartMatch=savedVids.find(v=>msg.includes(v.name)&&msg.includes("Uploading"));
+        if(vidStartMatch){
+          currentVidId=vidStartMatch.id;
+          setItem(currentVidId,{state:"active",pct:5});
+        }
+        // Upload progress (bytes)
+        const pctMatch=msg.match(/(\d+)%/);
+        if(pctMatch&&currentVidId) setItem(currentVidId,{pct:parseInt(pctMatch[1])});
+        // Upload complete → Stream processing
+        if(msg.includes("Stream")&&currentVidId){
+          const sidMatch=msg.match(/Stream \(([a-f0-9-]+)\)/i);
+          setStreamStatus(p=>({...p,[currentVidId]:{state:"processing",streamId:sidMatch?.[1]}}));
+          setItem(currentVidId,{state:"processing",pct:95,label:savedVids.find(v=>v.id===currentVidId)?.name||currentVidId});
+        }
+        // Video done
+        if(msg.includes("✓")&&currentVidId&&msg.includes(savedVids.find(v=>v.id===currentVidId)?.name||"")){
+          setItem(currentVidId,{state:"done",pct:100});
+          currentVidId=null;
+        }
+        recalcOverall();
+      });
+
+      // Mark remaining as done
+      setSyncProgress(p=>p?{...p,overall:98,items:p.items.map(it=>({...it,pct:it.pct<100?95:it.pct}))}:p);
+
+      setPhase("done");
+      addLog("Bunny sync complete. Stream videos processing in background…");
+      setSyncProgress(p=>p?{...p,overall:100}:p);
+
+      // Stream readiness polling
+      savedVids.forEach(async v=>{
+        const st=streamStatus[v.id];if(!st?.streamId)return;
+        const result=await waitForStreamReady(st.streamId,300000);
+        setStreamStatus(p=>({...p,[v.id]:{...p[v.id],state:result?"ready":"timeout",playbackUrl:result?.playbackUrl}}));
+        setItem(v.id,{state:result?"done":"error",pct:100});
+        addLog(result?`✓ ${v.name} ready — HLS available`:`⚠ ${v.name} stream timeout`);
+      });
+
+    } catch(e){
+      setSyncProgress(p=>p?{...p,error:String(e)}:p);
+      addLog(`✕ Sync error: ${e instanceof Error?e.message:String(e)}`);
+      setPhase("saved");
+    } finally {
+      clearInterval(syncTimerRef.current);
+    }
   };
 
   const reset=()=>{
@@ -1049,16 +1203,9 @@ function UploadTab({role,cloudStatus,onImported}){
                 </div>
               )}
               {phase==="saved"&&!cloudStatus?.available&&<div style={{fontSize:10,color:"#334155",background:"#071624",borderRadius:6,padding:"8px 10px"}}>Cloud not configured. Set Bunny env vars in Vercel to enable sync. Session is fully usable from local storage.</div>}
-              {(phase==="syncing"||phase==="done")&&savedVids.length>0&&(
-                <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:10}}>
-                  {savedVids.map(v=>{const st=streamStatus[v.id];return(
-                    <div key={v.id} style={{display:"flex",alignItems:"center",gap:8,background:"#071624",borderRadius:6,padding:"6px 10px"}}>
-                      <div style={{flex:1,minWidth:0,fontSize:10,color:"#94A3B8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div>
-                      <SrcBadge source={st?.state==="ready"?"cloud":st?.state==="processing"?"processing":"local"}/>
-                      {st?.streamId&&<span style={{fontSize:8,color:"#334155",fontFamily:"monospace"}}>{st.streamId.slice(0,8)}…</span>}
-                    </div>
-                  );})}
-                </div>
+              {(phase==="syncing"||phase==="done")&&syncProgress&&(
+                <SyncProgressPanel progress={syncProgress} phase={phase}
+                  onCancel={()=>{syncAbortRef.current=true;clearInterval(syncTimerRef.current);setPhase("saved");setSyncProgress(null);}}/>
               )}
             </div>
           </div>
@@ -2958,9 +3105,13 @@ export default function SmartSailingAnalytics(){
   const[aiResult,setAiResult]=useState(null);
   const[aiLoading,setAiLoading]=useState(false);
   const[loaded,setLoaded]=useState(false);
-  const[playUtc,setPlayUtc]=useState(null);              // current video UTC for GPS+chart sync
-  const[hasMountedAnalytics,setHasMountedAnalytics]=useState(false); // lazy-mount analytics
+  const[playUtc,setPlayUtc]=useState(null);
+  const[hasMountedAnalytics,setHasMountedAnalytics]=useState(false);
   const playUtcThrottle=useRef(0);
+  const[libSyncProgress,setLibSyncProgress]=useState(null);
+  const[libSyncPhase,setLibSyncPhase]=useState(null);
+  const libSyncAbortRef=useRef(false);
+  const libSyncTimerRef=useRef(null);
   const perms=ROLES[role];
 
   // Mount analytics pane on first visit OR as soon as log data arrives
@@ -3183,13 +3334,89 @@ export default function SmartSailingAnalytics(){
           </aside>
 
           {/* Library main content */}
-          <main style={{flex:1,display:"flex",overflow:"hidden"}}>
+          <main style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
+
+            {/* ── Sync modal overlay ──────────────────────────────────────── */}
+            {libSyncProgress&&(
+              <div style={{position:"absolute",inset:0,background:"rgba(3,15,26,0.88)",
+                zIndex:50,display:"flex",flexDirection:"column",justifyContent:"center",
+                alignItems:"center",padding:24}}>
+                <div style={{width:"100%",maxWidth:480}}>
+                  <SyncProgressPanel progress={libSyncProgress} phase={libSyncPhase||"syncing"}
+                    onCancel={()=>{
+                      libSyncAbortRef.current=true;
+                      clearInterval(libSyncTimerRef.current);
+                      setLibSyncProgress(null);setLibSyncPhase(null);
+                    }}/>
+                  {libSyncPhase==="done"&&(
+                    <button onClick={()=>{setLibSyncProgress(null);setLibSyncPhase(null);setUnsyncedCount(getUnsyncedCount());}}
+                      style={{marginTop:12,width:"100%",background:"#1D9E75",border:"none",
+                        borderRadius:8,padding:"10px",color:"#fff",fontWeight:700,
+                        fontSize:13,cursor:"pointer"}}>
+                      ✓ Done
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div style={{width:280,minWidth:280,overflowY:"auto",padding:"10px 8px",flexShrink:0,borderRight:"1px solid #0F2030"}}>
               {(logData||xmlData)&&<div style={{display:"flex",gap:7,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
                 {logData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,color:logData.source==="local"?"#1D9E75":"#8B5CF6"}}>{logData.source==="local"?"● Local":"● Cloud"} log · {logData.rows?.length?.toLocaleString()} rows</span>}
                 {xmlData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:"#8B5CF610",border:"1px solid #8B5CF630",color:"#8B5CF6"}}>{xmlData.source==="local"?"● Local":"● Cloud"} events · {xmlData.tackJibes?.length} manoeuvres</span>}
                 <span style={{fontSize:10,color:"#1E3A5A"}}>{displayed.length} clip{displayed.length!==1?"s":""}</span>
                 <div style={{flex:1}}/>
+                {/* ── Sync ↑ button — visible when session has unsynced local data ── */}
+                {cloudStatus?.available&&perms.canSync&&unsyncedCount>0&&(
+                  <button onClick={async()=>{
+                    const vids=await getVideosForDate(activeDate);
+                    const logD=await getLogData(activeDate);
+                    const xmlD=await getXmlData(activeDate);
+                    const items=[
+                      {id:"log",label:"Log & Events",state:"pending",pct:0},
+                      ...vids.map(v=>({id:v.id,label:v.name||v.title,state:"pending",pct:0}))
+                    ];
+                    libSyncAbortRef.current=false;
+                    const startMs=Date.now();
+                    libSyncTimerRef.current=setInterval(()=>
+                      setLibSyncProgress(p=>p?{...p,elapsed:Math.round((Date.now()-startMs)/1000)}:p),1000);
+                    setLibSyncProgress({items,overall:0,elapsed:0,error:null});
+                    setLibSyncPhase("syncing");
+                    const setItem=(id,patch)=>setLibSyncProgress(p=>p?{...p,items:p.items.map(it=>it.id===id?{...it,...patch}:it)}:p);
+                    try{
+                      let curVid=null;
+                      await syncSessionToCloud(activeDate,logD,xmlD,
+                        vids.map(v=>({...v,file:null})), // cloud-only: no blobs, just metadata + existing stream
+                        msg=>{
+                          if(libSyncAbortRef.current)return;
+                          if(msg.includes("log")&&msg.includes("✓")) setItem("log",{state:"done",pct:100});
+                          const vMatch=vids.find(v=>msg.includes(v.name||v.title||"")&&msg.includes("✓"));
+                          if(vMatch) setItem(vMatch.id,{state:"done",pct:100});
+                          else if(vids.find(v=>msg.includes(v.name||v.title||""))){
+                            const vf=vids.find(v=>msg.includes(v.name||v.title||""));
+                            if(vf&&!curVid){curVid=vf.id;setItem(curVid,{state:"active",pct:50});}
+                          }
+                          // recalc overall
+                          setLibSyncProgress(p=>{
+                            if(!p)return p;
+                            const avg=p.items.reduce((s,it)=>s+(it.pct||0),0)/p.items.length;
+                            return{...p,overall:Math.round(avg)};
+                          });
+                        });
+                      setLibSyncPhase("done");
+                      setLibSyncProgress(p=>p?{...p,overall:100}:p);
+                      markCloudSynced(activeDate);
+                      setUnsyncedCount(getUnsyncedCount());
+                    }catch(e){
+                      setLibSyncProgress(p=>p?{...p,error:String(e)}:p);
+                    }finally{clearInterval(libSyncTimerRef.current);}
+                  }}
+                  style={{background:"#8B5CF6",border:"none",borderRadius:5,padding:"3px 10px",
+                    color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,display:"flex",
+                    alignItems:"center",gap:4}}>
+                    ↑ Sync{unsyncedCount>0?` (${unsyncedCount})`:""}
+                  </button>
+                )}
                 {xmlData&&allVideos.length>0&&perms.canImport&&(
                   <button onClick={async()=>{
                     let count=0;
