@@ -1595,7 +1595,7 @@ function AIChatPanel({rows, allVideos}){
 // playUtc   — current video UTC for boat marker (null = no video playing)
 // visible   — whether the Analytics tab is currently shown (for Leaflet resize)
 
-function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[]}){
+function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null}){
   const containerRef = React.useRef(null);
   const mapRef       = React.useRef(null);
   const boatMarkerRef= React.useRef(null); // Leaflet marker for live boat position
@@ -1623,6 +1623,11 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 
   const polar = React.useMemo(()=>loadPolarFromLS(),[]);
 
+  // Keep callbacks in refs so Leaflet click closures always have the latest values
+  const onSelectVideoRef = React.useRef(onSelectVideo);
+  const onSwitchTabRef   = React.useRef(onSwitchTab);
+  React.useEffect(()=>{ onSelectVideoRef.current=onSelectVideo; },[onSelectVideo]);
+  React.useEffect(()=>{ onSwitchTabRef.current=onSwitchTab; },  [onSwitchTab]);
   const playUtcRef = React.useRef(playUtc);
   React.useEffect(()=>{ playUtcRef.current = playUtc; },[playUtc]);
 
@@ -1690,14 +1695,19 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         if(covRows.length<2) continue;
         const covStep=Math.max(1,Math.floor(covRows.length/300));
         const covPts=covRows.filter((_,i)=>i%covStep===0).map(r=>[r.lat,r.lon]);
-        L.polyline(covPts,{
+        const polyline = L.polyline(covPts,{
           color:'#ffffff',
           weight:8,
           opacity:0.28,
           smoothFactor:1,
         })
-          .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min`)
+          .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min<br><span style="font-size:10px;color:#94A3B8">Click to open in Library</span>`,{allowHTML:true})
           .addTo(map);
+        polyline.on('click',()=>{
+          if(onSelectVideoRef.current) onSelectVideoRef.current(vid);
+          if(onSwitchTabRef.current)   onSwitchTabRef.current('library');
+        });
+        polyline.getElement && (polyline.getElement().style.cursor='pointer');
         // Small dot at coverage start
         L.circleMarker(covPts[0],{radius:5,fillColor:'#ffffff',color:'rgba(0,0,0,0.3)',weight:1,fillOpacity:0.5})
           .addTo(map);
@@ -1980,7 +1990,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             </div>
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos}/>
+                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab}/>
               ) : (
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — select a date in the Library first.</div>
               )
