@@ -2,10 +2,50 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SmartSailingAnalytics — Bunny.net Storage + Stream integration
 //
-// Video upload uses the official tus-js-client library loaded from CDN.
-// Server generates signed credentials; browser uploads directly to Bunny.
+// All uploads bypass Vercel completely:
+//   Log/events JSON  → direct browser PUT → Bunny Storage (read/write key)
+//   Videos           → direct browser TUS → Bunny Stream
+// Reads go through Vercel proxy (GET /api/bunny/storage) using read-only key.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Cached storage write credentials (fetched once per session) ───────────────
+let _storageCreds = null;
+async function getStorageCreds() {
+  if (_storageCreds) return _storageCreds;
+  const res = await fetch("/api/storage/credentials");
+  if (!res.ok) throw new Error("Could not fetch storage credentials");
+  _storageCreds = await res.json();
+  return _storageCreds;
+}
+
+// ── Upload JSON directly from browser to Bunny Storage ───────────────────────
+// Uses read/write key via /api/storage/credentials — no Vercel size limit.
+export async function uploadJsonToStorage(key, data) {
+  try {
+    const { accessKey, zone, host } = await getStorageCreds();
+    const safeKey = key.replace(/\.\./g, "").replace(/^\/+/, "");
+    const res = await fetch(`${host}/${zone}/${safeKey}`, {
+      method:  "PUT",
+      headers: { AccessKey: accessKey, "Content-Type": "application/json" },
+      body:    JSON.stringify(data),
+    });
+    return res.ok || res.status === 201;
+  } catch (e) {
+    console.error("uploadJsonToStorage error:", e);
+    return false;
+  }
+}
+
+// ── Fetch JSON from Bunny Storage (via Vercel proxy — uses read-only key) ─────
+export async function fetchFromStorage(key) {
+  try {
+    const res = await fetch(`/api/bunny/storage?key=${encodeURIComponent(key)}`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
+
+// ── Cloud status check ────────────────────────────────────────────────────────
 export async function checkCloudStatus() {
   try {
     const res = await fetch("/api/cloud/status", { signal: AbortSignal.timeout(4000) });
@@ -14,6 +54,16 @@ export async function checkCloudStatus() {
   } catch (e) { return { available: false, reason: String(e) }; }
 }
 
+// ── List all cloud sessions ───────────────────────────────────────────────────
+export async function listR2Sessions() {
+  try {
+    const res = await fetch("/api/bunny/sessions");
+    if (!res.ok) return [];
+    return res.json();
+  } catch { return []; }
+}
+
+// ── Create a Bunny Stream video object ────────────────────────────────────────
 export async function createStreamUpload(fileName, fileSizeBytes) {
   try {
     const res = await fetch("/api/stream/create", {
@@ -38,25 +88,20 @@ function loadTus() {
   });
 }
 
-// ── Upload file directly from browser to Bunny Stream via tus-js-client ───────
-// Server generates signed credentials; tus client handles init + chunking.
+// ── Upload video directly from browser to Bunny Stream via tus-js-client ──────
 export async function uploadFileToStream(uploadInfo, file, onProgress) {
   const { streamId } = uploadInfo;
-
-  // Get signed credentials from server (keeps API key secret)
   const credRes = await fetch("/api/stream/upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ streamId, fileSize: file.size }),
   });
   if (!credRes.ok) {
-    console.error("Failed to get upload credentials:", await credRes.json());
+    console.error("Failed to get stream credentials:", await credRes.json());
     return false;
   }
   const { signature, expiry, libraryId } = await credRes.json();
-
   const tus = await loadTus();
-
   return new Promise((resolve) => {
     const upload = new tus.Upload(file, {
       endpoint: "https://video.bunnycdn.com/tusupload",
@@ -67,21 +112,13 @@ export async function uploadFileToStream(uploadInfo, file, onProgress) {
         VideoId:                streamId,
         LibraryId:              libraryId,
       },
-      metadata: {
-        filetype: file.type,
-        title:    file.name,
-      },
+      metadata: { filetype: file.type, title: file.name },
       onProgress(bytesUploaded, bytesTotal) {
         onProgress?.(Math.round((bytesUploaded / bytesTotal) * 100));
       },
       onSuccess() { resolve(true); },
-      onError(err) {
-        console.error("tus upload error:", err);
-        resolve(false);
-      },
+      onError(err) { console.error("tus upload error:", err); resolve(false); },
     });
-
-    // Resume previous upload if possible
     upload.findPreviousUploads().then(previous => {
       if (previous.length) upload.resumeFromPreviousUpload(previous[0]);
       upload.start();
@@ -89,7 +126,7 @@ export async function uploadFileToStream(uploadInfo, file, onProgress) {
   });
 }
 
-// ── Poll until Bunny Stream video is ready (status 4) ────────────────────────
+// ── Poll until Bunny Stream video is ready ────────────────────────────────────
 export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
@@ -102,70 +139,53 @@ export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
   return null;
 }
 
-// ── Upload JSON to Bunny Storage ──────────────────────────────────────────────
-export async function uploadJsonToStorage(key, data) {
-  try {
-    const res = await fetch("/api/bunny/storage", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, data }),
-    });
-    return res.ok;
-  } catch { return false; }
-}
-
-// ── Fetch JSON from Bunny Storage ─────────────────────────────────────────────
-export async function fetchFromStorage(key) {
-  try {
-    const res = await fetch(`/api/bunny/storage?key=${encodeURIComponent(key)}`);
-    if (!res.ok) return null;
-    return res.json();
-  } catch { return null; }
-}
-
-// ── List all cloud sessions ───────────────────────────────────────────────────
-export async function listR2Sessions() {
-  try {
-    const res = await fetch("/api/bunny/sessions");
-    if (!res.ok) return [];
-    return res.json();
-  } catch { return []; }
-}
-
 // ── Full session sync ─────────────────────────────────────────────────────────
 export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus) {
   const status = msg => onStatus?.(msg);
   const result = { success: false, streamIds: {} };
   try {
+    // 1. Log rows → Bunny Storage (direct, no Vercel size limit)
     if (logData?.rows?.length) {
-      status(`Uploading log data to Bunny Storage (${logData.rows.length.toLocaleString()} rows)…`);
+      const approxMB = (JSON.stringify(logData.rows).length / 1e6).toFixed(1);
+      status(`Uploading log data directly to Bunny Storage (${logData.rows.length.toLocaleString()} rows · ~${approxMB} MB)…`);
       const ok = await uploadJsonToStorage(`sessions/${date}/log.json`, {
-        rows: logData.rows, startUtc: logData.startUtc, endUtc: logData.endUtc, uploadedAt: Date.now(),
+        rows: logData.rows, startUtc: logData.startUtc,
+        endUtc: logData.endUtc, uploadedAt: Date.now(),
       });
-      if (!ok) { status("Bunny Storage log upload failed — check API key and zone name."); return result; }
-      status("✓ Log data uploaded to Bunny Storage");
+      if (!ok) status("⚠ Log upload failed — continuing with remaining data…");
+      else     status("✓ Log data uploaded to Bunny Storage");
     }
+
+    // 2. XML events → Bunny Storage (direct)
     if (xmlData) {
-      status("Uploading event data to Bunny Storage…");
-      const ok = await uploadJsonToStorage(`sessions/${date}/events.json`, { ...xmlData, uploadedAt: Date.now() });
-      if (!ok) { status("Bunny Storage events upload failed."); return result; }
-      status("✓ Event data uploaded to Bunny Storage");
+      status("Uploading event data directly to Bunny Storage…");
+      const ok = await uploadJsonToStorage(`sessions/${date}/events.json`, {
+        ...xmlData, uploadedAt: Date.now(),
+      });
+      if (!ok) status("⚠ Events upload failed — continuing…");
+      else     status("✓ Event data uploaded to Bunny Storage");
     }
+
+    // 3. Videos → Bunny Stream (direct via tus)
     for (const video of videos) {
       if (!video.file && !video.objectUrl) continue;
       status(`Creating Bunny Stream video for ${video.name}…`);
       const uploadInfo = await createStreamUpload(video.name, video.size);
-      if (!uploadInfo) { status(`Stream create failed for ${video.name}`); continue; }
+      if (!uploadInfo) { status(`⚠ Stream create failed for ${video.name}`); continue; }
       status(`Uploading ${video.name} to Bunny Stream (${(video.size / 1e6).toFixed(0)} MB)…`);
       let file = video.file;
       if (!file && video.objectUrl) {
         try { const r = await fetch(video.objectUrl); file = await r.blob(); } catch { continue; }
       }
-      const uploaded = await uploadFileToStream(uploadInfo, file, pct => status(`Uploading ${video.name}… ${pct}%`));
-      if (!uploaded) { status(`Stream upload failed for ${video.name}`); continue; }
+      const uploaded = await uploadFileToStream(
+        uploadInfo, file, pct => status(`Uploading ${video.name}… ${pct}%`)
+      );
+      if (!uploaded) { status(`⚠ Stream upload failed for ${video.name}`); continue; }
       result.streamIds[video.id] = uploadInfo.streamId;
       status(`✓ ${video.name} uploaded to Stream (ID: ${uploadInfo.streamId.slice(0, 8)}…)`);
     }
+
+    // 4. Session meta → Bunny Storage (direct)
     const meta = {
       date, boat: xmlData?.meta?.boat || null, location: xmlData?.meta?.location || null,
       hasLog: !!logData, hasXml: !!xmlData, videoCount: videos.length,
@@ -199,10 +219,17 @@ export async function fetchCloudSession(date) {
     if (v.streamId) {
       try {
         const res = await fetch(`/api/stream/status/${v.streamId}`);
-        if (res.ok) { const s = await res.json(); playbackUrl = s.playbackUrl || null; thumbnailUrl = s.thumbnailUrl || null; }
+        if (res.ok) {
+          const s = await res.json();
+          playbackUrl  = s.playbackUrl  || null;
+          thumbnailUrl = s.thumbnailUrl || null;
+        }
       } catch {}
     }
-    return { ...v, objectUrl: playbackUrl, thumbnailUrl, source: "cloud", sessionDate: date, addedAt: meta.syncedAt || 0 };
+    return {
+      ...v, objectUrl: playbackUrl, thumbnailUrl,
+      source: "cloud", sessionDate: date, addedAt: meta.syncedAt || 0,
+    };
   }));
   return {
     meta,
