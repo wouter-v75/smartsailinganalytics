@@ -82,7 +82,7 @@ function loadTus() {
   return new Promise((resolve, reject) => {
     if (window.tus) { resolve(window.tus); return; }
     const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/tus-js-client/3.1.0/tus.min.js";
+    s.src = "https://unpkg.com/tus-js-client@3.1.0/dist/tus.min.js";
     s.onload = () => resolve(window.tus);
     s.onerror = reject;
     document.head.appendChild(s);
