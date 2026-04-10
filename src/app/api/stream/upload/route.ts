@@ -51,7 +51,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Read the Location header — this is the URL the browser must PATCH to
-    const locationUrl = res.headers.get("Location") ?? "https://video.bunnycdn.com/tusupload";
+    const rawLocation = res.headers.get("Location") ?? "/tusupload";
+    const locationUrl = rawLocation.startsWith("http") ? rawLocation : `https://video.bunnycdn.com${rawLocation}`;
 
     // Return location + fresh auth so the browser can PATCH directly
     const { signature, expiry } = makeBunnyAuth(streamId);
