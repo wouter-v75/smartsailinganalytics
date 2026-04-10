@@ -17,7 +17,7 @@ function tusHeaders(streamId: string, extra: Record<string, string> = {}) {
 
   return {
     AuthorizationSignature: STREAM_KEY,
-    AuthorizationExpire:    "0",
+    AuthorizationExpire:    String(Math.floor(Date.now() / 1000) + 7200),
     VideoId:                streamId,
     LibraryId:              String(LIBRARY_ID),
     "Tus-Resumable":        "1.0.0",
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
 
     // Return location + fresh auth so the browser can PATCH directly
   
-    return NextResponse.json({ locationUrl, signature: STREAM_KEY, expiry: "0", libraryId: String(LIBRARY_ID) });
+    return NextResponse.json({ locationUrl, signature: STREAM_KEY, expiry: String(Math.floor(Date.now() / 1000) + 7200), libraryId: String(LIBRARY_ID) });
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
