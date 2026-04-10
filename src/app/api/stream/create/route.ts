@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
           AccessKey: STREAM_KEY,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ title: fileName }),
+        body: JSON.stringify({ title: fileName, enabledResolutions: "720p,1080p" }),
       }
     );
     if (!createRes.ok)
