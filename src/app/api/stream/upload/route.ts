@@ -16,8 +16,8 @@ function makeBunnyAuth(streamId: string) {
 function tusHeaders(streamId: string, extra: Record<string, string> = {}) {
 
   return {
-    AuthorizationSignature: STREAM_KEY,
-    AuthorizationExpire:    String(Math.floor(Date.now() / 1000) + 7200),
+    AuthorizationSignature: makeBunnyAuth(streamId).signature,
+    AuthorizationExpire:    makeBunnyAuth(streamId).expiry,
     VideoId:                streamId,
     LibraryId:              String(LIBRARY_ID),
     "Tus-Resumable":        "1.0.0",
