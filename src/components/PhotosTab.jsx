@@ -108,17 +108,6 @@ async function extractExif(file) {
 }
 
 // Load heic2any from CDN for HEIC conversion
-function loadExifr() {
-  return new Promise((resolve,reject)=>{
-    if(window.exifr){resolve(window.exifr);return;}
-    const s=document.createElement("script");
-    s.src="https://unpkg.com/exifr@7.1.3/dist/full.umd.js";
-    s.onload=()=>resolve(window.exifr);
-    s.onerror=reject;
-    document.head.appendChild(s);
-  });
-}
-
 function loadHeic2any() {
   return new Promise((resolve,reject)=>{
     if(window.heic2any){resolve(window.heic2any);return;}
@@ -229,7 +218,7 @@ function PhotoCard({photo,selected,onClick}){
         {photo.lat&&photo.lon&&<div style={{position:"absolute",bottom:3,left:4,fontSize:9,color:"#22C55E"}}>📍</div>}
       </div>
       <div style={{padding:"5px 8px"}}>
-        <div style={{fontSize:9,color:"#64748B"}}>{photo.utc?new Date(photo.utc).toISOString().slice(0,10)+" "+new Date(photo.utc).toISOString().slice(11,16)+" UTC":"No timestamp"}</div>
+        <div style={{fontSize:9,color:"#64748B"}}>{photo.utc?new Date(photo.utc).toISOString().slice(11,16)+" UTC":"No timestamp"}</div>
         <div style={{display:"flex",gap:6,marginTop:2}}>
           {photo.tws!=null&&<span style={{fontSize:9,color:"#06B6D4"}}>TWS {R(photo.tws)}kn</span>}
           {photo.twa!=null&&<span style={{fontSize:9,color:"#8B5CF6"}}>{R(photo.twa,0)}°</span>}
@@ -324,7 +313,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,cloudStatus,o
     const e={...photo};
     if(log?.rows?.length&&photo.utc){
       const row=nearestLogRow(log.rows,photo.utc);
-      if(row){const r2=(v,d)=>v!=null?Math.round(v*Math.pow(10,d))/Math.pow(10,d):null;e.tws=r2(row.tws,1);e.twa=r2(row.twa,0);e.awa=r2(row.awa,0);e.bsp=r2(row.bsp,1);e.heel=r2(row.heel,0);e.vmg=r2(row.vmg,1);}
+      if(row){e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;}
     }
     if(xml){e.sails=activeSailsAt(xml.sailsUpEvents,photo.utc);e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;}
     return e;
@@ -337,14 +326,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,cloudStatus,o
     const newPhotos=[];
     for(const file of imgs){
       try{
-        let exif=null;
-        try{
-          const exifr=await loadExifr();
-          const data=await exifr.parse(file,{tiff:true,exif:true,gps:true,ifd0:true});
-          const dt=data?.DateTimeOriginal||data?.DateTime;
-          const utc=dt?dt.getTime():null;
-          exif={utc,lat:data?.latitude||null,lon:data?.longitude||null};
-        }catch{exif=await extractExif(file);}
+        const exif = await extractExif(file);
         addLog(`${file.name.slice(0,25)}: ${exif?.utc?new Date(exif.utc).toISOString().slice(11,16)+" UTC":"no timestamp"}${exif?.lat?" 📍":""}`);
         let jpeg;
         try{jpeg=await convertToJpeg(file);}catch{jpeg=file;}
@@ -352,7 +334,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,cloudStatus,o
         const id=`p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         await idbPutPhoto(id, jpeg);
         const objectUrl = URL.createObjectURL(jpeg);
-        let photo={id,name:file.name,size:jpeg.size,utc:exif?.utc||null,lat:exif?.lat!=null?Math.round(exif.lat*100000)/100000:null,lon:exif?.lon!=null?Math.round(exif.lon*100000)/100000:null,
+        let photo={id,name:file.name,size:jpeg.size,utc:exif?.utc||null,lat:exif?.lat||null,lon:exif?.lon||null,
           sessionDate:activeDate,objectUrl,cloudSynced:false,addedAt:Date.now()};
         photo=enrichPhoto(photo,logData,xmlData);
         newPhotos.push(photo);
@@ -401,41 +383,109 @@ export default function PhotosTab({role,logData,xmlData,activeDate,cloudStatus,o
     setPhotos(updated);savePhotos(updated);setSelected(updated[0]||null);
   };
 
+  // ── Sidebar filtering state ──────────────────────────────────────────────
+  const [searchQuery, setSearchQuery] = React.useState("");
+  const [selectedTags, setSelectedTags] = React.useState([]);
+  const [sortBy, setSortBy] = React.useState("date");
+
+  // All unique tags across photos
+  const allTags = [...new Set(photos.flatMap(p => p.sails||[]))].sort();
+
+  // Filtered + sorted photos
+  const displayed = photos
+    .filter(p => {
+      const q = searchQuery.toLowerCase();
+      const matchQ = !q || p.name?.toLowerCase().includes(q) || (p.sails||[]).some(s=>s.toLowerCase().includes(q));
+      const matchT = selectedTags.length===0 || selectedTags.every(t=>(p.sails||[]).includes(t));
+      return matchQ && matchT;
+    })
+    .sort((a,b) => sortBy==="tws" ? (b.tws||0)-(a.tws||0) : (b.utc||0)-(a.utc||0));
+
+  // Group by date
+  const groups = [];
+  const seen = new Map();
+  for(const p of displayed){
+    const d = p.utc ? new Date(p.utc).toISOString().slice(0,10) : "unknown";
+    if(!seen.has(d)){seen.set(d,[]);groups.push(d);}
+    seen.get(d).push(p);
+  }
+
   return(
     <div style={{flex:1,display:"flex",overflow:"hidden"}}>
-      <div style={{width:300,minWidth:300,background:"#050E1C",borderRight:"1px solid #0F2030",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-        <div style={{padding:"10px 10px 0"}}>
+
+      {/* ── Left sidebar — sessions + search + sort ── */}
+      <aside style={{width:160,background:"#050E1C",borderRight:"1px solid #1E3A5A",display:"flex",flexDirection:"column",overflowY:"auto",flexShrink:0}}>
+        <div style={{padding:"12px 11px 6px"}}>
+          <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Photos</div>
           <input ref={fileRef} type="file" accept="image/*,.heic,.heif" multiple style={{display:"none"}} onChange={e=>handleFiles(e.target.files)}/>
           <div onClick={()=>fileRef.current?.click()}
             onDragOver={e=>{e.preventDefault();setDragOver(true);}}
             onDragLeave={()=>setDragOver(false)}
             onDrop={e=>{e.preventDefault();setDragOver(false);handleFiles(e.dataTransfer.files);}}
-            style={{border:`2px dashed ${dragOver?"#8B5CF6":"#1E3A5A"}`,borderRadius:8,padding:"16px 12px",textAlign:"center",cursor:"pointer",background:dragOver?"#0D1829":"transparent",marginBottom:8,transition:"all 0.12s"}}>
-            <div style={{fontSize:20,marginBottom:4}}>📷</div>
-            <div style={{fontSize:11,color:"#64748B"}}>Drop photos or click to browse</div>
-            <div style={{fontSize:9,color:"#334155",marginTop:2}}>JPEG · PNG · HEIC · multiple files</div>
-          </div>
-          {!logData&&<div style={{fontSize:9,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:5,padding:"5px 8px",marginBottom:8}}>⚠ No log loaded — instrument data won't be available</div>}
-          <div style={{fontSize:9,color:"#334155",marginBottom:6}}>{photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
-        </div>
-        <div style={{flex:1,overflowY:"auto",padding:"0 10px 10px"}}>
-          {photos.length===0&&(
-            <div style={{textAlign:"center",padding:"40px 20px",color:"#334155"}}>
-              <div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📷</div>
-              <div style={{fontSize:11,color:"#475569"}}>No photos yet</div>
-              <div style={{fontSize:10,marginTop:4}}>Upload from your camera roll</div>
-            </div>
-          )}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {photos.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>setSelected(p)}/>)}
+            style={{border:`2px dashed ${dragOver?"#8B5CF6":"#1E3A5A"}`,borderRadius:7,padding:"10px 8px",textAlign:"center",cursor:"pointer",background:dragOver?"#0D1829":"transparent",marginBottom:8,transition:"all 0.12s"}}>
+            <div style={{fontSize:16,marginBottom:2}}>📷</div>
+            <div style={{fontSize:9,color:"#64748B"}}>Drop or click</div>
+            <div style={{fontSize:8,color:"#334155",marginTop:1}}>JPEG · PNG · HEIC</div>
           </div>
         </div>
+        <div style={{height:1,background:"#0F2030",margin:"0 11px 6px"}}/>
+        <div style={{padding:"0 11px 8px"}}>
+          <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
+            placeholder="Search photos…"
+            style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7}}/>
+          {["date","tws"].map(s=>(
+            <button key={s} onClick={()=>setSortBy(s)} style={{display:"block",width:"100%",textAlign:"left",background:sortBy===s?"#1E3A5A":"none",border:"none",borderRadius:4,padding:"3px 6px",color:sortBy===s?"#8B5CF6":"#334155",cursor:"pointer",fontSize:10,marginBottom:1}}>
+              {sortBy===s?"▸ ":"  "}{s==="date"?"Date":"Wind (TWS)"}
+            </button>
+          ))}
+        </div>
+        {allTags.length>0&&<div style={{padding:"0 11px",flex:1}}>
+          <div style={{fontSize:8,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:5}}>Sails</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+            {allTags.map(t=>(
+              <button key={t} onClick={()=>setSelectedTags(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t])}
+                style={{background:selectedTags.includes(t)?"#8B5CF6":"#0A1929",border:`1px solid ${selectedTags.includes(t)?"#8B5CF6":"#1E3A5A"}`,borderRadius:3,padding:"1px 5px",color:selectedTags.includes(t)?"#fff":"#7DD3FC",fontSize:9,cursor:"pointer",fontFamily:"monospace"}}>
+                {t}
+              </button>
+            ))}
+          </div>
+          {selectedTags.length>0&&<button onClick={()=>setSelectedTags([])} style={{background:"none",border:"1px solid #EF444440",borderRadius:4,padding:"2px 8px",color:"#EF4444",fontSize:9,cursor:"pointer",width:"100%",marginTop:6}}>Clear</button>}
+        </div>}
         {log.length>0&&(
-          <div style={{padding:"6px 10px",borderTop:"1px solid #0F2030",maxHeight:80,overflowY:"auto"}}>
-            {log.map((l,i)=><div key={i} style={{fontSize:9,color:l.startsWith("✕")?"#EF4444":l.startsWith("✓")?"#1D9E75":"#475569",fontFamily:"monospace"}}>{l}</div>)}
+          <div style={{padding:"6px 10px",borderTop:"1px solid #0F2030",maxHeight:80,overflowY:"auto",marginTop:"auto"}}>
+            {log.map((l,i)=><div key={i} style={{fontSize:8,color:l.startsWith("✕")?"#EF4444":l.startsWith("✓")?"#1D9E75":"#475569",fontFamily:"monospace"}}>{l}</div>)}
           </div>
         )}
+      </aside>
+
+      {/* ── Photo grid ── */}
+      <div style={{width:280,minWidth:280,overflowY:"auto",padding:"10px 8px",flexShrink:0,borderRight:"1px solid #0F2030"}}>
+        {!logData&&<div style={{fontSize:9,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:5,padding:"5px 8px",marginBottom:8}}>⚠ No log loaded — instrument data won't be available</div>}
+        <div style={{fontSize:9,color:"#334155",marginBottom:8}}>{displayed.length} of {photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
+        {photos.length===0?(
+          <div style={{textAlign:"center",padding:"40px 20px",color:"#334155"}}>
+            <div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📷</div>
+            <div style={{fontSize:11,color:"#475569"}}>No photos yet</div>
+            <div style={{fontSize:10,marginTop:4}}>Upload from the sidebar</div>
+          </div>
+        ):(
+          groups.map(date=>{
+            const plist=seen.get(date);
+            return(
+              <div key={date} style={{marginBottom:16}}>
+                <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:6,paddingBottom:4,borderBottom:"1px solid #0F2030"}}>
+                  {date==="unknown"?"No date":date} · {plist.length} photo{plist.length!==1?"s":""}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6}}>
+                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>setSelected(p)}/>)}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
+
+      {/* ── Detail panel ── */}
       {selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155"}}>
