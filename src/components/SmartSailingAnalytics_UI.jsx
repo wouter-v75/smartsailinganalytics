@@ -1822,7 +1822,7 @@ function AIChatPanel({rows, allVideos}){
 // playUtc   — current video UTC for boat marker (null = no video playing)
 // visible   — whether the Analytics tab is currently shown (for Leaflet resize)
 
-function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null}){
+function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, photos=[]}){
   const containerRef = React.useRef(null);
   const mapRef       = React.useRef(null);
   const boatMarkerRef= React.useRef(null); // Leaflet marker for live boat position
@@ -2019,6 +2019,29 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       evLeg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div><div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div><div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div><div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gate</div><div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack</div><div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe</div><div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div><div><span style="display:inline-block;width:14px;height:4px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Boat position</div><div><span style="display:inline-block;width:14px;height:6px;background:rgba(255,255,255,0.3);border-radius:2px;margin-right:5px;vertical-align:middle;border:1px solid rgba(255,255,255,0.4)"></span>📹 Video coverage</div>`;return d;};
       evLeg.addTo(map);
 
+      // ── Photo markers ──────────────────────────────────────────────────────
+      for(const photo of (photos||[])){
+        if(!photo.lat||!photo.lon)continue;
+        try{
+          const marker=L.marker([photo.lat,photo.lon],{
+            icon:L.divIcon({className:"",iconSize:[24,24],iconAnchor:[12,12],
+              html:`<div style="background:#8B5CF6;border:2px solid #fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.5)">📷</div>`})
+          });
+          const dt=photo.utc?new Date(photo.utc).toISOString().slice(0,16).replace("T"," ")+" UTC":"";
+          marker.bindTooltip(`📷 ${photo.name||"Photo"}<br><span style="font-size:10px;color:#94A3B8">${dt}</span>`,{allowHTML:true});
+          if(photo.objectUrl){
+            marker.on("click",()=>{
+              const img=document.createElement("img");
+              img.src=photo.objectUrl;
+              img.style.cssText="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);max-width:80vw;max-height:80vh;z-index:9999;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.8);cursor:pointer";
+              img.onclick=()=>document.body.removeChild(img);
+              document.body.appendChild(img);
+            });
+          }
+          marker.addTo(map);
+        }catch(e){console.warn("photo marker err",e);}
+      }
+
       if(allLatLngs.length>0){try{map.fitBounds(L.latLngBounds(allLatLngs),{padding:[24,24]});}catch{}}
     };
 
@@ -2099,7 +2122,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 }
 
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
-function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,playUtc=null,visible=true}){
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,playUtc=null,visible=true,photos=[]}){
   const rows=logData?.rows||[];
   const noData=!rows.length;
   const step=Math.max(1,Math.floor(rows.length/400));
@@ -2217,7 +2240,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             </div>
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab}/>
+                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} photos={photos}/>
               ) : (
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — select a date in the Library first.</div>
               )
@@ -3054,7 +3077,7 @@ function MobileShell(props){
               allVideos={props.allVideos} sessions={props.sessions}
               selectedVideo={props.selectedVideo} onSelectVideo={props.setSelectedVideo}
               setActiveTab={setActiveTab} activeDate={props.activeDate}
-              playUtc={props.playUtc} visible={activeTab==="analytics"}/>
+              playUtc={props.playUtc} visible={activeTab==="analytics"} photos={props.photos}/>
           </div>
         )}
 
@@ -3561,7 +3584,7 @@ export default function SmartSailingAnalytics(){
               onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab}
               activeDate={activeDate}
               playUtc={playUtc}
-              visible={activeTab==="analytics"}
+              visible={activeTab==="analytics"} photos={photos}
             />
           </div>
         )}

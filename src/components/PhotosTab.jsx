@@ -229,7 +229,7 @@ function PhotoCard({photo,selected,onClick}){
         {photo.lat&&photo.lon&&<div style={{position:"absolute",bottom:3,left:4,fontSize:9,color:"#22C55E"}}>📍</div>}
       </div>
       <div style={{padding:"5px 8px"}}>
-        <div style={{fontSize:9,color:"#64748B"}}>{photo.utc?new Date(photo.utc).toISOString().slice(11,16)+" UTC":"No timestamp"}</div>
+        <div style={{fontSize:9,color:"#64748B"}}>{photo.utc?new Date(photo.utc).toISOString().slice(0,10)+" "+new Date(photo.utc).toISOString().slice(11,16)+" UTC":"No timestamp"}</div>
         <div style={{display:"flex",gap:6,marginTop:2}}>
           {photo.tws!=null&&<span style={{fontSize:9,color:"#06B6D4"}}>TWS {R(photo.tws)}kn</span>}
           {photo.twa!=null&&<span style={{fontSize:9,color:"#8B5CF6"}}>{R(photo.twa,0)}°</span>}
@@ -324,7 +324,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,cloudStatus,o
     const e={...photo};
     if(log?.rows?.length&&photo.utc){
       const row=nearestLogRow(log.rows,photo.utc);
-      if(row){e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;}
+      if(row){const r2=(v,d)=>v!=null?Math.round(v*Math.pow(10,d))/Math.pow(10,d):null;e.tws=r2(row.tws,1);e.twa=r2(row.twa,0);e.awa=r2(row.awa,0);e.bsp=r2(row.bsp,1);e.heel=r2(row.heel,0);e.vmg=r2(row.vmg,1);}
     }
     if(xml){e.sails=activeSailsAt(xml.sailsUpEvents,photo.utc);e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;}
     return e;
@@ -352,7 +352,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,cloudStatus,o
         const id=`p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         await idbPutPhoto(id, jpeg);
         const objectUrl = URL.createObjectURL(jpeg);
-        let photo={id,name:file.name,size:jpeg.size,utc:exif?.utc||null,lat:exif?.lat||null,lon:exif?.lon||null,
+        let photo={id,name:file.name,size:jpeg.size,utc:exif?.utc||null,lat:exif?.lat!=null?Math.round(exif.lat*100000)/100000:null,lon:exif?.lon!=null?Math.round(exif.lon*100000)/100000:null,
           sessionDate:activeDate,objectUrl,cloudSynced:false,addedAt:Date.now()};
         photo=enrichPhoto(photo,logData,xmlData);
         newPhotos.push(photo);
