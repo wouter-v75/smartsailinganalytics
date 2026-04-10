@@ -156,15 +156,16 @@ export function polarPerf(polar, bsp, twa, tws) {
   return {mode:'reach', pct:Math.max(0,Math.min(150,(bsp/targBSP)*100))};
 }
 
-// 3-stop colour scale: red(90%) → lightgreen(100%) → darkgreen(110%)
+// 3-stop colour scale: red(<90%) → green(90-110%) → dark green(>110%)
 export function perfColor(pct) {
   if(pct==null) return '#1E4080';
   const stops=[
-    {p:70, r:127,g:0,  b:0  },
-    {p:90, r:239,g:68, b:68 },
-    {p:100,r:134,g:239,b:172},
-    {p:110,r:21, g:128,b:61 },
-    {p:130,r:21, g:128,b:61 },
+    {p:70, r:239,g:68, b:68 },   // #EF4444 red
+    {p:90, r:239,g:68, b:68 },   // #EF4444 red
+    {p:90.01,r:34,g:197,b:94},   // #22C55E green (sharp transition)
+    {p:110,r:34, g:197,b:94 },   // #22C55E green
+    {p:110.01,r:22,g:101,b:52},  // #166534 dark green (sharp transition)
+    {p:130,r:22, g:101,b:52 },   // #166534 dark green
   ];
   const c=Math.max(stops[0].p,Math.min(stops[stops.length-1].p,pct));
   for(let i=1;i<stops.length;i++){

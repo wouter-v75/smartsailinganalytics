@@ -531,34 +531,34 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                color={ttbStbdFmt!=null&&ttbStbdFmt<0?"#EF4444":"#10B981"} size="lg"
                highlight={ttbStbdFmt!=null&&ttbStbdFmt<-10}/>
         <Gauge label="BSP"  value={R(row.bsp)}         unit="kn"   color="#10B981" size="sm"/>
-        <Gauge label="SOG"  value={R(row.sog)}         unit="kn"   color="#34D399" size="sm"/>
-        <Gauge label="TWS"  value={R(row.tws)}         unit="kn"   color="#06B6D4" size="sm"/>
-        <Gauge label="TWA"  value={`${R(row.twa,0)}°`} unit="true" color="#8B5CF6" size="sm"/>
-        <Gauge label="Heel" value={`${R(row.heel,0)}°`}unit="°"    color="#F59E0B" size="sm"/>
+        <Gauge label="SOG"  value={R(row.sog)}         unit="kn"   color="#FBBF24" size="sm"/>
+        <Gauge label="TWS"  value={R(row.tws)}         unit="kn"   color="#7DD3FC" size="sm"/>
+        <Gauge label="TWA"  value={`${R(row.twa,0)}°`} unit="true" color="#7DD3FC" size="sm"/>
+        <Gauge label="Heel" value={`${R(row.heel,0)}°`}unit="°"    color="#F97316" size="sm"/>
       </div>
     );
     if(mode==="reach") return(
       <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
         <Gauge label="BSP"     value={R(row.bsp)}                          unit="kn"       color="#10B981"/>
-        <Gauge label="Polar %" value={polPct!=null?R(polPct,0)+"%":"--"}   unit="vs polar" color="#F59E0B"/>
-        <Gauge label="Tgt BSP" value={targBsp!=null?R(targBsp):"--"}       unit="kn"       color="#34D399" size="sm"/>
-        <Gauge label="TWA"     value={`${R(row.twa,0)}°`}                  unit="true"     color="#8B5CF6" size="sm"/>
-        <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"       color="#06B6D4" size="sm"/>
-        <Gauge label="AWA"     value={awa!=null?`${R(awa,0)}°`:"--"}       unit="app"      color="#A78BFA" size="sm"/>
-        <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"        color="#F59E0B" size="sm"/>
+        <Gauge label="Polar %" value={polPct!=null?R(polPct,0)+"%":"--"}   unit="vs polar" color={polPct==null?"#22C55E":polPct>=110?"#166534":polPct>=90?"#22C55E":"#EF4444"}/>
+        <Gauge label="Tgt BSP" value={targBsp!=null?R(targBsp):"--"}       unit="kn"       color="#10B981" size="sm"/>
+        <Gauge label="TWA"     value={`${R(row.twa,0)}°`}                  unit="true"     color="#7DD3FC" size="sm"/>
+        <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"       color="#7DD3FC" size="sm"/>
+        <Gauge label="AWA"     value={awa!=null?`${R(awa,0)}°`:"--"}       unit="app"      color="#7DD3FC" size="sm"/>
+        <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"        color="#F97316" size="sm"/>
       </div>
     );
     // upwind / downwind — VMG as % of polar optimal
-    const vmgColor = vmgPct==null?"#22C55E":vmgPct>=100?"#10B981":vmgPct>=90?"#22C55E":"#F59E0B";
+    const vmgColor = vmgPct==null?"#22C55E":vmgPct>=110?"#166534":vmgPct>=90?"#22C55E":"#EF4444";
     return(
       <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
         <Gauge label="BSP"     value={R(row.bsp)}                          unit="kn"   color="#10B981"/>
         <Gauge label="VMG %"   value={vmgPct!=null?R(vmgPct,0)+"%":"--"}   unit={isUpwindAngle?"↑ opt":"↓ opt"} color={vmgColor}/>
-        <Gauge label="Tgt BSP" value={targBsp!=null?R(targBsp):"--"}       unit="kn"   color="#34D399" size="sm"/>
-        <Gauge label="TWA"     value={`${R(row.twa,0)}°`}                  unit="true" color="#8B5CF6" size="sm"/>
-        <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"   color="#06B6D4" size="sm"/>
-        <Gauge label="AWA"     value={awa!=null?`${R(awa,0)}°`:"--"}       unit="app"  color="#A78BFA" size="sm"/>
-        <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"    color="#F59E0B" size="sm"/>
+        <Gauge label="Tgt BSP" value={targBsp!=null?R(targBsp):"--"}       unit="kn"   color="#10B981" size="sm"/>
+        <Gauge label="TWA"     value={`${R(row.twa,0)}°`}                  unit="true" color="#7DD3FC" size="sm"/>
+        <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"   color="#7DD3FC" size="sm"/>
+        <Gauge label="AWA"     value={awa!=null?`${R(awa,0)}°`:"--"}       unit="app"  color="#7DD3FC" size="sm"/>
+        <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"    color="#F97316" size="sm"/>
       </div>
     );
   })();
@@ -637,7 +637,7 @@ function VideoCard({video,selected,onClick}){
       </div>
       <div style={{padding:"6px 9px"}}>
         <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
-        <div style={{fontSize:9,color:"#334155",marginBottom:4}}>{fmtDate(video.sessionDate)}{video.twsAvg!=null?` · TWS ${R(video.twsAvg)}kt`:""}{video.twaAvg!=null?` · TWA ${R(video.twaAvg,0)}°`:""}</div>
+        <div style={{fontSize:9,color:"#7DD3FC",marginBottom:4}}>{fmtDate(video.sessionDate)}{video.twsAvg!=null?` · TWS ${R(video.twsAvg)}kt`:""}{video.twaAvg!=null?` · TWA ${R(video.twaAvg,0)}°`:""}</div>
         {topRowTags.length>0&&(
           <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:realSailTags.length?3:0}}>
             {topRowTags.map(t=>{const{bg,bd,c}=tagColor(t);return(<span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>);})}
@@ -1730,15 +1730,15 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
         <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
         <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
         <g clipPath={`url(#${clipId})`}>
-          {visPol.length>1&&<path d={mkLine(visPol)} fill="none" stroke="#F59E0B" strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>}
-          {visTgt.length>1&&<path d={mkLine(visTgt)} fill="none" stroke="#10B981" strokeWidth="1.5" strokeLinejoin="round" opacity="0.7"/>}
+          {visPol.length>1&&<path d={mkLine(visPol)} fill="none" stroke="#22C55E" strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>}
+          {visTgt.length>1&&<path d={mkLine(visTgt)} fill="none" stroke="#22C55E" strokeWidth="1.5" strokeLinejoin="round" opacity="0.7"/>}
           {playUtc&&playUtc>=vx0&&playUtc<=vx1&&(()=>{const cx=px(playUtc);return(<g><line x1={cx} x2={cx} y1={pad.t} y2={pad.t+H} stroke="#F59E0B" strokeWidth="1.5" opacity="0.9"/><polygon points={`${cx-4},${pad.t} ${cx+4},${pad.t} ${cx},${pad.t+7}`} fill="#F59E0B" opacity="0.9"/></g>);})()}
           {isZoomed&&(()=>{const bx=pad.l,bw=W,by=pad.t+H+22,bh=3;const hx=bx+((vx0-allX0)/fullSpan)*bw;const hw=((vx1-vx0)/fullSpan)*bw;return(<g><rect x={bx} y={by} width={bw} height={bh} fill="#0F2030" rx="1"/><rect x={hx} y={by} width={Math.max(4,hw)} height={bh} fill="#F59E0B" rx="1" opacity="0.7"/></g>);})()}
         </g>
         {yTicks.map(y=><text key={y} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y}</text>)}
         {xTicks.map((x,i)=><text key={i} x={Math.max(pad.l+2,Math.min(pad.l+W-2,px(x)))} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
-        {polPts.length>0&&<><rect x={pad.l+4} y={4} width="8" height="5" fill="#F59E0B" rx="1"/><text x={pad.l+15} y={9} fontSize="8" fill="#F59E0B">Polar %</text></>}
-        {tgtPts.length>0&&<><rect x={pad.l+60} y={4} width="8" height="5" fill="#10B981" rx="1"/><text x={pad.l+71} y={9} fontSize="8" fill="#10B981">Target %</text></>}
+        {polPts.length>0&&<><rect x={pad.l+4} y={4} width="8" height="5" fill="#22C55E" rx="1"/><text x={pad.l+15} y={9} fontSize="8" fill="#22C55E">Polar %</text></>}
+        {tgtPts.length>0&&<><rect x={pad.l+60} y={4} width="8" height="5" fill="#22C55E" rx="1"/><text x={pad.l+71} y={9} fontSize="8" fill="#22C55E">Target %</text></>}
       </svg>
     </div>
   );
@@ -2203,7 +2203,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             <span style={{fontSize:9,color:"#F59E0B",fontWeight:700,letterSpacing:1,textTransform:"uppercase",flexShrink:0}}>▶ Now playing</span>
             <span style={{fontSize:11,fontFamily:"monospace",color:"#94A3B8"}}>{new Date(playUtc).toISOString().slice(11,19)} UTC</span>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              {[["TWS",liveRow.tws,"kn","#06B6D4"],["TWA",liveRow.twa,"°","#8B5CF6"],["BSP",liveRow.bsp,"kn","#10B981"],["SOG",liveRow.sog,"kn","#34D399"],["VMG",liveRow.vmg,"kn","#A78BFA"],["Heel",liveRow.heel,"°","#F59E0B"]].map(([l,v,u,c])=>(
+              {[["TWS",liveRow.tws,"kn","#7DD3FC"],["TWA",liveRow.twa,"°","#7DD3FC"],["BSP",liveRow.bsp,"kn","#10B981"],["SOG",liveRow.sog,"kn","#FBBF24"],["VMG",liveRow.vmg,"kn","#22C55E"],["Heel",liveRow.heel,"°","#F97316"]].map(([l,v,u,c])=>(
                 <div key={l} style={{display:"flex",alignItems:"baseline",gap:3}}>
                   <span style={{fontSize:9,color:"#334155"}}>{l}</span>
                   <span style={{fontSize:13,fontWeight:700,fontFamily:"monospace",color:c}}>{R(v,l==="TWA"||l==="Heel"?0:1)}</span>
@@ -2227,10 +2227,10 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
         ) : (
           <>
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
-              {card("Avg TWS",R(twsAvg),"kn","#06B6D4")}
+              {card("Avg TWS",R(twsAvg),"kn","#7DD3FC")}
               {card("Max TWS",R(twsMax),"kn","#7DD3FC")}
-              {card("Avg SOG",R(sogAvg),"kn","#10B981")}
-              {card("Max SOG",R(sogMax),"kn","#34D399")}
+              {card("Avg SOG",R(sogAvg),"kn","#FBBF24")}
+              {card("Max SOG",R(sogMax),"kn","#FBBF24")}
             </div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
               {card("Tacks",tacks,"","#1D9E75")}
@@ -2298,18 +2298,18 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                   <div>
                     <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div>
-                    <LineChart points={twsPts} color="#06B6D4" height={110} yLabel="TWS kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                    <LineChart points={twsPts} color="#7DD3FC" height={110} yLabel="TWS kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                   <div>
                     <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div>
-                    <LineChart points={sogPts} color="#10B981" height={110} yLabel="SOG kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                    <LineChart points={sogPts} color="#FBBF24" height={110} yLabel="SOG kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                 </div>
                 {/* ── Charts row 2: Heel + Polar % ─────────────────────────── */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                   <div>
                     <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div>
-                    <LineChart points={heelPts} color="#F59E0B" height={110} yLabel="Heel °" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                    <LineChart points={heelPts} color="#F97316" height={110} yLabel="Heel °" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                   <div>
                     <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div>
@@ -2405,15 +2405,15 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>b) TARGET BSP % (Vs_targ%) — vs TWS</div>
-                      {tgtPts.length>5?<XYPlot points={tgtPts} xLabel="TWS (kn)" yLabel="Target BSP %" color="#06B6D4" height={170} showTrend yLines={[100]}/>:noData}
+                      {tgtPts.length>5?<XYPlot points={tgtPts} xLabel="TWS (kn)" yLabel="Target BSP %" color="#10B981" height={170} showTrend yLines={[100]}/>:noData}
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>c) RUDDER ANGLE (|°|) — vs TWS</div>
-                      {rudPts.length>5?<XYPlot points={rudPts} xLabel="TWS (kn)" yLabel="Rudder |°|" color="#F59E0B" height={170} showTrend/>:noData}
+                      {rudPts.length>5?<XYPlot points={rudPts} xLabel="TWS (kn)" yLabel="Rudder |°|" color="#FBBF24" height={170} showTrend/>:noData}
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>d) HEEL ANGLE (|°|) — vs TWS</div>
-                      {heelPts2.length>5?<XYPlot points={heelPts2} xLabel="TWS (kn)" yLabel="Heel |°|" color="#8B5CF6" height={170} showTrend/>:noData}
+                      {heelPts2.length>5?<XYPlot points={heelPts2} xLabel="TWS (kn)" yLabel="Heel |°|" color="#F97316" height={170} showTrend/>:noData}
                     </div>
                   </div>
                 </>
@@ -2429,7 +2429,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                     const avgBsp=zone.length?zone.reduce((s,r)=>s+r.bsp,0)/zone.length:0;
                     const avgTws=zone.length?zone.reduce((s,r)=>s+r.tws,0)/zone.length:0;
                     const pct=rows.length?(zone.length/rows.length*100):0;
-                    return(<div key={label} style={{background:"#071624",borderRadius:6,padding:"8px 10px",marginBottom:6}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:10,color:"#94A3B8"}}>{label}</span><span style={{fontSize:9,color:"#475569"}}>{pct.toFixed(0)}% of session</span></div><div style={{display:"flex",gap:16}}><span style={{fontSize:11,fontFamily:"monospace",color:"#10B981"}}>BSP {R(avgBsp)} kn</span><span style={{fontSize:11,fontFamily:"monospace",color:"#06B6D4"}}>TWS {R(avgTws)} kn</span><span style={{fontSize:11,fontFamily:"monospace",color:"#475569"}}>{zone.length.toLocaleString()} pts</span></div></div>);
+                    return(<div key={label} style={{background:"#071624",borderRadius:6,padding:"8px 10px",marginBottom:6}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:10,color:"#94A3B8"}}>{label}</span><span style={{fontSize:9,color:"#475569"}}>{pct.toFixed(0)}% of session</span></div><div style={{display:"flex",gap:16}}><span style={{fontSize:11,fontFamily:"monospace",color:"#10B981"}}>BSP {R(avgBsp)} kn</span><span style={{fontSize:11,fontFamily:"monospace",color:"#7DD3FC"}}>TWS {R(avgTws)} kn</span><span style={{fontSize:11,fontFamily:"monospace",color:"#475569"}}>{zone.length.toLocaleString()} pts</span></div></div>);
                   })}
                 </div>
               </div>
@@ -2673,7 +2673,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>b) RUDDER ANGLE (|°|)</div>
-                      <TackChart series={tackSeries.rudder} yLabel="Rudder |°|" color="#F59E0B" height={130}
+                      <TackChart series={tackSeries.rudder} yLabel="Rudder |°|" color="#FBBF24" height={130}
                         selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     <div>
@@ -2683,7 +2683,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                     </div>
                     <div>
                       <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>d) TRUE WIND ANGLE (|°|)</div>
-                      <TackChart series={tackSeries.twa} yLabel="TWA |°|" color="#06B6D4" height={130}
+                      <TackChart series={tackSeries.twa} yLabel="TWA |°|" color="#7DD3FC" height={130}
                         selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     {tackPolar&&tackSeries.vmgPct.some(s=>s.length>1)&&(
@@ -2790,7 +2790,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 {allVideos.filter(v=>v.twsAvg!=null).map(v=>(
                   <div key={v.id} onClick={()=>{onSelectVideo(v);setActiveTab("library");}} style={{display:"flex",alignItems:"center",gap:10,background:"#071624",borderRadius:6,padding:"7px 10px",cursor:"pointer",border:"1px solid #1E3A5A"}}>
                     <div style={{fontSize:10,color:"#E2E8F0",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
-                    {[["TWS",v.twsAvg,"kt","#06B6D4"],["TWA",v.twaAvg,"°","#8B5CF6"],["VMG",v.vmgAvg,"kt","#10B981"],["Pol",v.polpercAvg,"%","#F59E0B"],["Tgt",v.vsTargPercAvg,"%","#EF4444"]].map(([l,val,u,c])=>(<div key={l} style={{textAlign:"center",minWidth:42}}><div style={{fontSize:8,color:"#334155"}}>{l}</div><div style={{fontSize:11,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}{u}</div></div>))}
+                    {[["TWS",v.twsAvg,"kt","#7DD3FC"],["TWA",v.twaAvg,"°","#7DD3FC"],["VMG",v.vmgAvg,"kt","#22C55E"],["Pol",v.polpercAvg,"%",v.polpercAvg==null?"#22C55E":v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"],["Tgt",v.vsTargPercAvg,"%",v.vsTargPercAvg==null?"#22C55E":v.vsTargPercAvg>=110?"#166534":v.vsTargPercAvg>=90?"#22C55E":"#EF4444"]].map(([l,val,u,c])=>(<div key={l} style={{textAlign:"center",minWidth:42}}><div style={{fontSize:8,color:"#334155"}}>{l}</div><div style={{fontSize:11,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}{u}</div></div>))}
                     <div style={{fontSize:9,color:"#334155"}}>→</div>
                   </div>
                 ))}
@@ -2899,8 +2899,8 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
       <div style={{padding:"12px 16px"}}>
         {video.twsAvg!=null&&(
           <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
-            {[["TWS",video.twsAvg,"kt","#06B6D4"],["TWA",video.twaAvg,"°","#8B5CF6"],["VMG",video.vmgAvg,"kt","#10B981"],
-              ["Polar%",video.polpercAvg,"%","#F59E0B"],["Target%",video.vsTargPercAvg,"%","#EF4444"],["BSP",video.bspAvg,"kt","#34D399"]]
+            {[["TWS",video.twsAvg,"kt","#7DD3FC"],["TWA",video.twaAvg,"°","#7DD3FC"],["VMG",video.vmgAvg,"kt","#22C55E"],
+              ["Polar%",video.polpercAvg,"%",video.polpercAvg==null?"#22C55E":video.polpercAvg>=110?"#166534":video.polpercAvg>=90?"#22C55E":"#EF4444"],["Target%",video.vsTargPercAvg,"%",video.vsTargPercAvg==null?"#22C55E":video.vsTargPercAvg>=110?"#166534":video.vsTargPercAvg>=90?"#22C55E":"#EF4444"],["BSP",video.bspAvg,"kt","#10B981"]]
               .map(([l,v,u,c])=>(
                 <div key={l} style={{background:"#0A1929",borderRadius:8,padding:"10px 10px",border:`1px solid ${c}20`,textAlign:"center"}}>
                   <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{l}</div>
@@ -2997,9 +2997,9 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
                       {v.twsAvg!=null&&(
                         <div style={{display:"flex",gap:10,fontSize:12}}>
-                          <span style={{color:"#06B6D4"}}>TWS {R(v.twsAvg)}kt</span>
-                          <span style={{color:"#8B5CF6"}}>TWA {R(v.twaAvg,0)}°</span>
-                          {v.polpercAvg!=null&&<span style={{color:"#F59E0B"}}>Pol {R(v.polpercAvg,0)}%</span>}
+                          <span style={{color:"#7DD3FC"}}>TWS {R(v.twsAvg)}kt</span>
+                          <span style={{color:"#7DD3FC"}}>TWA {R(v.twaAvg,0)}°</span>
+                          {v.polpercAvg!=null&&<span style={{color:v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"}}>Pol {R(v.polpercAvg,0)}%</span>}
                         </div>
                       )}
                       <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>
@@ -3545,7 +3545,7 @@ export default function SmartSailingAnalytics(){
                   </div>
                   {selectedVideo.twsAvg!=null&&(
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
-                      {[["Avg TWS",selectedVideo.twsAvg,"kt","#06B6D4"],["Avg TWA",selectedVideo.twaAvg,"°","#8B5CF6"],["Avg VMG",selectedVideo.vmgAvg,"kt","#10B981"],["Polar %",selectedVideo.polpercAvg,"%","#F59E0B"],["Target %",selectedVideo.vsTargPercAvg,"%","#EF4444"],["Avg BSP",selectedVideo.bspAvg,"kt","#34D399"]].map(([l,val,u,c])=>(<div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div><div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}<span style={{fontSize:10,marginLeft:2}}>{u}</span></div></div>))}
+                      {[["Avg TWS",selectedVideo.twsAvg,"kt","#7DD3FC"],["Avg TWA",selectedVideo.twaAvg,"°","#7DD3FC"],["Avg VMG",selectedVideo.vmgAvg,"kt","#22C55E"],["Polar %",selectedVideo.polpercAvg,"%",selectedVideo.polpercAvg==null?"#22C55E":selectedVideo.polpercAvg>=110?"#166534":selectedVideo.polpercAvg>=90?"#22C55E":"#EF4444"],["Target %",selectedVideo.vsTargPercAvg,"%",selectedVideo.vsTargPercAvg==null?"#22C55E":selectedVideo.vsTargPercAvg>=110?"#166534":selectedVideo.vsTargPercAvg>=90?"#22C55E":"#EF4444"],["Avg BSP",selectedVideo.bspAvg,"kt","#10B981"]].map(([l,val,u,c])=>(<div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div><div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}<span style={{fontSize:10,marginLeft:2}}>{u}</span></div></div>))}
                     </div>
                   )}
                   <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>

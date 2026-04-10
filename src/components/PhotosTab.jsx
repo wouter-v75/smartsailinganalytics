@@ -181,11 +181,11 @@ function renderOverlay(canvas,img,inst){
   const fs=Math.max(11,Math.round(14*scale)),pad=Math.round(12*scale);
   const bw=Math.round(90*scale),bh=Math.round(52*scale),gap=Math.round(8*scale);
   const gauges=[
-    {l:"TWS",v:inst.tws!=null?R(inst.tws)+" kn":"--",c:"#06B6D4"},
-    {l:"TWA",v:inst.twa!=null?R(inst.twa,0)+"°":"--",c:"#8B5CF6"},
-    {l:"AWA",v:inst.awa!=null?R(inst.awa,0)+"°":"--",c:"#A78BFA"},
+    {l:"TWS",v:inst.tws!=null?R(inst.tws)+" kn":"--",c:"#7DD3FC"},
+    {l:"TWA",v:inst.twa!=null?R(inst.twa,0)+"°":"--",c:"#7DD3FC"},
+    {l:"AWA",v:inst.awa!=null?R(inst.awa,0)+"°":"--",c:"#7DD3FC"},
     {l:"BSP",v:inst.bsp!=null?R(inst.bsp)+" kn":"--",c:"#10B981"},
-    {l:"Heel",v:inst.heel!=null?R(inst.heel,0)+"°":"--",c:"#F59E0B"},
+    {l:"Heel",v:inst.heel!=null?R(inst.heel,0)+"°":"--",c:"#F97316"},
     {l:"VMG",v:inst.vmg!=null?R(inst.vmg)+" kn":"--",c:"#22C55E"},
   ];
   const cols=3,rows=Math.ceil(gauges.length/cols);
@@ -279,8 +279,8 @@ function PhotoDetail({photo,onDelete,onUpload,uploading}){
       <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
         <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Instrument data</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-          {[["TWS",photo.tws,"kn","#06B6D4"],["TWA",photo.twa,"°","#8B5CF6"],["AWA",photo.awa,"°","#A78BFA"],
-            ["BSP",photo.bsp,"kn","#10B981"],["Heel",photo.heel,"°","#F59E0B"],["VMG",photo.vmg,"kn","#22C55E"]]
+          {[["TWS",photo.tws,"kn","#7DD3FC"],["TWA",photo.twa,"°","#7DD3FC"],["AWA",photo.awa,"°","#7DD3FC"],
+            ["BSP",photo.bsp,"kn","#10B981"],["Heel",photo.heel,"°","#F97316"],["VMG",photo.vmg,"kn","#22C55E"]]
             .map(([l,v,u,c])=>(
               <div key={l} style={{background:"#071624",borderRadius:6,padding:"7px 8px",border:`1px solid ${c}15`,textAlign:"center"}}>
                 <div style={{fontSize:8,color:"#334155",marginBottom:2}}>{l}</div>
