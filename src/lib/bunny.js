@@ -15,8 +15,8 @@ export async function checkCloudStatus() {
   }
 }
 
-// ── Create a Bunny Stream video and get upload credentials ────────────────────
-// Returns { streamId, uploadUrl, libraryId, apiKey } or null
+// ── Create a Bunny Stream video object ────────────────────────────────────────
+// Returns { streamId } or null
 export async function createStreamUpload(fileName, fileSizeBytes) {
   try {
     const res = await fetch("/api/stream/create", {
@@ -25,39 +25,66 @@ export async function createStreamUpload(fileName, fileSizeBytes) {
       body: JSON.stringify({ fileName, fileSizeBytes }),
     });
     if (!res.ok) return null;
-    return res.json();
+    return res.json(); // { streamId, libraryId, apiKey }
   } catch { return null; }
 }
 
-// ── Upload file to Bunny Stream via TUS protocol ──────────────────────────────
-// uploadInfo = { streamId, uploadUrl, libraryId, apiKey }
+// ── Upload file in chunks via server-side proxy ───────────────────────────────
+// Splits the file into CHUNK_SIZE pieces and PATCHes each one individually.
+// Each chunk is ≤ 4 MB — safe for Vercel Hobby's 4.5 MB request body limit.
+// Progress is reported as 0–100 across the whole file.
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB
+
 export async function uploadFileToStream(uploadInfo, file, onProgress) {
-  const { streamId, uploadUrl, libraryId, apiKey } = uploadInfo;
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", uploadUrl);
+  const { streamId } = uploadInfo;
 
-    // Bunny Stream TUS extension headers (required for auth)
-    xhr.setRequestHeader("AuthorizationSignature", apiKey);
-    xhr.setRequestHeader("AuthorizationExpire", "0");          // 0 = never expires
-    xhr.setRequestHeader("VideoId", streamId);
-    xhr.setRequestHeader("LibraryId", String(libraryId));
+  // 1. Initialise the TUS session with the total file size
+  try {
+    const initRes = await fetch("/api/stream/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, fileSize: file.size }),
+    });
+    if (!initRes.ok) {
+      const err = await initRes.json().catch(() => ({}));
+      console.error("TUS init failed:", err);
+      return false;
+    }
+  } catch (e) {
+    console.error("TUS init error:", e);
+    return false;
+  }
 
-    // Standard TUS headers
-    xhr.setRequestHeader("Content-Type", "application/offset+octet-stream");
-    xhr.setRequestHeader("Upload-Offset", "0");
-    xhr.setRequestHeader("Tus-Resumable", "1.0.0");
+  // 2. Upload chunks sequentially
+  let offset = 0;
+  while (offset < file.size) {
+    const end   = Math.min(offset + CHUNK_SIZE, file.size);
+    const chunk = file.slice(offset, end);
 
-    if (onProgress) {
-      xhr.upload.onprogress = e => {
-        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-      };
+    try {
+      const res = await fetch(
+        `/api/stream/upload?streamId=${encodeURIComponent(streamId)}&offset=${offset}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/offset+octet-stream" },
+          body: chunk,
+        }
+      );
+      // Bunny returns 204 on success; anything else is an error
+      if (res.status !== 204 && res.status !== 200) {
+        console.error(`Chunk at offset ${offset} failed: HTTP ${res.status}`);
+        return false;
+      }
+    } catch (e) {
+      console.error(`Chunk at offset ${offset} error:`, e);
+      return false;
     }
 
-    xhr.onload  = () => resolve(xhr.status >= 200 && xhr.status < 300);
-    xhr.onerror = () => resolve(false);
-    xhr.send(file);
-  });
+    offset = end;
+    onProgress?.(Math.round((offset / file.size) * 100));
+  }
+
+  return true;
 }
 
 // ── Poll until Bunny Stream video is ready (status 4) ────────────────────────
@@ -135,7 +162,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       status("✓ Event data uploaded to Bunny Storage");
     }
 
-    // 3. Videos → Stream
+    // 3. Videos → Stream (via server proxy)
     for (const video of videos) {
       if (!video.file && !video.objectUrl) continue;
 
