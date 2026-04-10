@@ -80,7 +80,7 @@ async function extractExif(file) {
     for(let i=0;i<n;i++){
       const eo=ifd+2+i*12, tag=g16(eo), type=g16(eo+2), cnt=g32(eo+4), vo=g32(eo+8);
       if((tag===0x0132||tag===0x9003||tag===0x9004)&&!dtStr)
-        dtStr=type===2&&cnt<=20?gStr(eo+8,cnt):gStr(vo,cnt);
+        dtStr=type===2&&cnt<=4?gStr(eo+8,cnt):gStr(vo,cnt);
       if(tag===0x8825) gpsOff=vo;
     }
     let lat=null,lon=null;
@@ -105,6 +105,18 @@ async function extractExif(file) {
     if(dtStr){const m=dtStr.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);if(m)utc=Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]);}
     return{utc,lat,lon};
   }catch{return null;}
+}
+
+// Load exifr from CDN for robust EXIF extraction (JPEG, HEIC, TIFF)
+function loadExifr() {
+  return new Promise((resolve,reject)=>{
+    if(window.exifr){resolve(window.exifr);return;}
+    const s=document.createElement("script");
+    s.src="https://unpkg.com/exifr@7.1.3/dist/full.umd.js";
+    s.onload=()=>resolve(window.exifr);
+    s.onerror=reject;
+    document.head.appendChild(s);
+  });
 }
 
 // Load heic2any from CDN for HEIC conversion
@@ -326,7 +338,14 @@ export default function PhotosTab({role,logData,xmlData,activeDate,cloudStatus,o
     const newPhotos=[];
     for(const file of imgs){
       try{
-        const exif = await extractExif(file);
+        let exif=null;
+        try{
+          const exifr=await loadExifr();
+          const data=await exifr.parse(file,{tiff:true,exif:true,gps:true,ifd0:true});
+          const dt=data?.DateTimeOriginal||data?.DateTime;
+          const utc=dt instanceof Date?dt.getTime():null;
+          exif={utc,lat:data?.latitude||null,lon:data?.longitude||null,camera:data?.Model||null};
+        }catch{exif=await extractExif(file);}
         addLog(`${file.name.slice(0,25)}: ${exif?.utc?new Date(exif.utc).toISOString().slice(11,16)+" UTC":"no timestamp"}${exif?.lat?" 📍":""}`);
         let jpeg;
         try{jpeg=await convertToJpeg(file);}catch{jpeg=file;}
