@@ -1,28 +1,8 @@
 // src/lib/bunny.js
 // ─────────────────────────────────────────────────────────────────────────────
 // SmartSailingAnalytics — Bunny.net Storage + Stream integration
-//
-// Drop-in replacement for cloudflare.js — identical exported function names
-// so only the import line in the UI changes.
-//
-// All functions return null/false silently when cloud is not configured,
-// so Phase 1 (local-only) continues working with zero changes.
-//
-// REQUIRED ENV VARS (set in Vercel dashboard):
-//   BUNNY_STORAGE_API_KEY     — Storage Zone password (from zone settings)
-//   BUNNY_STORAGE_ZONE        — Storage zone name  e.g. "smartsailinganalytics"
-//   BUNNY_STORAGE_REGION      — Storage region: de|ny|la|sg|se|br|jh  (default: de)
-//   BUNNY_STREAM_API_KEY      — Stream library API key
-//   BUNNY_STREAM_LIBRARY_ID   — Stream library ID (numeric)
-//   BUNNY_CDN_HOSTNAME        — CDN pull zone hostname e.g. "ssa.b-cdn.net"
-//
-// Data layout in Bunny Storage:
-//   sessions/{date}/log.json      — parsed log rows array
-//   sessions/{date}/events.json   — parsed XML events object
-//   sessions/{date}/meta.json     — session metadata + video IDs
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Cloud availability check (client-side safe) ───────────────────────────────
 export async function checkCloudStatus() {
   try {
     const res = await fetch("/api/cloud/status", {
@@ -35,8 +15,8 @@ export async function checkCloudStatus() {
   }
 }
 
-// ── Create a Bunny Stream video + TUS upload URL ───────────────────────────────
-// Returns { streamId, uploadUrl } or null
+// ── Create a Bunny Stream video and get upload credentials ────────────────────
+// Returns { streamId, uploadUrl, libraryId, apiKey } or null
 export async function createStreamUpload(fileName, fileSizeBytes) {
   try {
     const res = await fetch("/api/stream/create", {
@@ -45,16 +25,25 @@ export async function createStreamUpload(fileName, fileSizeBytes) {
       body: JSON.stringify({ fileName, fileSizeBytes }),
     });
     if (!res.ok) return null;
-    return res.json(); // { streamId, uploadUrl }
+    return res.json();
   } catch { return null; }
 }
 
-// ── Upload file directly to Bunny Stream TUS endpoint ─────────────────────────
-// Returns true on success
-export async function uploadFileToStream(uploadUrl, file, onProgress) {
+// ── Upload file to Bunny Stream via TUS protocol ──────────────────────────────
+// uploadInfo = { streamId, uploadUrl, libraryId, apiKey }
+export async function uploadFileToStream(uploadInfo, file, onProgress) {
+  const { streamId, uploadUrl, libraryId, apiKey } = uploadInfo;
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("PATCH", uploadUrl);
+    xhr.open("POST", uploadUrl);
+
+    // Bunny Stream TUS extension headers (required for auth)
+    xhr.setRequestHeader("AuthorizationSignature", apiKey);
+    xhr.setRequestHeader("AuthorizationExpire", "0");          // 0 = never expires
+    xhr.setRequestHeader("VideoId", streamId);
+    xhr.setRequestHeader("LibraryId", String(libraryId));
+
+    // Standard TUS headers
     xhr.setRequestHeader("Content-Type", "application/offset+octet-stream");
     xhr.setRequestHeader("Upload-Offset", "0");
     xhr.setRequestHeader("Tus-Resumable", "1.0.0");
@@ -71,7 +60,7 @@ export async function uploadFileToStream(uploadUrl, file, onProgress) {
   });
 }
 
-// ── Poll until Bunny Stream video is ready ────────────────────────────────────
+// ── Poll until Bunny Stream video is ready (status 4) ────────────────────────
 export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
@@ -87,7 +76,7 @@ export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
   return null;
 }
 
-// ── Upload JSON data to Bunny Storage ─────────────────────────────────────────
+// ── Upload JSON to Bunny Storage ──────────────────────────────────────────────
 export async function uploadJsonToStorage(key, data) {
   try {
     const res = await fetch("/api/bunny/storage", {
@@ -108,7 +97,7 @@ export async function fetchFromStorage(key) {
   } catch { return null; }
 }
 
-// ── List all sessions stored in Bunny Storage ─────────────────────────────────
+// ── List all cloud sessions ───────────────────────────────────────────────────
 export async function listR2Sessions() {
   try {
     const res = await fetch("/api/bunny/sessions");
@@ -117,13 +106,13 @@ export async function listR2Sessions() {
   } catch { return []; }
 }
 
-// ── Full sync: push one session to Bunny Storage + Stream ─────────────────────
+// ── Full session sync to Bunny Storage + Stream ───────────────────────────────
 export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus) {
   const status = msg => onStatus?.(msg);
   const result = { success: false, streamIds: {} };
 
   try {
-    // 1. Push log rows to Storage
+    // 1. Log rows → Storage
     if (logData?.rows?.length) {
       status(`Uploading log data to Bunny Storage (${logData.rows.length.toLocaleString()} rows)…`);
       const ok = await uploadJsonToStorage(`sessions/${date}/log.json`, {
@@ -136,7 +125,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       status("✓ Log data uploaded to Bunny Storage");
     }
 
-    // 2. Push XML events to Storage
+    // 2. XML events → Storage
     if (xmlData) {
       status("Uploading event data to Bunny Storage…");
       const ok = await uploadJsonToStorage(`sessions/${date}/events.json`, {
@@ -146,13 +135,13 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       status("✓ Event data uploaded to Bunny Storage");
     }
 
-    // 3. Upload each video to Bunny Stream
+    // 3. Videos → Stream
     for (const video of videos) {
       if (!video.file && !video.objectUrl) continue;
 
       status(`Creating Bunny Stream video for ${video.name}…`);
-      const upload = await createStreamUpload(video.name, video.size);
-      if (!upload) { status(`Stream create failed for ${video.name}`); continue; }
+      const uploadInfo = await createStreamUpload(video.name, video.size);
+      if (!uploadInfo) { status(`Stream create failed for ${video.name}`); continue; }
 
       status(`Uploading ${video.name} to Bunny Stream (${(video.size / 1e6).toFixed(0)} MB)…`);
 
@@ -162,16 +151,17 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       }
 
       const uploaded = await uploadFileToStream(
-        upload.uploadUrl, file,
+        uploadInfo,
+        file,
         pct => status(`Uploading ${video.name}… ${pct}%`)
       );
 
       if (!uploaded) { status(`Stream upload failed for ${video.name}`); continue; }
-      result.streamIds[video.id] = upload.streamId;
-      status(`✓ ${video.name} uploaded to Stream (ID: ${upload.streamId.slice(0, 8)}…)`);
+      result.streamIds[video.id] = uploadInfo.streamId;
+      status(`✓ ${video.name} uploaded to Stream (ID: ${uploadInfo.streamId.slice(0, 8)}…)`);
     }
 
-    // 4. Save session meta to Storage
+    // 4. Session meta → Storage
     const meta = {
       date,
       boat:       xmlData?.meta?.boat     || null,
@@ -198,12 +188,12 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
     return result;
 
   } catch (err) {
-    status(`Sync error: ${err.message}`);
+    status(`Sync error: ${err instanceof Error ? err.message : String(err)}`);
     return result;
   }
 }
 
-// ── Fetch older session from Bunny Storage + Stream ───────────────────────────
+// ── Fetch a session from cloud ────────────────────────────────────────────────
 export async function fetchCloudSession(date) {
   const [meta, logData, xmlData] = await Promise.all([
     fetchFromStorage(`sessions/${date}/meta.json`),
@@ -212,7 +202,6 @@ export async function fetchCloudSession(date) {
   ]);
   if (!meta) return null;
 
-  // Resolve each video's Stream playback URL
   const videos = await Promise.all((meta.videos || []).map(async v => {
     let playbackUrl = null, thumbnailUrl = null;
     if (v.streamId) {
@@ -245,7 +234,7 @@ export async function fetchCloudSession(date) {
 
 // ── Delete a video from Bunny Stream ─────────────────────────────────────────
 export async function deleteStreamVideo(streamId) {
-  if (!streamId) return true; // nothing to delete
+  if (!streamId) return true;
   try {
     const res = await fetch("/api/stream/delete", {
       method: "DELETE",
