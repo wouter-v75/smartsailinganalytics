@@ -25,7 +25,7 @@ export async function GET() {
     // Bunny returns JSON array of file/folder objects
     const items: { ObjectName: string; IsDirectory: boolean }[] = await res.json();
     const dates = items
-      .filter(i => i.IsDirectory && /^\d{4}-\d{2}-\d{2}$/.test(i.ObjectName))
+      .filter(i => i.IsDirectory && /^\d{4}-\d{2}-\d{2}$/.test(i.ObjectName) && parseInt(i.ObjectName.slice(0,4)) >= 2000 && parseInt(i.ObjectName.slice(0,4)) <= 2100)
       .map(i => ({ date: i.ObjectName, source: "cloud" }))
       .sort((a, b) => b.date.localeCompare(a.date));
 
