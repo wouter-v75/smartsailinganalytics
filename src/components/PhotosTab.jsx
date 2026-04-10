@@ -108,6 +108,17 @@ async function extractExif(file) {
 }
 
 // Load heic2any from CDN for HEIC conversion
+function loadExifr() {
+  return new Promise((resolve,reject)=>{
+    if(window.exifr){resolve(window.exifr);return;}
+    const s=document.createElement("script");
+    s.src="https://unpkg.com/exifr@7.1.3/dist/full.umd.js";
+    s.onload=()=>resolve(window.exifr);
+    s.onerror=reject;
+    document.head.appendChild(s);
+  });
+}
+
 function loadHeic2any() {
   return new Promise((resolve,reject)=>{
     if(window.heic2any){resolve(window.heic2any);return;}
@@ -326,7 +337,14 @@ export default function PhotosTab({role,logData,xmlData,activeDate,cloudStatus,o
     const newPhotos=[];
     for(const file of imgs){
       try{
-        const exif = await extractExif(file);
+        let exif=null;
+        try{
+          const exifr=await loadExifr();
+          const data=await exifr.parse(file,{tiff:true,exif:true,gps:true,ifd0:true});
+          const dt=data?.DateTimeOriginal||data?.DateTime;
+          const utc=dt?dt.getTime():null;
+          exif={utc,lat:data?.latitude||null,lon:data?.longitude||null};
+        }catch{exif=await extractExif(file);}
         addLog(`${file.name.slice(0,25)}: ${exif?.utc?new Date(exif.utc).toISOString().slice(11,16)+" UTC":"no timestamp"}${exif?.lat?" 📍":""}`);
         let jpeg;
         try{jpeg=await convertToJpeg(file);}catch{jpeg=file;}
