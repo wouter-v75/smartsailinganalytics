@@ -8,7 +8,7 @@ function makeBunnyAuth(streamId: string) {
   const expiry = Math.floor(Date.now() / 1000) + 7200;
   const signature = crypto
     .createHash("sha256")
-    .update(LIBRARY_ID + STREAM_KEY + expiry + streamId)
+    .update(LIBRARY_ID + STREAM_KEY + String(expiry) + streamId)
     .digest("hex");
   return { signature, expiry: String(expiry) };
 }
@@ -31,6 +31,7 @@ function tusHeaders(streamId: string, extra: Record<string, string> = {}) {
 // Body: { streamId: string, fileSize: number }
 // Returns: { locationUrl, signature, expiry, libraryId }
 export async function POST(req: NextRequest) {
+  console.error("DEBUG TUS auth:", STREAM_KEY?.slice(0,8), LIBRARY_ID);
   if (!STREAM_KEY || !LIBRARY_ID)
     return NextResponse.json({ error: "Bunny Stream not configured" }, { status: 503 });
 
@@ -54,9 +55,10 @@ export async function POST(req: NextRequest) {
     const rawLocation = res.headers.get("Location") ?? "/tusupload";
     const locationUrl = rawLocation.startsWith("http") ? rawLocation : `https://video.bunnycdn.com${rawLocation}`;
 
+    const { signature, expiry } = makeBunnyAuth(streamId);
     // Return location + fresh auth so the browser can PATCH directly
   
-    return NextResponse.json({ locationUrl, signature: STREAM_KEY, expiry: String(Math.floor(Date.now() / 1000) + 7200), libraryId: String(LIBRARY_ID) });
+    return NextResponse.json({ locationUrl, signature, expiry: String(expiry), libraryId: String(LIBRARY_ID) });
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
