@@ -3426,7 +3426,7 @@ export default function SmartSailingAnalytics(){
                     try{
                       let curVid=null;
                       await syncSessionToCloud(activeDate,logD,xmlD,
-                        vids.map(v=>({...v,file:null})), // cloud-only: no blobs, just metadata + existing stream
+                        vids,
                         msg=>{
                           if(libSyncAbortRef.current)return;
                           if(msg.includes("log")&&msg.includes("✓")) setItem("log",{state:"done",pct:100});
