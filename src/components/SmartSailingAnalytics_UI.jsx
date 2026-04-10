@@ -267,6 +267,7 @@ function parseXmlEvents(text,offsetMin=0){
 }
 
 // ─── POLAR (see src/lib/polarCalc.js) ──────────────────────────────────────
+import PhotosTab from "./PhotosTab";
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   buildSpline, evalSpline, goldenMax, preparePolar,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
@@ -3003,6 +3004,7 @@ function MobileShell(props){
   const tabDefs=[
     {id:"library",  icon:"📹", label:"Library"},
     {id:"analytics",icon:"📊", label:"Analytics"},
+    {id:"photos",   icon:"📷", label:"Photos"},
     {id:"upload",   icon:"⬆", label:"Upload"},
     {id:"admin",    icon:"⚙",  label:"Admin"},
   ];
@@ -3057,6 +3059,11 @@ function MobileShell(props){
         )}
 
         {/* Upload */}
+        {activeTab==="photos"&&(
+          <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
+            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos}/>
+          </div>
+        )}
         {activeTab==="upload"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
             <UploadTab role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported}/>
@@ -3146,6 +3153,7 @@ export default function SmartSailingAnalytics(){
   const[aiLoading,setAiLoading]=useState(false);
   const[loaded,setLoaded]=useState(false);
   const[playUtc,setPlayUtc]=useState(null);
+  const[photos,setPhotos]=useState([]);
   const[hasMountedAnalytics,setHasMountedAnalytics]=useState(false);
   const playUtcThrottle=useRef(0);
   const[libSyncProgress,setLibSyncProgress]=useState(null);
@@ -3309,7 +3317,7 @@ export default function SmartSailingAnalytics(){
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:16}}>⚓</span><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Smart</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{display:"flex",gap:2,marginLeft:10}}>
-          {["library","analytics","upload","admin"].map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
+          {["library","analytics","photos","upload","admin"].map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
         </nav>
         <div style={{flex:1}}/>
         <div style={{display:"flex",gap:5,width:290}}>
@@ -3559,6 +3567,11 @@ export default function SmartSailingAnalytics(){
         )}
 
         {/* ── UPLOAD & ADMIN — standard conditional render ─────────────────── */}
+        {activeTab==="photos"&&(
+          <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
+            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos}/>
+          </div>
+        )}
         {activeTab==="upload"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
             <UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/>
