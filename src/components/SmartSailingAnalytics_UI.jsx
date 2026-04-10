@@ -3407,7 +3407,7 @@ export default function SmartSailingAnalytics(){
                 <span style={{fontSize:10,color:"#1E3A5A"}}>{displayed.length} clip{displayed.length!==1?"s":""}</span>
                 <div style={{flex:1}}/>
                 {/* ── Sync ↑ button — visible when session has unsynced local data ── */}
-                {cloudStatus?.available&&perms.canSync&&unsyncedCount>0&&(
+                {cloudStatus?.available&&perms.canSync&&(logData||xmlData||allVideos.length>0)&&(
                   <button onClick={async()=>{
                     const vids=await getVideosForDate(activeDate);
                     const logD=await getLogData(activeDate);
@@ -3454,7 +3454,7 @@ export default function SmartSailingAnalytics(){
                   style={{background:"#8B5CF6",border:"none",borderRadius:5,padding:"3px 10px",
                     color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,display:"flex",
                     alignItems:"center",gap:4}}>
-                    ↑ Sync{unsyncedCount>0?` (${unsyncedCount})`:""}
+                    ↑ {unsyncedCount>0?"Sync":"Re-sync"}{unsyncedCount>0?` (${unsyncedCount})`:""}
                   </button>
                 )}
                 {xmlData&&allVideos.length>0&&perms.canImport&&(
