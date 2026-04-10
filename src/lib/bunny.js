@@ -1,9 +1,10 @@
 // src/lib/bunny.js
 // ─────────────────────────────────────────────────────────────────────────────
 // SmartSailingAnalytics — Bunny.net Storage + Stream integration
+//
+// Video upload uses the official tus-js-client library loaded from CDN.
+// Server generates signed credentials; browser uploads directly to Bunny.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB — no Vercel limits on direct upload
 
 export async function checkCloudStatus() {
   try {
@@ -25,78 +26,70 @@ export async function createStreamUpload(fileName, fileSizeBytes) {
   } catch { return null; }
 }
 
-// ── Upload file directly from browser to Bunny Stream ────────────────────────
-// Flow:
-//   1. POST /api/stream/upload  → server initialises TUS session with Bunny,
-//                                 reads the Location header, returns it + auth.
-//   2. Browser PATCHes chunks directly to that locationUrl — bypasses Vercel.
-export async function uploadFileToStream(uploadInfo, file, onProgress) {
-  const { streamId } = uploadInfo;
-
-  // Step 1 — init TUS session server-side to get the upload Location URL
-  let locationUrl, signature, expiry, libraryId;
-  try {
-    const initRes = await fetch("/api/stream/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ streamId, fileSize: file.size }),
-    });
-    if (!initRes.ok) {
-      const err = await initRes.json().catch(() => ({}));
-      console.error("TUS init failed:", err);
-      return false;
-    }
-    ({ locationUrl, signature, expiry, libraryId } = await initRes.json());
-  } catch (e) {
-    console.error("TUS init error:", e);
-    return false;
-  }
-
-  // Auth headers sent with every PATCH chunk directly to Bunny
-  const tusHeaders = {
-    AuthorizationSignature: signature,
-    AuthorizationExpire:    expiry,
-    VideoId:                streamId,
-    LibraryId:              libraryId,
-    "Tus-Resumable":        "1.0.0",
-  };
-
-  // Step 2 — upload chunks directly to Bunny (locationUrl from init response)
-  let offset = 0;
-  while (offset < file.size) {
-    const end   = Math.min(offset + CHUNK_SIZE, file.size);
-    const chunk = file.slice(offset, end);
-
-    const ok = await patchChunk(locationUrl, tusHeaders, chunk, offset);
-    if (!ok) {
-      console.warn(`Chunk at ${offset} failed, retrying…`);
-      const retryOk = await patchChunk(locationUrl, tusHeaders, chunk, offset);
-      if (!retryOk) {
-        console.error(`Chunk at ${offset} failed after retry`);
-        return false;
-      }
-    }
-
-    offset = end;
-    onProgress?.(Math.round((offset / file.size) * 100));
-  }
-
-  return true;
-}
-
-function patchChunk(locationUrl, tusHeaders, chunk, offset) {
-  return new Promise(resolve => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PATCH", locationUrl);
-    Object.entries(tusHeaders).forEach(([k, v]) => xhr.setRequestHeader(k, v));
-    xhr.setRequestHeader("Content-Type",  "application/offset+octet-stream");
-    xhr.setRequestHeader("Upload-Offset", String(offset));
-    xhr.onload  = () => resolve(xhr.status === 204 || xhr.status === 200);
-    xhr.onerror = () => resolve(false);
-    xhr.send(chunk);
+// ── Load tus-js-client from CDN ───────────────────────────────────────────────
+function loadTus() {
+  return new Promise((resolve, reject) => {
+    if (window.tus) { resolve(window.tus); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/tus-js-client/3.1.0/tus.min.js";
+    s.onload = () => resolve(window.tus);
+    s.onerror = reject;
+    document.head.appendChild(s);
   });
 }
 
+// ── Upload file directly from browser to Bunny Stream via tus-js-client ───────
+// Server generates signed credentials; tus client handles init + chunking.
+export async function uploadFileToStream(uploadInfo, file, onProgress) {
+  const { streamId } = uploadInfo;
+
+  // Get signed credentials from server (keeps API key secret)
+  const credRes = await fetch("/api/stream/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ streamId, fileSize: file.size }),
+  });
+  if (!credRes.ok) {
+    console.error("Failed to get upload credentials:", await credRes.json());
+    return false;
+  }
+  const { signature, expiry, libraryId } = await credRes.json();
+
+  const tus = await loadTus();
+
+  return new Promise((resolve) => {
+    const upload = new tus.Upload(file, {
+      endpoint: "https://video.bunnycdn.com/tusupload",
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      headers: {
+        AuthorizationSignature: signature,
+        AuthorizationExpire:    expiry,
+        VideoId:                streamId,
+        LibraryId:              libraryId,
+      },
+      metadata: {
+        filetype: file.type,
+        title:    file.name,
+      },
+      onProgress(bytesUploaded, bytesTotal) {
+        onProgress?.(Math.round((bytesUploaded / bytesTotal) * 100));
+      },
+      onSuccess() { resolve(true); },
+      onError(err) {
+        console.error("tus upload error:", err);
+        resolve(false);
+      },
+    });
+
+    // Resume previous upload if possible
+    upload.findPreviousUploads().then(previous => {
+      if (previous.length) upload.resumeFromPreviousUpload(previous[0]);
+      upload.start();
+    });
+  });
+}
+
+// ── Poll until Bunny Stream video is ready (status 4) ────────────────────────
 export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
@@ -109,6 +102,7 @@ export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
   return null;
 }
 
+// ── Upload JSON to Bunny Storage ──────────────────────────────────────────────
 export async function uploadJsonToStorage(key, data) {
   try {
     const res = await fetch("/api/bunny/storage", {
@@ -120,6 +114,7 @@ export async function uploadJsonToStorage(key, data) {
   } catch { return false; }
 }
 
+// ── Fetch JSON from Bunny Storage ─────────────────────────────────────────────
 export async function fetchFromStorage(key) {
   try {
     const res = await fetch(`/api/bunny/storage?key=${encodeURIComponent(key)}`);
@@ -128,6 +123,7 @@ export async function fetchFromStorage(key) {
   } catch { return null; }
 }
 
+// ── List all cloud sessions ───────────────────────────────────────────────────
 export async function listR2Sessions() {
   try {
     const res = await fetch("/api/bunny/sessions");
@@ -136,6 +132,7 @@ export async function listR2Sessions() {
   } catch { return []; }
 }
 
+// ── Full session sync ─────────────────────────────────────────────────────────
 export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus) {
   const status = msg => onStatus?.(msg);
   const result = { success: false, streamIds: {} };
@@ -189,6 +186,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
   }
 }
 
+// ── Fetch a session from cloud ────────────────────────────────────────────────
 export async function fetchCloudSession(date) {
   const [meta, logData, xmlData] = await Promise.all([
     fetchFromStorage(`sessions/${date}/meta.json`),
@@ -208,12 +206,13 @@ export async function fetchCloudSession(date) {
   }));
   return {
     meta,
-    logData:  logData  ? { ...logData,  source: "cloud" } : null,
-    xmlData:  xmlData  ? { ...xmlData,  source: "cloud" } : null,
+    logData: logData ? { ...logData, source: "cloud" } : null,
+    xmlData: xmlData ? { ...xmlData, source: "cloud" } : null,
     videos,
   };
 }
 
+// ── Delete a video from Bunny Stream ─────────────────────────────────────────
 export async function deleteStreamVideo(streamId) {
   if (!streamId) return true;
   try {

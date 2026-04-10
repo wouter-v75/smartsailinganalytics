@@ -4,34 +4,10 @@ import crypto from "crypto";
 const STREAM_KEY = process.env.BUNNY_STREAM_API_KEY!;
 const LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID!;
 
-function makeBunnyAuth(streamId: string) {
-  const expiry = Math.floor(Date.now() / 1000) + 7200;
-  const signature = crypto
-    .createHash("sha256")
-    .update(LIBRARY_ID + STREAM_KEY + String(expiry) + streamId)
-    .digest("hex");
-  return { signature, expiry: String(expiry) };
-}
-
-function tusHeaders(streamId: string, extra: Record<string, string> = {}) {
-
-  return {
-    AuthorizationSignature: makeBunnyAuth(streamId).signature,
-    AuthorizationExpire:    makeBunnyAuth(streamId).expiry,
-    VideoId:                streamId,
-    LibraryId:              String(LIBRARY_ID),
-    "Tus-Resumable":        "1.0.0",
-    ...extra,
-  };
-}
-
 // POST /api/stream/upload
-// Initialises a TUS session with Bunny server-side so we can read the
-// Location header (not accessible from the browser due to CORS).
-// Body: { streamId: string, fileSize: number }
-// Returns: { locationUrl, signature, expiry, libraryId }
+// Returns signed credentials for the browser to upload directly via tus-js-client.
+// Signature = SHA256(libraryId + apiKey + expiry + videoId)
 export async function POST(req: NextRequest) {
-  console.error("DEBUG TUS auth:", STREAM_KEY?.slice(0,8), LIBRARY_ID);
   if (!STREAM_KEY || !LIBRARY_ID)
     return NextResponse.json({ error: "Bunny Stream not configured" }, { status: 503 });
 
@@ -39,27 +15,16 @@ export async function POST(req: NextRequest) {
   if (!streamId || !fileSize)
     return NextResponse.json({ error: "streamId and fileSize required" }, { status: 400 });
 
-  try {
-    const res = await fetch("https://video.bunnycdn.com/tusupload", {
-      method: "POST",
-      headers: tusHeaders(streamId, { "Upload-Length": String(fileSize) }),
-    });
+  const expiry = Math.floor(Date.now() / 1000) + 86400; // 24 hours
+  const signature = crypto
+    .createHash("sha256")
+    .update(`${LIBRARY_ID}${STREAM_KEY}${expiry}${streamId}`)
+    .digest("hex");
 
-    if (!res.ok) {
-      const body = await res.text();
-      console.error("Bunny TUS init failed:", res.status, body);
-      return NextResponse.json({ error: `TUS init HTTP ${res.status}: ${body}` }, { status: 500 });
-    }
-
-    // Read the Location header — this is the URL the browser must PATCH to
-    const rawLocation = res.headers.get("Location") ?? "/tusupload";
-    const locationUrl = rawLocation.startsWith("http") ? rawLocation : `https://video.bunnycdn.com${rawLocation}`;
-
-    const { signature, expiry } = makeBunnyAuth(streamId);
-    // Return location + fresh auth so the browser can PATCH directly
-  
-    return NextResponse.json({ locationUrl, signature, expiry: String(expiry), libraryId: String(LIBRARY_ID) });
-  } catch (e: unknown) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
-  }
+  return NextResponse.json({
+    signature,
+    expiry:    String(expiry),
+    libraryId: String(LIBRARY_ID),
+    streamId,
+  });
 }
