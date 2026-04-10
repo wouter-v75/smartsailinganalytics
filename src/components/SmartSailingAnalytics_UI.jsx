@@ -3084,7 +3084,7 @@ function MobileShell(props){
         {/* Upload */}
         {activeTab==="photos"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos}/>
+            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={sessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos}/>
           </div>
         )}
         {activeTab==="upload"&&(
@@ -3592,7 +3592,7 @@ export default function SmartSailingAnalytics(){
         {/* ── UPLOAD & ADMIN — standard conditional render ─────────────────── */}
         {activeTab==="photos"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos}/>
+            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={sessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos}/>
           </div>
         )}
         {activeTab==="upload"&&(
