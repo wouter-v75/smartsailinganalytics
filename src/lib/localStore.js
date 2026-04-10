@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_NAME = "ssa-db";
-const DB_VER  = 3;
+const DB_VER  = 4;
 const TODAY   = () => new Date().toISOString().slice(0, 10);
 
 // ── IndexedDB bootstrap ──────────────────────────────────────────────────────
@@ -34,6 +34,9 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains("xml_data")) {
         db.createObjectStore("xml_data", { keyPath: "date" });
+      }
+      if (!db.objectStoreNames.contains("photos")) {
+        db.createObjectStore("photos", { keyPath: "id" });
       }
     };
     req.onsuccess = e => resolve(e.target.result);
