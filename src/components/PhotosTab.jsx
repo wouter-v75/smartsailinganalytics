@@ -107,8 +107,30 @@ async function extractExif(file) {
   }catch{return null;}
 }
 
+// Load heic2any from CDN for HEIC conversion
+function loadHeic2any() {
+  return new Promise((resolve,reject)=>{
+    if(window.heic2any){resolve(window.heic2any);return;}
+    const s=document.createElement("script");
+    s.src="https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js";
+    s.onload=()=>resolve(window.heic2any);
+    s.onerror=reject;
+    document.head.appendChild(s);
+  });
+}
+
 async function convertToJpeg(file) {
   if(file.type==="image/jpeg") return file;
+
+  // HEIC/HEIF — use heic2any library
+  const isHeic = file.type==="image/heic"||file.type==="image/heif"||/\.(heic|heif)$/i.test(file.name);
+  if(isHeic){
+    const heic2any = await loadHeic2any();
+    const blob = await heic2any({blob:file, toType:"image/jpeg", quality:0.92});
+    return new File([blob], file.name.replace(/\.[^.]+$/,".jpg"), {type:"image/jpeg"});
+  }
+
+  // PNG/WebP — convert via canvas
   return new Promise((resolve,reject)=>{
     const url=URL.createObjectURL(file);
     const img=new Image();
@@ -116,7 +138,10 @@ async function convertToJpeg(file) {
       const c=document.createElement("canvas");
       c.width=img.naturalWidth;c.height=img.naturalHeight;
       c.getContext("2d").drawImage(img,0,0);
-      c.toBlob(blob=>{URL.revokeObjectURL(url);blob?resolve(new File([blob],file.name.replace(/\.[^.]+$/,".jpg"),{type:"image/jpeg"})):reject(new Error("Conversion failed"));},"image/jpeg",0.92);
+      c.toBlob(blob=>{
+        URL.revokeObjectURL(url);
+        blob?resolve(new File([blob],file.name.replace(/\.[^.]+$/,".jpg"),{type:"image/jpeg"})):reject(new Error("Conversion failed"));
+      },"image/jpeg",0.92);
     };
     img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error("Load failed"));};
     img.src=url;
