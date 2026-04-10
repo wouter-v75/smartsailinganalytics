@@ -63,7 +63,7 @@ export async function uploadFileToStream(uploadInfo, file, onProgress) {
 
     try {
       const res = await fetch(
-        `/api/stream/upload?streamId=${encodeURIComponent(streamId)}&offset=${offset}`,
+        `/api/stream/chunk?streamId=${encodeURIComponent(streamId)}&offset=${offset}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/offset+octet-stream" },
