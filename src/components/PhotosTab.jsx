@@ -243,7 +243,7 @@ function PhotoCard({photo,selected,onClick}){
       </div>
       <div style={{padding:"6px 9px"}}>
         <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{photo.name||"Photo"}</div>
-        <div style={{fontSize:9,color:"#334155",marginBottom:sails.length?4:0}}>{photo.tws!=null?`TWS ${R(photo.tws)}kn`:""}{ photo.twa!=null?` · TWA ${R(photo.twa,0)}°`:""}</div>
+        <div style={{fontSize:9,color:"#7DD3FC",marginBottom:sails.length?4:0}}>{photo.tws!=null?`TWS ${R(photo.tws)}kn`:""}{ photo.twa!=null?` · TWA ${R(photo.twa,0)}°`:""}</div>
         {sails.length>0&&(
           <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
             {sails.map(t=>(<span key={t} style={{background:sailTagColor.bg,border:`1px solid ${sailTagColor.bd}`,color:sailTagColor.c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>))}
@@ -274,7 +274,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading}){
     <div style={{flex:1,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:16}}>
       <div style={{position:"relative",marginBottom:12}}>
         <canvas ref={canvasRef} style={{width:"100%",borderRadius:8,border:"1px solid #1E3A5A",display:"block"}}/>
-        {dateStr&&<div style={{position:"absolute",top:8,right:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5}}>{fmtDate(dateStr)}</div>}
+        {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5}}>{fmtDate(new Date(photo.utc).toISOString().slice(0,10))} {new Date(photo.utc).toISOString().slice(11,16)} UTC</div>}
       </div>
       <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
         <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Instrument data</div>
