@@ -3180,7 +3180,7 @@ export default function SmartSailingAnalytics(){
   useEffect(()=>{
     async function boot(){
       const today=TODAY();
-      const localSessions=getSessions();setSessions(localSessions);
+      const localSessions=getSessions().sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
 
       // ── Mobile progressive load ───────────────────────────────────────────
       // On mobile we only fetch full video blobs + log data for the latest session.
