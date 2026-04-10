@@ -1,8 +1,24 @@
 // src/lib/bunny.js
 // ─────────────────────────────────────────────────────────────────────────────
 // SmartSailingAnalytics — Bunny.net Storage + Stream integration
+//
+// Video upload strategy: browser uploads DIRECTLY to Bunny Stream's TUS
+// endpoint. Vercel only handles the small JSON API calls (create, auth, status).
+// This means no Vercel size limits or timeouts for video uploads.
+//
+// REQUIRED ENV VARS (Vercel dashboard):
+//   BUNNY_STORAGE_API_KEY     — Storage zone password
+//   BUNNY_STORAGE_ZONE        — Storage zone name
+//   BUNNY_STORAGE_REGION      — de | ny | la | sg | se | br | jh  (default: de)
+//   BUNNY_STREAM_API_KEY      — Stream library API key
+//   BUNNY_STREAM_LIBRARY_ID   — Stream library ID (numeric)
+//   BUNNY_CDN_HOSTNAME        — CDN pull zone hostname e.g. "ssa.b-cdn.net"
 // ─────────────────────────────────────────────────────────────────────────────
 
+const BUNNY_TUS = "https://video.bunnycdn.com/tusupload";
+const CHUNK_SIZE = 50 * 1024 * 1024; // 50 MB chunks — no Vercel limits now
+
+// ── Cloud availability check ──────────────────────────────────────────────────
 export async function checkCloudStatus() {
   try {
     const res = await fetch("/api/cloud/status", {
@@ -29,25 +45,45 @@ export async function createStreamUpload(fileName, fileSizeBytes) {
   } catch { return null; }
 }
 
-// ── Upload file in chunks via server-side proxy ───────────────────────────────
-// Splits the file into CHUNK_SIZE pieces and PATCHes each one individually.
-// Each chunk is ≤ 4 MB — safe for Vercel Hobby's 4.5 MB request body limit.
-// Progress is reported as 0–100 across the whole file.
-const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB
+// ── Get signed upload credentials from server ─────────────────────────────────
+// Returns { signature, expiry, libraryId, streamId } or null
+async function getUploadAuth(streamId) {
+  try {
+    const res = await fetch(`/api/stream/auth?streamId=${encodeURIComponent(streamId)}`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
 
+// ── Upload file directly from browser to Bunny Stream TUS endpoint ────────────
+// No Vercel proxy — video bytes go straight to Bunny.
+// Chunked so progress is accurate and large files work reliably.
 export async function uploadFileToStream(uploadInfo, file, onProgress) {
   const { streamId } = uploadInfo;
 
-  // 1. Initialise the TUS session with the total file size
+  // 1. Get signed credentials from our server (keeps API key secret)
+  const auth = await getUploadAuth(streamId);
+  if (!auth) {
+    console.error("Failed to get upload auth credentials");
+    return false;
+  }
+
+  const tusHeaders = {
+    AuthorizationSignature: auth.signature,
+    AuthorizationExpire:    auth.expiry,
+    VideoId:                streamId,
+    LibraryId:              auth.libraryId,
+    "Tus-Resumable":        "1.0.0",
+  };
+
+  // 2. Initialise the TUS session (POST with Upload-Length, no body)
   try {
-    const initRes = await fetch("/api/stream/upload", {
+    const initRes = await fetch(BUNNY_TUS, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ streamId, fileSize: file.size }),
+      headers: { ...tusHeaders, "Upload-Length": String(file.size) },
     });
     if (!initRes.ok) {
-      const err = await initRes.json().catch(() => ({}));
-      console.error("TUS init failed:", err);
+      console.error("TUS init failed:", initRes.status, await initRes.text());
       return false;
     }
   } catch (e) {
@@ -55,29 +91,21 @@ export async function uploadFileToStream(uploadInfo, file, onProgress) {
     return false;
   }
 
-  // 2. Upload chunks sequentially
+  // 3. Upload chunks directly to Bunny
   let offset = 0;
   while (offset < file.size) {
     const end   = Math.min(offset + CHUNK_SIZE, file.size);
     const chunk = file.slice(offset, end);
 
-    try {
-      const res = await fetch(
-        `/api/stream/chunk?streamId=${encodeURIComponent(streamId)}&offset=${offset}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/offset+octet-stream" },
-          body: chunk,
-        }
-      );
-      // Bunny returns 204 on success; anything else is an error
-      if (res.status !== 204 && res.status !== 200) {
-        console.error(`Chunk at offset ${offset} failed: HTTP ${res.status}`);
+    const ok = await uploadChunk(tusHeaders, chunk, offset);
+    if (!ok) {
+      // Retry once before giving up
+      console.warn(`Chunk at ${offset} failed, retrying…`);
+      const retryOk = await uploadChunk(tusHeaders, chunk, offset);
+      if (!retryOk) {
+        console.error(`Chunk at ${offset} failed after retry`);
         return false;
       }
-    } catch (e) {
-      console.error(`Chunk at offset ${offset} error:`, e);
-      return false;
     }
 
     offset = end;
@@ -85,6 +113,19 @@ export async function uploadFileToStream(uploadInfo, file, onProgress) {
   }
 
   return true;
+}
+
+function uploadChunk(tusHeaders, chunk, offset) {
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PATCH", BUNNY_TUS);
+    Object.entries(tusHeaders).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+    xhr.setRequestHeader("Content-Type",  "application/offset+octet-stream");
+    xhr.setRequestHeader("Upload-Offset", String(offset));
+    xhr.onload  = () => resolve(xhr.status === 204 || xhr.status === 200);
+    xhr.onerror = () => resolve(false);
+    xhr.send(chunk);
+  });
 }
 
 // ── Poll until Bunny Stream video is ready (status 4) ────────────────────────
@@ -162,7 +203,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       status("✓ Event data uploaded to Bunny Storage");
     }
 
-    // 3. Videos → Stream (via server proxy)
+    // 3. Videos → Stream (direct browser upload)
     for (const video of videos) {
       if (!video.file && !video.objectUrl) continue;
 
