@@ -14,10 +14,10 @@ function makeBunnyAuth(streamId: string) {
 }
 
 function tusHeaders(streamId: string, extra: Record<string, string> = {}) {
-  const { signature, expiry } = makeBunnyAuth(streamId);
+
   return {
-    AuthorizationSignature: signature,
-    AuthorizationExpire:    expiry,
+    AuthorizationSignature: STREAM_KEY,
+    AuthorizationExpire:    "0",
     VideoId:                streamId,
     LibraryId:              String(LIBRARY_ID),
     "Tus-Resumable":        "1.0.0",
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     const locationUrl = rawLocation.startsWith("http") ? rawLocation : `https://video.bunnycdn.com${rawLocation}`;
 
     // Return location + fresh auth so the browser can PATCH directly
-    const { signature, expiry } = makeBunnyAuth(streamId);
+  
     return NextResponse.json({ locationUrl, signature, expiry, libraryId: String(LIBRARY_ID) });
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
