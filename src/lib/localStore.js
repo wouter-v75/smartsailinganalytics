@@ -6,7 +6,7 @@
 //   IndexedDB  "ssa-db"
 //     store "videos"    — blobs + metadata
 //     store "log_data"  — CSV rows (keyed by date)
-//     store "xml_data"  — event file data (keyed by date) ← NEW in v3
+//     store "xml_data"  — event file data (keyed by date)
 //   localStorage
 //     ssa:sessions      — session index
 //     ssa:taglist:{date}
@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_NAME = "ssa-db";
-const DB_VER  = 3;          // v3: adds xml_data store
+const DB_VER  = 3;
 const TODAY   = () => new Date().toISOString().slice(0, 10);
 
 // ── IndexedDB bootstrap ──────────────────────────────────────────────────────
@@ -32,7 +32,6 @@ function openDb() {
       if (!db.objectStoreNames.contains("log_data")) {
         db.createObjectStore("log_data", { keyPath: "date" });
       }
-      // v3: xml event data in IDB — no more 5 MB localStorage quota risk
       if (!db.objectStoreNames.contains("xml_data")) {
         db.createObjectStore("xml_data", { keyPath: "date" });
       }
@@ -117,10 +116,23 @@ function upsertSession(date, patch) {
 }
 
 // ── Video store ───────────────────────────────────────────────────────────────
+
+// Detect if we're on a mobile device — affects whether blob is stored locally.
+// On iPhone/iPad, Safari has tight storage limits so we skip blob storage.
+function isMobileDevice() {
+  if (typeof navigator === "undefined") return false;
+  return /iPhone|iPad|Android/i.test(navigator.userAgent);
+}
+
 export async function saveVideo(file, parsedMeta) {
   const db   = await openDb();
   const date = parsedMeta.sessionDate || TODAY();
   const id   = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+  // On mobile: skip storing the blob (storage limits, upload goes direct to cloud)
+  // On desktop: store the blob for local playback and background cloud sync
+  const storeBlob = !isMobileDevice();
+
   const entry = {
     id,
     name:        file.name,
@@ -128,17 +140,57 @@ export async function saveVideo(file, parsedMeta) {
     duration:    parsedMeta.duration || null,
     startUtc:    parsedMeta.startUtc  || null,
     tsSource:    parsedMeta.tsSource  || null,
-    blob:        file,
+    blob:        storeBlob ? file : null,
     addedAt:     Date.now(),
     sessionDate: date,
     tags:        parsedMeta.tags || [],
     title:       parsedMeta.title || file.name.replace(/\.[^.]+$/, ""),
     camera:      parsedMeta.camera || detectCamera(file.name),
     syncedToDb:  false,
+    cloudSynced: false,   // tracks whether this video has been uploaded to Stream
   };
   await idbPut(db, "videos", entry);
-  upsertSession(date, { videoCount: (getSessions().find(s => s.date === date)?.videoCount || 0) + 1 });
-  return { ...entry, blob: undefined, objectUrl: URL.createObjectURL(file) };
+  upsertSession(date, {
+    videoCount: (getSessions().find(s => s.date === date)?.videoCount || 0) + 1,
+  });
+  return {
+    ...entry,
+    blob:      undefined,
+    objectUrl: storeBlob ? URL.createObjectURL(file) : null,
+  };
+}
+
+// ── Get the raw blob for a video (used by cloud sync) ────────────────────────
+export async function getVideoBlob(id) {
+  try {
+    const db    = await openDb();
+    const entry = await idbGet(db, "videos", id);
+    return entry?.blob ?? null;
+  } catch { return null; }
+}
+
+// ── Store a blob for an existing video (used by "Download for offline") ───────
+export async function saveVideoBlob(id, blob) {
+  try {
+    const db    = await openDb();
+    const entry = await idbGet(db, "videos", id);
+    if (!entry) return false;
+    entry.blob = blob;
+    await idbPut(db, "videos", entry);
+    return true;
+  } catch { return false; }
+}
+
+// ── Mark a video as cloud-synced (has a streamId) ─────────────────────────────
+export async function markVideoCloudSynced(id, streamId) {
+  try {
+    const db    = await openDb();
+    const entry = await idbGet(db, "videos", id);
+    if (!entry) return;
+    entry.cloudSynced = true;
+    entry.streamId    = streamId;
+    await idbPut(db, "videos", entry);
+  } catch {}
 }
 
 export async function getVideosForDate(date) {
@@ -146,8 +198,9 @@ export async function getVideosForDate(date) {
   const entries = await idbGetByIndex(db, "videos", "sessionDate", date);
   return entries.map(e => ({
     ...e,
-    blob: undefined,
-    objectUrl: e.blob ? URL.createObjectURL(e.blob) : null,
+    blob:        undefined,
+    objectUrl:   e.blob ? URL.createObjectURL(e.blob) : null,
+    hasLocalBlob: !!e.blob,   // flag so UI/sync knows blob is available
   }));
 }
 
@@ -156,21 +209,30 @@ export async function getAllVideos() {
   const entries = await idbGetAll(db, "videos");
   return entries.map(e => ({
     ...e,
-    blob: undefined,
-    objectUrl: e.blob ? URL.createObjectURL(e.blob) : null,
+    blob:        undefined,
+    objectUrl:   e.blob ? URL.createObjectURL(e.blob) : null,
+    hasLocalBlob: !!e.blob,
   })).sort((a, b) => b.addedAt - a.addedAt);
 }
 
 export async function updateVideoTags(id, tags) {
   const db    = await openDb();
   const entry = await idbGet(db, "videos", id);
-  if (entry) { entry.tags = tags; entry.syncedToDb = false; await idbPut(db, "videos", entry); }
+  if (entry) {
+    entry.tags        = tags;
+    entry.syncedToDb  = false;
+    await idbPut(db, "videos", entry);
+  }
 }
 
 export async function updateVideoStartUtc(id, startUtc) {
   const db    = await openDb();
   const entry = await idbGet(db, "videos", id);
-  if (entry) { entry.startUtc = startUtc; entry.syncedToDb = false; await idbPut(db, "videos", entry); }
+  if (entry) {
+    entry.startUtc   = startUtc;
+    entry.syncedToDb = false;
+    await idbPut(db, "videos", entry);
+  }
 }
 
 export async function deleteVideo(id) {
@@ -179,7 +241,7 @@ export async function deleteVideo(id) {
 }
 
 // ── Log (CSV) store — IndexedDB ───────────────────────────────────────────────
-export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffset=0) {
+export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffset = 0) {
   const db = await openDb();
   await idbPut(db, "log_data", {
     date, rows, fileName, startUtc, endUtc,
@@ -187,7 +249,7 @@ export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffs
     addedAt: Date.now(), synced: false,
   });
   upsertSession(date, { hasLog: true, logFile: fileName, tzOffset });
-  lsDel(`ssa:log:${date}`); // clean up old localStorage entry
+  lsDel(`ssa:log:${date}`);
 }
 
 export async function getLogData(date) {
@@ -196,24 +258,21 @@ export async function getLogData(date) {
     const entry = await idbGet(db, "log_data", date);
     if (entry) return entry;
   } catch {}
-  return lsGet(`ssa:log:${date}`); // fallback: pre-migration format
+  return lsGet(`ssa:log:${date}`);
 }
 
-// ── XML (event) store — IndexedDB (v3) ───────────────────────────────────────
-// Moved from localStorage to IDB to avoid the 5 MB quota limit.
-// Falls back to old localStorage key for sessions imported before v3.
+// ── XML (event) store — IndexedDB ────────────────────────────────────────────
 export async function saveXmlData(date, parsed, fileName) {
   const db = await openDb();
   await idbPut(db, "xml_data", {
     date,
-    ...parsed,          // meta, sailsUpEvents, raceGuns, markRoundings,
-                        // tackJibes, dayStartUtc, dayStopUtc
+    ...parsed,
     fileName,
     addedAt: Date.now(),
     synced:  false,
   });
   upsertSession(date, { hasXml: true, xmlFile: fileName });
-  lsDel(`ssa:xml:${date}`); // clean up old localStorage entry
+  lsDel(`ssa:xml:${date}`);
 }
 
 export async function getXmlData(date) {
@@ -222,11 +281,10 @@ export async function getXmlData(date) {
     const entry = await idbGet(db, "xml_data", date);
     if (entry) return entry;
   } catch {}
-  // Fallback: old localStorage format (pre-v3 sessions)
   return lsGet(`ssa:xml:${date}`);
 }
 
-// ── Auto-tag from log + XML ────────────────────────────────────────────────────
+// ── Auto-tag from log + XML ───────────────────────────────────────────────────
 export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, offsetSec = 0) {
   const tags = [];
   if (!videoStartUtc) return tags;
@@ -272,7 +330,7 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
   {
     const allSailEvents = xmlData.sailsUpEvents || xmlData.sailsUp || [];
     const activeSails   = new Set();
-    const beforeClip = allSailEvents
+    const beforeClip    = allSailEvents
       .filter(s => s.utc <= winStart)
       .sort((a, b) => b.utc - a.utc)[0];
     if (beforeClip) beforeClip.sails.forEach(s => activeSails.add(s.trim().toLowerCase()));
@@ -306,15 +364,15 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
 
   for (const g of (xmlData.raceGuns || [])) {
     if (g.utc < searchStart || g.utc > searchEnd) continue;
-    allEvents.push({ utc:g.utc, tag:"race-start", priority:8, valid:true });
+    allEvents.push({ utc: g.utc, tag: "race-start", priority: 8, valid: true });
   }
   for (const tj of (xmlData.tackJibes || []).filter(t => !t.isTack)) {
     if (tj.utc < searchStart || tj.utc > searchEnd) continue;
-    allEvents.push({ utc:tj.utc, tag:"gybe", priority:5, valid:tj.isValid !== false });
+    allEvents.push({ utc: tj.utc, tag: "gybe", priority: 5, valid: tj.isValid !== false });
   }
   for (const tj of (xmlData.tackJibes || []).filter(t => t.isTack)) {
     if (tj.utc < searchStart || tj.utc > searchEnd) continue;
-    allEvents.push({ utc:tj.utc, tag:"tack", priority:3, valid:tj.isValid !== false });
+    allEvents.push({ utc: tj.utc, tag: "tack", priority: 3, valid: tj.isValid !== false });
   }
 
   if (allEvents.length > 0) {
@@ -373,12 +431,17 @@ export function markCloudSynced(date) {
   markSynced(date, "xml");
   const sessions = getSessions();
   const idx = sessions.findIndex(s => s.date === date);
-  if (idx >= 0) { sessions[idx].cloudSynced = true; lsSet("ssa:sessions", sessions); }
+  if (idx >= 0) {
+    sessions[idx].cloudSynced = true;
+    lsSet("ssa:sessions", sessions);
+  }
 }
 
 // ── Session tag list ──────────────────────────────────────────────────────────
-export function getTagList(date)       { return lsGet(`ssa:taglist:${date}`) || []; }
-export function saveTagList(date, list){ lsSet(`ssa:taglist:${date}`, [...new Set(list.filter(Boolean))].sort()); }
+export function getTagList(date)        { return lsGet(`ssa:taglist:${date}`) || []; }
+export function saveTagList(date, list) {
+  lsSet(`ssa:taglist:${date}`, [...new Set(list.filter(Boolean))].sort());
+}
 export function mergeTagList(date, newTags) {
   saveTagList(date, [...getTagList(date), ...newTags]);
   return getTagList(date);
@@ -386,7 +449,7 @@ export function mergeTagList(date, newTags) {
 
 // ── Sync offsets ──────────────────────────────────────────────────────────────
 const OFFSET_KEY = "ssa:syncOffsets";
-export function getSyncOffsets()              { return lsGet(OFFSET_KEY) || {}; }
+export function getSyncOffsets() { return lsGet(OFFSET_KEY) || {}; }
 export function saveSyncOffset(videoId, secs) {
   const o = getSyncOffsets();
   if (secs === 0) delete o[videoId]; else o[videoId] = secs;

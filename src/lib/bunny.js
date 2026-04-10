@@ -3,12 +3,14 @@
 // SmartSailingAnalytics — Bunny.net Storage + Stream integration
 //
 // All uploads bypass Vercel completely:
-//   Log/events JSON  → direct browser PUT → Bunny Storage (read/write key)
+//   Log/events JSON  → direct browser PUT → Bunny Storage
 //   Videos           → direct browser TUS → Bunny Stream
-// Reads go through Vercel proxy (GET /api/bunny/storage) using read-only key.
+// Reads go through Vercel proxy (read-only key).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ── Cached storage write credentials (fetched once per session) ───────────────
+import { getVideoBlob, markVideoCloudSynced } from "./localStore";
+
+// ── Cached storage write credentials ─────────────────────────────────────────
 let _storageCreds = null;
 async function getStorageCreds() {
   if (_storageCreds) return _storageCreds;
@@ -19,7 +21,6 @@ async function getStorageCreds() {
 }
 
 // ── Upload JSON directly from browser to Bunny Storage ───────────────────────
-// Uses read/write key via /api/storage/credentials — no Vercel size limit.
 export async function uploadJsonToStorage(key, data) {
   try {
     const { accessKey, zone, host } = await getStorageCreds();
@@ -36,7 +37,7 @@ export async function uploadJsonToStorage(key, data) {
   }
 }
 
-// ── Fetch JSON from Bunny Storage (via Vercel proxy — uses read-only key) ─────
+// ── Fetch JSON from Bunny Storage (via Vercel proxy) ─────────────────────────
 export async function fetchFromStorage(key) {
   try {
     const res = await fetch(`/api/bunny/storage?key=${encodeURIComponent(key)}`);
@@ -147,18 +148,18 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
     // 1. Log rows → Bunny Storage (direct, no Vercel size limit)
     if (logData?.rows?.length) {
       const approxMB = (JSON.stringify(logData.rows).length / 1e6).toFixed(1);
-      status(`Uploading log data directly to Bunny Storage (${logData.rows.length.toLocaleString()} rows · ~${approxMB} MB)…`);
+      status(`Uploading log data to Bunny Storage (${logData.rows.length.toLocaleString()} rows · ~${approxMB} MB)…`);
       const ok = await uploadJsonToStorage(`sessions/${date}/log.json`, {
         rows: logData.rows, startUtc: logData.startUtc,
         endUtc: logData.endUtc, uploadedAt: Date.now(),
       });
-      if (!ok) status("⚠ Log upload failed — continuing with remaining data…");
+      if (!ok) status("⚠ Log upload failed — continuing…");
       else     status("✓ Log data uploaded to Bunny Storage");
     }
 
     // 2. XML events → Bunny Storage (direct)
     if (xmlData) {
-      status("Uploading event data directly to Bunny Storage…");
+      status("Uploading event data to Bunny Storage…");
       const ok = await uploadJsonToStorage(`sessions/${date}/events.json`, {
         ...xmlData, uploadedAt: Date.now(),
       });
@@ -168,20 +169,36 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
 
     // 3. Videos → Bunny Stream (direct via tus)
     for (const video of videos) {
-      if (!video.file && !video.objectUrl) continue;
+      // Skip if already cloud-synced
+      if (video.cloudSynced && video.streamId) {
+        status(`↩ ${video.name} already in Stream — skipping`);
+        result.streamIds[video.id] = video.streamId;
+        continue;
+      }
+
+      // Get file: prefer video.file (just uploaded), then IDB blob, then objectUrl
+      let file = video.file || null;
+      if (!file) file = await getVideoBlob(video.id);
+      if (!file && video.objectUrl) {
+        try { const r = await fetch(video.objectUrl); file = await r.blob(); } catch {}
+      }
+      if (!file) {
+        status(`⚠ No file available for ${video.name} — skipping`);
+        continue;
+      }
+
       status(`Creating Bunny Stream video for ${video.name}…`);
       const uploadInfo = await createStreamUpload(video.name, video.size);
       if (!uploadInfo) { status(`⚠ Stream create failed for ${video.name}`); continue; }
+
       status(`Uploading ${video.name} to Bunny Stream (${(video.size / 1e6).toFixed(0)} MB)…`);
-      let file = video.file;
-      if (!file && video.objectUrl) {
-        try { const r = await fetch(video.objectUrl); file = await r.blob(); } catch { continue; }
-      }
       const uploaded = await uploadFileToStream(
         uploadInfo, file, pct => status(`Uploading ${video.name}… ${pct}%`)
       );
       if (!uploaded) { status(`⚠ Stream upload failed for ${video.name}`); continue; }
+
       result.streamIds[video.id] = uploadInfo.streamId;
+      await markVideoCloudSynced(video.id, uploadInfo.streamId);
       status(`✓ ${video.name} uploaded to Stream (ID: ${uploadInfo.streamId.slice(0, 8)}…)`);
     }
 
@@ -192,7 +209,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       videos: videos.map(v => ({
         id: v.id, name: v.name, size: v.size, duration: v.duration,
         camera: v.camera, title: v.title, tags: v.tags,
-        streamId: result.streamIds[v.id] || null,
+        streamId: result.streamIds[v.id] || v.streamId || null,
       })),
       syncedAt: Date.now(),
     };
@@ -237,6 +254,37 @@ export async function fetchCloudSession(date) {
     xmlData: xmlData ? { ...xmlData, source: "cloud" } : null,
     videos,
   };
+}
+
+// ── Download original video from Bunny Storage for offline playback ───────────
+// Fetches via Vercel proxy (read-only key), stores blob in IndexedDB.
+export async function downloadVideoForOffline(video, onProgress) {
+  try {
+    const { saveVideoBlob } = await import("./localStore");
+    const storageKey = `sessions/${video.sessionDate}/videos/${video.id}/original`;
+    const res = await fetch(`/api/bunny/storage?key=${encodeURIComponent(storageKey)}`);
+    if (!res.ok) return false;
+
+    // Stream with progress
+    const contentLength = res.headers.get("Content-Length");
+    const total = contentLength ? parseInt(contentLength) : 0;
+    const reader = res.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (total > 0) onProgress?.(Math.round((received / total) * 100));
+    }
+    const blob = new Blob(chunks, { type: "video/mp4" });
+    await saveVideoBlob(video.id, blob);
+    return true;
+  } catch (e) {
+    console.error("downloadVideoForOffline error:", e);
+    return false;
+  }
 }
 
 // ── Delete a video from Bunny Stream ─────────────────────────────────────────
