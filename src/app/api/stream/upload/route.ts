@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
 
     // Return location + fresh auth so the browser can PATCH directly
   
-    return NextResponse.json({ locationUrl, signature, expiry, libraryId: String(LIBRARY_ID) });
+    return NextResponse.json({ locationUrl, signature: STREAM_KEY, expiry: "0", libraryId: String(LIBRARY_ID) });
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
