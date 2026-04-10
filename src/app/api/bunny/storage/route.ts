@@ -60,3 +60,25 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
 }
+
+// DELETE /api/bunny/storage?key=sessions/3925-09-04/meta.json
+export async function DELETE(req: NextRequest) {
+  if (!API_KEY || !ZONE)
+    return NextResponse.json({ error: "Bunny Storage not configured" }, { status: 503 });
+
+  const key = req.nextUrl.searchParams.get("key");
+  if (!key)
+    return NextResponse.json({ error: "key required" }, { status: 400 });
+
+  try {
+    const res = await fetch(`${base()}/${ZONE}/${safeKey(key)}`, {
+      method: "DELETE",
+      headers: { AccessKey: API_KEY },
+    });
+    if (!res.ok)
+      return NextResponse.json({ error: `Bunny HTTP ${res.status}` }, { status: 500 });
+    return NextResponse.json({ ok: true });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+  }
+}
