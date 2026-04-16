@@ -1028,25 +1028,78 @@ function UploadTab({role,cloudStatus,onImported}){
   const saveLocal=async()=>{
     if(!pendingVids.length&&!csvParsed&&!xmlParsed)return;
     setPhase("saving");setLog([]);
-    const date=csvParsed?.startUtc?new Date(csvParsed.startUtc).toISOString().slice(0,10):xmlParsed?.meta?.date||TODAY();
-    addLog(`Saving session ${fmtDate(date)} to local storage…`);
-    if(csvParsed){await saveLogData(date,csvParsed.rows,csvFile.name,csvParsed.startUtc,csvParsed.endUtc,csvTz);addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows)`);}
-    if(xmlParsed){
-      await saveXmlData(date,xmlParsed,xmlFile.name);
-      if(xmlParsed.meta?.sailsUsed?.length){mergeTagList(date, xmlParsed.meta.sailsUsed.map(s=>s.toLowerCase()));addLog(`✓ Events saved · ${xmlParsed.meta.sailsUsed.length} sails in tag list`);}
-      else{addLog("✓ Events saved");}
+
+    // ── Derive per-file session dates from each file's own timestamp ────────
+    // Helper: convert a UTC ms value to YYYY-MM-DD using the video tz offset
+    const utcToDate = (ms, tzMin) => new Date(ms + tzMin * 60000).toISOString().slice(0, 10);
+    const fallbackDate = TODAY();
+
+    // CSV log → its own date
+    const csvDate = csvParsed?.startUtc
+      ? new Date(csvParsed.startUtc).toISOString().slice(0, 10)
+      : null;
+
+    // XML events → its own date
+    const xmlDate = xmlParsed?.meta?.date || null;
+
+    if (csvParsed) {
+      const d = csvDate || fallbackDate;
+      addLog(`Saving log → session ${fmtDate(d)}…`);
+      await saveLogData(d, csvParsed.rows, csvFile.name, csvParsed.startUtc, csvParsed.endUtc, csvTz);
+      addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows) → ${d}`);
     }
-    const saved=[];
-    for(const pv of pendingVids){
-      const tags=computeAutoTags(pv.startUtc,pv.duration,csvParsed,xmlParsed);
-      const tsLabel=pv.tsSource==="mp4-meta"?"📷 camera meta":pv.tsSource==="filename"?"📝 filename":pv.tsSource==="lastmodified"?"⚠ file mtime":"❌ no timestamp";
-      try{const s=await saveVideo(pv.file,{duration:pv.duration,startUtc:pv.startUtc,tsSource:pv.tsSource,tags,title:pv.name.replace(/\.[^.]+$/,"").replace(/[_-]/g," "),sessionDate:date});saved.push({...s,file:pv.file});addLog(`✓ ${pv.name} · ${tsLabel}${pv.startUtc?` · ${new Date(pv.startUtc).toISOString().slice(11,19)} UTC`:""}`);}
-      catch(e){addLog(`✕ ${pv.name}: ${e instanceof Error?e.message:String(e)}`);}
+    if (xmlParsed) {
+      const d = xmlDate || csvDate || fallbackDate;
+      addLog(`Saving events → session ${fmtDate(d)}…`);
+      await saveXmlData(d, xmlParsed, xmlFile.name);
+      if (xmlParsed.meta?.sailsUsed?.length) {
+        mergeTagList(d, xmlParsed.meta.sailsUsed.map(s => s.toLowerCase()));
+        addLog(`✓ Events saved · ${xmlParsed.meta.sailsUsed.length} sails → ${d}`);
+      } else { addLog(`✓ Events saved → ${d}`); }
     }
-    setSavedDate(date);setSavedVids(saved);
-    addLog(cloudStatus?.available&&perms.canSync?"Saved. Click Push to Cloud to upload.":"Saved to local storage. Ready in Library.");
+
+    // ── Save each video to the date from its own timestamp ──────────────────
+    const saved = [];
+    const touchedDates = new Set();
+    if (csvDate) touchedDates.add(csvDate);
+    if (xmlDate) touchedDates.add(xmlDate);
+
+    for (const pv of pendingVids) {
+      // Per-video date: own timestamp → CSV date → XML date → today
+      let vidDate;
+      if (pv.startUtc && (pv.tsSource === "mp4-meta" || pv.tsSource === "filename"))
+        vidDate = utcToDate(pv.startUtc, vidTz);
+      else if (pv.startUtc && pv.tsSource === "lastmodified")
+        vidDate = utcToDate(pv.startUtc, vidTz);
+      else
+        vidDate = csvDate || xmlDate || fallbackDate;
+
+      touchedDates.add(vidDate);
+      const tags = computeAutoTags(pv.startUtc, pv.duration, csvParsed, xmlParsed);
+      const tsLabel = pv.tsSource === "mp4-meta" ? "📷 camera meta"
+        : pv.tsSource === "filename" ? "📝 filename"
+        : pv.tsSource === "lastmodified" ? "⚠ file mtime" : "❌ no timestamp";
+      try {
+        const s = await saveVideo(pv.file, {
+          duration: pv.duration, startUtc: pv.startUtc, tsSource: pv.tsSource,
+          tags, title: pv.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " "),
+          sessionDate: vidDate,
+        });
+        saved.push({ ...s, file: pv.file });
+        addLog(`✓ ${pv.name} · ${tsLabel}${pv.startUtc ? ` · ${new Date(pv.startUtc).toISOString().slice(11, 19)} UTC` : ""} → ${vidDate}`);
+      } catch (e) { addLog(`✕ ${pv.name}: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+
+    // Summary
+    const dateList = [...touchedDates].sort();
+    if (dateList.length > 1) addLog(`Files filed across ${dateList.length} sessions: ${dateList.join(", ")}`);
+
+    // Navigate to the most relevant date: CSV > XML > earliest video > today
+    const primaryDate = csvDate || xmlDate || (dateList.length ? dateList[0] : fallbackDate);
+    setSavedDate(primaryDate); setSavedVids(saved);
+    addLog(cloudStatus?.available && perms.canSync ? "Saved. Click Push to Cloud to upload." : "Saved to local storage. Ready in Library.");
     setPhase("saved");
-    onImported({date,videos:saved,logData:csvParsed,xmlData:xmlParsed});
+    onImported({ date: primaryDate, videos: saved, logData: csvParsed, xmlData: xmlParsed });
   };
 
   const pushCloud=async()=>{
