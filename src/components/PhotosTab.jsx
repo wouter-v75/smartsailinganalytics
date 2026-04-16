@@ -1,11 +1,52 @@
 // src/components/PhotosTab.jsx
 // Photos stored as blobs in IndexedDB, metadata in localStorage
+//
+// Sync architecture (tiered):
+//   1) ALL users upload full-resolution + thumbnail to Bunny Storage
+//   2) ALL users pull thumbnails for fast browsing
+//   3) ALL users can stream (view) via the CDN
+//   4) Admin/Coach can optionally download full-res to IDB for offline debrief
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { uploadJsonToStorage } from "../lib/bunny";
+import { uploadJsonToStorage, fetchFromStorage } from "../lib/bunny";
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
+
+// Keys for cloud layout
+const cloudKeys = (date, id) => ({
+  original: `sessions/${date}/photos/${id}.jpg`,
+  thumb:    `sessions/${date}/photos/${id}_thumb.jpg`,
+  meta:     `sessions/${date}/photos/${id}_meta.json`,
+  index:    `sessions/${date}/photos.json`,
+});
+
+// Full-res originals are served via the binary proxy.
+// Thumbs are tiny so we fetch through the same route.
+const cloudImageUrl = key => `/api/bunny/image?key=${encodeURIComponent(key)}`;
+
+// Generate a thumbnail from a blob using canvas. Keeps aspect ratio.
+async function generateThumbnail(blob, maxSize=480, quality=0.78) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const scale = Math.min(1, maxSize / Math.max(w, h));
+      const tw = Math.max(1, Math.round(w*scale));
+      const th = Math.max(1, Math.round(h*scale));
+      const c = document.createElement("canvas");
+      c.width = tw; c.height = th;
+      c.getContext("2d").drawImage(img, 0, 0, tw, th);
+      c.toBlob(b => {
+        URL.revokeObjectURL(url);
+        b ? resolve(b) : reject(new Error("thumb encode failed"));
+      }, "image/jpeg", quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("thumb load failed")); };
+    img.src = url;
+  });
+}
 
 // ── IndexedDB helpers for photos ─────────────────────────────────────────────
 function openDb() {
@@ -55,6 +96,16 @@ async function idbDeletePhoto(id) {
     const req = tx.objectStore("photos").delete(id);
     req.onsuccess = ()=>res();
     req.onerror   = ()=>rej(req.error);
+  });
+}
+
+async function idbHasPhoto(id) {
+  const db = await openDb();
+  return new Promise((res)=>{
+    const tx  = db.transaction("photos","readonly");
+    const req = tx.objectStore("photos").getKey(id);
+    req.onsuccess = ()=>res(!!req.result);
+    req.onerror   = ()=>res(false);
   });
 }
 
@@ -254,13 +305,15 @@ function PhotoCard({photo,selected,onClick}){
   );
 }
 
-function PhotoDetail({photo,onDelete,onUpload,uploading}){
+function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,onDownloadOriginal,downloadingOriginal}){
   const canvasRef=useRef(null);
   const [rendered,setRendered]=useState(false);
   useEffect(()=>{
     if(!photo?.objectUrl||!canvasRef.current){setRendered(false);return;}
     const img=new Image();
+    img.crossOrigin="anonymous";
     img.onload=()=>{renderOverlay(canvasRef.current,img,{tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,sails:photo.sails,location:photo.location,boat:photo.boat});setRendered(true);};
+    img.onerror=()=>setRendered(false);
     img.src=photo.objectUrl;
   },[photo.id,photo.objectUrl,photo.tws,photo.twa,photo.sails]);
   const handleExport=()=>{
@@ -302,6 +355,20 @@ function PhotoDetail({photo,onDelete,onUpload,uploading}){
         {photo.cloudSynced&&<div style={{flex:1,background:"#1D9E7510",border:"1px solid #1D9E7530",borderRadius:7,padding:"9px 0",color:"#1D9E75",fontSize:12,textAlign:"center"}}>✓ In cloud</div>}
         <button onClick={onDelete} style={{background:"none",border:"1px solid #EF444440",borderRadius:7,padding:"9px 14px",color:"#EF4444",cursor:"pointer",fontSize:12}}>🗑</button>
       </div>
+
+      {/* Admin/Coach: download full-res original for offline debrief */}
+      {photo.cloudSynced && !photo.hasLocalOriginal && canSync && (
+        <button onClick={onDownloadOriginal} disabled={downloadingOriginal}
+          style={{marginTop:8,width:"100%",background:downloadingOriginal?"#1E3A5A":"#0A1929",border:"1px solid #06B6D440",borderRadius:7,padding:"9px 0",color:downloadingOriginal?"#475569":"#06B6D4",fontWeight:600,cursor:downloadingOriginal?"default":"pointer",fontSize:11}}>
+          {downloadingOriginal ? "Downloading full-res…" : "⬇ Download full-res to device (for offline debrief)"}
+        </button>
+      )}
+      {photo.cloudSynced && photo.hasLocalOriginal && (
+        <div style={{marginTop:8,textAlign:"center",fontSize:10,color:"#1D9E75"}}>✓ Full-res available offline</div>
+      )}
+      {photo.cloudSynced && !photo.hasLocalOriginal && !canSync && (
+        <div style={{marginTop:8,textAlign:"center",fontSize:10,color:"#475569"}}>Streaming thumbnail · admin/coach can cache full-res</div>
+      )}
     </div>
   );
 }
@@ -311,21 +378,32 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [photos,setPhotos]     = useState([]);   // metadata only — no blobs
   const [selected,setSelected] = useState(null);
   const [uploading,setUploading]= useState(false);
+  const [syncing,setSyncing]   = useState(false);
+  const [syncState,setSyncState] = useState(null); // { phase, current, total, msg }
+  const [downloadingOriginal,setDownloadingOriginal] = useState(false);
   const [dragOver,setDragOver] = useState(false);
   const [log,setLog]           = useState([]);
   const fileRef = useRef(null);
   const addLog  = msg => setLog(p=>[...p.slice(-20),msg]);
 
+  const canSync = role === "admin" || role === "coach";
+
   const LS_KEY = `ssa:photos-meta:${activeDate}`;
 
-  // Load metadata from localStorage, blobs from IDB
+  // Load metadata from localStorage, blobs from IDB, fill in cloud thumb URLs
   useEffect(()=>{
     if(!activeDate)return;
     const meta = JSON.parse(localStorage.getItem(LS_KEY)||"[]");
-    // Restore objectUrls from IDB blobs
+    // For each photo: prefer local blob URL; otherwise fall back to cloud thumb URL.
     Promise.all(meta.map(async p=>{
       const blob = await idbGetPhoto(p.id).catch(()=>null);
-      return{...p, objectUrl: blob?URL.createObjectURL(blob):null};
+      const hasLocalOriginal = !!blob;
+      const keys = cloudKeys(p.sessionDate||activeDate, p.id);
+      // Display URL priority: local blob → cloud thumb (if cloud-synced) → null
+      const objectUrl = blob
+        ? URL.createObjectURL(blob)
+        : (p.cloudSynced ? cloudImageUrl(keys.thumb) : null);
+      return{...p, objectUrl, hasLocalOriginal};
     })).then(restored=>{
       setPhotos(restored);
       if(restored.length>0) setSelected(restored[0]);
@@ -393,25 +471,182 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[logData,xmlData]);
 
-  const handleUpload = async()=>{
+  // ── Upload a single photo (full-res + thumb + meta) ─────────────────────────
+  // Returns updated photo metadata on success, null on failure.
+  const uploadPhotoToCloud = useCallback(async (photo) => {
+    if(!cloudStatus?.available) throw new Error("Cloud not available");
+    const blob = await idbGetPhoto(photo.id);
+    if(!blob) throw new Error("No local blob");
+    const keys = cloudKeys(photo.sessionDate||activeDate, photo.id);
+    const {accessKey,zone,host} = await fetch("/api/storage/credentials").then(r=>r.json());
+
+    // 1) Generate and upload thumbnail
+    let thumbBlob;
+    try { thumbBlob = await generateThumbnail(blob, 480, 0.78); }
+    catch(e){ throw new Error(`thumb: ${e.message}`); }
+    const thumbRes = await fetch(`${host}/${zone}/${keys.thumb}`, {
+      method: "PUT",
+      headers: { AccessKey: accessKey, "Content-Type": "image/jpeg" },
+      body: thumbBlob,
+    });
+    if(!thumbRes.ok && thumbRes.status !== 201) throw new Error(`thumb HTTP ${thumbRes.status}`);
+
+    // 2) Upload full-resolution original
+    const imgRes = await fetch(`${host}/${zone}/${keys.original}`, {
+      method: "PUT",
+      headers: { AccessKey: accessKey, "Content-Type": "image/jpeg" },
+      body: blob,
+    });
+    if(!imgRes.ok && imgRes.status !== 201) throw new Error(`img HTTP ${imgRes.status}`);
+
+    // 3) Upload per-photo metadata JSON
+    const {objectUrl, hasLocalOriginal, ...meta} = photo;
+    const metaPayload = {...meta, cloudSynced: true, originalSize: blob.size, thumbSize: thumbBlob.size};
+    await uploadJsonToStorage(keys.meta, metaPayload);
+
+    return {...photo, cloudSynced: true, thumbSize: thumbBlob.size, originalSize: blob.size};
+  }, [activeDate, cloudStatus]);
+
+  // Rebuild and upload the session-level photos.json index from current photos.
+  const writePhotoIndex = useCallback(async (list) => {
+    const cloudEntries = list
+      .filter(p => p.cloudSynced)
+      .map(({objectUrl, hasLocalOriginal, ...meta}) => meta);
+    await uploadJsonToStorage(`sessions/${activeDate}/photos.json`, {
+      updatedAt: Date.now(),
+      photos: cloudEntries,
+    });
+  }, [activeDate]);
+
+  // ── Upload-only for the currently selected photo (legacy single-photo flow) ─
+  const handleUpload = async () => {
     if(!selected||!cloudStatus?.available)return;
     setUploading(true);
     addLog(`Uploading ${selected.name.slice(0,25)}…`);
-    try{
-      const blob = await idbGetPhoto(selected.id);
-      if(!blob){addLog("✕ No blob found");setUploading(false);return;}
-      const{accessKey,zone,host}=await fetch("/api/storage/credentials").then(r=>r.json());
-      const imgRes=await fetch(`${host}/${zone}/sessions/${activeDate}/photos/${selected.id}.jpg`,
-        {method:"PUT",headers:{AccessKey:accessKey,"Content-Type":"image/jpeg"},body:blob});
-      if(imgRes.ok||imgRes.status===201){
-        const{objectUrl,...meta}=selected;
-        await uploadJsonToStorage(`sessions/${activeDate}/photos/${selected.id}_meta.json`,meta);
-        addLog("✓ Uploaded to cloud");
-        const updated=photos.map(p=>p.id===selected.id?{...p,cloudSynced:true}:p);
-        setPhotos(updated);setSelected(p=>({...p,cloudSynced:true}));savePhotos(updated);
-      }else{addLog(`✕ Upload failed: ${imgRes.status}`);}
-    }catch(e){addLog(`✕ ${e.message}`);}
+    try {
+      const updatedPhoto = await uploadPhotoToCloud(selected);
+      const updated = photos.map(p => p.id===selected.id ? {...updatedPhoto, objectUrl: p.objectUrl, hasLocalOriginal: p.hasLocalOriginal} : p);
+      setPhotos(updated);
+      setSelected(p => ({...p, cloudSynced: true}));
+      savePhotos(updated);
+      await writePhotoIndex(updated);
+      addLog("✓ Uploaded (thumb + original + index)");
+    } catch(e) {
+      addLog(`✕ ${e.message}`);
+    }
     setUploading(false);
+  };
+
+  // ── Pull cloud photos for this session, merge with local state ──────────────
+  // Cloud-only photos get thumbnail URLs; we don't auto-download originals.
+  const handlePullFromCloud = useCallback(async () => {
+    if(!activeDate || !cloudStatus?.available) return;
+    const index = await fetchFromStorage(`sessions/${activeDate}/photos.json`);
+    if(!index?.photos) return { added: 0, updated: 0 };
+    const cloudPhotos = index.photos;
+
+    // Merge: local wins on id collision (keeps objectUrl), but mark cloudSynced.
+    const byId = new Map(photos.map(p => [p.id, p]));
+    let added = 0, updated = 0;
+    for(const cp of cloudPhotos) {
+      if(byId.has(cp.id)) {
+        const local = byId.get(cp.id);
+        if(!local.cloudSynced) {
+          byId.set(cp.id, {...local, ...cp, cloudSynced: true, objectUrl: local.objectUrl, hasLocalOriginal: local.hasLocalOriginal});
+          updated++;
+        }
+      } else {
+        const keys = cloudKeys(activeDate, cp.id);
+        byId.set(cp.id, {
+          ...cp,
+          cloudSynced: true,
+          sessionDate: activeDate,
+          objectUrl: cloudImageUrl(keys.thumb),
+          hasLocalOriginal: false,
+        });
+        added++;
+      }
+    }
+    const merged = Array.from(byId.values()).sort((a,b)=>(b.utc||0)-(a.utc||0));
+    setPhotos(merged);
+    savePhotos(merged);
+    return { added, updated };
+  }, [activeDate, cloudStatus, photos, savePhotos]);
+
+  // ── Full sync: push all local-only + pull all cloud-only ────────────────────
+  const handleSyncAll = async () => {
+    if(!cloudStatus?.available) { addLog("✕ Cloud not available"); return; }
+    setSyncing(true);
+    try {
+      // PHASE 1 — Pull cloud index first so we don't re-upload anything
+      setSyncState({ phase: "pull", current: 0, total: 0, msg: "Fetching cloud index…" });
+      const pullResult = await handlePullFromCloud();
+      if(pullResult?.added)   addLog(`✓ Pulled ${pullResult.added} cloud photo${pullResult.added>1?"s":""}`);
+      if(pullResult?.updated) addLog(`✓ Updated ${pullResult.updated} photo${pullResult.updated>1?"s":""}`);
+
+      // PHASE 2 — Push every local photo that isn't cloud-synced yet.
+      // Read fresh state because handlePullFromCloud may have merged.
+      const currentList = JSON.parse(localStorage.getItem(LS_KEY)||"[]");
+      const toPush = currentList.filter(p => !p.cloudSynced);
+      const total = toPush.length;
+      if(total === 0) {
+        setSyncState({ phase: "done", current: 0, total: 0, msg: "Nothing to upload" });
+        addLog("✓ Nothing to push — all photos in cloud");
+      } else {
+        addLog(`Pushing ${total} photo${total>1?"s":""} to cloud…`);
+        let pushed = 0;
+        let latestList = currentList;
+        for(let i=0; i<total; i++) {
+          const p = toPush[i];
+          setSyncState({ phase: "push", current: i+1, total, msg: `Uploading ${p.name?.slice(0,20)||"photo"}…` });
+          try {
+            const updatedPhoto = await uploadPhotoToCloud(p);
+            latestList = latestList.map(x => x.id===p.id ? {...updatedPhoto} : x);
+            // Keep in-state UI in sync too
+            setPhotos(prev => prev.map(x => x.id===p.id ? {...x, cloudSynced: true} : x));
+            pushed++;
+          } catch(e) {
+            addLog(`✕ ${p.name?.slice(0,20)||p.id}: ${e.message}`);
+          }
+        }
+        // Persist and write the updated index once at the end
+        localStorage.setItem(LS_KEY, JSON.stringify(latestList));
+        try { await writePhotoIndex(latestList.map(p => ({...p, objectUrl: null}))); } catch {}
+        setSyncState({ phase: "done", current: pushed, total, msg: `✓ Synced ${pushed}/${total}` });
+        addLog(`✓ Pushed ${pushed}/${total} photos`);
+      }
+    } catch(e) {
+      setSyncState({ phase: "error", msg: String(e.message||e) });
+      addLog(`✕ Sync error: ${e.message||e}`);
+    }
+    // Keep the final state visible briefly, then clear
+    setTimeout(() => setSyncState(null), 3500);
+    setSyncing(false);
+  };
+
+  // ── Admin/Coach: download full-res original for offline use ─────────────────
+  const handleDownloadOriginal = async () => {
+    if(!selected || !canSync) return;
+    if(selected.hasLocalOriginal) { addLog("✓ Already local"); return; }
+    setDownloadingOriginal(true);
+    try {
+      const keys = cloudKeys(selected.sessionDate||activeDate, selected.id);
+      const res = await fetch(cloudImageUrl(keys.original));
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      await idbPutPhoto(selected.id, blob);
+      const localUrl = URL.createObjectURL(blob);
+      const updated = photos.map(p => p.id===selected.id
+        ? {...p, objectUrl: localUrl, hasLocalOriginal: true}
+        : p);
+      setPhotos(updated);
+      setSelected(p => ({...p, objectUrl: localUrl, hasLocalOriginal: true}));
+      savePhotos(updated);
+      addLog("✓ Downloaded full-res");
+    } catch(e) {
+      addLog(`✕ Download failed: ${e.message||e}`);
+    }
+    setDownloadingOriginal(false);
   };
 
   const handleDelete = async()=>{
@@ -475,6 +710,50 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             <div style={{fontSize:13,marginBottom:1}}>📷</div>
             <div style={{fontSize:8,color:"#64748B"}}>Drop or click</div>
           </div>
+
+          {/* ── Sync All — push local + pull cloud ── */}
+          {(() => {
+            const unsynced = photos.filter(p => !p.cloudSynced).length;
+            const disabled = syncing || !cloudStatus?.available || !activeDate;
+            return (
+              <button onClick={handleSyncAll} disabled={disabled}
+                title={!cloudStatus?.available ? "Cloud not available" : (unsynced ? `Upload ${unsynced} photo${unsynced>1?"s":""} + pull cloud index` : "Pull cloud index")}
+                style={{
+                  width:"100%", marginBottom:8,
+                  background: disabled ? "#0A1929" : (unsynced>0 ? "#06B6D4" : "#1E3A5A"),
+                  color: disabled ? "#334155" : (unsynced>0 ? "#000" : "#06B6D4"),
+                  border: `1px solid ${disabled ? "#1E3A5A" : (unsynced>0 ? "#06B6D4" : "#06B6D440")}`,
+                  borderRadius:6, padding:"7px 0", fontSize:10, fontWeight:700,
+                  cursor: disabled ? "default" : "pointer", letterSpacing:0.3,
+                }}>
+                {syncing ? "⟳ Syncing…" : unsynced>0 ? `☁ Sync All (${unsynced})` : "⟳ Pull cloud"}
+              </button>
+            );
+          })()}
+
+          {/* ── Sync progress readout ── */}
+          {syncState && (
+            <div style={{
+              marginBottom:8, padding:"6px 8px",
+              background: syncState.phase==="error" ? "#EF444415" : "#06B6D410",
+              border: `1px solid ${syncState.phase==="error" ? "#EF444440" : "#06B6D430"}`,
+              borderRadius:5, fontSize:9, fontFamily:"monospace",
+              color: syncState.phase==="error" ? "#EF4444" : "#06B6D4",
+            }}>
+              <div style={{marginBottom: syncState.total>0 ? 4 : 0}}>
+                {syncState.total>0 ? `${syncState.current}/${syncState.total} · ` : ""}{syncState.msg}
+              </div>
+              {syncState.total>0 && (
+                <div style={{height:3,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
+                  <div style={{
+                    height:"100%",
+                    width:`${Math.round((syncState.current/syncState.total)*100)}%`,
+                    background:"#06B6D4", transition:"width 0.15s",
+                  }}/>
+                </div>
+              )}
+            </div>
+          )}
           <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
             placeholder="Search photos…"
             style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7}}/>
@@ -533,7 +812,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
 
       {/* ── Detail panel ── */}
       {selected
-        ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}/>
+        ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
+           canSync={canSync} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155"}}>
           <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#475569"}}>Select a photo to view</div></div>
         </div>}
