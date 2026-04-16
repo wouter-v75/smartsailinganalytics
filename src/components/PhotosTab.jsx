@@ -224,6 +224,25 @@ function activeSailsAt(evts,utc){
   return evts.filter(s=>s.utc<=utc).sort((a,b)=>b.utc-a.utc)[0]?.sails||[];
 }
 
+// Derive race-context tags for a single photo UTC from XML events.
+// Mirrors the priority logic used by computeAutoTags for videos.
+function raceTagsAt(xml,utc){
+  if(!xml||!utc)return[];
+  const BUFFER_MS=120_000;
+  const tags=[];
+  for(const m of (xml.markRoundings||[])){
+    if(Math.abs(m.utc-utc)<=BUFFER_MS) tags.push(m.isTop?"topmark":"mark");
+  }
+  for(const g of (xml.raceGuns||[])){
+    if(Math.abs(g.utc-utc)<=BUFFER_MS) tags.push("race-start");
+  }
+  for(const tj of (xml.tackJibes||[])){
+    if(tj.isValid===false) continue;
+    if(Math.abs(tj.utc-utc)<=BUFFER_MS) tags.push(tj.isTack?"tack":"gybe");
+  }
+  return [...new Set(tags)];
+}
+
 function renderOverlay(canvas,img,inst){
   const ctx=canvas.getContext("2d");
   canvas.width=img.naturalWidth||img.width;canvas.height=img.naturalHeight||img.height;
@@ -294,8 +313,20 @@ function useIsNarrow(breakpoint=768){
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
 
+// Race-tag colour scheme — must match VideoCard.tagColor in SmartSailingAnalytics_UI.jsx
+const RACE_EVENT_TAGS = ["race-start","topmark","mark"];
+const RACE_POS_TAGS   = ["upwind","reach","downwind"];
+const RACE_MANO_TAGS  = ["tack","gybe"];
+const raceTagColor = t => {
+  if(RACE_EVENT_TAGS.includes(t)) return{bg:"#EF444420",bd:"#EF444440",c:"#EF4444"};
+  if(RACE_POS_TAGS.includes(t))   return{bg:"#06B6D420",bd:"#06B6D440",c:"#06B6D4"};
+  if(RACE_MANO_TAGS.includes(t))  return{bg:"#1D9E7520",bd:"#1D9E7540",c:"#1D9E75"};
+  return                               {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
+};
+
 function PhotoCard({photo,selected,onClick,onThumbLoad}){
   const sails = (photo.sails||[]).filter(s=>!SAIL_SKIP.test(s));
+  const race  = photo.raceTags||[];
   const handleLoad = () => onThumbLoad?.(photo.id);
   const handleError = () => onThumbLoad?.(photo.id);
   return(
@@ -312,13 +343,25 @@ function PhotoCard({photo,selected,onClick,onThumbLoad}){
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{photo.utc?new Date(photo.utc).toISOString().slice(11,16)+" UTC":"--:--"}</div>
       </div>
       <div style={{padding:"6px 9px"}}>
-        <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{photo.name||"Photo"}</div>
-        <div style={{fontSize:9,color:"#7DD3FC",marginBottom:sails.length?4:0}}>{photo.tws!=null?`TWS ${R(photo.tws)}kn`:""}{ photo.twa!=null?` · TWA ${R(photo.twa,0)}°`:""}</div>
+        {/* 1) Race tags */}
+        {race.length>0&&(
+          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+            {race.map(t=>{const{bg,bd,c}=raceTagColor(t);return(<span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>);})}
+          </div>
+        )}
+        {/* 2) Sail tags */}
         {sails.length>0&&(
-          <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
             {sails.map(t=>(<span key={t} style={{background:sailTagColor.bg,border:`1px solid ${sailTagColor.bd}`,color:sailTagColor.c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>))}
           </div>
         )}
+        {/* 3) TWS & TWA */}
+        <div style={{fontSize:9,color:"#7DD3FC",marginBottom:2,fontFamily:"monospace"}}>
+          {photo.tws!=null?`TWS ${R(photo.tws)}kn`:""}{photo.tws!=null&&photo.twa!=null?" · ":""}{photo.twa!=null?`TWA ${R(photo.twa,0)}°`:""}
+          {photo.tws==null&&photo.twa==null&&<span style={{color:"#334155"}}>—</span>}
+        </div>
+        {/* 4) Filename at bottom */}
+        <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{photo.name||"Photo"}</div>
       </div>
     </div>
   );
@@ -484,7 +527,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       const row=nearestLogRow(log.rows,photo.utc);
       if(row){e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;}
     }
-    if(xml){e.sails=activeSailsAt(xml.sailsUpEvents,photo.utc);e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;}
+    if(xml){e.sails=activeSailsAt(xml.sailsUpEvents,photo.utc);e.raceTags=raceTagsAt(xml,photo.utc);e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;}
     return e;
   },[]);
 

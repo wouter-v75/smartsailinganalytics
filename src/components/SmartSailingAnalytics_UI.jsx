@@ -10,26 +10,75 @@ function saveSyncOffset(videoId, secs) { try { const o=getSyncOffsets(); if(secs
 import { checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady } from "../lib/bunny";
 
 // ─── VIDEO CREATION TIME ─────────────────────────────────────────────────────
+// Scan a buffer for the `mvhd` atom and return its creation_time in ms (UTC).
+// MP4 stores creation_time as seconds since 1904-01-01 UTC.
+// Returns null if not found.
+function _scanMvhd(buf) {
+  const view = new DataView(buf);
+  const u8   = new Uint8Array(buf);
+  for (let i = 0; i < u8.length - 12; i++) {
+    if (u8[i]===0x6d&&u8[i+1]===0x76&&u8[i+2]===0x68&&u8[i+3]===0x64) {
+      const version = view.getUint8(i+4);
+      let secs;
+      if (version===1) {
+        const hi = view.getUint32(i+8);
+        const lo = view.getUint32(i+12);
+        secs = hi * 4294967296 + lo;
+      } else {
+        secs = view.getUint32(i+8);
+      }
+      const unix = secs - 2082844800;
+      if (unix > 0 && unix < 4102444800) return unix * 1000;
+    }
+  }
+  return null;
+}
+
+// Parse a timestamp out of common camera filename conventions.
+// Handles:
+//   DJI_20250903122919_0041_A2_drop.mp4          → DJI drones / Osmo (local time)
+//   GX010041.MP4, GH010041.mp4                   → GoPro (no timestamp in name)
+//   IMG_20250903_122919.mp4, VID_20250903_122919 → Android / generic
+//   20250903_122919.mp4                          → raw datetime
+// Returns ms in UTC *before* any vidTz adjustment by the caller (camera local time
+// is interpreted as the selected video timezone just like the mvhd path).
+function extractTimestampFromFilename(name) {
+  if (!name) return null;
+  // YYYYMMDDHHMMSS (14 digits in a row) — DJI
+  let m = name.match(/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
+  if (!m) {
+    // YYYYMMDD[_-]HHMMSS — Android / generic
+    m = name.match(/(\d{4})(\d{2})(\d{2})[_\-T ]?(\d{2})(\d{2})(\d{2})/);
+  }
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s] = m.map(Number);
+  if (y < 2000 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  if (h > 23 || mi > 59 || s > 59) return null;
+  return Date.UTC(y, mo - 1, d, h, mi, s);
+}
+
+// Returns { utc, source } | null where source is "mp4-meta" or "filename"
 async function extractVideoCreationTime(file) {
   try {
-    const buf  = await file.slice(0, 524288).arrayBuffer();
-    const view = new DataView(buf);
-    const u8   = new Uint8Array(buf);
-    for (let i = 0; i < u8.length - 12; i++) {
-      if (u8[i]===0x6d&&u8[i+1]===0x76&&u8[i+2]===0x68&&u8[i+3]===0x64) {
-        const version = view.getUint8(i+4);
-        let secs;
-        if (version===1) {
-          const hi = view.getUint32(i+8);
-          const lo = view.getUint32(i+12);
-          secs = hi * 4294967296 + lo;
-        } else {
-          secs = view.getUint32(i+8);
-        }
-        const unix = secs - 2082844800;
-        if (unix > 0 && unix < 4102444800) return unix * 1000;
-      }
+    // 1) Scan the first 512KB — fast path, covers most consumer cameras.
+    const head = await file.slice(0, 524288).arrayBuffer();
+    const fromHead = _scanMvhd(head);
+    if (fromHead) return { utc: fromHead, source: "mp4-meta" };
+
+    // 2) Scan the last 1MB — DJI HEVC / re-muxed files often put `moov` at
+    //    the end of the file instead of the start. Without this pass we'd
+    //    never find mvhd and the timestamp would fall back to mtime.
+    if (file.size > 524288) {
+      const tailStart = Math.max(0, file.size - 1048576);
+      const tail = await file.slice(tailStart, file.size).arrayBuffer();
+      const fromTail = _scanMvhd(tail);
+      if (fromTail) return { utc: fromTail, source: "mp4-meta" };
     }
+
+    // 3) Filename fallback — DJI / Android / generic cameras embed the
+    //    capture time directly in the filename (e.g. DJI_20250903122919_…).
+    const fromName = extractTimestampFromFilename(file.name || "");
+    if (fromName) return { utc: fromName, source: "filename" };
   } catch {}
   return null;
 }
@@ -638,18 +687,25 @@ function VideoCard({video,selected,onClick,onThumbLoad}){
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={video.source||"local"}/></div>
       </div>
       <div style={{padding:"6px 9px"}}>
-        <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
-        <div style={{fontSize:9,color:"#7DD3FC",marginBottom:4}}>{fmtDate(video.sessionDate)}{video.twsAvg!=null?` · TWS ${R(video.twsAvg)}kt`:""}{video.twaAvg!=null?` · TWA ${R(video.twaAvg,0)}°`:""}</div>
+        {/* 1) Race tags (start, top mark, gate, tack, gybe, upwind, reach, downwind) */}
         {topRowTags.length>0&&(
-          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:realSailTags.length?3:0}}>
+          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
             {topRowTags.map(t=>{const{bg,bd,c}=tagColor(t);return(<span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>);})}
           </div>
         )}
+        {/* 2) Sail tags */}
         {realSailTags.length>0&&(
-          <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+          <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
             {realSailTags.map(t=>{const{bg,bd,c}=tagColor(t);return(<span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:8,borderRadius:3,padding:"0 4px",fontFamily:"monospace"}}>{t}</span>);})}
           </div>
         )}
+        {/* 3) TWS & TWA */}
+        <div style={{fontSize:9,color:"#7DD3FC",marginBottom:2,fontFamily:"monospace"}}>
+          {video.twsAvg!=null?`TWS ${R(video.twsAvg)}kt`:""}{video.twsAvg!=null&&video.twaAvg!=null?" · ":""}{video.twaAvg!=null?`TWA ${R(video.twaAvg,0)}°`:""}
+          {video.twsAvg==null&&video.twaAvg==null&&<span style={{color:"#334155"}}>—</span>}
+        </div>
+        {/* 4) Filename (title) at bottom */}
+        <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
       </div>
     </div>
   );
@@ -901,10 +957,15 @@ function UploadTab({role,cloudStatus,onImported}){
     setPendingVids(p=>[...p,...valid.map(f=>({id:Math.random().toString(36).slice(2),file:f,name:f.name,size:f.size,url:URL.createObjectURL(f),duration:null,startUtc:null,tsSource:null}))]);
     addLog(`✓ ${valid.length} video${valid.length>1?"s":""} queued — reading timestamps…`);
     valid.forEach(async f=>{
-      const mp4ts=await extractVideoCreationTime(f);
+      const result=await extractVideoCreationTime(f);
       setPendingVids(p=>p.map(v=>{
         if(v.file!==f)return v;
-        if(mp4ts){const adjusted=mp4ts - vidTz*60000;addLog(`✓ ${f.name}: camera timestamp ${fmtDateTime(adjusted)} UTC`);return{...v,startUtc:adjusted,tsSource:"mp4-meta"};}
+        if(result){
+          const adjusted=result.utc - vidTz*60000;
+          const label=result.source==="filename"?"filename timestamp":"camera timestamp";
+          addLog(`✓ ${f.name}: ${label} ${fmtDateTime(adjusted)} UTC`);
+          return{...v,startUtc:adjusted,tsSource:result.source};
+        }
         if(f.lastModified&&v.duration){const ts=f.lastModified-v.duration*1000 - vidTz*60000;addLog(`✓ ${f.name}: using file modified time (no MP4 metadata)`);return{...v,startUtc:ts,tsSource:"lastmodified"};}
         addLog(`⚠ ${f.name}: no timestamp — set manually in Library`);
         return v;
@@ -978,7 +1039,7 @@ function UploadTab({role,cloudStatus,onImported}){
     const saved=[];
     for(const pv of pendingVids){
       const tags=computeAutoTags(pv.startUtc,pv.duration,csvParsed,xmlParsed);
-      const tsLabel=pv.tsSource==="mp4-meta"?"📷 camera meta":pv.tsSource==="lastmodified"?"⚠ file mtime":"❌ no timestamp";
+      const tsLabel=pv.tsSource==="mp4-meta"?"📷 camera meta":pv.tsSource==="filename"?"📝 filename":pv.tsSource==="lastmodified"?"⚠ file mtime":"❌ no timestamp";
       try{const s=await saveVideo(pv.file,{duration:pv.duration,startUtc:pv.startUtc,tsSource:pv.tsSource,tags,title:pv.name.replace(/\.[^.]+$/,"").replace(/[_-]/g," "),sessionDate:date});saved.push({...s,file:pv.file});addLog(`✓ ${pv.name} · ${tsLabel}${pv.startUtc?` · ${new Date(pv.startUtc).toISOString().slice(11,19)} UTC`:""}`);}
       catch(e){addLog(`✕ ${pv.name}: ${e instanceof Error?e.message:String(e)}`);}
     }
@@ -3061,24 +3122,52 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         {v.duration?fmtT(v.duration):"--:--"}
                       </div>
                     </div>
-                    {/* Metadata */}
-                    <div style={{flex:1,padding:"8px 8px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-                      <div style={{fontSize:13,fontWeight:600,color:"#E2E8F0",marginBottom:4,
-                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
-                      {v.twsAvg!=null&&(
-                        <div style={{display:"flex",gap:10,fontSize:12}}>
-                          <span style={{color:"#7DD3FC"}}>TWS {R(v.twsAvg)}kt</span>
-                          <span style={{color:"#7DD3FC"}}>TWA {R(v.twaAvg,0)}°</span>
-                          {v.polpercAvg!=null&&<span style={{color:v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"}}>Pol {R(v.polpercAvg,0)}%</span>}
+                    {/* Metadata — order: race tags, sail tags, TWS/TWA, filename */}
+                    {(()=>{
+                      const EVENT_TAGS = ["race-start","topmark","mark"];
+                      const POS_TAGS   = ["upwind","reach","downwind"];
+                      const MANO_TAGS  = ["tack","gybe"];
+                      const SAIL_SKIP  = /^(main|msail|mainsail|main-)/;
+                      const tags = v.tags||[];
+                      const raceTags = [
+                        ...tags.filter(t=>EVENT_TAGS.includes(t)),
+                        ...tags.filter(t=>POS_TAGS.includes(t)).slice(0,1),
+                        ...tags.filter(t=>MANO_TAGS.includes(t)),
+                      ];
+                      const sailTags = tags.filter(t=>/-20\d{2}$/.test(t)&&!SAIL_SKIP.test(t));
+                      const tagCol = t => {
+                        if(EVENT_TAGS.includes(t)) return{bg:"#EF444420",bd:"#EF444440",c:"#EF4444"};
+                        if(POS_TAGS.includes(t))   return{bg:"#06B6D420",bd:"#06B6D440",c:"#06B6D4"};
+                        if(MANO_TAGS.includes(t))  return{bg:"#1D9E7520",bd:"#1D9E7540",c:"#1D9E75"};
+                        if(/-20\d{2}$/.test(t))    return{bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
+                        return                          {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
+                      };
+                      return(
+                        <div style={{flex:1,padding:"8px 8px",display:"flex",flexDirection:"column",justifyContent:"center",minWidth:0}}>
+                          {/* 1) Race tags */}
+                          {raceTags.length>0&&(
+                            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+                              {raceTags.map(t=>{const{bg,bd,c}=tagCol(t);return(<span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:9,borderRadius:3,padding:"1px 5px",fontFamily:"monospace"}}>{t}</span>);})}
+                            </div>
+                          )}
+                          {/* 2) Sail tags */}
+                          {sailTags.length>0&&(
+                            <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
+                              {sailTags.map(t=>{const{bg,bd,c}=tagCol(t);return(<span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:9,borderRadius:3,padding:"1px 5px",fontFamily:"monospace"}}>{t}</span>);})}
+                            </div>
+                          )}
+                          {/* 3) TWS & TWA */}
+                          <div style={{fontSize:11,color:"#7DD3FC",fontFamily:"monospace",marginBottom:3,display:"flex",gap:8}}>
+                            {v.twsAvg!=null?<span>TWS {R(v.twsAvg)}kt</span>:null}
+                            {v.twaAvg!=null?<span>TWA {R(v.twaAvg,0)}°</span>:null}
+                            {v.polpercAvg!=null&&<span style={{color:v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"}}>Pol {R(v.polpercAvg,0)}%</span>}
+                            {v.twsAvg==null&&v.twaAvg==null&&<span style={{color:"#334155"}}>—</span>}
+                          </div>
+                          {/* 4) Filename at bottom */}
+                          <div style={{fontSize:12,fontWeight:600,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
                         </div>
-                      )}
-                      <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:4}}>
-                        {(v.tags||[]).slice(0,4).map(t=>(
-                          <span key={t} style={{background:"#1E3A5A",borderRadius:3,padding:"1px 5px",
-                            fontSize:10,color:"#7DD3FC"}}>{t}</span>
-                        ))}
-                      </div>
-                    </div>
+                      );
+                    })()}
                     <div style={{display:"flex",alignItems:"center",padding:"0 10px",color:"#334155",fontSize:18}}>›</div>
                   </div>
                 ))}
