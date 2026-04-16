@@ -294,13 +294,15 @@ function useIsNarrow(breakpoint=768){
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
 
-function PhotoCard({photo,selected,onClick}){
+function PhotoCard({photo,selected,onClick,onThumbLoad}){
   const sails = (photo.sails||[]).filter(s=>!SAIL_SKIP.test(s));
+  const handleLoad = () => onThumbLoad?.(photo.id);
+  const handleError = () => onThumbLoad?.(photo.id);
   return(
     <div onClick={onClick} style={{background:selected?"#0F2A45":"#0A1929",border:`2px solid ${selected?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"4/3",background:"#071624",position:"relative",overflow:"hidden"}}>
         {photo.objectUrl
-          ?<img src={photo.objectUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+          ?<img src={photo.objectUrl} alt="" loading="lazy" onLoad={handleLoad} onError={handleError} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           :<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:22}}>📷</div>}
         {/* Source badge top-right */}
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={photo.cloudSynced?"cloud":"local"}/></div>
@@ -423,11 +425,31 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   // Auto-close the mobile overlay if we switch sessions / clear selection / resize to desktop
   useEffect(()=>{ if(!isNarrow || !selected) setMobileDetailOpen(false); },[isNarrow, selected, activeDate]);
 
+  // ── Thumbnail load tracking ─────────────────────────────────────────────────
+  // "metaLoading" = restoring metadata + IDB blobs (before photos render)
+  // "loadedIds"   = Set of photo IDs whose <img> has fired onLoad/onError
+  // "totalThumbs" = total photos we expect to render for this date
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [loadedIds, setLoadedIds] = useState(() => new Set());
+  const [totalThumbs, setTotalThumbs] = useState(0);
+  const markThumbLoaded = useCallback((id) => {
+    setLoadedIds(prev => {
+      if(prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  }, []);
+
   const LS_KEY = `ssa:photos-meta:${activeDate}`;
 
   // Load metadata from localStorage, blobs from IDB, fill in cloud thumb URLs
   useEffect(()=>{
     if(!activeDate)return;
+    // Reset load-tracking for the new date
+    setMetaLoading(true);
+    setLoadedIds(new Set());
+    setTotalThumbs(0);
     const meta = JSON.parse(localStorage.getItem(LS_KEY)||"[]");
     // For each photo: prefer local blob URL; otherwise fall back to cloud thumb URL.
     Promise.all(meta.map(async p=>{
@@ -441,6 +463,9 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       return{...p, objectUrl, hasLocalOriginal};
     })).then(restored=>{
       setPhotos(restored);
+      // Only count photos that actually have a thumbnail to load
+      setTotalThumbs(restored.filter(p => p.objectUrl).length);
+      setMetaLoading(false);
       if(restored.length>0) setSelected(restored[0]);
     });
   },[activeDate]);
@@ -820,6 +845,33 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {/* ── Photo grid ── */}
       <div style={{width:280,minWidth:280,overflowY:"auto",padding:"10px 8px",flexShrink:0,borderRight:"1px solid #0F2030"}}>
         {!logData&&<div style={{fontSize:9,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:5,padding:"5px 8px",marginBottom:8}}>⚠ No log loaded — instrument data won't be available</div>}
+
+        {/* ── Loading thumbnails banner ── */}
+        {(() => {
+          const loadedCount = Math.min(loadedIds.size, totalThumbs);
+          const isLoading = metaLoading || (totalThumbs > 0 && loadedCount < totalThumbs);
+          if(!isLoading) return null;
+          const pct = totalThumbs > 0 ? Math.round((loadedCount/totalThumbs)*100) : 0;
+          return (
+            <div style={{background:"#06B6D410",border:"1px solid #06B6D430",borderRadius:6,padding:"7px 10px",marginBottom:8}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:10,color:"#06B6D4",fontFamily:"monospace",marginBottom:5}}>
+                <span>⟳ Loading thumbnails…</span>
+                <span>{metaLoading ? "…" : `${loadedCount} / ${totalThumbs}`}</span>
+              </div>
+              <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
+                <div style={{
+                  height:"100%",
+                  width: metaLoading ? "15%" : `${pct}%`,
+                  background:"#06B6D4",
+                  transition:"width 0.2s ease-out",
+                  animation: metaLoading ? "ssa-thumb-pulse 1.2s ease-in-out infinite" : "none",
+                }}/>
+              </div>
+              <style>{`@keyframes ssa-thumb-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+            </div>
+          );
+        })()}
+
         <div style={{fontSize:9,color:"#334155",marginBottom:8}}>{displayed.length} of {photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
         {photos.length===0?(
           <div style={{textAlign:"center",padding:"40px 20px",color:"#334155"}}>
@@ -837,7 +889,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
                   <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{plist.length} photo{plist.length!==1?"s":""}</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>{setSelected(p);if(isNarrow)setMobileDetailOpen(true);}}/>)}
+                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>{setSelected(p);if(isNarrow)setMobileDetailOpen(true);}} onThumbLoad={markThumbLoaded}/>)}
                 </div>
               </div>
             );

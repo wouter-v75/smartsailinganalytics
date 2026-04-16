@@ -606,7 +606,8 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   );
 }
 
-function VideoCard({video,selected,onClick}){
+function VideoCard({video,selected,onClick,onThumbLoad}){
+  const handleLoaded = () => onThumbLoad?.(video.id);
   const tags = video.tags||[];
   const EVENT_TAGS   = ["race-start","topmark","mark"];
   const SAIL_SKIP    = /^(main|msail|mainsail|main-)/;
@@ -629,8 +630,8 @@ function VideoCard({video,selected,onClick}){
   return(
     <div onClick={onClick} style={{background:selected?"#0F2A45":"#0A1929",border:`2px solid ${selected?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
-        {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
-         video.objectUrl&&video.source!=="cloud"?<video src={video.objectUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
+        {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" loading="lazy" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
+         video.objectUrl&&video.source!=="cloud"?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
          video.source==="processing"?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
@@ -2896,7 +2897,8 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         selectedTags,toggleTag,allTags,isManTag,displayed,perms,
                         setActiveTab,cloudStatus,updateVideoTagsFn,
                         computeAutoTagsFn,sessionTagList,setSessionTagList,
-                        handlePlayUtc,onDeleted,role}){
+                        handlePlayUtc,onDeleted,role,
+                        onThumbLoad,videoThumbsLoading,videoLoadedIds,videoTotalThumbs}){
   const [view, setView]   = React.useState("clips"); // "clips" | "player" | "sessions"
   const video = selectedVideo;
   const fmtDate_ = d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}`:d;};
@@ -3000,6 +3002,24 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
       )}
       {/* Clip grid */}
       <div style={{flex:1,overflowY:"auto",padding:"10px 10px"}}>
+        {(() => {
+          const loadedCount = Math.min(videoLoadedIds?.size || 0, videoTotalThumbs || 0);
+          const isLoading = videoThumbsLoading || ((videoTotalThumbs||0) > 0 && loadedCount < videoTotalThumbs);
+          if(!isLoading) return null;
+          const pct = (videoTotalThumbs||0) > 0 ? Math.round((loadedCount/videoTotalThumbs)*100) : 0;
+          return (
+            <div style={{background:"#06B6D410",border:"1px solid #06B6D430",borderRadius:6,padding:"7px 10px",marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:10,color:"#06B6D4",fontFamily:"monospace",marginBottom:5}}>
+                <span>⟳ Loading thumbnails…</span>
+                <span>{videoThumbsLoading ? "…" : `${loadedCount} / ${videoTotalThumbs}`}</span>
+              </div>
+              <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
+                <div style={{height:"100%",width: videoThumbsLoading ? "15%" : `${pct}%`,background:"#06B6D4",transition:"width 0.2s ease-out",animation: videoThumbsLoading ? "ssa-thumb-pulse 1.2s ease-in-out infinite" : "none"}}/>
+              </div>
+              <style>{`@keyframes ssa-thumb-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+            </div>
+          );
+        })()}
         {displayed.length===0&&(
           <div style={{textAlign:"center",padding:"60px 20px",color:"#334155"}}>
             <div style={{fontSize:40,marginBottom:12,opacity:0.3}}>📹</div>
@@ -3026,9 +3046,15 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                     {/* Thumbnail */}
                     <div style={{width:96,flexShrink:0,background:"#071624",position:"relative",overflow:"hidden"}}>
                       {v.thumbnailUrl
-                        ? <img src={v.thumbnailUrl} alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                        ? <img src={v.thumbnailUrl} alt="" loading="lazy"
+                            onLoad={()=>onThumbLoad?.(v.id)}
+                            onError={()=>onThumbLoad?.(v.id)}
+                            style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                         : v.objectUrl&&v.source!=="cloud"
-                          ? <video src={v.objectUrl} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="none"/>
+                          ? <video src={v.objectUrl}
+                              onLoadedData={()=>onThumbLoad?.(v.id)}
+                              onError={()=>onThumbLoad?.(v.id)}
+                              style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="none"/>
                           : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:18}}>📹</div>}
                       <div style={{position:"absolute",bottom:2,right:4,background:"rgba(0,0,0,0.8)",
                         borderRadius:2,padding:"0 3px",fontSize:9,color:"#64748B",fontFamily:"monospace"}}>
@@ -3265,6 +3291,16 @@ export default function SmartSailingAnalytics(){
   const libSyncTimerRef=useRef(null);
   // Mobile-specific sync state — phase: null | "pulling" | "pushing" | "done" | "error"
   const[mobileSyncState,setMobileSyncState]=useState({phase:null,message:"",progress:0});
+  // Video thumbnail load tracking — mirrors the PhotosTab pattern
+  const[videoThumbsLoading,setVideoThumbsLoading]=useState(false);
+  const[videoLoadedIds,setVideoLoadedIds]=useState(()=>new Set());
+  const[videoTotalThumbs,setVideoTotalThumbs]=useState(0);
+  const markVideoThumbLoaded=useCallback(id=>{
+    setVideoLoadedIds(prev=>{
+      if(prev.has(id))return prev;
+      const n=new Set(prev);n.add(id);return n;
+    });
+  },[]);
   const perms=ROLES[role];
 
   // Mount analytics pane on first visit OR as soon as log data arrives
@@ -3340,6 +3376,10 @@ export default function SmartSailingAnalytics(){
 
   async function loadDate(date){
     setActiveDate(date);
+    // Reset video thumbnail load tracking for the new date
+    setVideoThumbsLoading(true);
+    setVideoLoadedIds(new Set());
+    setVideoTotalThumbs(0);
     const localLog=await getLogData(date);const localXml=await getXmlData(date);
     if(localLog){setLogData({...localLog,source:"local"});setSessionTzOffset(localLog.tzOffset??DEFAULT_TZ);}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);setLogData(r2?.logData?{...r2.logData,source:"cloud"}:null);}
@@ -3352,7 +3392,11 @@ export default function SmartSailingAnalytics(){
     if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
     if(!vids.length&&cloudStatus?.available){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
     const log=await getLogData(date);
-    setAllVideos(vids.map(v=>enrichVideo(v,log)));
+    const enriched=vids.map(v=>enrichVideo(v,log));
+    setAllVideos(enriched);
+    // Count videos that will actually render a thumb/preview source
+    setVideoTotalThumbs(enriched.filter(v => v.thumbnailUrl || (v.objectUrl && v.source!=="cloud")).length);
+    setVideoThumbsLoading(false);
     setSelectedVideo(vids[0]||null);
   }
 
@@ -3493,6 +3537,10 @@ export default function SmartSailingAnalytics(){
       onMobileSync={handleMobileCloudSync}
       mobileSyncState={mobileSyncState}
       setMobileSyncState={setMobileSyncState}
+      onThumbLoad={markVideoThumbLoaded}
+      videoThumbsLoading={videoThumbsLoading}
+      videoLoadedIds={videoLoadedIds}
+      videoTotalThumbs={videoTotalThumbs}
     />
   );
 
@@ -3669,6 +3717,31 @@ export default function SmartSailingAnalytics(){
                 )}
               </div>}
               {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
+              {/* ── Loading thumbnails banner ── */}
+              {(() => {
+                const loadedCount = Math.min(videoLoadedIds.size, videoTotalThumbs);
+                const isLoading = videoThumbsLoading || (videoTotalThumbs > 0 && loadedCount < videoTotalThumbs);
+                if(!isLoading) return null;
+                const pct = videoTotalThumbs > 0 ? Math.round((loadedCount/videoTotalThumbs)*100) : 0;
+                return (
+                  <div style={{background:"#06B6D410",border:"1px solid #06B6D430",borderRadius:6,padding:"7px 10px",marginBottom:12}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:10,color:"#06B6D4",fontFamily:"monospace",marginBottom:5}}>
+                      <span>⟳ Loading thumbnails…</span>
+                      <span>{videoThumbsLoading ? "…" : `${loadedCount} / ${videoTotalThumbs}`}</span>
+                    </div>
+                    <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
+                      <div style={{
+                        height:"100%",
+                        width: videoThumbsLoading ? "15%" : `${pct}%`,
+                        background:"#06B6D4",
+                        transition:"width 0.2s ease-out",
+                        animation: videoThumbsLoading ? "ssa-thumb-pulse 1.2s ease-in-out infinite" : "none",
+                      }}/>
+                    </div>
+                    <style>{`@keyframes ssa-thumb-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+                  </div>
+                );
+              })()}
               {(()=>{
                 const groups=[]; const seen=new Map();
                 for(const v of displayed){const d=v.sessionDate||"unknown";if(!seen.has(d)){seen.set(d,[]);groups.push(d);}seen.get(d).push(v);}
@@ -3685,7 +3758,7 @@ export default function SmartSailingAnalytics(){
                       <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{vids.length} clip{vids.length!==1?"s":""}</span>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8}}>
-                      {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)}/>)}
+                      {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)} onThumbLoad={markVideoThumbLoaded}/>)}
                     </div>
                   </div>);
                 });
