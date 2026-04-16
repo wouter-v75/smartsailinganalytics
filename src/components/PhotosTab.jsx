@@ -275,6 +275,23 @@ const fmtDate = d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p
 const TODAY = ()=>new Date().toISOString().slice(0,10);
 const sailTagColor = {bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
 
+// Narrow-viewport hook — matches the same threshold used by MobileShell
+function useIsNarrow(breakpoint=768){
+  const [isNarrow, setIsNarrow] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia(`(max-width:${breakpoint}px)`).matches
+  );
+  useEffect(()=>{
+    if(typeof window === "undefined") return;
+    const mq = window.matchMedia(`(max-width:${breakpoint}px)`);
+    const onChange = e => setIsNarrow(e.matches);
+    mq.addEventListener ? mq.addEventListener("change", onChange) : mq.addListener(onChange);
+    return () => {
+      mq.removeEventListener ? mq.removeEventListener("change", onChange) : mq.removeListener(onChange);
+    };
+  },[breakpoint]);
+  return isNarrow;
+}
+
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
 
 function PhotoCard({photo,selected,onClick}){
@@ -305,7 +322,7 @@ function PhotoCard({photo,selected,onClick}){
   );
 }
 
-function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,onDownloadOriginal,downloadingOriginal}){
+function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,onDownloadOriginal,downloadingOriginal,onClose}){
   const canvasRef=useRef(null);
   const [rendered,setRendered]=useState(false);
   useEffect(()=>{
@@ -324,7 +341,20 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,onDownloadOrigin
   };
   const dateStr = photo.utc ? new Date(photo.utc).toISOString().slice(0,10) : null;
   return(
-    <div style={{flex:1,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:16}}>
+    <div style={{flex:1,background:"#050E1C",borderLeft:onClose?"none":"1px solid #1E3A5A",overflowY:"auto",padding:onClose?"0 14px 20px":16,width:"100%"}}>
+      {/* Mobile: sticky back bar at top */}
+      {onClose && (
+        <div style={{position:"sticky",top:0,zIndex:5,background:"#050E1C",padding:"10px 0 10px",borderBottom:"1px solid #0F2030",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
+          <button onClick={onClose} aria-label="Back to photos"
+            style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:7,padding:"8px 14px",color:"#E2E8F0",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+            ← Back
+          </button>
+          <div style={{fontSize:12,color:"#94A3B8",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
+            {photo.name||"Photo"}
+          </div>
+          <SrcBadge source={photo.cloudSynced?"cloud":"local"}/>
+        </div>
+      )}
       <div style={{position:"relative",marginBottom:12}}>
         <canvas ref={canvasRef} style={{width:"100%",borderRadius:8,border:"1px solid #1E3A5A",display:"block"}}/>
         {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5}}>{fmtDate(new Date(photo.utc).toISOString().slice(0,10))} {new Date(photo.utc).toISOString().slice(11,16)} UTC</div>}
@@ -387,6 +417,11 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const addLog  = msg => setLog(p=>[...p.slice(-20),msg]);
 
   const canSync = role === "admin" || role === "coach";
+  const isNarrow = useIsNarrow(768);
+  // Mobile: only show the fullscreen photo detail when user explicitly taps a thumbnail
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  // Auto-close the mobile overlay if we switch sessions / clear selection / resize to desktop
+  useEffect(()=>{ if(!isNarrow || !selected) setMobileDetailOpen(false); },[isNarrow, selected, activeDate]);
 
   const LS_KEY = `ssa:photos-meta:${activeDate}`;
 
@@ -802,7 +837,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
                   <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{plist.length} photo{plist.length!==1?"s":""}</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>setSelected(p)}/>)}
+                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>{setSelected(p);if(isNarrow)setMobileDetailOpen(true);}}/>)}
                 </div>
               </div>
             );
@@ -810,13 +845,24 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         )}
       </div>
 
-      {/* ── Detail panel ── */}
-      {selected
+      {/* ── Detail panel — desktop-only (mobile renders as overlay below) ── */}
+      {!isNarrow && (selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
            canSync={canSync} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155"}}>
           <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#475569"}}>Select a photo to view</div></div>
-        </div>}
+        </div>)}
+
+      {/* ── Mobile fullscreen overlay ── */}
+      {isNarrow && mobileDetailOpen && selected && (
+        <div style={{position:"fixed",inset:0,background:"#050E1C",zIndex:50,display:"flex",flexDirection:"column"}}
+             role="dialog" aria-modal="true">
+          <PhotoDetail photo={selected} onDelete={()=>{handleDelete();setMobileDetailOpen(false);}}
+            onUpload={handleUpload} uploading={uploading}
+            canSync={canSync} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}
+            onClose={()=>setMobileDetailOpen(false)}/>
+        </div>
+      )}
     </div>
   );
 }
