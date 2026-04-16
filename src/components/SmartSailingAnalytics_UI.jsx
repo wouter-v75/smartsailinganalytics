@@ -105,6 +105,7 @@ function injectMobileCSS(){
     @supports(padding:env(safe-area-inset-bottom)){
       .ssa-mob-bottom-nav { padding-bottom:env(safe-area-inset-bottom); }
     }
+    @keyframes ssa-spin { to { transform: rotate(360deg); } }
   `;
   document.head.appendChild(s);
 }
@@ -2177,12 +2178,57 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
 
   const card=(label,val,unit,color)=>(<div style={{background:"#0A1929",border:`1px solid ${color}25`,borderRadius:8,padding:"12px 14px"}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace"}}>{val}<span style={{fontSize:11,color:"#475569",marginLeft:3}}>{unit}</span></div></div>);
   const section=(title,children)=>(<div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"14px 16px",marginBottom:14}}><div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>{title}</div>{children}</div>);
+  // ── Prominent session date header ────────────────────────────────────────────
+  // Analytics previously buried the session date inside a dense status pill,
+  // which on mobile wrapped awkwardly and left users unsure which day they
+  // were looking at. We surface the date, day-of-week and location/boat (from
+  // event XML meta) in a clear banner at the top of the tab.
+  const sessionDateLabel=(()=>{
+    if(!activeDate) return "No session loaded";
+    const [y,m,d]=activeDate.split("-").map(Number);
+    if(!y||!m||!d) return activeDate;
+    const dt=new Date(Date.UTC(y,m-1,d));
+    const today=TODAY();
+    const yesterday=(()=>{const t=new Date();t.setDate(t.getDate()-1);return t.toISOString().slice(0,10);})();
+    const dayNames=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const monthNames=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const rel=activeDate===today?"Today":activeDate===yesterday?"Yesterday":null;
+    const long=`${dayNames[dt.getUTCDay()]} ${d} ${monthNames[m-1]} ${y}`;
+    return rel?`${rel} · ${long}`:long;
+  })();
+  const sessionMeta=xmlData?.meta||{};
+
   return(
     <div style={{flex:1,overflowY:"auto",padding:16}}>
       <div style={{maxWidth:900,margin:"0 auto"}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+        {/* ── Session banner: clear, always-visible date indicator ─────── */}
+        <div style={{background:"linear-gradient(90deg,#0A1929 0%,#0F2A45 100%)",
+          border:"1px solid #06B6D440",borderRadius:10,padding:"10px 14px",marginBottom:12,
+          display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <div style={{fontSize:18,lineHeight:1}}>📅</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:10,color:"#64748B",letterSpacing:1.5,textTransform:"uppercase",fontWeight:600}}>Session</div>
+            <div style={{fontSize:15,fontWeight:700,color:"#E2E8F0",marginTop:1,
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+              {sessionDateLabel}
+            </div>
+            {(sessionMeta.location||sessionMeta.boat||sessionMeta.dayType)&&(
+              <div style={{fontSize:11,color:"#7DD3FC",marginTop:2,
+                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                {[sessionMeta.location,sessionMeta.boat,sessionMeta.dayType].filter(Boolean).join(" · ")}
+              </div>
+            )}
+          </div>
+          <button onClick={()=>setActiveTab("library")}
+            style={{background:"#06B6D420",border:"1px solid #06B6D460",borderRadius:6,
+              padding:"6px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:600,
+              flexShrink:0,minHeight:32}}>
+            Change
+          </button>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14,flexWrap:"wrap"}}>
           <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0"}}>Analytics</div>
-          {logData&&<span style={{fontSize:10,color:logData.source==="local"?"#1D9E75":"#8B5CF6",background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,borderRadius:3,padding:"2px 7px"}}>{logData.source==="local"?"● Local":"● Cloud"} log · {rows.length.toLocaleString()} rows · {durationH.toFixed(1)}h · {fmtDate(activeDate)}</span>}
+          {logData&&<span style={{fontSize:10,color:logData.source==="local"?"#1D9E75":"#8B5CF6",background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,borderRadius:3,padding:"2px 7px"}}>{logData.source==="local"?"● Local":"● Cloud"} · {rows.length.toLocaleString()} rows · {durationH.toFixed(1)}h</span>}
           {xmlData ? (
             <span style={{fontSize:10,color:"#8B5CF6",background:"#8B5CF610",border:"1px solid #8B5CF630",borderRadius:3,padding:"2px 7px"}}>
               ● Events · {(xmlData.tackJibes||[]).length} T/G · {(xmlData.markRoundings||[]).length} marks · {(xmlData.raceGuns||[]).length} guns · {(xmlData.sailsUpEvents||[]).length} sail chg
@@ -2193,8 +2239,6 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             </span>
           )}
           {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — select a session in Library</span>}
-          <div style={{flex:1}}/>
-          <button onClick={()=>setActiveTab("library")} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:5,padding:"3px 10px",color:"#475569",cursor:"pointer",fontSize:10}}>← Library</button>
         </div>
 
         {/* ── Now Playing bar — live instrument data from video ── */}
@@ -3038,8 +3082,8 @@ function MobileShell(props){
 
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",
-        padding:"0 14px",height:48,display:"flex",alignItems:"center",
-        gap:10,flexShrink:0,position:"relative",zIndex:50}}>
+        padding:"0 10px 0 14px",height:48,display:"flex",alignItems:"center",
+        gap:8,flexShrink:0,position:"relative",zIndex:50}}>
         <span style={{fontSize:16}}>⚓</span>
         <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Smart</span>
         <span style={{fontSize:14,fontWeight:700,color:"#06B6D4"}}>Sailing</span>
@@ -3050,13 +3094,47 @@ function MobileShell(props){
             background:props.cloudStatus?.available?"#1D9E75":props.cloudStatus===null?"#334155":"#F59E0B"}}/>
           <span style={{color:"#475569"}}>{props.cloudStatus?.available?"Cloud":"Local"}</span>
         </div>
-        {props.unsyncedCount>0&&(
-          <span style={{background:"#F59E0B",color:"#000",borderRadius:10,
-            padding:"1px 7px",fontSize:10,fontWeight:800}}>
-            {props.unsyncedCount}
+        {/* ── Cloud sync / refresh button ─────────────────────────────────── */}
+        {/* Clearly labelled, tappable 36px target. Always visible when cloud */}
+        {/* is available — pulls fresh session data (thumbnails) and pushes   */}
+        {/* any unsynced local data. Shows a spinner while running.           */}
+        <button onClick={()=>props.onMobileSync?.()}
+          disabled={!props.cloudStatus?.available||props.mobileSyncState?.phase==="pulling"||props.mobileSyncState?.phase==="pushing"}
+          aria-label="Sync with cloud"
+          style={{background:props.unsyncedCount>0?"#F59E0B":"#06B6D420",
+            border:`1px solid ${props.unsyncedCount>0?"#F59E0B":"#06B6D4"}`,
+            borderRadius:8,padding:"6px 10px",
+            color:props.unsyncedCount>0?"#000":"#06B6D4",
+            fontSize:12,fontWeight:700,cursor:"pointer",
+            display:"flex",alignItems:"center",gap:5,minHeight:32,
+            opacity:props.cloudStatus?.available?1:0.4}}>
+          <span style={{fontSize:13,display:"inline-block",
+            transform:(props.mobileSyncState?.phase==="pulling"||props.mobileSyncState?.phase==="pushing")?"rotate(360deg)":"none",
+            animation:(props.mobileSyncState?.phase==="pulling"||props.mobileSyncState?.phase==="pushing")?"ssa-spin 1s linear infinite":"none"}}>
+            {props.mobileSyncState?.phase==="done"?"✓":props.mobileSyncState?.phase==="error"?"⚠":"⟳"}
           </span>
-        )}
+          <span>{props.unsyncedCount>0?`Sync (${props.unsyncedCount})`:"Sync"}</span>
+        </button>
       </header>
+      {/* ── Sync progress toast — slides in below header ─────────────────── */}
+      {props.mobileSyncState?.phase&&(
+        <div style={{background:props.mobileSyncState.phase==="error"?"#EF444415":props.mobileSyncState.phase==="done"?"#1D9E7515":"#06B6D415",
+          borderBottom:`1px solid ${props.mobileSyncState.phase==="error"?"#EF444440":props.mobileSyncState.phase==="done"?"#1D9E7540":"#06B6D440"}`,
+          padding:"6px 14px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+          <div style={{flex:1,display:"flex",flexDirection:"column",gap:3}}>
+            <div style={{fontSize:11,fontWeight:600,
+              color:props.mobileSyncState.phase==="error"?"#EF4444":props.mobileSyncState.phase==="done"?"#1D9E75":"#06B6D4"}}>
+              {props.mobileSyncState.message||"Working…"}
+            </div>
+            {(props.mobileSyncState.phase==="pulling"||props.mobileSyncState.phase==="pushing")&&(
+              <div style={{height:2,background:"#1E3A5A",borderRadius:1,overflow:"hidden"}}>
+                <div style={{height:"100%",background:"#06B6D4",
+                  width:`${props.mobileSyncState.progress||0}%`,transition:"width .3s"}}/>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Content area ─────────────────────────────────────────────────── */}
       <div style={{flex:1,overflow:"hidden",position:"relative"}}>
@@ -3081,10 +3159,12 @@ function MobileShell(props){
           </div>
         )}
 
-        {/* Upload */}
+        {/* Photos */}
         {activeTab==="photos"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={sessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos}/>
+            <PhotosTab role={props.role} logData={props.logData} xmlData={props.xmlData}
+              activeDate={props.activeDate} sessions={props.sessions} loadDate={props.loadDate}
+              cloudStatus={props.cloudStatus} onPhotosChange={props.setPhotos}/>
           </div>
         )}
         {activeTab==="upload"&&(
@@ -3183,6 +3263,8 @@ export default function SmartSailingAnalytics(){
   const[libSyncPhase,setLibSyncPhase]=useState(null);
   const libSyncAbortRef=useRef(false);
   const libSyncTimerRef=useRef(null);
+  // Mobile-specific sync state — phase: null | "pulling" | "pushing" | "done" | "error"
+  const[mobileSyncState,setMobileSyncState]=useState({phase:null,message:"",progress:0});
   const perms=ROLES[role];
 
   // Mount analytics pane on first visit OR as soon as log data arrives
@@ -3282,6 +3364,81 @@ export default function SmartSailingAnalytics(){
     setActiveTab("library");
   }
 
+  // ── Mobile cloud sync handler ──────────────────────────────────────────────
+  // Two-phase sync tailored for phones:
+  //   1. PULL — fetch cloud session for the active date so thumbnails/video URLs
+  //      appear even when only local metadata existed before. Merges cloud
+  //      videos with any local ones (cloud thumbnails win when local has none).
+  //   2. PUSH — if the user has unsynced local data + canSync, upload it.
+  // Progress is reported via mobileSyncState so the top-bar button can show
+  // a spinner and the content area can show a non-blocking toast.
+  async function handleMobileCloudSync(){
+    if(!cloudStatus?.available){
+      setMobileSyncState({phase:"error",message:"Cloud not configured",progress:0});
+      setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2500);
+      return;
+    }
+    try{
+      // PULL phase — refresh sessions list + latest session
+      setMobileSyncState({phase:"pulling",message:"Fetching cloud sessions…",progress:10});
+      const remote=await listR2Sessions();
+      // De-duplicate by date, keeping local entries (they have IDB-backed blobs) over cloud-only
+      const byDate=new Map();
+      for(const s of sessions) byDate.set(s.date, s);
+      for(const s of remote) if(!byDate.has(s.date)) byDate.set(s.date, {...s,source:"cloud"});
+      const merged=Array.from(byDate.values()).sort((a,b)=>b.date.localeCompare(a.date));
+      setSessions(merged);
+
+      setMobileSyncState({phase:"pulling",message:`Loading ${activeDate}…`,progress:40});
+      const r2=await fetchCloudSession(activeDate);
+      if(r2){
+        // Merge cloud log/xml if we don't already have local
+        if(r2.logData&&!logData)setLogData({...r2.logData,source:"cloud"});
+        if(r2.xmlData&&!xmlData)setXmlData({...r2.xmlData,source:"cloud"});
+        // Merge videos — attach thumbnailUrl/objectUrl from cloud to local entries by id
+        if(r2.videos?.length){
+          setAllVideos(prev=>{
+            const byId=new Map(prev.map(v=>[v.id,v]));
+            for(const cv of r2.videos){
+              const ex=byId.get(cv.id);
+              if(ex){
+                // Prefer cloud thumbnails/stream URL only when local lacks them
+                byId.set(cv.id,{...ex,
+                  thumbnailUrl:ex.thumbnailUrl||cv.thumbnailUrl,
+                  objectUrl:ex.objectUrl||cv.objectUrl,
+                  streamId:ex.streamId||cv.streamId,
+                });
+              }else{
+                byId.set(cv.id,cv);
+              }
+            }
+            return Array.from(byId.values());
+          });
+        }
+      }
+      setMobileSyncState({phase:"pulling",message:"Thumbnails refreshed",progress:70});
+
+      // PUSH phase — only if user has permission + unsynced local
+      const uc=getUnsyncedCount();
+      if(uc>0 && perms.canSync){
+        setMobileSyncState({phase:"pushing",message:`Uploading ${uc} unsynced…`,progress:75});
+        const logD=await getLogData(activeDate);
+        const xmlD=await getXmlData(activeDate);
+        const vids=await getVideosForDate(activeDate);
+        await syncSessionToCloud(activeDate,logD,xmlD,vids,msg=>{
+          setMobileSyncState(p=>({...p,message:msg.length>48?msg.slice(0,45)+"…":msg}));
+        });
+        markCloudSynced(activeDate);
+        setUnsyncedCount(getUnsyncedCount());
+      }
+      setMobileSyncState({phase:"done",message:"✓ Synced",progress:100});
+      setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2200);
+    }catch(e){
+      setMobileSyncState({phase:"error",message:"Sync failed: "+(e?.message||e),progress:0});
+      setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),3500);
+    }
+  }
+
   async function runAiQuery(){
     if(!aiQuery.trim()||!allVideos.length)return;
     setAiLoading(true);setAiResult(null);
@@ -3332,6 +3489,10 @@ export default function SmartSailingAnalytics(){
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
+      photos={photos} setPhotos={setPhotos}
+      onMobileSync={handleMobileCloudSync}
+      mobileSyncState={mobileSyncState}
+      setMobileSyncState={setMobileSyncState}
     />
   );
 
