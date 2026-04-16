@@ -324,19 +324,31 @@ const raceTagColor = t => {
   return                               {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
 };
 
-function PhotoCard({photo,selected,onClick,onThumbLoad}){
+function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,onBatchToggle}){
   const sails = (photo.sails||[]).filter(s=>!SAIL_SKIP.test(s));
   const race  = photo.raceTags||[];
   const handleLoad = () => onThumbLoad?.(photo.id);
   const handleError = () => onThumbLoad?.(photo.id);
+  const isBatchSelected = batchMode && batchSelected?.has(photo.id);
+  const handleClick = () => batchMode ? onBatchToggle?.(photo.id) : onClick?.();
   return(
-    <div onClick={onClick} style={{background:selected?"#0F2A45":"#0A1929",border:`2px solid ${selected?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
+    <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"4/3",background:"#071624",position:"relative",overflow:"hidden"}}>
         {photo.objectUrl
           ?<img src={photo.objectUrl} alt="" loading="lazy" onLoad={handleLoad} onError={handleError} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           :<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:22}}>📷</div>}
         {/* Source badge top-right */}
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={photo.cloudSynced?"cloud":"local"}/></div>
+        {/* Batch checkbox */}
+        {batchMode&&(
+          <div style={{position:"absolute",top:4,left:4,width:22,height:22,borderRadius:4,
+            background:isBatchSelected?"#EF4444":"rgba(0,0,0,0.6)",
+            border:`2px solid ${isBatchSelected?"#EF4444":"#64748B"}`,
+            display:"flex",alignItems:"center",justifyContent:"center",
+            fontSize:14,color:"#fff",fontWeight:700}}>
+            {isBatchSelected?"✓":""}
+          </div>
+        )}
         {/* GPS pin */}
         {photo.lat&&photo.lon&&<div style={{position:"absolute",bottom:3,left:4,fontSize:9,color:"#22C55E"}}>📍</div>}
         {/* Time badge bottom-right */}
@@ -367,7 +379,7 @@ function PhotoCard({photo,selected,onClick,onThumbLoad}){
   );
 }
 
-function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,onDownloadOriginal,downloadingOriginal,onClose}){
+function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose}){
   const canvasRef=useRef(null);
   const [rendered,setRendered]=useState(false);
   useEffect(()=>{
@@ -428,7 +440,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,onDownloadOrigin
         <button onClick={handleExport} disabled={!rendered} style={{flex:1,background:rendered?"#8B5CF6":"#1E3A5A",border:"none",borderRadius:7,padding:"9px 0",color:rendered?"#fff":"#475569",fontWeight:700,cursor:rendered?"pointer":"default",fontSize:12}}>⬇ Export JPEG</button>
         {!photo.cloudSynced&&<button onClick={onUpload} disabled={uploading} style={{flex:1,background:uploading?"#1E3A5A":"#06B6D4",border:"none",borderRadius:7,padding:"9px 0",color:uploading?"#475569":"#000",fontWeight:700,cursor:uploading?"default":"pointer",fontSize:12}}>{uploading?"Uploading…":"☁ Upload"}</button>}
         {photo.cloudSynced&&<div style={{flex:1,background:"#1D9E7510",border:"1px solid #1D9E7530",borderRadius:7,padding:"9px 0",color:"#1D9E75",fontSize:12,textAlign:"center"}}>✓ In cloud</div>}
-        <button onClick={onDelete} style={{background:"none",border:"1px solid #EF444440",borderRadius:7,padding:"9px 14px",color:"#EF4444",cursor:"pointer",fontSize:12}}>🗑</button>
+        {canDelete!==false&&<button onClick={onDelete} style={{background:"none",border:"1px solid #EF444440",borderRadius:7,padding:"9px 14px",color:"#EF4444",cursor:"pointer",fontSize:12}}>🗑</button>}
       </div>
 
       {/* Admin/Coach: download full-res original for offline debrief */}
@@ -456,6 +468,22 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [syncing,setSyncing]   = useState(false);
   const [syncState,setSyncState] = useState(null); // { phase, current, total, msg }
   const [downloadingOriginal,setDownloadingOriginal] = useState(false);
+  // Batch select / delete — admin + coach only
+  const canDelete = role === "admin" || role === "coach";
+  const [batchMode,setBatchMode] = useState(false);
+  const [batchSelected,setBatchSelected] = useState(()=>new Set());
+  const toggleBatchSelect = useCallback(id=>{
+    setBatchSelected(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+  },[]);
+  const clearBatch = useCallback(()=>{setBatchMode(false);setBatchSelected(new Set());},[]);
+  const handleBatchDeletePhotos = useCallback(async()=>{
+    if(!batchSelected.size)return;
+    for(const id of batchSelected){try{await idbDeletePhoto(id);}catch{}}
+    const updated=photos.filter(p=>!batchSelected.has(p.id));
+    setPhotos(updated);savePhotos(updated);
+    if(selected&&batchSelected.has(selected.id))setSelected(updated[0]||null);
+    clearBatch();
+  },[batchSelected,photos,selected,clearBatch]);
   const [dragOver,setDragOver] = useState(false);
   const [log,setLog]           = useState([]);
   const fileRef = useRef(null);
@@ -915,6 +943,31 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           );
         })()}
 
+        {/* ── Batch select toolbar (admin/coach only) ── */}
+        {canDelete && photos.length > 0 && (
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+            <button onClick={()=>batchMode?clearBatch():setBatchMode(true)}
+              style={{background:batchMode?"#EF444420":"#0A1929",border:`1px solid ${batchMode?"#EF444440":"#1E3A5A"}`,
+                borderRadius:5,padding:"4px 10px",color:batchMode?"#EF4444":"#64748B",cursor:"pointer",fontSize:10,fontWeight:600}}>
+              {batchMode?"✕ Cancel":"☑ Select"}
+            </button>
+            {batchMode&&(
+              <>
+                <button onClick={()=>{const allIds=new Set(displayed.map(p=>p.id));setBatchSelected(allIds);}}
+                  style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"4px 8px",color:"#64748B",cursor:"pointer",fontSize:9}}>All</button>
+                <button onClick={()=>setBatchSelected(new Set())}
+                  style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"4px 8px",color:"#64748B",cursor:"pointer",fontSize:9}}>None</button>
+                <span style={{fontSize:10,color:"#475569",fontFamily:"monospace"}}>{batchSelected.size}</span>
+                {batchSelected.size>0&&(
+                  <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} photo${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDeletePhotos();}}
+                    style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:5,padding:"4px 10px",color:"#EF4444",cursor:"pointer",fontSize:10,fontWeight:700}}>
+                    🗑 Delete {batchSelected.size}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
         <div style={{fontSize:9,color:"#334155",marginBottom:8}}>{displayed.length} of {photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
         {photos.length===0?(
           <div style={{textAlign:"center",padding:"40px 20px",color:"#334155"}}>
@@ -932,7 +985,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
                   <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{plist.length} photo{plist.length!==1?"s":""}</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>{setSelected(p);if(isNarrow)setMobileDetailOpen(true);}} onThumbLoad={markThumbLoaded}/>)}
+                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>{setSelected(p);if(isNarrow)setMobileDetailOpen(true);}} onThumbLoad={markThumbLoaded} batchMode={batchMode} batchSelected={batchSelected} onBatchToggle={toggleBatchSelect}/>)}
                 </div>
               </div>
             );
@@ -943,7 +996,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {/* ── Detail panel — desktop-only (mobile renders as overlay below) ── */}
       {!isNarrow && (selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
-           canSync={canSync} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}/>
+           canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155"}}>
           <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#475569"}}>Select a photo to view</div></div>
         </div>)}
@@ -954,7 +1007,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
              role="dialog" aria-modal="true">
           <PhotoDetail photo={selected} onDelete={()=>{handleDelete();setMobileDetailOpen(false);}}
             onUpload={handleUpload} uploading={uploading}
-            canSync={canSync} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}
+            canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}
             onClose={()=>setMobileDetailOpen(false)}/>
         </div>
       )}

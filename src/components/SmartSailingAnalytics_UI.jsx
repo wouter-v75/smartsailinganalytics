@@ -84,11 +84,11 @@ async function extractVideoCreationTime(file) {
 }
 
 const ROLES = {
-  admin:      { label:"Admin",      canImport:true,  canSync:true,  seeLocal:true },
-  coach:      { label:"Coach",      canImport:true,  canSync:true,  seeLocal:true },
-  crew:       { label:"Crew",       canImport:true,  canSync:false, seeLocal:true },
-  viewer:     { label:"Viewer",     canImport:false, canSync:false, seeLocal:false },
-  consultant: { label:"Consultant", canImport:false, canSync:false, seeLocal:false },
+  admin:      { label:"Admin",      canImport:true,  canSync:true,  seeLocal:true, canDelete:true  },
+  coach:      { label:"Coach",      canImport:true,  canSync:true,  seeLocal:true, canDelete:true  },
+  crew:       { label:"Crew",       canImport:true,  canSync:false, seeLocal:true, canDelete:false },
+  viewer:     { label:"Viewer",     canImport:false, canSync:false, seeLocal:false,canDelete:false },
+  consultant: { label:"Consultant", canImport:false, canSync:false, seeLocal:false,canDelete:false },
 };
 
 function parseNmea(s){
@@ -332,27 +332,51 @@ const fmtDate=d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2
 const fmtDateTime=u=>{if(!u)return"";const dt=new Date(u);const dd=String(dt.getUTCDate()).padStart(2,"0");const mm=String(dt.getUTCMonth()+1).padStart(2,"0");const yyyy=dt.getUTCFullYear();const hh=String(dt.getUTCHours()).padStart(2,"0");const mi=String(dt.getUTCMinutes()).padStart(2,"0");return`${dd}/${mm}/${yyyy} ${hh}:${mi}`;};
 const fmtSize=b=>b>1e9?`${(b/1e9).toFixed(1)} GB`:`${(b/1e6).toFixed(0)} MB`;
 function nearestRow(rows,utc){if(!rows?.length)return null;let lo=0,hi=rows.length-1;while(lo<hi){const mid=(lo+hi)>>1;if(rows[mid].utc<utc)lo=mid+1;else hi=mid;}if(lo>0&&Math.abs(rows[lo-1].utc-utc)<Math.abs(rows[lo].utc-utc))lo--;return Math.abs(rows[lo].utc-utc)<300000?rows[lo]:null;}
-function enrichVideo(v,log){
-  if(!log?.rows?.length||!v.startUtc)return v;
-  const w=log.rows.filter(r=>r.utc>=v.startUtc&&r.utc<=v.startUtc+(v.duration||0)*1000);
-  if(!w.length)return v;
-  const avg=f=>w.reduce((s,r)=>s+(r[f]||0),0)/w.length;
-  const avgFiltered=(f,lo,hi)=>{const valid=w.filter(r=>r[f]>lo&&r[f]<hi);return valid.length?valid.reduce((s,r)=>s+r[f],0)/valid.length:null;};
-  const max=f=>w.reduce((mx,r)=>Math.max(mx,r[f]||0),0);
-  return{
-    ...v,
-    twsAvg:   avg("tws"),
-    twaAvg:   avg("twa"),
-    vmgAvg:   avg("vmg"),
-    polpercAvg: avgFiltered("vsPerfPct",5,200),
-    vsTargPercAvg: avgFiltered("vsTargPct",5,200),
-    sogAvg:   avg("sog"),
-    sogMax:   max("sog"),
-    twsMax:   max("tws"),
-    heelAvg:  avg("heel"),
-    bspAvg:   avg("bsp"),
-    logRows:  w,
-  };
+function enrichVideo(v,log,xml,syncOffsets){
+  const out = {...v};
+
+  // ── Instrument averages from log ──────────────────────────────────────────
+  if(log?.rows?.length&&v.startUtc){
+    const offset = (syncOffsets && syncOffsets[v.id]) || 0;
+    const start  = v.startUtc + offset * 1000;
+    const w=log.rows.filter(r=>r.utc>=start&&r.utc<=start+(v.duration||0)*1000);
+    if(w.length){
+      const avg=f=>w.reduce((s,r)=>s+(r[f]||0),0)/w.length;
+      const avgFiltered=(f,lo,hi)=>{const valid=w.filter(r=>r[f]>lo&&r[f]<hi);return valid.length?valid.reduce((s,r)=>s+r[f],0)/valid.length:null;};
+      const max=f=>w.reduce((mx,r)=>Math.max(mx,r[f]||0),0);
+      out.twsAvg   = avg("tws");
+      out.twaAvg   = avg("twa");
+      out.vmgAvg   = avg("vmg");
+      out.polpercAvg = avgFiltered("vsPerfPct",5,200);
+      out.vsTargPercAvg = avgFiltered("vsTargPct",5,200);
+      out.sogAvg   = avg("sog");
+      out.sogMax   = max("sog");
+      out.twsMax   = max("tws");
+      out.heelAvg  = avg("heel");
+      out.bspAvg   = avg("bsp");
+      out.logRows  = w;
+    }
+  }
+
+  // ── Auto-tags from log + xml (race events, sails, position) ───────────────
+  // Re-derive on every enrich so tags update when xml/log loads after the
+  // video was first imported. Preserves manually-added tags.
+  if(v.startUtc && (log || xml)){
+    const offset = (syncOffsets && syncOffsets[v.id]) || 0;
+    const autoTags = computeAutoTags(v.startUtc, v.duration, log, xml, offset);
+    const autoPattern = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
+    const manualTags = (v.tags||[]).filter(t => {
+      if(autoPattern.test(t)) return false;
+      const meta = xml?.meta;
+      if(meta?.location && t === meta.location.toLowerCase().replace(/\s+/g,"-")) return false;
+      if(meta?.boat && t === meta.boat.toLowerCase().replace(/\s+/g,"-")) return false;
+      if(meta?.dayType && t === meta.dayType.toLowerCase().replace(/\s+/g,"-")) return false;
+      return true;
+    });
+    out.tags = [...new Set([...autoTags, ...manualTags])];
+  }
+
+  return out;
 }
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
@@ -655,7 +679,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   );
 }
 
-function VideoCard({video,selected,onClick,onThumbLoad}){
+function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,onBatchToggle}){
   const handleLoaded = () => onThumbLoad?.(video.id);
   const tags = video.tags||[];
   const EVENT_TAGS   = ["race-start","topmark","mark"];
@@ -676,8 +700,10 @@ function VideoCard({video,selected,onClick,onThumbLoad}){
     if(/-20\d{2}$/.test(t))     return{bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
     return                            {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
   };
+  const isBatchSelected = batchMode && batchSelected?.has(video.id);
+  const handleClick = () => batchMode ? onBatchToggle?.(video.id) : onClick?.();
   return(
-    <div onClick={onClick} style={{background:selected?"#0F2A45":"#0A1929",border:`2px solid ${selected?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
+    <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
         {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" loading="lazy" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
          video.objectUrl&&video.source!=="cloud"?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
@@ -685,6 +711,16 @@ function VideoCard({video,selected,onClick,onThumbLoad}){
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={video.source||"local"}/></div>
+        {/* Batch checkbox */}
+        {batchMode&&(
+          <div style={{position:"absolute",top:4,left:4,width:22,height:22,borderRadius:4,
+            background:isBatchSelected?"#EF4444":"rgba(0,0,0,0.6)",
+            border:`2px solid ${isBatchSelected?"#EF4444":"#64748B"}`,
+            display:"flex",alignItems:"center",justifyContent:"center",
+            fontSize:14,color:"#fff",fontWeight:700}}>
+            {isBatchSelected?"✓":""}
+          </div>
+        )}
       </div>
       <div style={{padding:"6px 9px"}}>
         {/* 1) Race tags (start, top mark, gate, tack, gybe, upwind, reach, downwind) */}
@@ -3433,6 +3469,22 @@ export default function SmartSailingAnalytics(){
   const libSyncTimerRef=useRef(null);
   // Mobile-specific sync state — phase: null | "pulling" | "pushing" | "done" | "error"
   const[mobileSyncState,setMobileSyncState]=useState({phase:null,message:"",progress:0});
+
+  // Batch select / delete — admin + coach only
+  const[batchMode,setBatchMode]=useState(false);
+  const[batchSelected,setBatchSelected]=useState(()=>new Set());
+  const toggleBatchSelect=useCallback(id=>{
+    setBatchSelected(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+  },[]);
+  const clearBatch=useCallback(()=>{setBatchMode(false);setBatchSelected(new Set());},[]);
+  const handleBatchDelete=useCallback(async()=>{
+    if(!batchSelected.size)return;
+    const ids=[...batchSelected];
+    for(const id of ids){try{await deleteVideo(id);}catch{}}
+    setAllVideos(p=>p.filter(v=>!batchSelected.has(v.id)));
+    if(selectedVideo&&batchSelected.has(selectedVideo.id))setSelectedVideo(null);
+    clearBatch();
+  },[batchSelected,selectedVideo,clearBatch]);
   // Video thumbnail load tracking — mirrors the PhotosTab pattern
   const[videoThumbsLoading,setVideoThumbsLoading]=useState(false);
   const[videoLoadedIds,setVideoLoadedIds]=useState(()=>new Set());
@@ -3485,7 +3537,8 @@ export default function SmartSailingAnalytics(){
         const d=v.sessionDate||today;
         if(isMobile && !isRecent(d)) return v; // mobile: skip log read for old clips
         const log=await getLogData(d);
-        return enrichVideo(v,log);
+        const xml=await getXmlData(d);
+        return enrichVideo(v,log,xml);
       }));
       setAllVideos(enriched);
       if(enriched.length>0)setSelectedVideo(enriched[0]);
@@ -3534,7 +3587,8 @@ export default function SmartSailingAnalytics(){
     if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
     if(!vids.length&&cloudStatus?.available){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
     const log=await getLogData(date);
-    const enriched=vids.map(v=>enrichVideo(v,log));
+    const xml=localXml||await getXmlData(date)||null;
+    const enriched=vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
     setAllVideos(enriched);
     // Count videos that will actually render a thumb/preview source
     setVideoTotalThumbs(enriched.filter(v => v.thumbnailUrl || (v.objectUrl && v.source!=="cloud")).length);
@@ -3859,6 +3913,31 @@ export default function SmartSailingAnalytics(){
                 )}
               </div>}
               {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
+              {/* ── Batch select toolbar (admin/coach only) ── */}
+              {perms.canDelete && allVideos.length > 0 && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                  <button onClick={()=>batchMode?clearBatch():setBatchMode(true)}
+                    style={{background:batchMode?"#EF444420":"#0A1929",border:`1px solid ${batchMode?"#EF444440":"#1E3A5A"}`,
+                      borderRadius:6,padding:"5px 12px",color:batchMode?"#EF4444":"#64748B",cursor:"pointer",fontSize:11,fontWeight:600}}>
+                    {batchMode?"✕ Cancel":"☑ Select"}
+                  </button>
+                  {batchMode&&(
+                    <>
+                      <button onClick={()=>{const allIds=new Set(displayed.map(v=>v.id));setBatchSelected(allIds);}}
+                        style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:10}}>All</button>
+                      <button onClick={()=>setBatchSelected(new Set())}
+                        style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:10}}>None</button>
+                      <span style={{fontSize:11,color:"#475569",fontFamily:"monospace"}}>{batchSelected.size} selected</span>
+                      {batchSelected.size>0&&(
+                        <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} video${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDelete();}}
+                          style={{marginLeft:"auto",background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"5px 14px",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                          🗑 Delete {batchSelected.size}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
               {/* ── Loading thumbnails banner ── */}
               {(() => {
                 const loadedCount = Math.min(videoLoadedIds.size, videoTotalThumbs);
@@ -3900,7 +3979,7 @@ export default function SmartSailingAnalytics(){
                       <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{vids.length} clip{vids.length!==1?"s":""}</span>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8}}>
-                      {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)} onThumbLoad={markVideoThumbLoaded}/>)}
+                      {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)} onThumbLoad={markVideoThumbLoaded} batchMode={batchMode} batchSelected={batchSelected} onBatchToggle={toggleBatchSelect}/>)}
                     </div>
                   </div>);
                 });
@@ -3933,13 +4012,13 @@ export default function SmartSailingAnalytics(){
                       const autoTags2=new Set(computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0));const manualTags=(selectedVideo.tags||[]).filter(t=>!autoTags2.has(t));
                       const mergedTags=[...new Set([...autoTags,...manualTags])];
                       await updateVideoTags(id,mergedTags);
-                      const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData);
+                      const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData,xmlData,syncOffsets);
                       setAllVideos(p=>p.map(v=>v.id===id?enriched:v));
                       setSelectedVideo(enriched);
                     }}/>
                   </div>
                   {perms.canImport&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={updated=>{saveTagList(activeDate,updated);setSessionTagList(updated);}} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
-                  {perms.canImport&&(<DeleteButton video={selectedVideo} cloudStatus={cloudStatus} onDeleted={id=>{setAllVideos(p=>p.filter(v=>v.id!==id));setSelectedVideo(null);saveSyncOffset(id,0);}}/>)}
+                  {perms.canDelete&&(<DeleteButton video={selectedVideo} cloudStatus={cloudStatus} onDeleted={id=>{setAllVideos(p=>p.filter(v=>v.id!==id));setSelectedVideo(null);saveSyncOffset(id,0);}}/>)}
                 </div>
               </div>
             )}
