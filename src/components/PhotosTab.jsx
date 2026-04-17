@@ -536,15 +536,19 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       // Enrich immediately with whatever log/xml is already available
       // so tags + instrument data appear without waiting for a
       // separate re-enrich cycle.
-      const enriched = (logData || xmlData)
+      const willEnrich = !!(logData || xmlData);
+      console.debug("[SSA:photos] loadEffect:",restored.length,"photos, logData:",!!logData,"(rows:",logData?.rows?.length||0,"), xmlData:",!!xmlData,", willEnrich:",willEnrich);
+      if(restored.length>0) console.debug("[SSA:photos] sample utc:",restored[0].name,restored[0].utc?new Date(restored[0].utc).toISOString():"NULL");
+      const enriched = willEnrich
         ? restored.map(p => enrichPhoto(p, logData, xmlData))
         : restored;
+      if(enriched.length>0) console.debug("[SSA:photos] after enrich sample:",enriched[0].name,"tws:",enriched[0].tws,"sails:",enriched[0].sails,"raceTags:",enriched[0].raceTags);
       setPhotos(enriched);
       // Only count photos that actually have a thumbnail to load
       setTotalThumbs(enriched.filter(p => p.objectUrl).length);
       setMetaLoading(false);
       if(enriched.length>0) setSelected(enriched[0]);
-      if(logData || xmlData) savePhotos(enriched);
+      if(willEnrich) savePhotos(enriched);
     });
   // logData/xmlData intentionally in deps so photos re-enrich when data arrives
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -563,8 +567,14 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     if(log?.rows?.length&&photo.utc){
       const row=nearestLogRow(log.rows,photo.utc);
       if(row){e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;}
+      else console.debug("[SSA:photo] no log row near",photo.name,new Date(photo.utc).toISOString());
+    }else if(!photo.utc) console.debug("[SSA:photo] no UTC for",photo.name,"— instrument data skipped");
+    if(xml){
+      const sails=activeSailsAt(xml.sailsUpEvents,photo.utc);
+      const race=raceTagsAt(xml,photo.utc);
+      e.sails=sails;e.raceTags=race;e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;
+      if(sails.length||race.length) console.debug("[SSA:photo] enriched",photo.name,"sails:",sails,"race:",race);
     }
-    if(xml){e.sails=activeSailsAt(xml.sailsUpEvents,photo.utc);e.raceTags=raceTagsAt(xml,photo.utc);e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;}
     return e;
   },[]);
 
@@ -602,14 +612,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     addLog(`✓ ${newPhotos.length} photo${newPhotos.length>1?"s":""} added`);
   },[photos,activeDate,logData,xmlData,enrichPhoto,savePhotos]);
 
-  // Re-enrich when log/xml loads
-  useEffect(()=>{
-    if(!photos.length||(!logData&&!xmlData))return;
-    const enriched=photos.map(p=>enrichPhoto(p,logData,xmlData));
-    setPhotos(enriched);savePhotos(enriched);
-    if(selected)setSelected(enriched.find(p=>p.id===selected.id)||enriched[0]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[logData,xmlData]);
+  // Re-enrich is handled by the loading effect above (logData/xmlData are in its deps).
+  // A separate effect would race with the async loading effect and cause stale-state bugs.
 
   // ── Upload a single photo (full-res + thumb + meta) ─────────────────────────
   // Returns updated photo metadata on success, null on failure.

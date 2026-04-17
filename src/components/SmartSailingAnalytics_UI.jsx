@@ -374,7 +374,8 @@ function enrichVideo(v,log,xml,syncOffsets){
       return true;
     });
     out.tags = [...new Set([...autoTags, ...manualTags])];
-  }
+    console.debug("[SSA:video] enrichVideo",v.title,"autoTags:",autoTags,"final tags:",out.tags);
+  }else if(!v.startUtc) console.debug("[SSA:video] enrichVideo",v.title,"— no startUtc, skipping auto-tags");
 
   return out;
 }
@@ -691,13 +692,13 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   const eventTags  = tags.filter(t=>EVENT_TAGS.includes(t));
   const posTags    = tags.filter(t=>POS_TAGS.includes(t)).slice(0,1);
   const manoTags   = tags.filter(t=>MANO_TAGS.includes(t));
-  const realSailTags = tags.filter(t=>/-20\d{2}$/.test(t)&&!SAIL_SKIP.test(t));
+  const realSailTags = tags.filter(t=>!SKIP_ALWAYS.has(t)&&!SAIL_SKIP.test(t)&&!t.startsWith("tws-")&&!/^\d+x-/.test(t)&&!isLocationTag(t));
   const topRowTags  = [...new Set([...eventTags, ...posTags, ...manoTags])].filter(Boolean);
   const tagColor = t => {
     if(EVENT_TAGS.includes(t))  return{bg:"#EF444420",bd:"#EF444440",c:"#EF4444"};
     if(POS_TAGS.includes(t))    return{bg:"#06B6D420",bd:"#06B6D440",c:"#06B6D4"};
     if(MANO_TAGS.includes(t))   return{bg:"#1D9E7520",bd:"#1D9E7540",c:"#1D9E75"};
-    if(/-20\d{2}$/.test(t))     return{bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
+    if(realSailTags.includes(t))return{bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
     return                            {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
   };
   const isBatchSelected = batchMode && batchSelected?.has(video.id);
@@ -3223,12 +3224,14 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         ...tags.filter(t=>POS_TAGS.includes(t)).slice(0,1),
                         ...tags.filter(t=>MANO_TAGS.includes(t)),
                       ];
-                      const sailTags = tags.filter(t=>/-20\d{2}$/.test(t)&&!SAIL_SKIP.test(t));
+                      const SKIP_ALL = new Set(["local","cloud","training","race","today","topmark","mark","race-start","upwind","reach","downwind","tack","gybe"]);
+                      const isLocTag = t => !SKIP_ALL.has(t)&&!t.startsWith("tws-")&&!SAIL_SKIP.test(t)&&!/^\d+x-/.test(t)&&t.includes("-")&&!EVENT_TAGS.includes(t)&&!POS_TAGS.includes(t)&&!MANO_TAGS.includes(t);
+                      const sailTags = tags.filter(t=>!SKIP_ALL.has(t)&&!SAIL_SKIP.test(t)&&!t.startsWith("tws-")&&!/^\d+x-/.test(t)&&!isLocTag(t));
                       const tagCol = t => {
                         if(EVENT_TAGS.includes(t)) return{bg:"#EF444420",bd:"#EF444440",c:"#EF4444"};
                         if(POS_TAGS.includes(t))   return{bg:"#06B6D420",bd:"#06B6D440",c:"#06B6D4"};
                         if(MANO_TAGS.includes(t))  return{bg:"#1D9E7520",bd:"#1D9E7540",c:"#1D9E75"};
-                        if(/-20\d{2}$/.test(t))    return{bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
+                        if(sailTags.includes(t))   return{bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
                         return                          {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
                       };
                       return(
