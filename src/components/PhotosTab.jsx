@@ -533,13 +533,22 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         : (p.cloudSynced ? cloudImageUrl(keys.thumb) : null);
       return{...p, objectUrl, hasLocalOriginal};
     })).then(restored=>{
-      setPhotos(restored);
+      // Enrich immediately with whatever log/xml is already available
+      // so tags + instrument data appear without waiting for a
+      // separate re-enrich cycle.
+      const enriched = (logData || xmlData)
+        ? restored.map(p => enrichPhoto(p, logData, xmlData))
+        : restored;
+      setPhotos(enriched);
       // Only count photos that actually have a thumbnail to load
-      setTotalThumbs(restored.filter(p => p.objectUrl).length);
+      setTotalThumbs(enriched.filter(p => p.objectUrl).length);
       setMetaLoading(false);
-      if(restored.length>0) setSelected(restored[0]);
+      if(enriched.length>0) setSelected(enriched[0]);
+      if(logData || xmlData) savePhotos(enriched);
     });
-  },[activeDate]);
+  // logData/xmlData intentionally in deps so photos re-enrich when data arrives
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[activeDate, logData, xmlData]);
 
   const savePhotos = useCallback((updated)=>{
     // Save metadata to localStorage (no blobs)

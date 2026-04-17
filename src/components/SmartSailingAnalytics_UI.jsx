@@ -3575,19 +3575,27 @@ export default function SmartSailingAnalytics(){
     setVideoThumbsLoading(true);
     setVideoLoadedIds(new Set());
     setVideoTotalThumbs(0);
-    const localLog=await getLogData(date);const localXml=await getXmlData(date);
-    if(localLog){setLogData({...localLog,source:"local"});setSessionTzOffset(localLog.tzOffset??DEFAULT_TZ);}
-    else if(cloudStatus?.available){const r2=await fetchCloudSession(date);setLogData(r2?.logData?{...r2.logData,source:"cloud"}:null);}
+
+    // ── Load log + xml (local first, cloud fallback) ────────────────────────
+    let log = await getLogData(date);
+    let xml = await getXmlData(date);
+
+    if(log){setLogData({...log,source:"local"});setSessionTzOffset(log.tzOffset??DEFAULT_TZ);}
+    else if(cloudStatus?.available){const r2=await fetchCloudSession(date);log=r2?.logData||null;setLogData(log?{...log,source:"cloud"}:null);}
     else setLogData(null);
+
     setSessionTagList(getTagList(date));
-    if(localXml){setXmlData({...localXml,source:"local"});}
-    else if(cloudStatus?.available){const r2=await fetchCloudSession(date);setXmlData(r2?.xmlData?{...r2.xmlData,source:"cloud"}:null);}
+
+    if(xml){setXmlData({...xml,source:"local"});}
+    else if(cloudStatus?.available){const r2=await fetchCloudSession(date);xml=r2?.xmlData||null;setXmlData(xml?{...xml,source:"cloud"}:null);}
     else setXmlData(null);
+
+    // ── Load videos ─────────────────────────────────────────────────────────
     let vids=await getVideosForDate(date);
     if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
     if(!vids.length&&cloudStatus?.available){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
-    const log=await getLogData(date);
-    const xml=localXml||await getXmlData(date)||null;
+
+    // Enrich with BOTH log AND xml — uses the resolved values above (local or cloud)
     const enriched=vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
     setAllVideos(enriched);
     // Count videos that will actually render a thumb/preview source
