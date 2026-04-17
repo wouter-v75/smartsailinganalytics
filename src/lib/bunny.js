@@ -203,6 +203,8 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
     }
 
     // 4. Session meta → Bunny Storage (direct)
+    // Include ALL enriched fields so other devices can display full metadata
+    // without needing to re-derive from log/xml.
     const meta = {
       date, boat: xmlData?.meta?.boat || null, location: xmlData?.meta?.location || null,
       hasLog: !!logData, hasXml: !!xmlData, videoCount: videos.length,
@@ -210,6 +212,14 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
         id: v.id, name: v.name, size: v.size, duration: v.duration,
         camera: v.camera, title: v.title, tags: v.tags,
         streamId: result.streamIds[v.id] || v.streamId || null,
+        startUtc: v.startUtc || null, tsSource: v.tsSource || null,
+        // Enriched instrument averages
+        twsAvg: v.twsAvg ?? null, twaAvg: v.twaAvg ?? null,
+        vmgAvg: v.vmgAvg ?? null, bspAvg: v.bspAvg ?? null,
+        sogAvg: v.sogAvg ?? null, sogMax: v.sogMax ?? null,
+        twsMax: v.twsMax ?? null, heelAvg: v.heelAvg ?? null,
+        polpercAvg: v.polpercAvg ?? null, vsTargPercAvg: v.vsTargPercAvg ?? null,
+        sessionDate: v.sessionDate || date,
       })),
       syncedAt: Date.now(),
     };
@@ -220,6 +230,94 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
   } catch (err) {
     status(`Sync error: ${err instanceof Error ? err.message : String(err)}`);
     return result;
+  }
+}
+
+// ── Update cloud metadata after re-enrichment ────────────────────────────────
+// Called when log/event files are uploaded after videos were already synced.
+// Updates meta.json with enriched video data + optionally uploads new log/events.
+export async function updateCloudSessionMetadata(date, { videos, logData, xmlData, photos } = {}) {
+  try {
+    // 1. Read existing meta.json from cloud
+    const existing = await fetchFromStorage(`sessions/${date}/meta.json`);
+    if (!existing) return false; // session not yet in cloud — nothing to update
+
+    // 2. Upload log/events if provided (new data that wasn't there before)
+    const uploads = [];
+    if (logData?.rows?.length) {
+      uploads.push(uploadJsonToStorage(`sessions/${date}/log.json`, {
+        rows: logData.rows, startUtc: logData.startUtc,
+        endUtc: logData.endUtc, uploadedAt: Date.now(),
+      }));
+    }
+    if (xmlData && !xmlData.source) {  // skip cloud-sourced xml (already there)
+      uploads.push(uploadJsonToStorage(`sessions/${date}/events.json`, {
+        ...xmlData, uploadedAt: Date.now(),
+      }));
+    }
+
+    // 3. Merge enriched video data into existing meta
+    if (videos?.length) {
+      const byId = new Map((existing.videos || []).map(v => [v.id, v]));
+      for (const v of videos) {
+        const prev = byId.get(v.id) || {};
+        byId.set(v.id, {
+          ...prev,
+          id: v.id, name: v.name || prev.name, size: v.size || prev.size,
+          duration: v.duration || prev.duration,
+          camera: v.camera || prev.camera, title: v.title || prev.title,
+          tags: v.tags || prev.tags,
+          streamId: v.streamId || prev.streamId || null,
+          startUtc: v.startUtc || prev.startUtc || null,
+          tsSource: v.tsSource || prev.tsSource || null,
+          twsAvg: v.twsAvg ?? prev.twsAvg ?? null,
+          twaAvg: v.twaAvg ?? prev.twaAvg ?? null,
+          vmgAvg: v.vmgAvg ?? prev.vmgAvg ?? null,
+          bspAvg: v.bspAvg ?? prev.bspAvg ?? null,
+          sogAvg: v.sogAvg ?? prev.sogAvg ?? null,
+          sogMax: v.sogMax ?? prev.sogMax ?? null,
+          twsMax: v.twsMax ?? prev.twsMax ?? null,
+          heelAvg: v.heelAvg ?? prev.heelAvg ?? null,
+          polpercAvg: v.polpercAvg ?? prev.polpercAvg ?? null,
+          vsTargPercAvg: v.vsTargPercAvg ?? prev.vsTargPercAvg ?? null,
+          sessionDate: v.sessionDate || prev.sessionDate || date,
+        });
+      }
+      existing.videos = Array.from(byId.values());
+      existing.videoCount = existing.videos.length;
+    }
+
+    // Update session-level flags
+    existing.hasLog = existing.hasLog || !!(logData?.rows?.length);
+    existing.hasXml = existing.hasXml || !!xmlData;
+    if (xmlData?.meta?.boat)     existing.boat     = xmlData.meta.boat;
+    if (xmlData?.meta?.location) existing.location  = xmlData.meta.location;
+    existing.enrichedAt = Date.now();
+
+    // 4. Upload updated meta.json + any log/event uploads in parallel
+    uploads.push(uploadJsonToStorage(`sessions/${date}/meta.json`, existing));
+
+    // 5. Update per-photo metadata if photos provided
+    if (photos?.length) {
+      const photoIndex = { updatedAt: Date.now(), photos: [] };
+      for (const p of photos) {
+        const metaObj = { ...p };
+        delete metaObj.objectUrl;  // don't store blob URLs in cloud
+        photoIndex.photos.push(metaObj);
+        uploads.push(uploadJsonToStorage(
+          `sessions/${date}/photos/${p.id}_meta.json`, metaObj
+        ));
+      }
+      uploads.push(uploadJsonToStorage(`sessions/${date}/photos.json`, photoIndex));
+    }
+
+    await Promise.all(uploads);
+    console.debug("[SSA:cloud] Updated cloud metadata for", date,
+      "videos:", videos?.length || 0, "photos:", photos?.length || 0);
+    return true;
+  } catch (err) {
+    console.error("[SSA:cloud] updateCloudSessionMetadata error:", err);
+    return false;
   }
 }
 

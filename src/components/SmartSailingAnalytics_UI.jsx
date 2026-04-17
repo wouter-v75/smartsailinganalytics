@@ -1,7 +1,7 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
-import { deleteStreamVideo } from "../lib/bunny";
+import { deleteStreamVideo, updateCloudSessionMetadata } from "../lib/bunny";
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
@@ -1175,11 +1175,15 @@ function UploadTab({role,cloudStatus,onImported}){
     try{
       let currentVidId=null;
 
+      // Enrich videos with latest log/xml before uploading so cloud gets full metadata
+      const _syncLog = await getLogData(savedDate);
+      const _syncXml = await getXmlData(savedDate);
+      const _syncVids = savedVids.map(v => enrichVideo(v, _syncLog, _syncXml, syncOffsets));
       const result=await syncSessionToCloud(
         savedDate,
-        await getLogData(savedDate),
-        await getXmlData(savedDate),
-        savedVids,
+        _syncLog,
+        _syncXml,
+        _syncVids,
         msg=>{
           if(syncAbortRef.current)return;
           addLog(msg);
@@ -3607,12 +3611,55 @@ export default function SmartSailingAnalytics(){
     setSelectedVideo(vids[0]||null);
   }
 
-  function handleImported({date,videos,logData:ld,xmlData:xd}){
+  async function handleImported({date,videos,logData:ld,xmlData:xd}){
     if(ld)setLogData({...ld,source:"local"});if(xd)setXmlData({...xd,source:"local"});
     setSessions(getSessions());setUnsyncedCount(getUnsyncedCount());
-    // Also load from IDB to ensure state matches storage (catches second import race)
-    loadDate(date);
+    // Load from IDB to ensure state matches storage (catches second import race)
+    await loadDate(date);
     setActiveTab("library");
+
+    // ── Re-enrich & update cloud metadata ──────────────────────────────────
+    // When log/event files are uploaded after videos were already synced,
+    // update the cloud metadata so other devices get enriched data.
+    if((ld||xd)&&cloudStatus?.available){
+      // loadDate already enriched allVideos in state — use the freshly enriched data
+      // Small delay to let loadDate's setState propagate
+      setTimeout(async()=>{
+        try{
+          const log=await getLogData(date);
+          const xml=await getXmlData(date);
+          const vids=await getVideosForDate(date);
+          const enrichedVids=vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
+          // Get photos from localStorage for this date
+          const photoMeta=JSON.parse(localStorage.getItem(`ssa:photos-meta:${date}`)||"[]");
+          const enrichedPhotos=photoMeta.length&&(log||xml)
+            ? photoMeta.map(p=>{
+                const e={...p};
+                if(log?.rows?.length&&p.utc){
+                  const nearRow=log.rows.reduce((best,r)=>Math.abs(r.utc-p.utc)<Math.abs(best.utc-p.utc)?r:best,log.rows[0]);
+                  if(Math.abs(nearRow.utc-p.utc)<300000){e.tws=nearRow.tws;e.twa=nearRow.twa;e.awa=nearRow.awa;e.bsp=nearRow.bsp;e.heel=nearRow.heel;e.vmg=nearRow.vmg;}
+                }
+                if(xml){
+                  const sailEvts=xml.sailsUpEvents||[];
+                  const before=sailEvts.filter(s=>s.utc<=p.utc).sort((a,b)=>b.utc-a.utc)[0];
+                  e.sails=before?.sails||[];
+                  e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;
+                }
+                return e;
+              })
+            : photoMeta;
+          // Save enriched photos back to localStorage
+          if(enrichedPhotos.length&&(log||xml)){
+            localStorage.setItem(`ssa:photos-meta:${date}`,JSON.stringify(enrichedPhotos.map(({objectUrl,...p})=>p)));
+          }
+          await updateCloudSessionMetadata(date,{
+            videos:enrichedVids,logData:log,xmlData:xml,
+            photos:enrichedPhotos.length?enrichedPhotos:undefined
+          });
+          console.debug("[SSA] Cloud metadata updated for",date,"after log/event import");
+        }catch(err){console.error("[SSA] Cloud metadata update failed:",err);}
+      },500);
+    }
   }
 
   // ── Mobile cloud sync handler ──────────────────────────────────────────────
