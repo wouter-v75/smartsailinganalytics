@@ -18,6 +18,8 @@ interface CropBox {
 
 export default function SquashShotsApp() {
   const [step, setStep] = useState<Step>('camera');
+  const [cameraMode, setCameraMode] = useState<'select' | 'live' | 'preview'>('select');
+  const [previewSrc, setPreviewSrc] = useState<string>('');
   const [imageSrc, setImageSrc] = useState<string>('');
   const [rotatedImageSrc, setRotatedImageSrc] = useState<string>('');
   const [croppedImageSrc, setCroppedImageSrc] = useState<string>('');
@@ -77,19 +79,20 @@ export default function SquashShotsApp() {
   const cachedImage = useRef<HTMLImageElement | null>(null);
   const cachedImageSrc = useRef<string>('');
 
-  // Initialize camera
-  useEffect(() => {
-    if (step === 'camera') {
-      startCamera();
+  // Stop camera helper
+  const stopCamera = () => {
+    if (videoRef.current?.srcObject) {
+      (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
     }
-    return () => {
-      if (videoRef.current?.srcObject) {
-        (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-      }
-    };
-  }, [step]);
+  };
 
-  const startCamera = async () => {
+  // Cleanup camera on unmount or step change
+  useEffect(() => {
+    return () => stopCamera();
+  }, []);
+
+  const openCamera = async () => {
     try {
       const constraints = {
         video: {
@@ -102,12 +105,13 @@ export default function SquashShotsApp() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
+      setCameraMode('live');
     } catch (err) {
-      console.error('Camera access denied:', err);
+      alert('Camera access denied. Please allow camera access in your browser settings.');
     }
   };
 
-  const captureImage = () => {
+  const takePicture = () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const ctx = canvasRef.current.getContext('2d');
@@ -115,20 +119,32 @@ export default function SquashShotsApp() {
 
     canvasRef.current.width = videoRef.current.videoWidth;
     canvasRef.current.height = videoRef.current.videoHeight;
-
     ctx.drawImage(videoRef.current, 0, 0);
 
-    // Convert to blob URL for fast loading (same perf as album photos)
-    originalFile.current = null; // Camera capture has no EXIF
+    // Create preview blob URL
     canvasRef.current.toBlob((blob) => {
       if (!blob) return;
       const objectUrl = URL.createObjectURL(blob);
-      setImageSrc(objectUrl);
-      setStep('points');
+      setPreviewSrc(objectUrl);
+      setCameraMode('preview');
     }, 'image/jpeg', 1.0);
 
-    const stream = videoRef.current.srcObject as MediaStream;
-    stream?.getTracks().forEach(track => track.stop());
+    // Stop camera while previewing
+    stopCamera();
+  };
+
+  const usePicture = () => {
+    originalFile.current = null; // Camera capture has no EXIF
+    setImageSrc(previewSrc);
+    setPreviewSrc('');
+    setCameraMode('select');
+    setStep('points');
+  };
+
+  const retakePicture = () => {
+    if (previewSrc) URL.revokeObjectURL(previewSrc);
+    setPreviewSrc('');
+    openCamera(); // Re-open camera
   };
 
   // Loading state for album/file picker
@@ -1020,7 +1036,10 @@ export default function SquashShotsApp() {
   };
 
   const resetAll = () => {
+    stopCamera();
     setStep('camera');
+    setCameraMode('select');
+    setPreviewSrc('');
     setImageSrc('');
     setRotatedImageSrc('');
     setCroppedImageSrc('');
@@ -1051,10 +1070,12 @@ export default function SquashShotsApp() {
       {/* Header */}
       <div className="bg-gradient-to-b from-slate-900 to-transparent px-4 py-3 flex justify-between items-center text-sm z-10">
         <div className="flex items-center gap-2">
-          {step !== 'camera' && (
+          {(step !== 'camera' || cameraMode !== 'select') && (
             <button
               onClick={() => {
-                if (step === 'points') { setStep('camera'); setPoints([]); setZoom(1); setPan({ x: 0, y: 0 }); }
+                if (step === 'camera' && cameraMode === 'live') { stopCamera(); setCameraMode('select'); }
+                else if (step === 'camera' && cameraMode === 'preview') { retakePicture(); }
+                else if (step === 'points') { setStep('camera'); setCameraMode('select'); setPoints([]); setZoom(1); setPan({ x: 0, y: 0 }); }
                 else if (step === 'crop') { setStep('points'); setCropBox(null); setCropZoom(1); setCropPan({ x: 0, y: 0 }); }
                 else if (step === 'squash') { setStep('crop'); setCroppedImageSrc(''); setSquashedImageSrc(''); }
               }}
@@ -1093,25 +1114,21 @@ export default function SquashShotsApp() {
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* ── Camera / Upload Step ── */}
-        {step === 'camera' && (
+        {step === 'camera' && cameraMode === 'select' && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 py-6">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              className="max-w-full max-h-[50vh] rounded-lg bg-black object-cover"
-            />
+            <div className="text-center mb-4">
+              <p className="text-slate-400 text-sm">Select an image source</p>
+            </div>
             <button
-              onClick={captureImage}
+              onClick={openCamera}
               className="w-full px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-base rounded-lg active:scale-95 transition-transform"
             >
-              📸 Capture from Camera
+              📷 Use Camera
             </button>
             <div className="flex gap-3 w-full">
               <button
                 onClick={() => {
                   setActiveButton('album');
-                  // No capture attribute = opens photo library on mobile
                   if (fileInputRef.current) {
                     fileInputRef.current.removeAttribute('capture');
                     fileInputRef.current.click();
@@ -1128,7 +1145,6 @@ export default function SquashShotsApp() {
               <button
                 onClick={() => {
                   setActiveButton('files');
-                  // Separate input with specific extensions = file browser on mobile
                   if (fileBrowserRef.current) {
                     fileBrowserRef.current.click();
                   }
@@ -1140,6 +1156,59 @@ export default function SquashShotsApp() {
                 }`}
               >
                 {activeButton === 'files' ? '⏳ Loading...' : '📁 Browse Files'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Camera Live View ── */}
+        {step === 'camera' && cameraMode === 'live' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <div className="flex-shrink-0 px-4 py-4 flex gap-3">
+              <button
+                onClick={() => { stopCamera(); setCameraMode('select'); }}
+                className="px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm rounded-lg active:scale-95 transition-transform"
+              >
+                ← Back
+              </button>
+              <button
+                onClick={takePicture}
+                className="flex-1 px-6 py-4 bg-red-600 hover:bg-red-700 text-white font-bold text-lg rounded-full active:scale-95 transition-transform shadow-lg"
+              >
+                ⬤ Take Picture
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Camera Preview (Use / Retake) ── */}
+        {step === 'camera' && cameraMode === 'preview' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
+              {previewSrc && (
+                <img src={previewSrc} alt="Preview" className="w-full h-full object-contain" />
+              )}
+            </div>
+            <div className="flex-shrink-0 px-4 py-4 flex gap-3">
+              <button
+                onClick={retakePicture}
+                className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
+              >
+                ↺ Retake
+              </button>
+              <button
+                onClick={usePicture}
+                className="flex-1 px-6 py-4 bg-green-600 hover:bg-green-700 text-white font-bold text-lg rounded-lg active:scale-95 transition-transform shadow-lg shadow-green-900/50"
+              >
+                ✓ Use Picture
               </button>
             </div>
           </div>
