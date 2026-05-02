@@ -327,11 +327,31 @@ export default function SquashShotsApp() {
         ctx.fillText(`${idx + 1}`, point.x, point.y);
       });
 
-      // Draw line connecting points
+      // Draw dashed line connecting points
       if (points.length === 2) {
-        ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)';
-        ctx.lineWidth = 2 / zoom;
-        ctx.setLineDash([6 / zoom, 4 / zoom]);
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
+        ctx.lineWidth = 3 / zoom;
+        ctx.setLineDash([10 / zoom, 6 / zoom]);
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        ctx.lineTo(points[1].x, points[1].y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw white outline for visibility on dark backgrounds
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 5 / zoom;
+        ctx.setLineDash([10 / zoom, 6 / zoom]);
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        ctx.lineTo(points[1].x, points[1].y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Redraw blue on top
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
+        ctx.lineWidth = 3 / zoom;
+        ctx.setLineDash([10 / zoom, 6 / zoom]);
         ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
         ctx.lineTo(points[1].x, points[1].y);
@@ -757,24 +777,22 @@ export default function SquashShotsApp() {
                 </p>
               </div>
 
-              <div className="flex gap-2">
-                {points.length > 0 && (
-                  <button
-                    onClick={removeLastPoint}
-                    className="px-4 py-3 bg-red-600/80 text-white font-semibold text-sm rounded-lg active:scale-95 transition-transform"
-                  >
-                    ✕ Undo
-                  </button>
-                )}
-                {points.length === 2 && (
-                  <button
-                    onClick={rotateImage}
-                    className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
-                  >
-                    ✓ Confirm &amp; Rotate
-                  </button>
-                )}
-              </div>
+              {points.length === 2 && (
+                <button
+                  onClick={rotateImage}
+                  className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white font-bold text-lg rounded-lg active:scale-95 transition-transform shadow-lg shadow-green-900/50"
+                >
+                  ✓ Confirm &amp; Next →
+                </button>
+              )}
+              {points.length > 0 && points.length < 2 && (
+                <button
+                  onClick={removeLastPoint}
+                  className="w-full px-4 py-3 bg-red-600/60 text-white font-semibold text-sm rounded-lg active:scale-95 transition-transform"
+                >
+                  ✕ Remove Point
+                </button>
+              )}
             </div>
           </div>
         )}
