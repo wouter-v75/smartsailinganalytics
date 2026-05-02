@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 type Step = 'camera' | 'points' | 'crop' | 'squash' | 'export';
 
@@ -22,23 +22,40 @@ export default function SquashShotsApp() {
   const [rotatedImageSrc, setRotatedImageSrc] = useState<string>('');
   const [croppedImageSrc, setCroppedImageSrc] = useState<string>('');
   const [squashedImageSrc, setSquashedImageSrc] = useState<string>('');
-  
+
   const [points, setPoints] = useState<Point[]>([]);
+  const [draggingPoint, setDraggingPoint] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [initialPan, setInitialPan] = useState({ x: 0, y: 0 });
   const [initialDistance, setInitialDistance] = useState(0);
+  const [initialZoom, setInitialZoom] = useState(1);
+
+  // Long-press state
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [longPressActive, setLongPressActive] = useState(false);
+  const longPressCoords = useRef<Point | null>(null);
+  const touchMoved = useRef(false);
+
+  // Crop state
   const [cropBox, setCropBox] = useState<CropBox | null>(null);
   const [cropDragging, setCropDragging] = useState<string | null>(null);
-  const [crosshairPos, setCrosshairPos] = useState<Point | null>(null);
-  
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropPan, setCropPan] = useState({ x: 0, y: 0 });
+  const [cropIsPanning, setCropIsPanning] = useState(false);
+  const [cropPanStart, setCropPanStart] = useState({ x: 0, y: 0 });
+  const [cropInitialPan, setCropInitialPan] = useState({ x: 0, y: 0 });
+  const [cropInitialDistance, setCropInitialDistance] = useState(0);
+  const [cropInitialZoom, setCropInitialZoom] = useState(1);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointsCanvasRef = useRef<HTMLCanvasElement>(null);
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
   const squashCanvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize camera
   useEffect(() => {
@@ -67,13 +84,12 @@ export default function SquashShotsApp() {
       }
     } catch (err) {
       console.error('Camera access denied:', err);
-      alert('Camera access required');
     }
   };
 
   const captureImage = () => {
     if (!videoRef.current || !canvasRef.current) return;
-    
+
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
 
@@ -85,79 +101,194 @@ export default function SquashShotsApp() {
     setImageSrc(dataUrl);
 
     const stream = videoRef.current.srcObject as MediaStream;
-    stream.getTracks().forEach(track => track.stop());
+    stream?.getTracks().forEach(track => track.stop());
 
     setStep('points');
   };
 
-  // Touch handlers for point selection
-  const getTouchCoords = (touch: any, rect: DOMRect) => {
+  // Handle file upload (album or file browser)
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target?.result as string;
+      setImageSrc(dataUrl);
+      // Stop camera if running
+      if (videoRef.current?.srcObject) {
+        (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+      }
+      setStep('points');
+    };
+    reader.readAsDataURL(file);
+    // Reset input so same file can be selected again
+    e.target.value = '';
+  };
+
+  // ─── POINTS STEP: Touch handlers with long-press ─────────────────────────────
+
+  const getCanvasCoords = (clientX: number, clientY: number): Point => {
+    const canvas = pointsCanvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
     return {
-      x: (touch.clientX - rect.left - pan.x * zoom) / zoom,
-      y: (touch.clientY - rect.top - pan.y * zoom) / zoom
+      x: ((clientX - rect.left) * scaleX - pan.x * zoom) / zoom,
+      y: ((clientY - rect.top) * scaleY - pan.y * zoom) / zoom
     };
   };
 
+  const findNearPoint = (coords: Point): number | null => {
+    const threshold = 40 / zoom; // touch target radius in image space
+    for (let i = 0; i < points.length; i++) {
+      const dx = points[i].x - coords.x;
+      const dy = points[i].y - coords.y;
+      if (Math.sqrt(dx * dx + dy * dy) < threshold) return i;
+    }
+    return null;
+  };
+
   const handlePointsTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    const rect = pointsCanvasRef.current!.getBoundingClientRect();
+    e.preventDefault();
+    touchMoved.current = false;
 
     if (e.touches.length === 2) {
+      // Pinch zoom start
+      clearLongPress();
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const distance = Math.sqrt(
         Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
       );
       setInitialDistance(distance);
-    } else if (e.touches.length === 1) {
+      setInitialZoom(zoom);
+      setIsPanning(false);
+      return;
+    }
+
+    if (e.touches.length === 1) {
+      const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+
+      // Check if touching an existing point (drag it)
+      const nearIdx = findNearPoint(coords);
+      if (nearIdx !== null) {
+        setDraggingPoint(nearIdx);
+        return;
+      }
+
+      // Start pan
       setIsPanning(true);
       setPanStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
       setInitialPan(pan);
-      
-      const coords = getTouchCoords(e.touches[0], rect);
-      setCrosshairPos(coords);
+
+      // Start long-press timer for point placement
+      if (points.length < 2) {
+        longPressCoords.current = coords;
+        longPressTimer.current = setTimeout(() => {
+          if (!touchMoved.current) {
+            setLongPressActive(true);
+            navigator.vibrate?.(100);
+            // Place point
+            setPoints(prev => [...prev, longPressCoords.current!]);
+            setLongPressActive(false);
+          }
+        }, 1500);
+      }
     }
   };
 
   const handlePointsTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    if (e.touches.length === 0) return;
-
-    const rect = pointsCanvasRef.current!.getBoundingClientRect();
+    e.preventDefault();
+    touchMoved.current = true;
+    clearLongPress();
 
     if (e.touches.length === 2 && initialDistance > 0) {
+      // Pinch zoom
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const distance = Math.sqrt(
         Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
       );
       const ratio = distance / initialDistance;
-      setZoom(prev => Math.max(1, Math.min(5, prev * ratio)));
-      setInitialDistance(distance);
-    } else if (e.touches.length === 1 && isPanning) {
-      const dx = (e.touches[0].clientX - panStart.x) / zoom;
-      const dy = (e.touches[0].clientY - panStart.y) / zoom;
-      setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
-      
-      const coords = getTouchCoords(e.touches[0], rect);
-      setCrosshairPos(coords);
+      setZoom(Math.max(0.5, Math.min(8, initialZoom * ratio)));
+      return;
+    }
+
+    if (e.touches.length === 1) {
+      if (draggingPoint !== null) {
+        // Drag existing point
+        const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+        setPoints(prev => prev.map((p, i) => i === draggingPoint ? coords : p));
+        return;
+      }
+
+      if (isPanning) {
+        const dx = (e.touches[0].clientX - panStart.x) / zoom;
+        const dy = (e.touches[0].clientY - panStart.y) / zoom;
+        setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
+      }
     }
   };
 
   const handlePointsTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    const rect = pointsCanvasRef.current!.getBoundingClientRect();
-
-    if (e.touches.length === 0 && e.changedTouches.length > 0) {
-      const lastTouch = e.changedTouches[0];
-      const coords = getTouchCoords(lastTouch, rect);
-      
-      if (points.length < 2) {
-        setPoints([...points, coords]);
-        navigator.vibrate?.(50);
-      }
-    }
-
+    e.preventDefault();
+    clearLongPress();
     setIsPanning(false);
     setInitialDistance(0);
-    setCrosshairPos(null);
+    setDraggingPoint(null);
+  };
+
+  // Mouse support for desktop
+  const handlePointsMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+    const nearIdx = findNearPoint(coords);
+    if (nearIdx !== null) {
+      setDraggingPoint(nearIdx);
+      return;
+    }
+    setIsPanning(true);
+    setPanStart({ x: e.clientX, y: e.clientY });
+    setInitialPan(pan);
+
+    // Double-click to place point on desktop
+    if (e.detail === 2 && points.length < 2) {
+      setPoints(prev => [...prev, coords]);
+    }
+  };
+
+  const handlePointsMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (draggingPoint !== null) {
+      const coords = getCanvasCoords(e.clientX, e.clientY);
+      setPoints(prev => prev.map((p, i) => i === draggingPoint ? coords : p));
+    } else if (isPanning) {
+      const dx = (e.clientX - panStart.x) / zoom;
+      const dy = (e.clientY - panStart.y) / zoom;
+      setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
+    }
+  };
+
+  const handlePointsMouseUp = () => {
+    setIsPanning(false);
+    setDraggingPoint(null);
+  };
+
+  const handlePointsWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setZoom(prev => Math.max(0.5, Math.min(8, prev * delta)));
+  };
+
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    setLongPressActive(false);
+  };
+
+  const removeLastPoint = () => {
+    setPoints(prev => prev.slice(0, -1));
   };
 
   // Draw points overlay
@@ -178,18 +309,19 @@ export default function SquashShotsApp() {
       ctx.scale(zoom, zoom);
       ctx.drawImage(img, 0, 0);
 
-      // Draw points with large touch targets
+      // Draw points
       points.forEach((point, idx) => {
+        const radius = 20 / zoom;
         ctx.fillStyle = idx === 0 ? '#3b82f6' : '#ef4444';
         ctx.beginPath();
-        ctx.arc(point.x, point.y, 16, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = 'white';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 3 / zoom;
         ctx.stroke();
-        
+
         ctx.fillStyle = 'white';
-        ctx.font = 'bold 18px sans-serif';
+        ctx.font = `bold ${18 / zoom}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(`${idx + 1}`, point.x, point.y);
@@ -197,9 +329,9 @@ export default function SquashShotsApp() {
 
       // Draw line connecting points
       if (points.length === 2) {
-        ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)';
+        ctx.lineWidth = 2 / zoom;
+        ctx.setLineDash([6 / zoom, 4 / zoom]);
         ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
         ctx.lineTo(points[1].x, points[1].y);
@@ -207,32 +339,10 @@ export default function SquashShotsApp() {
         ctx.setLineDash([]);
       }
 
-      // Draw crosshair
-      if (crosshairPos && points.length < 2) {
-        ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        
-        const size = 40;
-        ctx.beginPath();
-        ctx.moveTo(crosshairPos.x - size, crosshairPos.y);
-        ctx.lineTo(crosshairPos.x + size, crosshairPos.y);
-        ctx.moveTo(crosshairPos.x, crosshairPos.y - size);
-        ctx.lineTo(crosshairPos.x, crosshairPos.y + size);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(crosshairPos.x, crosshairPos.y, 50, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
       ctx.restore();
     };
     img.src = imageSrc;
-  }, [imageSrc, points, zoom, pan, crosshairPos]);
+  }, [imageSrc, points, zoom, pan]);
 
   const rotateImage = async () => {
     if (points.length !== 2 || !imageSrc || !canvasRef.current) return;
@@ -258,14 +368,37 @@ export default function SquashShotsApp() {
       setPoints([]);
       setZoom(1);
       setPan({ x: 0, y: 0 });
+      setCropZoom(1);
+      setCropPan({ x: 0, y: 0 });
+      setCropBox(null);
       setStep('crop');
     };
     img.src = imageSrc;
   };
 
+  // ─── CROP STEP ────────────────────────────────────────────────────────────────
+
+  // Initialize crop box when entering crop step
+  useEffect(() => {
+    if (!rotatedImageSrc || step !== 'crop') return;
+    const img = new Image();
+    img.onload = () => {
+      // Smaller centered crop box (60% of image)
+      const boxW = img.width * 0.6;
+      const boxH = img.height * 0.6;
+      setCropBox({
+        x: (img.width - boxW) / 2,
+        y: (img.height - boxH) / 2,
+        width: boxW,
+        height: boxH
+      });
+    };
+    img.src = rotatedImageSrc;
+  }, [rotatedImageSrc, step]);
+
   // Draw crop overlay
   useEffect(() => {
-    if (!cropCanvasRef.current || !rotatedImageSrc) return;
+    if (!cropCanvasRef.current || !rotatedImageSrc || !cropBox) return;
 
     const img = new Image();
     img.onload = () => {
@@ -273,120 +406,186 @@ export default function SquashShotsApp() {
       canvas.width = img.width;
       canvas.height = img.height;
 
-      if (!cropBox) {
-        setCropBox({
-          x: img.width * 0.05,
-          y: img.height * 0.05,
-          width: img.width * 0.9,
-          height: img.height * 0.9
-        });
-        return;
-      }
-
       const ctx = canvas.getContext('2d')!;
+
+      ctx.save();
+      ctx.translate(cropPan.x * cropZoom, cropPan.y * cropZoom);
+      ctx.scale(cropZoom, cropZoom);
       ctx.drawImage(img, 0, 0);
 
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+      // Dark overlay outside crop
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
       ctx.fillRect(0, 0, img.width, img.height);
-      ctx.clearRect(cropBox.x, cropBox.y, cropBox.width, cropBox.height);
 
+      // Clear crop area
+      ctx.clearRect(cropBox.x, cropBox.y, cropBox.width, cropBox.height);
+      ctx.drawImage(img, cropBox.x, cropBox.y, cropBox.width, cropBox.height, cropBox.x, cropBox.y, cropBox.width, cropBox.height);
+
+      // Crop border
       ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 3 / cropZoom;
       ctx.strokeRect(cropBox.x, cropBox.y, cropBox.width, cropBox.height);
 
-      // Draw large touch-friendly handles
-      const handleSize = 24;
+      // Corner handles (large for touch)
+      const handleSize = 20 / cropZoom;
       const handles = [
         { x: cropBox.x, y: cropBox.y },
         { x: cropBox.x + cropBox.width, y: cropBox.y },
         { x: cropBox.x, y: cropBox.y + cropBox.height },
         { x: cropBox.x + cropBox.width, y: cropBox.y + cropBox.height }
       ];
-
       handles.forEach(handle => {
         ctx.fillStyle = '#3b82f6';
-        ctx.fillRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+        ctx.beginPath();
+        ctx.arc(handle.x, handle.y, handleSize, 0, Math.PI * 2);
+        ctx.fill();
         ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(handle.x - handleSize / 2, handle.y - handleSize / 2, handleSize, handleSize);
+        ctx.lineWidth = 2 / cropZoom;
+        ctx.stroke();
       });
+
+      ctx.restore();
     };
     img.src = rotatedImageSrc;
-  }, [rotatedImageSrc, cropBox]);
+  }, [rotatedImageSrc, cropBox, cropZoom, cropPan]);
 
-  // Touch handlers for crop
+  const getCropCanvasCoords = (clientX: number, clientY: number): Point => {
+    const canvas = cropCanvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: ((clientX - rect.left) * scaleX - cropPan.x * cropZoom) / cropZoom,
+      y: ((clientY - rect.top) * scaleY - cropPan.y * cropZoom) / cropZoom
+    };
+  };
+
   const handleCropTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
     if (!cropBox) return;
 
-    const rect = cropCanvasRef.current!.getBoundingClientRect();
-    const x = e.touches[0].clientX - rect.left;
-    const y = e.touches[0].clientY - rect.top;
-
-    const handleSize = 32;
-    const corners = [
-      { name: 'tl', x: cropBox.x, y: cropBox.y },
-      { name: 'tr', x: cropBox.x + cropBox.width, y: cropBox.y },
-      { name: 'bl', x: cropBox.x, y: cropBox.y + cropBox.height },
-      { name: 'br', x: cropBox.x + cropBox.width, y: cropBox.y + cropBox.height }
-    ];
-
-    for (const corner of corners) {
-      if (Math.abs(x - corner.x) < handleSize && Math.abs(y - corner.y) < handleSize) {
-        setCropDragging(corner.name);
-        return;
-      }
+    if (e.touches.length === 2) {
+      // Pinch zoom
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const distance = Math.sqrt(
+        Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
+      );
+      setCropInitialDistance(distance);
+      setCropInitialZoom(cropZoom);
+      setCropIsPanning(false);
+      setCropDragging(null);
+      return;
     }
 
-    if (x > cropBox.x && x < cropBox.x + cropBox.width &&
-        y > cropBox.y && y < cropBox.y + cropBox.height) {
-      setCropDragging('move');
+    if (e.touches.length === 1) {
+      const coords = getCropCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+
+      // Check corner handles
+      const handleThreshold = 40 / cropZoom;
+      const corners = [
+        { name: 'tl', x: cropBox.x, y: cropBox.y },
+        { name: 'tr', x: cropBox.x + cropBox.width, y: cropBox.y },
+        { name: 'bl', x: cropBox.x, y: cropBox.y + cropBox.height },
+        { name: 'br', x: cropBox.x + cropBox.width, y: cropBox.y + cropBox.height }
+      ];
+
+      for (const corner of corners) {
+        const dx = coords.x - corner.x;
+        const dy = coords.y - corner.y;
+        if (Math.sqrt(dx * dx + dy * dy) < handleThreshold) {
+          setCropDragging(corner.name);
+          return;
+        }
+      }
+
+      // Check if inside crop box (move crop)
+      if (coords.x > cropBox.x && coords.x < cropBox.x + cropBox.width &&
+          coords.y > cropBox.y && coords.y < cropBox.y + cropBox.height) {
+        setCropDragging('move');
+        setCropPanStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+        return;
+      }
+
+      // Otherwise, pan the image
+      setCropIsPanning(true);
+      setCropPanStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+      setCropInitialPan(cropPan);
     }
   };
 
   const handleCropTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    if (!cropDragging || !cropBox) return;
+    e.preventDefault();
+    if (!cropBox) return;
 
-    const rect = cropCanvasRef.current!.getBoundingClientRect();
-    const x = e.touches[0].clientX - rect.left;
-    const y = e.touches[0].clientY - rect.top;
-
-    let newBox = { ...cropBox };
-    const minSize = 80;
-
-    switch (cropDragging) {
-      case 'tl':
-        newBox.x = Math.min(x, cropBox.x + cropBox.width - minSize);
-        newBox.y = Math.min(y, cropBox.y + cropBox.height - minSize);
-        newBox.width = cropBox.width - (newBox.x - cropBox.x);
-        newBox.height = cropBox.height - (newBox.y - cropBox.y);
-        break;
-      case 'tr':
-        newBox.width = Math.max(minSize, x - cropBox.x);
-        newBox.y = Math.min(y, cropBox.y + cropBox.height - minSize);
-        newBox.height = cropBox.height - (newBox.y - cropBox.y);
-        break;
-      case 'bl':
-        newBox.x = Math.min(x, cropBox.x + cropBox.width - minSize);
-        newBox.height = Math.max(minSize, y - cropBox.y);
-        newBox.width = cropBox.width - (newBox.x - cropBox.x);
-        break;
-      case 'br':
-        newBox.width = Math.max(minSize, x - cropBox.x);
-        newBox.height = Math.max(minSize, y - cropBox.y);
-        break;
-      case 'move':
-        const dx = x - (cropBox.x + cropBox.width / 2);
-        const dy = y - (cropBox.y + cropBox.height / 2);
-        newBox.x = cropBox.x + dx;
-        newBox.y = cropBox.y + dy;
-        break;
+    if (e.touches.length === 2 && cropInitialDistance > 0) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const distance = Math.sqrt(
+        Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
+      );
+      const ratio = distance / cropInitialDistance;
+      setCropZoom(Math.max(0.5, Math.min(5, cropInitialZoom * ratio)));
+      return;
     }
 
-    setCropBox(newBox);
+    if (e.touches.length === 1) {
+      const coords = getCropCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+
+      if (cropDragging && cropDragging !== 'move') {
+        // Resize crop box
+        let newBox = { ...cropBox };
+        const minSize = 80;
+
+        switch (cropDragging) {
+          case 'tl':
+            newBox.width = cropBox.width + (cropBox.x - coords.x);
+            newBox.height = cropBox.height + (cropBox.y - coords.y);
+            if (newBox.width >= minSize) newBox.x = coords.x;
+            else newBox.width = cropBox.width;
+            if (newBox.height >= minSize) newBox.y = coords.y;
+            else newBox.height = cropBox.height;
+            break;
+          case 'tr':
+            newBox.width = Math.max(minSize, coords.x - cropBox.x);
+            newBox.height = cropBox.height + (cropBox.y - coords.y);
+            if (newBox.height >= minSize) newBox.y = coords.y;
+            else newBox.height = cropBox.height;
+            break;
+          case 'bl':
+            newBox.width = cropBox.width + (cropBox.x - coords.x);
+            if (newBox.width >= minSize) newBox.x = coords.x;
+            else newBox.width = cropBox.width;
+            newBox.height = Math.max(minSize, coords.y - cropBox.y);
+            break;
+          case 'br':
+            newBox.width = Math.max(minSize, coords.x - cropBox.x);
+            newBox.height = Math.max(minSize, coords.y - cropBox.y);
+            break;
+        }
+        setCropBox(newBox);
+      } else if (cropDragging === 'move') {
+        // Move crop box
+        const canvas = cropCanvasRef.current!;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const dx = ((e.touches[0].clientX - cropPanStart.x) * scaleX) / cropZoom;
+        const dy = ((e.touches[0].clientY - cropPanStart.y) * (canvas.height / rect.height)) / cropZoom;
+        setCropBox(prev => prev ? { ...prev, x: prev.x + dx, y: prev.y + dy } : prev);
+        setCropPanStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+      } else if (cropIsPanning) {
+        // Pan image
+        const dx = (e.touches[0].clientX - cropPanStart.x) / cropZoom;
+        const dy = (e.touches[0].clientY - cropPanStart.y) / cropZoom;
+        setCropPan({ x: cropInitialPan.x + dx, y: cropInitialPan.y + dy });
+      }
+    }
   };
 
   const handleCropTouchEnd = () => {
     setCropDragging(null);
+    setCropIsPanning(false);
+    setCropInitialDistance(0);
   };
 
   const applyCrop = () => {
@@ -408,7 +607,8 @@ export default function SquashShotsApp() {
     img.src = rotatedImageSrc;
   };
 
-  // Squash step
+  // ─── SQUASH STEP ──────────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (!squashCanvasRef.current || !croppedImageSrc) return;
 
@@ -416,7 +616,7 @@ export default function SquashShotsApp() {
     img.onload = () => {
       const canvas = squashCanvasRef.current!;
       const squashFactor = 10;
-      
+
       canvas.width = img.width;
       canvas.height = Math.round(img.height / squashFactor);
 
@@ -431,7 +631,7 @@ export default function SquashShotsApp() {
 
   const downloadImage = () => {
     if (!squashedImageSrc) return;
-    
+
     const link = document.createElement('a');
     link.href = squashedImageSrc;
     link.download = `squash-shot-${Date.now()}.jpg`;
@@ -450,39 +650,80 @@ export default function SquashShotsApp() {
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setCropBox(null);
+    setCropZoom(1);
+    setCropPan({ x: 0, y: 0 });
+    setDraggingPoint(null);
   };
 
   return (
     <div className="absolute inset-0 bg-black flex flex-col overflow-hidden">
-      {/* Header - minimal */}
-      <div className="bg-gradient-to-b from-slate-900 to-transparent px-4 py-3 flex justify-between items-center text-sm">
+      {/* Header */}
+      <div className="bg-gradient-to-b from-slate-900 to-transparent px-4 py-3 flex justify-between items-center text-sm z-10">
         <h1 className="font-bold text-white">Squash Shots</h1>
         <div className="text-slate-400">
-          {step === 'points' && `${points.length}/2`}
+          {step === 'points' && `${points.length}/2 points`}
+          {step === 'crop' && 'Crop'}
+          {step === 'squash' && 'Result'}
         </div>
       </div>
 
-      {/* Main content - full screen */}
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileUpload}
+      />
+
+      {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Camera Step */}
+
+        {/* ── Camera / Upload Step ── */}
         {step === 'camera' && (
-          <div className="flex-1 flex flex-col items-center justify-center gap-6 px-4 py-8">
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 py-6">
             <video
               ref={videoRef}
               autoPlay
               playsInline
-              className="max-w-full max-h-[65vh] rounded-lg bg-black object-cover"
+              className="max-w-full max-h-[50vh] rounded-lg bg-black object-cover"
             />
             <button
               onClick={captureImage}
-              className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg rounded-lg active:scale-95 transition-transform touch-none"
+              className="w-full px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-base rounded-lg active:scale-95 transition-transform"
             >
-              📸 Tap to Capture
+              📸 Capture from Camera
             </button>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.setAttribute('capture', '');
+                    fileInputRef.current.accept = 'image/*';
+                    fileInputRef.current.click();
+                  }
+                }}
+                className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm rounded-lg active:scale-95 transition-transform"
+              >
+                🖼️ Photo Album
+              </button>
+              <button
+                onClick={() => {
+                  if (fileInputRef.current) {
+                    fileInputRef.current.removeAttribute('capture');
+                    fileInputRef.current.accept = 'image/*,.jpg,.jpeg,.png,.heic,.heif';
+                    fileInputRef.current.click();
+                  }
+                }}
+                className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm rounded-lg active:scale-95 transition-transform"
+              >
+                📁 Browse Files
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Points Selection Step */}
+        {/* ── Points Selection Step ── */}
         {step === 'points' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-1 flex items-center justify-center bg-black relative">
@@ -491,39 +732,54 @@ export default function SquashShotsApp() {
                 onTouchStart={handlePointsTouchStart}
                 onTouchMove={handlePointsTouchMove}
                 onTouchEnd={handlePointsTouchEnd}
+                onMouseDown={handlePointsMouseDown}
+                onMouseMove={handlePointsMouseMove}
+                onMouseUp={handlePointsMouseUp}
+                onMouseLeave={handlePointsMouseUp}
+                onWheel={handlePointsWheel}
                 className="w-full h-full"
-                style={{ maxWidth: '100%', maxHeight: '100%', touchAction: 'none' }}
+                style={{ maxWidth: '100%', maxHeight: '100%', touchAction: 'none', cursor: draggingPoint !== null ? 'grabbing' : 'crosshair' }}
               />
             </div>
 
             {/* Bottom control panel */}
-            <div className="bg-gradient-to-t from-slate-900 via-slate-900 to-transparent px-4 py-6 space-y-4">
-              <div className="text-center space-y-2">
-                <p className="text-white font-bold text-base">
-                  {points.length === 0 && '👆 Tap first point'}
-                  {points.length === 1 && '👆 Tap second point'}
-                  {points.length === 2 && '✓ Ready to rotate'}
+            <div className="bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-3">
+              <div className="text-center space-y-1">
+                <p className="text-white font-bold text-sm">
+                  {points.length === 0 && '👆 Long-press to place point 1'}
+                  {points.length === 1 && '👆 Long-press to place point 2'}
+                  {points.length === 2 && '✓ Two points set — confirm or adjust'}
                 </p>
-                {points.length < 2 && (
-                  <p className="text-slate-400 text-xs">
-                    Pinch to zoom • Drag to pan
-                  </p>
-                )}
+                <p className="text-slate-500 text-xs">
+                  {points.length < 2
+                    ? 'Hold 1.5s to place • Drag points to move • Pinch to zoom'
+                    : 'Drag points to adjust • Double-click on desktop'}
+                </p>
               </div>
 
-              {points.length === 2 && (
-                <button
-                  onClick={rotateImage}
-                  className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white font-bold text-base rounded-lg active:scale-95 transition-transform touch-none"
-                >
-                  ↻ Rotate
-                </button>
-              )}
+              <div className="flex gap-2">
+                {points.length > 0 && (
+                  <button
+                    onClick={removeLastPoint}
+                    className="px-4 py-3 bg-red-600/80 text-white font-semibold text-sm rounded-lg active:scale-95 transition-transform"
+                  >
+                    ✕ Undo
+                  </button>
+                )}
+                {points.length === 2 && (
+                  <button
+                    onClick={rotateImage}
+                    className="flex-1 px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
+                  >
+                    ✓ Confirm &amp; Rotate
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}
 
-        {/* Crop Step */}
+        {/* ── Crop Step ── */}
         {step === 'crop' && (
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-1 flex items-center justify-center bg-black">
@@ -537,13 +793,13 @@ export default function SquashShotsApp() {
               />
             </div>
 
-            <div className="bg-gradient-to-t from-slate-900 via-slate-900 to-transparent px-4 py-6">
-              <p className="text-white text-center font-semibold text-sm mb-4">
-                Drag corners to crop
+            <div className="bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4">
+              <p className="text-slate-400 text-center text-xs mb-3">
+                Drag corners to resize • Drag inside to move • Pinch to zoom image
               </p>
               <button
                 onClick={applyCrop}
-                className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white font-bold text-base rounded-lg active:scale-95 transition-transform touch-none"
+                className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
               >
                 ✓ Apply Crop
               </button>
@@ -551,33 +807,33 @@ export default function SquashShotsApp() {
           </div>
         )}
 
-        {/* Squash Step */}
+        {/* ── Squash Result Step ── */}
         {step === 'squash' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex-1 flex items-center justify-center bg-black overflow-auto">
+            <div className="flex-1 flex items-center justify-center bg-black overflow-auto p-4">
               {squashedImageSrc && (
-                <img 
-                  src={squashedImageSrc} 
-                  alt="Squashed" 
-                  className="max-w-full max-h-full object-contain"
+                <img
+                  src={squashedImageSrc}
+                  alt="Squashed"
+                  className="max-w-full max-h-full object-contain rounded"
                 />
               )}
             </div>
 
-            <div className="bg-gradient-to-t from-slate-900 via-slate-900 to-transparent px-4 py-6 space-y-3">
+            <div className="bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-3">
               <p className="text-slate-400 text-center text-xs">
                 Height reduced 10×
               </p>
               <div className="flex gap-2">
                 <button
                   onClick={downloadImage}
-                  className="flex-1 px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-base rounded-lg active:scale-95 transition-transform touch-none"
+                  className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
                 >
                   ⬇ Download
                 </button>
                 <button
                   onClick={resetAll}
-                  className="flex-1 px-6 py-4 bg-slate-700 hover:bg-slate-600 text-white font-bold text-base rounded-lg active:scale-95 transition-transform touch-none"
+                  className="flex-1 px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
                 >
                   ↺ New
                 </button>
