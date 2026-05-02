@@ -311,13 +311,14 @@ export default function SquashShotsApp() {
 
       // Draw points as crosshairs with number label
       points.forEach((point, idx) => {
-        const size = 40 / zoom;       // crosshair arm length
-        const lw = 3 / zoom;          // line width
+        const size = 60 / zoom;       // crosshair arm length (bigger)
+        const lw = 4 / zoom;          // line width
+        const gap = 10 / zoom;        // gap around center
         const color = idx === 0 ? '#3b82f6' : '#ef4444';
 
-        // Outer crosshair lines (white outline for contrast)
-        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-        ctx.lineWidth = (lw + 4 / zoom);
+        // Outer crosshair lines (black outline for contrast)
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = (lw + 5 / zoom);
         ctx.beginPath();
         ctx.moveTo(point.x - size, point.y);
         ctx.lineTo(point.x + size, point.y);
@@ -325,42 +326,42 @@ export default function SquashShotsApp() {
         ctx.lineTo(point.x, point.y + size);
         ctx.stroke();
 
-        // Crosshair lines (colored)
+        // Crosshair lines (colored, with gap in center)
         ctx.strokeStyle = color;
         ctx.lineWidth = lw;
         ctx.beginPath();
         ctx.moveTo(point.x - size, point.y);
-        ctx.lineTo(point.x - 6 / zoom, point.y);
-        ctx.moveTo(point.x + 6 / zoom, point.y);
+        ctx.lineTo(point.x - gap, point.y);
+        ctx.moveTo(point.x + gap, point.y);
         ctx.lineTo(point.x + size, point.y);
         ctx.moveTo(point.x, point.y - size);
-        ctx.lineTo(point.x, point.y - 6 / zoom);
-        ctx.moveTo(point.x, point.y + 6 / zoom);
+        ctx.lineTo(point.x, point.y - gap);
+        ctx.moveTo(point.x, point.y + gap);
         ctx.lineTo(point.x, point.y + size);
         ctx.stroke();
 
         // Center dot
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(point.x, point.y, 5 / zoom, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, 8 / zoom, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2 / zoom;
+        ctx.lineWidth = 2.5 / zoom;
         ctx.stroke();
 
         // Number label (top-right of crosshair)
-        const labelX = point.x + size * 0.7;
-        const labelY = point.y - size * 0.7;
-        const labelR = 14 / zoom;
+        const labelX = point.x + size * 0.6;
+        const labelY = point.y - size * 0.6;
+        const labelR = 18 / zoom;
         ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(labelX, labelY, labelR, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2 / zoom;
+        ctx.lineWidth = 2.5 / zoom;
         ctx.stroke();
         ctx.fillStyle = 'white';
-        ctx.font = `bold ${16 / zoom}px sans-serif`;
+        ctx.font = `bold ${22 / zoom}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(`${idx + 1}`, labelX, labelY);
@@ -413,12 +414,22 @@ export default function SquashShotsApp() {
 
       const dx = points[1].x - points[0].x;
       const dy = points[1].y - points[0].y;
-      const angle = Math.atan2(dy, dx);
+      let angle = Math.atan2(dy, dx);
 
-      canvas.width = img.width;
-      canvas.height = img.height;
+      // Normalize angle to [-PI/2, PI/2] to avoid flipping image upside down
+      // We only want a small rotation to straighten the horizon line
+      if (angle > Math.PI / 2) angle -= Math.PI;
+      if (angle < -Math.PI / 2) angle += Math.PI;
 
-      ctx.translate(img.width / 2, img.height / 2);
+      // Calculate rotated canvas size to avoid clipping
+      const absAngle = Math.abs(angle);
+      const newW = Math.ceil(img.width * Math.cos(absAngle) + img.height * Math.sin(absAngle));
+      const newH = Math.ceil(img.width * Math.sin(absAngle) + img.height * Math.cos(absAngle));
+
+      canvas.width = newW;
+      canvas.height = newH;
+
+      ctx.translate(newW / 2, newH / 2);
       ctx.rotate(-angle);
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
 
@@ -839,7 +850,7 @@ export default function SquashShotsApp() {
         {/* ── Crop Step ── */}
         {step === 'crop' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex-1 flex items-center justify-center bg-black">
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-black overflow-hidden">
               <canvas
                 ref={cropCanvasRef}
                 onTouchStart={handleCropTouchStart}
@@ -850,15 +861,15 @@ export default function SquashShotsApp() {
               />
             </div>
 
-            <div className="bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4">
-              <p className="text-slate-400 text-center text-xs mb-3">
+            <div className="flex-shrink-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-3">
+              <p className="text-slate-400 text-center text-xs">
                 Drag corners to resize • Drag inside to move • Pinch to zoom image
               </p>
               <button
                 onClick={applyCrop}
-                className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
+                className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white font-bold text-lg rounded-lg active:scale-95 transition-transform shadow-lg shadow-green-900/50"
               >
-                ✓ Apply Crop
+                ✓ Crop &amp; Squash →
               </button>
             </div>
           </div>
