@@ -171,8 +171,17 @@ export default function SquashShotsApp() {
     };
   };
 
+  // Get the image-to-screen scale factor (how many image pixels per screen pixel)
+  const getImageScale = (): number => {
+    if (!pointsCanvasRef.current) return 1;
+    const rect = pointsCanvasRef.current.getBoundingClientRect();
+    return pointsCanvasRef.current.width / (rect.width || 1);
+  };
+
   const findNearPoint = (coords: Point): number | null => {
-    const threshold = 60 / zoom; // larger touch target radius for easier dragging
+    // 50 screen pixels touch target, converted to image space
+    const scale = getImageScale();
+    const threshold = (50 * scale) / zoom;
     for (let i = 0; i < points.length; i++) {
       const dx = points[i].x - coords.x;
       const dy = points[i].y - coords.y;
@@ -355,15 +364,20 @@ export default function SquashShotsApp() {
       ctx.drawImage(img, 0, 0);
 
       // Draw points as crosshairs with number label
+      // Size in SCREEN pixels (converted to image space using scale factor)
+      const rect = canvas.getBoundingClientRect();
+      const imgScale = canvas.width / (rect.width || 1);
+      const px = (screenPx: number) => (screenPx * imgScale) / zoom; // convert screen px to image px
+
       points.forEach((point, idx) => {
-        const size = 60 / zoom;       // crosshair arm length (bigger)
-        const lw = 4 / zoom;          // line width
-        const gap = 10 / zoom;        // gap around center
+        const size = px(36);      // 36 screen px arm length (20% bigger than before)
+        const lw = px(3);         // line width
+        const gap = px(6);        // gap around center
         const color = idx === 0 ? '#3b82f6' : '#ef4444';
 
         // Outer crosshair lines (black outline for contrast)
         ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-        ctx.lineWidth = (lw + 5 / zoom);
+        ctx.lineWidth = lw + px(3);
         ctx.beginPath();
         ctx.moveTo(point.x - size, point.y);
         ctx.lineTo(point.x + size, point.y);
@@ -388,25 +402,25 @@ export default function SquashShotsApp() {
         // Center dot
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(point.x, point.y, 8 / zoom, 0, Math.PI * 2);
+        ctx.arc(point.x, point.y, px(5), 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2.5 / zoom;
+        ctx.lineWidth = px(1.5);
         ctx.stroke();
 
         // Number label (top-right of crosshair)
         const labelX = point.x + size * 0.6;
         const labelY = point.y - size * 0.6;
-        const labelR = 18 / zoom;
+        const labelR = px(11);
         ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(labelX, labelY, labelR, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2.5 / zoom;
+        ctx.lineWidth = px(1.5);
         ctx.stroke();
         ctx.fillStyle = 'white';
-        ctx.font = `bold ${22 / zoom}px sans-serif`;
+        ctx.font = `bold ${px(14)}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(`${idx + 1}`, labelX, labelY);
@@ -415,8 +429,8 @@ export default function SquashShotsApp() {
       // Draw dashed line connecting points
       if (points.length === 2) {
         ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
-        ctx.lineWidth = 3 / zoom;
-        ctx.setLineDash([10 / zoom, 6 / zoom]);
+        ctx.lineWidth = px(2);
+        ctx.setLineDash([px(6), px(4)]);
         ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
         ctx.lineTo(points[1].x, points[1].y);
@@ -425,8 +439,8 @@ export default function SquashShotsApp() {
 
         // Draw white outline for visibility on dark backgrounds
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = 5 / zoom;
-        ctx.setLineDash([10 / zoom, 6 / zoom]);
+        ctx.lineWidth = px(3.5);
+        ctx.setLineDash([px(6), px(4)]);
         ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
         ctx.lineTo(points[1].x, points[1].y);
@@ -435,8 +449,8 @@ export default function SquashShotsApp() {
 
         // Redraw blue on top
         ctx.strokeStyle = 'rgba(59, 130, 246, 0.9)';
-        ctx.lineWidth = 3 / zoom;
-        ctx.setLineDash([10 / zoom, 6 / zoom]);
+        ctx.lineWidth = px(2);
+        ctx.setLineDash([px(6), px(4)]);
         ctx.beginPath();
         ctx.moveTo(points[0].x, points[0].y);
         ctx.lineTo(points[1].x, points[1].y);
@@ -552,26 +566,57 @@ export default function SquashShotsApp() {
       ctx.clearRect(cropBox.x, cropBox.y, cropBox.width, cropBox.height);
       ctx.drawImage(img, cropBox.x, cropBox.y, cropBox.width, cropBox.height, cropBox.x, cropBox.y, cropBox.width, cropBox.height);
 
+      // Screen-relative sizing for crop UI
+      const cropRect = canvas.getBoundingClientRect();
+      const cropScale = canvas.width / (cropRect.width || 1);
+      const cpx = (screenPx: number) => (screenPx * cropScale) / cropZoom;
+
       // Crop border
       ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 3 / cropZoom;
+      ctx.lineWidth = cpx(2.5);
       ctx.strokeRect(cropBox.x, cropBox.y, cropBox.width, cropBox.height);
 
-      // Corner handles (large for touch)
-      const handleSize = 20 / cropZoom;
+      // Grid lines (rule of thirds)
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = cpx(0.5);
+      for (let i = 1; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cropBox.x + cropBox.width * i / 3, cropBox.y);
+        ctx.lineTo(cropBox.x + cropBox.width * i / 3, cropBox.y + cropBox.height);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(cropBox.x, cropBox.y + cropBox.height * i / 3);
+        ctx.lineTo(cropBox.x + cropBox.width, cropBox.y + cropBox.height * i / 3);
+        ctx.stroke();
+      }
+
+      // Corner handles (large L-shaped brackets for easy touch)
+      const cornerLen = cpx(20);  // 20 screen px bracket length
+      const cornerLw = cpx(4);    // 4 screen px thick
       const handles = [
         { x: cropBox.x, y: cropBox.y },
         { x: cropBox.x + cropBox.width, y: cropBox.y },
         { x: cropBox.x, y: cropBox.y + cropBox.height },
         { x: cropBox.x + cropBox.width, y: cropBox.y + cropBox.height }
       ];
-      handles.forEach(handle => {
+      handles.forEach((handle, idx) => {
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = cornerLw;
+        ctx.lineCap = 'round';
+        const xDir = (idx % 2 === 0) ? 1 : -1;
+        const yDir = (idx < 2) ? 1 : -1;
+        ctx.beginPath();
+        ctx.moveTo(handle.x + xDir * cornerLen, handle.y);
+        ctx.lineTo(handle.x, handle.y);
+        ctx.lineTo(handle.x, handle.y + yDir * cornerLen);
+        ctx.stroke();
+        // Blue fill dot at corner
         ctx.fillStyle = '#3b82f6';
         ctx.beginPath();
-        ctx.arc(handle.x, handle.y, handleSize, 0, Math.PI * 2);
+        ctx.arc(handle.x, handle.y, cpx(6), 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2 / cropZoom;
+        ctx.lineWidth = cpx(1.5);
         ctx.stroke();
       });
 
@@ -612,8 +657,14 @@ export default function SquashShotsApp() {
     if (e.touches.length === 1) {
       const coords = getCropCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
 
-      // Check corner handles
-      const handleThreshold = 40 / cropZoom;
+      // Use screen-relative threshold for touch targets
+      const canvas = cropCanvasRef.current!;
+      const rect = canvas.getBoundingClientRect();
+      const cropImgScale = canvas.width / (rect.width || 1);
+      // 60 screen pixels converted to image space — generous touch target
+      const handleThreshold = (60 * cropImgScale) / cropZoom;
+
+      // Check corner handles FIRST (priority over move/pan)
       const corners = [
         { name: 'tl', x: cropBox.x, y: cropBox.y },
         { name: 'tr', x: cropBox.x + cropBox.width, y: cropBox.y },
@@ -621,6 +672,15 @@ export default function SquashShotsApp() {
         { name: 'br', x: cropBox.x + cropBox.width, y: cropBox.y + cropBox.height }
       ];
 
+      // Also check edges (halfway along each edge)
+      const edges = [
+        { name: 'tl', x: cropBox.x + cropBox.width * 0.25, y: cropBox.y }, // top-left quadrant
+        { name: 'tr', x: cropBox.x + cropBox.width * 0.75, y: cropBox.y }, // top-right quadrant
+        { name: 'bl', x: cropBox.x + cropBox.width * 0.25, y: cropBox.y + cropBox.height },
+        { name: 'br', x: cropBox.x + cropBox.width * 0.75, y: cropBox.y + cropBox.height },
+      ];
+
+      // Check corners (highest priority, tighter threshold)
       for (const corner of corners) {
         const dx = coords.x - corner.x;
         const dy = coords.y - corner.y;
@@ -630,7 +690,42 @@ export default function SquashShotsApp() {
         }
       }
 
-      // Check if inside crop box (move crop)
+      // Check edge midpoints (resize from edges too)
+      const edgeThreshold = handleThreshold * 0.7;
+      for (const edge of edges) {
+        const dx = coords.x - edge.x;
+        const dy = coords.y - edge.y;
+        if (Math.sqrt(dx * dx + dy * dy) < edgeThreshold) {
+          setCropDragging(edge.name);
+          return;
+        }
+      }
+
+      // Check if inside crop box but near the border (resize priority over move)
+      const borderInset = handleThreshold * 0.6;
+      const isNearBorder = (
+        coords.x > cropBox.x && coords.x < cropBox.x + cropBox.width &&
+        coords.y > cropBox.y && coords.y < cropBox.y + cropBox.height
+      ) && (
+        coords.x - cropBox.x < borderInset ||
+        cropBox.x + cropBox.width - coords.x < borderInset ||
+        coords.y - cropBox.y < borderInset ||
+        cropBox.y + cropBox.height - coords.y < borderInset
+      );
+
+      if (isNearBorder) {
+        // Find nearest corner for border-drag
+        let nearest = corners[0].name;
+        let minDist = Infinity;
+        for (const c of corners) {
+          const d = Math.sqrt(Math.pow(coords.x - c.x, 2) + Math.pow(coords.y - c.y, 2));
+          if (d < minDist) { minDist = d; nearest = c.name; }
+        }
+        setCropDragging(nearest);
+        return;
+      }
+
+      // Check if inside crop box center (move crop)
       if (coords.x > cropBox.x && coords.x < cropBox.x + cropBox.width &&
           coords.y > cropBox.y && coords.y < cropBox.y + cropBox.height) {
         setCropDragging('move');
@@ -656,7 +751,9 @@ export default function SquashShotsApp() {
         Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
       );
       const ratio = distance / cropInitialDistance;
-      setCropZoom(Math.max(0.5, Math.min(5, cropInitialZoom * ratio)));
+      // Dampen crop zoom to 40% for smoother control
+      const dampened = 1 + (ratio - 1) * 0.4;
+      setCropZoom(Math.max(0.5, Math.min(5, cropInitialZoom * dampened)));
       return;
     }
 
