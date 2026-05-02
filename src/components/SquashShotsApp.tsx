@@ -38,6 +38,12 @@ export default function SquashShotsApp() {
   const [longPressActive, setLongPressActive] = useState(false);
   const longPressCoords = useRef<Point | null>(null);
   const touchMoved = useRef(false);
+  const touchStartPos = useRef<{ x: number; y: number } | null>(null);
+  const MOVE_THRESHOLD = 15; // px of movement allowed during long-press
+
+  // Timestamp for saving to photo database
+  const [photoTimestamp, setPhotoTimestamp] = useState<string>('');
+  const [showTimestampInput, setShowTimestampInput] = useState(false);
 
   // Crop state
   const [cropBox, setCropBox] = useState<CropBox | null>(null);
@@ -152,6 +158,7 @@ export default function SquashShotsApp() {
   const handlePointsTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     touchMoved.current = false;
+    touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
 
     if (e.touches.length === 2) {
       // Pinch zoom start
@@ -188,7 +195,8 @@ export default function SquashShotsApp() {
         longPressTimer.current = setTimeout(() => {
           if (!touchMoved.current) {
             setLongPressActive(true);
-            navigator.vibrate?.(100);
+            // Double vibration: short pulse, pause, longer confirmation pulse
+            navigator.vibrate?.([50, 80, 150]);
             // Place point
             setPoints(prev => [...prev, longPressCoords.current!]);
             setLongPressActive(false);
@@ -200,8 +208,16 @@ export default function SquashShotsApp() {
 
   const handlePointsTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    touchMoved.current = true;
-    clearLongPress();
+
+    // Only cancel long-press if finger moved beyond threshold
+    if (!touchMoved.current && touchStartPos.current && e.touches.length === 1) {
+      const dx = e.touches[0].clientX - touchStartPos.current.x;
+      const dy = e.touches[0].clientY - touchStartPos.current.y;
+      if (Math.sqrt(dx * dx + dy * dy) > MOVE_THRESHOLD) {
+        touchMoved.current = true;
+        clearLongPress();
+      }
+    }
 
     if (e.touches.length === 2 && initialDistance > 0) {
       // Pinch zoom
@@ -710,6 +726,102 @@ export default function SquashShotsApp() {
     document.body.removeChild(link);
   };
 
+  // Extract timestamp from original image EXIF when loaded
+  const [exifTimestamp, setExifTimestamp] = useState<number | null>(null);
+
+  const loadExifr = (): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      if ((window as any).exifr) { resolve((window as any).exifr); return; }
+      const s = document.createElement('script');
+      s.src = 'https://unpkg.com/exifr@7.1.3/dist/full.umd.js';
+      s.onload = () => resolve((window as any).exifr);
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  };
+
+  const extractTimestamp = useCallback(async (dataUrl: string) => {
+    try {
+      // Convert data URL to blob for EXIF parsing
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      const exifr = await loadExifr();
+      if (exifr) {
+        const data = await exifr.parse(blob, { tiff: true, exif: true });
+        const dt = data?.DateTimeOriginal || data?.DateTime;
+        if (dt instanceof Date) {
+          setExifTimestamp(dt.getTime());
+          const iso = dt.toISOString().slice(0, 16);
+          setPhotoTimestamp(iso);
+          return;
+        }
+      }
+    } catch {}
+    setExifTimestamp(null);
+    // Default to now
+    setPhotoTimestamp(new Date().toISOString().slice(0, 16));
+  }, []);
+
+  // Extract EXIF when image is first loaded
+  useEffect(() => {
+    if (imageSrc) extractTimestamp(imageSrc);
+  }, [imageSrc, extractTimestamp]);
+
+  const saveToPhotoDatabase = async () => {
+    if (!squashedImageSrc) return;
+
+    try {
+      // Convert squashed image to blob
+      const res = await fetch(squashedImageSrc);
+      const blob = await res.blob();
+
+      // Determine timestamp
+      const ts = photoTimestamp ? new Date(photoTimestamp).getTime() : Date.now();
+      const date = new Date(ts).toISOString().slice(0, 10); // YYYY-MM-DD
+
+      // Store blob in IndexedDB
+      const id = `p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const DB_NAME = 'ssa-db';
+      const db: IDBDatabase = await new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 4);
+        req.onupgradeneeded = (e: any) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', { keyPath: 'id' });
+        };
+        req.onsuccess = (e: any) => resolve(e.target.result);
+        req.onerror = (e: any) => reject(e.target.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('photos', 'readwrite');
+        const req = tx.objectStore('photos').put({ id, blob });
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+
+      // Add metadata to localStorage
+      const lsKey = `ssa:photos-meta:${date}`;
+      const existing = JSON.parse(localStorage.getItem(lsKey) || '[]');
+      const photo = {
+        id,
+        name: `squash-shot-${id.slice(2, 12)}.jpg`,
+        size: blob.size,
+        utc: ts,
+        lat: null,
+        lon: null,
+        sessionDate: date,
+        cloudSynced: false,
+        addedAt: Date.now()
+      };
+      existing.push(photo);
+      localStorage.setItem(lsKey, JSON.stringify(existing));
+
+      navigator.vibrate?.([50, 50, 100]);
+      alert(`Saved to Photos (${date})`);
+    } catch (err: any) {
+      alert(`Error saving: ${err.message}`);
+    }
+  };
+
   const resetAll = () => {
     setStep('camera');
     setImageSrc('');
@@ -723,14 +835,32 @@ export default function SquashShotsApp() {
     setCropZoom(1);
     setCropPan({ x: 0, y: 0 });
     setDraggingPoint(null);
+    setExifTimestamp(null);
+    setPhotoTimestamp('');
+    setShowTimestampInput(false);
   };
 
   return (
     <div className="absolute inset-0 bg-black flex flex-col overflow-hidden">
       {/* Header */}
       <div className="bg-gradient-to-b from-slate-900 to-transparent px-4 py-3 flex justify-between items-center text-sm z-10">
-        <h1 className="font-bold text-white">Squash Shots</h1>
+        <div className="flex items-center gap-2">
+          {step !== 'camera' && (
+            <button
+              onClick={() => {
+                if (step === 'points') { setStep('camera'); setPoints([]); setZoom(1); setPan({ x: 0, y: 0 }); }
+                else if (step === 'crop') { setStep('points'); setCropBox(null); setCropZoom(1); setCropPan({ x: 0, y: 0 }); }
+                else if (step === 'squash') { setStep('crop'); setCroppedImageSrc(''); setSquashedImageSrc(''); }
+              }}
+              className="text-white bg-slate-700/60 rounded-full w-8 h-8 flex items-center justify-center active:scale-90 transition-transform"
+            >
+              ←
+            </button>
+          )}
+          <h1 className="font-bold text-white">Squash Shots</h1>
+        </div>
         <div className="text-slate-400">
+          {step === 'camera' && 'Select image'}
           {step === 'points' && `${points.length}/2 points`}
           {step === 'crop' && 'Crop'}
           {step === 'squash' && 'Result'}
@@ -888,20 +1018,56 @@ export default function SquashShotsApp() {
               )}
             </div>
 
-            <div className="bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-3">
+            <div className="flex-shrink-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-3">
               <p className="text-slate-400 text-center text-xs">
                 Height reduced 10×
               </p>
+
+              {/* Timestamp section */}
+              <div className="bg-slate-800/60 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 text-xs font-medium">
+                    {exifTimestamp ? '📅 EXIF timestamp found' : '⚠️ No timestamp in image'}
+                  </span>
+                  <button
+                    onClick={() => setShowTimestampInput(!showTimestampInput)}
+                    className="text-xs text-blue-400 underline"
+                  >
+                    {showTimestampInput ? 'Hide' : 'Edit'}
+                  </button>
+                </div>
+                {showTimestampInput && (
+                  <input
+                    type="datetime-local"
+                    value={photoTimestamp}
+                    onChange={(e) => setPhotoTimestamp(e.target.value)}
+                    className="w-full bg-slate-700 text-white text-sm rounded px-3 py-2 border border-slate-600"
+                  />
+                )}
+                {!showTimestampInput && photoTimestamp && (
+                  <p className="text-slate-400 text-xs">
+                    {new Date(photoTimestamp).toLocaleString()}
+                  </p>
+                )}
+              </div>
+
+              {/* Action buttons */}
+              <button
+                onClick={saveToPhotoDatabase}
+                className="w-full px-6 py-4 bg-green-600 hover:bg-green-700 text-white font-bold text-lg rounded-lg active:scale-95 transition-transform shadow-lg shadow-green-900/50"
+              >
+                💾 Save to Photo Database
+              </button>
               <div className="flex gap-2">
                 <button
                   onClick={downloadImage}
-                  className="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
+                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
                 >
                   ⬇ Download
                 </button>
                 <button
                   onClick={resetAll}
-                  className="flex-1 px-6 py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
+                  className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold text-sm rounded-lg active:scale-95 transition-transform"
                 >
                   ↺ New
                 </button>
