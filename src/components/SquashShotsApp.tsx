@@ -62,6 +62,8 @@ export default function SquashShotsApp() {
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
   const squashCanvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cachedImage = useRef<HTMLImageElement | null>(null);
+  const cachedImageSrc = useRef<string>('');
 
   // Initialize camera
   useEffect(() => {
@@ -220,14 +222,16 @@ export default function SquashShotsApp() {
     }
 
     if (e.touches.length === 2 && initialDistance > 0) {
-      // Pinch zoom
+      // Pinch zoom (dampened for smoother control)
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const distance = Math.sqrt(
         Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
       );
       const ratio = distance / initialDistance;
-      setZoom(Math.max(0.5, Math.min(8, initialZoom * ratio)));
+      // Dampen: only apply 60% of the zoom change
+      const dampened = 1 + (ratio - 1) * 0.6;
+      setZoom(Math.max(0.5, Math.min(8, initialZoom * dampened)));
       return;
     }
 
@@ -291,7 +295,7 @@ export default function SquashShotsApp() {
 
   const handlePointsWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const delta = e.deltaY > 0 ? 0.95 : 1.05;
     setZoom(prev => Math.max(0.5, Math.min(8, prev * delta)));
   };
 
@@ -307,12 +311,11 @@ export default function SquashShotsApp() {
     setPoints(prev => prev.slice(0, -1));
   };
 
-  // Draw points overlay
+  // Draw points overlay (uses cached image for performance)
   useEffect(() => {
     if (!pointsCanvasRef.current || !imageSrc) return;
 
-    const img = new Image();
-    img.onload = () => {
+    const draw = (img: HTMLImageElement) => {
       const canvas = pointsCanvasRef.current!;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
@@ -322,6 +325,7 @@ export default function SquashShotsApp() {
 
       ctx.save();
       ctx.translate(pan.x * zoom, pan.y * zoom);
+
       ctx.scale(zoom, zoom);
       ctx.drawImage(img, 0, 0);
 
@@ -417,7 +421,19 @@ export default function SquashShotsApp() {
 
       ctx.restore();
     };
-    img.src = imageSrc;
+
+    // Use cached image if src hasn't changed (avoids reloading data URL every frame)
+    if (cachedImage.current && cachedImageSrc.current === imageSrc) {
+      draw(cachedImage.current);
+    } else {
+      const img = new Image();
+      img.onload = () => {
+        cachedImage.current = img;
+        cachedImageSrc.current = imageSrc;
+        draw(img);
+      };
+      img.src = imageSrc;
+    }
   }, [imageSrc, points, zoom, pan]);
 
   const rotateImage = async () => {
@@ -810,10 +826,20 @@ export default function SquashShotsApp() {
         lon: null,
         sessionDate: date,
         cloudSynced: false,
-        addedAt: Date.now()
+        addedAt: Date.now(),
+        sails: ['Squash Shot'],
+        raceTags: ['squash-shot']
       };
       existing.push(photo);
       localStorage.setItem(lsKey, JSON.stringify(existing));
+
+      // Ensure the date exists in sessions index so Photos tab can navigate to it
+      const sessions: any[] = JSON.parse(localStorage.getItem('ssa:sessions') || '[]');
+      if (!sessions.find((s: any) => s.date === date)) {
+        sessions.push({ date, videoCount: 0, hasLog: false, hasXml: false });
+        sessions.sort((a: any, b: any) => b.date.localeCompare(a.date));
+        localStorage.setItem('ssa:sessions', JSON.stringify(sessions));
+      }
 
       navigator.vibrate?.([50, 50, 100]);
       alert(`Saved to Photos (${date})`);
