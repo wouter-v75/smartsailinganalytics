@@ -73,6 +73,7 @@ export default function SquashShotsApp() {
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
   const squashCanvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileBrowserRef = useRef<HTMLInputElement>(null);
   const cachedImage = useRef<HTMLImageElement | null>(null);
   const cachedImageSrc = useRef<string>('');
 
@@ -116,32 +117,43 @@ export default function SquashShotsApp() {
     canvasRef.current.height = videoRef.current.videoHeight;
 
     ctx.drawImage(videoRef.current, 0, 0);
-    // Use PNG for lossless capture at full resolution
-    const dataUrl = canvasRef.current.toDataURL('image/png');
-    setImageSrc(dataUrl);
+
+    // Convert to blob URL for fast loading (same perf as album photos)
+    originalFile.current = null; // Camera capture has no EXIF
+    canvasRef.current.toBlob((blob) => {
+      if (!blob) return;
+      const objectUrl = URL.createObjectURL(blob);
+      setImageSrc(objectUrl);
+      setStep('points');
+    }, 'image/jpeg', 1.0);
 
     const stream = videoRef.current.srcObject as MediaStream;
     stream?.getTracks().forEach(track => track.stop());
-
-    setStep('points');
   };
+
+  // Loading state for album/file picker
+  const [isLoading, setIsLoading] = useState(false);
+  const [activeButton, setActiveButton] = useState<string | null>(null);
+  const originalFile = useRef<File | null>(null);
 
   // Handle file upload (album or file browser)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file) { setIsLoading(false); setActiveButton(null); return; }
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const dataUrl = ev.target?.result as string;
-      setImageSrc(dataUrl);
-      // Stop camera if running
-      if (videoRef.current?.srcObject) {
-        (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-      }
-      setStep('points');
-    };
-    reader.readAsDataURL(file);
+    setIsLoading(true);
+    // Store original file for EXIF extraction
+    originalFile.current = file;
+    // Use createObjectURL for instant display (no need to read entire file into memory)
+    const objectUrl = URL.createObjectURL(file);
+    setImageSrc(objectUrl);
+    // Stop camera if running
+    if (videoRef.current?.srcObject) {
+      (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+    }
+    setIsLoading(false);
+    setActiveButton(null);
+    setStep('points');
     // Reset input so same file can be selected again
     e.target.value = '';
   };
@@ -160,7 +172,7 @@ export default function SquashShotsApp() {
   };
 
   const findNearPoint = (coords: Point): number | null => {
-    const threshold = 40 / zoom; // touch target radius in image space
+    const threshold = 60 / zoom; // larger touch target radius for easier dragging
     for (let i = 0; i < points.length; i++) {
       const dx = points[i].x - coords.x;
       const dy = points[i].y - coords.y;
@@ -478,16 +490,19 @@ export default function SquashShotsApp() {
       ctx.rotate(-angle);
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
 
-      // Use PNG for lossless intermediate step (max resolution)
-      const rotated = canvas.toDataURL('image/png');
-      setRotatedImageSrc(rotated);
-      setPoints([]);
-      setZoom(1);
-      setPan({ x: 0, y: 0 });
-      setCropZoom(1);
-      setCropPan({ x: 0, y: 0 });
-      setCropBox(null);
-      setStep('crop');
+      // Convert to blob URL for fast subsequent loading (lossless PNG)
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const rotatedUrl = URL.createObjectURL(blob);
+        setRotatedImageSrc(rotatedUrl);
+        setPoints([]);
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+        setCropZoom(1);
+        setCropPan({ x: 0, y: 0 });
+        setCropBox(null);
+        setStep('crop');
+      }, 'image/png');
     };
     img.src = imageSrc;
   };
@@ -716,10 +731,13 @@ export default function SquashShotsApp() {
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(img, -cropBox.x, -cropBox.y);
 
-      // Use PNG for lossless intermediate step (max resolution)
-      const cropped = canvas.toDataURL('image/png');
-      setCroppedImageSrc(cropped);
-      setStep('squash');
+      // Convert to blob URL for fast loading (lossless PNG)
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const croppedUrl = URL.createObjectURL(blob);
+        setCroppedImageSrc(croppedUrl);
+        setStep('squash');
+      }, 'image/png');
     };
     img.src = rotatedImageSrc;
   };
@@ -744,22 +762,30 @@ export default function SquashShotsApp() {
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, canvas.width, canvas.height);
 
-      // Use PNG for maximum quality (lossless)
-      const squashed = canvas.toDataURL('image/png');
-      setSquashedImageSrc(squashed);
+      // Convert to blob URL (lossless PNG)
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const squashedUrl = URL.createObjectURL(blob);
+        setSquashedImageSrc(squashedUrl);
+      }, 'image/png');
     };
     img.src = croppedImageSrc;
   }, [croppedImageSrc]);
 
-  const downloadImage = () => {
+  const downloadImage = async () => {
     if (!squashedImageSrc) return;
 
+    // Fetch the blob from the object URL, then download
+    const res = await fetch(squashedImageSrc);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = squashedImageSrc;
+    link.href = url;
     link.download = `squash-shot-${Date.now()}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Extract timestamp from original image EXIF when loaded
@@ -776,11 +802,12 @@ export default function SquashShotsApp() {
     });
   };
 
-  const extractTimestamp = useCallback(async (dataUrl: string) => {
+  const extractTimestamp = useCallback(async () => {
     try {
-      // Convert data URL to blob for EXIF parsing
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
+      // Use original file for EXIF (has metadata), fall back to blob URL fetch
+      const blob = originalFile.current
+        ? originalFile.current
+        : await fetch(imageSrc).then(r => r.blob());
       const exifr = await loadExifr();
       if (exifr) {
         const data = await exifr.parse(blob, { tiff: true, exif: true });
@@ -796,11 +823,11 @@ export default function SquashShotsApp() {
     setExifTimestamp(null);
     // Default to now
     setPhotoTimestamp(new Date().toISOString().slice(0, 16));
-  }, []);
+  }, [imageSrc]);
 
   // Extract EXIF when image is first loaded
   useEffect(() => {
-    if (imageSrc) extractTimestamp(imageSrc);
+    if (imageSrc) extractTimestamp();
   }, [imageSrc, extractTimestamp]);
 
   const saveToPhotoDatabase = async () => {
@@ -949,11 +976,18 @@ export default function SquashShotsApp() {
         </div>
       </div>
 
-      {/* Hidden file input */}
+      {/* Hidden file inputs — separate for album vs file browser */}
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        className="hidden"
+        onChange={handleFileUpload}
+      />
+      <input
+        ref={fileBrowserRef}
+        type="file"
+        accept=".jpg,.jpeg,.png,.heic,.heif,.webp,.tiff,.bmp"
         className="hidden"
         onChange={handleFileUpload}
       />
@@ -979,27 +1013,36 @@ export default function SquashShotsApp() {
             <div className="flex gap-3 w-full">
               <button
                 onClick={() => {
+                  setActiveButton('album');
+                  // No capture attribute = opens photo library on mobile
                   if (fileInputRef.current) {
-                    fileInputRef.current.setAttribute('capture', '');
-                    fileInputRef.current.accept = 'image/*';
+                    fileInputRef.current.removeAttribute('capture');
                     fileInputRef.current.click();
                   }
                 }}
-                className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm rounded-lg active:scale-95 transition-transform"
+                className={`flex-1 px-4 py-3 font-semibold text-sm rounded-lg active:scale-95 transition-all ${
+                  activeButton === 'album'
+                    ? 'bg-blue-600 text-white ring-2 ring-blue-400'
+                    : 'bg-slate-700 hover:bg-slate-600 text-white'
+                }`}
               >
-                🖼️ Photo Album
+                {activeButton === 'album' ? '⏳ Loading...' : '🖼️ Photo Album'}
               </button>
               <button
                 onClick={() => {
-                  if (fileInputRef.current) {
-                    fileInputRef.current.removeAttribute('capture');
-                    fileInputRef.current.accept = 'image/*,.jpg,.jpeg,.png,.heic,.heif';
-                    fileInputRef.current.click();
+                  setActiveButton('files');
+                  // Separate input with specific extensions = file browser on mobile
+                  if (fileBrowserRef.current) {
+                    fileBrowserRef.current.click();
                   }
                 }}
-                className="flex-1 px-4 py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold text-sm rounded-lg active:scale-95 transition-transform"
+                className={`flex-1 px-4 py-3 font-semibold text-sm rounded-lg active:scale-95 transition-all ${
+                  activeButton === 'files'
+                    ? 'bg-blue-600 text-white ring-2 ring-blue-400'
+                    : 'bg-slate-700 hover:bg-slate-600 text-white'
+                }`}
               >
-                📁 Browse Files
+                {activeButton === 'files' ? '⏳ Loading...' : '📁 Browse Files'}
               </button>
             </div>
           </div>
