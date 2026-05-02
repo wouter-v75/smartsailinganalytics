@@ -453,7 +453,7 @@ export default function SquashShotsApp() {
   };
 
   return (
-    <div className="fixed inset-0 bg-black flex flex-col overflow-hidden">
+    <div className="absolute inset-0 bg-black flex flex-col overflow-hidden">
       {/* Header - minimal */}
       <div className="bg-gradient-to-b from-slate-900 to-transparent px-4 py-3 flex justify-between items-center text-sm">
         <h1 className="font-bold text-white">Squash Shots</h1>
