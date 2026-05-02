@@ -91,7 +91,7 @@ export default function SquashShotsApp() {
   };
 
   // Touch handlers for point selection
-  const getTouchCoords = (touch: Touch, rect: DOMRect) => {
+  const getTouchCoords = (touch: any, rect: DOMRect) => {
     return {
       x: (touch.clientX - rect.left - pan.x * zoom) / zoom,
       y: (touch.clientY - rect.top - pan.y * zoom) / zoom
