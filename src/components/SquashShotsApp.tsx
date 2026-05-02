@@ -69,7 +69,7 @@ export default function SquashShotsApp() {
   const [cropInitialDistance, setCropInitialDistance] = useState(0);
   const [cropInitialZoom, setCropInitialZoom] = useState(1);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointsCanvasRef = useRef<HTMLCanvasElement>(null);
   const cropCanvasRef = useRef<HTMLCanvasElement>(null);
