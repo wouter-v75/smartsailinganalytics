@@ -309,22 +309,61 @@ export default function SquashShotsApp() {
       ctx.scale(zoom, zoom);
       ctx.drawImage(img, 0, 0);
 
-      // Draw points
+      // Draw points as crosshairs with number label
       points.forEach((point, idx) => {
-        const radius = 20 / zoom;
-        ctx.fillStyle = idx === 0 ? '#3b82f6' : '#ef4444';
+        const size = 40 / zoom;       // crosshair arm length
+        const lw = 3 / zoom;          // line width
+        const color = idx === 0 ? '#3b82f6' : '#ef4444';
+
+        // Outer crosshair lines (white outline for contrast)
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.lineWidth = (lw + 4 / zoom);
         ctx.beginPath();
-        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'white';
-        ctx.lineWidth = 3 / zoom;
+        ctx.moveTo(point.x - size, point.y);
+        ctx.lineTo(point.x + size, point.y);
+        ctx.moveTo(point.x, point.y - size);
+        ctx.lineTo(point.x, point.y + size);
         ctx.stroke();
 
+        // Crosshair lines (colored)
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lw;
+        ctx.beginPath();
+        ctx.moveTo(point.x - size, point.y);
+        ctx.lineTo(point.x - 6 / zoom, point.y);
+        ctx.moveTo(point.x + 6 / zoom, point.y);
+        ctx.lineTo(point.x + size, point.y);
+        ctx.moveTo(point.x, point.y - size);
+        ctx.lineTo(point.x, point.y - 6 / zoom);
+        ctx.moveTo(point.x, point.y + 6 / zoom);
+        ctx.lineTo(point.x, point.y + size);
+        ctx.stroke();
+
+        // Center dot
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 5 / zoom, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2 / zoom;
+        ctx.stroke();
+
+        // Number label (top-right of crosshair)
+        const labelX = point.x + size * 0.7;
+        const labelY = point.y - size * 0.7;
+        const labelR = 14 / zoom;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(labelX, labelY, labelR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2 / zoom;
+        ctx.stroke();
         ctx.fillStyle = 'white';
-        ctx.font = `bold ${18 / zoom}px sans-serif`;
+        ctx.font = `bold ${16 / zoom}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(`${idx + 1}`, point.x, point.y);
+        ctx.fillText(`${idx + 1}`, labelX, labelY);
       });
 
       // Draw dashed line connecting points
@@ -746,7 +785,7 @@ export default function SquashShotsApp() {
         {/* ── Points Selection Step ── */}
         {step === 'points' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex-1 flex items-center justify-center bg-black relative">
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-black relative overflow-hidden">
               <canvas
                 ref={pointsCanvasRef}
                 onTouchStart={handlePointsTouchStart}
@@ -763,7 +802,7 @@ export default function SquashShotsApp() {
             </div>
 
             {/* Bottom control panel */}
-            <div className="bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-3">
+            <div className="flex-shrink-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-3">
               <div className="text-center space-y-1">
                 <p className="text-white font-bold text-sm">
                   {points.length === 0 && '👆 Long-press to place point 1'}
