@@ -80,17 +80,29 @@ export default function SquashShotsApp() {
   const cachedImageSrc = useRef<string>('');
 
   // Stop camera helper
+  const cameraStream = useRef<MediaStream | null>(null);
+
   const stopCamera = () => {
-    if (videoRef.current?.srcObject) {
-      (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+    if (cameraStream.current) {
+      cameraStream.current.getTracks().forEach(track => track.stop());
+      cameraStream.current = null;
+    }
+    if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
   };
 
-  // Cleanup camera on unmount or step change
+  // Cleanup camera on unmount
   useEffect(() => {
     return () => stopCamera();
   }, []);
+
+  // Attach stream to video element once it's mounted (cameraMode === 'live')
+  useEffect(() => {
+    if (cameraMode === 'live' && videoRef.current && cameraStream.current) {
+      videoRef.current.srcObject = cameraStream.current;
+    }
+  }, [cameraMode]);
 
   const openCamera = async () => {
     try {
@@ -102,9 +114,7 @@ export default function SquashShotsApp() {
         }
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
+      cameraStream.current = stream;
       setCameraMode('live');
     } catch (err) {
       alert('Camera access denied. Please allow camera access in your browser settings.');
@@ -163,10 +173,7 @@ export default function SquashShotsApp() {
     // Use createObjectURL for instant display (no need to read entire file into memory)
     const objectUrl = URL.createObjectURL(file);
     setImageSrc(objectUrl);
-    // Stop camera if running
-    if (videoRef.current?.srcObject) {
-      (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-    }
+    stopCamera();
     setIsLoading(false);
     setActiveButton(null);
     setStep('points');
@@ -1166,7 +1173,12 @@ export default function SquashShotsApp() {
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
               <video
-                ref={videoRef}
+                ref={(el) => {
+                  videoRef.current = el;
+                  if (el && cameraStream.current && !el.srcObject) {
+                    el.srcObject = cameraStream.current;
+                  }
+                }}
                 autoPlay
                 playsInline
                 className="w-full h-full object-contain"
