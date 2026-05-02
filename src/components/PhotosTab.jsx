@@ -287,6 +287,27 @@ function renderOverlay(canvas,img,inst){
     if(ctx.roundRect)ctx.roundRect(W-bwb-pad,pad,bwb,bhb,5);else ctx.rect(W-bwb-pad,pad,bwb,bhb);ctx.fill();
     ctx.fillStyle="#94A3B8";ctx.textAlign="right";ctx.fillText(badge,W-pad*1.5,pad+Math.round(bhb*0.72));
   }
+  // Mast settings overlay (bottom-left, above instrument gauges)
+  const mastFields=[
+    inst.mast_var_manual_setting&&inst.mast_var_manual_setting!=="base"?`Set:${inst.mast_var_manual_setting}`:null,
+    inst.mast_var_manual_chins?`Ch:${inst.mast_var_manual_chins}`:null,
+    inst.mast_var_manual_rake?`Rk:${inst.mast_var_manual_rake}`:null,
+    inst.mast_var_manual_butt?`Bt:${inst.mast_var_manual_butt}`:null,
+    inst.mast_var_manual_v1?`V1:${inst.mast_var_manual_v1}`:null,
+    inst.mast_var_manual_d1?`D1:${inst.mast_var_manual_d1}`:null,
+    inst.mast_var_manual_d2?`D2:${inst.mast_var_manual_d2}`:null,
+  ].filter(Boolean);
+  if(mastFields.length>0){
+    const mastTxt="⛵ "+mastFields.join(" · ");
+    ctx.font=`${Math.round(fs*0.7)}px monospace`;
+    const mtw=ctx.measureText(mastTxt).width+pad*2,mth=Math.round(bh*0.6);
+    const my=H-rows*bh-(rows-1)*gap-pad-mth-gap;
+    ctx.fillStyle="rgba(3,15,26,0.82)";ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(pad,my,mtw,mth,5);else ctx.rect(pad,my,mtw,mth);ctx.fill();
+    ctx.strokeStyle="#F9731640";ctx.lineWidth=1;ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(pad,my,mtw,mth,5);else ctx.rect(pad,my,mtw,mth);ctx.stroke();
+    ctx.fillStyle="#F97316";ctx.textAlign="left";ctx.fillText(mastTxt,pad*1.5,my+Math.round(mth*0.72));
+  }
 }
 
 const SAIL_SKIP = /^(main|msail|mainsail|main-)/;
@@ -386,7 +407,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
     if(!photo?.objectUrl||!canvasRef.current){setRendered(false);return;}
     const img=new Image();
     img.crossOrigin="anonymous";
-    img.onload=()=>{renderOverlay(canvasRef.current,img,{tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,sails:photo.sails,location:photo.location,boat:photo.boat});setRendered(true);};
+    img.onload=()=>{renderOverlay(canvasRef.current,img,{tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2});setRendered(true);};
     img.onerror=()=>setRendered(false);
     img.src=photo.objectUrl;
   },[photo.id,photo.objectUrl,photo.tws,photo.twa,photo.sails]);

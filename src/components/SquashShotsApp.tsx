@@ -39,11 +39,22 @@ export default function SquashShotsApp() {
   const longPressCoords = useRef<Point | null>(null);
   const touchMoved = useRef(false);
   const touchStartPos = useRef<{ x: number; y: number } | null>(null);
-  const MOVE_THRESHOLD = 15; // px of movement allowed during long-press
+  const MOVE_THRESHOLD = 20; // px of movement allowed during long-press
 
   // Timestamp for saving to photo database
   const [photoTimestamp, setPhotoTimestamp] = useState<string>('');
   const [showTimestampInput, setShowTimestampInput] = useState(false);
+  const [timezone, setTimezone] = useState<string>('UTC');
+
+  // Mast settings
+  const [mastSetting, setMastSetting] = useState<string>('base');
+  const [mastChins, setMastChins] = useState<string>('');
+  const [mastRake, setMastRake] = useState<string>('');
+  const [mastButt, setMastButt] = useState<string>('');
+  const [mastV1, setMastV1] = useState<string>('');
+  const [mastD1, setMastD1] = useState<string>('');
+  const [mastD2, setMastD2] = useState<string>('');
+  const [showMastSettings, setShowMastSettings] = useState(false);
 
   // Crop state
   const [cropBox, setCropBox] = useState<CropBox | null>(null);
@@ -81,8 +92,8 @@ export default function SquashShotsApp() {
     try {
       const constraints = {
         video: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          width: { ideal: 4032 },
+          height: { ideal: 3024 },
           facingMode: 'environment'
         }
       };
@@ -105,7 +116,8 @@ export default function SquashShotsApp() {
     canvasRef.current.height = videoRef.current.videoHeight;
 
     ctx.drawImage(videoRef.current, 0, 0);
-    const dataUrl = canvasRef.current.toDataURL('image/jpeg', 0.95);
+    // Use PNG for lossless capture at full resolution
+    const dataUrl = canvasRef.current.toDataURL('image/png');
     setImageSrc(dataUrl);
 
     const stream = videoRef.current.srcObject as MediaStream;
@@ -222,15 +234,15 @@ export default function SquashShotsApp() {
     }
 
     if (e.touches.length === 2 && initialDistance > 0) {
-      // Pinch zoom (dampened for smoother control)
+      // Pinch zoom (heavily dampened for smoother control)
       const t1 = e.touches[0];
       const t2 = e.touches[1];
       const distance = Math.sqrt(
         Math.pow(t2.clientX - t1.clientX, 2) + Math.pow(t2.clientY - t1.clientY, 2)
       );
       const ratio = distance / initialDistance;
-      // Dampen: only apply 60% of the zoom change
-      const dampened = 1 + (ratio - 1) * 0.6;
+      // Dampen: only apply 40% of the zoom change for much slower zoom
+      const dampened = 1 + (ratio - 1) * 0.4;
       setZoom(Math.max(0.5, Math.min(8, initialZoom * dampened)));
       return;
     }
@@ -243,9 +255,10 @@ export default function SquashShotsApp() {
         return;
       }
 
-      if (isPanning) {
-        const dx = (e.touches[0].clientX - panStart.x) / zoom;
-        const dy = (e.touches[0].clientY - panStart.y) / zoom;
+      if (isPanning && touchMoved.current) {
+        // Pan 1.5x faster than finger movement for snappier feel
+        const dx = (e.touches[0].clientX - panStart.x) * 1.5 / zoom;
+        const dy = (e.touches[0].clientY - panStart.y) * 1.5 / zoom;
         setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
       }
     }
@@ -295,7 +308,7 @@ export default function SquashShotsApp() {
 
   const handlePointsWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.95 : 1.05;
+    const delta = e.deltaY > 0 ? 0.97 : 1.03;
     setZoom(prev => Math.max(0.5, Math.min(8, prev * delta)));
   };
 
@@ -465,7 +478,8 @@ export default function SquashShotsApp() {
       ctx.rotate(-angle);
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
 
-      const rotated = canvas.toDataURL('image/jpeg', 0.95);
+      // Use PNG for lossless intermediate step (max resolution)
+      const rotated = canvas.toDataURL('image/png');
       setRotatedImageSrc(rotated);
       setPoints([]);
       setZoom(1);
@@ -702,7 +716,8 @@ export default function SquashShotsApp() {
       const ctx = canvas.getContext('2d')!;
       ctx.drawImage(img, -cropBox.x, -cropBox.y);
 
-      const cropped = canvas.toDataURL('image/jpeg', 0.95);
+      // Use PNG for lossless intermediate step (max resolution)
+      const cropped = canvas.toDataURL('image/png');
       setCroppedImageSrc(cropped);
       setStep('squash');
     };
@@ -719,13 +734,18 @@ export default function SquashShotsApp() {
       const canvas = squashCanvasRef.current!;
       const squashFactor = 10;
 
+      // Keep full width, squash height — maximum resolution
       canvas.width = img.width;
       canvas.height = Math.round(img.height / squashFactor);
 
       const ctx = canvas.getContext('2d')!;
+      // Use high-quality image smoothing for the squash
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, img.width, img.height, 0, 0, canvas.width, canvas.height);
 
-      const squashed = canvas.toDataURL('image/jpeg', 0.95);
+      // Use PNG for maximum quality (lossless)
+      const squashed = canvas.toDataURL('image/png');
       setSquashedImageSrc(squashed);
     };
     img.src = croppedImageSrc;
@@ -736,7 +756,7 @@ export default function SquashShotsApp() {
 
     const link = document.createElement('a');
     link.href = squashedImageSrc;
-    link.download = `squash-shot-${Date.now()}.jpg`;
+    link.download = `squash-shot-${Date.now()}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -791,8 +811,24 @@ export default function SquashShotsApp() {
       const res = await fetch(squashedImageSrc);
       const blob = await res.blob();
 
-      // Determine timestamp
-      const ts = photoTimestamp ? new Date(photoTimestamp).getTime() : Date.now();
+      // Determine timestamp with timezone offset
+      let ts: number;
+      if (photoTimestamp) {
+        // Parse the datetime-local value with timezone offset
+        const tzOffsetMap: Record<string, number> = {
+          'UTC': 0, 'UTC+1': -60, 'UTC+2': -120, 'UTC+3': -180, 'UTC+4': -240,
+          'UTC+5': -300, 'UTC+6': -360, 'UTC+7': -420, 'UTC+8': -480, 'UTC+9': -540,
+          'UTC+10': -600, 'UTC+11': -660, 'UTC+12': -720,
+          'UTC-1': 60, 'UTC-2': 120, 'UTC-3': 180, 'UTC-4': 240, 'UTC-5': 300,
+          'UTC-6': 360, 'UTC-7': 420, 'UTC-8': 480, 'UTC-9': 540, 'UTC-10': 600,
+          'UTC-11': 660, 'UTC-12': 720
+        };
+        const offsetMin = tzOffsetMap[timezone] || 0;
+        const localDate = new Date(photoTimestamp);
+        ts = localDate.getTime() + offsetMin * 60000;
+      } else {
+        ts = Date.now();
+      }
       const date = new Date(ts).toISOString().slice(0, 10); // YYYY-MM-DD
 
       // Store blob in IndexedDB
@@ -817,9 +853,19 @@ export default function SquashShotsApp() {
       // Add metadata to localStorage
       const lsKey = `ssa:photos-meta:${date}`;
       const existing = JSON.parse(localStorage.getItem(lsKey) || '[]');
+      // Build mast metadata
+      const mastData: Record<string, string> = {};
+      if (mastSetting && mastSetting !== 'base') mastData['mast_var_manual_setting'] = mastSetting;
+      if (mastChins) mastData['mast_var_manual_chins'] = mastChins;
+      if (mastRake) mastData['mast_var_manual_rake'] = mastRake;
+      if (mastButt) mastData['mast_var_manual_butt'] = mastButt;
+      if (mastV1) mastData['mast_var_manual_v1'] = mastV1;
+      if (mastD1) mastData['mast_var_manual_d1'] = mastD1;
+      if (mastD2) mastData['mast_var_manual_d2'] = mastD2;
+
       const photo = {
         id,
-        name: `squash-shot-${id.slice(2, 12)}.jpg`,
+        name: `squash-shot-${id.slice(2, 12)}.png`,
         size: blob.size,
         utc: ts,
         lat: null,
@@ -828,7 +874,8 @@ export default function SquashShotsApp() {
         cloudSynced: false,
         addedAt: Date.now(),
         sails: ['Squash Shot'],
-        raceTags: ['squash-shot']
+        raceTags: ['squash-shot'],
+        ...mastData
       };
       existing.push(photo);
       localStorage.setItem(lsKey, JSON.stringify(existing));
@@ -864,6 +911,15 @@ export default function SquashShotsApp() {
     setExifTimestamp(null);
     setPhotoTimestamp('');
     setShowTimestampInput(false);
+    setTimezone('UTC');
+    setMastSetting('base');
+    setMastChins('');
+    setMastRake('');
+    setMastButt('');
+    setMastV1('');
+    setMastD1('');
+    setMastD2('');
+    setShowMastSettings(false);
   };
 
   return (
@@ -1044,16 +1100,16 @@ export default function SquashShotsApp() {
               )}
             </div>
 
-            <div className="flex-shrink-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-3">
+            <div className="flex-shrink-0 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent px-4 py-4 space-y-2 overflow-y-auto max-h-[60vh]">
               <p className="text-slate-400 text-center text-xs">
-                Height reduced 10×
+                Height reduced 10× • Lossless PNG
               </p>
 
               {/* Timestamp section */}
               <div className="bg-slate-800/60 rounded-lg p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-slate-300 text-xs font-medium">
-                    {exifTimestamp ? '📅 EXIF timestamp found' : '⚠️ No timestamp in image'}
+                    {exifTimestamp ? '📅 EXIF timestamp found' : '⚠️ No timestamp'}
                   </span>
                   <button
                     onClick={() => setShowTimestampInput(!showTimestampInput)}
@@ -1063,17 +1119,82 @@ export default function SquashShotsApp() {
                   </button>
                 </div>
                 {showTimestampInput && (
-                  <input
-                    type="datetime-local"
-                    value={photoTimestamp}
-                    onChange={(e) => setPhotoTimestamp(e.target.value)}
-                    className="w-full bg-slate-700 text-white text-sm rounded px-3 py-2 border border-slate-600"
-                  />
+                  <div className="space-y-2">
+                    <input
+                      type="datetime-local"
+                      value={photoTimestamp}
+                      onChange={(e) => setPhotoTimestamp(e.target.value)}
+                      className="w-full bg-slate-700 text-white text-sm rounded px-3 py-2 border border-slate-600"
+                    />
+                    <select
+                      value={timezone}
+                      onChange={(e) => setTimezone(e.target.value)}
+                      className="w-full bg-slate-700 text-white text-sm rounded px-3 py-2 border border-slate-600"
+                    >
+                      {['UTC-12','UTC-11','UTC-10','UTC-9','UTC-8','UTC-7','UTC-6','UTC-5','UTC-4','UTC-3','UTC-2','UTC-1','UTC','UTC+1','UTC+2','UTC+3','UTC+4','UTC+5','UTC+6','UTC+7','UTC+8','UTC+9','UTC+10','UTC+11','UTC+12'].map(tz => (
+                        <option key={tz} value={tz}>{tz}</option>
+                      ))}
+                    </select>
+                  </div>
                 )}
                 {!showTimestampInput && photoTimestamp && (
                   <p className="text-slate-400 text-xs">
-                    {new Date(photoTimestamp).toLocaleString()}
+                    {new Date(photoTimestamp).toLocaleString()} ({timezone})
                   </p>
+                )}
+              </div>
+
+              {/* Mast settings section */}
+              <div className="bg-slate-800/60 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 text-xs font-medium">⛵ Mast Settings</span>
+                  <button
+                    onClick={() => setShowMastSettings(!showMastSettings)}
+                    className="text-xs text-blue-400 underline"
+                  >
+                    {showMastSettings ? 'Hide' : 'Add'}
+                  </button>
+                </div>
+                {showMastSettings && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <label className="text-slate-400 text-xs w-14">Setting</label>
+                      <select
+                        value={mastSetting}
+                        onChange={(e) => setMastSetting(e.target.value)}
+                        className="flex-1 bg-slate-700 text-white text-xs rounded px-2 py-1.5 border border-slate-600"
+                      >
+                        {['-2', '-1.5', '-1', '-0.5', 'base', '+0.5', '+1', '+1.5', '+2'].map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: 'Chins', value: mastChins, set: setMastChins },
+                        { label: 'Rake', value: mastRake, set: setMastRake },
+                        { label: 'Butt', value: mastButt, set: setMastButt },
+                        { label: 'V1', value: mastV1, set: setMastV1 },
+                        { label: 'D1', value: mastD1, set: setMastD1 },
+                        { label: 'D2', value: mastD2, set: setMastD2 },
+                      ].map(f => (
+                        <div key={f.label} className="flex items-center gap-1">
+                          <label className="text-slate-400 text-xs w-8">{f.label}</label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={f.value}
+                            onChange={(e) => f.set(e.target.value)}
+                            placeholder="—"
+                            className="flex-1 bg-slate-700 text-white text-xs rounded px-2 py-1.5 border border-slate-600 w-0"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!showMastSettings && mastSetting !== 'base' && (
+                  <p className="text-slate-400 text-xs">Setting: {mastSetting}</p>
                 )}
               </div>
 
