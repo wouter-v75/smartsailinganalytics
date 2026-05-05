@@ -544,6 +544,10 @@ export default function SailScanTab() {
   // ── derived metrics for results screen ───────────────────────────────────
   const completedStripes = stripes.filter(s => s.luff && s.leech);
   const stripeMetrics = stripes.map(s => (s.luff && s.leech) ? computeStripeMetrics(s as { luff: P; leech: P; mid: P[] }) : null);
+  // A stripe is "fully analysable" only when it has at least one midpoint —
+  // chord alone gives no draft/draft-position/entry/exit info.
+  const stripesWithCurve = stripes.filter(s => s.luff && s.leech && s.mid.length > 0);
+  const activeMetrics = stripeMetrics[activeIdx];
 
   // Sort stripes top-to-bottom (smaller image-y = higher on sail) for twist computation.
   // We use the chord-midpoint y to order them; ties broken by index.
@@ -577,11 +581,24 @@ export default function SailScanTab() {
   }
 
   // ── status text in mark mode ─────────────────────────────────────────────
+  // Each step has a step number, a short heading, a body, and a colour cue
+  // so the next action is unmissable. Crucially, after L+E we point users
+  // at midpoints (without midpoints we cannot compute draft/depth/angles)
+  // *before* the Compute CTA shows up.
   const active = stripes[activeIdx];
-  const placeStatus =
-    !active.luff  ? '👆 Long-press on the LUFF end of the stripe' :
-    !active.leech ? '👆 Long-press on the LEECH end of the stripe' :
-                    '👆 Long-press to add midpoint(s) along the stripe';
+  const stepInfo = (() => {
+    if (!active.luff)  return { num: '1/3', title: 'Place the luff endpoint',  body: 'Long-press at the LUFF (mast/forestay) end of the stripe', tone: 'blue'   as const };
+    if (!active.leech) return { num: '2/3', title: 'Place the leech endpoint', body: 'Long-press at the LEECH (back) end of the stripe',         tone: 'blue'   as const };
+    if (active.mid.length === 0)
+                       return { num: '3/3', title: 'Add a midpoint',           body: 'Long-press where the stripe is deepest — needed for draft, depth, entry/exit', tone: 'amber'  as const };
+    return            { num: '✓',   title: 'Stripe ready',         body: 'Add more midpoints for accuracy, mark another stripe (+), or Compute', tone: 'green'  as const };
+  })();
+  const toneBg    = stepInfo.tone === 'amber' ? 'bg-amber-500/15 border-amber-500/50' :
+                    stepInfo.tone === 'green' ? 'bg-emerald-500/15 border-emerald-500/50' :
+                                                'bg-blue-500/15 border-blue-500/50';
+  const toneText  = stepInfo.tone === 'amber' ? 'text-amber-300' :
+                    stepInfo.tone === 'green' ? 'text-emerald-300' :
+                                                'text-blue-300';
 
   // ── render ───────────────────────────────────────────────────────────────
   return (
@@ -687,11 +704,16 @@ export default function SailScanTab() {
         {/* ── MARK ───────────────────────────────────────────────────────── */}
         {step === 'mark' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Stripe selector chips */}
+            {/* Stripe selector — chips for each stripe + a clearly labelled +Add chip.
+                Each chip shows status (○ chord-only / ✓ has curve) so you can see
+                at a glance which stripes still need a midpoint. */}
             <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 bg-slate-950/70 border-b border-slate-800 overflow-x-auto">
+              <span className="text-[10px] uppercase tracking-wider text-slate-500 flex-shrink-0 pr-1">Stripes</span>
               {stripes.map((s, i) => {
                 const c = STRIPE_COLORS[i % STRIPE_COLORS.length];
-                const filled = (s.luff ? 1 : 0) + (s.leech ? 1 : 0) + s.mid.length;
+                const hasChord = !!(s.luff && s.leech);
+                const hasCurve = hasChord && s.mid.length > 0;
+                const status   = hasCurve ? '✓' : hasChord ? '○' : '·';
                 return (
                   <button key={i} onClick={() => setActiveIdx(i)}
                     className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 flex-shrink-0 active:scale-95 transition-transform ${
@@ -702,14 +724,15 @@ export default function SailScanTab() {
                       color: i === activeIdx ? 'white' : '#cbd5e1',
                       ...(i === activeIdx ? { boxShadow: `0 0 0 2px ${c}55` } : {}),
                     }}
+                    title={hasCurve ? 'Curve set — full metrics' : hasChord ? 'Chord only — add a midpoint' : 'Empty'}
                   >
+                    <span>{status}</span>
                     <span>Stripe {i + 1}</span>
-                    <span className="opacity-80">{filled}pt</span>
                   </button>
                 );
               })}
               <button onClick={addStripe}
-                className="px-3 py-1.5 rounded-full text-xs font-bold bg-slate-800 text-slate-200 active:scale-95 flex-shrink-0">+ Stripe</button>
+                className="px-3 py-1.5 rounded-full text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white active:scale-95 flex-shrink-0">+ Add stripe</button>
             </div>
 
             {/* Canvas */}
@@ -730,29 +753,62 @@ export default function SailScanTab() {
             </div>
 
             {/* Bottom controls */}
-            <div className="flex-shrink-0 bg-gradient-to-t from-slate-950 via-slate-950/95 to-slate-950/70 px-3 py-3 space-y-2">
-              <p className="text-white text-sm font-bold text-center">{placeStatus}</p>
-              <p className="text-slate-500 text-xs text-center">Hold 1.5s to place • Drag points to move • Pinch to zoom</p>
+            <div className="flex-shrink-0 bg-gradient-to-t from-slate-950 via-slate-950/95 to-slate-950/70 px-3 py-2.5 space-y-2">
+
+              {/* Big, unmissable step card */}
+              <div className={`rounded-lg border px-3 py-2 ${toneBg}`}>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[10px] font-bold ${toneText} bg-black/30 rounded px-1.5 py-0.5`}>STEP {stepInfo.num}</span>
+                  <span className="text-white text-sm font-bold flex-1">{stepInfo.title}</span>
+                </div>
+                <p className="text-slate-200 text-xs mt-1 leading-snug">{stepInfo.body}</p>
+                <p className="text-slate-500 text-[10px] mt-1">Hold 1.5s to place • Drag to move • Pinch to zoom</p>
+              </div>
+
+              {/* Live metric preview for active stripe — appears once we have a curve */}
+              {activeMetrics?.hasCurve && (
+                <div className="rounded-md bg-slate-900/70 border border-slate-700 px-2 py-1.5 flex items-center gap-3 text-[11px] font-mono">
+                  <span className="text-slate-500">live:</span>
+                  <span className="text-slate-200">draft <b className="text-emerald-300">{activeMetrics.draftPct.toFixed(1)}%</b></span>
+                  <span className="text-slate-200">@ <b className="text-emerald-300">{activeMetrics.draftPositionPct.toFixed(0)}%</b></span>
+                  <span className="text-slate-200">entry <b className="text-emerald-300">{activeMetrics.entryAngleDeg.toFixed(0)}°</b></span>
+                  <span className="text-slate-200">exit <b className="text-emerald-300">{activeMetrics.exitAngleDeg.toFixed(0)}°</b></span>
+                </div>
+              )}
+
+              {/* Undo / reset / delete row */}
               <div className="flex gap-2">
                 <button onClick={undoLastPoint}
-                  className="flex-1 px-3 py-2.5 bg-slate-700 text-white text-xs font-semibold rounded-lg active:scale-95 disabled:opacity-40"
+                  className="flex-1 px-3 py-2 bg-slate-700 text-white text-xs font-semibold rounded-lg active:scale-95 disabled:opacity-40"
                   disabled={!active.luff && !active.leech && active.mid.length === 0}>
                   ↶ Undo
                 </button>
                 <button onClick={resetActiveStripe}
-                  className="flex-1 px-3 py-2.5 bg-slate-700 text-white text-xs font-semibold rounded-lg active:scale-95 disabled:opacity-40"
+                  className="flex-1 px-3 py-2 bg-slate-700 text-white text-xs font-semibold rounded-lg active:scale-95 disabled:opacity-40"
                   disabled={!active.luff && !active.leech && active.mid.length === 0}>
                   ⟲ Reset
                 </button>
                 <button onClick={removeActiveStripe}
-                  className="flex-1 px-3 py-2.5 bg-red-700/60 text-white text-xs font-semibold rounded-lg active:scale-95">
+                  className="flex-1 px-3 py-2 bg-red-700/60 text-white text-xs font-semibold rounded-lg active:scale-95">
                   ✕ Delete
                 </button>
               </div>
+
+              {/* Big "+ Add another stripe" CTA — appears once current stripe has a curve */}
+              {active.luff && active.leech && active.mid.length > 0 && (
+                <button onClick={addStripe}
+                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-lg active:scale-95 shadow-lg">
+                  + Add another stripe
+                </button>
+              )}
+
+              {/* Compute CTA — only enabled when at least one stripe has a curve */}
               <button onClick={() => setStep('results')}
-                disabled={completedStripes.length === 0}
-                className="w-full px-6 py-3.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:text-slate-400 text-white font-bold text-base rounded-lg active:scale-95 shadow-lg">
-                ✓ Compute &amp; Show Results
+                disabled={stripesWithCurve.length === 0}
+                className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:text-slate-500 text-white font-bold text-base rounded-lg active:scale-95 shadow-lg">
+                {stripesWithCurve.length === 0
+                  ? '✓ Compute (add a midpoint first)'
+                  : `✓ Compute · ${stripesWithCurve.length} stripe${stripesWithCurve.length === 1 ? '' : 's'}`}
               </button>
             </div>
           </div>
@@ -812,21 +868,36 @@ export default function SailScanTab() {
                 </>
               )}
 
-              <div className="flex gap-2 pt-2">
-                <button onClick={() => setStep('mark')}
-                  className="flex-1 px-4 py-3 bg-slate-700 text-white text-sm font-semibold rounded-lg active:scale-95">
-                  ← Adjust marks
+              {/* Suggest adding more stripes when there's only one — twist isn't
+                  meaningful with a single stripe, so users will usually want at
+                  least 2-3 (head, middle, foot). */}
+              {stripesWithCurve.length < 2 && (
+                <div className="rounded-lg p-3 border border-amber-500/40 bg-amber-500/10 text-amber-200 text-xs">
+                  Mark at least 2 stripes (top &amp; bottom of sail) to compare twist between them.
+                </div>
+              )}
+
+              <div className="flex flex-col gap-2 pt-2">
+                <button onClick={() => { addStripe(); setStep('mark'); }}
+                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg active:scale-95 shadow">
+                  + Mark another stripe
                 </button>
-                <button onClick={() => {
-                  if (imageSrc) URL.revokeObjectURL(imageSrc);
+                <div className="flex gap-2">
+                  <button onClick={() => setStep('mark')}
+                    className="flex-1 px-4 py-2.5 bg-slate-700 text-white text-sm font-semibold rounded-lg active:scale-95">
+                    ← Adjust marks
+                  </button>
+                  <button onClick={() => {
+                    if (imageSrc) URL.revokeObjectURL(imageSrc);
                   setImageSrc('');
                   setStripes([newStripe()]);
                   setActiveIdx(0);
                   setStep('select');
                 }}
-                  className="flex-1 px-4 py-3 bg-blue-600 text-white text-sm font-bold rounded-lg active:scale-95">
-                  🆕 New Scan
-                </button>
+                    className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg active:scale-95">
+                    🆕 New Scan
+                  </button>
+                </div>
               </div>
             </div>
           </div>
