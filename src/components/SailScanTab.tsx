@@ -1,0 +1,847 @@
+'use client';
+// src/components/SailScanTab.tsx
+// ─────────────────────────────────────────────────────────────────────────────
+// SailScan v1 — manual trim-stripe digitisation + spline analysis.
+//
+// Mobile-first. Reuses the touch / zoom / pan / long-press / blob-URL
+// patterns established in SquashShotsApp:
+//   - Camera capture → JPEG blob via canvas.toBlob (preserves full resolution)
+//   - File picker uses createObjectURL (no big data-URL strings)
+//   - Crosshairs and lines sized in screen pixels (px() helper) so they look
+//     identical regardless of source-image resolution
+//   - Long-press to place point (1.5s, 20px tolerance)
+//   - Pinch zoom dampened to 40%, wheel zoom 0.97/1.03, pan 1.5× snappier
+//
+// The user marks each trim stripe by long-pressing in this order:
+//   1) luff endpoint, 2) leech endpoint, 3+) midpoint(s) along the curve.
+// A natural cubic spline is fit through the points (in chord-relative space)
+// and per-stripe metrics + inter-stripe twist are computed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import React, { useState, useRef, useEffect } from 'react';
+import { computeStripeMetrics, splinePolyline, computeTwist } from '../lib/sailscan';
+
+type Step = 'select' | 'live' | 'preview' | 'mark' | 'results';
+interface P { x: number; y: number; }
+interface Stripe { luff: P | null; leech: P | null; mid: P[]; }
+
+type DragTarget =
+  | { stripeIdx: number; role: 'luff' | 'leech' }
+  | { stripeIdx: number; role: 'mid'; midIdx: number };
+
+const STRIPE_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ec4899', '#a855f7'];
+const ENDPOINT_LUFF_COLOR = '#3b82f6';
+const ENDPOINT_LEECH_COLOR = '#ef4444';
+const MID_COLOR = '#fbbf24';
+
+const newStripe = (): Stripe => ({ luff: null, leech: null, mid: [] });
+
+export default function SailScanTab() {
+  const [step, setStep] = useState<Step>('select');
+  const [previewSrc, setPreviewSrc] = useState<string>('');
+  const [imageSrc, setImageSrc] = useState<string>('');
+  const [stripes, setStripes] = useState<Stripe[]>([newStripe()]);
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  // ── pan / zoom ────────────────────────────────────────────────────────────
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<P>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState<P>({ x: 0, y: 0 });
+  const [initialPan, setInitialPan] = useState<P>({ x: 0, y: 0 });
+  const [initialDist, setInitialDist] = useState(0);
+  const [initialZoom, setInitialZoom] = useState(1);
+
+  // ── drag state ────────────────────────────────────────────────────────────
+  const [dragging, setDragging] = useState<DragTarget | null>(null);
+
+  // ── long-press state (for placing new points) ─────────────────────────────
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressCoords = useRef<P | null>(null);
+  const touchMoved = useRef(false);
+  const touchStartPos = useRef<P | null>(null);
+  const MOVE_THRESHOLD = 20;
+
+  // ── camera ────────────────────────────────────────────────────────────────
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const captureCanvasRef = useRef<HTMLCanvasElement>(null);
+  const cameraStream = useRef<MediaStream | null>(null);
+
+  // ── canvas / overlay ──────────────────────────────────────────────────────
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cachedImage = useRef<HTMLImageElement | null>(null);
+  const cachedImageSrc = useRef<string>('');
+
+  // ── file inputs ───────────────────────────────────────────────────────────
+  const fileAlbumRef = useRef<HTMLInputElement>(null);
+  const fileBrowserRef = useRef<HTMLInputElement>(null);
+  const [activeButton, setActiveButton] = useState<string | null>(null);
+
+  // ── camera lifecycle ──────────────────────────────────────────────────────
+  const stopCamera = () => {
+    if (cameraStream.current) {
+      cameraStream.current.getTracks().forEach(t => t.stop());
+      cameraStream.current = null;
+    }
+    if (videoRef.current) videoRef.current.srcObject = null;
+  };
+  useEffect(() => () => stopCamera(), []);
+  useEffect(() => {
+    if (step === 'live' && videoRef.current && cameraStream.current && !videoRef.current.srcObject) {
+      videoRef.current.srcObject = cameraStream.current;
+    }
+  }, [step]);
+
+  const openCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 4032 }, height: { ideal: 3024 }, facingMode: 'environment' },
+      });
+      cameraStream.current = stream;
+      setStep('live');
+    } catch {
+      alert('Camera access denied. Please allow camera access in your browser settings.');
+    }
+  };
+
+  const takePicture = () => {
+    if (!videoRef.current || !captureCanvasRef.current) return;
+    const ctx = captureCanvasRef.current.getContext('2d');
+    if (!ctx) return;
+    captureCanvasRef.current.width = videoRef.current.videoWidth;
+    captureCanvasRef.current.height = videoRef.current.videoHeight;
+    ctx.drawImage(videoRef.current, 0, 0);
+    captureCanvasRef.current.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      setPreviewSrc(url);
+      setStep('preview');
+    }, 'image/jpeg', 1.0);
+    stopCamera();
+  };
+
+  const usePicture = () => {
+    setImageSrc(previewSrc);
+    setPreviewSrc('');
+    setStripes([newStripe()]);
+    setActiveIdx(0);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setStep('mark');
+  };
+
+  const retakePicture = () => {
+    if (previewSrc) URL.revokeObjectURL(previewSrc);
+    setPreviewSrc('');
+    openCamera();
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) { setActiveButton(null); return; }
+    const url = URL.createObjectURL(file);
+    setImageSrc(url);
+    stopCamera();
+    setStripes([newStripe()]);
+    setActiveIdx(0);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setActiveButton(null);
+    setStep('mark');
+    e.target.value = '';
+  };
+
+  // ── coordinate helpers (canvas-pixel ↔ image-pixel) ──────────────────────
+  const getCanvasCoords = (clientX: number, clientY: number): P => {
+    const c = canvasRef.current!;
+    const rect = c.getBoundingClientRect();
+    const sx = c.width / rect.width, sy = c.height / rect.height;
+    return {
+      x: ((clientX - rect.left) * sx - pan.x * zoom) / zoom,
+      y: ((clientY - rect.top)  * sy - pan.y * zoom) / zoom,
+    };
+  };
+  const getImageScale = (): number => {
+    if (!canvasRef.current) return 1;
+    const rect = canvasRef.current.getBoundingClientRect();
+    return canvasRef.current.width / (rect.width || 1);
+  };
+
+  // ── find the nearest existing point across ALL stripes ───────────────────
+  const findNearPoint = (coords: P): DragTarget | null => {
+    const scale = getImageScale();
+    const threshold = (50 * scale) / zoom;
+    let best: DragTarget | null = null;
+    let bestDist = threshold;
+    stripes.forEach((s, si) => {
+      const checkPt = (pt: P | null, role: 'luff' | 'leech', midIdx?: number) => {
+        if (!pt) return;
+        const d = Math.hypot(pt.x - coords.x, pt.y - coords.y);
+        if (d < bestDist) {
+          bestDist = d;
+          if (role === 'luff' || role === 'leech') {
+            best = { stripeIdx: si, role };
+          }
+        }
+      };
+      checkPt(s.luff, 'luff');
+      checkPt(s.leech, 'leech');
+      s.mid.forEach((mp, mi) => {
+        const d = Math.hypot(mp.x - coords.x, mp.y - coords.y);
+        if (d < bestDist) {
+          bestDist = d;
+          best = { stripeIdx: si, role: 'mid', midIdx: mi };
+        }
+      });
+    });
+    return best;
+  };
+
+  const placePoint = (coords: P) => {
+    setStripes(prev => prev.map((s, i) => {
+      if (i !== activeIdx) return s;
+      if (!s.luff) return { ...s, luff: coords };
+      if (!s.leech) return { ...s, leech: coords };
+      return { ...s, mid: [...s.mid, coords] };
+    }));
+  };
+
+  const movePoint = (target: DragTarget, coords: P) => {
+    setStripes(prev => prev.map((s, i) => {
+      if (i !== target.stripeIdx) return s;
+      if (target.role === 'luff')  return { ...s, luff:  coords };
+      if (target.role === 'leech') return { ...s, leech: coords };
+      if (target.role === 'mid') {
+        const mid = s.mid.slice();
+        mid[target.midIdx] = coords;
+        return { ...s, mid };
+      }
+      return s;
+    }));
+  };
+
+  // ── touch handlers ───────────────────────────────────────────────────────
+  const clearLongPress = () => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    touchMoved.current = false;
+    touchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+
+    if (e.touches.length === 2) {
+      clearLongPress();
+      const t1 = e.touches[0], t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      setInitialDist(dist);
+      setInitialZoom(zoom);
+      setIsPanning(false);
+      return;
+    }
+
+    if (e.touches.length === 1) {
+      const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+      const near = findNearPoint(coords);
+      if (near) { setDragging(near); return; }
+
+      // Start panning
+      setIsPanning(true);
+      setPanStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
+      setInitialPan(pan);
+
+      // Arm long-press for placing a new point
+      longPressCoords.current = coords;
+      longPressTimer.current = setTimeout(() => {
+        if (!touchMoved.current) {
+          navigator.vibrate?.([50, 80, 150]);
+          placePoint(longPressCoords.current!);
+        }
+      }, 1500);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (!touchMoved.current && touchStartPos.current && e.touches.length === 1) {
+      const dx = e.touches[0].clientX - touchStartPos.current.x;
+      const dy = e.touches[0].clientY - touchStartPos.current.y;
+      if (Math.hypot(dx, dy) > MOVE_THRESHOLD) { touchMoved.current = true; clearLongPress(); }
+    }
+
+    if (e.touches.length === 2 && initialDist > 0) {
+      const t1 = e.touches[0], t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const ratio = dist / initialDist;
+      const dampened = 1 + (ratio - 1) * 0.4;
+      setZoom(Math.max(0.5, Math.min(8, initialZoom * dampened)));
+      return;
+    }
+
+    if (e.touches.length === 1) {
+      if (dragging) {
+        const coords = getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY);
+        movePoint(dragging, coords);
+        return;
+      }
+      if (isPanning && touchMoved.current) {
+        const dx = (e.touches[0].clientX - panStart.x) * 1.5 / zoom;
+        const dy = (e.touches[0].clientY - panStart.y) * 1.5 / zoom;
+        setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    clearLongPress();
+    setIsPanning(false);
+    setInitialDist(0);
+    setDragging(null);
+  };
+
+  // ── mouse handlers (desktop) ─────────────────────────────────────────────
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const coords = getCanvasCoords(e.clientX, e.clientY);
+    const near = findNearPoint(coords);
+    if (near) { setDragging(near); return; }
+    setIsPanning(true);
+    setPanStart({ x: e.clientX, y: e.clientY });
+    setInitialPan(pan);
+    if (e.detail === 2) placePoint(coords); // double-click places
+  };
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (dragging) {
+      movePoint(dragging, getCanvasCoords(e.clientX, e.clientY));
+    } else if (isPanning) {
+      const dx = (e.clientX - panStart.x) / zoom;
+      const dy = (e.clientY - panStart.y) / zoom;
+      setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
+    }
+  };
+  const handleMouseUp = () => { setIsPanning(false); setDragging(null); };
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.97 : 1.03;
+    setZoom(prev => Math.max(0.5, Math.min(8, prev * delta)));
+  };
+
+  // ── stripe management ────────────────────────────────────────────────────
+  const addStripe = () => {
+    setStripes(prev => [...prev, newStripe()]);
+    setActiveIdx(stripes.length);
+  };
+  const removeActiveStripe = () => {
+    if (stripes.length <= 1) {
+      setStripes([newStripe()]);
+      setActiveIdx(0);
+      return;
+    }
+    setStripes(prev => prev.filter((_, i) => i !== activeIdx));
+    setActiveIdx(i => Math.max(0, Math.min(i, stripes.length - 2)));
+  };
+  const resetActiveStripe = () => {
+    setStripes(prev => prev.map((s, i) => i === activeIdx ? newStripe() : s));
+  };
+  const undoLastPoint = () => {
+    setStripes(prev => prev.map((s, i) => {
+      if (i !== activeIdx) return s;
+      if (s.mid.length > 0) return { ...s, mid: s.mid.slice(0, -1) };
+      if (s.leech) return { ...s, leech: null };
+      if (s.luff) return { ...s, luff: null };
+      return s;
+    }));
+  };
+
+  // ── canvas rendering: photo + all stripes ────────────────────────────────
+  useEffect(() => {
+    if (!canvasRef.current || !imageSrc || step !== 'mark') return;
+    const draw = (img: HTMLImageElement) => drawScene(img, /*forResults*/false);
+    if (cachedImage.current && cachedImageSrc.current === imageSrc) {
+      draw(cachedImage.current);
+    } else {
+      const im = new Image();
+      im.onload = () => { cachedImage.current = im; cachedImageSrc.current = imageSrc; draw(im); };
+      im.src = imageSrc;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageSrc, stripes, activeIdx, zoom, pan, step]);
+
+  useEffect(() => {
+    if (!canvasRef.current || !imageSrc || step !== 'results') return;
+    const draw = (img: HTMLImageElement) => drawScene(img, /*forResults*/true);
+    if (cachedImage.current && cachedImageSrc.current === imageSrc) {
+      draw(cachedImage.current);
+    } else {
+      const im = new Image();
+      im.onload = () => { cachedImage.current = im; cachedImageSrc.current = imageSrc; draw(im); };
+      im.src = imageSrc;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageSrc, stripes, step]);
+
+  const drawScene = (img: HTMLImageElement, forResults: boolean) => {
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    canvas.width = img.width;
+    canvas.height = img.height;
+
+    // Results mode shows the full image without any user pan/zoom
+    const drawZoom = forResults ? 1 : zoom;
+    const drawPan  = forResults ? { x: 0, y: 0 } : pan;
+
+    ctx.save();
+    ctx.translate(drawPan.x * drawZoom, drawPan.y * drawZoom);
+    ctx.scale(drawZoom, drawZoom);
+    ctx.drawImage(img, 0, 0);
+
+    const rect = canvas.getBoundingClientRect();
+    const imgScale = canvas.width / (rect.width || 1);
+    const px = (sp: number) => (sp * imgScale) / drawZoom;
+
+    // Draw each stripe
+    stripes.forEach((stripe, si) => {
+      const isActive = si === activeIdx && !forResults;
+      const stripeColor = STRIPE_COLORS[si % STRIPE_COLORS.length];
+      const alpha = forResults ? 1 : (isActive ? 1 : 0.45);
+
+      // Chord (dashed) if both endpoints set
+      if (stripe.luff && stripe.leech) {
+        ctx.globalAlpha = alpha * 0.85;
+        ctx.strokeStyle = stripeColor;
+        ctx.lineWidth = px(2);
+        ctx.setLineDash([px(8), px(6)]);
+        ctx.beginPath();
+        ctx.moveTo(stripe.luff.x, stripe.luff.y);
+        ctx.lineTo(stripe.leech.x, stripe.leech.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Spline (solid) if endpoints + at least 1 mid
+      if (stripe.luff && stripe.leech && stripe.mid.length > 0) {
+        const poly = splinePolyline(stripe as { luff: P; leech: P; mid: P[] });
+        if (poly.length > 1) {
+          // White halo
+          ctx.globalAlpha = alpha;
+          ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+          ctx.lineWidth = px(5);
+          ctx.beginPath();
+          ctx.moveTo(poly[0].x, poly[0].y);
+          for (let k = 1; k < poly.length; k++) ctx.lineTo(poly[k].x, poly[k].y);
+          ctx.stroke();
+          // Coloured line
+          ctx.strokeStyle = stripeColor;
+          ctx.lineWidth = px(2.5);
+          ctx.beginPath();
+          ctx.moveTo(poly[0].x, poly[0].y);
+          for (let k = 1; k < poly.length; k++) ctx.lineTo(poly[k].x, poly[k].y);
+          ctx.stroke();
+
+          // Max-draft tick (perpendicular line from chord to spline)
+          const m = computeStripeMetrics(stripe as { luff: P; leech: P; mid: P[] });
+          if (m && m.hasCurve) {
+            // Find the sample at max draft and draw a tick from the chord up to it
+            const luff = stripe.luff!, leech = stripe.leech!;
+            const dx = leech.x - luff.x, dy = leech.y - luff.y;
+            const t = m.draftPositionPct / 100;
+            const chordPt = { x: luff.x + dx * t, y: luff.y + dy * t };
+            const len = Math.hypot(dx, dy);
+            const ux = dx / len, uy = dy / len;
+            const nx = -uy, ny = ux;
+            const splinePt = { x: chordPt.x + nx * m.maxDraft * m.draftSign, y: chordPt.y + ny * m.maxDraft * m.draftSign };
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = stripeColor;
+            ctx.lineWidth = px(1.5);
+            ctx.setLineDash([px(3), px(3)]);
+            ctx.beginPath();
+            ctx.moveTo(chordPt.x, chordPt.y);
+            ctx.lineTo(splinePt.x, splinePt.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            // Small dot at max draft
+            ctx.fillStyle = stripeColor;
+            ctx.beginPath();
+            ctx.arc(splinePt.x, splinePt.y, px(4), 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = px(1.5);
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Crosshairs at each placed point
+      if (!forResults) {
+        const drawCrosshair = (pt: P, color: string, label: string) => {
+          const size = px(36), lw = px(3), gap = px(6);
+          // Black outline for contrast
+          ctx.globalAlpha = alpha;
+          ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+          ctx.lineWidth = lw + px(3);
+          ctx.beginPath();
+          ctx.moveTo(pt.x - size, pt.y); ctx.lineTo(pt.x + size, pt.y);
+          ctx.moveTo(pt.x, pt.y - size); ctx.lineTo(pt.x, pt.y + size);
+          ctx.stroke();
+          // Coloured crosshair with center gap
+          ctx.strokeStyle = color;
+          ctx.lineWidth = lw;
+          ctx.beginPath();
+          ctx.moveTo(pt.x - size, pt.y); ctx.lineTo(pt.x - gap, pt.y);
+          ctx.moveTo(pt.x + gap, pt.y); ctx.lineTo(pt.x + size, pt.y);
+          ctx.moveTo(pt.x, pt.y - size); ctx.lineTo(pt.x, pt.y - gap);
+          ctx.moveTo(pt.x, pt.y + gap); ctx.lineTo(pt.x, pt.y + size);
+          ctx.stroke();
+          // Center dot
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, px(5), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'white';
+          ctx.lineWidth = px(1.5);
+          ctx.stroke();
+          // Label badge
+          const lx = pt.x + size * 0.6, ly = pt.y - size * 0.6;
+          const lr = px(11);
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(lx, ly, lr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'white';
+          ctx.lineWidth = px(1.5);
+          ctx.stroke();
+          ctx.fillStyle = 'white';
+          ctx.font = `bold ${px(13)}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(label, lx, ly);
+        };
+        if (stripe.luff)  drawCrosshair(stripe.luff,  ENDPOINT_LUFF_COLOR,  'L');
+        if (stripe.leech) drawCrosshair(stripe.leech, ENDPOINT_LEECH_COLOR, 'E');
+        stripe.mid.forEach((mp, mi) => drawCrosshair(mp, MID_COLOR, `${mi + 1}`));
+      } else {
+        // Results: small dots (no big crosshairs)
+        const dot = (pt: P, color: string) => {
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, px(5), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'white';
+          ctx.lineWidth = px(1.5);
+          ctx.stroke();
+        };
+        if (stripe.luff)  dot(stripe.luff,  stripeColor);
+        if (stripe.leech) dot(stripe.leech, stripeColor);
+      }
+
+      ctx.globalAlpha = 1;
+    });
+    ctx.restore();
+  };
+
+  // ── derived metrics for results screen ───────────────────────────────────
+  const completedStripes = stripes.filter(s => s.luff && s.leech);
+  const stripeMetrics = stripes.map(s => (s.luff && s.leech) ? computeStripeMetrics(s as { luff: P; leech: P; mid: P[] }) : null);
+
+  // Sort stripes top-to-bottom (smaller image-y = higher on sail) for twist computation.
+  // We use the chord-midpoint y to order them; ties broken by index.
+  const orderedForTwist = stripes
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => s.luff && s.leech)
+    .map(({ s, idx }) => ({
+      idx,
+      s,
+      midY: ((s.luff!.y + s.leech!.y) / 2),
+    }))
+    .sort((a, b) => a.midY - b.midY);
+
+  const twistRows: { fromIdx: number; toIdx: number; deg: number }[] = [];
+  for (let i = 0; i < orderedForTwist.length - 1; i++) {
+    const A = orderedForTwist[i + 1].s;   // upper stripe (numerically larger y? no, sorted ascending)
+    const B = orderedForTwist[i].s;       // lower stripe
+    // We sorted ascending midY. In image space, top of sail = smaller y. So
+    // orderedForTwist[0] = topmost stripe, [last] = bottommost.
+    // Twist = upper_chord_angle - lower_chord_angle, with upper = [i] (top),
+    //                                                       lower = [i+1] (below).
+    // So flip: upper = [i], lower = [i+1]
+    const upper = orderedForTwist[i].s;
+    const lower = orderedForTwist[i + 1].s;
+    const tw = computeTwist(upper, lower);
+    if (tw != null) twistRows.push({
+      fromIdx: orderedForTwist[i + 1].idx,
+      toIdx: orderedForTwist[i].idx,
+      deg: tw,
+    });
+  }
+
+  // ── status text in mark mode ─────────────────────────────────────────────
+  const active = stripes[activeIdx];
+  const placeStatus =
+    !active.luff  ? '👆 Long-press on the LUFF end of the stripe' :
+    !active.leech ? '👆 Long-press on the LEECH end of the stripe' :
+                    '👆 Long-press to add midpoint(s) along the stripe';
+
+  // ── render ───────────────────────────────────────────────────────────────
+  return (
+    <div className="flex flex-col h-full w-full bg-slate-900 text-slate-100" style={{ fontFamily: "'Segoe UI',system-ui,sans-serif" }}>
+
+      {/* Top bar */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-slate-950 border-b border-slate-800 flex-shrink-0">
+        {step !== 'select' && (
+          <button
+            onClick={() => {
+              if (step === 'live')      { stopCamera(); setStep('select'); }
+              else if (step === 'preview') retakePicture();
+              else if (step === 'mark')   { setStep('select'); }
+              else if (step === 'results'){ setStep('mark'); }
+            }}
+            className="text-white bg-slate-700/60 rounded-full w-8 h-8 flex items-center justify-center active:scale-90 transition-transform"
+          >←</button>
+        )}
+        <span className="font-bold">⛵ SailScan</span>
+        <div className="flex-1" />
+        <span className="text-slate-500 text-xs">
+          {step === 'select'  && 'Select image'}
+          {step === 'live'    && 'Camera'}
+          {step === 'preview' && 'Preview'}
+          {step === 'mark'    && `Stripe ${activeIdx + 1} / ${stripes.length}`}
+          {step === 'results' && `${completedStripes.length} stripe${completedStripes.length === 1 ? '' : 's'}`}
+        </span>
+      </div>
+
+      {/* Hidden inputs */}
+      <input ref={fileAlbumRef}   type="file" accept="image/*" className="hidden" onChange={handleFileUpload} />
+      <input ref={fileBrowserRef} type="file" accept=".jpg,.jpeg,.png,.heic,.heif,.webp,.tiff,.bmp" className="hidden" onChange={handleFileUpload} />
+
+      <canvas ref={captureCanvasRef} className="hidden" />
+
+      <div className="flex-1 flex flex-col overflow-hidden">
+
+        {/* ── SELECT ─────────────────────────────────────────────────────── */}
+        {step === 'select' && (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 py-6">
+            <div className="text-center mb-4">
+              <p className="text-slate-300 text-sm font-semibold mb-1">Photograph your sail from below, looking up.</p>
+              <p className="text-slate-500 text-xs">Trim stripes should be clearly visible, ideally horizontal in the image.</p>
+            </div>
+            <button
+              onClick={openCamera}
+              className="w-full px-6 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold text-base rounded-lg active:scale-95 transition-transform"
+            >📷 Use Camera</button>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={() => { setActiveButton('album'); fileAlbumRef.current?.removeAttribute('capture'); fileAlbumRef.current?.click(); }}
+                className={`flex-1 px-4 py-3 font-semibold text-sm rounded-lg active:scale-95 transition-all ${
+                  activeButton === 'album' ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-slate-700 hover:bg-slate-600 text-white'
+                }`}
+              >{activeButton === 'album' ? '⏳ Loading…' : '🖼️ Photo Album'}</button>
+              <button
+                onClick={() => { setActiveButton('files'); fileBrowserRef.current?.click(); }}
+                className={`flex-1 px-4 py-3 font-semibold text-sm rounded-lg active:scale-95 transition-all ${
+                  activeButton === 'files' ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-slate-700 hover:bg-slate-600 text-white'
+                }`}
+              >{activeButton === 'files' ? '⏳ Loading…' : '📁 Browse Files'}</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── LIVE CAMERA ────────────────────────────────────────────────── */}
+        {step === 'live' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
+              <video
+                ref={el => {
+                  videoRef.current = el;
+                  if (el && cameraStream.current && !el.srcObject) el.srcObject = cameraStream.current;
+                }}
+                autoPlay playsInline
+                className="w-full h-full object-contain"
+              />
+            </div>
+            <div className="flex-shrink-0 px-4 py-4 flex gap-3">
+              <button onClick={() => { stopCamera(); setStep('select'); }}
+                className="px-4 py-3 bg-slate-700 text-white font-semibold text-sm rounded-lg active:scale-95">← Back</button>
+              <button onClick={takePicture}
+                className="flex-1 px-6 py-4 bg-red-600 text-white font-bold text-lg rounded-full active:scale-95 shadow-lg">⬤ Take Picture</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── PREVIEW ────────────────────────────────────────────────────── */}
+        {step === 'preview' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-black">
+              {previewSrc && <img src={previewSrc} alt="preview" className="w-full h-full object-contain" />}
+            </div>
+            <div className="flex-shrink-0 px-4 py-4 flex gap-3">
+              <button onClick={retakePicture}
+                className="flex-1 px-4 py-3 bg-slate-700 text-white font-bold text-sm rounded-lg active:scale-95">↺ Retake</button>
+              <button onClick={usePicture}
+                className="flex-1 px-6 py-4 bg-green-600 text-white font-bold text-lg rounded-lg active:scale-95 shadow-lg">✓ Use Picture</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── MARK ───────────────────────────────────────────────────────── */}
+        {step === 'mark' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Stripe selector chips */}
+            <div className="flex-shrink-0 flex items-center gap-2 px-3 py-2 bg-slate-950/70 border-b border-slate-800 overflow-x-auto">
+              {stripes.map((s, i) => {
+                const c = STRIPE_COLORS[i % STRIPE_COLORS.length];
+                const filled = (s.luff ? 1 : 0) + (s.leech ? 1 : 0) + s.mid.length;
+                return (
+                  <button key={i} onClick={() => setActiveIdx(i)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 flex-shrink-0 active:scale-95 transition-transform ${
+                      i === activeIdx ? 'ring-2' : 'opacity-70'
+                    }`}
+                    style={{
+                      background: i === activeIdx ? c : '#1e293b',
+                      color: i === activeIdx ? 'white' : '#cbd5e1',
+                      ...(i === activeIdx ? { boxShadow: `0 0 0 2px ${c}55` } : {}),
+                    }}
+                  >
+                    <span>Stripe {i + 1}</span>
+                    <span className="opacity-80">{filled}pt</span>
+                  </button>
+                );
+              })}
+              <button onClick={addStripe}
+                className="px-3 py-1.5 rounded-full text-xs font-bold bg-slate-800 text-slate-200 active:scale-95 flex-shrink-0">+ Stripe</button>
+            </div>
+
+            {/* Canvas */}
+            <div className="flex-1 min-h-0 flex items-center justify-center bg-black relative overflow-hidden">
+              <canvas
+                ref={canvasRef}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                onWheel={handleWheel}
+                className="w-full h-full"
+                style={{ maxWidth: '100%', maxHeight: '100%', touchAction: 'none', cursor: dragging ? 'grabbing' : 'crosshair' }}
+              />
+            </div>
+
+            {/* Bottom controls */}
+            <div className="flex-shrink-0 bg-gradient-to-t from-slate-950 via-slate-950/95 to-slate-950/70 px-3 py-3 space-y-2">
+              <p className="text-white text-sm font-bold text-center">{placeStatus}</p>
+              <p className="text-slate-500 text-xs text-center">Hold 1.5s to place • Drag points to move • Pinch to zoom</p>
+              <div className="flex gap-2">
+                <button onClick={undoLastPoint}
+                  className="flex-1 px-3 py-2.5 bg-slate-700 text-white text-xs font-semibold rounded-lg active:scale-95 disabled:opacity-40"
+                  disabled={!active.luff && !active.leech && active.mid.length === 0}>
+                  ↶ Undo
+                </button>
+                <button onClick={resetActiveStripe}
+                  className="flex-1 px-3 py-2.5 bg-slate-700 text-white text-xs font-semibold rounded-lg active:scale-95 disabled:opacity-40"
+                  disabled={!active.luff && !active.leech && active.mid.length === 0}>
+                  ⟲ Reset
+                </button>
+                <button onClick={removeActiveStripe}
+                  className="flex-1 px-3 py-2.5 bg-red-700/60 text-white text-xs font-semibold rounded-lg active:scale-95">
+                  ✕ Delete
+                </button>
+              </div>
+              <button onClick={() => setStep('results')}
+                disabled={completedStripes.length === 0}
+                className="w-full px-6 py-3.5 bg-green-600 hover:bg-green-700 disabled:bg-slate-700 disabled:text-slate-400 text-white font-bold text-base rounded-lg active:scale-95 shadow-lg">
+                ✓ Compute &amp; Show Results
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── RESULTS ────────────────────────────────────────────────────── */}
+        {step === 'results' && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-shrink-0 bg-black flex items-center justify-center overflow-hidden" style={{ height: '40%' }}>
+              <canvas ref={canvasRef} style={{ maxWidth: '100%', maxHeight: '100%', display: 'block' }} />
+            </div>
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 bg-slate-900">
+              <h2 className="text-base font-bold text-slate-200">Per-stripe metrics</h2>
+              {stripes.map((s, i) => {
+                const m = stripeMetrics[i];
+                const c = STRIPE_COLORS[i % STRIPE_COLORS.length];
+                if (!m) return (
+                  <div key={i} className="rounded-lg p-3 border border-slate-800 bg-slate-800/40 text-xs text-slate-400">
+                    Stripe {i + 1}: incomplete (need both luff and leech endpoints).
+                  </div>
+                );
+                return (
+                  <div key={i} className="rounded-lg p-3 border" style={{ borderColor: `${c}55`, background: `${c}15` }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ background: c }}></span>
+                      <span className="font-bold text-sm">Stripe {i + 1}</span>
+                      <span className="ml-auto text-[10px] uppercase tracking-wider" style={{ color: c }}>
+                        {m.hasCurve ? `${s.mid.length} mid${s.mid.length === 1 ? '' : 's'}` : 'chord only'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <Metric label="Draft depth"     value={m.hasCurve ? `${m.draftPct.toFixed(2)}%` : '—'} />
+                      <Metric label="Draft position"  value={m.hasCurve ? `${m.draftPositionPct.toFixed(0)}%` : '—'} />
+                      <Metric label="Entry angle"     value={m.hasCurve ? `${m.entryAngleDeg.toFixed(1)}°` : '—'} />
+                      <Metric label="Exit angle"      value={m.hasCurve ? `${m.exitAngleDeg.toFixed(1)}°` : '—'} />
+                      <Metric label="Chord (px)"      value={m.chordLen.toFixed(0)} />
+                      <Metric label="Chord angle"     value={`${m.chordAngleDeg.toFixed(1)}°`} />
+                    </div>
+                  </div>
+                );
+              })}
+
+              {twistRows.length > 0 && (
+                <>
+                  <h2 className="text-base font-bold text-slate-200 mt-4">Twist between stripes</h2>
+                  {twistRows.map((tr, i) => (
+                    <div key={i} className="rounded-lg p-3 border border-slate-700 bg-slate-800/40 flex items-center justify-between text-xs">
+                      <span className="text-slate-300">
+                        <span className="font-bold" style={{ color: STRIPE_COLORS[tr.toIdx % STRIPE_COLORS.length] }}>Stripe {tr.toIdx + 1}</span>
+                        <span className="text-slate-500"> (upper) vs </span>
+                        <span className="font-bold" style={{ color: STRIPE_COLORS[tr.fromIdx % STRIPE_COLORS.length] }}>Stripe {tr.fromIdx + 1}</span>
+                        <span className="text-slate-500"> (lower)</span>
+                      </span>
+                      <span className="font-mono text-sm font-bold text-slate-100">{tr.deg.toFixed(1)}°</span>
+                    </div>
+                  ))}
+                </>
+              )}
+
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setStep('mark')}
+                  className="flex-1 px-4 py-3 bg-slate-700 text-white text-sm font-semibold rounded-lg active:scale-95">
+                  ← Adjust marks
+                </button>
+                <button onClick={() => {
+                  if (imageSrc) URL.revokeObjectURL(imageSrc);
+                  setImageSrc('');
+                  setStripes([newStripe()]);
+                  setActiveIdx(0);
+                  setStep('select');
+                }}
+                  className="flex-1 px-4 py-3 bg-blue-600 text-white text-sm font-bold rounded-lg active:scale-95">
+                  🆕 New Scan
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-slate-900/60 rounded p-2 border border-slate-800">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500">{label}</div>
+      <div className="text-sm font-mono font-bold text-slate-100 mt-0.5">{value}</div>
+    </div>
+  );
+}
