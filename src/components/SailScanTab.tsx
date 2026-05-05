@@ -18,7 +18,7 @@
 // and per-stripe metrics + inter-stripe twist are computed.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { computeStripeMetrics, splinePolyline, computeTwist } from '../lib/sailscan';
 
 type Step = 'select' | 'live' | 'preview' | 'mark' | 'results';
@@ -76,6 +76,16 @@ export default function SailScanTab() {
   const fileAlbumRef = useRef<HTMLInputElement>(null);
   const fileBrowserRef = useRef<HTMLInputElement>(null);
   const [activeButton, setActiveButton] = useState<string | null>(null);
+  // Original File handle, kept so we can extract EXIF later (object URLs lose it)
+  const originalFile = useRef<File | null>(null);
+
+  // ── timestamp + save-to-Photos state ─────────────────────────────────────
+  const [photoTimestamp, setPhotoTimestamp] = useState<string>('');     // datetime-local string
+  const [exifTimestamp,  setExifTimestamp]  = useState<number | null>(null);
+  const [timezone,       setTimezone]       = useState<string>('UTC');
+  const [showTimestampInput, setShowTimestampInput] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveMsg,    setSaveMsg]    = useState<string>('');
 
   // ── camera lifecycle ──────────────────────────────────────────────────────
   const stopCamera = () => {
@@ -121,6 +131,7 @@ export default function SailScanTab() {
   };
 
   const usePicture = () => {
+    originalFile.current = null;          // camera capture has no EXIF
     setImageSrc(previewSrc);
     setPreviewSrc('');
     setStripes([newStripe()]);
@@ -139,6 +150,7 @@ export default function SailScanTab() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) { setActiveButton(null); return; }
+    originalFile.current = file;          // keep for EXIF later
     const url = URL.createObjectURL(file);
     setImageSrc(url);
     stopCamera();
@@ -285,8 +297,11 @@ export default function SailScanTab() {
         return;
       }
       if (isPanning && touchMoved.current) {
-        const dx = (e.touches[0].clientX - panStart.x) * 1.5 / zoom;
-        const dy = (e.touches[0].clientY - panStart.y) * 1.5 / zoom;
+        // Pan multiplier 2.5x: zoom is dampened to 40%, so pan needs to be
+        // proportionally faster to feel balanced. Below 1.5x panning felt
+        // sluggish on the SailScan canvas (large sail photos).
+        const dx = (e.touches[0].clientX - panStart.x) * 2.5 / zoom;
+        const dy = (e.touches[0].clientY - panStart.y) * 2.5 / zoom;
         setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
       }
     }
@@ -541,6 +556,39 @@ export default function SailScanTab() {
     ctx.restore();
   };
 
+  // ── EXIF timestamp extraction (matches SquashShotsApp) ───────────────────
+  const loadExifr = (): Promise<any> => new Promise((resolve, reject) => {
+    if ((window as any).exifr) { resolve((window as any).exifr); return; }
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/exifr@7.1.3/dist/full.umd.js';
+    s.onload = () => resolve((window as any).exifr);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+
+  const extractTimestamp = useCallback(async () => {
+    if (!imageSrc) return;
+    try {
+      const blob = originalFile.current
+        ? originalFile.current
+        : await fetch(imageSrc).then(r => r.blob());
+      const exifr = await loadExifr();
+      if (exifr) {
+        const data = await exifr.parse(blob, { tiff: true, exif: true });
+        const dt = data?.DateTimeOriginal || data?.DateTime;
+        if (dt instanceof Date) {
+          setExifTimestamp(dt.getTime());
+          setPhotoTimestamp(dt.toISOString().slice(0, 16));
+          return;
+        }
+      }
+    } catch {}
+    setExifTimestamp(null);
+    setPhotoTimestamp(new Date().toISOString().slice(0, 16));
+  }, [imageSrc]);
+
+  useEffect(() => { if (imageSrc) extractTimestamp(); }, [imageSrc, extractTimestamp]);
+
   // ── derived metrics for results screen ───────────────────────────────────
   const completedStripes = stripes.filter(s => s.luff && s.leech);
   const stripeMetrics = stripes.map(s => (s.luff && s.leech) ? computeStripeMetrics(s as { luff: P; leech: P; mid: P[] }) : null);
@@ -579,6 +627,135 @@ export default function SailScanTab() {
       deg: tw,
     });
   }
+
+  // ── Save to Photos store (matches SquashShotsApp's flow exactly so the
+  //    PhotosTab picks it up without any further wiring) ────────────────────
+  const saveToPhotoDatabase = async () => {
+    setSaveStatus('saving'); setSaveMsg('');
+    try {
+      // Render the current annotated canvas (photo + spline overlays + max-draft
+      // ticks) to a JPEG blob. We re-draw in results mode (no user pan/zoom)
+      // so the saved image always shows the full photo with marks.
+      if (!canvasRef.current || !cachedImage.current) throw new Error('No image loaded');
+      drawScene(cachedImage.current, /*forResults*/true);
+      const blob: Blob = await new Promise((resolve, reject) =>
+        canvasRef.current!.toBlob(b => b ? resolve(b) : reject(new Error('toBlob failed')), 'image/jpeg', 0.92)
+      );
+
+      // Resolve UTC timestamp from datetime-local + selected offset.
+      const tzOffsetMap: Record<string, number> = {
+        'UTC': 0, 'UTC+1': -60, 'UTC+2': -120, 'UTC+3': -180, 'UTC+4': -240,
+        'UTC+5': -300, 'UTC+6': -360, 'UTC+7': -420, 'UTC+8': -480, 'UTC+9': -540,
+        'UTC+10': -600, 'UTC+11': -660, 'UTC+12': -720,
+        'UTC-1': 60, 'UTC-2': 120, 'UTC-3': 180, 'UTC-4': 240, 'UTC-5': 300,
+        'UTC-6': 360, 'UTC-7': 420, 'UTC-8': 480, 'UTC-9': 540, 'UTC-10': 600,
+        'UTC-11': 660, 'UTC-12': 720,
+      };
+      let ts: number;
+      if (photoTimestamp) {
+        const offsetMin = tzOffsetMap[timezone] ?? 0;
+        ts = new Date(photoTimestamp).getTime() + offsetMin * 60000;
+      } else {
+        ts = Date.now();
+      }
+      const date = new Date(ts).toISOString().slice(0, 10);
+
+      // Persist blob to IndexedDB (same db SquashShots uses, so PhotosTab finds it)
+      const id = `p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const db: IDBDatabase = await new Promise((resolve, reject) => {
+        const req = indexedDB.open('ssa-db', 4);
+        req.onupgradeneeded = (e: any) => {
+          const d = e.target.result;
+          if (!d.objectStoreNames.contains('photos')) d.createObjectStore('photos', { keyPath: 'id' });
+        };
+        req.onsuccess = (e: any) => resolve(e.target.result);
+        req.onerror   = (e: any) => reject(e.target.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('photos', 'readwrite');
+        const r  = tx.objectStore('photos').put({ id, blob });
+        r.onsuccess = () => resolve();
+        r.onerror   = () => reject(r.error);
+      });
+
+      // Build the SailScan-specific metadata payload.
+      // We strip the dense `samples` arrays from each metric (200+ pts each)
+      // so the LS entry stays small; spline can be re-derived from points.
+      const sailscanPayload = {
+        version: 1,
+        imageDims: { w: cachedImage.current.width, h: cachedImage.current.height },
+        stripes: stripes
+          .map((s, i) => {
+            if (!s.luff || !s.leech) return null;
+            const m = stripeMetrics[i];
+            return {
+              idx: i,
+              luff:  s.luff,
+              leech: s.leech,
+              mid:   s.mid,
+              metrics: m ? {
+                hasCurve:          m.hasCurve,
+                chordLen:          m.chordLen,
+                chordAngleDeg:     m.chordAngleDeg,
+                draftPct:          m.draftPct,
+                draftPositionPct:  m.draftPositionPct,
+                entryAngleDeg:     m.entryAngleDeg,
+                exitAngleDeg:      m.exitAngleDeg,
+              } : null,
+            };
+          })
+          .filter(Boolean),
+        twist: twistRows,
+      };
+      const avgDraft = stripeMetrics
+        .filter(m => m && m.hasCurve)
+        .reduce((acc, m, _, arr) => acc + (m!.draftPct / arr.length), 0);
+      const maxTwist = twistRows.length
+        ? Math.max(...twistRows.map(t => Math.abs(t.deg)))
+        : 0;
+
+      // Photo metadata schema matches SquashShotsApp + existing PhotosTab reader.
+      // The `sails` and `raceTags` arrays surface in the photo card UI and
+      // make these scans filterable from the Photos tab.
+      const photo: any = {
+        id,
+        name: `sailscan-${id.slice(2, 12)}.jpg`,
+        size: blob.size,
+        utc: ts,
+        lat: null,
+        lon: null,
+        sessionDate: date,
+        cloudSynced: false,
+        addedAt: Date.now(),
+        sails:    ['SailScan'],
+        raceTags: ['sailscan'],
+        sailscan_n_stripes:           String(stripesWithCurve.length),
+        sailscan_avg_draft_pct:       avgDraft.toFixed(2),
+        sailscan_max_abs_twist_deg:   maxTwist.toFixed(2),
+        sailscan_data:                JSON.stringify(sailscanPayload),
+      };
+
+      const lsKey = `ssa:photos-meta:${date}`;
+      const existing = JSON.parse(localStorage.getItem(lsKey) || '[]');
+      existing.push(photo);
+      localStorage.setItem(lsKey, JSON.stringify(existing));
+
+      // Make sure the date appears in the sessions index so PhotosTab routes to it.
+      const sessions: any[] = JSON.parse(localStorage.getItem('ssa:sessions') || '[]');
+      if (!sessions.find((s: any) => s.date === date)) {
+        sessions.push({ date, videoCount: 0, hasLog: false, hasXml: false });
+        sessions.sort((a: any, b: any) => b.date.localeCompare(a.date));
+        localStorage.setItem('ssa:sessions', JSON.stringify(sessions));
+      }
+
+      navigator.vibrate?.([50, 50, 100]);
+      setSaveStatus('saved');
+      setSaveMsg(`Saved to Photos · ${date} · ${stripesWithCurve.length} stripe${stripesWithCurve.length === 1 ? '' : 's'}`);
+    } catch (err: any) {
+      setSaveStatus('error');
+      setSaveMsg(err?.message || 'Save failed');
+    }
+  };
 
   // ── status text in mark mode ─────────────────────────────────────────────
   // Each step has a step number, a short heading, a body, and a colour cue
@@ -877,6 +1054,52 @@ export default function SailScanTab() {
                 </div>
               )}
 
+              {/* ── Save to Photos: timestamp + tag + stripe data ──────────── */}
+              <div className="rounded-lg p-3 border border-slate-700 bg-slate-800/40 space-y-2 mt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-300 text-xs font-bold">💾 Save to Photos</span>
+                  <button onClick={() => setShowTimestampInput(!showTimestampInput)}
+                    className="text-xs text-blue-400 underline">
+                    {showTimestampInput ? 'Hide' : 'Edit time'}
+                  </button>
+                </div>
+                <p className="text-slate-400 text-[11px]">
+                  {exifTimestamp ? '📅 EXIF timestamp found' : '⚠️ No EXIF — check or edit'}
+                  {photoTimestamp && <> · {new Date(photoTimestamp).toLocaleString()} ({timezone})</>}
+                </p>
+                {showTimestampInput && (
+                  <div className="space-y-2">
+                    <input type="datetime-local"
+                      value={photoTimestamp}
+                      onChange={e => setPhotoTimestamp(e.target.value)}
+                      className="w-full bg-slate-700 text-white text-sm rounded px-3 py-2 border border-slate-600" />
+                    <select value={timezone}
+                      onChange={e => setTimezone(e.target.value)}
+                      className="w-full bg-slate-700 text-white text-sm rounded px-3 py-2 border border-slate-600">
+                      {['UTC-12','UTC-11','UTC-10','UTC-9','UTC-8','UTC-7','UTC-6','UTC-5','UTC-4','UTC-3','UTC-2','UTC-1','UTC','UTC+1','UTC+2','UTC+3','UTC+4','UTC+5','UTC+6','UTC+7','UTC+8','UTC+9','UTC+10','UTC+11','UTC+12'].map(tz =>
+                        <option key={tz} value={tz}>{tz}</option>)}
+                    </select>
+                  </div>
+                )}
+                <p className="text-slate-500 text-[10px] leading-snug">
+                  Tag <span className="font-mono text-slate-400">sailscan</span> · {stripesWithCurve.length} analysed stripe{stripesWithCurve.length === 1 ? '' : 's'} · per-stripe metrics + raw points stored in metadata.
+                  Logfile/event data is linked automatically by timestamp when viewed in Photos.
+                </p>
+                <button onClick={saveToPhotoDatabase}
+                  disabled={saveStatus === 'saving' || stripesWithCurve.length === 0}
+                  className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-bold rounded-lg active:scale-95 shadow">
+                  {saveStatus === 'saving' ? '⏳ Saving…'
+                    : saveStatus === 'saved'  ? '✓ Saved — save again?'
+                    : saveStatus === 'error'  ? '⚠ Retry save'
+                    : '💾 Save to Photos'}
+                </button>
+                {saveMsg && (
+                  <p className={`text-[11px] ${saveStatus === 'error' ? 'text-red-400' : 'text-emerald-300'}`}>
+                    {saveMsg}
+                  </p>
+                )}
+              </div>
+
               <div className="flex flex-col gap-2 pt-2">
                 <button onClick={() => { addStripe(); setStep('mark'); }}
                   className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg active:scale-95 shadow">
@@ -889,11 +1112,15 @@ export default function SailScanTab() {
                   </button>
                   <button onClick={() => {
                     if (imageSrc) URL.revokeObjectURL(imageSrc);
-                  setImageSrc('');
-                  setStripes([newStripe()]);
-                  setActiveIdx(0);
-                  setStep('select');
-                }}
+                    setImageSrc('');
+                    setStripes([newStripe()]);
+                    setActiveIdx(0);
+                    setSaveStatus('idle');
+                    setSaveMsg('');
+                    setExifTimestamp(null);
+                    setPhotoTimestamp('');
+                    setStep('select');
+                  }}
                     className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-lg active:scale-95">
                     🆕 New Scan
                   </button>
