@@ -35,7 +35,16 @@ type Mat = any;
 // We try multiple CDNs in order. The first one that responds wins. Browsers
 // or networks may block individual hosts (corporate VPNs, ad blockers, CSP),
 // so a fallback chain is much more robust than a single URL.
-let cvPromise: Promise<CV> | null = null;
+//
+// IMPORTANT: OpenCV's `cv` namespace object is itself a *thenable* (it has a
+// `.then` method, an Emscripten Module convention used so you can `await` it
+// during init). Returning `cv` from an async function — or passing it to
+// Promise.resolve — causes the Promise machinery to try to chain through
+// `cv.then(resolve, reject)`. After init is complete, OpenCV's `.then` is a
+// no-op that never fires the callback, so the wrapping promise hangs forever.
+// To avoid that trap, the loader never resolves directly with `cv` — it
+// resolves with a wrapper `{ cv: ... }` that's NOT thenable.
+let cvPromise: Promise<{ cv: CV }> | null = null;
 
 const OPENCV_URLS = [
   'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
@@ -71,11 +80,16 @@ function tryLoadScript(url: string, timeoutMs: number): Promise<void> {
   });
 }
 
-export function loadOpenCV(): Promise<CV> {
+export async function loadOpenCV(): Promise<CV> {
+  const wrapped = await loadOpenCVWrapped();
+  return wrapped.cv;
+}
+
+function loadOpenCVWrapped(): Promise<{ cv: CV }> {
   if (cvPromise) return cvPromise;
   cvPromise = (async () => {
     const w = window as any;
-    if (w.cv?.Mat) { log('cv.Mat already present, skipping load'); return w.cv; }
+    if (w.cv?.Mat) { log('cv.Mat already present, skipping load'); return { cv: w.cv }; }
 
     let lastError: string = '';
     for (const url of OPENCV_URLS) {
@@ -118,8 +132,8 @@ export function loadOpenCV(): Promise<CV> {
           tick();
         });
         log('OpenCV ready (from', url, ')');
-        log('IIFE returning w.cv; truthy=' + !!w.cv);
-        return w.cv;
+        log('IIFE returning {cv:w.cv}; truthy=' + !!w.cv);
+        return { cv: w.cv };
       } catch (e: any) {
         lastError = `${url}: ${e?.message || e}`;
         log('CDN failed:', lastError);
