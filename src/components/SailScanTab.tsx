@@ -624,17 +624,46 @@ export default function SailScanTab() {
     window.addEventListener('unhandledrejection', onRej);
     window.addEventListener('error', onErr);
 
+    // Watchdogs fire independently of any await chain so we can see whether
+    // the JS event loop is alive even if our promise machinery is stuck.
+    const wd2  = setTimeout(() => tick('WD-2s'),   2000);
+    const wd5  = setTimeout(() => tick('WD-5s'),   5000);
+    const wd10 = setTimeout(() => tick('WD-10s'), 10000);
+    const wd20 = setTimeout(() => tick('WD-20s'), 20000);
+
     (async () => {
       try {
         tick('A: start; debugView=' + debugView);
+
+        // Use .then/.catch instead of await to bypass any weirdness in async
+        // resumption. A simple poll loop on a flag tells us deterministically
+        // when the promise settles.
         let cv: any = null;
-        try {
-          cv = await loadOpenCV();
-        } catch (le: any) {
-          tick('B-fail: loadOpenCV rejected — ' + (le?.message || le));
-          throw le;
+        let promiseState: 'pending' | 'resolved' | 'rejected' = 'pending';
+        let promiseError: any = null;
+        const p = loadOpenCV();
+        tick('A1: got loadOpenCV() promise, type=' + (typeof p) + ', has-then=' + (typeof (p as any)?.then === 'function'));
+        p.then(
+          (c) => { promiseState = 'resolved'; cv = c; tick('A2: .then RESOLVED, cv truthy=' + !!c); },
+          (e) => { promiseState = 'rejected'; promiseError = e; tick('A2: .then REJECTED — ' + (e?.message || e)); },
+        );
+
+        // Poll every 100ms for up to 30s for the promise to settle.
+        const pollStart = Date.now();
+        while (promiseState === 'pending') {
+          if (Date.now() - pollStart > 30000) {
+            tick('A3: TIMEOUT — loadOpenCV promise neither resolved nor rejected after 30s');
+            return;
+          }
+          await new Promise(r => setTimeout(r, 100));
         }
-        tick('B: past await');
+
+        if (promiseState === 'rejected') {
+          tick('A4: rejected, throwing — ' + (promiseError?.message || promiseError));
+          throw promiseError;
+        }
+
+        tick('B: past poll');
         // Atomic diagnostics — each on its own line so we know which one hangs.
         try { tick('C: cv typeof=' + (typeof cv)); } catch (e: any) { tick('C-fail: ' + (e?.message || e)); }
         try { tick('D: cv truthy=' + (cv ? 'yes' : 'no')); } catch (e: any) { tick('D-fail: ' + (e?.message || e)); }
@@ -705,6 +734,7 @@ export default function SailScanTab() {
       cancelled = true;
       window.removeEventListener('unhandledrejection', onRej);
       window.removeEventListener('error', onErr);
+      clearTimeout(wd2); clearTimeout(wd5); clearTimeout(wd10); clearTimeout(wd20);
     };
   }, [debugView, imageSrc]);
 

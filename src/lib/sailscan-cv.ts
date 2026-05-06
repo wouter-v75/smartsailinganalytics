@@ -118,6 +118,7 @@ export function loadOpenCV(): Promise<CV> {
           tick();
         });
         log('OpenCV ready (from', url, ')');
+        log('IIFE returning w.cv; truthy=' + !!w.cv);
         return w.cv;
       } catch (e: any) {
         lastError = `${url}: ${e?.message || e}`;
@@ -128,6 +129,7 @@ export function loadOpenCV(): Promise<CV> {
   })();
   // Reset the cached promise on failure so the user can retry without a reload.
   cvPromise.catch(() => { cvPromise = null; });
+  log('loadOpenCV returning cvPromise (caller will await)');
   return cvPromise;
 }
 
