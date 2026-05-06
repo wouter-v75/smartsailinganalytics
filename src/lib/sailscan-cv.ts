@@ -395,6 +395,32 @@ export function matToCanvas(cv: CV, mat: Mat, canvas: HTMLCanvasElement): void {
 
 interface P { x: number; y: number; }
 
+// Gaussian elimination on a 4×4 system A·x = b. Returns x.
+// Used by the cubic-LSQ fit for the centerline. Tolerates near-singular
+// matrices by returning zeros (caller treats that as "no curve").
+function solve4x4(A: number[][], b: number[]): number[] {
+  const M: number[][] = A.map((row, i) => [row[0], row[1], row[2], row[3], b[i]]);
+  for (let p = 0; p < 4; p++) {
+    let pivot = p;
+    for (let r = p + 1; r < 4; r++) {
+      if (Math.abs(M[r][p]) > Math.abs(M[pivot][p])) pivot = r;
+    }
+    if (pivot !== p) { const tmp = M[p]; M[p] = M[pivot]; M[pivot] = tmp; }
+    if (Math.abs(M[p][p]) < 1e-10) return [0, 0, 0, 0];
+    for (let r = p + 1; r < 4; r++) {
+      const f = M[r][p] / M[p][p];
+      for (let c = p; c <= 4; c++) M[r][c] -= f * M[p][c];
+    }
+  }
+  const x = [0, 0, 0, 0];
+  for (let i = 3; i >= 0; i--) {
+    let s = M[i][4];
+    for (let j = i + 1; j < 4; j++) s -= M[i][j] * x[j];
+    x[i] = s / M[i][i];
+  }
+  return x;
+}
+
 export interface DetectionResult {
   luff: P;
   leech: P;
@@ -595,58 +621,87 @@ export function detectStripeFromTap(
     }
   }
 
-  // Moving-average smoothing of perpendicular distances. Window of 5 covers
-  // ±2 samples either side, which damps the sample-to-sample jitter without
-  // blurring legitimate curvature.
-  const smoothedDs: number[] = new Array(centerlineDs.length);
-  const W = 2; // half-window: total 5 samples per smoothed point
-  for (let i = 0; i < centerlineDs.length; i++) {
-    let sum = 0, cnt = 0;
-    for (let j = Math.max(0, i - W); j <= Math.min(centerlineDs.length - 1, i + W); j++) {
-      sum += centerlineDs[j]; cnt++;
+  // ── Constraint (a): canonical side of chord ─────────────────────────────
+  // Sail trim stripes always curve to one side of the chord (the sail
+  // belly). Determine that side from the majority sign of raw centerline
+  // perpendicular distances, then drop any wrong-side samples as noise
+  // before fitting.
+  let posCnt = 0, negCnt = 0;
+  for (const d of centerlineDs) { if (d > 0.5) posCnt++; else if (d < -0.5) negCnt++; }
+  const stripeSide = posCnt >= negCnt ? 1 : -1;
+  const filteredTs: number[] = [];
+  const filteredDs: number[] = [];
+  for (let i = 0; i < centerlineTs.length; i++) {
+    if (centerlineDs[i] * stripeSide >= -0.5) {  // on-side or essentially zero
+      filteredTs.push(centerlineTs[i]);
+      filteredDs.push(centerlineDs[i]);
     }
-    smoothedDs[i] = cnt ? sum / cnt : 0;
   }
 
-  // Sample 5 midpoints biased toward the luff. Sail entry curvature is
-  // concentrated in the front 30–40% of the chord (the leading-edge shape
-  // carries most of the aerodynamic signal), so 3 of the 5 midpoints sit in
-  // the front half. Each midpoint is interpolated from the *smoothed*
-  // centerline rather than read from a raw nearest sample, eliminating
-  // single-sample noise.
-  //
-  //   t = 0.10  near luff (entry detail)
-  //       0.20  entry curvature
-  //       0.35  approaching max draft
-  //       0.55  past max draft
-  //       0.80  approaching leech (exit angle reference)
-  const MIDPOINT_TS = [0.10, 0.20, 0.35, 0.55, 0.80];
-  const midpoints: P[] = [];
-  const interpD = (t: number): number | null => {
-    const n = centerlineTs.length;
-    if (n === 0) return null;
-    if (t <= centerlineTs[0])     return smoothedDs[0];
-    if (t >= centerlineTs[n - 1]) return smoothedDs[n - 1];
-    for (let i = 0; i < n - 1; i++) {
-      if (t >= centerlineTs[i] && t <= centerlineTs[i + 1]) {
-        const span = centerlineTs[i + 1] - centerlineTs[i];
-        if (span === 0) return smoothedDs[i];
-        const f = (t - centerlineTs[i]) / span;
-        return smoothedDs[i] * (1 - f) + smoothedDs[i + 1] * f;
+  // ── Constraint (b): bounded curvature via cubic LSQ fit ─────────────────
+  // Fit  d(t) = c0 + c1·t + c2·t² + c3·t³  by weighted least squares.
+  // Synthetic (0,0) and (1,0) anchors at high weight pin both endpoints to
+  // the chord, since by definition the stripe centerline meets the chord at
+  // luff and leech. A cubic curve is smooth-by-construction so adjacent
+  // midpoints can never differ by an unbounded angle — they sit on the same
+  // smooth curve.
+  const ANCHOR_W = 100;
+  const ts = [0, ...filteredTs, 1];
+  const ds = [0, ...filteredDs, 0];
+  const ws = ts.map((_, i) => (i === 0 || i === ts.length - 1) ? ANCHOR_W : 1);
+  const sw = (k: number) => { let s = 0; for (let i = 0; i < ts.length; i++) s += ws[i] * Math.pow(ts[i], k); return s; };
+  const swd = (k: number) => { let s = 0; for (let i = 0; i < ts.length; i++) s += ws[i] * Math.pow(ts[i], k) * ds[i]; return s; };
+  const A = [
+    [sw(0), sw(1), sw(2), sw(3)],
+    [sw(1), sw(2), sw(3), sw(4)],
+    [sw(2), sw(3), sw(4), sw(5)],
+    [sw(3), sw(4), sw(5), sw(6)],
+  ];
+  const bVec = [swd(0), swd(1), swd(2), swd(3)];
+  const coeffs = solve4x4(A, bVec);
+  const fittedD = (t: number) => coeffs[0] + coeffs[1] * t + coeffs[2] * t * t + coeffs[3] * t * t * t;
+
+  // ── Constraint (c): snap to in-component pixel ──────────────────────────
+  // After computing the midpoint coordinate from the fit, search a small
+  // radius for the nearest pixel that's actually inside the flood-fill
+  // component. This guarantees points land *on* the stripe colour rather
+  // than floating on a smooth-but-untethered curve.
+  const SNAP_RADIUS = 5;
+  const snap = (px: number, py: number): { x: number; y: number } => {
+    const ix = Math.round(px), iy = Math.round(py);
+    if (ix >= 0 && ix < w && iy >= 0 && iy < h && accepted[iy * w + ix]) {
+      return { x: px, y: py };
+    }
+    let bestX = px, bestY = py, bestD2 = Infinity;
+    for (let dy = -SNAP_RADIUS; dy <= SNAP_RADIUS; dy++) {
+      for (let dx = -SNAP_RADIUS; dx <= SNAP_RADIUS; dx++) {
+        const sx = ix + dx, sy = iy + dy;
+        if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
+        if (!accepted[sy * w + sx]) continue;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; bestX = sx; bestY = sy; }
       }
     }
-    return smoothedDs[n - 1];
+    return { x: bestX, y: bestY };
   };
-  if (chordLen > 4 && centerlineTs.length >= 5) {
+
+  // ── Sample 5 luff-biased midpoints from the fitted curve ────────────────
+  // Sail entry curvature concentrates in the front 30–40% of the chord, so
+  // 3 of the 5 midpoints sit in the front half. Each midpoint comes from
+  // the cubic fit (smooth + bounded curvature), then snaps to the nearest
+  // in-component pixel (so it lands on an actual stripe pixel).
+  const MIDPOINT_TS = [0.10, 0.20, 0.35, 0.55, 0.80];
+  const midpoints: P[] = [];
+  if (chordLen > 4 && filteredTs.length >= 4) {
     MIDPOINT_TS.forEach(t => {
-      const d = interpD(t);
-      if (d == null) return;
+      let d = fittedD(t);
+      // Enforce canonical side: a slightly noisy fit can dip across the
+      // chord at endpoints; clamp to the correct side.
+      if (d * stripeSide < 0) d = 0;
       const cx = tx + ux * chordLen * t;
       const cy = ty + uy * chordLen * t;
-      midpoints.push({
-        x: (cx + nx * d) / scale,
-        y: (cy + ny * d) / scale,
-      });
+      const snapped = snap(cx + nx * d, cy + ny * d);
+      midpoints.push({ x: snapped.x / scale, y: snapped.y / scale });
     });
   }
 
