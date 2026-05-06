@@ -31,39 +31,77 @@ type Mat = any;
 // The script tag fires `onload` after the JS bytes arrive, but the WASM module
 // finishes initialisation slightly later. Both onRuntimeInitialized and a Mat
 // constructor existing are valid readiness signals; we poll for the latter.
+//
+// We try multiple CDNs in order. The first one that responds wins. Browsers
+// or networks may block individual hosts (corporate VPNs, ad blockers, CSP),
+// so a fallback chain is much more robust than a single URL.
 let cvPromise: Promise<CV> | null = null;
 
-const OPENCV_URL = 'https://unpkg.com/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js';
+const OPENCV_URLS = [
+  'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
+  'https://unpkg.com/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
+  'https://docs.opencv.org/4.10.0/opencv.js',
+];
+
+const log = (...args: any[]) => console.log('[SailScan:cv]', ...args);
+
+function tryLoadScript(url: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    log('attempting', url);
+    if (document.querySelector(`script[data-sailscan-cv][src="${url}"]`)) {
+      log('script already in DOM for', url);
+      resolve();
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = url;
+    s.async = true;
+    s.setAttribute('data-sailscan-cv', '1');
+    let settled = false;
+    const finish = (ok: boolean, err?: string) => {
+      if (settled) return;
+      settled = true;
+      if (ok) { log('script onload', url); resolve(); }
+      else    { log('script onerror / timeout', url, err); reject(new Error(err || 'script error')); }
+    };
+    s.onload  = () => finish(true);
+    s.onerror = () => finish(false, 'onerror (likely network/CSP block)');
+    setTimeout(() => finish(false, `script tag timed out after ${timeoutMs} ms`), timeoutMs);
+    document.head.appendChild(s);
+  });
+}
 
 export function loadOpenCV(): Promise<CV> {
   if (cvPromise) return cvPromise;
-  cvPromise = new Promise<CV>((resolve, reject) => {
+  cvPromise = (async () => {
     const w = window as any;
-    if (w.cv?.Mat) { resolve(w.cv); return; }
+    if (w.cv?.Mat) { log('cv.Mat already present, skipping load'); return w.cv; }
 
-    // Don't double-inject the script if a previous call already added it.
-    const existing = document.querySelector(`script[src="${OPENCV_URL}"]`);
-    if (!existing) {
-      const s = document.createElement('script');
-      s.src = OPENCV_URL;
-      s.async = true;
-      s.onerror = (e) => reject(new Error('Failed to load OpenCV.js: ' + String(e)));
-      document.head.appendChild(s);
-    }
-
-    // Poll for cv.Mat — the WASM module takes a few hundred ms after script load.
-    const startedAt = Date.now();
-    const TIMEOUT_MS = 30000;
-    const tick = () => {
-      if (w.cv?.Mat) { resolve(w.cv); return; }
-      if (Date.now() - startedAt > TIMEOUT_MS) {
-        reject(new Error('OpenCV.js init timed out after 30 s'));
-        return;
+    let lastError: string = '';
+    for (const url of OPENCV_URLS) {
+      try {
+        await tryLoadScript(url, 15000);
+        // Script bytes arrived. Poll for cv.Mat (WASM init lags the load event).
+        const startedAt = Date.now();
+        const POLL_MS = 60, INIT_TIMEOUT = 20000;
+        while (Date.now() - startedAt < INIT_TIMEOUT) {
+          if (w.cv?.Mat) {
+            log('cv.Mat ready after', Date.now() - startedAt, 'ms (from', url, ')');
+            return w.cv;
+          }
+          await new Promise(r => setTimeout(r, POLL_MS));
+        }
+        lastError = `script loaded from ${url} but cv.Mat never appeared (WASM init?)`;
+        log(lastError);
+      } catch (e: any) {
+        lastError = `${url}: ${e?.message || e}`;
+        log('CDN failed:', lastError);
       }
-      setTimeout(tick, 60);
-    };
-    tick();
-  });
+    }
+    throw new Error('All OpenCV CDNs failed. Last: ' + lastError);
+  })();
+  // Reset the cached promise on failure so the user can retry without a reload.
+  cvPromise.catch(() => { cvPromise = null; });
   return cvPromise;
 }
 
