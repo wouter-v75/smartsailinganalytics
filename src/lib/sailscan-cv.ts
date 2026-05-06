@@ -367,6 +367,230 @@ export function matToCanvas(cv: CV, mat: Mat, canvas: HTMLCanvasElement): void {
   rgba?.delete();
 }
 
+// ── Phase B: tap-the-luff seeded stripe detection ───────────────────────────
+//
+// Given a tap on the photo near the LUFF end of a stripe, find that one stripe
+// and return enough points (luff + leech + 3 midpoints) to seed the v1.2 spline
+// pipeline. The user can then drag/refine any point exactly as in v1.2.
+//
+// Algorithm:
+//   1. Downsample to ≤1024 px on the long edge for speed; keep scale factor.
+//   2. Convert to HSV.
+//   3. If a per-yacht HSV hint was supplied, use it as the colour centre;
+//      otherwise sample a 21×21 patch around the tap as the colour signature.
+//   4. cv.inRange in HSV ±tolerances → binary mask. Hue wrap-around handled.
+//   5. Morphological close to bridge stripe gaps from creases / wrinkles.
+//   6. Connected components; pick the component containing the tap.
+//   7. Within that component, the farthest pixel from the tap = leech.
+//   8. Centerline = column-wise (or row-wise) median along the chord direction.
+//   9. Sample 3 evenly-spaced midpoints along the centerline.
+//  10. Map all coordinates back to the original image-pixel space.
+//
+// Confidence is the chord length / image-long-edge ratio; below 0.15 we
+// surface it to the caller so the UI can prompt the user instead of silently
+// shipping a tiny garbage stripe.
+
+interface P { x: number; y: number; }
+
+export interface DetectionResult {
+  luff: P;
+  leech: P;
+  midpoints: P[];
+  /** 0..1: chord length / image long edge. <0.15 = suspicious. */
+  confidence: number;
+  /** The HSV signature actually used (whether learned or supplied). */
+  hsvSample: { h: number; s: number; v: number };
+  /** Diagnostic flags for debugging. */
+  componentArea: number;
+  imageWidth: number;
+  imageHeight: number;
+}
+
+export function detectStripeFromTap(
+  cv: CV,
+  imgElement: HTMLImageElement | HTMLCanvasElement,
+  tapImagePx: P,
+  options: {
+    hsvHint?: { h: number; s: number; v: number };
+    hueTol?: number;
+    satTol?: number;
+    valTol?: number;
+    morphKernelPx?: number;
+  } = {},
+): DetectionResult {
+  const hueTol = options.hueTol ?? 18;
+  const satTol = options.satTol ?? 70;
+  const valTol = options.valTol ?? 70;
+  const morphPx = options.morphKernelPx ?? 5;
+
+  const imgW = (imgElement as HTMLImageElement).naturalWidth || imgElement.width;
+  const imgH = (imgElement as HTMLImageElement).naturalHeight || imgElement.height;
+  const MAX = 1024;
+  const scale = Math.min(1, MAX / Math.max(imgW, imgH));
+  const w = Math.max(1, Math.round(imgW * scale));
+  const h = Math.max(1, Math.round(imgH * scale));
+
+  const tx = Math.max(0, Math.min(w - 1, Math.round(tapImagePx.x * scale)));
+  const ty = Math.max(0, Math.min(h - 1, Math.round(tapImagePx.y * scale)));
+
+  // Render image at downsampled resolution.
+  const offcanvas = document.createElement('canvas');
+  offcanvas.width = w; offcanvas.height = h;
+  offcanvas.getContext('2d')!.drawImage(imgElement as any, 0, 0, w, h);
+
+  const rgba = imageToMat(cv, offcanvas);
+  const bgr = new cv.Mat();
+  cv.cvtColor(rgba, bgr, cv.COLOR_RGBA2BGR);
+  rgba.delete();
+  const hsv = new cv.Mat();
+  cv.cvtColor(bgr, hsv, cv.COLOR_BGR2HSV);
+  bgr.delete();
+
+  // Resolve HSV centre — provided hint or sample around tap.
+  let hC: number, sC: number, vC: number;
+  if (options.hsvHint) {
+    hC = options.hsvHint.h; sC = options.hsvHint.s; vC = options.hsvHint.v;
+  } else {
+    const PR = 10;
+    let hSum = 0, sSum = 0, vSum = 0, cnt = 0;
+    const data = hsv.data as Uint8Array;
+    for (let y = Math.max(0, ty - PR); y <= Math.min(h - 1, ty + PR); y++) {
+      for (let x = Math.max(0, tx - PR); x <= Math.min(w - 1, tx + PR); x++) {
+        const idx = (y * w + x) * 3;
+        hSum += data[idx]; sSum += data[idx + 1]; vSum += data[idx + 2];
+        cnt++;
+      }
+    }
+    hC = hSum / cnt; sC = sSum / cnt; vC = vSum / cnt;
+  }
+
+  // Build the binary mask, handling hue wrap-around.
+  const sLo = Math.max(0,   sC - satTol);
+  const sHi = Math.min(255, sC + satTol);
+  const vLo = Math.max(0,   vC - valTol);
+  const vHi = Math.min(255, vC + valTol);
+  const hLoRaw = hC - hueTol;
+  const hHiRaw = hC + hueTol;
+
+  const mask = new cv.Mat();
+  if (hLoRaw < 0 || hHiRaw > 180) {
+    // Wrap: union of two ranges.
+    const lo1 = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.max(0, ((hLoRaw + 180) % 180)), sLo, vLo]);
+    const hi1 = cv.matFromArray(1, 1, cv.CV_8UC3, [180, sHi, vHi]);
+    const lo2 = cv.matFromArray(1, 1, cv.CV_8UC3, [0, sLo, vLo]);
+    const hi2 = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.min(180, ((hHiRaw + 180) % 180)), sHi, vHi]);
+    const m1 = new cv.Mat();
+    const m2 = new cv.Mat();
+    cv.inRange(hsv, lo1, hi1, m1);
+    cv.inRange(hsv, lo2, hi2, m2);
+    cv.bitwise_or(m1, m2, mask);
+    lo1.delete(); hi1.delete(); lo2.delete(); hi2.delete(); m1.delete(); m2.delete();
+  } else {
+    const lo = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.max(0, hLoRaw), sLo, vLo]);
+    const hi = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.min(180, hHiRaw), sHi, vHi]);
+    cv.inRange(hsv, lo, hi, mask);
+    lo.delete(); hi.delete();
+  }
+  hsv.delete();
+
+  // Bridge small gaps within stripes.
+  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(morphPx, morphPx));
+  cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
+  kernel.delete();
+
+  // Find connected components and pick the one containing the tap.
+  const labels = new cv.Mat();
+  const stats = new cv.Mat();
+  const centroids = new cv.Mat();
+  cv.connectedComponentsWithStats(mask, labels, stats, centroids);
+
+  const tapLabel = labels.intPtr(ty, tx)[0];
+  if (tapLabel === 0) {
+    mask.delete(); labels.delete(); stats.delete(); centroids.delete();
+    throw new Error('Tap landed on background — try tapping more precisely on the stripe.');
+  }
+
+  const cArea = stats.intPtr(tapLabel, cv.CC_STAT_AREA)[0] as number;
+  const cX = stats.intPtr(tapLabel, cv.CC_STAT_LEFT)[0] as number;
+  const cY = stats.intPtr(tapLabel, cv.CC_STAT_TOP)[0] as number;
+  const cW = stats.intPtr(tapLabel, cv.CC_STAT_WIDTH)[0] as number;
+  const cH = stats.intPtr(tapLabel, cv.CC_STAT_HEIGHT)[0] as number;
+
+  // Find leech = pixel in component farthest from tap.
+  let leechX = tx, leechY = ty;
+  let maxDist2 = 0;
+  for (let y = cY; y < cY + cH; y++) {
+    for (let x = cX; x < cX + cW; x++) {
+      if (labels.intPtr(y, x)[0] !== tapLabel) continue;
+      const dx = x - tx, dy = y - ty;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > maxDist2) { maxDist2 = d2; leechX = x; leechY = y; }
+    }
+  }
+
+  // Centerline: parameterise along the tap→leech vector. For each step t in
+  // [0,1], find pixels in the component near the chord at that t and take the
+  // perpendicular median. Robust to whether the stripe is roughly horizontal,
+  // diagonal, or near-vertical.
+  const dx = leechX - tx, dy = leechY - ty;
+  const chordLen = Math.sqrt(maxDist2);
+  const centerline: P[] = [];
+  if (chordLen > 4) {
+    const ux = dx / chordLen, uy = dy / chordLen;          // along-chord unit
+    const nx = -uy, ny = ux;                                // perpendicular
+    const SAMPLES = 40; // sample 40 t-positions along chord
+    const PERP_RADIUS = 30;
+    for (let i = 0; i <= SAMPLES; i++) {
+      const t = i / SAMPLES;
+      const cx = tx + ux * chordLen * t;
+      const cy = ty + uy * chordLen * t;
+      // Collect perpendicular distances of in-component pixels near (cx, cy).
+      const ds: number[] = [];
+      for (let pp = -PERP_RADIUS; pp <= PERP_RADIUS; pp++) {
+        const sx = Math.round(cx + nx * pp);
+        const sy = Math.round(cy + ny * pp);
+        if (sx < cX || sx >= cX + cW || sy < cY || sy >= cY + cH) continue;
+        if (labels.intPtr(sy, sx)[0] === tapLabel) ds.push(pp);
+      }
+      if (ds.length === 0) continue;
+      ds.sort((a, b) => a - b);
+      const median = ds[Math.floor(ds.length / 2)];
+      centerline.push({
+        x: cx + nx * median,
+        y: cy + ny * median,
+      });
+    }
+  }
+
+  mask.delete(); labels.delete(); stats.delete(); centroids.delete();
+
+  // Pick 3 midpoints: at t = 0.25, 0.5, 0.75 along the chord.
+  const midpoints: P[] = [];
+  if (centerline.length >= 5) {
+    [0.25, 0.5, 0.75].forEach(t => {
+      const idx = Math.floor(t * (centerline.length - 1));
+      const p = centerline[idx];
+      midpoints.push({ x: p.x / scale, y: p.y / scale });
+    });
+  }
+
+  // Map endpoints back to original-image space. Keep luff = user's exact tap.
+  const luff: P = { x: tapImagePx.x, y: tapImagePx.y };
+  const leech: P = { x: leechX / scale, y: leechY / scale };
+
+  const longEdge = Math.max(w, h);
+  const confidence = Math.max(0, Math.min(1, chordLen / (longEdge * 0.5)));
+
+  return {
+    luff, leech, midpoints,
+    confidence,
+    hsvSample: { h: hC, s: sC, v: vC },
+    componentArea: cArea,
+    imageWidth: imgW,
+    imageHeight: imgH,
+  };
+}
+
 // Read an HTMLImageElement (or canvas) into a fresh Mat (CV_8UC4 RGBA).
 // Caller deletes.
 //

@@ -19,8 +19,16 @@ const KEY = 'ssa:sailscan:yacht-prefs';
 
 export type StripeColour = 'black' | 'white' | 'red' | 'blue' | 'green' | 'yellow' | 'orange' | 'purple';
 
+// HSV in OpenCV's encoding: hue 0..180 (degrees / 2), sat / val 0..255.
+export interface StripeHsv { h: number; s: number; v: number; }
+
 export interface YachtPrefs {
+  /** Categorical user-facing label (for the colour picker). */
   stripeColour?: StripeColour;
+  /** Numeric colour signature auto-learned from the user's first tap on a
+   *  stripe. Reused as the HSV centre on subsequent auto-detects for this
+   *  yacht. Cheaper and more accurate than the categorical hint. */
+  stripeHsv?: StripeHsv;
 }
 
 type AllPrefs = Record<string, YachtPrefs>;
