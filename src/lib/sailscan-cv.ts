@@ -376,15 +376,18 @@ export function matToCanvas(cv: CV, mat: Mat, canvas: HTMLCanvasElement): void {
 // Algorithm:
 //   1. Downsample to ≤1024 px on the long edge for speed; keep scale factor.
 //   2. Convert to HSV.
-//   3. If a per-yacht HSV hint was supplied, use it as the colour centre;
-//      otherwise sample a 21×21 patch around the tap as the colour signature.
-//   4. cv.inRange in HSV ±tolerances → binary mask. Hue wrap-around handled.
-//   5. Morphological close to bridge stripe gaps from creases / wrinkles.
-//   6. Connected components; pick the component containing the tap.
-//   7. Within that component, the farthest pixel from the tap = leech.
-//   8. Centerline = column-wise (or row-wise) median along the chord direction.
-//   9. Sample 3 evenly-spaced midpoints along the centerline.
-//  10. Map all coordinates back to the original image-pixel space.
+//   3. Read the tap pixel's HSV directly — that is our reference colour.
+//   4. Region-grow (BFS flood fill) from the tap pixel in HSV space, accepting
+//      neighbours within ±HUE_DIFF / ±SAT_DIFF / ±VAL_DIFF of the tap pixel.
+//      Hue tolerance is bypassed for achromatic samples (sC < 50, e.g. white
+//      stripes), since hue is mathematically unstable at low saturation.
+//   5. The component is bounded automatically by the dramatic colour jumps at
+//      sail / sky / luff edges — no global threshold needed.
+//   6. The farthest pixel in the component from the tap = leech.
+//   7. Centerline sampled by walking along the tap→leech vector and taking the
+//      perpendicular median of in-component pixels at each step.
+//   8. Three midpoints sampled at t = 0.25, 0.50, 0.75 of the chord.
+//   9. Coordinates mapped back to the original image-pixel space.
 //
 // Confidence is the chord length / image-long-edge ratio; below 0.15 we
 // surface it to the caller so the UI can prompt the user instead of silently
@@ -418,11 +421,6 @@ export function detectStripeFromTap(
     morphKernelPx?: number;
   } = {},
 ): DetectionResult {
-  const hueTol = options.hueTol ?? 18;
-  const satTol = options.satTol ?? 70;
-  const valTol = options.valTol ?? 70;
-  const morphPx = options.morphKernelPx ?? 5;
-
   const imgW = (imgElement as HTMLImageElement).naturalWidth || imgElement.width;
   const imgH = (imgElement as HTMLImageElement).naturalHeight || imgElement.height;
   const MAX = 1024;
@@ -446,152 +444,107 @@ export function detectStripeFromTap(
   cv.cvtColor(bgr, hsv, cv.COLOR_BGR2HSV);
   bgr.delete();
 
-  // Resolve HSV centre — provided hint or sample around tap.
-  //
-  // Sampling strategy when no hint is given: read pixels from the ORIGINAL
-  // image (not the downsampled HSV mat) inside a 9×9 region around the tap,
-  // pick the 5 brightest, and take the per-channel median of their RGB →
-  // HSV. Rationale:
-  //   - Sampling at original resolution avoids the 4× spatial dilution that
-  //     the downsampled mat introduces; on thin stripes that dilution makes
-  //     a 21×21 mean almost entirely background.
-  //   - "Top-5 brightest" picks the actual stripe pixels for typical
-  //     light-on-dark trim stripes, even if the user is off by a few pixels.
-  //   - Median over the top 5 is robust to per-pixel JPEG noise and
-  //     compression artefacts.
-  // For dark-on-light stripes a future option could sample the darkest
-  // pixels instead. v1 of Phase B is tuned for the common case.
-  let hC: number, sC: number, vC: number;
-  if (options.hsvHint) {
-    hC = options.hsvHint.h; sC = options.hsvHint.s; vC = options.hsvHint.v;
-  } else {
-    const RAD = 4; // 9×9 sample region in original pixels
-    const cxOrig = Math.floor(tapImagePx.x);
-    const cyOrig = Math.floor(tapImagePx.y);
-    const sx0 = Math.max(0, cxOrig - RAD);
-    const sy0 = Math.max(0, cyOrig - RAD);
-    const sw  = Math.min(imgW, cxOrig + RAD + 1) - sx0;
-    const sh  = Math.min(imgH, cyOrig + RAD + 1) - sy0;
-    const sCanvas = document.createElement('canvas');
-    sCanvas.width = Math.max(1, sw);
-    sCanvas.height = Math.max(1, sh);
-    sCanvas.getContext('2d')!.drawImage(imgElement as any, -sx0, -sy0);
-    const pixData = sCanvas.getContext('2d')!.getImageData(0, 0, sCanvas.width, sCanvas.height).data;
+  // The tap pixel itself is always our colour reference — read it directly
+  // from the downsampled HSV mat (so it matches what we'll flood-fill on).
+  // This sidesteps the previous "sample, threshold, hope tap matches"
+  // pattern which broke when the brightest neighbour pixels were sky/glare.
+  const data = hsv.data as Uint8Array;
+  const tapIdxLin = ty * w + tx;
+  const tapIdx = tapIdxLin * 3;
+  const hC = data[tapIdx];
+  const sC = data[tapIdx + 1];
+  const vC = data[tapIdx + 2];
+  console.log('[SailScan:cv] tap-pixel HSV (downsampled)', { tx, ty, hsv: { h: hC, s: sC, v: vC } });
 
-    const all: { r: number; g: number; b: number; v: number }[] = [];
-    for (let i = 0; i < pixData.length; i += 4) {
-      const r = pixData[i], g = pixData[i + 1], b = pixData[i + 2];
-      all.push({ r, g, b, v: Math.max(r, g, b) });
-    }
-    all.sort((a, b) => b.v - a.v);
-    const top = all.slice(0, Math.min(5, all.length));
-    // Per-channel median of top-N
-    const med = (arr: number[]) => arr.slice().sort((a, b) => a - b)[Math.floor(arr.length / 2)];
-    const mR = med(top.map(p => p.r));
-    const mG = med(top.map(p => p.g));
-    const mB = med(top.map(p => p.b));
-    // RGB → HSV (OpenCV scale: H 0..180, S/V 0..255)
-    const maxC = Math.max(mR, mG, mB);
-    const minC = Math.min(mR, mG, mB);
-    const delta = maxC - minC;
-    vC = maxC;
-    sC = maxC === 0 ? 0 : (delta * 255) / maxC;
-    let hRaw = 0;
-    if (delta === 0)            hRaw = 0;
-    else if (maxC === mR)       hRaw = 30 * (((mG - mB) / delta + 6) % 6);
-    else if (maxC === mG)       hRaw = 30 * ((mB - mR) / delta + 2);
-    else                        hRaw = 30 * ((mR - mG) / delta + 4);
-    hC = hRaw;
-    console.log('[SailScan:cv] sampled stripe colour from top-brightest pixels',
-      { tap: tapImagePx, rgb: { r: mR, g: mG, b: mB }, hsv: { h: hC, s: sC, v: vC } });
-  }
-
-  // Build the binary mask. Two regimes:
-  //   - Achromatic sample (sC < 50, e.g. white-on-dark stripes): hue is
-  //     mathematically unreliable for near-white pixels, so we ignore H,
-  //     restrict S to a tight low band (excluding coloured regions like sky),
-  //     and threshold mainly on V. This is the regime sailing trim stripes
-  //     usually fall into (white tape on a coloured sail).
-  //   - Chromatic sample (sC ≥ 50, e.g. red, blue, yellow stripes): standard
-  //     hue-window threshold with hue wrap-around handling.
+  // ── Region-grow (flood fill) from the tap pixel in HSV space ────────────
+  // Far more robust than threshold-around-mean for thin stripes:
+  //   - The tap pixel is GUARANTEED to be in the component (it's the seed).
+  //   - Tolerance is local — neighbours are added if they're similar to the
+  //     tap pixel, not a global average. So small gradients along the stripe
+  //     are fine, but the dramatic colour jumps at sail/sky/luff boundaries
+  //     stop the growth automatically.
+  //   - Hue tolerance only matters when the sample is chromatic; for the
+  //     near-white stripes typical on sailing yachts (low S), the value
+  //     tolerance dominates.
+  const HUE_DIFF = options.hueTol ?? 15;
+  const SAT_DIFF = options.satTol ?? 60;
+  const VAL_DIFF = options.valTol ?? 60;
   const isAchromatic = sC < 50;
-  const mask = new cv.Mat();
 
-  if (isAchromatic) {
-    // Hue: full range. Sat: 0 to sC + 30 (tight cap to exclude saturated areas
-    // like blue sky / coloured sail). Val: ±valTol around vC.
-    const sCap = Math.min(255, sC + 30);
-    const vLo = Math.max(0,   vC - valTol);
-    const vHi = Math.min(255, vC + valTol);
-    const lo = cv.matFromArray(1, 1, cv.CV_8UC3, [0,   0,    vLo]);
-    const hi = cv.matFromArray(1, 1, cv.CV_8UC3, [180, sCap, vHi]);
-    cv.inRange(hsv, lo, hi, mask);
-    lo.delete(); hi.delete();
-  } else {
-    const sLo = Math.max(0,   sC - satTol);
-    const sHi = Math.min(255, sC + satTol);
-    const vLo = Math.max(0,   vC - valTol);
-    const vHi = Math.min(255, vC + valTol);
-    const hLoRaw = hC - hueTol;
-    const hHiRaw = hC + hueTol;
-    if (hLoRaw < 0 || hHiRaw > 180) {
-      const lo1 = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.max(0, ((hLoRaw + 180) % 180)), sLo, vLo]);
-      const hi1 = cv.matFromArray(1, 1, cv.CV_8UC3, [180, sHi, vHi]);
-      const lo2 = cv.matFromArray(1, 1, cv.CV_8UC3, [0, sLo, vLo]);
-      const hi2 = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.min(180, ((hHiRaw + 180) % 180)), sHi, vHi]);
-      const m1 = new cv.Mat();
-      const m2 = new cv.Mat();
-      cv.inRange(hsv, lo1, hi1, m1);
-      cv.inRange(hsv, lo2, hi2, m2);
-      cv.bitwise_or(m1, m2, mask);
-      lo1.delete(); hi1.delete(); lo2.delete(); hi2.delete(); m1.delete(); m2.delete();
-    } else {
-      const lo = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.max(0, hLoRaw), sLo, vLo]);
-      const hi = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.min(180, hHiRaw), sHi, vHi]);
-      cv.inRange(hsv, lo, hi, mask);
-      lo.delete(); hi.delete();
+  const inMask = new Uint8Array(w * h);
+  inMask[tapIdxLin] = 1;
+  // Open queue (4-connectivity flood fill). We use indices to avoid object
+  // churn; x = idx % w, y = idx / w.
+  const queue: number[] = [tapIdxLin];
+  let bbX0 = tx, bbY0 = ty, bbX1 = tx, bbY1 = ty;
+  let leechX = tx, leechY = ty;
+  let maxDist2 = 0;
+  let cArea = 1;
+  // Cap the BFS so a runaway flood fill (e.g. seed on uniform sail) can't
+  // consume the whole image. 1/8 of pixels is generous for one stripe.
+  const MAX_PIXELS = Math.max(2000, Math.floor((w * h) / 8));
+
+  let qHead = 0;
+  while (qHead < queue.length && cArea < MAX_PIXELS) {
+    const idx = queue[qHead++];
+    const y = (idx / w) | 0;
+    const x = idx - y * w;
+    // 4-connectivity neighbours
+    const ns = [idx - 1, idx + 1, idx - w, idx + w];
+    const nxs = [x - 1, x + 1, x,     x    ];
+    const nys = [y,     y,     y - 1, y + 1];
+    for (let k = 0; k < 4; k++) {
+      const nx = nxs[k], ny = nys[k];
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+      const nIdx = ns[k];
+      if (inMask[nIdx]) continue;
+      const dataIdx = nIdx * 3;
+      const nH = data[dataIdx];
+      const nS = data[dataIdx + 1];
+      const nV = data[dataIdx + 2];
+      // Hue is circular [0, 180); compute shortest difference.
+      let dH = Math.abs(nH - hC);
+      if (dH > 90) dH = 180 - dH;
+      const dS = Math.abs(nS - sC);
+      const dV = Math.abs(nV - vC);
+      // For achromatic samples (white/grey stripes), ignore hue entirely:
+      // hue is mathematically unstable when saturation is low, so the per-
+      // pixel hue value is effectively random and would cap growth wrongly.
+      const hueOk = isAchromatic || dH <= HUE_DIFF;
+      const satOk = dS <= SAT_DIFF;
+      const valOk = dV <= VAL_DIFF;
+      inMask[nIdx] = 1; // mark visited regardless so we don't revisit
+      if (!(hueOk && satOk && valOk)) continue;
+      // Accept this neighbour into the component.
+      cArea++;
+      queue.push(nIdx);
+      if (nx < bbX0) bbX0 = nx;
+      if (ny < bbY0) bbY0 = ny;
+      if (nx > bbX1) bbX1 = nx;
+      if (ny > bbY1) bbY1 = ny;
+      const ddx = nx - tx, ddy = ny - ty;
+      const d2 = ddx * ddx + ddy * ddy;
+      if (d2 > maxDist2) { maxDist2 = d2; leechX = nx; leechY = ny; }
     }
   }
+
   hsv.delete();
 
-  // Bridge small gaps within stripes.
-  const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(morphPx, morphPx));
-  cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, kernel);
-  kernel.delete();
-
-  // Find connected components and pick the one containing the tap.
-  const labels = new cv.Mat();
-  const stats = new cv.Mat();
-  const centroids = new cv.Mat();
-  cv.connectedComponentsWithStats(mask, labels, stats, centroids);
-
-  const tapLabel = labels.intPtr(ty, tx)[0];
-  if (tapLabel === 0) {
-    mask.delete(); labels.delete(); stats.delete(); centroids.delete();
+  if (cArea < 12) {
     throw new Error(
-      `Tap landed on background — colour signature [H=${Math.round(hC)} S=${Math.round(sC)} V=${Math.round(vC)}]`
-      + ` didn't match the stripe at the tap. Try tapping more precisely on the brightest part of the stripe,`
-      + ` or use the ↺ colour button to clear and retry.`,
+      `Component too small (${cArea}px) — tap was probably on background. Try tapping more precisely on the stripe.`,
     );
   }
 
-  const cArea = stats.intPtr(tapLabel, cv.CC_STAT_AREA)[0] as number;
-  const cX = stats.intPtr(tapLabel, cv.CC_STAT_LEFT)[0] as number;
-  const cY = stats.intPtr(tapLabel, cv.CC_STAT_TOP)[0] as number;
-  const cW = stats.intPtr(tapLabel, cv.CC_STAT_WIDTH)[0] as number;
-  const cH = stats.intPtr(tapLabel, cv.CC_STAT_HEIGHT)[0] as number;
-
-  // Find leech = pixel in component farthest from tap.
-  let leechX = tx, leechY = ty;
-  let maxDist2 = 0;
-  for (let y = cY; y < cY + cH; y++) {
-    for (let x = cX; x < cX + cW; x++) {
-      if (labels.intPtr(y, x)[0] !== tapLabel) continue;
-      const dx = x - tx, dy = y - ty;
-      const d2 = dx * dx + dy * dy;
-      if (d2 > maxDist2) { maxDist2 = d2; leechX = x; leechY = y; }
-    }
-  }
+  // Reconstruct an inMask that *only* contains accepted pixels, not "visited
+  // but rejected" pixels. We tagged "accepted" by pushing to queue; rebuild
+  // a boolean mask from that. (The earlier `inMask[nIdx] = 1` for rejected
+  // neighbours was a visit-marker only.)
+  const accepted = new Uint8Array(w * h);
+  for (const idx of queue) accepted[idx] = 1;
+  // Use a synthetic component bbox for downstream centerline sampling.
+  const cX = bbX0, cY = bbY0;
+  const cW = bbX1 - bbX0 + 1, cH = bbY1 - bbY0 + 1;
 
   // Centerline: parameterise along the tap→leech vector. For each step t in
   // [0,1], find pixels in the component near the chord at that t and take the
@@ -615,7 +568,7 @@ export function detectStripeFromTap(
         const sx = Math.round(cx + nx * pp);
         const sy = Math.round(cy + ny * pp);
         if (sx < cX || sx >= cX + cW || sy < cY || sy >= cY + cH) continue;
-        if (labels.intPtr(sy, sx)[0] === tapLabel) ds.push(pp);
+        if (accepted[sy * w + sx]) ds.push(pp);
       }
       if (ds.length === 0) continue;
       ds.sort((a, b) => a - b);
@@ -627,7 +580,7 @@ export function detectStripeFromTap(
     }
   }
 
-  mask.delete(); labels.delete(); stats.delete(); centroids.delete();
+  // (No CV mats to clean up here — flood fill ran in pure JS on the HSV data.)
 
   // Pick 3 midpoints: at t = 0.25, 0.5, 0.75 along the chord.
   const midpoints: P[] = [];
