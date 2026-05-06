@@ -626,11 +626,22 @@ export default function SailScanTab() {
 
     (async () => {
       try {
-        tick('start; debugView=' + debugView);
-        const cv = await loadOpenCV();
-        tick('past loadOpenCV await — typeof cv=' + typeof cv + ', Mat=' + typeof cv?.Mat + ', CLAHE=' + typeof cv?.CLAHE);
-        if (cancelled) { tick('CANCELLED after loadOpenCV — bailing'); return; }
-        tick('opencv ready');
+        tick('A: start; debugView=' + debugView);
+        let cv: any = null;
+        try {
+          cv = await loadOpenCV();
+        } catch (le: any) {
+          tick('B-fail: loadOpenCV rejected — ' + (le?.message || le));
+          throw le;
+        }
+        tick('B: past await');
+        // Atomic diagnostics — each on its own line so we know which one hangs.
+        try { tick('C: cv typeof=' + (typeof cv)); } catch (e: any) { tick('C-fail: ' + (e?.message || e)); }
+        try { tick('D: cv truthy=' + (cv ? 'yes' : 'no')); } catch (e: any) { tick('D-fail: ' + (e?.message || e)); }
+        try { tick('E: cv.Mat typeof=' + (typeof cv?.Mat)); } catch (e: any) { tick('E-fail: ' + (e?.message || e)); }
+        try { tick('F: cv.CLAHE typeof=' + (typeof cv?.CLAHE)); } catch (e: any) { tick('F-fail: ' + (e?.message || e)); }
+        if (cancelled) { tick('G: CANCELLED — bailing'); return; }
+        tick('H: opencv ready');
 
         // Downsample for speed — long edge capped at 1024 px.
         const img = cachedImage.current!;
