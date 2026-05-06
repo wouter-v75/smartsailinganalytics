@@ -28,29 +28,46 @@ type CV = any;
 type Mat = any;
 
 // ── Lazy loader ─────────────────────────────────────────────────────────────
-// The script tag fires `onload` after the JS bytes arrive, but the WASM module
-// finishes initialisation slightly later. Both onRuntimeInitialized and a Mat
-// constructor existing are valid readiness signals; we poll for the latter.
+// CRITICAL: OpenCV's `cv` namespace object is itself a *thenable* — it has a
+// `.then` method (Emscripten Module convention for `await Module()` style
+// init). If `cv` ever appears as the resolved value of a Promise — including
+// the return value of an async function — the Promise machinery chains
+// through `cv.then(resolve, reject)`, which after init is a silent no-op.
+// The whole Promise stalls forever and microtask handlers (including any
+// `.then` we add) never fire.
 //
-// We try multiple CDNs in order. The first one that responds wins. Browsers
-// or networks may block individual hosts (corporate VPNs, ad blockers, CSP),
-// so a fallback chain is much more robust than a single URL.
+// To avoid this entirely the loader API is split:
+//   - `ensureOpenCV(): Promise<void>` — resolves once cv is fully ready.
+//   - `getCV(): CV`                   — synchronous accessor, throws if not.
+// `cv` itself is never a Promise resolution value.
 //
-// IMPORTANT: OpenCV's `cv` namespace object is itself a *thenable* (it has a
-// `.then` method, an Emscripten Module convention used so you can `await` it
-// during init). Returning `cv` from an async function — or passing it to
-// Promise.resolve — causes the Promise machinery to try to chain through
-// `cv.then(resolve, reject)`. After init is complete, OpenCV's `.then` is a
-// no-op that never fires the callback, so the wrapping promise hangs forever.
-// To avoid that trap, the loader never resolves directly with `cv` — it
-// resolves with a wrapper `{ cv: ... }` that's NOT thenable.
-let cvPromise: Promise<{ cv: CV }> | null = null;
+// Plus, "fully ready" means we can actually instantiate a Mat without throwing
+// or hanging. Constructors existing isn't enough — Emscripten can populate
+// `cv.Mat` on the namespace before the WASM heap is fully allocated. The
+// canonical test is to `new cv.Mat(1, 1, cv.CV_8U)` inside a try/catch.
+//
+// We try multiple CDNs in order; the first that responds wins.
+let cvReady: Promise<void> | null = null;
 
 const OPENCV_URLS = [
-  'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
-  'https://unpkg.com/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js',
+  'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.12.0-release.1/dist/opencv.js',
+  'https://unpkg.com/@techstark/opencv-js@4.12.0-release.1/dist/opencv.js',
   'https://docs.opencv.org/4.10.0/opencv.js',
 ];
+
+function isOpenCVFullyReady(): boolean {
+  const cv = (window as any).cv;
+  if (!cv) return false;
+  if (typeof cv.Mat   !== 'function') return false;
+  if (typeof cv.CLAHE !== 'function') return false;
+  try {
+    const t = new cv.Mat(1, 1, cv.CV_8U);
+    t.delete();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const log = (...args: any[]) => console.log('[SailScan:cv]', ...args);
 
@@ -80,16 +97,21 @@ function tryLoadScript(url: string, timeoutMs: number): Promise<void> {
   });
 }
 
-export async function loadOpenCV(): Promise<CV> {
-  const wrapped = await loadOpenCVWrapped();
-  return wrapped.cv;
+// Synchronous accessor — call AFTER ensureOpenCV() has resolved.
+// Throws if cv isn't ready, so call sites fail loudly instead of hanging.
+export function getCV(): CV {
+  if (!isOpenCVFullyReady()) {
+    throw new Error('getCV called before ensureOpenCV resolved');
+  }
+  return (window as any).cv;
 }
 
-function loadOpenCVWrapped(): Promise<{ cv: CV }> {
-  if (cvPromise) return cvPromise;
-  cvPromise = (async () => {
+// Public loader API. Resolves with `void` so cv is never a Promise value.
+export function ensureOpenCV(): Promise<void> {
+  if (cvReady) return cvReady;
+  cvReady = (async () => {
     const w = window as any;
-    if (w.cv?.Mat) { log('cv.Mat already present, skipping load'); return { cv: w.cv }; }
+    if (isOpenCVFullyReady()) { log('cv already fully ready, skipping load'); return; }
 
     let lastError: string = '';
     for (const url of OPENCV_URLS) {
@@ -115,15 +137,15 @@ function loadOpenCVWrapped(): Promise<{ cv: CV }> {
             };
           }
 
-          // Always poll as the canonical readiness signal — looks for both
-          // cv.Mat AND cv.CLAHE so we don't return on partial WASM init.
+          // The canonical readiness check: actually construct a Mat. Constructors
+          // can be defined on the cv namespace before the WASM heap is alive,
+          // and downstream calls hang silently in that partial state. This try
+          // forces a heap allocation; if it succeeds, full init is guaranteed.
           const tick = () => {
             if (settled) return;
-            const cv = w.cv;
-            const matOk   = !!cv && typeof cv.Mat   === 'function';
-            const claheOk = !!cv && typeof cv.CLAHE === 'function';
-            if (matOk && claheOk) { settle('polled — Mat + CLAHE ready'); return; }
+            if (isOpenCVFullyReady()) { settle('Mat-instance test passed — fully ready'); return; }
             if (Date.now() - startedAt > INIT_TIMEOUT) {
+              const cv = (window as any).cv;
               reject(new Error(`WASM init timed out — Mat=${typeof cv?.Mat}, CLAHE=${typeof cv?.CLAHE}`));
               return;
             }
@@ -132,8 +154,7 @@ function loadOpenCVWrapped(): Promise<{ cv: CV }> {
           tick();
         });
         log('OpenCV ready (from', url, ')');
-        log('IIFE returning {cv:w.cv}; truthy=' + !!w.cv);
-        return { cv: w.cv };
+        return; // resolves the outer cvReady promise with void
       } catch (e: any) {
         lastError = `${url}: ${e?.message || e}`;
         log('CDN failed:', lastError);
@@ -142,13 +163,13 @@ function loadOpenCVWrapped(): Promise<{ cv: CV }> {
     throw new Error('All OpenCV CDNs failed. Last: ' + lastError);
   })();
   // Reset the cached promise on failure so the user can retry without a reload.
-  cvPromise.catch(() => { cvPromise = null; });
-  log('loadOpenCV returning cvPromise (caller will await)');
-  return cvPromise;
+  cvReady.catch(() => { cvReady = null; });
+  log('ensureOpenCV returning cvReady (caller will await void)');
+  return cvReady;
 }
 
 export function isOpenCVLoaded(): boolean {
-  return !!(window as any).cv?.Mat;
+  return isOpenCVFullyReady();
 }
 
 // ── Pipeline helpers ────────────────────────────────────────────────────────
