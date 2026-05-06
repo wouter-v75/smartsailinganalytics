@@ -82,41 +82,42 @@ export function loadOpenCV(): Promise<CV> {
       try {
         await tryLoadScript(url, 15000);
         // Script bytes arrived. WASM module is initialised slightly later.
-        // Prefer cv.onRuntimeInitialized callback (Emscripten standard) — only
-        // when that fires are downstream classes like cv.CLAHE actually safe
-        // to construct. Fall back to polling for cv.Mat AND cv.CLAHE both,
-        // which catches partial-init states.
+        // Belt-and-braces readiness check: hook onRuntimeInitialized AND poll
+        // for cv.Mat AND cv.CLAHE. We deliberately DON'T use cv.then(...) —
+        // OpenCV's Module.then() is a non-Promise callback registrar and
+        // chaining .catch on its return value blows up.
         await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const settle = (label: string) => { if (!settled) { settled = true; log(label); resolve(); } };
           const startedAt = Date.now();
           const INIT_TIMEOUT = 20000;
-          // Path 1: explicit Emscripten callback
-          if (typeof w.cv?.then === 'function') {
-            log('cv has .then; awaiting Promise-style ready');
-            w.cv.then(resolve).catch(reject);
-            return;
-          }
-          if (w.cv && 'onRuntimeInitialized' in w.cv && !w.cv.Mat) {
-            log('hooking onRuntimeInitialized');
+
+          // Hook the Emscripten callback if present.
+          if (w.cv && typeof w.cv.onRuntimeInitialized !== 'undefined') {
             const prev = w.cv.onRuntimeInitialized;
-            w.cv.onRuntimeInitialized = () => { try { prev?.(); } catch {} resolve(); };
-            // also poll as a backup
+            w.cv.onRuntimeInitialized = () => {
+              try { prev?.(); } catch {}
+              settle('onRuntimeInitialized fired');
+            };
           }
-          // Path 2: poll for both cv.Mat AND cv.CLAHE (partial init guard)
+
+          // Always poll as the canonical readiness signal — looks for both
+          // cv.Mat AND cv.CLAHE so we don't return on partial WASM init.
           const tick = () => {
+            if (settled) return;
             const cv = w.cv;
-            const ok = cv && typeof cv.Mat === 'function' && typeof cv.CLAHE === 'function';
-            if (ok) { resolve(); return; }
+            const matOk   = !!cv && typeof cv.Mat   === 'function';
+            const claheOk = !!cv && typeof cv.CLAHE === 'function';
+            if (matOk && claheOk) { settle('polled — Mat + CLAHE ready'); return; }
             if (Date.now() - startedAt > INIT_TIMEOUT) {
-              reject(new Error(
-                `WASM init timed out — Mat=${typeof cv?.Mat}, CLAHE=${typeof cv?.CLAHE}`,
-              ));
+              reject(new Error(`WASM init timed out — Mat=${typeof cv?.Mat}, CLAHE=${typeof cv?.CLAHE}`));
               return;
             }
             setTimeout(tick, 60);
           };
           tick();
         });
-        log('cv.Mat AND cv.CLAHE ready (from', url, ')');
+        log('OpenCV ready (from', url, ')');
         return w.cv;
       } catch (e: any) {
         lastError = `${url}: ${e?.message || e}`;
