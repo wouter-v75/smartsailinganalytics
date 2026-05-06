@@ -90,7 +90,12 @@ export default function SailScanTab() {
   const [debugView,       setDebugView]       = useState<DebugView>('off');
   const [debugProcessing, setDebugProcessing] = useState(false);
   const [debugError,      setDebugError]      = useState<string>('');
-  const debugCanvasRef = useRef<HTMLCanvasElement>(null);
+  // Offscreen canvas — receives the CV-pipeline output. Not in the DOM; its
+  // sole job is to be a bitmap source for drawScene, which then renders it
+  // into the marking canvas with the same pan/zoom transform as the photo.
+  const debugCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Bumped after each successful debug paint so drawScene re-runs.
+  const [debugVersion, setDebugVersion] = useState(0);
 
   // ── v2 Phase B: tap-the-luff auto-detect state ───────────────────────────
   // When autoDetectMode is on, a single tap on the marking canvas is treated
@@ -399,12 +404,19 @@ export default function SailScanTab() {
         return;
       }
       if (isPanning && touchMoved.current) {
-        // Pan multiplier 2.5x: zoom is dampened to 40%, so pan needs to be
-        // proportionally faster to feel balanced. Below 1.5x panning felt
-        // sluggish on the SailScan canvas (large sail photos).
-        const dx = (e.touches[0].clientX - panStart.x) * 2.5 / zoom;
-        const dy = (e.touches[0].clientY - panStart.y) * 2.5 / zoom;
-        setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
+        // 1:1 pan — finger motion translates the image by exactly the same
+        // distance on screen. We compute the image-to-screen pixel ratio
+        // from the canvas's current display size; previous hard-coded
+        // multipliers were way off on large iPhone photos.
+        const c = canvasRef.current;
+        if (c) {
+          const r = c.getBoundingClientRect();
+          const sx = c.width / (r.width  || 1);
+          const sy = c.height / (r.height || 1);
+          const dx = (e.touches[0].clientX - panStart.x) * sx / zoom;
+          const dy = (e.touches[0].clientY - panStart.y) * sy / zoom;
+          setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
+        }
       }
     }
   };
@@ -444,9 +456,16 @@ export default function SailScanTab() {
     if (dragging) {
       movePoint(dragging, getCanvasCoords(e.clientX, e.clientY));
     } else if (isPanning) {
-      const dx = (e.clientX - panStart.x) / zoom;
-      const dy = (e.clientY - panStart.y) / zoom;
-      setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
+      // 1:1 pan: cursor motion = exactly that many image pixels translated
+      const c = canvasRef.current;
+      if (c) {
+        const r = c.getBoundingClientRect();
+        const sx = c.width / (r.width  || 1);
+        const sy = c.height / (r.height || 1);
+        const dx = (e.clientX - panStart.x) * sx / zoom;
+        const dy = (e.clientY - panStart.y) * sy / zoom;
+        setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
+      }
     }
   };
   const handleMouseUp = () => { setIsPanning(false); setDragging(null); };
@@ -495,7 +514,7 @@ export default function SailScanTab() {
       im.src = imageSrc;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageSrc, stripes, activeIdx, zoom, pan, step]);
+  }, [imageSrc, stripes, activeIdx, zoom, pan, step, debugView, debugVersion]);
 
   useEffect(() => {
     if (!canvasRef.current || !imageSrc || step !== 'results') return;
@@ -524,7 +543,16 @@ export default function SailScanTab() {
     ctx.save();
     ctx.translate(drawPan.x * drawZoom, drawPan.y * drawZoom);
     ctx.scale(drawZoom, drawZoom);
-    ctx.drawImage(img, 0, 0);
+    // Source: original photo, OR the CV-pipeline result if a debug view is
+    // active. Either way the image is drawn into the same transformed
+    // coordinate space, so pan/zoom apply uniformly.
+    const dbgC = debugCanvasRef.current;
+    const showingDebug = !forResults && debugView !== 'off' && dbgC && dbgC.width > 0;
+    if (showingDebug) {
+      ctx.drawImage(dbgC!, 0, 0, img.width, img.height);
+    } else {
+      ctx.drawImage(img, 0, 0);
+    }
 
     const rect = canvas.getBoundingClientRect();
     const imgScale = canvas.width / (rect.width || 1);
@@ -771,9 +799,16 @@ export default function SailScanTab() {
         }
         gray.delete();
 
-        if (debugCanvasRef.current && !cancelled) {
+        if (!cancelled) {
+          // Lazily create the offscreen canvas; not part of the DOM.
+          if (!debugCanvasRef.current) {
+            debugCanvasRef.current = document.createElement('canvas');
+          }
           matToCanvas(cv, outMat, debugCanvasRef.current);
-          tick('painted to debug canvas');
+          tick('painted to offscreen debug canvas');
+          // Trigger drawScene to re-render the marking canvas with the new
+          // debug bitmap as its source.
+          setDebugVersion(v => v + 1);
         }
         outMat.delete();
         if (!cancelled) {
@@ -1131,15 +1166,9 @@ export default function SailScanTab() {
                 className="w-full h-full"
                 style={{ maxWidth: '100%', maxHeight: '100%', touchAction: 'none', cursor: dragging ? 'grabbing' : 'crosshair' }}
               />
-              {/* Debug overlay — visible only when a debug view is selected.
-                  pointer-events:none so touches still drive the marking canvas. */}
-              {debugView !== 'off' && (
-                <canvas
-                  ref={debugCanvasRef}
-                  className="absolute inset-0"
-                  style={{ width: '100%', height: '100%', pointerEvents: 'none', opacity: 0.85 }}
-                />
-              )}
+              {/* Debug result is rendered into the marking canvas itself
+                  (via drawScene), so it inherits pan/zoom. No overlay element
+                  is needed. */}
               {debugProcessing && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-amber-300 text-xs font-bold pointer-events-none">
                   ⏳ Processing CV pipeline…
