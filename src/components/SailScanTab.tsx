@@ -444,12 +444,15 @@ export default function SailScanTab() {
     setIsPanning(true);
     setPanStart({ x: e.clientX, y: e.clientY });
     setInitialPan(pan);
-    // Desktop: in auto-detect mode, single-click triggers detection.
-    // In manual mode, double-click places a point (existing behaviour).
-    if (autoDetectMode && !autoDetecting) {
-      runAutoDetect(coords);
-    } else if (e.detail === 2) {
-      placePoint(coords);
+    // Desktop: a single click is reserved for pan/drag. Double-click does
+    // the work — places a point in manual mode, runs auto-detect when
+    // Auto-detect mode is on.
+    if (e.detail === 2) {
+      if (autoDetectMode && !autoDetecting) {
+        runAutoDetect(coords);
+      } else {
+        placePoint(coords);
+      }
     }
   };
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {

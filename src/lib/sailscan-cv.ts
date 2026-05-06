@@ -582,10 +582,21 @@ export function detectStripeFromTap(
 
   // (No CV mats to clean up here — flood fill ran in pure JS on the HSV data.)
 
-  // Pick 3 midpoints: at t = 0.25, 0.5, 0.75 along the chord.
+  // Sample 5 midpoints biased toward the luff. Sail entry curvature is
+  // concentrated in the front 30–40% of the chord (where the leading-edge
+  // shape carries most of the aerodynamic signal), so placing 3 of the 5
+  // midpoints in the front half lets the spline track that curvature
+  // accurately while still constraining the trailing third.
+  //
+  //   t = 0.10  near luff (entry detail)
+  //       0.20  entry curvature
+  //       0.35  approaching max draft
+  //       0.55  past max draft
+  //       0.80  approaching leech (exit angle reference)
+  const MIDPOINT_TS = [0.10, 0.20, 0.35, 0.55, 0.80];
   const midpoints: P[] = [];
   if (centerline.length >= 5) {
-    [0.25, 0.5, 0.75].forEach(t => {
+    MIDPOINT_TS.forEach(t => {
       const idx = Math.floor(t * (centerline.length - 1));
       const p = centerline[idx];
       midpoints.push({ x: p.x / scale, y: p.y / scale });
