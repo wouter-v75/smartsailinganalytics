@@ -613,11 +613,16 @@ export default function SailScanTab() {
     let cancelled = false;
     setDebugError('');
     setDebugProcessing(true);
+    const dlog = (...a: any[]) => console.log('[SailScan:debug]', ...a);
+    const t0 = performance.now();
+    const tick = (label: string) => dlog(label, '+' + Math.round(performance.now() - t0) + 'ms');
 
     (async () => {
       try {
+        tick('start; debugView=' + debugView);
         const cv = await loadOpenCV();
         if (cancelled) return;
+        tick('opencv ready');
 
         // Downsample for speed — long edge capped at 1024 px.
         const img = cachedImage.current!;
@@ -625,38 +630,53 @@ export default function SailScanTab() {
         const scale = Math.min(1, MAX / Math.max(img.width, img.height));
         const w = Math.max(1, Math.round(img.width * scale));
         const h = Math.max(1, Math.round(img.height * scale));
+        tick(`downsample ${img.width}x${img.height} -> ${w}x${h}`);
         const tmp = document.createElement('canvas');
         tmp.width = w; tmp.height = h;
         tmp.getContext('2d')!.drawImage(img, 0, 0, w, h);
+        tick('canvas drawn');
 
         const rgba = imageToMat(cv, tmp);
+        tick('rgba mat created (matFromImageData)');
         const gray = new cv.Mat();
         cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
         rgba.delete();
+        tick('gray mat ready');
 
         let outMat: any;
         if (debugView === 'clahe') {
           outMat = applyClahe(cv, gray);
+          tick('clahe done');
         } else if (debugView === 'orientation') {
           const enhanced = applyClahe(cv, gray);
+          tick('clahe done');
           const { angle, coherence } = structureTensor(cv, enhanced);
+          tick('structure tensor done');
           outMat = colorizeOrientation(cv, angle, coherence);
+          tick('colorize done');
           enhanced.delete();
           angle.delete();
           coherence.delete();
         } else { // 'edges'
           outMat = horizontalOnlyEdges(cv, gray);
+          tick('horizontal-only edges done');
         }
         gray.delete();
 
         if (debugCanvasRef.current && !cancelled) {
           matToCanvas(cv, outMat, debugCanvasRef.current);
+          tick('painted to debug canvas');
         }
         outMat.delete();
-        if (!cancelled) setDebugProcessing(false);
-      } catch (e: any) {
         if (!cancelled) {
-          setDebugError(e?.message || 'CV pipeline failed');
+          setDebugProcessing(false);
+          tick('pipeline complete');
+        }
+      } catch (e: any) {
+        const msg = e?.message || String(e);
+        console.error('[SailScan:debug] pipeline error', msg, e);
+        if (!cancelled) {
+          setDebugError(msg);
           setDebugProcessing(false);
         }
       }

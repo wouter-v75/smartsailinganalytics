@@ -306,6 +306,21 @@ export function matToCanvas(cv: CV, mat: Mat, canvas: HTMLCanvasElement): void {
 
 // Read an HTMLImageElement (or canvas) into a fresh Mat (CV_8UC4 RGBA).
 // Caller deletes.
+//
+// We deliberately avoid `cv.imread` because it can hang silently on
+// offscreen canvases under certain WASM versions. `cv.matFromImageData` works
+// from a plain ImageData and is much more reliable.
 export function imageToMat(cv: CV, img: HTMLImageElement | HTMLCanvasElement): Mat {
-  return cv.imread(img);
+  let canvas: HTMLCanvasElement;
+  if (img instanceof HTMLCanvasElement) {
+    canvas = img;
+  } else {
+    canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    canvas.getContext('2d')!.drawImage(img, 0, 0);
+  }
+  const ctx = canvas.getContext('2d')!;
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return cv.matFromImageData(imgData);
 }
