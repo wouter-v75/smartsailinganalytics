@@ -464,32 +464,51 @@ export function detectStripeFromTap(
     hC = hSum / cnt; sC = sSum / cnt; vC = vSum / cnt;
   }
 
-  // Build the binary mask, handling hue wrap-around.
-  const sLo = Math.max(0,   sC - satTol);
-  const sHi = Math.min(255, sC + satTol);
-  const vLo = Math.max(0,   vC - valTol);
-  const vHi = Math.min(255, vC + valTol);
-  const hLoRaw = hC - hueTol;
-  const hHiRaw = hC + hueTol;
-
+  // Build the binary mask. Two regimes:
+  //   - Achromatic sample (sC < 50, e.g. white-on-dark stripes): hue is
+  //     mathematically unreliable for near-white pixels, so we ignore H,
+  //     restrict S to a tight low band (excluding coloured regions like sky),
+  //     and threshold mainly on V. This is the regime sailing trim stripes
+  //     usually fall into (white tape on a coloured sail).
+  //   - Chromatic sample (sC ≥ 50, e.g. red, blue, yellow stripes): standard
+  //     hue-window threshold with hue wrap-around handling.
+  const isAchromatic = sC < 50;
   const mask = new cv.Mat();
-  if (hLoRaw < 0 || hHiRaw > 180) {
-    // Wrap: union of two ranges.
-    const lo1 = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.max(0, ((hLoRaw + 180) % 180)), sLo, vLo]);
-    const hi1 = cv.matFromArray(1, 1, cv.CV_8UC3, [180, sHi, vHi]);
-    const lo2 = cv.matFromArray(1, 1, cv.CV_8UC3, [0, sLo, vLo]);
-    const hi2 = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.min(180, ((hHiRaw + 180) % 180)), sHi, vHi]);
-    const m1 = new cv.Mat();
-    const m2 = new cv.Mat();
-    cv.inRange(hsv, lo1, hi1, m1);
-    cv.inRange(hsv, lo2, hi2, m2);
-    cv.bitwise_or(m1, m2, mask);
-    lo1.delete(); hi1.delete(); lo2.delete(); hi2.delete(); m1.delete(); m2.delete();
-  } else {
-    const lo = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.max(0, hLoRaw), sLo, vLo]);
-    const hi = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.min(180, hHiRaw), sHi, vHi]);
+
+  if (isAchromatic) {
+    // Hue: full range. Sat: 0 to sC + 30 (tight cap to exclude saturated areas
+    // like blue sky / coloured sail). Val: ±valTol around vC.
+    const sCap = Math.min(255, sC + 30);
+    const vLo = Math.max(0,   vC - valTol);
+    const vHi = Math.min(255, vC + valTol);
+    const lo = cv.matFromArray(1, 1, cv.CV_8UC3, [0,   0,    vLo]);
+    const hi = cv.matFromArray(1, 1, cv.CV_8UC3, [180, sCap, vHi]);
     cv.inRange(hsv, lo, hi, mask);
     lo.delete(); hi.delete();
+  } else {
+    const sLo = Math.max(0,   sC - satTol);
+    const sHi = Math.min(255, sC + satTol);
+    const vLo = Math.max(0,   vC - valTol);
+    const vHi = Math.min(255, vC + valTol);
+    const hLoRaw = hC - hueTol;
+    const hHiRaw = hC + hueTol;
+    if (hLoRaw < 0 || hHiRaw > 180) {
+      const lo1 = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.max(0, ((hLoRaw + 180) % 180)), sLo, vLo]);
+      const hi1 = cv.matFromArray(1, 1, cv.CV_8UC3, [180, sHi, vHi]);
+      const lo2 = cv.matFromArray(1, 1, cv.CV_8UC3, [0, sLo, vLo]);
+      const hi2 = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.min(180, ((hHiRaw + 180) % 180)), sHi, vHi]);
+      const m1 = new cv.Mat();
+      const m2 = new cv.Mat();
+      cv.inRange(hsv, lo1, hi1, m1);
+      cv.inRange(hsv, lo2, hi2, m2);
+      cv.bitwise_or(m1, m2, mask);
+      lo1.delete(); hi1.delete(); lo2.delete(); hi2.delete(); m1.delete(); m2.delete();
+    } else {
+      const lo = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.max(0, hLoRaw), sLo, vLo]);
+      const hi = cv.matFromArray(1, 1, cv.CV_8UC3, [Math.min(180, hHiRaw), sHi, vHi]);
+      cv.inRange(hsv, lo, hi, mask);
+      lo.delete(); hi.delete();
+    }
   }
   hsv.delete();
 
