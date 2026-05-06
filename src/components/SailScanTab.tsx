@@ -617,11 +617,19 @@ export default function SailScanTab() {
     const t0 = performance.now();
     const tick = (label: string) => dlog(label, '+' + Math.round(performance.now() - t0) + 'ms');
 
+    // One-time global rejection / error handler so silent microtask errors
+    // surface in the console alongside our [SailScan:debug] timeline.
+    const onRej = (ev: PromiseRejectionEvent) => dlog('UNHANDLED REJECTION', ev.reason?.message || ev.reason);
+    const onErr = (ev: ErrorEvent) => dlog('WINDOW ERROR', ev.message, 'at', ev.filename + ':' + ev.lineno);
+    window.addEventListener('unhandledrejection', onRej);
+    window.addEventListener('error', onErr);
+
     (async () => {
       try {
         tick('start; debugView=' + debugView);
         const cv = await loadOpenCV();
-        if (cancelled) return;
+        tick('past loadOpenCV await — typeof cv=' + typeof cv + ', Mat=' + typeof cv?.Mat + ', CLAHE=' + typeof cv?.CLAHE);
+        if (cancelled) { tick('CANCELLED after loadOpenCV — bailing'); return; }
         tick('opencv ready');
 
         // Downsample for speed — long edge capped at 1024 px.
@@ -682,7 +690,11 @@ export default function SailScanTab() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      window.removeEventListener('unhandledrejection', onRej);
+      window.removeEventListener('error', onErr);
+    };
   }, [debugView, imageSrc]);
 
   // ── derived metrics for results screen ───────────────────────────────────

@@ -81,18 +81,43 @@ export function loadOpenCV(): Promise<CV> {
     for (const url of OPENCV_URLS) {
       try {
         await tryLoadScript(url, 15000);
-        // Script bytes arrived. Poll for cv.Mat (WASM init lags the load event).
-        const startedAt = Date.now();
-        const POLL_MS = 60, INIT_TIMEOUT = 20000;
-        while (Date.now() - startedAt < INIT_TIMEOUT) {
-          if (w.cv?.Mat) {
-            log('cv.Mat ready after', Date.now() - startedAt, 'ms (from', url, ')');
-            return w.cv;
+        // Script bytes arrived. WASM module is initialised slightly later.
+        // Prefer cv.onRuntimeInitialized callback (Emscripten standard) — only
+        // when that fires are downstream classes like cv.CLAHE actually safe
+        // to construct. Fall back to polling for cv.Mat AND cv.CLAHE both,
+        // which catches partial-init states.
+        await new Promise<void>((resolve, reject) => {
+          const startedAt = Date.now();
+          const INIT_TIMEOUT = 20000;
+          // Path 1: explicit Emscripten callback
+          if (typeof w.cv?.then === 'function') {
+            log('cv has .then; awaiting Promise-style ready');
+            w.cv.then(resolve).catch(reject);
+            return;
           }
-          await new Promise(r => setTimeout(r, POLL_MS));
-        }
-        lastError = `script loaded from ${url} but cv.Mat never appeared (WASM init?)`;
-        log(lastError);
+          if (w.cv && 'onRuntimeInitialized' in w.cv && !w.cv.Mat) {
+            log('hooking onRuntimeInitialized');
+            const prev = w.cv.onRuntimeInitialized;
+            w.cv.onRuntimeInitialized = () => { try { prev?.(); } catch {} resolve(); };
+            // also poll as a backup
+          }
+          // Path 2: poll for both cv.Mat AND cv.CLAHE (partial init guard)
+          const tick = () => {
+            const cv = w.cv;
+            const ok = cv && typeof cv.Mat === 'function' && typeof cv.CLAHE === 'function';
+            if (ok) { resolve(); return; }
+            if (Date.now() - startedAt > INIT_TIMEOUT) {
+              reject(new Error(
+                `WASM init timed out — Mat=${typeof cv?.Mat}, CLAHE=${typeof cv?.CLAHE}`,
+              ));
+              return;
+            }
+            setTimeout(tick, 60);
+          };
+          tick();
+        });
+        log('cv.Mat AND cv.CLAHE ready (from', url, ')');
+        return w.cv;
       } catch (e: any) {
         lastError = `${url}: ${e?.message || e}`;
         log('CDN failed:', lastError);
