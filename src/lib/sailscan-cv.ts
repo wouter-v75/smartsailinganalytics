@@ -447,21 +447,63 @@ export function detectStripeFromTap(
   bgr.delete();
 
   // Resolve HSV centre — provided hint or sample around tap.
+  //
+  // Sampling strategy when no hint is given: read pixels from the ORIGINAL
+  // image (not the downsampled HSV mat) inside a 9×9 region around the tap,
+  // pick the 5 brightest, and take the per-channel median of their RGB →
+  // HSV. Rationale:
+  //   - Sampling at original resolution avoids the 4× spatial dilution that
+  //     the downsampled mat introduces; on thin stripes that dilution makes
+  //     a 21×21 mean almost entirely background.
+  //   - "Top-5 brightest" picks the actual stripe pixels for typical
+  //     light-on-dark trim stripes, even if the user is off by a few pixels.
+  //   - Median over the top 5 is robust to per-pixel JPEG noise and
+  //     compression artefacts.
+  // For dark-on-light stripes a future option could sample the darkest
+  // pixels instead. v1 of Phase B is tuned for the common case.
   let hC: number, sC: number, vC: number;
   if (options.hsvHint) {
     hC = options.hsvHint.h; sC = options.hsvHint.s; vC = options.hsvHint.v;
   } else {
-    const PR = 10;
-    let hSum = 0, sSum = 0, vSum = 0, cnt = 0;
-    const data = hsv.data as Uint8Array;
-    for (let y = Math.max(0, ty - PR); y <= Math.min(h - 1, ty + PR); y++) {
-      for (let x = Math.max(0, tx - PR); x <= Math.min(w - 1, tx + PR); x++) {
-        const idx = (y * w + x) * 3;
-        hSum += data[idx]; sSum += data[idx + 1]; vSum += data[idx + 2];
-        cnt++;
-      }
+    const RAD = 4; // 9×9 sample region in original pixels
+    const cxOrig = Math.floor(tapImagePx.x);
+    const cyOrig = Math.floor(tapImagePx.y);
+    const sx0 = Math.max(0, cxOrig - RAD);
+    const sy0 = Math.max(0, cyOrig - RAD);
+    const sw  = Math.min(imgW, cxOrig + RAD + 1) - sx0;
+    const sh  = Math.min(imgH, cyOrig + RAD + 1) - sy0;
+    const sCanvas = document.createElement('canvas');
+    sCanvas.width = Math.max(1, sw);
+    sCanvas.height = Math.max(1, sh);
+    sCanvas.getContext('2d')!.drawImage(imgElement as any, -sx0, -sy0);
+    const pixData = sCanvas.getContext('2d')!.getImageData(0, 0, sCanvas.width, sCanvas.height).data;
+
+    const all: { r: number; g: number; b: number; v: number }[] = [];
+    for (let i = 0; i < pixData.length; i += 4) {
+      const r = pixData[i], g = pixData[i + 1], b = pixData[i + 2];
+      all.push({ r, g, b, v: Math.max(r, g, b) });
     }
-    hC = hSum / cnt; sC = sSum / cnt; vC = vSum / cnt;
+    all.sort((a, b) => b.v - a.v);
+    const top = all.slice(0, Math.min(5, all.length));
+    // Per-channel median of top-N
+    const med = (arr: number[]) => arr.slice().sort((a, b) => a - b)[Math.floor(arr.length / 2)];
+    const mR = med(top.map(p => p.r));
+    const mG = med(top.map(p => p.g));
+    const mB = med(top.map(p => p.b));
+    // RGB → HSV (OpenCV scale: H 0..180, S/V 0..255)
+    const maxC = Math.max(mR, mG, mB);
+    const minC = Math.min(mR, mG, mB);
+    const delta = maxC - minC;
+    vC = maxC;
+    sC = maxC === 0 ? 0 : (delta * 255) / maxC;
+    let hRaw = 0;
+    if (delta === 0)            hRaw = 0;
+    else if (maxC === mR)       hRaw = 30 * (((mG - mB) / delta + 6) % 6);
+    else if (maxC === mG)       hRaw = 30 * ((mB - mR) / delta + 2);
+    else                        hRaw = 30 * ((mR - mG) / delta + 4);
+    hC = hRaw;
+    console.log('[SailScan:cv] sampled stripe colour from top-brightest pixels',
+      { tap: tapImagePx, rgb: { r: mR, g: mG, b: mB }, hsv: { h: hC, s: sC, v: vC } });
   }
 
   // Build the binary mask. Two regimes:
@@ -526,7 +568,11 @@ export function detectStripeFromTap(
   const tapLabel = labels.intPtr(ty, tx)[0];
   if (tapLabel === 0) {
     mask.delete(); labels.delete(); stats.delete(); centroids.delete();
-    throw new Error('Tap landed on background — try tapping more precisely on the stripe.');
+    throw new Error(
+      `Tap landed on background — colour signature [H=${Math.round(hC)} S=${Math.round(sC)} V=${Math.round(vC)}]`
+      + ` didn't match the stripe at the tap. Try tapping more precisely on the brightest part of the stripe,`
+      + ` or use the ↺ colour button to clear and retry.`,
+    );
   }
 
   const cArea = stats.intPtr(tapLabel, cv.CC_STAT_AREA)[0] as number;
