@@ -20,6 +20,10 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { computeStripeMetrics, splinePolyline, computeTwist } from '../lib/sailscan';
+import {
+  loadOpenCV, applyClahe, structureTensor, maskByOrientation,
+  horizontalOnlyEdges, colorizeOrientation, matToCanvas, imageToMat,
+} from '../lib/sailscan-cv';
 
 type Step = 'select' | 'live' | 'preview' | 'mark' | 'results';
 interface P { x: number; y: number; }
@@ -78,6 +82,13 @@ export default function SailScanTab() {
   const [activeButton, setActiveButton] = useState<string | null>(null);
   // Original File handle, kept so we can extract EXIF later (object URLs lose it)
   const originalFile = useRef<File | null>(null);
+
+  // ── v2 Phase A: CV debug pane state ──────────────────────────────────────
+  type DebugView = 'off' | 'clahe' | 'orientation' | 'edges';
+  const [debugView,       setDebugView]       = useState<DebugView>('off');
+  const [debugProcessing, setDebugProcessing] = useState(false);
+  const [debugError,      setDebugError]      = useState<string>('');
+  const debugCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // ── timestamp + save-to-Photos state ─────────────────────────────────────
   const [photoTimestamp, setPhotoTimestamp] = useState<string>('');     // datetime-local string
@@ -589,6 +600,71 @@ export default function SailScanTab() {
 
   useEffect(() => { if (imageSrc) extractTimestamp(); }, [imageSrc, extractTimestamp]);
 
+  // ── v2 Phase A: CV debug pipeline ────────────────────────────────────────
+  // When the user toggles a debug view we lazy-load OpenCV.js, downsample the
+  // photo to a max edge of 1024 px (CV's worth doing on a small image; full
+  // resolution waits for v2 release), run the requested stage, and paint the
+  // result to debugCanvasRef which overlays the marking canvas.
+  //
+  // pointer-events: none on the debug canvas so the user can still interact
+  // with the underlying marking canvas (drag points, pan, etc.).
+  useEffect(() => {
+    if (debugView === 'off' || !imageSrc || !cachedImage.current) return;
+    let cancelled = false;
+    setDebugError('');
+    setDebugProcessing(true);
+
+    (async () => {
+      try {
+        const cv = await loadOpenCV();
+        if (cancelled) return;
+
+        // Downsample for speed — long edge capped at 1024 px.
+        const img = cachedImage.current!;
+        const MAX = 1024;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const tmp = document.createElement('canvas');
+        tmp.width = w; tmp.height = h;
+        tmp.getContext('2d')!.drawImage(img, 0, 0, w, h);
+
+        const rgba = imageToMat(cv, tmp);
+        const gray = new cv.Mat();
+        cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
+        rgba.delete();
+
+        let outMat: any;
+        if (debugView === 'clahe') {
+          outMat = applyClahe(cv, gray);
+        } else if (debugView === 'orientation') {
+          const enhanced = applyClahe(cv, gray);
+          const { angle, coherence } = structureTensor(cv, enhanced);
+          outMat = colorizeOrientation(cv, angle, coherence);
+          enhanced.delete();
+          angle.delete();
+          coherence.delete();
+        } else { // 'edges'
+          outMat = horizontalOnlyEdges(cv, gray);
+        }
+        gray.delete();
+
+        if (debugCanvasRef.current && !cancelled) {
+          matToCanvas(cv, outMat, debugCanvasRef.current);
+        }
+        outMat.delete();
+        if (!cancelled) setDebugProcessing(false);
+      } catch (e: any) {
+        if (!cancelled) {
+          setDebugError(e?.message || 'CV pipeline failed');
+          setDebugProcessing(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [debugView, imageSrc]);
+
   // ── derived metrics for results screen ───────────────────────────────────
   const completedStripes = stripes.filter(s => s.luff && s.leech);
   const stripeMetrics = stripes.map(s => (s.luff && s.leech) ? computeStripeMetrics(s as { luff: P; leech: P; mid: P[] }) : null);
@@ -912,7 +988,7 @@ export default function SailScanTab() {
                 className="px-3 py-1.5 rounded-full text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white active:scale-95 flex-shrink-0">+ Add stripe</button>
             </div>
 
-            {/* Canvas */}
+            {/* Canvas + (optional) CV debug overlay */}
             <div className="flex-1 min-h-0 flex items-center justify-center bg-black relative overflow-hidden">
               <canvas
                 ref={canvasRef}
@@ -927,6 +1003,25 @@ export default function SailScanTab() {
                 className="w-full h-full"
                 style={{ maxWidth: '100%', maxHeight: '100%', touchAction: 'none', cursor: dragging ? 'grabbing' : 'crosshair' }}
               />
+              {/* Debug overlay — visible only when a debug view is selected.
+                  pointer-events:none so touches still drive the marking canvas. */}
+              {debugView !== 'off' && (
+                <canvas
+                  ref={debugCanvasRef}
+                  className="absolute inset-0"
+                  style={{ width: '100%', height: '100%', pointerEvents: 'none', opacity: 0.85 }}
+                />
+              )}
+              {debugProcessing && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-amber-300 text-xs font-bold pointer-events-none">
+                  ⏳ Processing CV pipeline…
+                </div>
+              )}
+              {debugError && (
+                <div className="absolute top-2 left-2 right-2 px-3 py-2 bg-red-900/80 text-red-100 text-[11px] rounded">
+                  CV error: {debugError}
+                </div>
+              )}
             </div>
 
             {/* Bottom controls */}
@@ -987,6 +1082,30 @@ export default function SailScanTab() {
                   ? '✓ Compute (add a midpoint first)'
                   : `✓ Compute · ${stripesWithCurve.length} stripe${stripesWithCurve.length === 1 ? '' : 's'}`}
               </button>
+
+              {/* ── v2 Phase A debug pane: visualise CV pipeline stages ─── */}
+              <div className="border-t border-slate-800 pt-2">
+                <div className="flex items-center gap-1.5 text-[10px]">
+                  <span className="text-slate-500 uppercase tracking-wider mr-1">CV debug</span>
+                  {(['off','clahe','orientation','edges'] as DebugView[]).map(v => (
+                    <button key={v} onClick={() => setDebugView(v)}
+                      className={`px-2 py-1 rounded font-mono ${
+                        debugView === v
+                          ? 'bg-amber-500 text-black font-bold'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+                {debugView !== 'off' && (
+                  <p className="text-[10px] text-slate-500 mt-1 leading-snug">
+                    {debugView === 'clahe'       && 'CLAHE-normalised gray (exposure equalisation)'}
+                    {debugView === 'orientation' && 'Per-pixel orientation (hue) × coherence (saturation). Horizontal=red, vertical=cyan.'}
+                    {debugView === 'edges'       && 'Canny edges after masking out near-vertical pixels. Stripes should remain; luff/leech should drop out.'}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         )}
