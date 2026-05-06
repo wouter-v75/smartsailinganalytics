@@ -393,7 +393,7 @@ export default function SailScanTab() {
       const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
       const ratio = dist / initialDist;
       const dampened = 1 + (ratio - 1) * 0.4;
-      setZoom(Math.max(0.5, Math.min(8, initialZoom * dampened)));
+      setZoom(Math.max(0.5, Math.min(32,initialZoom * dampened)));
       return;
     }
 
@@ -475,7 +475,7 @@ export default function SailScanTab() {
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.97 : 1.03;
-    setZoom(prev => Math.max(0.5, Math.min(8, prev * delta)));
+    setZoom(prev => Math.max(0.5, Math.min(32,prev * delta)));
   };
 
   // ── stripe management ────────────────────────────────────────────────────
