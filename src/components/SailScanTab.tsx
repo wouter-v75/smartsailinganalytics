@@ -255,37 +255,62 @@ export default function SailScanTab() {
     }
     setAutoDetecting(true);
     setAutoDetectMsg('');
+    const dlog = (...a: any[]) => console.log('[SailScan:detect]', ...a);
     try {
       await ensureOpenCV();
       const cv = getCV();
-      // Use the per-yacht learned HSV if we have one, otherwise let detect
-      // sample the colour from a 21×21 patch around the tap and store it.
+      const img = cachedImage.current;
       const prefs = getYachtPrefs(yachtKey);
-      const result = detectStripeFromTap(cv, cachedImage.current, tapCoords, {
-        hsvHint: prefs.stripeHsv,
-      });
+      dlog('tap', tapCoords, 'storedHsv', prefs.stripeHsv);
 
-      // Persist learned colour for next time.
-      if (!prefs.stripeHsv) {
-        setYachtPref(yachtKey, 'stripeHsv', result.hsvSample);
+      let result;
+      let usedHint = false;
+      try {
+        // First pass: use the per-yacht stored colour if we have one.
+        result = detectStripeFromTap(cv, img, tapCoords, {
+          hsvHint: prefs.stripeHsv,
+        });
+        usedHint = !!prefs.stripeHsv;
+        dlog('first pass', { confidence: result.confidence, usedHint });
+      } catch (firstErr: any) {
+        // If the stored colour was stale (background error), forget it and
+        // resample fresh from the tap. This makes auto-detect self-healing
+        // across yacht / lighting changes.
+        const msg = firstErr?.message || String(firstErr);
+        if (msg.toLowerCase().includes('background') && prefs.stripeHsv) {
+          dlog('first pass background, retrying without hint');
+          setYachtPref(yachtKey, 'stripeHsv', undefined);
+          result = detectStripeFromTap(cv, img, tapCoords, {});
+          dlog('retry pass', { confidence: result.confidence });
+        } else {
+          throw firstErr;
+        }
       }
 
-      // Apply to the active stripe (replace whatever was there). We treat
-      // the user's tap as the LUFF and the detected farthest point as the
-      // LEECH, which matches the user's tap-the-luff intent.
+      // Always (re)persist the colour we ended up using — this keeps the
+      // stored hint matching the most recent successful tap.
+      setYachtPref(yachtKey, 'stripeHsv', result.hsvSample);
+      dlog('saved hsv', result.hsvSample);
+
+      // Apply to the active stripe (replace whatever was there). The user's
+      // tap is kept as the LUFF; the farthest pixel in the component is the
+      // LEECH; midpoints sample the centerline in between.
       setStripes(prev => prev.map((s, i) => i === activeIdx
         ? { luff: result.luff, leech: result.leech, mid: result.midpoints }
         : s,
       ));
 
       const pct = (result.confidence * 100).toFixed(0);
+      const reused = usedHint && prefs.stripeHsv ? ' (reused colour)' : ' (learned colour)';
       if (result.confidence < 0.15) {
-        setAutoDetectMsg(`Low confidence (${pct}%). Drag the points to refine, or undo and tap again.`);
+        setAutoDetectMsg(`Low confidence (${pct}%)${reused}. Drag the points to refine, or undo and tap again.`);
       } else {
-        setAutoDetectMsg(`Detected · ${result.midpoints.length} midpoints · ${pct}% confidence. Tap another stripe or refine.`);
+        setAutoDetectMsg(`Detected · ${result.midpoints.length} midpoints · ${pct}% confidence${reused}.`);
       }
     } catch (err: any) {
-      setAutoDetectMsg(err?.message || 'Auto-detect failed.');
+      const msg = err?.message || 'Auto-detect failed.';
+      console.error('[SailScan:detect]', msg, err);
+      setAutoDetectMsg(msg);
     } finally {
       setAutoDetecting(false);
     }
