@@ -419,6 +419,11 @@ export function detectStripeFromTap(
     satTol?: number;
     valTol?: number;
     morphKernelPx?: number;
+    /** When provided, use this as the leech endpoint (in original-image
+     *  coordinates) instead of the flood-fill's farthest-pixel result.
+     *  Useful for the "user supplies both endpoints, app fills midpoints"
+     *  workflow when the algorithm's auto-leech misses the actual stripe end. */
+    leechHint?: P;
   } = {},
 ): DetectionResult {
   const imgW = (imgElement as HTMLImageElement).naturalWidth || imgElement.width;
@@ -546,47 +551,69 @@ export function detectStripeFromTap(
   const cX = bbX0, cY = bbY0;
   const cW = bbX1 - bbX0 + 1, cH = bbY1 - bbY0 + 1;
 
-  // Centerline: parameterise along the tap→leech vector. For each step t in
-  // [0,1], find pixels in the component near the chord at that t and take the
-  // perpendicular median. Robust to whether the stripe is roughly horizontal,
-  // diagonal, or near-vertical.
-  const dx = leechX - tx, dy = leechY - ty;
-  const chordLen = Math.sqrt(maxDist2);
-  const centerline: P[] = [];
+  // ── Resolve chord (tap→leech) ───────────────────────────────────────────
+  // If the caller supplied an explicit leechHint (the user has manually
+  // marked both luff and leech), use that as the leech and the chord
+  // direction. Otherwise default to the flood-fill's farthest-pixel result.
+  let chordTx = leechX, chordTy = leechY;
+  if (options.leechHint) {
+    chordTx = Math.max(0, Math.min(w - 1, Math.round(options.leechHint.x * scale)));
+    chordTy = Math.max(0, Math.min(h - 1, Math.round(options.leechHint.y * scale)));
+  }
+  const dx = chordTx - tx, dy = chordTy - ty;
+  const chordLen = Math.sqrt(dx * dx + dy * dy);
+
+  // ── Sample centerline along the chord ───────────────────────────────────
+  // Walk along the tap→leech vector, at each step collect perpendicular
+  // distances of in-component pixels and take the median. We then smooth
+  // those perp-distance values with a moving-average to remove jitter
+  // caused by component spurs and chord-perpendicular wobble.
+  const centerlineTs: number[] = [];
+  const centerlineDs: number[] = [];
+  let ux = 0, uy = 0, nx = 0, ny = 0;
   if (chordLen > 4) {
-    const ux = dx / chordLen, uy = dy / chordLen;          // along-chord unit
-    const nx = -uy, ny = ux;                                // perpendicular
-    const SAMPLES = 40; // sample 40 t-positions along chord
+    ux = dx / chordLen; uy = dy / chordLen;          // along-chord unit
+    nx = -uy;           ny = ux;                      // perpendicular
+    const SAMPLES = 60;
     const PERP_RADIUS = 30;
     for (let i = 0; i <= SAMPLES; i++) {
       const t = i / SAMPLES;
       const cx = tx + ux * chordLen * t;
       const cy = ty + uy * chordLen * t;
-      // Collect perpendicular distances of in-component pixels near (cx, cy).
       const ds: number[] = [];
       for (let pp = -PERP_RADIUS; pp <= PERP_RADIUS; pp++) {
         const sx = Math.round(cx + nx * pp);
         const sy = Math.round(cy + ny * pp);
-        if (sx < cX || sx >= cX + cW || sy < cY || sy >= cY + cH) continue;
+        if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
         if (accepted[sy * w + sx]) ds.push(pp);
       }
       if (ds.length === 0) continue;
       ds.sort((a, b) => a - b);
       const median = ds[Math.floor(ds.length / 2)];
-      centerline.push({
-        x: cx + nx * median,
-        y: cy + ny * median,
-      });
+      centerlineTs.push(t);
+      centerlineDs.push(median);
     }
   }
 
-  // (No CV mats to clean up here — flood fill ran in pure JS on the HSV data.)
+  // Moving-average smoothing of perpendicular distances. Window of 5 covers
+  // ±2 samples either side, which damps the sample-to-sample jitter without
+  // blurring legitimate curvature.
+  const smoothedDs: number[] = new Array(centerlineDs.length);
+  const W = 2; // half-window: total 5 samples per smoothed point
+  for (let i = 0; i < centerlineDs.length; i++) {
+    let sum = 0, cnt = 0;
+    for (let j = Math.max(0, i - W); j <= Math.min(centerlineDs.length - 1, i + W); j++) {
+      sum += centerlineDs[j]; cnt++;
+    }
+    smoothedDs[i] = cnt ? sum / cnt : 0;
+  }
 
   // Sample 5 midpoints biased toward the luff. Sail entry curvature is
-  // concentrated in the front 30–40% of the chord (where the leading-edge
-  // shape carries most of the aerodynamic signal), so placing 3 of the 5
-  // midpoints in the front half lets the spline track that curvature
-  // accurately while still constraining the trailing third.
+  // concentrated in the front 30–40% of the chord (the leading-edge shape
+  // carries most of the aerodynamic signal), so 3 of the 5 midpoints sit in
+  // the front half. Each midpoint is interpolated from the *smoothed*
+  // centerline rather than read from a raw nearest sample, eliminating
+  // single-sample noise.
   //
   //   t = 0.10  near luff (entry detail)
   //       0.20  entry curvature
@@ -595,17 +622,41 @@ export function detectStripeFromTap(
   //       0.80  approaching leech (exit angle reference)
   const MIDPOINT_TS = [0.10, 0.20, 0.35, 0.55, 0.80];
   const midpoints: P[] = [];
-  if (centerline.length >= 5) {
+  const interpD = (t: number): number | null => {
+    const n = centerlineTs.length;
+    if (n === 0) return null;
+    if (t <= centerlineTs[0])     return smoothedDs[0];
+    if (t >= centerlineTs[n - 1]) return smoothedDs[n - 1];
+    for (let i = 0; i < n - 1; i++) {
+      if (t >= centerlineTs[i] && t <= centerlineTs[i + 1]) {
+        const span = centerlineTs[i + 1] - centerlineTs[i];
+        if (span === 0) return smoothedDs[i];
+        const f = (t - centerlineTs[i]) / span;
+        return smoothedDs[i] * (1 - f) + smoothedDs[i + 1] * f;
+      }
+    }
+    return smoothedDs[n - 1];
+  };
+  if (chordLen > 4 && centerlineTs.length >= 5) {
     MIDPOINT_TS.forEach(t => {
-      const idx = Math.floor(t * (centerline.length - 1));
-      const p = centerline[idx];
-      midpoints.push({ x: p.x / scale, y: p.y / scale });
+      const d = interpD(t);
+      if (d == null) return;
+      const cx = tx + ux * chordLen * t;
+      const cy = ty + uy * chordLen * t;
+      midpoints.push({
+        x: (cx + nx * d) / scale,
+        y: (cy + ny * d) / scale,
+      });
     });
   }
 
   // Map endpoints back to original-image space. Keep luff = user's exact tap.
+  // Leech is either the user's hint (preserved exactly) or the flood-fill's
+  // farthest-pixel result (mapped back from downsampled space).
   const luff: P = { x: tapImagePx.x, y: tapImagePx.y };
-  const leech: P = { x: leechX / scale, y: leechY / scale };
+  const leech: P = options.leechHint
+    ? { x: options.leechHint.x, y: options.leechHint.y }
+    : { x: leechX / scale, y: leechY / scale };
 
   const longEdge = Math.max(w, h);
   const confidence = Math.max(0, Math.min(1, chordLen / (longEdge * 0.5)));

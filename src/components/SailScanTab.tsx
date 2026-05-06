@@ -250,6 +250,35 @@ export default function SailScanTab() {
     }));
   };
 
+  // ── Phase B: hybrid mode — fill midpoints when both endpoints are set ────
+  // Runs detection from the user-placed luff, but uses the user-placed leech
+  // as the endpoint instead of the flood-fill's farthest pixel. The active
+  // stripe's existing luff/leech are kept; only the midpoints are replaced.
+  const runAutoFillFromEndpoints = async () => {
+    const s = stripes[activeIdx];
+    if (!s.luff || !s.leech || !cachedImage.current) return;
+    setAutoDetecting(true);
+    setAutoDetectMsg('');
+    try {
+      await ensureOpenCV();
+      const cv = getCV();
+      const result = detectStripeFromTap(cv, cachedImage.current, s.luff, {
+        leechHint: s.leech,
+      });
+      // Keep the user's original luff/leech; only swap in the new midpoints.
+      setStripes(prev => prev.map((str, i) => i === activeIdx
+        ? { luff: s.luff, leech: s.leech, mid: result.midpoints }
+        : str,
+      ));
+      const pct = (result.confidence * 100).toFixed(0);
+      setAutoDetectMsg(`Filled ${result.midpoints.length} midpoints between your luff and leech · ${pct}% confidence.`);
+    } catch (err: any) {
+      setAutoDetectMsg(err?.message || 'Auto-fill failed.');
+    } finally {
+      setAutoDetecting(false);
+    }
+  };
+
   // ── Phase B: run auto-detection on a tap ─────────────────────────────────
   // tapCoords are in *image-pixel* space (same coordinate system that
   // getCanvasCoords returns and that all stripe points use).
@@ -1216,6 +1245,20 @@ export default function SailScanTab() {
                   );
                 })()}
               </div>
+              {/* Phase B hybrid: when both endpoints are placed (manually or
+                  auto), let the user re-fill midpoints between them. Useful
+                  when the auto-leech missed and the user tweaked it manually. */}
+              {(() => {
+                const s = stripes[activeIdx];
+                const canFill = !!(s.luff && s.leech) && !autoDetecting;
+                if (!canFill) return null;
+                return (
+                  <button onClick={runAutoFillFromEndpoints}
+                    className="w-full px-3 py-2 rounded-lg text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white active:scale-95">
+                    ✨ Auto-fill midpoints between luff &amp; leech
+                  </button>
+                );
+              })()}
               {autoDetectMsg && (
                 <p className={`text-[11px] leading-snug ${autoDetectMsg.startsWith('Detected') ? 'text-emerald-300' : 'text-amber-300'}`}>
                   {autoDetectMsg}
