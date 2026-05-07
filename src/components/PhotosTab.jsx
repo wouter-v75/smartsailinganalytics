@@ -457,6 +457,59 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
         {photo.lat&&photo.lon&&<div style={{marginTop:5,fontSize:9,color:"#22C55E"}}>📍 {photo.lat.toFixed(5)}°, {photo.lon.toFixed(5)}°</div>}
         {photo.utc&&<div style={{marginTop:4,fontSize:9,color:"#475569"}}>🕐 {new Date(photo.utc).toISOString().slice(0,19).replace("T"," ")} UTC</div>}
       </div>
+
+      {/* SailScan analysis card — appears for photos saved from the SailScan
+          tab. Reads the sailscan_data JSON we stash on save and renders the
+          per-stripe metrics + inter-stripe twist. */}
+      {photo.sailscan_data && (()=>{
+        let parsed;
+        try { parsed = typeof photo.sailscan_data === "string"
+          ? JSON.parse(photo.sailscan_data)
+          : photo.sailscan_data; }
+        catch { return null; }
+        const stripes = parsed?.stripes || [];
+        if (!stripes.length) return null;
+        const fmt = (v,d=1)=> v==null||isNaN(v) ? "—" : (+v).toFixed(d);
+        return (
+          <div style={{background:"#0A1929",border:"1px solid #8B5CF640",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div style={{fontSize:9,color:"#8B5CF6",letterSpacing:2,textTransform:"uppercase"}}>⛵ SailScan analysis</div>
+              {parsed.algorithmVersion && <div style={{fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{parsed.algorithmVersion}</div>}
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {stripes.map((s,i)=>{
+                const m = s.metrics;
+                if (!m) return (
+                  <div key={i} style={{background:"#071624",borderRadius:6,padding:"6px 10px",border:"1px solid #8B5CF615",fontSize:10,color:"#94A3B8"}}>
+                    Stripe {(s.idx??i)+1}: chord only (no curve fit)
+                  </div>
+                );
+                return (
+                  <div key={i} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:"1px solid #8B5CF615"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#A78BFA",marginBottom:4}}>Stripe {(s.idx??i)+1}</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:4,fontSize:10,fontFamily:"monospace",color:"#94A3B8"}}>
+                      <span>camber: <b style={{color:"#E2E8F0"}}>{fmt(m.draftPct,2)}%</b></span>
+                      <span>draft: <b style={{color:"#E2E8F0"}}>{fmt(m.draftPositionPct,0)}%</b></span>
+                      <span>entry: <b style={{color:"#E2E8F0"}}>{fmt(m.entryAngleDeg,1)}°</b></span>
+                      <span>exit: <b style={{color:"#E2E8F0"}}>{fmt(m.exitAngleDeg,1)}°</b></span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {parsed.twist?.length>0 && (
+              <div style={{marginTop:6,fontSize:10,color:"#94A3B8"}}>
+                Inter-stripe twist: <span style={{color:"#E2E8F0",fontFamily:"monospace"}}>{parsed.twist.map(t=>`${(+t.deg).toFixed(1)}°`).join(" / ")}</span>
+              </div>
+            )}
+            {parsed.stripes.some(s=>s.userTaps?.length>0) && (
+              <div style={{marginTop:4,fontSize:9,color:"#64748B"}}>
+                User-anchored stripes: {parsed.stripes.filter(s=>s.userTaps?.length>0).map(s=>s.userTaps.length).join("+")} mid hint{parsed.stripes.reduce((n,s)=>n+(s.userTaps?.length||0),0)===1?"":"s"}
+              </div>
+            )}
+          </div>
+        );
+      })()}
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button onClick={handleExport} disabled={!rendered} style={{flex:1,background:rendered?"#8B5CF6":"#1E3A5A",border:"none",borderRadius:7,padding:"9px 0",color:rendered?"#fff":"#475569",fontWeight:700,cursor:rendered?"pointer":"default",fontSize:12}}>⬇ Export JPEG</button>
         {!photo.cloudSynced&&<button onClick={onUpload} disabled={uploading} style={{flex:1,background:uploading?"#1E3A5A":"#06B6D4",border:"none",borderRadius:7,padding:"9px 0",color:uploading?"#475569":"#000",fontWeight:700,cursor:uploading?"default":"pointer",fontSize:12}}>{uploading?"Uploading…":"☁ Upload"}</button>}
@@ -535,6 +588,19 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
 
   const LS_KEY = `ssa:photos-meta:${activeDate}`;
 
+  // Bumped when SailScan / SquashShots save a new photo so the load-effect
+  // below re-runs without requiring a page reload. Filter to saves on the
+  // currently-viewed date so an unrelated save doesn't churn the list.
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  useEffect(()=>{
+    const onSaved = (e) => {
+      const d = e?.detail?.date;
+      if(!d || d === activeDate) setRefreshNonce(n => n + 1);
+    };
+    window.addEventListener('ssa:photo-saved', onSaved);
+    return ()=>window.removeEventListener('ssa:photo-saved', onSaved);
+  },[activeDate]);
+
   // Load metadata from localStorage, blobs from IDB, fill in cloud thumb URLs
   useEffect(()=>{
     if(!activeDate)return;
@@ -571,9 +637,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       if(enriched.length>0) setSelected(enriched[0]);
       if(willEnrich) savePhotos(enriched);
     });
-  // logData/xmlData intentionally in deps so photos re-enrich when data arrives
+  // logData/xmlData intentionally in deps so photos re-enrich when data arrives.
+  // refreshNonce in deps lets ssa:photo-saved trigger a reload of the date.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[activeDate, logData, xmlData]);
+  },[activeDate, logData, xmlData, refreshNonce]);
 
   const savePhotos = useCallback((updated)=>{
     // Save metadata to localStorage (no blobs)

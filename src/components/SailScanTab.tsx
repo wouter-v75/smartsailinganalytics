@@ -1059,9 +1059,14 @@ export default function SailScanTab() {
         localStorage.setItem('ssa:sessions', JSON.stringify(sessions));
       }
 
+      // Notify the rest of the app that a photo + session may have appeared.
+      // Otherwise PhotosTab and the session sidebar stay stale until a full
+      // page reload — the new SailScan save would be invisible.
+      window.dispatchEvent(new CustomEvent('ssa:photo-saved', { detail: { id, date, source: 'sailscan' } }));
+
       navigator.vibrate?.([50, 50, 100]);
       setSaveStatus('saved');
-      setSaveMsg(`Saved to Photos · ${date} · ${stripesWithCurve.length} stripe${stripesWithCurve.length === 1 ? '' : 's'}`);
+      setSaveMsg(`Saved to Photos · ${date} · ${stripesWithCurve.length} stripe${stripesWithCurve.length === 1 ? '' : 's'} — open Photos tab and navigate to ${date}`);
     } catch (err: any) {
       setSaveStatus('error');
       setSaveMsg(err?.message || 'Save failed');

@@ -3541,6 +3541,20 @@ export default function SmartSailingAnalytics(){
     setPlayUtc(utc);
   },[]);
 
+  // When SailScan (or SquashShots) saves a new photo + creates a session,
+  // they emit a CustomEvent so the sessions sidebar and PhotosTab can pick
+  // up the new date without requiring a full page reload.
+  useEffect(()=>{
+    const refresh=()=>{
+      try{
+        const sx=getSessions().sort((a,b)=>b.date.localeCompare(a.date));
+        setSessions(sx);
+      }catch(e){console.warn("[ssa:photo-saved] refresh failed",e);}
+    };
+    window.addEventListener("ssa:photo-saved",refresh);
+    return ()=>window.removeEventListener("ssa:photo-saved",refresh);
+  },[]);
+
   useEffect(()=>{
     async function boot(){
       const today=TODAY();
