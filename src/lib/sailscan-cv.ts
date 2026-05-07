@@ -475,26 +475,38 @@ export function detectStripeFromTap(
   cv.cvtColor(bgr, hsv, cv.COLOR_BGR2HSV);
   bgr.delete();
 
-  // ── Multi-seed flood fill ───────────────────────────────────────────────
-  // We try the user's luff first, then 3 chord-interior points (only if a
-  // leechHint was supplied). The biggest connected component wins. This
-  // makes detection robust when the user's luff/leech taps land *near* but
-  // not exactly *on* a stripe pixel — a chord-interior seed will likely fall
-  // inside the stripe.
+  // ── Pre-compute chord direction ─────────────────────────────────────────
+  // Done BEFORE flood-fill so we can use it as a constraint during growth.
+  // Perpendicular n always picked to point "down" in image (positive y)
+  // so a positive perpendicular distance means "below the chord", which is
+  // the sail-belly side. This convention matches the centerline filter and
+  // the snap-to-component check.
   const data = hsv.data as Uint8Array;
   const HUE_DIFF = options.hueTol ?? 15;
   const SAT_DIFF = options.satTol ?? 60;
   const VAL_DIFF = options.valTol ?? 60;
   const MAX_PIXELS = Math.max(2000, Math.floor((w * h) / 8));
 
-  // Pre-compute leech-hint coords in downsampled space (used for both seed
-  // candidates and chord direction below).
   const lhDsX = options.leechHint
     ? Math.max(0, Math.min(w - 1, Math.round(options.leechHint.x * scale)))
     : tx;
   const lhDsY = options.leechHint
     ? Math.max(0, Math.min(h - 1, Math.round(options.leechHint.y * scale)))
     : ty;
+  const cdx = lhDsX - tx, cdy = lhDsY - ty;
+  const chordLenPre = Math.sqrt(cdx * cdx + cdy * cdy);
+  let uxC = 0, uyC = 0, nxC = 0, nyC = 0;
+  if (chordLenPre > 4) {
+    uxC = cdx / chordLenPre; uyC = cdy / chordLenPre;
+    nxC = -uyC;             nyC = uxC;
+    if (nyC < 0) { nxC = -nxC; nyC = -nyC; }
+  }
+  // Flood-fill perpendicular constraint. ABOVE chord we are strict — glints
+  // and sky-reflection blobs sit there and would derail the component.
+  // BELOW chord we are generous — the actual stripe centerline can sit up
+  // to ~30% of chord length away when sail draft is at the upper bound.
+  const MAX_ABOVE_CHORD = 5;                                              // px (downsampled)
+  const MAX_BELOW_CHORD = chordLenPre > 4 ? Math.max(60, chordLenPre * 0.45) : 99999;
 
   const seeds: { x: number; y: number; label: string }[] = [{ x: tx, y: ty, label: 'luff' }];
   if (options.leechHint) {
@@ -541,6 +553,14 @@ export function detectStripeFromTap(
         const nIdx = ns[k];
         if (visited[nIdx]) continue;
         visited[nIdx] = 1;
+        // Constraint: limit perpendicular distance from the chord. Strict on
+        // the above-chord side (rejects sun-glint / sky / rigging blobs that
+        // sit above the stripe), generous below (the stripe arcs into the
+        // sail belly up to ~max draft from the chord).
+        if (chordLenPre > 4) {
+          const perp = (nx2 - tx) * nxC + (ny2 - ty) * nyC;
+          if (perp < -MAX_ABOVE_CHORD || perp > MAX_BELOW_CHORD) continue;
+        }
         const di = nIdx * 3;
         const nH = data[di], nS = data[di + 1], nV = data[di + 2];
         let dH = Math.abs(nH - sH);
@@ -679,7 +699,16 @@ export function detectStripeFromTap(
   const SNAP_RADIUS = 5;
   const snap = (px: number, py: number): { x: number; y: number } => {
     const ix = Math.round(px), iy = Math.round(py);
-    if (ix >= 0 && ix < w && iy >= 0 && iy < h && accepted[iy * w + ix]) {
+    // Same chord-side constraint as flood-fill: never snap to a pixel above
+    // the chord. Without this, snap could pull a midpoint into a sun-glint
+    // patch sitting just above the stripe even though the cubic fit was
+    // correctly placing it below.
+    const aboveChord = (sx: number, sy: number): boolean => {
+      if (chordLenPre <= 4) return false;
+      const perp = (sx - tx) * nxC + (sy - ty) * nyC;
+      return perp < -2;
+    };
+    if (ix >= 0 && ix < w && iy >= 0 && iy < h && accepted[iy * w + ix] && !aboveChord(ix, iy)) {
       return { x: px, y: py };
     }
     let bestX = px, bestY = py, bestD2 = Infinity;
@@ -688,6 +717,7 @@ export function detectStripeFromTap(
         const sx = ix + dx, sy = iy + dy;
         if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
         if (!accepted[sy * w + sx]) continue;
+        if (aboveChord(sx, sy)) continue;
         const d2 = dx * dx + dy * dy;
         if (d2 < bestD2) { bestD2 = d2; bestX = sx; bestY = sy; }
       }
