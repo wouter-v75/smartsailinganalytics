@@ -25,7 +25,8 @@ import {
   horizontalOnlyEdges, colorizeOrientation, matToCanvas, imageToMat,
   detectStripeFromTap,
 } from '../lib/sailscan-cv';
-import { getYachtPrefs, setYachtPref } from '../lib/yacht-prefs';
+// Yacht-prefs storage is built but no longer wired to detection (Auto-detect
+// removed). Will resurface in v2.x when per-yacht stripe colour is exposed.
 
 type Step = 'select' | 'live' | 'preview' | 'mark' | 'results';
 interface P { x: number; y: number; }
@@ -97,18 +98,15 @@ export default function SailScanTab() {
   // Bumped after each successful debug paint so drawScene re-runs.
   const [debugVersion, setDebugVersion] = useState(0);
 
-  // ── v2 Phase B: tap-the-luff auto-detect state ───────────────────────────
-  // When autoDetectMode is on, a single tap on the marking canvas is treated
-  // as a "luff seed" — we run colour-segmentation around the tap, find the
-  // connected component, sample a centerline, and push the resulting
-  // {luff, leech, mid[]} into the active stripe. Manual long-press flow
-  // continues to work when autoDetectMode is off.
-  const [autoDetectMode, setAutoDetectMode] = useState(false);
+  // ── v2 Phase B: midpoint auto-fill state ─────────────────────────────────
+  // The only auto mode now is L+E → fill: the user manually places luff and
+  // leech (long-press), then clicks ✨ Auto-fill midpoints. The algorithm
+  // floods from luff/leech/chord-interior seeds, picks the biggest component,
+  // fits a cubic curve and snaps midpoints to the stripe.
   const [autoDetecting,  setAutoDetecting]  = useState(false);
   const [autoDetectMsg,  setAutoDetectMsg]  = useState<string>('');
   // The yacht-prefs key uses the boat name from xmlData.meta.boat when we
-  // wire it through; for Phase B we use 'default' so the colour learned from
-  // the user's first tap persists across scans on the same device.
+  // wire it through; for now we use 'default' as a fallback per-device key.
   const yachtKey: string | null = null;
 
   // ── timestamp + save-to-Photos state ─────────────────────────────────────
@@ -279,76 +277,6 @@ export default function SailScanTab() {
     }
   };
 
-  // ── Phase B: run auto-detection on a tap ─────────────────────────────────
-  // tapCoords are in *image-pixel* space (same coordinate system that
-  // getCanvasCoords returns and that all stripe points use).
-  const runAutoDetect = async (tapCoords: P) => {
-    if (!cachedImage.current) {
-      setAutoDetectMsg('Image not ready yet — wait a moment and tap again.');
-      return;
-    }
-    setAutoDetecting(true);
-    setAutoDetectMsg('');
-    const dlog = (...a: any[]) => console.log('[SailScan:detect]', ...a);
-    try {
-      await ensureOpenCV();
-      const cv = getCV();
-      const img = cachedImage.current;
-      const prefs = getYachtPrefs(yachtKey);
-      dlog('tap', tapCoords, 'storedHsv', prefs.stripeHsv);
-
-      let result;
-      let usedHint = false;
-      try {
-        // First pass: use the per-yacht stored colour if we have one.
-        result = detectStripeFromTap(cv, img, tapCoords, {
-          hsvHint: prefs.stripeHsv,
-        });
-        usedHint = !!prefs.stripeHsv;
-        dlog('first pass', { confidence: result.confidence, usedHint });
-      } catch (firstErr: any) {
-        // If the stored colour was stale (background error), forget it and
-        // resample fresh from the tap. This makes auto-detect self-healing
-        // across yacht / lighting changes.
-        const msg = firstErr?.message || String(firstErr);
-        if (msg.toLowerCase().includes('background') && prefs.stripeHsv) {
-          dlog('first pass background, retrying without hint');
-          setYachtPref(yachtKey, 'stripeHsv', undefined);
-          result = detectStripeFromTap(cv, img, tapCoords, {});
-          dlog('retry pass', { confidence: result.confidence });
-        } else {
-          throw firstErr;
-        }
-      }
-
-      // Always (re)persist the colour we ended up using — this keeps the
-      // stored hint matching the most recent successful tap.
-      setYachtPref(yachtKey, 'stripeHsv', result.hsvSample);
-      dlog('saved hsv', result.hsvSample);
-
-      // Apply to the active stripe (replace whatever was there). The user's
-      // tap is kept as the LUFF; the farthest pixel in the component is the
-      // LEECH; midpoints sample the centerline in between.
-      setStripes(prev => prev.map((s, i) => i === activeIdx
-        ? { luff: result.luff, leech: result.leech, mid: result.midpoints }
-        : s,
-      ));
-
-      const pct = (result.confidence * 100).toFixed(0);
-      const reused = usedHint && prefs.stripeHsv ? ' (reused colour)' : ' (learned colour)';
-      if (result.confidence < 0.15) {
-        setAutoDetectMsg(`Low confidence (${pct}%)${reused}. Drag the points to refine, or undo and tap again.`);
-      } else {
-        setAutoDetectMsg(`Detected · ${result.midpoints.length} midpoints · ${pct}% confidence${reused}.`);
-      }
-    } catch (err: any) {
-      const msg = err?.message || 'Auto-detect failed.';
-      console.error('[SailScan:detect]', msg, err);
-      setAutoDetectMsg(msg);
-    } finally {
-      setAutoDetecting(false);
-    }
-  };
 
   const movePoint = (target: DragTarget, coords: P) => {
     setStripes(prev => prev.map((s, i) => {
@@ -394,11 +322,7 @@ export default function SailScanTab() {
       setPanStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
       setInitialPan(pan);
 
-      // In auto-detect mode, a stationary tap (no movement) triggers detection
-      // on touchEnd. We don't arm the long-press timer; touchend will do it.
-      if (autoDetectMode) return;
-
-      // Arm long-press for placing a new point (manual mode)
+      // Arm long-press for placing a new point
       longPressCoords.current = coords;
       longPressTimer.current = setTimeout(() => {
         if (!touchMoved.current) {
@@ -456,12 +380,6 @@ export default function SailScanTab() {
     setIsPanning(false);
     setInitialDist(0);
 
-    // Auto-detect on a stationary tap (only when not dragging an existing
-    // point and the finger didn't move beyond the tap threshold).
-    if (autoDetectMode && !dragging && !touchMoved.current && touchStartPos.current && !autoDetecting) {
-      const coords = getCanvasCoords(touchStartPos.current.x, touchStartPos.current.y);
-      runAutoDetect(coords);
-    }
     setDragging(null);
   };
 
@@ -473,16 +391,9 @@ export default function SailScanTab() {
     setIsPanning(true);
     setPanStart({ x: e.clientX, y: e.clientY });
     setInitialPan(pan);
-    // Desktop: a single click is reserved for pan/drag. Double-click does
-    // the work — places a point in manual mode, runs auto-detect when
-    // Auto-detect mode is on.
-    if (e.detail === 2) {
-      if (autoDetectMode && !autoDetecting) {
-        runAutoDetect(coords);
-      } else {
-        placePoint(coords);
-      }
-    }
+    // Desktop: single click is reserved for pan/drag. Double-click places
+    // the next point in the manual luff/leech/midpoint sequence.
+    if (e.detail === 2) placePoint(coords);
   };
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (dragging) {
@@ -1222,40 +1133,17 @@ export default function SailScanTab() {
             {/* Bottom controls */}
             <div className="flex-shrink-0 bg-gradient-to-t from-slate-950 via-slate-950/95 to-slate-950/70 px-3 py-2.5 space-y-2">
 
-              {/* Phase B: auto-detect toggle */}
-              <div className="flex items-center gap-2">
-                <button onClick={() => { setAutoDetectMode(v => !v); setAutoDetectMsg(''); }}
-                  disabled={autoDetecting}
-                  className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold active:scale-95 transition-all ${
-                    autoDetectMode
-                      ? 'bg-amber-500 text-black ring-2 ring-amber-300'
-                      : 'bg-slate-700 hover:bg-slate-600 text-white'
-                  }`}>
-                  {autoDetectMode ? '🎯 Auto-detect ON — tap a stripe' : '🎯 Auto-detect (tap luff to find stripe)'}
-                </button>
-                {(() => {
-                  const prefs = getYachtPrefs(yachtKey);
-                  if (!prefs.stripeHsv) return null;
-                  return (
-                    <button onClick={() => { setYachtPref(yachtKey, 'stripeHsv', undefined); setAutoDetectMsg('Stripe colour cleared — next tap learns a new one.'); }}
-                      title="Forget learned stripe colour"
-                      className="px-2 py-2 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 active:scale-95">
-                      ↺ colour
-                    </button>
-                  );
-                })()}
-              </div>
-              {/* Phase B hybrid: when both endpoints are placed (manually or
-                  auto), let the user re-fill midpoints between them. Useful
-                  when the auto-leech missed and the user tweaked it manually. */}
+              {/* L+E flow: long-press luff, long-press leech, then click to
+                  auto-fill midpoints in between. Button enabled only when
+                  both endpoints are placed. */}
               {(() => {
                 const s = stripes[activeIdx];
                 const canFill = !!(s.luff && s.leech) && !autoDetecting;
-                if (!canFill) return null;
                 return (
                   <button onClick={runAutoFillFromEndpoints}
-                    className="w-full px-3 py-2 rounded-lg text-xs font-bold bg-emerald-700 hover:bg-emerald-600 text-white active:scale-95">
-                    ✨ Auto-fill midpoints between luff &amp; leech
+                    disabled={!canFill}
+                    className="w-full px-3 py-2.5 rounded-lg text-xs font-bold bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-500 text-white active:scale-95">
+                    {canFill ? '✨ Auto-fill midpoints between luff & leech' : '✨ Auto-fill (place luff & leech first)'}
                   </button>
                 );
               })()}
