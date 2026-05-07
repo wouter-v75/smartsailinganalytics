@@ -270,8 +270,14 @@ export default function SailScanTab() {
     try {
       await ensureOpenCV();
       const cv = getCV();
+      // Forward any user-placed midpoints as high-weight anchors. With ≥1
+      // mid hint the cubic LSQ pulls the curve through that exact point and
+      // the ridge tracker uses it as a tight prior — much more robust than
+      // letting the tracker free-find the curve when there are deceptive
+      // bright features deeper in the sail.
       const result = detectStripeFromTap(cv, cachedImage.current, s.luff, {
         leechHint: s.leech,
+        midHints: s.mid,
       });
       // Keep the user's original luff/leech; only swap in the new midpoints.
       setStripes(prev => prev.map((str, i) => i === activeIdx
@@ -279,7 +285,8 @@ export default function SailScanTab() {
         : str,
       ));
       const pct = (result.confidence * 100).toFixed(0);
-      setAutoDetectMsg(`Filled ${result.midpoints.length} midpoints between your luff and leech · ${pct}% confidence.`);
+      const hint = (s.mid?.length ?? 0) > 0 ? ` · anchored to your ${s.mid.length} hint${s.mid.length === 1 ? '' : 's'}` : '';
+      setAutoDetectMsg(`Filled ${result.midpoints.length} midpoints between luff and leech${hint} · ${pct}% confidence.`);
     } catch (err: any) {
       setAutoDetectMsg(err?.message || 'Auto-fill failed.');
     } finally {

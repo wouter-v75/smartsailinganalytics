@@ -450,6 +450,12 @@ export function detectStripeFromTap(
      *  Useful for the "user supplies both endpoints, app fills midpoints"
      *  workflow when the algorithm's auto-leech misses the actual stripe end. */
     leechHint?: P;
+    /** Optional user-placed midpoints (in original-image coordinates). When
+     *  provided they're added as high-weight anchors to the cubic LSQ fit,
+     *  pulling the curve through points the user knows are correct. The
+     *  ridge tracker still runs and contributes refinement samples at lower
+     *  weight, but cannot override these anchors. */
+    midHints?: P[];
   } = {},
 ): DetectionResult {
   const imgW = (imgElement as HTMLImageElement).naturalWidth || imgElement.width;
@@ -709,6 +715,49 @@ export function detectStripeFromTap(
   const wV =                          0.70;
   const ACCEPT_TOL = 90;  // total weighted distance below which we accept
 
+  // Parabolic shape prior keeps the ridge tracker from latching onto a deep
+  // bright feature unrelated to the stripe (other stripe, boom highlight,
+  // water reflection through the sail). Default 10% draft = at t=0.5 the
+  // expected d is 0.10 × chordLen. If the user provides midHints we replace
+  // this with a cubic interpolation through the user's points (much
+  // tighter prior).
+  const expectedFromUserMids = (() => {
+    if (!options.midHints || options.midHints.length === 0) return null;
+    const anchorTs: number[] = [0];
+    const anchorDs: number[] = [0];
+    for (const mid of options.midHints) {
+      const dxh = mid.x * scale - tx;
+      const dyh = mid.y * scale - ty;
+      if (chordLen <= 4) continue;
+      const tHint = (dxh * ux + dyh * uy) / chordLen;
+      const dHint = dxh * nx + dyh * ny;
+      if (tHint > 0.02 && tHint < 0.98) {
+        anchorTs.push(tHint);
+        anchorDs.push(Math.max(0, dHint));
+      }
+    }
+    anchorTs.push(1); anchorDs.push(0);
+    if (anchorTs.length < 3) return null;
+    // Linear-interpolated lookup between anchors (sufficient as a prior).
+    return (t: number) => {
+      for (let i = 0; i < anchorTs.length - 1; i++) {
+        if (t >= anchorTs[i] && t <= anchorTs[i + 1]) {
+          const span = anchorTs[i + 1] - anchorTs[i];
+          if (span < 1e-6) return anchorDs[i];
+          const f = (t - anchorTs[i]) / span;
+          return anchorDs[i] * (1 - f) + anchorDs[i + 1] * f;
+        }
+      }
+      return 0;
+    };
+  })();
+  const expectedDefault = (t: number) => 4 * 0.10 * chordLen * t * (1 - t);
+  const expectedD = expectedFromUserMids ?? expectedDefault;
+  // How tightly to bias toward the prior. With user hints we lean harder
+  // (the user knows the stripe). Without, lean lightly so unusual sails
+  // (very flat or very full) are still detectable.
+  const wPrior = options.midHints && options.midHints.length > 0 ? 1.0 : 0.4;
+
   const centerlineTs: number[] = [];
   const centerlineDs: number[] = [];
   if (chordLen > 4) {
@@ -718,6 +767,7 @@ export function detectStripeFromTap(
       const t = i / SAMPLES;
       const cx = tx + ux * chordLen * t;
       const cy = ty + uy * chordLen * t;
+      const dPrior = expectedD(t);
       let bestD = 0;
       let bestDist = Infinity;
       for (let d = 0; d <= dMax; d++) {
@@ -729,11 +779,13 @@ export function detectStripeFromTap(
         if (dh > 90) dh = 180 - dh;
         const ds = Math.abs(data[di + 1] - medS);
         const dv = Math.abs(data[di + 2] - medV);
-        const dist = wH * dh + wS * ds + wV * dv;
+        const colorDist = wH * dh + wS * ds + wV * dv;
+        const priorDist = wPrior * Math.abs(d - dPrior);
+        const dist = colorDist + priorDist;
         if (dist < bestDist) { bestDist = dist; bestD = d; }
       }
       // Drop low-quality samples; cubic LSQ tolerates gaps.
-      if (bestDist < ACCEPT_TOL) {
+      if (bestDist < ACCEPT_TOL + wPrior * dMax * 0.5) {
         centerlineTs.push(t);
         centerlineDs.push(bestD);
       }
@@ -764,9 +816,25 @@ export function detectStripeFromTap(
   // midpoints can never differ by an unbounded angle — they sit on the same
   // smooth curve.
   const ANCHOR_W = 100;
-  const ts = [0, ...filteredTs, 1];
-  const ds = [0, ...filteredDs, 0];
-  const ws = ts.map((_, i) => (i === 0 || i === ts.length - 1) ? ANCHOR_W : 1);
+  const USER_MID_W = 100;        // user mid hints — same weight as endpoints
+  const ts: number[] = [0, ...filteredTs, 1];
+  const ds: number[] = [0, ...filteredDs, 0];
+  const ws: number[] = ts.map((_, i) => (i === 0 || i === ts.length - 1) ? ANCHOR_W : 1);
+  // Add user-placed midpoint anchors (if any). Convert each from image-pixel
+  // coords to chord coords (t, d) and append at high weight.
+  if (options.midHints && chordLen > 4) {
+    for (const mid of options.midHints) {
+      const dxh = mid.x * scale - tx;
+      const dyh = mid.y * scale - ty;
+      const tHint = (dxh * ux + dyh * uy) / chordLen;
+      const dHint = dxh * nx + dyh * ny;
+      if (tHint > 0.02 && tHint < 0.98) {
+        ts.push(tHint);
+        ds.push(Math.max(0, dHint));  // never above chord
+        ws.push(USER_MID_W);
+      }
+    }
+  }
   const sw = (k: number) => { let s = 0; for (let i = 0; i < ts.length; i++) s += ws[i] * Math.pow(ts[i], k); return s; };
   const swd = (k: number) => { let s = 0; for (let i = 0; i < ts.length; i++) s += ws[i] * Math.pow(ts[i], k) * ds[i]; return s; };
   const A = [
