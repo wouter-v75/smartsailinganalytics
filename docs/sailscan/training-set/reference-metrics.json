@@ -1,0 +1,89 @@
+{
+  "$comment": "Ground-truth metrics extracted from sailscan.thesailcloud.com PDF report (SailScan-Report-20250109-102403.pdf). 5 jib photos × 3 stripes × 7 metrics. Stripe positions follow the commercial tool's convention: 25% is the TOP stripe (near head), 50% is the MIDDLE stripe, 75% is the BOTTOM stripe (near foot). The numeric metric values (e.g. metrics.camberPct['25']) below stay as-is — they were extracted directly from the PDF tables — but readers should remember that '25' refers to the head stripe and '75' to the foot stripe.",
+  "source": "sailscan.thesailcloud.com PDF report 2025-01-09",
+  "boat": "Maxi worlds 2023 series (SS 20...)",
+  "stripePositions": {
+    "25": "top stripe (near head)",
+    "50": "middle stripe",
+    "75": "bottom stripe (near foot)"
+  },
+  "sails": [
+    {
+      "id": "J1-2023",
+      "name": "J1 2023_9-10Kn TWS_8,5T Backstay_-10mm shims_950Kg Jib Tack",
+      "conditions": { "tws": "9-10Kn", "backstay": "8.5T", "shims": "-10mm", "jibTack": "950kg" },
+      "instruments":  { "fst": 8.500, "twa": 47, "tws": 10, "awa": 21, "bsp": 9.6 },
+      "metrics": {
+        "camberPct":      { "75": 15.025, "50": 15.244, "25": 11.718 },
+        "draftPct":       { "75": 37.900, "50": 33.300, "25": 33.300 },
+        "twistDeg":       { "75": 22.532, "50": 16.074, "25":  8.815 },
+        "foreCamberPct":  { "75": 78.279, "50": 80.214, "25": 84.780 },
+        "backCamberPct":  { "75": 70.652, "50": 68.402, "25": 67.664 },
+        "entryAngleDeg":  { "75": 60.333, "50": 60.552, "25": 49.441 },
+        "exitAngleDeg":   { "75":  1.138, "50": -3.421, "25": -7.396 }
+      }
+    },
+    {
+      "id": "J1.5-2024",
+      "name": "J1.5 2024_First sail_15-16Kn TWS_10T Forestay_1580kg_jib Tack_Clew strop too long",
+      "conditions": { "tws": "15-16Kn", "forestay": "10T", "jibTack": "1580kg" },
+      "metrics": {
+        "camberPct":      { "75": 14.585, "50": 13.906, "25": 10.929 },
+        "draftPct":       { "75": 33.800, "50": 31.000, "25": 29.900 },
+        "twistDeg":       { "75": 24.858, "50": 19.354, "25": 12.084 },
+        "foreCamberPct":  { "75": 78.057, "50": 80.110, "25": 83.373 },
+        "backCamberPct":  { "75": 64.724, "50": 63.391, "25": 66.407 },
+        "entryAngleDeg":  { "75": 66.023, "50": 63.406, "25": 51.645 },
+        "exitAngleDeg":   { "75":  6.513, "50":  4.118, "25": -2.080 }
+      }
+    },
+    {
+      "id": "J2-2023",
+      "name": "J2-2023_12-13Kn TWS_full shims_12.1 Tons Backstay",
+      "conditions": { "tws": "12-13Kn", "backstay": "12.1T", "shims": "full" },
+      "instruments":  { "fst": 12, "twa": 35, "tws": 11, "awa": 17, "bsp": 10, "heel": 21 },
+      "trim":         { "jibCunningham": 2040, "jibInOut": 3.5, "waterBallast": 100 },
+      "metrics": {
+        "camberPct":      { "75": 13.399, "50": 13.523, "25": 10.670 },
+        "draftPct":       { "75": 37.300, "50": 32.800, "25": 32.600 },
+        "twistDeg":       { "75": 21.579, "50": 16.655, "25":  9.972 },
+        "foreCamberPct":  { "75": 78.749, "50": 82.219, "25": 87.288 },
+        "backCamberPct":  { "75": 66.796, "50": 65.753, "25": 68.390 },
+        "entryAngleDeg":  { "75": 57.361, "50": 57.820, "25": 49.956 },
+        "exitAngleDeg":   { "75":  4.361, "50":  0.462, "25": -4.475 }
+      }
+    },
+    {
+      "id": "J3-2023",
+      "name": "J3 2023_14-15Kn TWS_1350kg Jib Tack_13,1Tons Back",
+      "conditions": { "tws": "14-15Kn", "jibTack": "1350kg", "backstay": "13.1T" },
+      "instruments":  { "twa": 37, "tws": 14, "awa": 18, "bsp": 10 },
+      "trim":         { "rake": 4.5 },
+      "metrics": {
+        "camberPct":      { "75":  8.851, "50": 11.147, "25": 10.068 },
+        "draftPct":       { "75": 40.600, "50": 37.100, "25": 33.700 },
+        "twistDeg":       { "75": 27.344, "50": 19.519, "25": 10.514 },
+        "foreCamberPct":  { "75": 79.439, "50": 78.346, "25": 83.204 },
+        "backCamberPct":  { "75": 67.337, "50": 66.354, "25": 68.147 },
+        "entryAngleDeg":  { "75": 51.999, "50": 49.543, "25": 43.614 },
+        "exitAngleDeg":   { "75": 14.375, "50":  3.375, "25": -2.784 }
+      }
+    },
+    {
+      "id": "J3+-2023",
+      "name": "J3+_12-13Kn TWS_full shims_10.7 Tons Backstay_1260kg Jib tack",
+      "conditions": { "tws": "12-13Kn", "backstay": "10.7T", "shims": "full", "jibTack": "1260kg" },
+      "instruments":  { "fst": 10, "twa": 35, "tws": 11, "awa": 17, "bsp": 8.6, "heel": 15 },
+      "trim":         { "checkstay": 50, "deflector": 96 },
+      "metrics": {
+        "camberPct":      { "75":  7.572, "50":  9.495, "25":  8.289 },
+        "draftPct":       { "75": 37.700, "50": 35.100, "25": 35.200 },
+        "twistDeg":       { "75": 21.669, "50": 15.481, "25":  8.874 },
+        "foreCamberPct":  { "75": 79.187, "50": 82.080, "25": 86.847 },
+        "backCamberPct":  { "75": 72.056, "50": 72.652, "25": 70.426 },
+        "entryAngleDeg":  { "75": 43.229, "50": 47.308, "25": 41.245 },
+        "exitAngleDeg":   { "75": 10.550, "50":  1.384, "25": -2.884 }
+      }
+    }
+  ]
+}

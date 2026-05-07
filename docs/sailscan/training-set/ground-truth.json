@@ -1,0 +1,367 @@
+{
+  "$comment": "SailScan v2 ground-truth dataset, parsed from sailscan.thesailcloud PDF reports paired with original photos. Stripe convention: '25'=top stripe (head), '50'=middle, '75'=bottom (foot). Built by tools/parse-sailscan-pdfs.py.",
+  "stripePositions": {
+    "25": "top stripe (near head)",
+    "50": "middle stripe",
+    "75": "bottom stripe (near foot)"
+  },
+  "sessionCount": 6,
+  "sessions": [
+    {
+      "folder": "04:09:24_First sail_15-16Kn TWS_10T Forestay_1580kg_jib Tack_Clew strop too long",
+      "folderSignature": {
+        "forestayT": 10.0,
+        "jibTackKg": 1580,
+        "twsRange": "15-16",
+        "date": "2024-09-04"
+      },
+      "matchedHeaderRow": "J1.5 2024_First sail_15-16Kn TWS_10T Forestay_1580kg_jib Tack_Clew strop too long",
+      "matchedSignature": {
+        "forestayT": 10.0,
+        "jibTackKg": 1580,
+        "twsRange": "15-16"
+      },
+      "matchScore": 9,
+      "isSingleSessionPdf": true,
+      "sourcePdf": "SailScan-Report-20240904-190710.pdf",
+      "photos": [
+        "P9046173.JPG",
+        "P9046174.JPG"
+      ],
+      "metrics": {
+        "camberPct": {
+          "75": 14.585,
+          "50": 13.906,
+          "25": 10.929
+        },
+        "draftPct": {
+          "75": 33.8,
+          "50": 31.0,
+          "25": 29.9
+        },
+        "twistDeg": {
+          "75": 24.858,
+          "50": 19.354,
+          "25": 12.084
+        },
+        "foreCamberPct": {
+          "75": 78.057,
+          "50": 80.11,
+          "25": 83.373
+        },
+        "backCamberPct": {
+          "75": 64.724,
+          "50": 63.391,
+          "25": 66.407
+        },
+        "entryAngleDeg": {
+          "75": 66.023,
+          "50": 63.406,
+          "25": 51.645
+        },
+        "exitAngleDeg": {
+          "75": 6.513,
+          "50": 4.118,
+          "25": -2.08
+        }
+      }
+    },
+    {
+      "folder": "09:09:2025_10-11Kn TWS_10.5TForestay_-10mm shims_1130kg Jib Tack",
+      "folderSignature": {
+        "forestayT": 10.5,
+        "jibTackKg": 1130,
+        "twsRange": "10-11",
+        "date": "2025-09-09"
+      },
+      "matchedHeaderRow": "J1.5 2024_10-11Kn TWS_10.5TForestay_-10mm shims_1130kg Jib Tack Porto Cervo 2025 SS2014",
+      "matchedSignature": {
+        "forestayT": 10.5,
+        "jibTackKg": 1130,
+        "twsRange": "10-11"
+      },
+      "matchScore": 9,
+      "isSingleSessionPdf": true,
+      "sourcePdf": "SailScan-Report-20250909-190003.pdf",
+      "photos": [
+        "IMG_0292.JPG",
+        "IMG_0293.JPG"
+      ],
+      "metrics": {
+        "camberPct": {
+          "75": 15.153,
+          "50": 14.159,
+          "25": 10.553
+        },
+        "draftPct": {
+          "75": 35.0,
+          "50": 30.8,
+          "25": 30.0
+        },
+        "twistDeg": {
+          "75": 24.588,
+          "50": 19.899,
+          "25": 12.439
+        },
+        "foreCamberPct": {
+          "75": 78.2,
+          "50": 80.419,
+          "25": 87.394
+        },
+        "backCamberPct": {
+          "75": 69.424,
+          "50": 67.061,
+          "25": 65.075
+        },
+        "entryAngleDeg": {
+          "75": 63.503,
+          "50": 63.405,
+          "25": 54.035
+        },
+        "exitAngleDeg": {
+          "75": 3.208,
+          "50": -0.914,
+          "25": -0.608
+        }
+      }
+    },
+    {
+      "folder": "12:05:25_10-11Kn TWS_10.5T Forestay_1400kg_jib Tack_Head strop too short",
+      "folderSignature": {
+        "forestayT": 10.5,
+        "jibTackKg": 1400,
+        "twsRange": "10-11",
+        "date": "2025-05-12"
+      },
+      "matchedHeaderRow": "J1.5 2024_10-11Kn TWS_10.5T Forestay_1400kg_jib Tack_Head strop too short SS2014",
+      "matchedSignature": {
+        "forestayT": 10.5,
+        "jibTackKg": 1400,
+        "twsRange": "10-11"
+      },
+      "matchScore": 9,
+      "isSingleSessionPdf": true,
+      "sourcePdf": "SailScan_J1.5-2024_TWS10.2-TWA41 _15H05.pdf",
+      "photos": [
+        "IMG_6841.JPG",
+        "IMG_6842.JPG",
+        "IMG_6848.JPG",
+        "IMG_6849.JPG"
+      ],
+      "metrics": {
+        "camberPct": {
+          "75": 14.921,
+          "50": 14.314,
+          "25": 11.661
+        },
+        "draftPct": {
+          "75": 33.7,
+          "50": 31.5,
+          "25": 31.4
+        },
+        "twistDeg": {
+          "75": 22.571,
+          "50": 17.238,
+          "25": 9.421
+        },
+        "foreCamberPct": {
+          "75": 74.579,
+          "50": 79.305,
+          "25": 82.773
+        },
+        "backCamberPct": {
+          "75": 71.405,
+          "50": 66.346,
+          "25": 67.317
+        },
+        "entryAngleDeg": {
+          "75": 61.593,
+          "50": 59.599,
+          "25": 47.185
+        },
+        "exitAngleDeg": {
+          "75": 3.096,
+          "50": -0.159,
+          "25": -6.284
+        }
+      }
+    },
+    {
+      "folder": "13:09:2025_After LC Mods_Stiffer 2nd Batten_10-11Kn TWS_10.4TForestay_-10mm shims_1170kg Jib Tack",
+      "folderSignature": {
+        "forestayT": 10.4,
+        "jibTackKg": 1170,
+        "twsRange": "10-11",
+        "date": "2025-09-13"
+      },
+      "matchedHeaderRow": "(by-elimination from aggregate PDF column 1, 20250914-100638.pdf)",
+      "matchedSignature": {
+        "forestayT": 10.4,
+        "jibTackKgPrefix": 117,
+        "date": "2025-09-13"
+      },
+      "matchScore": "elimination",
+      "isSingleSessionPdf": false,
+      "sourcePdf": "SailScan-Report-20250914-100638.pdf",
+      "photos": [
+        "IMG_0316.JPG",
+        "IMG_0317.JPG"
+      ],
+      "metrics": {
+        "camberPct": {
+          "75": 14.158,
+          "50": 13.913,
+          "25": 10.659
+        },
+        "draftPct": {
+          "75": 37.4,
+          "50": 31.5,
+          "25": 29.7
+        },
+        "twistDeg": {
+          "75": 24.034,
+          "50": 18.063,
+          "25": 11.393
+        },
+        "foreCamberPct": {
+          "75": 82.371,
+          "50": 80.805,
+          "25": 82.837
+        },
+        "backCamberPct": {
+          "75": 65.816,
+          "50": 65.821,
+          "25": 65.963
+        },
+        "entryAngleDeg": {
+          "75": 66.711,
+          "50": 62.428,
+          "25": 50.731
+        },
+        "exitAngleDeg": {
+          "75": 5.425,
+          "50": 0.393,
+          "25": -1.459
+        }
+      }
+    },
+    {
+      "folder": "13:09:2025_After LC Mods_Stiffer 2nd Batten_10-11Kn TWS_10.7TForestay_-10mm shims_1000kg Jib Tack",
+      "folderSignature": {
+        "forestayT": 10.7,
+        "jibTackKg": 1000,
+        "twsRange": "10-11",
+        "date": "2025-09-13"
+      },
+      "matchedHeaderRow": "J1.5 2024_After LC Mods_Stiffer 2nd Batten_10-11Kn TWS_10.7TForestay_-10mm shims_100... Porto Cervo... SS2...",
+      "matchedSignature": {
+        "forestayT": 10.7,
+        "jibTackKgPrefix": 100,
+        "twsRange": "10-11"
+      },
+      "matchScore": 8,
+      "isSingleSessionPdf": true,
+      "sourcePdf": "SailScan-Report-20250916-090752.pdf",
+      "photos": [
+        "IMG_0308.JPG",
+        "IMG_0309.JPG"
+      ],
+      "metrics": {
+        "camberPct": {
+          "75": 14.227,
+          "50": 15.004,
+          "25": 11.789
+        },
+        "draftPct": {
+          "75": 36.3,
+          "50": 33.3,
+          "25": 29.7
+        },
+        "twistDeg": {
+          "75": 25.853,
+          "50": 19.407,
+          "25": 11.83
+        },
+        "foreCamberPct": {
+          "75": 77.149,
+          "50": 77.012,
+          "25": 79.282
+        },
+        "backCamberPct": {
+          "75": 69.557,
+          "50": 65.744,
+          "25": 65.118
+        },
+        "entryAngleDeg": {
+          "75": 60.5,
+          "50": 57.705,
+          "25": 49.722
+        },
+        "exitAngleDeg": {
+          "75": 6.597,
+          "50": 0.726,
+          "25": -1.683
+        }
+      }
+    },
+    {
+      "folder": "22:05:2025_08-09Kn TWS_7TForestay_830kg Jib Tack",
+      "folderSignature": {
+        "forestayT": 7.0,
+        "jibTackKg": 830,
+        "twsRange": "08-09",
+        "date": "2025-05-22"
+      },
+      "matchedHeaderRow": "J1.5 2024_08-09Kn TWS_7TForestay_830kg Jib Tack SS2014",
+      "matchedSignature": {
+        "forestayT": 7.0,
+        "jibTackKg": 830,
+        "twsRange": "08-09"
+      },
+      "matchScore": 9,
+      "isSingleSessionPdf": true,
+      "sourcePdf": "SailScan-Report-20250525-215119.pdf",
+      "photos": [
+        "IMG_6960.JPG",
+        "IMG_6961.JPG"
+      ],
+      "metrics": {
+        "camberPct": {
+          "75": 14.672,
+          "50": 15.048,
+          "25": 11.676
+        },
+        "draftPct": {
+          "75": 37.1,
+          "50": 32.6,
+          "25": 30.8
+        },
+        "twistDeg": {
+          "75": 24.194,
+          "50": 17.722,
+          "25": 10.518
+        },
+        "foreCamberPct": {
+          "75": 79.401,
+          "50": 79.507,
+          "25": 79.227
+        },
+        "backCamberPct": {
+          "75": 68.901,
+          "50": 67.083,
+          "25": 66.889
+        },
+        "entryAngleDeg": {
+          "75": 63.22,
+          "50": 61.21,
+          "25": 46.8
+        },
+        "exitAngleDeg": {
+          "75": 2.591,
+          "50": -3.014,
+          "25": -4.819
+        }
+      }
+    }
+  ]
+}

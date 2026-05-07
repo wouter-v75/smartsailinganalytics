@@ -42,3 +42,14 @@ build.log
 
 # Misc
 *.pem
+
+# SailScan training set — only the parsed ground-truth/reference JSON files
+# are tracked. The original photos and commercial-tool PDFs stay local.
+/docs/sailscan/training-set/**/*.JPG
+/docs/sailscan/training-set/**/*.jpg
+/docs/sailscan/training-set/**/*.jpeg
+/docs/sailscan/training-set/**/*.png
+/docs/sailscan/training-set/**/*.heic
+/docs/sailscan/training-set/**/*.HEIC
+/docs/sailscan/training-set/**/*.pdf
+/docs/sailscan/training-set/**/.DS_Store

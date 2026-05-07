@@ -27,6 +27,10 @@ import {
 } from '../lib/sailscan-cv';
 // Yacht-prefs storage is built but no longer wired to detection (Auto-detect
 // removed). Will resurface in v2.x when per-yacht stripe colour is exposed.
+import {
+  loadGroundTruth, findSessionByFilename, compareToReference,
+  type ReferenceSession, type BenchmarkReport,
+} from '../lib/sailscan-bench';
 
 type Step = 'select' | 'live' | 'preview' | 'mark' | 'results';
 interface P { x: number; y: number; }
@@ -116,6 +120,12 @@ export default function SailScanTab() {
   const [showTimestampInput, setShowTimestampInput] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMsg,    setSaveMsg]    = useState<string>('');
+
+  // ── v2 Phase F2: benchmark vs commercial ground-truth ────────────────────
+  // When the user uploads a photo whose filename matches a known reference
+  // session (sailscan.thesailcloud.com PDF dataset), we compute per-stripe
+  // and aggregate errors and surface them on the results screen.
+  const [refSession, setRefSession] = useState<ReferenceSession | null>(null);
 
   // ── camera lifecycle ──────────────────────────────────────────────────────
   const stopCamera = () => {
@@ -675,6 +685,23 @@ export default function SailScanTab() {
 
   useEffect(() => { if (imageSrc) extractTimestamp(); }, [imageSrc, extractTimestamp]);
 
+  // Look up reference session by uploaded photo filename (Phase F2).
+  useEffect(() => {
+    setRefSession(null);
+    const file = originalFile.current;
+    if (!file?.name) return;
+    let cancelled = false;
+    loadGroundTruth().then(gt => {
+      if (cancelled || !gt) return;
+      const match = findSessionByFilename(gt, file.name);
+      if (match) {
+        console.log('[SailScan:bench] reference match for', file.name, '→', match.folder);
+        setRefSession(match);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [imageSrc]);
+
   // ── v2 Phase A: CV debug pipeline ────────────────────────────────────────
   // When the user toggles a debug view we lazy-load OpenCV.js, downsample the
   // photo to a max edge of 1024 px (CV's worth doing on a small image; full
@@ -938,6 +965,29 @@ export default function SailScanTab() {
       setSaveMsg(err?.message || 'Save failed');
     }
   };
+
+  // ── Phase F2: benchmark report (derived from active stripe metrics) ──────
+  // Built only when (a) the photo matched a reference session AND (b) the
+  // user has at least one stripe with a curve fit. Re-derives on every
+  // metrics change so the user sees the comparison update live.
+  const benchmark: BenchmarkReport | null = (() => {
+    if (!refSession) return null;
+    const ourStripes = stripes
+      .map((s, i) => ({ stripe: s, metrics: stripeMetrics[i] }))
+      .filter(({ stripe, metrics }) =>
+        !!(stripe.luff && stripe.leech && metrics && metrics.hasCurve))
+      .map(({ stripe, metrics }) => ({
+        stripe: { luff: stripe.luff, leech: stripe.leech },
+        metrics: {
+          draftPct:         metrics!.draftPct,
+          draftPositionPct: metrics!.draftPositionPct,
+          entryAngleDeg:    metrics!.entryAngleDeg,
+          exitAngleDeg:     metrics!.exitAngleDeg,
+        },
+      }));
+    if (ourStripes.length === 0) return null;
+    return compareToReference(refSession, originalFile.current?.name || '(unknown)', ourStripes);
+  })();
 
   // ── status text in mark mode ─────────────────────────────────────────────
   // Each step has a step number, a short heading, a body, and a colour cue
@@ -1272,6 +1322,49 @@ export default function SailScanTab() {
                   </div>
                 );
               })}
+
+              {/* Phase F2: benchmark vs commercial reference */}
+              {benchmark && (
+                <div className="rounded-lg p-3 border border-violet-500/40 bg-violet-500/10 mt-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-bold text-violet-200">📊 Reference benchmark</span>
+                    <span className="text-[10px] text-violet-300/80 font-mono">{benchmark.matchedPhoto}</span>
+                  </div>
+                  <p className="text-[11px] text-violet-100/80 leading-snug">
+                    Reference: <span className="font-mono">{benchmark.matchedSession.slice(0, 70)}…</span>
+                  </p>
+                  <div className="grid grid-cols-1 gap-1.5 text-[11px]">
+                    {benchmark.perStripe.map((s, i) => (
+                      <div key={i} className="bg-slate-900/60 rounded p-2 border border-violet-500/20">
+                        <div className="font-bold text-violet-200 mb-1">Stripe at position {s.pos}</div>
+                        <div className="grid grid-cols-3 gap-1.5 font-mono text-[10px]">
+                          <div className="text-slate-400">camber%</div>
+                          <div className="text-slate-300">ours <span className="text-emerald-300">{s.ours.draftPct?.toFixed(2)}</span> · ref <span className="text-violet-300">{s.reference.camberPct.toFixed(2)}</span></div>
+                          <div className={`font-bold ${Math.abs(s.errors.camberPct) > 1.5 ? 'text-amber-300' : 'text-emerald-300'}`}>Δ {s.errors.camberPct >= 0 ? '+' : ''}{s.errors.camberPct.toFixed(2)}</div>
+                          <div className="text-slate-400">draft%</div>
+                          <div className="text-slate-300">ours <span className="text-emerald-300">{s.ours.draftPositionPct?.toFixed(1)}</span> · ref <span className="text-violet-300">{s.reference.draftPct.toFixed(1)}</span></div>
+                          <div className={`font-bold ${Math.abs(s.errors.draftPositionPct) > 5 ? 'text-amber-300' : 'text-emerald-300'}`}>Δ {s.errors.draftPositionPct >= 0 ? '+' : ''}{s.errors.draftPositionPct.toFixed(1)}</div>
+                          <div className="text-slate-400">entry°</div>
+                          <div className="text-slate-300">ours <span className="text-emerald-300">{s.ours.entryAngleDeg?.toFixed(1)}</span> · ref <span className="text-violet-300">{s.reference.entryAngleDeg.toFixed(1)}</span></div>
+                          <div className={`font-bold ${Math.abs(s.errors.entryAngleDeg) > 3 ? 'text-amber-300' : 'text-emerald-300'}`}>Δ {s.errors.entryAngleDeg >= 0 ? '+' : ''}{s.errors.entryAngleDeg.toFixed(1)}°</div>
+                          <div className="text-slate-400">exit°</div>
+                          <div className="text-slate-300">ours <span className="text-emerald-300">{s.ours.exitAngleDeg?.toFixed(1)}</span> · ref <span className="text-violet-300">{s.reference.exitAngleDeg.toFixed(1)}</span></div>
+                          <div className={`font-bold ${Math.abs(s.errors.exitAngleDeg) > 3 ? 'text-amber-300' : 'text-emerald-300'}`}>Δ {s.errors.exitAngleDeg >= 0 ? '+' : ''}{s.errors.exitAngleDeg.toFixed(1)}°</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="rounded p-2 bg-slate-900/40 border border-violet-500/30 text-[11px]">
+                    <div className="font-bold text-violet-200 mb-1">Mean abs error across {benchmark.perStripe.length} stripe{benchmark.perStripe.length === 1 ? '' : 's'}</div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[10px] text-slate-200">
+                      <span>camber: <b className="text-violet-100">{benchmark.meanAbsErrors.camberPct.toFixed(2)}%</b></span>
+                      <span>draft: <b className="text-violet-100">{benchmark.meanAbsErrors.draftPositionPct.toFixed(1)}%</b></span>
+                      <span>entry: <b className="text-violet-100">{benchmark.meanAbsErrors.entryAngleDeg.toFixed(1)}°</b></span>
+                      <span>exit: <b className="text-violet-100">{benchmark.meanAbsErrors.exitAngleDeg.toFixed(1)}°</b></span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {twistRows.length > 0 && (
                 <>
