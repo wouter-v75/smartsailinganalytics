@@ -471,9 +471,36 @@ export function detectStripeFromTap(
   const bgr = new cv.Mat();
   cv.cvtColor(rgba, bgr, cv.COLOR_RGBA2BGR);
   rgba.delete();
+
+  // ── Channel-min preprocessing (idea from Hugo Stubler's sail-scan-ai) ───
+  // For every pixel compute min(B, G, R). Specular highlights (sun glint on
+  // the sail) are bright in one or two channels but not all three, so their
+  // channel-min is much lower than their V. Matte stripes are uniformly
+  // bright across channels, so channel-min ≈ V. We replace the V channel of
+  // HSV with channel-min — flood-fill comparisons and ridge-tracking now
+  // automatically discriminate matte stripe pixels from glint contamination.
+  const bgrChannels = new cv.MatVector();
+  cv.split(bgr, bgrChannels);
+  const minBG = new cv.Mat();
+  cv.min(bgrChannels.get(0), bgrChannels.get(1), minBG);
+  const channelMin = new cv.Mat();
+  cv.min(minBG, bgrChannels.get(2), channelMin);
+  minBG.delete();
+  bgrChannels.delete();
+
   const hsv = new cv.Mat();
   cv.cvtColor(bgr, hsv, cv.COLOR_BGR2HSV);
   bgr.delete();
+
+  // Overwrite V with channel-min in-place.
+  {
+    const hsvBytes = hsv.data as Uint8Array;
+    const cmBytes  = channelMin.data as Uint8Array;
+    for (let i = 0, n = w * h; i < n; i++) {
+      hsvBytes[i * 3 + 2] = cmBytes[i];
+    }
+  }
+  channelMin.delete();
 
   // ── Pre-compute chord direction ─────────────────────────────────────────
   // Done BEFORE flood-fill so we can use it as a constraint during growth.
@@ -631,42 +658,103 @@ export function detectStripeFromTap(
     if (ny < 0) { nx = -nx; ny = -ny; } // flip to the down-pointing perpendicular
   }
 
-  // ── Sample centerline along the chord ───────────────────────────────────
-  // Walk along the luff→leech vector. At each step collect the
-  // perpendicular DISTANCES (only on the "below" side, since we know the
-  // stripe is below the chord) of in-component pixels and take the median.
+  // ── Sample centerline along the chord (perpendicular ridge tracking) ────
+  //
+  // Replaces the previous "flood-fill component median" approach. The flood
+  // fill committed to a binary mask early; if it leaked into a sun-glint
+  // patch the median pulled high, if it didn't reach the deepest stripe
+  // pixels the median stayed shallow. Either way we tracked the component,
+  // not the actual stripe.
+  //
+  // Ridge tracking inverts the dependency: at each chord-fraction t we walk
+  // a perpendicular line BELOW the chord and pick the single pixel whose
+  // (channel-min HSV) is closest to the median component colour. Because we
+  // search the full chord-relative band and score each candidate against a
+  // robust colour seed, the algorithm finds the true stripe centerline at
+  // every t — even when the flood-fill component bled or fell short.
+  //
+  // Idea borrowed from Hugo Stubler's sail-scan-ai (color-variant + thin-
+  // mask scoring); adapted to our tap-the-luff/leech UX.
+
+  // Robust seed: median HSV across the (channel-min) flood-fill component.
+  // Falls back to the tap pixel's HSV when the component is too small to be
+  // reliable. With channel-min preprocessing in place, glint-contaminated
+  // pixels score lower V and therefore don't pull the median up.
+  let medH = hC, medS = sC, medV = vC;
+  if (stripeFound) {
+    const accH: number[] = [];
+    const accS: number[] = [];
+    const accV: number[] = [];
+    for (let i = 0, n = w * h; i < n; i++) {
+      if (accepted[i]) {
+        const di = i * 3;
+        accH.push(data[di]); accS.push(data[di + 1]); accV.push(data[di + 2]);
+      }
+    }
+    if (accH.length > 0) {
+      accH.sort((a, b) => a - b);
+      accS.sort((a, b) => a - b);
+      accV.sort((a, b) => a - b);
+      medH = accH[Math.floor(accH.length / 2)];
+      medS = accS[Math.floor(accS.length / 2)];
+      medV = accV[Math.floor(accV.length / 2)];
+    }
+  }
+
+  // For achromatic seeds (white / grey stripes) hue is mathematically
+  // unreliable; weight it to zero. Saturation and value carry the signal.
+  const isAchromaticSeed = medS < 50;
+  const wH = isAchromaticSeed ? 0   : 0.30;
+  const wS =                          0.50;
+  const wV =                          0.70;
+  const ACCEPT_TOL = 90;  // total weighted distance below which we accept
+
   const centerlineTs: number[] = [];
   const centerlineDs: number[] = [];
-  if (chordLen > 4 && stripeFound) {
+  if (chordLen > 4) {
     const SAMPLES = 60;
-    const PERP_RADIUS = 30;
+    const dMax = Math.min(MAX_BELOW_CHORD, Math.max(w, h));
     for (let i = 0; i <= SAMPLES; i++) {
       const t = i / SAMPLES;
       const cx = tx + ux * chordLen * t;
       const cy = ty + uy * chordLen * t;
-      const ds: number[] = [];
-      // Constraint (a): only accept "below chord" pixels (pp >= 0). We allow
-      // pp from -2 upward so a stripe pixel sitting exactly on the chord at
-      // an endpoint isn't rejected by quantisation noise.
-      for (let pp = -2; pp <= PERP_RADIUS; pp++) {
-        const sx = Math.round(cx + nx * pp);
-        const sy = Math.round(cy + ny * pp);
-        if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
-        if (accepted[sy * w + sx]) ds.push(pp);
+      let bestD = 0;
+      let bestDist = Infinity;
+      for (let d = 0; d <= dMax; d++) {
+        const sx = Math.round(cx + nx * d);
+        const sy = Math.round(cy + ny * d);
+        if (sx < 0 || sx >= w || sy < 0 || sy >= h) break;
+        const di = (sy * w + sx) * 3;
+        let dh = Math.abs(data[di] - medH);
+        if (dh > 90) dh = 180 - dh;
+        const ds = Math.abs(data[di + 1] - medS);
+        const dv = Math.abs(data[di + 2] - medV);
+        const dist = wH * dh + wS * ds + wV * dv;
+        if (dist < bestDist) { bestDist = dist; bestD = d; }
       }
-      if (ds.length === 0) continue;
-      ds.sort((a, b) => a - b);
-      const median = ds[Math.floor(ds.length / 2)];
-      centerlineTs.push(t);
-      centerlineDs.push(median);
+      // Drop low-quality samples; cubic LSQ tolerates gaps.
+      if (bestDist < ACCEPT_TOL) {
+        centerlineTs.push(t);
+        centerlineDs.push(bestD);
+      }
     }
   }
 
-  // No further canonical-side filtering needed — perpendicular sampling is
-  // already constrained to d ≥ 0 above.
+  // Apply a 5-point median filter to remove single-step outliers before the
+  // cubic fit takes over. (One bad t-step pixel — a wave glint or rigging
+  // crossing — should not bend the curve.)
+  const MED_W = 2;
+  const medianFiltered: number[] = centerlineDs.map((_, i) => {
+    const a = Math.max(0, i - MED_W);
+    const b = Math.min(centerlineDs.length, i + MED_W + 1);
+    const slice = centerlineDs.slice(a, b).sort((x, y) => x - y);
+    return slice[Math.floor(slice.length / 2)];
+  });
+
   const filteredTs = centerlineTs;
-  const filteredDs = centerlineDs;
+  const filteredDs = medianFiltered;
   const stripeSide = 1; // by construction, all kept samples are on the +d side
+  console.log('[SailScan:cv] ridge-track samples=' + filteredTs.length + ', seed HSV=', { h: medH, s: medS, v: medV });
 
   // ── Constraint (b): bounded curvature via cubic LSQ fit ─────────────────
   // Fit  d(t) = c0 + c1·t + c2·t² + c3·t³  by weighted least squares.
