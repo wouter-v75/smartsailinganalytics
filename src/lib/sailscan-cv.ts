@@ -815,8 +815,14 @@ export function detectStripeFromTap(
   // luff and leech. A cubic curve is smooth-by-construction so adjacent
   // midpoints can never differ by an unbounded angle — they sit on the same
   // smooth curve.
-  const ANCHOR_W = 100;
-  const USER_MID_W = 100;        // user mid hints — same weight as endpoints
+  // High anchor weights (1000 each) so the cubic LSQ effectively passes
+  // through user-tapped points exactly, even when ridge-tracker samples
+  // disagree. With 3 anchors at 1000 each (3000 total) vs 60 ridge samples
+  // at 1 each (60 total), anchors carry >98 % of fitting influence —
+  // the curve will sit on the user's chosen points to within sub-pixel
+  // precision while ridge samples only refine the regions between anchors.
+  const ANCHOR_W = 1000;
+  const USER_MID_W = 1000;
   const ts: number[] = [0, ...filteredTs, 1];
   const ds: number[] = [0, ...filteredDs, 0];
   const ws: number[] = ts.map((_, i) => (i === 0 || i === ts.length - 1) ? ANCHOR_W : 1);
@@ -890,6 +896,13 @@ export function detectStripeFromTap(
   const MAX_DRAFT_FRAC = 0.30;
   const DEFAULT_DRAFT_FRAC = 0.10;
 
+  // Whether the user has anchored the curve with explicit midpoint hints.
+  // When they have, we trust their tap positions and skip the heuristic
+  // draft clamp — clamping would otherwise scale the whole curve uniformly
+  // and pull the cubic OFF the user's chosen anchor points whenever the
+  // implied max draft exceeds 30 % of chord length (common on full sails).
+  const userHasMidHints = !!(options.midHints && options.midHints.length > 0);
+
   let scaleD = 1;
   let usingFallback = false;
   let fittedDFinal: (t: number) => number;
@@ -901,17 +914,26 @@ export function detectStripeFromTap(
       if (d > maxAbsD) maxAbsD = d;
     }
     const ratio = maxAbsD / chordLen;
-    if (ratio > MAX_DRAFT_FRAC) {
-      scaleD = MAX_DRAFT_FRAC / ratio;
-    } else if (ratio < MIN_DRAFT_FRAC && ratio > 0.01) {
-      scaleD = MIN_DRAFT_FRAC / ratio;
-    } else if (ratio <= 0.01) {
-      // Curve too flat to trust — synthesise a default
-      usingFallback = true;
+    if (!userHasMidHints) {
+      if (ratio > MAX_DRAFT_FRAC) {
+        scaleD = MAX_DRAFT_FRAC / ratio;
+      } else if (ratio < MIN_DRAFT_FRAC && ratio > 0.01) {
+        scaleD = MIN_DRAFT_FRAC / ratio;
+      } else if (ratio <= 0.01) {
+        // Curve too flat to trust — synthesise a default
+        usingFallback = true;
+      }
     }
+    // When the user hasn't anchored: full clamp + fallback as before.
+    // When the user has anchored: trust the cubic fit through their points;
+    // no scaling, no fallback — the user knows where the stripe is.
     fittedDFinal = usingFallback
       ? (t: number) => 4 * DEFAULT_DRAFT_FRAC * chordLen * t * (1 - t)
       : (t: number) => fittedD(t) * scaleD;
+  } else if (userHasMidHints && chordLen > 4 && filteredTs.length >= 0) {
+    // No flood-fill component (or too small), but the user has anchored
+    // the curve. Trust the cubic fit through their points.
+    fittedDFinal = fittedD;
   } else {
     // Stripe not found at all — synthesise a parabolic default. Endpoints
     // are pinned (4·t·(1−t) is 0 at t=0 and t=1, peak 1 at t=0.5), and the
