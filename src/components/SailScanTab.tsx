@@ -34,7 +34,17 @@ import {
 
 type Step = 'select' | 'live' | 'preview' | 'mark' | 'results';
 interface P { x: number; y: number; }
-interface Stripe { luff: P | null; leech: P | null; mid: P[]; }
+interface Stripe {
+  luff: P | null;
+  leech: P | null;
+  /** Currently displayed midpoints (could be auto-filled or manually placed). */
+  mid: P[];
+  /** Phase F3-A — training corpus capture. Only the midpoints the user
+   *  actually long-pressed; auto-fill output never lands here. Survives
+   *  Auto-fill replacements of `mid`, so when we save we know exactly what
+   *  the user supplied as input vs what the algorithm produced as output. */
+  userTaps?: P[];
+}
 
 type DragTarget =
   | { stripeIdx: number; role: 'luff' | 'leech' }
@@ -45,7 +55,11 @@ const ENDPOINT_LUFF_COLOR = '#3b82f6';
 const ENDPOINT_LEECH_COLOR = '#ef4444';
 const MID_COLOR = '#fbbf24';
 
-const newStripe = (): Stripe => ({ luff: null, leech: null, mid: [] });
+const newStripe = (): Stripe => ({ luff: null, leech: null, mid: [], userTaps: [] });
+
+// Identifier we save with each scan so future trainers can filter examples
+// by which version of the algorithm produced them.
+const ALGORITHM_VERSION = 'v2.4-ridgeprior';
 
 export default function SailScanTab() {
   const [step, setStep] = useState<Step>('select');
@@ -254,7 +268,14 @@ export default function SailScanTab() {
       if (i !== activeIdx) return s;
       if (!s.luff) return { ...s, luff: coords };
       if (!s.leech) return { ...s, leech: coords };
-      return { ...s, mid: [...s.mid, coords] };
+      // Manual midpoint placement → record in BOTH `mid` (visible) and
+      // `userTaps` (training corpus). Auto-fill replaces `mid` later but
+      // never touches `userTaps`, so the training input is preserved.
+      return {
+        ...s,
+        mid: [...s.mid, coords],
+        userTaps: [...(s.userTaps || []), coords],
+      };
     }));
   };
 
@@ -275,17 +296,23 @@ export default function SailScanTab() {
       // the ridge tracker uses it as a tight prior — much more robust than
       // letting the tracker free-find the curve when there are deceptive
       // bright features deeper in the sail.
+      // Use the user's actual manual taps as the high-weight anchors. If the
+      // user has run Auto-fill once and re-runs it, `s.mid` will contain
+      // algorithm output — those should NOT be re-anchored. `userTaps` is
+      // exactly the user's training input.
+      const userMids = s.userTaps || [];
       const result = detectStripeFromTap(cv, cachedImage.current, s.luff, {
         leechHint: s.leech,
-        midHints: s.mid,
+        midHints: userMids,
       });
-      // Keep the user's original luff/leech; only swap in the new midpoints.
+      // Keep the user's original luff/leech AND userTaps; only swap in the
+      // new algorithm-produced midpoints for display.
       setStripes(prev => prev.map((str, i) => i === activeIdx
-        ? { luff: s.luff, leech: s.leech, mid: result.midpoints }
+        ? { luff: s.luff, leech: s.leech, mid: result.midpoints, userTaps: userMids }
         : str,
       ));
       const pct = (result.confidence * 100).toFixed(0);
-      const hint = (s.mid?.length ?? 0) > 0 ? ` · anchored to your ${s.mid.length} hint${s.mid.length === 1 ? '' : 's'}` : '';
+      const hint = userMids.length > 0 ? ` · anchored to your ${userMids.length} hint${userMids.length === 1 ? '' : 's'}` : '';
       setAutoDetectMsg(`Filled ${result.midpoints.length} midpoints between luff and leech${hint} · ${pct}% confidence.`);
     } catch (err: any) {
       setAutoDetectMsg(err?.message || 'Auto-fill failed.');
@@ -455,7 +482,15 @@ export default function SailScanTab() {
   const undoLastPoint = () => {
     setStripes(prev => prev.map((s, i) => {
       if (i !== activeIdx) return s;
-      if (s.mid.length > 0) return { ...s, mid: s.mid.slice(0, -1) };
+      if (s.mid.length > 0) return {
+        ...s,
+        mid: s.mid.slice(0, -1),
+        // Drop the last user-tap if `mid.length` exceeded `userTaps.length`
+        // it means the last entry came from auto-fill — keep userTaps intact.
+        userTaps: (s.userTaps || []).length >= s.mid.length
+          ? (s.userTaps || []).slice(0, -1)
+          : (s.userTaps || []),
+      };
       if (s.leech) return { ...s, leech: null };
       if (s.luff) return { ...s, luff: null };
       return s;
@@ -657,6 +692,59 @@ export default function SailScanTab() {
       ctx.globalAlpha = 1;
     });
     ctx.restore();
+  };
+
+  // ── F3-A: export training corpus ─────────────────────────────────────────
+  // Walks every saved photo across every date, filters for SailScan scans,
+  // bundles their metadata into a single JSON manifest the user can ship
+  // to the training pipeline. Photos themselves stay in IndexedDB; the
+  // manifest references them by photo `id` so the trainer can also load the
+  // blobs from the same db when run locally.
+  const exportTrainingCorpus = async () => {
+    const corpus: any[] = [];
+    let scannedKeys = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith('ssa:photos-meta:')) continue;
+      scannedKeys++;
+      try {
+        const arr = JSON.parse(localStorage.getItem(key) || '[]');
+        for (const photo of arr) {
+          if (!photo?.raceTags?.includes?.('sailscan')) continue;
+          let parsedData: any = null;
+          try { parsedData = photo.sailscan_data ? JSON.parse(photo.sailscan_data) : null; }
+          catch {}
+          corpus.push({
+            id:        photo.id,
+            name:      photo.name,
+            sessionDate: photo.sessionDate,
+            utc:       photo.utc,
+            sailscan:  parsedData,
+            // Surface the cloud-sync state so the trainer can pull blobs
+            // from Bunny if local IDB has been cleared.
+            cloudSynced: photo.cloudSynced,
+          });
+        }
+      } catch (e) {
+        console.warn('[SailScan:export] could not parse', key, e);
+      }
+    }
+    const manifest = {
+      exportedAt:        new Date().toISOString(),
+      algorithmVersion:  ALGORITHM_VERSION,
+      photoCount:        corpus.length,
+      datesScanned:      scannedKeys,
+      $note: 'For each photo: photoBlob lives in IndexedDB ssa-db / photos by `id`. Pair this manifest with your originals/ folder by name when training.',
+      photos:            corpus,
+    };
+    const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sailscan-corpus-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setSaveMsg(`Exported ${corpus.length} SailScan photo${corpus.length === 1 ? '' : 's'} from ${scannedKeys} session${scannedKeys === 1 ? '' : 's'} as JSON manifest.`);
   };
 
   // ── EXIF timestamp extraction (matches SquashShotsApp) ───────────────────
@@ -898,7 +986,8 @@ export default function SailScanTab() {
       // We strip the dense `samples` arrays from each metric (200+ pts each)
       // so the LS entry stays small; spline can be re-derived from points.
       const sailscanPayload = {
-        version: 1,
+        version: 2,
+        algorithmVersion: ALGORITHM_VERSION,
         imageDims: { w: cachedImage.current.width, h: cachedImage.current.height },
         stripes: stripes
           .map((s, i) => {
@@ -908,7 +997,13 @@ export default function SailScanTab() {
               idx: i,
               luff:  s.luff,
               leech: s.leech,
-              mid:   s.mid,
+              // Training-corpus inputs: ONLY the points the user manually
+              // long-pressed (or none, for pure-auto-fill scans).
+              userTaps: s.userTaps || [],
+              // Approved output: the curve actually displayed and saved
+              // (may contain auto-fill-produced midpoints, possibly nudged
+              // afterwards by drag).
+              approvedMids: s.mid,
               metrics: m ? {
                 hasCurve:          m.hasCurve,
                 chordLen:          m.chordLen,
@@ -1470,6 +1565,12 @@ export default function SailScanTab() {
                     🆕 New Scan
                   </button>
                 </div>
+                {/* F3-A: training-corpus export. Small admin link; pulls
+                    every saved SailScan into a JSON manifest for training. */}
+                <button onClick={exportTrainingCorpus}
+                  className="w-full px-3 py-2 mt-1 text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-4 active:scale-95">
+                  📦 Export training corpus (JSON manifest of all saved scans)
+                </button>
               </div>
             </div>
           </div>

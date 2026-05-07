@@ -115,3 +115,51 @@ If RMSE > 5 pixels persists after Phase F3-F4, the algorithm itself is the bottl
 ## Build order recommendation
 
 Build **F2 first** (benchmark runner). It tells us baseline accuracy and gives a measuring stick. Without it, parameter tuning is guessing. F3+ only become valuable once we can measure objectively.
+
+---
+
+## F3 — Learned-refiner CNN
+
+Once we have a measuring stick (F2), and a corpus growing through normal use of the app, we replace the ridge-tracking heuristic with a small learned model.
+
+### F3-A — Training-corpus capture (DONE)
+
+Every saved SailScan stores:
+
+- `userTaps[]` — the midpoints the user manually long-pressed (training input).
+- `approvedMids[]` — the curve actually saved (training target).
+- `algorithmVersion` — version string of the code that produced this scan, so the trainer can filter by epoch.
+
+Plus a "📦 Export training corpus" button on the results screen that bundles every SailScan saved across all dates into a JSON manifest. Photos stay in IndexedDB; the manifest references them by `id`.
+
+### F3-B — First refiner CNN (target: ≥50 corpus examples)
+
+Architecture:
+
+- **Input:** chord-aligned crop of the photo (256×64 px, chord rotated to horizontal, normalised). Plus scalar features: chord length and the user's mid hint depth (or 0 if none).
+- **Encoder:** 4 conv-BN-ReLU blocks, ~250K params total.
+- **Output:** 5 perpendicular depths, one per midpoint t-position (0.10 / 0.20 / 0.35 / 0.55 / 0.80).
+- **Loss:** MSE on midpoint depths against ground-truth `approvedMids`.
+- **Size:** ~1 MB ONNX, runs in `onnxruntime-web` in browser, ~80 ms inference on iPhone.
+
+Training pipeline lives in `tools/sailscan/train-refiner.py`. Reads the F3-A manifest plus the photo blobs, applies augmentation (rotation ±5°, brightness ±20%, gamma 0.7–1.4, channel-min stress, saturation jitter), trains for ~50 epochs, exports `public/sailscan-refiner.onnx`.
+
+Runtime change in `sailscan-cv.ts`: a `loadRefinerModel()` helper. When the model is bundled, it replaces the ridge-tracking step. When not, the heuristic stays as fallback.
+
+A/B harness against the F2 benchmark decides automatically whether to promote the new model.
+
+### F3-C — Iteration (200+ examples)
+
+- Re-train monthly with all accumulated examples.
+- Add a **"silver labels"** pipeline: when running predictions on a new photo, also run Hugo Stubler's sail-scan-ai pipeline (server-side, MIT-licensed) and treat its output as a teacher signal. Effective dataset size grows ~10×.
+- Per-yacht fine-tuning at ≥50 scans per yacht.
+
+### F3-D — Server fallback
+
+If on-device inference doesn't suit, a Vercel serverless `/api/sailscan/refine` runs a heavier model. App uses on-device when bundled, server when online and bundled model isn't trusted, heuristic when offline. ~half-day to wire.
+
+### Iteration cadence
+
+- After every batch of new labelled photos (~50 at a time), re-run F3-B.
+- Track accuracy in `docs/sailscan/benchmark-history.md`.
+- Document which augmentations / hyperparameters moved most.
