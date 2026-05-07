@@ -475,131 +475,149 @@ export function detectStripeFromTap(
   cv.cvtColor(bgr, hsv, cv.COLOR_BGR2HSV);
   bgr.delete();
 
-  // The tap pixel itself is always our colour reference — read it directly
-  // from the downsampled HSV mat (so it matches what we'll flood-fill on).
-  // This sidesteps the previous "sample, threshold, hope tap matches"
-  // pattern which broke when the brightest neighbour pixels were sky/glare.
+  // ── Multi-seed flood fill ───────────────────────────────────────────────
+  // We try the user's luff first, then 3 chord-interior points (only if a
+  // leechHint was supplied). The biggest connected component wins. This
+  // makes detection robust when the user's luff/leech taps land *near* but
+  // not exactly *on* a stripe pixel — a chord-interior seed will likely fall
+  // inside the stripe.
   const data = hsv.data as Uint8Array;
-  const tapIdxLin = ty * w + tx;
-  const tapIdx = tapIdxLin * 3;
-  const hC = data[tapIdx];
-  const sC = data[tapIdx + 1];
-  const vC = data[tapIdx + 2];
-  console.log('[SailScan:cv] tap-pixel HSV (downsampled)', { tx, ty, hsv: { h: hC, s: sC, v: vC } });
-
-  // ── Region-grow (flood fill) from the tap pixel in HSV space ────────────
-  // Far more robust than threshold-around-mean for thin stripes:
-  //   - The tap pixel is GUARANTEED to be in the component (it's the seed).
-  //   - Tolerance is local — neighbours are added if they're similar to the
-  //     tap pixel, not a global average. So small gradients along the stripe
-  //     are fine, but the dramatic colour jumps at sail/sky/luff boundaries
-  //     stop the growth automatically.
-  //   - Hue tolerance only matters when the sample is chromatic; for the
-  //     near-white stripes typical on sailing yachts (low S), the value
-  //     tolerance dominates.
   const HUE_DIFF = options.hueTol ?? 15;
   const SAT_DIFF = options.satTol ?? 60;
   const VAL_DIFF = options.valTol ?? 60;
-  const isAchromatic = sC < 50;
-
-  const inMask = new Uint8Array(w * h);
-  inMask[tapIdxLin] = 1;
-  // Open queue (4-connectivity flood fill). We use indices to avoid object
-  // churn; x = idx % w, y = idx / w.
-  const queue: number[] = [tapIdxLin];
-  let bbX0 = tx, bbY0 = ty, bbX1 = tx, bbY1 = ty;
-  let leechX = tx, leechY = ty;
-  let maxDist2 = 0;
-  let cArea = 1;
-  // Cap the BFS so a runaway flood fill (e.g. seed on uniform sail) can't
-  // consume the whole image. 1/8 of pixels is generous for one stripe.
   const MAX_PIXELS = Math.max(2000, Math.floor((w * h) / 8));
 
-  let qHead = 0;
-  while (qHead < queue.length && cArea < MAX_PIXELS) {
-    const idx = queue[qHead++];
-    const y = (idx / w) | 0;
-    const x = idx - y * w;
-    // 4-connectivity neighbours
-    const ns = [idx - 1, idx + 1, idx - w, idx + w];
-    const nxs = [x - 1, x + 1, x,     x    ];
-    const nys = [y,     y,     y - 1, y + 1];
-    for (let k = 0; k < 4; k++) {
-      const nx = nxs[k], ny = nys[k];
-      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-      const nIdx = ns[k];
-      if (inMask[nIdx]) continue;
-      const dataIdx = nIdx * 3;
-      const nH = data[dataIdx];
-      const nS = data[dataIdx + 1];
-      const nV = data[dataIdx + 2];
-      // Hue is circular [0, 180); compute shortest difference.
-      let dH = Math.abs(nH - hC);
-      if (dH > 90) dH = 180 - dH;
-      const dS = Math.abs(nS - sC);
-      const dV = Math.abs(nV - vC);
-      // For achromatic samples (white/grey stripes), ignore hue entirely:
-      // hue is mathematically unstable when saturation is low, so the per-
-      // pixel hue value is effectively random and would cap growth wrongly.
-      const hueOk = isAchromatic || dH <= HUE_DIFF;
-      const satOk = dS <= SAT_DIFF;
-      const valOk = dV <= VAL_DIFF;
-      inMask[nIdx] = 1; // mark visited regardless so we don't revisit
-      if (!(hueOk && satOk && valOk)) continue;
-      // Accept this neighbour into the component.
-      cArea++;
-      queue.push(nIdx);
-      if (nx < bbX0) bbX0 = nx;
-      if (ny < bbY0) bbY0 = ny;
-      if (nx > bbX1) bbX1 = nx;
-      if (ny > bbY1) bbY1 = ny;
-      const ddx = nx - tx, ddy = ny - ty;
-      const d2 = ddx * ddx + ddy * ddy;
-      if (d2 > maxDist2) { maxDist2 = d2; leechX = nx; leechY = ny; }
+  // Pre-compute leech-hint coords in downsampled space (used for both seed
+  // candidates and chord direction below).
+  const lhDsX = options.leechHint
+    ? Math.max(0, Math.min(w - 1, Math.round(options.leechHint.x * scale)))
+    : tx;
+  const lhDsY = options.leechHint
+    ? Math.max(0, Math.min(h - 1, Math.round(options.leechHint.y * scale)))
+    : ty;
+
+  const seeds: { x: number; y: number; label: string }[] = [{ x: tx, y: ty, label: 'luff' }];
+  if (options.leechHint) {
+    seeds.push({ x: lhDsX, y: lhDsY, label: 'leech' });
+    for (const frac of [0.25, 0.50, 0.75]) {
+      seeds.push({
+        x: Math.round(tx + (lhDsX - tx) * frac),
+        y: Math.round(ty + (lhDsY - ty) * frac),
+        label: `chord-${frac.toFixed(2)}`,
+      });
     }
   }
 
+  type FillResult = {
+    accepted: Uint8Array;
+    area: number;
+    bbX0: number; bbY0: number; bbX1: number; bbY1: number;
+    seedX: number; seedY: number; seedLabel: string;
+    seedH: number; seedS: number; seedV: number;
+  };
+
+  function runFloodFill(seedX: number, seedY: number, label: string): FillResult {
+    const seedIdxLin = seedY * w + seedX;
+    const sH = data[seedIdxLin * 3];
+    const sS = data[seedIdxLin * 3 + 1];
+    const sV = data[seedIdxLin * 3 + 2];
+    const isAch = sS < 50;
+    const visited = new Uint8Array(w * h);
+    visited[seedIdxLin] = 1;
+    const localQ: number[] = [seedIdxLin];
+    let area = 1;
+    let x0 = seedX, y0 = seedY, x1 = seedX, y1 = seedY;
+    let qH = 0;
+    while (qH < localQ.length && area < MAX_PIXELS) {
+      const idx = localQ[qH++];
+      const y = (idx / w) | 0;
+      const x = idx - y * w;
+      const ns = [idx - 1, idx + 1, idx - w, idx + w];
+      const nxs = [x - 1, x + 1, x,     x    ];
+      const nys = [y,     y,     y - 1, y + 1];
+      for (let k = 0; k < 4; k++) {
+        const nx2 = nxs[k], ny2 = nys[k];
+        if (nx2 < 0 || nx2 >= w || ny2 < 0 || ny2 >= h) continue;
+        const nIdx = ns[k];
+        if (visited[nIdx]) continue;
+        visited[nIdx] = 1;
+        const di = nIdx * 3;
+        const nH = data[di], nS = data[di + 1], nV = data[di + 2];
+        let dH = Math.abs(nH - sH);
+        if (dH > 90) dH = 180 - dH;
+        const hueOk = isAch || dH <= HUE_DIFF;
+        const satOk = Math.abs(nS - sS) <= SAT_DIFF;
+        const valOk = Math.abs(nV - sV) <= VAL_DIFF;
+        if (!(hueOk && satOk && valOk)) continue;
+        area++;
+        localQ.push(nIdx);
+        if (nx2 < x0) x0 = nx2;
+        if (ny2 < y0) y0 = ny2;
+        if (nx2 > x1) x1 = nx2;
+        if (ny2 > y1) y1 = ny2;
+      }
+    }
+    const acc = new Uint8Array(w * h);
+    for (const idx of localQ) acc[idx] = 1;
+    return { accepted: acc, area, bbX0: x0, bbY0: y0, bbX1: x1, bbY1: y1,
+             seedX, seedY, seedLabel: label, seedH: sH, seedS: sS, seedV: sV };
+  }
+
+  let best: FillResult | null = null;
+  for (const seed of seeds) {
+    const r = runFloodFill(seed.x, seed.y, seed.label);
+    if (!best || r.area > best.area) best = r;
+  }
   hsv.delete();
+  console.log('[SailScan:cv] flood-fill seeds:',
+    seeds.map(s => s.label).join(','),
+    '· best:', best?.seedLabel,
+    '· area:', best?.area ?? 0);
 
-  if (cArea < 12) {
-    throw new Error(
-      `Component too small (${cArea}px) — tap was probably on background. Try tapping more precisely on the stripe.`,
-    );
-  }
+  // The user's luff tap is always preserved as the luff endpoint.
+  const stripeFound = !!(best && best.area >= 30);
+  const accepted = best ? best.accepted : new Uint8Array(w * h);
+  const cArea = best?.area ?? 0;
+  // Default-far values; will be overwritten with chord direction below.
+  const hC = best?.seedH ?? 0;
+  const sC = best?.seedS ?? 0;
+  const vC = best?.seedV ?? 0;
+  // Carry through to keep type-checks happy; we don't use these as a fall-
+  // back leech anymore — the user's leech (or chord midpoint) governs.
+  const leechX = best ? best.bbX1 : tx;
+  const leechY = best ? best.bbY1 : ty;
+  void leechX; void leechY;
 
-  // Reconstruct an inMask that *only* contains accepted pixels, not "visited
-  // but rejected" pixels. We tagged "accepted" by pushing to queue; rebuild
-  // a boolean mask from that. (The earlier `inMask[nIdx] = 1` for rejected
-  // neighbours was a visit-marker only.)
-  const accepted = new Uint8Array(w * h);
-  for (const idx of queue) accepted[idx] = 1;
-  // Use a synthetic component bbox for downstream centerline sampling.
-  const cX = bbX0, cY = bbY0;
-  const cW = bbX1 - bbX0 + 1, cH = bbY1 - bbY0 + 1;
-
-  // ── Resolve chord (tap→leech) ───────────────────────────────────────────
-  // If the caller supplied an explicit leechHint (the user has manually
-  // marked both luff and leech), use that as the leech and the chord
-  // direction. Otherwise default to the flood-fill's farthest-pixel result.
-  let chordTx = leechX, chordTy = leechY;
-  if (options.leechHint) {
-    chordTx = Math.max(0, Math.min(w - 1, Math.round(options.leechHint.x * scale)));
-    chordTy = Math.max(0, Math.min(h - 1, Math.round(options.leechHint.y * scale)));
-  }
+  // ── Resolve chord (luff→leech) ──────────────────────────────────────────
+  // The user's luff and leech (or the leech-hint when supplied) define the
+  // chord exactly. We never override them with auto-detected positions —
+  // those endpoints are the user's contract.
+  const chordTx = options.leechHint ? lhDsX : (best ? best.bbX1 : tx);
+  const chordTy = options.leechHint ? lhDsY : (best ? best.bbY1 : ty);
   const dx = chordTx - tx, dy = chordTy - ty;
   const chordLen = Math.sqrt(dx * dx + dy * dy);
 
-  // ── Sample centerline along the chord ───────────────────────────────────
-  // Walk along the tap→leech vector, at each step collect perpendicular
-  // distances of in-component pixels and take the median. We then smooth
-  // those perp-distance values with a moving-average to remove jitter
-  // caused by component spurs and chord-perpendicular wobble.
-  const centerlineTs: number[] = [];
-  const centerlineDs: number[] = [];
+  // ── Constraint (a): always-below perpendicular direction ────────────────
+  // Pick the perpendicular vector that points DOWN in image coordinates
+  // (positive y), so the convention "positive d = below the chord" holds
+  // regardless of whether the user dragged from left-to-right or
+  // right-to-left. For a sail photographed from below looking up, the
+  // belly always projects downward in the image — that is "below the
+  // chord" in user terms.
   let ux = 0, uy = 0, nx = 0, ny = 0;
   if (chordLen > 4) {
-    ux = dx / chordLen; uy = dy / chordLen;          // along-chord unit
-    nx = -uy;           ny = ux;                      // perpendicular
+    ux = dx / chordLen; uy = dy / chordLen;
+    nx = -uy;           ny = ux;       // start with right-hand rule
+    if (ny < 0) { nx = -nx; ny = -ny; } // flip to the down-pointing perpendicular
+  }
+
+  // ── Sample centerline along the chord ───────────────────────────────────
+  // Walk along the luff→leech vector. At each step collect the
+  // perpendicular DISTANCES (only on the "below" side, since we know the
+  // stripe is below the chord) of in-component pixels and take the median.
+  const centerlineTs: number[] = [];
+  const centerlineDs: number[] = [];
+  if (chordLen > 4 && stripeFound) {
     const SAMPLES = 60;
     const PERP_RADIUS = 30;
     for (let i = 0; i <= SAMPLES; i++) {
@@ -607,7 +625,10 @@ export function detectStripeFromTap(
       const cx = tx + ux * chordLen * t;
       const cy = ty + uy * chordLen * t;
       const ds: number[] = [];
-      for (let pp = -PERP_RADIUS; pp <= PERP_RADIUS; pp++) {
+      // Constraint (a): only accept "below chord" pixels (pp >= 0). We allow
+      // pp from -2 upward so a stripe pixel sitting exactly on the chord at
+      // an endpoint isn't rejected by quantisation noise.
+      for (let pp = -2; pp <= PERP_RADIUS; pp++) {
         const sx = Math.round(cx + nx * pp);
         const sy = Math.round(cy + ny * pp);
         if (sx < 0 || sx >= w || sy < 0 || sy >= h) continue;
@@ -621,22 +642,11 @@ export function detectStripeFromTap(
     }
   }
 
-  // ── Constraint (a): canonical side of chord ─────────────────────────────
-  // Sail trim stripes always curve to one side of the chord (the sail
-  // belly). Determine that side from the majority sign of raw centerline
-  // perpendicular distances, then drop any wrong-side samples as noise
-  // before fitting.
-  let posCnt = 0, negCnt = 0;
-  for (const d of centerlineDs) { if (d > 0.5) posCnt++; else if (d < -0.5) negCnt++; }
-  const stripeSide = posCnt >= negCnt ? 1 : -1;
-  const filteredTs: number[] = [];
-  const filteredDs: number[] = [];
-  for (let i = 0; i < centerlineTs.length; i++) {
-    if (centerlineDs[i] * stripeSide >= -0.5) {  // on-side or essentially zero
-      filteredTs.push(centerlineTs[i]);
-      filteredDs.push(centerlineDs[i]);
-    }
-  }
+  // No further canonical-side filtering needed — perpendicular sampling is
+  // already constrained to d ≥ 0 above.
+  const filteredTs = centerlineTs;
+  const filteredDs = centerlineDs;
+  const stripeSide = 1; // by construction, all kept samples are on the +d side
 
   // ── Constraint (b): bounded curvature via cubic LSQ fit ─────────────────
   // Fit  d(t) = c0 + c1·t + c2·t² + c3·t³  by weighted least squares.
@@ -685,24 +695,71 @@ export function detectStripeFromTap(
     return { x: bestX, y: bestY };
   };
 
+  // ── Constraint (b/draft): clamp max draft to [5%, 30%] of chord ─────────
+  // Real sail trim stripe drafts fall in this range. Outside it, the
+  // detector almost certainly went wrong — clamp uniformly so the curve
+  // shape is preserved but its scale is sane. If no stripe was found at all
+  // we synthesise a default parabolic curve at 10% draft.
+  const MIN_DRAFT_FRAC = 0.05;
+  const MAX_DRAFT_FRAC = 0.30;
+  const DEFAULT_DRAFT_FRAC = 0.10;
+
+  let scaleD = 1;
+  let usingFallback = false;
+  let fittedDFinal: (t: number) => number;
+  if (stripeFound && chordLen > 4 && filteredTs.length >= 4) {
+    // Find max abs(d) across t ∈ [0.05, 0.95] (avoid endpoint anchors).
+    let maxAbsD = 0;
+    for (let t = 0.05; t <= 0.95; t += 0.02) {
+      const d = Math.abs(fittedD(t));
+      if (d > maxAbsD) maxAbsD = d;
+    }
+    const ratio = maxAbsD / chordLen;
+    if (ratio > MAX_DRAFT_FRAC) {
+      scaleD = MAX_DRAFT_FRAC / ratio;
+    } else if (ratio < MIN_DRAFT_FRAC && ratio > 0.01) {
+      scaleD = MIN_DRAFT_FRAC / ratio;
+    } else if (ratio <= 0.01) {
+      // Curve too flat to trust — synthesise a default
+      usingFallback = true;
+    }
+    fittedDFinal = usingFallback
+      ? (t: number) => 4 * DEFAULT_DRAFT_FRAC * chordLen * t * (1 - t)
+      : (t: number) => fittedD(t) * scaleD;
+  } else {
+    // Stripe not found at all — synthesise a parabolic default. Endpoints
+    // are pinned (4·t·(1−t) is 0 at t=0 and t=1, peak 1 at t=0.5), and the
+    // peak sits at DEFAULT_DRAFT_FRAC of the chord length.
+    usingFallback = true;
+    fittedDFinal = (t: number) => 4 * DEFAULT_DRAFT_FRAC * chordLen * t * (1 - t);
+  }
+
   // ── Sample 5 luff-biased midpoints from the fitted curve ────────────────
   // Sail entry curvature concentrates in the front 30–40% of the chord, so
   // 3 of the 5 midpoints sit in the front half. Each midpoint comes from
-  // the cubic fit (smooth + bounded curvature), then snaps to the nearest
-  // in-component pixel (so it lands on an actual stripe pixel).
+  // the cubic fit (smooth + bounded curvature, draft-clamped to a sane
+  // range), then snaps to the nearest in-component pixel when one exists.
   const MIDPOINT_TS = [0.10, 0.20, 0.35, 0.55, 0.80];
   const midpoints: P[] = [];
-  if (chordLen > 4 && filteredTs.length >= 4) {
+  if (chordLen > 4) {
     MIDPOINT_TS.forEach(t => {
-      let d = fittedD(t);
-      // Enforce canonical side: a slightly noisy fit can dip across the
-      // chord at endpoints; clamp to the correct side.
-      if (d * stripeSide < 0) d = 0;
+      let d = fittedDFinal(t);
+      if (d * stripeSide < 0) d = 0; // never above chord
       const cx = tx + ux * chordLen * t;
       const cy = ty + uy * chordLen * t;
-      const snapped = snap(cx + nx * d, cy + ny * d);
-      midpoints.push({ x: snapped.x / scale, y: snapped.y / scale });
+      const px = cx + nx * d;
+      const py = cy + ny * d;
+      // Only snap if we have a real component to snap to. With the fallback
+      // (synthesised curve, no flood-fill component), there's nothing to
+      // snap to — leave the synthetic point in place for the user to drag.
+      const final = stripeFound ? snap(px, py) : { x: px, y: py };
+      midpoints.push({ x: final.x / scale, y: final.y / scale });
     });
+  }
+  if (usingFallback) {
+    console.log('[SailScan:cv] no/weak stripe component — using default 10% parabolic midpoints');
+  } else if (scaleD !== 1) {
+    console.log('[SailScan:cv] draft clamp applied · scaleD=' + scaleD.toFixed(3));
   }
 
   // Map endpoints back to original-image space. Keep luff = user's exact tap.
