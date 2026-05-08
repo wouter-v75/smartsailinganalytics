@@ -1,17 +1,25 @@
 // Admin-only user-approval queue.
 //
-// Server component: checks the caller is admin, then fetches pending +
-// active + disabled users via the service-role client (so we can show
-// every row regardless of which RLS policies are applied).
-//
-// Approve / disable / reactivate actions hit the /api/admin/users route.
+// On approve, the admin can also pick a starting team / boat / role inline
+// so the user doesn't land in an empty workspace. The teams + boats are
+// fetched here (server-side) and passed down to the actions component.
 
 import { redirect } from 'next/navigation'
-import { getServerSupabase, getServiceSupabase } from '../../../lib/supabase/server'
+import Link from 'next/link'
+import {
+  getServerSupabase,
+  getServiceSupabase,
+} from '../../../lib/supabase/server'
 import type { AppUser } from '../../../lib/supabase/types'
 import UserActions from './UserActions'
 
 export const dynamic = 'force-dynamic'
+
+export interface TeamWithBoats {
+  id: string
+  name: string
+  boats: { id: string; name: string }[]
+}
 
 export default async function AdminUsersPage() {
   const supabase = getServerSupabase()
@@ -25,18 +33,32 @@ export default async function AdminUsersPage() {
     .select('global_role, status')
     .eq('id', user.id)
     .maybeSingle()
-
   if (!me || me.global_role !== 'admin' || me.status !== 'active') {
     redirect('/')
   }
 
   const service = getServiceSupabase()
-  const { data: users } = await service
-    .from('users')
-    .select(
-      'id, email, name, status, global_role, created_at, approved_at, approved_by, last_seen_at'
-    )
-    .order('created_at', { ascending: false })
+  const [{ data: users }, { data: teams }, { data: boats }] = await Promise.all([
+    service
+      .from('users')
+      .select(
+        'id, email, name, status, global_role, created_at, approved_at, approved_by, last_seen_at'
+      )
+      .order('created_at', { ascending: false }),
+    service.from('teams').select('id, name').order('name'),
+    service
+      .from('boats')
+      .select('id, name, team_id')
+      .order('name'),
+  ])
+
+  const teamsWithBoats: TeamWithBoats[] = (teams || []).map((t) => ({
+    id: t.id,
+    name: t.name,
+    boats: (boats || [])
+      .filter((b) => b.team_id === t.id)
+      .map((b) => ({ id: b.id, name: b.name })),
+  }))
 
   const list = (users || []) as AppUser[]
   const pending = list.filter((u) => u.status === 'pending')
@@ -50,23 +72,45 @@ export default async function AdminUsersPage() {
           <h1 className="text-2xl font-semibold text-slate-900">
             User approvals
           </h1>
-          <a
-            href="/"
-            className="text-sm text-blue-600 hover:underline"
-          >
-            ← Back to app
-          </a>
+          <div className="flex gap-3 text-sm">
+            <Link href="/admin/teams" className="text-blue-600 hover:underline">
+              Teams →
+            </Link>
+            <a href="/" className="text-blue-600 hover:underline">
+              ← Back to app
+            </a>
+          </div>
         </div>
 
-        <Section title={`Pending (${pending.length})`} users={pending} />
-        <Section title={`Active (${active.length})`} users={active} />
-        <Section title={`Disabled (${disabled.length})`} users={disabled} />
+        <Section
+          title={`Pending (${pending.length})`}
+          users={pending}
+          teams={teamsWithBoats}
+        />
+        <Section
+          title={`Active (${active.length})`}
+          users={active}
+          teams={teamsWithBoats}
+        />
+        <Section
+          title={`Disabled (${disabled.length})`}
+          users={disabled}
+          teams={teamsWithBoats}
+        />
       </div>
     </div>
   )
 }
 
-function Section({ title, users }: { title: string; users: AppUser[] }) {
+function Section({
+  title,
+  users,
+  teams,
+}: {
+  title: string
+  users: AppUser[]
+  teams: TeamWithBoats[]
+}) {
   if (users.length === 0) {
     return (
       <section className="mb-8">
@@ -86,9 +130,9 @@ function Section({ title, users }: { title: string; users: AppUser[] }) {
         {users.map((u) => (
           <div
             key={u.id}
-            className="flex items-center justify-between gap-3 px-4 py-3"
+            className="flex items-start justify-between gap-3 px-4 py-3"
           >
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="font-medium text-slate-900 truncate">
                 {u.name || '—'}
                 {u.global_role === 'admin' && (
@@ -103,7 +147,7 @@ function Section({ title, users }: { title: string; users: AppUser[] }) {
                 {u.approved_at && ` · Approved ${formatDate(u.approved_at)}`}
               </div>
             </div>
-            <UserActions userId={u.id} status={u.status} />
+            <UserActions userId={u.id} status={u.status} teams={teams} />
           </div>
         ))}
       </div>
