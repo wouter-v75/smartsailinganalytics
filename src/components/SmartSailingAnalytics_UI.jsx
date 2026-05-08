@@ -1,13 +1,18 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
-import { deleteStreamVideo, updateCloudSessionMetadata } from "../lib/bunny";
+import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady } from "../lib/bunny";
+import PhotosTab from "./PhotosTab";
+import SquashShotsApp from "./SquashShotsApp";
+import SailScanTab from "./SailScanTab";
+import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
+  buildSpline, evalSpline, goldenMax, preparePolar,
+  polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
 function getSyncOffsets() { try { const v=localStorage.getItem(OFFSET_KEY); return v?JSON.parse(v):{};} catch{return{};} }
 function saveSyncOffset(videoId, secs) { try { const o=getSyncOffsets(); if(secs===0){delete o[videoId];}else{o[videoId]=secs;} localStorage.setItem(OFFSET_KEY,JSON.stringify(o));} catch{} }
-import { checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady } from "../lib/bunny";
 
 // ─── VIDEO CREATION TIME ─────────────────────────────────────────────────────
 // Scan a buffer for the `mvhd` atom and return its creation_time in ms (UTC).
@@ -317,12 +322,7 @@ function parseXmlEvents(text,offsetMin=0){
 }
 
 // ─── POLAR (see src/lib/polarCalc.js) ──────────────────────────────────────
-import PhotosTab from "./PhotosTab";
-import SquashShotsApp from "./SquashShotsApp";
-import SailScanTab from "./SailScanTab";
-import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
-  buildSpline, evalSpline, goldenMax, preparePolar,
-  polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
+// (imports moved to top of file)
 
 
 const R=(n,d=1)=>(n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -3458,7 +3458,7 @@ function MobileShell(props){
   );
 }
 
-export default function SmartSailingAnalytics(){
+function SSAApp(){
   const isMobile = useIsMobile();
   const[role,setRole]=useState("coach");
   const[activeTab,setActiveTab]=useState("library");
@@ -4217,3 +4217,5 @@ export default function SmartSailingAnalytics(){
     </div>
   );
 }
+
+export default SSAApp;
