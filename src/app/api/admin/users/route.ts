@@ -15,7 +15,7 @@ import {
 } from '../../../../lib/supabase/server'
 
 type Action = 'approve' | 'disable' | 'reactivate'
-type Role = 'coach' | 'tl1' | 'tl2' | 'consultant'
+type Role = 'team_manager' | 'coach' | 'tl1' | 'tl2' | 'consultant'
 
 const STATUS_BY_ACTION: Record<Action, 'active' | 'disabled'> = {
   approve: 'active',
@@ -23,7 +23,7 @@ const STATUS_BY_ACTION: Record<Action, 'active' | 'disabled'> = {
   reactivate: 'active',
 }
 
-const ROLES: Role[] = ['coach', 'tl1', 'tl2', 'consultant']
+const ROLES: Role[] = ['team_manager', 'coach', 'tl1', 'tl2', 'consultant']
 
 interface Membership {
   team_id: string
@@ -85,6 +85,10 @@ export async function POST(req: NextRequest) {
   if (body.action === 'approve') {
     update.approved_at = new Date().toISOString()
     update.approved_by = user.id
+    // Clear the invitation hints — they've served their purpose.
+    update.requested_team_id = null
+    update.requested_role = null
+    update.requested_boat_id = null
   }
   const { error: updErr } = await service
     .from('users')

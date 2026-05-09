@@ -279,6 +279,21 @@ export default function UserPill() {
             </>
           )}
 
+          {/* Team manager links: one entry per team they manage. */}
+          {me.global_role !== 'admin' &&
+            memberships
+              .filter((m) => m.role === 'team_manager')
+              .map((m) => (
+                <Link
+                  key={`mgr-${m.team_id}`}
+                  href={`/admin/teams/${m.team_id}`}
+                  className="block px-3 py-2 hover:bg-slate-700 text-slate-100"
+                  onClick={() => setOpen(false)}
+                >
+                  Manage {m.team_name}
+                </Link>
+              ))}
+
           <button
             onClick={signOut}
             className="block w-full text-left px-3 py-2 hover:bg-slate-700 text-slate-100 border-t border-slate-700"

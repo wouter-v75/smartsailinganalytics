@@ -18,15 +18,18 @@ Living document. Captures choices we've agreed on so we don't relitigate them ev
 
 ## Roles
 
-Five roles. Two have global scope; three are membership-scoped (apply only within a (team, boat) context).
+Six roles. One global, five membership-scoped.
 
-| Role         | Scope         | Notes                                                |
-| ------------ | ------------- | ---------------------------------------------------- |
-| `admin`      | global        | Site manager. Full access. Set on `users.global_role`. |
-| `coach`      | per (team,boat) | Manages team data, runs SailScan / AI, can edit others' uploads. |
-| `tl2`        | per (team,boat) | Senior crew. Runs SailScan / AI, uploads, edits own. |
-| `tl1`        | per (team,boat) | Junior crew. Uploads own + views team data. No SailScan / AI. |
-| `consultant` | per (team,boat) **with valid_from / valid_to** | Read-only, time-bounded. Sees only data with `utc BETWEEN valid_from AND valid_to`. |
+The model separates **operations** (manage who's on the team, what boats they sail on) from **technical** (run training, edit data, run SailScan). A real-world owner-skipper who also sails holds two memberships — `team_manager` for ops and `coach`/`tl2` for sailing.
+
+| Role           | Scope         | Notes                                                |
+| -------------- | ------------- | ---------------------------------------------------- |
+| `admin`        | global        | Platform support. Cross-tenant escape hatch. Day-to-day hands-off. Set on `users.global_role`. |
+| `team_manager` | per team      | **Operations**. Manages boats, memberships (incl. coaches), renames team, curates tag lists. Reads all team data; does NOT write data (would need a separate sailing-side membership). |
+| `coach`        | per (team, boat) | **Technical**. Runs SailScan / AI, edits any team data, calibrates yacht stripe colours, deletes sessions/photos/videos. No user or boat management. |
+| `tl2`          | per (team, boat) | Senior crew. Runs SailScan / AI, uploads, edits own. |
+| `tl1`          | per (team, boat) | Junior crew. Uploads own + views team data. No SailScan / AI. |
+| `consultant`   | per (team, boat) **with valid_from / valid_to** | Read-only, time-bounded. Sees only data with `utc BETWEEN valid_from AND valid_to`. |
 
 Permission matrix lives in `docs/auth/permissions.md`.
 
@@ -40,13 +43,14 @@ Permission matrix lives in `docs/auth/permissions.md`.
 
 Per-user, by role. Storage tracked in `user_quota.bytes_used`, ceiling in `bytes_limit`.
 
-| Role         | Default bytes_limit |
-| ------------ | --------------------|
-| `admin`      | unlimited (`bytes_limit = NULL` or very large) |
-| `coach`      | 50 GB |
-| `tl2`        | 10 GB |
-| `tl1`        | 5 GB |
-| `consultant` | 5 GB |
+| Role           | Default bytes_limit |
+| -------------- | --------------------|
+| `admin`        | unlimited (`bytes_limit = NULL` or very large) |
+| `team_manager` | 5 GB (rare uploader) |
+| `coach`        | 50 GB |
+| `tl2`          | 10 GB |
+| `tl1`          | 5 GB |
+| `consultant`   | 5 GB |
 
 - **80 % threshold** → warning banner in app + email to user.
 - **100 % threshold** → upload blocked + email to user **and** to admin.

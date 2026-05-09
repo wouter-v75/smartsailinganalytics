@@ -1,16 +1,52 @@
 'use client'
 
-import { useState } from 'react'
+// Signup page. Two flavours:
+//   - Plain: lands user as 'pending' with no team, admin approves later.
+//   - Invite: ?invite=<token> in URL → shows the team / role they're being
+//     invited into, pre-fills email if the invite is targeted, and on signup
+//     redeems the invitation right after the auth row exists.
+
+import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { getBrowserSupabase } from '../../lib/supabase/browser'
 
-export default function SignupPage() {
+interface InviteSnapshot {
+  team_name: string | null
+  role: string
+  boat_name: string | null
+  auto_approve: boolean
+  status: 'valid' | 'expired' | 'revoked' | 'exhausted'
+}
+
+function SignupForm() {
+  const searchParams = useSearchParams()
+  const inviteToken = searchParams.get('invite')
+
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState(false)
+  const [done, setDone] = useState<'pending' | 'invited' | null>(null)
+
+  // Invite preview, fetched on mount when ?invite= is present.
+  const [invite, setInvite] = useState<InviteSnapshot | null>(null)
+  const [inviteLoading, setInviteLoading] = useState(Boolean(inviteToken))
+
+  useEffect(() => {
+    if (!inviteToken) return
+    let cancelled = false
+    ;(async () => {
+      const res = await fetch(`/api/invitations/${inviteToken}`)
+      const j = await res.json().catch(() => null)
+      if (!cancelled && res.ok) setInvite(j as InviteSnapshot)
+      if (!cancelled) setInviteLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [inviteToken])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -22,45 +58,71 @@ export default function SignupPage() {
     setBusy(true)
     try {
       const supabase = getBrowserSupabase()
-      // The handle_new_user trigger reads name from user_metadata.
-      const { error: signUpError } = await supabase.auth.signUp({
+      const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: { name },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: `${window.location.origin}/auth/callback${
+            inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : ''
+          }`,
         },
       })
       if (signUpError) {
         setError(signUpError.message)
         return
       }
-      setDone(true)
+      // If we have a session right away (rare for email-confirm flows but
+      // happens when "Confirm email" is OFF), redeem the invite now.
+      if (inviteToken && data?.session) {
+        await fetch(`/api/invitations/${inviteToken}`, { method: 'POST' })
+      }
+      setDone(inviteToken ? 'invited' : 'pending')
     } finally {
       setBusy(false)
     }
   }
 
-  if (done) {
+  if (done === 'pending') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
-        <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-6 sm:p-8 text-center">
-          <h1 className="text-2xl font-semibold text-slate-900 mb-2">
-            Check your inbox
-          </h1>
-          <p className="text-slate-600 mb-4">
-            We&apos;ve sent a confirmation email to <strong>{email}</strong>.
-            Click the link inside, then wait for the admin to approve your
-            account. You&apos;ll get an email when access is granted.
-          </p>
-          <Link
-            href="/login"
-            className="inline-block mt-2 text-blue-600 hover:underline"
-          >
-            Back to sign in
-          </Link>
-        </div>
-      </div>
+      <DonePanel>
+        <h1 className="text-2xl font-semibold text-slate-900 mb-2">
+          Check your inbox
+        </h1>
+        <p className="text-slate-600 mb-4">
+          We&apos;ve sent a confirmation email to <strong>{email}</strong>.
+          Click the link inside, then wait for the admin to approve your
+          account.
+        </p>
+        <Link
+          href="/login"
+          className="inline-block mt-2 text-blue-600 hover:underline"
+        >
+          Back to sign in
+        </Link>
+      </DonePanel>
+    )
+  }
+
+  if (done === 'invited') {
+    return (
+      <DonePanel>
+        <h1 className="text-2xl font-semibold text-slate-900 mb-2">
+          Check your inbox
+        </h1>
+        <p className="text-slate-600 mb-4">
+          We&apos;ve sent a confirmation email to <strong>{email}</strong>.
+          Click the link inside to finish joining{' '}
+          <strong>{invite?.team_name || 'the team'}</strong>.
+          {invite?.auto_approve ? null : (
+            <>
+              {' '}
+              The team manager will approve your access once the email is
+              confirmed.
+            </>
+          )}
+        </p>
+      </DonePanel>
     )
   }
 
@@ -68,11 +130,31 @@ export default function SignupPage() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
       <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-6 sm:p-8">
         <h1 className="text-2xl font-semibold text-slate-900 mb-1">
-          Request access
+          {invite ? `Join ${invite.team_name || 'this team'}` : 'Request access'}
         </h1>
-        <p className="text-sm text-slate-500 mb-6">
-          New accounts are reviewed by the admin before access is granted.
-        </p>
+        {invite ? (
+          <p className="text-sm text-slate-600 mb-6">
+            You&apos;ve been invited as <strong>{invite.role}</strong>
+            {invite.boat_name && (
+              <>
+                {' '}
+                on <strong>{invite.boat_name}</strong>
+              </>
+            )}
+            .
+            {invite.auto_approve
+              ? ' Your access is granted as soon as you confirm your email.'
+              : ' The team manager will approve your access after you sign up.'}
+          </p>
+        ) : (
+          <p className="text-sm text-slate-500 mb-6">
+            New accounts are reviewed by the admin before access is granted.
+          </p>
+        )}
+
+        {inviteLoading && (
+          <p className="text-sm text-slate-500 mb-4">Loading invite…</p>
+        )}
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
@@ -132,17 +214,42 @@ export default function SignupPage() {
             disabled={busy}
             className="w-full rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2 font-medium"
           >
-            {busy ? 'Submitting…' : 'Request access'}
+            {busy ? 'Submitting…' : invite ? 'Sign up & join' : 'Request access'}
           </button>
         </form>
 
         <p className="mt-6 text-sm text-slate-600 text-center">
           Already have an account?{' '}
-          <Link href="/login" className="text-blue-600 hover:underline">
+          <Link
+            href={
+              inviteToken
+                ? `/login?next=${encodeURIComponent(`/join/${inviteToken}`)}`
+                : '/login'
+            }
+            className="text-blue-600 hover:underline"
+          >
             Sign in
           </Link>
         </p>
       </div>
     </div>
+  )
+}
+
+function DonePanel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-6 sm:p-8 text-center">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen" />}>
+      <SignupForm />
+    </Suspense>
   )
 }

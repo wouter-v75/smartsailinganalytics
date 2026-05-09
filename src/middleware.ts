@@ -25,6 +25,13 @@ const PUBLIC_PATHS = new Set<string>([
   '/auth/confirm',
 ])
 
+// Path-prefix matches that bypass the auth gate entirely (anonymous AND
+// non-active users can hit them). /join/<token> is an invite redemption
+// landing page that needs to work for unauth, pending, and active alike.
+function isAlwaysPublic(pathname: string): boolean {
+  return pathname.startsWith('/join/')
+}
+
 function clearAuthCookies(request: NextRequest, redirectTo: URL) {
   const res = NextResponse.redirect(redirectTo)
   for (const cookie of request.cookies.getAll()) {
@@ -67,7 +74,11 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  const isPublic = PUBLIC_PATHS.has(pathname)
+  const isPublic = PUBLIC_PATHS.has(pathname) || isAlwaysPublic(pathname)
+
+  // /join/* is reachable regardless of auth state — the page itself decides
+  // what to do (redirect unauth to /signup?invite=, redeem for auth users).
+  if (isAlwaysPublic(pathname)) return response
 
   // Unauthenticated and visiting a protected page → /login.
   if (!user) {

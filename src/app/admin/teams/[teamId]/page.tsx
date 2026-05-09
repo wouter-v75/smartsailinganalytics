@@ -10,6 +10,7 @@ import {
 import TeamHeader from './TeamHeader'
 import BoatsPanel from './BoatsPanel'
 import MembershipsPanel from './MembershipsPanel'
+import InvitationsPanel from './InvitationsPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,11 +29,25 @@ export default async function TeamDetailPage({
     .select('global_role, status')
     .eq('id', user.id)
     .maybeSingle()
-  if (!me || me.global_role !== 'admin' || me.status !== 'active') {
-    redirect('/')
-  }
+  if (!me || me.status !== 'active') redirect('/')
 
+  // Allow access for global admin OR active team_manager of THIS team.
   const service = getServiceSupabase()
+  if (me.global_role !== 'admin') {
+    const { data: mgr } = await service
+      .from('memberships')
+      .select('id, valid_from, valid_to')
+      .eq('user_id', user.id)
+      .eq('team_id', params.teamId)
+      .eq('role', 'team_manager')
+    const now = Date.now()
+    const ok = (mgr || []).some((m) => {
+      if (m.valid_from && new Date(m.valid_from).getTime() > now) return false
+      if (m.valid_to && new Date(m.valid_to).getTime() < now) return false
+      return true
+    })
+    if (!ok) redirect('/')
+  }
   const [{ data: team }, { data: boats }, { data: memberships }, { data: users }] =
     await Promise.all([
       service
@@ -87,6 +102,8 @@ export default async function TeamDetailPage({
           memberships={memberships || []}
           activeUsers={users || []}
         />
+
+        <InvitationsPanel teamId={team.id} boats={boats || []} />
       </div>
     </div>
   )

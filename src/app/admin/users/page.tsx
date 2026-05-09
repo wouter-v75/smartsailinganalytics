@@ -42,7 +42,7 @@ export default async function AdminUsersPage() {
     service
       .from('users')
       .select(
-        'id, email, name, status, global_role, created_at, approved_at, approved_by, last_seen_at'
+        'id, email, name, status, global_role, created_at, approved_at, approved_by, last_seen_at, requested_team_id, requested_role, requested_boat_id'
       )
       .order('created_at', { ascending: false }),
     service.from('teams').select('id, name').order('name'),
@@ -147,7 +147,14 @@ function Section({
                 {u.approved_at && ` · Approved ${formatDate(u.approved_at)}`}
               </div>
             </div>
-            <UserActions userId={u.id} status={u.status} teams={teams} />
+            <UserActions
+              userId={u.id}
+              status={u.status}
+              teams={teams}
+              requestedTeamId={u.requested_team_id}
+              requestedRole={u.requested_role}
+              requestedBoatId={u.requested_boat_id}
+            />
           </div>
         ))}
       </div>

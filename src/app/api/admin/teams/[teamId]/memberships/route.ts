@@ -3,16 +3,16 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../lib/supabase/server'
-import { requireAdmin } from '../../../../../../lib/supabase/admin-guard'
+import { requireTeamManager } from '../../../../../../lib/supabase/admin-guard'
 
-const ROLES = ['coach', 'tl1', 'tl2', 'consultant'] as const
+const ROLES = ['team_manager', 'coach', 'tl1', 'tl2', 'consultant'] as const
 type Role = (typeof ROLES)[number]
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { teamId: string } }
 ) {
-  const guard = await requireAdmin()
+  const guard = await requireTeamManager(params.teamId)
   if (!guard.ok) return guard.response
 
   const body = (await req.json().catch(() => null)) as

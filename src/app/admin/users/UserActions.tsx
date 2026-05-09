@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation'
 
 type Status = 'pending' | 'active' | 'disabled'
 type Action = 'approve' | 'disable' | 'reactivate'
-type Role = 'coach' | 'tl2' | 'tl1' | 'consultant'
+type Role = 'team_manager' | 'coach' | 'tl2' | 'tl1' | 'consultant'
 
 interface TeamWithBoats {
   id: string
@@ -22,26 +22,52 @@ interface TeamWithBoats {
   boats: { id: string; name: string }[]
 }
 
-const ROLES: Role[] = ['coach', 'tl2', 'tl1', 'consultant']
+const ROLES: Role[] = ['team_manager', 'coach', 'tl2', 'tl1', 'consultant']
 
 export default function UserActions({
   userId,
   status,
   teams,
+  requestedTeamId,
+  requestedRole,
+  requestedBoatId,
 }: {
   userId: string
   status: Status
   teams: TeamWithBoats[]
+  requestedTeamId?: string | null
+  requestedRole?: Role | null
+  requestedBoatId?: string | null
 }) {
   const router = useRouter()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
 
-  // Approve form state
-  const [teamId, setTeamId] = useState<string>(teams[0]?.id || '')
-  const [boatId, setBoatId] = useState<string>('') // '' = all boats
-  const [role, setRole] = useState<Role>('tl2')
+  // Approve form state. Default to whatever the redeemed invitation
+  // recorded; otherwise fall back to the first team + tl2.
+  const initialTeamId = (() => {
+    if (requestedTeamId && teams.some((t) => t.id === requestedTeamId)) {
+      return requestedTeamId
+    }
+    return teams[0]?.id || ''
+  })()
+  const initialBoatId = (() => {
+    if (
+      requestedBoatId &&
+      teams
+        .find((t) => t.id === initialTeamId)
+        ?.boats.some((b) => b.id === requestedBoatId)
+    ) {
+      return requestedBoatId
+    }
+    return ''
+  })()
+  const initialRole: Role = requestedRole || 'tl2'
+
+  const [teamId, setTeamId] = useState<string>(initialTeamId)
+  const [boatId, setBoatId] = useState<string>(initialBoatId)
+  const [role, setRole] = useState<Role>(initialRole)
   const [validFrom, setValidFrom] = useState('')
   const [validTo, setValidTo] = useState('')
   const [skipMembership, setSkipMembership] = useState(false)

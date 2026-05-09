@@ -2,13 +2,13 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../../lib/supabase/server'
-import { requireAdmin } from '../../../../../../../lib/supabase/admin-guard'
+import { requireTeamManager } from '../../../../../../../lib/supabase/admin-guard'
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { teamId: string; boatId: string } }
 ) {
-  const guard = await requireAdmin()
+  const guard = await requireTeamManager(params.teamId)
   if (!guard.ok) return guard.response
 
   const body = (await req.json().catch(() => null)) as
@@ -45,7 +45,7 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: { teamId: string; boatId: string } }
 ) {
-  const guard = await requireAdmin()
+  const guard = await requireTeamManager(params.teamId)
   if (!guard.ok) return guard.response
 
   const service = getServiceSupabase()

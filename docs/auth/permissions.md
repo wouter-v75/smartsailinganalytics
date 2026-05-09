@@ -51,9 +51,9 @@ Legend: ✅ allowed · ❌ forbidden · ⏱ allowed only inside `valid_from … 
 
 Coaches can request membership changes via admin out-of-band; the system does not let them mutate memberships directly.
 
-### Sessions, photos, videos (tracked in app, not yet in DB at L1.0)
+### Sessions, photos, videos, mast_settings, tag_lists (added in L3.A)
 
-These tables don't exist yet — they'll be added in L3 when we move data off IndexedDB. Including the matrix here so we don't have to relitigate later.
+Tables ship in `supabase/migrations/0003_data_schema.sql`. RLS policies enforce the matrix below via the `has_boat_access` / `has_team_role` / `is_admin` helpers from 0002.
 
 | Action                              | admin | coach | tl2 | tl1 | consultant |
 | ----------------------------------- | :---: | :---: | :-: | :-: | :--------: |

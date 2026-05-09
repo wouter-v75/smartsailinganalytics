@@ -4,6 +4,12 @@
 
 export type AppUserStatus = 'pending' | 'active' | 'disabled'
 export type GlobalRole = 'admin' | null
+export type MembershipRole =
+  | 'team_manager'
+  | 'coach'
+  | 'tl1'
+  | 'tl2'
+  | 'consultant'
 
 export interface AppUser {
   id: string
@@ -15,4 +21,9 @@ export interface AppUser {
   approved_at: string | null
   approved_by: string | null
   last_seen_at: string | null
+  // Pre-filled by an open-link invitation redemption (0005, 0006). Used by
+  // the admin approval form to default the team / role / boat dropdowns.
+  requested_team_id: string | null
+  requested_role: MembershipRole | null
+  requested_boat_id: string | null
 }

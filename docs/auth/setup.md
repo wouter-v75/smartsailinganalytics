@@ -18,12 +18,13 @@ Decisions and rationale live in [`spec.md`](./spec.md). The SQL itself is in [`.
 
 ## 2. Run the schema migrations
 
-Two SQL files, run in order. Both are idempotent so you can re-run during development.
+Three SQL files, run in order. All idempotent so you can re-run during development.
 
 1. Open **SQL Editor** in the Supabase dashboard.
-2. **New query** → paste the contents of `supabase/migrations/0001_init_schema.sql` → **Run**.
-3. **New query** → paste the contents of `supabase/migrations/0002_rls_policies.sql` → **Run**.
-4. Verify under **Table Editor** that you can see: `users`, `teams`, `boats`, `memberships`, `user_quota`, `events`.
+2. **New query** → paste `supabase/migrations/0001_init_schema.sql` → **Run**.
+3. **New query** → paste `supabase/migrations/0002_rls_policies.sql` → **Run**.
+4. **New query** → paste `supabase/migrations/0003_data_schema.sql` → **Run** (added in L3.A: sessions, videos, photos, mast_settings, tag_lists with RLS).
+5. Verify under **Table Editor** that you can see: `users`, `teams`, `boats`, `memberships`, `user_quota`, `events`, `sessions`, `videos`, `photos`, `mast_settings`, `tag_lists`.
 
 > 💡 Once we're past L1.0 we should switch to the Supabase CLI and run migrations locally with `supabase db push`. For now, the dashboard SQL editor is fine.
 
@@ -131,13 +132,13 @@ SELECT id, email, status, global_role
   FROM public.users
  WHERE global_role = 'admin';
 
--- Should return 6 tables.
+-- Should return 11 tables (after L3.A migration).
 SELECT tablename
   FROM pg_tables
  WHERE schemaname = 'public'
  ORDER BY tablename;
 
--- Should return >0; verifies RLS is enabled on every table.
+-- Should return 11; verifies RLS is enabled on every table.
 SELECT relname, relrowsecurity
   FROM pg_class
  WHERE relnamespace = 'public'::regnamespace

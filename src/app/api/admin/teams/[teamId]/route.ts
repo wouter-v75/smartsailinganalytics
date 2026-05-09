@@ -1,17 +1,20 @@
 // Single team:
-//   GET    → details + boats + memberships (with user names).
-//   PATCH  → rename. Body: { name }.
-//   DELETE → cascade-deletes boats and memberships via FK ON DELETE CASCADE.
+//   GET    → details + boats + memberships (admin OR team_manager).
+//   PATCH  → rename (admin OR team_manager).
+//   DELETE → admin only. Cascade-deletes boats and memberships via FK.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../lib/supabase/server'
-import { requireAdmin } from '../../../../../lib/supabase/admin-guard'
+import {
+  requireAdmin,
+  requireTeamManager,
+} from '../../../../../lib/supabase/admin-guard'
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: { teamId: string } }
 ) {
-  const guard = await requireAdmin()
+  const guard = await requireTeamManager(params.teamId)
   if (!guard.ok) return guard.response
 
   const service = getServiceSupabase()
@@ -52,7 +55,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { teamId: string } }
 ) {
-  const guard = await requireAdmin()
+  const guard = await requireTeamManager(params.teamId)
   if (!guard.ok) return guard.response
 
   const body = (await req.json().catch(() => null)) as
@@ -84,6 +87,7 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: { teamId: string } }
 ) {
+  // Tenant-deletion stays admin-only.
   const guard = await requireAdmin()
   if (!guard.ok) return guard.response
 
