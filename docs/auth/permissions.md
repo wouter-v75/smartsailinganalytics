@@ -51,31 +51,37 @@ Legend: ✅ allowed · ❌ forbidden · ⏱ allowed only inside `valid_from … 
 
 Coaches can request membership changes via admin out-of-band; the system does not let them mutate memberships directly.
 
-### Sessions, photos, videos, mast_settings, tag_lists (added in L3.A)
+### Sessions, photos, videos, mast_settings, tag_lists (added in L3.A, refined in 0007)
 
-Tables ship in `supabase/migrations/0003_data_schema.sql`. RLS policies enforce the matrix below via the `has_boat_access` / `has_team_role` / `is_admin` helpers from 0002.
+Tables ship in `supabase/migrations/0003_data_schema.sql`. RLS policies enforce the matrix below via the `has_boat_access` / `has_team_role` / `is_admin` helpers from 0002. Consultant uploads (added in 0007) are gated by their `valid_from`/`valid_to` window — when the window closes, RLS denies both reads and writes, so they can no longer see or edit anything they contributed (data stays in the team archive).
 
-| Action                              | admin | coach | tl2 | tl1 | consultant |
-| ----------------------------------- | :---: | :---: | :-: | :-: | :--------: |
-| Upload photo / video / log to boat  | ✅    | ✅    | ✅  | ✅  | ❌         |
-| View own uploads                    | ✅    | ✅    | ✅  | ✅  | ⏱         |
-| View teammates' uploads (same boat) | ✅    | ✅    | ✅  | ✅  | ⏱         |
-| View other boats' uploads (same team) | ✅  | ✅    | ❌  | ❌  | ❌         |
-| Edit own uploads                    | ✅    | ✅    | ✅  | ✅  | ❌         |
-| Edit others' uploads                | ✅    | ✅    | ❌  | ❌  | ❌         |
-| Delete uploads                      | ✅    | ✅    | ❌  | ❌  | ❌         |
+team_manager is intentionally **not** in the upload list. A team_manager who also sails holds a second membership (typically `tl2` or `coach`) for that role.
 
-### Analyses (SailScan, AI commentary, etc.)
+| Action                              | admin | team_manager | coach | tl2 | tl1 | consultant |
+| ----------------------------------- | :---: | :----------: | :---: | :-: | :-: | :--------: |
+| Upload photo / video / log to boat  | ✅    | ❌           | ✅    | ✅  | ✅  | ⏱         |
+| View own uploads                    | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         |
+| View teammates' uploads (same boat) | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         |
+| View other boats' uploads (same team) | ✅  | ✅           | ✅    | ❌  | ❌  | ❌         |
+| Edit own uploads                    | ✅    | ❌           | ✅    | ✅  | ✅  | ⏱         |
+| Edit others' uploads                | ✅    | ❌           | ✅    | ❌  | ❌  | ❌         |
+| Delete uploads                      | ✅    | ❌           | ✅    | ❌  | ❌  | ❌         |
 
-| Action                              | admin | coach | tl2 | tl1 | consultant |
-| ----------------------------------- | :---: | :---: | :-: | :-: | :--------: |
-| Run SailScan on a photo             | ✅    | ✅    | ✅  | ❌  | ❌         |
-| Run AI commentary / video AI        | ✅    | ✅    | ✅  | ❌  | ❌         |
-| View existing analyses              | ✅    | ✅    | ✅  | ✅  | ⏱         |
-| Edit / approve a SailScan result    | ✅    | ✅    | ✅  | ❌  | ❌         |
-| Calibrate yacht stripe colours      | ✅    | ✅    | ✅  | ❌  | ❌         |
+### Analyses (SailScan, SquashShots, AI commentary)
 
-Rationale: TL1 is junior — can record data, but not consume scarce AI resources.
+These are UI-level gates (the DB doesn't know about features). Enforced in client components via the active membership's role.
+
+| Action                              | admin | team_manager | coach | tl2 | tl1 | consultant |
+| ----------------------------------- | :---: | :----------: | :---: | :-: | :-: | :--------: |
+| Run SailScan on a photo             | ✅    | ❌           | ✅    | ✅  | ✅  | ⏱         |
+| Run SquashShots                     | ✅    | ❌           | ✅    | ✅  | ✅  | ⏱         |
+| Run AI commentary / video AI        | ✅    | ❌           | ✅    | ✅  | ❌  | ❌         |
+| Access **Data Analysis** tab        | ✅    | ✅           | ✅    | ✅  | ✅  | ❌         |
+| View existing analyses              | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         |
+| Edit / approve a SailScan result    | ✅    | ❌           | ✅    | ✅  | ✅  | ❌         |
+| Calibrate yacht stripe colours      | ✅    | ❌           | ✅    | ✅  | ❌  | ❌         |
+
+Rationale: tl1 + consultant can take pictures and run SailScan / SquashShots (cheap inference). AI commentary stays gated to coach + tl2 (more expensive, requires interpretation skill). Consultants are deliberately blocked from the data-analysis tab — they're external advisors and should view through the lens the team curates for them, not browse the raw archive.
 
 ### Quotas & storage
 

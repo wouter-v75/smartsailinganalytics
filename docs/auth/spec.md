@@ -27,9 +27,9 @@ The model separates **operations** (manage who's on the team, what boats they sa
 | `admin`        | global        | Platform support. Cross-tenant escape hatch. Day-to-day hands-off. Set on `users.global_role`. |
 | `team_manager` | per team      | **Operations**. Manages boats, memberships (incl. coaches), renames team, curates tag lists. Reads all team data; does NOT write data (would need a separate sailing-side membership). |
 | `coach`        | per (team, boat) | **Technical**. Runs SailScan / AI, edits any team data, calibrates yacht stripe colours, deletes sessions/photos/videos. No user or boat management. |
-| `tl2`          | per (team, boat) | Senior crew. Runs SailScan / AI, uploads, edits own. |
-| `tl1`          | per (team, boat) | Junior crew. Uploads own + views team data. No SailScan / AI. |
-| `consultant`   | per (team, boat) **with valid_from / valid_to** | Read-only, time-bounded. Sees only data with `utc BETWEEN valid_from AND valid_to`. |
+| `tl2`          | per (team, boat) | Senior crew. Uploads, edits own, runs SailScan + SquashShots + AI. |
+| `tl1`          | per (team, boat) | Junior crew. Uploads, edits own, runs SailScan + SquashShots. **No AI.** Has data-analysis tab. |
+| `consultant`   | per (team, boat) **with valid_from / valid_to** | Time-bounded contributor. Same upload + SailScan + SquashShots powers as tl1 within their window. **No AI, no data-analysis tab.** Window closes → loses read + write access (uploaded data persists in team archive). |
 
 Permission matrix lives in `docs/auth/permissions.md`.
 
