@@ -10,6 +10,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 import { getBrowserSupabase } from '../lib/supabase/browser';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
+import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
@@ -1087,12 +1088,39 @@ function UploadTab({role,cloudStatus,onImported}){
       const d = csvDate || fallbackDate;
       addLog(`Saving log → session ${fmtDate(d)}…`);
       await saveLogData(d, csvParsed.rows, csvFile.name, csvParsed.startUtc, csvParsed.endUtc, csvTz);
+      // Mirror to Supabase if there's an active membership.
+      try {
+        const supabase = getBrowserSupabase();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const ok = await saveLogDataCloud({
+            userId: user.id,
+            date: d,
+            logData: { rows: csvParsed.rows, fileName: csvFile.name, startUtc: csvParsed.startUtc, endUtc: csvParsed.endUtc, tzOffset: csvTz },
+            tzOffsetMinutes: csvTz,
+          });
+          if (ok) addLog(`☁ Log synced to cloud → ${d}`);
+        }
+      } catch (e) { /* non-fatal — local copy is the source of truth until L3.F */ }
       addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows) → ${d}`);
     }
     if (xmlParsed) {
       const d = xmlDate || csvDate || fallbackDate;
       addLog(`Saving events → session ${fmtDate(d)}…`);
       await saveXmlData(d, xmlParsed, xmlFile.name);
+      // Mirror to Supabase.
+      try {
+        const supabase = getBrowserSupabase();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const ok = await saveXmlDataCloud({
+            userId: user.id,
+            date: d,
+            xmlData: { ...xmlParsed, fileName: xmlFile.name },
+          });
+          if (ok) addLog(`☁ Events synced to cloud → ${d}`);
+        }
+      } catch (e) { /* non-fatal */ }
       if (xmlParsed.meta?.sailsUsed?.length) {
         const newTags = xmlParsed.meta.sailsUsed.map(s => s.toLowerCase());
         try {
@@ -3620,6 +3648,24 @@ function SSAApp(){
           const newR=remote.filter(s=>!localDates.has(s.date));
           if(newR.length>0)setSessions(p=>[...p,...newR].sort((a,b)=>b.date.localeCompare(a.date)));
         }
+        // Supabase sessions list (active membership scope) — merge into UI.
+        try {
+          const supabase=getBrowserSupabase();
+          const {data:{user}}=await supabase.auth.getUser();
+          if(user){
+            const cloudSessions=await listSessionsCloud({userId:user.id});
+            if(cloudSessions.length>0){
+              const seen=new Set();
+              setSessions(p=>{
+                const merged=[...p];
+                for(const s of cloudSessions){
+                  if(!merged.some(m=>m.date===s.date)) merged.push({date:s.date, source:'supabase'});
+                }
+                return merged.sort((a,b)=>b.date.localeCompare(a.date));
+              });
+            }
+          }
+        } catch { /* non-fatal */ }
       };
       if(isMobile) setTimeout(doCloud,1500); else doCloud();
     }
@@ -3634,11 +3680,26 @@ function SSAApp(){
     setVideoLoadedIds(new Set());
     setVideoTotalThumbs(0);
 
-    // ── Load log + xml (local first, cloud fallback) ────────────────────────
+    // ── Load log + xml (local first, then Supabase, then Bunny R2) ──────────
     let log = await getLogData(date);
     let xml = await getXmlData(date);
 
-    if(log){setLogData({...log,source:"local"});setSessionTzOffset(log.tzOffset??DEFAULT_TZ);}
+    // If neither local has it, try Supabase (active membership scope).
+    if(!log || !xml){
+      try {
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(user){
+          const cs=await getSessionCloud({userId:user.id,date});
+          if(cs){
+            if(!log && cs.log_data) log={...cs.log_data, source:'supabase'};
+            if(!xml && cs.xml_data) xml={...cs.xml_data, source:'supabase'};
+          }
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    if(log){setLogData({...log,source:log.source||"local"});setSessionTzOffset(log.tzOffset??DEFAULT_TZ);}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);log=r2?.logData||null;setLogData(log?{...log,source:"cloud"}:null);}
     else setLogData(null);
 
@@ -3649,7 +3710,7 @@ function SSAApp(){
       else setSessionTagList(getTagList(date));
     } catch { setSessionTagList(getTagList(date)); }
 
-    if(xml){setXmlData({...xml,source:"local"});}
+    if(xml){setXmlData({...xml,source:xml.source||"local"});}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);xml=r2?.xmlData||null;setXmlData(xml?{...xml,source:"cloud"}:null);}
     else setXmlData(null);
 
