@@ -93,6 +93,51 @@ export default function BackfillPanel({
     setLog((p) => [...p, line])
   }
 
+  async function runFromBunny() {
+    if (!boatId) {
+      setErr('Pick a boat first.')
+      return
+    }
+    setErr(null)
+    setStatus('running')
+    setCounts(initial)
+    setLog([])
+    append('Calling Bunny cloud backfill (server-side scan of all dates)…')
+
+    try {
+      const res = await fetch(
+        `/api/teams/${teamId}/boats/${boatId}/backfill-from-bunny`,
+        { method: 'POST' }
+      )
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setErr(j.error || `failed (${res.status})`)
+        setStatus('error')
+        return
+      }
+      setCounts({
+        videos_imported: j.videos_imported || 0,
+        videos_failed: j.videos_skipped || 0,
+        photos_imported: j.photos_imported || 0,
+        photos_failed: j.photos_skipped || 0,
+      })
+      append(`✓ scanned ${j.sessions_seen} session date(s)`)
+      append(
+        `✓ videos: ${j.videos_imported} imported, ${j.videos_skipped} skipped`
+      )
+      append(
+        `✓ photos: ${j.photos_imported} imported, ${j.photos_skipped} skipped`
+      )
+      if (Array.isArray(j.log) && j.log.length) {
+        for (const line of j.log) append(line)
+      }
+      setStatus('done')
+    } catch (e) {
+      setErr((e as Error).message)
+      setStatus('error')
+    }
+  }
+
   async function run() {
     if (!boatId) {
       setErr('Pick a boat first.')
@@ -238,8 +283,17 @@ export default function BackfillPanel({
             onClick={run}
             disabled={status === 'running' || !boatId}
             className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 text-sm font-medium"
+            title="Reads videos + photos from this browser's IndexedDB / localStorage."
           >
-            {status === 'running' ? 'Importing…' : 'Run backfill'}
+            {status === 'running' ? 'Importing…' : 'Backfill from this browser'}
+          </button>
+          <button
+            onClick={runFromBunny}
+            disabled={status === 'running' || !boatId}
+            className="rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white px-4 py-2 text-sm font-medium"
+            title="Scans Bunny Cloud Storage (sessions/<date>/) for every session ever uploaded."
+          >
+            Backfill from Bunny cloud
           </button>
         </div>
 
