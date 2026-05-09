@@ -12,6 +12,7 @@ import BoatsPanel from './BoatsPanel'
 import MembershipsPanel from './MembershipsPanel'
 import InvitationsPanel from './InvitationsPanel'
 import PendingRequestsPanel from './PendingRequestsPanel'
+import BackfillPanel from './BackfillPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -121,6 +122,8 @@ export default async function TeamDetailPage({
         />
 
         <InvitationsPanel teamId={team.id} boats={boats || []} />
+
+        <BackfillPanel teamId={team.id} boats={boats || []} />
       </div>
     </div>
   )
