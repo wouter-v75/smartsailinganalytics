@@ -8,6 +8,8 @@ import SailScanTab from "./SailScanTab";
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   buildSpline, evalSpline, goldenMax, preparePolar,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
+import { getBrowserSupabase } from '../lib/supabase/browser';
+import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
@@ -1092,7 +1094,13 @@ function UploadTab({role,cloudStatus,onImported}){
       addLog(`Saving events → session ${fmtDate(d)}…`);
       await saveXmlData(d, xmlParsed, xmlFile.name);
       if (xmlParsed.meta?.sailsUsed?.length) {
-        mergeTagList(d, xmlParsed.meta.sailsUsed.map(s => s.toLowerCase()));
+        const newTags = xmlParsed.meta.sailsUsed.map(s => s.toLowerCase());
+        try {
+          const supabase = getBrowserSupabase();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) await mergeTagListCloud({ userId: user.id, date: d, newTags });
+          else mergeTagList(d, newTags);
+        } catch { mergeTagList(d, newTags); }
         addLog(`✓ Events saved · ${xmlParsed.meta.sailsUsed.length} sails → ${d}`);
       } else { addLog(`✓ Events saved → ${d}`); }
     }
@@ -3119,7 +3127,15 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         </div>
         {/* Tags */}
         {perms.canImport&&<TagEditor video={video} tagList={sessionTagList} sessionDate={activeDate}
-          onTagListChange={t=>{saveTagList(activeDate,t);setSessionTagList(t);}}
+          onTagListChange={async t=>{
+            setSessionTagList(t);
+            try {
+              const supabase=getBrowserSupabase();
+              const {data:{user}}=await supabase.auth.getUser();
+              if(user) await saveTagListCloud({userId:user.id,date:activeDate,tags:t});
+              else saveTagList(activeDate,t);
+            } catch { saveTagList(activeDate,t); }
+          }}
           onSave={(id,tags)=>{updateVideoTagsFn(id,tags);setSelectedVideo(p=>({...p,tags}));}}/>}
       </div>
     </div>
@@ -3583,7 +3599,14 @@ function SSAApp(){
       if(latestLog){setLogData({...latestLog,source:"local"});setSessionTzOffset(latestLog.tzOffset??DEFAULT_TZ);}
       if(latestXml)setXmlData({...latestXml,source:"local"});
       setActiveDate(latestDate);
-      setSessionTagList(getTagList(latestDate));
+      // Load tag list — cloud-backed when there's an active membership,
+      // localStorage fallback otherwise.
+      try {
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date:latestDate}));
+        else setSessionTagList(getTagList(latestDate));
+      } catch { setSessionTagList(getTagList(latestDate)); }
       const latestSession=localSessions.find(s=>s.date===latestDate);
       if(latestSession?.tzOffset!=null)setSessionTzOffset(latestSession.tzOffset);
       setUnsyncedCount(getUnsyncedCount());setLoaded(true);
@@ -3619,7 +3642,12 @@ function SSAApp(){
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);log=r2?.logData||null;setLogData(log?{...log,source:"cloud"}:null);}
     else setLogData(null);
 
-    setSessionTagList(getTagList(date));
+    try {
+      const supabase=getBrowserSupabase();
+      const {data:{user}}=await supabase.auth.getUser();
+      if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date}));
+      else setSessionTagList(getTagList(date));
+    } catch { setSessionTagList(getTagList(date)); }
 
     if(xml){setXmlData({...xml,source:"local"});}
     else if(cloudStatus?.available){const r2=await fetchCloudSession(date);xml=r2?.xmlData||null;setXmlData(xml?{...xml,source:"cloud"}:null);}
@@ -4103,7 +4131,15 @@ function SSAApp(){
                       setSelectedVideo(enriched);
                     }}/>
                   </div>
-                  {perms.canImport&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={updated=>{saveTagList(activeDate,updated);setSessionTagList(updated);}} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
+                  {perms.canImport&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={async updated=>{
+                    setSessionTagList(updated);
+                    try {
+                      const supabase=getBrowserSupabase();
+                      const {data:{user}}=await supabase.auth.getUser();
+                      if(user) await saveTagListCloud({userId:user.id,date:activeDate,tags:updated});
+                      else saveTagList(activeDate,updated);
+                    } catch { saveTagList(activeDate,updated); }
+                  }} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
                   {perms.canDelete&&(<DeleteButton video={selectedVideo} cloudStatus={cloudStatus} onDeleted={id=>{setAllVideos(p=>p.filter(v=>v.id!==id));setSelectedVideo(null);saveSyncOffset(id,0);}}/>)}
                 </div>
               </div>

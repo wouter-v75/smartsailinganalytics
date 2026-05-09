@@ -11,6 +11,7 @@ import TeamHeader from './TeamHeader'
 import BoatsPanel from './BoatsPanel'
 import MembershipsPanel from './MembershipsPanel'
 import InvitationsPanel from './InvitationsPanel'
+import PendingRequestsPanel from './PendingRequestsPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,7 +33,7 @@ export default async function TeamDetailPage({
   if (!me || me.status !== 'active') redirect('/')
 
   // Allow access for global admin OR active team_manager of THIS team.
-  const service = getServiceSupabase()
+  const service: ReturnType<typeof getServiceSupabase> = getServiceSupabase()
   if (me.global_role !== 'admin') {
     const { data: mgr } = await service
       .from('memberships')
@@ -75,6 +76,16 @@ export default async function TeamDetailPage({
         .order('name', { ascending: true }),
     ])
 
+  // Pending users requesting THIS team via an open invite.
+  const { data: pendingForTeam } = await service
+    .from('users')
+    .select(
+      'id, email, name, created_at, requested_role, requested_boat_id'
+    )
+    .eq('status', 'pending')
+    .eq('requested_team_id', params.teamId)
+    .order('created_at', { ascending: false })
+
   if (!team) notFound()
 
   return (
@@ -93,6 +104,12 @@ export default async function TeamDetailPage({
         </div>
 
         <TeamHeader team={team} />
+
+        <PendingRequestsPanel
+          teamId={team.id}
+          pendingUsers={pendingForTeam || []}
+          boats={boats || []}
+        />
 
         <BoatsPanel teamId={team.id} boats={boats || []} />
 

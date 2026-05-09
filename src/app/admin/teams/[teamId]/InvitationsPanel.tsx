@@ -105,8 +105,33 @@ export default function InvitationsPanel({
         setErr(j.error || `failed (${res.status})`)
         return
       }
+      // Surface email-delivery problems so the team_manager knows to copy
+      // the URL manually if Resend isn't configured / failed.
+      if (j.email_sent && !j.email_sent.ok) {
+        setErr(
+          `Invite created, but email failed: ${j.email_sent.error}. Copy the URL below.`
+        )
+      }
       setEmail('')
       reload()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resend(invId: string) {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await fetch(
+        `/api/admin/teams/${teamId}/invitations/${invId}/resend`,
+        { method: 'POST' }
+      )
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        setErr(j.error || `failed (${res.status})`)
+        return
+      }
     } finally {
       setBusy(false)
     }
@@ -355,6 +380,14 @@ export default function InvitationsPanel({
                     className="text-sm text-blue-600 hover:underline"
                   >
                     Show QR
+                  </button>
+                )}
+                {inv.email && !inv.revoked_at && inv.used_count < inv.max_uses && (
+                  <button
+                    onClick={() => resend(inv.id)}
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    Resend
                   </button>
                 )}
                 {!inv.revoked_at && (

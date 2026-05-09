@@ -16,9 +16,22 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { getBrowserSupabase } from '../lib/supabase/browser'
 import {
-  getActiveMembershipId,
-  setActiveMembershipId,
+  type ActiveMembership,
+  type MembershipRole,
+  getActiveMembership,
+  setActiveMembership,
 } from '../lib/active-membership'
+
+function toActiveMembership(m: MembershipRow): ActiveMembership {
+  return {
+    id: m.id,
+    team_id: m.team_id,
+    boat_id: m.boat_id,
+    role: m.role as MembershipRole,
+    team_name: m.team_name,
+    boat_name: m.boat_name,
+  }
+}
 
 interface MeProfile {
   id: string
@@ -117,13 +130,15 @@ export default function UserPill() {
       setMemberships(ms)
 
       // Pick active membership: persisted choice if still valid, else first.
-      const stored = getActiveMembershipId(user.id)
-      const valid = ms.find((m) => m.id === stored)
+      const stored = getActiveMembership(user.id)
+      const valid = ms.find((m) => m.id === stored?.id)
       if (valid) {
         setActiveId(valid.id)
+        // Re-persist with up-to-date team/boat names in case they changed.
+        setActiveMembership(user.id, toActiveMembership(valid))
       } else if (ms.length > 0) {
         setActiveId(ms[0].id)
-        setActiveMembershipId(user.id, ms[0].id)
+        setActiveMembership(user.id, toActiveMembership(ms[0]))
       } else {
         setActiveId(null)
       }
@@ -146,8 +161,10 @@ export default function UserPill() {
 
   function pick(membershipId: string) {
     if (!me) return
+    const target = memberships.find((m) => m.id === membershipId)
+    if (!target) return
     setActiveId(membershipId)
-    setActiveMembershipId(me.id, membershipId)
+    setActiveMembership(me.id, toActiveMembership(target))
     setOpen(false)
     // Tell the rest of the app to re-scope. Anything that cares can listen.
     window.dispatchEvent(

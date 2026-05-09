@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../lib/supabase/admin-guard'
 import { generateInviteToken } from '../../../../../../lib/invitation-token'
+import { sendInviteEmail } from '../../../../../../lib/email'
 
 const ROLES = ['team_manager', 'coach', 'tl1', 'tl2', 'consultant'] as const
 type Role = (typeof ROLES)[number]
@@ -139,5 +140,39 @@ export async function POST(
     },
   })
 
-  return NextResponse.json({ invitation: data })
+  // Send the invite email if it's email-targeted. Open links don't get
+  // emails (they're posted in WhatsApp etc).
+  let emailSent: { ok: boolean; error?: string } = { ok: true }
+  if (!isOpen && row.email) {
+    const [{ data: team }, { data: boat }, { data: inviter }] = await Promise.all([
+      service.from('teams').select('name').eq('id', params.teamId).maybeSingle(),
+      row.boat_id
+        ? service.from('boats').select('name').eq('id', row.boat_id as string).maybeSingle()
+        : Promise.resolve({ data: null as { name: string } | null }),
+      service.from('users').select('name').eq('id', guard.userId).maybeSingle(),
+    ])
+    const origin = req.nextUrl.origin
+    const result = await sendInviteEmail({
+      to: row.email as string,
+      team_name: team?.name || 'the team',
+      role: row.role as string,
+      boat_name: boat?.name || null,
+      invite_url: `${origin}/join/${row.token}`,
+      inviter_name: inviter?.name || null,
+    })
+    emailSent = result.ok
+      ? { ok: true }
+      : { ok: false, error: result.error }
+    await service.from('events').insert({
+      user_id: guard.userId,
+      action: result.ok ? 'invitation.email_sent' : 'invitation.email_failed',
+      details: {
+        invitation_id: data.id,
+        to: row.email,
+        error: result.ok ? null : result.error,
+      },
+    })
+  }
+
+  return NextResponse.json({ invitation: data, email_sent: emailSent })
 }
