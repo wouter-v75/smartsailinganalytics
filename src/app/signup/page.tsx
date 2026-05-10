@@ -81,8 +81,24 @@ function SignupForm() {
         setError(signUpError.message)
         return
       }
+      // Pre-stash the invite's team/role/boat onto the new user row even
+      // though they're still pending. This means the admin approval form
+      // pre-fills correctly even if the email-confirm OTP expires before
+      // the user clicks (runbox/AppleMail link prefetch is a common cause).
+      if (inviteToken) {
+        try {
+          await fetch(`/api/invitations/${inviteToken}/stash`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+          })
+        } catch {
+          // non-fatal — auth/callback will still try a full redeem later
+        }
+      }
       // If we have a session right away (rare for email-confirm flows but
-      // happens when "Confirm email" is OFF), redeem the invite now.
+      // happens when "Confirm email" is OFF), redeem the invite now too —
+      // the stash above is a no-op for active users so this is fine.
       if (inviteToken && data?.session) {
         await fetch(`/api/invitations/${inviteToken}`, { method: 'POST' })
       }
