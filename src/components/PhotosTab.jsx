@@ -608,7 +608,34 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     setMetaLoading(true);
     setLoadedIds(new Set());
     setTotalThumbs(0);
-    const meta = JSON.parse(localStorage.getItem(LS_KEY)||"[]");
+    let meta = JSON.parse(localStorage.getItem(LS_KEY)||"[]");
+    // Merge in Supabase photos for this date (active membership scope).
+    // Async — we update meta in place once cloud responds, then re-render.
+    (async ()=>{
+      try {
+        const { getBrowserSupabase } = await import('../lib/supabase/browser');
+        const { listPhotosCloud, toLegacyPhotoShape } = await import('../lib/cloud-photos');
+        const supabase = getBrowserSupabase();
+        const { data:{ user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const cloudPhotos = await listPhotosCloud({ userId: user.id, date: activeDate });
+        if (!cloudPhotos.length) return;
+        const seen = new Set(meta.map(p => p.bunnyPath || p.url).filter(Boolean));
+        const merged = [...meta];
+        for (const cp of cloudPhotos) {
+          const path = cp.bunny_storage_path;
+          if (path && seen.has(path)) continue;
+          merged.push(toLegacyPhotoShape(cp));
+        }
+        if (merged.length === meta.length) return;
+        // Re-render with merged list. Don't call savePhotos — we don't want
+        // to overwrite localStorage with cloud-only entries (they have no
+        // local blob).
+        meta = merged;
+        // Trigger a re-load by bumping refreshNonce.
+        setRefreshNonce(n => n + 1);
+      } catch { /* non-fatal */ }
+    })();
     // For each photo: prefer local blob URL; otherwise fall back to cloud thumb URL.
     Promise.all(meta.map(async p=>{
       const blob = await idbGetPhoto(p.id).catch(()=>null);

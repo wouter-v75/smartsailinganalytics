@@ -11,6 +11,8 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
 import { getBrowserSupabase } from '../lib/supabase/browser';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
+import { listVideosCloud, upsertVideoCloud, toLegacyVideoShape } from '../lib/cloud-videos';
+import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
@@ -1282,6 +1284,33 @@ function UploadTab({role,cloudStatus,onImported}){
         setItem(vidId,{state:"done",pct:100,streamId});
         setStreamStatus(p=>({...p,[vidId]:{state:"processing",streamId}}));
       });
+
+      // Mirror video metadata to Supabase (active membership scope) so
+      // teammates see new uploads without waiting for a Bunny re-scan.
+      try {
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(user){
+          for(const v of _syncVids){
+            const sid=result.streamIds?.[v.id]||v.streamId||null;
+            if(!sid) continue;
+            await upsertVideoCloud({
+              userId:user.id,
+              sessionDate:savedDate,
+              title:v.title||v.name,
+              startUtc:v.startUtc,
+              durationSec:v.duration,
+              tags:v.tags,
+              syncOffsetSecs:syncOffsets[v.id]||0,
+              bunnyStreamId:sid,
+              bunnyStoragePath:`sessions/${savedDate}/videos/${v.id}/original`,
+              bytes:v.size,
+              externalId:v.id,
+            });
+          }
+          addLog("☁ Video metadata synced to Supabase");
+        }
+      } catch (e) { /* non-fatal */ }
       // Mark log done if not already (handles the case with no XML)
       setItem("log",{state:"done",pct:100});
 
@@ -2317,7 +2346,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 }
 
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
-function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,playUtc=null,visible=true,photos=[]}){
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[]}){
   const rows=logData?.rows||[];
   const noData=!rows.length;
   const step=Math.max(1,Math.floor(rows.length/400));
@@ -2422,6 +2451,23 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14,flexWrap:"wrap"}}>
           <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0"}}>Analytics</div>
+          {sessions && sessions.length > 0 && onSelectDate && (
+            <select
+              value={activeDate || ''}
+              onChange={(e)=>onSelectDate(e.target.value)}
+              style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"4px 8px",color:"#E2E8F0",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}
+              title="Switch session date"
+            >
+              {sessions.map(s => (
+                <option key={s.date} value={s.date}>
+                  {s.date === TODAY() ? `Today (${s.date})` : s.date}
+                  {s.videoCount ? ` · ${s.videoCount}v` : ''}
+                  {s.hasLog ? ' · log' : ''}
+                  {s.hasXml ? ' · ev' : ''}
+                </option>
+              ))}
+            </select>
+          )}
           {logData&&<span style={{fontSize:10,color:logData.source==="local"?"#1D9E75":"#8B5CF6",background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,borderRadius:3,padding:"2px 7px"}}>{logData.source==="local"?"● Local":"● Cloud"} · {rows.length.toLocaleString()} rows · {durationH.toFixed(1)}h</span>}
           {xmlData ? (
             <span style={{fontSize:10,color:"#8B5CF6",background:"#8B5CF610",border:"1px solid #8B5CF630",borderRadius:3,padding:"2px 7px"}}>
@@ -3414,6 +3460,7 @@ function MobileShell(props){
               allVideos={props.allVideos} sessions={props.sessions}
               selectedVideo={props.selectedVideo} onSelectVideo={props.setSelectedVideo}
               setActiveTab={setActiveTab} activeDate={props.activeDate}
+              onSelectDate={props.onSelectDate}
               playUtc={props.playUtc} visible={activeTab==="analytics"} photos={props.photos}/>
           </div>
         )}
@@ -3587,13 +3634,38 @@ function SSAApp(){
 
   // When SailScan (or SquashShots) saves a new photo + creates a session,
   // they emit a CustomEvent so the sessions sidebar and PhotosTab can pick
-  // up the new date without requiring a full page reload.
+  // up the new date without requiring a full page reload. We also use this
+  // hook to mirror the photo's metadata into Supabase (active membership
+  // scope) so teammates see it without re-importing.
   useEffect(()=>{
-    const refresh=()=>{
+    const refresh=async (e)=>{
       try{
         const sx=getSessions().sort((a,b)=>b.date.localeCompare(a.date));
         setSessions(sx);
-      }catch(e){console.warn("[ssa:photo-saved] refresh failed",e);}
+      }catch(err){console.warn("[ssa:photo-saved] refresh failed",err);}
+
+      // Mirror the saved photo to Supabase. The CustomEvent detail carries
+      // {id, date, source}; the full metadata lives in localStorage.
+      try {
+        const detail = e?.detail || {};
+        if(!detail.id || !detail.date) return;
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(!user) return;
+        const list = JSON.parse(localStorage.getItem(`ssa:photos-meta:${detail.date}`) || "[]");
+        const photo = list.find(p => p.id === detail.id);
+        if(!photo) return;
+        await upsertPhotoCloud({
+          userId: user.id,
+          sessionDate: detail.date,
+          takenUtc: photo.utc,
+          exif: photo.exif,
+          thumbnailUrl: photo.thumbnailUrl,
+          bunnyStoragePath: photo.bunnyPath || photo.url || null,
+          bytes: photo.size,
+          analysis: photo.analysis,
+        });
+      } catch(err) { /* non-fatal */ }
     };
     window.addEventListener("ssa:photo-saved",refresh);
     return ()=>window.removeEventListener("ssa:photo-saved",refresh);
@@ -3717,6 +3789,22 @@ function SSAApp(){
     // ── Load videos ─────────────────────────────────────────────────────────
     let vids=await getVideosForDate(date);
     if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
+    // Supabase first when active membership; merge into result so locals
+    // and cloud-only videos coexist (deduped by streamId / id).
+    try {
+      const supabase=getBrowserSupabase();
+      const {data:{user}}=await supabase.auth.getUser();
+      if(user){
+        const cloudVids=await listVideosCloud({userId:user.id,date});
+        if(cloudVids.length){
+          const seen=new Set(vids.map(v=>v.streamId).filter(Boolean));
+          for(const cv of cloudVids){
+            if(cv.bunny_stream_id && seen.has(cv.bunny_stream_id)) continue;
+            vids.push(toLegacyVideoShape(cv));
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
     if(!vids.length&&cloudStatus?.available){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
 
     // Enrich with BOTH log AND xml — uses the resolved values above (local or cloud)
@@ -3899,7 +3987,7 @@ function SSAApp(){
       selectedTags={selectedTags} setSelectedTags={setSelectedTags}
       allTags={allTags} isManTag={isManTag} toggleTag={toggleTag}
       displayed={displayed}
-      loadDate={loadDate} handleImported={handleImported}
+      loadDate={loadDate} onSelectDate={loadDate} handleImported={handleImported}
       handlePlayUtc={handlePlayUtc} playUtc={playUtc}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
@@ -4221,6 +4309,7 @@ function SSAApp(){
               sessions={sessions} selectedVideo={selectedVideo}
               onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab}
               activeDate={activeDate}
+              onSelectDate={loadDate}
               playUtc={playUtc}
               visible={activeTab==="analytics"} photos={photos}
             />

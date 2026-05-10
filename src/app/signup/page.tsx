@@ -17,6 +17,7 @@ interface InviteSnapshot {
   boat_name: string | null
   auto_approve: boolean
   status: 'valid' | 'expired' | 'revoked' | 'exhausted'
+  email: string | null
 }
 
 function SignupForm() {
@@ -40,12 +41,20 @@ function SignupForm() {
     ;(async () => {
       const res = await fetch(`/api/invitations/${inviteToken}`)
       const j = await res.json().catch(() => null)
-      if (!cancelled && res.ok) setInvite(j as InviteSnapshot)
+      if (!cancelled && res.ok) {
+        const snap = j as InviteSnapshot
+        setInvite(snap)
+        // Pre-fill email for targeted invites — auto-approve only fires
+        // when the signup email matches the invite, so this gets it right
+        // by default while still letting the user override.
+        if (snap.email && !email) setEmail(snap.email)
+      }
       if (!cancelled) setInviteLoading(false)
     })()
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inviteToken])
 
   async function onSubmit(e: React.FormEvent) {
@@ -183,6 +192,12 @@ function SignupForm() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
+            {invite?.email && invite.email.toLowerCase() !== email.trim().toLowerCase() && (
+              <p className="mt-1 text-xs text-amber-700">
+                Use <strong>{invite.email}</strong> for instant approval. A different
+                email still works but the team manager will need to approve manually.
+              </p>
+            )}
           </div>
 
           <div>
