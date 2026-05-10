@@ -117,18 +117,25 @@ export async function POST(
   for (const date of dates) {
     sessions_seen++
 
-    // Ensure session row exists.
+    // Pull log + xml first so we can store them on the session row.
+    const [logFile, xmlFile] = await Promise.all([
+      bunnyJson<unknown>(`sessions/${date}/log.json`),
+      bunnyJson<unknown>(`sessions/${date}/events.json`),
+    ])
+
+    // Ensure session row exists, including log + xml when present.
+    const sessionRow: Record<string, unknown> = {
+      team_id: params.teamId,
+      boat_id: params.boatId,
+      date,
+      created_by_user_id: guard.userId,
+    }
+    if (logFile) sessionRow.log_data = logFile
+    if (xmlFile) sessionRow.xml_data = xmlFile
+
     const { data: session, error: sErr } = await service
       .from('sessions')
-      .upsert(
-        {
-          team_id: params.teamId,
-          boat_id: params.boatId,
-          date,
-          created_by_user_id: guard.userId,
-        },
-        { onConflict: 'boat_id,date', ignoreDuplicates: false }
-      )
+      .upsert(sessionRow, { onConflict: 'boat_id,date', ignoreDuplicates: false })
       .select('id')
       .single()
     if (sErr || !session) {
@@ -152,10 +159,27 @@ export async function POST(
           existingId = data?.id ?? null
         }
 
-        const startUtc =
-          typeof v.startUtc === 'number'
-            ? new Date(v.startUtc).toISOString()
-            : v.startUtc || null
+        // Resolve start time. Prefer meta.json's startUtc; fall back to
+        // parsing the DJI / Android-style YYYYMMDDHHMMSS timestamp out of
+        // the title or name (treated as the boat's local time, but storing
+        // as UTC iso string is fine because the per-session tz_offset is
+        // applied at render time).
+        let startUtc: string | null = null
+        if (typeof v.startUtc === 'number') {
+          startUtc = new Date(v.startUtc).toISOString()
+        } else if (typeof v.startUtc === 'string' && v.startUtc) {
+          startUtc = v.startUtc
+        } else {
+          const candidate = (v.title || v.name || '') as string
+          const re = /(\d{4})(\d{2})(\d{2})[_\-T ]?(\d{2})(\d{2})(\d{2})/
+          const m = candidate.match(re)
+          if (m) {
+            const [, y, mo, d, h, mi, s] = m.map(Number)
+            if (y >= 2000 && y <= 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31 && h <= 23 && mi <= 59 && s <= 59) {
+              startUtc = new Date(Date.UTC(y, mo - 1, d, h, mi, s)).toISOString()
+            }
+          }
+        }
         const duration_ms =
           typeof v.duration === 'number' ? Math.round(v.duration * 1000) : null
 
