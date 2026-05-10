@@ -100,11 +100,26 @@ function membershipLabel(m: MembershipRow): string {
   return `${scope} (${m.role})`
 }
 
+interface QuotaState {
+  bytes_used: number
+  bytes_limit: number | null
+  percent: number
+  blocked: boolean
+}
+
+function formatBytes(b: number): string {
+  if (b < 1024) return `${b} B`
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
+  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`
+  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
 export default function UserPill() {
   const router = useRouter()
   const [me, setMe] = useState<MeProfile | null>(null)
   const [memberships, setMemberships] = useState<MembershipRow[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [quota, setQuota] = useState<QuotaState | null>(null)
   const [open, setOpen] = useState(false)
   const popRef = useRef<HTMLDivElement>(null)
 
@@ -117,16 +132,22 @@ export default function UserPill() {
       } = await supabase.auth.getUser()
       if (!user) return
 
-      const [{ data: profile }, ms] = await Promise.all([
+      const [{ data: profile }, ms, quotaRes] = await Promise.all([
         supabase
           .from('users')
           .select('id, email, name, global_role')
           .eq('id', user.id)
           .maybeSingle(),
         loadMemberships(user.id),
+        fetch('/api/quota/me')
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
       ])
       if (cancelled) return
       if (profile) setMe(profile as MeProfile)
+      if (quotaRes && typeof quotaRes.bytes_used === 'number') {
+        setQuota(quotaRes as QuotaState)
+      }
       setMemberships(ms)
 
       // Pick active membership: persisted choice if still valid, else first.
@@ -244,6 +265,47 @@ export default function UserPill() {
             )}
           </div>
 
+          {/* Quota */}
+          {quota && quota.bytes_limit != null && (
+            <div className="px-3 py-2 border-b border-slate-700">
+              <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+                <span>Storage</span>
+                <span
+                  className={
+                    quota.percent >= 100
+                      ? 'text-red-400'
+                      : quota.percent >= 80
+                      ? 'text-amber-400'
+                      : 'text-slate-400'
+                  }
+                >
+                  {quota.percent}%
+                </span>
+              </div>
+              <div className="text-xs text-slate-300">
+                {formatBytes(quota.bytes_used)} of{' '}
+                {formatBytes(quota.bytes_limit)}
+              </div>
+              <div className="mt-1 h-1.5 bg-slate-700 rounded overflow-hidden">
+                <div
+                  className={
+                    quota.percent >= 100
+                      ? 'h-full bg-red-500'
+                      : quota.percent >= 80
+                      ? 'h-full bg-amber-500'
+                      : 'h-full bg-cyan-500'
+                  }
+                  style={{ width: `${Math.min(100, quota.percent)}%` }}
+                />
+              </div>
+              {quota.blocked && (
+                <div className="mt-2 text-xs text-red-400">
+                  Uploads blocked. Contact admin to raise the limit.
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Memberships */}
           <div className="px-3 py-2 border-b border-slate-700">
             <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">
@@ -292,6 +354,13 @@ export default function UserPill() {
                 onClick={() => setOpen(false)}
               >
                 Teams &amp; boats
+              </Link>
+              <Link
+                href="/admin/events"
+                className="block px-3 py-2 hover:bg-slate-700 text-slate-100"
+                onClick={() => setOpen(false)}
+              >
+                Audit log
               </Link>
             </>
           )}

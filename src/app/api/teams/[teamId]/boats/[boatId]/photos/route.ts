@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../../../lib/supabase/server'
+import { getQuota, addToQuota } from '../../../../../../../lib/quota'
 
 export async function GET(
   req: NextRequest,
@@ -60,6 +61,15 @@ export async function POST(
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(body.session_date)) {
     return NextResponse.json({ error: 'session_date must be YYYY-MM-DD' }, { status: 400 })
+  }
+
+  // Quota gate.
+  const quota = await getQuota(user.id)
+  if (quota?.blocked) {
+    return NextResponse.json(
+      { error: 'quota exceeded', quota },
+      { status: 413 }
+    )
   }
 
   const { data: session, error: sErr } = await supabase
@@ -127,6 +137,9 @@ export async function POST(
     .single()
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+  if (typeof body.bytes === 'number' && body.bytes > 0) {
+    await addToQuota(user.id, body.bytes)
   }
   return NextResponse.json({ photo: data, session_id: session.id, action: 'created' })
 }

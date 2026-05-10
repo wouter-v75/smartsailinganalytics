@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../../../lib/supabase/server'
+import { getQuota, addToQuota } from '../../../../../../../lib/quota'
 
 export async function GET(
   req: NextRequest,
@@ -82,6 +83,16 @@ export async function POST(
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(body.session_date)) {
     return NextResponse.json({ error: 'session_date must be YYYY-MM-DD' }, { status: 400 })
+  }
+
+  // Quota gate — block uploads when over 100%. Backfill / re-uploads of
+  // existing videos won't count twice (dedupe by bunny_stream_id below).
+  const quota = await getQuota(user.id)
+  if (quota?.blocked) {
+    return NextResponse.json(
+      { error: 'quota exceeded', quota },
+      { status: 413 }
+    )
   }
 
   // Step 1 — ensure session row exists.
@@ -155,5 +166,12 @@ export async function POST(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  // Bump quota only on fresh inserts (existing rows update via the path
+  // above and don't double-count).
+  if (typeof body.bytes === 'number' && body.bytes > 0) {
+    await addToQuota(user.id, body.bytes)
+  }
+
   return NextResponse.json({ video: data, session_id: session.id, action: 'created' })
 }
