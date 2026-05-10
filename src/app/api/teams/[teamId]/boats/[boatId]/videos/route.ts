@@ -30,6 +30,26 @@ export async function GET(
 
   const date = req.nextUrl.searchParams.get('date')
 
+  // If a date filter is requested, resolve it to a session_id first.
+  // Filtering directly on the joined sessions.date column doesn't filter
+  // the parent rows (PostgREST quirk) — it only constrains the embedded
+  // resource, so videos from every date come back.
+  let sessionIdForDate: string | null | undefined = undefined
+  if (date) {
+    const { data: ses } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('team_id', params.teamId)
+      .eq('boat_id', params.boatId)
+      .eq('date', date)
+      .maybeSingle()
+    sessionIdForDate = ses?.id ?? null
+    if (sessionIdForDate === null) {
+      // No session for that date → no videos.
+      return NextResponse.json({ videos: [] })
+    }
+  }
+
   let q = supabase
     .from('videos')
     .select(
@@ -40,9 +60,8 @@ export async function GET(
     .order('start_utc', { ascending: false })
     .limit(500)
 
-  if (date) {
-    // Filter via the joined sessions row.
-    q = q.eq('sessions.date', date)
+  if (sessionIdForDate) {
+    q = q.eq('session_id', sessionIdForDate)
   }
 
   const { data, error } = await q

@@ -17,6 +17,22 @@ export async function GET(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const date = req.nextUrl.searchParams.get('date')
+
+  let sessionIdForDate: string | null | undefined = undefined
+  if (date) {
+    const { data: ses } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('team_id', params.teamId)
+      .eq('boat_id', params.boatId)
+      .eq('date', date)
+      .maybeSingle()
+    sessionIdForDate = ses?.id ?? null
+    if (sessionIdForDate === null) {
+      return NextResponse.json({ photos: [] })
+    }
+  }
+
   let q = supabase
     .from('photos')
     .select(
@@ -26,7 +42,7 @@ export async function GET(
     .eq('boat_id', params.boatId)
     .order('taken_utc', { ascending: false })
     .limit(1000)
-  if (date) q = q.eq('sessions.date', date)
+  if (sessionIdForDate) q = q.eq('session_id', sessionIdForDate)
 
   const { data, error } = await q
   if (error) {
