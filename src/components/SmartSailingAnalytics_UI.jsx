@@ -3838,6 +3838,22 @@ function SSAApp(){
         }
       }
     } catch { /* non-fatal */ }
+
+    // Resolve Bunny Stream playback URLs for any video that has a streamId
+    // but no objectUrl yet. Supabase-sourced videos arrive with just the
+    // streamId; this hydrates them so the player + thumbnails work.
+    const needsResolve=vids.filter(v=>v.streamId&&!v.objectUrl);
+    if(needsResolve.length){
+      await Promise.all(needsResolve.map(async v=>{
+        try{
+          const res=await fetch(`/api/stream/status/${v.streamId}`);
+          if(!res.ok) return;
+          const s=await res.json();
+          v.objectUrl=s.playbackUrl||null;
+          if(!v.thumbnailUrl) v.thumbnailUrl=s.thumbnailUrl||null;
+        } catch { /* ignore */ }
+      }));
+    }
     if(!vids.length&&cloudStatus?.available){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
 
     // Enrich with BOTH log AND xml — uses the resolved values above (local or cloud)
