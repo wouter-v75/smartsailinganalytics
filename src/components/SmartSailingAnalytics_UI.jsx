@@ -13,6 +13,7 @@ import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud 
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { listVideosCloud, upsertVideoCloud, toLegacyVideoShape } from '../lib/cloud-videos';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
+import { getActiveMembership } from '../lib/active-membership';
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
@@ -2346,7 +2347,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 }
 
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
-function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[]}){
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true}){
   const rows=logData?.rows||[];
   const noData=!rows.length;
   const step=Math.max(1,Math.floor(rows.length/400));
@@ -3080,7 +3081,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 ))}
               </div>
             ))}
-            <AIChatPanel rows={rows} allVideos={allVideos}/>
+            {canUseAI && <AIChatPanel rows={rows} allVideos={allVideos}/>}
           </>
         )}
       </div>
@@ -3379,7 +3380,7 @@ function MobileShell(props){
     {id:"squashshots",icon:"🎯",label:"Squash"},
     {id:"sailscan", icon:"⛵", label:"SailScan"},
     {id:"admin",    icon:"⚙",  label:"Admin"},
-  ];
+  ].filter(t => props.canSeeAnalytics !== false || t.id !== "analytics");
   return(
     <div className="ssa-mobile" style={{display:"flex",flexDirection:"column",
       height:"100dvh",background:"#030F1A",color:"#E2E8F0",
@@ -3461,7 +3462,8 @@ function MobileShell(props){
               selectedVideo={props.selectedVideo} onSelectVideo={props.setSelectedVideo}
               setActiveTab={setActiveTab} activeDate={props.activeDate}
               onSelectDate={props.onSelectDate}
-              playUtc={props.playUtc} visible={activeTab==="analytics"} photos={props.photos}/>
+              playUtc={props.playUtc} visible={activeTab==="analytics"} photos={props.photos}
+              canUseAI={props.canUseAI}/>
           </div>
         )}
 
@@ -3570,6 +3572,10 @@ function SSAApp(){
   const[aiQuery,setAiQuery]=useState("");
   const[aiResult,setAiResult]=useState(null);
   const[aiLoading,setAiLoading]=useState(false);
+  // Effective auth role — either 'admin' (from users.global_role) or the
+  // active membership's role. Used to gate UI features. Null until the
+  // identity check resolves.
+  const[effectiveRole,setEffectiveRole]=useState(null);
   const[loaded,setLoaded]=useState(false);
   const[playUtc,setPlayUtc]=useState(null);
   const[photos,setPhotos]=useState([]);
@@ -3631,6 +3637,33 @@ function SSAApp(){
     playUtcThrottle.current=now;
     setPlayUtc(utc);
   },[]);
+
+  // Resolve the effective auth role once on mount and re-resolve when the
+  // active membership changes. Admin (global_role='admin') always wins.
+  useEffect(()=>{
+    let cancelled=false;
+    async function resolve(){
+      try{
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(!user||cancelled) return;
+        const {data:profile}=await supabase.from('users').select('global_role').eq('id',user.id).maybeSingle();
+        if(cancelled) return;
+        if(profile?.global_role==='admin'){ setEffectiveRole('admin'); return; }
+        const m=getActiveMembership(user.id);
+        setEffectiveRole(m?.role||null);
+      } catch { /* non-fatal */ }
+    }
+    resolve();
+    const onChange=()=>resolve();
+    window.addEventListener('ssa:active-membership-changed',onChange);
+    return ()=>{ cancelled=true; window.removeEventListener('ssa:active-membership-changed',onChange); };
+  },[]);
+
+  // Role-gated convenience flags. Default to permissive while role
+  // resolves so UI doesn't briefly hide things from admins.
+  const canSeeAnalytics = effectiveRole !== 'consultant';
+  const canUseAI = effectiveRole === null || !['tl1','consultant'].includes(effectiveRole);
 
   // When SailScan (or SquashShots) saves a new photo + creates a session,
   // they emit a CustomEvent so the sessions sidebar and PhotosTab can pick
@@ -3989,6 +4022,7 @@ function SSAApp(){
       displayed={displayed}
       loadDate={loadDate} onSelectDate={loadDate} handleImported={handleImported}
       handlePlayUtc={handlePlayUtc} playUtc={playUtc}
+      canSeeAnalytics={canSeeAnalytics} canUseAI={canUseAI}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -4008,14 +4042,16 @@ function SSAApp(){
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:16}}>⚓</span><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Smart</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{display:"flex",gap:2,marginLeft:10}}>
-          {["library","photos","analytics","upload","squashshots","sailscan","admin"].map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
+          {["library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => canSeeAnalytics || tab !== "analytics").map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
         </nav>
         <div style={{flex:1}}/>
+        {canUseAI && (
         <div style={{display:"flex",gap:5,width:290}}>
           <input value={aiQuery} onChange={e=>setAiQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&runAiQuery()} placeholder="✦ AI search…" style={{flex:1,background:"#071624",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#E2E8F0",fontSize:11,outline:"none"}}/>
           <button onClick={runAiQuery} disabled={aiLoading} style={{background:aiLoading?"#1E3A5A":"#8B5CF6",border:"none",borderRadius:6,padding:"5px 12px",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>{aiLoading?"…":"Search"}</button>
           {aiResult&&<button onClick={()=>setAiResult(null)} style={{background:"none",border:"1px solid #EF444440",borderRadius:6,padding:"5px 8px",color:"#EF4444",cursor:"pointer",fontSize:11}}>✕</button>}
         </div>
+        )}
         <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}>
           <div style={{width:5,height:5,borderRadius:"50%",background:cloudStatus?.available?"#1D9E75":cloudStatus===null?"#334155":"#F59E0B"}}/>
           <span style={{color:cloudStatus?.available?"#1D9E75":cloudStatus===null?"#334155":"#F59E0B"}}>{cloudStatus?.available?"R2+Stream":cloudStatus===null?"…":"Local only"}</span>
@@ -4312,6 +4348,7 @@ function SSAApp(){
               onSelectDate={loadDate}
               playUtc={playUtc}
               visible={activeTab==="analytics"} photos={photos}
+              canUseAI={canUseAI}
             />
           </div>
         )}

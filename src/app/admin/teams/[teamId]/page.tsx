@@ -13,6 +13,7 @@ import MembershipsPanel from './MembershipsPanel'
 import InvitationsPanel from './InvitationsPanel'
 import PendingRequestsPanel from './PendingRequestsPanel'
 import BackfillPanel from './BackfillPanel'
+import WipeLocalCachePanel from '../../../../components/WipeLocalCachePanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -124,6 +125,8 @@ export default async function TeamDetailPage({
         <InvitationsPanel teamId={team.id} boats={boats || []} />
 
         <BackfillPanel teamId={team.id} boats={boats || []} />
+
+        <WipeLocalCachePanel />
       </div>
     </div>
   )
