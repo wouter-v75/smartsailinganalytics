@@ -677,6 +677,31 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       <div style={{padding:"7px 12px 11px",display:"flex",gap:7,alignItems:"center"}}>
         <button onClick={()=>playing?vidRef.current?.pause():vidRef.current?.play()} style={{background:"#06B6D4",border:"none",borderRadius:6,padding:"6px 14px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>{playing?"⏸ Pause":"▶ Play"}</button>
         <button onClick={()=>{if(vidRef.current)vidRef.current.currentTime=0;}} style={{background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 9px",color:"#94A3B8",cursor:"pointer"}}>⏹</button>
+        <button
+          title="Fullscreen"
+          onClick={()=>{
+            const el=vidRef.current;
+            if(!el)return;
+            if(document.fullscreenElement) document.exitFullscreen?.();
+            else if(el.requestFullscreen) el.requestFullscreen();
+            else if(el.webkitEnterFullscreen) el.webkitEnterFullscreen();
+          }}
+          style={{background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 9px",color:"#94A3B8",cursor:"pointer"}}
+        >⛶</button>
+        <button
+          title="Picture-in-Picture (drag + resize a floating window)"
+          onClick={async ()=>{
+            const el=vidRef.current;
+            if(!el)return;
+            try {
+              if(document.pictureInPictureElement) await document.exitPictureInPicture?.();
+              else if(el.requestPictureInPicture) await el.requestPictureInPicture();
+            } catch (err) {
+              console.warn('Picture-in-picture unavailable:', err);
+            }
+          }}
+          style={{background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 9px",color:"#94A3B8",cursor:"pointer"}}
+        >⧉</button>
         <div style={{flex:1}}/>
         {row&&<span style={{fontSize:10,color:"#1D9E75"}}>● live instruments</span>}
         {!polar&&row&&<span style={{fontSize:9,color:"#475569"}}>· upload polar for target BSP</span>}
@@ -3385,6 +3410,7 @@ function MobileShell(props){
   ].filter(t => {
     if (t.id === "sailscan" && props.canSeeSailScanTab === false) return false;
     if (t.id === "squashshots" && props.canSeeSquashShotsTab === false) return false;
+    if (t.id === "admin" && props.effectiveRole !== 'admin') return false;
     return true;
   });
   return(
@@ -4074,7 +4100,7 @@ function SSAApp(){
       canSeeAnalytics={canSeeAnalytics} canUseAI={canUseAI}
       canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab}
       canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
-      showOnlyLatestDay={showOnlyLatestDay}
+      showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -4097,6 +4123,7 @@ function SSAApp(){
           {["library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
             if (tab === "sailscan" && !canSeeSailScanTab) return false;
             if (tab === "squashshots" && !canSeeSquashShotsTab) return false;
+            if (tab === "admin" && effectiveRole !== 'admin') return false;
             return true;
           }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
         </nav>
