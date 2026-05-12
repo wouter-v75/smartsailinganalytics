@@ -323,7 +323,6 @@ function parseXmlEvents(text,offsetMin=0){
     .map(([rn,{pin,boat}])=>({raceNum:parseInt(rn),pin,boat}))
     .filter(sl=>sl.pin&&sl.boat);
 
-  console.log(`[parseXmlEvents] sailsUp:${sailsUpEvents.length} guns:${raceGuns.length} marks:${markRoundings.length} T/G:${tackJibes.length} startLines:${startLines.length} phases:${phases.length}`);
   return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc,startLines,phases};
 }
 
@@ -382,8 +381,7 @@ function enrichVideo(v,log,xml,syncOffsets){
       return true;
     });
     out.tags = [...new Set([...autoTags, ...manualTags])];
-    console.debug("[SSA:video] enrichVideo",v.title,"autoTags:",autoTags,"final tags:",out.tags);
-  }else if(!v.startUtc) console.debug("[SSA:video] enrichVideo",v.title,"— no startUtc, skipping auto-tags");
+  }
 
   return out;
 }
@@ -2347,7 +2345,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 }
 
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
-function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true}){
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true,canSeeAnalyticsData=true}){
   const rows=logData?.rows||[];
   const noData=!rows.length;
   const step=Math.max(1,Math.floor(rows.length/400));
@@ -2511,18 +2509,22 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
           </div>
         ) : (
           <>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
-              {card("Avg TWS",R(twsAvg),"kn","#7DD3FC")}
-              {card("Max TWS",R(twsMax),"kn","#7DD3FC")}
-              {card("Avg SOG",R(sogAvg),"kn","#FBBF24")}
-              {card("Max SOG",R(sogMax),"kn","#FBBF24")}
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
-              {card("Tacks",tacks,"","#1D9E75")}
-              {card("Gybes",gybes,"","#7F77DD")}
-              {card("Polar %",vsPerfAvg?R(vsPerfAvg)+"%":"--","","#F59E0B")}
-              {card("Target %",vsTargAvg?R(vsTargAvg)+"%":"--","","#EF4444")}
-            </div>
+            {canSeeAnalyticsData && (
+              <>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
+                  {card("Avg TWS",R(twsAvg),"kn","#7DD3FC")}
+                  {card("Max TWS",R(twsMax),"kn","#7DD3FC")}
+                  {card("Avg SOG",R(sogAvg),"kn","#FBBF24")}
+                  {card("Max SOG",R(sogMax),"kn","#FBBF24")}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
+                  {card("Tacks",tacks,"","#1D9E75")}
+                  {card("Gybes",gybes,"","#7F77DD")}
+                  {card("Polar %",vsPerfAvg?R(vsPerfAvg)+"%":"--","","#F59E0B")}
+                  {card("Target %",vsTargAvg?R(vsTargAvg)+"%":"--","","#EF4444")}
+                </div>
+              </>
+            )}
             {section("GPS track",(
               rows.length > 0 ? (
                 <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} photos={photos}/>
@@ -2530,7 +2532,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — select a date in the Library first.</div>
               )
             ))}
-            {section("Wind & boat speed · heel · performance",(
+            {canSeeAnalyticsData && section("Wind & boat speed · heel · performance",(
               <>
                 {/* ── Zoom / pan control bar ─────────────────────────────── */}
                 {rows.length>0&&(()=>{
@@ -2603,7 +2605,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 </div>
               </>
             ))}
-            {rows.length>50&&section("Upwind analysis — data filtered to upwind phases",(()=>{
+            {canSeeAnalyticsData && rows.length>50&&section("Upwind analysis — data filtered to upwind phases",(()=>{
               // SailingPerformance sailingmode encoding observed from real data:
               //   1 = Upwind starboard tack   2 = Upwind port tack
               //   4 = Downwind/reach stbd     8 = Downwind/reach port
@@ -2704,7 +2706,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 </>
               );
             })())}
-            {section("Speed polar — TWA vs BSP by wind range",(
+            {canSeeAnalyticsData && section("Speed polar — TWA vs BSP by wind range",(
               <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
                 <SpeedPolar rows={rows} width={280} height={280}/>
                 <div style={{flex:1}}>
@@ -2719,7 +2721,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 </div>
               </div>
             ))}
-            {xmlData?.tackJibes?.length>0&&section(`Manoeuvre analysis — ${xmlData.tackJibes.length} total`,(
+            {canSeeAnalyticsData && xmlData?.tackJibes?.length>0&&section(`Manoeuvre analysis — ${xmlData.tackJibes.length} total`,(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>MANOEUVRES BY WIND STRENGTH</div><ManoeuvreChart tackJibes={xmlData.tackJibes} logRows={rows} width={360} height={130}/></div>
                 <div>
@@ -2927,7 +2929,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 );
               }
 
-              return section(`Tacking analysis — ${validTacks.length} valid tacks  (−${PRE}s → +${POST}s)`,(
+              return canSeeAnalyticsData && section(`Tacking analysis — ${validTacks.length} valid tacks  (−${PRE}s → +${POST}s)`,(
                 <>
                   <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
                     {validTacks.map((tk,i)=>(
@@ -3070,7 +3072,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 </>
               ));
             })()}
-            {allVideos.filter(v=>v.twsAvg!=null).length>0&&section("Clips with instrument data",(
+            {canSeeAnalyticsData && allVideos.filter(v=>v.twsAvg!=null).length>0&&section("Clips with instrument data",(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {allVideos.filter(v=>v.twsAvg!=null).map(v=>(
                   <div key={v.id} onClick={()=>{onSelectVideo(v);setActiveTab("library");}} style={{display:"flex",alignItems:"center",gap:10,background:"#071624",borderRadius:6,padding:"7px 10px",cursor:"pointer",border:"1px solid #1E3A5A"}}>
@@ -3380,7 +3382,11 @@ function MobileShell(props){
     {id:"squashshots",icon:"🎯",label:"Squash"},
     {id:"sailscan", icon:"⛵", label:"SailScan"},
     {id:"admin",    icon:"⚙",  label:"Admin"},
-  ].filter(t => props.canSeeAnalytics !== false || t.id !== "analytics");
+  ].filter(t => {
+    if (t.id === "sailscan" && props.canSeeSailScanTab === false) return false;
+    if (t.id === "squashshots" && props.canSeeSquashShotsTab === false) return false;
+    return true;
+  });
   return(
     <div className="ssa-mobile" style={{display:"flex",flexDirection:"column",
       height:"100dvh",background:"#030F1A",color:"#E2E8F0",
@@ -3463,7 +3469,7 @@ function MobileShell(props){
               setActiveTab={setActiveTab} activeDate={props.activeDate}
               onSelectDate={props.onSelectDate}
               playUtc={props.playUtc} visible={activeTab==="analytics"} photos={props.photos}
-              canUseAI={props.canUseAI}/>
+              canUseAI={props.canUseAI} canSeeAnalyticsData={props.canSeeAnalyticsData}/>
           </div>
         )}
 
@@ -3662,8 +3668,25 @@ function SSAApp(){
 
   // Role-gated convenience flags. Default to permissive while role
   // resolves so UI doesn't briefly hide things from admins.
-  const canSeeAnalytics = effectiveRole !== 'consultant';
-  const canUseAI = effectiveRole === null || !['tl1','consultant'].includes(effectiveRole);
+  // tl1: no SailScan, no analytics data (map OK), no SailScan-tagged photos.
+  // guest: no SailScan, no SquashShots, no analytics data, no SailScan
+  //   photos, only the latest session day shown.
+  // consultant: full access — already gated by valid_from/valid_to via RLS.
+  const canSeeSailScanTab     = !['tl1','guest'].includes(effectiveRole);
+  const canSeeSquashShotsTab  = effectiveRole !== 'guest';
+  const canSeeAnalyticsData   = !['tl1','guest'].includes(effectiveRole);
+  const canSeeSailScanPhotos  = !['tl1','guest'].includes(effectiveRole);
+  const canUseAI              = effectiveRole === null || !['tl1','consultant','guest'].includes(effectiveRole);
+  const showOnlyLatestDay     = effectiveRole === 'guest';
+  // Kept for backwards-compat with mobile shell prop; analytics tab is now
+  // visible to every role (the content inside is what's gated).
+  const canSeeAnalytics = true;
+
+  // Sessions visible in the sidebar — guests see only the latest day.
+  const visibleSessions = useMemo(
+    () => showOnlyLatestDay && sessions.length ? [sessions[0]] : sessions,
+    [sessions, showOnlyLatestDay]
+  );
 
   // When SailScan (or SquashShots) saves a new photo + creates a session,
   // they emit a CustomEvent so the sessions sidebar and PhotosTab can pick
@@ -3910,7 +3933,6 @@ function SSAApp(){
             videos:enrichedVids,logData:log,xmlData:xml,
             photos:enrichedPhotos.length?enrichedPhotos:undefined
           });
-          console.debug("[SSA] Cloud metadata updated for",date,"after log/event import");
         }catch(err){console.error("[SSA] Cloud metadata update failed:",err);}
       },500);
     }
@@ -4022,7 +4044,7 @@ function SSAApp(){
       activeTab={activeTab} setActiveTab={setActiveTab}
       role={role} perms={perms}
       allVideos={allVideos} setAllVideos={setAllVideos}
-      sessions={sessions} setSessions={setSessions}
+      sessions={visibleSessions} setSessions={setSessions}
       activeDate={activeDate} setActiveDate={setActiveDate}
       selectedVideo={selectedVideo} setSelectedVideo={setSelectedVideo}
       logData={logData} setLogData={setLogData}
@@ -4039,6 +4061,9 @@ function SSAApp(){
       loadDate={loadDate} onSelectDate={loadDate} handleImported={handleImported}
       handlePlayUtc={handlePlayUtc} playUtc={playUtc}
       canSeeAnalytics={canSeeAnalytics} canUseAI={canUseAI}
+      canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab}
+      canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
+      showOnlyLatestDay={showOnlyLatestDay}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -4058,7 +4083,11 @@ function SSAApp(){
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:16}}>⚓</span><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Smart</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{display:"flex",gap:2,marginLeft:10}}>
-          {["library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => canSeeAnalytics || tab !== "analytics").map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
+          {["library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
+            if (tab === "sailscan" && !canSeeSailScanTab) return false;
+            if (tab === "squashshots" && !canSeeSquashShotsTab) return false;
+            return true;
+          }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
         </nav>
         <div style={{flex:1}}/>
         {canUseAI && (
@@ -4101,8 +4130,8 @@ function SSAApp(){
           <aside style={{width:160,background:"#050E1C",borderRight:"1px solid #1E3A5A",display:"flex",flexDirection:"column",overflowY:"auto",flexShrink:0}}>
             <div style={{padding:"12px 11px 6px"}}>
               <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Sessions</div>
-              {sessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
-              {sessions.map(s=>{
+              {visibleSessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
+              {visibleSessions.map(s=>{
                 const isLocal=!s.source||s.source==="local";const isActive=activeDate===s.date;
                 return(<div key={s.date} onClick={()=>loadDate(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
@@ -4364,7 +4393,7 @@ function SSAApp(){
               onSelectDate={loadDate}
               playUtc={playUtc}
               visible={activeTab==="analytics"} photos={photos}
-              canUseAI={canUseAI}
+              canUseAI={canUseAI} canSeeAnalyticsData={canSeeAnalyticsData}
             />
           </div>
         )}
@@ -4372,7 +4401,7 @@ function SSAApp(){
         {/* ── UPLOAD & ADMIN — standard conditional render ─────────────────── */}
         {activeTab==="photos"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={sessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos}/>
+            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos}/>
           </div>
         )}
         {activeTab==="upload"&&(

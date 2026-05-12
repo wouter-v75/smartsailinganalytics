@@ -312,8 +312,6 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
     }
 
     await Promise.all(uploads);
-    console.debug("[SSA:cloud] Updated cloud metadata for", date,
-      "videos:", videos?.length || 0, "photos:", photos?.length || 0);
     return true;
   } catch (err) {
     console.error("[SSA:cloud] updateCloudSessionMetadata error:", err);

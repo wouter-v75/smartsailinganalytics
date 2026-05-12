@@ -23,7 +23,7 @@ interface MembershipRow {
   id: string
   user_id: string
   boat_id: string | null
-  role: 'team_manager' | 'coach' | 'tl1' | 'tl2' | 'consultant'
+  role: 'team_manager' | 'coach' | 'tl1' | 'tl2' | 'consultant' | 'guest'
   valid_from: string | null
   valid_to: string | null
   users: JoinedUser | JoinedUser[] | null

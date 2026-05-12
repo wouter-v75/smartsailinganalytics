@@ -535,7 +535,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
 }
 
 // ── Main PhotosTab ────────────────────────────────────────────────────────────
-export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],loadDate,cloudStatus,onPhotosChange}){
+export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],loadDate,cloudStatus,onPhotosChange,canSeeSailScanPhotos=true}){
   const [photos,setPhotos]     = useState([]);   // metadata only — no blobs
   const [selected,setSelected] = useState(null);
   const [uploading,setUploading]= useState(false);
@@ -651,12 +651,9 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       // so tags + instrument data appear without waiting for a
       // separate re-enrich cycle.
       const willEnrich = !!(logData || xmlData);
-      console.debug("[SSA:photos] loadEffect:",restored.length,"photos, logData:",!!logData,"(rows:",logData?.rows?.length||0,"), xmlData:",!!xmlData,", willEnrich:",willEnrich);
-      if(restored.length>0) console.debug("[SSA:photos] sample utc:",restored[0].name,restored[0].utc?new Date(restored[0].utc).toISOString():"NULL");
       const enriched = willEnrich
         ? restored.map(p => enrichPhoto(p, logData, xmlData))
         : restored;
-      if(enriched.length>0) console.debug("[SSA:photos] after enrich sample:",enriched[0].name,"tws:",enriched[0].tws,"sails:",enriched[0].sails,"raceTags:",enriched[0].raceTags);
       setPhotos(enriched);
       // Only count photos that actually have a thumbnail to load
       setTotalThumbs(enriched.filter(p => p.objectUrl).length);
@@ -682,13 +679,11 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     if(log?.rows?.length&&photo.utc){
       const row=nearestLogRow(log.rows,photo.utc);
       if(row){e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;}
-      else console.debug("[SSA:photo] no log row near",photo.name,new Date(photo.utc).toISOString());
-    }else if(!photo.utc) console.debug("[SSA:photo] no UTC for",photo.name,"— instrument data skipped");
+    }
     if(xml){
       const sails=activeSailsAt(xml.sailsUpEvents,photo.utc);
       const race=raceTagsAt(xml,photo.utc);
       e.sails=sails;e.raceTags=race;e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;
-      if(sails.length||race.length) console.debug("[SSA:photo] enriched",photo.name,"sails:",sails,"race:",race);
     }
     return e;
   },[]);
@@ -923,9 +918,12 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   // All unique tags across photos
   const allTags = [...new Set(photos.flatMap(p => p.sails||[]))].sort();
 
-  // Filtered + sorted photos
+  // Filtered + sorted photos. When canSeeSailScanPhotos is false (tl1, guest)
+  // we drop photos that carry SailScan analysis. Detected via `analysis`
+  // field on the photo metadata, which SailScan populates on save.
   const displayed = photos
     .filter(p => {
+      if (!canSeeSailScanPhotos && p.analysis) return false;
       const q = searchQuery.toLowerCase();
       const matchQ = !q || p.name?.toLowerCase().includes(q) || (p.sails||[]).some(s=>s.toLowerCase().includes(q));
       const matchT = selectedTags.length===0 || selectedTags.every(t=>(p.sails||[]).includes(t));

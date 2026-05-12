@@ -4,15 +4,31 @@ Authoritative reference. Implemented in `supabase/migrations/0002_rls_policies.s
 
 ## Role definitions
 
-| Role         | Scope            | Created by | Time-windowed? |
-| ------------ | ---------------- | ---------- | -------------- |
-| `admin`      | global           | manual SQL update on `users.global_role` | No |
-| `coach`      | per (team, boat) | admin assigns membership | No |
-| `tl2`        | per (team, boat) | admin assigns membership | No |
-| `tl1`        | per (team, boat) | admin assigns membership | No |
-| `consultant` | per (team, boat) | admin assigns membership | **Yes — `valid_from` / `valid_to`** |
+| Role           | Scope            | Created by | Time-windowed? |
+| -------------- | ---------------- | ---------- | -------------- |
+| `admin`        | global           | manual SQL update on `users.global_role` | No |
+| `team_manager` | per team         | admin assigns membership | No |
+| `coach`        | per (team, boat) | admin assigns membership | No |
+| `tl2`          | per (team, boat) | admin assigns membership | No |
+| `tl1`          | per (team, boat) | admin assigns membership | No |
+| `consultant`   | per (team, boat) | admin assigns membership | **Yes — `valid_from` / `valid_to`** |
+| `guest`        | per (team, boat) | admin assigns membership | Optional |
 
 A user can hold multiple memberships and switches between them in the app.
+
+## Feature-level UI gating (added in 0008)
+
+| Feature                                    | admin | team_manager | coach | tl2 | tl1 | consultant | guest |
+| ------------------------------------------ | :---: | :----------: | :---: | :-: | :-: | :--------: | :---: |
+| **SailScan tab**                           | ✅    | ✅           | ✅    | ✅  | ❌  | ⏱         | ❌    |
+| **SquashShots tab**                        | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         | ❌    |
+| Analytics tab — **GPS map**                | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         | ✅    |
+| Analytics tab — **charts, polar, AI**      | ✅    | ✅           | ✅    | ✅  | ❌  | ⏱         | ❌    |
+| Header **AI search**                       | ✅    | ✅           | ✅    | ✅  | ❌  | ❌         | ❌    |
+| Photos tab — see SailScan-tagged photos    | ✅    | ✅           | ✅    | ✅  | ❌  | ⏱         | ❌    |
+| Sessions list — **only latest day**        | full  | full         | full  | full| full| full       | latest-only |
+
+Consultants get full access within their `valid_from`/`valid_to` window; outside it, RLS denies all reads automatically.
 
 ## Resource × role matrix
 

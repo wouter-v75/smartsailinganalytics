@@ -10,6 +10,7 @@ export type MembershipRole =
   | 'tl1'
   | 'tl2'
   | 'consultant'
+  | 'guest'
 
 export interface AppUser {
   id: string

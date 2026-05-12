@@ -13,6 +13,7 @@ export type MembershipRole =
   | 'tl1'
   | 'tl2'
   | 'consultant'
+  | 'guest'
 
 export interface ActiveMembership {
   id: string
@@ -57,17 +58,3 @@ export function clearActiveMembership(userId: string): void {
   }
 }
 
-// Legacy id-only API kept as a deprecated shim so existing callers don't
-// break during the migration. Prefer get/setActiveMembership.
-export function getActiveMembershipId(userId: string): string | null {
-  return getActiveMembership(userId)?.id ?? null
-}
-export function setActiveMembershipId(
-  userId: string,
-  membershipId: string
-): void {
-  // No-op without the full object — caller should switch to setActiveMembership.
-  // Kept as a non-throwing stub to avoid runtime errors in older code paths.
-  void userId
-  void membershipId
-}

@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation'
 
 type Status = 'pending' | 'active' | 'disabled'
 type Action = 'approve' | 'disable' | 'reactivate'
-type Role = 'team_manager' | 'coach' | 'tl2' | 'tl1' | 'consultant'
+type Role = 'team_manager' | 'coach' | 'tl2' | 'tl1' | 'consultant' | 'guest'
 
 interface TeamWithBoats {
   id: string
@@ -22,7 +22,7 @@ interface TeamWithBoats {
   boats: { id: string; name: string }[]
 }
 
-const ROLES: Role[] = ['team_manager', 'coach', 'tl2', 'tl1', 'consultant']
+const ROLES: Role[] = ['team_manager', 'coach', 'tl2', 'tl1', 'consultant', 'guest']
 
 export default function UserActions({
   userId,
