@@ -1971,7 +1971,7 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
 const LOG_FIELDS = "tws (true wind speed kn), twa (true wind angle °), bsp (boat speed kn), sog (speed over ground kn), vmg (velocity made good kn), heel (heel angle °), vsTargPct (% of target speed col23), vsPerfPct (% of polar speed col26), rudder (rudder angle °)";
 const CLIP_FIELDS = "twsAvg, twaAvg, vmgAvg, polpercAvg, vsTargPercAvg, sogAvg, heelAvg";
 
-const CHART_SYSTEM = `You are a sailing data analyst AI for SmartSailingAnalytics.
+const CHART_SYSTEM = `You are a sailing data analyst AI for Shared Sailing Analytics.
 The user has log data (1 Hz rows with fields: ${LOG_FIELDS}) and clip summaries (fields: ${CLIP_FIELDS}).
 When the user asks a question, respond with JSON ONLY — no markdown, no explanation outside JSON.
 Return: {
@@ -3396,8 +3396,7 @@ function MobileShell(props){
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",
         padding:"0 10px 0 14px",height:48,display:"flex",alignItems:"center",
         gap:8,flexShrink:0,position:"relative",zIndex:50}}>
-        <span style={{fontSize:16}}>⚓</span>
-        <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Smart</span>
+        <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Shared</span>
         <span style={{fontSize:14,fontWeight:700,color:"#06B6D4"}}>Sailing</span>
         <div style={{flex:1}}/>
         {/* Connection dot */}
@@ -4030,7 +4029,7 @@ function SSAApp(){
     setAiLoading(true);setAiResult(null);
     try{
       const vl=allVideos.map(v=>({id:v.id,title:v.title,date:v.sessionDate,source:v.source,tags:v.tags||[],tws:v.twsAvg!=null?+R(v.twsAvg):null,twa:v.twaAvg!=null?+R(v.twaAvg,0):null,vmg:v.vmgAvg!=null?+R(v.vmgAvg):null,polperc:v.polpercAvg!=null?+R(v.polpercAvg,0):null,vsTargPerc:v.vsTargPercAvg!=null?+R(v.vsTargPercAvg,0):null,sog:v.sogAvg!=null?+R(v.sogAvg):null}));
-      const systemPrompt=`You are the AI assistant for SmartSailingAnalytics. Fields per clip: id, title, date, tags, tws, twa, vmg, polperc, vsTargPerc, sog. Library: ${JSON.stringify(vl)}\nReturn ONLY valid JSON: {"matches":[],"explanation":"","insight":""}`;
+      const systemPrompt=`You are the AI assistant for Shared Sailing Analytics. Fields per clip: id, title, date, tags, tws, twa, vmg, polperc, vsTargPerc, sog. Library: ${JSON.stringify(vl)}\nReturn ONLY valid JSON: {"matches":[],"explanation":"","insight":""}`;
       const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system:systemPrompt,messages:[{role:"user",content:aiQuery}]})});
       const data=await res.json();const text=data.content?.find(b=>b.type==="text")?.text||"{}";
       setAiResult(JSON.parse(text.replace(/```json|```/g,"").trim()));
@@ -4048,7 +4047,7 @@ function SSAApp(){
   const toggleTag=t=>setSelectedTags(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
   const tabStyle=tab=>({padding:"6px 15px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600,border:"none",background:activeTab===tab?"#06B6D4":"transparent",color:activeTab===tab?"#000":"#64748B"});
 
-  if(!loaded)return<div style={{minHeight:"100vh",background:"#030F1A",display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:13}}>Loading SmartSailingAnalytics…</div>;
+  if(!loaded)return<div style={{minHeight:"100vh",background:"#030F1A",display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:13}}>Loading Shared Sailing Analytics…</div>;
 
   // ── Mobile render ────────────────────────────────────────────────────────────
   if(isMobile) return(
@@ -4093,7 +4092,7 @@ function SSAApp(){
   return(
     <div style={{minHeight:"100vh",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:16}}>⚓</span><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Smart</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{display:"flex",gap:2,marginLeft:10}}>
           {["library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
             if (tab === "sailscan" && !canSeeSailScanTab) return false;
@@ -4109,10 +4108,6 @@ function SSAApp(){
           {aiResult&&<button onClick={()=>setAiResult(null)} style={{background:"none",border:"1px solid #EF444440",borderRadius:6,padding:"5px 8px",color:"#EF4444",cursor:"pointer",fontSize:11}}>✕</button>}
         </div>
         )}
-        <div style={{display:"flex",alignItems:"center",gap:4,fontSize:10}}>
-          <div style={{width:5,height:5,borderRadius:"50%",background:cloudStatus?.available?"#1D9E75":cloudStatus===null?"#334155":"#F59E0B"}}/>
-          <span style={{color:cloudStatus?.available?"#1D9E75":cloudStatus===null?"#334155":"#F59E0B"}}>{cloudStatus?.available?"R2+Stream":cloudStatus===null?"…":"Local only"}</span>
-        </div>
         <div style={{display:"flex",alignItems:"center",gap:5,background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"4px 8px"}}>
           <span style={{fontSize:8,color:"#334155",letterSpacing:1}}>ROLE</span>
           <select value={role} onChange={e=>setRole(e.target.value)} style={{background:"transparent",border:"none",color:"#94A3B8",fontSize:11,cursor:"pointer",outline:"none"}}>

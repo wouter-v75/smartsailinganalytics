@@ -23,6 +23,7 @@ const PUBLIC_PATHS = new Set<string>([
   '/signup',
   '/auth/callback',
   '/auth/confirm',
+  '/auth/reset-password',
 ])
 
 // Path-prefix matches that bypass the auth gate entirely (anonymous AND

@@ -165,7 +165,7 @@ async function fireWarningEmail(
           <p>You've used <strong>${usedGb} GB</strong> of your <strong>${limitGb} GB</strong> SSA storage limit (about 80%).</p>
           <p>You can keep uploading until 100%. After that, new uploads will be blocked until you free space or contact the admin to raise your limit.</p>
           <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
-          <p style="font-size:12px;color:#94a3b8">Smart Sailing Analytics</p>
+          <p style="font-size:12px;color:#94a3b8">Shared Sailing Analytics</p>
         </div>
       `,
     })
@@ -185,7 +185,7 @@ async function fireWarningEmail(
               <li>The admin raises your limit.</li>
             </ul>
             <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
-            <p style="font-size:12px;color:#94a3b8">Smart Sailing Analytics</p>
+            <p style="font-size:12px;color:#94a3b8">Shared Sailing Analytics</p>
           </div>
         `,
       }),

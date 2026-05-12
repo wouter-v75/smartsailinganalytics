@@ -87,7 +87,7 @@ export async function sendInviteEmail(args: InviteEmailArgs) {
       </p>
       <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
       <p style="font-size:12px;color:#94a3b8">
-        Smart Sailing Analytics · You can ignore this email if it wasn't expected.
+        Shared Sailing Analytics · You can ignore this email if it wasn't expected.
       </p>
     </div>
   `
