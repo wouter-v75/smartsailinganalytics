@@ -3770,7 +3770,10 @@ function SSAApp(){
       // Cloud check — on mobile defer until after paint
       const doCloud=async()=>{
         const cs=await checkCloudStatus();setCloudStatus(cs);
-        if(cs?.available){
+        // Bunny R2 session listing is GLOBAL (every date in the zone,
+        // every team). Only admins can see it; everyone else relies on
+        // Supabase below for the team-scoped view.
+        if(cs?.available && effectiveRole==='admin'){
           const remote=await listR2Sessions();
           const localDates=new Set(localSessions.map(s=>s.date));
           const newR=remote.filter(s=>!localDates.has(s.date));
@@ -3828,7 +3831,9 @@ function SSAApp(){
     }
 
     if(log){setLogData({...log,source:log.source||"local"});setSessionTzOffset(log.tzOffset??DEFAULT_TZ);}
-    else if(cloudStatus?.available){const r2=await fetchCloudSession(date);log=r2?.logData||null;setLogData(log?{...log,source:"cloud"}:null);}
+    // Bunny R2 fallback is GLOBAL (not team-scoped). Only admins can use
+    // it; everyone else must stay inside their team's RLS-protected data.
+    else if(cloudStatus?.available && effectiveRole==='admin'){const r2=await fetchCloudSession(date);log=r2?.logData||null;setLogData(log?{...log,source:"cloud"}:null);}
     else setLogData(null);
 
     try {
@@ -3839,7 +3844,7 @@ function SSAApp(){
     } catch { setSessionTagList(getTagList(date)); }
 
     if(xml){setXmlData({...xml,source:xml.source||"local"});}
-    else if(cloudStatus?.available){const r2=await fetchCloudSession(date);xml=r2?.xmlData||null;setXmlData(xml?{...xml,source:"cloud"}:null);}
+    else if(cloudStatus?.available && effectiveRole==='admin'){const r2=await fetchCloudSession(date);xml=r2?.xmlData||null;setXmlData(xml?{...xml,source:"cloud"}:null);}
     else setXmlData(null);
 
     // ── Load videos ─────────────────────────────────────────────────────────
@@ -3877,7 +3882,7 @@ function SSAApp(){
         } catch { /* ignore */ }
       }));
     }
-    if(!vids.length&&cloudStatus?.available){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
+    if(!vids.length&&cloudStatus?.available&&effectiveRole==='admin'){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
 
     // Enrich with BOTH log AND xml — uses the resolved values above (local or cloud)
     const enriched=vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
@@ -3949,6 +3954,13 @@ function SSAApp(){
   async function handleMobileCloudSync(){
     if(!cloudStatus?.available){
       setMobileSyncState({phase:"error",message:"Cloud not configured",progress:0});
+      setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2500);
+      return;
+    }
+    // Mobile sync hits Bunny R2 directly which isn't team-scoped. Gate to
+    // admin only; non-admin users already get team-scoped data via Supabase.
+    if(effectiveRole!=='admin'){
+      setMobileSyncState({phase:"error",message:"Cloud sync is admin-only",progress:0});
       setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2500);
       return;
     }
