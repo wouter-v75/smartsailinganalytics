@@ -542,6 +542,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [syncing,setSyncing]   = useState(false);
   const [syncState,setSyncState] = useState(null); // { phase, current, total, msg }
   const [downloadingOriginal,setDownloadingOriginal] = useState(false);
+  // Phase B — counter bumped after an import to auto-trigger a full sync
+  // so photos reach the cloud without a manual button press (mirrors the
+  // video auto-sync). Effect lives below handleSyncAll's definition.
+  const [autoSyncTrigger,setAutoSyncTrigger] = useState(0);
   // Batch select / delete — admin + coach only
   const canDelete = role === "admin" || role === "coach";
   const [batchMode,setBatchMode] = useState(false);
@@ -720,7 +724,12 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     setPhotos(updated);savePhotos(updated);
     if(newPhotos.length>0)setSelected(newPhotos[0]);
     addLog(`✓ ${newPhotos.length} photo${newPhotos.length>1?"s":""} added`);
-  },[photos,activeDate,logData,xmlData,enrichPhoto,savePhotos]);
+    // Phase B — auto-push new photos to the cloud (no manual button).
+    // Bump the trigger; the effect below handleSyncAll runs the upload.
+    if(newPhotos.length>0 && cloudStatus?.available){
+      setAutoSyncTrigger(t=>t+1);
+    }
+  },[photos,activeDate,logData,xmlData,enrichPhoto,savePhotos,cloudStatus]);
 
   // Re-enrich is handled by the loading effect above (logData/xmlData are in its deps).
   // A separate effect would race with the async loading effect and cause stale-state bugs.
@@ -877,6 +886,17 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     setTimeout(() => setSyncState(null), 3500);
     setSyncing(false);
   };
+
+  // Phase B — auto-sync after import. handleAddFiles bumps autoSyncTrigger;
+  // this effect (declared after handleSyncAll so there's no TDZ) runs the
+  // full pull+push. Guarded against the initial 0 value and re-entrancy.
+  useEffect(() => {
+    if (autoSyncTrigger === 0) return;
+    if (syncing) return;
+    if (!cloudStatus?.available) return;
+    handleSyncAll();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSyncTrigger]);
 
   // ── Admin/Coach: download full-res original for offline use ─────────────────
   const handleDownloadOriginal = async () => {

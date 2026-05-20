@@ -3872,6 +3872,24 @@ function SSAApp(){
   // Mobile-specific sync state — phase: null | "pulling" | "pushing" | "done" | "error"
   const[mobileSyncState,setMobileSyncState]=useState({phase:null,message:"",progress:0});
 
+  // ── Phase B auto-sync queue ─────────────────────────────────────────────────
+  // Background queue that uploads newly-imported videos to Bunny Storage as
+  // proxy MP4s without any manual button press. Drives `mobileSyncState` so
+  // the existing top-of-screen progress strip shows what's happening.
+  //
+  // Sequential by design — ffmpeg.wasm is single-instance per page, parallel
+  // runs just contend for the same WASM core. One clip at a time keeps memory
+  // bounded too.
+  //
+  // The Ref-based queue avoids stale-closure problems with the processor loop;
+  // the React state lives only on the visible progress strip.
+  const autoSyncRef = useRef({
+    queue: [],    // [{videoId, sessionDate}, …]
+    running: false,
+    done: 0,
+    total: 0,
+  });
+
   // Batch select / delete — admin + coach only
   const[batchMode,setBatchMode]=useState(false);
   const[batchSelected,setBatchSelected]=useState(()=>new Set());
@@ -4064,7 +4082,6 @@ function SSAApp(){
           if(user){
             const cloudSessions=await listSessionsCloud({userId:user.id});
             if(cloudSessions.length>0){
-              const seen=new Set();
               setSessions(p=>{
                 const merged=[...p];
                 for(const s of cloudSessions){
@@ -4072,6 +4089,25 @@ function SSAApp(){
                 }
                 return merged.sort((a,b)=>b.date.localeCompare(a.date));
               });
+              // ── #4 fix: if the user has no local data on the date we
+              // booted into (typical TL1 mobile-first scenario — fresh
+              // device, empty IDB), jump them to the newest cloud session
+              // so the library shows videos + thumbnails immediately
+              // instead of an empty "no sessions" state.
+              //
+              // Use `latestDate` (the date boot() actually set active) —
+              // the `activeDate` state var is a stale closure here,
+              // frozen at TODAY() from the initial render.
+              const localVidsForActive = (await getAllVideos()).filter(v => v.sessionDate === latestDate);
+              if (localVidsForActive.length === 0) {
+                const newestCloudDate = cloudSessions
+                  .map(s => s.date)
+                  .sort()
+                  .reverse()[0];
+                if (newestCloudDate && newestCloudDate !== latestDate) {
+                  await loadDate(newestCloudDate);
+                }
+              }
             }
           }
         } catch { /* non-fatal */ }
@@ -4193,12 +4229,129 @@ function SSAApp(){
     setSelectedVideo(vids[0]||null);
   }
 
+  // Run the auto-sync queue until it's empty. Idempotent — multiple calls
+  // while running are no-ops; the live loop pulls whatever's queued at the
+  // moment it needs the next item.
+  async function processAutoSyncQueue(){
+    if (autoSyncRef.current.running) return;
+    autoSyncRef.current.running = true;
+    try {
+      while (autoSyncRef.current.queue.length > 0) {
+        const item = autoSyncRef.current.queue.shift();
+        const idx = autoSyncRef.current.done + 1;
+        const total = autoSyncRef.current.total;
+        const label = item.label || `clip ${idx}`;
+
+        setMobileSyncState({
+          phase: 'pushing',
+          message: `Auto-syncing ${idx}/${total} · ${label}`,
+          progress: 0,
+        });
+
+        try {
+          // Need an authed user — without it we have no Supabase row to
+          // mark the proxy against. Quietly skip; the user can sync
+          // manually once they sign in.
+          const supabase = getBrowserSupabase();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) { autoSyncRef.current.done = idx; continue; }
+
+          // Source blob from IDB. If it's missing (e.g. mobile-skipped
+          // storage on a small device) the user has no way to re-upload
+          // from here; flag and move on.
+          const blob = await getVideoBlob(item.videoId);
+          if (!blob) {
+            console.warn('[autoSync] no local blob for', item.videoId);
+            autoSyncRef.current.done = idx; continue;
+          }
+
+          // Find the in-memory video record for ensureCloudVideoId to work
+          // out title/duration/etc.
+          const localVid = (await getAllVideos()).find(v => v.id === item.videoId)
+                          || { id: item.videoId, sessionDate: item.sessionDate };
+
+          const cloudId = await ensureCloudVideoId({
+            userId: user.id,
+            video: localVid,
+            sessionDate: item.sessionDate,
+          });
+          if (!cloudId) {
+            console.warn('[autoSync] no cloud row for', item.videoId);
+            autoSyncRef.current.done = idx; continue;
+          }
+
+          await syncProxyForVideo({
+            videoId: cloudId,
+            sessionDate: item.sessionDate,
+            source: blob,
+            onProgress: ({phase, pct, message}) => {
+              const phaseLabel = phase === 'transcoding' ? 'compressing'
+                               : phase === 'uploading'   ? 'uploading'
+                               : phase === 'marking'     ? 'finalizing'
+                               : phase;
+              setMobileSyncState({
+                phase: 'pushing',
+                message: `Auto-syncing ${idx}/${total} · ${label} · ${phaseLabel}`,
+                progress: Math.round((pct||0) * 100),
+              });
+            },
+          });
+
+          // Update the live UI so the clip's "proxy ready" badge shows up
+          // without waiting for a manual refresh.
+          setAllVideos(p => p.map(v => v.id === item.videoId
+            ? {...v, hasProxy: true, proxyUploadedAt: new Date().toISOString()}
+            : v));
+        } catch (e) {
+          console.error('[autoSync] failed for', item.videoId, e);
+        }
+        autoSyncRef.current.done = idx;
+      }
+    } finally {
+      autoSyncRef.current.running = false;
+      // Show a brief done state, then clear.
+      const finalCount = autoSyncRef.current.done;
+      setMobileSyncState({ phase: 'done', message: `✓ Synced ${finalCount} clip${finalCount===1?'':'s'}`, progress: 100 });
+      autoSyncRef.current.done = 0;
+      autoSyncRef.current.total = 0;
+      setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
+    }
+  }
+
+  // Add clips to the auto-sync queue and kick the processor if idle.
+  // Caller passes the local IDB video records (id + title/name for labels).
+  function enqueueAutoSync(videos, sessionDate){
+    if (!videos?.length) return;
+    const items = videos
+      // Filter out anything already proxy-uploaded so re-imports don't
+      // re-transcode unnecessarily.
+      .filter(v => !v.hasProxy)
+      .map(v => ({
+        videoId: v.id,
+        sessionDate,
+        label: v.title || v.name || v.id,
+      }));
+    if (!items.length) return;
+    autoSyncRef.current.queue.push(...items);
+    autoSyncRef.current.total += items.length;
+    processAutoSyncQueue();
+  }
+
   async function handleImported({date,videos,logData:ld,xmlData:xd}){
     if(ld)setLogData({...ld,source:"local"});if(xd)setXmlData({...xd,source:"local"});
     setSessions(getSessions());setUnsyncedCount(getUnsyncedCount());
     // Load from IDB to ensure state matches storage (catches second import race)
     await loadDate(date);
     setActiveTab("library");
+
+    // ── Phase B auto-sync ──────────────────────────────────────────────────
+    // Mobile users (especially TL1/crew/etc.) need their imports to reach
+    // the cloud without having to find a button. Enqueue the new clips for
+    // background proxy generation + upload. No role gate — anyone who can
+    // import gets their stuff synced.
+    if (videos?.length && cloudStatus?.available) {
+      enqueueAutoSync(videos, date);
+    }
 
     // ── Re-enrich & update cloud metadata ──────────────────────────────────
     // When log/event files are uploaded after videos were already synced,
@@ -4811,10 +4964,12 @@ function SSAApp(){
                       onDismissError={()=>setCropError(null)}
                     />
                   )}
-                  {/* Proxy sync is restricted to roles allowed to push to
-                      the cloud at all (admin + coach in the legacy perms
-                      map). Crew can import + tag locally but can't sync. */}
-                  {perms.canSync && (
+                  {/* Manual proxy sync — any role that can import sees
+                      this. Auto-sync runs in the background after each
+                      import (see enqueueAutoSync), but the manual button
+                      stays useful for re-syncing after a crop or for
+                      retrying a previously-failed upload. */}
+                  {perms.canImport && (
                     <RenditionSyncPanel
                       video={selectedVideo}
                       activeDate={activeDate}
