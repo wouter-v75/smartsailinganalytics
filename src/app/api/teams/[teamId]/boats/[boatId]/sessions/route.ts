@@ -17,10 +17,13 @@ export async function GET(
   } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
+  // `videos(count)` is a PostgREST aggregate embed — returns the number
+  // of related videos per session so the UI can show "N clips" in the
+  // session picker without a second round-trip.
   const { data, error } = await supabase
     .from('sessions')
     .select(
-      'id, date, title, tz_offset_minutes, created_at, updated_at, created_by_user_id'
+      'id, date, title, tz_offset_minutes, created_at, updated_at, created_by_user_id, videos(count)'
     )
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)
@@ -30,5 +33,14 @@ export async function GET(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
-  return NextResponse.json({ sessions: data || [] })
+
+  // Flatten the embedded aggregate into a plain `video_count` integer.
+  const sessions = (data || []).map((s) => {
+    const { videos, ...rest } = s as typeof s & {
+      videos?: { count: number }[]
+    }
+    return { ...rest, video_count: videos?.[0]?.count ?? 0 }
+  })
+
+  return NextResponse.json({ sessions })
 }

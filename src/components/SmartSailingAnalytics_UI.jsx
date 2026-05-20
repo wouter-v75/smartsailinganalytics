@@ -391,12 +391,24 @@ function enrichVideo(v,log,xml,syncOffsets){
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
 function Gauge({label,value,unit,color="#06B6D4",size="md",highlight=false}){
-  const fs=size==="lg"?28:size==="sm"?16:22;
+  // Gauge is only used for the on-video instrument overlay. On phones the
+  // desktop sizing covers half the frame, so shrink everything ~40 %.
+  const isMobile = useIsMobile();
+  const baseFs = size==="lg"?28:size==="sm"?16:22;
+  const fs     = isMobile ? Math.round(baseFs*0.6) : baseFs;
+  const labelFs= isMobile ? 7 : 9;
+  const unitFs = isMobile ? 7 : 10;
+  const minW   = isMobile
+    ? (size==="lg"?54:size==="sm"?38:46)
+    : (size==="lg"?90:size==="sm"?58:76);
+  const pad    = isMobile
+    ? (size==="sm"?"2px 5px":"3px 6px")
+    : (size==="sm"?"5px 9px":"7px 11px");
   return(
-    <div style={{background:highlight?"rgba(239,68,68,0.18)":"rgba(0,0,0,0.75)",border:`1px solid ${highlight?"#EF4444":color}40`,borderRadius:7,padding:size==="sm"?"5px 9px":"7px 11px",minWidth:size==="lg"?90:size==="sm"?58:76}}>
-      <div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:2}}>{label}</div>
+    <div style={{background:highlight?"rgba(239,68,68,0.18)":"rgba(0,0,0,0.75)",border:`1px solid ${highlight?"#EF4444":color}40`,borderRadius:isMobile?5:7,padding:pad,minWidth:minW}}>
+      <div style={{fontSize:labelFs,color:"#64748B",letterSpacing:isMobile?1:2,textTransform:"uppercase",marginBottom:isMobile?0:2}}>{label}</div>
       <div style={{fontSize:fs,fontWeight:700,color:highlight?"#EF4444":color,fontFamily:"'Courier New',monospace",lineHeight:1}}>{value}</div>
-      <div style={{fontSize:10,color:"#475569",marginTop:1}}>{unit}</div>
+      <div style={{fontSize:unitFs,color:"#475569",marginTop:1}}>{unit}</div>
     </div>
   );
 }
@@ -459,6 +471,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const[dur,setDur]=useState(video.duration||0);
   const isHls=video.source==="cloud"||video.objectUrl?.includes(".m3u8");
   const lastUtcEmit=useRef(0);
+  const isMobile=useIsMobile();
 
   // Load polar for target BSP calculation
   const polar=useMemo(()=>loadPolarFromLS(),[]);
@@ -668,7 +681,9 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
          video.source==="processing"?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
-        {overlay&&<div style={{position:"absolute",top:10,left:10}}>{overlay}</div>}
+        {/* On mobile, pin to all-but-bottom so tiles wrap within the
+            frame width instead of overflowing off the right edge. */}
+        {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:isMobile?6:undefined}}>{overlay}</div>}
         {modeBadge}
         {/* Phase B — PREVIEW badge when the player is serving the 720p
             proxy rendition and the full-resolution original hasn't been
@@ -3656,8 +3671,11 @@ function MobileShell(props){
       fontFamily:"'Segoe UI',system-ui,sans-serif",overflow:"hidden"}}>
 
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
+      {/* Right padding reserves ~60px for the fixed UserPill avatar that
+          floats at top-right (position:fixed, z-index:9999). Without it
+          the Sync button sits underneath the avatar and can't be tapped. */}
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",
-        padding:"0 10px 0 14px",height:48,display:"flex",alignItems:"center",
+        padding:"0 62px 0 14px",height:48,display:"flex",alignItems:"center",
         gap:8,flexShrink:0,position:"relative",zIndex:50}}>
         <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Shared</span>
         <span style={{fontSize:14,fontWeight:700,color:"#06B6D4"}}>Sailing</span>
@@ -4085,7 +4103,13 @@ function SSAApp(){
               setSessions(p=>{
                 const merged=[...p];
                 for(const s of cloudSessions){
-                  if(!merged.some(m=>m.date===s.date)) merged.push({date:s.date, source:'supabase'});
+                  const existing=merged.find(m=>m.date===s.date);
+                  if(existing){
+                    // Fill in the cloud video count if the local entry lacks one.
+                    if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                  }else{
+                    merged.push({date:s.date, source:'supabase', videoCount:s.video_count||0});
+                  }
                 }
                 return merged.sort((a,b)=>b.date.localeCompare(a.date));
               });
@@ -4430,7 +4454,12 @@ function SSAApp(){
             setSessions(prev=>{
               const merged=[...prev];
               for(const s of cloudSessions){
-                if(!merged.some(m=>m.date===s.date)) merged.push({date:s.date,source:'supabase'});
+                const existing=merged.find(m=>m.date===s.date);
+                if(existing){
+                  if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                }else{
+                  merged.push({date:s.date,source:'supabase',videoCount:s.video_count||0});
+                }
               }
               return merged.sort((a,b)=>b.date.localeCompare(a.date));
             });

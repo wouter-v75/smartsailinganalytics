@@ -18,6 +18,8 @@ export interface CloudSessionRow {
   created_at: string
   updated_at: string
   created_by_user_id: string | null
+  /** Number of videos in this session (from the API's aggregate embed). */
+  video_count?: number
 }
 
 function endpoint(teamId: string, boatId: string | null, date?: string): string | null {
