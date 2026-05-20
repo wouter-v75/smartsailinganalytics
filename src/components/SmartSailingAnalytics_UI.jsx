@@ -13,7 +13,8 @@ import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud 
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId } from '../lib/cloud-videos';
 import { syncProxyForVideo } from '../lib/video-rendition-sync';
-import { getVideoBlob } from '../lib/localStore';
+import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
+import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { getActiveMembership } from '../lib/active-membership';
 
@@ -838,6 +839,208 @@ function TagEditor({video, onSave, tagList=[], sessionDate, onTagListChange}){
           <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
             {tagList.map(t=>(<span key={t} style={{display:"flex",alignItems:"center",gap:3,background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#94A3B8"}}>{t}<span onClick={()=>deleteFromList(t)} style={{color:"#EF4444",fontSize:9,cursor:"pointer",marginLeft:2}}>×</span></span>))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Phase B — in-browser lossless crop. Lets the user chop the dead time
+// off the start and end of a clip BEFORE generating the proxy, so the
+// upload only carries the interesting part.
+//
+// The crop is a single keep-range [trimStart, trimEnd]; everything
+// outside is discarded. Uses ffmpeg.wasm with `-c copy` so it's fast
+// (~10× quicker than a re-encode) but snaps to keyframes (~1–2 s).
+function parseMmSs(s){
+  if(!s) return null;
+  // Accept "1:23", "1:23.5", "83", "83.5"
+  const m = s.match(/^(\d+):(\d{1,2}(?:\.\d+)?)$/);
+  if (m) return parseInt(m[1],10)*60 + parseFloat(m[2]);
+  const f = parseFloat(s);
+  return isFinite(f) ? f : null;
+}
+function fmtMmSs(secs){
+  if (secs == null || !isFinite(secs)) return "";
+  const m = Math.floor(secs/60);
+  const s = secs - m*60;
+  return `${m}:${s.toFixed(s%1?1:0).padStart(s%1?4:2,"0")}`;
+}
+
+function VideoCropPanel({video, onCropped}){
+  const fullDur = video.duration || 0;
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd,   setTrimEnd]   = useState(fullDur);
+  const [startTxt,  setStartTxt]  = useState("0:00");
+  const [endTxt,    setEndTxt]    = useState(fmtMmSs(fullDur));
+  const [progress,  setProgress]  = useState(null); // {pct,message} | null
+  const [error,     setError]     = useState(null);
+  const [confirming,setConfirming]= useState(false);
+
+  // Reset when the user picks a different clip
+  useEffect(()=>{
+    setTrimStart(0);
+    setTrimEnd(video.duration || 0);
+    setStartTxt("0:00");
+    setEndTxt(fmtMmSs(video.duration||0));
+    setProgress(null); setError(null); setConfirming(false);
+  },[video.id, video.duration]);
+
+  const isLocal   = !!video.hasLocalBlob;
+  const isBusy    = progress && progress.pct < 1;
+  const keepSec   = Math.max(0, trimEnd - trimStart);
+  const removeSec = Math.max(0, fullDur - keepSec);
+  const canRun    = isLocal && keepSec > 0.5 && removeSec > 0.5;
+
+  const onStartCommit = () => {
+    const v = parseMmSs(startTxt);
+    if (v == null) { setStartTxt(fmtMmSs(trimStart)); return; }
+    const clamped = Math.max(0, Math.min(v, fullDur));
+    setTrimStart(clamped);
+    setStartTxt(fmtMmSs(clamped));
+    if (clamped >= trimEnd) {
+      const newEnd = Math.min(fullDur, clamped + 1);
+      setTrimEnd(newEnd); setEndTxt(fmtMmSs(newEnd));
+    }
+  };
+  const onEndCommit = () => {
+    const v = parseMmSs(endTxt);
+    if (v == null) { setEndTxt(fmtMmSs(trimEnd)); return; }
+    const clamped = Math.max(0, Math.min(v, fullDur));
+    setTrimEnd(clamped);
+    setEndTxt(fmtMmSs(clamped));
+    if (clamped <= trimStart) {
+      const newStart = Math.max(0, clamped - 1);
+      setTrimStart(newStart); setStartTxt(fmtMmSs(newStart));
+    }
+  };
+
+  const handleConfirm = async () => {
+    setError(null);
+    setProgress({pct: 0, message: "Loading original…"});
+    try {
+      const blob = await getVideoBlob(video.id);
+      if (!blob) {
+        setError("Original not on this device — open this video on the device that imported it.");
+        setProgress(null); setConfirming(false); return;
+      }
+      const result = await cropVideo({
+        source: blob,
+        startSec: trimStart,
+        endSec: trimEnd,
+        inputStem: `v_${video.id}`,
+        onProgress: ({progress, message}) => setProgress({pct: progress, message}),
+      });
+      setProgress({pct: 0.95, message: "Saving…"});
+      // Shift the UTC anchor forward by trimStart so the kept range still
+      // aligns to log/event data. If the source had no startUtc, leave it
+      // alone — the user will set it later via the Start-time editor.
+      const newStartUtc = (typeof video.startUtc === "number")
+        ? video.startUtc + Math.round(trimStart * 1000)
+        : null;
+      const ok = await updateVideoBlobAndDuration(
+        video.id, result.blob, result.durationSec, newStartUtc
+      );
+      if (!ok) { setError("Failed to save cropped video."); setProgress(null); setConfirming(false); return; }
+      setProgress({pct: 1, message: "Done"});
+      onCropped?.(video.id, {
+        durationSec: result.durationSec,
+        bytes: result.bytes,
+        newStartUtc,
+      });
+      setConfirming(false);
+    } catch (e) {
+      setError(e?.message || String(e));
+      setProgress(null); setConfirming(false);
+    }
+  };
+
+  if (!isLocal && !video.hasProxy) {
+    // Don't show the crop panel for cloud-only rows (no original to cut from)
+    return null;
+  }
+
+  return (
+    <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A",marginBottom:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase"}}>Crop</div>
+        <div style={{fontSize:9,color:"#334155"}}>Lossless · keyframe-snapped</div>
+      </div>
+      {!isLocal && (
+        <div style={{fontSize:10,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:4,padding:"5px 7px",marginBottom:6}}>
+          Original not on this device — crop on the device that imported the clip.
+        </div>
+      )}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+        <label style={{display:"flex",flexDirection:"column",gap:3}}>
+          <span style={{fontSize:9,color:"#475569",letterSpacing:1}}>Keep from (m:ss)</span>
+          <input
+            value={startTxt}
+            onChange={e=>setStartTxt(e.target.value)}
+            onBlur={onStartCommit}
+            onKeyDown={e=>{ if(e.key==="Enter") e.currentTarget.blur(); }}
+            disabled={isBusy || !isLocal}
+            style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:12,fontFamily:"monospace",outline:"none"}}
+          />
+        </label>
+        <label style={{display:"flex",flexDirection:"column",gap:3}}>
+          <span style={{fontSize:9,color:"#475569",letterSpacing:1}}>Keep until (m:ss)</span>
+          <input
+            value={endTxt}
+            onChange={e=>setEndTxt(e.target.value)}
+            onBlur={onEndCommit}
+            onKeyDown={e=>{ if(e.key==="Enter") e.currentTarget.blur(); }}
+            disabled={isBusy || !isLocal}
+            style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:12,fontFamily:"monospace",outline:"none"}}
+          />
+        </label>
+      </div>
+      <div style={{fontSize:10,color:"#94A3B8",marginBottom:6,fontFamily:"monospace"}}>
+        Keep <span style={{color:"#1D9E75"}}>{fmtMmSs(keepSec)}</span>
+        {removeSec > 0.5 && <> · delete <span style={{color:"#EF4444"}}>{fmtMmSs(removeSec)}</span></>}
+        <span style={{color:"#334155"}}> of {fmtMmSs(fullDur)}</span>
+      </div>
+
+      {!isBusy && !confirming && (
+        <button
+          onClick={()=>setConfirming(true)}
+          disabled={!canRun}
+          style={{width:"100%",background:canRun?"#F59E0B":"#1E3A5A",border:"none",borderRadius:5,padding:"6px 0",color:canRun?"#000":"#475569",fontWeight:700,cursor:canRun?"pointer":"not-allowed",fontSize:11}}
+        >
+          ✂ Crop video
+        </button>
+      )}
+
+      {!isBusy && confirming && (
+        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+          <div style={{fontSize:10,color:"#EF4444",background:"#EF444410",border:"1px solid #EF444430",borderRadius:4,padding:"5px 7px"}}>
+            This permanently removes {fmtMmSs(removeSec)} from this clip. Original bytes will be gone.
+          </div>
+          <div style={{display:"flex",gap:5}}>
+            <button onClick={handleConfirm} style={{flex:1,background:"#EF4444",border:"none",borderRadius:5,padding:"6px 0",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>Confirm trim</button>
+            <button onClick={()=>setConfirming(false)} style={{flex:1,background:"#1E3A5A",border:"none",borderRadius:5,padding:"6px 0",color:"#94A3B8",cursor:"pointer",fontSize:11}}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {isBusy && (
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:10}}>
+            <span style={{color:"#7DD3FC"}}>Cropping…</span>
+            <span style={{color:"#94A3B8",fontFamily:"monospace"}}>{Math.round((progress.pct||0)*100)}%</span>
+          </div>
+          <div style={{height:6,background:"#1E3A5A",borderRadius:3,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${Math.round((progress.pct||0)*100)}%`,background:"#F59E0B",transition:"width 0.2s"}}/>
+          </div>
+          {progress.message && (
+            <div style={{fontSize:9,color:"#475569",marginTop:4,fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{progress.message}</div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div style={{marginTop:6,fontSize:10,color:"#EF4444",background:"#EF444410",border:"1px solid #EF444430",borderRadius:4,padding:"5px 7px"}}>
+          {error}
         </div>
       )}
     </div>
@@ -4580,7 +4783,53 @@ function SSAApp(){
                       setSelectedVideo(enriched);
                     }}/>
                   </div>
-                  {perms.canImport && (
+                  {/* Crop UI — admin + coach only, like sync. Lets the
+                      user chop dead time off the start/end before the
+                      proxy is generated so the upload is smaller. */}
+                  {perms.canSync && (
+                    <VideoCropPanel
+                      video={selectedVideo}
+                      onCropped={async (id, {durationSec, bytes, newStartUtc}) => {
+                        // 1. Recompute auto-tags for the new time window —
+                        //    upwind/reach/downwind, tack-N, race-start etc.
+                        //    Keep any manually-added tags.
+                        const cur = (allVideos.find(v=>v.id===id) || selectedVideo) || {};
+                        const startUtc = (typeof newStartUtc === 'number') ? newStartUtc : cur.startUtc;
+                        let mergedTags = cur.tags || [];
+                        if (typeof startUtc === 'number') {
+                          const autoTags = new Set(computeAutoTags(startUtc, durationSec, logData, xmlData, syncOffsets[id]||0));
+                          const autoTagPatterns = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
+                          const manualTags = (cur.tags||[]).filter(t => !autoTagPatterns.test(t));
+                          mergedTags = [...new Set([...autoTags, ...manualTags])];
+                          await updateVideoTags(id, mergedTags);
+                        }
+                        // 2. Patch in-memory state. Reset proxy flags so the
+                        //    user is prompted to re-sync — the cloud copy is
+                        //    now stale.
+                        const patch = {
+                          duration: durationSec,
+                          size: bytes,
+                          tags: mergedTags,
+                          hasProxy: false,
+                          proxyPath: null,
+                          proxyUploadedAt: null,
+                          // ObjectUrl is now pointing at the OLD blob — reload
+                          // by clearing; the next render via getVideosForDate
+                          // will recreate it. Cheaper than re-fetching all.
+                          objectUrl: null,
+                        };
+                        if (typeof newStartUtc === 'number') patch.startUtc = newStartUtc;
+                        setAllVideos(p => p.map(v => v.id === id ? {...v, ...patch} : v));
+                        setSelectedVideo(p => p && p.id === id ? {...p, ...patch} : p);
+                        // 3. Reload the date so the player picks up the new blob.
+                        loadDate(activeDate);
+                      }}
+                    />
+                  )}
+                  {/* Proxy sync is restricted to roles allowed to push to
+                      the cloud at all (admin + coach in the legacy perms
+                      map). Crew can import + tag locally but can't sync. */}
+                  {perms.canSync && (
                     <RenditionSyncPanel
                       video={selectedVideo}
                       activeDate={activeDate}

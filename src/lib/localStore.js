@@ -184,6 +184,41 @@ export async function saveVideoBlob(id, blob) {
   } catch { return false; }
 }
 
+// ── Replace blob + duration + startUtc (used by the in-browser crop UI) ─────
+// After cropping, three things change atomically:
+//   1. The new blob holds only the kept range (smaller, different bytes).
+//   2. The duration shrinks to (endSec - startSec).
+//   3. The video's UTC anchor shifts forward by trimStart seconds — the
+//      new frame 0 corresponds to (oldStartUtc + trimStart * 1000). If we
+//      forget this, every instrument/log overlay reads the wrong moment.
+//
+// Pass `newStartUtc` only when you've adjusted it; pass null/undefined to
+// leave the existing value alone (i.e. crop without start-time change).
+//
+// Cloud-sync state is invalidated so a subsequent sync re-uploads the
+// trimmed bytes (the old proxy/original in Bunny is now stale).
+export async function updateVideoBlobAndDuration(id, blob, durationSec, newStartUtc) {
+  try {
+    const db    = await openDb();
+    const entry = await idbGet(db, "videos", id);
+    if (!entry) return false;
+    entry.blob        = blob;
+    entry.size        = blob?.size ?? entry.size;
+    if (typeof durationSec === "number" && isFinite(durationSec)) {
+      entry.duration  = durationSec;
+    }
+    if (typeof newStartUtc === "number" && isFinite(newStartUtc)) {
+      entry.startUtc  = newStartUtc;
+    }
+    entry.syncedToDb  = false;
+    entry.cloudSynced = false;
+    // Drop any prior streamId — the cloud copy is now stale.
+    if (entry.streamId) entry.streamId = null;
+    await idbPut(db, "videos", entry);
+    return true;
+  } catch { return false; }
+}
+
 // ── Mark a video as cloud-synced (has a streamId) ─────────────────────────────
 export async function markVideoCloudSynced(id, streamId) {
   try {
