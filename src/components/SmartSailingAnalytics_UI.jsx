@@ -11,7 +11,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
 import { getBrowserSupabase } from '../lib/supabase/browser';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
-import { listVideosCloud, upsertVideoCloud, toLegacyVideoShape } from '../lib/cloud-videos';
+import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape } from '../lib/cloud-videos';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { getActiveMembership } from '../lib/active-membership';
 
@@ -1243,6 +1243,17 @@ function UploadTab({role,cloudStatus,onImported}){
       const _syncLog = await getLogData(savedDate);
       const _syncXml = await getXmlData(savedDate);
       const _syncVids = savedVids.map(v => enrichVideo(v, _syncLog, _syncXml, syncOffsets));
+
+      // Resolve the authed user up-front so the per-video Supabase mirror
+      // callback (below) doesn't have to re-auth on every clip.
+      let _syncUser = null;
+      try {
+        const sb = getBrowserSupabase();
+        const { data:{ user } } = await sb.auth.getUser();
+        _syncUser = user || null;
+      } catch {}
+      const _syncVidsById = new Map(_syncVids.map(v => [v.id, v]));
+
       const result=await syncSessionToCloud(
         savedDate,
         _syncLog,
@@ -1300,6 +1311,17 @@ function UploadTab({role,cloudStatus,onImported}){
           if(msg.includes("upload failed")||msg.includes("failed for")){
             if(currentVidId) setItem(currentVidId,{state:"error",pct:0});
           }
+        },
+        {
+          // Mirror each clip into Supabase the moment its Bunny upload
+          // finishes, so teammates see videos appear one-by-one during a
+          // long session sync — they no longer wait for the entire batch.
+          onVideoSynced: makeVideoMirrorCallback({
+            userId: _syncUser?.id || null,
+            sessionDate: savedDate,
+            syncOffsets,
+            onMirrored: (label) => addLog(`☁ ${label} mirrored to Supabase`),
+          }),
         }
       );
 
@@ -1308,33 +1330,6 @@ function UploadTab({role,cloudStatus,onImported}){
         setItem(vidId,{state:"done",pct:100,streamId});
         setStreamStatus(p=>({...p,[vidId]:{state:"processing",streamId}}));
       });
-
-      // Mirror video metadata to Supabase (active membership scope) so
-      // teammates see new uploads without waiting for a Bunny re-scan.
-      try {
-        const supabase=getBrowserSupabase();
-        const {data:{user}}=await supabase.auth.getUser();
-        if(user){
-          for(const v of _syncVids){
-            const sid=result.streamIds?.[v.id]||v.streamId||null;
-            if(!sid) continue;
-            await upsertVideoCloud({
-              userId:user.id,
-              sessionDate:savedDate,
-              title:v.title||v.name,
-              startUtc:v.startUtc,
-              durationSec:v.duration,
-              tags:v.tags,
-              syncOffsetSecs:syncOffsets[v.id]||0,
-              bunnyStreamId:sid,
-              bunnyStoragePath:`sessions/${savedDate}/videos/${v.id}/original`,
-              bytes:v.size,
-              externalId:v.id,
-            });
-          }
-          addLog("☁ Video metadata synced to Supabase");
-        }
-      } catch (e) { /* non-fatal */ }
       // Mark log done if not already (handles the case with no XML)
       setItem("log",{state:"done",pct:100});
 
@@ -4036,8 +4031,20 @@ function SSAApp(){
         const logD=await getLogData(activeDate);
         const xmlD=await getXmlData(activeDate);
         const vids=await getVideosForDate(activeDate);
+        // Resolve user up-front so the per-video mirror callback doesn't
+        // re-auth on every clip.
+        let mobileUser=null;
+        try{const sb=getBrowserSupabase();const {data:{user}}=await sb.auth.getUser();mobileUser=user||null;}catch{}
         await syncSessionToCloud(activeDate,logD,xmlD,vids,msg=>{
           setMobileSyncState(p=>({...p,message:msg.length>48?msg.slice(0,45)+"…":msg}));
+        },{
+          // Mirror each clip the moment its Bunny upload finishes so the
+          // crew watching from their phones see clips appear progressively.
+          onVideoSynced: makeVideoMirrorCallback({
+            userId: mobileUser?.id || null,
+            sessionDate: activeDate,
+            syncOffsets,
+          }),
         });
         markCloudSynced(activeDate);
         setUnsyncedCount(getUnsyncedCount());
@@ -4239,6 +4246,10 @@ function SSAApp(){
                     const setItem=(id,patch)=>setLibSyncProgress(p=>p?{...p,items:p.items.map(it=>it.id===id?{...it,...patch}:it)}:p);
                     try{
                       let curVid=null;
+                      // Resolve user once so the mirror callback below can
+                      // push each clip to Supabase as soon as it lands.
+                      let libUser=null;
+                      try{const sb=getBrowserSupabase();const {data:{user}}=await sb.auth.getUser();libUser=user||null;}catch{}
                       await syncSessionToCloud(activeDate,logD,xmlD,
                         vids,
                         msg=>{
@@ -4256,6 +4267,15 @@ function SSAApp(){
                             const avg=p.items.reduce((s,it)=>s+(it.pct||0),0)/p.items.length;
                             return{...p,overall:Math.round(avg)};
                           });
+                        },
+                        {
+                          // Per-video Supabase mirror — clips appear for
+                          // teammates as each finishes, not after the batch.
+                          onVideoSynced: makeVideoMirrorCallback({
+                            userId: libUser?.id || null,
+                            sessionDate: activeDate,
+                            syncOffsets,
+                          }),
                         });
                       setLibSyncPhase("done");
                       setLibSyncProgress(p=>p?{...p,overall:100}:p);

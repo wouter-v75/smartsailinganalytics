@@ -141,8 +141,13 @@ export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
 }
 
 // ── Full session sync ─────────────────────────────────────────────────────────
-export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus) {
+// opts.onVideoSynced({ video, streamId }) — fires immediately after each
+// individual video finishes uploading to Bunny Stream (before the next one
+// starts). Used by the UI to mirror that video into Supabase straight away so
+// teammates see clips appear one-by-one instead of waiting for the whole batch.
+export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus, opts = {}) {
   const status = msg => onStatus?.(msg);
+  const onVideoSynced = opts.onVideoSynced;
   const result = { success: false, streamIds: {} };
   try {
     // 1. Log rows → Bunny Storage (direct, no Vercel size limit)
@@ -200,6 +205,15 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       result.streamIds[video.id] = uploadInfo.streamId;
       await markVideoCloudSynced(video.id, uploadInfo.streamId);
       status(`✓ ${video.name} uploaded to Stream (ID: ${uploadInfo.streamId.slice(0, 8)}…)`);
+
+      // Fire per-video hook so the caller can mirror this clip to Supabase
+      // (or anywhere else) right now — before the rest of the batch finishes.
+      // Best-effort; swallow errors so a flaky DB call can't break the upload
+      // loop for the remaining clips.
+      if (onVideoSynced) {
+        try { await onVideoSynced({ video, streamId: uploadInfo.streamId }); }
+        catch (e) { console.warn('onVideoSynced threw:', e); }
+      }
     }
 
     // 4. Session meta → Bunny Storage (direct)

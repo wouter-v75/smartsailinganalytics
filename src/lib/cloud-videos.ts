@@ -99,6 +99,59 @@ export async function upsertVideoCloud(args: UpsertArgs): Promise<boolean> {
   }
 }
 
+// Build a per-video callback for syncSessionToCloud's onVideoSynced hook.
+// Mirrors each clip into Supabase the moment its Bunny upload finishes, so
+// teammates can see clips appear one-by-one rather than after the whole
+// batch. Safe to invoke without an authed user — returns a no-op in that case.
+interface MirrorArgs {
+  userId: string | null
+  sessionDate: string
+  syncOffsets?: Record<string, number>
+  onMirrored?: (label: string) => void
+}
+export function makeVideoMirrorCallback({
+  userId,
+  sessionDate,
+  syncOffsets,
+  onMirrored,
+}: MirrorArgs) {
+  return async ({
+    video,
+    streamId,
+  }: {
+    video: {
+      id: string
+      name?: string | null
+      title?: string | null
+      startUtc?: number | string | null
+      duration?: number | null
+      tags?: string[]
+      size?: number | null
+    }
+    streamId: string | null
+  }) => {
+    if (!userId || !streamId) return
+    try {
+      await upsertVideoCloud({
+        userId,
+        sessionDate,
+        title: video.title || video.name || null,
+        startUtc: video.startUtc ?? null,
+        durationSec: video.duration ?? null,
+        tags: video.tags ?? [],
+        syncOffsetSecs: syncOffsets?.[video.id] || 0,
+        bunnyStreamId: streamId,
+        bunnyStoragePath: `sessions/${sessionDate}/videos/${video.id}/original`,
+        bytes: video.size ?? null,
+        externalId: video.id,
+      })
+      onMirrored?.(video.title || video.name || video.id)
+    } catch {
+      /* non-fatal — Bunny still has the file */
+    }
+  }
+}
+
 // Convert Supabase rows into the shape the existing SSA UI expects (so we
 // don't have to refactor every consumer). Keeps the legacy field names that
 // localStore videos use.
