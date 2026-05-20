@@ -4410,51 +4410,52 @@ function SSAApp(){
       setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2500);
       return;
     }
-    // Mobile sync hits Bunny R2 directly which isn't team-scoped. Gate to
-    // admin only; non-admin users already get team-scoped data via Supabase.
-    if(effectiveRole!=='admin'){
-      setMobileSyncState({phase:"error",message:"Cloud sync is admin-only",progress:0});
-      setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2500);
-      return;
-    }
     try{
-      // PULL phase — refresh sessions list + latest session
+      // ── PULL phase — team-scoped, works for EVERY role ─────────────────
+      // Previously this was admin-only and used the global Bunny R2
+      // listing. That left TL1/crew/coach unable to see anything but the
+      // current local day. Now every role refreshes the Supabase
+      // (RLS-protected, team-scoped) session list; admins additionally
+      // merge the global R2 listing.
       setMobileSyncState({phase:"pulling",message:"Fetching cloud sessions…",progress:10});
-      const remote=await listR2Sessions();
-      // De-duplicate by date, keeping local entries (they have IDB-backed blobs) over cloud-only
-      const byDate=new Map();
-      for(const s of sessions) byDate.set(s.date, s);
-      for(const s of remote) if(!byDate.has(s.date)) byDate.set(s.date, {...s,source:"cloud"});
-      const merged=Array.from(byDate.values()).sort((a,b)=>b.date.localeCompare(a.date));
-      setSessions(merged);
 
-      setMobileSyncState({phase:"pulling",message:`Loading ${activeDate}…`,progress:40});
-      const r2=await fetchCloudSession(activeDate);
-      if(r2){
-        // Merge cloud log/xml if we don't already have local
-        if(r2.logData&&!logData)setLogData({...r2.logData,source:"cloud"});
-        if(r2.xmlData&&!xmlData)setXmlData({...r2.xmlData,source:"cloud"});
-        // Merge videos — attach thumbnailUrl/objectUrl from cloud to local entries by id
-        if(r2.videos?.length){
-          setAllVideos(prev=>{
-            const byId=new Map(prev.map(v=>[v.id,v]));
-            for(const cv of r2.videos){
-              const ex=byId.get(cv.id);
-              if(ex){
-                // Prefer cloud thumbnails/stream URL only when local lacks them
-                byId.set(cv.id,{...ex,
-                  thumbnailUrl:ex.thumbnailUrl||cv.thumbnailUrl,
-                  objectUrl:ex.objectUrl||cv.objectUrl,
-                  streamId:ex.streamId||cv.streamId,
-                });
-              }else{
-                byId.set(cv.id,cv);
+      let supaUser=null;
+      try{const sb=getBrowserSupabase();const {data:{user}}=await sb.auth.getUser();supaUser=user||null;}catch{}
+
+      // Supabase team-scoped session list — all roles.
+      if(supaUser){
+        try{
+          const cloudSessions=await listSessionsCloud({userId:supaUser.id});
+          if(cloudSessions.length){
+            setSessions(prev=>{
+              const merged=[...prev];
+              for(const s of cloudSessions){
+                if(!merged.some(m=>m.date===s.date)) merged.push({date:s.date,source:'supabase'});
               }
-            }
-            return Array.from(byId.values());
-          });
-        }
+              return merged.sort((a,b)=>b.date.localeCompare(a.date));
+            });
+          }
+        }catch{ /* non-fatal */ }
       }
+
+      // Admin-only extra: merge the global Bunny R2 listing.
+      if(effectiveRole==='admin'){
+        try{
+          const remote=await listR2Sessions();
+          if(remote.length){
+            setSessions(prev=>{
+              const byDate=new Map(prev.map(s=>[s.date,s]));
+              for(const s of remote) if(!byDate.has(s.date)) byDate.set(s.date,{...s,source:"cloud"});
+              return Array.from(byDate.values()).sort((a,b)=>b.date.localeCompare(a.date));
+            });
+          }
+        }catch{ /* non-fatal */ }
+      }
+
+      // Refresh the active date's videos + thumbnails through the standard
+      // loader (Supabase-first, resolves proxy/stream URLs + thumbnails).
+      setMobileSyncState({phase:"pulling",message:`Loading ${activeDate}…`,progress:45});
+      await loadDate(activeDate);
       setMobileSyncState({phase:"pulling",message:"Thumbnails refreshed",progress:70});
 
       // PUSH phase — only if user has permission + unsynced local
@@ -4464,17 +4465,14 @@ function SSAApp(){
         const logD=await getLogData(activeDate);
         const xmlD=await getXmlData(activeDate);
         const vids=await getVideosForDate(activeDate);
-        // Resolve user up-front so the per-video mirror callback doesn't
-        // re-auth on every clip.
-        let mobileUser=null;
-        try{const sb=getBrowserSupabase();const {data:{user}}=await sb.auth.getUser();mobileUser=user||null;}catch{}
         await syncSessionToCloud(activeDate,logD,xmlD,vids,msg=>{
           setMobileSyncState(p=>({...p,message:msg.length>48?msg.slice(0,45)+"…":msg}));
         },{
           // Mirror each clip the moment its Bunny upload finishes so the
           // crew watching from their phones see clips appear progressively.
+          // supaUser was resolved up-front in the PULL phase above.
           onVideoSynced: makeVideoMirrorCallback({
-            userId: mobileUser?.id || null,
+            userId: supaUser?.id || null,
             sessionDate: activeDate,
             syncOffsets,
           }),
