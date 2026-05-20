@@ -12,6 +12,8 @@ import { getBrowserSupabase } from '../lib/supabase/browser';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape } from '../lib/cloud-videos';
+import { syncProxyForVideo } from '../lib/video-rendition-sync';
+import { getVideoBlob } from '../lib/localStore';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { getActiveMembership } from '../lib/active-membership';
 
@@ -663,6 +665,14 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
         {overlay&&<div style={{position:"absolute",top:10,left:10}}>{overlay}</div>}
         {modeBadge}
+        {/* Phase B — PREVIEW badge when the player is serving the 720p
+            proxy rendition and the full-resolution original hasn't been
+            uploaded yet. Disappears automatically once the original lands. */}
+        {video.servedRendition==='proxy' && !video.hasOriginal && (
+          <div style={{position:"absolute",top:10,right:10,background:"rgba(245,158,11,0.95)",color:"#000",borderRadius:4,padding:"3px 8px",fontSize:10,fontWeight:700,letterSpacing:1}}>
+            PREVIEW · HD COMING LATER
+          </div>
+        )}
         <div style={{position:"absolute",bottom:8,left:8}}><SrcBadge source={video.source||"local"}/></div>
         <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
       </div>
@@ -828,6 +838,102 @@ function TagEditor({video, onSave, tagList=[], sessionDate, onTagListChange}){
           <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
             {tagList.map(t=>(<span key={t} style={{display:"flex",alignItems:"center",gap:3,background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#94A3B8"}}>{t}<span onClick={()=>deleteFromList(t)} style={{color:"#EF4444",fontSize:9,cursor:"pointer",marginLeft:2}}>×</span></span>))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Phase B — per-video proxy upload control. Manual trigger by design:
+// crew often want to crop a clip first (future feature) before paying
+// the transcode cost. Shown only when the row doesn't yet have a proxy.
+function RenditionSyncPanel({video, activeDate, onSynced}){
+  const [progress, setProgress] = useState(null); // {phase, pct, message}
+  const [error, setError]       = useState(null);
+  const isBusy = progress && progress.phase !== 'done' && progress.phase !== 'error';
+
+  if (video.hasProxy) {
+    const when = video.proxyUploadedAt
+      ? new Date(video.proxyUploadedAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})
+      : null;
+    return (
+      <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1D9E7540",marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
+        <span style={{color:"#1D9E75",fontSize:13}}>✓</span>
+        <div style={{flex:1}}>
+          <div style={{fontSize:11,color:"#1D9E75",fontWeight:600}}>Proxy ready{when?` · ${when}`:""}</div>
+          <div style={{fontSize:9,color:"#475569"}}>Teammates can stream the 720p preview now.</div>
+        </div>
+      </div>
+    );
+  }
+
+  const handleSync = async () => {
+    setError(null);
+    setProgress({phase:'transcoding', pct:0, message:'Loading source…'});
+    try {
+      const blob = await getVideoBlob(video.id);
+      if (!blob) {
+        setError("Original file not on this device. Open this video on the device that imported it.");
+        setProgress(null);
+        return;
+      }
+      const sessionDate = video.sessionDate || activeDate;
+      const result = await syncProxyForVideo({
+        videoId: video.id,
+        sessionDate,
+        source: blob,
+        onProgress: setProgress,
+      });
+      if (!result.ok) {
+        setError(result.error || "Sync failed");
+      } else {
+        // Tell the parent so it can refresh the row's hasProxy state.
+        onSynced?.(video.id, {
+          proxyPath: result.proxyPath,
+          proxyBytes: result.proxyBytes,
+        });
+      }
+    } catch (e) {
+      setError(e?.message || String(e));
+    }
+  };
+
+  return (
+    <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A",marginBottom:8}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase"}}>Proxy preview</div>
+        <div style={{fontSize:9,color:"#334155"}}>720p · ~30 MB</div>
+      </div>
+      {!isBusy && (
+        <>
+          <div style={{fontSize:10,color:"#94A3B8",marginBottom:6}}>
+            Generate a low-bandwidth preview and upload it for the team to watch on phones.
+          </div>
+          <button
+            onClick={handleSync}
+            style={{width:"100%",background:"#06B6D4",border:"none",borderRadius:5,padding:"7px 0",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}
+          >
+            ☁ Sync proxy
+          </button>
+        </>
+      )}
+      {isBusy && (
+        <div>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:10}}>
+            <span style={{color:"#7DD3FC",textTransform:"capitalize"}}>{progress.phase}…</span>
+            <span style={{color:"#94A3B8",fontFamily:"monospace"}}>{Math.round((progress.pct||0)*100)}%</span>
+          </div>
+          <div style={{height:6,background:"#1E3A5A",borderRadius:3,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${Math.round((progress.pct||0)*100)}%`,background:progress.phase==='transcoding'?"#F59E0B":"#06B6D4",transition:"width 0.2s"}}/>
+          </div>
+          {progress.message && (
+            <div style={{fontSize:9,color:"#475569",marginTop:4,fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{progress.message}</div>
+          )}
+        </div>
+      )}
+      {error && (
+        <div style={{marginTop:6,fontSize:10,color:"#EF4444",background:"#EF444410",border:"1px solid #EF444430",borderRadius:4,padding:"5px 7px"}}>
+          {error}
         </div>
       )}
     </div>
@@ -3887,19 +3993,41 @@ function SSAApp(){
       }
     } catch { /* non-fatal */ }
 
-    // Resolve Bunny Stream playback URLs for any video that has a streamId
-    // but no objectUrl yet. Supabase-sourced videos arrive with just the
-    // streamId; this hydrates them so the player + thumbnails work.
-    const needsResolve=vids.filter(v=>v.streamId&&!v.objectUrl);
+    // Resolve playback URLs for any cloud video that doesn't already have
+    // a local objectUrl. Two-tier preference:
+    //   1. If the row has a Phase-B proxy/original rendition, ask
+    //      /api/videos/[id]/url for a signed Bunny Storage URL. Cheap, MP4,
+    //      no HLS parsing needed.
+    //   2. Otherwise (legacy Stream-only row), fall back to the existing
+    //      /api/stream/status path that returns an HLS playlist URL.
+    // Either way, the player gets a single objectUrl to load.
+    const needsResolve=vids.filter(v=>!v.objectUrl && (v.streamId || v.hasProxy || v.hasOriginal));
     if(needsResolve.length){
       await Promise.all(needsResolve.map(async v=>{
-        try{
-          const res=await fetch(`/api/stream/status/${v.streamId}`);
-          if(!res.ok) return;
-          const s=await res.json();
-          v.objectUrl=s.playbackUrl||null;
-          if(!v.thumbnailUrl) v.thumbnailUrl=s.thumbnailUrl||null;
-        } catch { /* ignore */ }
+        // Phase B path — preferred when available.
+        if(v.hasProxy || v.hasOriginal){
+          try{
+            const res=await fetch(`/api/videos/${encodeURIComponent(v.id)}/url?prefer=auto`);
+            if(res.ok){
+              const j=await res.json();
+              if(j?.url){
+                v.objectUrl=j.url;
+                v.servedRendition=j.served||null; // 'proxy' | 'original' | 'legacy'
+                return;
+              }
+            }
+          } catch { /* fall through to Stream */ }
+        }
+        // Legacy Stream path.
+        if(v.streamId){
+          try{
+            const res=await fetch(`/api/stream/status/${v.streamId}`);
+            if(!res.ok) return;
+            const s=await res.json();
+            v.objectUrl=s.playbackUrl||null;
+            if(!v.thumbnailUrl) v.thumbnailUrl=s.thumbnailUrl||null;
+          } catch { /* ignore */ }
+        }
       }));
     }
     if(!vids.length&&cloudStatus?.available&&effectiveRole==='admin'){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
@@ -4415,6 +4543,18 @@ function SSAApp(){
                       setSelectedVideo(enriched);
                     }}/>
                   </div>
+                  {perms.canImport && (
+                    <RenditionSyncPanel
+                      video={selectedVideo}
+                      activeDate={activeDate}
+                      onSynced={(id, {proxyPath, proxyBytes}) => {
+                        const patch = { hasProxy: true, proxyPath, proxyUploadedAt: new Date().toISOString() };
+                        if (typeof proxyBytes === 'number') patch.proxyBytes = proxyBytes;
+                        setAllVideos(p => p.map(v => v.id === id ? {...v, ...patch} : v));
+                        setSelectedVideo(p => p && p.id === id ? {...p, ...patch} : p);
+                      }}
+                    />
+                  )}
                   {perms.canImport&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={async updated=>{
                     setSessionTagList(updated);
                     try {

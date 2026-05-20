@@ -15,6 +15,14 @@ export interface CloudVideoRow {
   thumbnail_url: string | null
   bunny_stream_id: string | null
   bunny_storage_path: string | null
+  // Phase B rendition columns. Either present + bool true, or null + false.
+  bunny_proxy_path?: string | null
+  bunny_original_path?: string | null
+  has_proxy?: boolean
+  has_original?: boolean
+  proxy_uploaded_at?: string | null
+  original_uploaded_at?: string | null
+  proxy_bytes?: number | null
   bytes: number | null
   created_at: string
   created_by_user_id: string | null
@@ -171,5 +179,12 @@ export function toLegacyVideoShape(v: CloudVideoRow): Record<string, unknown> {
     thumbnailUrl: v.thumbnail_url,
     source: 'supabase',
     hasLocalBlob: false,
+    // Phase B — propagate rendition state to the UI shape so the per-clip
+    // sync panel can know what's already uploaded.
+    hasProxy: Boolean(v.has_proxy),
+    hasOriginal: Boolean(v.has_original),
+    proxyPath: v.bunny_proxy_path || null,
+    originalPath: v.bunny_original_path || null,
+    proxyUploadedAt: v.proxy_uploaded_at || null,
   }
 }
