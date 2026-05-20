@@ -448,7 +448,11 @@ function extractBoatLengthM(boatName){
   return 12; // fallback ~40 ft
 }
 
-function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,onCropFromHere,onCropToHere}){
+function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,
+                      // Phase B crop UX — three callbacks + the current
+                      // cut points + busy flag. All optional; toolbar
+                      // crop UI only renders when the setters are provided.
+                      pendingCrop,onDeleteUpTo,onDeleteFromHere,onSaveCrop,cropBusy=false,cropProgress=null}){
   const vidRef=useRef(null),hlsRef=useRef(null);
   const[curTime,setCurTime]=useState(0);
   const[playing,setPlaying]=useState(false);
@@ -681,6 +685,22 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <div style={{position:"relative",height:26,background:"#071624",borderRadius:4,cursor:"pointer",overflow:"hidden"}} onClick={seek}>
           <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${pct}%`,background:"#06B6D430",transition:"width 0.5s linear"}}/>
           <div style={{position:"absolute",left:`${pct}%`,top:0,bottom:0,width:2,background:"#06B6D4",transform:"translateX(-50%)"}}/>
+          {/* Phase B — shaded "will be deleted" zones + red cut lines
+              at the user's chosen trim points. The shading visualises
+              what disappears on Save without scaring the user with a
+              modal. */}
+          {pendingCrop?.deleteUpTo != null && dur > 0 && (
+            <>
+              <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${Math.min(100,(pendingCrop.deleteUpTo/dur)*100)}%`,background:"rgba(239,68,68,0.20)",pointerEvents:"none"}}/>
+              <div style={{position:"absolute",left:`${Math.min(100,(pendingCrop.deleteUpTo/dur)*100)}%`,top:0,bottom:0,width:2,background:"#EF4444",transform:"translateX(-50%)",pointerEvents:"none"}}/>
+            </>
+          )}
+          {pendingCrop?.deleteFrom != null && dur > 0 && (
+            <>
+              <div style={{position:"absolute",left:`${Math.min(100,(pendingCrop.deleteFrom/dur)*100)}%`,top:0,right:0,bottom:0,background:"rgba(239,68,68,0.20)",pointerEvents:"none"}}/>
+              <div style={{position:"absolute",left:`${Math.min(100,(pendingCrop.deleteFrom/dur)*100)}%`,top:0,bottom:0,width:2,background:"#EF4444",transform:"translateX(-50%)",pointerEvents:"none"}}/>
+            </>
+          )}
           {markers.map((m,i)=><div key={i} onClick={e=>{e.stopPropagation();if(vidRef.current)vidRef.current.currentTime=m.vidSec;}} title={`${m.label} +${fmtT(m.vidSec)}`} style={{position:"absolute",left:`${(m.vidSec/Math.max(dur,1))*100}%`,top:0,bottom:0,width:2,background:m.color,opacity:m.isValid===false?0.3:1,cursor:"pointer"}}/>)}
           <span style={{position:"absolute",left:6,top:"50%",transform:"translateY(-50%)",fontSize:9,color:"#334155",pointerEvents:"none",fontFamily:"monospace"}}>{markers.length>0?`${markers.length} events`:row?"● live data":"click to seek"}</span>
         </div>
@@ -713,23 +733,40 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           }}
           style={{background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 9px",color:"#94A3B8",cursor:"pointer"}}
         >⧉</button>
-        {/* Phase B — crop-by-click. Each button captures the player's
-            current playback time and hands it up to the parent, which
-            kicks off a confirm dialog. Only rendered when the parent
-            passed the callbacks (i.e. perms.canSync + local original). */}
-        {onCropFromHere && (
+        {/* Phase B — three-button crop UX:
+            1. "Delete UPTO here"  — marks the head cut (keeps [t, end])
+            2. "Delete FROM here"  — marks the tail cut (keeps [0, t])
+            3. "Save cropped video" — appears once any cut is marked;
+               runs ffmpeg to commit. Both 1 and 2 can be re-clicked at
+               any time to move their marker; the timeline shows the
+               shaded delete zones live. */}
+        {onDeleteUpTo && (
           <button
-            title="Keep from this point onward — delete everything before"
-            onClick={()=>onCropFromHere(curTime)}
-            style={{background:"#F59E0B20",border:"1px solid #F59E0B40",borderRadius:6,padding:"6px 9px",color:"#F59E0B",cursor:"pointer",fontSize:11,fontWeight:600}}
-          >✂→ Crop from here</button>
+            title="Delete everything from start UP TO the current playback position"
+            onClick={()=>onDeleteUpTo(curTime)}
+            disabled={cropBusy}
+            style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"6px 9px",color:"#EF4444",cursor:cropBusy?"not-allowed":"pointer",fontSize:11,fontWeight:600,opacity:cropBusy?0.5:1}}
+          >⏴⌫ Delete UPTO here</button>
         )}
-        {onCropToHere && (
+        {onDeleteFromHere && (
           <button
-            title="Keep up to this point — delete everything after"
-            onClick={()=>onCropToHere(curTime)}
-            style={{background:"#F59E0B20",border:"1px solid #F59E0B40",borderRadius:6,padding:"6px 9px",color:"#F59E0B",cursor:"pointer",fontSize:11,fontWeight:600}}
-          >←✂ Crop up to here</button>
+            title="Delete everything FROM the current playback position to the end"
+            onClick={()=>onDeleteFromHere(curTime)}
+            disabled={cropBusy}
+            style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"6px 9px",color:"#EF4444",cursor:cropBusy?"not-allowed":"pointer",fontSize:11,fontWeight:600,opacity:cropBusy?0.5:1}}
+          >⌫⏵ Delete FROM here</button>
+        )}
+        {onSaveCrop && (pendingCrop?.deleteUpTo != null || pendingCrop?.deleteFrom != null) && (
+          <button
+            title="Apply the marked cuts — ffmpeg trims, the result replaces the local original"
+            onClick={onSaveCrop}
+            disabled={cropBusy}
+            style={{background:cropBusy?"#1E3A5A":"#1D9E75",border:"none",borderRadius:6,padding:"6px 12px",color:cropBusy?"#94A3B8":"#fff",cursor:cropBusy?"not-allowed":"pointer",fontSize:11,fontWeight:700}}
+          >
+            {cropBusy
+              ? `Saving ${Math.round((cropProgress?.pct||0)*100)}%`
+              : "💾 Save cropped video"}
+          </button>
         )}
         <div style={{flex:1}}/>
         {row&&<span style={{fontSize:10,color:"#1D9E75"}}>● live instruments</span>}
@@ -863,17 +900,11 @@ function TagEditor({video, onSave, tagList=[], sessionDate, onTagListChange}){
   );
 }
 
-// Phase B — in-browser lossless crop. The user picks a moment in the
-// player and clicks one of the two crop buttons in the player toolbar:
-//   • "Crop from here"   → keep [t, end], delete the head
-//   • "Crop up to here"  → keep [0, t], delete the tail
-// Either click pops up a confirmation card (this component). On confirm
-// we run ffmpeg.wasm with `-c copy` (lossless, keyframe-snapped) and
-// atomically swap the blob, duration, and startUtc in IndexedDB.
-//
-// State (pendingCrop) lives in the parent so the toolbar click and the
-// confirm card share a single source of truth. This component renders
-// nothing when pendingCrop is null.
+// Phase B — Crop status banner.
+// The UI lives in the video player toolbar now (mark with red lines on
+// the timeline via Delete-UPTO/FROM buttons, commit via Save). All this
+// component does is surface errors and the "no local blob" warning in
+// the sidebar; it renders nothing when the crop is healthy / idle.
 function fmtMmSsLong(secs){
   if (secs == null || !isFinite(secs)) return "—";
   const m = Math.floor(secs/60);
@@ -881,122 +912,31 @@ function fmtMmSsLong(secs){
   return `${m}:${s.toFixed(s%1?1:0).padStart(s%1?4:2,"0")}`;
 }
 
-function VideoCropPanel({video, pendingCrop, onCancel, onCropped}){
-  const [progress, setProgress] = useState(null); // {pct,message} | null
-  const [error,    setError]    = useState(null);
+function VideoCropStatusBanner({video, pendingCrop, cropError, onDismissError}){
+  const isLocal = !!video.hasLocalBlob;
+  // Only render when there's something to say.
+  const hasCutMarked = !!(pendingCrop && (pendingCrop.deleteUpTo != null || pendingCrop.deleteFrom != null));
+  if (!cropError && !(hasCutMarked && !isLocal)) return null;
 
-  // Reset when the pending action changes or the clip changes.
-  useEffect(()=>{ setProgress(null); setError(null); }, [video.id, pendingCrop?.action, pendingCrop?.startSec, pendingCrop?.endSec]);
-
-  if (!pendingCrop) return null;
-  const { startSec, endSec, action } = pendingCrop;
-  const fullDur   = video.duration || 0;
-  const keepSec   = Math.max(0, endSec - startSec);
-  const removeSec = Math.max(0, fullDur - keepSec);
-  const isLocal   = !!video.hasLocalBlob;
-  const isBusy    = progress && progress.pct < 1;
-
-  const handleConfirm = async () => {
-    setError(null);
-    setProgress({pct: 0, message: "Loading original…"});
-    try {
-      const blob = await getVideoBlob(video.id);
-      if (!blob) {
-        setError("Original not on this device — open this video on the device that imported it.");
-        setProgress(null);
-        return;
-      }
-      const result = await cropVideo({
-        source: blob,
-        startSec,
-        endSec,
-        inputStem: `v_${video.id}`,
-        onProgress: ({progress, message}) => setProgress({pct: progress, message}),
-      });
-      setProgress({pct: 0.95, message: "Saving…"});
-      // Shift the UTC anchor forward by startSec so the kept range still
-      // aligns to log/event data. If the source had no startUtc, leave
-      // it alone — the user will set it later via the Start-time editor.
-      const newStartUtc = (typeof video.startUtc === "number")
-        ? video.startUtc + Math.round(startSec * 1000)
-        : null;
-      const ok = await updateVideoBlobAndDuration(
-        video.id, result.blob, result.durationSec, newStartUtc
-      );
-      if (!ok) { setError("Failed to save cropped video."); setProgress(null); return; }
-      setProgress({pct: 1, message: "Done"});
-      onCropped?.(video.id, {
-        durationSec: result.durationSec,
-        bytes: result.bytes,
-        newStartUtc,
-      });
-    } catch (e) {
-      setError(e?.message || String(e));
-      setProgress(null);
-    }
-  };
-
-  const headline =
-    action === 'fromHere'
-      ? `Trim head — keep from ${fmtMmSsLong(startSec)} to end`
-      : `Trim tail — keep 0:00 to ${fmtMmSsLong(endSec)}`;
+  const fullDur = video.duration || 0;
+  const startSec = pendingCrop?.deleteUpTo ?? 0;
+  const endSec   = pendingCrop?.deleteFrom ?? fullDur;
+  const removeSec = Math.max(0, fullDur - Math.max(0, endSec - startSec));
 
   return (
-    <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #F59E0B40",marginBottom:8}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-        <div style={{fontSize:9,color:"#F59E0B",letterSpacing:2,textTransform:"uppercase"}}>Confirm crop</div>
-        <div style={{fontSize:9,color:"#334155"}}>Lossless · keyframe-snapped (~2 s)</div>
-      </div>
-      <div style={{fontSize:11,color:"#E2E8F0",marginBottom:6,fontWeight:600}}>{headline}</div>
-      <div style={{fontSize:10,color:"#94A3B8",marginBottom:8,fontFamily:"monospace"}}>
-        Keep <span style={{color:"#1D9E75"}}>{fmtMmSsLong(keepSec)}</span>
-        {removeSec > 0.5 && <> · delete <span style={{color:"#EF4444"}}>{fmtMmSsLong(removeSec)}</span></>}
-        <span style={{color:"#334155"}}> of {fmtMmSsLong(fullDur)}</span>
-      </div>
-
-      {!isLocal && (
-        <div style={{fontSize:10,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:4,padding:"5px 7px",marginBottom:6}}>
-          Original not on this device — crop on the device that imported the clip.
-        </div>
-      )}
-
-      {!isBusy && (
-        <>
-          <div style={{fontSize:10,color:"#EF4444",background:"#EF444410",border:"1px solid #EF444430",borderRadius:4,padding:"5px 7px",marginBottom:6}}>
-            This permanently removes {fmtMmSsLong(removeSec)} from this clip. The deleted bytes can't be recovered.
+    <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:`1px solid ${cropError?"#EF4444":"#F59E0B"}40`,marginBottom:8}}>
+      {cropError ? (
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+          <div style={{fontSize:10,color:"#EF4444",flex:1}}>
+            <span style={{fontWeight:700}}>Crop failed.</span> {cropError}
           </div>
-          <div style={{display:"flex",gap:5}}>
-            <button
-              onClick={handleConfirm}
-              disabled={!isLocal || keepSec < 0.5}
-              style={{flex:1,background:(!isLocal||keepSec<0.5)?"#1E3A5A":"#EF4444",border:"none",borderRadius:5,padding:"6px 0",color:(!isLocal||keepSec<0.5)?"#475569":"#fff",fontWeight:700,cursor:(!isLocal||keepSec<0.5)?"not-allowed":"pointer",fontSize:11}}
-            >Confirm trim</button>
-            <button
-              onClick={onCancel}
-              style={{flex:1,background:"#1E3A5A",border:"none",borderRadius:5,padding:"6px 0",color:"#94A3B8",cursor:"pointer",fontSize:11}}
-            >Cancel</button>
-          </div>
-        </>
-      )}
-
-      {isBusy && (
-        <div>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:10}}>
-            <span style={{color:"#7DD3FC"}}>Cropping…</span>
-            <span style={{color:"#94A3B8",fontFamily:"monospace"}}>{Math.round((progress.pct||0)*100)}%</span>
-          </div>
-          <div style={{height:6,background:"#1E3A5A",borderRadius:3,overflow:"hidden"}}>
-            <div style={{height:"100%",width:`${Math.round((progress.pct||0)*100)}%`,background:"#F59E0B",transition:"width 0.2s"}}/>
-          </div>
-          {progress.message && (
-            <div style={{fontSize:9,color:"#475569",marginTop:4,fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{progress.message}</div>
+          {onDismissError && (
+            <button onClick={onDismissError} style={{background:"none",border:"1px solid #EF444440",borderRadius:4,padding:"2px 8px",color:"#EF4444",cursor:"pointer",fontSize:10}}>Dismiss</button>
           )}
         </div>
-      )}
-
-      {error && (
-        <div style={{marginTop:6,fontSize:10,color:"#EF4444",background:"#EF444410",border:"1px solid #EF444430",borderRadius:4,padding:"5px 7px"}}>
-          {error}
+      ) : (
+        <div style={{fontSize:10,color:"#F59E0B"}}>
+          Cut marks set (will delete {fmtMmSsLong(removeSec)}), but the original isn't on this device. Open this clip on the device that imported it to apply the crop.
         </div>
       )}
     </div>
@@ -3889,14 +3829,22 @@ function SSAApp(){
   const[sessionTagList,setSessionTagList]=useState([]);
   const[xmlData,setXmlData]=useState(null);
   const[selectedVideo,setSelectedVideo]=useState(null);
-  // Phase B — pending crop. Set by the in-player toolbar buttons
-  // ("Crop from here" / "Crop up to here") and consumed by VideoCropPanel
-  // to render a confirmation card. Cleared on confirm or cancel.
-  // Shape: { startSec, endSec, action: 'fromHere' | 'toHere' } | null
-  const[pendingCrop,setPendingCrop]=useState(null);
-  // Clear any pending crop when the selected video changes so a stale
-  // confirmation can't survive into a different clip.
-  useEffect(()=>{ setPendingCrop(null); },[selectedVideo?.id]);
+  // Phase B — crop state. The two cut markers are set by the player
+  // toolbar buttons ("Delete UPTO here" / "Delete FROM here") and shown
+  // as red lines on the timeline. The Save button commits via ffmpeg.
+  //   pendingCrop : { deleteUpTo: secs|null, deleteFrom: secs|null } | null
+  //   cropBusy    : true while the save is running
+  //   cropProgress: { pct, message } during the save
+  //   cropError   : last error string, surfaced as a small banner
+  const[pendingCrop, setPendingCrop]   = useState(null);
+  const[cropBusy,    setCropBusy]      = useState(false);
+  const[cropProgress,setCropProgress]  = useState(null);
+  const[cropError,   setCropError]     = useState(null);
+  // Clear any pending crop when the selected video changes so cut marks
+  // can't leak across clips.
+  useEffect(()=>{
+    setPendingCrop(null); setCropProgress(null); setCropError(null); setCropBusy(false);
+  },[selectedVideo?.id]);
   const[syncOffsets,setSyncOffsets]=useState(()=>getSyncOffsets());
   const[selectedTags,setSelectedTags]=useState([]);
   const[searchQuery,setSearchQuery]=useState("");
@@ -4725,25 +4673,101 @@ function SSAApp(){
                   syncOffset={syncOffsets[selectedVideo.id]||0}
                   sessionTzOffset={sessionTzOffset}
                   onPlayUtc={handlePlayUtc}
-                  // Crop buttons only when the user can sync AND the
-                  // original blob is on this device. Cloud-only rows have
-                  // nothing to cut, and crew/viewer roles can't crop.
-                  onCropFromHere={
+                  // Phase B crop UX: three toolbar buttons + timeline
+                  // markers. Gated on perms.canSync + local original
+                  // present. Re-clicking a button moves that marker.
+                  pendingCrop={pendingCrop}
+                  cropBusy={cropBusy}
+                  cropProgress={cropProgress}
+                  onDeleteUpTo={
                     perms.canSync && selectedVideo.hasLocalBlob
-                      ? (t)=>setPendingCrop({
-                          startSec: Math.max(0, Math.min(t, (selectedVideo.duration||0))),
-                          endSec:   selectedVideo.duration || 0,
-                          action:   'fromHere',
-                        })
+                      ? (t)=>{
+                          const clamped = Math.max(0, Math.min(t, (selectedVideo.duration||0)));
+                          setPendingCrop(p => ({ ...(p||{deleteFrom:null}), deleteUpTo: clamped }));
+                          setCropError(null);
+                        }
                       : undefined
                   }
-                  onCropToHere={
+                  onDeleteFromHere={
                     perms.canSync && selectedVideo.hasLocalBlob
-                      ? (t)=>setPendingCrop({
-                          startSec: 0,
-                          endSec:   Math.max(0, Math.min(t, (selectedVideo.duration||0))),
-                          action:   'toHere',
-                        })
+                      ? (t)=>{
+                          const clamped = Math.max(0, Math.min(t, (selectedVideo.duration||0)));
+                          setPendingCrop(p => ({ ...(p||{deleteUpTo:null}), deleteFrom: clamped }));
+                          setCropError(null);
+                        }
+                      : undefined
+                  }
+                  onSaveCrop={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? async ()=>{
+                          // Compute the keep range from the two markers,
+                          // clamped to the clip's actual duration.
+                          const fullDur = selectedVideo.duration || 0;
+                          const startSec = pendingCrop?.deleteUpTo ?? 0;
+                          const endSec   = pendingCrop?.deleteFrom ?? fullDur;
+                          if (endSec - startSec < 0.5) {
+                            setCropError("Nothing to keep — markers overlap.");
+                            return;
+                          }
+                          setCropBusy(true);
+                          setCropError(null);
+                          setCropProgress({ pct: 0, message: "Loading original…" });
+                          try {
+                            const blob = await getVideoBlob(selectedVideo.id);
+                            if (!blob) {
+                              setCropError("Original not on this device.");
+                              setCropBusy(false); setCropProgress(null); return;
+                            }
+                            const result = await cropVideo({
+                              source: blob,
+                              startSec, endSec,
+                              inputStem: `v_${selectedVideo.id}`,
+                              onProgress: ({progress, message}) => setCropProgress({ pct: progress, message }),
+                            });
+                            setCropProgress({ pct: 0.95, message: "Saving…" });
+                            const newStartUtc = (typeof selectedVideo.startUtc === "number")
+                              ? selectedVideo.startUtc + Math.round(startSec * 1000)
+                              : null;
+                            const ok = await updateVideoBlobAndDuration(
+                              selectedVideo.id, result.blob, result.durationSec, newStartUtc
+                            );
+                            if (!ok) {
+                              setCropError("Failed to save cropped video.");
+                              setCropBusy(false); setCropProgress(null); return;
+                            }
+                            // Recompute auto-tags for the new time window.
+                            const cur = (allVideos.find(v=>v.id===selectedVideo.id) || selectedVideo) || {};
+                            const startUtcForTags = (typeof newStartUtc === 'number') ? newStartUtc : cur.startUtc;
+                            let mergedTags = cur.tags || [];
+                            if (typeof startUtcForTags === 'number') {
+                              const autoTags = new Set(computeAutoTags(startUtcForTags, result.durationSec, logData, xmlData, syncOffsets[selectedVideo.id]||0));
+                              const autoTagPatterns = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
+                              const manualTags = (cur.tags||[]).filter(t => !autoTagPatterns.test(t));
+                              mergedTags = [...new Set([...autoTags, ...manualTags])];
+                              await updateVideoTags(selectedVideo.id, mergedTags);
+                            }
+                            const patch = {
+                              duration: result.durationSec,
+                              size: result.bytes,
+                              tags: mergedTags,
+                              hasProxy: false,
+                              proxyPath: null,
+                              proxyUploadedAt: null,
+                              objectUrl: null,
+                            };
+                            if (typeof newStartUtc === 'number') patch.startUtc = newStartUtc;
+                            setAllVideos(p => p.map(v => v.id === selectedVideo.id ? {...v, ...patch} : v));
+                            setSelectedVideo(p => p && p.id === selectedVideo.id ? {...p, ...patch} : p);
+                            setPendingCrop(null);
+                            setCropProgress(null);
+                            setCropBusy(false);
+                            // Reload the date so the player picks up the new blob.
+                            loadDate(activeDate);
+                          } catch (e) {
+                            setCropError(e?.message || String(e));
+                            setCropBusy(false); setCropProgress(null);
+                          }
+                        }
                       : undefined
                   }
                 />
@@ -4775,51 +4799,16 @@ function SSAApp(){
                       setSelectedVideo(enriched);
                     }}/>
                   </div>
-                  {/* Crop confirmation card — only shows when one of the
-                      in-player "Crop from/to here" buttons has been clicked
-                      (pendingCrop is non-null). Admin + coach only — the
-                      buttons themselves are hidden for other roles. */}
+                  {/* Crop status banner — only renders when there's an
+                      error to surface or the user marked a cut but the
+                      original blob isn't on this device. The whole crop
+                      UI is otherwise inside the video player toolbar. */}
                   {perms.canSync && (
-                    <VideoCropPanel
+                    <VideoCropStatusBanner
                       video={selectedVideo}
                       pendingCrop={pendingCrop}
-                      onCancel={()=>setPendingCrop(null)}
-                      onCropped={async (id, {durationSec, bytes, newStartUtc}) => {
-                        setPendingCrop(null);
-                        // 1. Recompute auto-tags for the new time window —
-                        //    upwind/reach/downwind, tack-N, race-start etc.
-                        //    Keep any manually-added tags.
-                        const cur = (allVideos.find(v=>v.id===id) || selectedVideo) || {};
-                        const startUtc = (typeof newStartUtc === 'number') ? newStartUtc : cur.startUtc;
-                        let mergedTags = cur.tags || [];
-                        if (typeof startUtc === 'number') {
-                          const autoTags = new Set(computeAutoTags(startUtc, durationSec, logData, xmlData, syncOffsets[id]||0));
-                          const autoTagPatterns = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
-                          const manualTags = (cur.tags||[]).filter(t => !autoTagPatterns.test(t));
-                          mergedTags = [...new Set([...autoTags, ...manualTags])];
-                          await updateVideoTags(id, mergedTags);
-                        }
-                        // 2. Patch in-memory state. Reset proxy flags so the
-                        //    user is prompted to re-sync — the cloud copy is
-                        //    now stale.
-                        const patch = {
-                          duration: durationSec,
-                          size: bytes,
-                          tags: mergedTags,
-                          hasProxy: false,
-                          proxyPath: null,
-                          proxyUploadedAt: null,
-                          // ObjectUrl is now pointing at the OLD blob — reload
-                          // by clearing; the next render via getVideosForDate
-                          // will recreate it. Cheaper than re-fetching all.
-                          objectUrl: null,
-                        };
-                        if (typeof newStartUtc === 'number') patch.startUtc = newStartUtc;
-                        setAllVideos(p => p.map(v => v.id === id ? {...v, ...patch} : v));
-                        setSelectedVideo(p => p && p.id === id ? {...p, ...patch} : p);
-                        // 3. Reload the date so the player picks up the new blob.
-                        loadDate(activeDate);
-                      }}
+                      cropError={cropError}
+                      onDismissError={()=>setCropError(null)}
                     />
                   )}
                   {/* Proxy sync is restricted to roles allowed to push to
