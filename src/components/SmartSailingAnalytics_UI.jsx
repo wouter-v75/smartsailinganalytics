@@ -448,7 +448,7 @@ function extractBoatLengthM(boatName){
   return 12; // fallback ~40 ft
 }
 
-function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc}){
+function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,onCropFromHere,onCropToHere}){
   const vidRef=useRef(null),hlsRef=useRef(null);
   const[curTime,setCurTime]=useState(0);
   const[playing,setPlaying]=useState(false);
@@ -713,6 +713,24 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           }}
           style={{background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 9px",color:"#94A3B8",cursor:"pointer"}}
         >⧉</button>
+        {/* Phase B — crop-by-click. Each button captures the player's
+            current playback time and hands it up to the parent, which
+            kicks off a confirm dialog. Only rendered when the parent
+            passed the callbacks (i.e. perms.canSync + local original). */}
+        {onCropFromHere && (
+          <button
+            title="Keep from this point onward — delete everything before"
+            onClick={()=>onCropFromHere(curTime)}
+            style={{background:"#F59E0B20",border:"1px solid #F59E0B40",borderRadius:6,padding:"6px 9px",color:"#F59E0B",cursor:"pointer",fontSize:11,fontWeight:600}}
+          >✂→ Crop from here</button>
+        )}
+        {onCropToHere && (
+          <button
+            title="Keep up to this point — delete everything after"
+            onClick={()=>onCropToHere(curTime)}
+            style={{background:"#F59E0B20",border:"1px solid #F59E0B40",borderRadius:6,padding:"6px 9px",color:"#F59E0B",cursor:"pointer",fontSize:11,fontWeight:600}}
+          >←✂ Crop up to here</button>
+        )}
         <div style={{flex:1}}/>
         {row&&<span style={{fontSize:10,color:"#1D9E75"}}>● live instruments</span>}
         {!polar&&row&&<span style={{fontSize:9,color:"#475569"}}>· upload polar for target BSP</span>}
@@ -845,75 +863,38 @@ function TagEditor({video, onSave, tagList=[], sessionDate, onTagListChange}){
   );
 }
 
-// Phase B — in-browser lossless crop. Lets the user chop the dead time
-// off the start and end of a clip BEFORE generating the proxy, so the
-// upload only carries the interesting part.
+// Phase B — in-browser lossless crop. The user picks a moment in the
+// player and clicks one of the two crop buttons in the player toolbar:
+//   • "Crop from here"   → keep [t, end], delete the head
+//   • "Crop up to here"  → keep [0, t], delete the tail
+// Either click pops up a confirmation card (this component). On confirm
+// we run ffmpeg.wasm with `-c copy` (lossless, keyframe-snapped) and
+// atomically swap the blob, duration, and startUtc in IndexedDB.
 //
-// The crop is a single keep-range [trimStart, trimEnd]; everything
-// outside is discarded. Uses ffmpeg.wasm with `-c copy` so it's fast
-// (~10× quicker than a re-encode) but snaps to keyframes (~1–2 s).
-function parseMmSs(s){
-  if(!s) return null;
-  // Accept "1:23", "1:23.5", "83", "83.5"
-  const m = s.match(/^(\d+):(\d{1,2}(?:\.\d+)?)$/);
-  if (m) return parseInt(m[1],10)*60 + parseFloat(m[2]);
-  const f = parseFloat(s);
-  return isFinite(f) ? f : null;
-}
-function fmtMmSs(secs){
-  if (secs == null || !isFinite(secs)) return "";
+// State (pendingCrop) lives in the parent so the toolbar click and the
+// confirm card share a single source of truth. This component renders
+// nothing when pendingCrop is null.
+function fmtMmSsLong(secs){
+  if (secs == null || !isFinite(secs)) return "—";
   const m = Math.floor(secs/60);
   const s = secs - m*60;
   return `${m}:${s.toFixed(s%1?1:0).padStart(s%1?4:2,"0")}`;
 }
 
-function VideoCropPanel({video, onCropped}){
-  const fullDur = video.duration || 0;
-  const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd,   setTrimEnd]   = useState(fullDur);
-  const [startTxt,  setStartTxt]  = useState("0:00");
-  const [endTxt,    setEndTxt]    = useState(fmtMmSs(fullDur));
-  const [progress,  setProgress]  = useState(null); // {pct,message} | null
-  const [error,     setError]     = useState(null);
-  const [confirming,setConfirming]= useState(false);
+function VideoCropPanel({video, pendingCrop, onCancel, onCropped}){
+  const [progress, setProgress] = useState(null); // {pct,message} | null
+  const [error,    setError]    = useState(null);
 
-  // Reset when the user picks a different clip
-  useEffect(()=>{
-    setTrimStart(0);
-    setTrimEnd(video.duration || 0);
-    setStartTxt("0:00");
-    setEndTxt(fmtMmSs(video.duration||0));
-    setProgress(null); setError(null); setConfirming(false);
-  },[video.id, video.duration]);
+  // Reset when the pending action changes or the clip changes.
+  useEffect(()=>{ setProgress(null); setError(null); }, [video.id, pendingCrop?.action, pendingCrop?.startSec, pendingCrop?.endSec]);
 
+  if (!pendingCrop) return null;
+  const { startSec, endSec, action } = pendingCrop;
+  const fullDur   = video.duration || 0;
+  const keepSec   = Math.max(0, endSec - startSec);
+  const removeSec = Math.max(0, fullDur - keepSec);
   const isLocal   = !!video.hasLocalBlob;
   const isBusy    = progress && progress.pct < 1;
-  const keepSec   = Math.max(0, trimEnd - trimStart);
-  const removeSec = Math.max(0, fullDur - keepSec);
-  const canRun    = isLocal && keepSec > 0.5 && removeSec > 0.5;
-
-  const onStartCommit = () => {
-    const v = parseMmSs(startTxt);
-    if (v == null) { setStartTxt(fmtMmSs(trimStart)); return; }
-    const clamped = Math.max(0, Math.min(v, fullDur));
-    setTrimStart(clamped);
-    setStartTxt(fmtMmSs(clamped));
-    if (clamped >= trimEnd) {
-      const newEnd = Math.min(fullDur, clamped + 1);
-      setTrimEnd(newEnd); setEndTxt(fmtMmSs(newEnd));
-    }
-  };
-  const onEndCommit = () => {
-    const v = parseMmSs(endTxt);
-    if (v == null) { setEndTxt(fmtMmSs(trimEnd)); return; }
-    const clamped = Math.max(0, Math.min(v, fullDur));
-    setTrimEnd(clamped);
-    setEndTxt(fmtMmSs(clamped));
-    if (clamped <= trimStart) {
-      const newStart = Math.max(0, clamped - 1);
-      setTrimStart(newStart); setStartTxt(fmtMmSs(newStart));
-    }
-  };
 
   const handleConfirm = async () => {
     setError(null);
@@ -922,105 +903,80 @@ function VideoCropPanel({video, onCropped}){
       const blob = await getVideoBlob(video.id);
       if (!blob) {
         setError("Original not on this device — open this video on the device that imported it.");
-        setProgress(null); setConfirming(false); return;
+        setProgress(null);
+        return;
       }
       const result = await cropVideo({
         source: blob,
-        startSec: trimStart,
-        endSec: trimEnd,
+        startSec,
+        endSec,
         inputStem: `v_${video.id}`,
         onProgress: ({progress, message}) => setProgress({pct: progress, message}),
       });
       setProgress({pct: 0.95, message: "Saving…"});
-      // Shift the UTC anchor forward by trimStart so the kept range still
-      // aligns to log/event data. If the source had no startUtc, leave it
-      // alone — the user will set it later via the Start-time editor.
+      // Shift the UTC anchor forward by startSec so the kept range still
+      // aligns to log/event data. If the source had no startUtc, leave
+      // it alone — the user will set it later via the Start-time editor.
       const newStartUtc = (typeof video.startUtc === "number")
-        ? video.startUtc + Math.round(trimStart * 1000)
+        ? video.startUtc + Math.round(startSec * 1000)
         : null;
       const ok = await updateVideoBlobAndDuration(
         video.id, result.blob, result.durationSec, newStartUtc
       );
-      if (!ok) { setError("Failed to save cropped video."); setProgress(null); setConfirming(false); return; }
+      if (!ok) { setError("Failed to save cropped video."); setProgress(null); return; }
       setProgress({pct: 1, message: "Done"});
       onCropped?.(video.id, {
         durationSec: result.durationSec,
         bytes: result.bytes,
         newStartUtc,
       });
-      setConfirming(false);
     } catch (e) {
       setError(e?.message || String(e));
-      setProgress(null); setConfirming(false);
+      setProgress(null);
     }
   };
 
-  if (!isLocal && !video.hasProxy) {
-    // Don't show the crop panel for cloud-only rows (no original to cut from)
-    return null;
-  }
+  const headline =
+    action === 'fromHere'
+      ? `Trim head — keep from ${fmtMmSsLong(startSec)} to end`
+      : `Trim tail — keep 0:00 to ${fmtMmSsLong(endSec)}`;
 
   return (
-    <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A",marginBottom:8}}>
+    <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #F59E0B40",marginBottom:8}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-        <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase"}}>Crop</div>
-        <div style={{fontSize:9,color:"#334155"}}>Lossless · keyframe-snapped</div>
+        <div style={{fontSize:9,color:"#F59E0B",letterSpacing:2,textTransform:"uppercase"}}>Confirm crop</div>
+        <div style={{fontSize:9,color:"#334155"}}>Lossless · keyframe-snapped (~2 s)</div>
       </div>
+      <div style={{fontSize:11,color:"#E2E8F0",marginBottom:6,fontWeight:600}}>{headline}</div>
+      <div style={{fontSize:10,color:"#94A3B8",marginBottom:8,fontFamily:"monospace"}}>
+        Keep <span style={{color:"#1D9E75"}}>{fmtMmSsLong(keepSec)}</span>
+        {removeSec > 0.5 && <> · delete <span style={{color:"#EF4444"}}>{fmtMmSsLong(removeSec)}</span></>}
+        <span style={{color:"#334155"}}> of {fmtMmSsLong(fullDur)}</span>
+      </div>
+
       {!isLocal && (
         <div style={{fontSize:10,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:4,padding:"5px 7px",marginBottom:6}}>
           Original not on this device — crop on the device that imported the clip.
         </div>
       )}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-        <label style={{display:"flex",flexDirection:"column",gap:3}}>
-          <span style={{fontSize:9,color:"#475569",letterSpacing:1}}>Keep from (m:ss)</span>
-          <input
-            value={startTxt}
-            onChange={e=>setStartTxt(e.target.value)}
-            onBlur={onStartCommit}
-            onKeyDown={e=>{ if(e.key==="Enter") e.currentTarget.blur(); }}
-            disabled={isBusy || !isLocal}
-            style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:12,fontFamily:"monospace",outline:"none"}}
-          />
-        </label>
-        <label style={{display:"flex",flexDirection:"column",gap:3}}>
-          <span style={{fontSize:9,color:"#475569",letterSpacing:1}}>Keep until (m:ss)</span>
-          <input
-            value={endTxt}
-            onChange={e=>setEndTxt(e.target.value)}
-            onBlur={onEndCommit}
-            onKeyDown={e=>{ if(e.key==="Enter") e.currentTarget.blur(); }}
-            disabled={isBusy || !isLocal}
-            style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:12,fontFamily:"monospace",outline:"none"}}
-          />
-        </label>
-      </div>
-      <div style={{fontSize:10,color:"#94A3B8",marginBottom:6,fontFamily:"monospace"}}>
-        Keep <span style={{color:"#1D9E75"}}>{fmtMmSs(keepSec)}</span>
-        {removeSec > 0.5 && <> · delete <span style={{color:"#EF4444"}}>{fmtMmSs(removeSec)}</span></>}
-        <span style={{color:"#334155"}}> of {fmtMmSs(fullDur)}</span>
-      </div>
 
-      {!isBusy && !confirming && (
-        <button
-          onClick={()=>setConfirming(true)}
-          disabled={!canRun}
-          style={{width:"100%",background:canRun?"#F59E0B":"#1E3A5A",border:"none",borderRadius:5,padding:"6px 0",color:canRun?"#000":"#475569",fontWeight:700,cursor:canRun?"pointer":"not-allowed",fontSize:11}}
-        >
-          ✂ Crop video
-        </button>
-      )}
-
-      {!isBusy && confirming && (
-        <div style={{display:"flex",flexDirection:"column",gap:5}}>
-          <div style={{fontSize:10,color:"#EF4444",background:"#EF444410",border:"1px solid #EF444430",borderRadius:4,padding:"5px 7px"}}>
-            This permanently removes {fmtMmSs(removeSec)} from this clip. Original bytes will be gone.
+      {!isBusy && (
+        <>
+          <div style={{fontSize:10,color:"#EF4444",background:"#EF444410",border:"1px solid #EF444430",borderRadius:4,padding:"5px 7px",marginBottom:6}}>
+            This permanently removes {fmtMmSsLong(removeSec)} from this clip. The deleted bytes can't be recovered.
           </div>
           <div style={{display:"flex",gap:5}}>
-            <button onClick={handleConfirm} style={{flex:1,background:"#EF4444",border:"none",borderRadius:5,padding:"6px 0",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>Confirm trim</button>
-            <button onClick={()=>setConfirming(false)} style={{flex:1,background:"#1E3A5A",border:"none",borderRadius:5,padding:"6px 0",color:"#94A3B8",cursor:"pointer",fontSize:11}}>Cancel</button>
+            <button
+              onClick={handleConfirm}
+              disabled={!isLocal || keepSec < 0.5}
+              style={{flex:1,background:(!isLocal||keepSec<0.5)?"#1E3A5A":"#EF4444",border:"none",borderRadius:5,padding:"6px 0",color:(!isLocal||keepSec<0.5)?"#475569":"#fff",fontWeight:700,cursor:(!isLocal||keepSec<0.5)?"not-allowed":"pointer",fontSize:11}}
+            >Confirm trim</button>
+            <button
+              onClick={onCancel}
+              style={{flex:1,background:"#1E3A5A",border:"none",borderRadius:5,padding:"6px 0",color:"#94A3B8",cursor:"pointer",fontSize:11}}
+            >Cancel</button>
           </div>
-        </div>
+        </>
       )}
 
       {isBusy && (
@@ -3933,6 +3889,14 @@ function SSAApp(){
   const[sessionTagList,setSessionTagList]=useState([]);
   const[xmlData,setXmlData]=useState(null);
   const[selectedVideo,setSelectedVideo]=useState(null);
+  // Phase B — pending crop. Set by the in-player toolbar buttons
+  // ("Crop from here" / "Crop up to here") and consumed by VideoCropPanel
+  // to render a confirmation card. Cleared on confirm or cancel.
+  // Shape: { startSec, endSec, action: 'fromHere' | 'toHere' } | null
+  const[pendingCrop,setPendingCrop]=useState(null);
+  // Clear any pending crop when the selected video changes so a stale
+  // confirmation can't survive into a different clip.
+  useEffect(()=>{ setPendingCrop(null); },[selectedVideo?.id]);
   const[syncOffsets,setSyncOffsets]=useState(()=>getSyncOffsets());
   const[selectedTags,setSelectedTags]=useState([]);
   const[searchQuery,setSearchQuery]=useState("");
@@ -4754,7 +4718,35 @@ function SSAApp(){
             {selectedVideo&&(
               <div style={{flex:1,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:16,minWidth:400}}>
                 {/* onPlayUtc wires VideoPlayer → shared playUtc state → Analytics */}
-                <VideoPlayer video={selectedVideo} logData={logData} xmlData={xmlData} syncOffset={syncOffsets[selectedVideo.id]||0} sessionTzOffset={sessionTzOffset} onPlayUtc={handlePlayUtc}/>
+                <VideoPlayer
+                  video={selectedVideo}
+                  logData={logData}
+                  xmlData={xmlData}
+                  syncOffset={syncOffsets[selectedVideo.id]||0}
+                  sessionTzOffset={sessionTzOffset}
+                  onPlayUtc={handlePlayUtc}
+                  // Crop buttons only when the user can sync AND the
+                  // original blob is on this device. Cloud-only rows have
+                  // nothing to cut, and crew/viewer roles can't crop.
+                  onCropFromHere={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? (t)=>setPendingCrop({
+                          startSec: Math.max(0, Math.min(t, (selectedVideo.duration||0))),
+                          endSec:   selectedVideo.duration || 0,
+                          action:   'fromHere',
+                        })
+                      : undefined
+                  }
+                  onCropToHere={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? (t)=>setPendingCrop({
+                          startSec: 0,
+                          endSec:   Math.max(0, Math.min(t, (selectedVideo.duration||0))),
+                          action:   'toHere',
+                        })
+                      : undefined
+                  }
+                />
                 <div style={{marginTop:12}}>
                   <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:2}}>
                     <div style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,marginRight:8}}>{selectedVideo.title}</div>
@@ -4783,13 +4775,17 @@ function SSAApp(){
                       setSelectedVideo(enriched);
                     }}/>
                   </div>
-                  {/* Crop UI — admin + coach only, like sync. Lets the
-                      user chop dead time off the start/end before the
-                      proxy is generated so the upload is smaller. */}
+                  {/* Crop confirmation card — only shows when one of the
+                      in-player "Crop from/to here" buttons has been clicked
+                      (pendingCrop is non-null). Admin + coach only — the
+                      buttons themselves are hidden for other roles. */}
                   {perms.canSync && (
                     <VideoCropPanel
                       video={selectedVideo}
+                      pendingCrop={pendingCrop}
+                      onCancel={()=>setPendingCrop(null)}
                       onCropped={async (id, {durationSec, bytes, newStartUtc}) => {
+                        setPendingCrop(null);
                         // 1. Recompute auto-tags for the new time window —
                         //    upwind/reach/downwind, tack-N, race-start etc.
                         //    Keep any manually-added tags.
