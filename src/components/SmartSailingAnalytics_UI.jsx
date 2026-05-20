@@ -11,7 +11,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
 import { getBrowserSupabase } from '../lib/supabase/browser';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
-import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape } from '../lib/cloud-videos';
+import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId } from '../lib/cloud-videos';
 import { syncProxyForVideo } from '../lib/video-rendition-sync';
 import { getVideoBlob } from '../lib/localStore';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
@@ -878,8 +878,42 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
         return;
       }
       const sessionDate = video.sessionDate || activeDate;
+
+      // The PATCH endpoint targets the Supabase row by its UUID. For
+      // locally-imported videos, `video.id` is still the IDB key (e.g.
+      // `v_1779...`), so first ensure a cloud row exists and grab its
+      // UUID. Idempotent — repeated clicks dedupe by external_id.
+      let cloudId = video.id;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cloudId)) {
+        setProgress({phase:'transcoding', pct:0, message:'Registering cloud row…'});
+        try {
+          const supabase = getBrowserSupabase();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) {
+            setError("You're signed out. Sign in and try again.");
+            setProgress(null);
+            return;
+          }
+          const resolved = await ensureCloudVideoId({
+            userId: user.id,
+            video,
+            sessionDate,
+          });
+          if (!resolved) {
+            setError("Couldn't create the cloud row for this video. Check your team membership in Admin.");
+            setProgress(null);
+            return;
+          }
+          cloudId = resolved;
+        } catch (e) {
+          setError("Failed to register video in cloud: " + (e?.message || String(e)));
+          setProgress(null);
+          return;
+        }
+      }
+
       const result = await syncProxyForVideo({
-        videoId: video.id,
+        videoId: cloudId,
         sessionDate,
         source: blob,
         onProgress: setProgress,
@@ -888,9 +922,12 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
         setError(result.error || "Sync failed");
       } else {
         // Tell the parent so it can refresh the row's hasProxy state.
+        // Pass BOTH the local and cloud ids so the UI can update either
+        // way it might be looking up.
         onSynced?.(video.id, {
           proxyPath: result.proxyPath,
           proxyBytes: result.proxyBytes,
+          cloudId,
         });
       }
     } catch (e) {

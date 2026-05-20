@@ -138,8 +138,10 @@ export async function POST(
     )
   }
 
-  // Step 2 — dedupe lookup. Prefer bunny_stream_id; fall back to external_id
-  // matched against the title (we don't have a dedicated external_id column).
+  // Step 2 — dedupe lookup. Prefer bunny_stream_id (legacy Stream flow),
+  // fall back to external_id (Phase B proxy-first flow that has no stream
+  // id yet). Either match means "update this row" rather than insert a
+  // duplicate.
   let existing: { id: string } | null = null
   if (body.bunny_stream_id) {
     const { data } = await supabase
@@ -147,6 +149,15 @@ export async function POST(
       .select('id')
       .eq('boat_id', params.boatId)
       .eq('bunny_stream_id', body.bunny_stream_id)
+      .maybeSingle()
+    existing = data
+  }
+  if (!existing && body.external_id) {
+    const { data } = await supabase
+      .from('videos')
+      .select('id')
+      .eq('boat_id', params.boatId)
+      .eq('external_id', body.external_id)
       .maybeSingle()
     existing = data
   }
@@ -164,6 +175,7 @@ export async function POST(
     bytes: body.bytes ?? null,
     bunny_stream_id: body.bunny_stream_id ?? null,
     bunny_storage_path: body.bunny_storage_path ?? null,
+    external_id: body.external_id ?? null,
     created_by_user_id: user.id,
   }
 

@@ -107,6 +107,95 @@ export async function upsertVideoCloud(args: UpsertArgs): Promise<boolean> {
   }
 }
 
+// Recognise a Supabase UUID. We use this to decide whether a video's
+// id is already a cloud row id, or whether it's still the local IDB key
+// (e.g. `v_1779206586594_uavaqvgpr7s`) — in which case we need to
+// upsert first to get a real UUID before any rendition PATCH can target
+// the row.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export function isCloudVideoId(id: string | null | undefined): boolean {
+  return !!id && UUID_RE.test(id)
+}
+
+interface EnsureArgs {
+  userId: string
+  /** The local video record from IDB or already-cloud row. */
+  video: {
+    id: string
+    title?: string | null
+    name?: string | null
+    sessionDate?: string | null
+    startUtc?: number | string | null
+    duration?: number | null
+    tags?: string[]
+    size?: number | null
+    streamId?: string | null
+  }
+  /** Fallback session date if video.sessionDate isn't set. */
+  sessionDate: string
+  /** Optional sync offset map keyed by local id. */
+  syncOffsets?: Record<string, number>
+}
+
+/**
+ * Ensure a Supabase videos row exists for this local clip and return its
+ * UUID. Idempotent — if a row already exists (matched by external_id or
+ * stream id), the existing UUID is returned without creating a duplicate.
+ *
+ * Returns null when no active membership is set (e.g. solo / pre-onboarding
+ * users); callers should treat that as "skip the cloud step".
+ */
+export async function ensureCloudVideoId({
+  userId,
+  video,
+  sessionDate,
+  syncOffsets,
+}: EnsureArgs): Promise<string | null> {
+  // Already a cloud row id — nothing to do.
+  if (isCloudVideoId(video.id)) return video.id
+
+  const m = getActiveMembership(userId)
+  if (!m || !m.boat_id) return null
+
+  const startUtcIso =
+    video.startUtc != null
+      ? typeof video.startUtc === 'number'
+        ? new Date(video.startUtc).toISOString()
+        : video.startUtc
+      : null
+
+  const body = {
+    session_date: sessionDate,
+    title: video.title || video.name || null,
+    start_utc: startUtcIso,
+    duration_ms:
+      typeof video.duration === 'number'
+        ? Math.round(video.duration * 1000)
+        : null,
+    tags: video.tags ?? [],
+    sync_offset_secs: syncOffsets?.[video.id] || 0,
+    bunny_stream_id: video.streamId ?? null,
+    bytes: video.size ?? null,
+    external_id: video.id, // ← the linking key
+  }
+
+  try {
+    const res = await fetch(
+      `/api/teams/${m.team_id}/boats/${m.boat_id}/videos`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }
+    )
+    if (!res.ok) return null
+    const j = (await res.json()) as { video?: { id: string } }
+    return j.video?.id || null
+  } catch {
+    return null
+  }
+}
+
 // Build a per-video callback for syncSessionToCloud's onVideoSynced hook.
 // Mirrors each clip into Supabase the moment its Bunny upload finishes, so
 // teammates can see clips appear one-by-one rather than after the whole
