@@ -84,13 +84,25 @@ async function upsertSession(
   const url = endpoint(m.team_id, m.boat_id, date)
   if (!url) return false
   try {
+    const payload = JSON.stringify(body)
     const res = await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: payload,
     })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      // eslint-disable-next-line no-console
+      console.error(
+        `[cloud-sessions] session PUT failed: HTTP ${res.status} · ` +
+          `payload ${(payload.length / 1024 / 1024).toFixed(2)} MB · ` +
+          `${detail.slice(0, 200)}`
+      )
+    }
     return res.ok
-  } catch {
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[cloud-sessions] session PUT failed (network/exception)', e)
     return false
   }
 }

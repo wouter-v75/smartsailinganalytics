@@ -236,6 +236,53 @@ function parseCsvLog(text,offsetMin=0){
   return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};
 }
 
+// Build a compact cloud copy of a parsed log. A full session log is tens of
+// MB (~65k rows) — over the Supabase upload route's request-size limit, and
+// slow to load on phones. The cloud copy is trimmed to the on-water window
+// (from event timestamps, when an event file is present) and downsampled so
+// it never exceeds ~7000 rows, keeping at least 1s between rows (1 Hz — the
+// standard sailing-instrument rate, ample for the video overlay and the
+// averages/polar analytics). The full-resolution log is left untouched on
+// the importing device.
+function reduceLogForCloud(logData,xmlData){
+  const TARGET_MAX_ROWS=7000;
+  if(!logData?.rows?.length) return logData;
+  let rows=logData.rows;
+
+  // 1. Trim to the on-water window using event timestamps.
+  if(xmlData){
+    const utcs=[];
+    for(const k of ['tackJibes','markRoundings','sailsUpEvents','raceGuns']){
+      for(const e of (xmlData[k]||[])){
+        if(typeof e?.utc==='number'&&isFinite(e.utc)) utcs.push(e.utc);
+      }
+    }
+    if(utcs.length>=2){
+      const margin=30*60*1000;
+      const lo=Math.min(...utcs)-margin, hi=Math.max(...utcs)+margin;
+      const trimmed=rows.filter(r=>r.utc>=lo&&r.utc<=hi);
+      if(trimmed.length) rows=trimmed;
+    }
+  }
+
+  // 2. Downsample — ≥1s between rows, and never more than TARGET_MAX_ROWS
+  //    (the interval widens for very long sessions so the cap always holds).
+  const span=rows.length>1?rows[rows.length-1].utc-rows[0].utc:0;
+  const interval=Math.max(1000,Math.ceil(span/TARGET_MAX_ROWS));
+  const out=[];
+  let lastUtc=-Infinity;
+  for(const r of rows){
+    if(r.utc-lastUtc>=interval){ out.push(r); lastUtc=r.utc; }
+  }
+
+  return{
+    ...logData,
+    rows:out,
+    startUtc:out[0]?.utc??logData.startUtc,
+    endUtc:out[out.length-1]?.utc??logData.endUtc,
+  };
+}
+
 function isoUtc(s,offsetMin=0){
   return new Date(s.trim().replace(" ","T")+"Z").getTime() - offsetMin*60000;
 }
@@ -1457,13 +1504,20 @@ function UploadTab({role,cloudStatus,onImported}){
         const supabase = getBrowserSupabase();
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
+          // The cloud copy is trimmed + downsampled (see reduceLogForCloud):
+          // a full session log is tens of MB, over the upload route's size
+          // limit. The full-resolution log stays on this device.
+          const cloudLog = reduceLogForCloud(
+            { rows: csvParsed.rows, fileName: csvFile.name, startUtc: csvParsed.startUtc, endUtc: csvParsed.endUtc, tzOffset: csvTz },
+            xmlParsed
+          );
           const ok = await saveLogDataCloud({
             userId: user.id,
             date: d,
-            logData: { rows: csvParsed.rows, fileName: csvFile.name, startUtc: csvParsed.startUtc, endUtc: csvParsed.endUtc, tzOffset: csvTz },
+            logData: cloudLog,
             tzOffsetMinutes: csvTz,
           });
-          if (ok) addLog(`☁ Log synced to cloud → ${d}`);
+          if (ok) addLog(`☁ Log synced to cloud → ${d} · ${cloudLog.rows.length.toLocaleString()} of ${csvParsed.rows.length.toLocaleString()} rows`);
           else addLog(`⚠ Log saved on this device only — could not reach the cloud (is an active boat workspace selected?)`);
         }
       } catch (e) { addLog(`⚠ Log cloud sync failed — saved on this device only`); }
