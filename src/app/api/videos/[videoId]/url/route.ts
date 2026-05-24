@@ -147,10 +147,19 @@ export async function GET(
     return NextResponse.json({ error: 'no rendition available' }, { status: 404 })
   }
 
+  // Bunny Stream auto-generates a poster thumbnail for every uploaded video.
+  // Hand it back so cloud clips get a card image + a player poster instead
+  // of a black frame. Only available once the clip has an original on Stream.
+  const thumbnail =
+    v.bunny_original_stream_id && CDN_HOST
+      ? `https://${CDN_HOST}/${v.bunny_original_stream_id}/thumbnail.jpg`
+      : null
+
   return NextResponse.json({
     url: result.url,
     kind: result.kind,
     served: result.served,
+    thumbnail,
     expires_at: result.expires,
     has_proxy: Boolean(v.has_proxy),
     has_original: Boolean(v.has_original),

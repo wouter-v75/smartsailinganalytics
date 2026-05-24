@@ -688,7 +688,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   return(
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
       <div style={{position:"relative",background:"#000",aspectRatio:"16/9",width:"100%",overflow:"hidden",borderRadius:"12px 12px 0 0"}}>
-        {video.objectUrl?<video ref={vidRef} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration);}}/>:
+        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration);}}/>:
          video.source==="processing"?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
@@ -830,7 +830,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
     <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
         {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" loading="lazy" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
-         video.objectUrl&&video.source!=="cloud"?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
+         video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
          video.source==="processing"?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
@@ -4352,6 +4352,9 @@ function SSAApp(){
               if(j?.url){
                 v.objectUrl=j.url;
                 v.servedRendition=j.served||null; // 'proxy' | 'original' | 'legacy'
+                // Bunny Stream auto-thumbnail — gives cloud clips a card
+                // image + a player poster (no black frame before play).
+                if(j.thumbnail && !v.thumbnailUrl) v.thumbnailUrl=j.thumbnail;
                 return;
               }
             }
