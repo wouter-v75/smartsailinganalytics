@@ -203,45 +203,77 @@ function expToUtc(ds,ts,offsetMin=0){
 }
 function parseCsvLog(text,offsetMin=0){
   const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
+  if(!lines.length) return {rows:[],startUtc:0,endUtc:0};
   const rows=[];
+
+  // Expedition writes a header row. Map column NAME → index so the parser
+  // reads by name and survives Expedition reordering or inserting columns.
+  // (The old fixed-index version read TTB_Port/TTB_Stbd from the
+  // TM_LINEP/TM_LINES columns.) The fixed positions below are fallbacks
+  // only — used when a name is absent, e.g. a header-less legacy export.
+  const H={};
+  lines[0].split(",").forEach((name,i)=>{
+    const k=name.trim().toLowerCase();
+    if(k&&!(k in H)) H[k]=i;
+  });
+  const col=(name,fallback)=>{const k=name.toLowerCase();return (k in H)?H[k]:fallback;};
+  const IX={
+    pos:col('pos[dddmm.mm]',0), date:col('dd/mm/yy',1), time:col('hhmmss',2),
+    heel:col('heel',3), bsp:col('boatspeed',4), awa:col('aw_angle',5),
+    twa:col('tw_angle',11), tws:col('tw_speed',12), vmg:col('vmg',19),
+    sog:col('ext_sog',20),
+    vsTarget:col('vs_target',22),   // target boat speed, kn
+    vsTargPct:col('vs_targ%',23),   // boat speed as % of target
+    twaTarg:col('twa_targ',24),     // target TWA, deg
+    vsPerf:col('vs_perf',25),       // polar boat speed, kn
+    vsPerfPct:col('vs_perf%',26),   // boat speed as % of polar = "Polar %"
+    dstLine:col('dst_line',29), tmLine:col('tm_line',30),
+    ttbPort:col('ttb_port',31), ttbStbd:col('ttb_stbd',32),
+    ttbPin:col('ttb_pin',52), ttbCB:col('ttb_cb',53),
+    timer1:col('timer-1',55), rudder:col('rudder',56), yawR:col('yawr',41),
+  };
+
   for(let i=1;i<lines.length;i++){
     const c=lines[i].split(",");
     if(c.length<27)continue; // need at least up to Vs_perf% (col 26)
-    const bsp=parseFloat(c[4])||0, tws=parseFloat(c[12])||0;
+    const n=(ix)=>parseFloat(c[ix])||0;
+    const bsp=n(IX.bsp), tws=n(IX.tws);
     if(bsp<0.05&&tws<0.3)continue;
-    const ds=c[1]?.trim(), ts=c[2]?.trim();
+    const ds=c[IX.date]?.trim(), ts=c[IX.time]?.trim();
     if(!ds?.includes("/")||!ts?.includes(":"))continue;
     const utc=expToUtc(ds,ts,offsetMin);
     if(isNaN(utc))continue;
-    const pos=parseNmea(c[0]);
+    const pos=parseNmea(c[IX.pos]);
 
     // Starting data — null if zero/missing (Expedition outputs 0 when not applicable)
-    const opt=(i,zeroNull=true)=>{if(c.length<=i)return null;const v=parseFloat(c[i]);return(isNaN(v)||(zeroNull&&v===0))?null:v;};
-    const dstLine = opt(29);                 // DST_LINE nm — 0 = not in start zone
-    const tmLine  = opt(30);                 // TM_LINE seconds — 0 = not in start zone
-    const ttbPort = opt(50, false);          // TTB_Port seconds — keep 0 (perfectly timed start)
-    const ttbStbd = opt(51, false);          // TTB_Stbd seconds — keep 0
-    const ttbPin  = opt(52, false);          // TTB_Pin seconds
-    const ttbCB   = opt(53, false);          // TTB_CB seconds
-    // Timer-1: treat 0 as "sequence not active yet" → null so event-UTC fallback is used.
-    // Expedition only runs Timer-1 during the start sequence (last ~5 min before gun).
-    // A stored 0 means inactive, NOT that the gun has just fired.
-    const timer1  = opt(55, true);           // null when 0 → uses event-UTC diff as fallback
+    const opt=(ix,zeroNull=true)=>{if(ix==null||c.length<=ix)return null;const v=parseFloat(c[ix]);return(isNaN(v)||(zeroNull&&v===0))?null:v;};
 
     rows.push({
       utc, lat:pos.lat, lon:pos.lon,
-      heel:  parseFloat(c[3])||0,
+      heel: n(IX.heel),
       bsp,
-      awa:   parseFloat(c[5])||0,   // AW_angle — apparent wind angle directly from log
-      twa:   parseFloat(c[11])||0,
+      awa:  n(IX.awa),   // AW_angle — apparent wind angle directly from log
+      twa:  n(IX.twa),
       tws,
-      sog:   parseFloat(c[20])||0,
-      vmg:   parseFloat(c[19])||0,
-      vsTargPct: parseFloat(c[23])||0,
-      vsPerfPct: parseFloat(c[26])||0,
-      dstLine, tmLine, ttbPort, ttbStbd, ttbPin, ttbCB, timer1,
-      rudder:parseFloat(c[56]??0)||0,       // col 56 (was wrongly col 52)
-      yawR:  parseFloat(c[41]??0)||0,
+      sog:  n(IX.sog),
+      vmg:  n(IX.vmg),
+      // Polar/target metrics straight from Expedition — no polar file needed.
+      vsTarget:  opt(IX.vsTarget),    // Vs_target — target boat speed, kn
+      vsTargPct: n(IX.vsTargPct),     // Vs_targ%  — % of target speed
+      twaTarg:   opt(IX.twaTarg),     // TWA_targ  — target true wind angle, deg
+      vsPerf:    opt(IX.vsPerf),      // Vs_perf   — polar boat speed, kn
+      vsPerfPct: n(IX.vsPerfPct),     // Vs_perf%  — % of polar speed ("Polar %")
+      dstLine: opt(IX.dstLine),       // DST_LINE — 0 = not in start zone
+      tmLine:  opt(IX.tmLine),        // TM_LINE  — 0 = not in start zone
+      ttbPort: opt(IX.ttbPort,false), // TTB_Port — keep 0 (perfectly timed start)
+      ttbStbd: opt(IX.ttbStbd,false), // TTB_Stbd — keep 0
+      ttbPin:  opt(IX.ttbPin,false),
+      ttbCB:   opt(IX.ttbCB,false),
+      // Timer-1: 0 = sequence not active yet → null so the event-UTC fallback
+      // is used. Expedition only runs Timer-1 in the ~5 min before the gun.
+      timer1:  opt(IX.timer1,true),
+      rudder:  n(IX.rudder),
+      yawR:    n(IX.yawR),
     });
   }
   return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};
@@ -565,7 +597,8 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const lastUtcEmit=useRef(0);
   const isMobile=useIsMobile();
 
-  // Load polar for target BSP calculation
+  // Polar file — fallback only. Target BSP, Polar % and VMG % now come
+  // straight from the Expedition log columns (see the derived values below).
   const polar=useMemo(()=>loadPolarFromLS(),[]);
 
   useEffect(()=>{
@@ -617,9 +650,15 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   // ── Mode-specific overlay ───────────────────────────────────────────────────
   const mode=getVideoMode(video.tags);
 
-  // Pre-compute derived values
-  const targBsp  = (polar && row) ? polarInterp(polar, row.tws, Math.abs(row.twa||0)) : null;
-  const polPct   = (polar && row) ? polarPerf(polar, row.bsp, row.twa, row.tws)?.pct : null;
+  // Pre-compute derived values. Target BSP and Polar % come straight from
+  // the Expedition log columns (Vs_target, Vs_perf%); the uploaded polar
+  // file is only a fallback for older logs that lack those columns.
+  const targBsp  = (row?.vsTarget != null && row.vsTarget > 0)
+    ? row.vsTarget
+    : ((polar && row) ? polarInterp(polar, row.tws, Math.abs(row.twa||0)) : null);
+  const polPct   = (row?.vsPerfPct != null && row.vsPerfPct > 0)
+    ? row.vsPerfPct
+    : ((polar && row) ? polarPerf(polar, row.bsp, row.twa, row.tws)?.pct : null);
 
   // AWA: use log col 5 (AW_angle) directly; fall back to computed if 0/missing
   const awaRaw = row?.awa;
@@ -627,13 +666,19 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     ? awaRaw
     : calcAWA(row?.twa, row?.tws, row?.bsp);
 
-  // VMG% vs polar optimal — for upwind/downwind overlay
-  const vmgTarget = (polar && row) ? polarVMGTarget(polar, row.tws) : null;
+  // VMG% — target VMG derived from the log's own Vs_target × cos(TWA_targ);
+  // fall back to the polar curve when the log lacks the target columns.
   const absA = Math.abs(row?.twa||0);
   const isUpwindAngle = absA < 90;
-  const optVMG = vmgTarget ? (isUpwindAngle ? vmgTarget.upVMG : vmgTarget.downVMG) : null;
+  const logOptVMG = (row?.vsTarget != null && row?.twaTarg != null)
+    ? row.vsTarget * Math.abs(Math.cos(row.twaTarg * Math.PI / 180))
+    : null;
+  const vmgTarget = (polar && row) ? polarVMGTarget(polar, row.tws) : null;
+  const optVMG = (logOptVMG && logOptVMG > 0.01)
+    ? logOptVMG
+    : (vmgTarget ? (isUpwindAngle ? vmgTarget.upVMG : vmgTarget.downVMG) : null);
   const vmgPct = (optVMG && optVMG > 0.01 && row?.vmg != null)
-    ? Math.max(0, Math.min(200, (row.vmg / optVMG) * 100))
+    ? Math.max(0, Math.min(200, (Math.abs(row.vmg) / optVMG) * 100))
     : null;
 
   // ── Starting instruments ────────────────────────────────────────────────────
@@ -877,7 +922,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         )}
         <div style={{flex:1}}/>
         {row&&<span style={{fontSize:10,color:"#1D9E75"}}>● live instruments</span>}
-        {!polar&&row&&<span style={{fontSize:9,color:"#475569"}}>· upload polar for target BSP</span>}
+        {!polar&&row&&row.vsTarget==null&&<span style={{fontSize:9,color:"#475569"}}>· upload polar for target BSP</span>}
         {isHls&&<span style={{fontSize:9,color:"#8B5CF6"}}>HLS · Stream</span>}
       </div>
     </div>
@@ -2416,7 +2461,7 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
 }
 
 // ─── AI CHART CHAT ────────────────────────────────────────────────────────────
-const LOG_FIELDS = "tws (true wind speed kn), twa (true wind angle °), bsp (boat speed kn), sog (speed over ground kn), vmg (velocity made good kn), heel (heel angle °), vsTargPct (% of target speed col23), vsPerfPct (% of polar speed col26), rudder (rudder angle °)";
+const LOG_FIELDS = "tws (true wind speed kn), twa (true wind angle °), bsp (boat speed kn), sog (speed over ground kn), vmg (velocity made good kn), heel (heel angle °), vsTarget (target boat speed kn), vsTargPct (% of target speed), twaTarg (target TWA °), vsPerf (polar boat speed kn), vsPerfPct (% of polar speed), rudder (rudder angle °)";
 const CLIP_FIELDS = "twsAvg, twaAvg, vmgAvg, polpercAvg, vsTargPercAvg, sogAvg, heelAvg";
 
 const CHART_SYSTEM = `You are a sailing data analyst AI for Shared Sailing Analytics.
@@ -3083,19 +3128,25 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               const dnMin  = Math.round(dnPhases.reduce((s,p)=>s+(p.endUtc-p.utc),0)/60000);
               const rcMin  = Math.round(rcPhases.reduce((s,p)=>s+(p.endUtc-p.utc),0)/60000);
 
-              // Polar for target BSP
+              // Polar file — fallback only; the log's own Vs_target / TWA_targ
+              // columns are preferred for the VMG% curve below.
               const upPolar = loadPolarFromLS();
+              const logHasTarget = rows.some(r=>r.vsTarget!=null&&r.twaTarg!=null);
 
               // Sample rows inside upwind phases (max ~1200 pts for perf)
               const step=Math.max(1,Math.floor(rows.length/1200));
               const upRows=rows.filter((_,i)=>i%step===0)
                 .filter(r=>r.tws>0&&r.tws<50&&inUpwind(r.utc));
 
-              // a) VMG % of polar optimal upwind VMG
+              // a) VMG % of optimal upwind VMG. Target VMG comes from the log
+              //    (Vs_target × cos(TWA_targ)); the polar curve is the fallback.
               const vmgPts=upRows.filter(r=>r.vmg>0).map(r=>{
-                if(!upPolar) return null;
-                const t=polarVMGTarget(upPolar,r.tws);
-                const pct=t.upVMG>0.01?(r.vmg/t.upVMG)*100:null;
+                let optVMG=null;
+                if(r.vsTarget!=null&&r.twaTarg!=null)
+                  optVMG=r.vsTarget*Math.abs(Math.cos(r.twaTarg*Math.PI/180));
+                else if(upPolar)
+                  optVMG=polarVMGTarget(upPolar,r.tws)?.upVMG;
+                const pct=(optVMG&&optVMG>0.01)?(Math.abs(r.vmg)/optVMG)*100:null;
                 return (pct!=null&&pct>20&&pct<150)?{x:r.tws,y:pct,twa:r.twa}:null;
               }).filter(Boolean);
 
@@ -3131,7 +3182,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                         ⚠ No event file — showing all rows unfiltered
                       </span>
                     )}
-                    {!upPolar&&<span style={{fontSize:9,color:"#F59E0B",marginLeft:4}}>⚠ Upload polar for VMG% and target BSP%</span>}
+                    {!upPolar&&!logHasTarget&&<span style={{fontSize:9,color:"#F59E0B",marginLeft:4}}>⚠ Upload polar for VMG% — this log lacks target columns</span>}
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                     <div>
