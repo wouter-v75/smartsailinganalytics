@@ -1,11 +1,12 @@
 // Client-side proxy generation via ffmpeg.wasm.
 //
 // Transcodes a source video (typically 4K @ 100+ Mbps) into a small,
-// mobile-friendly proxy: 1280×720, H.264 baseline, ~2.5 Mbps video,
-// 128 kbps AAC, faststart so streaming begins before the file finishes.
+// mobile-friendly proxy: 1280×720, H.264 baseline, ~1.2 Mbps video,
+// 64 kbps AAC, faststart so streaming begins before the file finishes.
 //
-// Sizes: an 8-minute 4K clip drops from ~400 MB → ~30 MB. That's the
-// difference between 35 minutes and 3 minutes of 5G upload time.
+// The proxy is a low-bandwidth PREVIEW — kept deliberately small so it
+// uploads fast on poor field / apartment wifi. Full quality is carried by
+// the separately-uploaded original.
 //
 // Lazy-loads ffmpeg.wasm core on first call (~25 MB worth of WASM, cached
 // by the browser after first download). The Worker runs off the main
@@ -113,11 +114,12 @@ export async function generateProxy({
     //                             larger output, still well inside the
     //                             ~30 MB budget for a typical clip.
     //  -tune zerolatency          fewer reference frames, faster encode.
-    //  -b:v 2000k -maxrate 2400k -bufsize 4000k
-    //                             ~2 Mbps target — smaller upload, still
-    //                             HD on a 720p screen.
-    //  -c:a aac -b:a 96k          slightly lighter audio, indistinguishable
-    //                             on phone speakers.
+    //  -b:v 1200k -maxrate 1500k -bufsize 3000k
+    //                             ~1.2 Mbps target — roughly half the bytes
+    //                             of the old 2 Mbps proxy, so ~2× faster to
+    //                             upload on slow wifi. Still legible on a
+    //                             720p phone screen; this is a preview only.
+    //  -c:a aac -b:a 64k          light audio, fine on phone speakers.
     //  -movflags +faststart       moov atom at start → streamable.
     //  -pix_fmt yuv420p           required for browser playback.
     //  -y                         overwrite if exists.
@@ -132,11 +134,11 @@ export async function generateProxy({
       '-level', '3.1',
       '-preset', 'ultrafast',
       '-tune', 'zerolatency',
-      '-b:v', '2000k',
-      '-maxrate', '2400k',
-      '-bufsize', '4000k',
+      '-b:v', '1200k',
+      '-maxrate', '1500k',
+      '-bufsize', '3000k',
       '-c:a', 'aac',
-      '-b:a', '96k',
+      '-b:a', '64k',
       '-pix_fmt', 'yuv420p',
       '-movflags', '+faststart',
       '-y',
@@ -163,6 +165,6 @@ export async function generateProxy({
 /** Estimate the resulting proxy size in bytes without doing a real transcode.
  *  Useful for showing "will upload ~22 MB" before the user confirms. */
 export function estimateProxySize(durationSec: number): number {
-  // 2 Mbps video + 96 kbps audio ≈ 2.1 Mbps total = ~262 KB/s.
-  return Math.round(durationSec * 262 * 1024)
+  // 1.2 Mbps video + 64 kbps audio ≈ 1.26 Mbps total = ~158 KB/s.
+  return Math.round(durationSec * 158 * 1024)
 }

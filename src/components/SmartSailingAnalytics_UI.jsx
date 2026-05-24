@@ -153,29 +153,6 @@ function useIsMobile(){
   return mobile;
 }
 
-// Best-effort "are we on an unmetered link" check for the two-tier sync.
-// Used to decide whether full-resolution originals may upload automatically
-// ("auto on wifi"). The Network Information API is uneven: Chrome/Android
-// exposes `connection.type` ('wifi'|'cellular'|…); most desktop browsers and
-// iOS Safari expose nothing at all. Logic:
-//   - explicit wifi/ethernet  → unmetered (true)
-//   - explicit cellular/etc.  → metered   (false)
-//   - data-saver requested    → metered   (false)
-//   - no usable signal        → assume desktop is unmetered, but make mobile
-//                                fall back to the manual batch button.
-// A wrong "true" only ever costs bandwidth on a metered link; the user can
-// still force an upload via the batch button regardless of this result.
-function isLikelyUnmetered(isMobile){
-  const c = (typeof navigator !== "undefined") &&
-    (navigator.connection || navigator.mozConnection || navigator.webkitConnection);
-  if(!c) return !isMobile;                 // no API (desktop Safari/FF, iOS)
-  if(c.saveData) return false;             // user explicitly asked to save data
-  const t = typeof c.type === "string" ? c.type : "";
-  if(t === "wifi" || t === "ethernet") return true;
-  if(t === "cellular" || t === "wimax" || t === "bluetooth" || t === "other" || t === "none") return false;
-  return !isMobile;                        // no `type` signal → trust desktop only
-}
-
 // Inject mobile-specific CSS once (touch targets, overscroll, safe areas)
 let _mobileStyleInjected = false;
 function injectMobileCSS(){
@@ -1146,7 +1123,7 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
       {row("Originals · HD", haveOrig, "#8B5CF6")}
       {busy && syncState?.message && (
         <div style={{margin:"7px 0"}}>
-          <div style={{fontSize:9,color:"#7DD3FC",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:3}}>{syncState.message}</div>
+          <div style={{fontSize:9,color:"#7DD3FC",fontFamily:"monospace",lineHeight:1.4,wordBreak:"break-word",marginBottom:3}}>{syncState.message}</div>
           <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
             <div style={{height:"100%",width:`${syncState.progress||0}%`,background:"#06B6D4",transition:"width .3s"}}/>
           </div>
@@ -1165,7 +1142,7 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
         {needOrig===0?"✓ All originals uploaded":`⇪ Upload ${needOrig} original${needOrig===1?"":"s"}`}
       </button>
       <div style={{fontSize:8,color:"#334155",marginTop:6,lineHeight:1.4}}>
-        Proxies stream instantly on phones. Originals are full quality — uploaded automatically on wifi.
+        Proxies stream instantly on phones. Originals are full quality — upload them with the button when on fast wifi.
       </div>
     </div>
   );
@@ -4367,7 +4344,7 @@ function SSAApp(){
 
         setMobileSyncState({
           phase: 'pushing',
-          message: `Auto-syncing ${idx}/${total} · ${label}`,
+          message: `Preparing ${idx}/${total} · ${label}`,
           progress: 0,
         });
 
@@ -4408,13 +4385,16 @@ function SSAApp(){
             sessionDate: item.sessionDate,
             source: blob,
             onProgress: ({phase, pct, message}) => {
-              const phaseLabel = phase === 'transcoding' ? 'compressing'
-                               : phase === 'uploading'   ? 'uploading'
-                               : phase === 'marking'     ? 'finalizing'
+              // Phase leads the message so it stays visible even where the
+              // progress line is narrow (the clip name is what gets clipped,
+              // not the phase the user needs to see).
+              const phaseLabel = phase === 'transcoding' ? 'Compressing'
+                               : phase === 'uploading'   ? 'Uploading'
+                               : phase === 'marking'     ? 'Finalizing'
                                : phase;
               setMobileSyncState({
                 phase: 'pushing',
-                message: `Auto-syncing ${idx}/${total} · ${label} · ${phaseLabel}`,
+                message: `${phaseLabel} ${idx}/${total} · ${label}`,
                 progress: Math.round((pct||0) * 100),
               });
             },
@@ -4458,26 +4438,24 @@ function SSAApp(){
     originalsSyncRef.current.total += items.length;
   }
 
-  // Drain the originals queue. Uploads the full-resolution source bytes (no
-  // transcode). Unless `forced`, it only proceeds on an unmetered link and
-  // pauses — leaving the rest queued — if the link goes metered mid-batch.
-  async function processOriginalsQueue({ forced = false } = {}){
+  // Drain the originals queue — uploads the full-resolution source bytes
+  // (no transcode). Runs only when the user explicitly presses the
+  // "Upload originals" button; originals are multi-GB so they are never
+  // uploaded automatically.
+  async function processOriginalsQueue(){
     if (originalsSyncRef.current.running) return;
     if (autoSyncRef.current.activePromise) return;        // let proxies finish first
     if (!originalsSyncRef.current.queue.length) return;
-    if (!forced && !isLikelyUnmetered(isMobile)) return;  // hold for wifi
     if (syncClearTimerRef.current) { clearTimeout(syncClearTimerRef.current); syncClearTimerRef.current = null; }
     originalsSyncRef.current.running = true;
     try {
       while (originalsSyncRef.current.queue.length > 0) {
-        // Re-check the link between clips — pause a non-forced run if wifi drops.
-        if (!forced && !isLikelyUnmetered(isMobile)) break;
         const item = originalsSyncRef.current.queue.shift();
         const idx = originalsSyncRef.current.done + 1;
         const total = originalsSyncRef.current.total;
         const label = item.label || `clip ${idx}`;
 
-        setMobileSyncState({ phase: 'pushing', message: `Uploading original ${idx}/${total} · ${label}`, progress: 0 });
+        setMobileSyncState({ phase: 'pushing', message: `Uploading HD ${idx}/${total} · ${label}`, progress: 0 });
 
         try {
           const supabase = getBrowserSupabase();
@@ -4509,7 +4487,7 @@ function SSAApp(){
             onProgress: ({ pct }) => {
               setMobileSyncState({
                 phase: 'pushing',
-                message: `Uploading original ${idx}/${total} · ${label}`,
+                message: `Uploading HD ${idx}/${total} · ${label}`,
                 progress: Math.round((pct || 0) * 100),
               });
             },
@@ -4528,61 +4506,37 @@ function SSAApp(){
       }
     } finally {
       originalsSyncRef.current.running = false;
-      const remaining = originalsSyncRef.current.queue.length;
       const finalCount = originalsSyncRef.current.done;
-      if (remaining > 0) {
-        // Paused waiting for an unmetered link — keep counters so a resume continues.
-        setMobileSyncState({ phase: 'done', message: `⏸ ${remaining} original${remaining===1?'':'s'} waiting for wifi`, progress: 100 });
-      } else {
-        setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${finalCount} original${finalCount===1?'':'s'}`, progress: 100 });
-        originalsSyncRef.current.done = 0;
-        originalsSyncRef.current.total = 0;
-      }
+      setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${finalCount} original${finalCount===1?'':'s'}`, progress: 100 });
+      originalsSyncRef.current.done = 0;
+      originalsSyncRef.current.total = 0;
       syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3500);
     }
   }
 
   // Batch "Sync proxies" — coach/admin button. Transcodes + uploads every
-  // un-proxied clip in the session, then queues the originals to follow
-  // (uploaded automatically once the proxies are done, on an unmetered link).
+  // un-proxied clip in the session. Proxies ONLY — the full-resolution
+  // originals are a separate, deliberate action (handleBatchUploadOriginals)
+  // so a slow link is never hit with a multi-GB upload by surprise.
   async function handleBatchSyncProxies(){
     if (!cloudStatus?.available) return;
     const toSync = allVideos.filter(v => !v.hasProxy);
     if (!toSync.length) return;
     enqueueAutoSync(toSync, activeDate);
     await processAutoSyncQueue();
-    enqueueOriginals(toSync, activeDate);
-    processOriginalsQueue({ forced: false });
   }
 
-  // Batch "Upload originals" — coach/admin button. Forces the full-resolution
-  // upload for the whole session regardless of the link type.
+  // Batch "Upload originals" — coach/admin button. Uploads the full-
+  // resolution source for every clip in the session that doesn't have one
+  // yet. Deliberately manual: originals are multi-GB, so the user triggers
+  // this only when on fast wifi.
   function handleBatchUploadOriginals(){
     if (!cloudStatus?.available) return;
     const toUpload = allVideos.filter(v => !v.hasOriginal);
     if (!toUpload.length) return;
     enqueueOriginals(toUpload, activeDate);
-    processOriginalsQueue({ forced: true });
+    processOriginalsQueue();
   }
-
-  // "Auto on wifi" — when the connection flips to an unmetered link, drain
-  // any originals that were queued while metered. Best-effort: the Network
-  // Information API only fires `change` where it's implemented (Chrome).
-  useEffect(() => {
-    const c = (typeof navigator !== "undefined") &&
-      (navigator.connection || navigator.mozConnection || navigator.webkitConnection);
-    if (!c || typeof c.addEventListener !== "function") return;
-    const onChange = () => {
-      if (originalsSyncRef.current.queue.length > 0
-          && !originalsSyncRef.current.running
-          && !autoSyncRef.current.activePromise) {
-        processOriginalsQueue({ forced: false });
-      }
-    };
-    c.addEventListener("change", onChange);
-    return () => c.removeEventListener("change", onChange);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Add clips to the auto-sync queue and kick the processor if idle.
   // Caller passes the local IDB video records (id + title/name for labels).
