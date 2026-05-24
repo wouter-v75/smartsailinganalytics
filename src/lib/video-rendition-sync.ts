@@ -86,6 +86,7 @@ export async function syncProxyForVideo({
       const result = await generateProxy({
         source,
         inputStem: `v_${videoId}`,
+        signal,
         onProgress: (pp: ProxyProgress) => {
           emit({
             phase: 'transcoding',
@@ -98,11 +99,12 @@ export async function syncProxyForVideo({
       proxyBlob = result.blob
       // eslint-disable-next-line no-console
       console.log(
-        `[rendition] proxy generated for ${videoId}: ${(
-          proxyBlob.size /
-          1024 /
-          1024
-        ).toFixed(1)} MB in ${((Date.now() - t0) / 1000).toFixed(0)}s`
+        `[rendition] proxy generated for ${videoId} via ${
+          result.engine || 'unknown'
+        }: ${(proxyBlob.size / 1024 / 1024).toFixed(1)} MB in ${(
+          (Date.now() - t0) /
+          1000
+        ).toFixed(0)}s`
       )
     }
 
