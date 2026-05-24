@@ -54,6 +54,12 @@ interface MembershipRow {
 // Internal helper: fetch memberships for the user and join in team + boat
 // names. We do two queries because RLS gates each table separately, and
 // nested-select with RLS can be cranky.
+//
+// "All boats" memberships: a membership row with boat_id NULL grants access
+// to *every* boat in the team (RLS: has_boat_access treats NULL as a
+// wildcard). The rest of the app is boat-scoped — one boat's data at a time —
+// so here we EXPAND such a membership into one selectable workspace per boat.
+// The user picks a boat and every downstream call has a concrete boat_id.
 async function loadMemberships(userId: string): Promise<MembershipRow[]> {
   const supabase = getBrowserSupabase()
 
@@ -65,27 +71,55 @@ async function loadMemberships(userId: string): Promise<MembershipRow[]> {
   if (!memberships || memberships.length === 0) return []
 
   const teamIds = Array.from(new Set(memberships.map((m) => m.team_id)))
-  const boatIds = memberships
-    .map((m) => m.boat_id)
-    .filter((x): x is string => Boolean(x))
 
+  // Fetch teams + every boat in those teams. RLS already limits the boats
+  // query to boats the caller can access, so a boat-scoped member sees just
+  // their boat and an "all boats" member sees the whole team's boats.
   const [{ data: teams }, { data: boats }] = await Promise.all([
     supabase.from('teams').select('id, name').in('id', teamIds),
-    boatIds.length > 0
-      ? supabase.from('boats').select('id, name').in('id', boatIds)
-      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    supabase.from('boats').select('id, name, team_id').in('team_id', teamIds),
   ])
 
   const teamMap = new Map((teams || []).map((t) => [t.id, t.name]))
   const boatMap = new Map((boats || []).map((b) => [b.id, b.name]))
+  const boatsByTeam = new Map<string, { id: string; name: string }[]>()
+  for (const b of boats || []) {
+    const arr = boatsByTeam.get(b.team_id) || []
+    arr.push({ id: b.id, name: b.name })
+    boatsByTeam.set(b.team_id, arr)
+  }
 
-  return memberships
-    .map((m) => ({
-      ...m,
-      team_name: teamMap.get(m.team_id) || '(team removed)',
-      boat_name: m.boat_id ? boatMap.get(m.boat_id) || '(boat removed)' : null,
-    }))
-    .filter((m) => isWindowOpen(m.valid_from, m.valid_to))
+  const rows: MembershipRow[] = []
+  for (const m of memberships) {
+    const team_name = teamMap.get(m.team_id) || '(team removed)'
+    if (m.boat_id) {
+      rows.push({
+        ...m,
+        team_name,
+        boat_name: boatMap.get(m.boat_id) || '(boat removed)',
+      })
+    } else {
+      // "All boats" — expand to one workspace per boat. Each expanded row
+      // gets a synthetic id (`<membershipId>::<boatId>`) so the switcher can
+      // tell them apart; that id is only ever read inside this component.
+      const teamBoats = boatsByTeam.get(m.team_id) || []
+      if (teamBoats.length === 0) {
+        rows.push({ ...m, team_name, boat_name: null })
+      } else {
+        for (const b of teamBoats) {
+          rows.push({
+            ...m,
+            id: `${m.id}::${b.id}`,
+            boat_id: b.id,
+            team_name,
+            boat_name: b.name,
+          })
+        }
+      }
+    }
+  }
+
+  return rows.filter((m) => isWindowOpen(m.valid_from, m.valid_to))
 }
 
 function isWindowOpen(from: string | null, to: string | null): boolean {
@@ -365,20 +399,26 @@ export default function UserPill() {
             </>
           )}
 
-          {/* Team manager links: one entry per team they manage. */}
+          {/* Team manager links: one entry per team they manage. De-duped by
+              team_id — an "all boats" membership expands to several rows for
+              the same team. */}
           {me.global_role !== 'admin' &&
-            memberships
-              .filter((m) => m.role === 'team_manager')
-              .map((m) => (
-                <Link
-                  key={`mgr-${m.team_id}`}
-                  href={`/admin/teams/${m.team_id}`}
-                  className="block px-3 py-2 hover:bg-slate-700 text-slate-100"
-                  onClick={() => setOpen(false)}
-                >
-                  Manage {m.team_name}
-                </Link>
-              ))}
+            Array.from(
+              new Map(
+                memberships
+                  .filter((m) => m.role === 'team_manager')
+                  .map((m) => [m.team_id, m] as const)
+              ).values()
+            ).map((m) => (
+              <Link
+                key={`mgr-${m.team_id}`}
+                href={`/admin/teams/${m.team_id}`}
+                className="block px-3 py-2 hover:bg-slate-700 text-slate-100"
+                onClick={() => setOpen(false)}
+              >
+                Manage {m.team_name}
+              </Link>
+            ))}
 
           <button
             onClick={signOut}
