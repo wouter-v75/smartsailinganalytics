@@ -4287,11 +4287,12 @@ function SSAApp(){
           const {data:{user}}=await supabase.auth.getUser();
           if(user){
             // <UserPill> resolves the active membership and writes it to
-            // localStorage asynchronously. On a brand-new user's first login
-            // that can land AFTER this boot step — which would make the
-            // cloud session list come back empty and leave the app blank.
-            // Wait (up to ~6s) for the membership before listing.
-            for(let i=0;i<24 && !getActiveMembership(user.id);i++){
+            // localStorage asynchronously. On a first login — especially
+            // mobile on slow wifi — that can land well after this boot step,
+            // which would make the cloud session list come back empty and
+            // leave the app blank until a manual Sync. Wait for it (up to
+            // ~20s; the loop exits the instant the membership appears).
+            for(let i=0;i<80 && !getActiveMembership(user.id);i++){
               await new Promise(r=>setTimeout(r,250));
             }
             const cloudSessions=await listSessionsCloud({userId:user.id});
