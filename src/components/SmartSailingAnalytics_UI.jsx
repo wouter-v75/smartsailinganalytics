@@ -239,17 +239,22 @@ function parseCsvLog(text,offsetMin=0){
 // Build a compact cloud copy of a parsed log. A full session log is tens of
 // MB (~65k rows) — over the Supabase upload route's request-size limit, and
 // slow to load on phones. The cloud copy is trimmed to the on-water window
-// (from event timestamps, when an event file is present) and downsampled so
-// it never exceeds ~7000 rows, keeping at least 1s between rows (1 Hz — the
+// (from the event file's timestamps, or — when there's no event file — from
+// when the boat actually starts and stops moving) and downsampled so it
+// never exceeds ~7000 rows, keeping at least 1s between rows (1 Hz — the
 // standard sailing-instrument rate, ample for the video overlay and the
 // averages/polar analytics). The full-resolution log is left untouched on
 // the importing device.
 function reduceLogForCloud(logData,xmlData){
   const TARGET_MAX_ROWS=7000;
+  const MARGIN_MS=30*60*1000;
   if(!logData?.rows?.length) return logData;
   let rows=logData.rows;
 
-  // 1. Trim to the on-water window using event timestamps.
+  // 1. Trim away dock time so only the on-water window is kept.
+  let trimmed=null;
+
+  // 1a. Preferred — bound the window by the event file's timestamps.
   if(xmlData){
     const utcs=[];
     for(const k of ['tackJibes','markRoundings','sailsUpEvents','raceGuns']){
@@ -258,12 +263,30 @@ function reduceLogForCloud(logData,xmlData){
       }
     }
     if(utcs.length>=2){
-      const margin=30*60*1000;
-      const lo=Math.min(...utcs)-margin, hi=Math.max(...utcs)+margin;
-      const trimmed=rows.filter(r=>r.utc>=lo&&r.utc<=hi);
-      if(trimmed.length) rows=trimmed;
+      const lo=Math.min(...utcs)-MARGIN_MS, hi=Math.max(...utcs)+MARGIN_MS;
+      const t=rows.filter(r=>r.utc>=lo&&r.utc<=hi);
+      if(t.length) trimmed=t;
     }
   }
+
+  // 1b. Fallback (no event file — not every team runs an onboard assistant):
+  //     derive the window from boat movement. A boat on the dock with the
+  //     logger still running reads BSP≈0 and SOG≈0; find the first and last
+  //     rows where it is actually moving and keep a 30-min margin on each
+  //     side, dropping the long dock stretches before and after sailing.
+  if(!trimmed){
+    const moving=r=>(r.bsp||0)>0.5||(r.sog||0)>1.0;
+    let first=-1,last=-1;
+    for(let i=0;i<rows.length;i++){ if(moving(rows[i])){ first=i; break; } }
+    for(let i=rows.length-1;i>=0;i--){ if(moving(rows[i])){ last=i; break; } }
+    if(first>=0&&last>=first){
+      const lo=rows[first].utc-MARGIN_MS, hi=rows[last].utc+MARGIN_MS;
+      const t=rows.filter(r=>r.utc>=lo&&r.utc<=hi);
+      if(t.length) trimmed=t;
+    }
+  }
+
+  if(trimmed) rows=trimmed;
 
   // 2. Downsample — ≥1s between rows, and never more than TARGET_MAX_ROWS
   //    (the interval widens for very long sessions so the cap always holds).
