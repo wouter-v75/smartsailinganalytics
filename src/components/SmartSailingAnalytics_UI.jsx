@@ -4579,7 +4579,9 @@ function SSAApp(){
     const queued = new Set(originalsSyncRef.current.queue.map(it => it.videoId));
     const items = videos
       .filter(v => !v.hasOriginal && !queued.has(v.id))
-      .map(v => ({ videoId: v.id, sessionDate, label: v.title || v.name || v.id }));
+      // Each clip keeps its OWN session date — not the batch-wide one — so a
+      // May-19 clip can't be filed under a May-20 cloud session.
+      .map(v => ({ videoId: v.id, sessionDate: v.sessionDate || sessionDate, label: v.title || v.name || v.id }));
     if (!items.length) return;
     originalsSyncRef.current.queue.push(...items);
     originalsSyncRef.current.total += items.length;
@@ -4740,7 +4742,9 @@ function SSAApp(){
       .filter(v => !v.hasProxy)
       .map(v => ({
         videoId: v.id,
-        sessionDate,
+        // Each clip keeps its OWN session date — not the batch-wide
+        // activeDate — so a May-19 clip can't be filed under May 20.
+        sessionDate: v.sessionDate || sessionDate,
         label: v.title || v.name || v.id,
       }));
     if (!items.length) return;
