@@ -23,6 +23,17 @@ const OFFSET_KEY = "ssa:syncOffsets";
 function getSyncOffsets() { try { const v=localStorage.getItem(OFFSET_KEY); return v?JSON.parse(v):{};} catch{return{};} }
 function saveSyncOffset(videoId, secs) { try { const o=getSyncOffsets(); if(secs===0){delete o[videoId];}else{o[videoId]=secs;} localStorage.setItem(OFFSET_KEY,JSON.stringify(o));} catch{} }
 
+// Phase 2 — pending originals upload state. When the originals queue creates
+// a Bunny Stream video object but the (resumable) TUS upload doesn't finish,
+// we keep its GUID keyed by local video id. A later run reuses the same
+// Stream video so tus-js-client resumes the upload instead of restarting it.
+// Cleared once the upload completes.
+const PENDING_ORIG_KEY = "ssa:pendingOrigStream";
+function getPendingOrigStreams() { try { const v=localStorage.getItem(PENDING_ORIG_KEY); return v?JSON.parse(v):{};} catch{return{};} }
+function getPendingOrigStream(videoId) { return getPendingOrigStreams()[videoId] || null; }
+function setPendingOrigStream(videoId, streamId) { try { const o=getPendingOrigStreams(); o[videoId]=streamId; localStorage.setItem(PENDING_ORIG_KEY,JSON.stringify(o));} catch{} }
+function clearPendingOrigStream(videoId) { try { const o=getPendingOrigStreams(); delete o[videoId]; localStorage.setItem(PENDING_ORIG_KEY,JSON.stringify(o));} catch{} }
+
 // ─── VIDEO CREATION TIME ─────────────────────────────────────────────────────
 // Scan a buffer for the `mvhd` atom and return its creation_time in ms (UTC).
 // MP4 stores creation_time as seconds since 1904-01-01 UTC.
@@ -4480,25 +4491,66 @@ function SSAApp(){
             originalsSyncRef.current.done = idx; continue;
           }
 
-          const res = await syncOriginalForVideo({
-            videoId: cloudId,
-            sessionDate: item.sessionDate,
-            source: blob,
-            onProgress: ({ pct }) => {
+          // Bunny Stream's TUS metadata wants a File (name + type).
+          const safeName = `${(label || cloudId)}`.replace(/[^\w.-]+/g, '_');
+          const fileForUpload = new File([blob], `${safeName}.mp4`, {
+            type: blob.type || 'video/mp4',
+          });
+
+          // Reuse a Stream video object from a prior unfinished attempt so the
+          // TUS client resumes it; otherwise create a fresh one.
+          let streamId = getPendingOrigStream(item.videoId);
+          if (!streamId) {
+            const created = await createStreamUpload(label || cloudId, blob.size);
+            streamId = created?.streamId || null;
+            if (streamId) setPendingOrigStream(item.videoId, streamId);
+          }
+          if (!streamId) {
+            console.warn('[originals] could not create Stream video for', item.videoId);
+            originalsSyncRef.current.done = idx; continue;
+          }
+
+          // Resumable TUS upload to Bunny Stream. uploadFileToStream auto-
+          // retries dropped chunks and resumes from localStorage; a hard
+          // failure leaves the pending streamId so the next run continues it.
+          const uploaded = await uploadFileToStream(
+            { streamId },
+            fileForUpload,
+            (pct) => {
               setMobileSyncState({
                 phase: 'pushing',
                 message: `Uploading HD ${idx}/${total} · ${label}`,
-                progress: Math.round((pct || 0) * 100),
+                progress: pct,
               });
-            },
-          });
-          if (res.ok) {
-            setAllVideos(p => p.map(v => v.id === item.videoId
-              ? { ...v, hasOriginal: true, originalPath: res.originalPath }
-              : v));
-          } else {
-            console.warn('[originals] upload failed for', item.videoId, res.error);
+            }
+          );
+          if (!uploaded) {
+            console.warn('[originals] Stream upload interrupted for', item.videoId);
+            originalsSyncRef.current.done = idx; continue;
           }
+
+          // Record the original (its Bunny Stream GUID) on the Supabase row.
+          try {
+            const patchRes = await fetch(
+              `/api/videos/${encodeURIComponent(cloudId)}/renditions`,
+              {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ original: { streamId } }),
+              }
+            );
+            if (!patchRes.ok) {
+              const j = await patchRes.json().catch(() => null);
+              console.warn('[originals] renditions PATCH failed:', j?.error || patchRes.status);
+            }
+          } catch (e) {
+            console.warn('[originals] renditions PATCH threw:', e);
+          }
+
+          clearPendingOrigStream(item.videoId);
+          setAllVideos(p => p.map(v => v.id === item.videoId
+            ? { ...v, hasOriginal: true, originalStreamId: streamId }
+            : v));
         } catch (e) {
           console.error('[originals] failed for', item.videoId, e);
         }
