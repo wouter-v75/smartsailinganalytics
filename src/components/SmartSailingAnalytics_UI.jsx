@@ -607,7 +607,14 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     if(isHls){
       const init=()=>{
         if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
-        if(window.Hls?.isSupported()){const hls=new window.Hls();hls.loadSource(video.objectUrl);hls.attachMedia(vidRef.current);hlsRef.current=hls;}
+        if(window.Hls?.isSupported()){
+          // Tuned for weak field wifi: start on the lowest rendition so
+          // playback begins immediately (then adapt up only if bandwidth
+          // allows), cap quality to the on-screen video size, and buffer
+          // well ahead so brief wifi dropouts don't stall the video.
+          const hls=new window.Hls({startLevel:0,capLevelToPlayerSize:true,maxBufferLength:60,maxMaxBufferLength:120});
+          hls.loadSource(video.objectUrl);hls.attachMedia(vidRef.current);hlsRef.current=hls;
+        }
         else if(vidRef.current.canPlayType("application/vnd.apple.mpegurl"))vidRef.current.src=video.objectUrl;
       };
       if(!window.Hls){const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.14/hls.min.js";s.onload=init;document.head.appendChild(s);}
