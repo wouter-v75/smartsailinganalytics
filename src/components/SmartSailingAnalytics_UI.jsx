@@ -1464,8 +1464,9 @@ function UploadTab({role,cloudStatus,onImported}){
             tzOffsetMinutes: csvTz,
           });
           if (ok) addLog(`☁ Log synced to cloud → ${d}`);
+          else addLog(`⚠ Log saved on this device only — could not reach the cloud (is an active boat workspace selected?)`);
         }
-      } catch (e) { /* non-fatal — local copy is the source of truth until L3.F */ }
+      } catch (e) { addLog(`⚠ Log cloud sync failed — saved on this device only`); }
       addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows) → ${d}`);
     }
     if (xmlParsed) {
@@ -1483,8 +1484,9 @@ function UploadTab({role,cloudStatus,onImported}){
             xmlData: { ...xmlParsed, fileName: xmlFile.name },
           });
           if (ok) addLog(`☁ Events synced to cloud → ${d}`);
+          else addLog(`⚠ Events saved on this device only — could not reach the cloud (is an active boat workspace selected?)`);
         }
-      } catch (e) { /* non-fatal */ }
+      } catch (e) { addLog(`⚠ Events cloud sync failed — saved on this device only`); }
       if (xmlParsed.meta?.sailsUsed?.length) {
         const newTags = xmlParsed.meta.sailsUsed.map(s => s.toLowerCase());
         try {
