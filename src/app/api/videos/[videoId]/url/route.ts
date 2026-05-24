@@ -1,25 +1,65 @@
 // GET /api/videos/:videoId/url[?prefer=original|proxy]
 //
-// Returns a short-lived signed Bunny URL for the requested rendition.
+// Returns a playable URL for the requested rendition of a video.
 // RLS does the heavy lifting — the supabase client uses the caller's
 // session cookie, so a query for a video they can't see returns nothing.
 //
+// Two kinds of URL can come back:
+//   kind: 'hls' — a Bunny Stream adaptive-bitrate playlist (.m3u8). Since
+//                 Phase 2 the full-resolution original is uploaded to Bunny
+//                 Stream; Phase 3 serves its adaptive HLS once encoding has
+//                 finished. The player streams the rendition that fits the
+//                 viewer's connection.
+//   kind: 'mp4' — a short-lived signed Bunny Storage URL (the proxy, or a
+//                 legacy original / pre-migration row).
+//
 // Selection rule:
-//   prefer=original:    serve original if has_original, else proxy.
-//   prefer=proxy:       serve proxy if has_proxy, else original (fallback).
-//   (no prefer / 'auto'): original if available, else proxy.
+//   prefer=original / auto : original (Stream HLS if encoded, else legacy
+//                            Storage original) → else proxy → else legacy.
+//   prefer=proxy           : proxy → else original → else legacy.
 //
-// Response: { url, expires_at, served: 'original' | 'proxy' | 'legacy',
-//             has_proxy, has_original }
+// While a freshly-uploaded original is still encoding on Bunny's side, the
+// original isn't playable yet, so the request transparently falls back to the
+// proxy — that's the "instant preview, HD when ready" behaviour.
 //
-// The 'legacy' served value covers rows that pre-date the proxy migration —
-// they only have bunny_storage_path. Returned URL still signs that path.
+// Response: { url, kind, served, expires_at, has_proxy, has_original }
+//   served ∈ 'original' | 'proxy' | 'legacy'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../lib/supabase/server'
 import { bunnyConfigured, signBunnyUrl } from '../../../../../lib/bunny-signed-url'
 
 type Prefer = 'original' | 'proxy' | 'auto'
+type Served = 'original' | 'proxy' | 'legacy'
+interface Resolved {
+  url: string
+  kind: 'hls' | 'mp4'
+  served: Served
+  expires: number | null
+}
+
+const STREAM_KEY = process.env.BUNNY_STREAM_API_KEY
+const LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID
+const CDN_HOST = process.env.BUNNY_CDN_HOSTNAME || ''
+
+// If the Bunny Stream video has finished encoding (status 4), return its
+// adaptive HLS playlist URL; otherwise null (not playable yet).
+async function streamHlsUrl(guid: string): Promise<string | null> {
+  if (!STREAM_KEY || !LIBRARY_ID || !CDN_HOST) return null
+  try {
+    const res = await fetch(
+      `https://video.bunnycdn.com/library/${LIBRARY_ID}/videos/${guid}`,
+      { headers: { AccessKey: STREAM_KEY }, cache: 'no-store' }
+    )
+    if (!res.ok) return null
+    const v = (await res.json()) as { status?: number }
+    // status 4 = finished encoding → adaptive renditions exist.
+    if (v?.status === 4) return `https://${CDN_HOST}/${guid}/playlist.m3u8`
+    return null
+  } catch {
+    return null
+  }
+}
 
 export async function GET(
   req: NextRequest,
@@ -48,7 +88,7 @@ export async function GET(
   const { data: v, error } = await ssr
     .from('videos')
     .select(
-      'id, has_proxy, has_original, bunny_proxy_path, bunny_original_path, bunny_storage_path, title'
+      'id, has_proxy, has_original, bunny_proxy_path, bunny_original_path, bunny_original_stream_id, bunny_storage_path, title'
     )
     .eq('id', params.videoId)
     .maybeSingle()
@@ -56,54 +96,62 @@ export async function GET(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   if (!v) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
-  // Resolve path + served rendition.
-  let path: string | null = null
-  let served: 'original' | 'proxy' | 'legacy' = 'legacy'
-
-  if (prefer === 'proxy') {
-    if (v.has_proxy && v.bunny_proxy_path) {
-      path = v.bunny_proxy_path
-      served = 'proxy'
-    } else if (v.has_original && v.bunny_original_path) {
-      path = v.bunny_original_path
-      served = 'original'
+  // ── Rendition resolvers ────────────────────────────────────────────────────
+  const resolveOriginal = async (): Promise<Resolved | null> => {
+    // Phase 2/3 — original lives in Bunny Stream as adaptive HLS.
+    if (v.bunny_original_stream_id) {
+      const hls = await streamHlsUrl(v.bunny_original_stream_id)
+      if (hls) return { url: hls, kind: 'hls', served: 'original', expires: null }
+      // Stream video exists but hasn't finished encoding — not playable yet.
     }
-  } else {
-    // 'original' or 'auto' — both prefer original first.
+    // Legacy — original as a signed Bunny Storage MP4.
     if (v.has_original && v.bunny_original_path) {
-      path = v.bunny_original_path
-      served = 'original'
-    } else if (v.has_proxy && v.bunny_proxy_path) {
-      path = v.bunny_proxy_path
-      served = 'proxy'
+      const signed = signBunnyUrl({ path: v.bunny_original_path })
+      if (signed) {
+        return { url: signed.url, kind: 'mp4', served: 'original', expires: signed.expires }
+      }
     }
+    return null
   }
 
-  // Legacy fallback: rows that pre-date this migration.
-  if (!path && v.bunny_storage_path) {
-    path = v.bunny_storage_path
-    served = 'legacy'
+  const resolveProxy = (): Resolved | null => {
+    if (v.has_proxy && v.bunny_proxy_path) {
+      const signed = signBunnyUrl({ path: v.bunny_proxy_path })
+      if (signed) {
+        return { url: signed.url, kind: 'mp4', served: 'proxy', expires: signed.expires }
+      }
+    }
+    return null
   }
 
-  if (!path) {
-    return NextResponse.json(
-      { error: 'no rendition available' },
-      { status: 404 }
-    )
+  const resolveLegacy = (): Resolved | null => {
+    // Rows that pre-date the proxy migration — only bunny_storage_path.
+    if (v.bunny_storage_path) {
+      const signed = signBunnyUrl({ path: v.bunny_storage_path })
+      if (signed) {
+        return { url: signed.url, kind: 'mp4', served: 'legacy', expires: signed.expires }
+      }
+    }
+    return null
   }
 
-  const signed = signBunnyUrl({ path })
-  if (!signed) {
-    return NextResponse.json(
-      { error: 'failed to sign URL' },
-      { status: 500 }
-    )
+  let result: Resolved | null = null
+  if (prefer === 'proxy') {
+    result = resolveProxy() || (await resolveOriginal()) || resolveLegacy()
+  } else {
+    // 'original' and 'auto' both prefer the original first.
+    result = (await resolveOriginal()) || resolveProxy() || resolveLegacy()
+  }
+
+  if (!result) {
+    return NextResponse.json({ error: 'no rendition available' }, { status: 404 })
   }
 
   return NextResponse.json({
-    url: signed.url,
-    expires_at: signed.expires,
-    served,
+    url: result.url,
+    kind: result.kind,
+    served: result.served,
+    expires_at: result.expires,
     has_proxy: Boolean(v.has_proxy),
     has_original: Boolean(v.has_original),
   })
