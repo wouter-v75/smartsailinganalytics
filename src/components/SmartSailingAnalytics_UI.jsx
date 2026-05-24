@@ -2,9 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
 import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady, createStreamUpload, uploadFileToStream } from "../lib/bunny";
-import PhotosTab from "./PhotosTab";
-import SquashShotsApp from "./SquashShotsApp";
-import SailScanTab from "./SailScanTab";
+import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   buildSpline, evalSpline, goldenMax, preparePolar,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
@@ -17,6 +15,18 @@ import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { getActiveMembership } from '../lib/active-membership';
+
+// ── Lazy-loaded tab components ──────────────────────────────────────────────
+// Each ships as its own JS chunk the browser downloads only when the user
+// first opens that tab — keeps the initial app bundle small (matters on
+// phones / slow wifi). A user whose role hides a tab can never open it, so
+// its chunk is simply never downloaded for them.
+const TabLoading = () => (
+  <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",minHeight:240,color:"#475569",fontSize:13}}>Loading…</div>
+);
+const PhotosTab      = dynamic(() => import("./PhotosTab"),      { ssr:false, loading:TabLoading });
+const SquashShotsApp = dynamic(() => import("./SquashShotsApp"), { ssr:false, loading:TabLoading });
+const SailScanTab    = dynamic(() => import("./SailScanTab"),    { ssr:false, loading:TabLoading });
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
