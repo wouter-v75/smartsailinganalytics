@@ -1108,12 +1108,17 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
 // originals. Progress rides the shared `syncState` channel (mobileSyncState)
 // that the auto-sync queue also drives.
 function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
-  const total     = videos.length;
-  const haveProxy = videos.filter(v=>v.hasProxy).length;
-  const haveOrig  = videos.filter(v=>v.hasOriginal).length;
+  // Only clips whose source file is on this device can be synced from here,
+  // so the panel counts (and the buttons) consider just those.
+  const syncable  = videos.filter(v=>v.hasLocalBlob);
+  const total     = syncable.length;
+  const haveProxy = syncable.filter(v=>v.hasProxy).length;
+  const haveOrig  = syncable.filter(v=>v.hasOriginal).length;
   const needProxy = total - haveProxy;
   const needOrig  = total - haveOrig;
   const busy      = syncState?.phase==="pushing" || syncState?.phase==="pulling";
+  // Nothing on this device to sync — hide the panel entirely.
+  if (total === 0) return null;
 
   const row = (label, have, color) => (
     <div style={{marginBottom:6}}>
@@ -4272,18 +4277,37 @@ function SSAApp(){
     // ── Load videos ─────────────────────────────────────────────────────────
     let vids=await getVideosForDate(date);
     if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
-    // Supabase first when active membership; merge into result so locals
-    // and cloud-only videos coexist (deduped by streamId / id).
+    // Merge Supabase rows in. A clip can exist BOTH on this device (local
+    // IDB, has the blob) and in Supabase (a cloud row). They must collapse
+    // to ONE entry, or the library shows duplicates and batch-sync tries to
+    // sync the blob-less cloud copy. The link is external_id (the cloud row
+    // stores the local IDB id it was mirrored from); legacy rows fall back
+    // to a bunny_stream_id match. When a match is found we keep the LOCAL
+    // entry (its id + blob drive transcode/upload/crop) and copy the cloud
+    // rendition state onto it; the cloud UUID is stashed as `cloudId` for
+    // rendition PATCH + playback-URL resolution.
     try {
       const supabase=getBrowserSupabase();
       const {data:{user}}=await supabase.auth.getUser();
       if(user){
         const cloudVids=await listVideosCloud({userId:user.id,date});
         if(cloudVids.length){
-          const seen=new Set(vids.map(v=>v.streamId).filter(Boolean));
+          const localById=new Map(vids.map(v=>[v.id,v]));
+          const localByStream=new Map(vids.filter(v=>v.streamId).map(v=>[v.streamId,v]));
           for(const cv of cloudVids){
-            if(cv.bunny_stream_id && seen.has(cv.bunny_stream_id)) continue;
-            vids.push(toLegacyVideoShape(cv));
+            const shaped=toLegacyVideoShape(cv);
+            const local=(shaped.externalId && localById.get(shaped.externalId))
+                      || (cv.bunny_stream_id && localByStream.get(cv.bunny_stream_id))
+                      || null;
+            if(local){
+              local.cloudId=shaped.id;
+              local.hasProxy=shaped.hasProxy;
+              local.hasOriginal=shaped.hasOriginal;
+              local.originalStreamId=shaped.originalStreamId;
+              if(shaped.streamId && !local.streamId) local.streamId=shaped.streamId;
+            } else {
+              vids.push(shaped); // cloud-only clip (uploaded from another device)
+            }
           }
         }
       }
@@ -4300,10 +4324,12 @@ function SSAApp(){
     const needsResolve=vids.filter(v=>!v.objectUrl && (v.streamId || v.hasProxy || v.hasOriginal));
     if(needsResolve.length){
       await Promise.all(needsResolve.map(async v=>{
-        // Phase B path — preferred when available.
+        // Phase B path — preferred when available. The signed-URL endpoint
+        // is keyed by the Supabase row id, so use cloudId when this is a
+        // merged local entry (its own id is the local IDB key).
         if(v.hasProxy || v.hasOriginal){
           try{
-            const res=await fetch(`/api/videos/${encodeURIComponent(v.id)}/url?prefer=auto`);
+            const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=auto`);
             if(res.ok){
               const j=await res.json();
               if(j?.url){
@@ -4572,7 +4598,10 @@ function SSAApp(){
   // so a slow link is never hit with a multi-GB upload by surprise.
   async function handleBatchSyncProxies(){
     if (!cloudStatus?.available) return;
-    const toSync = allVideos.filter(v => !v.hasProxy);
+    // Only clips whose source file is on THIS device can be transcoded +
+    // uploaded from here. Cloud-only clips (uploaded elsewhere) have no
+    // local blob — skip them rather than erroring on a missing blob.
+    const toSync = allVideos.filter(v => !v.hasProxy && v.hasLocalBlob);
     if (!toSync.length) return;
     enqueueAutoSync(toSync, activeDate);
     await processAutoSyncQueue();
@@ -4584,7 +4613,8 @@ function SSAApp(){
   // this only when on fast wifi.
   function handleBatchUploadOriginals(){
     if (!cloudStatus?.available) return;
-    const toUpload = allVideos.filter(v => !v.hasOriginal);
+    // Only clips with the source file on this device can be uploaded.
+    const toUpload = allVideos.filter(v => !v.hasOriginal && v.hasLocalBlob);
     if (!toUpload.length) return;
     enqueueOriginals(toUpload, activeDate);
     processOriginalsQueue();

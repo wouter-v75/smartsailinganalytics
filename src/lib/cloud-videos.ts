@@ -28,6 +28,8 @@ export interface CloudVideoRow {
   bytes: number | null
   created_at: string
   created_by_user_id: string | null
+  /** Links a cloud row back to the local IDB video it was mirrored from. */
+  external_id?: string | null
   // joined
   sessions?: { date: string } | null
 }
@@ -257,6 +259,9 @@ export function makeVideoMirrorCallback({
 export function toLegacyVideoShape(v: CloudVideoRow): Record<string, unknown> {
   return {
     id: v.id,
+    /** Local IDB id this cloud row was mirrored from — used to de-dupe a
+     *  clip that exists both on this device and in Supabase. */
+    externalId: v.external_id || null,
     title: v.title,
     name: v.title,
     sessionDate: v.sessions?.date || '',
