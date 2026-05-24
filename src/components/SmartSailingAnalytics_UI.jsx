@@ -3645,8 +3645,10 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
               ))}
           </div>
         )}
-        {/* Sync offset — coach + admin only */}
-        {perms.canSync && (
+        {/* Sync offset — coach + admin only. Gate on effectiveRole (the real
+            membership role); perms.canSync follows the legacy `role` selector
+            which defaults to "coach", so it leaked this card to TL1/TL2. */}
+        {['admin','coach'].includes(effectiveRole) && (
         <div style={{marginBottom:12}}>
           <SyncControl offset={syncOffsets[video.id]||0}
             onChange={v=>{saveSyncOffset(video.id,v);setSyncOffsets(p=>({...p,[video.id]:v}));}}/>
@@ -3743,8 +3745,12 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                       border:`1px solid ${selectedVideo?.id===v.id?"#06B6D4":"#1E3A5A"}`,
                       borderRadius:10,overflow:"hidden",marginBottom:8,cursor:"pointer",
                       minHeight:64,alignItems:"stretch"}}>
-                    {/* Thumbnail */}
-                    <div style={{width:96,flexShrink:0,background:"#071624",position:"relative",overflow:"hidden"}}>
+                    {/* Thumbnail. minHeight:64 gives the box a height of its
+                        own — it must never depend solely on align-items:stretch
+                        propagating through the flex row, which collapses to 0
+                        on some mobile browsers (blank thumbnails in portrait).
+                        With a guaranteed height, the inset:0 image resolves. */}
+                    <div style={{width:96,flexShrink:0,minHeight:64,alignSelf:"stretch",background:"#071624",position:"relative",overflow:"hidden"}}>
                       {/* Fill the thumbnail box with position:absolute/inset:0
                           — height:100% does not resolve reliably inside a
                           flex item, which left thumbnails blank in portrait. */}
@@ -5397,7 +5403,7 @@ function SSAApp(){
                       {[["Avg TWS",selectedVideo.twsAvg,"kt","#7DD3FC"],["Avg TWA",selectedVideo.twaAvg,"°","#7DD3FC"],["Avg VMG",selectedVideo.vmgAvg,"kt","#22C55E"],["Polar %",selectedVideo.polpercAvg,"%",selectedVideo.polpercAvg==null?"#22C55E":selectedVideo.polpercAvg>=110?"#166534":selectedVideo.polpercAvg>=90?"#22C55E":"#EF4444"],["Target %",selectedVideo.vsTargPercAvg,"%",selectedVideo.vsTargPercAvg==null?"#22C55E":selectedVideo.vsTargPercAvg>=110?"#166534":selectedVideo.vsTargPercAvg>=90?"#22C55E":"#EF4444"],["Avg BSP",selectedVideo.bspAvg,"kt","#10B981"]].map(([l,val,u,c])=>(<div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div><div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}<span style={{fontSize:10,marginLeft:2}}>{u}</span></div></div>))}
                     </div>
                   )}
-                  {perms.canSync && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>}
+                  {['admin','coach'].includes(effectiveRole) && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>}
                   <div style={{marginBottom:12}}>
                     <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
                       await updateVideoStartUtc(id,startUtc);
