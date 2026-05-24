@@ -12,7 +12,7 @@ import { getBrowserSupabase } from '../lib/supabase/browser';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId } from '../lib/cloud-videos';
-import { syncProxyForVideo } from '../lib/video-rendition-sync';
+import { syncProxyForVideo, syncOriginalForVideo } from '../lib/video-rendition-sync';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
@@ -151,6 +151,29 @@ function useIsMobile(){
     return ()=>mq.removeEventListener("change", handler);
   },[]);
   return mobile;
+}
+
+// Best-effort "are we on an unmetered link" check for the two-tier sync.
+// Used to decide whether full-resolution originals may upload automatically
+// ("auto on wifi"). The Network Information API is uneven: Chrome/Android
+// exposes `connection.type` ('wifi'|'cellular'|…); most desktop browsers and
+// iOS Safari expose nothing at all. Logic:
+//   - explicit wifi/ethernet  → unmetered (true)
+//   - explicit cellular/etc.  → metered   (false)
+//   - data-saver requested    → metered   (false)
+//   - no usable signal        → assume desktop is unmetered, but make mobile
+//                                fall back to the manual batch button.
+// A wrong "true" only ever costs bandwidth on a metered link; the user can
+// still force an upload via the batch button regardless of this result.
+function isLikelyUnmetered(isMobile){
+  const c = (typeof navigator !== "undefined") &&
+    (navigator.connection || navigator.mozConnection || navigator.webkitConnection);
+  if(!c) return !isMobile;                 // no API (desktop Safari/FF, iOS)
+  if(c.saveData) return false;             // user explicitly asked to save data
+  const t = typeof c.type === "string" ? c.type : "";
+  if(t === "wifi" || t === "ethernet") return true;
+  if(t === "cellular" || t === "wimax" || t === "bluetooth" || t === "other" || t === "none") return false;
+  return !isMobile;                        // no `type` signal → trust desktop only
 }
 
 // Inject mobile-specific CSS once (touch targets, overscroll, safe areas)
@@ -1087,6 +1110,63 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
           {error}
         </div>
       )}
+    </div>
+  );
+}
+
+// Phase B.3 — session-level batch sync. Coach/admin tool shown in the
+// library's left column. One press transcodes + uploads proxies for every
+// un-proxied clip in the session; a second button uploads full-resolution
+// originals. Progress rides the shared `syncState` channel (mobileSyncState)
+// that the auto-sync queue also drives.
+function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
+  const total     = videos.length;
+  const haveProxy = videos.filter(v=>v.hasProxy).length;
+  const haveOrig  = videos.filter(v=>v.hasOriginal).length;
+  const needProxy = total - haveProxy;
+  const needOrig  = total - haveOrig;
+  const busy      = syncState?.phase==="pushing" || syncState?.phase==="pulling";
+
+  const row = (label, have, color) => (
+    <div style={{marginBottom:6}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:9,marginBottom:3}}>
+        <span style={{color:"#475569",letterSpacing:1,textTransform:"uppercase"}}>{label}</span>
+        <span style={{color:total>0&&have===total?color:"#64748B",fontFamily:"monospace"}}>{have}/{total}</span>
+      </div>
+      <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
+        <div style={{height:"100%",width:`${total?Math.round((have/total)*100):0}%`,background:color,transition:"width .3s"}}/>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{background:"#071624",borderRadius:8,padding:"10px 11px",border:"1px solid #1E3A5A",marginBottom:12}}>
+      <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Cloud sync · session</div>
+      {row("Proxies · 720p", haveProxy, "#06B6D4")}
+      {row("Originals · HD", haveOrig, "#8B5CF6")}
+      {busy && syncState?.message && (
+        <div style={{margin:"7px 0"}}>
+          <div style={{fontSize:9,color:"#7DD3FC",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:3}}>{syncState.message}</div>
+          <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${syncState.progress||0}%`,background:"#06B6D4",transition:"width .3s"}}/>
+          </div>
+        </div>
+      )}
+      <button onClick={onSyncProxies} disabled={busy||needProxy===0}
+        style={{width:"100%",marginTop:8,background:needProxy===0?"#0A1929":"#06B6D4",border:"none",borderRadius:6,
+          padding:"7px 0",color:needProxy===0?"#475569":"#000",fontWeight:700,fontSize:11,
+          cursor:(busy||needProxy===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
+        {needProxy===0?"✓ All proxies synced":`☁ Sync ${needProxy} prox${needProxy===1?"y":"ies"}`}
+      </button>
+      <button onClick={onUploadOriginals} disabled={busy||needOrig===0}
+        style={{width:"100%",marginTop:6,background:"none",border:`1px solid ${needOrig===0?"#1E3A5A":"#8B5CF6"}`,
+          borderRadius:6,padding:"6px 0",color:needOrig===0?"#475569":"#A78BFA",fontWeight:700,fontSize:11,
+          cursor:(busy||needOrig===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
+        {needOrig===0?"✓ All originals uploaded":`⇪ Upload ${needOrig} original${needOrig===1?"":"s"}`}
+      </button>
+      <div style={{fontSize:8,color:"#334155",marginTop:6,lineHeight:1.4}}>
+        Proxies stream instantly on phones. Originals are full quality — uploaded automatically on wifi.
+      </div>
     </div>
   );
 }
@@ -3902,11 +3982,27 @@ function SSAApp(){
   // The Ref-based queue avoids stale-closure problems with the processor loop;
   // the React state lives only on the visible progress strip.
   const autoSyncRef = useRef({
-    queue: [],    // [{videoId, sessionDate}, …]
+    queue: [],          // [{videoId, sessionDate, label}, …]
+    running: false,
+    activePromise: null,// in-flight drain promise — lets the batch flow await it
+    done: 0,
+    total: 0,
+  });
+
+  // ── Phase B.3 originals queue ───────────────────────────────────────────────
+  // Full-resolution originals follow the proxies ("two-tier" sync). They are
+  // large, so the queue only drains on an unmetered link unless force-run via
+  // the batch button. A connection-change listener resumes a held queue.
+  const originalsSyncRef = useRef({
+    queue: [],          // [{videoId, sessionDate, label}, …]
     running: false,
     done: 0,
     total: 0,
   });
+  // Shared timer that clears the progress strip a few seconds after a queue
+  // finishes. Held in a ref so a follow-on phase (proxies → originals) can
+  // cancel the pending clear instead of having its progress wiped mid-run.
+  const syncClearTimerRef = useRef(null);
 
   // Batch select / delete — admin + coach only
   const[batchMode,setBatchMode]=useState(false);
@@ -4253,11 +4349,14 @@ function SSAApp(){
     setSelectedVideo(vids[0]||null);
   }
 
-  // Run the auto-sync queue until it's empty. Idempotent — multiple calls
-  // while running are no-ops; the live loop pulls whatever's queued at the
-  // moment it needs the next item.
-  async function processAutoSyncQueue(){
-    if (autoSyncRef.current.running) return;
+  // Run the proxy auto-sync queue until it's empty. Returns the in-flight
+  // drain promise so callers (the batch flow) can await completion; repeated
+  // calls while running return the same promise rather than starting a
+  // second drain.
+  function processAutoSyncQueue(){
+    if (autoSyncRef.current.activePromise) return autoSyncRef.current.activePromise;
+    autoSyncRef.current.activePromise = (async () => {
+    if (syncClearTimerRef.current) { clearTimeout(syncClearTimerRef.current); syncClearTimerRef.current = null; }
     autoSyncRef.current.running = true;
     try {
       while (autoSyncRef.current.queue.length > 0) {
@@ -4338,9 +4437,152 @@ function SSAApp(){
       setMobileSyncState({ phase: 'done', message: `✓ Synced ${finalCount} clip${finalCount===1?'':'s'}`, progress: 100 });
       autoSyncRef.current.done = 0;
       autoSyncRef.current.total = 0;
-      setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
+      syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
+    }
+    })();
+    autoSyncRef.current.activePromise.finally(() => { autoSyncRef.current.activePromise = null; });
+    return autoSyncRef.current.activePromise;
+  }
+
+  // ── Phase B.3 originals queue ───────────────────────────────────────────────
+  // Add session clips to the originals upload queue. Skips anything already
+  // uploaded or already queued.
+  function enqueueOriginals(videos, sessionDate){
+    if (!videos?.length) return;
+    const queued = new Set(originalsSyncRef.current.queue.map(it => it.videoId));
+    const items = videos
+      .filter(v => !v.hasOriginal && !queued.has(v.id))
+      .map(v => ({ videoId: v.id, sessionDate, label: v.title || v.name || v.id }));
+    if (!items.length) return;
+    originalsSyncRef.current.queue.push(...items);
+    originalsSyncRef.current.total += items.length;
+  }
+
+  // Drain the originals queue. Uploads the full-resolution source bytes (no
+  // transcode). Unless `forced`, it only proceeds on an unmetered link and
+  // pauses — leaving the rest queued — if the link goes metered mid-batch.
+  async function processOriginalsQueue({ forced = false } = {}){
+    if (originalsSyncRef.current.running) return;
+    if (autoSyncRef.current.activePromise) return;        // let proxies finish first
+    if (!originalsSyncRef.current.queue.length) return;
+    if (!forced && !isLikelyUnmetered(isMobile)) return;  // hold for wifi
+    if (syncClearTimerRef.current) { clearTimeout(syncClearTimerRef.current); syncClearTimerRef.current = null; }
+    originalsSyncRef.current.running = true;
+    try {
+      while (originalsSyncRef.current.queue.length > 0) {
+        // Re-check the link between clips — pause a non-forced run if wifi drops.
+        if (!forced && !isLikelyUnmetered(isMobile)) break;
+        const item = originalsSyncRef.current.queue.shift();
+        const idx = originalsSyncRef.current.done + 1;
+        const total = originalsSyncRef.current.total;
+        const label = item.label || `clip ${idx}`;
+
+        setMobileSyncState({ phase: 'pushing', message: `Uploading original ${idx}/${total} · ${label}`, progress: 0 });
+
+        try {
+          const supabase = getBrowserSupabase();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) { originalsSyncRef.current.done = idx; continue; }
+
+          const blob = await getVideoBlob(item.videoId);
+          if (!blob) {
+            console.warn('[originals] no local blob for', item.videoId);
+            originalsSyncRef.current.done = idx; continue;
+          }
+
+          const localVid = (await getAllVideos()).find(v => v.id === item.videoId)
+                          || { id: item.videoId, sessionDate: item.sessionDate };
+          const cloudId = await ensureCloudVideoId({
+            userId: user.id,
+            video: localVid,
+            sessionDate: item.sessionDate,
+          });
+          if (!cloudId) {
+            console.warn('[originals] no cloud row for', item.videoId);
+            originalsSyncRef.current.done = idx; continue;
+          }
+
+          const res = await syncOriginalForVideo({
+            videoId: cloudId,
+            sessionDate: item.sessionDate,
+            source: blob,
+            onProgress: ({ pct }) => {
+              setMobileSyncState({
+                phase: 'pushing',
+                message: `Uploading original ${idx}/${total} · ${label}`,
+                progress: Math.round((pct || 0) * 100),
+              });
+            },
+          });
+          if (res.ok) {
+            setAllVideos(p => p.map(v => v.id === item.videoId
+              ? { ...v, hasOriginal: true, originalPath: res.originalPath }
+              : v));
+          } else {
+            console.warn('[originals] upload failed for', item.videoId, res.error);
+          }
+        } catch (e) {
+          console.error('[originals] failed for', item.videoId, e);
+        }
+        originalsSyncRef.current.done = idx;
+      }
+    } finally {
+      originalsSyncRef.current.running = false;
+      const remaining = originalsSyncRef.current.queue.length;
+      const finalCount = originalsSyncRef.current.done;
+      if (remaining > 0) {
+        // Paused waiting for an unmetered link — keep counters so a resume continues.
+        setMobileSyncState({ phase: 'done', message: `⏸ ${remaining} original${remaining===1?'':'s'} waiting for wifi`, progress: 100 });
+      } else {
+        setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${finalCount} original${finalCount===1?'':'s'}`, progress: 100 });
+        originalsSyncRef.current.done = 0;
+        originalsSyncRef.current.total = 0;
+      }
+      syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3500);
     }
   }
+
+  // Batch "Sync proxies" — coach/admin button. Transcodes + uploads every
+  // un-proxied clip in the session, then queues the originals to follow
+  // (uploaded automatically once the proxies are done, on an unmetered link).
+  async function handleBatchSyncProxies(){
+    if (!cloudStatus?.available) return;
+    const toSync = allVideos.filter(v => !v.hasProxy);
+    if (!toSync.length) return;
+    enqueueAutoSync(toSync, activeDate);
+    await processAutoSyncQueue();
+    enqueueOriginals(toSync, activeDate);
+    processOriginalsQueue({ forced: false });
+  }
+
+  // Batch "Upload originals" — coach/admin button. Forces the full-resolution
+  // upload for the whole session regardless of the link type.
+  function handleBatchUploadOriginals(){
+    if (!cloudStatus?.available) return;
+    const toUpload = allVideos.filter(v => !v.hasOriginal);
+    if (!toUpload.length) return;
+    enqueueOriginals(toUpload, activeDate);
+    processOriginalsQueue({ forced: true });
+  }
+
+  // "Auto on wifi" — when the connection flips to an unmetered link, drain
+  // any originals that were queued while metered. Best-effort: the Network
+  // Information API only fires `change` where it's implemented (Chrome).
+  useEffect(() => {
+    const c = (typeof navigator !== "undefined") &&
+      (navigator.connection || navigator.mozConnection || navigator.webkitConnection);
+    if (!c || typeof c.addEventListener !== "function") return;
+    const onChange = () => {
+      if (originalsSyncRef.current.queue.length > 0
+          && !originalsSyncRef.current.running
+          && !autoSyncRef.current.activePromise) {
+        processOriginalsQueue({ forced: false });
+      }
+    };
+    c.addEventListener("change", onChange);
+    return () => c.removeEventListener("change", onChange);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Add clips to the auto-sync queue and kick the processor if idle.
   // Caller passes the local IDB video records (id + title/name for labels).
@@ -4368,12 +4610,13 @@ function SSAApp(){
     await loadDate(date);
     setActiveTab("library");
 
-    // ── Phase B auto-sync ──────────────────────────────────────────────────
+    // ── Phase B auto-sync (mobile only) ────────────────────────────────────
     // Mobile users (especially TL1/crew/etc.) need their imports to reach
-    // the cloud without having to find a button. Enqueue the new clips for
-    // background proxy generation + upload. No role gate — anyone who can
-    // import gets their stuff synced.
-    if (videos?.length && cloudStatus?.available) {
+    // the cloud without having to find a button, so mobile imports auto-sync
+    // their proxies in the background. Desktop is deliberately NOT auto-synced:
+    // coaches crop clips first and then push everything with the batch
+    // "Sync proxies" button (see BatchSyncPanel / handleBatchSyncProxies).
+    if (isMobile && videos?.length && cloudStatus?.available) {
       enqueueAutoSync(videos, date);
     }
 
@@ -4770,6 +5013,15 @@ function SSAApp(){
                   </button>
                 )}
               </div>}
+              {/* ── Batch cloud sync — coach/admin, Phase B.3 ──────────────── */}
+              {cloudStatus?.available && perms.canSync && allVideos.length>0 && (
+                <BatchSyncPanel
+                  videos={allVideos}
+                  syncState={mobileSyncState}
+                  onSyncProxies={handleBatchSyncProxies}
+                  onUploadOriginals={handleBatchUploadOriginals}
+                />
+              )}
               {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
               {/* ── Batch select toolbar (admin/coach only) ── */}
               {perms.canDelete && allVideos.length > 0 && (
