@@ -3587,7 +3587,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         selectedTags,toggleTag,allTags,isManTag,displayed,perms,
                         setActiveTab,cloudStatus,updateVideoTagsFn,
                         computeAutoTagsFn,sessionTagList,setSessionTagList,
-                        handlePlayUtc,onDeleted,role,
+                        handlePlayUtc,onDeleted,role,effectiveRole,
                         onThumbLoad,videoThumbsLoading,videoLoadedIds,videoTotalThumbs}){
   const [view, setView]   = React.useState("clips"); // "clips" | "player" | "sessions"
   const video = selectedVideo;
@@ -3645,13 +3645,15 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
               ))}
           </div>
         )}
-        {/* Sync offset */}
+        {/* Sync offset — coach + admin only */}
+        {perms.canSync && (
         <div style={{marginBottom:12}}>
           <SyncControl offset={syncOffsets[video.id]||0}
             onChange={v=>{saveSyncOffset(video.id,v);setSyncOffsets(p=>({...p,[video.id]:v}));}}/>
         </div>
-        {/* Tags */}
-        {perms.canImport&&<TagEditor video={video} tagList={sessionTagList} sessionDate={activeDate}
+        )}
+        {/* Tags — admin / coach / TL2 only */}
+        {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={video} tagList={sessionTagList} sessionDate={activeDate}
           onTagListChange={async t=>{
             setSessionTagList(t);
             try {
@@ -3743,17 +3745,20 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                       minHeight:64,alignItems:"stretch"}}>
                     {/* Thumbnail */}
                     <div style={{width:96,flexShrink:0,background:"#071624",position:"relative",overflow:"hidden"}}>
+                      {/* Fill the thumbnail box with position:absolute/inset:0
+                          — height:100% does not resolve reliably inside a
+                          flex item, which left thumbnails blank in portrait. */}
                       {v.thumbnailUrl
                         ? <img src={v.thumbnailUrl} alt="" loading="lazy"
                             onLoad={()=>onThumbLoad?.(v.id)}
                             onError={()=>onThumbLoad?.(v.id)}
-                            style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-                        : v.objectUrl&&v.source!=="cloud"
+                            style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+                        : v.objectUrl&&v.source!=="cloud"&&!String(v.objectUrl).includes(".m3u8")
                           ? <video src={v.objectUrl}
                               onLoadedData={()=>onThumbLoad?.(v.id)}
                               onError={()=>onThumbLoad?.(v.id)}
-                              style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="none"/>
-                          : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:18}}>📹</div>}
+                              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} muted preload="none"/>
+                          : <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:18}}>📹</div>}
                       <div style={{position:"absolute",bottom:2,right:4,background:"rgba(0,0,0,0.8)",
                         borderRadius:2,padding:"0 3px",fontSize:9,color:"#64748B",fontFamily:"monospace"}}>
                         {v.duration?fmtT(v.duration):"--:--"}
@@ -5368,7 +5373,7 @@ function SSAApp(){
                       {[["Avg TWS",selectedVideo.twsAvg,"kt","#7DD3FC"],["Avg TWA",selectedVideo.twaAvg,"°","#7DD3FC"],["Avg VMG",selectedVideo.vmgAvg,"kt","#22C55E"],["Polar %",selectedVideo.polpercAvg,"%",selectedVideo.polpercAvg==null?"#22C55E":selectedVideo.polpercAvg>=110?"#166534":selectedVideo.polpercAvg>=90?"#22C55E":"#EF4444"],["Target %",selectedVideo.vsTargPercAvg,"%",selectedVideo.vsTargPercAvg==null?"#22C55E":selectedVideo.vsTargPercAvg>=110?"#166534":selectedVideo.vsTargPercAvg>=90?"#22C55E":"#EF4444"],["Avg BSP",selectedVideo.bspAvg,"kt","#10B981"]].map(([l,val,u,c])=>(<div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div><div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}<span style={{fontSize:10,marginLeft:2}}>{u}</span></div></div>))}
                     </div>
                   )}
-                  <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>
+                  {perms.canSync && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>}
                   <div style={{marginBottom:12}}>
                     <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
                       await updateVideoStartUtc(id,startUtc);
@@ -5411,7 +5416,7 @@ function SSAApp(){
                       }}
                     />
                   )}
-                  {perms.canImport&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={async updated=>{
+                  {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={async updated=>{
                     setSessionTagList(updated);
                     try {
                       const supabase=getBrowserSupabase();
