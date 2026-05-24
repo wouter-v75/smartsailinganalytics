@@ -27,6 +27,8 @@ import { getServerSupabase } from '../../../../../lib/supabase/server'
 
 interface RenditionPatchBody {
   proxy?: { path: string; bytes?: number | null }
+  /** Proxy uploaded to Bunny Stream (adaptive-bitrate HLS source). */
+  proxyStream?: { streamId: string; bytes?: number | null }
   original?: { path?: string; streamId?: string; bytes?: number | null }
 }
 
@@ -41,9 +43,9 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const body = (await req.json().catch(() => null)) as RenditionPatchBody | null
-  if (!body || (!body.proxy && !body.original)) {
+  if (!body || (!body.proxy && !body.proxyStream && !body.original)) {
     return NextResponse.json(
-      { error: 'expected { proxy?, original? }' },
+      { error: 'expected { proxy?, proxyStream?, original? }' },
       { status: 400 }
     )
   }
@@ -64,6 +66,23 @@ export async function PATCH(
     update.proxy_uploaded_at = new Date().toISOString()
     if (typeof body.proxy.bytes === 'number') {
       update.proxy_bytes = body.proxy.bytes
+    }
+  }
+  if (body.proxyStream) {
+    const { streamId, bytes } = body.proxyStream
+    if (typeof streamId !== 'string' || !streamId) {
+      return NextResponse.json(
+        { error: 'proxyStream.streamId must be a non-empty string' },
+        { status: 400 }
+      )
+    }
+    update.bunny_proxy_stream_id = streamId
+    update.has_proxy = true
+    update.proxy_uploaded_at = new Date().toISOString()
+    // A fresh upload always re-encodes — clear any cached encoding status.
+    update.proxy_stream_status = null
+    if (typeof bytes === 'number') {
+      update.proxy_bytes = bytes
     }
   }
   if (body.original) {
@@ -93,7 +112,7 @@ export async function PATCH(
     .update(update)
     .eq('id', params.videoId)
     .select(
-      'id, has_proxy, has_original, bunny_proxy_path, bunny_original_path, bunny_original_stream_id'
+      'id, has_proxy, has_original, bunny_proxy_path, bunny_proxy_stream_id, bunny_original_path, bunny_original_stream_id'
     )
     .maybeSingle()
 
@@ -105,6 +124,7 @@ export async function PATCH(
     has_proxy: Boolean(data.has_proxy),
     has_original: Boolean(data.has_original),
     proxy_path: data.bunny_proxy_path,
+    proxy_stream_id: data.bunny_proxy_stream_id,
     original_path: data.bunny_original_path,
     original_stream_id: data.bunny_original_stream_id,
   })

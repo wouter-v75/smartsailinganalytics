@@ -836,7 +836,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
       <div style={{position:"relative",background:"#000",aspectRatio:"16/9",width:"100%",overflow:"hidden",borderRadius:"12px 12px 0 0"}}>
         {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration);}}/>:
-         video.source==="processing"?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
+         (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
         {/* On mobile, pin to all-but-bottom so tiles wrap within the
@@ -981,7 +981,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
         {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
          video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
-         video.source==="processing"?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
+         (video.source==="processing"||video.streamProcessing)?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={video.source||"local"}/></div>
@@ -1200,7 +1200,7 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
         // Pass BOTH the local and cloud ids so the UI can update either
         // way it might be looking up.
         onSynced?.(video.id, {
-          proxyPath: result.proxyPath,
+          proxyStreamId: result.proxyStreamId,
           proxyBytes: result.proxyBytes,
           cloudId,
         });
@@ -4138,6 +4138,7 @@ function SSAApp(){
   const[playUtc,setPlayUtc]=useState(null);
   const[photos,setPhotos]=useState([]);
   const[hasMountedAnalytics,setHasMountedAnalytics]=useState(false);
+  const[streamPollTick,setStreamPollTick]=useState(0); // re-arms the Bunny Stream encoding poll
   const playUtcThrottle=useRef(0);
   const[libSyncProgress,setLibSyncProgress]=useState(null);
   const[libSyncPhase,setLibSyncPhase]=useState(null);
@@ -4221,6 +4222,33 @@ function SSAApp(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[activeTab]);
   useEffect(()=>{ setPlayUtc(selectedVideo?.startUtc||null); },[selectedVideo?.id]);
+
+  // Poll Bunny Stream for clips still encoding their adaptive HLS ladder.
+  // Once a clip is ready, swap its playback URL in with no manual reload.
+  // Self-terminating: stops as soon as no clip is left processing, and is
+  // capped (~10 min) so a genuinely stuck encode can't poll forever.
+  useEffect(()=>{
+    if(streamPollTick>30 || !allVideos.some(v=>v.streamProcessing)) return;
+    const t=setTimeout(async()=>{
+      const procs=allVideos.filter(v=>v.streamProcessing);
+      const updates={};
+      await Promise.all(procs.map(async v=>{
+        try{
+          const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=${isMobile?'proxy':'auto'}`);
+          if(!res.ok) return;
+          const j=await res.json();
+          if(j?.url) updates[v.id]={objectUrl:j.url,servedRendition:j.served||null,streamProcessing:false,thumbnailUrl:v.thumbnailUrl||j.thumbnail||null};
+        }catch{}
+      }));
+      if(Object.keys(updates).length){
+        setAllVideos(prev=>prev.map(v=>updates[v.id]?{...v,...updates[v.id]}:v));
+        setSelectedVideo(prev=>(prev&&updates[prev.id])?{...prev,...updates[prev.id]}:prev);
+      }
+      setStreamPollTick(n=>n+1); // re-arm until no clip is processing
+    },20000);
+    return ()=>clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[allVideos,streamPollTick,isMobile]);
 
   // Throttled callback passed to VideoPlayer — ~12 fps max to keep renders light
   const handlePlayUtc=useCallback(utc=>{
@@ -4429,6 +4457,7 @@ function SSAApp(){
     setVideoThumbsLoading(true);
     setVideoLoadedIds(new Set());
     setVideoTotalThumbs(0);
+    setStreamPollTick(0); // fresh encoding-poll budget for the new session
 
     // ── Load log + xml (local first, then Supabase, then Bunny R2) ──────────
     let log = await getLogData(date);
@@ -4555,6 +4584,14 @@ function SSAApp(){
                 if(j.thumbnail && !v.thumbnailUrl) v.thumbnailUrl=j.thumbnail;
                 return;
               }
+              // Rendition is on Bunny Stream but still encoding — flag it so
+              // the player shows the "processing" state; the poll effect
+              // re-checks every 20s until the adaptive stream is ready.
+              if(j?.kind==='processing'){
+                v.streamProcessing=true;
+                if(j.thumbnail && !v.thumbnailUrl) v.thumbnailUrl=j.thumbnail;
+                return;
+              }
             }
           } catch { /* fall through to Stream */ }
         }
@@ -4661,7 +4698,7 @@ function SSAApp(){
           // Update the live UI so the clip's "proxy ready" badge shows up
           // without waiting for a manual refresh.
           setAllVideos(p => p.map(v => v.id === item.videoId
-            ? {...v, hasProxy: true, proxyUploadedAt: new Date().toISOString()}
+            ? {...v, hasProxy: true, cloudId, streamProcessing: true, proxyUploadedAt: new Date().toISOString()}
             : v));
         } catch (e) {
           console.error('[autoSync] failed for', item.videoId, e);
@@ -5513,8 +5550,11 @@ function SSAApp(){
                     <RenditionSyncPanel
                       video={selectedVideo}
                       activeDate={activeDate}
-                      onSynced={(id, {proxyPath, proxyBytes}) => {
-                        const patch = { hasProxy: true, proxyPath, proxyUploadedAt: new Date().toISOString() };
+                      onSynced={(id, {proxyStreamId, proxyBytes, cloudId}) => {
+                        // Proxy is now on Bunny Stream and encoding — flag it
+                        // processing so the poll effect swaps in the adaptive
+                        // URL once Bunny finishes, with no manual reload.
+                        const patch = { hasProxy: true, proxyStreamId, cloudId, streamProcessing: true, proxyUploadedAt: new Date().toISOString() };
                         if (typeof proxyBytes === 'number') patch.proxyBytes = proxyBytes;
                         setAllVideos(p => p.map(v => v.id === id ? {...v, ...patch} : v));
                         setSelectedVideo(p => p && p.id === id ? {...p, ...patch} : p);

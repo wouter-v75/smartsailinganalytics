@@ -20,6 +20,8 @@
 
 import { generateProxy, type ProxyProgress } from './video-proxy'
 import { uploadBlobToStorage, type UploadProgress } from './bunny-storage-upload'
+// @ts-ignore — bunny.js is plain JS without type declarations
+import { createStreamUpload, uploadFileToStream } from './bunny'
 
 /** Path layout — keep aligned with the design in the project memo. */
 export function proxyPathFor(sessionDate: string, videoId: string): string {
@@ -71,7 +73,7 @@ export async function syncProxyForVideo({
   signal,
 }: BaseArgs & { proxyBlobIfAvailable?: Blob | null }): Promise<{
   ok: boolean
-  proxyPath?: string
+  proxyStreamId?: string
   proxyBytes?: number
   proxyBlob?: Blob
   error?: string
@@ -108,35 +110,39 @@ export async function syncProxyForVideo({
       )
     }
 
-    // ── 2. Upload proxy to Bunny Storage ─────────────────────────────
-    const proxyPath = proxyPathFor(sessionDate, videoId)
-    emit({ phase: 'uploading', pct: 0, message: 'Uploading to Bunny…' })
-    const up = await uploadBlobToStorage({
-      key: proxyPath,
-      blob: proxyBlob,
-      contentType: 'video/mp4',
-      signal,
-      onProgress: (u: UploadProgress) => {
+    // ── 2. Upload proxy to Bunny Stream ──────────────────────────────
+    // Bunny Stream encodes the proxy into an adaptive-bitrate HLS ladder
+    // (240p–720p) so playback adapts to the viewer's connection. TUS is
+    // resumable — survives dropped connections on weak field wifi.
+    emit({ phase: 'uploading', pct: 0, message: 'Uploading to Bunny Stream…' })
+    const proxyFile = new File([proxyBlob], `${videoId}.mp4`, {
+      type: 'video/mp4',
+    })
+    const uploadInfo = await createStreamUpload(proxyFile.name, proxyFile.size)
+    if (!uploadInfo?.streamId) {
+      throw new Error('Bunny Stream create failed')
+    }
+    const streamOk = await uploadFileToStream(
+      uploadInfo,
+      proxyFile,
+      (pct: number) => {
         emit({
           phase: 'uploading',
-          pct: u.fraction,
-          message: `${(u.bytesUploaded / 1024 / 1024).toFixed(1)} / ${(
-            u.bytesTotal /
-            1024 /
-            1024
-          ).toFixed(1)} MB`,
-          bytesUploaded: u.bytesUploaded,
-          bytesTotal: u.bytesTotal,
+          pct: (pct || 0) / 100,
+          message: `Uploading to Bunny Stream… ${pct || 0}%`,
         })
-      },
-    })
+      }
+    )
+    if (!streamOk) throw new Error('Bunny Stream upload failed')
 
     // ── 3. Mark in Supabase ──────────────────────────────────────────
     emit({ phase: 'marking', pct: 0, message: 'Recording rendition…' })
     const res = await fetch(`/api/videos/${encodeURIComponent(videoId)}/renditions`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ proxy: { path: up.key, bytes: up.bytes } }),
+      body: JSON.stringify({
+        proxyStream: { streamId: uploadInfo.streamId, bytes: proxyBlob.size },
+      }),
     })
     if (!res.ok) {
       const j = await res.json().catch(() => null)
@@ -144,7 +150,12 @@ export async function syncProxyForVideo({
     }
 
     emit({ phase: 'done', pct: 1, message: 'Proxy ready' })
-    return { ok: true, proxyPath: up.key, proxyBytes: up.bytes, proxyBlob }
+    return {
+      ok: true,
+      proxyStreamId: uploadInfo.streamId,
+      proxyBytes: proxyBlob.size,
+      proxyBlob,
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     emit({ phase: 'error', pct: 0, errorMessage: msg })

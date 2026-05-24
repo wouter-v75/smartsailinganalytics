@@ -24,7 +24,11 @@ export async function POST(req: NextRequest) {
           AccessKey: STREAM_KEY,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ title: fileName, enabledResolutions: "720p,1080p" }),
+        // Encode the full ladder so adaptive streaming has low rungs to drop
+        // to on weak wifi. Bunny only produces renditions up to the source
+        // resolution, so a 720p proxy yields 240–720p and a full original
+        // yields 240–1080p — listing 1080p here is harmless for the proxy.
+        body: JSON.stringify({ title: fileName, enabledResolutions: "240p,360p,480p,720p,1080p" }),
       }
     );
     if (!createRes.ok)
@@ -38,7 +42,9 @@ export async function POST(req: NextRequest) {
     // Required headers for the actual PATCH are set client-side; we just return the URL + streamId.
     const uploadUrl = `https://video.bunnycdn.com/tusupload`;
 
-    return NextResponse.json({ streamId, uploadUrl, libraryId: LIBRARY_ID, apiKey: STREAM_KEY });
+    // NOTE: never return STREAM_KEY to the browser. The TUS upload is
+    // authorised separately via the short-lived signature from /stream/upload.
+    return NextResponse.json({ streamId, uploadUrl, libraryId: LIBRARY_ID });
   } catch (e: unknown) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }

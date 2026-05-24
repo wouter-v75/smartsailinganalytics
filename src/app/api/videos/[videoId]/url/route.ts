@@ -88,7 +88,7 @@ export async function GET(
   const { data: v, error } = await ssr
     .from('videos')
     .select(
-      'id, has_proxy, has_original, bunny_proxy_path, bunny_original_path, bunny_original_stream_id, bunny_storage_path, title'
+      'id, has_proxy, has_original, bunny_proxy_path, bunny_proxy_stream_id, proxy_stream_status, bunny_original_path, bunny_original_stream_id, bunny_storage_path, title'
     )
     .eq('id', params.videoId)
     .maybeSingle()
@@ -114,7 +114,34 @@ export async function GET(
     return null
   }
 
-  const resolveProxy = (): Resolved | null => {
+  const resolveProxy = async (): Promise<Resolved | null> => {
+    // Genuine ABR — the proxy is encoded as an adaptive HLS ladder on Bunny
+    // Stream. Prefer it over the single-bitrate Storage MP4.
+    if (v.bunny_proxy_stream_id) {
+      // Fast path: we've already recorded that this Stream video finished
+      // encoding, so skip the Bunny round-trip.
+      if (v.proxy_stream_status === 4 && CDN_HOST) {
+        return {
+          url: `https://${CDN_HOST}/${v.bunny_proxy_stream_id}/playlist.m3u8`,
+          kind: 'hls',
+          served: 'proxy',
+          expires: null,
+        }
+      }
+      const hls = await streamHlsUrl(v.bunny_proxy_stream_id)
+      if (hls) {
+        // Cache the finished status so future loads skip the round-trip.
+        // RLS-gated; a no-op for callers who can't UPDATE — harmless.
+        await ssr
+          .from('videos')
+          .update({ proxy_stream_status: 4 })
+          .eq('id', params.videoId)
+        return { url: hls, kind: 'hls', served: 'proxy', expires: null }
+      }
+      // Stream video exists but isn't finished encoding — falls through to
+      // the Storage MP4 if there is one, else the `processing` state below.
+    }
+    // Legacy / fallback — proxy as a single-bitrate signed Storage MP4.
     if (v.has_proxy && v.bunny_proxy_path) {
       const signed = signBunnyUrl({ path: v.bunny_proxy_path })
       if (signed) {
@@ -137,23 +164,37 @@ export async function GET(
 
   let result: Resolved | null = null
   if (prefer === 'proxy') {
-    result = resolveProxy() || (await resolveOriginal()) || resolveLegacy()
+    result = (await resolveProxy()) || (await resolveOriginal()) || resolveLegacy()
   } else {
     // 'original' and 'auto' both prefer the original first.
-    result = (await resolveOriginal()) || resolveProxy() || resolveLegacy()
-  }
-
-  if (!result) {
-    return NextResponse.json({ error: 'no rendition available' }, { status: 404 })
+    result = (await resolveOriginal()) || (await resolveProxy()) || resolveLegacy()
   }
 
   // Bunny Stream auto-generates a poster thumbnail for every uploaded video.
   // Hand it back so cloud clips get a card image + a player poster instead
-  // of a black frame. Only available once the clip has an original on Stream.
+  // of a black frame. Available once the clip has any rendition on Stream.
+  const thumbStreamId = v.bunny_original_stream_id || v.bunny_proxy_stream_id
   const thumbnail =
-    v.bunny_original_stream_id && CDN_HOST
-      ? `https://${CDN_HOST}/${v.bunny_original_stream_id}/thumbnail.jpg`
+    thumbStreamId && CDN_HOST
+      ? `https://${CDN_HOST}/${thumbStreamId}/thumbnail.jpg`
       : null
+
+  if (!result) {
+    // A Stream rendition exists but hasn't finished encoding yet — tell the
+    // UI to show the "processing" state and poll, rather than erroring.
+    if (v.bunny_proxy_stream_id || v.bunny_original_stream_id) {
+      return NextResponse.json({
+        url: null,
+        kind: 'processing',
+        served: 'processing',
+        thumbnail,
+        expires_at: null,
+        has_proxy: Boolean(v.has_proxy),
+        has_original: Boolean(v.has_original),
+      })
+    }
+    return NextResponse.json({ error: 'no rendition available' }, { status: 404 })
+  }
 
   return NextResponse.json({
     url: result.url,
