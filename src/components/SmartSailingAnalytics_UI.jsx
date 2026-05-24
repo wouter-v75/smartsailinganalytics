@@ -1117,8 +1117,6 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
   const needProxy = total - haveProxy;
   const needOrig  = total - haveOrig;
   const busy      = syncState?.phase==="pushing" || syncState?.phase==="pulling";
-  // Nothing on this device to sync — hide the panel entirely.
-  if (total === 0) return null;
 
   const row = (label, have, color) => (
     <div style={{marginBottom:6}}>
@@ -1135,31 +1133,41 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
   return (
     <div style={{background:"#071624",borderRadius:8,padding:"10px 11px",border:"1px solid #1E3A5A",marginBottom:12}}>
       <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Cloud sync · session</div>
-      {row("Proxies · 720p", haveProxy, "#06B6D4")}
-      {row("Originals · HD", haveOrig, "#8B5CF6")}
-      {busy && syncState?.message && (
-        <div style={{margin:"7px 0"}}>
-          <div style={{fontSize:9,color:"#7DD3FC",fontFamily:"monospace",lineHeight:1.4,wordBreak:"break-word",marginBottom:3}}>{syncState.message}</div>
-          <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
-            <div style={{height:"100%",width:`${syncState.progress||0}%`,background:"#06B6D4",transition:"width .3s"}}/>
-          </div>
+      {total === 0 ? (
+        <div style={{fontSize:9,color:"#64748B",lineHeight:1.5}}>
+          No clips in this session have their source file on this device, so
+          there is nothing to sync from here. Open the session on the device
+          that imported the clips to sync their proxies and originals.
         </div>
+      ) : (
+        <>
+          {row("Proxies · 720p", haveProxy, "#06B6D4")}
+          {row("Originals · HD", haveOrig, "#8B5CF6")}
+          {busy && syncState?.message && (
+            <div style={{margin:"7px 0"}}>
+              <div style={{fontSize:9,color:"#7DD3FC",fontFamily:"monospace",lineHeight:1.4,wordBreak:"break-word",marginBottom:3}}>{syncState.message}</div>
+              <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
+                <div style={{height:"100%",width:`${syncState.progress||0}%`,background:"#06B6D4",transition:"width .3s"}}/>
+              </div>
+            </div>
+          )}
+          <button onClick={onSyncProxies} disabled={busy||needProxy===0}
+            style={{width:"100%",marginTop:8,background:needProxy===0?"#0A1929":"#06B6D4",border:"none",borderRadius:6,
+              padding:"7px 0",color:needProxy===0?"#475569":"#000",fontWeight:700,fontSize:11,
+              cursor:(busy||needProxy===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
+            {needProxy===0?"✓ All proxies synced":`☁ Sync ${needProxy} prox${needProxy===1?"y":"ies"}`}
+          </button>
+          <button onClick={onUploadOriginals} disabled={busy||needOrig===0}
+            style={{width:"100%",marginTop:6,background:"none",border:`1px solid ${needOrig===0?"#1E3A5A":"#8B5CF6"}`,
+              borderRadius:6,padding:"6px 0",color:needOrig===0?"#475569":"#A78BFA",fontWeight:700,fontSize:11,
+              cursor:(busy||needOrig===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
+            {needOrig===0?"✓ All originals uploaded":`⇪ Upload ${needOrig} original${needOrig===1?"":"s"}`}
+          </button>
+          <div style={{fontSize:8,color:"#334155",marginTop:6,lineHeight:1.4}}>
+            Proxies stream instantly on phones. Originals are full quality — upload them with the button when on fast wifi.
+          </div>
+        </>
       )}
-      <button onClick={onSyncProxies} disabled={busy||needProxy===0}
-        style={{width:"100%",marginTop:8,background:needProxy===0?"#0A1929":"#06B6D4",border:"none",borderRadius:6,
-          padding:"7px 0",color:needProxy===0?"#475569":"#000",fontWeight:700,fontSize:11,
-          cursor:(busy||needProxy===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
-        {needProxy===0?"✓ All proxies synced":`☁ Sync ${needProxy} prox${needProxy===1?"y":"ies"}`}
-      </button>
-      <button onClick={onUploadOriginals} disabled={busy||needOrig===0}
-        style={{width:"100%",marginTop:6,background:"none",border:`1px solid ${needOrig===0?"#1E3A5A":"#8B5CF6"}`,
-          borderRadius:6,padding:"6px 0",color:needOrig===0?"#475569":"#A78BFA",fontWeight:700,fontSize:11,
-          cursor:(busy||needOrig===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
-        {needOrig===0?"✓ All originals uploaded":`⇪ Upload ${needOrig} original${needOrig===1?"":"s"}`}
-      </button>
-      <div style={{fontSize:8,color:"#334155",marginTop:6,lineHeight:1.4}}>
-        Proxies stream instantly on phones. Originals are full quality — upload them with the button when on fast wifi.
-      </div>
     </div>
   );
 }
