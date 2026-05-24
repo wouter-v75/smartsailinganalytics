@@ -513,7 +513,7 @@ function enrichVideo(v,log,xml,syncOffsets){
   return out;
 }
 
-function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
+function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source==="supabase"?"cloud":source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
 function Gauge({label,value,unit,color="#06B6D4",size="md",highlight=false}){
   // Gauge is only used for the on-video instrument overlay. On phones the
   // desktop sizing covers half the frame, so shrink everything ~40 %.
@@ -3820,26 +3820,24 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                       border:`1px solid ${selectedVideo?.id===v.id?"#06B6D4":"#1E3A5A"}`,
                       borderRadius:10,overflow:"hidden",marginBottom:8,cursor:"pointer",
                       minHeight:64,alignItems:"stretch"}}>
-                    {/* Thumbnail. minHeight:64 gives the box a height of its
-                        own — it must never depend solely on align-items:stretch
-                        propagating through the flex row, which collapses to 0
-                        on some mobile browsers (blank thumbnails in portrait).
-                        With a guaranteed height, the inset:0 image resolves. */}
-                    <div style={{width:96,flexShrink:0,minHeight:64,alignSelf:"stretch",background:"#071624",position:"relative",overflow:"hidden"}}>
-                      {/* Fill the thumbnail box with position:absolute/inset:0
-                          — height:100% does not resolve reliably inside a
-                          flex item, which left thumbnails blank in portrait. */}
+                    {/* Thumbnail — FIXED 96×64 box. Earlier versions sized the
+                        box via flex align-items:stretch and the image via
+                        height:100% / inset:0 — both depend on the parent
+                        having a "definite" height, which is unreliable across
+                        mobile browsers and left thumbnails blank in portrait.
+                        Explicit width+height removes every such dependency. */}
+                    <div style={{width:96,height:64,flexShrink:0,alignSelf:"center",background:"#071624",position:"relative",overflow:"hidden"}}>
                       {v.thumbnailUrl
                         ? <img src={v.thumbnailUrl} alt=""
                             onLoad={()=>onThumbLoad?.(v.id)}
                             onError={()=>onThumbLoad?.(v.id)}
-                            style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+                            style={{display:"block",width:"100%",height:"100%",objectFit:"cover"}}/>
                         : v.objectUrl&&v.source!=="cloud"&&!String(v.objectUrl).includes(".m3u8")
                           ? <video src={v.objectUrl}
                               onLoadedData={()=>onThumbLoad?.(v.id)}
                               onError={()=>onThumbLoad?.(v.id)}
-                              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} muted preload="none"/>
-                          : <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:18}}>📹</div>}
+                              style={{display:"block",width:"100%",height:"100%",objectFit:"cover"}} muted preload="none"/>
+                          : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:18}}>📹</div>}
                       <div style={{position:"absolute",bottom:2,right:4,background:"rgba(0,0,0,0.8)",
                         borderRadius:2,padding:"0 3px",fontSize:9,color:"#64748B",fontFamily:"monospace"}}>
                         {v.duration?fmtT(v.duration):"--:--"}
@@ -4544,7 +4542,9 @@ function SSAApp(){
         // merged local entry (its own id is the local IDB key).
         if(v.hasProxy || v.hasOriginal){
           try{
-            const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=auto`);
+            // On mobile, prefer the small 720p proxy over the full-res
+            // original — far lighter on weak field wifi.
+            const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=${isMobile?'proxy':'auto'}`);
             if(res.ok){
               const j=await res.json();
               if(j?.url){
