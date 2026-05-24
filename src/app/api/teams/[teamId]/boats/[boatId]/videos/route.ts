@@ -18,6 +18,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../../../lib/supabase/server'
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
 
+// Bunny Stream auto-generates a poster thumbnail for every uploaded video.
+// We hand it back inline in the list response (derived from the original's
+// GUID — no extra round-trip) so the library can render every card from
+// this one call instead of a per-clip signed-URL request.
+const CDN_HOST = process.env.BUNNY_CDN_HOSTNAME || ''
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { teamId: string; boatId: string } }
@@ -71,7 +77,15 @@ export async function GET(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
-  return NextResponse.json({ videos: data || [] })
+  // Attach the Bunny Stream poster thumbnail URL inline (no per-clip call).
+  const videos = (data || []).map((v) => ({
+    ...v,
+    thumbnail:
+      v.bunny_original_stream_id && CDN_HOST
+        ? `https://${CDN_HOST}/${v.bunny_original_stream_id}/thumbnail.jpg`
+        : null,
+  }))
+  return NextResponse.json({ videos })
 }
 
 interface PostBody {

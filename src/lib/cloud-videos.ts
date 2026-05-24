@@ -13,6 +13,10 @@ export interface CloudVideoRow {
   tags: string[]
   sync_offset_secs: number
   thumbnail_url: string | null
+  /** Bunny Stream auto-poster URL, attached inline by the videos GET route
+   *  (derived from bunny_original_stream_id) so cards can paint without a
+   *  per-clip signed-URL call. */
+  thumbnail?: string | null
   bunny_stream_id: string | null
   bunny_storage_path: string | null
   // Phase B rendition columns. Either present + bool true, or null + false.
@@ -272,7 +276,7 @@ export function toLegacyVideoShape(v: CloudVideoRow): Record<string, unknown> {
     streamId: v.bunny_stream_id,
     cloudSynced: true,
     syncOffset: v.sync_offset_secs,
-    thumbnailUrl: v.thumbnail_url,
+    thumbnailUrl: v.thumbnail || v.thumbnail_url || null,
     source: 'supabase',
     hasLocalBlob: false,
     // Phase B — propagate rendition state to the UI shape so the per-clip

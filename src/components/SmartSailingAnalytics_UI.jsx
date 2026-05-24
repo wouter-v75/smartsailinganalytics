@@ -4426,6 +4426,27 @@ function SSAApp(){
       }
     } catch { /* non-fatal */ }
 
+    // Admin fallback — if the boat-scoped query found nothing, try the
+    // legacy single-tenant cloud session. Done BEFORE the first paint so
+    // those clips are part of the early render.
+    if(!vids.length&&cloudStatus?.available&&effectiveRole==='admin'){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
+
+    // Re-enrich the current vids array with log + xml + sync offsets.
+    const enrichAll=()=>vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
+
+    // EARLY PAINT — render the cards now. The videos GET route attaches each
+    // clip's Bunny poster thumbnail inline, so the library can show an image
+    // immediately instead of waiting on a per-clip signed-URL round-trip.
+    // Playback URLs are resolved below in the background; that triggers a
+    // second, cheap re-render once they land.
+    {
+      const early=enrichAll();
+      setAllVideos(early);
+      setVideoTotalThumbs(early.filter(v => v.thumbnailUrl || (v.objectUrl && v.source!=="cloud")).length);
+      setVideoThumbsLoading(false);
+      setSelectedVideo(early[0]||null);
+    }
+
     // Resolve playback URLs for any cloud video that doesn't already have
     // a local objectUrl. Two-tier preference:
     //   1. If the row has a Phase-B proxy/original rendition, ask
@@ -4467,16 +4488,19 @@ function SSAApp(){
           } catch { /* ignore */ }
         }
       }));
+      // Re-paint with resolved playback URLs (and any thumbnails the
+      // signed-URL endpoint backfilled for clips that had none).
+      const resolved=enrichAll();
+      setAllVideos(resolved);
+      setVideoTotalThumbs(resolved.filter(v => v.thumbnailUrl || (v.objectUrl && v.source!=="cloud")).length);
+      setSelectedVideo(prev=>{
+        if(!prev) return resolved[0]||null;
+        // Re-point the current selection to its freshly-enriched object so
+        // the player picks up the resolved objectUrl — but honour a
+        // selection the user changed while resolution was in flight.
+        return resolved.find(v=>v.id===prev.id)||prev;
+      });
     }
-    if(!vids.length&&cloudStatus?.available&&effectiveRole==='admin'){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
-
-    // Enrich with BOTH log AND xml — uses the resolved values above (local or cloud)
-    const enriched=vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
-    setAllVideos(enriched);
-    // Count videos that will actually render a thumb/preview source
-    setVideoTotalThumbs(enriched.filter(v => v.thumbnailUrl || (v.objectUrl && v.source!=="cloud")).length);
-    setVideoThumbsLoading(false);
-    setSelectedVideo(vids[0]||null);
   }
 
   // Run the proxy auto-sync queue until it's empty. Returns the in-flight
