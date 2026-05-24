@@ -3752,15 +3752,15 @@ function MobileShell(props){
       fontFamily:"'Segoe UI',system-ui,sans-serif",overflow:"hidden"}}>
 
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
-      {/* Right padding reserves ~60px for the fixed UserPill avatar that
-          floats at top-right (position:fixed, z-index:9999). Without it
-          the Sync button sits underneath the avatar and can't be tapped. */}
+      {/* All header controls sit on the LEFT. The UserPill avatar is fixed
+          at the top-right (position:fixed, z-index:9999); keeping the sync
+          button + status left-aligned means they can never end up hidden
+          underneath it, on any screen width. */}
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",
-        padding:"0 62px 0 14px",height:48,display:"flex",alignItems:"center",
+        padding:"0 14px",height:48,display:"flex",alignItems:"center",
         gap:8,flexShrink:0,position:"relative",zIndex:50}}>
         <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Shared</span>
         <span style={{fontSize:14,fontWeight:700,color:"#06B6D4"}}>Sailing</span>
-        <div style={{flex:1}}/>
         {/* Connection dot */}
         <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11}}>
           <div style={{width:6,height:6,borderRadius:"50%",
@@ -3788,6 +3788,7 @@ function MobileShell(props){
           </span>
           <span>{props.unsyncedCount>0?`Sync (${props.unsyncedCount})`:"Sync"}</span>
         </button>
+        <div style={{flex:1}}/>
       </header>
       {/* ── Sync progress toast — slides in below header ─────────────────── */}
       {props.mobileSyncState?.phase&&(
@@ -4195,6 +4196,14 @@ function SSAApp(){
           const supabase=getBrowserSupabase();
           const {data:{user}}=await supabase.auth.getUser();
           if(user){
+            // <UserPill> resolves the active membership and writes it to
+            // localStorage asynchronously. On a brand-new user's first login
+            // that can land AFTER this boot step — which would make the
+            // cloud session list come back empty and leave the app blank.
+            // Wait (up to ~6s) for the membership before listing.
+            for(let i=0;i<24 && !getActiveMembership(user.id);i++){
+              await new Promise(r=>setTimeout(r,250));
+            }
             const cloudSessions=await listSessionsCloud({userId:user.id});
             if(cloudSessions.length>0){
               setSessions(p=>{
