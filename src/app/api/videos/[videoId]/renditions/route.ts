@@ -8,8 +8,12 @@
 // Body shape (all optional, server only applies provided fields):
 //   {
 //     proxy?:    { path: string, bytes?: number },
-//     original?: { path: string, bytes?: number }
+//     original?: { path?: string, streamId?: string, bytes?: number }
 //   }
+//
+// The original may be recorded either as a Bunny Storage path (legacy) or,
+// since Phase 2, as a Bunny Stream video GUID (`streamId`) — the originals
+// upload now goes through Bunny Stream's resumable TUS endpoint.
 //
 // On success:
 //   { ok: true, has_proxy, has_original, proxy_path, original_path }
@@ -23,7 +27,7 @@ import { getServerSupabase } from '../../../../../lib/supabase/server'
 
 interface RenditionPatchBody {
   proxy?: { path: string; bytes?: number | null }
-  original?: { path: string; bytes?: number | null }
+  original?: { path?: string; streamId?: string; bytes?: number | null }
 }
 
 export async function PATCH(
@@ -63,15 +67,23 @@ export async function PATCH(
     }
   }
   if (body.original) {
-    if (typeof body.original.path !== 'string' || !body.original.path) {
+    const { path, streamId } = body.original
+    if (typeof streamId === 'string' && streamId) {
+      // Phase 2 — original lives in Bunny Stream.
+      update.bunny_original_stream_id = streamId
+      update.has_original = true
+      update.original_uploaded_at = new Date().toISOString()
+    } else if (typeof path === 'string' && path) {
+      // Legacy — original lives at a Bunny Storage path.
+      update.bunny_original_path = path
+      update.has_original = true
+      update.original_uploaded_at = new Date().toISOString()
+    } else {
       return NextResponse.json(
-        { error: 'original.path must be a non-empty string' },
+        { error: 'original requires a non-empty path or streamId' },
         { status: 400 }
       )
     }
-    update.bunny_original_path = body.original.path
-    update.has_original = true
-    update.original_uploaded_at = new Date().toISOString()
   }
 
   // RLS-gated UPDATE — returns no rows if the caller can't see this video,
@@ -81,7 +93,7 @@ export async function PATCH(
     .update(update)
     .eq('id', params.videoId)
     .select(
-      'id, has_proxy, has_original, bunny_proxy_path, bunny_original_path'
+      'id, has_proxy, has_original, bunny_proxy_path, bunny_original_path, bunny_original_stream_id'
     )
     .maybeSingle()
 
@@ -94,5 +106,6 @@ export async function PATCH(
     has_original: Boolean(data.has_original),
     proxy_path: data.bunny_proxy_path,
     original_path: data.bunny_original_path,
+    original_stream_id: data.bunny_original_stream_id,
   })
 }

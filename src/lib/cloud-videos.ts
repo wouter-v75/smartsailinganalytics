@@ -18,6 +18,8 @@ export interface CloudVideoRow {
   // Phase B rendition columns. Either present + bool true, or null + false.
   bunny_proxy_path?: string | null
   bunny_original_path?: string | null
+  /** Phase 2 — GUID of the Bunny Stream video holding the original. */
+  bunny_original_stream_id?: string | null
   has_proxy?: boolean
   has_original?: boolean
   proxy_uploaded_at?: string | null
@@ -274,6 +276,7 @@ export function toLegacyVideoShape(v: CloudVideoRow): Record<string, unknown> {
     hasOriginal: Boolean(v.has_original),
     proxyPath: v.bunny_proxy_path || null,
     originalPath: v.bunny_original_path || null,
+    originalStreamId: v.bunny_original_stream_id || null,
     proxyUploadedAt: v.proxy_uploaded_at || null,
   }
 }

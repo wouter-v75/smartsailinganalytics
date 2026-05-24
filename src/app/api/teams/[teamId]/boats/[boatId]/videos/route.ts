@@ -56,7 +56,7 @@ export async function GET(
       // Phase B added has_proxy/has_original/bunny_*_path so the UI can
       // show per-rendition status and the player can ask the signed-URL
       // endpoint for the right one.
-      'id, session_id, title, start_utc, duration_ms, tags, sync_offset_secs, thumbnail_url, bunny_stream_id, bunny_storage_path, bunny_proxy_path, bunny_original_path, has_proxy, has_original, proxy_uploaded_at, original_uploaded_at, proxy_bytes, bytes, created_at, created_by_user_id, sessions:sessions(date)'
+      'id, session_id, title, start_utc, duration_ms, tags, sync_offset_secs, thumbnail_url, bunny_stream_id, bunny_storage_path, bunny_proxy_path, bunny_original_path, bunny_original_stream_id, has_proxy, has_original, proxy_uploaded_at, original_uploaded_at, proxy_bytes, bytes, created_at, created_by_user_id, sessions:sessions(date)'
     )
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)
