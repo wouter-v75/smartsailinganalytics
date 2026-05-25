@@ -230,7 +230,7 @@ function parseCsvLog(text,offsetMin=0){
   const IX={
     pos:col('pos[dddmm.mm]',0), date:col('dd/mm/yy',1), time:col('hhmmss',2),
     heel:col('heel',3), bsp:col('boatspeed',4), awa:col('aw_angle',5),
-    twa:col('tw_angle',11), tws:col('tw_speed',12), vmg:col('vmg',19),
+    twd:col('tw_dirn',10), twa:col('tw_angle',11), tws:col('tw_speed',12), vmg:col('vmg',19),
     sog:col('ext_sog',20),
     // Expedition exports the target columns as either "Vs_target"/"Vs_targ"
     // and "Twa_targ"/"Twa_target" depending on version — accept both.
@@ -265,6 +265,7 @@ function parseCsvLog(text,offsetMin=0){
       heel: n(IX.heel),
       bsp,
       awa:  n(IX.awa),   // AW_angle — apparent wind angle directly from log
+      twd:  n(IX.twd),   // TW_Dirn — true wind direction, deg (orients OCS side)
       twa:  n(IX.twa),
       tws,
       sog:  n(IX.sog),
@@ -596,25 +597,35 @@ function calcAWA(twa,tws,bsp){
   return twa<0?-deg:deg;
 }
 
-// Perpendicular (signed) distance from point to start line in metres.
-// Positive = boat is on the pre-start side (has not crossed).
-// Negative = boat is over the line (OCS).
-// The "pre-start" side is determined by which side the wind comes from — we use
-// the fact that the course is upwind: the boat should approach from downwind,
-// so we check if the boat is on the downwind side of the line.
-function perpDistToLine(lat,lon,pin,boat){
+// Perpendicular (signed) distance from a point to the start line, in metres.
+//   positive = boat is on the pre-start side (has not crossed) — good
+//   negative = boat is over the line early (OCS) — bad
+// The raw cross product only says which geometric side of the pin→committee
+// line the boat sits on; that sign is meaningless on its own because it
+// flips with pin/committee ordering and line orientation. A fleet start is
+// sailed upwind, so the pre-start side is the side the wind blows TOWARD —
+// we use the true wind direction (TWD) to orient the sign correctly.
+function perpDistToLine(lat,lon,pin,boat,twd){
   if(!pin||!boat) return null;
   const latRef=(pin.lat+boat.lat)/2;
   const mLat=111319;
   const mLon=111319*Math.cos(latRef*Math.PI/180);
-  const ax=0, ay=0;
-  const bx=(boat.lon-pin.lon)*mLon, by=(boat.lat-pin.lat)*mLat;
-  const cx=(lon-pin.lon)*mLon,       cy=(lat-pin.lat)*mLat;
+  // (East,North) metre vectors, origin at the pin.
+  const bx=(boat.lon-pin.lon)*mLon, by=(boat.lat-pin.lat)*mLat;  // pin → committee
+  const cx=(lon-pin.lon)*mLon,       cy=(lat-pin.lat)*mLat;       // pin → our boat
   const len=Math.sqrt(bx*bx+by*by);
   if(len<1) return null;
-  // Signed cross product: positive = left of pin→boat vector (pre-start side
-  // when line runs roughly E-W and course is south / downwind is south)
-  return (bx*cy-by*cx)/len;
+  // d>0 places the boat on the (-by,bx) side of the line.
+  const d=(bx*cy-by*cx)/len;
+  // Orient the sign so positive is the downwind / pre-start side.
+  if(twd!=null&&isFinite(twd)&&twd!==0){
+    const rad=twd*Math.PI/180;
+    // Wind blows toward TWD+180° → (East,North) unit vector.
+    const windToE=-Math.sin(rad), windToN=-Math.cos(rad);
+    // Does the (-by,bx) side point downwind? If not, flip d.
+    if((-by*windToE+bx*windToN)<0) return -d;
+  }
+  return d;
 }
 
 // Extract boat length in metres from name — e.g. "NORTHSTAR72" → 72 ft → 21.9 m
@@ -773,7 +784,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     ? startLines.find(sl=>sl.raceNum===nearestGun.raceNum)||startLines[0]||null
     : startLines[0]||null;
   const distMGeom = (activeLine&&row?.lat&&row?.lon)
-    ? perpDistToLine(row.lat,row.lon,activeLine.pin,activeLine.boat) : null;
+    ? perpDistToLine(row.lat,row.lon,activeLine.pin,activeLine.boat,row?.twd) : null;
   const distBL = dstLineNm!=null
     ? dstLineNm*1852/boatLenM
     : (distMGeom!=null ? distMGeom/boatLenM : null);
