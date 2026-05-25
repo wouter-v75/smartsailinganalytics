@@ -212,19 +212,31 @@ function parseCsvLog(text,offsetMin=0){
   // TM_LINEP/TM_LINES columns.) The fixed positions below are fallbacks
   // only — used when a name is absent, e.g. a header-less legacy export.
   const H={};
+  // Normalise a header for tolerant matching: lowercase, "%" → "pct", then
+  // strip every other non-alphanumeric character. "Vs_targ%", "Vs targ %"
+  // and "VS-Targ%" all collapse to the same key, so the parser keeps working
+  // when Expedition tweaks header punctuation, spacing or casing.
+  const norm=s=>String(s||"").toLowerCase().replace(/%/g,"pct").replace(/[^a-z0-9]/g,"");
   lines[0].split(",").forEach((name,i)=>{
-    const k=name.trim().toLowerCase();
+    const k=norm(name);
     if(k&&!(k in H)) H[k]=i;
   });
-  const col=(name,fallback)=>{const k=name.toLowerCase();return (k in H)?H[k]:fallback;};
+  // Look up a column by one or more candidate header names; the fixed
+  // position is used only when none of the names appear in the header row.
+  const col=(names,fallback)=>{
+    for(const nm of [].concat(names)){const k=norm(nm);if(k in H)return H[k];}
+    return fallback;
+  };
   const IX={
     pos:col('pos[dddmm.mm]',0), date:col('dd/mm/yy',1), time:col('hhmmss',2),
     heel:col('heel',3), bsp:col('boatspeed',4), awa:col('aw_angle',5),
     twa:col('tw_angle',11), tws:col('tw_speed',12), vmg:col('vmg',19),
     sog:col('ext_sog',20),
-    vsTarget:col('vs_target',22),   // target boat speed, kn
-    vsTargPct:col('vs_targ%',23),   // boat speed as % of target
-    twaTarg:col('twa_targ',24),     // target TWA, deg
+    // Expedition exports the target columns as either "Vs_target"/"Vs_targ"
+    // and "Twa_targ"/"Twa_target" depending on version — accept both.
+    vsTarget:col(['vs_target','vs_targ'],22),    // target boat speed, kn
+    vsTargPct:col(['vs_targ%','vs_target%'],23), // boat speed as % of target
+    twaTarg:col(['twa_targ','twa_target'],24),   // target TWA, deg
     vsPerf:col('vs_perf',25),       // polar boat speed, kn
     vsPerfPct:col('vs_perf%',26),   // boat speed as % of polar = "Polar %"
     dstLine:col('dst_line',29), tmLine:col('tm_line',30),
@@ -699,11 +711,19 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const mode=getVideoMode(video.tags);
 
   // Pre-compute derived values. Target BSP and Polar % come straight from
-  // the Expedition log columns (Vs_target, Vs_perf%); the uploaded polar
+  // the Expedition log columns (Vs_targ, Vs_perf%); the uploaded polar
   // file is only a fallback for older logs that lack those columns.
-  const targBsp  = (row?.vsTarget != null && row.vsTarget > 0)
+  //
+  // logTargBsp — target boat speed from the log alone. Prefer the absolute
+  // Vs_targ column; when an export keeps only Vs_targ% (boat speed as a %
+  // of target speed) recover it as  Vs_targ = BSP ÷ (Vs_targ% / 100).
+  const logTargBsp = (row?.vsTarget != null && row.vsTarget > 0)
     ? row.vsTarget
-    : ((polar && row) ? polarInterp(polar, row.tws, Math.abs(row.twa||0)) : null);
+    : (row && row.vsTargPct > 0 && row.bsp > 0)
+      ? row.bsp * 100 / row.vsTargPct
+      : null;
+  const targBsp  = logTargBsp
+    ?? ((polar && row) ? polarInterp(polar, row.tws, Math.abs(row.twa||0)) : null);
   const polPct   = (row?.vsPerfPct != null && row.vsPerfPct > 0)
     ? row.vsPerfPct
     : ((polar && row) ? polarPerf(polar, row.bsp, row.twa, row.tws)?.pct : null);
@@ -714,12 +734,14 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     ? awaRaw
     : calcAWA(row?.twa, row?.tws, row?.bsp);
 
-  // VMG% — target VMG derived from the log's own Vs_target × cos(TWA_targ);
-  // fall back to the polar curve when the log lacks the target columns.
+  // VMG% — optimal VMG is the log's target boat speed projected onto the
+  // wind axis at the target TWA (Vs_targ × cos(TWA_targ)). logTargBsp also
+  // covers the Vs_targ%-recovered case above; fall back to the polar curve
+  // when the log carries no target data at all.
   const absA = Math.abs(row?.twa||0);
   const isUpwindAngle = absA < 90;
-  const logOptVMG = (row?.vsTarget != null && row?.twaTarg != null)
-    ? row.vsTarget * Math.abs(Math.cos(row.twaTarg * Math.PI / 180))
+  const logOptVMG = (logTargBsp != null && row?.twaTarg != null)
+    ? logTargBsp * Math.abs(Math.cos(row.twaTarg * Math.PI / 180))
     : null;
   const vmgTarget = (polar && row) ? polarVMGTarget(polar, row.tws) : null;
   const optVMG = (logOptVMG && logOptVMG > 0.01)
@@ -802,7 +824,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <Gauge label={`LINE·${lineSrc||"--"}`}
                value={fmtDist(distBL)}
                unit={distBL==null?"BL":`BL`}
-               color={distBL!=null&&distBL<0?"#EF4444":"#F59E0B"} size="lg"
+               color={distBL==null?"#F59E0B":distBL<0?"#EF4444":"#10B981"} size="lg"
                highlight={distBL!=null&&distBL<0}/>
         {/* TTB PORT */}
         <Gauge label={`TTB·P${ttbPort!=null?"·log":"·calc"}`}
@@ -3723,18 +3745,6 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         syncOffset={syncOffsets[video.id]||0} sessionTzOffset={sessionTzOffset}
         onPlayUtc={handlePlayUtc}/>
       <div style={{padding:"12px 16px"}}>
-        {video.twsAvg!=null&&(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
-            {[["TWS",video.twsAvg,"kt","#7DD3FC"],["TWA",video.twaAvg,"°","#7DD3FC"],["VMG",video.vmgAvg,"kt","#22C55E"],
-              ["Polar%",video.polpercAvg,"%",video.polpercAvg==null?"#22C55E":video.polpercAvg>=110?"#166534":video.polpercAvg>=90?"#22C55E":"#EF4444"],["Target%",video.vsTargPercAvg,"%",video.vsTargPercAvg==null?"#22C55E":video.vsTargPercAvg>=110?"#166534":video.vsTargPercAvg>=90?"#22C55E":"#EF4444"],["BSP",video.bspAvg,"kt","#10B981"]]
-              .map(([l,v,u,c])=>(
-                <div key={l} style={{background:"#0A1929",borderRadius:8,padding:"10px 10px",border:`1px solid ${c}20`,textAlign:"center"}}>
-                  <div style={{fontSize:10,color:"#475569",marginBottom:3}}>{l}</div>
-                  <div style={{fontSize:18,fontWeight:700,color:c,fontFamily:"monospace"}}>{v!=null?R(v):"--"}<span style={{fontSize:10,marginLeft:1}}>{u}</span></div>
-                </div>
-              ))}
-          </div>
-        )}
         {/* Sync offset — coach + admin only. Gate on effectiveRole (the real
             membership role); perms.canSync follows the legacy `role` selector
             which defaults to "coach", so it leaked this card to TL1/TL2. */}
@@ -5531,11 +5541,6 @@ function SSAApp(){
                     <div style={{fontSize:10,color:"#334155"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
                     {selectedVideo.tsSource&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:selectedVideo.tsSource==="mp4-meta"?"#1D9E7515":"#F59E0B15",border:`1px solid ${selectedVideo.tsSource==="mp4-meta"?"#1D9E7530":"#F59E0B30"}`,color:selectedVideo.tsSource==="mp4-meta"?"#1D9E75":"#F59E0B"}}>{selectedVideo.tsSource==="mp4-meta"?"📷 camera metadata":"⚠ file modified time"}</span>)}
                   </div>
-                  {selectedVideo.twsAvg!=null&&(
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:12}}>
-                      {[["Avg TWS",selectedVideo.twsAvg,"kt","#7DD3FC"],["Avg TWA",selectedVideo.twaAvg,"°","#7DD3FC"],["Avg VMG",selectedVideo.vmgAvg,"kt","#22C55E"],["Polar %",selectedVideo.polpercAvg,"%",selectedVideo.polpercAvg==null?"#22C55E":selectedVideo.polpercAvg>=110?"#166534":selectedVideo.polpercAvg>=90?"#22C55E":"#EF4444"],["Target %",selectedVideo.vsTargPercAvg,"%",selectedVideo.vsTargPercAvg==null?"#22C55E":selectedVideo.vsTargPercAvg>=110?"#166534":selectedVideo.vsTargPercAvg>=90?"#22C55E":"#EF4444"],["Avg BSP",selectedVideo.bspAvg,"kt","#10B981"]].map(([l,val,u,c])=>(<div key={l} style={{background:"#071624",borderRadius:6,padding:"8px 10px",border:`1px solid ${c}15`}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:2}}>{l}</div><div style={{fontSize:17,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}<span style={{fontSize:10,marginLeft:2}}>{u}</span></div></div>))}
-                    </div>
-                  )}
                   {['admin','coach'].includes(effectiveRole) && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>}
                   <div style={{marginBottom:12}}>
                     <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
