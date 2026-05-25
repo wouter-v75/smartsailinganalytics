@@ -466,6 +466,34 @@ const fmtDate=d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2
 const fmtDateTime=u=>{if(!u)return"";const dt=new Date(u);const dd=String(dt.getUTCDate()).padStart(2,"0");const mm=String(dt.getUTCMonth()+1).padStart(2,"0");const yyyy=dt.getUTCFullYear();const hh=String(dt.getUTCHours()).padStart(2,"0");const mi=String(dt.getUTCMinutes()).padStart(2,"0");return`${dd}/${mm}/${yyyy} ${hh}:${mi}`;};
 const fmtSize=b=>b>1e9?`${(b/1e9).toFixed(1)} GB`:`${(b/1e6).toFixed(0)} MB`;
 function nearestRow(rows,utc){if(!rows?.length)return null;let lo=0,hi=rows.length-1;while(lo<hi){const mid=(lo+hi)>>1;if(rows[mid].utc<utc)lo=mid+1;else hi=mid;}if(lo>0&&Math.abs(rows[lo-1].utc-utc)<Math.abs(rows[lo].utc-utc))lo--;return Math.abs(rows[lo].utc-utc)<300000?rows[lo]:null;}
+
+// Like nearestRow, but linearly interpolates between the two bracketing log
+// samples instead of snapping to the nearest. The session log is sampled
+// every ~1-2s; snapping makes the video overlay hang on one value until the
+// next sample. Interpolation gives a smooth, continuously-moving readout.
+function interpRow(rows,utc){
+  if(!rows?.length)return null;
+  const last=rows.length-1;
+  if(utc<=rows[0].utc)   return Math.abs(rows[0].utc-utc)<300000?rows[0]:null;
+  if(utc>=rows[last].utc)return Math.abs(rows[last].utc-utc)<300000?rows[last]:null;
+  // Largest index with rows[lo].utc <= utc (utc is strictly interior here).
+  let lo=0,hi=last;
+  while(lo<hi){const mid=(lo+hi+1)>>1;if(rows[mid].utc<=utc)lo=mid;else hi=mid-1;}
+  const a=rows[lo],b=rows[lo+1];
+  if(!b)return a;
+  const span=b.utc-a.utc;
+  if(span<=0)return a;
+  const f=(utc-a.utc)/span;
+  // Interpolate every numeric field; snap non-numeric / null fields to the
+  // nearer sample.
+  const out={};
+  for(const k in a){
+    const av=a[k],bv=b[k];
+    if(typeof av==='number'&&typeof bv==='number'&&isFinite(av)&&isFinite(bv)) out[k]=av+(bv-av)*f;
+    else out[k]=f<0.5?av:bv;
+  }
+  return out;
+}
 function enrichVideo(v,log,xml,syncOffsets){
   const out = {...v};
 
@@ -635,8 +663,20 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     onPlayUtc(video.startUtc+(t+(syncOffset||0))*1000);
   },[onPlayUtc,video.startUtc,syncOffset]);
 
+  // Drive the instrument overlay at a steady 5 Hz while playing. The HTML
+  // <video> `timeupdate` event fires irregularly, so a fixed 200 ms tick
+  // keeps the gauges refreshing smoothly (paired with interpRow above).
+  useEffect(()=>{
+    if(!playing)return;
+    const id=setInterval(()=>{
+      const v=vidRef.current;
+      if(v&&!v.paused){ setCurTime(v.currentTime); emitUtc(v.currentTime); }
+    },200);
+    return ()=>clearInterval(id);
+  },[playing,emitUtc]);
+
   const logUtc=video.startUtc?video.startUtc+(curTime+(syncOffset||0))*1000:0;
-  const row=logData&&logUtc?nearestRow(logData.rows,logUtc):null;
+  const row=logData&&logUtc?interpRow(logData.rows,logUtc):null;
   const markers=xmlData&&video.startUtc?[...(xmlData.tackJibes||[]),...(xmlData.markRoundings||[]),...(xmlData.sailsUpEvents||[]).map(s=>({...s,color:"#F59E0B"}))].map(m=>({...m,vidSec:(m.utc-video.startUtc)/1000-(syncOffset||0)})).filter(m=>m.vidSec>=0&&m.vidSec<=dur):[];
   const upcoming=markers.filter(m=>m.vidSec>curTime&&m.vidSec<curTime+30).slice(0,2);
   const pct=dur>0?(curTime/dur)*100:0;
