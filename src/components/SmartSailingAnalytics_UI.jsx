@@ -994,7 +994,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   return(
     <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
-        {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
+        {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" loading="eager" fetchpriority="high" decoding="async" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
          video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
@@ -3844,6 +3844,12 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                     <div style={{width:96,height:64,flexShrink:0,alignSelf:"center",background:"#071624",position:"relative",overflow:"hidden"}}>
                       {v.thumbnailUrl
                         ? <img src={v.thumbnailUrl} alt=""
+                            /* loading=eager + fetchpriority=high stop the
+                               browser parking below-the-fold thumbnails at
+                               Low priority — on weak wifi those requests
+                               otherwise never start and the loader hangs
+                               (e.g. 6/10) until a rotation re-prioritises. */
+                            loading="eager" fetchpriority="high" decoding="async"
                             onLoad={()=>onThumbLoad?.(v.id)}
                             onError={()=>onThumbLoad?.(v.id)}
                             style={{display:"block",width:"100%",height:"100%",objectFit:"cover"}}/>
