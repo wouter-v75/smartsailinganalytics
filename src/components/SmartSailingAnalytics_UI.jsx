@@ -626,6 +626,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const[curTime,setCurTime]=useState(0);
   const[playing,setPlaying]=useState(false);
   const[dur,setDur]=useState(video.duration||0);
+  const[vidQuality,setVidQuality]=useState(null); // live rendition label
   const isHls=video.source==="cloud"||video.objectUrl?.includes(".m3u8");
   const lastUtcEmit=useRef(0);
   const isMobile=useIsMobile();
@@ -636,7 +637,14 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
 
   useEffect(()=>{
     if(!vidRef.current||!video.objectUrl)return;
-    setCurTime(0);setPlaying(false);
+    setCurTime(0);setPlaying(false);setVidQuality(null);
+    // videoHeight reflects the rendition currently being decoded — works for
+    // native HLS (iOS) and progressive MP4 alike. The element fires `resize`
+    // on every rendition switch. Falls through to the hls.js LEVEL_SWITCHED
+    // handler below which adds the bitrate.
+    const vEl=vidRef.current;
+    const onResize=()=>{ if(vEl.videoHeight) setVidQuality(q=>(q&&q.includes('Mbps'))?q:`${vEl.videoHeight}p`); };
+    vEl.addEventListener('resize',onResize);
     if(isHls){
       const init=()=>{
         if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
@@ -647,6 +655,12 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           // far ahead (up to ~10 min / the whole clip) so wifi dropouts —
           // even long ones — don't stall the video.
           const hls=new window.Hls({startLevel:0,capLevelToPlayerSize:true,maxBufferLength:180,maxMaxBufferLength:600,maxBufferSize:200*1000*1000});
+          // Surface the actually-playing rendition (resolution + bitrate)
+          // so the bottom-left badge can prove what ABR settled on.
+          hls.on(window.Hls.Events.LEVEL_SWITCHED,(_e,d)=>{
+            const lvl=hls.levels?.[d.level];
+            if(lvl) setVidQuality(`${lvl.height}p · ${(lvl.bitrate/1e6).toFixed(2)} Mbps`);
+          });
           hls.loadSource(video.objectUrl);hls.attachMedia(vidRef.current);hlsRef.current=hls;
         }
         else if(vidRef.current.canPlayType("application/vnd.apple.mpegurl"))vidRef.current.src=video.objectUrl;
@@ -657,7 +671,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
       vidRef.current.src=video.objectUrl;
     }
-    return()=>{if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}};
+    return()=>{vEl.removeEventListener('resize',onResize);if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}};
   },[video.id,video.objectUrl]);
 
   const emitUtc=useCallback((t)=>{
@@ -910,6 +924,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             frame width instead of overflowing off the right edge. */}
         {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:isMobile?6:undefined}}>{overlay}</div>}
         {modeBadge}
+        {vidQuality&&<div style={{position:"absolute",bottom:8,left:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 6px",fontSize:9,color:"#7DD3FC",fontFamily:"monospace",letterSpacing:0.3}}>▾ {vidQuality}</div>}
         <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
       </div>
       <div style={{padding:"8px 12px 0"}}>
