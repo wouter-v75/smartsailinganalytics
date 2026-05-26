@@ -597,37 +597,6 @@ function calcAWA(twa,tws,bsp){
   return twa<0?-deg:deg;
 }
 
-// Perpendicular (signed) distance from a point to the start line, in metres.
-//   positive = boat is on the pre-start side (has not crossed) — good
-//   negative = boat is over the line early (OCS) — bad
-// The raw cross product only says which geometric side of the pin→committee
-// line the boat sits on; that sign is meaningless on its own because it
-// flips with pin/committee ordering and line orientation. A fleet start is
-// sailed upwind, so the pre-start side is the side the wind blows TOWARD —
-// we use the true wind direction (TWD) to orient the sign correctly.
-function perpDistToLine(lat,lon,pin,boat,twd){
-  if(!pin||!boat) return null;
-  const latRef=(pin.lat+boat.lat)/2;
-  const mLat=111319;
-  const mLon=111319*Math.cos(latRef*Math.PI/180);
-  // (East,North) metre vectors, origin at the pin.
-  const bx=(boat.lon-pin.lon)*mLon, by=(boat.lat-pin.lat)*mLat;  // pin → committee
-  const cx=(lon-pin.lon)*mLon,       cy=(lat-pin.lat)*mLat;       // pin → our boat
-  const len=Math.sqrt(bx*bx+by*by);
-  if(len<1) return null;
-  // d>0 places the boat on the (-by,bx) side of the line.
-  const d=(bx*cy-by*cx)/len;
-  // Orient the sign so positive is the downwind / pre-start side.
-  if(twd!=null&&isFinite(twd)&&twd!==0){
-    const rad=twd*Math.PI/180;
-    // Wind blows toward TWD+180° → (East,North) unit vector.
-    const windToE=-Math.sin(rad), windToN=-Math.cos(rad);
-    // Does the (-by,bx) side point downwind? If not, flip d.
-    if((-by*windToE+bx*windToN)<0) return -d;
-  }
-  return d;
-}
-
 // Extract boat length in metres from name — e.g. "NORTHSTAR72" → 72 ft → 21.9 m
 function extractBoatLengthM(boatName){
   const m=(boatName||"").match(/(\d+)/);
@@ -763,9 +732,8 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     : null;
 
   // ── Starting instruments ────────────────────────────────────────────────────
-  const guns       = xmlData?.raceGuns||[];
-  const startLines = xmlData?.startLines||[];
-  const boatLenM   = extractBoatLengthM(xmlData?.meta?.boat);
+  const guns     = xmlData?.raceGuns||[];
+  const boatLenM = extractBoatLengthM(xmlData?.meta?.boat);
 
   // GUN — prefer Timer-1 (col 55), fall back to event UTC diff
   const timerFromLog = row?.timer1;
@@ -778,23 +746,18 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const gunActive = secToGun!=null;
   const afterGun  = secToGun!=null && secToGun <= 0;  // gun has fired
 
-  // DISTANCE TO LINE — log DST_LINE (col 29, nm); geometry fallback
-  const dstLineNm = (row?.dstLine!=null&&!isNaN(row.dstLine)) ? row.dstLine : null;
-  const activeLine = nearestGun
-    ? startLines.find(sl=>sl.raceNum===nearestGun.raceNum)||startLines[0]||null
-    : startLines[0]||null;
-  const distMGeom = (activeLine&&row?.lat&&row?.lon)
-    ? perpDistToLine(row.lat,row.lon,activeLine.pin,activeLine.boat,row?.twd) : null;
-  const distBL = dstLineNm!=null
-    ? dstLineNm*1852/boatLenM
-    : (distMGeom!=null ? distMGeom/boatLenM : null);
-  const lineSrc = dstLineNm!=null ? "log" : (distMGeom!=null ? "gps" : null);
+  // DISTANCE TO LINE — read straight from the Expedition log's DST_LINE
+  // column (metres). The previous build had a GPS-geometry fallback off the
+  // event-file start-line marks, but that was fragile: the sign depended on
+  // pin/committee ordering and the magnitude could go off the rails when
+  // the marks weren't pinged accurately. If DST_LINE is empty we now show
+  // "--" rather than guessing.
+  const distM = (row?.dstLine!=null && isFinite(row.dstLine)) ? row.dstLine : null;
+  const distBL = distM!=null ? distM/boatLenM : null;
 
-  // TIME TO LINE — log TM_LINE (col 30, seconds); geometry fallback from dist/SOG
-  const sogMs = (row?.sog||0)*0.5144;
-  const tmLineLog  = (row?.tmLine!=null&&!isNaN(row.tmLine)&&row.tmLine>0) ? row.tmLine : null;
-  const tmLineGeom = (distMGeom!=null&&sogMs>0.1) ? Math.abs(distMGeom)/sogMs : null;
-  const timeToLine = tmLineLog ?? tmLineGeom;
+  // TIME TO LINE — TM_LINE log column (seconds). No geometry fallback.
+  const timeToLine = (row?.tmLine!=null && isFinite(row.tmLine) && row.tmLine>0)
+    ? row.tmLine : null;
 
   // TIME TO BURN — log TTB_Port/Stbd (cols 50/51, opt keeps 0); fallback: gun timer − time to line
   // Expedition only populates these during the active start sequence.
@@ -831,10 +794,10 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                unit={secToGun==null?"":secToGun>0?"to start":"after gun"}
                color={afterGun?"#10B981":"#EF4444"} size="lg"
                highlight={gunActive&&!afterGun&&secToGun<=60}/>
-        {/* DIST TO LINE — log or GPS geometry */}
-        <Gauge label={`LINE·${lineSrc||"--"}`}
+        {/* DIST TO LINE — straight from the log's DST_LINE column */}
+        <Gauge label="LINE"
                value={fmtDist(distBL)}
-               unit={distBL==null?"BL":`BL`}
+               unit="BL"
                color={distBL==null?"#F59E0B":distBL<0?"#EF4444":"#10B981"} size="lg"
                highlight={distBL!=null&&distBL<0}/>
         {/* TTB PORT */}
