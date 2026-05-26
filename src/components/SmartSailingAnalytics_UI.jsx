@@ -855,7 +855,8 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                color={ttbStbd!=null&&ttbStbd<0?"#EF4444":"#10B981"} size="lg"
                highlight={ttbStbd!=null&&ttbStbd<-10}/>
         <Gauge label="BSP"  value={R(row.bsp)}         unit="kn"   color="#10B981" size="sm"/>
-        <Gauge label="SOG"  value={R(row.sog)}         unit="kn"   color="#FBBF24" size="sm"/>
+        <Gauge label="Tgt %" value={row?.vsTargPct>0?`${R(row.vsTargPct,0)}%`:"--"} unit="vs target"
+               color={!row?.vsTargPct||row.vsTargPct<=0?"#22C55E":row.vsTargPct>=110?"#166534":row.vsTargPct>=90?"#22C55E":"#EF4444"} size="sm"/>
         <Gauge label="TWS"  value={R(row.tws)}         unit="kn"   color="#7DD3FC" size="sm"/>
         <Gauge label="TWA"  value={`${R(row.twa,0)}°`} unit="true" color="#7DD3FC" size="sm"/>
         <Gauge label="TWD"  value={row?.twd!=null?`${R(row.twd,0)}°`:"--"}  unit="°"   color="#7DD3FC" size="sm"/>
