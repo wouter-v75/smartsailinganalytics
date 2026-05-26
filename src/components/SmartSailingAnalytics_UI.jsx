@@ -764,10 +764,10 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   //   negative = late, you'll cross after the gun
   //
   // Three flavours, all computed the same way (gun-time − time-to-reach):
-  //   TTB·LINE — perpendicular line crossing, uses TM_LINE
-  //   TTB·P    — port end of the line. Expedition's TTB_Port column turns
-  //              out to be the time it takes to reach the port end of the
-  //              line in seconds, not a pre-computed burn — so we subtract.
+  //   TTB·LINE — uses TM_LINE (time to the line on the current heading).
+  //   TTB·P    — port end. Expedition's TTB_Port column is the time it
+  //              takes to reach the port end of the line in seconds, not a
+  //              pre-computed burn — so we subtract from the gun timer.
   //   TTB·S    — starboard end, same shape as TTB·P with TTB_Stbd.
   const ttbLine = (timeToLine!=null && secToGun!=null) ? secToGun-timeToLine : null;
   const ttbPort = (row?.ttbPort!=null && secToGun!=null) ? secToGun-row.ttbPort : null;
@@ -804,12 +804,18 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                unit="BL"
                color={distBL==null?"#F59E0B":distBL<0?"#EF4444":"#10B981"} size="lg"
                highlight={distBL!=null&&distBL<0}/>
-        {/* TTB LINE — gun-time minus TM_LINE (perpendicular crossing) */}
+        {/* TTB LINE — gun-time minus TM_LINE */}
         <Gauge label="TTB·LINE"
                value={ttbLine!=null?fmtBurn(ttbLine):"--:--"}
                unit={ttbLine==null?"":ttbLine>0?"early":"late"}
                color={ttbLine!=null&&ttbLine<0?"#EF4444":"#10B981"} size="lg"
                highlight={ttbLine!=null&&ttbLine<-10}/>
+        {/* TEMP DEBUG — raw TM_LINE next to TTB·LINE so the subtraction is
+            visible at a glance. Remove once we've confirmed the math. */}
+        <Gauge label="TM·LINE"
+               value={timeToLine!=null?fmtT(timeToLine):"--:--"}
+               unit="raw"
+               color="#94A3B8" size="sm"/>
         {/* TTB at PORT end of line */}
         <Gauge label="TTB·P"
                value={ttbPort!=null?fmtBurn(ttbPort):"--:--"}
