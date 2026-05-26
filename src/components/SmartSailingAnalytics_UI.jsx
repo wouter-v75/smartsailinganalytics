@@ -755,21 +755,17 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   // rather than guessing.
   const distBL = (row?.dstLine!=null && isFinite(row.dstLine)) ? row.dstLine : null;
 
-  // TIME TO LINE — TM_LINE log column (seconds). No geometry fallback.
-  const timeToLine = (row?.tmLine!=null && isFinite(row.tmLine) && row.tmLine>0)
-    ? row.tmLine : null;
-
-  // TIME TO BURN — how much excess time you have before the gun fires.
-  //   positive = early, you need to burn some time before the line
+  // TIME TO BURN — how much excess time before the gun fires.
+  //   positive = early, you need to burn some time before crossing
   //   negative = late, you'll cross after the gun
   //
-  // Three flavours, all computed the same way (gun-time − time-to-reach):
-  //   TTB·LINE — uses TM_LINE (time to the line on the current heading).
-  //   TTB·P    — port end. Expedition's TTB_Port column is the time it
-  //              takes to reach the port end of the line in seconds, not a
-  //              pre-computed burn — so we subtract from the gun timer.
-  //   TTB·S    — starboard end, same shape as TTB·P with TTB_Stbd.
-  const ttbLine = (timeToLine!=null && secToGun!=null) ? secToGun-timeToLine : null;
+  // TTB·LINE — the TM_LINE log column is misleadingly named ("TM_"
+  //   suggests time-to-reach), but the value is already the burn at the
+  //   line on the current heading. Display directly, no subtraction.
+  // TTB·P / TTB·S — TTB_Port / TTB_Stbd are the seconds it takes to
+  //   reach the port / starboard end of the line (not a pre-computed
+  //   burn), so we subtract from the gun timer.
+  const ttbLine = (row?.tmLine!=null && isFinite(row.tmLine)) ? row.tmLine : null;
   const ttbPort = (row?.ttbPort!=null && secToGun!=null) ? secToGun-row.ttbPort : null;
   const ttbStbd = (row?.ttbStbd!=null && secToGun!=null) ? secToGun-row.ttbStbd : null;
 
@@ -804,18 +800,12 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                unit="BL"
                color={distBL==null?"#F59E0B":distBL<0?"#EF4444":"#10B981"} size="lg"
                highlight={distBL!=null&&distBL<0}/>
-        {/* TTB LINE — gun-time minus TM_LINE */}
+        {/* TTB·LINE — direct from the TM_LINE column (already a burn) */}
         <Gauge label="TTB·LINE"
                value={ttbLine!=null?fmtBurn(ttbLine):"--:--"}
                unit={ttbLine==null?"":ttbLine>0?"early":"late"}
                color={ttbLine!=null&&ttbLine<0?"#EF4444":"#10B981"} size="lg"
                highlight={ttbLine!=null&&ttbLine<-10}/>
-        {/* TEMP DEBUG — raw TM_LINE next to TTB·LINE so the subtraction is
-            visible at a glance. Remove once we've confirmed the math. */}
-        <Gauge label="TM·LINE"
-               value={timeToLine!=null?fmtT(timeToLine):"--:--"}
-               unit="raw"
-               color="#94A3B8" size="sm"/>
         {/* TTB at PORT end of line */}
         <Gauge label="TTB·P"
                value={ttbPort!=null?fmtBurn(ttbPort):"--:--"}
