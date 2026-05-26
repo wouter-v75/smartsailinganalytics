@@ -1087,9 +1087,15 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   );
 }
 
-function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,onBatchToggle}){
+function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,onBatchToggle,sessionTzOffset=0}){
   const handleLoaded = () => onThumbLoad?.(video.id);
   const tags = video.tags||[];
+  // Clip's start time in session-local clock — replaces the filename label.
+  const localStart = (()=>{
+    if(video.startUtc==null) return "—";
+    const d=new Date(video.startUtc + sessionTzOffset*60000);
+    return `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}`;
+  })();
   const EVENT_TAGS   = ["race-start","topmark","mark"];
   const SAIL_SKIP    = /^(main|msail|mainsail|main-)/;
   const POS_TAGS     = ["upwind","reach","downwind"];
@@ -1148,8 +1154,8 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
           {video.twsAvg!=null?`TWS ${R(video.twsAvg)}kt`:""}{video.twsAvg!=null&&video.twaAvg!=null?" · ":""}{video.twaAvg!=null?`TWA ${R(video.twaAvg,0)}°`:""}
           {video.twsAvg==null&&video.twaAvg==null&&<span style={{color:"#334155"}}>—</span>}
         </div>
-        {/* 4) Filename (title) at bottom */}
-        <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</div>
+        {/* 4) Clip start time (session-local) at bottom — replaces filename */}
+        <div title={video.title||""} style={{fontSize:11,fontWeight:600,color:"#E2E8F0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{localStart}</div>
       </div>
     </div>
   );
@@ -1456,7 +1462,7 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
   );
 }
 
-function SyncControl({offset,onChange}){
+function SyncControl({offset,onChange,onSave,saving=false,saveLabel="💾 Save"}){
   return(
     <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A"}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:7}}>
@@ -1464,9 +1470,22 @@ function SyncControl({offset,onChange}){
         <span style={{fontSize:11,fontFamily:"monospace",color:offset!==0?"#F59E0B":"#334155"}}>{offset>0?"+":""}{offset}s</span>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:3,marginBottom:offset!==0?5:0}}>
-        {[[-3600,"-1h"],[-60,"-1m"],[-10,"-10s"],[-1,"-1s"],[1,"+1s"],[10,"+10s"],[60,"+1m"],[3600,"+1h"]].map(([v,l])=><button key={l} onClick={()=>onChange(offset+v)} style={{background:"#1E3A5A",border:"none",borderRadius:3,padding:"4px 0",color:"#7DD3FC",cursor:"pointer",fontSize:10,fontFamily:"monospace"}}>{l}</button>)}
+        {[[-3600,"-1h"],[-60,"-1m"],[-10,"-10s"],[-1,"-1s"],[1,"+1s"],[10,"+10s"],[60,"+1m"],[3600,"+1h"]].map(([v,l])=><button key={l} disabled={saving} onClick={()=>onChange(offset+v)} style={{background:"#1E3A5A",border:"none",borderRadius:3,padding:"4px 0",color:"#7DD3FC",cursor:saving?"not-allowed":"pointer",fontSize:10,fontFamily:"monospace",opacity:saving?0.5:1}}>{l}</button>)}
       </div>
-      {offset!==0&&<button onClick={()=>onChange(0)} style={{width:"100%",background:"none",border:"1px solid #EF444440",borderRadius:4,padding:"3px",color:"#EF4444",cursor:"pointer",fontSize:10}}>Reset</button>}
+      {offset!==0&&(
+        <div style={{display:"flex",gap:5}}>
+          {onSave && (
+            <button onClick={()=>onSave(offset)} disabled={saving}
+              style={{flex:2,background:saving?"#1E3A5A":"#1D9E75",border:"none",borderRadius:4,padding:"5px",color:saving?"#94A3B8":"#fff",cursor:saving?"not-allowed":"pointer",fontSize:11,fontWeight:700}}>
+              {saving?"Saving…":saveLabel}
+            </button>
+          )}
+          <button onClick={()=>onChange(0)} disabled={saving}
+            style={{flex:1,background:"none",border:"1px solid #EF444440",borderRadius:4,padding:"3px",color:"#EF4444",cursor:saving?"not-allowed":"pointer",fontSize:10,opacity:saving?0.5:1}}>
+            Reset
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -3792,6 +3811,7 @@ function DeleteButton({video, cloudStatus, onDeleted}){
 
 function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedVideo,
                         logData,xmlData,loadDate,syncOffsets,setSyncOffsets,
+                        saveSyncForVideos,
                         sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
                         selectedTags,toggleTag,allTags,isManTag,displayed,perms,
                         setActiveTab,cloudStatus,updateVideoTagsFn,
@@ -3849,7 +3869,8 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         {['admin','coach'].includes(effectiveRole) && (
         <div style={{marginBottom:12}}>
           <SyncControl offset={syncOffsets[video.id]||0}
-            onChange={v=>{saveSyncOffset(video.id,v);setSyncOffsets(p=>({...p,[video.id]:v}));}}/>
+            onChange={v=>{saveSyncOffset(video.id,v);setSyncOffsets(p=>({...p,[video.id]:v}));}}
+            onSave={async(secs)=>{ await saveSyncForVideos([video], secs); }}/>
         </div>
         )}
         {/* Tags — admin / coach / TL2 only */}
@@ -4015,8 +4036,12 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                             {v.polpercAvg!=null&&<span style={{color:v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"}}>Pol {R(v.polpercAvg,0)}%</span>}
                             {v.twsAvg==null&&v.twaAvg==null&&<span style={{color:"#334155"}}>—</span>}
                           </div>
-                          {/* 4) Filename at bottom */}
-                          <div style={{fontSize:12,fontWeight:600,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
+                          {/* 4) Clip start time (session-local) at bottom — replaces filename */}
+                          <div title={v.title||""} style={{fontSize:13,fontWeight:600,color:"#E2E8F0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(()=>{
+                            if(v.startUtc==null) return "—";
+                            const d=new Date(v.startUtc + (sessionTzOffset||0)*60000);
+                            return `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}`;
+                          })()}</div>
                         </div>
                       );
                     })()}
@@ -4325,6 +4350,70 @@ function SSAApp(){
     if(selectedVideo&&batchSelected.has(selectedVideo.id))setSelectedVideo(null);
     clearBatch();
   },[batchSelected,selectedVideo,clearBatch]);
+
+  // Batch sync — admin + coach only. A pending offset (seconds) that can be
+  // applied to every clip currently in batchSelected.
+  const[batchSyncOffset,setBatchSyncOffset]=useState(0);
+  const[batchSyncOpen,setBatchSyncOpen]=useState(false);
+  const[batchSyncBusy,setBatchSyncBusy]=useState(false);
+
+  // Bake a sync offset into one or more clips' startUtc — local IDB + cloud
+  // row + auto-tag recomputation in one shot. Used by both the per-clip Save
+  // button in the SyncControl and the batch Sync apply path. Returns the
+  // number of clips actually updated (clips with no startUtc are skipped).
+  const saveSyncForVideos = useCallback(async (videos, offsetSecs) => {
+    if (!offsetSecs || !videos?.length) return 0;
+    let supabaseUser = null;
+    try {
+      const supabase = getBrowserSupabase();
+      const { data: { user } } = await supabase.auth.getUser();
+      supabaseUser = user;
+    } catch {}
+    const enriched = {};
+    const newOffsetMap = { ...syncOffsets };
+    const autoTagPatterns = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
+    for (const v of videos) {
+      if (v.startUtc == null) continue;
+      const newStartUtc = v.startUtc + offsetSecs * 1000;
+      // Recompute auto-tags from the new startUtc (window shifts).
+      const autoTags = computeAutoTags(newStartUtc, v.duration, logData, xmlData, 0);
+      const manualTags = (v.tags || []).filter(t => !autoTagPatterns.test(t));
+      const mergedTags = [...new Set([...autoTags, ...manualTags])];
+      // 1. Local IDB (no-op for cloud-only entries).
+      try { await updateVideoStartUtc(v.id, newStartUtc); } catch {}
+      try { await updateVideoTags(v.id, mergedTags); } catch {}
+      // 2. Cloud row — propagate startUtc + tags + reset stored offset.
+      if (supabaseUser) {
+        try {
+          await upsertVideoCloud({
+            userId: supabaseUser.id,
+            sessionDate: v.sessionDate || activeDate,
+            title: v.title || v.name || null,
+            startUtc: newStartUtc,
+            durationSec: v.duration ?? null,
+            tags: mergedTags,
+            syncOffsetSecs: 0,                // baked in
+            thumbnailUrl: v.thumbnailUrl ?? null,
+            bunnyStreamId: v.streamId ?? null,
+            bunnyStoragePath: v.bunny_storage_path ?? null,
+            bytes: v.size ?? null,
+            externalId: v.externalId || v.id,
+          });
+        } catch { /* non-fatal — local copy is updated */ }
+      }
+      // 3. Local sync-offset preference → 0.
+      saveSyncOffset(v.id, 0);
+      delete newOffsetMap[v.id];
+      enriched[v.id] = enrichVideo({ ...v, startUtc: newStartUtc, tags: mergedTags }, logData, xmlData, newOffsetMap);
+    }
+    const updatedCount = Object.keys(enriched).length;
+    if (updatedCount) {
+      setSyncOffsets(newOffsetMap);
+      setAllVideos(p => p.map(v => enriched[v.id] || v));
+      if (selectedVideo && enriched[selectedVideo.id]) setSelectedVideo(enriched[selectedVideo.id]);
+    }
+    return updatedCount;
+  }, [activeDate, syncOffsets, logData, xmlData, selectedVideo]);
   // Video thumbnail load tracking — mirrors the PhotosTab pattern
   const[videoThumbsLoading,setVideoThumbsLoading]=useState(false);
   const[videoLoadedIds,setVideoLoadedIds]=useState(()=>new Set());
@@ -5237,6 +5326,7 @@ function SSAApp(){
       sessionTzOffset={sessionTzOffset}
       sessionTagList={sessionTagList} setSessionTagList={setSessionTagList}
       syncOffsets={syncOffsets} setSyncOffsets={setSyncOffsets}
+      saveSyncForVideos={saveSyncForVideos}
       cloudStatus={cloudStatus} unsyncedCount={unsyncedCount}
       searchQuery={searchQuery} setSearchQuery={setSearchQuery}
       sortBy={sortBy} setSortBy={setSortBy}
@@ -5477,13 +5567,46 @@ function SSAApp(){
                         style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:10}}>None</button>
                       <span style={{fontSize:11,color:"#475569",fontFamily:"monospace"}}>{batchSelected.size} selected</span>
                       {batchSelected.size>0&&(
-                        <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} video${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDelete();}}
-                          style={{marginLeft:"auto",background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"5px 14px",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:700}}>
-                          🗑 Delete {batchSelected.size}
-                        </button>
+                        <>
+                          <button onClick={()=>setBatchSyncOpen(o=>!o)}
+                            style={{marginLeft:"auto",background:batchSyncOpen?"#06B6D420":"#0A1929",border:`1px solid ${batchSyncOpen?"#06B6D450":"#1E3A5A"}`,borderRadius:6,padding:"5px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                            ⟲ Sync {batchSelected.size}
+                          </button>
+                          <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} video${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDelete();}}
+                            style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"5px 14px",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                            🗑 Delete {batchSelected.size}
+                          </button>
+                        </>
                       )}
                     </>
                   )}
+                </div>
+              )}
+              {/* ── Batch sync offset panel — apply the same shift to every
+                  selected clip in one go. Bakes into startUtc (local + cloud)
+                  and recomputes auto-tags from the shifted window. ── */}
+              {batchMode && batchSelected.size>0 && batchSyncOpen && (
+                <div style={{marginBottom:10,maxWidth:420}}>
+                  <SyncControl
+                    offset={batchSyncOffset}
+                    onChange={setBatchSyncOffset}
+                    saving={batchSyncBusy}
+                    saveLabel={`💾 Apply to ${batchSelected.size}`}
+                    onSave={async(secs)=>{
+                      setBatchSyncBusy(true);
+                      try {
+                        const sel = allVideos.filter(v => batchSelected.has(v.id));
+                        const n = await saveSyncForVideos(sel, secs);
+                        if (n === 0) {
+                          alert('Nothing to update — none of the selected clips have a start time set.');
+                        }
+                      } finally {
+                        setBatchSyncBusy(false);
+                        setBatchSyncOffset(0);
+                        setBatchSyncOpen(false);
+                        setBatchSelected(new Set());
+                      }
+                    }}/>
                 </div>
               )}
               {/* ── Loading thumbnails banner ── */}
@@ -5527,7 +5650,7 @@ function SSAApp(){
                       <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{vids.length} clip{vids.length!==1?"s":""}</span>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8}}>
-                      {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)} onThumbLoad={markVideoThumbLoaded} batchMode={batchMode} batchSelected={batchSelected} onBatchToggle={toggleBatchSelect}/>)}
+                      {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)} onThumbLoad={markVideoThumbLoaded} batchMode={batchMode} batchSelected={batchSelected} onBatchToggle={toggleBatchSelect} sessionTzOffset={sessionTzOffset}/>)}
                     </div>
                   </div>);
                 });
@@ -5651,7 +5774,7 @@ function SSAApp(){
                     <div style={{fontSize:10,color:"#334155"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
                     {selectedVideo.tsSource&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:selectedVideo.tsSource==="mp4-meta"?"#1D9E7515":"#F59E0B15",border:`1px solid ${selectedVideo.tsSource==="mp4-meta"?"#1D9E7530":"#F59E0B30"}`,color:selectedVideo.tsSource==="mp4-meta"?"#1D9E75":"#F59E0B"}}>{selectedVideo.tsSource==="mp4-meta"?"📷 camera metadata":"⚠ file modified time"}</span>)}
                   </div>
-                  {['admin','coach'].includes(effectiveRole) && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}}/></div>}
+                  {['admin','coach'].includes(effectiveRole) && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}} onSave={async(secs)=>{ await saveSyncForVideos([selectedVideo], secs); }}/></div>}
                   <div style={{marginBottom:12}}>
                     <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
                       await updateVideoStartUtc(id,startUtc);
