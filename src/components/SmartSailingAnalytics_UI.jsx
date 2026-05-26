@@ -635,6 +635,10 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const seekOnLoadRef=useRef(null); // preserve playback position across source swaps
   const lastUtcEmit=useRef(0);
   const isMobile=useIsMobile();
+  // True when the active source is HLS (cloud adaptive). Flips to false when
+  // a coach/admin has toggled HD-local, because the IndexedDB blob is always
+  // a progressive MP4/MOV. Consumed by the toolbar indicator below.
+  const isHls=!useLocalHD && (video.source==="cloud" || video.objectUrl?.includes(".m3u8"));
 
   // Always start a fresh clip on the default (cloud) source.
   useEffect(()=>{ setUseLocalHD(false); },[video.id]);
