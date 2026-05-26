@@ -621,15 +621,30 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                       // Phase B crop UX — three callbacks + the current
                       // cut points + busy flag. All optional; toolbar
                       // crop UI only renders when the setters are provided.
-                      pendingCrop,onDeleteUpTo,onDeleteFromHere,onSaveCrop,cropBusy=false,cropProgress=null}){
+                      pendingCrop,onDeleteUpTo,onDeleteFromHere,onSaveCrop,cropBusy=false,cropProgress=null,
+                      // When true (coach/admin), the player offers a toggle
+                      // to switch to the local IndexedDB blob for HD debrief
+                      // playback — overriding the default cloud-HLS path.
+                      canPlayLocalHD=false}){
   const vidRef=useRef(null),hlsRef=useRef(null);
   const[curTime,setCurTime]=useState(0);
   const[playing,setPlaying]=useState(false);
   const[dur,setDur]=useState(video.duration||0);
   const[vidQuality,setVidQuality]=useState(null); // live rendition label
-  const isHls=video.source==="cloud"||video.objectUrl?.includes(".m3u8");
+  const[useLocalHD,setUseLocalHD]=useState(false);
+  const seekOnLoadRef=useRef(null); // preserve playback position across source swaps
   const lastUtcEmit=useRef(0);
   const isMobile=useIsMobile();
+
+  // Always start a fresh clip on the default (cloud) source.
+  useEffect(()=>{ setUseLocalHD(false); },[video.id]);
+
+  // Coach/admin one-click toggle: cache the current scrub position so the
+  // swapped source picks up exactly where we left off, then flip the mode.
+  const toggleLocalHD=()=>{
+    seekOnLoadRef.current=vidRef.current?.currentTime??0;
+    setUseLocalHD(v=>!v);
+  };
 
   // Polar file — fallback only. Target BSP, Polar % and VMG % now come
   // straight from the Expedition log columns (see the derived values below).
@@ -637,7 +652,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
 
   useEffect(()=>{
     if(!vidRef.current||!video.objectUrl)return;
-    setCurTime(0);setPlaying(false);setVidQuality(null);
+    setVidQuality(null);
     // videoHeight reflects the rendition currently being decoded — works for
     // native HLS (iOS) and progressive MP4 alike. The element fires `resize`
     // on every rendition switch. Falls through to the hls.js LEVEL_SWITCHED
@@ -645,34 +660,67 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     const vEl=vidRef.current;
     const onResize=()=>{ if(vEl.videoHeight) setVidQuality(q=>(q&&q.includes('Mbps'))?q:`${vEl.videoHeight}p`); };
     vEl.addEventListener('resize',onResize);
-    if(isHls){
-      const init=()=>{
+
+    let cancelled=false;
+    let createdBlobUrl=null;
+    (async()=>{
+      let srcUrl=video.objectUrl;
+      // Coach/admin opt-in: pull the original from IndexedDB and feed the
+      // <video> a Blob URL. This is the highest-fidelity playback path
+      // (uncompressed source, no streaming) — used for debriefs.
+      if(useLocalHD && video.hasLocalBlob){
+        try{
+          const blob=await getVideoBlob(video.id);
+          if(cancelled||!blob) return;
+          createdBlobUrl=URL.createObjectURL(blob);
+          srcUrl=createdBlobUrl;
+        }catch{ /* fall through to cloud */ }
+      }
+      if(cancelled||!vidRef.current) return;
+      // HLS only when we're NOT on the local blob: local is always a
+      // progressive MP4/MOV that the <video> element decodes natively.
+      const useHls = !useLocalHD && (video.source==="cloud" || srcUrl?.includes(".m3u8"));
+      if(useHls){
+        const init=()=>{
+          if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
+          if(window.Hls?.isSupported()){
+            // Tuned for weak field wifi: start on the lowest rendition so
+            // playback begins immediately (then adapt up only if bandwidth
+            // allows), cap quality to the on-screen video size, and buffer
+            // far ahead (up to ~10 min / the whole clip) so wifi dropouts —
+            // even long ones — don't stall the video.
+            const hls=new window.Hls({startLevel:0,capLevelToPlayerSize:true,maxBufferLength:180,maxMaxBufferLength:600,maxBufferSize:200*1000*1000});
+            // Surface the actually-playing rendition (resolution + bitrate)
+            // so the bottom-left badge can prove what ABR settled on.
+            hls.on(window.Hls.Events.LEVEL_SWITCHED,(_e,d)=>{
+              const lvl=hls.levels?.[d.level];
+              if(lvl) setVidQuality(`${lvl.height}p · ${(lvl.bitrate/1e6).toFixed(2)} Mbps`);
+            });
+            hls.loadSource(srcUrl);hls.attachMedia(vidRef.current);hlsRef.current=hls;
+          }
+          else if(vidRef.current.canPlayType("application/vnd.apple.mpegurl"))vidRef.current.src=srcUrl;
+        };
+        if(!window.Hls){const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.14/hls.min.js";s.onload=init;document.head.appendChild(s);}
+        else init();
+      }else{
         if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
-        if(window.Hls?.isSupported()){
-          // Tuned for weak field wifi: start on the lowest rendition so
-          // playback begins immediately (then adapt up only if bandwidth
-          // allows), cap quality to the on-screen video size, and buffer
-          // far ahead (up to ~10 min / the whole clip) so wifi dropouts —
-          // even long ones — don't stall the video.
-          const hls=new window.Hls({startLevel:0,capLevelToPlayerSize:true,maxBufferLength:180,maxMaxBufferLength:600,maxBufferSize:200*1000*1000});
-          // Surface the actually-playing rendition (resolution + bitrate)
-          // so the bottom-left badge can prove what ABR settled on.
-          hls.on(window.Hls.Events.LEVEL_SWITCHED,(_e,d)=>{
-            const lvl=hls.levels?.[d.level];
-            if(lvl) setVidQuality(`${lvl.height}p · ${(lvl.bitrate/1e6).toFixed(2)} Mbps`);
-          });
-          hls.loadSource(video.objectUrl);hls.attachMedia(vidRef.current);hlsRef.current=hls;
-        }
-        else if(vidRef.current.canPlayType("application/vnd.apple.mpegurl"))vidRef.current.src=video.objectUrl;
-      };
-      if(!window.Hls){const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.14/hls.min.js";s.onload=init;document.head.appendChild(s);}
-      else init();
-    }else{
+        vidRef.current.src=srcUrl;
+      }
+    })();
+
+    return()=>{
+      cancelled=true;
+      vEl.removeEventListener('resize',onResize);
       if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
-      vidRef.current.src=video.objectUrl;
-    }
-    return()=>{vEl.removeEventListener('resize',onResize);if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}};
-  },[video.id,video.objectUrl]);
+      if(createdBlobUrl){ try{URL.revokeObjectURL(createdBlobUrl);}catch{} }
+    };
+  },[video.id,video.objectUrl,video.source,video.hasLocalBlob,useLocalHD]);
+
+  // Reset playback state only on clip change; toggling source within a
+  // clip should NOT zero the scrub position (the seek ref handles that).
+  useEffect(()=>{
+    setCurTime(0); setPlaying(false);
+  },[video.id]);
 
   const emitUtc=useCallback((t)=>{
     if(!onPlayUtc||!video.startUtc)return;
@@ -916,7 +964,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   return(
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
       <div style={{position:"relative",background:"#000",aspectRatio:"16/9",width:"100%",overflow:"hidden",borderRadius:"12px 12px 0 0"}}>
-        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration);}}/>:
+        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;}}}/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
@@ -924,7 +972,19 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             frame width instead of overflowing off the right edge. */}
         {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:isMobile?6:undefined}}>{overlay}</div>}
         {modeBadge}
-        {vidQuality&&<div style={{position:"absolute",bottom:8,left:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 6px",fontSize:9,color:"#7DD3FC",fontFamily:"monospace",letterSpacing:0.3}}>▾ {vidQuality}</div>}
+        <div style={{position:"absolute",bottom:8,left:8,display:"flex",alignItems:"center",gap:6}}>
+          {vidQuality&&<div style={{background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 6px",fontSize:9,color:"#7DD3FC",fontFamily:"monospace",letterSpacing:0.3}}>▾ {vidQuality}</div>}
+          {/* Coach/admin only: opt into local HD playback from the IndexedDB
+              blob. Useful for debriefs where bandwidth-independent, max-
+              fidelity playback matters more than smooth ABR. */}
+          {canPlayLocalHD && video.hasLocalBlob && (
+            <button onClick={toggleLocalHD}
+              title={useLocalHD?"Switch back to the adaptive cloud stream":"Play the original from local storage (HD, no streaming)"}
+              style={{background:useLocalHD?"rgba(245,158,11,0.9)":"rgba(0,0,0,0.7)",border:"none",borderRadius:4,padding:"2px 6px",fontSize:9,color:useLocalHD?"#000":"#F59E0B",fontFamily:"monospace",letterSpacing:0.3,cursor:"pointer",fontWeight:useLocalHD?700:500}}>
+              {useLocalHD?"◆ HD local":"◇ HD local"}
+            </button>
+          )}
+        </div>
         <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
       </div>
       <div style={{padding:"8px 12px 0"}}>
@@ -3776,7 +3836,8 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
       </div>
       <VideoPlayer video={video} logData={logData} xmlData={xmlData}
         syncOffset={syncOffsets[video.id]||0} sessionTzOffset={sessionTzOffset}
-        onPlayUtc={handlePlayUtc}/>
+        onPlayUtc={handlePlayUtc}
+        canPlayLocalHD={['admin','coach'].includes(effectiveRole)}/>
       <div style={{padding:"12px 16px"}}>
         {/* Sync offset — coach + admin only. Gate on effectiveRole (the real
             membership role); perms.canSync follows the legacy `role` selector
@@ -4619,15 +4680,22 @@ function SSAApp(){
       setSelectedVideo(early[0]||null);
     }
 
-    // Resolve playback URLs for any cloud video that doesn't already have
-    // a local objectUrl. Two-tier preference:
-    //   1. If the row has a Phase-B proxy/original rendition, ask
-    //      /api/videos/[id]/url for a signed Bunny Storage URL. Cheap, MP4,
-    //      no HLS parsing needed.
-    //   2. Otherwise (legacy Stream-only row), fall back to the existing
-    //      /api/stream/status path that returns an HLS playlist URL.
-    // Either way, the player gets a single objectUrl to load.
-    const needsResolve=vids.filter(v=>!v.objectUrl && (v.streamId || v.hasProxy || v.hasOriginal));
+    // Resolve playback URLs for any clip that's been uploaded to Bunny.
+    //   • No objectUrl yet — fetch the cloud URL so playback works at all.
+    //   • objectUrl is a local blob: URL — STILL fetch the cloud URL and
+    //     prefer it over the blob. Native blob playback of HD originals
+    //     stutters in browsers without hardware-accelerated decode for the
+    //     source codec; the cloud adaptive HLS ladder downshifts cleanly.
+    //     The blob stays in IndexedDB and is used for crop/export.
+    //   • objectUrl is already an https URL (previously-resolved cloud) —
+    //     skip; no need to re-fetch.
+    const needsResolve=vids.filter(v=>
+      (v.streamId || v.hasProxy || v.hasOriginal) &&
+      (!v.objectUrl || String(v.objectUrl).startsWith('blob:'))
+    );
+    // Free any local blob URL we're about to replace with a cloud URL so the
+    // browser can GC the underlying Blob handle.
+    const revokeIfBlob=u=>{ try{ if(u && String(u).startsWith('blob:')) URL.revokeObjectURL(u); }catch{} };
     if(needsResolve.length){
       await Promise.all(needsResolve.map(async v=>{
         // Phase B path — preferred when available. The signed-URL endpoint
@@ -4641,6 +4709,7 @@ function SSAApp(){
             if(res.ok){
               const j=await res.json();
               if(j?.url){
+                revokeIfBlob(v.objectUrl);
                 v.objectUrl=j.url;
                 v.servedRendition=j.served||null; // 'proxy' | 'original' | 'legacy'
                 // Bunny Stream auto-thumbnail — gives cloud clips a card
@@ -4665,7 +4734,10 @@ function SSAApp(){
             const res=await fetch(`/api/stream/status/${v.streamId}`);
             if(!res.ok) return;
             const s=await res.json();
-            v.objectUrl=s.playbackUrl||null;
+            if(s.playbackUrl){
+              revokeIfBlob(v.objectUrl);
+              v.objectUrl=s.playbackUrl;
+            }
             if(!v.thumbnailUrl) v.thumbnailUrl=s.thumbnailUrl||null;
           } catch { /* ignore */ }
         }
@@ -5467,6 +5539,7 @@ function SSAApp(){
                   syncOffset={syncOffsets[selectedVideo.id]||0}
                   sessionTzOffset={sessionTzOffset}
                   onPlayUtc={handlePlayUtc}
+                  canPlayLocalHD={['admin','coach'].includes(effectiveRole)}
                   // Phase B crop UX: three toolbar buttons + timeline
                   // markers. Gated on perms.canSync + local original
                   // present. Re-clicking a button moves that marker.
