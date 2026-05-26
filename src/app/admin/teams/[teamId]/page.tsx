@@ -60,7 +60,7 @@ export default async function TeamDetailPage({
         .maybeSingle(),
       service
         .from('boats')
-        .select('id, name, sail_number, created_at')
+        .select('id, name, sail_number, length_m, created_at')
         .eq('team_id', params.teamId)
         .order('name', { ascending: true }),
       service
