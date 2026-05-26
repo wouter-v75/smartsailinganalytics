@@ -759,15 +759,19 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const timeToLine = (row?.tmLine!=null && isFinite(row.tmLine) && row.tmLine>0)
     ? row.tmLine : null;
 
-  // TIME TO BURN — log TTB_Port/Stbd (cols 50/51, opt keeps 0); fallback: gun timer − time to line
-  // Expedition only populates these during the active start sequence.
-  // opt(50, false) stored 0 = perfect start, null = not in sequence.
-  const ttbPort = row?.ttbPort;  // already null-cleaned by opt(50, false) in parseCsvLog
-  const ttbStbd = row?.ttbStbd;
-  const ttbCalc = (secToGun!=null&&timeToLine!=null) ? secToGun-timeToLine : null;
-  // Use log value when available (including 0 = perfect); otherwise calculated fallback
-  const ttbPortFmt = (ttbPort!=null) ? ttbPort : ttbCalc;
-  const ttbStbdFmt = (ttbStbd!=null) ? ttbStbd : ttbCalc;
+  // TIME TO BURN — how much excess time you have before the gun fires.
+  //   positive = early, you need to burn some time before the line
+  //   negative = late, you'll cross after the gun
+  //
+  // Three flavours, all computed the same way (gun-time − time-to-reach):
+  //   TTB·LINE — perpendicular line crossing, uses TM_LINE
+  //   TTB·P    — port end of the line. Expedition's TTB_Port column turns
+  //              out to be the time it takes to reach the port end of the
+  //              line in seconds, not a pre-computed burn — so we subtract.
+  //   TTB·S    — starboard end, same shape as TTB·P with TTB_Stbd.
+  const ttbLine = (timeToLine!=null && secToGun!=null) ? secToGun-timeToLine : null;
+  const ttbPort = (row?.ttbPort!=null && secToGun!=null) ? secToGun-row.ttbPort : null;
+  const ttbStbd = (row?.ttbStbd!=null && secToGun!=null) ? secToGun-row.ttbStbd : null;
 
   // Formatters
   const fmtGun = s=>{
@@ -800,18 +804,24 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                unit="BL"
                color={distBL==null?"#F59E0B":distBL<0?"#EF4444":"#10B981"} size="lg"
                highlight={distBL!=null&&distBL<0}/>
-        {/* TTB PORT */}
-        <Gauge label={`TTB·P${ttbPort!=null?"·log":"·calc"}`}
-               value={ttbPortFmt!=null?fmtBurn(ttbPortFmt):"--:--"}
-               unit={ttbPortFmt==null?"":ttbPortFmt>0?"early":"late"}
-               color={ttbPortFmt!=null&&ttbPortFmt<0?"#EF4444":"#10B981"} size="lg"
-               highlight={ttbPortFmt!=null&&ttbPortFmt<-10}/>
-        {/* TTB STBD */}
-        <Gauge label={`TTB·S${ttbStbd!=null?"·log":"·calc"}`}
-               value={ttbStbdFmt!=null?fmtBurn(ttbStbdFmt):"--:--"}
-               unit={ttbStbdFmt==null?"":ttbStbdFmt>0?"early":"late"}
-               color={ttbStbdFmt!=null&&ttbStbdFmt<0?"#EF4444":"#10B981"} size="lg"
-               highlight={ttbStbdFmt!=null&&ttbStbdFmt<-10}/>
+        {/* TTB LINE — gun-time minus TM_LINE (perpendicular crossing) */}
+        <Gauge label="TTB·LINE"
+               value={ttbLine!=null?fmtBurn(ttbLine):"--:--"}
+               unit={ttbLine==null?"":ttbLine>0?"early":"late"}
+               color={ttbLine!=null&&ttbLine<0?"#EF4444":"#10B981"} size="lg"
+               highlight={ttbLine!=null&&ttbLine<-10}/>
+        {/* TTB at PORT end of line */}
+        <Gauge label="TTB·P"
+               value={ttbPort!=null?fmtBurn(ttbPort):"--:--"}
+               unit={ttbPort==null?"":ttbPort>0?"early":"late"}
+               color={ttbPort!=null&&ttbPort<0?"#EF4444":"#10B981"} size="lg"
+               highlight={ttbPort!=null&&ttbPort<-10}/>
+        {/* TTB at STBD end of line */}
+        <Gauge label="TTB·S"
+               value={ttbStbd!=null?fmtBurn(ttbStbd):"--:--"}
+               unit={ttbStbd==null?"":ttbStbd>0?"early":"late"}
+               color={ttbStbd!=null&&ttbStbd<0?"#EF4444":"#10B981"} size="lg"
+               highlight={ttbStbd!=null&&ttbStbd<-10}/>
         <Gauge label="BSP"  value={R(row.bsp)}         unit="kn"   color="#10B981" size="sm"/>
         <Gauge label="SOG"  value={R(row.sog)}         unit="kn"   color="#FBBF24" size="sm"/>
         <Gauge label="TWS"  value={R(row.tws)}         unit="kn"   color="#7DD3FC" size="sm"/>
