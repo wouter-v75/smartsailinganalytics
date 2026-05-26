@@ -557,14 +557,16 @@ function enrichVideo(v,log,xml,syncOffsets){
 }
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source==="supabase"?"cloud":source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
-function Gauge({label,value,unit,color="#06B6D4",size="md",highlight=false}){
+function Gauge({label,value,/* unit kept for call-site back-compat — not rendered */ unit:_unit,color="#06B6D4",size="md",highlight=false}){
   // Gauge is only used for the on-video instrument overlay. On phones the
-  // desktop sizing covers half the frame, so shrink everything ~40 %.
+  // desktop sizing covers half the frame, so shrink everything ~40 %. Units
+  // (kn / true / vs polar / etc.) are intentionally not rendered — the
+  // label already conveys the dimension and the cluster reads cleaner
+  // without the secondary line.
   const isMobile = useIsMobile();
   const baseFs = size==="lg"?28:size==="sm"?16:22;
   const fs     = isMobile ? Math.round(baseFs*0.6) : baseFs;
   const labelFs= isMobile ? 7 : 9;
-  const unitFs = isMobile ? 7 : 10;
   const minW   = isMobile
     ? (size==="lg"?54:size==="sm"?38:46)
     : (size==="lg"?90:size==="sm"?58:76);
@@ -575,7 +577,6 @@ function Gauge({label,value,unit,color="#06B6D4",size="md",highlight=false}){
     <div style={{background:highlight?"rgba(239,68,68,0.18)":"rgba(0,0,0,0.75)",border:`1px solid ${highlight?"#EF4444":color}40`,borderRadius:isMobile?5:7,padding:pad,minWidth:minW}}>
       <div style={{fontSize:labelFs,color:"#64748B",letterSpacing:isMobile?1:2,textTransform:"uppercase",marginBottom:isMobile?0:2}}>{label}</div>
       <div style={{fontSize:fs,fontWeight:700,color:highlight?"#EF4444":color,fontFamily:"'Courier New',monospace",lineHeight:1}}>{value}</div>
-      <div style={{fontSize:unitFs,color:"#475569",marginTop:1}}>{unit}</div>
     </div>
   );
 }
@@ -3856,7 +3857,11 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
     <div style={{flex:1,overflowY:"auto",background:"#030F1A"}}>
       <div style={{display:"flex",alignItems:"center",padding:"10px 14px 6px",gap:10}}>
         <button onClick={()=>setView("clips")} style={{background:"none",border:"none",color:"#06B6D4",fontSize:18,cursor:"pointer",padding:"4px 8px 4px 0"}}>←</button>
-        <span style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{video.title}</span>
+        <span title={video.title||""} style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(()=>{
+          if(video.startUtc==null) return "—";
+          const d=new Date(video.startUtc + (sessionTzOffset||0)*60000);
+          return `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}`;
+        })()}</span>
       </div>
       <VideoPlayer video={video} logData={logData} xmlData={xmlData}
         syncOffset={syncOffsets[video.id]||0} sessionTzOffset={sessionTzOffset}
@@ -5767,7 +5772,11 @@ function SSAApp(){
                 />
                 <div style={{marginTop:12}}>
                   <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:2}}>
-                    <div style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,marginRight:8}}>{selectedVideo.title}</div>
+                    <div title={selectedVideo.title||""} style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,marginRight:8,fontFamily:"monospace"}}>{(()=>{
+                      if(selectedVideo.startUtc==null) return "—";
+                      const d=new Date(selectedVideo.startUtc + (sessionTzOffset||0)*60000);
+                      return `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}`;
+                    })()}</div>
                     <SrcBadge source={selectedVideo.source||"local"}/>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
