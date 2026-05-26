@@ -732,8 +732,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     : null;
 
   // ── Starting instruments ────────────────────────────────────────────────────
-  const guns     = xmlData?.raceGuns||[];
-  const boatLenM = extractBoatLengthM(xmlData?.meta?.boat);
+  const guns = xmlData?.raceGuns||[];
 
   // GUN — prefer Timer-1 (col 55), fall back to event UTC diff
   const timerFromLog = row?.timer1;
@@ -747,13 +746,14 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const afterGun  = secToGun!=null && secToGun <= 0;  // gun has fired
 
   // DISTANCE TO LINE — read straight from the Expedition log's DST_LINE
-  // column (metres). The previous build had a GPS-geometry fallback off the
-  // event-file start-line marks, but that was fragile: the sign depended on
-  // pin/committee ordering and the magnitude could go off the rails when
-  // the marks weren't pinged accurately. If DST_LINE is empty we now show
-  // "--" rather than guessing.
-  const distM = (row?.dstLine!=null && isFinite(row.dstLine)) ? row.dstLine : null;
-  const distBL = distM!=null ? distM/boatLenM : null;
+  // column, which the user's instrument config writes in boat lengths (the
+  // "m" suffix in the CSV is Expedition's display formatting, not a unit).
+  // The previous build had a GPS-geometry fallback off the event-file
+  // start-line marks, but that was fragile: the sign depended on pin/
+  // committee ordering and the magnitude could go off the rails when the
+  // marks weren't pinged accurately. If DST_LINE is empty we now show "--"
+  // rather than guessing.
+  const distBL = (row?.dstLine!=null && isFinite(row.dstLine)) ? row.dstLine : null;
 
   // TIME TO LINE — TM_LINE log column (seconds). No geometry fallback.
   const timeToLine = (row?.tmLine!=null && isFinite(row.tmLine) && row.tmLine>0)
