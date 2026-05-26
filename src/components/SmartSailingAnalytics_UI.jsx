@@ -243,6 +243,7 @@ function parseCsvLog(text,offsetMin=0){
     ttbPort:col('ttb_port',31), ttbStbd:col('ttb_stbd',32),
     ttbPin:col('ttb_pin',52), ttbCB:col('ttb_cb',53),
     timer1:col('timer-1',55), rudder:col('rudder',56), yawR:col('yawr',41),
+    magvar:col('magvar',74),        // MagVar — magnetic variation, deg (east +)
   };
 
   for(let i=1;i<lines.length;i++){
@@ -287,6 +288,7 @@ function parseCsvLog(text,offsetMin=0){
       timer1:  opt(IX.timer1,true),
       rudder:  n(IX.rudder),
       yawR:    n(IX.yawR),
+      magvar:  n(IX.magvar),    // MagVar — for converting true bearings to magnetic
     });
   }
   return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};
@@ -597,6 +599,17 @@ function calcAWA(twa,tws,bsp){
   return twa<0?-deg:deg;
 }
 
+// Compass bearing in degrees from one lat/lon point to another (0–360, true).
+// Uses a local-flat approximation, which is accurate to well under a degree
+// over typical start-line distances (~hundreds of metres).
+function bearingDeg(from,to){
+  if(!from||!to) return null;
+  const dy=to.lat-from.lat;
+  const dx=(to.lon-from.lon)*Math.cos(from.lat*Math.PI/180);
+  if(dx===0&&dy===0) return null;
+  return ((Math.atan2(dx,dy)*180/Math.PI)+360)%360;
+}
+
 // Extract boat length in metres from name — e.g. "NORTHSTAR72" → 72 ft → 21.9 m
 function extractBoatLengthM(boatName){
   const m=(boatName||"").match(/(\d+)/);
@@ -732,7 +745,8 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     : null;
 
   // ── Starting instruments ────────────────────────────────────────────────────
-  const guns = xmlData?.raceGuns||[];
+  const guns       = xmlData?.raceGuns||[];
+  const startLines = xmlData?.startLines||[];
 
   // GUN — prefer Timer-1 (col 55), fall back to event UTC diff
   const timerFromLog = row?.timer1;
@@ -768,6 +782,28 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const ttbLine = (row?.tmLine!=null && isFinite(row.tmLine)) ? row.tmLine : null;
   const ttbPort = (row?.ttbPort!=null && secToGun!=null) ? secToGun-row.ttbPort : null;
   const ttbStbd = (row?.ttbStbd!=null && secToGun!=null) ? secToGun-row.ttbStbd : null;
+
+  // LINE SQUARE — the wind direction at which the start line is perpendicular
+  // to the wind, in MAGNETIC degrees. There are two perpendiculars to any
+  // line; pick the one closer to the current TWD so pin/committee ordering
+  // doesn't flip the value. Convert true → magnetic via the log's MagVar
+  // column (signed: positive east → magnetic = true − magvar).
+  const activeLine = nearestGun
+    ? startLines.find(sl=>sl.raceNum===nearestGun.raceNum)||startLines[0]||null
+    : startLines[0]||null;
+  let lineSqrMag = null;
+  if(activeLine?.pin&&activeLine?.boat){
+    const lineBearing = bearingDeg(activeLine.pin, activeLine.boat);
+    if(lineBearing!=null){
+      const a = (lineBearing + 90) % 360;
+      const b = (lineBearing + 270) % 360;
+      const ref = (row?.twd!=null && isFinite(row.twd) && row.twd!==0) ? row.twd : a;
+      const angDist = (x,y)=>{const d=Math.abs(x-y)%360;return d>180?360-d:d;};
+      const lineSqrTrue = angDist(a,ref) <= angDist(b,ref) ? a : b;
+      const magvar = (row?.magvar!=null && isFinite(row.magvar)) ? row.magvar : 0;
+      lineSqrMag = (lineSqrTrue - magvar + 360) % 360;
+    }
+  }
 
   // Formatters
   const fmtGun = s=>{
@@ -822,7 +858,8 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <Gauge label="SOG"  value={R(row.sog)}         unit="kn"   color="#FBBF24" size="sm"/>
         <Gauge label="TWS"  value={R(row.tws)}         unit="kn"   color="#7DD3FC" size="sm"/>
         <Gauge label="TWA"  value={`${R(row.twa,0)}°`} unit="true" color="#7DD3FC" size="sm"/>
-        <Gauge label="Heel" value={`${R(row.heel,0)}°`}unit="°"    color="#F97316" size="sm"/>
+        <Gauge label="TWD"  value={row?.twd!=null?`${R(row.twd,0)}°`:"--"}  unit="°"   color="#7DD3FC" size="sm"/>
+        <Gauge label="Line Sqr" value={lineSqrMag!=null?`${R(lineSqrMag,0)}°`:"--"} unit="mag" color="#A78BFA" size="sm"/>
       </div>
     );
     if(mode==="reach") return(
