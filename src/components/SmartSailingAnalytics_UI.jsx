@@ -1408,6 +1408,14 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
   const needProxy = total - haveProxy;
   const needOrig  = total - haveOrig;
   const busy      = syncState?.phase==="pushing" || syncState?.phase==="pulling";
+  // On desktop we now skip the client-side proxy transcode entirely —
+  // Bunny Stream encodes the full adaptive ladder (incl. 720p for mobile
+  // viewers) from the uploaded original, so the proxy is wasted CPU on
+  // multi-GB sources. The proxy button + progress row are hidden here;
+  // mobile keeps both because field wifi makes the small proxy useful
+  // as a first-pass preview before originals upload from a fast link.
+  const isMobile  = useIsMobile();
+  const showProxy = isMobile;
 
   const row = (label, have, color) => (
     <div style={{marginBottom:6}}>
@@ -1432,7 +1440,7 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
         </div>
       ) : (
         <>
-          {row("Proxies · 720p", haveProxy, "#06B6D4")}
+          {showProxy && row("Proxies · 720p", haveProxy, "#06B6D4")}
           {row("Originals · HD", haveOrig, "#8B5CF6")}
           {busy && syncState?.message && (
             <div style={{margin:"7px 0"}}>
@@ -1442,15 +1450,31 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
               </div>
             </div>
           )}
-          <button onClick={onSyncProxies} disabled={busy||needProxy===0}
-            style={{width:"100%",marginTop:8,background:needProxy===0?"#0A1929":"#06B6D4",border:"none",borderRadius:6,
-              padding:"7px 0",color:needProxy===0?"#475569":"#000",fontWeight:700,fontSize:11,
-              cursor:(busy||needProxy===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
-            {needProxy===0?"✓ All proxies synced":`☁ Sync ${needProxy} prox${needProxy===1?"y":"ies"}`}
-          </button>
+          {showProxy && (
+            <button onClick={onSyncProxies} disabled={busy||needProxy===0}
+              style={{width:"100%",marginTop:8,background:needProxy===0?"#0A1929":"#06B6D4",border:"none",borderRadius:6,
+                padding:"7px 0",color:needProxy===0?"#475569":"#000",fontWeight:700,fontSize:11,
+                cursor:(busy||needProxy===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
+              {needProxy===0?"✓ All proxies synced":`☁ Sync ${needProxy} prox${needProxy===1?"y":"ies"}`}
+            </button>
+          )}
+          {/* Originals are the primary sync action on desktop (we skip the
+              proxy entirely there) — promote to filled style + larger pad
+              when the proxy button is hidden. */}
           <button onClick={onUploadOriginals} disabled={busy||needOrig===0}
-            style={{width:"100%",marginTop:6,background:"none",border:`1px solid ${needOrig===0?"#1E3A5A":"#8B5CF6"}`,
-              borderRadius:6,padding:"6px 0",color:needOrig===0?"#475569":"#A78BFA",fontWeight:700,fontSize:11,
+            style={{width:"100%",marginTop:showProxy?6:8,
+              background: showProxy
+                ? "none"
+                : (needOrig===0?"#0A1929":"#8B5CF6"),
+              border: showProxy
+                ? `1px solid ${needOrig===0?"#1E3A5A":"#8B5CF6"}`
+                : "none",
+              borderRadius:6,
+              padding: showProxy ? "6px 0" : "7px 0",
+              color: showProxy
+                ? (needOrig===0?"#475569":"#A78BFA")
+                : (needOrig===0?"#475569":"#fff"),
+              fontWeight:700,fontSize:11,
               cursor:(busy||needOrig===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
             {needOrig===0?"✓ All originals uploaded":`⇪ Upload ${needOrig} original${needOrig===1?"":"s"}`}
           </button>
@@ -3812,7 +3836,7 @@ function DeleteButton({video, cloudStatus, onDeleted}){
 
 function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedVideo,
                         logData,xmlData,loadDate,syncOffsets,setSyncOffsets,
-                        saveSyncForVideos,
+                        saveSyncForVideos,saveTagsForVideo,
                         sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
                         selectedTags,toggleTag,allTags,isManTag,displayed,perms,
                         setActiveTab,cloudStatus,updateVideoTagsFn,
@@ -3889,7 +3913,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
               else saveTagList(activeDate,t);
             } catch { saveTagList(activeDate,t); }
           }}
-          onSave={(id,tags)=>{updateVideoTagsFn(id,tags);setSelectedVideo(p=>({...p,tags}));}}/>}
+          onSave={async (id,tags)=>{ const vid=allVideos.find(v=>v.id===id)||video; await saveTagsForVideo(vid, tags); }}/>}
       </div>
     </div>
   );
@@ -4425,6 +4449,43 @@ function SSAApp(){
     }
     return updatedCount;
   }, [activeDate, syncOffsets, logData, xmlData, selectedVideo]);
+
+  // Persist tag edits to BOTH local IDB and the Supabase row. Without the
+  // cloud upsert, tag edits on cloud-only clips (uploaded from another
+  // device, no local IDB entry) silently revert on the next library reload
+  // — updateVideoTags is a no-op for missing IDB entries. On desktop the
+  // earlier wiring didn't even hit IDB, only React state, so every tag
+  // edit reverted there too. Used by both TagEditor onSave handlers.
+  const saveTagsForVideo = useCallback(async (video, newTags) => {
+    if (!video) return;
+    // 1. Local IDB (no-op for cloud-only entries).
+    try { await updateVideoTags(video.id, newTags); } catch {}
+    // 2. Cloud row — preserves the edit across tab close + other devices.
+    try {
+      const supabase = getBrowserSupabase();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await upsertVideoCloud({
+          userId: user.id,
+          sessionDate: video.sessionDate || activeDate,
+          title: video.title || video.name || null,
+          startUtc: video.startUtc ?? null,
+          durationSec: video.duration ?? null,
+          tags: newTags,
+          syncOffsetSecs: syncOffsets[video.id] ?? 0,
+          thumbnailUrl: video.thumbnailUrl ?? null,
+          bunnyStreamId: video.streamId ?? null,
+          bunnyStoragePath: video.bunny_storage_path ?? null,
+          bytes: video.size ?? null,
+          externalId: video.externalId || video.id,
+        });
+      }
+    } catch { /* non-fatal — local copy is updated */ }
+    // 3. Update React state so the UI reflects immediately.
+    setAllVideos(p => p.map(v => v.id === video.id ? { ...v, tags: newTags } : v));
+    setSelectedVideo(p => p && p.id === video.id ? { ...p, tags: newTags } : p);
+  }, [activeDate, syncOffsets]);
+
   // Video thumbnail load tracking — mirrors the PhotosTab pattern
   const[videoThumbsLoading,setVideoThumbsLoading]=useState(false);
   const[videoLoadedIds,setVideoLoadedIds]=useState(()=>new Set());
@@ -4760,7 +4821,9 @@ function SSAApp(){
               // already-uploaded clips don't get re-queued for sync.
               local.cloudId=shaped.id;
               const localMtime = local.localBlobModifiedAt || 0;
-              const cloudMtime = shaped.proxyUploadedAt ? new Date(shaped.proxyUploadedAt).getTime() : 0;
+              const proxyMtime = shaped.proxyUploadedAt ? new Date(shaped.proxyUploadedAt).getTime() : 0;
+              const origMtime  = shaped.originalUploadedAt ? new Date(shaped.originalUploadedAt).getTime() : 0;
+              const cloudMtime = Math.max(proxyMtime, origMtime);
               const cloudFresh = localMtime === 0 || cloudMtime >= localMtime;
               if(cloudFresh){
                 local.hasProxy=shaped.hasProxy;
@@ -5351,6 +5414,7 @@ function SSAApp(){
       sessionTagList={sessionTagList} setSessionTagList={setSessionTagList}
       syncOffsets={syncOffsets} setSyncOffsets={setSyncOffsets}
       saveSyncForVideos={saveSyncForVideos}
+      saveTagsForVideo={saveTagsForVideo}
       cloudStatus={cloudStatus} unsyncedCount={unsyncedCount}
       searchQuery={searchQuery} setSearchQuery={setSearchQuery}
       sortBy={sortBy} setSortBy={setSortBy}
@@ -5856,7 +5920,7 @@ function SSAApp(){
                       if(user) await saveTagListCloud({userId:user.id,date:activeDate,tags:updated});
                       else saveTagList(activeDate,updated);
                     } catch { saveTagList(activeDate,updated); }
-                  }} onSave={(id,tags)=>{setAllVideos(p=>p.map(v=>v.id===id?{...v,tags}:v));if(selectedVideo.id===id)setSelectedVideo(p=>({...p,tags}));}}/>}
+                  }} onSave={async (id,tags)=>{ const vid=allVideos.find(v=>v.id===id)||selectedVideo; await saveTagsForVideo(vid, tags); }}/>}
                   {perms.canDelete&&(<DeleteButton video={selectedVideo} cloudStatus={cloudStatus} onDeleted={id=>{setAllVideos(p=>p.filter(v=>v.id!==id));setSelectedVideo(null);saveSyncOffset(id,0);}}/>)}
                 </div>
               </div>

@@ -287,5 +287,10 @@ export function toLegacyVideoShape(v: CloudVideoRow): Record<string, unknown> {
     originalPath: v.bunny_original_path || null,
     originalStreamId: v.bunny_original_stream_id || null,
     proxyUploadedAt: v.proxy_uploaded_at || null,
+    // Exposed for the local/cloud freshness comparison in loadDate: a clip
+    // can have an original uploaded without ever having a proxy (and on
+    // desktop we skip the proxy step entirely), so we need both timestamps
+    // to decide whether the cloud row's bytes are newer than a local edit.
+    originalUploadedAt: v.original_uploaded_at || null,
   }
 }
