@@ -4750,11 +4750,21 @@ function SSAApp(){
                       || (cv.bunny_stream_id && localByStream.get(cv.bunny_stream_id))
                       || null;
             if(local){
+              // Always link the cloud row so a later resync targets the
+              // same Supabase entry. But only adopt the cloud's rendition
+              // flags (hasProxy / hasOriginal / streamId) when the local
+              // copy is in sync. After a local crop, updateVideoBlobAnd-
+              // Duration flips cloudSynced to false because the cloud's
+              // bytes are now stale — in that window we must keep the
+              // freshly-cropped local blob as the playback source instead
+              // of getting overridden by the old cloud HLS.
               local.cloudId=shaped.id;
-              local.hasProxy=shaped.hasProxy;
-              local.hasOriginal=shaped.hasOriginal;
-              local.originalStreamId=shaped.originalStreamId;
-              if(shaped.streamId && !local.streamId) local.streamId=shaped.streamId;
+              if(local.cloudSynced !== false){
+                local.hasProxy=shaped.hasProxy;
+                local.hasOriginal=shaped.hasOriginal;
+                local.originalStreamId=shaped.originalStreamId;
+                if(shaped.streamId && !local.streamId) local.streamId=shaped.streamId;
+              }
             } else {
               vids.push(shaped); // cloud-only clip (uploaded from another device)
             }
