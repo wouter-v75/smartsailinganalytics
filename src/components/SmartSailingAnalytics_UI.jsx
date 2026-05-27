@@ -3998,25 +3998,34 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         {v.duration?fmtT(v.duration):"--:--"}
                       </div>
                     </div>
-                    {/* Metadata — order: race tags, sail tags, TWS/TWA, filename */}
+                    {/* Metadata — declutter for mobile: drop TWS/TWA, the
+                        boat-name and location auto-tags, and the "tack"
+                        manoeuvre tag. Only race + sail + polar% are kept. */}
                     {(()=>{
                       const EVENT_TAGS = ["race-start","topmark","mark"];
                       const POS_TAGS   = ["upwind","reach","downwind"];
-                      const MANO_TAGS  = ["tack","gybe"];
                       const SAIL_SKIP  = /^(main|msail|mainsail|main-)/;
                       const tags = v.tags||[];
+                      const boatTag = xmlData?.meta?.boat?.toLowerCase().replace(/\s+/g,"-") || null;
+                      const locTag  = xmlData?.meta?.location?.toLowerCase().replace(/\s+/g,"-") || null;
+                      // raceTags — events + first position; "gybe" stays, "tack" is hidden.
                       const raceTags = [
                         ...tags.filter(t=>EVENT_TAGS.includes(t)),
                         ...tags.filter(t=>POS_TAGS.includes(t)).slice(0,1),
-                        ...tags.filter(t=>MANO_TAGS.includes(t)),
+                        ...tags.filter(t=>t==="gybe"),
                       ];
                       const SKIP_ALL = new Set(["local","cloud","training","race","today","topmark","mark","race-start","upwind","reach","downwind","tack","gybe"]);
-                      const isLocTag = t => !SKIP_ALL.has(t)&&!t.startsWith("tws-")&&!SAIL_SKIP.test(t)&&!/^\d+x-/.test(t)&&t.includes("-")&&!EVENT_TAGS.includes(t)&&!POS_TAGS.includes(t)&&!MANO_TAGS.includes(t);
-                      const sailTags = tags.filter(t=>!SKIP_ALL.has(t)&&!SAIL_SKIP.test(t)&&!t.startsWith("tws-")&&!/^\d+x-/.test(t)&&!isLocTag(t));
+                      const isLocTag = t => !SKIP_ALL.has(t)&&!t.startsWith("tws-")&&!SAIL_SKIP.test(t)&&!/^\d+x-/.test(t)&&t.includes("-")&&!EVENT_TAGS.includes(t)&&!POS_TAGS.includes(t);
+                      const sailTags = tags.filter(t=>
+                        !SKIP_ALL.has(t) && !SAIL_SKIP.test(t)
+                        && !t.startsWith("tws-") && !/^\d+x-/.test(t)
+                        && !isLocTag(t)
+                        && t!==boatTag && t!==locTag
+                      );
                       const tagCol = t => {
                         if(EVENT_TAGS.includes(t)) return{bg:"#EF444420",bd:"#EF444440",c:"#EF4444"};
                         if(POS_TAGS.includes(t))   return{bg:"#06B6D420",bd:"#06B6D440",c:"#06B6D4"};
-                        if(MANO_TAGS.includes(t))  return{bg:"#1D9E7520",bd:"#1D9E7540",c:"#1D9E75"};
+                        if(t==="gybe")             return{bg:"#1D9E7520",bd:"#1D9E7540",c:"#1D9E75"};
                         if(sailTags.includes(t))   return{bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
                         return                          {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
                       };
@@ -4034,13 +4043,12 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                               {sailTags.map(t=>{const{bg,bd,c}=tagCol(t);return(<span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:9,borderRadius:3,padding:"1px 5px",fontFamily:"monospace"}}>{t}</span>);})}
                             </div>
                           )}
-                          {/* 3) TWS & TWA */}
-                          <div style={{fontSize:11,color:"#7DD3FC",fontFamily:"monospace",marginBottom:3,display:"flex",gap:8}}>
-                            {v.twsAvg!=null?<span>TWS {R(v.twsAvg)}kt</span>:null}
-                            {v.twaAvg!=null?<span>TWA {R(v.twaAvg,0)}°</span>:null}
-                            {v.polpercAvg!=null&&<span style={{color:v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"}}>Pol {R(v.polpercAvg,0)}%</span>}
-                            {v.twsAvg==null&&v.twaAvg==null&&<span style={{color:"#334155"}}>—</span>}
-                          </div>
+                          {/* 3) Polar % only — TWS / TWA intentionally hidden on mobile */}
+                          {v.polpercAvg!=null && (
+                            <div style={{fontSize:11,fontFamily:"monospace",marginBottom:3}}>
+                              <span style={{color:v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"}}>Pol {R(v.polpercAvg,0)}%</span>
+                            </div>
+                          )}
                           {/* 4) Clip start time (session-local) at bottom — replaces filename */}
                           <div title={v.title||""} style={{fontSize:13,fontWeight:600,color:"#E2E8F0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(()=>{
                             if(v.startUtc==null) return "—";
