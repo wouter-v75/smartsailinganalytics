@@ -53,3 +53,4 @@ build.log
 /docs/sailscan/training-set/**/*.HEIC
 /docs/sailscan/training-set/**/*.pdf
 /docs/sailscan/training-set/**/.DS_Store
+videos2compress/
