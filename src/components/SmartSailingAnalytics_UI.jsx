@@ -3998,9 +3998,9 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         {v.duration?fmtT(v.duration):"--:--"}
                       </div>
                     </div>
-                    {/* Metadata — declutter for mobile: drop TWS/TWA, the
-                        boat-name and location auto-tags, and the "tack"
-                        manoeuvre tag. Only race + sail + polar% are kept. */}
+                    {/* Metadata — declutter for mobile: drop TWS/TWA/Polar%,
+                        the boat-name and location auto-tags, and the "tack"
+                        manoeuvre tag. Only race + sail tags + local time. */}
                     {(()=>{
                       const EVENT_TAGS = ["race-start","topmark","mark"];
                       const POS_TAGS   = ["upwind","reach","downwind"];
@@ -4015,11 +4015,15 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         ...tags.filter(t=>t==="gybe"),
                       ];
                       const SKIP_ALL = new Set(["local","cloud","training","race","today","topmark","mark","race-start","upwind","reach","downwind","tack","gybe"]);
-                      const isLocTag = t => !SKIP_ALL.has(t)&&!t.startsWith("tws-")&&!SAIL_SKIP.test(t)&&!/^\d+x-/.test(t)&&t.includes("-")&&!EVENT_TAGS.includes(t)&&!POS_TAGS.includes(t);
+                      // Sail tags = everything that ISN'T a race/event/manoeuvre
+                      // category, mainsail, a wind/count bucket, the boat-name
+                      // auto-tag, or the location auto-tag. We deliberately do
+                      // NOT also try to guess "location-like" tags from hyphens
+                      // — sail names with descriptors (e.g. "j3-light", "a2-vmg")
+                      // were being swept up by that heuristic and disappeared.
                       const sailTags = tags.filter(t=>
                         !SKIP_ALL.has(t) && !SAIL_SKIP.test(t)
                         && !t.startsWith("tws-") && !/^\d+x-/.test(t)
-                        && !isLocTag(t)
                         && t!==boatTag && t!==locTag
                       );
                       const tagCol = t => {
@@ -4041,12 +4045,6 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                           {sailTags.length>0&&(
                             <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:3}}>
                               {sailTags.map(t=>{const{bg,bd,c}=tagCol(t);return(<span key={t} style={{background:bg,border:`1px solid ${bd}`,color:c,fontSize:9,borderRadius:3,padding:"1px 5px",fontFamily:"monospace"}}>{t}</span>);})}
-                            </div>
-                          )}
-                          {/* 3) Polar % only — TWS / TWA intentionally hidden on mobile */}
-                          {v.polpercAvg!=null && (
-                            <div style={{fontSize:11,fontFamily:"monospace",marginBottom:3}}>
-                              <span style={{color:v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"}}>Pol {R(v.polpercAvg,0)}%</span>
                             </div>
                           )}
                           {/* 4) Clip start time (session-local) at bottom — replaces filename */}
