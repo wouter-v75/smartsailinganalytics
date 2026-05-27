@@ -4751,15 +4751,18 @@ function SSAApp(){
                       || null;
             if(local){
               // Always link the cloud row so a later resync targets the
-              // same Supabase entry. But only adopt the cloud's rendition
+              // same Supabase entry. Only adopt the cloud's rendition
               // flags (hasProxy / hasOriginal / streamId) when the local
-              // copy is in sync. After a local crop, updateVideoBlobAnd-
-              // Duration flips cloudSynced to false because the cloud's
-              // bytes are now stale — in that window we must keep the
-              // freshly-cropped local blob as the playback source instead
-              // of getting overridden by the old cloud HLS.
+              // blob is in sync with what's actually uploaded — measured
+              // by comparing localBlobModifiedAt (stamped on every crop)
+              // against the cloud's proxy_uploaded_at. Without a stamp on
+              // the local entry the cloud is assumed fresh, so legacy
+              // already-uploaded clips don't get re-queued for sync.
               local.cloudId=shaped.id;
-              if(local.cloudSynced !== false){
+              const localMtime = local.localBlobModifiedAt || 0;
+              const cloudMtime = shaped.proxyUploadedAt ? new Date(shaped.proxyUploadedAt).getTime() : 0;
+              const cloudFresh = localMtime === 0 || cloudMtime >= localMtime;
+              if(cloudFresh){
                 local.hasProxy=shaped.hasProxy;
                 local.hasOriginal=shaped.hasOriginal;
                 local.originalStreamId=shaped.originalStreamId;

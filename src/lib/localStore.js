@@ -212,6 +212,12 @@ export async function updateVideoBlobAndDuration(id, blob, durationSec, newStart
     }
     entry.syncedToDb  = false;
     entry.cloudSynced = false;
+    // Stamp the moment we wrote new bytes. The library merge compares this
+    // against the cloud row's proxy_uploaded_at to decide whether the cloud
+    // rendition is still fresh — if local is newer, the cloud's hasProxy /
+    // hasOriginal claims are about stale bytes and must be ignored, so the
+    // freshly-cropped local blob stays as the playback source.
+    entry.localBlobModifiedAt = Date.now();
     // Drop any prior streamId — the cloud copy is now stale.
     if (entry.streamId) entry.streamId = null;
     await idbPut(db, "videos", entry);
