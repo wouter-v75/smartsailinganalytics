@@ -4412,6 +4412,142 @@ function SSAApp(){
     clearBatch();
   },[batchSelected,selectedVideo,clearBatch]);
 
+  // Batch ↓ Save to disk — download every selected clip's local blob as
+  // its own MP4 in ~/Downloads. Used to feed the external ffmpeg compress
+  // pipeline. Browsers throttle bursts of programmatic downloads, so we
+  // space them ~400ms apart; the file picker prompts only on the very
+  // first download (then Chrome remembers the dir for the rest).
+  const handleBatchSaveToDisk = useCallback(async () => {
+    if (!batchSelected.size) return;
+    const selected = allVideos.filter(v => batchSelected.has(v.id) && v.hasLocalBlob);
+    if (!selected.length) { alert('None of the selected clips have a local file on this device.'); return; }
+    let saved = 0;
+    for (const v of selected) {
+      try {
+        const blob = await getVideoBlob(v.id);
+        if (!blob) continue;
+        const stem = (v.title || v.name || 'clip').replace(/\.[^.]+$/, '');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${stem}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
+        saved++;
+        await new Promise(r => setTimeout(r, 400));
+      } catch (e) {
+        console.error('[batch-save] failed for', v.id, e);
+      }
+    }
+    if (saved < selected.length) {
+      alert(`Saved ${saved}/${selected.length}. The rest failed (see console).`);
+    }
+  }, [batchSelected, allVideos]);
+
+  // Batch ↑ Upload compressed — pick N compressed files, match each to a
+  // selected clip by filename stem (case-insensitive prefix), then push
+  // each to Bunny Stream as the cloud "original". The local IDB blobs
+  // stay untouched so HD-local debrief playback still works.
+  const handleBatchUploadCompressed = useCallback(async () => {
+    if (!batchSelected.size) return;
+    const selected = allVideos.filter(v => batchSelected.has(v.id));
+    if (!selected.length) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'video/mp4,video/quicktime,.mp4,.mov,.m4v';
+    input.onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      // Match files to clips by filename stem (case-insensitive). Accepts
+      // "<stem>.mp4", "<stem>_<anything>.mp4", "<stem>-<anything>.mp4"
+      // — e.g. matches "Race1.mp4" → Race1.mp4 / Race1_720p.mp4 / Race1-720.mp4.
+      const norm = s => (s || '').replace(/\.[^.]+$/, '').toLowerCase().trim();
+      const pairs = [];
+      const usedFiles = new Set();
+      for (const v of selected) {
+        const clipStem = norm(v.title || v.name || v.id);
+        if (!clipStem) continue;
+        const match = files.find(f => {
+          if (usedFiles.has(f)) return false;
+          const fs = norm(f.name);
+          return fs === clipStem || fs.startsWith(clipStem + '_') || fs.startsWith(clipStem + '-');
+        });
+        if (match) {
+          pairs.push({ video: v, file: match });
+          usedFiles.add(match);
+        }
+      }
+      if (!pairs.length) {
+        alert('No picked files matched the selected clips by name.\n\nThe match looks at filename stem — e.g. a clip titled "Race1" matches Race1.mp4 / Race1_720p.mp4 / Race1-compressed.mp4. Re-export from "Save to disk" if you renamed them.');
+        return;
+      }
+      if (pairs.length < selected.length) {
+        if (!confirm(`Matched ${pairs.length} of ${selected.length} clips. Continue with those?`)) return;
+      }
+
+      try {
+        const supabase = getBrowserSupabase();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { alert('You need to be signed in.'); return; }
+
+        for (let i = 0; i < pairs.length; i++) {
+          const { video, file } = pairs[i];
+          const label = video.title || video.name || video.id;
+          try {
+            const cloudId = await ensureCloudVideoId({
+              userId: user.id,
+              video,
+              sessionDate: video.sessionDate || activeDate,
+            });
+            if (!cloudId) { console.warn('[batch-upload-compressed] no cloud row for', video.id); continue; }
+            setMobileSyncState({ phase: 'pushing', message: `Uploading ${i+1}/${pairs.length} · ${label}`, progress: 0 });
+            let streamId = getPendingOrigStream(video.id);
+            if (!streamId) {
+              const created = await createStreamUpload(label, file.size);
+              streamId = created?.streamId || null;
+              if (streamId) setPendingOrigStream(video.id, streamId);
+            }
+            if (!streamId) { console.warn('[batch-upload-compressed] no Stream video for', video.id); continue; }
+            const uploaded = await uploadFileToStream(
+              { streamId },
+              file,
+              (pct) => setMobileSyncState({
+                phase: 'pushing',
+                message: `Uploading ${i+1}/${pairs.length} · ${label}`,
+                progress: pct,
+              }),
+            );
+            if (!uploaded) { console.warn('[batch-upload-compressed] interrupted for', video.id); continue; }
+            await fetch(
+              `/api/videos/${encodeURIComponent(cloudId)}/renditions`,
+              {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ original: { streamId } }),
+              },
+            ).catch(()=>{});
+            clearPendingOrigStream(video.id);
+            setAllVideos(p => p.map(v => v.id === video.id
+              ? { ...v, hasOriginal: true, originalStreamId: streamId, streamProcessing: true, cloudId }
+              : v));
+          } catch (err) {
+            console.error('[batch-upload-compressed] failed for', video.id, err);
+          }
+        }
+        setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${pairs.length} compressed clip${pairs.length===1?'':'s'}`, progress: 100 });
+        setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 4000);
+        clearBatch();
+      } catch (err) {
+        console.error('[batch-upload-compressed] outer failure', err);
+        setMobileSyncState({ phase: 'error', message: err?.message || 'Batch upload failed', progress: 0 });
+      }
+    };
+    input.click();
+  }, [batchSelected, allVideos, activeDate, clearBatch]);
+
   // Batch sync — admin + coach only. A pending offset (seconds) that can be
   // applied to every clip currently in batchSelected.
   const[batchSyncOffset,setBatchSyncOffset]=useState(0);
@@ -5685,6 +5821,16 @@ function SSAApp(){
                           <button onClick={()=>setBatchSyncOpen(o=>!o)}
                             style={{marginLeft:"auto",background:batchSyncOpen?"#06B6D420":"#0A1929",border:`1px solid ${batchSyncOpen?"#06B6D450":"#1E3A5A"}`,borderRadius:6,padding:"5px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:700}}>
                             ⟲ Sync {batchSelected.size}
+                          </button>
+                          <button onClick={handleBatchSaveToDisk}
+                            title="Download each selected clip's local file to disk for external ffmpeg compression"
+                            style={{background:"#06B6D420",border:"1px solid #06B6D450",borderRadius:6,padding:"5px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                            ↓ Save {batchSelected.size} to disk
+                          </button>
+                          <button onClick={handleBatchUploadCompressed}
+                            title="Upload compressed copies (from disk) for each selected clip — matched by filename stem. Local HD blobs are left untouched."
+                            style={{background:"#8B5CF620",border:"1px solid #8B5CF650",borderRadius:6,padding:"5px 12px",color:"#A78BFA",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                            ↑ Upload {batchSelected.size} compressed
                           </button>
                           <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} video${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDelete();}}
                             style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"5px 14px",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:700}}>
