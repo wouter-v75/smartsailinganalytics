@@ -89,11 +89,24 @@ export async function cropVideo({
 
   const inputName = `${inputStem}.mp4`
   const outputName = `${inputStem}.crop.mp4`
+  // Mount the source Blob into WORKERFS rather than reading the whole file
+  // into a Uint8Array via `arrayBuffer()`. The single-buffer path hits the
+  // browser's ~2 GiB typed-array ceiling on HD camera originals (multi-GB
+  // .mp4/.mov), throwing NotReadableError. WORKERFS lets ffmpeg read the
+  // Blob lazily via slice(), with no whole-file allocation.
+  const mountPoint = `/in_${Math.random().toString(36).slice(2, 8)}`
 
+  let mounted = false
   try {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-    const buf = new Uint8Array(await source.arrayBuffer())
-    await ff.writeFile(inputName, buf)
+
+    await ff.createDir(mountPoint)
+    await ff.mount(
+      'WORKERFS' as any,
+      { blobs: [{ name: inputName, data: source }] } as any,
+      mountPoint,
+    )
+    mounted = true
 
     // -ss before -i is "fast seek": jumps to nearest keyframe without
     // decoding earlier frames. Combined with -c copy, this is the
@@ -106,7 +119,7 @@ export async function cropVideo({
     //  -movflags +faststart  moov at start (mobile streaming)
     await ff.exec([
       '-ss', String(startSec),
-      '-i', inputName,
+      '-i', `${mountPoint}/${inputName}`,
       '-t', String(dur),
       '-c', 'copy',
       '-avoid_negative_ts', 'make_zero',
@@ -122,11 +135,14 @@ export async function cropVideo({
     const blob = new Blob([bytes], { type: 'video/mp4' })
 
     // Clean up the virtual FS so memory doesn't accumulate.
-    try { await ff.deleteFile(inputName) } catch {}
     try { await ff.deleteFile(outputName) } catch {}
 
     return { blob, bytes: blob.size, durationSec: dur, type: 'video/mp4' }
   } finally {
     ff.off('progress', onProgressEv)
+    if (mounted) {
+      try { await ff.unmount(mountPoint) } catch {}
+      try { await ff.deleteDir(mountPoint) } catch {}
+    }
   }
 }
