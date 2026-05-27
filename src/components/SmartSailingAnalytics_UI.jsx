@@ -626,7 +626,15 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                       // When true (coach/admin), the player offers a toggle
                       // to switch to the local IndexedDB blob for HD debrief
                       // playback — overriding the default cloud-HLS path.
-                      canPlayLocalHD=false}){
+                      canPlayLocalHD=false,
+                      // Native-pipeline helpers (desktop only): download the
+                      // local clip blob to disk for external compression,
+                      // and push the compressed file straight to Bunny as
+                      // the cloud "original". The IDB blob is deliberately
+                      // NOT replaced — the HD-local debrief toggle still
+                      // plays the full-fidelity local file. Both optional;
+                      // the toolbar buttons only appear when wired.
+                      onExportToDisk,onUploadCompressed}){
   const vidRef=useRef(null),hlsRef=useRef(null);
   const[curTime,setCurTime]=useState(0);
   const[playing,setPlaying]=useState(false);
@@ -1078,6 +1086,24 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
               ? `Saving ${Math.round((cropProgress?.pct||0)*100)}%`
               : "💾 Save cropped video"}
           </button>
+        )}
+        {/* Native-pipeline shortcuts — for the "crop in-app → ffmpeg compress
+            on disk → re-import" workflow on slow-upload connections. */}
+        {onExportToDisk && (
+          <button
+            title="Save the local clip to disk as MP4 — for external compression with ffmpeg, then bring it back via Replace"
+            onClick={onExportToDisk}
+            disabled={cropBusy}
+            style={{background:"#06B6D420",border:"1px solid #06B6D450",borderRadius:6,padding:"6px 9px",color:"#06B6D4",cursor:cropBusy?"not-allowed":"pointer",fontSize:11,fontWeight:600,opacity:cropBusy?0.5:1}}
+          >↓ Save to disk</button>
+        )}
+        {onUploadCompressed && (
+          <button
+            title="Upload a compressed copy (from disk) to Bunny — local HD stays untouched for debriefs"
+            onClick={onUploadCompressed}
+            disabled={cropBusy}
+            style={{background:"#06B6D420",border:"1px solid #06B6D450",borderRadius:6,padding:"6px 9px",color:"#06B6D4",cursor:cropBusy?"not-allowed":"pointer",fontSize:11,fontWeight:600,opacity:cropBusy?0.5:1}}
+          >↑ Upload compressed</button>
         )}
         <div style={{flex:1}}/>
         {row&&<span style={{fontSize:10,color:"#1D9E75"}}>● live instruments</span>}
@@ -5849,6 +5875,122 @@ function SSAApp(){
                             setCropError(e?.message || String(e));
                             setCropBusy(false); setCropProgress(null);
                           }
+                        }
+                      : undefined
+                  }
+                  // ↓ Save to disk — download the local blob as MP4 so the
+                  // user can run native ffmpeg + VideoToolbox compression on
+                  // it (much faster than ffmpeg.wasm for multi-GB sources).
+                  onExportToDisk={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? async () => {
+                          try {
+                            const blob = await getVideoBlob(selectedVideo.id);
+                            if (!blob) { alert('No local file to export.'); return; }
+                            // Strip any extension from the title (camera files
+                            // often end in .MP4) and tack on .mp4 so the
+                            // downloaded file is unambiguous.
+                            const stem = (selectedVideo.title || selectedVideo.name || 'clip').replace(/\.[^.]+$/, '');
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `${stem}.mp4`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            // Browsers need the URL alive for the duration of
+                            // the streaming download. 60s is generous for any
+                            // realistic SSD write speed.
+                            setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
+                          } catch (e) {
+                            alert(`Export failed: ${e?.message || e}`);
+                          }
+                        }
+                      : undefined
+                  }
+                  // ↑ Upload compressed — file picker that pushes the
+                  // chosen file STRAIGHT to Bunny Stream as the cloud's
+                  // "original" rendition. The IDB blob is deliberately
+                  // not touched, so the coach can keep playing the full
+                  // HD locally (HD-local toggle) while teammates stream
+                  // the smaller compressed version's adaptive ladder.
+                  onUploadCompressed={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? () => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'video/mp4,video/quicktime,.mp4,.mov,.m4v';
+                          input.onchange = async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            try {
+                              const supabase = getBrowserSupabase();
+                              const { data: { user } } = await supabase.auth.getUser();
+                              if (!user) { alert('You need to be signed in.'); return; }
+                              const cloudId = await ensureCloudVideoId({
+                                userId: user.id,
+                                video: selectedVideo,
+                                sessionDate: selectedVideo.sessionDate || activeDate,
+                              });
+                              if (!cloudId) {
+                                alert('No cloud row available — check your team membership.');
+                                return;
+                              }
+                              const label = selectedVideo.title || selectedVideo.name || cloudId;
+                              setMobileSyncState({ phase: 'pushing', message: `Uploading compressed · ${label}`, progress: 0 });
+                              // Reuse a pending Stream video object from a
+                              // half-finished attempt so the TUS client
+                              // resumes; otherwise create a fresh one.
+                              let streamId = getPendingOrigStream(selectedVideo.id);
+                              if (!streamId) {
+                                const created = await createStreamUpload(label, file.size);
+                                streamId = created?.streamId || null;
+                                if (streamId) setPendingOrigStream(selectedVideo.id, streamId);
+                              }
+                              if (!streamId) {
+                                setMobileSyncState({ phase: 'error', message: 'Stream create failed', progress: 0 });
+                                alert('Could not create a Stream video.');
+                                return;
+                              }
+                              const uploaded = await uploadFileToStream(
+                                { streamId },
+                                file,
+                                (pct) => setMobileSyncState({
+                                  phase: 'pushing',
+                                  message: `Uploading compressed · ${label}`,
+                                  progress: pct,
+                                }),
+                              );
+                              if (!uploaded) {
+                                setMobileSyncState({ phase: 'error', message: 'Upload interrupted', progress: 0 });
+                                alert('Upload was interrupted — retry to resume.');
+                                return;
+                              }
+                              // Flip has_original=true + record the Stream GUID.
+                              await fetch(
+                                `/api/videos/${encodeURIComponent(cloudId)}/renditions`,
+                                {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ original: { streamId } }),
+                                },
+                              ).catch(()=>{});
+                              clearPendingOrigStream(selectedVideo.id);
+                              setAllVideos(p => p.map(v => v.id === selectedVideo.id
+                                ? { ...v, hasOriginal: true, originalStreamId: streamId, streamProcessing: true, cloudId }
+                                : v));
+                              setSelectedVideo(p => p && p.id === selectedVideo.id
+                                ? { ...p, hasOriginal: true, originalStreamId: streamId, streamProcessing: true, cloudId }
+                                : p);
+                              setMobileSyncState({ phase: 'done', message: `✓ Compressed uploaded · ${label}`, progress: 100 });
+                              setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
+                            } catch (err) {
+                              console.error('[upload-compressed] failed', err);
+                              setMobileSyncState({ phase: 'error', message: err?.message || 'Upload failed', progress: 0 });
+                              alert(`Upload failed: ${err?.message || err}`);
+                            }
+                          };
+                          input.click();
                         }
                       : undefined
                   }
