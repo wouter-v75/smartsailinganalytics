@@ -130,11 +130,17 @@ export async function cropVideo({
 
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
 
-    const data = await ff.readFile(outputName)
-    const bytes = new Uint8Array(data as ArrayBufferLike).slice().buffer
-    const blob = new Blob([bytes], { type: 'video/mp4' })
+    // ff.readFile() already hands back a JS-owned Uint8Array. The previous
+    // `new Uint8Array(data).slice().buffer` then `new Blob([bytes])` chain
+    // allocated the full output THREE times (the Uint8Array constructor
+    // copies, slice() copies, Blob copies again). On large cuts that piles
+    // up past the JS heap and throws "Array buffer allocation failed". The
+    // Blob constructor copies the bytes into its own backing store anyway,
+    // so we hand `data` to it directly — one copy, then `data` is free.
+    const data = await ff.readFile(outputName) as Uint8Array
+    const blob = new Blob([data as unknown as BlobPart], { type: 'video/mp4' })
 
-    // Clean up the virtual FS so memory doesn't accumulate.
+    // Drop the wasm-side copy of the output now that the Blob owns its bytes.
     try { await ff.deleteFile(outputName) } catch {}
 
     return { blob, bytes: blob.size, durationSec: dur, type: 'video/mp4' }
