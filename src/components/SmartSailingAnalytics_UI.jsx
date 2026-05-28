@@ -4999,24 +4999,29 @@ function SSAApp(){
                 }
                 return merged.sort((a,b)=>b.date.localeCompare(a.date));
               });
-              // ── #4 fix: if the user has no local data on the date we
-              // booted into (typical TL1 mobile-first scenario — fresh
-              // device, empty IDB), jump them to the newest cloud session
-              // so the library shows videos + thumbnails immediately
-              // instead of an empty "no sessions" state.
+              // Pick the freshest session of either tier and jump there.
+              // Previously we only jumped to the newest cloud date when
+              // the user had ZERO local clips on the local-latest date —
+              // which meant someone with stale May-20 clips on their
+              // phone stayed on May 20 even though the cloud had a May-27
+              // session ready. Now we always land on max(latest local,
+              // newest cloud), so a refresh after a coach's desktop sync
+              // takes mobile straight to the new session and auto-fills
+              // its thumbnails via loadDate.
               //
-              // Use `latestDate` (the date boot() actually set active) —
-              // the `activeDate` state var is a stale closure here,
-              // frozen at TODAY() from the initial render.
-              const localVidsForActive = (await getAllVideos()).filter(v => v.sessionDate === latestDate);
-              if (localVidsForActive.length === 0) {
-                const newestCloudDate = cloudSessions
-                  .map(s => s.date)
-                  .sort()
-                  .reverse()[0];
-                if (newestCloudDate && newestCloudDate !== latestDate) {
-                  await loadDate(newestCloudDate);
-                }
+              // Uses `latestDate` (the date boot() actually set active)
+              // rather than the `activeDate` state var — that one's a
+              // stale closure, frozen at TODAY() from the initial render.
+              const newestCloudDate = cloudSessions
+                .map(s => s.date)
+                .sort()
+                .reverse()[0];
+              const bestDate = [latestDate, newestCloudDate]
+                .filter(Boolean)
+                .sort()
+                .reverse()[0];
+              if (bestDate && bestDate !== latestDate) {
+                await loadDate(bestDate);
               }
             }
           }
