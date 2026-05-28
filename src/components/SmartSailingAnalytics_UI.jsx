@@ -4705,6 +4705,38 @@ function SSAApp(){
     return updatedCount;
   }, [activeDate, syncOffsets, logData, xmlData, selectedVideo]);
 
+  // Fire-and-forget cloud upsert for a single clip's metadata. Used by
+  // every code path that mutates a clip's tags / startUtc / duration on
+  // disk — crop, StartTimeEditor, Re-tag-all — so that the videos row
+  // reflects the change and other users / devices pick it up via the
+  // cloud-authoritative tags merge in loadDate. `overrides` lets the
+  // caller send the post-mutation values (e.g. newStartUtc after a crop)
+  // even when the in-memory `video` shape hasn't been re-rendered yet.
+  const pushVideoMetadataToCloud = useCallback(async (video, overrides = {}) => {
+    if (!video) return false;
+    try {
+      const supabase = getBrowserSupabase();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return false;
+      await upsertVideoCloud({
+        userId: user.id,
+        sessionDate: video.sessionDate || activeDate,
+        title: video.title || video.name || null,
+        startUtc: video.startUtc ?? null,
+        durationSec: video.duration ?? null,
+        tags: video.tags ?? [],
+        syncOffsetSecs: syncOffsets[video.id] ?? 0,
+        thumbnailUrl: video.thumbnailUrl ?? null,
+        bunnyStreamId: video.streamId ?? null,
+        bunnyStoragePath: video.bunny_storage_path ?? null,
+        bytes: video.size ?? null,
+        externalId: video.externalId || video.id,
+        ...overrides,
+      });
+      return true;
+    } catch (e) { console.warn('[cloud] meta push failed', e); return false; }
+  }, [activeDate, syncOffsets]);
+
   // Persist tag edits to BOTH local IDB and the Supabase row. Without the
   // cloud upsert, tag edits on cloud-only clips (uploaded from another
   // device, no local IDB entry) silently revert on the next library reload
@@ -5075,6 +5107,12 @@ function SSAApp(){
               // the local entry the cloud is assumed fresh, so legacy
               // already-uploaded clips don't get re-queued for sync.
               local.cloudId=shaped.id;
+              // Tags are CLOUD-AUTHORITATIVE: every editor path now pushes
+              // the tag set to the videos row, so adopting the cloud's
+              // tags on every load propagates desktop edits to mobile (and
+              // vice versa). Without this the merge kept the device's
+              // stale IDB tags forever.
+              if(Array.isArray(shaped.tags)) local.tags=shaped.tags;
               const localMtime = local.localBlobModifiedAt || 0;
               const proxyMtime = shaped.proxyUploadedAt ? new Date(shaped.proxyUploadedAt).getTime() : 0;
               const origMtime  = shaped.originalUploadedAt ? new Date(shaped.originalUploadedAt).getTime() : 0;
@@ -5874,7 +5912,10 @@ function SSAApp(){
                       const newTags=computeAutoTags(v.startUtc,v.duration,logData,xmlData,syncOffsets[v.id]||0);
                       const manualTags=(v.tags||[]).filter(t=>{if(isAutoTag(t))return false;const meta=xmlData?.meta;if(meta?.location&&t===meta.location.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.boat&&t===meta.boat.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.dayType&&t===meta.dayType.toLowerCase().replace(/\s+/g,"-"))return false;return true;});
                       const merged=[...new Set([...newTags,...manualTags])];
-                      await updateVideoTags(v.id,merged);count++;return{...v,tags:merged};
+                      await updateVideoTags(v.id,merged);
+                      // Push to cloud so other devices pick up the re-tag.
+                      pushVideoMetadataToCloud(v,{tags:merged});
+                      count++;return{...v,tags:merged};
                     }));
                     setAllVideos(updated);
                     if(selectedVideo){const u=updated.find(v=>v.id===selectedVideo.id);if(u)setSelectedVideo(u);}
@@ -6104,6 +6145,15 @@ function SSAApp(){
                             if (typeof newStartUtc === 'number') patch.startUtc = newStartUtc;
                             setAllVideos(p => p.map(v => v.id === selectedVideo.id ? {...v, ...patch} : v));
                             setSelectedVideo(p => p && p.id === selectedVideo.id ? {...p, ...patch} : p);
+                            // Push the post-crop metadata (new tags, startUtc,
+                            // duration) to the cloud row so teammates pick
+                            // them up on next library load.
+                            pushVideoMetadataToCloud(selectedVideo, {
+                              tags: mergedTags,
+                              ...(typeof newStartUtc === 'number' ? { startUtc: newStartUtc } : {}),
+                              durationSec: result.durationSec,
+                              bytes: result.bytes,
+                            });
                             setPendingCrop(null);
                             setCropProgress(null);
                             setCropBusy(false);
@@ -6255,6 +6305,9 @@ function SSAApp(){
                       const autoTags2=new Set(computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0));const manualTags=(selectedVideo.tags||[]).filter(t=>!autoTags2.has(t));
                       const mergedTags=[...new Set([...autoTags,...manualTags])];
                       await updateVideoTags(id,mergedTags);
+                      // Push to cloud so teammates / other devices pick
+                      // up the new start time + recomputed tag set.
+                      pushVideoMetadataToCloud(selectedVideo,{startUtc,tags:mergedTags});
                       const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData,xmlData,syncOffsets);
                       setAllVideos(p=>p.map(v=>v.id===id?enriched:v));
                       setSelectedVideo(enriched);
