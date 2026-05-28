@@ -4340,26 +4340,6 @@ function SSAApp(){
   const[sessionTzOffset,setSessionTzOffset]=useState(DEFAULT_TZ);
   const[sessionTagList,setSessionTagList]=useState([]);
   const[xmlData,setXmlData]=useState(null);
-  // Effective "TAP TO ADD" suggestion list: union of the curated session tag
-  // list (what gets persisted via saveTagListCloud) and the actual MANUAL
-  // tags applied to every clip in the active session. This way a tag that
-  // someone added directly to a clip on another device (or before we wired
-  // tag-list cloud sync) still appears as a suggestion next time anyone
-  // opens that session's TagEditor. Auto-computed tags (tws-/race-/upwind/
-  // tack etc.) are deliberately excluded — they'd just clutter the picker.
-  const TAG_SUGGESTION_AUTO_RE = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
-  const tagSuggestionList = React.useMemo(() => {
-    const set = new Set(sessionTagList);
-    for (const v of allVideos) {
-      if (v.sessionDate !== activeDate) continue;
-      for (const t of (v.tags || [])) {
-        if (!t || TAG_SUGGESTION_AUTO_RE.test(t)) continue;
-        set.add(t);
-      }
-    }
-    return [...set].sort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionTagList, allVideos, activeDate]);
   const[selectedVideo,setSelectedVideo]=useState(null);
   // Phase B — crop state. The two cut markers are set by the player
   // toolbar buttons ("Delete UPTO here" / "Delete FROM here") and shown
@@ -4383,6 +4363,27 @@ function SSAApp(){
   const[sortBy,setSortBy]=useState("date");
   const[sessions,setSessions]=useState([]);
   const[activeDate,setActiveDate]=useState(TODAY());
+  // Effective "TAP TO ADD" suggestion list: union of the curated session tag
+  // list (what gets persisted via saveTagListCloud) and the actual MANUAL
+  // tags applied to every clip in the active session. This way a tag that
+  // someone added directly to a clip on another device (or before we wired
+  // tag-list cloud sync) still appears as a suggestion next time anyone
+  // opens that session's TagEditor. Auto-computed tags (tws-/race-/upwind/
+  // tack etc.) are deliberately excluded — they'd just clutter the picker.
+  // Must come AFTER activeDate's useState — referencing it before throws a
+  // TDZ "Cannot access 'P' before initialization" in the Vercel production
+  // build (caught Mar 2026 prerender).
+  const tagSuggestionList = useMemo(() => {
+    const set = new Set(sessionTagList);
+    for (const v of allVideos) {
+      if (v.sessionDate !== activeDate) continue;
+      for (const t of (v.tags || [])) {
+        if (!t || isAutoTag(t)) continue;
+        set.add(t);
+      }
+    }
+    return [...set].sort();
+  }, [sessionTagList, allVideos, activeDate]);
   const[cloudStatus,setCloudStatus]=useState(null);
   const[unsyncedCount,setUnsyncedCount]=useState(0);
   const[aiQuery,setAiQuery]=useState("");
