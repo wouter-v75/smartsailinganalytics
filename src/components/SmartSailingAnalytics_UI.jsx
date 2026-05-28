@@ -1220,7 +1220,15 @@ function TagEditor({video, onSave, tagList=[], suggestionList, sessionDate, onTa
     if(!tagList.includes(t)) onTagListChange?.([...tagList, t].sort());
   };
   const remTag = t => { setTags(p=>p.filter(x=>x!==t)); setDirty(true); };
-  const save = async () => { await updateVideoTags(video.id, tags); onSave(video.id, tags); setDirty(false); };
+  const save = async () => {
+    await updateVideoTags(video.id, tags);
+    // AWAIT the parent's onSave — that's the path that pushes the new tags
+    // to the cloud row. Previously the call was fire-and-forget, so if the
+    // user clicked Save then refreshed within a second or two the in-flight
+    // POST got cancelled by the navigation and the cloud row never updated.
+    try { await Promise.resolve(onSave(video.id, tags)); } catch {}
+    setDirty(false);
+  };
   const deleteFromList = tag => { onTagListChange?.(tagList.filter(t => t !== tag)); };
   // "TAP TO ADD" pulls from the broader suggestion list when one is provided —
   // sessionTagList only contains tags that were added through this UI (or via
@@ -4746,13 +4754,18 @@ function SSAApp(){
   const saveTagsForVideo = useCallback(async (video, newTags) => {
     if (!video) return;
     // 1. Local IDB (no-op for cloud-only entries).
-    try { await updateVideoTags(video.id, newTags); } catch {}
+    try { await updateVideoTags(video.id, newTags); } catch (e) { console.warn('[tags] IDB write failed', e); }
     // 2. Cloud row — preserves the edit across tab close + other devices.
+    //    Surface failures: silent returns from upsertVideoCloud (no active
+    //    membership, RLS denial, network) were hiding real cloud-sync
+    //    breakage and making "tags don't propagate" hard to diagnose.
     try {
       const supabase = getBrowserSupabase();
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await upsertVideoCloud({
+      if (!user) {
+        console.warn('[tags] cloud sync skipped — not signed in');
+      } else {
+        const ok = await upsertVideoCloud({
           userId: user.id,
           sessionDate: video.sessionDate || activeDate,
           title: video.title || video.name || null,
@@ -4766,8 +4779,15 @@ function SSAApp(){
           bytes: video.size ?? null,
           externalId: video.externalId || video.id,
         });
+        if (!ok) {
+          console.warn('[tags] cloud upsert returned false — active membership / RLS / network?', {
+            videoId: video.id,
+            externalId: video.externalId || video.id,
+            sessionDate: video.sessionDate || activeDate,
+          });
+        }
       }
-    } catch { /* non-fatal — local copy is updated */ }
+    } catch (e) { console.warn('[tags] cloud upsert threw', e); }
     // 3. Update React state so the UI reflects immediately.
     setAllVideos(p => p.map(v => v.id === video.id ? { ...v, tags: newTags } : v));
     setSelectedVideo(p => p && p.id === video.id ? { ...p, tags: newTags } : p);
