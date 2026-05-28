@@ -509,6 +509,25 @@ function interpRow(rows,utc){
   }
   return out;
 }
+// Strings that computeAutoTags writes verbatim (excluding the dynamic ones
+// — sail names, boat/location/dayType — which are handled separately).
+const AUTO_TAG_EXACT = new Set([
+  'upwind', 'reach', 'downwind',
+  'topmark', 'mark',
+  'race-start', 'tack', 'gybe',
+  'race', 'training',
+]);
+// Bucketed auto-tag patterns: TWS bands like "tws-12-16kn" / "tws-25+kn",
+// and manoeuvre count multipliers like "3x-tack" / "5x-gybe".
+const AUTO_TAG_REGEX = /^(tws-\d+(-\d+)?\+?kn|\d+x-(tack|gybe))$/;
+// Precise auto-tag detector. The previous prefix-match version stripped
+// manual tags like "race1", "tack9", "markings", "training-day" because
+// they happened to start with an auto-tag word; every enrichVideo pass
+// quietly wiped them, so tag edits never persisted across refreshes.
+function isAutoTag(t){
+  return AUTO_TAG_EXACT.has(t) || AUTO_TAG_REGEX.test(t);
+}
+
 function enrichVideo(v,log,xml,syncOffsets){
   const out = {...v};
 
@@ -541,9 +560,8 @@ function enrichVideo(v,log,xml,syncOffsets){
   if(v.startUtc && (log || xml)){
     const offset = (syncOffsets && syncOffsets[v.id]) || 0;
     const autoTags = computeAutoTags(v.startUtc, v.duration, log, xml, offset);
-    const autoPattern = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
     const manualTags = (v.tags||[]).filter(t => {
-      if(autoPattern.test(t)) return false;
+      if(isAutoTag(t)) return false;
       const meta = xml?.meta;
       if(meta?.location && t === meta.location.toLowerCase().replace(/\s+/g,"-")) return false;
       if(meta?.boat && t === meta.boat.toLowerCase().replace(/\s+/g,"-")) return false;
@@ -1188,7 +1206,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   );
 }
 
-function TagEditor({video, onSave, tagList=[], sessionDate, onTagListChange}){
+function TagEditor({video, onSave, tagList=[], suggestionList, sessionDate, onTagListChange}){
   const[tags,    setTags]    = useState(video.tags||[]);
   const[input,   setInput]   = useState("");
   const[dirty,   setDirty]   = useState(false);
@@ -1204,7 +1222,12 @@ function TagEditor({video, onSave, tagList=[], sessionDate, onTagListChange}){
   const remTag = t => { setTags(p=>p.filter(x=>x!==t)); setDirty(true); };
   const save = async () => { await updateVideoTags(video.id, tags); onSave(video.id, tags); setDirty(false); };
   const deleteFromList = tag => { onTagListChange?.(tagList.filter(t => t !== tag)); };
-  const suggestions = tagList.filter(t => !tags.includes(t));
+  // "TAP TO ADD" pulls from the broader suggestion list when one is provided —
+  // sessionTagList only contains tags that were added through this UI (or via
+  // the <sailsused> import), so it misses tags applied directly to clips.
+  // Fall back to tagList so the editor still works in older call sites.
+  const suggestionSource = suggestionList && suggestionList.length ? suggestionList : tagList;
+  const suggestions = suggestionSource.filter(t => !tags.includes(t));
   return(
     <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
@@ -3866,7 +3889,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
                         selectedTags,toggleTag,allTags,isManTag,displayed,perms,
                         setActiveTab,cloudStatus,updateVideoTagsFn,
-                        computeAutoTagsFn,sessionTagList,setSessionTagList,
+                        computeAutoTagsFn,sessionTagList,setSessionTagList,tagSuggestionList,
                         handlePlayUtc,onDeleted,role,effectiveRole,
                         onThumbLoad,videoThumbsLoading,videoLoadedIds,videoTotalThumbs}){
   const [view, setView]   = React.useState("clips"); // "clips" | "player" | "sessions"
@@ -3929,7 +3952,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         </div>
         )}
         {/* Tags — admin / coach / TL2 only */}
-        {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={video} tagList={sessionTagList} sessionDate={activeDate}
+        {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={video} tagList={sessionTagList} suggestionList={tagSuggestionList} sessionDate={activeDate}
           onTagListChange={async t=>{
             setSessionTagList(t);
             try {
@@ -4317,6 +4340,26 @@ function SSAApp(){
   const[sessionTzOffset,setSessionTzOffset]=useState(DEFAULT_TZ);
   const[sessionTagList,setSessionTagList]=useState([]);
   const[xmlData,setXmlData]=useState(null);
+  // Effective "TAP TO ADD" suggestion list: union of the curated session tag
+  // list (what gets persisted via saveTagListCloud) and the actual MANUAL
+  // tags applied to every clip in the active session. This way a tag that
+  // someone added directly to a clip on another device (or before we wired
+  // tag-list cloud sync) still appears as a suggestion next time anyone
+  // opens that session's TagEditor. Auto-computed tags (tws-/race-/upwind/
+  // tack etc.) are deliberately excluded — they'd just clutter the picker.
+  const TAG_SUGGESTION_AUTO_RE = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
+  const tagSuggestionList = React.useMemo(() => {
+    const set = new Set(sessionTagList);
+    for (const v of allVideos) {
+      if (v.sessionDate !== activeDate) continue;
+      for (const t of (v.tags || [])) {
+        if (!t || TAG_SUGGESTION_AUTO_RE.test(t)) continue;
+        set.add(t);
+      }
+    }
+    return [...set].sort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionTagList, allVideos, activeDate]);
   const[selectedVideo,setSelectedVideo]=useState(null);
   // Phase B — crop state. The two cut markers are set by the player
   // toolbar buttons ("Delete UPTO here" / "Delete FROM here") and shown
@@ -4618,13 +4661,12 @@ function SSAApp(){
     } catch {}
     const enriched = {};
     const newOffsetMap = { ...syncOffsets };
-    const autoTagPatterns = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
     for (const v of videos) {
       if (v.startUtc == null) continue;
       const newStartUtc = v.startUtc + offsetSecs * 1000;
       // Recompute auto-tags from the new startUtc (window shifts).
       const autoTags = computeAutoTags(newStartUtc, v.duration, logData, xmlData, 0);
-      const manualTags = (v.tags || []).filter(t => !autoTagPatterns.test(t));
+      const manualTags = (v.tags || []).filter(t => !isAutoTag(t));
       const mergedTags = [...new Set([...autoTags, ...manualTags])];
       // 1. Local IDB (no-op for cloud-only entries).
       try { await updateVideoStartUtc(v.id, newStartUtc); } catch {}
@@ -5627,6 +5669,7 @@ function SSAApp(){
       syncOffsets={syncOffsets} setSyncOffsets={setSyncOffsets}
       saveSyncForVideos={saveSyncForVideos}
       saveTagsForVideo={saveTagsForVideo}
+      tagSuggestionList={tagSuggestionList}
       cloudStatus={cloudStatus} unsyncedCount={unsyncedCount}
       searchQuery={searchQuery} setSearchQuery={setSearchQuery}
       sortBy={sortBy} setSortBy={setSortBy}
@@ -5828,8 +5871,7 @@ function SSAApp(){
                     const updated=await Promise.all(allVideos.map(async v=>{
                       if(!v.startUtc)return v;
                       const newTags=computeAutoTags(v.startUtc,v.duration,logData,xmlData,syncOffsets[v.id]||0);
-                      const autoTagPatterns=/^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
-                      const manualTags=(v.tags||[]).filter(t=>{if(autoTagPatterns.test(t))return false;const meta=xmlData?.meta;if(meta?.location&&t===meta.location.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.boat&&t===meta.boat.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.dayType&&t===meta.dayType.toLowerCase().replace(/\s+/g,"-"))return false;return true;});
+                      const manualTags=(v.tags||[]).filter(t=>{if(isAutoTag(t))return false;const meta=xmlData?.meta;if(meta?.location&&t===meta.location.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.boat&&t===meta.boat.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.dayType&&t===meta.dayType.toLowerCase().replace(/\s+/g,"-"))return false;return true;});
                       const merged=[...new Set([...newTags,...manualTags])];
                       await updateVideoTags(v.id,merged);count++;return{...v,tags:merged};
                     }));
@@ -6045,8 +6087,7 @@ function SSAApp(){
                             let mergedTags = cur.tags || [];
                             if (typeof startUtcForTags === 'number') {
                               const autoTags = new Set(computeAutoTags(startUtcForTags, result.durationSec, logData, xmlData, syncOffsets[selectedVideo.id]||0));
-                              const autoTagPatterns = /^(tws-|upwind|reach|downwind|tack|gybe|topmark|mark|race-start|race|training|\d+x-)/;
-                              const manualTags = (cur.tags||[]).filter(t => !autoTagPatterns.test(t));
+                              const manualTags = (cur.tags||[]).filter(t => !isAutoTag(t));
                               mergedTags = [...new Set([...autoTags, ...manualTags])];
                               await updateVideoTags(selectedVideo.id, mergedTags);
                             }
@@ -6250,7 +6291,7 @@ function SSAApp(){
                       }}
                     />
                   )}
-                  {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={selectedVideo} tagList={sessionTagList} sessionDate={activeDate} onTagListChange={async updated=>{
+                  {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={selectedVideo} tagList={sessionTagList} suggestionList={tagSuggestionList} sessionDate={activeDate} onTagListChange={async updated=>{
                     setSessionTagList(updated);
                     try {
                       const supabase=getBrowserSupabase();
