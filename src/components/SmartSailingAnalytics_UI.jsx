@@ -694,15 +694,41 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     return ()=>mq.removeEventListener?.('change', onChange);
   },[isMobile, video.objectUrl]);
 
-  // Lock body scroll + autoplay while the pseudo-fullscreen stage is up.
+  // Lock body scroll, autoplay, and (where supported) request real
+  // element-fullscreen so the browser hides its address/menu bars and the
+  // video gets the whole screen. We fullscreen the STAGE container, not the
+  // bare <video>, so the instrument overlay stays on top. Android Chrome
+  // and iPad honour this; iPhone Safari ignores element-fullscreen, so the
+  // position:fixed + 100dvh stage is the fallback (covers the layout
+  // viewport; Safari's bars auto-collapse on most devices).
   useEffect(()=>{
     if(!mobileFs) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    // Nudge playback to start when entering fullscreen by rotation.
     vidRef.current?.play?.().catch(()=>{});
-    return ()=>{ document.body.style.overflow = prev; };
+    const el = stageRef.current;
+    if(el && !document.fullscreenElement){
+      try { (el.requestFullscreen?.() || el.webkitRequestFullscreen?.())?.catch?.(()=>{}); } catch {}
+    }
+    return ()=>{
+      document.body.style.overflow = prev;
+      try { if(document.fullscreenElement) (document.exitFullscreen?.() || document.webkitExitFullscreen?.())?.catch?.(()=>{}); } catch {}
+    };
   },[mobileFs]);
+
+  // Keep mobileFs in sync if the user leaves native fullscreen via the
+  // browser's own gesture (Esc / swipe / back). Only fires where native FS
+  // exists; on iPhone there's no fullscreenElement so this is a no-op.
+  useEffect(()=>{
+    if(!isMobile) return;
+    const onFsChange = ()=>{ if(!document.fullscreenElement) setMobileFs(false); };
+    document.addEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange);
+    return ()=>{
+      document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('webkitfullscreenchange', onFsChange);
+    };
+  },[isMobile]);
 
   // Coach/admin one-click toggle: cache the current scrub position so the
   // swapped source picks up exactly where we left off, then flip the mode.
@@ -1029,14 +1055,14 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   return(
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
       <div ref={stageRef} style={mobileFs
-          ? {position:"fixed",inset:0,zIndex:9999,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}
+          ? {position:"fixed",top:0,left:0,width:"100vw",height:"100dvh",zIndex:9999,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}
           : {position:"relative",background:"#000",aspectRatio:"16/9",width:"100%",overflow:"hidden",borderRadius:"12px 12px 0 0"}}>
         {/* Exit button — only while in mobile pseudo-fullscreen. */}
         {mobileFs&&(
-          <button onClick={()=>setMobileFs(false)}
-            style={{position:"absolute",top:10,right:10,zIndex:3,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+          <button onClick={(e)=>{e.stopPropagation();setMobileFs(false);}}
+            style={{position:"absolute",top:10,right:10,zIndex:4,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         )}
-        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;}}}/>:
+        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer"}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;}}}/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
