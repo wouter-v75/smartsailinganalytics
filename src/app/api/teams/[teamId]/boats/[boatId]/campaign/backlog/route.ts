@@ -28,7 +28,7 @@ export async function GET(
     .select(
       'id, kind, subteam_id, title, body, status, priority, owner_user_id, ' +
         'target_session_id, due_date, is_milestone, wind_min_kt, wind_max_kt, ' +
-        'completion, answer_state, progress_pct, answered_at, ' +
+        'completion, answer_state, progress_pct, answered_at, tags, ' +
         'source_note_id, source_run_id, source_clip_id, meta, created_at, updated_at, ' +
         'subteams(id, label, category)'
     )
@@ -63,6 +63,7 @@ export async function POST(
     is_milestone?: boolean
     wind_min_kt?: number | null
     wind_max_kt?: number | null
+    tags?: string[]
     meta?: Record<string, unknown> | null
   } | null
 
@@ -91,6 +92,9 @@ export async function POST(
       wind_min_kt: typeof body.wind_min_kt === 'number' ? body.wind_min_kt : null,
       wind_max_kt: typeof body.wind_max_kt === 'number' ? body.wind_max_kt : null,
       progress_pct: completion === 'progress' ? 0 : null,
+      tags: Array.isArray(body.tags)
+        ? Array.from(new Set(body.tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean)))
+        : [],
       meta: body.meta ?? null,
       created_by_user_id: user.id,
     })

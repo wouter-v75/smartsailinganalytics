@@ -158,6 +158,8 @@ const ANSWER_META = {
   answered: { label: 'Answered', c: '#1D9E75' },
 }
 const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl1', 'tl2']
+const TAG_ROLES = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'] // TL2 and up
+const WIND_STEPS = [0, 5, 10, 15, 20, 25, 30]
 
 function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   const [items, setItems] = useState([])
@@ -167,9 +169,11 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   const [showDone, setShowDone] = useState(false)
   const [adding, setAdding] = useState(false)
 
+  const [availableTags, setAvailableTags] = useState([])
   const subteams = (config?.subteams || []).filter((s) => s.active !== false)
   const mySubteamIds = config?.mySubteamIds || []
   const canAdd = WRITE_ROLES.includes(role)
+  const canTag = TAG_ROLES.includes(role)
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
 
   const canEditItem = useCallback(
@@ -192,6 +196,28 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   }, [base])
 
   useEffect(() => { load() }, [load])
+
+  // Shared tag vocabulary (same list the video tagger uses, per team+boat).
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/teams/${teamId}/tag-list?boat_id=${boatId}`)
+      .then((r) => (r.ok ? r.json() : { tags: [] }))
+      .then((j) => { if (!cancelled) setAvailableTags(j.tags || []) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [teamId, boatId])
+
+  async function addVocabTag(tag) {
+    const t = String(tag).trim().toLowerCase()
+    if (!t || availableTags.includes(t)) return
+    const next = [...availableTags, t].sort()
+    setAvailableTags(next)
+    await fetch(`/api/teams/${teamId}/tag-list`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags: next, boat_id: boatId }),
+    }).catch(() => {})
+  }
 
   const visible = items.filter((it) => {
     if (!showDone && (it.status === 'done' || it.status === 'wontfix')) return false
@@ -263,6 +289,9 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
               item={it}
               editable={canEditItem(it)}
               canSetPriority={canEditPlan}
+              canTag={canTag}
+              availableTags={availableTags}
+              onAddVocabTag={addVocabTag}
               onPatch={(body) => patch(it.id, body)}
               onDelete={() => remove(it.id)}
             />
@@ -273,11 +302,23 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   )
 }
 
-function ItemCard({ item, editable, canSetPriority, onPatch, onDelete }) {
+function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, onPatch, onDelete }) {
   const sub = item.subteams
   const catColor = sub ? CAT_COLOR[sub.category] || '#64748B' : '#334155'
   const [pct, setPct] = useState(item.progress_pct ?? 0)
   useEffect(() => { setPct(item.progress_pct ?? 0) }, [item.progress_pct])
+  const [showTagPicker, setShowTagPicker] = useState(false)
+  const [tagInput, setTagInput] = useState('')
+  const tags = item.tags || []
+  const addTag = (t) => {
+    const v = String(t).trim().toLowerCase()
+    if (!v || tags.includes(v)) { setTagInput(''); return }
+    onPatch({ tags: [...tags, v] })
+    onAddVocabTag?.(v)
+    setTagInput('')
+  }
+  const removeTag = (t) => onPatch({ tags: tags.filter((x) => x !== t) })
+  const suggestable = availableTags.filter((t) => !tags.includes(t))
   const windBand =
     item.wind_min_kt != null || item.wind_max_kt != null
       ? `${item.wind_min_kt ?? '0'}–${item.wind_max_kt ?? '∞'} kt`
@@ -309,6 +350,39 @@ function ItemCard({ item, editable, canSetPriority, onPatch, onDelete }) {
       </div>
 
       {item.body && <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>{item.body}</div>}
+
+      {/* Tags */}
+      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+        {tags.map((t) => (
+          <span key={t} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: '#A78BFA', background: '#8B5CF620', border: '1px solid #8B5CF640', borderRadius: 4, padding: '1px 6px', fontFamily: 'monospace' }}>
+            {t}
+            {canTag && <button onClick={() => removeTag(t)} style={{ background: 'none', border: 'none', color: '#A78BFA', cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: 0 }}>×</button>}
+          </span>
+        ))}
+        {tags.length === 0 && !canTag && <span style={{ fontSize: 10, color: '#334155' }}>no tags</span>}
+        {canTag && (
+          showTagPicker ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <input
+                list={`tags-${item.id}`}
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag(tagInput) } }}
+                placeholder="tag…"
+                autoFocus
+                style={{ ...inputStyle, padding: '2px 6px', fontSize: 11, width: 110 }}
+              />
+              <datalist id={`tags-${item.id}`}>
+                {suggestable.map((t) => <option key={t} value={t} />)}
+              </datalist>
+              <button onClick={() => addTag(tagInput)} style={{ ...btnSmall, padding: '3px 8px', fontSize: 11 }}>Add</button>
+              <button onClick={() => { setShowTagPicker(false); setTagInput('') }} style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', fontSize: 11 }}>done</button>
+            </span>
+          ) : (
+            <button onClick={() => setShowTagPicker(true)} style={{ fontSize: 10, color: '#64748B', background: 'none', border: '1px dashed #334155', borderRadius: 4, padding: '1px 7px', cursor: 'pointer' }}>+ tag</button>
+          )
+        )}
+      </div>
 
       {/* Completion control */}
       <div style={{ marginTop: 10 }}>
@@ -421,8 +495,14 @@ function AddItemForm({ base, subteams, mySubteamIds, canEditPlan, onDone, onCanc
             {[1, 2, 3, 4, 5].map((p) => <option key={p} value={p}>P{p}</option>)}
           </select>
         )}
-        <input type="number" value={wmin} onChange={(e) => setWmin(e.target.value)} placeholder="wind min" style={{ ...inputStyle, width: 90 }} title="Testable wind min (kt)" />
-        <input type="number" value={wmax} onChange={(e) => setWmax(e.target.value)} placeholder="wind max" style={{ ...inputStyle, width: 90 }} title="Testable wind max (kt)" />
+        <select value={wmin} onChange={(e) => setWmin(e.target.value)} style={inputStyle} title="Testable wind min (kt)">
+          <option value="">wind min</option>
+          {WIND_STEPS.map((w) => <option key={w} value={w}>{w} kt</option>)}
+        </select>
+        <select value={wmax} onChange={(e) => setWmax(e.target.value)} style={inputStyle} title="Testable wind max (kt)">
+          <option value="">wind max</option>
+          {WIND_STEPS.map((w) => <option key={w} value={w}>{w} kt</option>)}
+        </select>
       </div>
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={add} disabled={busy || !title.trim()} style={btnPrimary}>Add item</button>

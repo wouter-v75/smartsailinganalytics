@@ -55,6 +55,10 @@ export async function PATCH(
         ? Math.max(0, Math.min(100, Math.round(b.progress_pct)))
         : null
   if ('meta' in b) update.meta = b.meta ?? null
+  if ('tags' in b && Array.isArray(b.tags))
+    update.tags = Array.from(
+      new Set((b.tags as unknown[]).map((t) => String(t).trim().toLowerCase()).filter(Boolean))
+    )
   // Loop-closing: provenance pointers + the answer tri-state.
   if ('answered_run_id' in b) update.answered_run_id = b.answered_run_id ?? null
   if ('answered_note_id' in b) update.answered_note_id = b.answered_note_id ?? null
