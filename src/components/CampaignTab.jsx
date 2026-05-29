@@ -106,11 +106,303 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile }) 
         />
       )}
       {sub === 'backlog' && (
-        <Placeholder title="Backlog" note="The one prioritised backlog — coming next." />
+        <BacklogView
+          teamId={teamId}
+          boatId={boatId}
+          role={role}
+          config={config}
+          canEditPlan={canEditPlan}
+          isMobile={isMobile}
+        />
       )}
       {sub === 'day' && (
         <Placeholder title="Day plan" note="Today's plan + wind-adaptive selection — coming next." />
       )}
+    </div>
+  )
+}
+
+// ── Backlog ──────────────────────────────────────────────────────────────────
+const CAT_COLOR = { racing: '#1D9E75', technical: '#F59E0B', 'whole-team': '#8B5CF6' }
+const KIND_LABEL = { action: 'Action', fmea: 'FMEA', task: 'Task', deliverable: 'Deliverable', milestone: 'Milestone' }
+const PRIO_COLOR = { 1: '#EF4444', 2: '#F97316', 3: '#F59E0B', 4: '#64748B', 5: '#475569' }
+const ANSWER_META = {
+  unanswered: { label: 'Not tested', c: '#64748B' },
+  partial: { label: 'Partial', c: '#F59E0B' },
+  answered: { label: 'Answered', c: '#1D9E75' },
+}
+const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl1', 'tl2']
+
+function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState(null)
+  const [filterSub, setFilterSub] = useState('all') // 'all' | 'mine' | subteamId
+  const [showDone, setShowDone] = useState(false)
+  const [adding, setAdding] = useState(false)
+
+  const subteams = (config?.subteams || []).filter((s) => s.active !== false)
+  const mySubteamIds = config?.mySubteamIds || []
+  const canAdd = WRITE_ROLES.includes(role)
+  const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
+
+  const canEditItem = useCallback(
+    (it) => canEditPlan || (it.subteam_id && mySubteamIds.includes(it.subteam_id)),
+    [canEditPlan, mySubteamIds]
+  )
+
+  const load = useCallback(async () => {
+    setErr(null)
+    try {
+      const res = await fetch(`${base}/backlog`)
+      if (!res.ok) {
+        setErr((await res.json().catch(() => ({}))).error || `failed (${res.status})`)
+        return
+      }
+      setItems((await res.json()).items || [])
+    } finally {
+      setLoading(false)
+    }
+  }, [base])
+
+  useEffect(() => { load() }, [load])
+
+  const visible = items.filter((it) => {
+    if (!showDone && (it.status === 'done' || it.status === 'wontfix')) return false
+    if (filterSub === 'mine') return it.subteam_id && mySubteamIds.includes(it.subteam_id)
+    if (filterSub !== 'all') return it.subteam_id === filterSub
+    return true
+  })
+
+  async function patch(id, body) {
+    const res = await fetch(`${base}/backlog/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'update failed'); return }
+    load()
+  }
+  async function remove(id) {
+    if (!confirm('Delete this backlog item?')) return
+    await fetch(`${base}/backlog/${id}`, { method: 'DELETE' })
+    load()
+  }
+
+  const chip = (key, label) => (
+    <button
+      key={key}
+      onClick={() => setFilterSub(key)}
+      style={{
+        fontSize: 11, borderRadius: 999, padding: '4px 10px', cursor: 'pointer',
+        border: `1px solid ${filterSub === key ? '#06B6D4' : '#1E3A5A'}`,
+        background: filterSub === key ? '#06B6D4' : 'transparent',
+        color: filterSub === key ? '#000' : '#94A3B8',
+      }}
+    >{label}</button>
+  )
+
+  return (
+    <div>
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+        {chip('all', 'All')}
+        {mySubteamIds.length > 0 && chip('mine', 'My sub-teams')}
+        {subteams.map((s) => chip(s.id, s.label))}
+        <div style={{ flex: 1 }} />
+        <label style={{ fontSize: 11, color: '#64748B', display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+          <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> show done
+        </label>
+      </div>
+
+      {canAdd && (
+        adding
+          ? <AddItemForm base={base} subteams={subteams} mySubteamIds={mySubteamIds} canEditPlan={canEditPlan} onDone={() => { setAdding(false); load() }} onCancel={() => setAdding(false)} />
+          : <button onClick={() => setAdding(true)} style={{ ...btnPrimary, marginBottom: 14 }}>+ New item</button>
+      )}
+
+      {err && <div style={{ color: '#EF4444', fontSize: 13, marginBottom: 10 }}>{err}</div>}
+
+      {loading ? (
+        <div style={{ color: '#475569', fontSize: 13 }}>Loading backlog…</div>
+      ) : visible.length === 0 ? (
+        <div style={{ color: '#475569', fontSize: 13, textAlign: 'center', padding: 30, border: '1px dashed #1E3A5A', borderRadius: 12 }}>
+          No items{filterSub !== 'all' ? ' in this filter' : ''}.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {visible.map((it) => (
+            <ItemCard
+              key={it.id}
+              item={it}
+              editable={canEditItem(it)}
+              canSetPriority={canEditPlan}
+              onPatch={(body) => patch(it.id, body)}
+              onDelete={() => remove(it.id)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ItemCard({ item, editable, canSetPriority, onPatch, onDelete }) {
+  const sub = item.subteams
+  const catColor = sub ? CAT_COLOR[sub.category] || '#64748B' : '#334155'
+  const [pct, setPct] = useState(item.progress_pct ?? 0)
+  useEffect(() => { setPct(item.progress_pct ?? 0) }, [item.progress_pct])
+  const windBand =
+    item.wind_min_kt != null || item.wind_max_kt != null
+      ? `${item.wind_min_kt ?? '0'}–${item.wind_max_kt ?? '∞'} kt`
+      : null
+
+  return (
+    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderLeft: `4px solid ${catColor}`, borderRadius: 10, padding: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+        {/* Priority */}
+        {canSetPriority ? (
+          <select
+            value={item.priority ?? ''}
+            onChange={(e) => onPatch({ priority: e.target.value === '' ? null : Number(e.target.value) })}
+            title="Priority"
+            style={{ ...inputStyle, padding: '2px 4px', fontSize: 11, color: PRIO_COLOR[item.priority] || '#64748B', fontWeight: 800 }}
+          >
+            <option value="">P–</option>
+            {[1, 2, 3, 4, 5].map((p) => <option key={p} value={p}>P{p}</option>)}
+          </select>
+        ) : (
+          <span style={{ fontSize: 12, fontWeight: 800, color: PRIO_COLOR[item.priority] || '#475569' }}>
+            {item.priority ? `P${item.priority}` : 'P–'}
+          </span>
+        )}
+        <span style={{ fontSize: 14, fontWeight: 700, color: '#E2E8F0', flex: 1, minWidth: 120 }}>{item.title}</span>
+        <span style={{ fontSize: 9, color: '#64748B', border: '1px solid #1E3A5A', borderRadius: 4, padding: '1px 5px' }}>{KIND_LABEL[item.kind] || item.kind}</span>
+        {sub && <span style={{ fontSize: 9, color: catColor, border: `1px solid ${catColor}55`, borderRadius: 4, padding: '1px 5px' }}>{sub.label}</span>}
+        {windBand && <span style={{ fontSize: 9, color: '#7DD3FC', fontFamily: 'monospace' }}>{windBand}</span>}
+      </div>
+
+      {item.body && <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>{item.body}</div>}
+
+      {/* Completion control */}
+      <div style={{ marginTop: 10 }}>
+        {item.completion === 'progress' ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ flex: 1, height: 8, background: '#071624', borderRadius: 4, overflow: 'hidden', border: '1px solid #1E3A5A' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: pct >= 100 ? '#1D9E75' : '#06B6D4', transition: 'width .2s' }} />
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 800, color: pct >= 100 ? '#1D9E75' : '#06B6D4', width: 38, textAlign: 'right' }}>{pct}%</span>
+            {editable && (
+              <input
+                type="range" min={0} max={100} step={5} value={pct}
+                onChange={(e) => setPct(Number(e.target.value))}
+                onMouseUp={(e) => onPatch({ progress_pct: Number(e.target.value) })}
+                onTouchEnd={(e) => onPatch({ progress_pct: Number(e.target.value) })}
+                style={{ width: 120 }}
+                title="Confidence"
+              />
+            )}
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {Object.keys(ANSWER_META).map((st) => {
+              const on = (item.answer_state || 'unanswered') === st
+              const m = ANSWER_META[st]
+              return (
+                <button
+                  key={st}
+                  disabled={!editable}
+                  onClick={() => editable && onPatch({ answer_state: st })}
+                  style={{
+                    fontSize: 11, borderRadius: 6, padding: '4px 10px',
+                    cursor: editable ? 'pointer' : 'default',
+                    border: `1px solid ${on ? m.c : '#1E3A5A'}`,
+                    background: on ? m.c : 'transparent',
+                    color: on ? '#001018' : '#64748B', fontWeight: on ? 800 : 500,
+                    opacity: editable || on ? 1 : 0.6,
+                  }}
+                >{m.label}</button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {editable && (
+        <div style={{ marginTop: 10, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select value={item.status} onChange={(e) => onPatch({ status: e.target.value })} style={{ ...inputStyle, fontSize: 11, padding: '4px 6px' }}>
+            {['open', 'in_progress', 'done', 'parked', 'wontfix'].map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <div style={{ flex: 1 }} />
+          <button onClick={onDelete} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>Delete</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AddItemForm({ base, subteams, mySubteamIds, canEditPlan, onDone, onCancel }) {
+  // Non-coach members can only file into their own sub-teams.
+  const allowedSubteams = canEditPlan ? subteams : subteams.filter((s) => mySubteamIds.includes(s.id))
+  const [title, setTitle] = useState('')
+  const [kind, setKind] = useState('action')
+  const [completion, setCompletion] = useState('binary')
+  const [subteamId, setSubteamId] = useState(allowedSubteams[0]?.id || '')
+  const [priority, setPriority] = useState('')
+  const [wmin, setWmin] = useState('')
+  const [wmax, setWmax] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  async function add() {
+    if (!title.trim()) return
+    setBusy(true); setErr(null)
+    try {
+      const res = await fetch(`${base}/backlog`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title, kind, completion,
+          subteam_id: subteamId || null,
+          priority: priority === '' ? null : Number(priority),
+          wind_min_kt: wmin === '' ? null : Number(wmin),
+          wind_max_kt: wmax === '' ? null : Number(wmax),
+        }),
+      })
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not add'); return }
+      onDone()
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 10, padding: 12, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing / answering?" style={{ ...inputStyle, fontSize: 14 }} autoFocus />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <select value={kind} onChange={(e) => setKind(e.target.value)} style={inputStyle} title="Kind">
+          {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <select value={completion} onChange={(e) => setCompletion(e.target.value)} style={inputStyle} title="Completion">
+          <option value="binary">Question (answered y/n)</option>
+          <option value="progress">Goal (0–100%)</option>
+        </select>
+        <select value={subteamId} onChange={(e) => setSubteamId(e.target.value)} style={inputStyle} title="Sub-team">
+          <option value="">— sub-team —</option>
+          {allowedSubteams.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+        </select>
+        {canEditPlan && (
+          <select value={priority} onChange={(e) => setPriority(e.target.value)} style={inputStyle} title="Priority">
+            <option value="">Priority…</option>
+            {[1, 2, 3, 4, 5].map((p) => <option key={p} value={p}>P{p}</option>)}
+          </select>
+        )}
+        <input type="number" value={wmin} onChange={(e) => setWmin(e.target.value)} placeholder="wind min" style={{ ...inputStyle, width: 90 }} title="Testable wind min (kt)" />
+        <input type="number" value={wmax} onChange={(e) => setWmax(e.target.value)} placeholder="wind max" style={{ ...inputStyle, width: 90 }} title="Testable wind max (kt)" />
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button onClick={add} disabled={busy || !title.trim()} style={btnPrimary}>Add item</button>
+        <button onClick={onCancel} style={btnGhost}>Cancel</button>
+        {err && <span style={{ color: '#EF4444', fontSize: 12, alignSelf: 'center' }}>{err}</span>}
+      </div>
     </div>
   )
 }
