@@ -10,6 +10,7 @@ import {
 import TeamHeader from './TeamHeader'
 import BoatsPanel from './BoatsPanel'
 import MembershipsPanel from './MembershipsPanel'
+import SubteamsPanel from './SubteamsPanel'
 import InvitationsPanel from './InvitationsPanel'
 import PendingRequestsPanel from './PendingRequestsPanel'
 import BackfillPanel from './BackfillPanel'
@@ -90,6 +91,46 @@ export default async function TeamDetailPage({
 
   if (!team) notFound()
 
+  // ── Campaign engine (NORTHSTAR-gated) ──────────────────────────────────────
+  // Defensive: these columns/tables only exist once migrations 0014+ are applied.
+  // supabase-js returns {error} rather than throwing, so a pre-migration team
+  // simply yields campaignOn=false and the panel stays hidden.
+  let campaignOn = false
+  let subteams: Array<{
+    id: string
+    category: 'racing' | 'technical' | 'whole-team'
+    key: string
+    label: string
+    seq: number
+    active: boolean
+  }> = []
+  let subteamAssignments: Array<{ membership_id: string; subteam_id: string }> =
+    []
+  const { data: feat } = await service
+    .from('teams')
+    .select('features')
+    .eq('id', params.teamId)
+    .maybeSingle()
+  campaignOn = Boolean(
+    feat?.features &&
+      (feat.features as Record<string, unknown>).campaign_engine === true
+  )
+  if (campaignOn) {
+    const [{ data: st }, { data: ms }] = await Promise.all([
+      service
+        .from('subteams')
+        .select('id, category, key, label, seq, active')
+        .eq('team_id', params.teamId)
+        .order('seq', { ascending: true }),
+      service
+        .from('membership_subteams')
+        .select('membership_id, subteam_id')
+        .eq('team_id', params.teamId),
+    ])
+    subteams = st || []
+    subteamAssignments = ms || []
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-8">
       <div className="max-w-4xl mx-auto">
@@ -121,6 +162,15 @@ export default async function TeamDetailPage({
           memberships={memberships || []}
           activeUsers={users || []}
         />
+
+        {campaignOn && (
+          <SubteamsPanel
+            teamId={team.id}
+            subteams={subteams}
+            memberships={memberships || []}
+            assignments={subteamAssignments}
+          />
+        )}
 
         <InvitationsPanel teamId={team.id} boats={boats || []} />
 
