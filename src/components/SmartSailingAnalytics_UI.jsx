@@ -28,6 +28,7 @@ const PhotosTab      = dynamic(() => import("./PhotosTab"),      { ssr:false, lo
 const SquashShotsApp = dynamic(() => import("./SquashShotsApp"), { ssr:false, loading:TabLoading });
 const SailScanTab    = dynamic(() => import("./SailScanTab"),    { ssr:false, loading:TabLoading });
 const AdminTab       = dynamic(() => import("./AdminTab"),       { ssr:false, loading:TabLoading });
+const CampaignTab    = dynamic(() => import("./CampaignTab"),    { ssr:false, loading:TabLoading });
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
@@ -4239,6 +4240,7 @@ function MobileShell(props){
   React.useEffect(()=>{ injectMobileCSS(); },[]);
   const tabDefs=[
     {id:"library",  icon:"📹", label:"Videos"},
+    {id:"campaign", icon:"🗓", label:"Plan"},
     {id:"photos",   icon:"📷", label:"Photos"},
     {id:"analytics",icon:"📊", label:"Analytics"},
     {id:"upload",   icon:"⬆", label:"Upload"},
@@ -4246,6 +4248,7 @@ function MobileShell(props){
     {id:"sailscan", icon:"⛵", label:"SailScan"},
     {id:"admin",    icon:"⚙",  label:"Admin"},
   ].filter(t => {
+    if (t.id === "campaign" && !props.campaignOn) return false;
     if (t.id === "sailscan" && props.canSeeSailScanTab === false) return false;
     if (t.id === "squashshots" && props.canSeeSquashShotsTab === false) return false;
     if (t.id === "admin" && props.effectiveRole !== 'admin') return false;
@@ -4361,6 +4364,13 @@ function MobileShell(props){
         {activeTab==="sailscan"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
             <SailScanTab/>
+          </div>
+        )}
+
+        {/* Campaign */}
+        {activeTab==="campaign"&&props.campaignOn&&props.campaignCfg&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <CampaignTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true}/>
           </div>
         )}
 
@@ -4486,6 +4496,8 @@ function SSAApp(){
   // active membership's role. Used to gate UI features. Null until the
   // identity check resolves.
   const[effectiveRole,setEffectiveRole]=useState(null);
+  // Campaign engine config (null = off / unavailable). See the fetch effect below.
+  const[campaignCfg,setCampaignCfg]=useState(null);
   const[loaded,setLoaded]=useState(false);
   const[playUtc,setPlayUtc]=useState(null);
   const[photos,setPhotos]=useState([]);
@@ -4983,6 +4995,32 @@ function SSAApp(){
     return ()=>{ cancelled=true; window.removeEventListener('ssa:active-membership-changed',onChange); };
   },[]);
 
+  // Campaign engine config for the active team. Null unless the team has
+  // features.campaign_engine = true AND the active membership has a boat. When
+  // set, it carries {teamId, boatId, subteams, mySubteamIds, targetDate} and
+  // the Campaign tab becomes available.
+  useEffect(()=>{
+    let cancelled=false;
+    async function run(){
+      try{
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(!user||cancelled) return;
+        const m=getActiveMembership(user.id);
+        if(!m||!m.team_id||!m.boat_id){ setCampaignCfg(null); return; }
+        const res=await fetch(`/api/teams/${m.team_id}/campaign/config`);
+        if(!res.ok||cancelled) return;
+        const j=await res.json();
+        if(cancelled) return;
+        setCampaignCfg(j?.campaignOn ? {...j, teamId:m.team_id, boatId:m.boat_id} : null);
+      } catch { /* non-fatal — campaign tab just stays hidden */ }
+    }
+    run();
+    const onChange=()=>run();
+    window.addEventListener('ssa:active-membership-changed',onChange);
+    return ()=>{ cancelled=true; window.removeEventListener('ssa:active-membership-changed',onChange); };
+  },[]);
+
   // Role-gated convenience flags. Default to permissive while role
   // resolves so UI doesn't briefly hide things from admins.
   // tl1: no SailScan, no analytics data (map OK), no SailScan-tagged photos.
@@ -4998,6 +5036,8 @@ function SSAApp(){
   // Kept for backwards-compat with mobile shell prop; analytics tab is now
   // visible to every role (the content inside is what's gated).
   const canSeeAnalytics = true;
+  // Campaign tab available only when the active team has the engine on.
+  const campaignOn = !!campaignCfg;
 
   // Sessions visible in the sidebar — guests see only the latest day.
   const visibleSessions = useMemo(
@@ -5852,6 +5892,7 @@ function SSAApp(){
       canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab}
       canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
       showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
+      campaignOn={campaignOn} campaignCfg={campaignCfg}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -5871,7 +5912,8 @@ function SSAApp(){
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{display:"flex",gap:2,marginLeft:10}}>
-          {["library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
+          {["library","campaign","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
+            if (tab === "campaign" && !campaignOn) return false;
             if (tab === "sailscan" && !canSeeSailScanTab) return false;
             if (tab === "squashshots" && !canSeeSquashShotsTab) return false;
             if (tab === "admin" && effectiveRole !== 'admin') return false;
@@ -6544,6 +6586,11 @@ function SSAApp(){
               setLogData={setLogData}
               setXmlData={setXmlData}
             />
+          </div>
+        )}
+        {activeTab==="campaign"&&campaignOn&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <CampaignTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false}/>
           </div>
         )}
       </div>
