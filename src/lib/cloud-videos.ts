@@ -77,9 +77,20 @@ interface UpsertArgs {
   externalId?: string | null
 }
 
-export async function upsertVideoCloud(args: UpsertArgs): Promise<boolean> {
+export interface UpsertVideoResult {
+  ok: boolean
+  /** 'updated' = matched an existing cloud row; 'created' = a fresh row was inserted (often the symptom of a dedupe-key mismatch). */
+  action?: 'updated' | 'created'
+  /** The Supabase row UUID the server actually touched, when available. */
+  videoId?: string
+  error?: string
+  /** When ok=false because no active membership / boat_id is set. */
+  noMembership?: boolean
+}
+
+export async function upsertVideoCloud(args: UpsertArgs): Promise<UpsertVideoResult> {
   const m = getActiveMembership(args.userId)
-  if (!m || !m.boat_id) return false
+  if (!m || !m.boat_id) return { ok: false, noMembership: true }
   const url = `/api/teams/${m.team_id}/boats/${m.boat_id}/videos`
   const startUtc =
     args.startUtc != null
@@ -109,9 +120,20 @@ export async function upsertVideoCloud(args: UpsertArgs): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    return res.ok
-  } catch {
-    return false
+    if (!res.ok) {
+      let errText = ''
+      try { errText = (await res.json())?.error || '' } catch { /* ignore */ }
+      return { ok: false, error: errText || `HTTP ${res.status}` }
+    }
+    let parsed: { video?: { id?: string }; action?: 'updated' | 'created' } = {}
+    try { parsed = await res.json() } catch { /* ignore */ }
+    return {
+      ok: true,
+      action: parsed.action,
+      videoId: parsed.video?.id,
+    }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || String(e) }
   }
 }
 

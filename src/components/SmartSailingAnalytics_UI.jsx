@@ -662,6 +662,13 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const seekOnLoadRef=useRef(null); // preserve playback position across source swaps
   const lastUtcEmit=useRef(0);
   const isMobile=useIsMobile();
+  const stageRef=useRef(null);
+  // Pseudo-fullscreen (mobile). Native <video> fullscreen on iOS hands off
+  // to the OS player, which can't show our HTML instrument overlay, so on
+  // mobile we cover the viewport with a position:fixed stage instead. That
+  // keeps the overlay on top. Desktop uses the real Fullscreen API on the
+  // stage container (handled in the button below).
+  const[mobileFs,setMobileFs]=useState(false);
   // True when the active source is HLS (cloud adaptive). Flips to false when
   // a coach/admin has toggled HD-local, because the IndexedDB blob is always
   // a progressive MP4/MOV. Consumed by the toolbar indicator below.
@@ -669,6 +676,33 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
 
   // Always start a fresh clip on the default (cloud) source.
   useEffect(()=>{ setUseLocalHD(false); },[video.id]);
+
+  // Mobile: rotate to landscape → enter pseudo-fullscreen (video + overlay);
+  // rotate back to portrait → exit. Lets the coach just turn the phone to get
+  // a full-frame replay with the instruments on top, and put it upright to
+  // return to the library.
+  useEffect(()=>{
+    if(!isMobile) return;
+    const mq = window.matchMedia('(orientation: landscape)');
+    const onChange = e => {
+      if(e.matches){ if(video.objectUrl) setMobileFs(true); }
+      else setMobileFs(false);
+    };
+    // Sync once on mount in case we're already landscape.
+    if(mq.matches && video.objectUrl) setMobileFs(true);
+    mq.addEventListener?.('change', onChange);
+    return ()=>mq.removeEventListener?.('change', onChange);
+  },[isMobile, video.objectUrl]);
+
+  // Lock body scroll + autoplay while the pseudo-fullscreen stage is up.
+  useEffect(()=>{
+    if(!mobileFs) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    // Nudge playback to start when entering fullscreen by rotation.
+    vidRef.current?.play?.().catch(()=>{});
+    return ()=>{ document.body.style.overflow = prev; };
+  },[mobileFs]);
 
   // Coach/admin one-click toggle: cache the current scrub position so the
   // swapped source picks up exactly where we left off, then flip the mode.
@@ -994,14 +1028,21 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
 
   return(
     <div style={{background:"#030F1A",borderRadius:12,overflow:"hidden",border:"1px solid #1E3A5A"}}>
-      <div style={{position:"relative",background:"#000",aspectRatio:"16/9",width:"100%",overflow:"hidden",borderRadius:"12px 12px 0 0"}}>
+      <div ref={stageRef} style={mobileFs
+          ? {position:"fixed",inset:0,zIndex:9999,background:"#000",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}
+          : {position:"relative",background:"#000",aspectRatio:"16/9",width:"100%",overflow:"hidden",borderRadius:"12px 12px 0 0"}}>
+        {/* Exit button — only while in mobile pseudo-fullscreen. */}
+        {mobileFs&&(
+          <button onClick={()=>setMobileFs(false)}
+            style={{position:"absolute",top:10,right:10,zIndex:3,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        )}
         {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} style={{width:"100%",height:"100%",objectFit:"contain"}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;}}}/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
         {/* On mobile, pin to all-but-bottom so tiles wrap within the
             frame width instead of overflowing off the right edge. */}
-        {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:isMobile?6:undefined}}>{overlay}</div>}
+        {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:mobileFs?52:(isMobile?6:undefined)}}>{overlay}</div>}
         {modeBadge}
         <div style={{position:"absolute",bottom:8,left:8,display:"flex",alignItems:"center",gap:6}}>
           {vidQuality&&<div style={{background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 6px",fontSize:9,color:"#7DD3FC",fontFamily:"monospace",letterSpacing:0.3}}>▾ {vidQuality}</div>}
@@ -1046,13 +1087,21 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <button onClick={()=>playing?vidRef.current?.pause():vidRef.current?.play()} style={{background:"#06B6D4",border:"none",borderRadius:6,padding:"6px 14px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>{playing?"⏸ Pause":"▶ Play"}</button>
         <button onClick={()=>{if(vidRef.current)vidRef.current.currentTime=0;}} style={{background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 9px",color:"#94A3B8",cursor:"pointer"}}>⏹</button>
         <button
-          title="Fullscreen"
+          title="Fullscreen (with data overlay)"
           onClick={()=>{
-            const el=vidRef.current;
+            if(isMobile){
+              // CSS pseudo-fullscreen keeps the instrument overlay on top —
+              // native iOS video fullscreen would hide it.
+              setMobileFs(f=>!f);
+              return;
+            }
+            // Desktop: fullscreen the STAGE container (video + overlay), not
+            // the bare <video>, so the gauges render over the picture.
+            const el=stageRef.current;
             if(!el)return;
             if(document.fullscreenElement) document.exitFullscreen?.();
             else if(el.requestFullscreen) el.requestFullscreen();
-            else if(el.webkitEnterFullscreen) el.webkitEnterFullscreen();
+            else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
           }}
           style={{background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 9px",color:"#94A3B8",cursor:"pointer"}}
         >⛶</button>
@@ -4765,7 +4814,7 @@ function SSAApp(){
       if (!user) {
         console.warn('[tags] cloud sync skipped — not signed in');
       } else {
-        const ok = await upsertVideoCloud({
+        const res = await upsertVideoCloud({
           userId: user.id,
           sessionDate: video.sessionDate || activeDate,
           title: video.title || video.name || null,
@@ -4779,12 +4828,33 @@ function SSAApp(){
           bytes: video.size ?? null,
           externalId: video.externalId || video.id,
         });
-        if (!ok) {
-          console.warn('[tags] cloud upsert returned false — active membership / RLS / network?', {
+        if (!res.ok) {
+          console.warn('[tags] cloud upsert FAILED', {
             videoId: video.id,
             externalId: video.externalId || video.id,
             sessionDate: video.sessionDate || activeDate,
+            error: res.error,
+            noMembership: res.noMembership,
           });
+        } else {
+          // Action=updated means the dedupe found the existing row and
+          // applied tags. action=created means the server didn't find a
+          // matching row (external_id / bunny_stream_id mismatch) and
+          // inserted a NEW row — symptom of a duplicate-clip problem
+          // where the original cloud row still has the old tags.
+          console.log('[tags] cloud upsert OK', {
+            videoId: video.id,
+            externalId: video.externalId || video.id,
+            cloudRowId: res.videoId,
+            action: res.action,
+            tags: newTags,
+          });
+          if (res.action === 'created') {
+            console.warn('[tags] ⚠ INSERTED a new cloud row instead of updating — likely a duplicate. mobile will keep reading the original row.', {
+              externalIdSent: video.externalId || video.id,
+              newRowId: res.videoId,
+            });
+          }
         }
       }
     } catch (e) { console.warn('[tags] cloud upsert threw', e); }
