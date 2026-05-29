@@ -13,6 +13,7 @@
 //        blocks. Race-training + other are visible to everyone.
 
 import React, { useState, useEffect, useCallback } from 'react'
+import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 
 const BLOCK_META = {
   'technical-testing': { label: 'Technical testing', c: '#F59E0B', testing: true },
@@ -44,6 +45,24 @@ const daysBetween = (fromIso, toIso) => {
   const a = Date.UTC(ay, am - 1, ad)
   const b = Date.UTC(by, bm - 1, bd)
   return Math.round((b - a) / 86400000)
+}
+const datesInRange = (aIso, bIso) => {
+  if (!aIso) return []
+  const end = bIso && bIso >= aIso ? bIso : aIso
+  const out = []
+  const [y, m, d] = aIso.split('-').map(Number)
+  let cur = new Date(y, m - 1, d)
+  const [ey, em, ed] = end.split('-').map(Number)
+  const stop = new Date(ey, em - 1, ed)
+  let guard = 0
+  while (cur <= stop && guard < 120) {
+    out.push(
+      `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
+    )
+    cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1)
+    guard++
+  }
+  return out
 }
 const minToHHMM = (m) =>
   m == null ? '' : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
@@ -116,7 +135,13 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile }) 
         />
       )}
       {sub === 'day' && (
-        <Placeholder title="Day plan" note="Today's plan + wind-adaptive selection — coming next." />
+        <DayView
+          teamId={teamId}
+          boatId={boatId}
+          role={role}
+          canEditPlan={canEditPlan}
+          isMobile={isMobile}
+        />
       )}
     </div>
   )
@@ -407,6 +432,235 @@ function AddItemForm({ base, subteams, mySubteamIds, canEditPlan, onDone, onCanc
   )
 }
 
+// ── Day sub-tab ──────────────────────────────────────────────────────────────
+const safeName = (n) => n.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80)
+
+function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
+  const [date, setDate] = useState(todayStr())
+  const [session, setSession] = useState(null) // {id, objective, blocks} | null
+  const [allDates, setAllDates] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState(null)
+  const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'].includes(role)
+  const canEditDebrief = WRITE_ROLES.includes(role)
+  const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
+
+  const loadCalendar = useCallback(async () => {
+    try {
+      const res = await fetch(`${base}/calendar`)
+      if (!res.ok) return
+      const j = await res.json()
+      const list = j.sessions || []
+      setAllDates(list.map((s) => s.date))
+      setSession(list.find((s) => s.date === date) || null)
+    } finally {
+      setLoading(false)
+    }
+  }, [base, date])
+
+  useEffect(() => { loadCalendar() }, [loadCalendar])
+
+  const blocks = (session?.blocks || []).filter(
+    (b) => canSeeTesting || !BLOCK_META[b.block_type]?.testing
+  )
+
+  return (
+    <div>
+      {/* Date selector */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} />
+        {allDates.length > 0 && (
+          <select value={allDates.includes(date) ? date : ''} onChange={(e) => e.target.value && setDate(e.target.value)} style={inputStyle}>
+            <option value="">Jump to planned day…</option>
+            {allDates.map((d) => <option key={d} value={d}>{fmtDay(d)}</option>)}
+          </select>
+        )}
+        {date === todayStr() && <span style={{ fontSize: 11, color: '#1D9E75', fontWeight: 700 }}>● Today</span>}
+      </div>
+
+      {err && <div style={{ color: '#EF4444', fontSize: 13, marginBottom: 10 }}>{err}</div>}
+
+      <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch' }}>
+        {/* Plan for today */}
+        <div style={{ flex: isMobile ? 'none' : '1.1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>Plan for {fmtDay(date)}</div>
+          {loading ? (
+            <div style={{ color: '#475569', fontSize: 13 }}>Loading…</div>
+          ) : !session ? (
+            <div style={{ color: '#475569', fontSize: 12 }}>
+              No plan for this day yet.{canEditPlan ? ' Add it in the Plan tab (blocks) — backlog-item selection lands next.' : ''}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {session.objective && (
+                <div style={{ fontSize: 12, color: '#94A3B8', borderLeft: '2px solid #06B6D4', paddingLeft: 8 }}>{session.objective}</div>
+              )}
+              {blocks.length === 0 ? (
+                <div style={{ fontSize: 12, color: '#475569' }}>No blocks{canSeeTesting ? '' : ' visible'} for this day.</div>
+              ) : (
+                blocks.map((b) => {
+                  const meta = BLOCK_META[b.block_type] || BLOCK_META.other
+                  const time = b.start_min != null ? `${minToHHMM(b.start_min)}${b.end_min != null ? '–' + minToHHMM(b.end_min) : ''}` : ''
+                  return (
+                    <div key={b.id} style={{ background: '#071624', borderLeft: `3px solid ${meta.c}`, borderRadius: 6, padding: '8px 10px' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: meta.c }}>{meta.label}</span>
+                        {b.label && <span style={{ fontSize: 12, color: '#E2E8F0' }}>· {b.label}</span>}
+                        {time && <span style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{time}</span>}
+                      </div>
+                      {b.objective && <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>{b.objective}</div>}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Debrief notes */}
+        <DebriefCard
+          base={base}
+          date={date}
+          canEdit={canEditDebrief}
+          isMobile={isMobile}
+        />
+      </div>
+    </div>
+  )
+}
+
+function DebriefCard({ base, date, canEdit, isMobile }) {
+  const [learnings, setLearnings] = useState('')
+  const [nextFocus, setNextFocus] = useState('')
+  const [docs, setDocs] = useState([])
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const load = useCallback(async () => {
+    setErr(null)
+    const res = await fetch(`${base}/debrief?date=${date}`)
+    if (!res.ok) { setErr('could not load debrief'); return }
+    const j = await res.json()
+    setLearnings(j.debrief?.learnings || '')
+    setNextFocus(j.debrief?.next_focus || '')
+    setDocs(j.debrief?.documents || [])
+    setDirty(false)
+  }, [base, date])
+
+  useEffect(() => { load() }, [load])
+
+  async function save() {
+    setSaving(true)
+    setErr(null)
+    try {
+      const res = await fetch(`${base}/debrief`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, learnings, next_focus: nextFocus }),
+      })
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'save failed'); return }
+      setDirty(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function onPickFile(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setUploading(true)
+    setErr(null)
+    try {
+      const key = `campaign/debriefs/${date}/${Date.now()}-${safeName(file.name)}`
+      await uploadBlobToStorage({ key, blob: file, contentType: file.type })
+      const res = await fetch(`${base}/debrief/documents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, name: file.name, key, bytes: file.size, content_type: file.type }),
+      })
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not register document'); return }
+      load()
+    } catch (e2) {
+      setErr(e2?.message || 'upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function removeDoc(key) {
+    if (!confirm('Remove this document?')) return
+    await fetch(`${base}/debrief/documents`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, key }),
+    })
+    load()
+  }
+
+  const section = (label, value, setter) => (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>{label}</div>
+      {canEdit ? (
+        <textarea
+          value={value}
+          onChange={(e) => { setter(e.target.value); setDirty(true) }}
+          rows={4}
+          placeholder={`${label}…`}
+          style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }}
+        />
+      ) : (
+        <div style={{ fontSize: 13, color: value ? '#E2E8F0' : '#475569', whiteSpace: 'pre-wrap' }}>{value || '—'}</div>
+      )}
+    </div>
+  )
+
+  return (
+    <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', flex: 1 }}>Debrief notes</div>
+        {canEdit && dirty && (
+          <button onClick={save} disabled={saving} style={btnSmall}>{saving ? 'Saving…' : 'Save'}</button>
+        )}
+      </div>
+
+      {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>{err}</div>}
+
+      {section('Learnings', learnings, setLearnings)}
+      {section('Next focus points', nextFocus, setNextFocus)}
+
+      {/* Documents */}
+      <div style={{ marginTop: 4 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Documents</div>
+        {docs.length === 0 && <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>None yet.</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
+          {docs.map((d) => (
+            <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderRadius: 6, padding: '6px 9px' }}>
+              <span style={{ fontSize: 13 }}>📄</span>
+              {d.url ? (
+                <a href={d.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#06B6D4', textDecoration: 'none', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</a>
+              ) : (
+                <span style={{ fontSize: 12, color: '#94A3B8', flex: 1 }}>{d.name}</span>
+              )}
+              {canEdit && (
+                <button onClick={() => removeDoc(d.key)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>✕</button>
+              )}
+            </div>
+          ))}
+        </div>
+        {canEdit && (
+          <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
+            {uploading ? 'Uploading…' : '+ Upload document'}
+            <input type="file" onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
+          </label>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Placeholder({ title, note }) {
   return (
     <div
@@ -431,7 +685,9 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
   const [targetDate, setTargetDate] = useState(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
-  const [newDate, setNewDate] = useState('')
+  const [rangeStart, setRangeStart] = useState('')
+  const [rangeEnd, setRangeEnd] = useState('')
+  const [addingDays, setAddingDays] = useState(false)
 
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
 
@@ -459,20 +715,30 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
   const trainingDaysToGo = sessions.filter((s) => s.date >= today).length
   const daysToGo = targetDate ? Math.max(0, daysBetween(today, targetDate)) : null
 
-  async function addDay(e) {
+  async function addDays(e) {
     e.preventDefault()
-    if (!newDate) return
-    const res = await fetch(`${base}/sessions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: newDate }),
-    })
-    if (!res.ok) {
-      setErr((await res.json().catch(() => ({}))).error || 'could not add day')
-      return
+    const dates = datesInRange(rangeStart, rangeEnd)
+    if (dates.length === 0) return
+    setAddingDays(true)
+    setErr(null)
+    try {
+      for (const date of dates) {
+        const res = await fetch(`${base}/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date }),
+        })
+        if (!res.ok) {
+          setErr((await res.json().catch(() => ({}))).error || `could not add ${date}`)
+          break
+        }
+      }
+      setRangeStart('')
+      setRangeEnd('')
+      load()
+    } finally {
+      setAddingDays(false)
     }
-    setNewDate('')
-    load()
   }
 
   async function saveTarget(date) {
@@ -524,9 +790,13 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
 
       {/* Add day */}
       {canEditPlan && (
-        <form onSubmit={addDay} style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-          <input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} style={inputStyle} />
-          <button type="submit" disabled={!newDate} style={btnPrimary}>+ Add test day</button>
+        <form onSubmit={addDays} style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input type="date" value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} style={inputStyle} title="From" />
+          <span style={{ color: '#475569', fontSize: 12 }}>to</span>
+          <input type="date" value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} style={inputStyle} title="To (optional — leave blank for a single day)" />
+          <button type="submit" disabled={!rangeStart || addingDays} style={btnPrimary}>
+            {addingDays ? 'Adding…' : '+ Add training days'}
+          </button>
         </form>
       )}
 
