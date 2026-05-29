@@ -1249,8 +1249,8 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   return(
     <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
-        {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" loading="eager" fetchpriority="high" decoding="async" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:
-         video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover"}} muted preload="metadata"/>:
+        {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" loading="eager" fetchpriority="high" decoding="async" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}}/>:
+         video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}} muted preload="metadata"/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
@@ -4152,12 +4152,12 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                             loading="eager" fetchpriority="high" decoding="async"
                             onLoad={()=>onThumbLoad?.(v.id)}
                             onError={()=>onThumbLoad?.(v.id)}
-                            style={{display:"block",width:"100%",height:"100%",objectFit:"cover"}}/>
+                            style={{display:"block",width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}}/>
                         : v.objectUrl&&v.source!=="cloud"&&!String(v.objectUrl).includes(".m3u8")
                           ? <video src={v.objectUrl}
                               onLoadedData={()=>onThumbLoad?.(v.id)}
                               onError={()=>onThumbLoad?.(v.id)}
-                              style={{display:"block",width:"100%",height:"100%",objectFit:"cover"}} muted preload="none"/>
+                              style={{display:"block",width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}} muted preload="none"/>
                           : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:18}}>📹</div>}
                       <div style={{position:"absolute",bottom:2,right:4,background:"rgba(0,0,0,0.8)",
                         borderRadius:2,padding:"0 3px",fontSize:9,color:"#64748B",fontFamily:"monospace"}}>
