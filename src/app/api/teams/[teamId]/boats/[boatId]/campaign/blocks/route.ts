@@ -10,6 +10,7 @@ const BLOCK_TYPES = [
   'technical-testing',
   'speed-testing',
   'race-training',
+  'racing',
   'other',
 ] as const
 type BlockType = (typeof BLOCK_TYPES)[number]

@@ -19,9 +19,10 @@ const BLOCK_META = {
   'technical-testing': { label: 'Technical testing', c: '#F59E0B', testing: true },
   'speed-testing':     { label: 'Speed testing',     c: '#06B6D4', testing: true },
   'race-training':     { label: 'Race training',     c: '#1D9E75', testing: false },
+  'racing':            { label: 'Racing',            c: '#EF4444', testing: false },
   'other':             { label: 'Other',             c: '#64748B', testing: false },
 }
-const BLOCK_ORDER = ['technical-testing', 'speed-testing', 'race-training', 'other']
+const BLOCK_ORDER = ['technical-testing', 'speed-testing', 'race-training', 'racing', 'other']
 
 const todayStr = () => {
   const d = new Date()
