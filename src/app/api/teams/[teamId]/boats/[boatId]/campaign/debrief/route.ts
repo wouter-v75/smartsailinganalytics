@@ -57,7 +57,7 @@ export async function GET(
 
   const { data, error } = await supabase
     .from('debriefs')
-    .select('learnings, next_focus, documents, updated_at')
+    .select('learnings, next_focus, speed_learnings, speed_focus_today, speed_long_term, documents, updated_at')
     .eq('session_id', sessionId)
     .maybeSingle()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -79,7 +79,14 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const body = (await req.json().catch(() => null)) as
-    | { date?: string; learnings?: string | null; next_focus?: string | null }
+    | {
+        date?: string
+        learnings?: string | null
+        next_focus?: string | null
+        speed_learnings?: string | null
+        speed_focus_today?: string | null
+        speed_long_term?: string | null
+      }
     | null
   if (!body?.date || !DATE_RE.test(body.date)) {
     return NextResponse.json({ error: 'valid date required' }, { status: 400 })
@@ -102,9 +109,11 @@ export async function PATCH(
     sessionId = ins.id
   }
 
+  const FIELDS = ['learnings', 'next_focus', 'speed_learnings', 'speed_focus_today', 'speed_long_term'] as const
   const patch: Record<string, unknown> = {}
-  if ('learnings' in body) patch.learnings = body.learnings ?? null
-  if ('next_focus' in body) patch.next_focus = body.next_focus ?? null
+  for (const f of FIELDS) {
+    if (f in body) patch[f] = (body as Record<string, unknown>)[f] ?? null
+  }
 
   const { data: existing } = await supabase
     .from('debriefs')
@@ -125,8 +134,7 @@ export async function PATCH(
       session_id: sessionId,
       team_id: params.teamId,
       boat_id: params.boatId,
-      learnings: body.learnings ?? null,
-      next_focus: body.next_focus ?? null,
+      ...patch,
       created_by_user_id: user.id,
     })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })

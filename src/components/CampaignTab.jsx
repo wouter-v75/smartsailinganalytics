@@ -800,7 +800,8 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
   const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'].includes(role)
-  const canEditDebrief = WRITE_ROLES.includes(role)
+  // Debrief + speed-meeting notes: TL2 and above can write.
+  const canEditDebrief = ['admin', 'team_manager', 'coach', 'tl2'].includes(role)
   // Weather forecast: TL1 and above can SEE it (not guests); upload/remove is
   // TL2 and above. Consultants are limited to their authorised window by RLS.
   const canSeeForecast = role !== 'guest'
@@ -939,7 +940,33 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
         </div>
 
         {/* Debrief notes */}
-        <DebriefCard
+        <NotesCard
+          title="Debrief notes"
+          fields={[{ key: 'learnings', label: 'Learnings' }, { key: 'next_focus', label: 'Next focus points' }]}
+          showDocuments
+          wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
+          base={base}
+          date={date}
+          teamId={teamId}
+          boatId={boatId}
+          role={role}
+          canEdit={canEditDebrief}
+          isMobile={isMobile}
+          onOpenVideo={onOpenVideo}
+          onOpenItem={onOpenItem}
+        />
+      </div>
+
+      {/* Speed team meeting notes — full width, below the plan/debrief row */}
+      <div style={{ marginTop: 14 }}>
+        <NotesCard
+          title="Speed team meeting notes"
+          fields={[
+            { key: 'speed_learnings', label: 'Learnings' },
+            { key: 'speed_focus_today', label: 'Focus for today' },
+            { key: 'speed_long_term', label: 'Long term development points' },
+          ]}
+          showDocuments={false}
           base={base}
           date={date}
           teamId={teamId}
@@ -1032,30 +1059,41 @@ function WeatherCard({ base, date, canEdit }) {
   )
 }
 
-// Compact clickable thumbnail — opens the PDF (or image) in a new tab.
+// Compact clickable thumbnail (~1/4 the old size). PDFs show their actual
+// first page via a scaled, clipped, non-interactive iframe; click opens a new
+// tab. No PDF library needed — the browser's built-in viewer renders the page.
+const THUMB_W = 96
+const THUMB_H = 60
 function ForecastThumb({ doc, canEdit, onRemove }) {
   const isImg = /^image\//.test(doc.content_type || '') || /\.(png|jpe?g|gif|webp)$/i.test(doc.name || '')
+  const isPdf = !isImg
   return (
-    <div style={{ width: 120 }}>
+    <div style={{ width: THUMB_W }}>
       <a href={doc.url || '#'} target="_blank" rel="noreferrer"
         title={`Open ${doc.name} in a new tab`}
         onClick={(e) => { if (!doc.url) e.preventDefault() }}
         style={{ display: 'block', textDecoration: 'none' }}>
-        <div style={{ position: 'relative', width: 120, height: 150, borderRadius: 8, overflow: 'hidden', border: '1px solid #1E3A5A', background: isImg ? '#071624' : 'linear-gradient(160deg,#f8fafc,#e2e8f0)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+        <div style={{ position: 'relative', width: THUMB_W, height: THUMB_H, borderRadius: 6, overflow: 'hidden', border: '1px solid #1E3A5A', background: '#fff', cursor: 'pointer' }}>
           {isImg && doc.url ? (
             <img src={doc.url} alt={doc.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : isPdf && doc.url ? (
+            // 4× iframe scaled to 0.25 → renders the first page into the box.
+            <iframe
+              src={`${doc.url}#page=1&toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+              title={doc.name}
+              scrolling="no"
+              style={{ position: 'absolute', top: 0, left: 0, width: THUMB_W * 4, height: THUMB_H * 4, border: 'none', transform: 'scale(0.25)', transformOrigin: '0 0', pointerEvents: 'none', background: '#fff' }}
+            />
           ) : (
-            <>
-              <span style={{ fontSize: 40 }}>📄</span>
-              <span style={{ position: 'absolute', top: 8, right: 8, background: '#DC2626', color: '#fff', fontSize: 9, fontWeight: 800, borderRadius: 3, padding: '1px 5px', letterSpacing: 0.5 }}>PDF</span>
-            </>
+            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg,#f8fafc,#e2e8f0)' }}><span style={{ fontSize: 24 }}>📄</span></div>
           )}
-          <span style={{ position: 'absolute', bottom: 6, right: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, borderRadius: 4, padding: '1px 5px' }}>↗</span>
+          {isPdf && <span style={{ position: 'absolute', top: 3, right: 3, background: '#DC2626', color: '#fff', fontSize: 7, fontWeight: 800, borderRadius: 2, padding: '0 3px', letterSpacing: 0.5 }}>PDF</span>}
+          <span style={{ position: 'absolute', bottom: 2, right: 3, background: 'rgba(0,0,0,0.55)', color: '#fff', fontSize: 9, borderRadius: 3, padding: '0 3px' }}>↗</span>
         </div>
       </a>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-        <span title={doc.name} style={{ fontSize: 10, color: '#94A3B8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
-        {canEdit && <button onClick={onRemove} title="Remove" style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: 0 }}>✕</button>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginTop: 3 }}>
+        <span title={doc.name} style={{ fontSize: 9, color: '#94A3B8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
+        {canEdit && <button onClick={onRemove} title="Remove" style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: 0 }}>✕</button>}
       </div>
     </div>
   )
@@ -1211,34 +1249,30 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
           )}
         </div>
       )}
-      {/* Click-to-insert tag palette */}
-      {availableTags.length > 0 && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 5 }}>
-          {availableTags.slice(0, 24).map((t) => (
-            <button key={t} type="button" onMouseDown={(e) => { e.preventDefault(); insertTag(t, true) }}
-              title={`Insert #${t} at cursor`}
-              style={{ fontSize: 10, fontFamily: 'monospace', color: '#A78BFA', background: '#8B5CF615', border: '1px solid #8B5CF640', borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>
-              #{t}
-            </button>
-          ))}
-        </div>
-      )}
-      {allowLinks && (
-        <div style={{ fontSize: 9, color: '#475569', marginTop: 3 }}>Type <b>#</b> to tag · <b>@</b> to link a clip or backlog item</div>
-      )}
+      <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>
+        {allowLinks
+          ? 'Type # to add tags, type @ to link to videos, photos or backlog items.'
+          : 'Type # to add tags.'}
+      </div>
     </div>
   )
 }
 
-function DebriefCard({ base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
-  const [learnings, setLearnings] = useState('')
-  const [nextFocus, setNextFocus] = useState('')
+// Generic notes card used for both Debrief notes and Speed-team-meeting notes.
+// `fields` is [{key,label}]; all share one debrief row (one endpoint). Supports
+// #tag + @link editing and (optionally) document uploads.
+function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
+  const [values, setValues] = useState({})
   const [docs, setDocs] = useState([])
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [err, setErr] = useState(null)
   const [availableTags, setAvailableTags] = useState([])
+  const [links, setLinks] = useState([])
+  const photoUrlRef = useRef({})
+  // Adding links is coach-and-up; clicking works for any viewer.
+  const allowLinks = ['admin', 'team_manager', 'coach'].includes(role)
 
   useEffect(() => {
     let cancelled = false
@@ -1261,24 +1295,29 @@ function DebriefCard({ base, date, teamId, boatId, role, canEdit, isMobile, onOp
     }).catch(() => {})
   }
 
-  // @-link candidates: this day's clips + the boat's backlog items. Adding
-  // links is coach-and-up (allowLinks); clicking them works for any viewer.
-  const allowLinks = ['admin', 'team_manager', 'coach'].includes(role)
-  const [links, setLinks] = useState([])
+  // @-link candidates: this day's clips + photos + the boat's backlog items.
   useEffect(() => {
     let cancelled = false
     Promise.all([
       fetch(`/api/teams/${teamId}/boats/${boatId}/videos?date=${date}`).then((r) => (r.ok ? r.json() : { videos: [] })).catch(() => ({ videos: [] })),
+      fetch(`/api/teams/${teamId}/boats/${boatId}/photos`).then((r) => (r.ok ? r.json() : { photos: [] })).catch(() => ({ photos: [] })),
       fetch(`${base}/backlog`).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })),
-    ]).then(([v, b]) => {
+    ]).then(([v, p, b]) => {
       if (cancelled) return
       const clips = (v.videos || []).map((c) => {
         const t = c.start_utc ? new Date(c.start_utc) : null
         const time = t ? `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}` : ''
         return { kind: 'clip', id: c.id, label: (c.title || 'clip') + (time ? ` ${time}` : '') }
       })
+      const dayPhotos = (p.photos || []).filter((ph) => (ph.sessions?.date || ph.date) === date)
+      const urlMap = {}
+      const photos = dayPhotos.map((ph, i) => {
+        urlMap[ph.id] = ph.thumbnail_url || ph.url || null
+        return { kind: 'photo', id: ph.id, label: `photo ${i + 1}` }
+      })
+      photoUrlRef.current = urlMap
       const items = (b.items || []).map((it) => ({ kind: 'item', id: it.id, label: it.title }))
-      setLinks([...clips, ...items])
+      setLinks([...clips, ...photos, ...items])
     })
     return () => { cancelled = true }
   }, [teamId, boatId, date, base])
@@ -1286,17 +1325,21 @@ function DebriefCard({ base, date, teamId, boatId, role, canEdit, isMobile, onOp
   const onOpenRef = (kind, id) => {
     if (kind === 'clip') onOpenVideo && onOpenVideo(date, id)
     else if (kind === 'item') onOpenItem && onOpenItem(id)
+    else if (kind === 'photo') { const u = photoUrlRef.current[id]; if (u) window.open(u, '_blank') }
   }
 
   const load = useCallback(async () => {
     setErr(null)
     const res = await fetch(`${base}/debrief?date=${date}`)
-    if (!res.ok) { setErr('could not load debrief'); return }
+    if (!res.ok) { setErr('could not load notes'); return }
     const j = await res.json()
-    setLearnings(j.debrief?.learnings || '')
-    setNextFocus(j.debrief?.next_focus || '')
-    setDocs(j.debrief?.documents || [])
+    const d = j.debrief || {}
+    const vals = {}
+    for (const f of fields) vals[f.key] = d[f.key] || ''
+    setValues(vals)
+    if (showDocuments) setDocs(d.documents || [])
     setDirty(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, date])
 
   useEffect(() => { load() }, [load])
@@ -1305,10 +1348,12 @@ function DebriefCard({ base, date, teamId, boatId, role, canEdit, isMobile, onOp
     setSaving(true)
     setErr(null)
     try {
+      const payload = { date }
+      for (const f of fields) payload[f.key] = values[f.key] ?? ''
       const res = await fetch(`${base}/debrief`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, learnings, next_focus: nextFocus }),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'save failed'); return }
       setDirty(false)
@@ -1350,30 +1395,12 @@ function DebriefCard({ base, date, teamId, boatId, role, canEdit, isMobile, onOp
     load()
   }
 
-  const section = (label, value, setter) => (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>{label}</div>
-      {canEdit ? (
-        <TagTextArea
-          value={value}
-          onChange={(v) => { setter(v); setDirty(true) }}
-          placeholder={`${label}…`}
-          availableTags={availableTags}
-          onAddTag={addVocabTag}
-          links={links}
-          allowLinks={allowLinks}
-          rows={4}
-        />
-      ) : (
-        <div style={{ fontSize: 13, color: value ? '#E2E8F0' : '#475569', whiteSpace: 'pre-wrap' }}>{renderRich(value, onOpenRef)}</div>
-      )}
-    </div>
-  )
+  const setField = (key, v) => { setValues((prev) => ({ ...prev, [key]: v })); setDirty(true) }
 
   return (
-    <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
+    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, ...(wrapperStyle || {}) }}>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', flex: 1 }}>Debrief notes</div>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', flex: 1 }}>{title}</div>
         {canEdit && dirty && (
           <button onClick={save} disabled={saving} style={btnSmall}>{saving ? 'Saving…' : 'Save'}</button>
         )}
@@ -1381,35 +1408,53 @@ function DebriefCard({ base, date, teamId, boatId, role, canEdit, isMobile, onOp
 
       {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>{err}</div>}
 
-      {section('Learnings', learnings, setLearnings)}
-      {section('Next focus points', nextFocus, setNextFocus)}
-
-      {/* Documents */}
-      <div style={{ marginTop: 4 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Documents</div>
-        {docs.length === 0 && <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>None yet.</div>}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
-          {docs.map((d) => (
-            <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderRadius: 6, padding: '6px 9px' }}>
-              <span style={{ fontSize: 13 }}>📄</span>
-              {d.url ? (
-                <a href={d.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#06B6D4', textDecoration: 'none', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</a>
-              ) : (
-                <span style={{ fontSize: 12, color: '#94A3B8', flex: 1 }}>{d.name}</span>
-              )}
-              {canEdit && (
-                <button onClick={() => removeDoc(d.key)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>✕</button>
-              )}
-            </div>
-          ))}
+      {fields.map((f) => (
+        <div key={f.key} style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>{f.label}</div>
+          {canEdit ? (
+            <TagTextArea
+              value={values[f.key] || ''}
+              onChange={(v) => setField(f.key, v)}
+              placeholder={`${f.label}…`}
+              availableTags={availableTags}
+              onAddTag={addVocabTag}
+              links={links}
+              allowLinks={allowLinks}
+              rows={4}
+            />
+          ) : (
+            <div style={{ fontSize: 13, color: values[f.key] ? '#E2E8F0' : '#475569', whiteSpace: 'pre-wrap' }}>{renderRich(values[f.key], onOpenRef)}</div>
+          )}
         </div>
-        {canEdit && (
-          <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
-            {uploading ? 'Uploading…' : '+ Upload document'}
-            <input type="file" onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
-          </label>
-        )}
-      </div>
+      ))}
+
+      {showDocuments && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Documents</div>
+          {docs.length === 0 && <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>None yet.</div>}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
+            {docs.map((d) => (
+              <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderRadius: 6, padding: '6px 9px' }}>
+                <span style={{ fontSize: 13 }}>📄</span>
+                {d.url ? (
+                  <a href={d.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#06B6D4', textDecoration: 'none', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</a>
+                ) : (
+                  <span style={{ fontSize: 12, color: '#94A3B8', flex: 1 }}>{d.name}</span>
+                )}
+                {canEdit && (
+                  <button onClick={() => removeDoc(d.key)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>✕</button>
+                )}
+              </div>
+            ))}
+          </div>
+          {canEdit && (
+            <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
+              {uploading ? 'Uploading…' : '+ Upload document'}
+              <input type="file" onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
+            </label>
+          )}
+        </div>
+      )}
     </div>
   )
 }
