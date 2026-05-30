@@ -982,6 +982,112 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
   )
 }
 
+// "Details for today" — comments + an hourly wind table (Time / TWD / TWS /
+// min–max), transcribed from the forecast deck. Shown if filled; TL2+ edits.
+function DetailsToday({ base, date, canEdit }) {
+  const emptyRow = () => ({ time: '', twd: '', tws: '', range: '' })
+  const [comments, setComments] = useState('')
+  const [rows, setRows] = useState([])
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const load = useCallback(async () => {
+    const res = await fetch(`${base}/conditions?date=${date}`)
+    if (!res.ok) return
+    const j = await res.json()
+    setComments(j.details?.comments || '')
+    setRows(Array.isArray(j.details?.rows) ? j.details.rows : [])
+    setDirty(false)
+  }, [base, date])
+  useEffect(() => { load() }, [load])
+
+  async function save() {
+    setSaving(true); setErr(null)
+    try {
+      const cleanRows = rows.filter((r) => r.time || r.twd || r.tws || r.range)
+      const res = await fetch(`${base}/conditions`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, details: { comments, rows: cleanRows } }),
+      })
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'save failed'); return }
+      setDirty(false)
+    } finally { setSaving(false) }
+  }
+
+  const setRow = (i, key, v) => { setRows((p) => p.map((r, idx) => (idx === i ? { ...r, [key]: v } : r))); setDirty(true) }
+  const addRow = () => { setRows((p) => [...p, emptyRow()]); setDirty(true) }
+  const delRow = (i) => { setRows((p) => p.filter((_, idx) => idx !== i)); setDirty(true) }
+
+  const hasData = comments.trim() || rows.some((r) => r.time || r.twd || r.tws || r.range)
+  if (!canEdit && !hasData) return null
+
+  const th = { textAlign: 'left', fontSize: 9, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 0.5, padding: '3px 6px', borderBottom: '1px solid #1E3A5A' }
+  const td = { fontSize: 11, color: '#E2E8F0', padding: '3px 6px', borderBottom: '1px solid #0F2030', fontFamily: 'monospace' }
+  const cellInput = { ...inputStyle, fontSize: 11, padding: '2px 5px', width: '100%' }
+
+  return (
+    <div style={{ marginTop: 12, borderTop: '1px solid #1E3A5A', paddingTop: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>Details for today</div>
+        {canEdit && dirty && <button onClick={save} disabled={saving} style={btnSmall}>{saving ? 'Saving…' : 'Save'}</button>}
+      </div>
+      {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 6 }}>{err}</div>}
+
+      {/* Comments */}
+      {canEdit ? (
+        <textarea value={comments} onChange={(e) => { setComments(e.target.value); setDirty(true) }}
+          rows={3} placeholder="Comments (one per line)…"
+          style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4, marginBottom: 8 }} />
+      ) : (
+        comments.trim() && (
+          <ul style={{ margin: '0 0 8px', paddingLeft: 18, color: '#94A3B8', fontSize: 12 }}>
+            {comments.split('\n').filter(Boolean).map((c, i) => <li key={i} style={{ marginBottom: 2 }}>{c}</li>)}
+          </ul>
+        )
+      )}
+
+      {/* Hourly table */}
+      {(canEdit || rows.length > 0) && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 360 }}>
+            <thead>
+              <tr>
+                <th style={th}>Time</th><th style={th}>TWD</th><th style={th}>TWS</th><th style={th}>Min–Max</th>
+                {canEdit && <th style={{ ...th, width: 24 }} />}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  {canEdit ? (
+                    <>
+                      <td style={td}><input value={r.time || ''} onChange={(e) => setRow(i, 'time', e.target.value)} placeholder="14:00" style={{ ...cellInput, width: 56 }} /></td>
+                      <td style={td}><input value={r.twd || ''} onChange={(e) => setRow(i, 'twd', e.target.value)} placeholder="240-260" style={{ ...cellInput, width: 80 }} /></td>
+                      <td style={td}><input value={r.tws || ''} onChange={(e) => setRow(i, 'tws', e.target.value)} placeholder="10-12kn" style={{ ...cellInput, width: 72 }} /></td>
+                      <td style={td}><input value={r.range || ''} onChange={(e) => setRow(i, 'range', e.target.value)} placeholder="8-13kn" style={{ ...cellInput, width: 72 }} /></td>
+                      <td style={td}><button onClick={() => delRow(i)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 11 }}>✕</button></td>
+                    </>
+                  ) : (
+                    <>
+                      <td style={{ ...td, fontWeight: 700 }}>{r.time}</td>
+                      <td style={td}>{r.twd}</td>
+                      <td style={{ ...td, color: '#7DD3FC' }}>{r.tws}</td>
+                      <td style={{ ...td, color: '#64748B' }}>{r.range}</td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {canEdit && <button onClick={addRow} style={{ ...btnGhost, marginTop: 6 }}>+ Add row</button>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function WeatherCard({ base, date, canEdit }) {
   const [docs, setDocs] = useState([])
   const [uploading, setUploading] = useState(false)
@@ -1055,6 +1161,9 @@ function WeatherCard({ base, date, canEdit }) {
           ))}
         </div>
       )}
+
+      {/* Details for today — comments + hourly wind table */}
+      <DetailsToday base={base} date={date} canEdit={canEdit} />
     </div>
   )
 }
@@ -1100,6 +1209,34 @@ function ForecastThumb({ doc, canEdit, onRemove }) {
 }
 
 const normTag = (t) => String(t).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+
+// Local HH:MM from a UTC timestamp + the session's tz offset (minutes).
+const localHM = (utc, tzMin) => {
+  if (!utc) return ''
+  const d = new Date(new Date(utc).getTime() + (tzMin || 0) * 60000)
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+}
+// Tags worth showing on a clip's @-link label: race events (start/topmark/mark)
+// + sail tags. Drops position/manoeuvre/auto tags (upwind, reach, downwind,
+// tack, gybe, tws-…, Nx-…) and the mainsail tag.
+const RACE_EVENT_LABEL = { 'race-start': 'start', topmark: 'topmark', mark: 'mark' }
+const NOTE_NOISE_TAGS = new Set(['upwind', 'reach', 'reaching', 'downwind', 'tack', 'gybe', 'local', 'cloud', 'training', 'race', 'today'])
+const NOTE_SAIL_SKIP = /^(main|msail|mainsail|main-)/
+function noteClipTags(tags) {
+  const arr = Array.isArray(tags) ? tags : []
+  const events = []
+  const sails = []
+  for (const raw of arr) {
+    const t = String(raw)
+    if (RACE_EVENT_LABEL[t]) { events.push(RACE_EVENT_LABEL[t]); continue }
+    if (NOTE_NOISE_TAGS.has(t)) continue
+    if (NOTE_SAIL_SKIP.test(t)) continue
+    if (t.startsWith('tws-')) continue
+    if (/^\d+x-/.test(t)) continue
+    sails.push(t)
+  }
+  return [...events, ...sails]
+}
 
 function renderTagsSegment(seg, base) {
   return seg.split(/(#[\w-]+)/g).map((p, i) =>
@@ -1302,18 +1439,24 @@ function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, tea
       fetch(`/api/teams/${teamId}/boats/${boatId}/videos?date=${date}`).then((r) => (r.ok ? r.json() : { videos: [] })).catch(() => ({ videos: [] })),
       fetch(`/api/teams/${teamId}/boats/${boatId}/photos`).then((r) => (r.ok ? r.json() : { photos: [] })).catch(() => ({ photos: [] })),
       fetch(`${base}/backlog`).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })),
-    ]).then(([v, p, b]) => {
+      fetch(`${base}/calendar`).then((r) => (r.ok ? r.json() : { sessions: [] })).catch(() => ({ sessions: [] })),
+    ]).then(([v, p, b, cal]) => {
       if (cancelled) return
+      const sess = (cal.sessions || []).find((s) => s.date === date)
+      const tzMin = sess?.tz_offset_minutes ?? 0
+      // Clip label = local start time + meaningful tags (no filename).
       const clips = (v.videos || []).map((c) => {
-        const t = c.start_utc ? new Date(c.start_utc) : null
-        const time = t ? `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}` : ''
-        return { kind: 'clip', id: c.id, label: (c.title || 'clip') + (time ? ` ${time}` : '') }
+        const hm = localHM(c.start_utc, tzMin)
+        const tags = noteClipTags(c.tags)
+        const label = [hm, ...tags].filter(Boolean).join(' ') || 'clip'
+        return { kind: 'clip', id: c.id, label }
       })
       const dayPhotos = (p.photos || []).filter((ph) => (ph.sessions?.date || ph.date) === date)
       const urlMap = {}
       const photos = dayPhotos.map((ph, i) => {
         urlMap[ph.id] = ph.thumbnail_url || ph.url || null
-        return { kind: 'photo', id: ph.id, label: `photo ${i + 1}` }
+        const hm = localHM(ph.taken_utc, tzMin)
+        return { kind: 'photo', id: ph.id, label: `photo ${hm || i + 1}` }
       })
       photoUrlRef.current = urlMap
       const items = (b.items || []).map((it) => ({ kind: 'item', id: it.id, label: it.title }))
