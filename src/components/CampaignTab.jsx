@@ -928,9 +928,8 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
   )
 }
 
-function WeatherCard({ base, date, canEdit, isMobile }) {
+function WeatherCard({ base, date, canEdit }) {
   const [docs, setDocs] = useState([])
-  const [sel, setSel] = useState(0)
   const [uploading, setUploading] = useState(false)
   const [err, setErr] = useState(null)
 
@@ -940,7 +939,6 @@ function WeatherCard({ base, date, canEdit, isMobile }) {
     if (!res.ok) { setErr('could not load forecast'); return }
     const j = await res.json()
     setDocs(j.attachments || [])
-    setSel(0)
   }, [base, date])
   useEffect(() => { load() }, [load])
 
@@ -977,10 +975,6 @@ function WeatherCard({ base, date, canEdit, isMobile }) {
     load()
   }
 
-  const cur = docs[sel] || null
-  const isPdf = cur && ((cur.content_type === 'application/pdf') || /\.pdf$/i.test(cur.name || ''))
-  const isImg = cur && (/^image\//.test(cur.content_type || '') || /\.(png|jpe?g|gif|webp)$/i.test(cur.name || ''))
-
   return (
     <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, marginBottom: 14 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: docs.length ? 10 : 0, flexWrap: 'wrap' }}>
@@ -998,42 +992,44 @@ function WeatherCard({ base, date, canEdit, isMobile }) {
 
       {docs.length === 0 ? (
         <div style={{ fontSize: 12, color: '#475569' }}>
-          No forecast for this day.{canEdit ? ' Upload the weather/strategy deck as a PDF — it shows inline here.' : ''}
+          No forecast for this day.{canEdit ? ' Upload the weather/strategy deck as a PDF.' : ''}
         </div>
       ) : (
-        <>
-          {/* Switcher when more than one forecast doc */}
-          {docs.length > 1 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-              {docs.map((d, i) => (
-                <button key={d.id} onClick={() => setSel(i)}
-                  style={{ fontSize: 11, borderRadius: 6, padding: '3px 9px', cursor: 'pointer', border: `1px solid ${i === sel ? '#06B6D4' : '#1E3A5A'}`, background: i === sel ? '#06B6D4' : 'transparent', color: i === sel ? '#000' : '#94A3B8' }}>
-                  {d.name}
-                </button>
-              ))}
-            </div>
-          )}
-          {cur && (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {docs.map((d) => (
+            <ForecastThumb key={d.id} doc={d} canEdit={canEdit} onRemove={() => remove(d.id)} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Compact clickable thumbnail — opens the PDF (or image) in a new tab.
+function ForecastThumb({ doc, canEdit, onRemove }) {
+  const isImg = /^image\//.test(doc.content_type || '') || /\.(png|jpe?g|gif|webp)$/i.test(doc.name || '')
+  return (
+    <div style={{ width: 120 }}>
+      <a href={doc.url || '#'} target="_blank" rel="noreferrer"
+        title={`Open ${doc.name} in a new tab`}
+        onClick={(e) => { if (!doc.url) e.preventDefault() }}
+        style={{ display: 'block', textDecoration: 'none' }}>
+        <div style={{ position: 'relative', width: 120, height: 150, borderRadius: 8, overflow: 'hidden', border: '1px solid #1E3A5A', background: isImg ? '#071624' : 'linear-gradient(160deg,#f8fafc,#e2e8f0)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+          {isImg && doc.url ? (
+            <img src={doc.url} alt={doc.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, color: '#E2E8F0' }}>📄 {cur.name}</span>
-                {cur.url && <a href={cur.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#06B6D4', textDecoration: 'none' }}>Open in new window ↗</a>}
-                <div style={{ flex: 1 }} />
-                {canEdit && <button onClick={() => remove(cur.id)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>Remove</button>}
-              </div>
-              {!cur.url ? (
-                <div style={{ fontSize: 12, color: '#475569' }}>Preview unavailable.</div>
-              ) : isPdf ? (
-                <iframe src={cur.url} title={cur.name} style={{ width: '100%', height: isMobile ? 380 : 600, border: '1px solid #1E3A5A', borderRadius: 8, background: '#fff' }} />
-              ) : isImg ? (
-                <img src={cur.url} alt={cur.name} style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid #1E3A5A' }} />
-              ) : (
-                <div style={{ fontSize: 12, color: '#94A3B8' }}>This file type can't preview inline — use “Open in new window”.</div>
-              )}
+              <span style={{ fontSize: 40 }}>📄</span>
+              <span style={{ position: 'absolute', top: 8, right: 8, background: '#DC2626', color: '#fff', fontSize: 9, fontWeight: 800, borderRadius: 3, padding: '1px 5px', letterSpacing: 0.5 }}>PDF</span>
             </>
           )}
-        </>
-      )}
+          <span style={{ position: 'absolute', bottom: 6, right: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 11, borderRadius: 4, padding: '1px 5px' }}>↗</span>
+        </div>
+      </a>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+        <span title={doc.name} style={{ fontSize: 10, color: '#94A3B8', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</span>
+        {canEdit && <button onClick={onRemove} title="Remove" style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: 0 }}>✕</button>}
+      </div>
     </div>
   )
 }
