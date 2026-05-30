@@ -20,9 +20,10 @@ const BLOCK_META = {
   'speed-testing':     { label: 'Speed testing',     c: '#06B6D4', testing: true },
   'race-training':     { label: 'Race training',     c: '#1D9E75', testing: false },
   'racing':            { label: 'Racing',            c: '#EF4444', testing: false },
+  'shore':             { label: 'Shore',             c: '#9333EA', testing: false },
   'other':             { label: 'Other',             c: '#64748B', testing: false },
 }
-const BLOCK_ORDER = ['technical-testing', 'speed-testing', 'race-training', 'racing', 'other']
+const BLOCK_ORDER = ['technical-testing', 'speed-testing', 'race-training', 'racing', 'shore', 'other']
 
 const todayStr = () => {
   const d = new Date()
@@ -150,7 +151,11 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile }) 
 
 // ── Backlog ──────────────────────────────────────────────────────────────────
 const CAT_COLOR = { racing: '#1D9E75', technical: '#F59E0B', 'whole-team': '#8B5CF6' }
-const KIND_LABEL = { action: 'Action', fmea: 'FMEA', task: 'Task', deliverable: 'Deliverable', milestone: 'Milestone' }
+const KIND_LABEL = { action: 'Action', fmea: 'FMEA', task: 'Task', test: 'Test', training: 'Training', deliverable: 'Deliverable', milestone: 'Milestone' }
+// Kinds offered when creating an item (existing action/deliverable/milestone stay valid for old rows).
+const KIND_ADD_OPTIONS = [['task', 'Task'], ['test', 'Test'], ['training', 'Training'], ['fmea', 'FMEA']]
+const VENUES = [['on-water', 'On the water'], ['dock', 'Dock'], ['shed', 'Shed']]
+const VENUE_LABEL = { 'on-water': 'On the water', dock: 'Dock', shed: 'Shed' }
 const PRIO_COLOR = { 1: '#EF4444', 2: '#F97316', 3: '#F59E0B', 4: '#64748B', 5: '#475569' }
 const ANSWER_META = {
   unanswered: { label: 'Not tested', c: '#64748B' },
@@ -160,6 +165,18 @@ const ANSWER_META = {
 const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl1', 'tl2']
 const TAG_ROLES = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'] // TL2 and up
 const WIND_STEPS = [0, 5, 10, 15, 20, 25, 30]
+const SOD = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+// FMEA: RPN = S×O×D (1–1000). High severity is top priority regardless of RPN.
+const fmeaRpn = (m) => (Number(m?.severity) || 0) * (Number(m?.occurrence) || 0) * (Number(m?.detection) || 0)
+const rpnToPriority = (m) => {
+  const sev = Number(m?.severity) || 0
+  const rpn = fmeaRpn(m)
+  if (sev >= 9 || rpn >= 200) return 1
+  if (rpn >= 120) return 2
+  if (rpn >= 60) return 3
+  if (rpn >= 30) return 4
+  return 5
+}
 
 function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   const [items, setItems] = useState([])
@@ -170,7 +187,9 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   const [adding, setAdding] = useState(false)
 
   const [availableTags, setAvailableTags] = useState([])
+  const [days, setDays] = useState([]) // [{id,date}] planned test days, for the planned-day picker
   const subteams = (config?.subteams || []).filter((s) => s.active !== false)
+  const members = config?.members || []
   const mySubteamIds = config?.mySubteamIds || []
   const canAdd = WRITE_ROLES.includes(role)
   const canTag = TAG_ROLES.includes(role)
@@ -206,6 +225,16 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
       .catch(() => {})
     return () => { cancelled = true }
   }, [teamId, boatId])
+
+  // Planned test days for the planned-day picker (target_session_id).
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${base}/calendar`)
+      .then((r) => (r.ok ? r.json() : { sessions: [] }))
+      .then((j) => { if (!cancelled) setDays((j.sessions || []).map((s) => ({ id: s.id, date: s.date }))) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [base])
 
   async function addVocabTag(tag) {
     const t = String(tag).trim().toLowerCase()
@@ -269,7 +298,7 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
 
       {canAdd && (
         adding
-          ? <AddItemForm base={base} subteams={subteams} mySubteamIds={mySubteamIds} canEditPlan={canEditPlan} onDone={() => { setAdding(false); load() }} onCancel={() => setAdding(false)} />
+          ? <AddItemForm base={base} subteams={subteams} mySubteamIds={mySubteamIds} members={members} days={days} canEditPlan={canEditPlan} onDone={() => { setAdding(false); load() }} onCancel={() => setAdding(false)} />
           : <button onClick={() => setAdding(true)} style={{ ...btnPrimary, marginBottom: 14 }}>+ New item</button>
       )}
 
@@ -292,6 +321,8 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
               canTag={canTag}
               availableTags={availableTags}
               onAddVocabTag={addVocabTag}
+              members={members}
+              days={days}
               onPatch={(body) => patch(it.id, body)}
               onDelete={() => remove(it.id)}
             />
@@ -302,9 +333,14 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   )
 }
 
-function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, onPatch, onDelete }) {
+function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, members = [], days = [], onPatch, onDelete }) {
   const sub = item.subteams
   const catColor = sub ? CAT_COLOR[sub.category] || '#64748B' : '#334155'
+  const ownerName = members.find((m) => m.id === item.owner_user_id)?.name || null
+  const plannedDate = days.find((d) => d.id === item.target_session_id)?.date || null
+  const isFmea = item.kind === 'fmea'
+  const meta = item.meta || {}
+  const rpn = isFmea ? fmeaRpn(meta) : 0
   const [pct, setPct] = useState(item.progress_pct ?? 0)
   useEffect(() => { setPct(item.progress_pct ?? 0) }, [item.progress_pct])
   const [showTagPicker, setShowTagPicker] = useState(false)
@@ -346,7 +382,13 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
         <span style={{ fontSize: 14, fontWeight: 700, color: '#E2E8F0', flex: 1, minWidth: 120 }}>{item.title}</span>
         <span style={{ fontSize: 9, color: '#64748B', border: '1px solid #1E3A5A', borderRadius: 4, padding: '1px 5px' }}>{KIND_LABEL[item.kind] || item.kind}</span>
         {sub && <span style={{ fontSize: 9, color: catColor, border: `1px solid ${catColor}55`, borderRadius: 4, padding: '1px 5px' }}>{sub.label}</span>}
+        {item.venue && <span style={{ fontSize: 9, color: '#94A3B8', border: '1px solid #334155', borderRadius: 4, padding: '1px 5px' }}>{VENUE_LABEL[item.venue]}</span>}
         {windBand && <span style={{ fontSize: 9, color: '#7DD3FC', fontFamily: 'monospace' }}>{windBand}</span>}
+        {isFmea && (
+          <span style={{ fontSize: 9, fontWeight: 800, color: PRIO_COLOR[rpnToPriority(meta)] || '#64748B', border: `1px solid ${(PRIO_COLOR[rpnToPriority(meta)] || '#334155')}66`, borderRadius: 4, padding: '1px 5px' }}>
+            RPN {rpn || '—'}
+          </span>
+        )}
       </div>
 
       {item.body && <div style={{ fontSize: 12, color: '#94A3B8', marginTop: 6 }}>{item.body}</div>}
@@ -383,6 +425,46 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
           )
         )}
       </div>
+
+      {/* Owner / planned day / due date */}
+      {editable ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
+          <select value={item.owner_user_id || ''} onChange={(e) => onPatch({ owner_user_id: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Owner">
+            <option value="">Owner…</option>
+            {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+          <select value={item.target_session_id || ''} onChange={(e) => onPatch({ target_session_id: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Planned test day">
+            <option value="">Planned day…</option>
+            {days.map((d) => <option key={d.id} value={d.id}>{fmtDay(d.date)}</option>)}
+          </select>
+          <span style={{ fontSize: 10, color: '#64748B' }}>due</span>
+          <input type="date" value={item.due_date || ''} onChange={(e) => onPatch({ due_date: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Due date" />
+          <select value={item.venue || ''} onChange={(e) => onPatch({ venue: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Venue">
+            <option value="">Venue…</option>
+            {VENUES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </div>
+      ) : (
+        (ownerName || plannedDate || item.due_date) && (
+          <div style={{ fontSize: 11, color: '#64748B', marginTop: 8, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {ownerName && <span>👤 {ownerName}</span>}
+            {plannedDate && <span>🗓 {fmtDay(plannedDate)}</span>}
+            {item.due_date && <span>⏰ due {item.due_date}</span>}
+          </div>
+        )
+      )}
+
+      {/* FMEA scoring */}
+      {isFmea && (
+        <FmeaBlock
+          meta={meta}
+          editable={editable}
+          canSetPriority={canSetPriority}
+          onApply={(newMeta, suggestedPriority) =>
+            onPatch(suggestedPriority != null ? { meta: newMeta, priority: suggestedPriority } : { meta: newMeta })
+          }
+        />
+      )}
 
       {/* Completion control */}
       <div style={{ marginTop: 10 }}>
@@ -441,32 +523,149 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
   )
 }
 
-function AddItemForm({ base, subteams, mySubteamIds, canEditPlan, onDone, onCancel }) {
+function FmeaBlock({ meta, editable, canSetPriority, onApply }) {
+  const init = () => ({
+    severity: meta.severity ?? '',
+    occurrence: meta.occurrence ?? '',
+    detection: meta.detection ?? '',
+    failure_mode: meta.failure_mode ?? '',
+    effect: meta.effect ?? '',
+    cause: meta.cause ?? '',
+    controls: meta.controls ?? '',
+  })
+  const [m, setM] = useState(init)
+  const [dirty, setDirty] = useState(false)
+  useEffect(() => { setM(init()); setDirty(false) }, [meta]) // re-sync after reload
+  const set = (k, v) => { setM((p) => ({ ...p, [k]: v })); setDirty(true) }
+  const rpn = fmeaRpn(m)
+  const sugg = rpnToPriority(m)
+  const complete = m.severity && m.occurrence && m.detection
+
+  function apply() {
+    const newMeta = {
+      ...meta,
+      severity: Number(m.severity) || null,
+      occurrence: Number(m.occurrence) || null,
+      detection: Number(m.detection) || null,
+      failure_mode: m.failure_mode || null,
+      effect: m.effect || null,
+      cause: m.cause || null,
+      controls: m.controls || null,
+      rpn: complete ? rpn : null,
+    }
+    onApply(newMeta, canSetPriority && complete ? sugg : null)
+    setDirty(false)
+  }
+
+  const sodColor = '#1E3A5A'
+  if (!editable) {
+    return (
+      <div style={{ marginTop: 10, background: '#071624', borderRadius: 8, padding: 10, fontSize: 12, color: '#94A3B8' }}>
+        <div style={{ display: 'flex', gap: 14, marginBottom: m.failure_mode || m.effect || m.cause || m.controls ? 6 : 0 }}>
+          <span>S <b style={{ color: '#E2E8F0' }}>{m.severity || '–'}</b></span>
+          <span>O <b style={{ color: '#E2E8F0' }}>{m.occurrence || '–'}</b></span>
+          <span>D <b style={{ color: '#E2E8F0' }}>{m.detection || '–'}</b></span>
+          <span>RPN <b style={{ color: PRIO_COLOR[sugg] }}>{rpn || '–'}</b></span>
+        </div>
+        {m.failure_mode && <div>Mode: {m.failure_mode}</div>}
+        {m.effect && <div>Effect: {m.effect}</div>}
+        {m.cause && <div>Cause: {m.cause}</div>}
+        {m.controls && <div>Controls: {m.controls}</div>}
+      </div>
+    )
+  }
+
+  const sodSelect = (key, label) => (
+    <label style={{ fontSize: 11, color: '#94A3B8', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      {label}
+      <select value={m[key]} onChange={(e) => set(key, e.target.value)} style={{ ...inputStyle, padding: '2px 4px', fontSize: 11, borderColor: sodColor }}>
+        <option value="">–</option>
+        {SOD.map((n) => <option key={n} value={n}>{n}</option>)}
+      </select>
+    </label>
+  )
+
+  return (
+    <div style={{ marginTop: 10, background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8, padding: 10 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>FMEA scoring</div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+        {sodSelect('severity', 'Severity')}
+        {sodSelect('occurrence', 'Occurrence')}
+        {sodSelect('detection', 'Detection')}
+        <span style={{ fontSize: 12, color: '#94A3B8' }}>RPN <b style={{ color: PRIO_COLOR[sugg] }}>{rpn || '–'}</b></span>
+        {complete && <span style={{ fontSize: 11, color: PRIO_COLOR[sugg], fontWeight: 700 }}>→ suggests P{sugg}{!canSetPriority ? ' (a lead sets priority)' : ''}</span>}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <input value={m.failure_mode} onChange={(e) => set('failure_mode', e.target.value)} placeholder="Failure mode — how it breaks" style={{ ...inputStyle, fontSize: 12 }} />
+        <input value={m.effect} onChange={(e) => set('effect', e.target.value)} placeholder="Effect — consequence (drives Severity)" style={{ ...inputStyle, fontSize: 12 }} />
+        <input value={m.cause} onChange={(e) => set('cause', e.target.value)} placeholder="Cause — why it happens (drives Occurrence)" style={{ ...inputStyle, fontSize: 12 }} />
+        <input value={m.controls} onChange={(e) => set('controls', e.target.value)} placeholder="Current controls / detection (drives Detection)" style={{ ...inputStyle, fontSize: 12 }} />
+      </div>
+      {dirty && (
+        <button onClick={apply} style={{ ...btnSmall, marginTop: 8 }}>
+          Save FMEA{canSetPriority && complete ? ` → set P${sugg}` : ''}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function AddItemForm({ base, subteams, mySubteamIds, members = [], days = [], canEditPlan, onDone, onCancel }) {
   // Non-coach members can only file into their own sub-teams.
   const allowedSubteams = canEditPlan ? subteams : subteams.filter((s) => mySubteamIds.includes(s.id))
   const [title, setTitle] = useState('')
-  const [kind, setKind] = useState('action')
+  const [kind, setKind] = useState('task')
+  const [venue, setVenue] = useState('')
   const [completion, setCompletion] = useState('binary')
   const [subteamId, setSubteamId] = useState(allowedSubteams[0]?.id || '')
   const [priority, setPriority] = useState('')
   const [wmin, setWmin] = useState('')
   const [wmax, setWmax] = useState('')
+  const [ownerId, setOwnerId] = useState('')
+  const [plannedDayId, setPlannedDayId] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [fmea, setFmea] = useState({ severity: '', occurrence: '', detection: '', failure_mode: '', effect: '', cause: '', controls: '' })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
+
+  const fmeaRpnLive = fmeaRpn(fmea)
+  const fmeaSugg = rpnToPriority(fmea)
+  const fmeaComplete = fmea.severity && fmea.occurrence && fmea.detection
 
   async function add() {
     if (!title.trim()) return
     setBusy(true); setErr(null)
     try {
+      const isFmea = kind === 'fmea'
+      const meta = isFmea
+        ? {
+            severity: Number(fmea.severity) || null,
+            occurrence: Number(fmea.occurrence) || null,
+            detection: Number(fmea.detection) || null,
+            failure_mode: fmea.failure_mode || null,
+            effect: fmea.effect || null,
+            cause: fmea.cause || null,
+            controls: fmea.controls || null,
+            rpn: fmeaComplete ? fmeaRpnLive : null,
+          }
+        : null
+      // FMEA auto-suggests priority (overrides the blank field); manual wins if set.
+      const effPriority =
+        priority !== '' ? Number(priority) : isFmea && fmeaComplete ? fmeaSugg : null
       const res = await fetch(`${base}/backlog`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title, kind, completion,
           subteam_id: subteamId || null,
-          priority: priority === '' ? null : Number(priority),
+          venue: venue || null,
+          priority: effPriority,
+          owner_user_id: ownerId || null,
+          target_session_id: plannedDayId || null,
+          due_date: dueDate || null,
           wind_min_kt: wmin === '' ? null : Number(wmin),
           wind_max_kt: wmax === '' ? null : Number(wmax),
+          meta,
         }),
       })
       if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not add'); return }
@@ -478,8 +677,12 @@ function AddItemForm({ base, subteams, mySubteamIds, canEditPlan, onDone, onCanc
     <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 10, padding: 12, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing / answering?" style={{ ...inputStyle, fontSize: 14 }} autoFocus />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <select value={kind} onChange={(e) => setKind(e.target.value)} style={inputStyle} title="Kind">
-          {Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        <select value={kind} onChange={(e) => setKind(e.target.value)} style={inputStyle} title="Type">
+          {KIND_ADD_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <select value={venue} onChange={(e) => setVenue(e.target.value)} style={inputStyle} title="Venue">
+          <option value="">Venue…</option>
+          {VENUES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
         <select value={completion} onChange={(e) => setCompletion(e.target.value)} style={inputStyle} title="Completion">
           <option value="binary">Question (answered y/n)</option>
@@ -503,7 +706,40 @@ function AddItemForm({ base, subteams, mySubteamIds, canEditPlan, onDone, onCanc
           <option value="">wind max</option>
           {WIND_STEPS.map((w) => <option key={w} value={w}>{w} kt</option>)}
         </select>
+        <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} style={inputStyle} title="Owner">
+          <option value="">Owner…</option>
+          {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+        <select value={plannedDayId} onChange={(e) => setPlannedDayId(e.target.value)} style={inputStyle} title="Planned test day">
+          <option value="">Planned day…</option>
+          {days.map((d) => <option key={d.id} value={d.id}>{fmtDay(d.date)}</option>)}
+        </select>
+        <span style={{ fontSize: 10, color: '#64748B' }}>due</span>
+        <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} style={inputStyle} title="Due date" />
       </div>
+
+      {kind === 'fmea' && (
+        <div style={{ background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            {['severity', 'occurrence', 'detection'].map((k) => (
+              <label key={k} style={{ fontSize: 11, color: '#94A3B8', display: 'inline-flex', alignItems: 'center', gap: 4, textTransform: 'capitalize' }}>
+                {k}
+                <select value={fmea[k]} onChange={(e) => setFmea((p) => ({ ...p, [k]: e.target.value }))} style={{ ...inputStyle, padding: '2px 4px', fontSize: 11 }}>
+                  <option value="">–</option>
+                  {SOD.map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </label>
+            ))}
+            <span style={{ fontSize: 12, color: '#94A3B8' }}>RPN <b style={{ color: PRIO_COLOR[fmeaSugg] }}>{fmeaRpnLive || '–'}</b></span>
+            {fmeaComplete && <span style={{ fontSize: 11, color: PRIO_COLOR[fmeaSugg], fontWeight: 700 }}>→ P{fmeaSugg}</span>}
+          </div>
+          <input value={fmea.failure_mode} onChange={(e) => setFmea((p) => ({ ...p, failure_mode: e.target.value }))} placeholder="Failure mode — how it breaks" style={{ ...inputStyle, fontSize: 12 }} />
+          <input value={fmea.effect} onChange={(e) => setFmea((p) => ({ ...p, effect: e.target.value }))} placeholder="Effect — consequence (drives Severity)" style={{ ...inputStyle, fontSize: 12 }} />
+          <input value={fmea.cause} onChange={(e) => setFmea((p) => ({ ...p, cause: e.target.value }))} placeholder="Cause — why it happens (drives Occurrence)" style={{ ...inputStyle, fontSize: 12 }} />
+          <input value={fmea.controls} onChange={(e) => setFmea((p) => ({ ...p, controls: e.target.value }))} placeholder="Current controls / detection (drives Detection)" style={{ ...inputStyle, fontSize: 12 }} />
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={add} disabled={busy || !title.trim()} style={btnPrimary}>Add item</button>
         <button onClick={onCancel} style={btnGhost}>Cancel</button>
@@ -516,6 +752,23 @@ function AddItemForm({ base, subteams, mySubteamIds, canEditPlan, onDone, onCanc
 // ── Day sub-tab ──────────────────────────────────────────────────────────────
 const safeName = (n) => n.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80)
 
+function PlanItemRow({ item, highlight }) {
+  const sub = item.subteams
+  const catColor = sub ? CAT_COLOR[sub.category] || '#64748B' : '#334155'
+  const wind = item.wind_min_kt != null || item.wind_max_kt != null
+    ? `${item.wind_min_kt ?? '0'}–${item.wind_max_kt ?? '∞'}kt`
+    : null
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderLeft: `3px solid ${highlight ? '#06B6D4' : catColor}`, borderRadius: 6, padding: '6px 9px', flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 11, fontWeight: 800, color: PRIO_COLOR[item.priority] || '#475569' }}>{item.priority ? `P${item.priority}` : 'P–'}</span>
+      <span style={{ fontSize: 12, color: '#E2E8F0', flex: 1, minWidth: 100 }}>{item.title}</span>
+      {sub && <span style={{ fontSize: 9, color: catColor }}>{sub.label}</span>}
+      {item.venue && <span style={{ fontSize: 9, color: '#94A3B8' }}>{VENUE_LABEL[item.venue]}</span>}
+      {wind && <span style={{ fontSize: 9, color: '#7DD3FC', fontFamily: 'monospace' }}>{wind}</span>}
+    </div>
+  )
+}
+
 function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
   const [date, setDate] = useState(todayStr())
   const [session, setSession] = useState(null) // {id, objective, blocks} | null
@@ -524,6 +777,10 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
   const [err, setErr] = useState(null)
   const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'].includes(role)
   const canEditDebrief = WRITE_ROLES.includes(role)
+  // Weather forecast: TL1 and above can SEE it (not guests); upload/remove is
+  // TL2 and above. Consultants are limited to their authorised window by RLS.
+  const canSeeForecast = role !== 'guest'
+  const canEditForecast = TAG_ROLES.includes(role)
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
 
   const loadCalendar = useCallback(async () => {
@@ -545,6 +802,30 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
     (b) => canSeeTesting || !BLOCK_META[b.block_type]?.testing
   )
 
+  // Backlog → planned items for this day + wind-adaptive "test now" ranking.
+  const [items, setItems] = useState([])
+  const [tws, setTws] = useState('')
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${base}/backlog`)
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((j) => { if (!cancelled) setItems(j.items || []) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [base])
+  const plannedItems = session ? items.filter((it) => it.target_session_id === session.id) : []
+  const twsNum = tws === '' ? null : Number(tws)
+  const windOk = (it) => {
+    if (twsNum == null) return true
+    if (it.wind_min_kt != null && twsNum < it.wind_min_kt) return false
+    if (it.wind_max_kt != null && twsNum > it.wind_max_kt) return false
+    return true
+  }
+  const candidates = items
+    .filter((it) => it.status !== 'done' && it.status !== 'wontfix' && windOk(it))
+    .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+    .slice(0, 8)
+
   return (
     <div>
       {/* Date selector */}
@@ -560,6 +841,12 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
       </div>
 
       {err && <div style={{ color: '#EF4444', fontSize: 13, marginBottom: 10 }}>{err}</div>}
+
+      {/* Weather forecast — full width, above the plan/debrief columns.
+          Visible to TL1+ (not guests); upload/remove restricted to TL2+. */}
+      {canSeeForecast && (
+        <WeatherCard base={base} date={date} canEdit={canEditForecast} isMobile={isMobile} />
+      )}
 
       <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch' }}>
         {/* Plan for today */}
@@ -588,6 +875,7 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
                         <span style={{ fontSize: 11, fontWeight: 700, color: meta.c }}>{meta.label}</span>
                         {b.label && <span style={{ fontSize: 12, color: '#E2E8F0' }}>· {b.label}</span>}
                         {time && <span style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{time}</span>}
+                        {b.venue && <span style={{ fontSize: 10, color: '#94A3B8', border: '1px solid #334155', borderRadius: 4, padding: '0 5px' }}>{VENUE_LABEL[b.venue]}</span>}
                       </div>
                       {b.objective && <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>{b.objective}</div>}
                     </div>
@@ -596,6 +884,34 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
               )}
             </div>
           )}
+
+          {/* Planned items for this day */}
+          {plannedItems.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Planned items</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {plannedItems.map((it) => <PlanItemRow key={it.id} item={it} />)}
+              </div>
+            </div>
+          )}
+
+          {/* Wind-adaptive: what can we test now */}
+          <div style={{ marginTop: 14, borderTop: '1px solid #1E3A5A', paddingTop: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>What can we test now?</span>
+              <span style={{ fontSize: 11, color: '#64748B' }}>TWS</span>
+              <input type="number" value={tws} onChange={(e) => setTws(e.target.value)} placeholder="kt" style={{ ...inputStyle, width: 70, fontSize: 12 }} />
+            </div>
+            {candidates.length === 0 ? (
+              <div style={{ fontSize: 12, color: '#475569' }}>
+                {twsNum == null ? 'Enter the current wind to rank testable items.' : `Nothing testable at ${twsNum} kt.`}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {candidates.map((it) => <PlanItemRow key={it.id} item={it} highlight={twsNum != null} />)}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Debrief notes */}
@@ -606,6 +922,116 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
           isMobile={isMobile}
         />
       </div>
+    </div>
+  )
+}
+
+function WeatherCard({ base, date, canEdit, isMobile }) {
+  const [docs, setDocs] = useState([])
+  const [sel, setSel] = useState(0)
+  const [uploading, setUploading] = useState(false)
+  const [err, setErr] = useState(null)
+
+  const load = useCallback(async () => {
+    setErr(null)
+    const res = await fetch(`${base}/attachments?date=${date}&kind=weather`)
+    if (!res.ok) { setErr('could not load forecast'); return }
+    const j = await res.json()
+    setDocs(j.attachments || [])
+    setSel(0)
+  }, [base, date])
+  useEffect(() => { load() }, [load])
+
+  async function onPick(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setUploading(true)
+    setErr(null)
+    try {
+      const key = `campaign/weather/${date}/${Date.now()}-${safeName(file.name)}`
+      await uploadBlobToStorage({ key, blob: file, contentType: file.type })
+      const res = await fetch(`${base}/attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, kind: 'weather', name: file.name, key, bytes: file.size, content_type: file.type }),
+      })
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not register file'); return }
+      load()
+    } catch (e2) {
+      setErr(e2?.message || 'upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function remove(id) {
+    if (!confirm('Remove this forecast?')) return
+    await fetch(`${base}/attachments`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+    load()
+  }
+
+  const cur = docs[sel] || null
+  const isPdf = cur && ((cur.content_type === 'application/pdf') || /\.pdf$/i.test(cur.name || ''))
+  const isImg = cur && (/^image\//.test(cur.content_type || '') || /\.(png|jpe?g|gif|webp)$/i.test(cur.name || ''))
+
+  return (
+    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: docs.length ? 10 : 0, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>🌦 Weather forecast</span>
+        <div style={{ flex: 1 }} />
+        {canEdit && (
+          <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
+            {uploading ? 'Uploading…' : '+ Upload forecast (PDF)'}
+            <input type="file" accept="application/pdf,image/*" onChange={onPick} disabled={uploading} style={{ display: 'none' }} />
+          </label>
+        )}
+      </div>
+
+      {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>{err}</div>}
+
+      {docs.length === 0 ? (
+        <div style={{ fontSize: 12, color: '#475569' }}>
+          No forecast for this day.{canEdit ? ' Upload the weather/strategy deck as a PDF — it shows inline here.' : ''}
+        </div>
+      ) : (
+        <>
+          {/* Switcher when more than one forecast doc */}
+          {docs.length > 1 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+              {docs.map((d, i) => (
+                <button key={d.id} onClick={() => setSel(i)}
+                  style={{ fontSize: 11, borderRadius: 6, padding: '3px 9px', cursor: 'pointer', border: `1px solid ${i === sel ? '#06B6D4' : '#1E3A5A'}`, background: i === sel ? '#06B6D4' : 'transparent', color: i === sel ? '#000' : '#94A3B8' }}>
+                  {d.name}
+                </button>
+              ))}
+            </div>
+          )}
+          {cur && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: '#E2E8F0' }}>📄 {cur.name}</span>
+                {cur.url && <a href={cur.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#06B6D4', textDecoration: 'none' }}>Open in new window ↗</a>}
+                <div style={{ flex: 1 }} />
+                {canEdit && <button onClick={() => remove(cur.id)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>Remove</button>}
+              </div>
+              {!cur.url ? (
+                <div style={{ fontSize: 12, color: '#475569' }}>Preview unavailable.</div>
+              ) : isPdf ? (
+                <iframe src={cur.url} title={cur.name} style={{ width: '100%', height: isMobile ? 380 : 600, border: '1px solid #1E3A5A', borderRadius: 8, background: '#fff' }} />
+              ) : isImg ? (
+                <img src={cur.url} alt={cur.name} style={{ maxWidth: '100%', borderRadius: 8, border: '1px solid #1E3A5A' }} />
+              ) : (
+                <div style={{ fontSize: 12, color: '#94A3B8' }}>This file type can't preview inline — use “Open in new window”.</div>
+              )}
+            </>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -1033,6 +1459,7 @@ function BlockRow({ base, block, canEditPlan, onChanged }) {
       <span style={{ fontSize: 11, fontWeight: 700, color: meta.c }}>{meta.label}</span>
       {block.label && <span style={{ fontSize: 12, color: '#E2E8F0' }}>· {block.label}</span>}
       {time && <span style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{time}</span>}
+      {block.venue && <span style={{ fontSize: 10, color: '#94A3B8', border: '1px solid #334155', borderRadius: 4, padding: '0 5px' }}>{VENUE_LABEL[block.venue]}</span>}
       {block.objective && <span style={{ fontSize: 11, color: '#64748B' }}>— {block.objective}</span>}
       <div style={{ flex: 1 }} />
       {canEditPlan && (
@@ -1045,6 +1472,7 @@ function BlockRow({ base, block, canEditPlan, onChanged }) {
 function BlockForm({ base, sessionId, seq, onDone, onCancel }) {
   const [type, setType] = useState('speed-testing')
   const [label, setLabel] = useState('')
+  const [venue, setVenue] = useState('')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
   const [busy, setBusy] = useState(false)
@@ -1061,6 +1489,7 @@ function BlockForm({ base, sessionId, seq, onDone, onCancel }) {
           session_id: sessionId,
           block_type: type,
           label: label || null,
+          venue: venue || null,
           seq,
           start_min: hhmmToMin(start),
           end_min: hhmmToMin(end),
@@ -1084,6 +1513,10 @@ function BlockForm({ base, sessionId, seq, onDone, onCancel }) {
         ))}
       </select>
       <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (optional)" style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
+      <select value={venue} onChange={(e) => setVenue(e.target.value)} style={inputStyle} title="Venue">
+        <option value="">Venue…</option>
+        {VENUES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
       <input type="time" value={start} onChange={(e) => setStart(e.target.value)} style={inputStyle} title="Start" />
       <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} style={inputStyle} title="End" />
       <button onClick={add} disabled={busy} style={btnSmall}>Add</button>
