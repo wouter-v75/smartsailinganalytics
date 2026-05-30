@@ -12,7 +12,7 @@
 //   • canSeeTesting (tl2 and above)               — see technical/speed-testing
 //        blocks. Race-training + other are visible to everyone.
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 
 const BLOCK_META = {
@@ -918,6 +918,8 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
         <DebriefCard
           base={base}
           date={date}
+          teamId={teamId}
+          boatId={boatId}
           canEdit={canEditDebrief}
           isMobile={isMobile}
         />
@@ -1036,7 +1038,125 @@ function WeatherCard({ base, date, canEdit, isMobile }) {
   )
 }
 
-function DebriefCard({ base, date, canEdit, isMobile }) {
+const normTag = (t) => String(t).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+
+// Colour #hashtags inside read-only debrief text.
+function renderWithTags(text) {
+  if (!text) return '—'
+  const parts = String(text).split(/(#[\w-]+)/g)
+  return parts.map((p, i) =>
+    /^#[\w-]+$/.test(p)
+      ? <span key={i} style={{ color: '#A78BFA', fontWeight: 600 }}>{p}</span>
+      : <span key={i}>{p}</span>
+  )
+}
+
+// Textarea with inline #tag autocomplete (type '#') + a click-to-insert palette.
+function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTag, rows = 4 }) {
+  const ref = useRef(null)
+  const [menu, setMenu] = useState(null) // { token, start, caret, matches }
+  const [active, setActive] = useState(0)
+
+  function detect() {
+    const el = ref.current
+    if (!el) return
+    const caret = el.selectionStart
+    const before = el.value.slice(0, caret)
+    const m = before.match(/(^|\s)#([\w-]*)$/)
+    if (!m) { setMenu(null); return }
+    const token = m[2]
+    const start = caret - token.length - 1 // index of the '#'
+    const matches = availableTags
+      .filter((t) => t.includes(token.toLowerCase()))
+      .slice(0, 8)
+    setMenu({ token, start, caret, matches })
+    setActive(0)
+  }
+
+  function insertTag(raw, fromMenu) {
+    const el = ref.current
+    if (!el) return
+    const t = normTag(raw)
+    if (!t) { setMenu(null); return }
+    const caret = el.selectionStart
+    const start = fromMenu && menu ? menu.start : caret
+    const end = fromMenu && menu ? menu.caret : caret
+    const needSpace = start > 0 && !/\s/.test(value[start - 1] || '')
+    const insert = (needSpace ? ' ' : '') + '#' + t + ' '
+    const next = value.slice(0, start) + insert + value.slice(end)
+    onChange(next)
+    onAddTag?.(t)
+    setMenu(null)
+    requestAnimationFrame(() => {
+      const pos = start + insert.length
+      el.focus()
+      try { el.setSelectionRange(pos, pos) } catch { /* ignore */ }
+    })
+  }
+
+  function onKeyDown(e) {
+    if (!menu) return
+    const opts = menu.matches.slice()
+    const showCreate = menu.token && !availableTags.includes(menu.token.toLowerCase())
+    const total = opts.length + (showCreate ? 1 : 0)
+    if (total === 0) return
+    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => (a + 1) % total) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => (a - 1 + total) % total) }
+    else if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      const pick = active < opts.length ? opts[active] : menu.token
+      insertTag(pick, true)
+    } else if (e.key === 'Escape') { setMenu(null) }
+  }
+
+  const showCreate = menu && menu.token && !availableTags.includes(menu.token.toLowerCase())
+  return (
+    <div style={{ position: 'relative' }}>
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyUp={detect}
+        onClick={detect}
+        onKeyDown={onKeyDown}
+        onBlur={() => setTimeout(() => setMenu(null), 150)}
+        rows={rows}
+        placeholder={placeholder}
+        style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }}
+      />
+      {menu && (menu.matches.length > 0 || showCreate) && (
+        <div style={{ position: 'absolute', zIndex: 30, left: 0, right: 0, background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, marginTop: 2, maxHeight: 180, overflowY: 'auto', boxShadow: '0 6px 16px rgba(0,0,0,0.45)' }}>
+          {menu.matches.map((t, i) => (
+            <div key={t} onMouseDown={(e) => { e.preventDefault(); insertTag(t, true) }}
+              style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'monospace', color: i === active ? '#001018' : '#A78BFA', background: i === active ? '#06B6D4' : 'transparent' }}>
+              #{t}
+            </div>
+          ))}
+          {showCreate && (
+            <div onMouseDown={(e) => { e.preventDefault(); insertTag(menu.token, true) }}
+              style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', color: active >= menu.matches.length ? '#001018' : '#7DD3FC', background: active >= menu.matches.length ? '#06B6D4' : 'transparent', borderTop: menu.matches.length ? '1px solid #1E3A5A' : 'none' }}>
+              + Create #{normTag(menu.token)}
+            </div>
+          )}
+        </div>
+      )}
+      {/* Click-to-insert palette */}
+      {availableTags.length > 0 && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 5 }}>
+          {availableTags.slice(0, 24).map((t) => (
+            <button key={t} type="button" onMouseDown={(e) => { e.preventDefault(); insertTag(t, false) }}
+              title={`Insert #${t} at cursor`}
+              style={{ fontSize: 10, fontFamily: 'monospace', color: '#A78BFA', background: '#8B5CF615', border: '1px solid #8B5CF640', borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>
+              #{t}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DebriefCard({ base, date, teamId, boatId, canEdit, isMobile }) {
   const [learnings, setLearnings] = useState('')
   const [nextFocus, setNextFocus] = useState('')
   const [docs, setDocs] = useState([])
@@ -1044,6 +1164,28 @@ function DebriefCard({ base, date, canEdit, isMobile }) {
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [err, setErr] = useState(null)
+  const [availableTags, setAvailableTags] = useState([])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/teams/${teamId}/tag-list?boat_id=${boatId}`)
+      .then((r) => (r.ok ? r.json() : { tags: [] }))
+      .then((j) => { if (!cancelled) setAvailableTags(j.tags || []) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [teamId, boatId])
+
+  async function addVocabTag(tag) {
+    const t = normTag(tag)
+    if (!t || availableTags.includes(t)) return
+    const next = [...availableTags, t].sort()
+    setAvailableTags(next)
+    fetch(`/api/teams/${teamId}/tag-list`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags: next, boat_id: boatId }),
+    }).catch(() => {})
+  }
 
   const load = useCallback(async () => {
     setErr(null)
@@ -1111,15 +1253,16 @@ function DebriefCard({ base, date, canEdit, isMobile }) {
     <div style={{ marginBottom: 12 }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>{label}</div>
       {canEdit ? (
-        <textarea
+        <TagTextArea
           value={value}
-          onChange={(e) => { setter(e.target.value); setDirty(true) }}
+          onChange={(v) => { setter(v); setDirty(true) }}
+          placeholder={`${label}… (type # to tag)`}
+          availableTags={availableTags}
+          onAddTag={addVocabTag}
           rows={4}
-          placeholder={`${label}…`}
-          style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }}
         />
       ) : (
-        <div style={{ fontSize: 13, color: value ? '#E2E8F0' : '#475569', whiteSpace: 'pre-wrap' }}>{value || '—'}</div>
+        <div style={{ fontSize: 13, color: value ? '#E2E8F0' : '#475569', whiteSpace: 'pre-wrap' }}>{renderWithTags(value)}</div>
       )}
     </div>
   )
