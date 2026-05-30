@@ -4248,7 +4248,7 @@ function MobileShell(props){
     {id:"sailscan", icon:"⛵", label:"SailScan"},
     {id:"admin",    icon:"⚙",  label:"Admin"},
   ].filter(t => {
-    if (t.id === "campaign" && !props.campaignOn) return false;
+    if (t.id === "campaign" && (!props.campaignOn || props.effectiveRole === 'guest')) return false;
     if (t.id === "sailscan" && props.canSeeSailScanTab === false) return false;
     if (t.id === "squashshots" && props.canSeeSquashShotsTab === false) return false;
     if (t.id === "admin" && props.effectiveRole !== 'admin') return false;
@@ -4368,9 +4368,9 @@ function MobileShell(props){
         )}
 
         {/* Campaign */}
-        {activeTab==="campaign"&&props.campaignOn&&props.campaignCfg&&(
+        {activeTab==="campaign"&&props.campaignOn&&props.campaignCfg&&props.effectiveRole!=='guest'&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <CampaignTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true}/>
+            <CampaignTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} onOpenVideo={props.openCampaignVideo}/>
           </div>
         )}
 
@@ -5038,6 +5038,23 @@ function SSAApp(){
   const canSeeAnalytics = true;
   // Campaign tab available only when the active team has the engine on.
   const campaignOn = !!campaignCfg;
+  // Open a clip referenced from a debrief note: switch to the Library tab,
+  // load that date if needed, and select the clip. loadDate honours the
+  // pending-clip ref at its first paint (see below).
+  const campaignPendingClipRef = React.useRef(null);
+  const openCampaignVideo = async (date, clipId) => {
+    campaignPendingClipRef.current = clipId || null;
+    setActiveTab("library");
+    if (date && date !== activeDate) {
+      await loadDate(date);
+    } else {
+      setSelectedVideo(prev => {
+        const m = allVideos.find(v => v.id === clipId || v.cloudId === clipId || v.externalId === clipId);
+        return m || prev;
+      });
+      campaignPendingClipRef.current = null;
+    }
+  };
 
   // Sessions visible in the sidebar — guests see only the latest day.
   const visibleSessions = useMemo(
@@ -5321,7 +5338,10 @@ function SSAApp(){
       setAllVideos(early);
       setVideoTotalThumbs(early.filter(v => v.thumbnailUrl || (v.objectUrl && v.source!=="cloud")).length);
       setVideoThumbsLoading(false);
-      setSelectedVideo(early[0]||null);
+      const pend=campaignPendingClipRef.current;
+      const match=pend?early.find(v=>v.id===pend||v.cloudId===pend||v.externalId===pend):null;
+      setSelectedVideo(match||early[0]||null);
+      if(pend) campaignPendingClipRef.current=null;
     }
 
     // Resolve playback URLs for any clip that's been uploaded to Bunny.
@@ -5892,7 +5912,7 @@ function SSAApp(){
       canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab}
       canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
       showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
-      campaignOn={campaignOn} campaignCfg={campaignCfg}
+      campaignOn={campaignOn} campaignCfg={campaignCfg} openCampaignVideo={openCampaignVideo}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -5913,7 +5933,7 @@ function SSAApp(){
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{display:"flex",gap:2,marginLeft:10}}>
           {["library","campaign","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
-            if (tab === "campaign" && !campaignOn) return false;
+            if (tab === "campaign" && (!campaignOn || effectiveRole === 'guest')) return false;
             if (tab === "sailscan" && !canSeeSailScanTab) return false;
             if (tab === "squashshots" && !canSeeSquashShotsTab) return false;
             if (tab === "admin" && effectiveRole !== 'admin') return false;
@@ -6588,9 +6608,9 @@ function SSAApp(){
             />
           </div>
         )}
-        {activeTab==="campaign"&&campaignOn&&(
+        {activeTab==="campaign"&&campaignOn&&effectiveRole!=='guest'&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <CampaignTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false}/>
+            <CampaignTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} onOpenVideo={openCampaignVideo}/>
           </div>
         )}
       </div>

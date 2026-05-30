@@ -75,9 +75,16 @@ const hhmmToMin = (s) => {
   return h * 60 + (m || 0)
 }
 
-export default function CampaignTab({ teamId, boatId, role, config, isMobile }) {
-  const [sub, setSub] = useState('plan')
+export default function CampaignTab({ teamId, boatId, role, config, isMobile, onOpenVideo }) {
+  // Consultants only get the Day sub-tab (no Plan / Backlog).
+  const consultantOnly = role === 'consultant'
+  const [sub, setSub] = useState(consultantOnly ? 'day' : 'plan')
+  const effSub = consultantOnly ? 'day' : sub
   const canEditPlan = ['admin', 'coach', 'team_manager'].includes(role)
+  // Clicking a backlog-item link in a debrief jumps to the Backlog sub-tab and
+  // highlights that item.
+  const [highlightItem, setHighlightItem] = useState(null)
+  const onOpenItem = (id) => { if (!consultantOnly) { setSub('backlog'); setHighlightItem(id) } }
   const canEditDates = ['admin', 'team_manager'].includes(role)
   const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'].includes(role)
 
@@ -110,13 +117,15 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile }) 
         padding: isMobile ? '14px 12px 40px' : '20px 24px 60px',
       }}
     >
-      <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
-        {subTab('plan', 'Plan')}
-        {subTab('backlog', 'Backlog')}
-        {subTab('day', 'Day')}
-      </div>
+      {!consultantOnly && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+          {subTab('plan', 'Plan')}
+          {subTab('backlog', 'Backlog')}
+          {subTab('day', 'Day')}
+        </div>
+      )}
 
-      {sub === 'plan' && (
+      {effSub === 'plan' && (
         <PlanView
           teamId={teamId}
           boatId={boatId}
@@ -126,7 +135,7 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile }) 
           isMobile={isMobile}
         />
       )}
-      {sub === 'backlog' && (
+      {effSub === 'backlog' && (
         <BacklogView
           teamId={teamId}
           boatId={boatId}
@@ -134,15 +143,18 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile }) 
           config={config}
           canEditPlan={canEditPlan}
           isMobile={isMobile}
+          highlightId={highlightItem}
         />
       )}
-      {sub === 'day' && (
+      {effSub === 'day' && (
         <DayView
           teamId={teamId}
           boatId={boatId}
           role={role}
           canEditPlan={canEditPlan}
           isMobile={isMobile}
+          onOpenVideo={onOpenVideo}
+          onOpenItem={onOpenItem}
         />
       )}
     </div>
@@ -178,7 +190,7 @@ const rpnToPriority = (m) => {
   return 5
 }
 
-function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
+function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, highlightId }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
@@ -215,6 +227,11 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   }, [base])
 
   useEffect(() => { load() }, [load])
+
+  // When an item is highlighted (via a debrief link), make sure it's visible.
+  useEffect(() => {
+    if (highlightId) { setFilterSub('all'); setShowDone(true) }
+  }, [highlightId])
 
   // Shared tag vocabulary (same list the video tagger uses, per team+boat).
   useEffect(() => {
@@ -323,6 +340,7 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
               onAddVocabTag={addVocabTag}
               members={members}
               days={days}
+              highlight={it.id === highlightId}
               onPatch={(body) => patch(it.id, body)}
               onDelete={() => remove(it.id)}
             />
@@ -333,7 +351,13 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile }) {
   )
 }
 
-function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, members = [], days = [], onPatch, onDelete }) {
+function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, members = [], days = [], highlight, onPatch, onDelete }) {
+  const cardRef = useRef(null)
+  useEffect(() => {
+    if (highlight && cardRef.current) {
+      try { cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch { /* ignore */ }
+    }
+  }, [highlight])
   const sub = item.subteams
   const catColor = sub ? CAT_COLOR[sub.category] || '#64748B' : '#334155'
   const ownerName = members.find((m) => m.id === item.owner_user_id)?.name || null
@@ -361,7 +385,7 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
       : null
 
   return (
-    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderLeft: `4px solid ${catColor}`, borderRadius: 10, padding: 12 }}>
+    <div ref={cardRef} style={{ background: '#0A1929', border: `1px solid ${highlight ? '#06B6D4' : '#1E3A5A'}`, borderLeft: `4px solid ${catColor}`, borderRadius: 10, padding: 12, boxShadow: highlight ? '0 0 0 2px #06B6D455' : 'none', transition: 'box-shadow .3s' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
         {/* Priority */}
         {canSetPriority ? (
@@ -769,7 +793,7 @@ function PlanItemRow({ item, highlight }) {
   )
 }
 
-function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
+function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onOpenItem }) {
   const [date, setDate] = useState(todayStr())
   const [session, setSession] = useState(null) // {id, objective, blocks} | null
   const [allDates, setAllDates] = useState([])
@@ -920,8 +944,11 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile }) {
           date={date}
           teamId={teamId}
           boatId={boatId}
+          role={role}
           canEdit={canEditDebrief}
           isMobile={isMobile}
+          onOpenVideo={onOpenVideo}
+          onOpenItem={onOpenItem}
         />
       </div>
     </div>
@@ -1036,21 +1063,45 @@ function ForecastThumb({ doc, canEdit, onRemove }) {
 
 const normTag = (t) => String(t).trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
 
-// Colour #hashtags inside read-only debrief text.
-function renderWithTags(text) {
-  if (!text) return '—'
-  const parts = String(text).split(/(#[\w-]+)/g)
-  return parts.map((p, i) =>
+function renderTagsSegment(seg, base) {
+  return seg.split(/(#[\w-]+)/g).map((p, i) =>
     /^#[\w-]+$/.test(p)
-      ? <span key={i} style={{ color: '#A78BFA', fontWeight: 600 }}>{p}</span>
-      : <span key={i}>{p}</span>
+      ? <span key={base + 'h' + i} style={{ color: '#A78BFA', fontWeight: 600 }}>{p}</span>
+      : <span key={base + 't' + i}>{p}</span>
   )
 }
 
-// Textarea with inline #tag autocomplete (type '#') + a click-to-insert palette.
-function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTag, rows = 4 }) {
+// Render read-only debrief text: colour #hashtags and turn [[clip:id|label]] /
+// [[item:id|label]] tokens into clickable chips (onOpenRef handles the click).
+function renderRich(text, onOpenRef) {
+  if (!text) return '—'
+  const linkRe = /\[\[(clip|item):([^|\]]+)\|([^\]]+)\]\]/g
+  const out = []
+  let last = 0
+  let m
+  let k = 0
+  while ((m = linkRe.exec(text)) !== null) {
+    if (m.index > last) out.push(...renderTagsSegment(text.slice(last, m.index), 's' + k++))
+    const kind = m[1]
+    const id = m[2]
+    const label = m[3]
+    out.push(
+      <button key={'lnk' + k++} type="button" onClick={() => onOpenRef && onOpenRef(kind, id, label)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, border: '1px solid #06B6D455', background: '#06B6D415', color: '#7DD3FC', borderRadius: 5, padding: '0 6px', cursor: 'pointer', margin: '0 1px' }}>
+        {kind === 'clip' ? '▶' : '◳'} {label}
+      </button>
+    )
+    last = linkRe.lastIndex
+  }
+  if (last < text.length) out.push(...renderTagsSegment(text.slice(last), 's' + k++))
+  return out
+}
+
+// Textarea with inline autocomplete: '#' → tag picker, '@' → link picker
+// (clips / backlog items, only when allowLinks). Plus a click-to-insert palette.
+function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTag, links = [], allowLinks = false, rows = 4 }) {
   const ref = useRef(null)
-  const [menu, setMenu] = useState(null) // { token, start, caret, matches }
+  const [menu, setMenu] = useState(null) // { mode:'tag'|'link', token, start, caret, items }
   const [active, setActive] = useState(0)
 
   function detect() {
@@ -1058,54 +1109,75 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
     if (!el) return
     const caret = el.selectionStart
     const before = el.value.slice(0, caret)
-    const m = before.match(/(^|\s)#([\w-]*)$/)
+    const m = before.match(/(^|\s)([#@])([\w-]*)$/)
     if (!m) { setMenu(null); return }
-    const token = m[2]
-    const start = caret - token.length - 1 // index of the '#'
-    const matches = availableTags
-      .filter((t) => t.includes(token.toLowerCase()))
-      .slice(0, 8)
-    setMenu({ token, start, caret, matches })
+    const trigger = m[2]
+    const token = m[3]
+    const start = caret - token.length - 1
+    if (trigger === '#') {
+      const items = availableTags.filter((t) => t.includes(token.toLowerCase())).slice(0, 8)
+      setMenu({ mode: 'tag', token, start, caret, items })
+    } else if (trigger === '@' && allowLinks) {
+      const q = token.toLowerCase()
+      const items = links.filter((l) => (l.label || '').toLowerCase().includes(q)).slice(0, 8)
+      setMenu({ mode: 'link', token, start, caret, items })
+    } else { setMenu(null); return }
     setActive(0)
   }
 
-  function insertTag(raw, fromMenu) {
+  function applyInsert(insertText, atCaret) {
     const el = ref.current
     if (!el) return
-    const t = normTag(raw)
-    if (!t) { setMenu(null); return }
     const caret = el.selectionStart
-    const start = fromMenu && menu ? menu.start : caret
-    const end = fromMenu && menu ? menu.caret : caret
+    const useMenu = menu && !atCaret
+    const start = useMenu ? menu.start : caret
+    const end = useMenu ? menu.caret : caret
     const needSpace = start > 0 && !/\s/.test(value[start - 1] || '')
-    const insert = (needSpace ? ' ' : '') + '#' + t + ' '
-    const next = value.slice(0, start) + insert + value.slice(end)
+    const ins = (needSpace ? ' ' : '') + insertText
+    const next = value.slice(0, start) + ins + value.slice(end)
     onChange(next)
-    onAddTag?.(t)
     setMenu(null)
     requestAnimationFrame(() => {
-      const pos = start + insert.length
+      const pos = start + ins.length
       el.focus()
       try { el.setSelectionRange(pos, pos) } catch { /* ignore */ }
     })
   }
 
+  function insertTag(raw, atCaret) {
+    const t = normTag(raw)
+    if (!t) { setMenu(null); return }
+    onAddTag?.(t)
+    applyInsert('#' + t + ' ', atCaret)
+  }
+  function insertLink(l) {
+    const label = String(l.label || '').replace(/[|\]]/g, ' ').trim() || l.kind
+    applyInsert(`[[${l.kind}:${l.id}|${label}]] `)
+  }
+
+  function chooseOption(idx) {
+    if (!menu) return
+    if (menu.mode === 'tag') {
+      if (idx < menu.items.length) insertTag(menu.items[idx])
+      else insertTag(menu.token)
+    } else if (idx < menu.items.length) {
+      insertLink(menu.items[idx])
+    }
+  }
+
   function onKeyDown(e) {
     if (!menu) return
-    const opts = menu.matches.slice()
-    const showCreate = menu.token && !availableTags.includes(menu.token.toLowerCase())
-    const total = opts.length + (showCreate ? 1 : 0)
+    const showCreate = menu.mode === 'tag' && menu.token && !availableTags.includes(menu.token.toLowerCase())
+    const total = menu.items.length + (showCreate ? 1 : 0)
     if (total === 0) return
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => (a + 1) % total) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => (a - 1 + total) % total) }
-    else if (e.key === 'Enter' || e.key === 'Tab') {
-      e.preventDefault()
-      const pick = active < opts.length ? opts[active] : menu.token
-      insertTag(pick, true)
-    } else if (e.key === 'Escape') { setMenu(null) }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); chooseOption(active) }
+    else if (e.key === 'Escape') { setMenu(null) }
   }
 
-  const showCreate = menu && menu.token && !availableTags.includes(menu.token.toLowerCase())
+  const rowStyle = (on, kind) => ({ padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: kind === 'tag' ? 'monospace' : 'inherit', color: on ? '#001018' : (kind === 'tag' ? '#A78BFA' : '#E2E8F0'), background: on ? '#06B6D4' : 'transparent' })
+  const showCreate = menu && menu.mode === 'tag' && menu.token && !availableTags.includes(menu.token.toLowerCase())
   return (
     <div style={{ position: 'relative' }}>
       <textarea
@@ -1120,27 +1192,30 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
         placeholder={placeholder}
         style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }}
       />
-      {menu && (menu.matches.length > 0 || showCreate) && (
-        <div style={{ position: 'absolute', zIndex: 30, left: 0, right: 0, background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, marginTop: 2, maxHeight: 180, overflowY: 'auto', boxShadow: '0 6px 16px rgba(0,0,0,0.45)' }}>
-          {menu.matches.map((t, i) => (
-            <div key={t} onMouseDown={(e) => { e.preventDefault(); insertTag(t, true) }}
-              style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'monospace', color: i === active ? '#001018' : '#A78BFA', background: i === active ? '#06B6D4' : 'transparent' }}>
-              #{t}
-            </div>
+      {menu && (menu.items.length > 0 || showCreate) && (
+        <div style={{ position: 'absolute', zIndex: 30, left: 0, right: 0, background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, marginTop: 2, maxHeight: 200, overflowY: 'auto', boxShadow: '0 6px 16px rgba(0,0,0,0.45)' }}>
+          {menu.items.map((it, i) => (
+            menu.mode === 'tag' ? (
+              <div key={it} onMouseDown={(e) => { e.preventDefault(); insertTag(it) }} style={rowStyle(i === active, 'tag')}>#{it}</div>
+            ) : (
+              <div key={it.kind + it.id} onMouseDown={(e) => { e.preventDefault(); insertLink(it) }} style={rowStyle(i === active, 'link')}>
+                <span style={{ fontSize: 9, marginRight: 6, fontWeight: 700, color: i === active ? '#001018' : (it.kind === 'clip' ? '#06B6D4' : '#A78BFA') }}>{it.kind === 'clip' ? '▶ CLIP' : '◳ ITEM'}</span>{it.label}
+              </div>
+            )
           ))}
           {showCreate && (
-            <div onMouseDown={(e) => { e.preventDefault(); insertTag(menu.token, true) }}
-              style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', color: active >= menu.matches.length ? '#001018' : '#7DD3FC', background: active >= menu.matches.length ? '#06B6D4' : 'transparent', borderTop: menu.matches.length ? '1px solid #1E3A5A' : 'none' }}>
+            <div onMouseDown={(e) => { e.preventDefault(); insertTag(menu.token) }}
+              style={{ padding: '6px 10px', fontSize: 12, cursor: 'pointer', color: active >= menu.items.length ? '#001018' : '#7DD3FC', background: active >= menu.items.length ? '#06B6D4' : 'transparent', borderTop: menu.items.length ? '1px solid #1E3A5A' : 'none' }}>
               + Create #{normTag(menu.token)}
             </div>
           )}
         </div>
       )}
-      {/* Click-to-insert palette */}
+      {/* Click-to-insert tag palette */}
       {availableTags.length > 0 && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 5 }}>
           {availableTags.slice(0, 24).map((t) => (
-            <button key={t} type="button" onMouseDown={(e) => { e.preventDefault(); insertTag(t, false) }}
+            <button key={t} type="button" onMouseDown={(e) => { e.preventDefault(); insertTag(t, true) }}
               title={`Insert #${t} at cursor`}
               style={{ fontSize: 10, fontFamily: 'monospace', color: '#A78BFA', background: '#8B5CF615', border: '1px solid #8B5CF640', borderRadius: 4, padding: '1px 6px', cursor: 'pointer' }}>
               #{t}
@@ -1148,11 +1223,14 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
           ))}
         </div>
       )}
+      {allowLinks && (
+        <div style={{ fontSize: 9, color: '#475569', marginTop: 3 }}>Type <b>#</b> to tag · <b>@</b> to link a clip or backlog item</div>
+      )}
     </div>
   )
 }
 
-function DebriefCard({ base, date, teamId, boatId, canEdit, isMobile }) {
+function DebriefCard({ base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
   const [learnings, setLearnings] = useState('')
   const [nextFocus, setNextFocus] = useState('')
   const [docs, setDocs] = useState([])
@@ -1181,6 +1259,33 @@ function DebriefCard({ base, date, teamId, boatId, canEdit, isMobile }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tags: next, boat_id: boatId }),
     }).catch(() => {})
+  }
+
+  // @-link candidates: this day's clips + the boat's backlog items. Adding
+  // links is coach-and-up (allowLinks); clicking them works for any viewer.
+  const allowLinks = ['admin', 'team_manager', 'coach'].includes(role)
+  const [links, setLinks] = useState([])
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([
+      fetch(`/api/teams/${teamId}/boats/${boatId}/videos?date=${date}`).then((r) => (r.ok ? r.json() : { videos: [] })).catch(() => ({ videos: [] })),
+      fetch(`${base}/backlog`).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })),
+    ]).then(([v, b]) => {
+      if (cancelled) return
+      const clips = (v.videos || []).map((c) => {
+        const t = c.start_utc ? new Date(c.start_utc) : null
+        const time = t ? `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}` : ''
+        return { kind: 'clip', id: c.id, label: (c.title || 'clip') + (time ? ` ${time}` : '') }
+      })
+      const items = (b.items || []).map((it) => ({ kind: 'item', id: it.id, label: it.title }))
+      setLinks([...clips, ...items])
+    })
+    return () => { cancelled = true }
+  }, [teamId, boatId, date, base])
+
+  const onOpenRef = (kind, id) => {
+    if (kind === 'clip') onOpenVideo && onOpenVideo(date, id)
+    else if (kind === 'item') onOpenItem && onOpenItem(id)
   }
 
   const load = useCallback(async () => {
@@ -1252,13 +1357,15 @@ function DebriefCard({ base, date, teamId, boatId, canEdit, isMobile }) {
         <TagTextArea
           value={value}
           onChange={(v) => { setter(v); setDirty(true) }}
-          placeholder={`${label}… (type # to tag)`}
+          placeholder={`${label}…`}
           availableTags={availableTags}
           onAddTag={addVocabTag}
+          links={links}
+          allowLinks={allowLinks}
           rows={4}
         />
       ) : (
-        <div style={{ fontSize: 13, color: value ? '#E2E8F0' : '#475569', whiteSpace: 'pre-wrap' }}>{renderWithTags(value)}</div>
+        <div style={{ fontSize: 13, color: value ? '#E2E8F0' : '#475569', whiteSpace: 'pre-wrap' }}>{renderRich(value, onOpenRef)}</div>
       )}
     </div>
   )
