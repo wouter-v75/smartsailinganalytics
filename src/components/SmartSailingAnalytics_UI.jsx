@@ -3295,7 +3295,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"4px 8px",color:"#E2E8F0",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}
               title="Switch session date"
             >
-              {sessions.map(s => (
+              {sessions.filter(s => (s.videoCount||0) > 0 && s.date <= TODAY()).map(s => (
                 <option key={s.date} value={s.date}>
                   {s.date === TODAY() ? `Today (${s.date})` : s.date}
                   {s.videoCount ? ` · ${s.videoCount}v` : ''}
@@ -3996,7 +3996,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         <button onClick={()=>setView("clips")} style={{background:"none",border:"none",color:"#06B6D4",fontSize:18,cursor:"pointer",padding:"4px 8px 4px 0"}}>←</button>
         <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Sessions</span>
       </div>
-      {sessions.map(s=>{
+      {sessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
         const isActive=activeDate===s.date;
         const isLocal=!s.source||s.source==="local";
         return(
@@ -5008,7 +5008,7 @@ function SSAApp(){
         if(!user||cancelled) return;
         const m=getActiveMembership(user.id);
         if(!m||!m.team_id||!m.boat_id){ setCampaignCfg(null); return; }
-        const res=await fetch(`/api/teams/${m.team_id}/campaign/config`);
+        const res=await fetch(`/api/teams/${m.team_id}/campaign/config?boat_id=${m.boat_id}`);
         if(!res.ok||cancelled) return;
         const j=await res.json();
         if(cancelled) return;
@@ -5978,7 +5978,7 @@ function SSAApp(){
             <div style={{padding:"12px 11px 6px"}}>
               <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Sessions</div>
               {visibleSessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
-              {visibleSessions.map(s=>{
+              {visibleSessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
                 const isLocal=!s.source||s.source==="local";const isActive=activeDate===s.date;
                 return(<div key={s.date} onClick={()=>loadDate(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
                   <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
