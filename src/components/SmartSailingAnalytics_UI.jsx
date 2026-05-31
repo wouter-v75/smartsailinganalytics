@@ -5174,10 +5174,11 @@ function SSAApp(){
                 for(const s of cloudSessions){
                   const existing=merged.find(m=>m.date===s.date);
                   if(existing){
-                    // Fill in the cloud video count if the local entry lacks one.
+                    // Fill in the cloud video/photo counts if the local entry lacks them.
                     if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                    if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
                   }else{
-                    merged.push({date:s.date, source:'supabase', videoCount:s.video_count||0});
+                    merged.push({date:s.date, source:'supabase', videoCount:s.video_count||0, photoCount:s.photo_count||0});
                   }
                 }
                 return merged.sort((a,b)=>b.date.localeCompare(a.date));
@@ -5798,8 +5799,9 @@ function SSAApp(){
                 const existing=merged.find(m=>m.date===s.date);
                 if(existing){
                   if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                  if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
                 }else{
-                  merged.push({date:s.date,source:'supabase',videoCount:s.video_count||0});
+                  merged.push({date:s.date,source:'supabase',videoCount:s.video_count||0,photoCount:s.photo_count||0});
                 }
               }
               return merged.sort((a,b)=>b.date.localeCompare(a.date));

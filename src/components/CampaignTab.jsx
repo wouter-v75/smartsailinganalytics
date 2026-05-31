@@ -938,8 +938,8 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
             </div>
           )}
 
-          {/* Timings — TL3+ edit, all view */}
-          <TimingsBox base={base} date={date} canEdit={canEditPlan} />
+          {/* PLAN + TIMINGS — TL3+ edit, all view (one fetch via PlanConditions) */}
+          <PlanConditions base={base} date={date} canEdit={canEditPlan} />
         </div>
 
         <OnWaterCard
@@ -981,40 +981,99 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
   )
 }
 
-// Timings free-text — TL3+ edit, everyone (TL1+ / consultant-in-window) views.
-function TimingsBox({ base, date, canEdit }) {
-  const [val, setVal] = useState('')
-  const [dirty, setDirty] = useState(false)
+// View-by-default block: shows full content (auto-expands), with an Edit
+// button for editors. When empty + canEdit, shows a "+ Add {label}" affordance.
+// When empty + !canEdit, renders nothing. Each save is field-scoped so the
+// surrounding fetch state isn't disturbed.
+function EditableTextBlock({ label, value, canEdit, placeholder, onSave }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value || '')
   const [saving, setSaving] = useState(false)
-  const load = useCallback(async () => {
-    const res = await fetch(`${base}/conditions?date=${date}`)
-    if (!res.ok) return
-    const j = await res.json()
-    setVal(j.timings || '')
-    setDirty(false)
-  }, [base, date])
-  useEffect(() => { load() }, [load])
-  async function save() {
+  useEffect(() => { if (!editing) setDraft(value || '') }, [value, editing])
+
+  const hasContent = !!(value && value.trim())
+  if (!canEdit && !hasContent) return null
+
+  async function commit() {
     setSaving(true)
     try {
-      await fetch(`${base}/conditions`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, timings: val }) })
-      setDirty(false)
+      await onSave(draft)
+      setEditing(false)
     } finally { setSaving(false) }
   }
-  if (!canEdit && !val.trim()) return null
+
   return (
     <div style={{ marginTop: 14, borderTop: '1px solid #1E3A5A', paddingTop: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>Timings</span>
-        {canEdit && dirty && <button onClick={save} disabled={saving} style={btnSmall}>{saving ? 'Saving…' : 'Save'}</button>}
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>{label}</span>
+        {canEdit && !editing && hasContent && (
+          <button onClick={() => setEditing(true)} style={btnGhost}>Edit</button>
+        )}
+        {canEdit && editing && (
+          <>
+            <button onClick={commit} disabled={saving} style={btnSmall}>{saving ? 'Saving…' : 'Save'}</button>
+            <button onClick={() => { setDraft(value || ''); setEditing(false) }} style={btnGhost}>Cancel</button>
+          </>
+        )}
       </div>
-      {canEdit ? (
-        <textarea value={val} onChange={(e) => { setVal(e.target.value); setDirty(true) }} rows={3} placeholder="Dock out, warning signal, first start…"
+      {editing ? (
+        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} placeholder={placeholder}
+          autoFocus
           style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }} />
+      ) : hasContent ? (
+        <div style={{ fontSize: 13, color: '#E2E8F0', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{value}</div>
       ) : (
-        <div style={{ fontSize: 13, color: '#E2E8F0', whiteSpace: 'pre-wrap' }}>{val}</div>
+        <button onClick={() => setEditing(true)} style={{ ...btnGhost, alignSelf: 'flex-start' }}>
+          + Add {label.toLowerCase()}
+        </button>
       )}
     </div>
+  )
+}
+
+// PLAN + TIMINGS — single fetch, two view/edit blocks. TL3+ edit; everyone
+// (TL1+ / consultant-in-window) views via the same RLS-gated GET.
+function PlanConditions({ base, date, canEdit }) {
+  const [plan, setPlan] = useState('')
+  const [timings, setTimings] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const load = useCallback(async () => {
+    const res = await fetch(`${base}/conditions?date=${date}`)
+    if (!res.ok) { setLoaded(true); return }
+    const j = await res.json()
+    setPlan(j.plan || '')
+    setTimings(j.timings || '')
+    setLoaded(true)
+  }, [base, date])
+  useEffect(() => { setLoaded(false); load() }, [load])
+
+  async function patch(field, val) {
+    await fetch(`${base}/conditions`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, [field]: val }),
+    })
+    if (field === 'plan') setPlan(val); else if (field === 'timings') setTimings(val)
+  }
+
+  if (!loaded) return null
+  return (
+    <>
+      <EditableTextBlock
+        label="Plan"
+        value={plan}
+        canEdit={canEdit}
+        placeholder="Today's plan, intent, focus areas…"
+        onSave={(v) => patch('plan', v)}
+      />
+      <EditableTextBlock
+        label="Timings"
+        value={timings}
+        canEdit={canEdit}
+        placeholder="Dock out, warning signal, first start…"
+        onSave={(v) => patch('timings', v)}
+      />
+    </>
   )
 }
 

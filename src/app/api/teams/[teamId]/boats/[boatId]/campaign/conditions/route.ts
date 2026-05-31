@@ -44,6 +44,7 @@ export async function GET(
   return NextResponse.json({
     details: (sess?.conditions?.details_today as unknown) || null,
     timings: (sess?.conditions?.timings as string) || '',
+    plan: (sess?.conditions?.plan as string) || '',
   })
 }
 
@@ -56,7 +57,7 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const body = (await req.json().catch(() => null)) as
-    | { date?: string; details?: { comments?: string; rows?: unknown[] } | null; timings?: string | null }
+    | { date?: string; details?: { comments?: string; rows?: unknown[] } | null; timings?: string | null; plan?: string | null }
     | null
   if (!body?.date || !DATE_RE.test(body.date)) {
     return NextResponse.json({ error: 'valid date required' }, { status: 400 })
@@ -76,6 +77,7 @@ export async function PATCH(
   const conditions = { ...sess.conditions }
   if ('details' in body) conditions.details_today = body.details ?? null
   if ('timings' in body) conditions.timings = body.timings ?? null
+  if ('plan' in body) conditions.plan = body.plan ?? null
   const { error } = await supabase.from('sessions').update({ conditions }).eq('id', sess.id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
