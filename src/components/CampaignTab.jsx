@@ -88,6 +88,28 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
   const canEditDates = ['admin', 'team_manager'].includes(role)
   const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'].includes(role)
 
+  // Campaign belongs to the TEAM, which may run more than one boat at once
+  // (e.g. an old hull + new hull during a transition). The Plan calendar
+  // always shows the whole team; Day and Backlog can be scoped to one boat
+  // or to "both / all" boats via the selector here.
+  const [boats, setBoats] = useState([])
+  // 'specific' boat ids OR the literal string 'all'. Defaults to the
+  // membership-active boatId so existing flows continue to work unchanged.
+  const [boatScope, setBoatScope] = useState(boatId)
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/teams/${teamId}/boats`)
+      .then((r) => (r.ok ? r.json() : { boats: [] }))
+      .then((j) => { if (!cancelled) setBoats(j.boats || []) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [teamId])
+
+  // If the active boatId isn't in the list (timing) keep showing the original.
+  const scopeAll = boatScope === 'all'
+  const activeBoatName = boats.find((b) => b.id === boatScope)?.name || null
+  const multipleBoats = boats.length > 1
+
   const subTab = (id, label) => (
     <button
       key={id}
@@ -118,10 +140,31 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
       }}
     >
       {!consultantOnly && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           {subTab('plan', 'Plan')}
           {subTab('backlog', 'Backlog')}
           {subTab('day', 'Day')}
+          <div style={{ flex: 1 }} />
+          {/* Boat selector — visible whenever the user can see >1 boat on the
+              team. The Plan is team-wide regardless of selection; Day and
+              Backlog narrow to one boat OR show both. */}
+          {multipleBoats ? (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#94A3B8' }}>
+              <span>Boat</span>
+              <select
+                value={boatScope}
+                onChange={(e) => setBoatScope(e.target.value)}
+                style={{ ...inputStyle, fontSize: 12, padding: '4px 8px' }}
+              >
+                {boats.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                <option value="all">Both boats</option>
+              </select>
+            </label>
+          ) : activeBoatName ? (
+            <span style={{ fontSize: 12, color: '#94A3B8' }}>
+              Boat: <span style={{ color: '#E2E8F0', fontWeight: 700 }}>{activeBoatName}</span>
+            </span>
+          ) : null}
         </div>
       )}
 
@@ -133,6 +176,7 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
           canEditDates={canEditDates}
           canSeeTesting={canSeeTesting}
           isMobile={isMobile}
+          boats={boats}
         />
       )}
       {effSub === 'backlog' && (
@@ -144,17 +188,20 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
           canEditPlan={canEditPlan}
           isMobile={isMobile}
           highlightId={highlightItem}
+          scopeAll={scopeAll}
         />
       )}
       {effSub === 'day' && (
         <DayView
           teamId={teamId}
-          boatId={boatId}
+          boatId={scopeAll ? boatId : boatScope}
           role={role}
           canEditPlan={canEditPlan}
           isMobile={isMobile}
           onOpenVideo={onOpenVideo}
           onOpenItem={onOpenItem}
+          scopeAll={scopeAll}
+          activeBoatName={activeBoatName}
         />
       )}
     </div>
@@ -194,7 +241,7 @@ const rpnToPriority = (m) => {
   return 5
 }
 
-function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, highlightId }) {
+function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, highlightId, scopeAll }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
@@ -208,17 +255,25 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
   const members = config?.members || []
   const meId = config?.meId || null
   const mySubteamIds = config?.mySubteamIds || []
-  const canAdd = EDIT_ROLES.includes(role)
+  // New items always belong to one specific boat — only allow Add when a
+  // boat is selected (i.e. not in "both" scope).
+  const canAdd = EDIT_ROLES.includes(role) && !scopeAll
   const canTag = EDIT_ROLES.includes(role)
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
 
   // Only TL3 and above may edit backlog items.
-  const canEditItem = useCallback(() => canEditPlan, [canEditPlan])
+  // In "both boats" scope we route writes via `${base}/...` which is locked
+  // to the active boat — disallow item-level edits on items belonging to a
+  // different boat so they don't silently fail or hit RLS.
+  const canEditItem = useCallback(
+    (item) => canEditPlan && (!scopeAll || item.boat_id === boatId),
+    [canEditPlan, scopeAll, boatId]
+  )
 
   const load = useCallback(async () => {
     setErr(null)
     try {
-      const res = await fetch(`${base}/backlog`)
+      const res = await fetch(`${base}/backlog${scopeAll ? '?scope=team' : ''}`)
       if (!res.ok) {
         setErr((await res.json().catch(() => ({}))).error || `failed (${res.status})`)
         return
@@ -227,7 +282,7 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
     } finally {
       setLoading(false)
     }
-  }, [base])
+  }, [base, scopeAll])
 
   useEffect(() => { load() }, [load])
 
@@ -246,15 +301,17 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
     return () => { cancelled = true }
   }, [teamId, boatId])
 
-  // Planned test days for the planned-day picker (target_session_id).
+  // Planned test days for the planned-day picker (target_session_id). When
+  // viewing both boats, include every boat's days so an item can land on a
+  // session that may belong to either hull.
   useEffect(() => {
     let cancelled = false
-    fetch(`${base}/calendar`)
+    fetch(`${base}/calendar${scopeAll ? '?scope=team' : ''}`)
       .then((r) => (r.ok ? r.json() : { sessions: [] }))
-      .then((j) => { if (!cancelled) setDays((j.sessions || []).map((s) => ({ id: s.id, date: s.date }))) })
+      .then((j) => { if (!cancelled) setDays((j.sessions || []).map((s) => ({ id: s.id, date: s.date, boat_name: s.boat_name }))) })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [base])
+  }, [base, scopeAll])
 
   async function addVocabTag(tag) {
     const t = String(tag).trim().toLowerCase()
@@ -316,6 +373,12 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
         </label>
       </div>
 
+      {scopeAll && (
+        <div style={{ fontSize: 11, color: '#7DD3FC', background: '#0F2A45', border: '1px solid #1E3A5A', borderRadius: 6, padding: '6px 10px', marginBottom: 10 }}>
+          Viewing both boats. Pick a specific boat above to add or edit items.
+        </div>
+      )}
+
       {canAdd && (
         adding
           ? <ItemForm subteams={subteams} mySubteamIds={mySubteamIds} members={members} days={days} meId={meId} canEditPlan={canEditPlan} submitLabel="Add item"
@@ -355,6 +418,7 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
               highlight={it.id === highlightId}
               onPatch={(body) => patch(it.id, body)}
               onDelete={() => remove(it.id)}
+              showBoatChip={scopeAll}
             />
           ))}
         </div>
@@ -363,7 +427,7 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
   )
 }
 
-function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, members = [], days = [], meId, subteams = [], mySubteamIds = [], highlight, onPatch, onDelete }) {
+function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, members = [], days = [], meId, subteams = [], mySubteamIds = [], highlight, onPatch, onDelete, showBoatChip }) {
   const cardRef = useRef(null)
   const [editing, setEditing] = useState(false)
   useEffect(() => {
@@ -436,6 +500,9 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
           </span>
         )}
         <span style={{ fontSize: 14, fontWeight: 700, color: '#E2E8F0', flex: 1, minWidth: 120 }}>{item.title}</span>
+        {showBoatChip && item.boat_name && (
+          <span style={{ fontSize: 9, fontWeight: 700, color: '#7DD3FC', background: '#0F2A45', borderRadius: 4, padding: '1px 5px', letterSpacing: 0.4 }}>{item.boat_name}</span>
+        )}
         <span style={{ fontSize: 9, color: '#64748B', border: '1px solid #1E3A5A', borderRadius: 4, padding: '1px 5px' }}>{KIND_LABEL[item.kind] || item.kind}</span>
         {sub && <span style={{ fontSize: 9, color: catColor, border: `1px solid ${catColor}55`, borderRadius: 4, padding: '1px 5px' }}>{sub.label}</span>}
         {item.venue && <span style={{ fontSize: 9, color: '#94A3B8', border: '1px solid #334155', borderRadius: 4, padding: '1px 5px' }}>{VENUE_LABEL[item.venue]}</span>}
@@ -838,7 +905,7 @@ function PlanItemRow({ item, highlight, selectable, checked, onToggle }) {
   )
 }
 
-function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onOpenItem }) {
+function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onOpenItem, scopeAll, activeBoatName }) {
   const [date, setDate] = useState(todayStr())
   const [session, setSession] = useState(null) // {id, objective, blocks} | null
   const [allDays, setAllDays] = useState([]) // [{id, date}]
@@ -892,7 +959,18 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
           </select>
         )}
         {date === todayStr() && <span style={{ fontSize: 11, color: '#1D9E75', fontWeight: 700 }}>● Today</span>}
+        {activeBoatName && !scopeAll && (
+          <span style={{ fontSize: 11, color: '#7DD3FC', background: '#0F2A45', borderRadius: 4, padding: '3px 8px', fontWeight: 700, marginLeft: 'auto' }}>
+            {activeBoatName}
+          </span>
+        )}
       </div>
+
+      {scopeAll && (
+        <div style={{ fontSize: 12, color: '#7DD3FC', background: '#0F2A45', border: '1px solid #1E3A5A', borderRadius: 8, padding: '10px 12px', marginBottom: 14 }}>
+          The Day view edits one boat at a time. Pick a specific boat above to see its plan, debrief notes and weather.
+        </div>
+      )}
 
       {err && <div style={{ color: '#EF4444', fontSize: 13, marginBottom: 10 }}>{err}</div>}
 
@@ -1723,7 +1801,7 @@ function Placeholder({ title, note }) {
   )
 }
 
-function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, isMobile }) {
+function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, isMobile, boats }) {
   const [sessions, setSessions] = useState([])
   const [targetDate, setTargetDate] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -1732,12 +1810,16 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
   const [rangeEnd, setRangeEnd] = useState('')
   const [addingDays, setAddingDays] = useState(false)
 
+  // The Plan calendar is team-wide — we union every boat's sessions and tag
+  // each one with its boat. New days created from this view land on the
+  // membership-active boat (the URL boatId).
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
+  const showBoatChips = (boats || []).length > 1
 
   const load = useCallback(async () => {
     setErr(null)
     try {
-      const res = await fetch(`${base}/calendar`)
+      const res = await fetch(`${base}/calendar?scope=team`)
       if (!res.ok) {
         setErr((await res.json().catch(() => ({}))).error || `failed (${res.status})`)
         return
@@ -1859,10 +1941,15 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
               base={base}
               session={s}
               isPast={s.date < today}
-              canEditPlan={canEditPlan}
+              // In team scope, write actions (`objective`, `+ Add block`) go
+              // to `${base}/...` which is locked to the active boat. To avoid
+              // posting to the wrong session, only let the active boat's
+              // sessions be edited; others are view-only here.
+              canEditPlan={canEditPlan && s.boat_id === boatId}
               canSeeTesting={canSeeTesting}
               isMobile={isMobile}
               onChanged={load}
+              showBoatChip={showBoatChips}
             />
           ))}
         </div>
@@ -1890,7 +1977,7 @@ function Counter({ value, label, sub }) {
   )
 }
 
-function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, onChanged }) {
+function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, onChanged, showBoatChip }) {
   const [objective, setObjective] = useState(session.objective || '')
   const [objDirty, setObjDirty] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -1921,6 +2008,11 @@ function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, 
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 14, fontWeight: 800, color: '#E2E8F0' }}>{fmtDay(session.date)}</span>
+        {showBoatChip && session.boat_name && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#7DD3FC', background: '#0F2A45', borderRadius: 4, padding: '1px 6px', letterSpacing: 0.4 }}>
+            {session.boat_name}
+          </span>
+        )}
         {isPast && <span style={{ fontSize: 10, color: '#475569' }}>past</span>}
       </div>
 

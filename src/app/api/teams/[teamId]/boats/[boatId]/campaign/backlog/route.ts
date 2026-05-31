@@ -8,13 +8,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '@/lib/supabase/server'
 
-const KINDS = ['action', 'fmea', 'task', 'deliverable', 'milestone'] as const
+const KINDS = ['action', 'task', 'test', 'training', 'fmea', 'deliverable', 'milestone'] as const
+const VENUES = ['on-water', 'dock', 'shed']
 const COMPLETIONS = ['binary', 'progress'] as const
 type Kind = (typeof KINDS)[number]
 type Completion = (typeof COMPLETIONS)[number]
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { teamId: string; boatId: string } }
 ) {
   const supabase = getServerSupabase()
@@ -23,22 +24,35 @@ export async function GET(
   } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
-  const { data, error } = await supabase
+  // `?scope=team` returns items across every boat on the team the caller can
+  // see (RLS still filters), so the UI can render a boat chip per row.
+  const teamScope = req.nextUrl.searchParams.get('scope') === 'team'
+
+  let q = supabase
     .from('backlog_items')
     .select(
       'id, kind, subteam_id, title, body, status, priority, owner_user_id, ' +
         'target_session_id, due_date, is_milestone, wind_min_kt, wind_max_kt, ' +
-        'completion, answer_state, progress_pct, answered_at, tags, ' +
+        'completion, answer_state, progress_pct, answered_at, tags, venue, ' +
         'source_note_id, source_run_id, source_clip_id, meta, created_at, updated_at, ' +
-        'subteams(id, label, category)'
+        'boat_id, boats(name), subteams(id, label, category)'
     )
     .eq('team_id', params.teamId)
-    .eq('boat_id', params.boatId)
     .order('priority', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: false })
+  if (!teamScope) q = q.eq('boat_id', params.boatId)
 
+  const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ items: data || [] })
+
+  const items = ((data || []) as unknown as Array<Record<string, unknown>>).map((row) => {
+    const { boats, ...rest } = row
+    return {
+      ...rest,
+      boat_name: ((boats as { name?: string } | null)?.name) || null,
+    }
+  })
+  return NextResponse.json({ items })
 }
 
 export async function POST(
@@ -59,10 +73,12 @@ export async function POST(
     subteam_id?: string | null
     priority?: number | null
     owner_user_id?: string | null
+    target_session_id?: string | null
     due_date?: string | null
     is_milestone?: boolean
     wind_min_kt?: number | null
     wind_max_kt?: number | null
+    venue?: string | null
     tags?: string[]
     meta?: Record<string, unknown> | null
   } | null
@@ -87,10 +103,12 @@ export async function POST(
       body: body.body ?? null,
       priority: typeof body.priority === 'number' ? body.priority : null,
       owner_user_id: body.owner_user_id ?? null,
+      target_session_id: body.target_session_id ?? null,
       due_date: body.due_date ?? null,
       is_milestone: body.is_milestone === true || kind === 'milestone',
       wind_min_kt: typeof body.wind_min_kt === 'number' ? body.wind_min_kt : null,
       wind_max_kt: typeof body.wind_max_kt === 'number' ? body.wind_max_kt : null,
+      venue: VENUES.includes(body.venue as string) ? body.venue : null,
       progress_pct: completion === 'progress' ? 0 : null,
       tags: Array.isArray(body.tags)
         ? Array.from(new Set(body.tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean)))
