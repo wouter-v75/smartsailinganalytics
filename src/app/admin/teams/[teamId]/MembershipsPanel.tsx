@@ -23,7 +23,7 @@ interface MembershipRow {
   id: string
   user_id: string
   boat_id: string | null
-  role: 'team_manager' | 'coach' | 'tl1' | 'tl2' | 'consultant' | 'guest'
+  role: 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'tl2' | 'consultant' | 'guest'
   valid_from: string | null
   valid_to: string | null
   users: JoinedUser | JoinedUser[] | null
@@ -35,7 +35,7 @@ function firstUser(u: MembershipRow['users']): JoinedUser | null {
   return u
 }
 
-const ROLES = ['coach', 'tl2', 'tl1', 'consultant'] as const
+const ROLES = ['coach', 'tl3', 'tl2', 'tl1', 'consultant'] as const
 type Role = (typeof ROLES)[number]
 
 export default function MembershipsPanel({

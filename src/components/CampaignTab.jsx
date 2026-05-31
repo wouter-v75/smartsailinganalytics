@@ -80,7 +80,7 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
   const consultantOnly = role === 'consultant'
   const [sub, setSub] = useState(consultantOnly ? 'day' : 'plan')
   const effSub = consultantOnly ? 'day' : sub
-  const canEditPlan = ['admin', 'coach', 'team_manager'].includes(role)
+  const canEditPlan = EDIT_ROLES.includes(role)
   // Clicking a backlog-item link in a debrief jumps to the Backlog sub-tab and
   // highlights that item.
   const [highlightItem, setHighlightItem] = useState(null)
@@ -176,6 +176,10 @@ const ANSWER_META = {
 }
 const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl1', 'tl2']
 const TAG_ROLES = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'] // TL2 and up
+// TL3 and above may EDIT plan / backlog / day / debrief / speed notes / weather.
+const EDIT_ROLES = ['admin', 'team_manager', 'coach', 'tl3']
+// TL2 and above may see the "what can we test now" picker.
+const TESTNOW_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl2']
 const WIND_STEPS = [0, 5, 10, 15, 20, 25, 30]
 const SOD = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 // FMEA: RPN = S×O×D (1–1000). High severity is top priority regardless of RPN.
@@ -202,15 +206,14 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
   const [days, setDays] = useState([]) // [{id,date}] planned test days, for the planned-day picker
   const subteams = (config?.subteams || []).filter((s) => s.active !== false)
   const members = config?.members || []
+  const meId = config?.meId || null
   const mySubteamIds = config?.mySubteamIds || []
-  const canAdd = WRITE_ROLES.includes(role)
-  const canTag = TAG_ROLES.includes(role)
+  const canAdd = EDIT_ROLES.includes(role)
+  const canTag = EDIT_ROLES.includes(role)
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
 
-  const canEditItem = useCallback(
-    (it) => canEditPlan || (it.subteam_id && mySubteamIds.includes(it.subteam_id)),
-    [canEditPlan, mySubteamIds]
-  )
+  // Only TL3 and above may edit backlog items.
+  const canEditItem = useCallback(() => canEditPlan, [canEditPlan])
 
   const load = useCallback(async () => {
     setErr(null)
@@ -315,7 +318,13 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
 
       {canAdd && (
         adding
-          ? <AddItemForm base={base} subteams={subteams} mySubteamIds={mySubteamIds} members={members} days={days} canEditPlan={canEditPlan} onDone={() => { setAdding(false); load() }} onCancel={() => setAdding(false)} />
+          ? <ItemForm subteams={subteams} mySubteamIds={mySubteamIds} members={members} days={days} meId={meId} canEditPlan={canEditPlan} submitLabel="Add item"
+              onCancel={() => setAdding(false)}
+              onSubmit={async (payload) => {
+                const res = await fetch(`${base}/backlog`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+                if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'could not add')
+                setAdding(false); load()
+              }} />
           : <button onClick={() => setAdding(true)} style={{ ...btnPrimary, marginBottom: 14 }}>+ New item</button>
       )}
 
@@ -340,6 +349,9 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
               onAddVocabTag={addVocabTag}
               members={members}
               days={days}
+              meId={meId}
+              subteams={subteams}
+              mySubteamIds={mySubteamIds}
               highlight={it.id === highlightId}
               onPatch={(body) => patch(it.id, body)}
               onDelete={() => remove(it.id)}
@@ -351,13 +363,33 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
   )
 }
 
-function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, members = [], days = [], highlight, onPatch, onDelete }) {
+function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, members = [], days = [], meId, subteams = [], mySubteamIds = [], highlight, onPatch, onDelete }) {
   const cardRef = useRef(null)
+  const [editing, setEditing] = useState(false)
   useEffect(() => {
     if (highlight && cardRef.current) {
       try { cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch { /* ignore */ }
     }
   }, [highlight])
+
+  if (editing) {
+    return (
+      <div ref={cardRef} style={{ background: '#071018', border: '1px solid #06B6D4', borderRadius: 10, padding: 4 }}>
+        <ItemForm
+          initial={item}
+          subteams={subteams}
+          mySubteamIds={mySubteamIds}
+          members={members}
+          days={days}
+          meId={meId}
+          canEditPlan={canSetPriority}
+          submitLabel="Save changes"
+          onCancel={() => setEditing(false)}
+          onSubmit={async (payload) => { await onPatch(payload); setEditing(false) }}
+        />
+      </div>
+    )
+  }
   const sub = item.subteams
   const catColor = sub ? CAT_COLOR[sub.category] || '#64748B' : '#334155'
   const ownerName = members.find((m) => m.id === item.owner_user_id)?.name || null
@@ -455,7 +487,8 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
           <select value={item.owner_user_id || ''} onChange={(e) => onPatch({ owner_user_id: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Owner">
             <option value="">Owner…</option>
-            {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            {meId && <option value={meId}>Me</option>}
+            {members.filter((m) => m.id !== meId).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
           <select value={item.target_session_id || ''} onChange={(e) => onPatch({ target_session_id: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Planned test day">
             <option value="">Planned day…</option>
@@ -540,6 +573,7 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
             {['open', 'in_progress', 'done', 'parked', 'wontfix'].map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
           <div style={{ flex: 1 }} />
+          <button onClick={() => setEditing(true)} style={{ ...btnGhost, fontSize: 12, padding: '4px 12px' }}>Edit</button>
           <button onClick={onDelete} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>Delete</button>
         </div>
       )}
@@ -634,29 +668,41 @@ function FmeaBlock({ meta, editable, canSetPriority, onApply }) {
   )
 }
 
-function AddItemForm({ base, subteams, mySubteamIds, members = [], days = [], canEditPlan, onDone, onCancel }) {
+// Add / edit form for a backlog item. With `initial` it pre-fills and edits;
+// without it, it creates. `onSubmit(payload)` does the request (POST or PATCH).
+function ItemForm({ subteams, mySubteamIds, members = [], days = [], meId, canEditPlan, initial = null, submitLabel = 'Add item', onSubmit, onCancel }) {
   // Non-coach members can only file into their own sub-teams.
   const allowedSubteams = canEditPlan ? subteams : subteams.filter((s) => mySubteamIds.includes(s.id))
-  const [title, setTitle] = useState('')
-  const [kind, setKind] = useState('task')
-  const [venue, setVenue] = useState('')
-  const [completion, setCompletion] = useState('binary')
-  const [subteamId, setSubteamId] = useState(allowedSubteams[0]?.id || '')
-  const [priority, setPriority] = useState('')
-  const [wmin, setWmin] = useState('')
-  const [wmax, setWmax] = useState('')
-  const [ownerId, setOwnerId] = useState('')
-  const [plannedDayId, setPlannedDayId] = useState('')
-  const [dueDate, setDueDate] = useState('')
-  const [fmea, setFmea] = useState({ severity: '', occurrence: '', detection: '', failure_mode: '', effect: '', cause: '', controls: '' })
+  const [title, setTitle] = useState(initial?.title || '')
+  const [body, setBody] = useState(initial?.body || '')
+  const [kind, setKind] = useState(initial?.kind || 'task')
+  const [venue, setVenue] = useState(initial?.venue || '')
+  const [completion, setCompletion] = useState(initial?.completion || 'binary')
+  const [subteamId, setSubteamId] = useState(initial ? (initial.subteam_id || '') : (allowedSubteams[0]?.id || ''))
+  const [priority, setPriority] = useState(initial?.priority != null ? String(initial.priority) : '')
+  const [wmin, setWmin] = useState(initial?.wind_min_kt != null ? String(initial.wind_min_kt) : '')
+  const [wmax, setWmax] = useState(initial?.wind_max_kt != null ? String(initial.wind_max_kt) : '')
+  const [ownerId, setOwnerId] = useState(initial?.owner_user_id || '')
+  const [plannedDayId, setPlannedDayId] = useState(initial?.target_session_id || '')
+  const [dueDate, setDueDate] = useState(initial?.due_date || '')
+  const [fmea, setFmea] = useState({
+    severity: initial?.meta?.severity ?? '', occurrence: initial?.meta?.occurrence ?? '', detection: initial?.meta?.detection ?? '',
+    failure_mode: initial?.meta?.failure_mode ?? '', effect: initial?.meta?.effect ?? '', cause: initial?.meta?.cause ?? '', controls: initial?.meta?.controls ?? '',
+  })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
   const fmeaRpnLive = fmeaRpn(fmea)
   const fmeaSugg = rpnToPriority(fmea)
   const fmeaComplete = fmea.severity && fmea.occurrence && fmea.detection
+  // Keep the item's existing kind selectable even if it isn't a default option.
+  const kindOptions = (() => {
+    const opts = KIND_ADD_OPTIONS.slice()
+    if (initial?.kind && !opts.some(([k]) => k === initial.kind)) opts.unshift([initial.kind, KIND_LABEL[initial.kind] || initial.kind])
+    return opts
+  })()
 
-  async function add() {
+  async function submit() {
     if (!title.trim()) return
     setBusy(true); setErr(null)
     try {
@@ -676,33 +722,30 @@ function AddItemForm({ base, subteams, mySubteamIds, members = [], days = [], ca
       // FMEA auto-suggests priority (overrides the blank field); manual wins if set.
       const effPriority =
         priority !== '' ? Number(priority) : isFmea && fmeaComplete ? fmeaSugg : null
-      const res = await fetch(`${base}/backlog`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title, kind, completion,
-          subteam_id: subteamId || null,
-          venue: venue || null,
-          priority: effPriority,
-          owner_user_id: ownerId || null,
-          target_session_id: plannedDayId || null,
-          due_date: dueDate || null,
-          wind_min_kt: wmin === '' ? null : Number(wmin),
-          wind_max_kt: wmax === '' ? null : Number(wmax),
-          meta,
-        }),
+      await onSubmit({
+        title: title.trim(), body: body || null, kind, completion,
+        subteam_id: subteamId || null,
+        venue: venue || null,
+        priority: effPriority,
+        owner_user_id: ownerId || null,
+        target_session_id: plannedDayId || null,
+        due_date: dueDate || null,
+        wind_min_kt: wmin === '' ? null : Number(wmin),
+        wind_max_kt: wmax === '' ? null : Number(wmax),
+        meta,
       })
-      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not add'); return }
-      onDone()
+    } catch (e) {
+      setErr(e?.message || 'could not save')
     } finally { setBusy(false) }
   }
 
   return (
     <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 10, padding: 12, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing / answering?" style={{ ...inputStyle, fontSize: 14 }} autoFocus />
+      <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Details (optional)…" rows={2} style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13 }} />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <select value={kind} onChange={(e) => setKind(e.target.value)} style={inputStyle} title="Type">
-          {KIND_ADD_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          {kindOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
         <select value={venue} onChange={(e) => setVenue(e.target.value)} style={inputStyle} title="Venue">
           <option value="">Venue…</option>
@@ -732,7 +775,8 @@ function AddItemForm({ base, subteams, mySubteamIds, members = [], days = [], ca
         </select>
         <select value={ownerId} onChange={(e) => setOwnerId(e.target.value)} style={inputStyle} title="Owner">
           <option value="">Owner…</option>
-          {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          {meId && <option value={meId}>Me</option>}
+          {members.filter((m) => m.id !== meId).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
         </select>
         <select value={plannedDayId} onChange={(e) => setPlannedDayId(e.target.value)} style={inputStyle} title="Planned test day">
           <option value="">Planned day…</option>
@@ -765,7 +809,7 @@ function AddItemForm({ base, subteams, mySubteamIds, members = [], days = [], ca
       )}
 
       <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={add} disabled={busy || !title.trim()} style={btnPrimary}>Add item</button>
+        <button onClick={submit} disabled={busy || !title.trim()} style={btnPrimary}>{busy ? 'Saving…' : submitLabel}</button>
         <button onClick={onCancel} style={btnGhost}>Cancel</button>
         {err && <span style={{ color: '#EF4444', fontSize: 12, alignSelf: 'center' }}>{err}</span>}
       </div>
@@ -776,7 +820,7 @@ function AddItemForm({ base, subteams, mySubteamIds, members = [], days = [], ca
 // ── Day sub-tab ──────────────────────────────────────────────────────────────
 const safeName = (n) => n.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80)
 
-function PlanItemRow({ item, highlight }) {
+function PlanItemRow({ item, highlight, selectable, checked, onToggle }) {
   const sub = item.subteams
   const catColor = sub ? CAT_COLOR[sub.category] || '#64748B' : '#334155'
   const wind = item.wind_min_kt != null || item.wind_max_kt != null
@@ -784,6 +828,7 @@ function PlanItemRow({ item, highlight }) {
     : null
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderLeft: `3px solid ${highlight ? '#06B6D4' : catColor}`, borderRadius: 6, padding: '6px 9px', flexWrap: 'wrap' }}>
+      {selectable && <input type="checkbox" checked={!!checked} onChange={() => onToggle?.(item.id)} style={{ margin: 0, cursor: 'pointer' }} />}
       <span style={{ fontSize: 11, fontWeight: 800, color: PRIO_COLOR[item.priority] || '#475569' }}>{item.priority ? `P${item.priority}` : 'P–'}</span>
       <span style={{ fontSize: 12, color: '#E2E8F0', flex: 1, minWidth: 100 }}>{item.title}</span>
       {sub && <span style={{ fontSize: 9, color: catColor }}>{sub.label}</span>}
@@ -796,16 +841,16 @@ function PlanItemRow({ item, highlight }) {
 function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onOpenItem }) {
   const [date, setDate] = useState(todayStr())
   const [session, setSession] = useState(null) // {id, objective, blocks} | null
-  const [allDates, setAllDates] = useState([])
+  const [allDays, setAllDays] = useState([]) // [{id, date}]
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
-  const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'].includes(role)
-  // Debrief + speed-meeting notes: TL2 and above can write.
-  const canEditDebrief = ['admin', 'team_manager', 'coach', 'tl2'].includes(role)
-  // Weather forecast: TL1 and above can SEE it (not guests); upload/remove is
-  // TL2 and above. Consultants are limited to their authorised window by RLS.
-  const canSeeForecast = role !== 'guest'
-  const canEditForecast = TAG_ROLES.includes(role)
+  const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl3', 'tl2', 'consultant'].includes(role)
+  // TL3 and above edit notes, weather, plan/timings.
+  const canEditDebrief = EDIT_ROLES.includes(role)
+  const canSeeForecast = role !== 'guest'   // TL1+ (consultant within window via RLS)
+  const canEditForecast = EDIT_ROLES.includes(role)
+  const canSeeTestNow = TESTNOW_ROLES.includes(role)  // TL2+
+  const canMoveTests = EDIT_ROLES.includes(role)      // TL3+
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
 
   const loadCalendar = useCallback(async () => {
@@ -814,42 +859,26 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
       if (!res.ok) return
       const j = await res.json()
       const list = j.sessions || []
-      setAllDates(list.map((s) => s.date))
+      setAllDays(list.map((s) => ({ id: s.id, date: s.date })))
       setSession(list.find((s) => s.date === date) || null)
     } finally {
       setLoading(false)
     }
   }, [base, date])
-
   useEffect(() => { loadCalendar() }, [loadCalendar])
 
   const blocks = (session?.blocks || []).filter(
     (b) => canSeeTesting || !BLOCK_META[b.block_type]?.testing
   )
 
-  // Backlog → planned items for this day + wind-adaptive "test now" ranking.
+  // Backlog (for the on-the-water Tests & tasks card).
   const [items, setItems] = useState([])
-  const [tws, setTws] = useState('')
-  useEffect(() => {
-    let cancelled = false
-    fetch(`${base}/backlog`)
-      .then((r) => (r.ok ? r.json() : { items: [] }))
-      .then((j) => { if (!cancelled) setItems(j.items || []) })
-      .catch(() => {})
-    return () => { cancelled = true }
+  const reloadItems = useCallback(() => {
+    fetch(`${base}/backlog`).then((r) => (r.ok ? r.json() : { items: [] })).then((j) => setItems(j.items || [])).catch(() => {})
   }, [base])
-  const plannedItems = session ? items.filter((it) => it.target_session_id === session.id) : []
-  const twsNum = tws === '' ? null : Number(tws)
-  const windOk = (it) => {
-    if (twsNum == null) return true
-    if (it.wind_min_kt != null && twsNum < it.wind_min_kt) return false
-    if (it.wind_max_kt != null && twsNum > it.wind_max_kt) return false
-    return true
-  }
-  const candidates = items
-    .filter((it) => it.status !== 'done' && it.status !== 'wontfix' && windOk(it))
-    .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
-    .slice(0, 8)
+  useEffect(() => { reloadItems() }, [reloadItems])
+
+  const allDates = allDays.map((d) => d.date)
 
   return (
     <div>
@@ -867,21 +896,20 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
 
       {err && <div style={{ color: '#EF4444', fontSize: 13, marginBottom: 10 }}>{err}</div>}
 
-      {/* Weather forecast — full width, above the plan/debrief columns.
-          Visible to TL1+ (not guests); upload/remove restricted to TL2+. */}
+      {/* Weather forecast (PDF only) — TL1+ view, TL3+ edit. */}
       {canSeeForecast && (
-        <WeatherCard base={base} date={date} canEdit={canEditForecast} isMobile={isMobile} />
+        <WeatherCard base={base} date={date} canEdit={canEditForecast} />
       )}
 
+      {/* Row 1 — Plan | On-the-water Tests & tasks */}
       <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch' }}>
-        {/* Plan for today */}
-        <div style={{ flex: isMobile ? 'none' : '1.1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
+        <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>Plan for {fmtDay(date)}</div>
           {loading ? (
             <div style={{ color: '#475569', fontSize: 13 }}>Loading…</div>
           ) : !session ? (
             <div style={{ color: '#475569', fontSize: 12 }}>
-              No plan for this day yet.{canEditPlan ? ' Add it in the Plan tab (blocks) — backlog-item selection lands next.' : ''}
+              No plan for this day yet.{canEditPlan ? ' Add the day + blocks in the Plan tab.' : ''}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -910,55 +938,32 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
             </div>
           )}
 
-          {/* Planned items for this day */}
-          {plannedItems.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Planned items</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {plannedItems.map((it) => <PlanItemRow key={it.id} item={it} />)}
-              </div>
-            </div>
-          )}
-
-          {/* Wind-adaptive: what can we test now */}
-          <div style={{ marginTop: 14, borderTop: '1px solid #1E3A5A', paddingTop: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>What can we test now?</span>
-              <span style={{ fontSize: 11, color: '#64748B' }}>TWS</span>
-              <input type="number" value={tws} onChange={(e) => setTws(e.target.value)} placeholder="kt" style={{ ...inputStyle, width: 70, fontSize: 12 }} />
-            </div>
-            {candidates.length === 0 ? (
-              <div style={{ fontSize: 12, color: '#475569' }}>
-                {twsNum == null ? 'Enter the current wind to rank testable items.' : `Nothing testable at ${twsNum} kt.`}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {candidates.map((it) => <PlanItemRow key={it.id} item={it} highlight={twsNum != null} />)}
-              </div>
-            )}
-          </div>
+          {/* Timings — TL3+ edit, all view */}
+          <TimingsBox base={base} date={date} canEdit={canEditPlan} />
         </div>
 
-        {/* Debrief notes */}
+        <OnWaterCard
+          base={base}
+          items={items}
+          allDays={allDays}
+          sessionId={session?.id || null}
+          canSeeTestNow={canSeeTestNow}
+          canMoveTests={canMoveTests}
+          isMobile={isMobile}
+          onChanged={reloadItems}
+        />
+      </div>
+
+      {/* Row 2 — Debrief notes | Speed team meeting notes */}
+      <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch', marginTop: 14 }}>
         <NotesCard
           title="Debrief notes"
           fields={[{ key: 'learnings', label: 'Learnings' }, { key: 'next_focus', label: 'Next focus points' }]}
           showDocuments
           wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
-          base={base}
-          date={date}
-          teamId={teamId}
-          boatId={boatId}
-          role={role}
-          canEdit={canEditDebrief}
-          isMobile={isMobile}
-          onOpenVideo={onOpenVideo}
-          onOpenItem={onOpenItem}
+          base={base} date={date} teamId={teamId} boatId={boatId} role={role}
+          canEdit={canEditDebrief} isMobile={isMobile} onOpenVideo={onOpenVideo} onOpenItem={onOpenItem}
         />
-      </div>
-
-      {/* Speed team meeting notes — full width, below the plan/debrief row */}
-      <div style={{ marginTop: 14 }}>
         <NotesCard
           title="Speed team meeting notes"
           fields={[
@@ -967,121 +972,135 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
             { key: 'speed_long_term', label: 'Long term development points' },
           ]}
           showDocuments={false}
-          base={base}
-          date={date}
-          teamId={teamId}
-          boatId={boatId}
-          role={role}
-          canEdit={canEditDebrief}
-          isMobile={isMobile}
-          onOpenVideo={onOpenVideo}
-          onOpenItem={onOpenItem}
+          wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
+          base={base} date={date} teamId={teamId} boatId={boatId} role={role}
+          canEdit={canEditDebrief} isMobile={isMobile} onOpenVideo={onOpenVideo} onOpenItem={onOpenItem}
         />
       </div>
     </div>
   )
 }
 
-// "Details for today" — comments + an hourly wind table (Time / TWD / TWS /
-// min–max), transcribed from the forecast deck. Shown if filled; TL2+ edits.
-function DetailsToday({ base, date, canEdit }) {
-  const emptyRow = () => ({ time: '', twd: '', tws: '', range: '' })
-  const [comments, setComments] = useState('')
-  const [rows, setRows] = useState([])
+// Timings free-text — TL3+ edit, everyone (TL1+ / consultant-in-window) views.
+function TimingsBox({ base, date, canEdit }) {
+  const [val, setVal] = useState('')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [err, setErr] = useState(null)
-
   const load = useCallback(async () => {
     const res = await fetch(`${base}/conditions?date=${date}`)
     if (!res.ok) return
     const j = await res.json()
-    setComments(j.details?.comments || '')
-    setRows(Array.isArray(j.details?.rows) ? j.details.rows : [])
+    setVal(j.timings || '')
     setDirty(false)
   }, [base, date])
   useEffect(() => { load() }, [load])
-
   async function save() {
-    setSaving(true); setErr(null)
+    setSaving(true)
     try {
-      const cleanRows = rows.filter((r) => r.time || r.twd || r.tws || r.range)
-      const res = await fetch(`${base}/conditions`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, details: { comments, rows: cleanRows } }),
-      })
-      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'save failed'); return }
+      await fetch(`${base}/conditions`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, timings: val }) })
       setDirty(false)
     } finally { setSaving(false) }
   }
-
-  const setRow = (i, key, v) => { setRows((p) => p.map((r, idx) => (idx === i ? { ...r, [key]: v } : r))); setDirty(true) }
-  const addRow = () => { setRows((p) => [...p, emptyRow()]); setDirty(true) }
-  const delRow = (i) => { setRows((p) => p.filter((_, idx) => idx !== i)); setDirty(true) }
-
-  const hasData = comments.trim() || rows.some((r) => r.time || r.twd || r.tws || r.range)
-  if (!canEdit && !hasData) return null
-
-  const th = { textAlign: 'left', fontSize: 9, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 0.5, padding: '3px 6px', borderBottom: '1px solid #1E3A5A' }
-  const td = { fontSize: 11, color: '#E2E8F0', padding: '3px 6px', borderBottom: '1px solid #0F2030', fontFamily: 'monospace' }
-  const cellInput = { ...inputStyle, fontSize: 11, padding: '2px 5px', width: '100%' }
-
+  if (!canEdit && !val.trim()) return null
   return (
-    <div style={{ marginTop: 12, borderTop: '1px solid #1E3A5A', paddingTop: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>Details for today</div>
+    <div style={{ marginTop: 14, borderTop: '1px solid #1E3A5A', paddingTop: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>Timings</span>
         {canEdit && dirty && <button onClick={save} disabled={saving} style={btnSmall}>{saving ? 'Saving…' : 'Save'}</button>}
       </div>
-      {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 6 }}>{err}</div>}
-
-      {/* Comments */}
       {canEdit ? (
-        <textarea value={comments} onChange={(e) => { setComments(e.target.value); setDirty(true) }}
-          rows={3} placeholder="Comments (one per line)…"
-          style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4, marginBottom: 8 }} />
+        <textarea value={val} onChange={(e) => { setVal(e.target.value); setDirty(true) }} rows={3} placeholder="Dock out, warning signal, first start…"
+          style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }} />
       ) : (
-        comments.trim() && (
-          <ul style={{ margin: '0 0 8px', paddingLeft: 18, color: '#94A3B8', fontSize: 12 }}>
-            {comments.split('\n').filter(Boolean).map((c, i) => <li key={i} style={{ marginBottom: 2 }}>{c}</li>)}
-          </ul>
-        )
+        <div style={{ fontSize: 13, color: '#E2E8F0', whiteSpace: 'pre-wrap' }}>{val}</div>
+      )}
+    </div>
+  )
+}
+
+// On-the-water Tests & tasks: SELECTED items for the day (TL1+) and the
+// wind-range "what can we test now" picker (TL2+ view, TL3+ move-to-day).
+function OnWaterCard({ base, items, allDays, sessionId, canSeeTestNow, canMoveTests, isMobile, onChanged }) {
+  const [wmin, setWmin] = useState('')
+  const [wmax, setWmax] = useState('')
+  const [picked, setPicked] = useState(new Set())
+  const [targetDay, setTargetDay] = useState(sessionId || '')
+  const [moving, setMoving] = useState(false)
+  useEffect(() => { setTargetDay(sessionId || '') }, [sessionId])
+
+  const selected = sessionId ? items.filter((it) => it.target_session_id === sessionId) : []
+  const lo = wmin === '' ? null : Number(wmin)
+  const hi = wmax === '' ? null : Number(wmax)
+  // Item testable if its wind band overlaps the entered range (open bounds = ∞).
+  const overlaps = (it) => {
+    if (lo == null && hi == null) return true
+    if (hi != null && it.wind_min_kt != null && it.wind_min_kt > hi) return false
+    if (lo != null && it.wind_max_kt != null && it.wind_max_kt < lo) return false
+    return true
+  }
+  const candidates = items
+    .filter((it) => it.status !== 'done' && it.status !== 'wontfix' && overlaps(it))
+    .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+    .slice(0, 12)
+
+  const toggle = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+  async function move() {
+    if (!picked.size || !targetDay) return
+    setMoving(true)
+    try {
+      for (const id of picked) {
+        await fetch(`${base}/backlog/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_session_id: targetDay }) })
+      }
+      setPicked(new Set())
+      onChanged()
+    } finally { setMoving(false) }
+  }
+
+  return (
+    <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>On the water — tests & tasks</div>
+
+      {/* SELECTED (TL1+) */}
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Selected</div>
+      {selected.length === 0 ? (
+        <div style={{ fontSize: 12, color: '#475569' }}>Nothing selected for this day yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {selected.map((it) => <PlanItemRow key={it.id} item={it} />)}
+        </div>
       )}
 
-      {/* Hourly table */}
-      {(canEdit || rows.length > 0) && (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 360 }}>
-            <thead>
-              <tr>
-                <th style={th}>Time</th><th style={th}>TWD</th><th style={th}>TWS</th><th style={th}>Min–Max</th>
-                {canEdit && <th style={{ ...th, width: 24 }} />}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  {canEdit ? (
-                    <>
-                      <td style={td}><input value={r.time || ''} onChange={(e) => setRow(i, 'time', e.target.value)} placeholder="14:00" style={{ ...cellInput, width: 56 }} /></td>
-                      <td style={td}><input value={r.twd || ''} onChange={(e) => setRow(i, 'twd', e.target.value)} placeholder="240-260" style={{ ...cellInput, width: 80 }} /></td>
-                      <td style={td}><input value={r.tws || ''} onChange={(e) => setRow(i, 'tws', e.target.value)} placeholder="10-12kn" style={{ ...cellInput, width: 72 }} /></td>
-                      <td style={td}><input value={r.range || ''} onChange={(e) => setRow(i, 'range', e.target.value)} placeholder="8-13kn" style={{ ...cellInput, width: 72 }} /></td>
-                      <td style={td}><button onClick={() => delRow(i)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 11 }}>✕</button></td>
-                    </>
-                  ) : (
-                    <>
-                      <td style={{ ...td, fontWeight: 700 }}>{r.time}</td>
-                      <td style={td}>{r.twd}</td>
-                      <td style={{ ...td, color: '#7DD3FC' }}>{r.tws}</td>
-                      <td style={{ ...td, color: '#64748B' }}>{r.range}</td>
-                    </>
-                  )}
-                </tr>
+      {/* WHAT CAN WE TEST NOW (TL2+) */}
+      {canSeeTestNow && (
+        <div style={{ marginTop: 14, borderTop: '1px solid #1E3A5A', paddingTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>What can we test now?</span>
+            <span style={{ fontSize: 11, color: '#64748B' }}>wind</span>
+            <input type="number" value={wmin} onChange={(e) => setWmin(e.target.value)} placeholder="min" style={{ ...inputStyle, width: 56, fontSize: 12 }} />
+            <span style={{ fontSize: 11, color: '#64748B' }}>–</span>
+            <input type="number" value={wmax} onChange={(e) => setWmax(e.target.value)} placeholder="max" style={{ ...inputStyle, width: 56, fontSize: 12 }} />
+            <span style={{ fontSize: 11, color: '#64748B' }}>kt</span>
+          </div>
+          {candidates.length === 0 ? (
+            <div style={{ fontSize: 12, color: '#475569' }}>Nothing testable in this wind range.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {candidates.map((it) => (
+                <PlanItemRow key={it.id} item={it} highlight={lo != null || hi != null}
+                  selectable={canMoveTests} checked={picked.has(it.id)} onToggle={toggle} />
               ))}
-            </tbody>
-          </table>
-          {canEdit && <button onClick={addRow} style={{ ...btnGhost, marginTop: 6 }}>+ Add row</button>}
+            </div>
+          )}
+          {canMoveTests && picked.size > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: '#94A3B8' }}>Move {picked.size} to</span>
+              <select value={targetDay} onChange={(e) => setTargetDay(e.target.value)} style={{ ...inputStyle, fontSize: 12 }}>
+                {sessionId && <option value={sessionId}>Today ({allDays.find((d) => d.id === sessionId) ? fmtDay(allDays.find((d) => d.id === sessionId).date) : 'this day'})</option>}
+                {allDays.filter((d) => d.id !== sessionId).map((d) => <option key={d.id} value={d.id}>{fmtDay(d.date)}</option>)}
+              </select>
+              <button onClick={move} disabled={moving || !targetDay} style={btnSmall}>{moving ? 'Moving…' : 'Move'}</button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1161,9 +1180,6 @@ function WeatherCard({ base, date, canEdit }) {
           ))}
         </div>
       )}
-
-      {/* Details for today — comments + hourly wind table */}
-      <DetailsToday base={base} date={date} canEdit={canEdit} />
     </div>
   )
 }
@@ -1408,8 +1424,8 @@ function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, tea
   const [availableTags, setAvailableTags] = useState([])
   const [links, setLinks] = useState([])
   const photoUrlRef = useRef({})
-  // Adding links is coach-and-up; clicking works for any viewer.
-  const allowLinks = ['admin', 'team_manager', 'coach'].includes(role)
+  // Adding links is TL3-and-up; clicking works for any viewer.
+  const allowLinks = EDIT_ROLES.includes(role)
 
   useEffect(() => {
     let cancelled = false

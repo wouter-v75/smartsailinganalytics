@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../lib/supabase/admin-guard'
 
-const ROLES = ['team_manager', 'coach', 'tl1', 'tl2', 'consultant', 'guest'] as const
+const ROLES = ['team_manager', 'coach', 'tl3', 'tl1', 'tl2', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
 
 export async function POST(
