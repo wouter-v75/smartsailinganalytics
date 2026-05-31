@@ -1060,18 +1060,18 @@ function PlanConditions({ base, date, canEdit }) {
   return (
     <>
       <EditableTextBlock
-        label="Plan"
-        value={plan}
-        canEdit={canEdit}
-        placeholder="Today's plan, intent, focus areas…"
-        onSave={(v) => patch('plan', v)}
-      />
-      <EditableTextBlock
         label="Timings"
         value={timings}
         canEdit={canEdit}
         placeholder="Dock out, warning signal, first start…"
         onSave={(v) => patch('timings', v)}
+      />
+      <EditableTextBlock
+        label="Plan"
+        value={plan}
+        canEdit={canEdit}
+        placeholder="Today's plan, intent, focus areas…"
+        onSave={(v) => patch('plan', v)}
       />
     </>
   )
@@ -1476,7 +1476,10 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
 function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
   const [values, setValues] = useState({})
   const [docs, setDocs] = useState([])
-  const [dirty, setDirty] = useState(false)
+  // Per-field view/edit state — editing one field at a time doesn't block
+  // others, and Save only PATCHes the field that changed.
+  const [editing, setEditing] = useState({}) // { [key]: bool }
+  const [drafts, setDrafts] = useState({})   // { [key]: string }
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [err, setErr] = useState(null)
@@ -1556,25 +1559,33 @@ function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, tea
     for (const f of fields) vals[f.key] = d[f.key] || ''
     setValues(vals)
     if (showDocuments) setDocs(d.documents || [])
-    setDirty(false)
+    setEditing({})
+    setDrafts({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, date])
 
   useEffect(() => { load() }, [load])
 
-  async function save() {
+  function startEdit(key) {
+    setDrafts((d) => ({ ...d, [key]: values[key] || '' }))
+    setEditing((e) => ({ ...e, [key]: true }))
+  }
+  function cancelEdit(key) {
+    setEditing((e) => ({ ...e, [key]: false }))
+  }
+  async function saveField(key) {
     setSaving(true)
     setErr(null)
     try {
-      const payload = { date }
-      for (const f of fields) payload[f.key] = values[f.key] ?? ''
+      const next = drafts[key] ?? ''
       const res = await fetch(`${base}/debrief`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ date, [key]: next }),
       })
       if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'save failed'); return }
-      setDirty(false)
+      setValues((v) => ({ ...v, [key]: next }))
+      setEditing((e) => ({ ...e, [key]: false }))
     } finally {
       setSaving(false)
     }
@@ -1613,38 +1624,54 @@ function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, tea
     load()
   }
 
-  const setField = (key, v) => { setValues((prev) => ({ ...prev, [key]: v })); setDirty(true) }
-
   return (
     <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, ...(wrapperStyle || {}) }}>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', flex: 1 }}>{title}</div>
-        {canEdit && dirty && (
-          <button onClick={save} disabled={saving} style={btnSmall}>{saving ? 'Saving…' : 'Save'}</button>
-        )}
       </div>
 
       {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>{err}</div>}
 
-      {fields.map((f) => (
-        <div key={f.key} style={{ marginBottom: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 5 }}>{f.label}</div>
-          {canEdit ? (
-            <TagTextArea
-              value={values[f.key] || ''}
-              onChange={(v) => setField(f.key, v)}
-              placeholder={`${f.label}…`}
-              availableTags={availableTags}
-              onAddTag={addVocabTag}
-              links={links}
-              allowLinks={allowLinks}
-              rows={4}
-            />
-          ) : (
-            <div style={{ fontSize: 13, color: values[f.key] ? '#E2E8F0' : '#475569', whiteSpace: 'pre-wrap' }}>{renderRich(values[f.key], onOpenRef)}</div>
-          )}
-        </div>
-      ))}
+      {fields.map((f) => {
+        const isEditing = !!editing[f.key]
+        const cur = values[f.key] || ''
+        const hasContent = !!cur.trim()
+        if (!canEdit && !hasContent) return null
+        return (
+          <div key={f.key} style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>{f.label}</div>
+              {canEdit && !isEditing && hasContent && (
+                <button onClick={() => startEdit(f.key)} style={btnGhost}>Edit</button>
+              )}
+              {canEdit && isEditing && (
+                <>
+                  <button onClick={() => saveField(f.key)} disabled={saving} style={btnSmall}>{saving ? 'Saving…' : 'Save'}</button>
+                  <button onClick={() => cancelEdit(f.key)} style={btnGhost}>Cancel</button>
+                </>
+              )}
+            </div>
+            {isEditing ? (
+              <TagTextArea
+                value={drafts[f.key] || ''}
+                onChange={(v) => setDrafts((d) => ({ ...d, [f.key]: v }))}
+                placeholder={`${f.label}…`}
+                availableTags={availableTags}
+                onAddTag={addVocabTag}
+                links={links}
+                allowLinks={allowLinks}
+                rows={4}
+              />
+            ) : hasContent ? (
+              <div style={{ fontSize: 13, color: '#E2E8F0', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{renderRich(cur, onOpenRef)}</div>
+            ) : (
+              <button onClick={() => startEdit(f.key)} style={{ ...btnGhost, alignSelf: 'flex-start' }}>
+                + Add {f.label.toLowerCase()}
+              </button>
+            )}
+          </div>
+        )
+      })}
 
       {showDocuments && (
         <div style={{ marginTop: 4 }}>
