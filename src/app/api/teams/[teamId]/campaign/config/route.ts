@@ -11,7 +11,7 @@ import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server'
 import { requireTeamManager } from '@/lib/supabase/admin-guard'
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { teamId: string } }
 ) {
   const supabase = getServerSupabase()
@@ -56,10 +56,34 @@ export async function GET(
     mySubteamIds = (links || []).map((l) => l.subteam_id)
   }
 
+  // Team members (id + name) for owner pickers. Scoped to the active boat
+  // (this boat's memberships + team-wide null-boat memberships) when a boat_id
+  // is given. Read via service so the roster is complete regardless of
+  // per-row membership RLS visibility.
+  const boatId = req.nextUrl.searchParams.get('boat_id')
+  const service = getServiceSupabase()
+  let memberQ = service
+    .from('memberships')
+    .select('user_id, boat_id, users:users(id, name)')
+    .eq('team_id', params.teamId)
+  if (boatId) memberQ = memberQ.or(`boat_id.eq.${boatId},boat_id.is.null`)
+  const { data: memberRows } = await memberQ
+  const memberMap = new Map<string, { id: string; name: string }>()
+  for (const m of memberRows || []) {
+    const u = (Array.isArray(m.users) ? m.users[0] : m.users) as
+      | { id: string; name: string }
+      | null
+    if (u && !memberMap.has(u.id)) memberMap.set(u.id, { id: u.id, name: u.name })
+  }
+
   return NextResponse.json({
     campaignOn: true,
     subteams: subteams || [],
     mySubteamIds,
+    meId: user.id,
+    members: Array.from(memberMap.values()).sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '')
+    ),
     targetDate: (features.campaign_target_date as string) || null,
     startDate: (features.campaign_start_date as string) || null,
   })

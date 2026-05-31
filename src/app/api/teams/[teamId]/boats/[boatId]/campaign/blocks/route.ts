@@ -11,9 +11,11 @@ const BLOCK_TYPES = [
   'speed-testing',
   'race-training',
   'racing',
+  'shore',
   'other',
 ] as const
 type BlockType = (typeof BLOCK_TYPES)[number]
+const VENUES = ['on-water', 'dock', 'shed']
 
 export async function POST(
   req: NextRequest,
@@ -34,6 +36,7 @@ export async function POST(
         start_min?: number | null
         end_min?: number | null
         objective?: string | null
+        venue?: string | null
       }
     | null
   if (!body?.session_id || !body?.block_type) {
@@ -65,9 +68,10 @@ export async function POST(
       start_min: typeof body.start_min === 'number' ? body.start_min : null,
       end_min: typeof body.end_min === 'number' ? body.end_min : null,
       objective: body.objective ?? null,
+      venue: VENUES.includes(body.venue as string) ? body.venue : null,
       created_by_user_id: user.id,
     })
-    .select('id, session_id, block_type, label, seq, start_min, end_min, objective')
+    .select('id, session_id, block_type, label, seq, start_min, end_min, objective, venue')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ block: data })

@@ -11,7 +11,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '@/lib/supabase/server'
 
-const KINDS = ['action', 'fmea', 'task', 'deliverable', 'milestone']
+const KINDS = ['action', 'task', 'test', 'training', 'fmea', 'deliverable', 'milestone']
+const VENUES = ['on-water', 'dock', 'shed']
 const STATUSES = ['open', 'in_progress', 'done', 'parked', 'wontfix']
 const ANSWER_STATES = ['unanswered', 'partial', 'answered']
 const COMPLETIONS = ['binary', 'progress']
@@ -41,6 +42,7 @@ export async function PATCH(
   if (typeof b.status === 'string' && STATUSES.includes(b.status)) update.status = b.status
   if ('subteam_id' in b) update.subteam_id = b.subteam_id ?? null
   if ('owner_user_id' in b) update.owner_user_id = b.owner_user_id ?? null
+  if ('target_session_id' in b) update.target_session_id = b.target_session_id ?? null
   if ('due_date' in b) update.due_date = b.due_date ?? null
   if ('is_milestone' in b) update.is_milestone = b.is_milestone === true
   if ('priority' in b)
@@ -55,6 +57,7 @@ export async function PATCH(
         ? Math.max(0, Math.min(100, Math.round(b.progress_pct)))
         : null
   if ('meta' in b) update.meta = b.meta ?? null
+  if ('venue' in b) update.venue = VENUES.includes(b.venue as string) ? b.venue : null
   if ('tags' in b && Array.isArray(b.tags))
     update.tags = Array.from(
       new Set((b.tags as unknown[]).map((t) => String(t).trim().toLowerCase()).filter(Boolean))

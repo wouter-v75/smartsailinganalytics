@@ -11,9 +11,11 @@ const BLOCK_TYPES = [
   'speed-testing',
   'race-training',
   'racing',
+  'shore',
   'other',
 ] as const
 type BlockType = (typeof BLOCK_TYPES)[number]
+const VENUES = ['on-water', 'dock', 'shed']
 
 export async function PATCH(
   req: NextRequest,
@@ -33,6 +35,7 @@ export async function PATCH(
         start_min?: number | null
         end_min?: number | null
         objective?: string | null
+        venue?: string | null
       }
     | null
 
@@ -48,6 +51,8 @@ export async function PATCH(
   if (body && 'start_min' in body) update.start_min = body.start_min ?? null
   if (body && 'end_min' in body) update.end_min = body.end_min ?? null
   if (body && 'objective' in body) update.objective = body.objective ?? null
+  if (body && 'venue' in body)
+    update.venue = VENUES.includes(body.venue as string) ? body.venue : null
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'nothing to update' }, { status: 400 })
   }
@@ -58,7 +63,7 @@ export async function PATCH(
     .eq('id', params.blockId)
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)
-    .select('id, session_id, block_type, label, seq, start_min, end_min, objective')
+    .select('id, session_id, block_type, label, seq, start_min, end_min, objective, venue')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ block: data })
