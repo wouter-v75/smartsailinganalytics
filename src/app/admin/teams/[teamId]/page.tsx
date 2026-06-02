@@ -149,7 +149,17 @@ export default async function TeamDetailPage({
           teamId={team.id}
           boats={boats || []}
           memberships={memberships || []}
-          activeUsers={users || []}
+          // Admins see the full active-user list (they need to be able to
+          // grant any user a membership across the system). Team_managers
+          // only see users who already have a membership on this team —
+          // adding net-new users to the team goes through invitations.
+          activeUsers={
+            me.global_role === 'admin'
+              ? (users || [])
+              : (users || []).filter((u) =>
+                  (memberships || []).some((m) => m.user_id === u.id)
+                )
+          }
         />
 
         <SubteamsPanel

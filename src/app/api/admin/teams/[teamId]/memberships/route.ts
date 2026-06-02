@@ -45,6 +45,24 @@ export async function POST(
   }
 
   const service = getServiceSupabase()
+
+  // Defence in depth on the picker filter in the admin UI: team_managers
+  // (not global admins) may only re-scope users who already have a
+  // membership on this team. Onboarding new users goes via invitations.
+  if (!guard.isAdmin) {
+    const { data: existing } = await service
+      .from('memberships')
+      .select('id')
+      .eq('team_id', params.teamId)
+      .eq('user_id', body.user_id)
+      .limit(1)
+    if (!existing || existing.length === 0) {
+      return NextResponse.json(
+        { error: 'user must already be on this team — invite them instead' },
+        { status: 403 }
+      )
+    }
+  }
   const { data, error } = await service
     .from('memberships')
     .insert({
