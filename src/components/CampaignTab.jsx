@@ -87,6 +87,10 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
   // highlights that item.
   const [highlightItem, setHighlightItem] = useState(null)
   const onOpenItem = (id) => { if (!consultantOnly) { setSub('backlog'); setHighlightItem(id) } }
+  // Clicking "Day details" on a Plan DayCard jumps to the Day sub-tab on that
+  // date. DayView consumes pendingDayDate via initialDate (one-shot consume).
+  const [pendingDayDate, setPendingDayDate] = useState(null)
+  const onOpenDay = (date) => { setSub('day'); setPendingDayDate(date) }
   const canEditDates = ['admin', 'team_manager'].includes(role)
   const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'].includes(role)
 
@@ -179,6 +183,7 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
           canSeeTesting={canSeeTesting}
           isMobile={isMobile}
           boats={boats}
+          onOpenDay={onOpenDay}
         />
       )}
       {effSub === 'backlog' && (
@@ -205,6 +210,8 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
           onOpenItem={onOpenItem}
           scopeAll={scopeAll}
           activeBoatName={activeBoatName}
+          initialDate={pendingDayDate}
+          onConsumeInitialDate={() => setPendingDayDate(null)}
         />
       )}
     </div>
@@ -917,8 +924,17 @@ function PlanItemRow({ item, highlight, selectable, checked, onToggle }) {
   )
 }
 
-function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVideo, onOpenItem, scopeAll, activeBoatName }) {
-  const [date, setDate] = useState(todayStr())
+function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVideo, onOpenItem, scopeAll, activeBoatName, initialDate, onConsumeInitialDate }) {
+  const [date, setDate] = useState(initialDate || todayStr())
+  // A non-null `initialDate` from the parent means "jump to this date".
+  // Consume it once so subsequent in-tab navigations aren't overridden.
+  useEffect(() => {
+    if (initialDate) {
+      setDate(initialDate)
+      onConsumeInitialDate && onConsumeInitialDate()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDate])
   const [session, setSession] = useState(null) // {id, objective, blocks} | null
   const [allDays, setAllDays] = useState([]) // [{id, date}]
   const [loading, setLoading] = useState(true)
@@ -1051,6 +1067,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
           title="Debrief notes"
           fields={[{ key: 'learnings', label: 'Learnings' }, { key: 'next_focus', label: 'Next focus points' }]}
           showDocuments
+          documentsScope="debrief"
           wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
           base={base} date={date} teamId={teamId} boatId={boatId} role={role}
           canEdit={canEditDebrief} isMobile={isMobile} onOpenVideo={onOpenVideo} onOpenItem={onOpenItem}
@@ -1062,7 +1079,8 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
             { key: 'speed_focus_today', label: 'Focus for today' },
             { key: 'speed_long_term', label: 'Long term development points' },
           ]}
-          showDocuments={false}
+          showDocuments
+          documentsScope="speed"
           wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
           base={base} date={date} teamId={teamId} boatId={boatId} role={role}
           canEdit={canEditDebrief} isMobile={isMobile} onOpenVideo={onOpenVideo} onOpenItem={onOpenItem}
@@ -1679,7 +1697,7 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
 // Generic notes card used for both Debrief notes and Speed-team-meeting notes.
 // `fields` is [{key,label}]; all share one debrief row (one endpoint). Supports
 // #tag + @link editing and (optionally) document uploads.
-function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
+function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', wrapperStyle, base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
   const [values, setValues] = useState({})
   const [docs, setDocs] = useState([])
   // Per-field view/edit state — editing one field at a time doesn't block
@@ -1764,11 +1782,17 @@ function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, tea
     const vals = {}
     for (const f of fields) vals[f.key] = d[f.key] || ''
     setValues(vals)
-    if (showDocuments) setDocs(d.documents || [])
+    // Filter docs by scope: speed-meeting docs only show on the speed card,
+    // debrief docs only on the debrief card. Older rows without a scope are
+    // treated as 'debrief' for back-compat.
+    if (showDocuments) {
+      const all = Array.isArray(d.documents) ? d.documents : []
+      setDocs(all.filter((doc) => (doc.scope || 'debrief') === documentsScope))
+    }
     setEditing({})
     setDrafts({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, date])
+  }, [base, date, documentsScope, showDocuments])
 
   useEffect(() => { load() }, [load])
 
@@ -1804,12 +1828,16 @@ function NotesCard({ title, fields, showDocuments, wrapperStyle, base, date, tea
     setUploading(true)
     setErr(null)
     try {
-      const key = `campaign/debriefs/${date}/${Date.now()}-${safeName(file.name)}`
+      // Separate Bunny paths per scope so files don't collide and the listing
+      // stays tidy. The server records `scope` on the document entry too so
+      // the right card can re-render only its own files.
+      const folder = documentsScope === 'speed' ? 'speed' : 'debriefs'
+      const key = `campaign/${folder}/${date}/${Date.now()}-${safeName(file.name)}`
       await uploadBlobToStorage({ key, blob: file, contentType: file.type })
       const res = await fetch(`${base}/debrief/documents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, name: file.name, key, bytes: file.size, content_type: file.type }),
+        body: JSON.stringify({ date, name: file.name, key, bytes: file.size, content_type: file.type, scope: documentsScope }),
       })
       if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not register document'); return }
       load()
@@ -1929,7 +1957,7 @@ function Placeholder({ title, note }) {
   )
 }
 
-function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, isMobile, boats }) {
+function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, isMobile, boats, onOpenDay }) {
   const [sessions, setSessions] = useState([])
   const [targetDate, setTargetDate] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -2150,6 +2178,7 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
               isMobile={isMobile}
               onChanged={load}
               showBoatChip={showBoatChips}
+              onOpenDay={onOpenDay}
             />
           ))}
         </div>
@@ -2177,7 +2206,7 @@ function Counter({ value, label, sub }) {
   )
 }
 
-function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, onChanged, showBoatChip }) {
+function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, onChanged, showBoatChip, onOpenDay }) {
   const [objective, setObjective] = useState(session.objective || '')
   const [objDirty, setObjDirty] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -2235,6 +2264,14 @@ function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, 
           </span>
         )}
         {isPast && <span style={{ fontSize: 10, color: '#475569' }}>past</span>}
+        <div style={{ flex: 1 }} />
+        {onOpenDay && (
+          <button
+            onClick={() => onOpenDay(session.date)}
+            style={{ ...btnGhost, fontSize: 11, padding: '4px 10px' }}
+            title="Open this day in the Day tab"
+          >Day details →</button>
+        )}
       </div>
 
       {/* Event editor — only racing days have an Event field (the regatta

@@ -46,11 +46,14 @@ export async function POST(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const body = (await req.json().catch(() => null)) as
-    | { date?: string; name?: string; key?: string; bytes?: number; content_type?: string }
+    | { date?: string; name?: string; key?: string; bytes?: number; content_type?: string; scope?: string }
     | null
   if (!body?.date || !DATE_RE.test(body.date) || !body?.key || !body?.name) {
     return NextResponse.json({ error: 'date, name and key required' }, { status: 400 })
   }
+  // Scope separates debrief docs from speed-meeting docs (and any future
+  // notes card). Older rows without a scope are treated as 'debrief'.
+  const scope = body.scope === 'speed' ? 'speed' : 'debrief'
 
   // Ensure session + debrief row exist.
   let dbf = await getDebrief(supabase, params.teamId, params.boatId, body.date)
@@ -85,6 +88,7 @@ export async function POST(
     name: body.name,
     bytes: typeof body.bytes === 'number' ? body.bytes : null,
     content_type: body.content_type || null,
+    scope,
     uploaded_at: new Date().toISOString(),
     uploaded_by: user.id,
   }
