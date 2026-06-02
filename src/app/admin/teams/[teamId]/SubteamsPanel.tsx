@@ -6,7 +6,7 @@
 //   2) Manage the vocabulary (add / deactivate / delete) — collapsed by default
 //      to keep the panel decluttered.
 //
-// Only rendered for teams with features.campaign_engine = true (see page.tsx).
+// Rendered for every team — campaign engine is generic.
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'

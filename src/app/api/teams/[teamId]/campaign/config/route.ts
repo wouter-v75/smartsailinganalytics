@@ -20,17 +20,16 @@ export async function GET(
   } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
+  // Campaign is generic — every team gets it. Per-team isolation is handled
+  // by RLS on team_id + boat_id (a team only ever sees its own data).
+  // We still read teams.features here for targetDate/startDate, but the
+  // campaign_engine flag is no longer required.
   const { data: team } = await supabase
     .from('teams')
     .select('features')
     .eq('id', params.teamId)
     .maybeSingle()
   const features = (team?.features as Record<string, unknown>) || {}
-  const campaignOn = features.campaign_engine === true
-
-  if (!campaignOn) {
-    return NextResponse.json({ campaignOn: false })
-  }
 
   const [{ data: subteams }, { data: myMemberships }] = await Promise.all([
     supabase

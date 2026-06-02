@@ -1,7 +1,9 @@
 // Campaign tab — the team's operating system for the work-up.
 //
-// Sub-tabs: Plan (global calendar, built here) · Backlog · Day (coming next).
-// Gated upstream: only mounted when the team has features.campaign_engine on.
+// Sub-tabs: Plan (global calendar, built here) · Backlog · Day.
+// Available to every team. Per-team isolation is enforced by RLS on all
+// campaign tables (team_id + boat_id scoping). Teams that haven't seeded
+// sub-teams just see an empty list in the Backlog filter chips.
 //
 // Theme: dark inline styles to match the host SPA (not the light Tailwind
 // admin panels). Mobile-friendly: single column, wrapping chips.

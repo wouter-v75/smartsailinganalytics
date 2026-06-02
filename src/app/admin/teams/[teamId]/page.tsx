@@ -92,10 +92,10 @@ export default async function TeamDetailPage({
   if (!team) notFound()
 
   // ── Campaign engine (NORTHSTAR-gated) ──────────────────────────────────────
-  // Defensive: these columns/tables only exist once migrations 0014+ are applied.
-  // supabase-js returns {error} rather than throwing, so a pre-migration team
-  // simply yields campaignOn=false and the panel stays hidden.
-  let campaignOn = false
+  // Campaign engine is generic — every team can manage sub-teams. The
+  // 0014+ tables must exist (they do once that migration's been applied).
+  // supabase-js returns { error } rather than throwing, so a pre-migration
+  // environment just yields empty arrays here.
   let subteams: Array<{
     id: string
     category: 'racing' | 'technical' | 'whole-team'
@@ -106,30 +106,19 @@ export default async function TeamDetailPage({
   }> = []
   let subteamAssignments: Array<{ membership_id: string; subteam_id: string }> =
     []
-  const { data: feat } = await service
-    .from('teams')
-    .select('features')
-    .eq('id', params.teamId)
-    .maybeSingle()
-  campaignOn = Boolean(
-    feat?.features &&
-      (feat.features as Record<string, unknown>).campaign_engine === true
-  )
-  if (campaignOn) {
-    const [{ data: st }, { data: ms }] = await Promise.all([
-      service
-        .from('subteams')
-        .select('id, category, key, label, seq, active')
-        .eq('team_id', params.teamId)
-        .order('seq', { ascending: true }),
-      service
-        .from('membership_subteams')
-        .select('membership_id, subteam_id')
-        .eq('team_id', params.teamId),
-    ])
-    subteams = st || []
-    subteamAssignments = ms || []
-  }
+  const [{ data: st }, { data: ms }] = await Promise.all([
+    service
+      .from('subteams')
+      .select('id, category, key, label, seq, active')
+      .eq('team_id', params.teamId)
+      .order('seq', { ascending: true }),
+    service
+      .from('membership_subteams')
+      .select('membership_id, subteam_id')
+      .eq('team_id', params.teamId),
+  ])
+  subteams = st || []
+  subteamAssignments = ms || []
 
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-8">
@@ -163,14 +152,12 @@ export default async function TeamDetailPage({
           activeUsers={users || []}
         />
 
-        {campaignOn && (
-          <SubteamsPanel
-            teamId={team.id}
-            subteams={subteams}
-            memberships={memberships || []}
-            assignments={subteamAssignments}
-          />
-        )}
+        <SubteamsPanel
+          teamId={team.id}
+          subteams={subteams}
+          memberships={memberships || []}
+          assignments={subteamAssignments}
+        />
 
         <InvitationsPanel teamId={team.id} boats={boats || []} />
 
