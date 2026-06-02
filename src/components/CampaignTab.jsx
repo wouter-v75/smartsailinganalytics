@@ -2056,6 +2056,23 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
       ).length
     : sessions.filter((s) => s.date >= today && isOnWaterTrainingDay(s)).length
 
+  // "Prep day" = a planned day with at least one block at the dock or in
+  // the shed AND no on-the-water blocks at all. The two counters are
+  // mutually exclusive: any day that also has on-water work lands in the
+  // training counter and is excluded here, so the same calendar day is
+  // never counted twice. Same time window as the training counter.
+  const PREP_VENUES = new Set(['dock', 'shed'])
+  const hasOnWaterBlock = (s) =>
+    (s.blocks || []).some((b) => b.venue === 'on-water')
+  const isPrepDay = (s) =>
+    !hasOnWaterBlock(s) &&
+    (s.blocks || []).some((b) => PREP_VENUES.has(b.venue))
+  const prepDaysToGo = nextEvent
+    ? sessions.filter(
+        (s) => s.date >= today && s.date < nextEvent.date && isPrepDay(s)
+      ).length
+    : sessions.filter((s) => s.date >= today && isPrepDay(s)).length
+
   async function addDays(e) {
     e.preventDefault()
     const dates = datesInRange(rangeStart, rangeEnd)
@@ -2135,6 +2152,14 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
           sub={nextEvent
             ? `before ${fmtDay(nextEvent.date)}`
             : `${sessions.length} day${sessions.length === 1 ? '' : 's'} planned`}
+        />
+        <Counter
+          big
+          value={prepDaysToGo}
+          label="Prep days to go"
+          sub={nextEvent
+            ? `dock + shed before ${fmtDay(nextEvent.date)}`
+            : 'dock + shed days planned'}
         />
       </div>
 
