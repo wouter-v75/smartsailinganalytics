@@ -22,7 +22,7 @@ export async function GET(
   const { data, error } = await supabase
     .from('sessions')
     .select(
-      'id, date, title, tz_offset_minutes, created_at, updated_at, created_by_user_id, videos(count), photos(count)'
+      'id, date, title, event, tz_offset_minutes, created_at, updated_at, created_by_user_id, videos(count), photos(count)'
     )
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)

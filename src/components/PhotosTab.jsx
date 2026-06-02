@@ -968,13 +968,23 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         <div style={{padding:"12px 11px 6px"}}>
           <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Sessions</div>
           {sessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
-          {sessions.filter(s=>(s.photoCount||0)>0 && s.date<=TODAY()).map(s=>{
-            const isLocal=!s.source||s.source==="local";const isActive=activeDate===s.date;
-            return(<div key={s.date} onClick={()=>loadDate?.(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
-              <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
-              <div style={{fontSize:9,color:"#1E3A5A"}}>{s.videoCount||0}v{s.hasLog?" ·log":""}{s.hasXml?" ·ev":""}{s.location?` · ${s.location}`:""}</div>
-            </div>);
-          })}
+          {(()=>{
+            // Day-N within each regatta. Compute once over the full session
+            // list so the numbering survives sessions that only have videos
+            // (or are otherwise filtered out below).
+            const evMap=new Map(); const g=new Map();
+            for(const s of sessions){ if(s.event){ if(!g.has(s.event)) g.set(s.event,[]); g.get(s.event).push(s.date); } }
+            for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
+            return sessions.filter(s=>(s.photoCount||0)>0 && s.date<=TODAY()).map(s=>{
+              const isLocal=!s.source||s.source==="local";const isActive=activeDate===s.date;
+              const ev=evMap.get(s.date);
+              return(<div key={s.date} onClick={()=>loadDate?.(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
+                {ev&&<div style={{fontSize:9,color:"#EF4444",fontWeight:700,marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={`${ev.event} Day ${ev.dayN}`}>🏁 {ev.event} Day {ev.dayN}</div>}
+                <div style={{fontSize:9,color:"#1E3A5A"}}>{s.videoCount||0}v{s.hasLog?" ·log":""}{s.hasXml?" ·ev":""}{s.location?` · ${s.location}`:""}</div>
+              </div>);
+            });
+          })()}
         </div>
         <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
         <div style={{padding:"0 11px 8px"}}>

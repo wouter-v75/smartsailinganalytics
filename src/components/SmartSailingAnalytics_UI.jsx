@@ -1844,7 +1844,7 @@ function UploadTab({role,cloudStatus,onImported}){
           return{...v,startUtc:adjusted,tsSource:result.source};
         }
         if(f.lastModified&&v.duration){const ts=f.lastModified-v.duration*1000 - vidTz*60000;addLog(`✓ ${f.name}: using file modified time (no MP4 metadata)`);return{...v,startUtc:ts,tsSource:"lastmodified"};}
-        addLog(`⚠ ${f.name}: no timestamp — set manually in Library`);
+        addLog(`⚠ ${f.name}: no timestamp — set manually in Videos`);
         return v;
       }));
     });
@@ -2016,7 +2016,7 @@ function UploadTab({role,cloudStatus,onImported}){
     // Navigate to the most relevant date: CSV > XML > earliest video > today
     const primaryDate = csvDate || xmlDate || (dateList.length ? dateList[0] : fallbackDate);
     setSavedDate(primaryDate); setSavedVids(saved);
-    addLog(cloudStatus?.available && perms.canSync ? "Saved. Click Push to Cloud to upload." : "Saved to local storage. Ready in Library.");
+    addLog(cloudStatus?.available && perms.canSync ? "Saved. Click Push to Cloud to upload." : "Saved to local storage. Ready in Videos.");
     setPhase("saved");
     onImported({ date: primaryDate, videos: saved, logData: csvParsed, xmlData: xmlParsed });
   };
@@ -2191,7 +2191,7 @@ function UploadTab({role,cloudStatus,onImported}){
       <div style={{maxWidth:660,margin:"0 auto",display:"flex",flexDirection:"column",gap:14}}>
         {/* Tier explanation */}
         <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"12px 14px",display:"flex",gap:16}}>
-          <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="local"/><span style={{fontSize:11,fontWeight:600,color:"#06B6D4"}}>① Local — instant</span></div><div style={{fontSize:10,color:"#475569"}}>Saved to browser IndexedDB + localStorage. Available in Library immediately. Coach/Admin only.</div></div>
+          <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="local"/><span style={{fontSize:11,fontWeight:600,color:"#06B6D4"}}>① Local — instant</span></div><div style={{fontSize:10,color:"#475569"}}>Saved to browser IndexedDB + localStorage. Available in Videos immediately. Coach/Admin only.</div></div>
           <div style={{width:1,background:"#1E3A5A"}}/>
           <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="cloud"/><span style={{fontSize:11,fontWeight:600,color:"#8B5CF6"}}>② Cloud — background</span></div><div style={{fontSize:10,color:"#475569"}}>Log + events → Bunny Storage. Videos → Bunny Stream (HLS). Accessible to all team roles.</div></div>
         </div>
@@ -2871,7 +2871,7 @@ function AIChatPanel({rows, allVideos}){
         </div>
       )}
       <div style={{display:"flex",gap:6}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!loading&&ask()} placeholder={hasData?"Ask about your sailing data…":"Load a session in Library first"} disabled={!hasData||loading} style={{flex:1,background:"#071624",border:"1px solid #8B5CF640",borderRadius:6,padding:"7px 11px",color:"#E2E8F0",fontSize:11,outline:"none",opacity:hasData?1:0.4}}/>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!loading&&ask()} placeholder={hasData?"Ask about your sailing data…":"Load a session in Videos first"} disabled={!hasData||loading} style={{flex:1,background:"#071624",border:"1px solid #8B5CF640",borderRadius:6,padding:"7px 11px",color:"#E2E8F0",fontSize:11,outline:"none",opacity:hasData?1:0.4}}/>
         <button onClick={ask} disabled={!hasData||loading||!input.trim()} style={{background:loading||!input.trim()?"#1E3A5A":"#8B5CF6",border:"none",borderRadius:6,padding:"7px 14px",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>{loading?"…":"Ask"}</button>
         {messages.length>0&&<button onClick={()=>setMessages([])} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 10px",color:"#475569",cursor:"pointer",fontSize:10}}>Clear</button>}
       </div>
@@ -2989,7 +2989,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
           opacity:0.28,
           smoothFactor:1,
         })
-          .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min<br><span style="font-size:10px;color:#94A3B8">Click to open in Library</span>`,{allowHTML:true})
+          .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min<br><span style="font-size:10px;color:#94A3B8">Click to open in Videos</span>`,{allowHTML:true})
           .addTo(map);
         polyline.on('click',()=>{
           if(onSelectVideoRef.current) onSelectVideoRef.current(vid);
@@ -3312,10 +3312,10 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             </span>
           ) : (
             <span style={{fontSize:10,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px"}}>
-              ⚠ No event file — select session in Library or re-import XML
+              ⚠ No event file — select session in Videos or re-import XML
             </span>
           )}
-          {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — select a session in Library</span>}
+          {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — select a session in Videos</span>}
         </div>
 
         {/* ── Now Playing bar — live instrument data from video ── */}
@@ -3341,7 +3341,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             <div style={{fontSize:13,color:"#475569",marginBottom:6}}>No log data loaded</div>
             <div style={{fontSize:11,color:"#334155",marginBottom:16}}>Select a session in the Library sidebar — click any date to load its log and event data.</div>
             <div style={{display:"flex",gap:8,justifyContent:"center"}}>
-              <button onClick={()=>setActiveTab("library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Library</button>
+              <button onClick={()=>setActiveTab("library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Videos</button>
               <button onClick={()=>setActiveTab("upload")} style={{background:"#1E3A5A",border:"none",borderRadius:8,padding:"8px 20px",color:"#94A3B8",fontWeight:700,cursor:"pointer",fontSize:12}}>Re-import CSV</button>
             </div>
           </div>
@@ -3996,17 +3996,24 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         <button onClick={()=>setView("clips")} style={{background:"none",border:"none",color:"#06B6D4",fontSize:18,cursor:"pointer",padding:"4px 8px 4px 0"}}>←</button>
         <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Sessions</span>
       </div>
-      {sessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
-        const isActive=activeDate===s.date;
-        const isLocal=!s.source||s.source==="local";
-        return(
+      {(()=>{
+        // Day-N within each regatta (same logic as desktop sidebar).
+        const evMap=new Map(); const g=new Map();
+        for(const s of sessions){ if(s.event){ if(!g.has(s.event)) g.set(s.event,[]); g.get(s.event).push(s.date); } }
+        for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
+        return sessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
+          const isActive=activeDate===s.date;
+          const isLocal=!s.source||s.source==="local";
+          const ev=evMap.get(s.date);
+          return(
           <div key={s.date} onClick={()=>{loadDate(s.date);setView("clips");}}
             style={{padding:"14px 16px",borderBottom:"1px solid #0F2030",
               background:isActive?"#0F2A45":"transparent",display:"flex",alignItems:"center",gap:12}}>
-            <div style={{flex:1}}>
+            <div style={{flex:1,minWidth:0}}>
               <div style={{fontSize:14,color:isActive?"#06B6D4":"#E2E8F0",fontWeight:600}}>
                 {s.date===TODAY()?"Today":fmtDate_(s.date)}
               </div>
+              {ev&&<div style={{fontSize:11,color:"#EF4444",fontWeight:700,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>🏁 {ev.event} Day {ev.dayN}</div>}
               <div style={{fontSize:12,color:"#475569",marginTop:2}}>
                 {s.videoCount||0} clips{s.hasLog?" · log":""}{s.hasXml?" · events":""}
                 {s.location?` · ${s.location}`:""}
@@ -4015,8 +4022,9 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
             <SrcBadge source={isLocal?"local":"cloud"}/>
             {isActive&&<span style={{color:"#06B6D4",fontSize:18}}>✓</span>}
           </div>
-        );
-      })}
+          );
+        });
+      })()}
     </div>
   );
 
@@ -5177,8 +5185,10 @@ function SSAApp(){
                     // Fill in the cloud video/photo counts if the local entry lacks them.
                     if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
                     if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
+                    // Campaign event name (regatta) — cloud is the source of truth.
+                    if(s.event!==undefined) existing.event=s.event;
                   }else{
-                    merged.push({date:s.date, source:'supabase', videoCount:s.video_count||0, photoCount:s.photo_count||0});
+                    merged.push({date:s.date, source:'supabase', videoCount:s.video_count||0, photoCount:s.photo_count||0, event:s.event||null});
                   }
                 }
                 return merged.sort((a,b)=>b.date.localeCompare(a.date));
@@ -5800,8 +5810,9 @@ function SSAApp(){
                 if(existing){
                   if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
                   if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
+                  if(s.event!==undefined) existing.event=s.event;
                 }else{
-                  merged.push({date:s.date,source:'supabase',videoCount:s.video_count||0,photoCount:s.photo_count||0});
+                  merged.push({date:s.date,source:'supabase',videoCount:s.video_count||0,photoCount:s.photo_count||0,event:s.event||null});
                 }
               }
               return merged.sort((a,b)=>b.date.localeCompare(a.date));
@@ -5940,7 +5951,7 @@ function SSAApp(){
             if (tab === "squashshots" && !canSeeSquashShotsTab) return false;
             if (tab === "admin" && effectiveRole !== 'admin') return false;
             return true;
-          }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
+          }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab==="library"?"Videos":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
         </nav>
         <div style={{flex:1}}/>
         {canUseAI && (
@@ -5980,13 +5991,25 @@ function SSAApp(){
             <div style={{padding:"12px 11px 6px"}}>
               <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Sessions</div>
               {visibleSessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
-              {visibleSessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
-                const isLocal=!s.source||s.source==="local";const isActive=activeDate===s.date;
-                return(<div key={s.date} onClick={()=>loadDate(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
-                  <div style={{fontSize:9,color:"#1E3A5A"}}>{s.videoCount||0}v{s.hasLog?" ·log":""}{s.hasXml?" ·ev":""}{s.location?` · ${s.location}`:""}</div>
-                </div>);
-              })}
+              {(()=>{
+                // Compute Day N per regatta: group all known sessions by
+                // event, sort each group by date, assign 1..N. Built once
+                // over the full session list so day numbering survives
+                // photo-only or no-video days within the regatta.
+                const evMap=new Map(); // date → {event, dayN}
+                const g=new Map();
+                for(const s of visibleSessions){ if(s.event){ if(!g.has(s.event)) g.set(s.event,[]); g.get(s.event).push(s.date); } }
+                for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
+                return visibleSessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
+                  const isLocal=!s.source||s.source==="local";const isActive=activeDate===s.date;
+                  const ev=evMap.get(s.date);
+                  return(<div key={s.date} onClick={()=>loadDate(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
+                    {ev&&<div style={{fontSize:9,color:"#EF4444",fontWeight:700,marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={`${ev.event} Day ${ev.dayN}`}>🏁 {ev.event} Day {ev.dayN}</div>}
+                    <div style={{fontSize:9,color:"#1E3A5A"}}>{s.videoCount||0}v{s.hasLog?" ·log":""}{s.hasXml?" ·ev":""}{s.location?` · ${s.location}`:""}</div>
+                  </div>);
+                });
+              })()}
             </div>
             <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
             <div style={{padding:"0 11px 8px"}}>

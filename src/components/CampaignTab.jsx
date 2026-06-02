@@ -1948,18 +1948,20 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
 
       {loading ? (
         <div style={{ color: '#475569', fontSize: 13 }}>Loading calendar…</div>
-      ) : sessions.length === 0 ? (
+      ) : sessions.filter((s) => s.date >= today).length === 0 ? (
         <div style={{ color: '#475569', fontSize: 13, textAlign: 'center', padding: 30, border: '1px dashed #1E3A5A', borderRadius: 12 }}>
-          No test days yet.{canEditPlan ? ' Add the first one above.' : ''}
+          No upcoming days planned.{canEditPlan ? ' Add the first one above.' : ''}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {sessions.map((s) => (
+          {/* Plan only shows today and upcoming days — past sessions live in
+              Day / Videos / Photos history, not in the forward planning view. */}
+          {sessions.filter((s) => s.date >= today).map((s) => (
             <DayCard
               key={s.id}
               base={base}
               session={s}
-              isPast={s.date < today}
+              isPast={false}
               // In team scope, write actions (`objective`, `+ Add block`) go
               // to `${base}/...` which is locked to the active boat. To avoid
               // posting to the wrong session, only let the active boat's
