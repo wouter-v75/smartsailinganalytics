@@ -2032,15 +2032,15 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
   // From this we derive both counters; if no event is set anywhere, fall
   // back to counting all future planned training days.
   const isRacingDay = (s) => (s.blocks || []).some((b) => b.block_type === 'racing')
-  // A "training day" only counts when at least one of its blocks is an
-  // on-the-water training/testing block — race-training, technical-testing
-  // or speed-testing with venue='on-water'. Shore/office days, blocks with
-  // no venue set, and days without those block types are excluded.
+  // A "training day" counts when at least one of its blocks is a
+  // race-training, technical-testing or speed-testing block. These three
+  // block types are inherently on-the-water (that's their definition),
+  // so we don't also require venue='on-water' — the block-type filter is
+  // enough. Shore / other / racing-only days and pure dock-or-shed days
+  // are excluded.
   const ON_WATER_TRAINING_TYPES = new Set(['race-training', 'technical-testing', 'speed-testing'])
   const isOnWaterTrainingDay = (s) =>
-    (s.blocks || []).some(
-      (b) => ON_WATER_TRAINING_TYPES.has(b.block_type) && b.venue === 'on-water'
-    )
+    (s.blocks || []).some((b) => ON_WATER_TRAINING_TYPES.has(b.block_type))
   const futureEvents = sessions
     .filter((s) => s.date >= today && isRacingDay(s) && s.event && s.event.trim())
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -2057,15 +2057,16 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
     : sessions.filter((s) => s.date >= today && isOnWaterTrainingDay(s)).length
 
   // "Prep day" = a planned day with at least one block at the dock or in
-  // the shed AND no on-the-water blocks at all. The two counters are
-  // mutually exclusive: any day that also has on-water work lands in the
-  // training counter and is excluded here, so the same calendar day is
-  // never counted twice. Same time window as the training counter.
+  // the shed AND no on-the-water activity at all. The two counters are
+  // mutually exclusive: a training day (block-type-implied on-water) or
+  // a day with any block explicitly tagged venue='on-water' is excluded
+  // here, so the same calendar day is never counted twice.
   const PREP_VENUES = new Set(['dock', 'shed'])
-  const hasOnWaterBlock = (s) =>
+  const hasOnWaterActivity = (s) =>
+    isOnWaterTrainingDay(s) ||
     (s.blocks || []).some((b) => b.venue === 'on-water')
   const isPrepDay = (s) =>
-    !hasOnWaterBlock(s) &&
+    !hasOnWaterActivity(s) &&
     (s.blocks || []).some((b) => PREP_VENUES.has(b.venue))
   const prepDaysToGo = nextEvent
     ? sessions.filter(
