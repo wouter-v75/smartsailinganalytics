@@ -31,7 +31,7 @@ export async function GET(
     .maybeSingle()
   const features = (team?.features as Record<string, unknown>) || {}
 
-  const [{ data: subteams }, { data: myMemberships }] = await Promise.all([
+  const [{ data: subteams }, { data: myMemberships }, { data: meRow }] = await Promise.all([
     supabase
       .from('subteams')
       .select('id, category, key, label, seq, active')
@@ -39,14 +39,31 @@ export async function GET(
       .order('seq', { ascending: true }),
     supabase
       .from('memberships')
-      .select('id')
+      .select('id, role')
       .eq('team_id', params.teamId)
       .eq('user_id', user.id),
+    supabase
+      .from('users')
+      .select('global_role')
+      .eq('id', user.id)
+      .maybeSingle(),
   ])
 
+  // Compute "my sub-teams" — drives the Backlog "My sub-teams" chip and the
+  // ItemForm sub-team picker. Senior roles (admin, team_manager, coach, tl3)
+  // are implicitly members of every active sub-team on the team, so they
+  // can both view and triage everything without having to be assigned to
+  // each one manually.
+  const SENIOR_ROLES = new Set(['team_manager', 'coach', 'tl3'])
+  const isAdmin = meRow?.global_role === 'admin'
+  const isSenior = (myMemberships || []).some((m) => SENIOR_ROLES.has(m.role))
   const membershipIds = (myMemberships || []).map((m) => m.id)
   let mySubteamIds: string[] = []
-  if (membershipIds.length) {
+  if (isAdmin || isSenior) {
+    mySubteamIds = ((subteams as Array<{ id: string; active: boolean }> | null) || [])
+      .filter((s) => s.active !== false)
+      .map((s) => s.id)
+  } else if (membershipIds.length) {
     const { data: links } = await supabase
       .from('membership_subteams')
       .select('subteam_id')
