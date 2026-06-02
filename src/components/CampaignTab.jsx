@@ -331,6 +331,9 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
 
   const visible = items.filter((it) => {
     if (!showDone && (it.status === 'done' || it.status === 'wontfix')) return false
+    // "me"   = items owned by me (regardless of sub-team)
+    // "mine" = items in any of my sub-teams (any owner)
+    if (filterSub === 'me') return meId && it.owner_user_id === meId
     if (filterSub === 'mine') return it.subteam_id && mySubteamIds.includes(it.subteam_id)
     if (filterSub !== 'all') return it.subteam_id === filterSub
     return true
@@ -369,6 +372,7 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
       {/* Filters */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
         {chip('all', 'All')}
+        {meId && chip('me', 'Me')}
         {mySubteamIds.length > 0 && chip('mine', 'My sub-teams')}
         {subteams.map((s) => chip(s.id, s.label))}
         <div style={{ flex: 1 }} />
