@@ -20,7 +20,7 @@ export async function POST(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const body = (await req.json().catch(() => null)) as
-    | { date?: string; objective?: string | null; title?: string | null }
+    | { date?: string; objective?: string | null; title?: string | null; event?: string | null }
     | null
   if (!body?.date || !DATE_RE.test(body.date)) {
     return NextResponse.json({ error: 'valid date (YYYY-MM-DD) required' }, { status: 400 })
@@ -34,9 +34,18 @@ export async function POST(
     .eq('date', body.date)
     .maybeSingle()
 
+  // Normalise event: trim, treat empty string as null. CHECK constraint
+  // caps it at 80 chars (see 0028).
+  const normEvent = (v: string | null | undefined) => {
+    if (v == null) return null
+    const t = String(v).trim()
+    return t ? t.slice(0, 80) : null
+  }
+
   const patch: Record<string, unknown> = {}
   if ('objective' in body) patch.objective = body.objective ?? null
   if ('title' in body) patch.title = body.title ?? null
+  if ('event' in body) patch.event = normEvent(body.event)
 
   if (existing) {
     if (Object.keys(patch).length) {
@@ -57,9 +66,10 @@ export async function POST(
       date: body.date,
       objective: body.objective ?? null,
       title: body.title ?? null,
+      event: normEvent(body.event),
       created_by_user_id: user.id,
     })
-    .select('id, date, objective, title')
+    .select('id, date, objective, title, event')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ session: data })

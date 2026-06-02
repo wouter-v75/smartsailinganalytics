@@ -1837,8 +1837,26 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
   }, [load])
 
   const today = todayStr()
-  const trainingDaysToGo = sessions.filter((s) => s.date >= today).length
-  const daysToGo = targetDate ? Math.max(0, daysBetween(today, targetDate)) : null
+  // A session is a "racing day" if it carries a `racing` block. Multi-day
+  // regattas are just consecutive racing days sharing the same `event` name.
+  // The next event = the soonest racing day with `event` set on/after today.
+  // From this we derive both counters; if no event is set anywhere, fall
+  // back to counting all future planned days.
+  const isRacingDay = (s) => (s.blocks || []).some((b) => b.block_type === 'racing')
+  const futureEvents = sessions
+    .filter((s) => s.date >= today && isRacingDay(s) && s.event && s.event.trim())
+    .sort((a, b) => a.date.localeCompare(b.date))
+  const nextEvent = futureEvents[0] || null
+  const daysToGo = nextEvent
+    ? Math.max(0, daysBetween(today, nextEvent.date))
+    : targetDate
+      ? Math.max(0, daysBetween(today, targetDate))
+      : null
+  const trainingDaysToGo = nextEvent
+    ? sessions.filter(
+        (s) => s.date >= today && s.date < nextEvent.date && !isRacingDay(s)
+      ).length
+    : sessions.filter((s) => s.date >= today && !isRacingDay(s)).length
 
   async function addDays(e) {
     e.preventDefault()
@@ -1866,15 +1884,8 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
     }
   }
 
-  async function saveTarget(date) {
-    const res = await fetch(`/api/teams/${teamId}/campaign/config`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_date: date || null }),
-    })
-    if (res.ok) setTargetDate(date || null)
-    else setErr((await res.json().catch(() => ({}))).error || 'could not save date')
-  }
+  // saveTarget removed — target date is now derived from the next racing
+  // day's event (see Counter logic above).
 
   return (
     <div>
@@ -1887,21 +1898,29 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
           marginBottom: 18,
         }}
       >
-        <Counter big value={daysToGo == null ? '—' : daysToGo} label="Days to go" sub={targetDate ? `to ${fmtDay(targetDate)}` : 'no target set'} />
-        <Counter big value={trainingDaysToGo} label="Training days to go" sub={`${sessions.length} day${sessions.length === 1 ? '' : 's'} planned`} />
+        <Counter
+          big
+          value={daysToGo == null ? '—' : daysToGo}
+          label="Days to go"
+          sub={nextEvent
+            ? `Next Event: ${nextEvent.event} (${fmtDay(nextEvent.date)})`
+            : targetDate
+              ? `to ${fmtDay(targetDate)}`
+              : 'no event set yet'}
+        />
+        <Counter
+          big
+          value={trainingDaysToGo}
+          label="Training days to go"
+          sub={nextEvent
+            ? `before ${fmtDay(nextEvent.date)}`
+            : `${sessions.length} day${sessions.length === 1 ? '' : 's'} planned`}
+        />
       </div>
 
-      {canEditDates && (
-        <div style={{ marginBottom: 16, fontSize: 12, color: '#64748B', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span>Campaign target date:</span>
-          <input
-            type="date"
-            defaultValue={targetDate || ''}
-            onChange={(e) => saveTarget(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-      )}
+      {/* Campaign target date is now derived from the next racing day with
+          an event set (see counters above). Add a racing block to a day and
+          enter the regatta name there. */}
 
       {/* Legend */}
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 14, fontSize: 11, color: '#64748B' }}>
@@ -1981,10 +2000,15 @@ function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, 
   const [objective, setObjective] = useState(session.objective || '')
   const [objDirty, setObjDirty] = useState(false)
   const [adding, setAdding] = useState(false)
+  // Event (regatta name) for racing days. Persisted via /sessions POST.
+  const [event, setEvent] = useState(session.event || '')
+  const [eventDirty, setEventDirty] = useState(false)
+  useEffect(() => { setEvent(session.event || ''); setEventDirty(false) }, [session.event])
 
   const visibleBlocks = (session.blocks || []).filter(
     (b) => canSeeTesting || !BLOCK_META[b.block_type]?.testing
   )
+  const isRacingDay = (session.blocks || []).some((b) => b.block_type === 'racing')
 
   async function saveObjective() {
     await fetch(`${base}/sessions`, {
@@ -1993,6 +2017,16 @@ function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, 
       body: JSON.stringify({ date: session.date, objective }),
     })
     setObjDirty(false)
+    onChanged()
+  }
+
+  async function saveEvent() {
+    await fetch(`${base}/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: session.date, event: event.trim() ? event.trim() : null }),
+    })
+    setEventDirty(false)
     onChanged()
   }
 
@@ -2013,8 +2047,31 @@ function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, 
             {session.boat_name}
           </span>
         )}
+        {/* Event chip in view mode — only meaningful for racing days. */}
+        {isRacingDay && session.event && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#000', background: BLOCK_META.racing.c, borderRadius: 4, padding: '1px 6px', letterSpacing: 0.4 }}>
+            🏁 {session.event}
+          </span>
+        )}
         {isPast && <span style={{ fontSize: 10, color: '#475569' }}>past</span>}
       </div>
+
+      {/* Event editor — only racing days have an Event field (the regatta
+          name). Multi-day regattas are entered as the same event name on
+          each consecutive racing day; the Plan derives "Next Event" from
+          the earliest future racing day with this set. */}
+      {canEditPlan && isRacingDay && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+          <input
+            value={event}
+            onChange={(e) => { setEvent(e.target.value); setEventDirty(true) }}
+            placeholder="Event / regatta name (e.g. Cowes Week)…"
+            maxLength={80}
+            style={{ ...inputStyle, flex: 1, borderColor: BLOCK_META.racing.c + '88' }}
+          />
+          {eventDirty && <button onClick={saveEvent} style={btnSmall}>Save</button>}
+        </div>
+      )}
 
       {/* Objective */}
       {canEditPlan ? (
