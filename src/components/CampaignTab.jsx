@@ -1248,14 +1248,19 @@ function OnWaterCard({ base, items, allDays, sessionId, subteams = [], canSeeTes
   }
   const move = () => moveItems(picked, targetDay)
 
-  // Drag-and-drop. The dragged set = the explicit drag target, unioned with
-  // any currently checked items. Drop lands on today's session.
+  // Drag-and-drop. On mobile (phones) the long-press-to-drag gesture is
+  // unreliable and the affordance is hidden — touch users plan via the
+  // checkbox + "Plan for today" button below. On tablets / desktop the
+  // native HTML5 drag works fine (iPadOS Safari + Android Chrome both
+  // support it), so we keep it. `isMobile` distinguishes phones because
+  // tablets are intentionally not classified as mobile in useIsMobile.
+  const dragEnabled = canMoveTests && !isMobile
   const onDragStart = (e, id) => {
     e.dataTransfer.setData('text/plain', id)
     e.dataTransfer.effectAllowed = 'move'
   }
   const onDragOverSelected = (e) => {
-    if (!canMoveTests || !sessionId) return
+    if (!dragEnabled || !sessionId) return
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
     if (!dropHover) setDropHover(true)
@@ -1263,14 +1268,14 @@ function OnWaterCard({ base, items, allDays, sessionId, subteams = [], canSeeTes
   const onDropSelected = (e) => {
     e.preventDefault()
     setDropHover(false)
-    if (!canMoveTests || !sessionId) return
+    if (!dragEnabled || !sessionId) return
     const dragged = e.dataTransfer.getData('text/plain')
     const ids = new Set(picked)
     if (dragged) ids.add(dragged)
     if (ids.size) moveItems(ids, sessionId)
   }
 
-  const dropZoneStyle = canMoveTests && sessionId ? {
+  const dropZoneStyle = dragEnabled && sessionId ? {
     border: `1px dashed ${dropHover ? '#06B6D4' : '#1E3A5A'}`,
     background: dropHover ? '#0F2A45' : 'transparent',
     borderRadius: 8,
@@ -1282,7 +1287,9 @@ function OnWaterCard({ base, items, allDays, sessionId, subteams = [], canSeeTes
     <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
       <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>On the water — tests & tasks</div>
 
-      {/* SELECTED (TL1+) — TL3+ can drop dragged candidates here to plan them for today */}
+      {/* SELECTED (TL1+) — on tablet/desktop, TL3+ can drop dragged candidates
+          here to plan them for today. Phones use the checkbox + Plan-for-today
+          button below instead (drag affordance hidden). */}
       <div
         onDragOver={onDragOverSelected}
         onDragLeave={() => setDropHover(false)}
@@ -1291,7 +1298,7 @@ function OnWaterCard({ base, items, allDays, sessionId, subteams = [], canSeeTes
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>Selected</span>
-          {canMoveTests && sessionId && (
+          {dragEnabled && sessionId && (
             <span style={{ fontSize: 10, color: dropHover ? '#06B6D4' : '#475569' }}>
               {dropHover ? '↓ drop to plan for today' : 'drag items here to plan for today'}
             </span>
@@ -1359,7 +1366,7 @@ function OnWaterCard({ base, items, allDays, sessionId, subteams = [], canSeeTes
                     onToggle={toggle}
                   />
                 )
-                if (!canMoveTests) return row
+                if (!dragEnabled) return row
                 return (
                   <div
                     key={it.id}
@@ -1377,6 +1384,18 @@ function OnWaterCard({ base, items, allDays, sessionId, subteams = [], canSeeTes
           {canMoveTests && picked.size > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11, color: '#94A3B8' }}>Move {picked.size} to</span>
+              {/* One-tap "plan for today" — the common case, especially on
+                  phones where drag isn't offered. */}
+              {sessionId && (
+                <button
+                  type="button"
+                  onClick={() => moveItems(new Set(picked), sessionId)}
+                  disabled={moving}
+                  style={btnSmall}
+                  title="Set planned day to today"
+                >{moving ? 'Saving…' : 'Plan for today'}</button>
+              )}
+              <span style={{ fontSize: 10, color: '#475569' }}>or</span>
               <select value={targetDay} onChange={(e) => setTargetDay(e.target.value)} style={{ ...inputStyle, fontSize: 12 }}>
                 {sessionId && <option value={sessionId}>Today ({allDays.find((d) => d.id === sessionId) ? fmtDay(allDays.find((d) => d.id === sessionId).date) : 'this day'})</option>}
                 {allDays.filter((d) => d.id !== sessionId).map((d) => <option key={d.id} value={d.id}>{fmtDay(d.date)}</option>)}
