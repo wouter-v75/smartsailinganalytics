@@ -1817,6 +1817,9 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
   const [targetDate, setTargetDate] = useState(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
+  // Picked block types for the "+ Add block" creator. Empty means "create the
+  // day(s) only, no blocks yet" — same as the legacy add-training-days flow.
+  const [pickedBlockTypes, setPickedBlockTypes] = useState(new Set())
   const [rangeStart, setRangeStart] = useState('')
   const [rangeEnd, setRangeEnd] = useState('')
   const [addingDays, setAddingDays] = useState(false)
@@ -1876,6 +1879,10 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
     setAddingDays(true)
     setErr(null)
     try {
+      // For each date in the range: upsert the session (returns its id),
+      // then POST one block per picked type. Empty pick set just creates
+      // the day with no blocks — handy for placeholder planning.
+      const typesInOrder = BLOCK_ORDER.filter((t) => pickedBlockTypes.has(t))
       for (const date of dates) {
         const res = await fetch(`${base}/sessions`, {
           method: 'POST',
@@ -1886,9 +1893,27 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
           setErr((await res.json().catch(() => ({}))).error || `could not add ${date}`)
           break
         }
+        const { session } = await res.json().catch(() => ({}))
+        const sessionId = session?.id
+        if (!sessionId || typesInOrder.length === 0) continue
+        // Append blocks at the end of the day's existing block list.
+        let seq = 0
+        for (const bt of typesInOrder) {
+          const bres = await fetch(`${base}/blocks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, block_type: bt, seq }),
+          })
+          if (!bres.ok) {
+            setErr((await bres.json().catch(() => ({}))).error || `could not add block to ${date}`)
+            break
+          }
+          seq++
+        }
       }
       setRangeStart('')
       setRangeEnd('')
+      setPickedBlockTypes(new Set())
       load()
     } finally {
       setAddingDays(false)
@@ -1943,14 +1968,40 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
         ))}
       </div>
 
-      {/* Add day */}
+      {/* Add day(s) + optionally pre-populate with block types. Each picked
+          type becomes one block on every date in the range, in the order
+          shown (BLOCK_ORDER). Empty pick = create the day(s) only. */}
       {canEditPlan && (
         <form onSubmit={addDays} style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <input type="date" value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} style={inputStyle} title="From" />
           <span style={{ color: '#475569', fontSize: 12 }}>to</span>
           <input type="date" value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} style={inputStyle} title="To (optional — leave blank for a single day)" />
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }} title="Pick one or more block types to add to each day">
+            {BLOCK_ORDER.filter((t) => canSeeTesting || !BLOCK_META[t].testing).map((t) => {
+              const on = pickedBlockTypes.has(t)
+              const meta = BLOCK_META[t]
+              return (
+                <button
+                  type="button"
+                  key={t}
+                  onClick={() => setPickedBlockTypes((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(t)) next.delete(t); else next.add(t)
+                    return next
+                  })}
+                  style={{
+                    fontSize: 11, borderRadius: 999, padding: '4px 10px', cursor: 'pointer',
+                    border: `1px solid ${on ? meta.c : '#1E3A5A'}`,
+                    background: on ? meta.c : 'transparent',
+                    color: on ? '#000' : '#94A3B8',
+                    fontWeight: on ? 700 : 500,
+                  }}
+                >{meta.label}</button>
+              )
+            })}
+          </div>
           <button type="submit" disabled={!rangeStart || addingDays} style={btnPrimary}>
-            {addingDays ? 'Adding…' : '+ Add training days'}
+            {addingDays ? 'Adding…' : '+ Add block'}
           </button>
         </form>
       )}
