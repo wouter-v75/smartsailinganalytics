@@ -10,7 +10,7 @@ import { requireTeamManager } from '../../../../../../lib/supabase/admin-guard'
 import { generateInviteToken } from '../../../../../../lib/invitation-token'
 import { sendInviteEmail } from '../../../../../../lib/email'
 
-const ROLES = ['team_manager', 'coach', 'tl1', 'tl2', 'consultant', 'guest'] as const
+const ROLES = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
 
 const DEFAULT_OPEN_MAX_USES = 25

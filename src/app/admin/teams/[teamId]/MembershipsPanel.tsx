@@ -227,37 +227,131 @@ export default function MembershipsPanel({
             No memberships yet.
           </div>
         ) : (
-          memberships.map((m) => {
-            const u = firstUser(m.users)
-            return (
-              <div
-                key={m.id}
-                className="flex items-center justify-between px-4 py-3"
-              >
-                <div>
-                  <div className="font-medium text-slate-900">
-                    {u?.name || '(unknown)'}{' '}
-                    <span className="text-xs text-slate-500 ml-2">
-                      {m.role}
-                    </span>
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    {u?.email} · {boatNameOf(m.boat_id)}
-                    {m.valid_from && ` · from ${m.valid_from.slice(0, 10)}`}
-                    {m.valid_to && ` to ${m.valid_to.slice(0, 10)}`}
-                  </div>
-                </div>
-                <button
-                  onClick={() => destroy(m.id)}
-                  className="text-sm text-red-600 hover:underline"
-                >
-                  Revoke
-                </button>
-              </div>
-            )
-          })
+          memberships.map((m) => (
+            <MembershipListRow
+              key={m.id}
+              membership={m}
+              boatName={boatNameOf(m.boat_id)}
+              teamId={teamId}
+              onChanged={() => router.refresh()}
+              onRevoke={() => destroy(m.id)}
+            />
+          ))
         )}
       </div>
     </section>
+  )
+}
+
+// One row: name + role, with an Edit affordance that swaps the role into a
+// dropdown. Saves via PATCH on the existing memberships/[id] route, which
+// already enforces requireTeamManager (admin OR team_manager).
+function MembershipListRow({
+  membership,
+  boatName,
+  teamId,
+  onChanged,
+  onRevoke,
+}: {
+  membership: MembershipRow
+  boatName: string
+  teamId: string
+  onChanged: () => void
+  onRevoke: () => void
+}) {
+  const u = firstUser(membership.users)
+  const [editing, setEditing] = useState(false)
+  const [role, setRole] = useState<Role>(membership.role as Role)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function save() {
+    if (role === membership.role) { setEditing(false); return }
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await fetch(
+        `/api/admin/teams/${teamId}/memberships/${membership.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role }),
+        }
+      )
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        setErr(j.error || `failed (${res.status})`)
+        return
+      }
+      setEditing(false)
+      onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="font-medium text-slate-900 flex items-center gap-2 flex-wrap">
+          {u?.name || '(unknown)'}
+          {editing ? (
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as Role)}
+              className="rounded border border-slate-300 bg-white text-slate-900 px-2 py-0.5 text-xs"
+            >
+              {ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-xs text-slate-500">{membership.role}</span>
+          )}
+        </div>
+        <div className="text-xs text-slate-500">
+          {u?.email} · {boatName}
+          {membership.valid_from && ` · from ${membership.valid_from.slice(0, 10)}`}
+          {membership.valid_to && ` to ${membership.valid_to.slice(0, 10)}`}
+        </div>
+        {err && <div className="text-xs text-red-600 mt-1">{err}</div>}
+      </div>
+      <div className="flex gap-2 shrink-0">
+        {editing ? (
+          <>
+            <button
+              onClick={save}
+              disabled={busy}
+              className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-1.5 text-sm font-medium"
+            >
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={() => { setRole(membership.role as Role); setEditing(false); setErr(null) }}
+              className="rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 px-3 py-1.5 text-sm"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => setEditing(true)}
+              className="text-sm text-blue-600 hover:underline"
+            >
+              Edit
+            </button>
+            <button
+              onClick={onRevoke}
+              className="text-sm text-red-600 hover:underline"
+            >
+              Revoke
+            </button>
+          </>
+        )}
+      </div>
+    </div>
   )
 }

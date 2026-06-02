@@ -8,8 +8,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import QRCodeSVG from '../../../../components/QRCodeSVG'
 
-type Role = 'team_manager' | 'coach' | 'tl2' | 'tl1' | 'consultant' | 'guest'
-const ROLES: Role[] = ['team_manager', 'coach', 'tl2', 'tl1', 'consultant', 'guest']
+type Role = 'team_manager' | 'coach' | 'tl3' | 'tl2' | 'tl1' | 'consultant' | 'guest'
+const ROLES: Role[] = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'consultant', 'guest']
 
 interface Invitation {
   id: string
