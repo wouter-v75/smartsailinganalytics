@@ -190,28 +190,40 @@ export default function SubteamsPanel({
           memberships.map((m) => {
             const u = firstUser(m.users)
             const set = links[m.id] || new Set<string>()
+            // Senior roles (team_manager / coach / tl3) are implicit members
+            // of every sub-team — the campaign config endpoint expands their
+            // `mySubteamIds` to the full active list, so the chips on this
+            // row should reflect that automatically. We render them as ✓ on
+            // and disable click so admins don't try to "remove" something
+            // that isn't really stored.
+            const isSenior = m.role === 'team_manager' || m.role === 'coach' || m.role === 'tl3'
             return (
               <div key={m.id} className="px-4 py-3">
-                <div className="mb-2">
+                <div className="mb-2 flex items-center gap-2 flex-wrap">
                   <span className="font-medium text-slate-900">
                     {u?.name || '(unknown)'}
                   </span>
-                  <span className="text-xs text-slate-500 ml-2">{m.role}</span>
+                  <span className="text-xs text-slate-500">{m.role}</span>
+                  {isSenior && (
+                    <span className="text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 bg-slate-100 text-slate-600 border border-slate-200">
+                      all sub-teams (automatic)
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {activeSubteams.map((s) => {
-                    const on = set.has(s.id)
+                    const on = isSenior || set.has(s.id)
                     const key = `${m.id}:${s.id}`
                     const busy = pending.has(key)
                     return (
                       <button
                         key={s.id}
-                        onClick={() => toggle(m.id, s)}
-                        disabled={busy}
+                        onClick={() => { if (!isSenior) toggle(m.id, s) }}
+                        disabled={busy || isSenior}
                         className={`text-xs rounded-full border px-2.5 py-1 transition ${
                           on ? CAT[s.category].on : CAT[s.category].off
-                        } ${busy ? 'opacity-50' : ''}`}
-                        title={CAT[s.category].label}
+                        } ${busy ? 'opacity-50' : ''} ${isSenior ? 'cursor-not-allowed' : ''}`}
+                        title={isSenior ? `${CAT[s.category].label} — automatic for ${m.role}` : CAT[s.category].label}
                       >
                         {on ? '✓ ' : ''}
                         {s.label}
