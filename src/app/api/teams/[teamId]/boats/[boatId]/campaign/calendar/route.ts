@@ -27,7 +27,7 @@ export async function GET(
   let q = supabase
     .from('sessions')
     .select(
-      'id, date, title, objective, event, tz_offset_minutes, boat_id, ' +
+      'id, date, title, objective, event, location, tz_offset_minutes, boat_id, ' +
         'boats(name), ' +
         'session_blocks(id, block_type, label, seq, start_min, end_min, objective, venue)'
     )

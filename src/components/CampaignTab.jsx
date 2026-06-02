@@ -148,8 +148,9 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
       {!consultantOnly && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           {subTab('plan', 'Plan')}
-          {subTab('backlog', 'Backlog')}
+          {subTab('regattas', 'Regattas')}
           {subTab('day', 'Day')}
+          {subTab('backlog', 'Backlog')}
           <div style={{ flex: 1 }} />
           {/* Boat selector — visible whenever the user can see >1 boat on the
               team. The Plan is team-wide regardless of selection; Day and
@@ -181,6 +182,16 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
           canEditPlan={canEditPlan}
           canEditDates={canEditDates}
           canSeeTesting={canSeeTesting}
+          isMobile={isMobile}
+          boats={boats}
+          onOpenDay={onOpenDay}
+        />
+      )}
+      {effSub === 'regattas' && (
+        <RegattasView
+          teamId={teamId}
+          boatId={boatId}
+          canEditPlan={canEditPlan}
           isMobile={isMobile}
           boats={boats}
           onOpenDay={onOpenDay}
@@ -2202,6 +2213,385 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// Regattas — derives a list of regattas from sessions by grouping contiguous
+// dates that share the same `event` name. TL3+ (canEditPlan) get a "+ Regatta"
+// inline form and the ability to upload event documents (NOR/SI/course
+// notice) keyed to the regatta's anchor day. Everyone else sees a read-only
+// listing.
+//
+// Two-way binding with Plan: regattas write through to the same
+// `sessions.event` / `sessions.location` columns the Plan calendar and Day
+// view use, so adding a regatta here makes racing days appear in Plan and
+// the event chip light up in Day; conversely typing an event in Plan's
+// DayCard groups that day into a regatta here.
+const REGATTA_DOC_KIND = 'regatta'
+function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, onOpenDay }) {
+  const [sessions, setSessions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState(null)
+  const [adding, setAdding] = useState(false)
+
+  const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
+  const showBoatChips = (boats || []).length > 1
+
+  const load = useCallback(async () => {
+    setErr(null)
+    try {
+      // Team-scoped — regattas span the whole team, not just one boat.
+      const res = await fetch(`${base}/calendar?scope=team`)
+      if (!res.ok) {
+        setErr((await res.json().catch(() => ({}))).error || `failed (${res.status})`)
+        return
+      }
+      const j = await res.json()
+      setSessions(j.sessions || [])
+    } finally {
+      setLoading(false)
+    }
+  }, [base])
+  useEffect(() => { load() }, [load])
+
+  // ── Group sessions into regattas ───────────────────────────────────────
+  // A "regatta" = consecutive racing days on the same boat sharing an
+  // event name. Sorted by date, the earliest day is the anchor (where
+  // documents are filed; the location is read from there too if not
+  // overridden elsewhere). Gaps of more than a day break a regatta.
+  const today = todayStr()
+  const regattas = (() => {
+    const racing = sessions
+      .filter((s) => s.event && s.event.trim() && (s.blocks || []).some((b) => b.block_type === 'racing'))
+      .slice()
+      .sort((a, b) => (a.boat_id || '').localeCompare(b.boat_id || '') || a.date.localeCompare(b.date))
+    const groups = []
+    for (const s of racing) {
+      const prev = groups[groups.length - 1]
+      const sameAsPrev = prev && prev.boat_id === s.boat_id && prev.event === s.event &&
+        daysBetween(prev.dateTo, s.date) <= 1
+      if (sameAsPrev) {
+        prev.dateTo = s.date
+        prev.sessions.push(s)
+        if (s.location && !prev.location) prev.location = s.location
+      } else {
+        groups.push({
+          key: `${s.boat_id}|${s.event}|${s.date}`,
+          boat_id: s.boat_id,
+          boat_name: s.boat_name,
+          event: s.event,
+          location: s.location || null,
+          dateFrom: s.date,
+          dateTo: s.date,
+          sessions: [s],
+        })
+      }
+    }
+    // Most relevant first: upcoming/ongoing before past.
+    return groups.sort((a, b) => {
+      const aOver = a.dateTo < today
+      const bOver = b.dateTo < today
+      if (aOver !== bOver) return aOver ? 1 : -1
+      return b.dateFrom.localeCompare(a.dateFrom)
+    })
+  })()
+
+  async function createRegatta({ dateFrom, dateTo, name, location }) {
+    const dates = datesInRange(dateFrom, dateTo)
+    if (dates.length === 0) throw new Error('pick a valid date range')
+    const trimName = name.trim().slice(0, 80)
+    const trimLoc = (location || '').trim().slice(0, 80) || null
+    for (const date of dates) {
+      // Upsert session with event + location.
+      const r = await fetch(`${base}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, event: trimName, location: trimLoc }),
+      })
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `could not save ${date}`)
+      const j = await r.json().catch(() => ({}))
+      const sessionId = j?.session?.id
+      // Ensure each day has a racing block (so PlanView's racing-day
+      // detector picks it up and Day/Backlog filters work). Skip if the
+      // day already has one — check the latest sessions copy.
+      const existing = sessions.find((s) => s.date === date && s.boat_id === boatId)
+      const hasRacing = (existing?.blocks || []).some((b) => b.block_type === 'racing')
+      if (sessionId && !hasRacing) {
+        await fetch(`${base}/blocks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, block_type: 'racing', seq: 0 }),
+        }).catch(() => {})
+      }
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, color: '#94A3B8' }}>
+          {regattas.length === 0
+            ? 'No regattas yet.'
+            : `${regattas.length} regatta${regattas.length === 1 ? '' : 's'} on the calendar.`}
+        </span>
+        <div style={{ flex: 1 }} />
+        {canEditPlan && !adding && (
+          <button onClick={() => setAdding(true)} style={btnPrimary}>+ Regatta</button>
+        )}
+      </div>
+
+      {adding && (
+        <RegattaForm
+          onCancel={() => setAdding(false)}
+          onSubmit={async (payload) => {
+            try {
+              await createRegatta(payload)
+              setAdding(false)
+              await load()
+            } catch (e) { throw e }
+          }}
+        />
+      )}
+
+      {err && <div style={{ color: '#EF4444', fontSize: 13, marginBottom: 10 }}>{err}</div>}
+
+      {loading ? (
+        <div style={{ color: '#475569', fontSize: 13 }}>Loading regattas…</div>
+      ) : regattas.length === 0 ? (
+        <div style={{ color: '#475569', fontSize: 13, textAlign: 'center', padding: 30, border: '1px dashed #1E3A5A', borderRadius: 12 }}>
+          {canEditPlan ? 'Add a regatta to populate the calendar with racing days.' : 'No regattas to show.'}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {regattas.map((r) => (
+            <RegattaCard
+              key={r.key}
+              regatta={r}
+              base={base}
+              canEdit={canEditPlan && r.boat_id === boatId}
+              isMobile={isMobile}
+              showBoatChip={showBoatChips}
+              onChanged={load}
+              onOpenDay={onOpenDay}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RegattaForm({ initial, onSubmit, onCancel }) {
+  const [dateFrom, setDateFrom] = useState(initial?.dateFrom || '')
+  const [dateTo, setDateTo] = useState(initial?.dateTo || '')
+  const [name, setName] = useState(initial?.event || '')
+  const [location, setLocation] = useState(initial?.location || '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  async function submit(e) {
+    e.preventDefault()
+    if (!dateFrom || !name.trim()) return
+    setBusy(true); setErr(null)
+    try {
+      await onSubmit({ dateFrom, dateTo: dateTo || dateFrom, name, location })
+    } catch (e2) {
+      setErr(e2?.message || 'could not save')
+    } finally { setBusy(false) }
+  }
+  return (
+    <form onSubmit={submit} style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} title="From" required />
+        <span style={{ color: '#475569', fontSize: 12 }}>to</span>
+        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} title="To (leave blank for a single day)" />
+      </div>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Regatta name (e.g. Maxi Worlds)" maxLength={80} style={{ ...inputStyle, fontSize: 14 }} required />
+      <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Location (e.g. Porto Cervo)" maxLength={80} style={inputStyle} />
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button type="submit" disabled={busy || !dateFrom || !name.trim()} style={btnPrimary}>{busy ? 'Saving…' : 'Save regatta'}</button>
+        <button type="button" onClick={onCancel} style={btnGhost}>Cancel</button>
+        {err && <span style={{ color: '#EF4444', fontSize: 12, alignSelf: 'center' }}>{err}</span>}
+      </div>
+    </form>
+  )
+}
+
+function RegattaCard({ regatta, base, canEdit, isMobile, showBoatChip, onChanged, onOpenDay }) {
+  const [editing, setEditing] = useState(false)
+  const [docs, setDocs] = useState([])
+  const [docsLoaded, setDocsLoaded] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [err, setErr] = useState(null)
+
+  // Documents are anchored to the regatta's first day. Loaded lazily on
+  // first render so the list doesn't fire N queries for N regattas all at
+  // once when the tab opens.
+  const loadDocs = useCallback(async () => {
+    try {
+      const res = await fetch(`${base}/attachments?date=${regatta.dateFrom}&kind=${REGATTA_DOC_KIND}`)
+      if (!res.ok) { setErr('could not load docs'); return }
+      const j = await res.json()
+      setDocs(j.attachments || [])
+    } finally { setDocsLoaded(true) }
+  }, [base, regatta.dateFrom])
+  useEffect(() => { loadDocs() }, [loadDocs])
+
+  async function onPickFile(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setUploading(true); setErr(null)
+    try {
+      const key = `campaign/regattas/${regatta.dateFrom}/${Date.now()}-${safeName(file.name)}`
+      await uploadBlobToStorage({ key, blob: file, contentType: file.type })
+      const res = await fetch(`${base}/attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: regatta.dateFrom, kind: REGATTA_DOC_KIND, name: file.name, key, bytes: file.size, content_type: file.type }),
+      })
+      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not register file'); return }
+      loadDocs()
+    } catch (e2) {
+      setErr(e2?.message || 'upload failed')
+    } finally { setUploading(false) }
+  }
+
+  async function removeDoc(id) {
+    if (!confirm('Remove this document?')) return
+    await fetch(`${base}/attachments`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    })
+    loadDocs()
+  }
+
+  async function deleteRegatta() {
+    if (!confirm(`Remove regatta "${regatta.event}"? Each day's event + location will be cleared but the session itself stays.`)) return
+    for (const s of regatta.sessions) {
+      await fetch(`${base}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: s.date, event: null, location: null }),
+      }).catch(() => {})
+    }
+    onChanged()
+  }
+
+  if (editing) {
+    return (
+      <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
+        <RegattaForm
+          initial={regatta}
+          onCancel={() => setEditing(false)}
+          onSubmit={async (payload) => {
+            // Apply the new name/location to every day in the range. If
+            // dates changed, days that fell out keep the OLD event name
+            // unless we explicitly clear them — easier to handle by
+            // clearing the previous range first.
+            for (const s of regatta.sessions) {
+              await fetch(`${base}/sessions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date: s.date, event: null, location: null }),
+              }).catch(() => {})
+            }
+            const dates = datesInRange(payload.dateFrom, payload.dateTo)
+            for (const date of dates) {
+              await fetch(`${base}/sessions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  date,
+                  event: payload.name.trim().slice(0, 80),
+                  location: (payload.location || '').trim().slice(0, 80) || null,
+                }),
+              }).catch(() => {})
+            }
+            setEditing(false)
+            onChanged()
+          }}
+        />
+      </div>
+    )
+  }
+
+  const days = regatta.sessions.length
+  const past = regatta.dateTo < todayStr()
+  return (
+    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, opacity: past ? 0.8 : 1 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 16, fontWeight: 800, color: '#000', background: BLOCK_META.racing.c, borderRadius: 5, padding: '2px 9px' }}>
+          🏁 {regatta.event}
+        </span>
+        {regatta.location && <span style={{ fontSize: 13, color: '#E2E8F0' }}>· {regatta.location}</span>}
+        {showBoatChip && regatta.boat_name && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#7DD3FC', background: '#0F2A45', borderRadius: 4, padding: '1px 6px', letterSpacing: 0.4 }}>
+            {regatta.boat_name}
+          </span>
+        )}
+        {past && <span style={{ fontSize: 10, color: '#475569' }}>past</span>}
+        <div style={{ flex: 1 }} />
+        {canEdit && (
+          <>
+            <button onClick={() => setEditing(true)} style={btnGhost}>Edit</button>
+            <button onClick={deleteRegatta} style={{ ...btnGhost, color: '#EF4444' }}>Remove</button>
+          </>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: '#94A3B8', marginBottom: 10 }}>
+        {regatta.dateFrom === regatta.dateTo
+          ? fmtDay(regatta.dateFrom)
+          : `${fmtDay(regatta.dateFrom)} → ${fmtDay(regatta.dateTo)} (${days} day${days === 1 ? '' : 's'})`}
+      </div>
+
+      {/* Per-day chips — quick Day-details access. */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
+        {regatta.sessions.map((s, i) => (
+          <button
+            key={s.id}
+            onClick={() => onOpenDay && onOpenDay(s.date)}
+            title={`Open Day ${i + 1} (${fmtDay(s.date)})`}
+            style={{ fontSize: 10, borderRadius: 4, padding: '2px 6px', background: '#0F2A45', border: '1px solid #1E3A5A', color: '#7DD3FC', cursor: 'pointer' }}
+          >Day {i + 1}</button>
+        ))}
+      </div>
+
+      {/* Documents */}
+      <div style={{ borderTop: '1px solid #1E3A5A', paddingTop: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>Event documents</span>
+          {canEdit && (
+            <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
+              {uploading ? 'Uploading…' : '+ Upload PDF'}
+              <input type="file" accept="application/pdf,image/*" onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
+            </label>
+          )}
+        </div>
+        {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 6 }}>{err}</div>}
+        {!docsLoaded ? (
+          <div style={{ fontSize: 11, color: '#475569' }}>Loading…</div>
+        ) : docs.length === 0 ? (
+          <div style={{ fontSize: 12, color: '#475569' }}>No documents yet.{canEdit ? ' Upload the NOR / SI / course notice as PDFs.' : ''}</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {docs.map((d) => (
+              <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderRadius: 6, padding: '6px 9px' }}>
+                <span style={{ fontSize: 13 }}>📄</span>
+                {d.url ? (
+                  <a href={d.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#06B6D4', textDecoration: 'none', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</a>
+                ) : (
+                  <span style={{ fontSize: 12, color: '#94A3B8', flex: 1 }}>{d.name}</span>
+                )}
+                {canEdit && (
+                  <button onClick={() => removeDoc(d.id)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>✕</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

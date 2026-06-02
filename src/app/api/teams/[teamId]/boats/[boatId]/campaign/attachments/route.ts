@@ -13,7 +13,7 @@ import { getServerSupabase } from '@/lib/supabase/server'
 import { signBunnyUrl } from '@/lib/bunny-signed-url'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-const KINDS = ['weather', 'debrief', 'other']
+const KINDS = ['weather', 'debrief', 'regatta', 'other']
 
 async function findSessionId(
   supabase: ReturnType<typeof getServerSupabase>,
