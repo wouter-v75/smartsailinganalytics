@@ -213,8 +213,10 @@ const CAT_COLOR = { racing: '#1D9E75', technical: '#F59E0B', 'whole-team': '#8B5
 const KIND_LABEL = { action: 'Action', fmea: 'FMEA', task: 'Task', test: 'Test', training: 'Training', deliverable: 'Deliverable', milestone: 'Milestone' }
 // Kinds offered when creating an item (existing action/deliverable/milestone stay valid for old rows).
 const KIND_ADD_OPTIONS = [['task', 'Task'], ['test', 'Test'], ['training', 'Training'], ['fmea', 'FMEA']]
-const VENUES = [['on-water', 'On the water'], ['dock', 'Dock'], ['shed', 'Shed']]
-const VENUE_LABEL = { 'on-water': 'On the water', dock: 'Dock', shed: 'Shed' }
+// "Location" in the UI — the DB column is still called `venue` for stability.
+// Where the work happens; office covers desk / planning / writeup days.
+const VENUES = [['on-water', 'On the water'], ['dock', 'Dock'], ['shed', 'Shed'], ['office', 'Office']]
+const VENUE_LABEL = { 'on-water': 'On the water', dock: 'Dock', shed: 'Shed', office: 'Office' }
 const PRIO_COLOR = { 1: '#EF4444', 2: '#F97316', 3: '#F59E0B', 4: '#64748B', 5: '#475569' }
 const ANSWER_META = {
   unanswered: { label: 'Not tested', c: '#64748B' },
@@ -428,13 +430,20 @@ function BacklogView({ teamId, boatId, role, config, canEditPlan, isMobile, high
 }
 
 function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], onAddVocabTag, members = [], days = [], meId, subteams = [], mySubteamIds = [], highlight, onPatch, onDelete, showBoatChip }) {
+  // Hooks must run in the same order on every render — keep them all above
+  // any conditional return. Switching to edit mode swaps the rendered tree
+  // but the hook order is preserved here.
   const cardRef = useRef(null)
   const [editing, setEditing] = useState(false)
+  const [pct, setPct] = useState(item.progress_pct ?? 0)
+  const [showTagPicker, setShowTagPicker] = useState(false)
+  const [tagInput, setTagInput] = useState('')
   useEffect(() => {
     if (highlight && cardRef.current) {
       try { cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' }) } catch { /* ignore */ }
     }
   }, [highlight])
+  useEffect(() => { setPct(item.progress_pct ?? 0) }, [item.progress_pct])
 
   if (editing) {
     return (
@@ -461,10 +470,6 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
   const isFmea = item.kind === 'fmea'
   const meta = item.meta || {}
   const rpn = isFmea ? fmeaRpn(meta) : 0
-  const [pct, setPct] = useState(item.progress_pct ?? 0)
-  useEffect(() => { setPct(item.progress_pct ?? 0) }, [item.progress_pct])
-  const [showTagPicker, setShowTagPicker] = useState(false)
-  const [tagInput, setTagInput] = useState('')
   const tags = item.tags || []
   const addTag = (t) => {
     const v = String(t).trim().toLowerCase()
@@ -563,8 +568,8 @@ function ItemCard({ item, editable, canSetPriority, canTag, availableTags = [], 
           </select>
           <span style={{ fontSize: 10, color: '#64748B' }}>due</span>
           <input type="date" value={item.due_date || ''} onChange={(e) => onPatch({ due_date: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Due date" />
-          <select value={item.venue || ''} onChange={(e) => onPatch({ venue: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Venue">
-            <option value="">Venue…</option>
+          <select value={item.venue || ''} onChange={(e) => onPatch({ venue: e.target.value || null })} style={{ ...inputStyle, fontSize: 11, padding: '3px 6px' }} title="Location">
+            <option value="">Location…</option>
             {VENUES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </div>
@@ -814,8 +819,8 @@ function ItemForm({ subteams, mySubteamIds, members = [], days = [], meId, canEd
         <select value={kind} onChange={(e) => setKind(e.target.value)} style={inputStyle} title="Type">
           {kindOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
-        <select value={venue} onChange={(e) => setVenue(e.target.value)} style={inputStyle} title="Venue">
-          <option value="">Venue…</option>
+        <select value={venue} onChange={(e) => setVenue(e.target.value)} style={inputStyle} title="Location">
+          <option value="">Location…</option>
           {VENUES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
         <select value={completion} onChange={(e) => setCompletion(e.target.value)} style={inputStyle} title="Completion">
@@ -2200,8 +2205,8 @@ function BlockForm({ base, sessionId, seq, onDone, onCancel }) {
         ))}
       </select>
       <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (optional)" style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
-      <select value={venue} onChange={(e) => setVenue(e.target.value)} style={inputStyle} title="Venue">
-        <option value="">Venue…</option>
+      <select value={venue} onChange={(e) => setVenue(e.target.value)} style={inputStyle} title="Location">
+        <option value="">Location…</option>
         {VENUES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
       </select>
       <input type="time" value={start} onChange={(e) => setStart(e.target.value)} style={inputStyle} title="Start" />

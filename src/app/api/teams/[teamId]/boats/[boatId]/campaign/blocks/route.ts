@@ -15,7 +15,7 @@ const BLOCK_TYPES = [
   'other',
 ] as const
 type BlockType = (typeof BLOCK_TYPES)[number]
-const VENUES = ['on-water', 'dock', 'shed']
+const VENUES = ['on-water', 'dock', 'shed', 'office']
 
 export async function POST(
   req: NextRequest,

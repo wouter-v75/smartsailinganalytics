@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '@/lib/supabase/server'
 
 const KINDS = ['action', 'task', 'test', 'training', 'fmea', 'deliverable', 'milestone']
-const VENUES = ['on-water', 'dock', 'shed']
+const VENUES = ['on-water', 'dock', 'shed', 'office']
 const STATUSES = ['open', 'in_progress', 'done', 'parked', 'wontfix']
 const ANSWER_STATES = ['unanswered', 'partial', 'answered']
 const COMPLETIONS = ['binary', 'progress']

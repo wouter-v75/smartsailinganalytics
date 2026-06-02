@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '@/lib/supabase/server'
 
 const KINDS = ['action', 'task', 'test', 'training', 'fmea', 'deliverable', 'milestone'] as const
-const VENUES = ['on-water', 'dock', 'shed']
+const VENUES = ['on-water', 'dock', 'shed', 'office']
 const COMPLETIONS = ['binary', 'progress'] as const
 type Kind = (typeof KINDS)[number]
 type Completion = (typeof COMPLETIONS)[number]
