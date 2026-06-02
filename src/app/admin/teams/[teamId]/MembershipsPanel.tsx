@@ -35,7 +35,10 @@ function firstUser(u: MembershipRow['users']): JoinedUser | null {
   return u
 }
 
-const ROLES = ['coach', 'tl3', 'tl2', 'tl1', 'consultant'] as const
+// Full membership-role spectrum the admin can grant. Order top-down by
+// privilege so the dropdown reads naturally. `consultant` keeps the
+// extra valid_from / valid_to date pickers.
+const ROLES = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
 
 export default function MembershipsPanel({

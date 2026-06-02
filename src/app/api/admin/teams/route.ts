@@ -42,10 +42,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  // Auto-grant the creator a team_manager membership scoped to all boats
+  // (boat_id NULL). Means: the moment you create a team, it shows up in
+  // your UserPill workspace switcher — no separate "add yourself" step.
+  // Best-effort: if it fails (e.g. unique-constraint race) we still return
+  // the team so the admin UI doesn't error out; they can add the row
+  // manually from the Memberships panel.
+  const { error: memErr } = await service.from('memberships').insert({
+    user_id: guard.userId,
+    team_id: data.id,
+    boat_id: null,
+    role: 'team_manager',
+  })
+
   await service.from('events').insert({
     user_id: guard.userId,
     action: 'team.create',
-    details: { team_id: data.id, name },
+    details: { team_id: data.id, name, auto_membership_error: memErr?.message || null },
   })
 
   return NextResponse.json({ team: data })
