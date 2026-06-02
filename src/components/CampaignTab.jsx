@@ -2288,14 +2288,15 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, onOpenDay 
         })
       }
     }
-    // Most relevant first: upcoming/ongoing before past.
-    return groups.sort((a, b) => {
-      const aOver = a.dateTo < today
-      const bOver = b.dateTo < today
-      if (aOver !== bOver) return aOver ? 1 : -1
-      return b.dateFrom.localeCompare(a.dateFrom)
-    })
+    // Upcoming first, soonest at the top. Past regattas rendered in their
+    // own section below (see split below).
+    return groups.sort((a, b) => a.dateFrom.localeCompare(b.dateFrom))
   })()
+  const upcomingRegattas = regattas.filter((r) => r.dateTo >= today)
+  const pastRegattas = regattas
+    .filter((r) => r.dateTo < today)
+    .slice()
+    .sort((a, b) => b.dateFrom.localeCompare(a.dateFrom))
 
   async function createRegatta({ dateFrom, dateTo, name, location }) {
     const dates = datesInRange(dateFrom, dateTo)
@@ -2363,20 +2364,52 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, onOpenDay 
           {canEditPlan ? 'Add a regatta to populate the calendar with racing days.' : 'No regattas to show.'}
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {regattas.map((r) => (
-            <RegattaCard
-              key={r.key}
-              regatta={r}
-              base={base}
-              canEdit={canEditPlan && r.boat_id === boatId}
-              isMobile={isMobile}
-              showBoatChip={showBoatChips}
-              onChanged={load}
-              onOpenDay={onOpenDay}
-            />
-          ))}
-        </div>
+        <>
+          {/* Upcoming + currently-running regattas, soonest first. */}
+          {upcomingRegattas.length === 0 ? (
+            <div style={{ color: '#475569', fontSize: 13, textAlign: 'center', padding: 16, border: '1px dashed #1E3A5A', borderRadius: 12, marginBottom: pastRegattas.length ? 18 : 0 }}>
+              No upcoming regattas.{canEditPlan ? ' Add one above.' : ''}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {upcomingRegattas.map((r) => (
+                <RegattaCard
+                  key={r.key}
+                  regatta={r}
+                  base={base}
+                  canEdit={canEditPlan && r.boat_id === boatId}
+                  isMobile={isMobile}
+                  showBoatChip={showBoatChips}
+                  onChanged={load}
+                  onOpenDay={onOpenDay}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Past regattas — rendered greyed-out in their own section. */}
+          {pastRegattas.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, margin: '24px 0 10px' }}>
+                Past regattas ({pastRegattas.length})
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {pastRegattas.map((r) => (
+                  <RegattaCard
+                    key={r.key}
+                    regatta={r}
+                    base={base}
+                    canEdit={canEditPlan && r.boat_id === boatId}
+                    isMobile={isMobile}
+                    showBoatChip={showBoatChips}
+                    onChanged={load}
+                    onOpenDay={onOpenDay}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </>
       )}
     </div>
   )
@@ -2437,23 +2470,39 @@ function RegattaCard({ regatta, base, canEdit, isMobile, showBoatChip, onChanged
   }, [base, regatta.dateFrom])
   useEffect(() => { loadDocs() }, [loadDocs])
 
+  // Multi-file upload: accept whatever the file picker hands us, upload each
+  // file sequentially so we don't saturate the browser's connection limit,
+  // and refresh the listing once at the end. A partial failure surfaces in
+  // the error strip but doesn't block the files that already landed.
   async function onPickFile(e) {
-    const file = e.target.files?.[0]
+    const files = Array.from(e.target.files || [])
     e.target.value = ''
-    if (!file) return
+    if (files.length === 0) return
     setUploading(true); setErr(null)
+    const failed = []
     try {
-      const key = `campaign/regattas/${regatta.dateFrom}/${Date.now()}-${safeName(file.name)}`
-      await uploadBlobToStorage({ key, blob: file, contentType: file.type })
-      const res = await fetch(`${base}/attachments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: regatta.dateFrom, kind: REGATTA_DOC_KIND, name: file.name, key, bytes: file.size, content_type: file.type }),
-      })
-      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not register file'); return }
+      for (const file of files) {
+        try {
+          // Unique key per file: timestamp + safeName already collision-safe
+          // for normal use, but loop iteration could share a millisecond on
+          // a fast disk — append the index for belt-and-braces.
+          const key = `campaign/regattas/${regatta.dateFrom}/${Date.now()}-${failed.length}-${safeName(file.name)}`
+          await uploadBlobToStorage({ key, blob: file, contentType: file.type })
+          const res = await fetch(`${base}/attachments`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date: regatta.dateFrom, kind: REGATTA_DOC_KIND, name: file.name, key, bytes: file.size, content_type: file.type }),
+          })
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}))
+            failed.push(`${file.name}: ${j.error || res.status}`)
+          }
+        } catch (e2) {
+          failed.push(`${file.name}: ${e2?.message || 'upload failed'}`)
+        }
+      }
+      if (failed.length) setErr(`Some files failed: ${failed.join('; ')}`)
       loadDocs()
-    } catch (e2) {
-      setErr(e2?.message || 'upload failed')
     } finally { setUploading(false) }
   }
 
@@ -2519,10 +2568,14 @@ function RegattaCard({ regatta, base, canEdit, isMobile, showBoatChip, onChanged
 
   const days = regatta.sessions.length
   const past = regatta.dateTo < todayStr()
+  // Past regattas dim the whole card and swap the red chip for a muted
+  // grey so the eye is drawn to upcoming events.
+  const chipBg = past ? '#334155' : BLOCK_META.racing.c
+  const chipFg = past ? '#94A3B8' : '#000'
   return (
-    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, opacity: past ? 0.8 : 1 }}>
+    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, opacity: past ? 0.65 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 16, fontWeight: 800, color: '#000', background: BLOCK_META.racing.c, borderRadius: 5, padding: '2px 9px' }}>
+        <span style={{ fontSize: 16, fontWeight: 800, color: chipFg, background: chipBg, borderRadius: 5, padding: '2px 9px' }}>
           🏁 {regatta.event}
         </span>
         {regatta.location && <span style={{ fontSize: 13, color: '#E2E8F0' }}>· {regatta.location}</span>}
@@ -2564,8 +2617,8 @@ function RegattaCard({ regatta, base, canEdit, isMobile, showBoatChip, onChanged
           <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>Event documents</span>
           {canEdit && (
             <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
-              {uploading ? 'Uploading…' : '+ Upload PDF'}
-              <input type="file" accept="application/pdf,image/*" onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
+              {uploading ? 'Uploading…' : '+ Upload PDFs'}
+              <input type="file" accept="application/pdf,image/*" multiple onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
             </label>
           )}
         </div>
