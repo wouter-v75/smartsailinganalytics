@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { saveVideo, getAllVideos, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
+import { saveVideo, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
 import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady, createStreamUpload, uploadFileToStream } from "../lib/bunny";
 import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
@@ -1922,7 +1922,12 @@ function UploadTab({role,cloudStatus,onImported}){
     if (csvParsed) {
       const d = csvDate || fallbackDate;
       addLog(`Saving log → session ${fmtDate(d)}…`);
-      await saveLogData(d, csvParsed.rows, csvFile.name, csvParsed.startUtc, csvParsed.endUtc, csvTz);
+      // Tag the log entry with the active workspace so cross-tenant local
+      // data doesn't bleed when an admin switches teams.
+      const supaForLog = getBrowserSupabase();
+      const { data: { user: logUser } } = await supaForLog.auth.getUser();
+      const logMembership = logUser ? getActiveMembership(logUser.id) : null;
+      await saveLogData(d, csvParsed.rows, csvFile.name, csvParsed.startUtc, csvParsed.endUtc, csvTz, logMembership);
       // Mirror to Supabase if there's an active membership.
       try {
         const supabase = getBrowserSupabase();
@@ -1950,7 +1955,10 @@ function UploadTab({role,cloudStatus,onImported}){
     if (xmlParsed) {
       const d = xmlDate || csvDate || fallbackDate;
       addLog(`Saving events → session ${fmtDate(d)}…`);
-      await saveXmlData(d, xmlParsed, xmlFile.name);
+      const supaForXml = getBrowserSupabase();
+      const { data: { user: xmlUser } } = await supaForXml.auth.getUser();
+      const xmlMembership = xmlUser ? getActiveMembership(xmlUser.id) : null;
+      await saveXmlData(d, xmlParsed, xmlFile.name, xmlMembership);
       // Mirror to Supabase.
       try {
         const supabase = getBrowserSupabase();
@@ -1999,11 +2007,16 @@ function UploadTab({role,cloudStatus,onImported}){
         : pv.tsSource === "filename" ? "📝 filename"
         : pv.tsSource === "lastmodified" ? "⚠ file mtime" : "❌ no timestamp";
       try {
+        // Tag the saved video + session with the current workspace so
+        // membership-scoped readers can isolate per-tenant.
+        const supaForSave = getBrowserSupabase();
+        const { data: { user: saveUser } } = await supaForSave.auth.getUser();
+        const saveMembership = saveUser ? getActiveMembership(saveUser.id) : null;
         const s = await saveVideo(pv.file, {
           duration: pv.duration, startUtc: pv.startUtc, tsSource: pv.tsSource,
           tags, title: pv.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " "),
           sessionDate: vidDate,
-        });
+        }, saveMembership);
         saved.push({ ...s, file: pv.file });
         addLog(`✓ ${pv.name} · ${tsLabel}${pv.startUtc ? ` · ${new Date(pv.startUtc).toISOString().slice(11, 19)} UTC` : ""} → ${vidDate}`);
       } catch (e) { addLog(`✕ ${pv.name}: ${e instanceof Error ? e.message : String(e)}`); }
@@ -5029,6 +5042,59 @@ function SSAApp(){
     return ()=>{ cancelled=true; window.removeEventListener('ssa:active-membership-changed',onChange); };
   },[]);
 
+  // Workspace-switch isolation. When the user changes their active
+  // membership via UserPill, in-memory `sessions` / `allVideos` still hold
+  // the previous workspace's data — including LOCAL entries that belong to
+  // another team's boat. Reset both, re-read local (now filtered by the new
+  // membership) and re-fetch the cloud session list for the new workspace.
+  // Without this, an admin switching teams keeps seeing the previous team's
+  // folders in the sidebar.
+  useEffect(()=>{
+    async function rescope(){
+      try{
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(!user) return;
+        const m=getActiveMembership(user.id);
+        // Clear what we may still have from the previous workspace.
+        setSessions([]);
+        setAllVideos([]);
+        setActiveDate(null);
+        setSelectedVideo(null);
+        setLogData(null);
+        setXmlData(null);
+        // Re-load filtered local data for the new workspace.
+        const localSessions=getSessionsForMembership(m).sort((a,b)=>b.date.localeCompare(a.date));
+        setSessions(localSessions);
+        const vids=await getAllVideosForMembership(m);
+        setAllVideos(vids);
+        // Cloud list will be refreshed by the boot effect's
+        // listSessionsCloud call when it re-runs; but to make the
+        // switch feel instant, also trigger one here.
+        const cloudSessions=await listSessionsCloud({userId:user.id});
+        if(cloudSessions.length>0){
+          setSessions(p=>{
+            const merged=[...p];
+            for(const s of cloudSessions){
+              const existing=merged.find(x=>x.date===s.date);
+              if(existing){
+                if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
+                if(s.event!==undefined) existing.event=s.event;
+              }else{
+                merged.push({date:s.date,source:'supabase',videoCount:s.video_count||0,photoCount:s.photo_count||0,event:s.event||null});
+              }
+            }
+            return merged.sort((a,b)=>b.date.localeCompare(a.date));
+          });
+        }
+      }catch{ /* non-fatal — boot will retry */ }
+    }
+    const onChange=()=>{ rescope(); };
+    window.addEventListener('ssa:active-membership-changed',onChange);
+    return ()=>{ window.removeEventListener('ssa:active-membership-changed',onChange); };
+  },[]);
+
   // Role-gated convenience flags. Default to permissive while role
   // resolves so UI doesn't briefly hide things from admins.
   // tl1: no SailScan, no analytics data (map OK), no SailScan-tagged photos.
@@ -5112,7 +5178,13 @@ function SSAApp(){
   useEffect(()=>{
     async function boot(){
       const today=TODAY();
-      const localSessions=getSessions().sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
+      // Read the active membership BEFORE pulling local data so we only show
+      // sessions/videos belonging to the current workspace. Untagged legacy
+      // entries are visible only when there is no active membership.
+      const supaForBoot = getBrowserSupabase();
+      const { data: { user: bootUser } } = await supaForBoot.auth.getUser();
+      const bootMembership = bootUser ? getActiveMembership(bootUser.id) : null;
+      const localSessions=getSessionsForMembership(bootMembership).sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
 
       // ── Mobile progressive load ───────────────────────────────────────────
       // On mobile we only fetch full video blobs + log data for the latest session.
@@ -5120,7 +5192,7 @@ function SSAApp(){
       const latestDate=localSessions[0]?.date||today;
       const isRecent=(date)=>date===today||date===latestDate;
 
-      const vids=await getAllVideos();
+      const vids=await getAllVideosForMembership(bootMembership);
       // On mobile: skip expensive enrichVideo (requires full log read) for old sessions
       const enriched=await Promise.all(vids.map(async v=>{
         const d=v.sessionDate||today;
@@ -5152,10 +5224,11 @@ function SSAApp(){
       // Cloud check — on mobile defer until after paint
       const doCloud=async()=>{
         const cs=await checkCloudStatus();setCloudStatus(cs);
-        // Bunny R2 session listing is GLOBAL (every date in the zone,
-        // every team). Only admins can see it; everyone else relies on
-        // Supabase below for the team-scoped view.
-        if(cs?.available && effectiveRole==='admin'){
+        // Bunny R2 session listing is GLOBAL — every date in the zone, every
+        // team. Historically only admins saw it; now we skip it entirely when
+        // a workspace is active (per-team isolation wins). The Supabase
+        // session list below is the team-scoped source of truth.
+        if(cs?.available && effectiveRole==='admin' && !bootMembership){
           const remote=await listR2Sessions();
           const localDates=new Set(localSessions.map(s=>s.date));
           const newR=remote.filter(s=>!localDates.has(s.date));
@@ -5714,7 +5787,12 @@ function SSAApp(){
 
   async function handleImported({date,videos,logData:ld,xmlData:xd}){
     if(ld)setLogData({...ld,source:"local"});if(xd)setXmlData({...xd,source:"local"});
-    setSessions(getSessions());setUnsyncedCount(getUnsyncedCount());
+    // Read local sessions filtered to the active workspace so imports into
+    // workspace A don't appear when later viewing workspace B.
+    const supaForReload = getBrowserSupabase();
+    const { data: { user: reloadUser } } = await supaForReload.auth.getUser();
+    const reloadMembership = reloadUser ? getActiveMembership(reloadUser.id) : null;
+    setSessions(getSessionsForMembership(reloadMembership));setUnsyncedCount(getUnsyncedCount());
     // Load from IDB to ensure state matches storage (catches second import race)
     await loadDate(date);
     setActiveTab("library");

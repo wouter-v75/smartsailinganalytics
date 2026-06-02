@@ -107,11 +107,35 @@ function lsDel(key) {
 }
 
 // ── Session index ─────────────────────────────────────────────────────────────
+// Local sessions can be tagged with the (team_id, boat_id) workspace they were
+// created in. When a user switches workspaces we filter by tag so a Northstar
+// clip doesn't bleed into a Warp sidebar. Legacy (untagged) entries only
+// appear when there is no active membership — the SPA tags new entries via
+// the membership object passed to saveVideo / saveLogData / saveXmlData.
 export function getSessions() { return lsGet("ssa:sessions") || []; }
+
+// Filtered variant. Pass {teamId, boatId} from the active membership. Returns
+// only sessions whose tags match, OR untagged sessions when the caller has no
+// active membership (legacy single-tenant mode).
+export function getSessionsForMembership(membership) {
+  const all = getSessions();
+  if (!membership || !membership.team_id || !membership.boat_id) {
+    return all.filter((s) => !s.team_id && !s.boat_id);
+  }
+  return all.filter(
+    (s) =>
+      s.team_id === membership.team_id && s.boat_id === membership.boat_id
+  );
+}
 
 function upsertSession(date, patch) {
   const sessions = getSessions();
-  const idx = sessions.findIndex(s => s.date === date);
+  const idx = sessions.findIndex(
+    (s) =>
+      s.date === date &&
+      (s.team_id || null) === (patch.team_id || null) &&
+      (s.boat_id || null) === (patch.boat_id || null)
+  );
   if (idx >= 0) sessions[idx] = { ...sessions[idx], ...patch };
   else sessions.push({ date, videoCount: 0, hasLog: false, hasXml: false, ...patch });
   sessions.sort((a, b) => b.date.localeCompare(a.date));
@@ -127,7 +151,11 @@ function isMobileDevice() {
   return /iPhone|iPad|Android/i.test(navigator.userAgent);
 }
 
-export async function saveVideo(file, parsedMeta) {
+// `membership`: optional active-membership object {team_id, boat_id}. When
+// provided, the saved video and its session-index row are tagged with the
+// workspace so getSessionsForMembership / getAllVideosForMembership can
+// later filter by workspace and keep tenants isolated.
+export async function saveVideo(file, parsedMeta, membership = null) {
   const db   = await openDb();
   const date = parsedMeta.sessionDate || TODAY();
   const id   = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -136,6 +164,8 @@ export async function saveVideo(file, parsedMeta) {
   // On desktop: store the blob for local playback and background cloud sync
   const storeBlob = !isMobileDevice();
 
+  const teamId = membership?.team_id || null;
+  const boatId = membership?.boat_id || null;
   const entry = {
     id,
     name:        file.name,
@@ -149,12 +179,19 @@ export async function saveVideo(file, parsedMeta) {
     tags:        parsedMeta.tags || [],
     title:       parsedMeta.title || file.name.replace(/\.[^.]+$/, ""),
     camera:      parsedMeta.camera || detectCamera(file.name),
+    team_id:     teamId,
+    boat_id:     boatId,
     syncedToDb:  false,
     cloudSynced: false,   // tracks whether this video has been uploaded to Stream
   };
   await idbPut(db, "videos", entry);
+  const existing = getSessions().find(
+    (s) => s.date === date && (s.team_id || null) === teamId && (s.boat_id || null) === boatId
+  );
   upsertSession(date, {
-    videoCount: (getSessions().find(s => s.date === date)?.videoCount || 0) + 1,
+    team_id: teamId,
+    boat_id: boatId,
+    videoCount: (existing?.videoCount || 0) + 1,
   });
   return {
     ...entry,
@@ -259,6 +296,19 @@ export async function getAllVideos() {
   })).sort((a, b) => b.addedAt - a.addedAt);
 }
 
+// Same as getAllVideos but filtered by the active workspace. Legacy/untagged
+// videos are visible only when no membership is active. Used everywhere the
+// SPA reads local videos in a workspace-aware context.
+export async function getAllVideosForMembership(membership) {
+  const all = await getAllVideos();
+  if (!membership || !membership.team_id || !membership.boat_id) {
+    return all.filter((v) => !v.team_id && !v.boat_id);
+  }
+  return all.filter(
+    (v) => v.team_id === membership.team_id && v.boat_id === membership.boat_id
+  );
+}
+
 export async function updateVideoTags(id, tags) {
   const db    = await openDb();
   const entry = await idbGet(db, "videos", id);
@@ -285,14 +335,20 @@ export async function deleteVideo(id) {
 }
 
 // ── Log (CSV) store — IndexedDB ───────────────────────────────────────────────
-export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffset = 0) {
+export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffset = 0, membership = null) {
   const db = await openDb();
   await idbPut(db, "log_data", {
     date, rows, fileName, startUtc, endUtc,
     tzOffset,
+    team_id: membership?.team_id || null,
+    boat_id: membership?.boat_id || null,
     addedAt: Date.now(), synced: false,
   });
-  upsertSession(date, { hasLog: true, logFile: fileName, tzOffset });
+  upsertSession(date, {
+    hasLog: true, logFile: fileName, tzOffset,
+    team_id: membership?.team_id || null,
+    boat_id: membership?.boat_id || null,
+  });
   lsDel(`ssa:log:${date}`);
 }
 
@@ -306,16 +362,22 @@ export async function getLogData(date) {
 }
 
 // ── XML (event) store — IndexedDB ────────────────────────────────────────────
-export async function saveXmlData(date, parsed, fileName) {
+export async function saveXmlData(date, parsed, fileName, membership = null) {
   const db = await openDb();
   await idbPut(db, "xml_data", {
     date,
     ...parsed,
     fileName,
+    team_id: membership?.team_id || null,
+    boat_id: membership?.boat_id || null,
     addedAt: Date.now(),
     synced:  false,
   });
-  upsertSession(date, { hasXml: true, xmlFile: fileName });
+  upsertSession(date, {
+    hasXml: true, xmlFile: fileName,
+    team_id: membership?.team_id || null,
+    boat_id: membership?.boat_id || null,
+  });
   lsDel(`ssa:xml:${date}`);
 }
 
