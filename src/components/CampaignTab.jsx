@@ -198,6 +198,7 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
           teamId={teamId}
           boatId={scopeAll ? boatId : boatScope}
           role={role}
+          config={config}
           canEditPlan={canEditPlan}
           isMobile={isMobile}
           onOpenVideo={onOpenVideo}
@@ -916,7 +917,7 @@ function PlanItemRow({ item, highlight, selectable, checked, onToggle }) {
   )
 }
 
-function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onOpenItem, scopeAll, activeBoatName }) {
+function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVideo, onOpenItem, scopeAll, activeBoatName }) {
   const [date, setDate] = useState(todayStr())
   const [session, setSession] = useState(null) // {id, objective, blocks} | null
   const [allDays, setAllDays] = useState([]) // [{id, date}]
@@ -1036,6 +1037,7 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
           items={items}
           allDays={allDays}
           sessionId={session?.id || null}
+          subteams={(config?.subteams || []).filter((s) => s.active !== false && (s.category === 'racing' || s.category === 'technical'))}
           canSeeTestNow={canSeeTestNow}
           canMoveTests={canMoveTests}
           isMobile={isMobile}
@@ -1168,12 +1170,18 @@ function PlanConditions({ base, date, canEdit }) {
 
 // On-the-water Tests & tasks: SELECTED items for the day (TL1+) and the
 // wind-range "what can we test now" picker (TL2+ view, TL3+ move-to-day).
-function OnWaterCard({ base, items, allDays, sessionId, canSeeTestNow, canMoveTests, isMobile, onChanged }) {
+// Candidates are filtered to venue='on-water'; sub-team chips narrow further.
+// TL3+ can also drag picked items onto the Selected card to plan them for
+// the current session (HTML5 native DnD; checkbox + Move button remain as
+// a touch fallback).
+function OnWaterCard({ base, items, allDays, sessionId, subteams = [], canSeeTestNow, canMoveTests, isMobile, onChanged }) {
   const [wmin, setWmin] = useState('')
   const [wmax, setWmax] = useState('')
   const [picked, setPicked] = useState(new Set())
+  const [pickedSubteams, setPickedSubteams] = useState(new Set())
   const [targetDay, setTargetDay] = useState(sessionId || '')
   const [moving, setMoving] = useState(false)
+  const [dropHover, setDropHover] = useState(false)
   useEffect(() => { setTargetDay(sessionId || '') }, [sessionId])
 
   const selected = sessionId ? items.filter((it) => it.target_session_id === sessionId) : []
@@ -1187,36 +1195,98 @@ function OnWaterCard({ base, items, allDays, sessionId, canSeeTestNow, canMoveTe
     return true
   }
   const candidates = items
-    .filter((it) => it.status !== 'done' && it.status !== 'wontfix' && overlaps(it))
+    .filter((it) =>
+      it.status !== 'done' &&
+      it.status !== 'wontfix' &&
+      it.venue === 'on-water' &&             // only on-water items count
+      overlaps(it) &&
+      (pickedSubteams.size === 0 || (it.subteam_id && pickedSubteams.has(it.subteam_id)))
+    )
     .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
     .slice(0, 12)
 
   const toggle = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
-  async function move() {
-    if (!picked.size || !targetDay) return
+
+  // Re-target a set of items to a given session. Used by both the "Move"
+  // button and the drag-to-Selected drop handler.
+  async function moveItems(ids, dayId) {
+    if (!ids.size || !dayId) return
     setMoving(true)
     try {
-      for (const id of picked) {
-        await fetch(`${base}/backlog/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_session_id: targetDay }) })
+      for (const id of ids) {
+        await fetch(`${base}/backlog/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_session_id: dayId }),
+        })
       }
-      setPicked(new Set())
+      setPicked((p) => {
+        const n = new Set(p)
+        for (const id of ids) n.delete(id)
+        return n
+      })
       onChanged()
     } finally { setMoving(false) }
   }
+  const move = () => moveItems(picked, targetDay)
+
+  // Drag-and-drop. The dragged set = the explicit drag target, unioned with
+  // any currently checked items. Drop lands on today's session.
+  const onDragStart = (e, id) => {
+    e.dataTransfer.setData('text/plain', id)
+    e.dataTransfer.effectAllowed = 'move'
+  }
+  const onDragOverSelected = (e) => {
+    if (!canMoveTests || !sessionId) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (!dropHover) setDropHover(true)
+  }
+  const onDropSelected = (e) => {
+    e.preventDefault()
+    setDropHover(false)
+    if (!canMoveTests || !sessionId) return
+    const dragged = e.dataTransfer.getData('text/plain')
+    const ids = new Set(picked)
+    if (dragged) ids.add(dragged)
+    if (ids.size) moveItems(ids, sessionId)
+  }
+
+  const dropZoneStyle = canMoveTests && sessionId ? {
+    border: `1px dashed ${dropHover ? '#06B6D4' : '#1E3A5A'}`,
+    background: dropHover ? '#0F2A45' : 'transparent',
+    borderRadius: 8,
+    padding: 6,
+    transition: 'background .12s, border-color .12s',
+  } : {}
 
   return (
     <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
       <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>On the water — tests & tasks</div>
 
-      {/* SELECTED (TL1+) */}
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Selected</div>
-      {selected.length === 0 ? (
-        <div style={{ fontSize: 12, color: '#475569' }}>Nothing selected for this day yet.</div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {selected.map((it) => <PlanItemRow key={it.id} item={it} />)}
+      {/* SELECTED (TL1+) — TL3+ can drop dragged candidates here to plan them for today */}
+      <div
+        onDragOver={onDragOverSelected}
+        onDragLeave={() => setDropHover(false)}
+        onDrop={onDropSelected}
+        style={dropZoneStyle}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>Selected</span>
+          {canMoveTests && sessionId && (
+            <span style={{ fontSize: 10, color: dropHover ? '#06B6D4' : '#475569' }}>
+              {dropHover ? '↓ drop to plan for today' : 'drag items here to plan for today'}
+            </span>
+          )}
         </div>
-      )}
+        {selected.length === 0 ? (
+          <div style={{ fontSize: 12, color: '#475569' }}>Nothing selected for this day yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {selected.map((it) => <PlanItemRow key={it.id} item={it} />)}
+          </div>
+        )}
+      </div>
 
       {/* WHAT CAN WE TEST NOW (TL2+) */}
       {canSeeTestNow && (
@@ -1229,14 +1299,61 @@ function OnWaterCard({ base, items, allDays, sessionId, canSeeTestNow, canMoveTe
             <input type="number" value={wmax} onChange={(e) => setWmax(e.target.value)} placeholder="max" style={{ ...inputStyle, width: 56, fontSize: 12 }} />
             <span style={{ fontSize: 11, color: '#64748B' }}>kt</span>
           </div>
+
+          {/* Sub-team filter chips — multi-select. Empty = show all. */}
+          {subteams.length > 0 && (
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 8 }}>
+              {subteams.map((s) => {
+                const on = pickedSubteams.has(s.id)
+                const c = CAT_COLOR[s.category] || '#64748B'
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => setPickedSubteams((p) => { const n = new Set(p); n.has(s.id) ? n.delete(s.id) : n.add(s.id); return n })}
+                    style={{
+                      fontSize: 10, borderRadius: 999, padding: '2px 9px', cursor: 'pointer',
+                      border: `1px solid ${on ? c : '#1E3A5A'}`,
+                      background: on ? c : 'transparent',
+                      color: on ? '#000' : '#94A3B8',
+                      fontWeight: on ? 700 : 500,
+                    }}
+                  >{s.label}</button>
+                )
+              })}
+              {pickedSubteams.size > 0 && (
+                <button onClick={() => setPickedSubteams(new Set())} style={{ fontSize: 10, background: 'none', border: 'none', color: '#64748B', cursor: 'pointer' }}>clear</button>
+              )}
+            </div>
+          )}
+
           {candidates.length === 0 ? (
-            <div style={{ fontSize: 12, color: '#475569' }}>Nothing testable in this wind range.</div>
+            <div style={{ fontSize: 12, color: '#475569' }}>Nothing on-water testable in this filter.</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {candidates.map((it) => (
-                <PlanItemRow key={it.id} item={it} highlight={lo != null || hi != null}
-                  selectable={canMoveTests} checked={picked.has(it.id)} onToggle={toggle} />
-              ))}
+              {candidates.map((it) => {
+                const row = (
+                  <PlanItemRow
+                    key={it.id}
+                    item={it}
+                    highlight={lo != null || hi != null}
+                    selectable={canMoveTests}
+                    checked={picked.has(it.id)}
+                    onToggle={toggle}
+                  />
+                )
+                if (!canMoveTests) return row
+                return (
+                  <div
+                    key={it.id}
+                    draggable
+                    onDragStart={(e) => onDragStart(e, it.id)}
+                    style={{ cursor: 'grab' }}
+                    title="Drag onto Selected to plan for today"
+                  >
+                    {row}
+                  </div>
+                )
+              })}
             </div>
           )}
           {canMoveTests && picked.size > 0 && (
