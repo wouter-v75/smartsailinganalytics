@@ -2030,8 +2030,17 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
   // regattas are just consecutive racing days sharing the same `event` name.
   // The next event = the soonest racing day with `event` set on/after today.
   // From this we derive both counters; if no event is set anywhere, fall
-  // back to counting all future planned days.
+  // back to counting all future planned training days.
   const isRacingDay = (s) => (s.blocks || []).some((b) => b.block_type === 'racing')
+  // A "training day" only counts when at least one of its blocks is an
+  // on-the-water training/testing block — race-training, technical-testing
+  // or speed-testing with venue='on-water'. Shore/office days, blocks with
+  // no venue set, and days without those block types are excluded.
+  const ON_WATER_TRAINING_TYPES = new Set(['race-training', 'technical-testing', 'speed-testing'])
+  const isOnWaterTrainingDay = (s) =>
+    (s.blocks || []).some(
+      (b) => ON_WATER_TRAINING_TYPES.has(b.block_type) && b.venue === 'on-water'
+    )
   const futureEvents = sessions
     .filter((s) => s.date >= today && isRacingDay(s) && s.event && s.event.trim())
     .sort((a, b) => a.date.localeCompare(b.date))
@@ -2043,9 +2052,9 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
       : null
   const trainingDaysToGo = nextEvent
     ? sessions.filter(
-        (s) => s.date >= today && s.date < nextEvent.date && !isRacingDay(s)
+        (s) => s.date >= today && s.date < nextEvent.date && isOnWaterTrainingDay(s)
       ).length
-    : sessions.filter((s) => s.date >= today && !isRacingDay(s)).length
+    : sessions.filter((s) => s.date >= today && isOnWaterTrainingDay(s)).length
 
   async function addDays(e) {
     e.preventDefault()
