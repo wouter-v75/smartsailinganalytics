@@ -83,6 +83,11 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
   const [sub, setSub] = useState(consultantOnly ? 'day' : 'plan')
   const effSub = consultantOnly ? 'day' : sub
   const canEditPlan = EDIT_ROLES.includes(role)
+  // Cross-boat editors (admin + team_manager) manage the team as a whole —
+  // they should be able to edit any boat's Plan + Regattas from any one
+  // workspace, without switching membership. Coach / tl3 stay scoped to
+  // their active boat (the URL boatId).
+  const crossBoatEdit = role === 'admin' || role === 'team_manager'
   // Clicking a backlog-item link in a debrief jumps to the Backlog sub-tab and
   // highlights that item.
   const [highlightItem, setHighlightItem] = useState(null)
@@ -184,6 +189,9 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
           canSeeTesting={canSeeTesting}
           isMobile={isMobile}
           boats={boats}
+          boatScope={boatScope}
+          scopeAll={scopeAll}
+          crossBoatEdit={crossBoatEdit}
           onOpenDay={onOpenDay}
         />
       )}
@@ -194,6 +202,7 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
           canEditPlan={canEditPlan}
           isMobile={isMobile}
           boats={boats}
+          crossBoatEdit={crossBoatEdit}
           onOpenDay={onOpenDay}
         />
       )}
@@ -1987,7 +1996,7 @@ function Placeholder({ title, note }) {
   )
 }
 
-function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, isMobile, boats, onOpenDay }) {
+function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, isMobile, boats, boatScope, scopeAll, crossBoatEdit, onOpenDay }) {
   const [sessions, setSessions] = useState([])
   const [targetDate, setTargetDate] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -2025,6 +2034,14 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
     load()
   }, [load])
 
+  // Apply the header boat filter: when a specific boat is selected, only
+  // show that boat's sessions in the Plan list / counters / empty-state.
+  // The fetch above stays team-wide (cheap server-side) so toggling the
+  // picker is instant — no refetch on switch.
+  const filteredSessions = scopeAll
+    ? sessions
+    : sessions.filter((s) => s.boat_id === boatScope)
+
   const today = todayStr()
   // A session is a "racing day" if it carries a `racing` block. Multi-day
   // regattas are just consecutive racing days sharing the same `event` name.
@@ -2041,7 +2058,7 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
   const ON_WATER_TRAINING_TYPES = new Set(['race-training', 'technical-testing', 'speed-testing'])
   const isOnWaterTrainingDay = (s) =>
     (s.blocks || []).some((b) => ON_WATER_TRAINING_TYPES.has(b.block_type))
-  const futureEvents = sessions
+  const futureEvents = filteredSessions
     .filter((s) => s.date >= today && isRacingDay(s) && s.event && s.event.trim())
     .sort((a, b) => a.date.localeCompare(b.date))
   const nextEvent = futureEvents[0] || null
@@ -2051,10 +2068,10 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
       ? Math.max(0, daysBetween(today, targetDate))
       : null
   const trainingDaysToGo = nextEvent
-    ? sessions.filter(
+    ? filteredSessions.filter(
         (s) => s.date >= today && s.date < nextEvent.date && isOnWaterTrainingDay(s)
       ).length
-    : sessions.filter((s) => s.date >= today && isOnWaterTrainingDay(s)).length
+    : filteredSessions.filter((s) => s.date >= today && isOnWaterTrainingDay(s)).length
 
   // "Prep day" = a planned day with at least one block at the dock or in
   // the shed AND no on-the-water activity at all. The two counters are
@@ -2069,10 +2086,10 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
     !hasOnWaterActivity(s) &&
     (s.blocks || []).some((b) => PREP_VENUES.has(b.venue))
   const prepDaysToGo = nextEvent
-    ? sessions.filter(
+    ? filteredSessions.filter(
         (s) => s.date >= today && s.date < nextEvent.date && isPrepDay(s)
       ).length
-    : sessions.filter((s) => s.date >= today && isPrepDay(s)).length
+    : filteredSessions.filter((s) => s.date >= today && isPrepDay(s)).length
 
   async function addDays(e) {
     e.preventDefault()
@@ -2152,7 +2169,7 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
           label="Training days to go"
           sub={nextEvent
             ? `before ${fmtDay(nextEvent.date)}`
-            : `${sessions.length} day${sessions.length === 1 ? '' : 's'} planned`}
+            : `${filteredSessions.length} day${filteredSessions.length === 1 ? '' : 's'} planned`}
         />
         <Counter
           big
@@ -2220,7 +2237,7 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
 
       {loading ? (
         <div style={{ color: '#475569', fontSize: 13 }}>Loading calendar…</div>
-      ) : sessions.filter((s) => s.date >= today).length === 0 ? (
+      ) : filteredSessions.filter((s) => s.date >= today).length === 0 ? (
         <div style={{ color: '#475569', fontSize: 13, textAlign: 'center', padding: 30, border: '1px dashed #1E3A5A', borderRadius: 12 }}>
           No upcoming days planned.{canEditPlan ? ' Add the first one above.' : ''}
         </div>
@@ -2228,24 +2245,32 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           {/* Plan only shows today and upcoming days — past sessions live in
               Day / Videos / Photos history, not in the forward planning view. */}
-          {sessions.filter((s) => s.date >= today).map((s) => (
-            <DayCard
-              key={s.id}
-              base={base}
-              session={s}
-              isPast={false}
-              // In team scope, write actions (`objective`, `+ Add block`) go
-              // to `${base}/...` which is locked to the active boat. To avoid
-              // posting to the wrong session, only let the active boat's
-              // sessions be edited; others are view-only here.
-              canEditPlan={canEditPlan && s.boat_id === boatId}
-              canSeeTesting={canSeeTesting}
-              isMobile={isMobile}
-              onChanged={load}
-              showBoatChip={showBoatChips}
-              onOpenDay={onOpenDay}
-            />
-          ))}
+          {filteredSessions.filter((s) => s.date >= today).map((s) => {
+            // For cross-boat editors (admin / team_manager) writes must
+            // target the SESSION'S boat, not the URL-active boat — otherwise
+            // saveObjective / saveEvent / + Add block would silently land on
+            // the wrong boat's calendar. Build a per-session base URL when
+            // the row belongs to a different boat than the membership.
+            const isOwnBoat = s.boat_id === boatId
+            const sessionBase = isOwnBoat
+              ? base
+              : `/api/teams/${teamId}/boats/${s.boat_id}/campaign`
+            const sessionCanEdit = canEditPlan && (isOwnBoat || crossBoatEdit)
+            return (
+              <DayCard
+                key={s.id}
+                base={sessionBase}
+                session={s}
+                isPast={false}
+                canEditPlan={sessionCanEdit}
+                canSeeTesting={canSeeTesting}
+                isMobile={isMobile}
+                onChanged={load}
+                showBoatChip={showBoatChips}
+                onOpenDay={onOpenDay}
+              />
+            )
+          })}
         </div>
       )}
     </div>
@@ -2264,7 +2289,7 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
 // the event chip light up in Day; conversely typing an event in Plan's
 // DayCard groups that day into a regatta here.
 const REGATTA_DOC_KIND = 'regatta'
-function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, onOpenDay }) {
+function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, crossBoatEdit, onOpenDay }) {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
@@ -2407,18 +2432,28 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, onOpenDay 
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {upcomingRegattas.map((r) => (
-                <RegattaCard
-                  key={r.key}
-                  regatta={r}
-                  base={base}
-                  canEdit={canEditPlan && r.boat_id === boatId}
-                  isMobile={isMobile}
-                  showBoatChip={showBoatChips}
-                  onChanged={load}
-                  onOpenDay={onOpenDay}
-                />
-              ))}
+              {upcomingRegattas.map((r) => {
+                // Admin / team_manager edit any boat from any workspace;
+                // writes are routed via that boat's base URL so the right
+                // sessions are updated. Coach / tl3 stay on their own boat.
+                const isOwnBoat = r.boat_id === boatId
+                const regattaBase = isOwnBoat
+                  ? base
+                  : `/api/teams/${teamId}/boats/${r.boat_id}/campaign`
+                const regattaCanEdit = canEditPlan && (isOwnBoat || crossBoatEdit)
+                return (
+                  <RegattaCard
+                    key={r.key}
+                    regatta={r}
+                    base={regattaBase}
+                    canEdit={regattaCanEdit}
+                    isMobile={isMobile}
+                    showBoatChip={showBoatChips}
+                    onChanged={load}
+                    onOpenDay={onOpenDay}
+                  />
+                )
+              })}
             </div>
           )}
 
@@ -2429,18 +2464,25 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, onOpenDay 
                 Past regattas ({pastRegattas.length})
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {pastRegattas.map((r) => (
-                  <RegattaCard
-                    key={r.key}
-                    regatta={r}
-                    base={base}
-                    canEdit={canEditPlan && r.boat_id === boatId}
-                    isMobile={isMobile}
-                    showBoatChip={showBoatChips}
-                    onChanged={load}
-                    onOpenDay={onOpenDay}
-                  />
-                ))}
+                {pastRegattas.map((r) => {
+                  const isOwnBoat = r.boat_id === boatId
+                  const regattaBase = isOwnBoat
+                    ? base
+                    : `/api/teams/${teamId}/boats/${r.boat_id}/campaign`
+                  const regattaCanEdit = canEditPlan && (isOwnBoat || crossBoatEdit)
+                  return (
+                    <RegattaCard
+                      key={r.key}
+                      regatta={r}
+                      base={regattaBase}
+                      canEdit={regattaCanEdit}
+                      isMobile={isMobile}
+                      showBoatChip={showBoatChips}
+                      onChanged={load}
+                      onOpenDay={onOpenDay}
+                    />
+                  )
+                })}
               </div>
             </>
           )}
