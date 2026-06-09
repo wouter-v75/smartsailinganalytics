@@ -43,6 +43,7 @@ export default function WeatherTab({ isMobile = false }) {
   const [windData, setWindData] = useState({})
   const [activeModel, setActiveModel] = useState('AROME')
   const [resolvedTz, setResolvedTz] = useState('UTC')
+  const [mastHeight, setMastHeight] = useState(20) // metres; interpolated masthead wind
 
   function handleDataChange(next, modelKey, tz) {
     setWindData(next)
@@ -125,12 +126,14 @@ export default function WeatherTab({ isMobile = false }) {
             windData={windData}
             activeModel={activeModel}
             resolvedTz={resolvedTz}
+            mastHeight={mastHeight}
+            onMastHeightChange={setMastHeight}
             onDataChange={handleDataChange}
             onActiveModelChange={setActiveModel}
           />
         )}
         {sub === 'compare' && (
-          <CompareView windData={windData} />
+          <CompareView windData={windData} mastHeight={mastHeight} />
         )}
         {sub === 'sounding' && (
           <SoundingView windData={windData} resolvedTz={resolvedTz} />

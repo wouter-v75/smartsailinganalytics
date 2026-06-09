@@ -11,7 +11,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
 import PlotlyChart from './PlotlyChart'
-import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries } from './openMeteo'
+import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight } from './openMeteo'
 
 const LOCATION_META = [
   { key: '1', emoji: '🔴', accent: '#EF4444' },
@@ -19,7 +19,7 @@ const LOCATION_META = [
   { key: '3', emoji: '🟠', accent: '#F97316' },
 ]
 
-export default function CompareView({ windData }) {
+export default function CompareView({ windData, mastHeight = 20 }) {
   const locKeys = Object.keys(windData)
   const [activeLoc, setActiveLoc] = useState(locKeys[0] || '1')
   useEffect(() => {
@@ -77,6 +77,20 @@ export default function CompareView({ windData }) {
         title="10 m wind speed"
         point={point}
         seriesFn={(h) => h.wind_speed_10m ? h.wind_speed_10m.map((v) => v != null ? kmhToKnots(v) : null) : null}
+        yTitle="Wind speed (knots)"
+        isDir={false}
+      />
+      <ComparePanel
+        title={`⛵ Wind speed at mast height (${mastHeight} m)`}
+        point={point}
+        seriesFn={(h, key) => {
+          if (!h || !h.time) return null
+          const hgts = MODELS[key].heights
+          return h.time.map((_, i) => {
+            const v = interpolateSpeedAtHeight(h, hgts, mastHeight, i)
+            return v != null ? kmhToKnots(v) : null
+          })
+        }}
         yTitle="Wind speed (knots)"
         isDir={false}
       />

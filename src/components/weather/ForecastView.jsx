@@ -18,6 +18,7 @@ import {
   fetchAllForPoint, pickDefaultActiveModel, hasValidSpeed,
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
+  interpolateSpeedAtHeight,
 } from './openMeteo'
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -55,6 +56,8 @@ export default function ForecastView({
   windData = {},
   activeModel = 'AROME',
   resolvedTz = 'UTC',
+  mastHeight = 20,
+  onMastHeightChange,
   onDataChange,
   onActiveModelChange,
 }) {
@@ -72,6 +75,7 @@ export default function ForecastView({
   )
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
+  const [progress, setProgress] = useState(null) // { done, total, label } during fetch
 
   // ── Map bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
@@ -158,15 +162,29 @@ export default function ForecastView({
     const tz = timezone === 'auto'
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
       : timezone
+    const labelFor = (k) => (k === 'GFS' ? 'GFS (upper air)' : (MODELS[k]?.label || k))
+    const locEntries = Object.entries(locations)
+    const perPoint = COMPARE_ORDER.filter((k) => enabledModels[k]).length + 1 // +GFS
+    const total = locEntries.length * perPoint
+    let done = 0
+    setProgress({ done: 0, total, label: 'Starting…' })
     try {
       const out = {}
-      for (const [key, coords] of Object.entries(locations)) {
+      for (const [key, coords] of locEntries) {
         // eslint-disable-next-line no-await-in-loop
         out[key] = await fetchAllForPoint({
           latitude: coords.lat,
           longitude: coords.lon,
           timezone: tz,
           enabledModels,
+          onProgress: ({ modelKey, phase }) => {
+            if (phase === 'start') {
+              setProgress({ done, total, label: `Loading ${labelFor(modelKey)} — Location ${key}` })
+            } else {
+              done += 1
+              setProgress({ done, total, label: `Loaded ${labelFor(modelKey)} — Location ${key}` })
+            }
+          },
         })
       }
       const points = Object.values(out)
@@ -175,6 +193,7 @@ export default function ForecastView({
       setErr(e?.message || 'fetch failed')
     } finally {
       setLoading(false)
+      setProgress(null)
     }
   }
   const setActiveModel = (key) => onActiveModelChange?.(key)
@@ -265,6 +284,15 @@ export default function ForecastView({
             </select>
           </Field>
           <div style={{ flex: 1 }} />
+          <Field label="Mast height (m)">
+            <input
+              type="number" min="1" max="120" step="1"
+              value={mastHeight}
+              onChange={(e) => onMastHeightChange?.(Math.max(0, Number(e.target.value) || 0))}
+              style={{ ...inputStyle, width: 92 }}
+              title="Interpolated masthead wind — fit through the 3 nearest model heights"
+            />
+          </Field>
           <button
             onClick={fetchAll}
             disabled={loading || Object.keys(locations).length === 0}
@@ -273,6 +301,19 @@ export default function ForecastView({
             {loading ? 'Fetching…' : '🌬 Fetch wind data'}
           </button>
         </div>
+
+        {/* Fetch progress — which models are loading. */}
+        {loading && progress && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ height: 8, background: '#071624', border: '1px solid #1E3A5A', borderRadius: 999, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%`, background: '#06B6D4', transition: 'width 0.2s ease' }} />
+            </div>
+            <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 6, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <span>{progress.label}</span>
+              <span style={{ color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>{progress.done}/{progress.total}</span>
+            </div>
+          </div>
+        )}
 
         {/* Model checkboxes — tick which to fetch. */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid #1E3A5A' }}>
@@ -360,6 +401,7 @@ export default function ForecastView({
                 point={point}
                 model={MODELS[activeModel]}
                 timezone={resolvedTz}
+                mastHeight={mastHeight}
               />
             ))}
           </div>
@@ -401,7 +443,7 @@ export default function ForecastView({
 
 // ── Subcomponents ─────────────────────────────────────────────────────
 
-function WindTable({ locationKey, point, model, timezone }) {
+function WindTable({ locationKey, point, model, timezone, mastHeight }) {
   const meta = LOCATION_META.find((m) => m.key === locationKey)
   const surf = point.surfaceByModel[model.key]
   const cols = model.tableCols // [10, c2, c3]
@@ -432,6 +474,7 @@ function WindTable({ locationKey, point, model, timezone }) {
       rows.push({
         time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: timezone }),
         windDir: hourly.wind_direction_10m?.[index],
+        mast: interpolateSpeedAtHeight(hourly, model.heights, mastHeight, index),
         speeds: cols.map((h) => hourly[`wind_speed_${h}m`]?.[index]),
       })
     }
@@ -452,6 +495,7 @@ function WindTable({ locationKey, point, model, timezone }) {
           <tr>
             <th style={th}>Time<br /><span style={{ fontSize: 9, color: '#475569' }}>{timezone}</span></th>
             <th style={th}>Dir<br /><span style={{ fontSize: 9, color: '#475569' }}>10m °</span></th>
+            <th style={thHi}>⛵ Mast<br /><span style={{ fontSize: 9, color: '#38BDF8' }}>{mastHeight}m kt</span></th>
             {cols.map((h) => (
               <th key={h} style={th}>Speed<br /><span style={{ fontSize: 9, color: '#475569' }}>{h}m kt</span></th>
             ))}
@@ -462,6 +506,7 @@ function WindTable({ locationKey, point, model, timezone }) {
             <tr key={i}>
               <td style={tdTime}>{r.time}</td>
               <td style={td}>{r.windDir != null ? String(Math.round(r.windDir)).padStart(3, '0') : '–'}</td>
+              <td style={tdHi}>{r.mast != null ? kmhToKnots(r.mast).toFixed(1) : '–'}</td>
               {r.speeds.map((s, j) => (
                 <td key={j} style={td}>{s != null ? kmhToKnots(s).toFixed(1) : '–'}</td>
               ))}
@@ -772,3 +817,5 @@ const btnGhost = {
 const th = { padding: '6px 4px', textAlign: 'center', color: '#94A3B8', fontWeight: 600, fontSize: 10, borderBottom: '1px solid #1E3A5A' }
 const td = { padding: '4px', textAlign: 'center', color: '#E2E8F0', fontFamily: 'monospace', borderBottom: '1px solid #0F2030' }
 const tdTime = { ...td, fontWeight: 700, color: '#7DD3FC' }
+const thHi = { ...th, background: '#0E2A38', color: '#67E8F9', borderBottom: '1px solid #155E75' }
+const tdHi = { ...td, background: '#0E2A38', color: '#67E8F9', fontWeight: 700, borderBottom: '1px solid #0F2030' }

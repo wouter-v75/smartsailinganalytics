@@ -161,17 +161,21 @@ export async function fetchGFSPressureLevels({ latitude, longitude, timezone }) 
 // Fetch every enabled surface model + GFS for one point. Returns a
 // { surfaceByModel, gfs, elevation, coords } container matching the shape
 // the upstream tool's `windData[locKey]` object expects.
-export async function fetchAllForPoint({ latitude, longitude, timezone, enabledModels }) {
+export async function fetchAllForPoint({ latitude, longitude, timezone, enabledModels, onProgress }) {
   const surfaceByModel = {}
   for (const modelKey of COMPARE_ORDER) {
     if (!enabledModels[modelKey]) { surfaceByModel[modelKey] = null; continue }
+    onProgress?.({ modelKey, phase: 'start' })
     // eslint-disable-next-line no-await-in-loop
     surfaceByModel[modelKey] = await fetchSurfaceModel({ modelKey, latitude, longitude, timezone })
+    onProgress?.({ modelKey, phase: 'done' })
     // Be gentle on Open-Meteo's rate limit (matches the 300ms spacing in v1.3).
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, 300))
   }
+  onProgress?.({ modelKey: 'GFS', phase: 'start' })
   const gfs = await fetchGFSPressureLevels({ latitude, longitude, timezone })
+  onProgress?.({ modelKey: 'GFS', phase: 'done' })
 
   // Elevation: first model that returned it, else GFS's.
   let elevation = 0
@@ -253,6 +257,38 @@ export function speed100mSeries(hourly, modelKey) {
   return hourly.wind_speed_100m
     ? hourly.wind_speed_100m.map((v) => v != null ? kmhToKnots(v) : null)
     : null
+}
+
+// Wind speed at an arbitrary height (e.g. masthead), interpolated from a
+// model's own height levels. Fits a curve through the 3 nearest available
+// levels (Lagrange, in log-height space — wind shear is ~logarithmic near the
+// surface, so this tracks the profile better than a straight line and is exact
+// at the data points). Falls back to a 2-point log fit, or the single value,
+// when fewer levels carry data. Returns km/h (same unit as the inputs) or null.
+export function interpolateSpeedAtHeight(hourly, heights, targetH, idx) {
+  if (!hourly || !heights || !heights.length || targetH == null) return null
+  const pts = []
+  for (const hgt of heights) {
+    const v = hourly[`wind_speed_${hgt}m`]?.[idx]
+    if (v != null && isFinite(v)) pts.push({ h: hgt, v })
+  }
+  if (!pts.length) return null
+  if (pts.length === 1) return pts[0].v
+  const lt = Math.log(Math.max(targetH, 1))
+  // 3 nearest levels by distance in log-height
+  pts.sort((a, b) => Math.abs(Math.log(a.h) - lt) - Math.abs(Math.log(b.h) - lt))
+  const use = pts.slice(0, Math.min(3, pts.length)).sort((a, b) => a.h - b.h)
+  const xs = use.map((p) => Math.log(p.h))
+  const ys = use.map((p) => p.v)
+  let result = 0
+  for (let i = 0; i < xs.length; i++) {
+    let term = ys[i]
+    for (let j = 0; j < xs.length; j++) {
+      if (j !== i) term *= (lt - xs[j]) / (xs[i] - xs[j])
+    }
+    result += term
+  }
+  return result > 0 ? result : 0
 }
 
 
