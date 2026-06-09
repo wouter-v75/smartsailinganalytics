@@ -1,23 +1,38 @@
-// Weather tab — admin-gated embed of the AROME / ECMWF / ICON wind-analysis
-// tool (live at weather.wvsailing.co.uk).
+// Weather tab — native port of the standalone weather tool (v1.3 of
+// weather.wvsailing.co.uk, source HTML in Smart Sailing Analytics/index.html).
 //
-// V1 strategy is an iframe so the tool keeps shipping from its own repo and
-// auto-updates here. A native port (with proper React state + dark theming
-// at the component level) replaces this once the integration brief in
-// MODEL_VERIFICATION_PROPOSAL.md is implemented.
+// Architecture:
+//   Phase 1 (this commit) — sub-tab shell + Forecast sub-tab end-to-end:
+//      Leaflet map + 3-point picker, model checkboxes, surface model toggle,
+//      hourly tables. No iframe. All deps lazy-loaded from CDN on tab open.
+//   Phase 2 — Wind profile + Model Comparison sub-tab.
+//   Phase 3 — Skew-T sounding (custom D3) sub-tab.
+//   Phase 4 — Skill Score / model verification (admin-only sub-tab even
+//      when Forecast gets relaxed to lower roles).
 //
-// Role gate is read at the call site (effectiveRole === 'admin' today,
-// relaxable to a single ROLES[...].canSeeWeather flag later).
-//
-// Theme: dark frame to match the host SPA; the iframe interior stays the
-// tool's own theme until ported.
+// Role gating:
+//   Whole tab is admin-only today via the shell's `effectiveRole !== 'admin'`
+//   check (see SmartSailingAnalytics_UI). The Skill Score sub-tab also
+//   enforces admin internally so it stays gated when Forecast widens.
 
 import React, { useState } from 'react'
+import dynamic from 'next/dynamic'
 
-const WEATHER_URL = 'https://weather.wvsailing.co.uk'
+const ForecastView = dynamic(() => import('./weather/ForecastView'), {
+  ssr: false,
+  loading: () => <TabLoading label="Loading forecast tools…" />,
+})
+
+const SUB_TABS = [
+  { id: 'forecast',   label: 'Forecast',         enabled: true  },
+  { id: 'compare',    label: 'Model Comparison', enabled: false, badge: 'Phase 2' },
+  { id: 'sounding',   label: 'Sounding',         enabled: false, badge: 'Phase 3' },
+  { id: 'skillscore', label: 'Skill Score',      enabled: false, badge: 'Phase 4', adminOnly: true },
+]
 
 export default function WeatherTab({ isMobile = false }) {
-  const [loaded, setLoaded] = useState(false)
+  const [sub, setSub] = useState('forecast')
+
   return (
     <div
       style={{
@@ -28,92 +43,70 @@ export default function WeatherTab({ isMobile = false }) {
         color: '#E2E8F0',
       }}
     >
-      {/* Mini header — keeps the tab consistent with Plan / Day / Backlog
-          chrome (label + actions on the right). Hidden on mobile to free
-          vertical space for the iframe. */}
-      {!isMobile && (
-        <div
-          style={{
-            padding: '10px 18px',
-            borderBottom: '1px solid #1E3A5A',
-            background: '#050E1C',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            flexShrink: 0,
-          }}
-        >
-          <span style={{ fontSize: 13, fontWeight: 800 }}>🌦 Weather tool</span>
-          <span style={{ fontSize: 11, color: '#64748B' }}>
-            AROME · ECMWF · ICON wind analysis
-          </span>
-          <span
-            style={{
-              fontSize: 9,
-              fontWeight: 700,
-              color: '#F59E0B',
-              background: '#0F2A45',
-              border: '1px solid #1E3A5A',
-              borderRadius: 4,
-              padding: '1px 6px',
-              letterSpacing: 0.5,
-              textTransform: 'uppercase',
-            }}
-          >
-            Admin preview
-          </span>
-          <div style={{ flex: 1 }} />
-          <a
-            href={WEATHER_URL}
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              fontSize: 11,
-              color: '#06B6D4',
-              textDecoration: 'none',
-              padding: '4px 10px',
-              border: '1px solid #1E3A5A',
-              borderRadius: 6,
-              background: '#0A1929',
-            }}
-          >
-            Open in new tab ↗
-          </a>
-        </div>
-      )}
-
-      {!loaded && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            pointerEvents: 'none',
-            color: '#475569',
-            fontSize: 12,
-            background: '#030F1A',
-          }}
-        >
-          Loading wind analysis…
-        </div>
-      )}
-
-      <iframe
-        src={WEATHER_URL}
-        title="AROME / ECMWF / ICON wind analysis"
-        onLoad={() => setLoaded(true)}
+      {/* Sub-tab chrome — same pattern as Campaign tab. */}
+      <div
         style={{
-          flex: 1,
-          width: '100%',
-          border: 'none',
+          padding: isMobile ? '10px 12px' : '14px 20px 0',
           background: '#030F1A',
+          borderBottom: '1px solid #1E3A5A',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+          flexShrink: 0,
         }}
-        // Sandbox kept permissive — the tool runs on a sibling subdomain we
-        // control. Tighten later if the native port is delayed.
-        allow="geolocation; clipboard-read; clipboard-write"
-      />
+      >
+        <span style={{ fontSize: 13, fontWeight: 800, marginRight: 8 }}>🌦 Weather</span>
+        {SUB_TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => t.enabled && setSub(t.id)}
+            disabled={!t.enabled}
+            style={{
+              padding: '7px 14px',
+              borderRadius: 8,
+              border: 'none',
+              cursor: t.enabled ? 'pointer' : 'not-allowed',
+              fontSize: 12,
+              fontWeight: 700,
+              background: sub === t.id ? '#06B6D4' : '#0F2A45',
+              color: sub === t.id ? '#000' : t.enabled ? '#94A3B8' : '#475569',
+              opacity: t.enabled ? 1 : 0.55,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+            title={!t.enabled ? `${t.badge} — not yet ported` : ''}
+          >
+            {t.label}
+            {!t.enabled && (
+              <span style={{ fontSize: 9, fontWeight: 700, color: '#7DD3FC', background: '#0A1929', border: '1px solid #1E3A5A', padding: '0 5px', borderRadius: 3 }}>
+                {t.badge}
+              </span>
+            )}
+          </button>
+        ))}
+        <div style={{ flex: 1 }} />
+        <span style={{
+          fontSize: 9, fontWeight: 700, color: '#F59E0B',
+          background: '#0F2A45', border: '1px solid #1E3A5A',
+          borderRadius: 4, padding: '2px 6px',
+          letterSpacing: 0.5, textTransform: 'uppercase',
+        }}>
+          Admin preview
+        </span>
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {sub === 'forecast' && <ForecastView />}
+        {/* Future sub-tabs land here. */}
+      </div>
+    </div>
+  )
+}
+
+function TabLoading({ label }) {
+  return (
+    <div style={{ padding: 30, textAlign: 'center', color: '#475569', fontSize: 12 }}>
+      {label || 'Loading…'}
     </div>
   )
 }
