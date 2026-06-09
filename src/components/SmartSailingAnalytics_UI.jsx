@@ -29,6 +29,7 @@ const SquashShotsApp = dynamic(() => import("./SquashShotsApp"), { ssr:false, lo
 const SailScanTab    = dynamic(() => import("./SailScanTab"),    { ssr:false, loading:TabLoading });
 const AdminTab       = dynamic(() => import("./AdminTab"),       { ssr:false, loading:TabLoading });
 const CampaignTab    = dynamic(() => import("./CampaignTab"),    { ssr:false, loading:TabLoading });
+const WeatherTab     = dynamic(() => import("./WeatherTab"),     { ssr:false, loading:TabLoading });
 
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
@@ -4261,6 +4262,7 @@ function MobileShell(props){
   React.useEffect(()=>{ injectMobileCSS(); },[]);
   const tabDefs=[
     {id:"campaign", icon:"🗓", label:"Plan"},
+    {id:"weather",  icon:"🌦", label:"Weather"},
     {id:"library",  icon:"📹", label:"Videos"},
     {id:"photos",   icon:"📷", label:"Photos"},
     {id:"analytics",icon:"📊", label:"Analytics"},
@@ -4270,6 +4272,9 @@ function MobileShell(props){
     {id:"admin",    icon:"⚙",  label:"Admin"},
   ].filter(t => {
     if (t.id === "campaign" && (!props.campaignOn || props.effectiveRole === 'guest')) return false;
+    // Weather tab is admin-only for now. Relax later by replacing this
+    // line with: if (t.id === "weather" && !props.canSeeWeather) return false;
+    if (t.id === "weather" && props.effectiveRole !== 'admin') return false;
     if (t.id === "sailscan" && props.canSeeSailScanTab === false) return false;
     if (t.id === "squashshots" && props.canSeeSquashShotsTab === false) return false;
     if (t.id === "admin" && props.effectiveRole !== 'admin') return false;
@@ -4392,6 +4397,13 @@ function MobileShell(props){
         {activeTab==="campaign"&&props.campaignOn&&props.campaignCfg&&props.effectiveRole!=='guest'&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
             <CampaignTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} onOpenVideo={props.openCampaignVideo}/>
+          </div>
+        )}
+
+        {/* Weather — admin-only embed of the AROME/ECMWF/ICON wind tool. */}
+        {activeTab==="weather"&&props.effectiveRole==='admin'&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <WeatherTab isMobile={true}/>
           </div>
         )}
 
@@ -6023,13 +6035,16 @@ function SSAApp(){
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{display:"flex",gap:2,marginLeft:10}}>
-          {["campaign","library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
+          {["campaign","weather","library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
             if (tab === "campaign" && (!campaignOn || effectiveRole === 'guest')) return false;
+            // Weather is admin-only for now; flip to a ROLES[role].canSeeWeather
+            // flag when ready to widen access.
+            if (tab === "weather" && effectiveRole !== 'admin') return false;
             if (tab === "sailscan" && !canSeeSailScanTab) return false;
             if (tab === "squashshots" && !canSeeSquashShotsTab) return false;
             if (tab === "admin" && effectiveRole !== 'admin') return false;
             return true;
-          }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab==="library"?"Videos":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
+          }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab==="library"?"Videos":tab==="weather"?"Weather":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
         </nav>
         <div style={{flex:1}}/>
         {canUseAI && (
@@ -6714,6 +6729,12 @@ function SSAApp(){
         {activeTab==="campaign"&&campaignOn&&effectiveRole!=='guest'&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
             <CampaignTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} onOpenVideo={openCampaignVideo}/>
+          </div>
+        )}
+        {/* Weather — admin-only embed of the wind-analysis tool. */}
+        {activeTab==="weather"&&effectiveRole==='admin'&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <WeatherTab isMobile={false}/>
           </div>
         )}
       </div>
