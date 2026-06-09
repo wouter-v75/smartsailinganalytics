@@ -182,7 +182,11 @@ function drawBarb(g, cx, cy, dir, kt) {
   for (let i = 0; i < f5; i++)  { grp.append('line').attr('x1', 0).attr('y1', pos).attr('x2', 5).attr('y2', pos - 2); pos += step }
 }
 
-// The full Skew-T draw — imperative D3 into `container`. Ported from drawSkewT.
+// The full Skew-T draw — imperative D3 into `container`. Ported from drawSkewT,
+// reworked for TRUE semantic zoom: wheel/drag rescales the temperature (x) and
+// pressure (y) scales from the zoom transform and redraws, so axes re-tick,
+// gridlines re-space and stroke widths stay constant — not a css-transform
+// "picture" zoom of the whole SVG.
 function drawSkewT(container, data) {
   const d3 = window.d3
   const W = Math.max(360, Math.min(560, container.clientWidth || 520))
@@ -190,70 +194,91 @@ function drawSkewT(container, data) {
   const m = { top: 16, right: 140, bottom: 38, left: 44 }
   const w = W - m.left - m.right, h = H - m.top - m.bottom
 
-  const y = d3.scaleLog().domain([SKEWT_PBOT, SKEWT_PTOP]).range([h, 0])
-  const x = d3.scaleLinear().domain([-10, 35]).range([0, w])
+  // Base (identity) scales. The zoom transform rescales copies of THESE and we
+  // redraw against the rescaled scales (zx / zy).
+  const x0 = d3.scaleLinear().domain([-10, 35]).range([0, w])
+  const y0 = d3.scaleLog().domain([SKEWT_PBOT, SKEWT_PTOP]).range([h, 0])
   const SK = (0.55 * w) / h
-  const sx = (t, p) => x(t) + (h - y(p)) * SK
+  let zx = x0, zy = y0
+  const sxFor = (sx_, sy_) => (t, p) => sx_(t) + (h - sy_(p)) * SK
 
   const svg = d3.select(container).append('svg')
     .attr('width', W).attr('height', H)
     .attr('viewBox', `0 0 ${W} ${H}`).style('max-width', '100%').style('height', 'auto')
   const outer = svg.append('g').attr('transform', `translate(${m.left},${m.top})`)
-  const g = outer.append('g')
 
   const clipId = 'sktxclip-' + Math.random().toString(36).slice(2, 8)
-  g.append('clipPath').attr('id', clipId).append('rect').attr('width', w).attr('height', h)
-  const plot = g.append('g').attr('clip-path', `url(#${clipId})`)
+  outer.append('clipPath').attr('id', clipId).append('rect').attr('width', w).attr('height', h)
+  const plot = outer.append('g').attr('clip-path', `url(#${clipId})`)
+  const gStatic = plot.append('g')   // grid + profiles — cleared & redrawn each zoom
+  const gDyn = plot.append('g')      // hover parcel + dew line — persistent
+  const gAxis = outer.append('g')    // pressure labels + temp axis + barbs — redrawn each zoom
 
-  // Isobars + pressure labels
-  ;[1000, 950, 900, 850, 800, 750, 700, 650, 600, 550, 500].forEach((P) => {
-    plot.append('line').attr('class', 'sktx-isobar').attr('x1', 0).attr('x2', w).attr('y1', y(P)).attr('y2', y(P))
-    g.append('text').attr('class', 'sktx-label').attr('x', -6).attr('y', y(P)).attr('text-anchor', 'end').attr('dy', '0.32em').text(P)
-  })
+  const parcelPath = gDyn.append('path').attr('class', 'sktx-parcel').style('display', 'none')
+  const dewLine = gDyn.append('path').attr('class', 'sktx-dewline').style('display', 'none')
 
-  // Skewed isotherms (every 10 °C)
-  d3.range(-120, 61, 10).forEach((T) => {
-    plot.append('line')
-      .attr('class', T === 0 ? 'sktx-isotherm-zero' : 'sktx-isotherm')
-      .attr('x1', sx(T, SKEWT_PBOT)).attr('y1', h)
-      .attr('x2', sx(T, SKEWT_PTOP)).attr('y2', 0)
-  })
-
-  // Light dry adiabats
-  const line = d3.line().x((d) => d[0]).y((d) => d[1])
+  const ISOBARS = [1000, 950, 900, 850, 800, 750, 700, 650, 600, 550, 500]
   const pgrid = d3.range(SKEWT_PBOT, SKEWT_PTOP - 1, -10)
-  d3.range(-20, 160, 20).forEach((theta) => {
-    const pts = pgrid.map((p) => {
-      const T = (theta + 273.15) * Math.pow(p / 1000, 0.286) - 273.15
-      return [sx(T, p), y(p)]
+  const lineXY = d3.line().x((d) => d[0]).y((d) => d[1])
+
+  // Redraw everything that depends on the current (zoomed) scales.
+  function redraw() {
+    const sx = sxFor(zx, zy)
+    gStatic.selectAll('*').remove()
+    gAxis.selectAll('*').remove()
+
+    // Isobars + pressure labels (labels only where on-screen)
+    ISOBARS.forEach((P) => {
+      const yp = zy(P)
+      gStatic.append('line').attr('class', 'sktx-isobar').attr('x1', 0).attr('x2', w).attr('y1', yp).attr('y2', yp)
+      if (yp >= -1 && yp <= h + 1) {
+        gAxis.append('text').attr('class', 'sktx-label').attr('x', -6).attr('y', yp).attr('text-anchor', 'end').attr('dy', '0.32em').text(P)
+      }
     })
-    plot.append('path').attr('class', 'sktx-dryadiabat').attr('d', line(pts))
-  })
 
-  // Temperature & dew-point profiles
-  plot.append('path').datum(data).attr('class', 'sktx-temp')
-    .attr('d', d3.line().x((d) => sx(d.temp, d.press)).y((d) => y(d.press)))
-  plot.append('path').datum(data).attr('class', 'sktx-dwpt')
-    .attr('d', d3.line().x((d) => sx(d.dwpt, d.press)).y((d) => y(d.press)))
+    // Skewed isotherms (every 10 °C), spanning the full pressure axis
+    d3.range(-120, 61, 10).forEach((T) => {
+      gStatic.append('line')
+        .attr('class', T === 0 ? 'sktx-isotherm-zero' : 'sktx-isotherm')
+        .attr('x1', sx(T, SKEWT_PBOT)).attr('y1', zy(SKEWT_PBOT))
+        .attr('x2', sx(T, SKEWT_PTOP)).attr('y2', zy(SKEWT_PTOP))
+    })
 
-  const parcelPath = plot.append('path').attr('class', 'sktx-parcel').style('display', 'none')
-  const dewLine = plot.append('path').attr('class', 'sktx-dewline').style('display', 'none')
+    // Dry adiabats
+    d3.range(-20, 160, 20).forEach((theta) => {
+      const pts = pgrid.map((p) => {
+        const T = (theta + 273.15) * Math.pow(p / 1000, 0.286) - 273.15
+        return [sx(T, p), zy(p)]
+      })
+      gStatic.append('path').attr('class', 'sktx-dryadiabat').attr('d', lineXY(pts))
+    })
 
-  // Temperature axis (bottom)
-  g.append('g').attr('class', 'sktx-axis').attr('transform', `translate(0,${h})`)
-    .call(d3.axisBottom(x).tickValues(d3.range(-10, 36, 5)).tickFormat((d) => d + '°'))
-  g.append('text').attr('class', 'sktx-label').attr('x', w / 2).attr('y', h + 34).attr('text-anchor', 'middle').text('Temperature (°C)')
+    // Temperature & dew-point profiles
+    gStatic.append('path').datum(data).attr('class', 'sktx-temp')
+      .attr('d', d3.line().x((d) => sx(d.temp, d.press)).y((d) => zy(d.press)))
+    gStatic.append('path').datum(data).attr('class', 'sktx-dwpt')
+      .attr('d', d3.line().x((d) => sx(d.dwpt, d.press)).y((d) => zy(d.press)))
 
-  // Wind barbs on the right margin
-  const bx = w + 22
-  g.append('text').attr('class', 'sktx-label').attr('x', bx).attr('y', -4).attr('text-anchor', 'middle').text('kt')
-  data.forEach((d) => {
-    if (d.wdir == null) return
-    drawBarb(g, bx, y(d.press), d.wdir, d.wspd * 1.94384)
-  })
+    // Temperature axis (bottom) — ticks follow the zoomed x scale
+    gAxis.append('g').attr('class', 'sktx-axis').attr('transform', `translate(0,${h})`)
+      .call(d3.axisBottom(zx).ticks(8).tickFormat((d) => d + '°'))
+    gAxis.append('text').attr('class', 'sktx-label').attr('x', w / 2).attr('y', h + 34).attr('text-anchor', 'middle').text('Temperature (°C)')
 
-  // Interactive crosshair (Windy-style)
-  const focus = g.append('g').style('display', 'none')
+    // Wind barbs on the right margin, at the (zoomed) pressure height
+    const bx = w + 22
+    gAxis.append('text').attr('class', 'sktx-label').attr('x', bx).attr('y', -4).attr('text-anchor', 'middle').text('kt')
+    data.forEach((d) => {
+      if (d.wdir == null) return
+      const yp = zy(d.press)
+      if (yp < -2 || yp > h + 2) return
+      drawBarb(gAxis, bx, yp, d.wdir, d.wspd * 1.94384)
+    })
+  }
+
+  redraw()
+
+  // Interactive crosshair (Windy-style) — persistent group above the grid.
+  const focus = outer.append('g').style('display', 'none')
   const hline = focus.append('line').attr('class', 'sktx-cursorline').attr('x1', 0).attr('x2', w)
   const mT = focus.append('circle').attr('class', 'sktx-marker-temp').attr('r', 4)
   const mD = focus.append('circle').attr('class', 'sktx-marker-dwpt').attr('r', 4)
@@ -262,18 +287,20 @@ function drawSkewT(container, data) {
   const tipText = tipG.append('text').attr('class', 'sktx-tip')
 
   const P0 = data[0].press
-  const parcelLine = d3.line().x((o) => sx(o.temp, o.press)).y((o) => y(o.press))
 
-  g.append('rect').attr('width', w).attr('height', h)
+  // Transparent capture rect — drives the crosshair and lets zoom events bubble.
+  outer.append('rect').attr('width', w).attr('height', h)
     .style('fill', 'none').style('pointer-events', 'all')
     .on('mouseover', () => { focus.style('display', null); parcelPath.style('display', null); dewLine.style('display', null) })
     .on('mouseout', () => { focus.style('display', 'none'); parcelPath.style('display', 'none'); dewLine.style('display', 'none') })
     .on('mousemove', function (ev) {
+      const sx = sxFor(zx, zy)
+      const parcelLine = d3.line().x((o) => sx(o.temp, o.press)).y((o) => zy(o.press))
       const [mx, my] = d3.pointer(ev, this)
-      const pCursor = y.invert(my)
+      const pCursor = zy.invert(my)
       let d = data[0], best = Infinity
       data.forEach((o) => { const diff = Math.abs(o.press - pCursor); if (diff < best) { best = diff; d = o } })
-      const yy = y(d.press)
+      const yy = zy(d.press)
       hline.attr('y1', yy).attr('y2', yy)
       mT.attr('cx', sx(d.temp, d.press)).attr('cy', yy)
       mD.attr('cx', sx(d.dwpt, d.press)).attr('cy', yy)
@@ -299,18 +326,25 @@ function drawSkewT(container, data) {
       tipG.attr('transform', `translate(${tx},${ty})`)
 
       const Pa = Math.min(pCursor, P0)
-      const Ta = x.invert(mx - (h - y(Pa)) * SK)
+      const Ta = zx.invert(mx - (h - zy(Pa)) * SK)
       const pp = parcelThrough(Ta, Pa, P0).filter((o) => o.press >= SKEWT_PTOP && o.press <= P0 + 1)
       parcelPath.attr('d', parcelLine(pp))
     })
 
-  // Wheel zoom / drag pan / double-click reset
+  // Semantic zoom: rescale both axes from the transform and redraw. Attached to
+  // `outer` so pointer coords line up with the plot area (events bubble up from
+  // the capture rect). Double-click resets.
   const zoom = d3.zoom()
-    .scaleExtent([1, 10])
-    .translateExtent([[-60, -40], [w + 100, h + 50]])
-    .on('zoom', (ev) => g.attr('transform', ev.transform))
-  svg.call(zoom).on('dblclick.zoom', () =>
-    svg.transition().duration(200).call(zoom.transform, d3.zoomIdentity))
+    .scaleExtent([1, 12])
+    .extent([[0, 0], [w, h]])
+    .translateExtent([[0, 0], [w, h]])
+    .on('zoom', (ev) => {
+      zx = ev.transform.rescaleX(x0)
+      zy = ev.transform.rescaleY(y0)
+      redraw()
+    })
+  outer.call(zoom).on('dblclick.zoom', () =>
+    outer.transition().duration(200).call(zoom.transform, d3.zoomIdentity))
 }
 
 // ── React component ──────────────────────────────────────────────────────────
