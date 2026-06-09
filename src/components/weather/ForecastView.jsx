@@ -12,10 +12,12 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
+import PlotlyChart from './PlotlyChart'
 import {
   MODELS, MODEL_ORDER, COMPARE_ORDER,
   fetchAllForPoint, pickDefaultActiveModel, hasValidSpeed,
   kmhToKnots, decimalToDMS,
+  calculateTheoreticalSeaProfile, pressureToAltitude,
 } from './openMeteo'
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -44,27 +46,32 @@ const TZ_OPTIONS = [
   { v: 'Australia/Sydney',           l: 'Australia/Sydney' },
 ]
 
-export default function ForecastView() {
+// Props:
+//   windData, activeModel, resolvedTz — fetched data (lifted to WeatherTab so
+//     CompareView and future sub-tabs share the same payload without refetch).
+//   onDataChange(windData, activeModel, resolvedTz) — emitted after a fetch.
+//   onActiveModelChange(modelKey) — emitted when the user flips the toggle.
+export default function ForecastView({
+  windData = {},
+  activeModel = 'AROME',
+  resolvedTz = 'UTC',
+  onDataChange,
+  onActiveModelChange,
+}) {
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
   const mapDivRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef({}) // { '1': marker, '2': marker, '3': marker }
 
-  // Form state
+  // Form state stays local — only the post-fetch results are lifted.
   const [date, setDate] = useState(today())
   const [timezone, setTimezone] = useState('auto')
-  // Initial sample point — Paris, matches the standalone tool's default.
   const [locations, setLocations] = useState({ 1: { lat: 48.8566, lon: 2.3522 } })
   const [enabledModels, setEnabledModels] = useState(
     () => Object.fromEntries(COMPARE_ORDER.map((k) => [k, true]))
   )
-
-  // Fetch state
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
-  const [windData, setWindData] = useState({}) // { '1': pointData, '2': pointData, ... }
-  const [activeModel, setActiveModel] = useState('AROME')
-  const [resolvedTz, setResolvedTz] = useState('UTC')
 
   // ── Map bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
@@ -138,19 +145,19 @@ export default function ForecastView() {
     setLocations((prev) => {
       const next = { ...prev }; delete next[key]; return next
     })
-    // Clear any existing windData so the table goes back to placeholder.
-    setWindData((prev) => {
-      const next = { ...prev }; delete next[key]; return next
-    })
+    // Drop that point's fetched data too so the table goes back to placeholder.
+    if (windData[key]) {
+      const next = { ...windData }; delete next[key]
+      onDataChange?.(next, activeModel, resolvedTz)
+    }
   }
 
   // ── Fetch all models for every selected location ─────────────────────
   async function fetchAll() {
-    setLoading(true); setErr(null); setWindData({})
+    setLoading(true); setErr(null); onDataChange?.({}, activeModel, resolvedTz)
     const tz = timezone === 'auto'
       ? Intl.DateTimeFormat().resolvedOptions().timeZone
       : timezone
-    setResolvedTz(tz)
     try {
       const out = {}
       for (const [key, coords] of Object.entries(locations)) {
@@ -162,15 +169,15 @@ export default function ForecastView() {
           enabledModels,
         })
       }
-      setWindData(out)
       const points = Object.values(out)
-      setActiveModel(pickDefaultActiveModel(points))
+      onDataChange?.(out, pickDefaultActiveModel(points), tz)
     } catch (e) {
       setErr(e?.message || 'fetch failed')
     } finally {
       setLoading(false)
     }
   }
+  const setActiveModel = (key) => onActiveModelChange?.(key)
 
   // Which models actually returned data at any selected point (for greying).
   const modelAvailable = useMemo(() => {
@@ -304,6 +311,11 @@ export default function ForecastView() {
         <Card><div style={{ color: '#EF4444', fontSize: 13 }}>⚠ {err}</div></Card>
       )}
 
+      {/* Multi-location summary strip — appears as soon as we have data. */}
+      {hasResults && (
+        <LocationSummaryStrip windData={windData} model={MODELS[activeModel]} />
+      )}
+
       {/* Hourly tables */}
       {hasResults && (
         <Card>
@@ -351,6 +363,36 @@ export default function ForecastView() {
               />
             ))}
           </div>
+        </Card>
+      )}
+
+      {/* Wind speed comparison — all picked locations on one chart at the
+          active model's 10m and upper height. */}
+      {hasResults && (
+        <Card>
+          <ChartTitle>
+            🌬 Wind Speed Comparison — All Locations ({MODELS[activeModel].label})
+          </ChartTitle>
+          <WindCompareChart windData={windData} model={MODELS[activeModel]} timezone={resolvedTz} />
+        </Card>
+      )}
+
+      {/* Vertical wind profile — surface model levels + GFS pressure levels +
+          theoretical neutral marine log profile at a user-selectable time. */}
+      {hasResults && (
+        <WindProfileSection
+          windData={windData}
+          model={MODELS[activeModel]}
+          timezone={resolvedTz}
+        />
+      )}
+
+      {/* GFS planetary boundary layer height — single line per location, not
+          model-dependent (GFS only). Useful sea-breeze / convection signal. */}
+      {hasResults && (
+        <Card>
+          <ChartTitle>🌫 Planetary Boundary Layer Height (GFS)</ChartTitle>
+          <BoundaryLayerChart windData={windData} timezone={resolvedTz} />
         </Card>
       )}
     </div>
@@ -427,6 +469,272 @@ function WindTable({ locationKey, point, model, timezone }) {
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// ── Phase 2 chart sections ────────────────────────────────────────────
+
+// Per-location stat block: emoji + coords + avg / max / min wind + elevation.
+function LocationSummaryStrip({ windData, model }) {
+  const entries = Object.entries(windData)
+  return (
+    <Card>
+      <ChartTitle>📊 Multi-Location Wind Comparison</ChartTitle>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+        {entries.map(([key, point]) => {
+          const meta = LOCATION_META.find((m) => m.key === key)
+          const surf = point.surfaceByModel[model.key]
+          const valid = surf?.hourly?.wind_speed_10m?.filter?.((v) => v != null) || []
+          const hasData = valid.length > 0
+          const avg = hasData ? valid.reduce((a, b) => a + b, 0) / valid.length : null
+          const max = hasData ? Math.max(...valid) : null
+          const min = hasData ? Math.min(...valid) : null
+          return (
+            <div key={key} style={{ background: '#071624', border: `1px solid ${meta.accent}44`, borderRadius: 8, padding: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <span style={{ fontSize: 13 }}>{meta.emoji}</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0' }}>Location {key}</span>
+                <span style={{ fontSize: 9, fontWeight: 700, color: '#000', background: model.color, padding: '1px 5px', borderRadius: 3 }}>
+                  {model.label}
+                </span>
+              </div>
+              <div style={{ fontFamily: 'monospace', fontSize: 10, color: '#64748B', marginBottom: 8 }}>
+                {decimalToDMS(point.coords.latitude, false)}, {decimalToDMS(point.coords.longitude, true)}
+              </div>
+              {hasData ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 6 }}>
+                  <Stat label="Avg" value={`${kmhToKnots(avg).toFixed(1)} kt`} />
+                  <Stat label="Max" value={`${kmhToKnots(max).toFixed(1)} kt`} />
+                  <Stat label="Min" value={`${kmhToKnots(min).toFixed(1)} kt`} />
+                  <Stat label="Elev" value={`${Math.round(point.elevation || 0)} m`} />
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: '#64748B' }}>No {model.label} data here.</div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </Card>
+  )
+}
+
+function Stat({ label, value }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', fontFamily: 'monospace' }}>{value}</div>
+    </div>
+  )
+}
+
+// Wind speed over time, one trace per location at 10m + dashed at the model's
+// upper height. Active model only.
+function WindCompareChart({ windData, model, timezone }) {
+  const data = useMemo(() => {
+    const traces = []
+    const upParam = `wind_speed_${model.upperHeight}m`
+    for (const [key, point] of Object.entries(windData)) {
+      const meta = LOCATION_META.find((m) => m.key === key)
+      const surf = point.surfaceByModel[model.key]
+      if (!surf || !hasValidSpeed(surf.hourly)) continue
+      const xs = surf.hourly.time.map((t) => new Date(t))
+      const s10 = surf.hourly.wind_speed_10m
+      const sUp = surf.hourly[upParam]
+      if (s10) {
+        traces.push({
+          x: xs, y: s10.map((s) => s != null ? kmhToKnots(s) : null),
+          type: 'scatter', mode: 'lines+markers',
+          name: `${meta.emoji} Loc ${key} (10m)`,
+          line: { color: meta.accent, width: 3 }, marker: { size: 5 },
+          connectgaps: true,
+        })
+      }
+      if (sUp) {
+        traces.push({
+          x: xs, y: sUp.map((s) => s != null ? kmhToKnots(s) : null),
+          type: 'scatter', mode: 'lines',
+          name: `${meta.emoji} Loc ${key} (${model.upperHeight}m)`,
+          line: { color: meta.accent, width: 2, dash: 'dash' },
+          connectgaps: true,
+        })
+      }
+    }
+    return traces
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windData, model.key])
+
+  const layout = {
+    xaxis: { title: 'Time', type: 'date' },
+    yaxis: { title: 'Wind speed (knots)', rangemode: 'tozero' },
+    hovermode: 'x unified',
+    legend: { orientation: 'h', y: -0.2 },
+    margin: { t: 20, b: 80, l: 60, r: 20 },
+  }
+  return (
+    <PlotlyChart
+      data={data}
+      layout={layout}
+      height={340}
+      placeholder={`No ${model.label} data to compare`}
+    />
+  )
+}
+
+// Vertical profile — surface levels from the active model + GFS pressure
+// levels + theoretical log profile from the model's 10m wind. Time selector
+// drives `timeIndex`.
+function WindProfileSection({ windData, model, timezone }) {
+  const times = useMemo(() => {
+    for (const point of Object.values(windData)) {
+      const surf = point.surfaceByModel[model.key]
+      if (surf?.hourly?.time?.length) return surf.hourly.time
+      if (point.gfs?.hourly?.time?.length) return point.gfs.hourly.time
+    }
+    return []
+  }, [windData, model.key])
+  const [timeIdx, setTimeIdx] = useState(0)
+  useEffect(() => { setTimeIdx(0) }, [windData, model.key])
+
+  const data = useMemo(() => {
+    const traces = []
+    const surfaceLevels = model.heights.map((h) => ({ name: `${h}m`, param: `wind_speed_${h}m`, altitude: h }))
+    const pressureLevels = [975, 950, 925, 900, 875, 850, 825, 800, 775, 750].map((p) => ({
+      name: `${p}hPa`, param: `wind_speed_${p}hPa`, altitude: pressureToAltitude(p),
+    }))
+    for (const [key, point] of Object.entries(windData)) {
+      const meta = LOCATION_META.find((m) => m.key === key)
+      const surf = point.surfaceByModel[model.key]
+      const gfsHourly = point.gfs?.hourly || {}
+      const profile = []
+      if (surf?.hourly) {
+        for (const lv of surfaceLevels) {
+          const spd = surf.hourly[lv.param]?.[timeIdx]
+          if (spd != null && spd > 0) {
+            profile.push({ name: lv.name, altitude: Math.max(lv.altitude, 1), speed: kmhToKnots(spd), source: model.label })
+          }
+        }
+      }
+      for (const lv of pressureLevels) {
+        const spd = gfsHourly[lv.param]?.[timeIdx]
+        if (spd != null && spd > 0) {
+          profile.push({ name: lv.name, altitude: Math.max(lv.altitude, 1), speed: kmhToKnots(spd), source: 'GFS' })
+        }
+      }
+      if (profile.length) {
+        profile.sort((a, b) => a.altitude - b.altitude)
+        traces.push({
+          x: profile.map((d) => d.speed),
+          y: profile.map((d) => d.altitude),
+          type: 'scatter', mode: 'lines+markers',
+          name: `${meta.emoji} Loc ${key}`,
+          line: { color: meta.accent, width: 3 }, marker: { size: 6 },
+          text: profile.map((d) => `<b>Loc ${key}</b><br>Level: ${d.name}<br>Alt: ${Math.round(d.altitude)} m<br>Speed: ${d.speed.toFixed(1)} kt<br><i>${d.source}</i>`),
+          hovertemplate: '%{text}<extra></extra>',
+        })
+      }
+      // Theoretical neutral marine log profile from the model's 10m wind.
+      const w10 = surf?.hourly?.wind_speed_10m?.[timeIdx]
+      if (w10 && w10 > 0) {
+        const theory = calculateTheoreticalSeaProfile(w10)
+        traces.push({
+          x: theory.map((d) => kmhToKnots(d.speed)),
+          y: theory.map((d) => d.height),
+          type: 'scatter', mode: 'lines',
+          name: `📏 Loc ${key} log z₀=0.2mm`,
+          line: { color: meta.accent + '66', width: 2, dash: 'dot' },
+          hoverinfo: 'skip',
+        })
+      }
+    }
+    return traces
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windData, model.key, timeIdx])
+
+  const selTime = times[timeIdx] ? new Date(times[timeIdx]) : null
+  const timeLabel = selTime
+    ? selTime.toLocaleString('en-GB', { timeZone: timezone, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : ''
+
+  const layout = {
+    xaxis: { title: 'Wind speed (knots)', rangemode: 'tozero' },
+    yaxis: { title: 'Altitude (m)', type: 'log', tickformat: '.0f' },
+    hovermode: 'closest',
+    legend: { x: 0.02, y: 0.98 },
+    margin: { t: 20, b: 50, l: 70, r: 20 },
+  }
+  return (
+    <Card>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+        <ChartTitle inline>
+          📈 Vertical Wind Profile ({model.label} + GFS) — {timeLabel || '—'}
+        </ChartTitle>
+        <div style={{ flex: 1 }} />
+        <Field label="Time">
+          <select value={timeIdx} onChange={(e) => setTimeIdx(Number(e.target.value))} style={inputStyle}>
+            {times.map((t, i) => (
+              <option key={i} value={i}>
+                {new Date(t).toLocaleString('en-GB', { timeZone: timezone, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </div>
+      <PlotlyChart
+        data={data}
+        layout={layout}
+        height={380}
+        placeholder="No profile data"
+      />
+    </Card>
+  )
+}
+
+// GFS boundary layer height — one line per location.
+function BoundaryLayerChart({ windData, timezone }) {
+  const data = useMemo(() => {
+    const traces = []
+    for (const [key, point] of Object.entries(windData)) {
+      const meta = LOCATION_META.find((m) => m.key === key)
+      const hr = point.gfs?.hourly || {}
+      const blh = hr.boundary_layer_height
+      const time = hr.time
+      if (!blh || !time || !blh.some((h) => h != null && h > 0)) continue
+      traces.push({
+        x: time.map((t) => new Date(t)),
+        y: blh,
+        type: 'scatter', mode: 'lines+markers',
+        name: `${meta.emoji} Loc ${key}`,
+        line: { color: meta.accent, width: 3 }, marker: { size: 5 },
+        connectgaps: true,
+      })
+    }
+    return traces
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windData])
+  const layout = {
+    xaxis: { title: 'Time', type: 'date' },
+    yaxis: { title: 'PBL height (m)', rangemode: 'tozero' },
+    hovermode: 'x unified',
+    legend: { orientation: 'h', y: -0.2 },
+    margin: { t: 20, b: 80, l: 60, r: 20 },
+  }
+  return <PlotlyChart data={data} layout={layout} height={300} placeholder="No PBL data at the selected points" />
+}
+
+function ChartTitle({ children, inline }) {
+  return (
+    <div
+      style={{
+        fontSize: 12, fontWeight: 700,
+        color: '#7DD3FC',
+        textTransform: 'uppercase', letterSpacing: 1,
+        marginBottom: inline ? 0 : 10,
+        display: inline ? 'inline-block' : 'block',
+      }}
+    >
+      {children}
     </div>
   )
 }

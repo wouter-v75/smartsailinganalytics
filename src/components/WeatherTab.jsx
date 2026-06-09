@@ -1,19 +1,15 @@
 // Weather tab — native port of the standalone weather tool (v1.3 of
 // weather.wvsailing.co.uk, source HTML in Smart Sailing Analytics/index.html).
 //
-// Architecture:
-//   Phase 1 (this commit) — sub-tab shell + Forecast sub-tab end-to-end:
-//      Leaflet map + 3-point picker, model checkboxes, surface model toggle,
-//      hourly tables. No iframe. All deps lazy-loaded from CDN on tab open.
-//   Phase 2 — Wind profile + Model Comparison sub-tab.
-//   Phase 3 — Skew-T sounding (custom D3) sub-tab.
-//   Phase 4 — Skill Score / model verification (admin-only sub-tab even
-//      when Forecast gets relaxed to lower roles).
+// Phase 1: sub-tab shell + Forecast (map + tables + summary strip + charts).
+// Phase 2: Compare sub-tab (6-model 48 h speed/dir for one location).
+// Phase 3: Skew-T sounding (custom D3 port) — pending.
+// Phase 4: Skill Score / model verification (admin-only) — pending.
 //
-// Role gating:
-//   Whole tab is admin-only today via the shell's `effectiveRole !== 'admin'`
-//   check (see SmartSailingAnalytics_UI). The Skill Score sub-tab also
-//   enforces admin internally so it stays gated when Forecast widens.
+// Shared post-fetch state — windData / activeModel / resolvedTz — lives at
+// THIS level so opening the Compare sub-tab after fetching in Forecast
+// instantly renders without re-querying Open-Meteo. The input state
+// (locations, date, etc.) stays inside ForecastView.
 
 import React, { useState } from 'react'
 import dynamic from 'next/dynamic'
@@ -22,16 +18,35 @@ const ForecastView = dynamic(() => import('./weather/ForecastView'), {
   ssr: false,
   loading: () => <TabLoading label="Loading forecast tools…" />,
 })
+const CompareView = dynamic(() => import('./weather/CompareView'), {
+  ssr: false,
+  loading: () => <TabLoading label="Loading compare view…" />,
+})
 
 const SUB_TABS = [
   { id: 'forecast',   label: 'Forecast',         enabled: true  },
-  { id: 'compare',    label: 'Model Comparison', enabled: false, badge: 'Phase 2' },
+  { id: 'compare',    label: 'Model Comparison', enabled: true  },
   { id: 'sounding',   label: 'Sounding',         enabled: false, badge: 'Phase 3' },
   { id: 'skillscore', label: 'Skill Score',      enabled: false, badge: 'Phase 4', adminOnly: true },
 ]
 
 export default function WeatherTab({ isMobile = false }) {
   const [sub, setSub] = useState('forecast')
+
+  // Shared post-fetch state. Forecast emits updates via callbacks; Compare
+  // reads them straight from here. Empty until the user clicks "Fetch wind
+  // data" in Forecast.
+  const [windData, setWindData] = useState({})
+  const [activeModel, setActiveModel] = useState('AROME')
+  const [resolvedTz, setResolvedTz] = useState('UTC')
+
+  function handleDataChange(next, modelKey, tz) {
+    setWindData(next)
+    if (modelKey) setActiveModel(modelKey)
+    if (tz) setResolvedTz(tz)
+  }
+
+  const hasData = Object.keys(windData).length > 0
 
   return (
     <div
@@ -85,6 +100,11 @@ export default function WeatherTab({ isMobile = false }) {
           </button>
         ))}
         <div style={{ flex: 1 }} />
+        {hasData && sub !== 'forecast' && (
+          <span style={{ fontSize: 10, color: '#64748B' }}>
+            data from {Object.keys(windData).length} location{Object.keys(windData).length === 1 ? '' : 's'}
+          </span>
+        )}
         <span style={{
           fontSize: 9, fontWeight: 700, color: '#F59E0B',
           background: '#0F2A45', border: '1px solid #1E3A5A',
@@ -96,8 +116,18 @@ export default function WeatherTab({ isMobile = false }) {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {sub === 'forecast' && <ForecastView />}
-        {/* Future sub-tabs land here. */}
+        {sub === 'forecast' && (
+          <ForecastView
+            windData={windData}
+            activeModel={activeModel}
+            resolvedTz={resolvedTz}
+            onDataChange={handleDataChange}
+            onActiveModelChange={setActiveModel}
+          />
+        )}
+        {sub === 'compare' && (
+          <CompareView windData={windData} />
+        )}
       </div>
     </div>
   )

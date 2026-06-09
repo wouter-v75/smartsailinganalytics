@@ -212,3 +212,45 @@ export function decimalToDMS(decimal, isLongitude) {
   const degStr = isLongitude ? String(deg).padStart(3, '0') : String(deg).padStart(2, '0')
   return `${degStr} ${min.toFixed(1)}${hemi}`
 }
+
+// Theoretical neutral marine log-wind profile. Roughness z₀=0.0002 m, von
+// Kármán k=0.41. Returns altitude-speed pairs (1m–100m). Matches the
+// formula in index.html line 591 (calculateTheoreticalSeaProfile).
+export function calculateTheoreticalSeaProfile(windSpeed10mKmh) {
+  const z0 = 0.0002, k = 0.41
+  const uStar = (windSpeed10mKmh * k) / Math.log(10 / z0)
+  const out = []
+  for (let z = 10; z <= 100; z++) {
+    const spd = (uStar / k) * Math.log(z / z0)
+    out.push({ height: z, speed: spd > 0 ? spd : 0 })
+  }
+  return out
+}
+
+// Pressure → approximate altitude (m). Used to place pressure-level samples
+// on the vertical profile chart's altitude axis. International Standard
+// Atmosphere troposphere.
+export function pressureToAltitude(pressureHpa) {
+  const seaLevel = 1013.25
+  const T0 = 288.15
+  const L = 0.0065
+  const Rd = 287.053
+  const g = 9.80665
+  return (T0 / L) * (1 - Math.pow(pressureHpa / seaLevel, (Rd * L) / g))
+}
+
+// 100 m wind-speed series for a given model. ICON publishes 80 m and 120 m
+// natively; we interpolate at 100 m. Other models expose 100 m directly.
+// Returns knots (or null if the model doesn't carry the needed levels).
+export function speed100mSeries(hourly, modelKey) {
+  if (!hourly) return null
+  if (modelKey === 'ICON') {
+    const a = hourly.wind_speed_80m
+    const b = hourly.wind_speed_120m
+    if (!a || !b) return null
+    return a.map((v, i) => (v != null && b[i] != null) ? kmhToKnots((v + b[i]) / 2) : null)
+  }
+  return hourly.wind_speed_100m
+    ? hourly.wind_speed_100m.map((v) => v != null ? kmhToKnots(v) : null)
+    : null
+}
