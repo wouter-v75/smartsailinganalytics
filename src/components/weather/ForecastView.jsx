@@ -69,7 +69,7 @@ export default function ForecastView({
   // Form state stays local — only the post-fetch results are lifted.
   const [date, setDate] = useState(today())
   const [timezone, setTimezone] = useState('auto')
-  const [locations, setLocations] = useState({ 1: { lat: 48.8566, lon: 2.3522 } })
+  const [locations, setLocations] = useState({}) // empty → first click fills slot 1, then 2, then 3
   const [enabledModels, setEnabledModels] = useState(
     () => Object.fromEntries(COMPARE_ORDER.map((k) => [k, true]))
   )
@@ -102,8 +102,7 @@ export default function ForecastView({
       })
     })
 
-    // Drop the initial Paris marker.
-    addMarker(map, '1', 48.8566, 2.3522)
+    // No pre-dropped marker — locations start empty so clicks number 1 → 2 → 3.
     mapRef.current = map
     return () => {
       try { map.remove() } catch { /* ignore */ }
