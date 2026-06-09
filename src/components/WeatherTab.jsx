@@ -3,7 +3,7 @@
 //
 // Phase 1: sub-tab shell + Forecast (map + tables + summary strip + charts).
 // Phase 2: Compare sub-tab (6-model 48 h speed/dir for one location).
-// Phase 3: Skew-T sounding (custom D3 port) — pending.
+// Phase 3: Skew-T sounding (custom D3 port) — shipped.
 // Phase 4: Skill Score / model verification (admin-only) — pending.
 //
 // Shared post-fetch state — windData / activeModel / resolvedTz — lives at
@@ -22,11 +22,15 @@ const CompareView = dynamic(() => import('./weather/CompareView'), {
   ssr: false,
   loading: () => <TabLoading label="Loading compare view…" />,
 })
+const SoundingView = dynamic(() => import('./weather/SoundingView'), {
+  ssr: false,
+  loading: () => <TabLoading label="Loading sounding…" />,
+})
 
 const SUB_TABS = [
   { id: 'forecast',   label: 'Forecast',         enabled: true  },
   { id: 'compare',    label: 'Model Comparison', enabled: true  },
-  { id: 'sounding',   label: 'Sounding',         enabled: false, badge: 'Phase 3' },
+  { id: 'sounding',   label: 'Sounding',         enabled: true  },
   { id: 'skillscore', label: 'Skill Score',      enabled: false, badge: 'Phase 4', adminOnly: true },
 ]
 
@@ -127,6 +131,9 @@ export default function WeatherTab({ isMobile = false }) {
         )}
         {sub === 'compare' && (
           <CompareView windData={windData} />
+        )}
+        {sub === 'sounding' && (
+          <SoundingView windData={windData} resolvedTz={resolvedTz} />
         )}
       </div>
     </div>

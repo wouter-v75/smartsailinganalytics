@@ -132,7 +132,7 @@ export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezon
 // GFS pressure-level fetch — drives the Skew-T (Phase 3) and the PBL chart
 // (Phase 2). Always fetched alongside the surface models so we don't have a
 // second round-trip when the user opens the Sounding sub-tab.
-const GFS_SOUNDING_LEVELS = [
+export const GFS_SOUNDING_LEVELS = [
   1000, 975, 950, 925, 900, 875, 850, 825, 800, 775, 750, 725, 700, 675, 650,
   625, 600, 575, 550, 525, 500,
 ]
@@ -253,4 +253,43 @@ export function speed100mSeries(hourly, modelKey) {
   return hourly.wind_speed_100m
     ? hourly.wind_speed_100m.map((v) => v != null ? kmhToKnots(v) : null)
     : null
+}
+
+
+// ── Skew-T sounding sources (Phase 3) ────────────────────────────────────────
+// Pressure levels each source publishes. GFS uses the dense 25 hPa ladder above;
+// ICON / ECMWF expose the coarser sets Open-Meteo carries for those models.
+export const ICON_SOUNDING_LEVELS  = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500]
+export const ECMWF_SOUNDING_LEVELS = [1000, 925, 850, 700, 600, 500]
+
+// Sounding source registry — mirrors SOUNDING_SOURCES in index.html. Each
+// `hourly(point)` resolves the Open-Meteo payload that carries that source's
+// pressure-level columns for a windData point.
+export const SOUNDING_SOURCES = {
+  GFS:   { label: 'GFS · 25 hPa', levels: GFS_SOUNDING_LEVELS,   hourly: (d) => d && d.gfs && d.gfs.hourly },
+  ICON:  { label: 'ICON',         levels: ICON_SOUNDING_LEVELS,  hourly: (d) => d && d.surfaceByModel && d.surfaceByModel.ICON  && d.surfaceByModel.ICON.hourly },
+  ECMWF: { label: 'ECMWF',        levels: ECMWF_SOUNDING_LEVELS, hourly: (d) => d && d.surfaceByModel && d.surfaceByModel.ECMWF && d.surfaceByModel.ECMWF.hourly },
+}
+export const SOUNDING_ORDER = ['GFS', 'ICON', 'ECMWF']
+
+// Fetch a single user-picked sounding point. Lighter than fetchAllForPoint —
+// only the sources the Skew-T can use (ICON + ECMWF surface upper-air, GFS
+// pressure levels). Returns the same { coords, surfaceByModel, gfs, elevation }
+// container shape so it slots straight into windData under the 'S' key.
+// Mirrors fetchSoundingPoint() in index.html.
+export async function fetchSoundingPoint({ latitude, longitude, timezone }) {
+  const surfaceByModel = {}
+  surfaceByModel.ICON  = await fetchSurfaceModel({ modelKey: 'ICON',  latitude, longitude, timezone })
+  await new Promise((r) => setTimeout(r, 250))
+  surfaceByModel.ECMWF = await fetchSurfaceModel({ modelKey: 'ECMWF', latitude, longitude, timezone })
+  await new Promise((r) => setTimeout(r, 250))
+  const gfs = await fetchGFSPressureLevels({ latitude, longitude, timezone })
+
+  let elevation = 0
+  for (const k of ['ICON', 'ECMWF']) {
+    if (surfaceByModel[k] && surfaceByModel[k].elevation != null) { elevation = surfaceByModel[k].elevation; break }
+  }
+  if (!elevation && gfs && gfs.elevation != null) elevation = gfs.elevation
+
+  return { coords: { latitude, longitude }, surfaceByModel, gfs, elevation }
 }
