@@ -2062,11 +2062,12 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
     .filter((s) => s.date >= today && isRacingDay(s) && s.event && s.event.trim())
     .sort((a, b) => a.date.localeCompare(b.date))
   const nextEvent = futureEvents[0] || null
-  const daysToGo = nextEvent
-    ? Math.max(0, daysBetween(today, nextEvent.date))
-    : targetDate
-      ? Math.max(0, daysBetween(today, targetDate))
-      : null
+  // Counter is now strictly derived from THIS boat's racing days. The
+  // legacy team-wide targetDate fallback (teams.features.campaign_target_date)
+  // was removed — that field is per-team, not per-boat, so falling back to
+  // it produced wrong numbers when the selected boat had no events but
+  // another boat on the team did.
+  const daysToGo = nextEvent ? Math.max(0, daysBetween(today, nextEvent.date)) : null
   const trainingDaysToGo = nextEvent
     ? filteredSessions.filter(
         (s) => s.date >= today && s.date < nextEvent.date && isOnWaterTrainingDay(s)
@@ -2159,9 +2160,7 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
           label="Days to go"
           sub={nextEvent
             ? `Next Event: ${nextEvent.event} (${fmtDay(nextEvent.date)})`
-            : targetDate
-              ? `to ${fmtDay(targetDate)}`
-              : 'no event set yet'}
+            : 'no event set yet'}
         />
         <Counter
           big
