@@ -1,0 +1,6 @@
+# Generated / local artifacts — never commit.
+__pycache__/
+*.pyc
+_executed.ipynb
+data/
+.ipynb_checkpoints/

@@ -1,0 +1,10 @@
+# Phase-0 toe-setting tool — minimal, runs on a Mac, no GPU, no cloud.
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+jupyter>=1.0
+
+# Optional — only for the hierarchical upgrade (bayes_toe.fit_pymc). Not needed
+# for the Phase-0 closed-form fit.
+# pymc>=5.10
+# arviz>=0.17
