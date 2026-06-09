@@ -102,6 +102,18 @@ export default async function AdminEventsPage({
             Audit log
           </h1>
           <div className="flex gap-3 text-sm">
+            <Link
+              href="/admin/skill-score"
+              className="text-blue-600 hover:underline"
+            >
+              Skill score
+            </Link>
+            <Link
+              href="/admin/weather"
+              className="text-blue-600 hover:underline"
+            >
+              Weather
+            </Link>
             <Link href="/admin/users" className="text-blue-600 hover:underline">
               Users
             </Link>
