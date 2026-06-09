@@ -446,7 +446,12 @@ export default function ForecastView({
 function WindTable({ locationKey, point, model, timezone, mastHeight }) {
   const meta = LOCATION_META.find((m) => m.key === locationKey)
   const surf = point.surfaceByModel[model.key]
-  const cols = model.tableCols // [10, c2, c3]
+  // Speed columns = the model's display heights plus the mast height, sorted
+  // ascending so the row reads low→high. The mast height is interpolated and
+  // highlighted; if it coincides with a native column the two merge into one.
+  const speedHeights = Array.from(new Set([...model.tableCols, mastHeight]))
+    .filter((h) => Number.isFinite(h) && h > 0)
+    .sort((a, b) => a - b)
 
   if (!surf || !hasValidSpeed(surf.hourly)) {
     return (
@@ -474,8 +479,11 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
       rows.push({
         time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: timezone }),
         windDir: hourly.wind_direction_10m?.[index],
-        mast: interpolateSpeedAtHeight(hourly, model.heights, mastHeight, index),
-        speeds: cols.map((h) => hourly[`wind_speed_${h}m`]?.[index]),
+        speeds: speedHeights.map((h) => (
+          h === mastHeight
+            ? interpolateSpeedAtHeight(hourly, model.heights, mastHeight, index)
+            : hourly[`wind_speed_${h}m`]?.[index]
+        )),
       })
     }
   })
@@ -494,11 +502,16 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
         <thead>
           <tr>
             <th style={th}>Time<br /><span style={{ fontSize: 9, color: '#475569' }}>{timezone}</span></th>
-            <th style={th}>Dir<br /><span style={{ fontSize: 9, color: '#475569' }}>10m °</span></th>
-            <th style={thHi}>⛵ Mast<br /><span style={{ fontSize: 9, color: '#38BDF8' }}>{mastHeight}m kt</span></th>
-            {cols.map((h) => (
-              <th key={h} style={th}>Speed<br /><span style={{ fontSize: 9, color: '#475569' }}>{h}m kt</span></th>
-            ))}
+            <th style={th}>10m<br /><span style={{ fontSize: 9, color: '#475569' }}>TWD °</span></th>
+            {speedHeights.map((h) => {
+              const isMast = h === mastHeight
+              return (
+                <th key={h} style={isMast ? thHi : th}>
+                  {isMast ? '⛵ ' : ''}{h}m<br />
+                  <span style={{ fontSize: 9, color: isMast ? '#38BDF8' : '#475569' }}>TWS kt</span>
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>
@@ -506,10 +519,12 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
             <tr key={i}>
               <td style={tdTime}>{r.time}</td>
               <td style={td}>{r.windDir != null ? String(Math.round(r.windDir)).padStart(3, '0') : '–'}</td>
-              <td style={tdHi}>{r.mast != null ? kmhToKnots(r.mast).toFixed(1) : '–'}</td>
-              {r.speeds.map((s, j) => (
-                <td key={j} style={td}>{s != null ? kmhToKnots(s).toFixed(1) : '–'}</td>
-              ))}
+              {r.speeds.map((s, j) => {
+                const isMast = speedHeights[j] === mastHeight
+                return (
+                  <td key={j} style={isMast ? tdHi : td}>{s != null ? kmhToKnots(s).toFixed(1) : '–'}</td>
+                )
+              })}
             </tr>
           ))}
         </tbody>
