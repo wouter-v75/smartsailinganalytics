@@ -12,6 +12,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import PlotlyChart from './PlotlyChart'
 import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight } from './openMeteo'
+import { matchVenue, specFor, mosSeries } from './mos'
 
 const LOCATION_META = [
   { key: '1', emoji: '🔴', accent: '#EF4444' },
@@ -19,7 +20,7 @@ const LOCATION_META = [
   { key: '3', emoji: '🟠', accent: '#F97316' },
 ]
 
-export default function CompareView({ windData, mastHeight = 20 }) {
+export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'UTC' }) {
   const locKeys = Object.keys(windData)
   const [activeLoc, setActiveLoc] = useState(locKeys[0] || '1')
   useEffect(() => {
@@ -41,6 +42,8 @@ export default function CompareView({ windData, mastHeight = 20 }) {
   }
 
   const point = windData[activeLoc]
+  const venue = point ? matchVenue(point.coords.latitude, point.coords.longitude) : null
+  const spec = venue ? specFor(venue) : null
 
   return (
     <div style={{ padding: '16px 20px 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -94,6 +97,19 @@ export default function CompareView({ windData, mastHeight = 20 }) {
         yTitle="Wind speed (knots)"
         isDir={false}
       />
+      {spec && (
+        <ComparePanel
+          title={`✓ MOS-corrected mast-height wind (30 m) — ${venue.replace('_', ' ')}`}
+          point={point}
+          seriesFn={(h, key) => {
+            const mosId = MODELS[key].mosModel
+            if (!mosId) return null
+            return mosSeries(h, MODELS[key].heights, spec, mosId, resolvedTz)
+          }}
+          yTitle="Wind speed (knots)"
+          isDir={false}
+        />
+      )}
       <ComparePanel
         title="100 m wind speed  (ICON interpolated 80↔120 m)"
         point={point}

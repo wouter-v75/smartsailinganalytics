@@ -26,11 +26,16 @@ const SoundingView = dynamic(() => import('./weather/SoundingView'), {
   ssr: false,
   loading: () => <TabLoading label="Loading sounding…" />,
 })
+const VenueMOSView = dynamic(() => import('./weather/VenueMOSView'), {
+  ssr: false,
+  loading: () => <TabLoading label="Loading venue MOS…" />,
+})
 
 const SUB_TABS = [
   { id: 'forecast',   label: 'Forecast',         enabled: true  },
   { id: 'compare',    label: 'Model Comparison', enabled: true  },
   { id: 'sounding',   label: 'Sounding',         enabled: true  },
+  { id: 'venuemos',   label: 'Venue MOS',        enabled: true  },
   { id: 'skillscore', label: 'Skill Score',      enabled: false, badge: 'Phase 4', adminOnly: true },
 ]
 
@@ -133,10 +138,13 @@ export default function WeatherTab({ isMobile = false }) {
           />
         )}
         {sub === 'compare' && (
-          <CompareView windData={windData} mastHeight={mastHeight} />
+          <CompareView windData={windData} mastHeight={mastHeight} resolvedTz={resolvedTz} />
         )}
         {sub === 'sounding' && (
           <SoundingView windData={windData} resolvedTz={resolvedTz} />
+        )}
+        {sub === 'venuemos' && (
+          <VenueMOSView />
         )}
       </div>
     </div>
