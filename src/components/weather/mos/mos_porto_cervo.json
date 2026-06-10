@@ -1,0 +1,97 @@
+{
+  "venue": "porto_cervo",
+  "target_height_m": 30.0,
+  "bands": [
+    [
+      "NW",
+      270,
+      340
+    ],
+    [
+      "SW-S",
+      180,
+      270
+    ],
+    [
+      "SE-E",
+      40,
+      180
+    ]
+  ],
+  "models": {
+    "ecmwf_ifs025": {
+      "type": "sector",
+      "a": 0.8559380804566877,
+      "b": 1.9633517566274823,
+      "delta": {
+        "SW-S": -0.9827054513242706,
+        "NW": 1.0733017877199436,
+        "SE-E": -1.0777842598729115,
+        "other": 0.07818917777257157
+      },
+      "global": -5.907577534863668e-15,
+      "best": "sector",
+      "cv_rmse": 2.787,
+      "raw_rmse": 3.014,
+      "reduction_pct": 7.5,
+      "sector_agreement": 0.89,
+      "n": 261
+    },
+    "gfs_seamless": {
+      "type": "raw",
+      "best": "raw",
+      "cv_rmse": 3.102,
+      "raw_rmse": 3.102,
+      "reduction_pct": 0.0,
+      "sector_agreement": 0.88,
+      "n": 261
+    },
+    "icon_eu": {
+      "type": "bias_scale",
+      "a": 1.0510081021789734,
+      "b": 1.843267785746618,
+      "best": "bias_scale",
+      "cv_rmse": 3.007,
+      "raw_rmse": 3.691,
+      "reduction_pct": 18.5,
+      "sector_agreement": 0.87,
+      "n": 261
+    },
+    "italia_meteo_arpae_icon_2i": {
+      "type": "raw",
+      "best": "raw",
+      "sector_agreement": 0.95,
+      "n": 131,
+      "note": "insufficient regattas for CV"
+    },
+    "meteofrance_arome_france_hd": {
+      "type": "bias_scale",
+      "a": 0.8733167852389236,
+      "b": 2.591931603817258,
+      "best": "bias_scale",
+      "cv_rmse": 3.825,
+      "raw_rmse": 3.905,
+      "reduction_pct": 2.0,
+      "sector_agreement": 0.89,
+      "n": 261
+    },
+    "meteofrance_arpege_europe": {
+      "type": "sector",
+      "a": 1.0627602318579177,
+      "b": 0.8057519890279009,
+      "delta": {
+        "SW-S": -0.4203483201423136,
+        "NW": 0.9385816549336791,
+        "SE-E": -1.012253935861066,
+        "other": 0.21360491672354587
+      },
+      "global": -4.9819663082030015e-15,
+      "best": "sector",
+      "cv_rmse": 2.627,
+      "raw_rmse": 3.086,
+      "reduction_pct": 14.9,
+      "sector_agreement": 0.9,
+      "n": 261
+    }
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "venue": "sorrento",
+  "target_height_m": 30.0,
+  "bands": [
+    [
+      "SW-W",
+      200,
+      270
+    ],
+    [
+      "N-NE",
+      0,
+      70
+    ],
+    [
+      "E-S",
+      80,
+      200
+    ]
+  ],
+  "models": {
+    "ecmwf_ifs025": {
+      "type": "diurnal",
+      "a": 0.5208695310887265,
+      "b": 6.24528046993578,
+      "c0": -0.6108245109083156,
+      "c1": -2.4330058459060484,
+      "c2": -0.006272156301655206,
+      "best": "diurnal",
+      "cv_rmse": 3.458,
+      "raw_rmse": 4.829,
+      "reduction_pct": 28.4,
+      "sector_agreement": 0.62,
+      "n": 445
+    },
+    "gfs_seamless": {
+      "type": "bias_scale",
+      "a": 0.6230268472212506,
+      "b": 4.957944876828991,
+      "best": "bias_scale",
+      "cv_rmse": 3.743,
+      "raw_rmse": 4.155,
+      "reduction_pct": 9.9,
+      "sector_agreement": 0.57,
+      "n": 445
+    },
+    "icon_eu": {
+      "type": "bias_scale",
+      "a": 0.7347893305366335,
+      "b": 5.363956465275883,
+      "best": "bias_scale",
+      "cv_rmse": 3.672,
+      "raw_rmse": 5.171,
+      "reduction_pct": 29.0,
+      "sector_agreement": 0.68,
+      "n": 445
+    },
+    "italia_meteo_arpae_icon_2i": {
+      "type": "raw",
+      "best": "raw",
+      "cv_rmse": 3.912,
+      "raw_rmse": 3.912,
+      "reduction_pct": 0.0,
+      "sector_agreement": 0.59,
+      "n": 287
+    }
+  }
+}

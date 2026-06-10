@@ -9,11 +9,17 @@
 // backend routes for storing scoring results.
 
 export const MODELS = {
+  // mosModel = the Open-Meteo id the MOS correction was trained on
+  // (wind-verification). Exact match for AROME/ARPEGE/ITALIA; mosApprox marks
+  // models where the tool's variant differs slightly from the trained one
+  // (tool ICON = icon_seamless vs trained icon_eu; tool ECMWF default vs
+  // ecmwf_ifs025) — the correction is applied but flagged approximate.
   AROME: {
     key: 'AROME', label: 'AROME', subtitle: 'Météo-France 1.5 km',
     color: '#2e7d32',
     endpoint: 'https://api.open-meteo.com/v1/meteofrance',
     modelParam: 'meteofrance_arome_france_hd',
+    mosModel: 'meteofrance_arome_france_hd',
     heights: [10, 20, 50, 100, 150, 200],
     tableCols: [10, 20, 50],
     upperHeight: 50,
@@ -23,6 +29,7 @@ export const MODELS = {
     color: '#1565c0',
     endpoint: 'https://api.open-meteo.com/v1/ecmwf',
     modelParam: null,
+    mosModel: 'ecmwf_ifs025', mosApprox: true,
     heights: [10, 100, 200],
     tableCols: [10, 100, 200],
     upperHeight: 100,
@@ -33,6 +40,7 @@ export const MODELS = {
     color: '#ad1457',
     endpoint: 'https://api.open-meteo.com/v1/dwd-icon',
     modelParam: 'icon_seamless',
+    mosModel: 'icon_eu', mosApprox: true,
     heights: [10, 80, 120, 180],
     tableCols: [10, 80, 180],
     upperHeight: 120,
@@ -47,21 +55,27 @@ export const MODELS = {
     heights: [10, 100],
   },
   ITALIA: {
-    key: 'ITALIA', label: 'ItaliaMeteo', color: '#ef6c00',
+    key: 'ITALIA', label: 'ItaliaMeteo', subtitle: 'ARPAE ICON-2I 2 km', color: '#ef6c00',
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'italia_meteo_arpae_icon_2i',
+    mosModel: 'italia_meteo_arpae_icon_2i',
     heights: [10],
+    tableCols: [10],
   },
   ARPEGE: {
-    key: 'ARPEGE', label: 'ARPEGE', color: '#5d4037',
+    key: 'ARPEGE', label: 'ARPEGE', subtitle: 'Météo-France 11 km', color: '#5d4037',
     endpoint: 'https://api.open-meteo.com/v1/meteofrance',
     modelParam: 'meteofrance_arpege_europe',
-    heights: [10],
+    mosModel: 'meteofrance_arpege_europe',
+    heights: [10, 20, 50, 80, 100],
+    tableCols: [10, 50, 100],
+    upperHeight: 100,
   },
 }
 
-// Models shown in the Forecast surface toggle (Phase 1).
-export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON']
+// Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
+// venue MOS corrections (e.g. ARPEGE sector at Porto Cervo) surface here too.
+export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ARPEGE', 'ITALIA']
 // All models fetched (Phase 2 Compare consumes the extras).
 export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'DMI', 'ITALIA', 'ARPEGE']
 

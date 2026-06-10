@@ -1,0 +1,88 @@
+{
+  "venue": "st_tropez",
+  "target_height_m": 30.0,
+  "bands": [
+    [
+      "NW",
+      270,
+      330
+    ],
+    [
+      "S-W",
+      160,
+      260
+    ],
+    [
+      "E-SE",
+      30,
+      150
+    ]
+  ],
+  "models": {
+    "ecmwf_ifs025": {
+      "type": "bias_scale",
+      "a": 0.8969911065891987,
+      "b": 3.258254355002632,
+      "best": "bias_scale",
+      "cv_rmse": 3.035,
+      "raw_rmse": 3.43,
+      "reduction_pct": 11.5,
+      "sector_agreement": 0.7,
+      "n": 267
+    },
+    "gfs_seamless": {
+      "type": "bias_scale",
+      "a": 0.8046741159658484,
+      "b": 2.447952164728759,
+      "best": "bias_scale",
+      "cv_rmse": 2.357,
+      "raw_rmse": 2.558,
+      "reduction_pct": 7.9,
+      "sector_agreement": 0.83,
+      "n": 417
+    },
+    "icon_eu": {
+      "type": "bias_scale",
+      "a": 0.895312530709088,
+      "b": 2.8909464183865947,
+      "best": "bias_scale",
+      "cv_rmse": 2.656,
+      "raw_rmse": 3.264,
+      "reduction_pct": 18.6,
+      "sector_agreement": 0.82,
+      "n": 417
+    },
+    "meteofrance_arome_france_hd": {
+      "type": "diurnal",
+      "a": 0.9724556669415771,
+      "b": 1.380373585954529,
+      "c0": -0.861935917214086,
+      "c1": 1.1120711759646495,
+      "c2": -1.4213706069712502,
+      "best": "diurnal",
+      "cv_rmse": 2.507,
+      "raw_rmse": 2.637,
+      "reduction_pct": 4.9,
+      "sector_agreement": 0.78,
+      "n": 417
+    },
+    "meteofrance_arpege_europe": {
+      "type": "sector",
+      "a": 0.9444131842718618,
+      "b": 2.087088006648074,
+      "delta": {
+        "S-W": 0.3002301822733753,
+        "E-SE": -0.7496037353967796,
+        "other": 0.8650659132838302,
+        "NW": 0.5890276162950808
+      },
+      "global": 1.2609151665766766e-15,
+      "best": "sector",
+      "cv_rmse": 2.713,
+      "raw_rmse": 3.114,
+      "reduction_pct": 12.9,
+      "sector_agreement": 0.82,
+      "n": 417
+    }
+  }
+}

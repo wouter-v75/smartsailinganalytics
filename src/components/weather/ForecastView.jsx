@@ -20,6 +20,9 @@ import {
   calculateTheoreticalSeaProfile, pressureToAltitude,
   interpolateSpeedAtHeight,
 } from './openMeteo'
+import {
+  matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
+} from './mos'
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
@@ -466,6 +469,13 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
     )
   }
 
+  // MOS correction availability for this point + active model.
+  const venue = matchVenue(point.coords.latitude, point.coords.longitude)
+  const mosId = model.mosModel
+  const spec = venue && mosId ? specFor(venue) : null
+  const corr = venue && mosId ? correctionInfo(venue, mosId) : null
+  const canMos = !!(spec && corr)
+
   const hourly = surf.hourly
   const rows = []
   hourly.time.forEach((timeStr, index) => {
@@ -475,6 +485,14 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
       10
     )
     if (hour >= 8 && hour <= 18) {
+      let mos = null
+      if (canMos) {
+        const w = wind30(hourly, model.heights, index)
+        if (w) {
+          const r = applyMOS(spec, mosId, w.ws30, w.twd, hour)
+          mos = r ? r.ws : null
+        }
+      }
       rows.push({
         time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: timezone }),
         windDir: hourly.wind_direction_10m?.[index],
@@ -483,6 +501,7 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
             ? interpolateSpeedAtHeight(hourly, model.heights, mastHeight, index)
             : hourly[`wind_speed_${h}m`]?.[index]
         )),
+        mos,
       })
     }
   })
@@ -497,6 +516,14 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
           {model.label}
         </span>
       </div>
+      {canMos && (
+        <div style={{ fontSize: 9, color: '#34D399', marginBottom: 6 }}>
+          ✓ MOS-corrected 30 m for <b>{venue.replace('_', ' ')}</b> · {corr.type}
+          {model.mosApprox ? ' ≈' : ''} · CV RMSE {corr.cv_rmse} kt
+          {corr.type === 'sector' && corr.sector_agreement != null
+            ? ` · dir agree ${Math.round(corr.sector_agreement * 100)}%` : ''}
+        </div>
+      )}
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
         <thead>
           <tr>
@@ -511,6 +538,9 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
                 </th>
               )
             })}
+            {canMos && (
+              <th style={{ ...th, color: '#34D399' }}>MOS<br /><span style={{ fontSize: 9, color: '#1f7a5a' }}>30m kt</span></th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -524,6 +554,11 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
                   <td key={j} style={isMast ? tdHi : td}>{s != null ? kmhToKnots(s).toFixed(1) : '–'}</td>
                 )
               })}
+              {canMos && (
+                <td style={{ ...td, color: '#34D399', fontWeight: 700 }}>
+                  {r.mos != null ? r.mos.toFixed(1) : '–'}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -619,10 +654,25 @@ function WindCompareChart({ windData, model, timezone }) {
           connectgaps: true,
         })
       }
+      // MOS-corrected 30 m (venue-calibrated) — bold dash-dot line.
+      const venue = matchVenue(point.coords.latitude, point.coords.longitude)
+      const spec = venue && model.mosModel ? specFor(venue) : null
+      if (spec) {
+        const ms = mosSeries(surf.hourly, model.heights, spec, model.mosModel, timezone)
+        if (ms && ms.some((v) => v != null)) {
+          traces.push({
+            x: xs, y: ms,
+            type: 'scatter', mode: 'lines',
+            name: `${meta.emoji} Loc ${key} MOS 30m`,
+            line: { color: meta.accent, width: 3, dash: 'dashdot' },
+            connectgaps: true,
+          })
+        }
+      }
     }
     return traces
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windData, model.key])
+  }, [windData, model.key, timezone])
 
   const layout = {
     xaxis: { title: 'Time', type: 'date' },
