@@ -71,13 +71,38 @@ export const MODELS = {
     tableCols: [10, 50, 100],
     upperHeight: 100,
   },
+  // Self-hosted ICON-LAM 2 km (Regatta project). NOT Open-Meteo — each venue
+  // publishes a ~2 km GRID over its racing box to Bunny; fetchBunnyModel snaps
+  // a clicked point to the nearest grid cell (so 3 clicks -> 3 resolved points),
+  // and greys out for clicks outside every venue box. 30 m is a NATIVE model
+  // output here, so its column is exact, not interpolated.
+  ICONRACE: {
+    key: 'ICONRACE', label: 'Icon-Race', subtitle: 'self-hosted ICON-LAM 2 km', color: '#e11d48',
+    // Public Bunny pull-zone serving the smartsailinganalytics storage zone
+    // (CORS enabled). Override per-deploy with NEXT_PUBLIC_ICONRACE_BASE.
+    bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE)
+      || 'https://wvsailing.b-cdn.net/icon-race',
+    // Venue boxes (must match each domain's venues.csv: half = half-width in deg).
+    // Grid lives at  <bunnyBase>/<domain>/<name>/grid.json .
+    venues: [
+      { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.15 },
+      { name: 'st_tropez', domain: 'riviera_2km', clon: 6.57, clat: 43.25, half: 0.15 },
+      // Porto Cervo (Maxi Worlds) — enable when its grid is published:
+      // { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.15 },
+    ],
+    heights: [10, 30, 50, 100, 180],
+    tableCols: [10, 30, 50, 100, 180],
+    upperHeight: 100,
+    mosModel: null, // no MOS column yet — needs an Icon-Race correction trained
+                    // from >=1 regatta of obs; until then ship raw winds only.
+  },
 }
 
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
 // venue MOS corrections (e.g. ARPEGE sector at Porto Cervo) surface here too.
-export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ARPEGE', 'ITALIA']
+export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ARPEGE', 'ITALIA']
 // All models fetched (Phase 2 Compare consumes the extras).
-export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'DMI', 'ITALIA', 'ARPEGE']
+export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'DMI', 'ITALIA', 'ARPEGE']
 
 // Quick sanity check: does this model's hourly payload have any wind_speed
 // data at all? Open-Meteo returns the structure even when a model has no
@@ -118,10 +143,58 @@ function surfaceUrl(modelKey, latitude, longitude, timezone) {
   return url
 }
 
-// Fetch one surface model at one point. Returns the Open-Meteo JSON envelope,
-// or null if the response is missing / empty for this point. Never throws —
-// network errors are logged + swallowed (matches the upstream tool).
+// Module-level cache of fetched venue grids (keyed by URL) so the three
+// clicked points don't each re-download the same venue grid.
+const _iconRaceGrids = new Map()
+function getIconRaceGrid(url) {
+  if (_iconRaceGrids.has(url)) return _iconRaceGrids.get(url)
+  const p = (async () => {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) { console.warn(`[weather] ICONRACE grid HTTP ${res.status}`); return null }
+      return await res.json()
+    } catch (err) {
+      console.warn('[weather] ICONRACE grid fetch failed:', err?.message || err); return null
+    }
+  })()
+  _iconRaceGrids.set(url, p)
+  return p
+}
+
+// Self-hosted Icon-Race fetch. Finds the venue whose racing box contains the
+// clicked point, fetches that venue's ~2 km grid (cached), snaps to the nearest
+// cell, and returns it as an Open-Meteo-shaped envelope. Null when the click is
+// outside every venue box (model greys out, like an OM model with no coverage).
+async function fetchBunnyModel(m, latitude, longitude) {
+  const v = (m.venues || []).find(
+    (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
+  )
+  if (!v) return null
+  const grid = await getIconRaceGrid(`${m.bunnyBase}/${v.domain}/${v.name}/grid.json`)
+  if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return null
+  // nearest cell (equirectangular distance is plenty over a ~30 km box)
+  const cosLat = Math.cos((latitude * Math.PI) / 180)
+  let best = null
+  for (const c of grid.cells) {
+    const dLat = latitude - c.lat, dLon = (longitude - c.lon) * cosLat
+    const d2 = dLat * dLat + dLon * dLon
+    if (!best || d2 < best.d2) best = { c, d2 }
+  }
+  const c = best.c
+  const hourly = { time: grid.time }
+  for (const h of grid.heights) {
+    hourly[`wind_speed_${h}m`] = c.spd?.[String(h)] ?? null
+    hourly[`wind_direction_${h}m`] = c.dir?.[String(h)] ?? null
+  }
+  return hasValidSpeed(hourly) ? { latitude: c.lat, longitude: c.lon, elevation: 0, hourly } : null
+}
+
+// Fetch one surface model at one point -> the Open-Meteo hourly envelope (or
+// null if missing/empty). Icon-Race delegates to fetchBunnyModel above.
+
 export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezone }) {
+  const cfg = MODELS[modelKey]
+  if (cfg && cfg.bunnyBase) return fetchBunnyModel(cfg, latitude, longitude)
   try {
     const res = await fetch(surfaceUrl(modelKey, latitude, longitude, timezone))
     if (!res.ok) {
