@@ -490,21 +490,6 @@ export default function ForecastView({
           />
         </div>
 
-        {/* compact point chips */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-          {LOCATION_META.map((m) => {
-            const c = locations[m.key]
-            return (
-              <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0A1929', border: `1px solid ${c ? m.accent + '88' : '#1E3A5A'}`, borderRadius: 6, padding: '4px 8px', fontSize: 11 }}>
-                <span style={{ fontWeight: 700, color: c ? m.accent : '#475569' }}>{m.emoji} {m.key}</span>
-                {c
-                  ? <span style={{ fontFamily: 'monospace', color: '#94A3B8' }}>{decimalToDMS(c.lat, false)} {decimalToDMS(c.lon, true)}</span>
-                  : <span style={{ color: '#475569' }}>click map</span>}
-                {c && <button onClick={() => clearLocation(m.key)} style={btnGhost}>✕</button>}
-              </div>
-            )
-          })}
-        </div>
         </div>{/* end LEFT column */}
 
         {/* RIGHT — wind-field controls as buttons */}
@@ -569,8 +554,8 @@ export default function ForecastView({
           Icon-Race first; available models coloured, others greyed; selected highlighted. */}
       {hasResults && (
         <Card>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: '#94A3B8' }}>Select model:</span>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#CBD5E1' }}>Select model:</span>
             {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => k !== 'ICONRACE')).map((k) => {
               const m = MODELS[k]
               const avail = modelAvailable[k]
@@ -582,7 +567,7 @@ export default function ForecastView({
                   onClick={() => { onActiveModelChange?.(k); setFieldModel(k) }}
                   title={avail ? (m.subtitle || '') : `${m.label} has no data here`}
                   style={{
-                    fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
+                    fontSize: 15, fontWeight: 700, padding: '8px 18px', borderRadius: 999,
                     cursor: avail ? 'pointer' : 'not-allowed',
                     border: `1px solid ${selected ? m.color : (avail ? m.color + '88' : '#1E3A5A')}`,
                     background: selected ? m.color : (avail ? m.color + '22' : 'transparent'),
@@ -594,7 +579,7 @@ export default function ForecastView({
                 </button>
               )
             })}
-            {loading && <span style={{ fontSize: 11, color: '#7DD3FC' }}>loading…</span>}
+            {loading && <span style={{ fontSize: 12, color: '#7DD3FC' }}>loading…</span>}
           </div>
         </Card>
       )}
@@ -765,7 +750,7 @@ function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed
               )
             })}
             {canMos && (
-              <th style={{ ...th, color: '#34D399' }}>MOS<br /><span style={{ fontSize: 9, color: '#1f7a5a' }}>30m kt</span></th>
+              <th style={{ ...th, color: '#34D399' }}>30m MOS<br /><span style={{ fontSize: 9, color: '#1f7a5a' }}>kt</span></th>
             )}
           </tr>
         </thead>

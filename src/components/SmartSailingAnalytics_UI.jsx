@@ -4267,14 +4267,13 @@ function MobileShell(props){
     {id:"photos",   icon:"📷", label:"Photos"},
     {id:"analytics",icon:"📊", label:"Analytics"},
     {id:"upload",   icon:"⬆", label:"Upload"},
-    {id:"squashshots",icon:"🎯",label:"Squash"},
-    {id:"sailscan", icon:"⛵", label:"SailScan"},
+    {id:"tools",    icon:"🧰", label:"Tools"},
     {id:"admin",    icon:"⚙",  label:"Admin"},
   ].filter(t => {
     if (t.id === "campaign" && (!props.campaignOn || props.effectiveRole === 'guest')) return false;
     // Weather tab is available to all roles (tl1, consultant, guest included).
-    if (t.id === "sailscan" && props.canSeeSailScanTab === false) return false;
-    if (t.id === "squashshots" && props.canSeeSquashShotsTab === false) return false;
+    // Tools (Squash + SailScan): TL2+ and consultant-in-period.
+    if (t.id === "tools" && props.canSeeToolsTab === false) return false;
     if (t.id === "admin" && props.effectiveRole !== 'admin') return false;
     return true;
   });
@@ -4380,14 +4379,12 @@ function MobileShell(props){
             <UploadTab role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported}/>
           </div>
         )}
-        {activeTab==="squashshots"&&(
-          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <SquashShotsApp/>
-          </div>
-        )}
-        {activeTab==="sailscan"&&(
-          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <SailScanTab/>
+        {activeTab==="tools"&&(
+          <div style={{position:"absolute",inset:0,overflowY:"auto",zIndex:2,background:"#030F1A"}}>
+            <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
+            <div style={{position:"relative",height:"85vh"}}><SquashShotsApp/></div>
+            <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
+            <div style={{position:"relative",height:"85vh"}}><SailScanTab/></div>
           </div>
         )}
 
@@ -5113,6 +5110,8 @@ function SSAApp(){
   // consultant: full access — already gated by valid_from/valid_to via RLS.
   const canSeeSailScanTab     = !['tl1','guest'].includes(effectiveRole);
   const canSeeSquashShotsTab  = effectiveRole !== 'guest';
+  // Tools tab (Squash + SailScan combined): TL2 and above, plus consultant (in-period).
+  const canSeeToolsTab        = ['admin','team_manager','coach','tl3','tl2','consultant'].includes(effectiveRole);
   const canSeeAnalyticsData   = !['tl1','guest'].includes(effectiveRole);
   const canSeeSailScanPhotos  = !['tl1','guest'].includes(effectiveRole);
   const canUseAI              = effectiveRole === null || !['tl1','consultant','guest'].includes(effectiveRole);
@@ -6010,7 +6009,7 @@ function SSAApp(){
       loadDate={loadDate} onSelectDate={loadDate} handleImported={handleImported}
       handlePlayUtc={handlePlayUtc} playUtc={playUtc}
       canSeeAnalytics={canSeeAnalytics} canUseAI={canUseAI}
-      canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab}
+      canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab} canSeeToolsTab={canSeeToolsTab}
       canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
       showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
       campaignOn={campaignOn} campaignCfg={campaignCfg} openCampaignVideo={openCampaignVideo}
@@ -6033,16 +6032,14 @@ function SSAApp(){
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{display:"flex",gap:2,marginLeft:10}}>
-          {["campaign","weather","library","photos","analytics","upload","squashshots","sailscan","admin"].filter(tab => {
+          {["campaign","weather","library","photos","analytics","upload","tools","admin"].filter(tab => {
             if (tab === "campaign" && (!campaignOn || effectiveRole === 'guest')) return false;
-            // Weather is admin-only for now; flip to a ROLES[role].canSeeWeather
-            // flag when ready to widen access.
-            if (tab === "weather" && effectiveRole !== 'admin') return false;
-            if (tab === "sailscan" && !canSeeSailScanTab) return false;
-            if (tab === "squashshots" && !canSeeSquashShotsTab) return false;
+            // Weather: available to all roles.
+            // Tools (Squash + SailScan): TL2+ and consultant-in-period.
+            if (tab === "tools" && !canSeeToolsTab) return false;
             if (tab === "admin" && effectiveRole !== 'admin') return false;
             return true;
-          }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="squashshots"?"Squash":tab==="sailscan"?"SailScan":tab==="library"?"Videos":tab==="weather"?"Weather":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
+          }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="tools"?"Tools":tab==="library"?"Videos":tab==="weather"?"Weather":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
         </nav>
         <div style={{flex:1}}/>
         {canUseAI && (
@@ -6702,14 +6699,12 @@ function SSAApp(){
             <UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/>
           </div>
         )}
-        {activeTab==="squashshots"&&(
-          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <SquashShotsApp/>
-          </div>
-        )}
-        {activeTab==="sailscan"&&(
-          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <SailScanTab/>
+        {activeTab==="tools"&&(
+          <div style={{position:"absolute",inset:0,overflowY:"auto",zIndex:2,background:"#030F1A"}}>
+            <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
+            <div style={{position:"relative",height:"85vh"}}><SquashShotsApp/></div>
+            <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
+            <div style={{position:"relative",height:"85vh"}}><SailScanTab/></div>
           </div>
         )}
         {activeTab==="admin"&&(
