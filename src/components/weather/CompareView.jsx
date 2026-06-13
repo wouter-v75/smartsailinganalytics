@@ -20,7 +20,7 @@ const LOCATION_META = [
   { key: '3', emoji: '🟠', accent: '#F97316' },
 ]
 
-export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'UTC' }) {
+export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'UTC', canMos = false }) {
   const locKeys = Object.keys(windData)
   const [activeLoc, setActiveLoc] = useState(locKeys[0] || '1')
   useEffect(() => {
@@ -97,7 +97,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
         yTitle="Wind speed (knots)"
         isDir={false}
       />
-      {spec && (
+      {spec && canMos && (
         <ComparePanel
           title={`✓ MOS-corrected mast-height wind (30 m) — ${venue.replace('_', ' ')}`}
           point={point}

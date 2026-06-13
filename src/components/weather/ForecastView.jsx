@@ -98,6 +98,8 @@ export default function ForecastView({
   onActiveModelChange,
   persist = {},
   onPersistChange,
+  canMos = false,
+  canIconRace = false,
 }) {
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
   const mapDivRef = useRef(null)
@@ -108,7 +110,8 @@ export default function ForecastView({
   // always "today" (forecast_days window) and timezone is always auto; models
   // are always all-fetched (greyed where a model has no data in the area).
   const [locations, setLocations] = useState(() => persist.locations || {}) // restored across tab switches
-  const ALL_MODELS = useMemo(() => Object.fromEntries(COMPARE_ORDER.map((k) => [k, true])), [])
+  // Fetch all models; Icon-Race only for TL2+ (so its data never reaches lower roles).
+  const ALL_MODELS = useMemo(() => Object.fromEntries(COMPARE_ORDER.map((k) => [k, k !== 'ICONRACE' || canIconRace])), [canIconRace])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
   const [progress, setProgress] = useState(null) // { done, total, label } during fetch
@@ -127,6 +130,7 @@ export default function ForecastView({
   const speedOverlayRef = useRef(null)
   const readoutRef = useRef(null)
   const selLabelRef = useRef(null)   // local-time label of the currently scrubbed hour (kept across model switches)
+  const venueBoxesRef = useRef([])   // Icon-Race coverage rectangles (TL2+ only)
 
   // Persist points + field selection up to WeatherTab so they survive sub-tab
   // switches (ForecastView is dynamically imported and unmounts when hidden).
@@ -165,7 +169,7 @@ export default function ForecastView({
     if (!allThree || p1lat == null) { setField(null); return }
     let cancelled = false
     setFieldLoading(true); setFieldErr('')
-    const isMos = fieldHeight === 'mastMOS' && fieldMosAvail
+    const isMos = fieldHeight === 'mastMOS' && fieldMosAvail && canMos
     const hVal = (fieldHeight === 'mast' || fieldHeight === 'mastMOS') ? mastHeight : fieldHeight
     const req = fieldModel === 'ICONRACE'
       ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
@@ -184,12 +188,19 @@ export default function ForecastView({
       .catch((e) => { if (!cancelled) { setField(null); setFieldErr(e?.message || 'fetch failed') } })
       .finally(() => { if (!cancelled) setFieldLoading(false) })
     return () => { cancelled = true }
-  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, fieldMosAvail])
+  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, fieldMosAvail, canMos])
 
   // If MOS becomes unavailable (model/venue change) while it's selected, fall back to raw mast.
   useEffect(() => {
-    if (fieldHeight === 'mastMOS' && !fieldMosAvail) setFieldHeight('mast')
-  }, [fieldHeight, fieldMosAvail])
+    if (fieldHeight === 'mastMOS' && (!fieldMosAvail || !canMos)) setFieldHeight('mast')
+  }, [fieldHeight, fieldMosAvail, canMos])
+
+  // Below TL2: never leave Icon-Race selected (e.g. restored from a prior session).
+  useEffect(() => {
+    if (canIconRace) return
+    if (fieldModel === 'ICONRACE') setFieldModel('AROME')
+    if (activeModel === 'ICONRACE') onActiveModelChange?.('AROME')
+  }, [canIconRace, fieldModel, activeModel]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Render the speed-colour wash + white particles for the current frame.
   useEffect(() => {
@@ -294,18 +305,6 @@ export default function ForecastView({
     // the wind field. (Tweak the brightness factor to taste.)
     try { map.getPane('tilePane').style.filter = 'brightness(1.7) contrast(0.92)' } catch { /* */ }
 
-    // Draw Icon-Race coverage boxes (each venue's grid extent). A clicked point
-    // inside one of these has self-hosted Icon-Race data; outside, it greys out.
-    try {
-      const venues = (MODELS.ICONRACE && MODELS.ICONRACE.venues) || []
-      venues.forEach((v) => {
-        const bounds = [[v.clat - v.half, v.clon - v.half], [v.clat + v.half, v.clon + v.half]]
-        L.rectangle(bounds, {
-          color: '#e36209', weight: 1.5, fillColor: '#e36209', fillOpacity: 0.06,
-          dashArray: '5 4', interactive: false,
-        }).addTo(map).bindTooltip(`Icon-Race: ${v.name}`, { sticky: true, direction: 'top' })
-      })
-    } catch { /* venues optional */ }
 
     // Click → place / cycle markers (1 → 2 → 3 → replace 1 again).
     map.on('click', (e) => {
@@ -353,6 +352,23 @@ export default function ForecastView({
       }
     }
   }, [locations, mapReady])
+
+  // Icon-Race coverage boxes — drawn only for TL2+ (canIconRace), and re-evaluated
+  // if the role resolves after the map mounts.
+  useEffect(() => {
+    const map = mapRef.current; const L = window.L
+    if (!map || !L || !mapReady) return
+    venueBoxesRef.current.forEach((r) => { try { map.removeLayer(r) } catch { /* */ } })
+    venueBoxesRef.current = []
+    if (!canIconRace) return
+    const venues = (MODELS.ICONRACE && MODELS.ICONRACE.venues) || []
+    venues.forEach((v) => {
+      const bounds = [[v.clat - v.half, v.clon - v.half], [v.clat + v.half, v.clon + v.half]]
+      const r = L.rectangle(bounds, { color: '#e36209', weight: 1.5, fillColor: '#e36209', fillOpacity: 0.06, dashArray: '5 4', interactive: false })
+        .addTo(map).bindTooltip(`Icon-Race: ${v.name}`, { sticky: true, direction: 'top' })
+      venueBoxesRef.current.push(r)
+    })
+  }, [mapReady, canIconRace])
 
   function addMarker(map, key, lat, lon) {
     const L = window.L
@@ -436,7 +452,7 @@ export default function ForecastView({
     if (!Object.keys(locations).length) return
     const id = setTimeout(() => { fetchAllRef.current(locations) }, 500)
     return () => clearTimeout(id)
-  }, [locations])
+  }, [locations, canIconRace])
 
   const hasResults = Object.keys(windData).length > 0
   const tzLabel = resolvedTz === 'UTC' ? 'UTC' : resolvedTz
@@ -506,7 +522,7 @@ export default function ForecastView({
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               <PillBtn active={fieldHeight === 10} onClick={() => setFieldHeight(10)}>10 m</PillBtn>
               <PillBtn active={fieldHeight === 'mast'} onClick={() => setFieldHeight('mast')}>Mast {mastHeight} m</PillBtn>
-              {fieldMosAvail && (
+              {fieldMosAvail && canMos && (
                 <PillBtn active={fieldHeight === 'mastMOS'} color="#22D3EE" onClick={() => setFieldHeight('mastMOS')}>Mast {mastHeight} m MOS</PillBtn>
               )}
               {fieldHeightsFor(fieldModel).filter((h) => h >= 50).map((h) => (
@@ -555,7 +571,7 @@ export default function ForecastView({
         <Card>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: '#94A3B8' }}>Select model:</span>
-            {MODEL_PICK_ORDER.map((k) => {
+            {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => k !== 'ICONRACE')).map((k) => {
               const m = MODELS[k]
               const avail = modelAvailable[k]
               const selected = activeModel === k
@@ -611,6 +627,7 @@ export default function ForecastView({
                 model={MODELS[activeModel]}
                 timezone={resolvedTz}
                 mastHeight={mastHeight}
+                mosAllowed={canMos}
               />
             ))}
           </div>
@@ -652,7 +669,7 @@ export default function ForecastView({
 
 // ── Subcomponents ─────────────────────────────────────────────────────
 
-function WindTable({ locationKey, point, model, timezone, mastHeight }) {
+function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed = false }) {
   const meta = LOCATION_META.find((m) => m.key === locationKey)
   const surf = point.surfaceByModel[model.key]
   // Speed columns = the model's display heights plus the mast height, sorted
@@ -683,7 +700,7 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
   const mosId = model.mosModel
   const spec = venue && mosId ? specFor(venue) : null
   const corr = venue && mosId ? correctionInfo(venue, mosId) : null
-  const canMos = !!(spec && corr)
+  const canMos = !!(mosAllowed && spec && corr)
 
   const hourly = surf.hourly
   const rows = []

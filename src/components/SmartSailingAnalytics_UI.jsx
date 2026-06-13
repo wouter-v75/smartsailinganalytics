@@ -4272,9 +4272,7 @@ function MobileShell(props){
     {id:"admin",    icon:"⚙",  label:"Admin"},
   ].filter(t => {
     if (t.id === "campaign" && (!props.campaignOn || props.effectiveRole === 'guest')) return false;
-    // Weather tab is admin-only for now. Relax later by replacing this
-    // line with: if (t.id === "weather" && !props.canSeeWeather) return false;
-    if (t.id === "weather" && props.effectiveRole !== 'admin') return false;
+    // Weather tab is available to all roles (tl1, consultant, guest included).
     if (t.id === "sailscan" && props.canSeeSailScanTab === false) return false;
     if (t.id === "squashshots" && props.canSeeSquashShotsTab === false) return false;
     if (t.id === "admin" && props.effectiveRole !== 'admin') return false;
@@ -4400,10 +4398,10 @@ function MobileShell(props){
           </div>
         )}
 
-        {/* Weather — admin-only embed of the AROME/ECMWF/ICON wind tool. */}
-        {activeTab==="weather"&&props.effectiveRole==='admin'&&(
+        {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
+        {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <WeatherTab isMobile={true}/>
+            <WeatherTab isMobile={true} effectiveRole={props.effectiveRole}/>
           </div>
         )}
 
@@ -6731,10 +6729,10 @@ function SSAApp(){
             <CampaignTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} onOpenVideo={openCampaignVideo}/>
           </div>
         )}
-        {/* Weather — admin-only embed of the wind-analysis tool. */}
-        {activeTab==="weather"&&effectiveRole==='admin'&&(
+        {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
+        {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <WeatherTab isMobile={false}/>
+            <WeatherTab isMobile={false} effectiveRole={effectiveRole}/>
           </div>
         )}
       </div>

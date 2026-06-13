@@ -31,15 +31,24 @@ const VenueMOSView = dynamic(() => import('./weather/VenueMOSView'), {
   loading: () => <TabLoading label="Loading venue MOS…" />,
 })
 
+// Role hierarchy. MOS adjustments + Icon-Race require TL2 and up; Venue MOS is
+// admin-only. Weather itself is open to every role.
+const ROLE_RANK = { guest: 0, consultant: 1, tl1: 2, tl2: 3, tl3: 4, coach: 5, team_manager: 6, admin: 7 }
+
 const SUB_TABS = [
   { id: 'forecast',   label: 'Forecast',         enabled: true  },
   { id: 'compare',    label: 'Model Comparison', enabled: true  },
   { id: 'sounding',   label: 'Sounding',         enabled: true  },
-  { id: 'venuemos',   label: 'Venue MOS',        enabled: true  },
-  { id: 'skillscore', label: 'Skill Score',      enabled: false, badge: 'Phase 4', adminOnly: true },
+  { id: 'venuemos',   label: 'Venue MOS',        enabled: true, adminOnly: true },
 ]
 
-export default function WeatherTab({ isMobile = false }) {
+export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
+  const isAdmin = effectiveRole === 'admin'
+  const atLeastTL2 = (ROLE_RANK[effectiveRole] ?? -1) >= ROLE_RANK.tl2
+  const canMos = atLeastTL2        // MOS adjustments (field button, table column, comparisons)
+  const canIconRace = atLeastTL2   // Icon-Race model + data
+  const subTabs = SUB_TABS.filter((t) => !t.adminOnly || isAdmin)
+
   const [sub, setSub] = useState('forecast')
 
   // Shared post-fetch state. Forecast emits updates via callbacks; Compare
@@ -85,7 +94,7 @@ export default function WeatherTab({ isMobile = false }) {
         }}
       >
         <span style={{ fontSize: 13, fontWeight: 800, marginRight: 8 }}>🌦 Weather</span>
-        {SUB_TABS.map((t) => (
+        {subTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => t.enabled && setSub(t.id)}
@@ -118,14 +127,6 @@ export default function WeatherTab({ isMobile = false }) {
             data from {Object.keys(windData).length} location{Object.keys(windData).length === 1 ? '' : 's'}
           </span>
         )}
-        <span style={{
-          fontSize: 9, fontWeight: 700, color: '#F59E0B',
-          background: '#0F2A45', border: '1px solid #1E3A5A',
-          borderRadius: 4, padding: '2px 6px',
-          letterSpacing: 0.5, textTransform: 'uppercase',
-        }}>
-          Admin preview
-        </span>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -140,15 +141,17 @@ export default function WeatherTab({ isMobile = false }) {
             onActiveModelChange={setActiveModel}
             persist={forecastPersist}
             onPersistChange={setForecastPersist}
+            canMos={canMos}
+            canIconRace={canIconRace}
           />
         )}
         {sub === 'compare' && (
-          <CompareView windData={windData} mastHeight={mastHeight} resolvedTz={resolvedTz} />
+          <CompareView windData={windData} mastHeight={mastHeight} resolvedTz={resolvedTz} canMos={canMos} />
         )}
         {sub === 'sounding' && (
           <SoundingView windData={windData} resolvedTz={resolvedTz} />
         )}
-        {sub === 'venuemos' && (
+        {sub === 'venuemos' && isAdmin && (
           <VenueMOSView />
         )}
       </div>
