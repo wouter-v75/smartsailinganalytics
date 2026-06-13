@@ -17,8 +17,37 @@
 // ----------------------------------------------------------------------------
 
 import { MODELS, iconRaceGridForPoint } from './openMeteo'
+import { applyMOS } from './mos'
 
 const NM_DEG = 1 / 60 // 1 nautical mile in degrees latitude
+
+// Apply the venue MOS correction to a field's TWS, cell by cell (direction
+// unchanged, speed scaled by the MOS ratio). Same correction the hourly table
+// uses — just spread across the grid. localHour comes from the field's local
+// labels ("Sat 14:00"). Returns a new field; unchanged if no spec.
+export function applyMosToField(field, spec, mosModelId) {
+  if (!field || !spec || !mosModelId) return field
+  const KN = 1.94384
+  const hourOf = (t) => { const h = parseInt((field.labels?.[t] || '').slice(-5, -3), 10); return Number.isNaN(h) ? null : h }
+  const frames = field.frames.map((fr, t) => {
+    const lh = hourOf(t)
+    const n = fr.u.length
+    const u = new Array(n); const v = new Array(n)
+    for (let p = 0; p < n; p++) {
+      const uu = fr.u[p]; const vv = fr.v[p]
+      const ws = Math.hypot(uu, vv) * KN          // raw mast wind, knots
+      if (ws < 1e-3) { u[p] = uu; v[p] = vv; continue }
+      const dirTrue = (((Math.atan2(-uu, -vv) * 180) / Math.PI) % 360 + 360) % 360
+      const r = applyMOS(spec, mosModelId, ws, dirTrue, lh)
+      const f = r && r.ws > 0 ? r.ws / ws : 1
+      u[p] = uu * f; v[p] = vv * f
+    }
+    return { u, v }
+  })
+  let maxSpeed = 1
+  for (const fr of frames) for (let i = 0; i < fr.u.length; i++) { const s = Math.hypot(fr.u[i], fr.v[i]); if (s > maxSpeed) maxSpeed = s }
+  return { ...field, frames, maxSpeed }
+}
 
 // Local-time label "Sat 14:00". isUTC=true converts from UTC to `timezone`;
 // otherwise the ISO is treated as already-local wall-clock (Open-Meteo output).

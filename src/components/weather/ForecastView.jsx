@@ -25,7 +25,7 @@ import {
 } from './mos'
 import {
   fetchWindField, fetchIconRaceField, toVelocityData, speedImageURL, sampleField,
-  fieldHeightsFor,
+  applyMosToField, fieldHeightsFor,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
@@ -155,20 +155,35 @@ export default function ForecastView({
 
   // Fetch the field grid for point 1's 20 nm box on point/model/height change.
   const p1lat = locations['1']?.lat; const p1lon = locations['1']?.lon
+  // Field MOS availability: point 1 within 20 nm of a calibrated venue AND the
+  // selected model has a fitted correction there.
+  const fieldVenue = p1lat != null ? matchVenue(p1lat, p1lon) : null
+  const fieldMosId = MODELS[fieldModel]?.mosModel
+  const fieldMosAvail = !!(fieldVenue && fieldMosId && correctionInfo(fieldVenue, fieldMosId))
   useEffect(() => {
     if (!allThree || p1lat == null) { setField(null); return }
     let cancelled = false
     setFieldLoading(true); setFieldErr('')
-    const hVal = fieldHeight === 'mast' ? mastHeight : fieldHeight
+    const isMos = fieldHeight === 'mastMOS' && fieldMosAvail
+    const hVal = (fieldHeight === 'mast' || fieldHeight === 'mastMOS') ? mastHeight : fieldHeight
     const req = fieldModel === 'ICONRACE'
       ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
       : fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
     req
-      .then((f) => { if (!cancelled) { setField(f); setFieldHourIdx((i) => Math.min(i, Math.max(0, f.times.length - 1))) } })
+      .then((f) => {
+        if (cancelled) return
+        const ff = isMos ? applyMosToField(f, specFor(fieldVenue), fieldMosId) : f
+        setField(ff); setFieldHourIdx((i) => Math.min(i, Math.max(0, ff.times.length - 1)))
+      })
       .catch((e) => { if (!cancelled) { setField(null); setFieldErr(e?.message || 'fetch failed') } })
       .finally(() => { if (!cancelled) setFieldLoading(false) })
     return () => { cancelled = true }
-  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved])
+  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, fieldMosAvail])
+
+  // If MOS becomes unavailable (model/venue change) while it's selected, fall back to raw mast.
+  useEffect(() => {
+    if (fieldHeight === 'mastMOS' && !fieldMosAvail) setFieldHeight('mast')
+  }, [fieldHeight, fieldMosAvail])
 
   // Render the speed-colour wash + white particles for the current frame.
   useEffect(() => {
@@ -480,6 +495,9 @@ export default function ForecastView({
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               <PillBtn active={fieldHeight === 10} onClick={() => setFieldHeight(10)}>10 m</PillBtn>
               <PillBtn active={fieldHeight === 'mast'} onClick={() => setFieldHeight('mast')}>Mast {mastHeight} m</PillBtn>
+              {fieldMosAvail && (
+                <PillBtn active={fieldHeight === 'mastMOS'} color="#22D3EE" onClick={() => setFieldHeight('mastMOS')}>Mast {mastHeight} m MOS</PillBtn>
+              )}
               {fieldHeightsFor(fieldModel).filter((h) => h >= 50).map((h) => (
                 <PillBtn key={h} active={fieldHeight === h} onClick={() => setFieldHeight(h)}>{h} m</PillBtn>
               ))}
