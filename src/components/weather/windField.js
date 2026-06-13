@@ -205,6 +205,29 @@ function cellAtHeight(c, h, heights, t) {
   return { s: sp(lo) + (sp(hi) - sp(lo)) * f, d: di(Math.abs(h - lo) <= Math.abs(hi - h) ? lo : hi) }
 }
 
+// Bilinear sample of the field at (lat,lon) for a given frame -> wind at the
+// cursor. Returns { kt, dirTrue } (speed in knots, met direction FROM, true) or
+// null if the cursor is outside the field box.
+export function sampleField(field, idx, lat, lon) {
+  if (!field || !field.frames || !field.frames[idx]) return null
+  const { nx, ny, lo1, la1, dx, dy } = field.header
+  const cx = (lon - lo1) / dx          // column (W->E)
+  const cy = (la1 - lat) / dy          // row (N->S)
+  if (cx < 0 || cx > nx - 1 || cy < 0 || cy > ny - 1) return null
+  const x0 = Math.floor(cx); const y0 = Math.floor(cy)
+  const x1 = Math.min(x0 + 1, nx - 1); const y1 = Math.min(y0 + 1, ny - 1)
+  const fx = cx - x0; const fy = cy - y0
+  const f = field.frames[idx]
+  const bil = (arr) => (
+    (arr[y0 * nx + x0] * (1 - fx) + arr[y0 * nx + x1] * fx) * (1 - fy)
+    + (arr[y1 * nx + x0] * (1 - fx) + arr[y1 * nx + x1] * fx) * fy
+  )
+  const u = bil(f.u); const v = bil(f.v)
+  const spdMs = Math.hypot(u, v)
+  const dirTrue = (((Math.atan2(-u, -v) * 180) / Math.PI) % 360 + 360) % 360
+  return { kt: spdMs * 1.94384, dirTrue }
+}
+
 // Wind-speed colour ramp (m/s) -> [r,g,b]. Calm deep-blue -> teal -> green ->
 // yellow -> orange -> red, for the shaded speed field behind the particles.
 function speedRamp(s, maxS) {

@@ -24,8 +24,14 @@ import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
 import {
-  fetchWindField, fetchIconRaceField, toVelocityData, speedImageURL, fieldModelKeys, fieldHeightsFor,
+  fetchWindField, fetchIconRaceField, toVelocityData, speedImageURL, sampleField,
+  fieldModelKeys, fieldHeightsFor,
 } from './windField'
+
+// Approx magnetic variation for the western Mediterranean venues (~+3° E in
+// 2026). magnetic = true − variation (east positive). Adjust if you extend
+// beyond the Med.
+const MAG_VAR_DEG = 3
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
@@ -99,6 +105,7 @@ export default function ForecastView({
   const [fieldErr, setFieldErr] = useState('')
   const velocityLayerRef = useRef(null)
   const speedOverlayRef = useRef(null)
+  const readoutRef = useRef(null)
 
   // Persist points + field selection up to WeatherTab so they survive sub-tab
   // switches (ForecastView is dynamically imported and unmounts when hidden).
@@ -171,8 +178,7 @@ export default function ForecastView({
     const data = toVelocityData(field.frames[idx], field.header, field.times[idx])
     if (!velocityLayerRef.current) {
       velocityLayerRef.current = L.velocityLayer({
-        displayValues: true,
-        displayOptions: { velocityType: 'Wind', position: 'bottomleft', emptyString: 'No wind data', speedUnit: 'k/h', angleConvention: 'meteoCW' },
+        displayValues: false,   // we render our own knots + magnetic readout
         data,
         maxVelocity: Math.max(12, field.maxSpeed),
         velocityScale: 0.013,
@@ -208,6 +214,24 @@ export default function ForecastView({
     const id = setInterval(() => setFieldHourIdx((i) => (i + 1) % field.times.length), 650)
     return () => clearInterval(id)
   }, [fieldPlaying, field])
+
+  // Cursor readout: TWS in knots + TWD in magnetic, sampled from the field.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !field) return
+    const idx = Math.min(fieldHourIdx, field.frames.length - 1)
+    const onMove = (e) => {
+      const el = readoutRef.current; if (!el) return
+      const s = sampleField(field, idx, e.latlng.lat, e.latlng.lng)
+      if (!s) { el.style.display = 'none'; return }
+      const mag = ((Math.round(s.dirTrue - MAG_VAR_DEG) % 360) + 360) % 360
+      el.textContent = `${String(mag).padStart(3, '0')}°M   ${s.kt.toFixed(1)} kt`
+      el.style.display = 'block'
+    }
+    const onOut = () => { if (readoutRef.current) readoutRef.current.style.display = 'none' }
+    map.on('mousemove', onMove); map.on('mouseout', onOut)
+    return () => { map.off('mousemove', onMove); map.off('mouseout', onOut) }
+  }, [field, fieldHourIdx])
 
   // ── Map bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
@@ -370,16 +394,28 @@ export default function ForecastView({
           Click the map to drop a marker. Click again to add a 2nd / 3rd point.
           Drag any marker to fine-tune. Markers persist until you Clear.
         </div>
-        <div
-          ref={mapDivRef}
-          style={{
-            width: '100%',
-            height: 320,
-            border: '1px solid #1E3A5A',
-            borderRadius: 8,
-            background: '#0A1929',
-          }}
-        />
+        <div style={{ position: 'relative' }}>
+          <div
+            ref={mapDivRef}
+            style={{
+              width: '100%',
+              height: 320,
+              border: '1px solid #1E3A5A',
+              borderRadius: 8,
+              background: '#0A1929',
+            }}
+          />
+          <div
+            ref={readoutRef}
+            style={{
+              position: 'absolute', left: 8, bottom: 8, zIndex: 500, display: 'none',
+              background: 'rgba(3,15,26,0.85)', color: '#fff',
+              font: '700 12px ui-monospace, monospace', padding: '4px 9px',
+              borderRadius: 6, border: '1px solid #1E3A5A', pointerEvents: 'none',
+              letterSpacing: 0.5,
+            }}
+          />
+        </div>
 
         {/* Animated wind-field overlay controls — appear once all 3 points set */}
         {allThree && (

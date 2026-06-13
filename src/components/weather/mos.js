@@ -15,23 +15,30 @@ import st_tropez from './mos/mos_st_tropez.json'
 
 const SPECS = { sorrento, porto_cervo, st_tropez }
 
-// Venue race-area centres + match radius (deg). Generous enough to catch a
-// marker dropped anywhere on the course.
+// Venue race-area centres. A point is matched to its NEAREST calibrated venue
+// only if within MATCH_RADIUS_NM of it; otherwise no MOS is applied (so a point
+// off La Spezia or anywhere without a fitted venue gets the raw forecast, never
+// a neighbouring venue's correction).
 const VENUE_CENTERS = {
   sorrento: [40.60, 14.42],
   porto_cervo: [41.13, 9.54],
   st_tropez: [43.27, 6.62],
 }
-const MATCH_RADIUS_DEG = 0.35
+const MATCH_RADIUS_NM = 20
+const NM_PER_DEG = 60
 
 export function matchVenue(lat, lon) {
+  if (lat == null || lon == null || Number.isNaN(lat) || Number.isNaN(lon)) return null
+  const cosLat = Math.cos((lat * Math.PI) / 180)
   let best = null
   let bd = Infinity
   for (const [v, [la, lo]] of Object.entries(VENUE_CENTERS)) {
-    const d = Math.hypot(lat - la, lon - lo)
-    if (d < bd) { bd = d; best = v }
+    const dLatNm = (lat - la) * NM_PER_DEG
+    const dLonNm = (lon - lo) * NM_PER_DEG * cosLat   // longitude shrinks with latitude
+    const dNm = Math.hypot(dLatNm, dLonNm)
+    if (dNm < bd) { bd = dNm; best = v }
   }
-  return bd <= MATCH_RADIUS_DEG ? best : null
+  return bd <= MATCH_RADIUS_NM ? best : null
 }
 
 export function specFor(venue) {
