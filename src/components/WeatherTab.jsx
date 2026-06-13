@@ -47,6 +47,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
   const atLeastTL2 = (ROLE_RANK[effectiveRole] ?? -1) >= ROLE_RANK.tl2
   const canMos = atLeastTL2        // MOS adjustments (field button, table column, comparisons)
   const canIconRace = atLeastTL2   // Icon-Race model + data
+  const canHeights = !['tl1', 'guest'].includes(effectiveRole) // above-10 m winds (tl1/guest see 10 m only)
   const subTabs = SUB_TABS.filter((t) => !t.adminOnly || isAdmin)
 
   const [sub, setSub] = useState('forecast')
@@ -143,10 +144,11 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
             onPersistChange={setForecastPersist}
             canMos={canMos}
             canIconRace={canIconRace}
+            canHeights={canHeights}
           />
         )}
         {sub === 'compare' && (
-          <CompareView windData={windData} mastHeight={mastHeight} resolvedTz={resolvedTz} canMos={canMos} />
+          <CompareView windData={windData} mastHeight={mastHeight} resolvedTz={resolvedTz} canMos={canMos} canHeights={canHeights} />
         )}
         {sub === 'sounding' && (
           <SoundingView windData={windData} resolvedTz={resolvedTz} />

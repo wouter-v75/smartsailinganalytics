@@ -20,7 +20,7 @@ const LOCATION_META = [
   { key: '3', emoji: '🟠', accent: '#F97316' },
 ]
 
-export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'UTC', canMos = false }) {
+export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'UTC', canMos = false, canHeights = false }) {
   const locKeys = Object.keys(windData)
   const [activeLoc, setActiveLoc] = useState(locKeys[0] || '1')
   useEffect(() => {
@@ -83,6 +83,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
         yTitle="Wind speed (knots)"
         isDir={false}
       />
+      {canHeights && (
       <ComparePanel
         title={`⛵ Wind speed at mast height (${mastHeight} m)`}
         point={point}
@@ -97,6 +98,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
         yTitle="Wind speed (knots)"
         isDir={false}
       />
+      )}
       {spec && canMos && (
         <ComparePanel
           title={`✓ MOS-corrected mast-height wind (30 m) — ${venue.replace('_', ' ')}`}
@@ -110,6 +112,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
           isDir={false}
         />
       )}
+      {canHeights && (
       <ComparePanel
         title="100 m wind speed  (ICON interpolated 80↔120 m)"
         point={point}
@@ -117,6 +120,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
         yTitle="Wind speed (knots)"
         isDir={false}
       />
+      )}
       <ComparePanel
         title="10 m wind direction"
         point={point}

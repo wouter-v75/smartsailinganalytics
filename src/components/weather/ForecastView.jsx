@@ -100,6 +100,7 @@ export default function ForecastView({
   onPersistChange,
   canMos = false,
   canIconRace = false,
+  canHeights = false,
 }) {
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
   const mapDivRef = useRef(null)
@@ -201,6 +202,11 @@ export default function ForecastView({
     if (fieldModel === 'ICONRACE') setFieldModel('AROME')
     if (activeModel === 'ICONRACE') onActiveModelChange?.('AROME')
   }, [canIconRace, fieldModel, activeModel]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // tl1/guest: 10 m winds only — force the wind-field height to 10 m.
+  useEffect(() => {
+    if (!canHeights && fieldHeight !== 10) setFieldHeight(10)
+  }, [canHeights, fieldHeight])
 
   // Render the speed-colour wash + white particles for the current frame.
   useEffect(() => {
@@ -506,21 +512,23 @@ export default function ForecastView({
             <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Height</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               <PillBtn active={fieldHeight === 10} onClick={() => setFieldHeight(10)}>10 m</PillBtn>
-              <PillBtn active={fieldHeight === 'mast'} onClick={() => setFieldHeight('mast')}>Mast {mastHeight} m</PillBtn>
-              {fieldMosAvail && canMos && (
+              {canHeights && <PillBtn active={fieldHeight === 'mast'} onClick={() => setFieldHeight('mast')}>Mast {mastHeight} m</PillBtn>}
+              {canHeights && fieldMosAvail && canMos && (
                 <PillBtn active={fieldHeight === 'mastMOS'} color="#22D3EE" onClick={() => setFieldHeight('mastMOS')}>Mast {mastHeight} m MOS</PillBtn>
               )}
-              {fieldHeightsFor(fieldModel).filter((h) => h >= 50).map((h) => (
+              {canHeights && fieldHeightsFor(fieldModel).filter((h) => h >= 50).map((h) => (
                 <PillBtn key={h} active={fieldHeight === h} onClick={() => setFieldHeight(h)}>{h} m</PillBtn>
               ))}
             </div>
           </div>
+          {canHeights && (
           <div>
             <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Mast height (m)</div>
             <input type="number" min="1" max="120" step="1" value={mastHeight}
               onChange={(e) => onMastHeightChange?.(Math.max(0, Number(e.target.value) || 0))}
               style={{ ...inputStyle, width: 92 }} />
           </div>
+          )}
           {field && field.times.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
@@ -613,6 +621,7 @@ export default function ForecastView({
                 timezone={resolvedTz}
                 mastHeight={mastHeight}
                 mosAllowed={canMos}
+                heightsAllowed={canHeights}
               />
             ))}
           </div>
@@ -654,7 +663,7 @@ export default function ForecastView({
 
 // ── Subcomponents ─────────────────────────────────────────────────────
 
-function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed = false }) {
+function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed = false, heightsAllowed = false }) {
   const meta = LOCATION_META.find((m) => m.key === locationKey)
   const surf = point.surfaceByModel[model.key]
   // Speed columns = the model's display heights plus the mast height, sorted
@@ -662,9 +671,12 @@ function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed
   // highlighted; if it coincides with a native column the two merge into one.
   // Table shows sailing-relevant heights only: drop model columns above 100 m
   // (the user's mast height is always kept, even if set higher).
-  const speedHeights = Array.from(new Set([...model.tableCols.filter((h) => h <= 100), mastHeight]))
-    .filter((h) => Number.isFinite(h) && h > 0)
-    .sort((a, b) => a - b)
+  // tl1/guest see 10 m only; everyone else gets the model heights (<=100 m) + mast.
+  const speedHeights = heightsAllowed
+    ? Array.from(new Set([...model.tableCols.filter((h) => h <= 100), mastHeight]))
+      .filter((h) => Number.isFinite(h) && h > 0)
+      .sort((a, b) => a - b)
+    : [10]
 
   if (!surf || !hasValidSpeed(surf.hourly)) {
     return (
