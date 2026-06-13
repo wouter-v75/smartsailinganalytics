@@ -257,24 +257,34 @@ export function sampleField(field, idx, lat, lon) {
   return { kt: spdMs * 1.94384, dirTrue }
 }
 
-// Wind-speed colour ramp (m/s) -> [r,g,b]. Calm deep-blue -> teal -> green ->
-// yellow -> orange -> red, for the shaded speed field behind the particles.
-function speedRamp(s, maxS) {
-  const stops = [
-    [0.00, [12, 34, 72]], [0.18, [20, 110, 165]], [0.36, [26, 178, 150]],
-    [0.55, [150, 200, 70]], [0.72, [240, 180, 45]], [0.88, [232, 100, 40]], [1.0, [205, 45, 60]],
-  ]
-  const f = Math.max(0, Math.min(1, s / Math.max(1, maxS)))
-  let a = stops[0]; let b = stops[stops.length - 1]
-  for (let i = 0; i < stops.length - 1; i++) { if (f >= stops[i][0] && f <= stops[i + 1][0]) { a = stops[i]; b = stops[i + 1]; break } }
-  const t = (f - a[0]) / ((b[0] - a[0]) || 1)
-  return a[1].map((v, k) => Math.round(v + (b[1][k] - v) * t))
+// ABSOLUTE Beaufort colour scale: each band's upper-bound wind speed (knots)
+// maps to a fixed colour, so the same colour always means the same wind force
+// regardless of the domain max. f = Beaufort number, max = upper bound (kt).
+export const BEAUFORT_BANDS = [
+  { f: 0, max: 1, c: [130, 145, 170] },   // calm
+  { f: 1, max: 4, c: [90, 165, 210] },    // light air
+  { f: 2, max: 7, c: [55, 195, 195] },    // light breeze
+  { f: 3, max: 11, c: [60, 200, 120] },   // gentle breeze
+  { f: 4, max: 17, c: [170, 210, 60] },   // moderate breeze
+  { f: 5, max: 22, c: [240, 205, 50] },   // fresh breeze
+  { f: 6, max: 28, c: [242, 150, 40] },   // strong breeze
+  { f: 7, max: 34, c: [232, 95, 40] },    // near gale
+  { f: 8, max: 41, c: [212, 40, 50] },    // gale
+  { f: 9, max: 48, c: [200, 40, 120] },   // strong gale
+  { f: 10, max: 56, c: [150, 40, 165] },  // storm
+  { f: 11, max: 64, c: [110, 30, 150] },  // violent storm
+  { f: 12, max: 1e9, c: [80, 20, 120] },  // hurricane
+]
+const MS_TO_KN = 1.94384
+function speedRamp(speedMs) {
+  const kt = speedMs * MS_TO_KN
+  for (const b of BEAUFORT_BANDS) { if (kt < b.max) return b.c }
+  return BEAUFORT_BANDS[BEAUFORT_BANDS.length - 1].c
 }
 
-// Build a small nx*ny canvas coloured by wind speed -> dataURL. Used as a
-// Leaflet imageOverlay that the browser scales smoothly over the field box, so
-// the speed reads as a translucent colour wash under the white particles.
-export function speedImageURL(frame, header, maxSpeed) {
+// Build a small nx*ny canvas coloured by ABSOLUTE wind speed (Beaufort) ->
+// dataURL. Used as a Leaflet imageOverlay scaled smoothly over the field box.
+export function speedImageURL(frame, header) {
   if (typeof document === 'undefined') return null
   const { nx, ny } = header
   const cv = document.createElement('canvas'); cv.width = nx; cv.height = ny
@@ -282,7 +292,7 @@ export function speedImageURL(frame, header, maxSpeed) {
   const img = ctx.createImageData(nx, ny)   // row 0 = north (matches frame order)
   for (let p = 0; p < nx * ny; p++) {
     const s = Math.hypot(frame.u[p] || 0, frame.v[p] || 0)
-    const [r, g, b] = speedRamp(s, maxSpeed)
+    const [r, g, b] = speedRamp(s)
     img.data[p * 4] = r; img.data[p * 4 + 1] = g; img.data[p * 4 + 2] = b; img.data[p * 4 + 3] = 180
   }
   ctx.putImageData(img, 0, 0)

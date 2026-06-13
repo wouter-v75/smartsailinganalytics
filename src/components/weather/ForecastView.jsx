@@ -25,7 +25,7 @@ import {
 } from './mos'
 import {
   fetchWindField, fetchIconRaceField, toVelocityData, speedImageURL, sampleField,
-  applyMosToField, fieldHeightsFor,
+  applyMosToField, fieldHeightsFor, BEAUFORT_BANDS,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
@@ -204,7 +204,7 @@ export default function ForecastView({
     const bounds = [[field.box.south, field.box.west], [field.box.north, field.box.east]]
 
     // 1) translucent speed-shaded colour wash, under the particles
-    const sUrl = speedImageURL(field.frames[idx], field.header, field.maxSpeed)
+    const sUrl = speedImageURL(field.frames[idx], field.header)
     if (sUrl) {
       if (!speedOverlayRef.current) {
         speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: 0.4, interactive: false, pane: 'speedField' }).addTo(map)
@@ -532,6 +532,18 @@ export default function ForecastView({
             {fieldErr && <span style={{ color: '#F87171' }}>field: {fieldErr}</span>}
             {!velocityReady && !fieldErr && allThree && <span style={{ color: '#94A3B8' }}>loading particles…</span>}
             {loading && <span style={{ color: '#7DD3FC' }}> · loading models…</span>}
+          </div>
+          {/* Absolute Beaufort colour scale legend */}
+          <div>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Wind colour (Beaufort · kt)</div>
+            <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid #1E3A5A' }}>
+              {BEAUFORT_BANDS.slice(0, 11).map((b) => (
+                <div key={b.f} title={`Force ${b.f} · <${b.max} kt`} style={{ flex: 1, height: 12, background: `rgb(${b.c[0]},${b.c[1]},${b.c[2]})` }} />
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#64748B', marginTop: 2 }}>
+              <span>0</span><span>7</span><span>17</span><span>27</span><span>40</span><span>48+</span>
+            </div>
           </div>
         </div>{/* end RIGHT column */}
        </div>{/* end flex row */}
