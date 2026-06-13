@@ -126,6 +126,7 @@ export default function ForecastView({
   const velocityLayerRef = useRef(null)
   const speedOverlayRef = useRef(null)
   const readoutRef = useRef(null)
+  const selLabelRef = useRef(null)   // local-time label of the currently scrubbed hour (kept across model switches)
 
   // Persist points + field selection up to WeatherTab so they survive sub-tab
   // switches (ForecastView is dynamically imported and unmounts when hidden).
@@ -173,7 +174,12 @@ export default function ForecastView({
       .then((f) => {
         if (cancelled) return
         const ff = isMos ? applyMosToField(f, specFor(fieldVenue), fieldMosId) : f
-        setField(ff); setFieldHourIdx((i) => Math.min(i, Math.max(0, ff.times.length - 1)))
+        setField(ff)
+        // keep the same wall-clock hour selected across model switches
+        const want = selLabelRef.current
+        const ni = want && ff.labels ? ff.labels.findIndex((l) => l === want) : -1
+        if (ni >= 0) setFieldHourIdx(ni)
+        else setFieldHourIdx((i) => Math.min(i, Math.max(0, ff.times.length - 1)))
       })
       .catch((e) => { if (!cancelled) { setField(null); setFieldErr(e?.message || 'fetch failed') } })
       .finally(() => { if (!cancelled) setFieldLoading(false) })
@@ -248,6 +254,11 @@ export default function ForecastView({
     const id = setInterval(() => setFieldHourIdx((i) => (i + 1) % field.times.length), 650)
     return () => clearInterval(id)
   }, [fieldPlaying, field])
+
+  // Remember the scrubbed hour's local label so a model switch keeps the time.
+  useEffect(() => {
+    if (field?.labels?.length) selLabelRef.current = field.labels[Math.min(fieldHourIdx, field.labels.length - 1)]
+  }, [field, fieldHourIdx])
 
   // Cursor readout: TWS in knots + TWD in magnetic, sampled from the field.
   useEffect(() => {
@@ -445,7 +456,7 @@ export default function ForecastView({
             ref={mapDivRef}
             style={{
               width: '100%',
-              height: 320,
+              height: 640,
               border: '1px solid #1E3A5A',
               borderRadius: 8,
               background: '#0A1929',
