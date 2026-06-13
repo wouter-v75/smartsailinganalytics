@@ -496,7 +496,7 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
         }
       }
       rows.push({
-        time: date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: timezone }),
+        time: date.toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: timezone }),
         windDir: hourly.wind_direction_10m?.[index],
         speeds: speedHeights.map((h) => (
           h === mastHeight

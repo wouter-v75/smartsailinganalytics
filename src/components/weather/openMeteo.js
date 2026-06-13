@@ -88,8 +88,10 @@ export const MODELS = {
     venues: [
       { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.15 },
       { name: 'st_tropez', domain: 'riviera_2km', clon: 6.678, clat: 43.275, half: 0.23 }, // ~20 nm race box (43 16.5N 006 40.7E)
-      // Porto Cervo (Maxi Worlds) — enable when its grid is published:
-      // { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.15 },
+      // La Spezia (early training, 22-26 June) — points grey out until its grid publishes:
+      { name: 'la_spezia', domain: 'la_spezia_2km', clon: 9.85, clat: 44.05, half: 0.18 },
+      // Porto Cervo (Maxi Worlds, 1-12 Sept) — points grey out until its grid publishes:
+      { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.15 },
     ],
     heights: [10, 30, 50, 100, 180],
     tableCols: [10, 30, 50, 100, 180],
