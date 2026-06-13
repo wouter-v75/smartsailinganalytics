@@ -78,15 +78,16 @@ export const MODELS = {
   // output here, so its column is exact, not interpolated.
   ICONRACE: {
     key: 'ICONRACE', label: 'Icon-Race', subtitle: 'self-hosted ICON-LAM 2 km', color: '#e11d48',
-    // Public Bunny pull-zone serving the smartsailinganalytics storage zone
-    // (CORS enabled). Override per-deploy with NEXT_PUBLIC_ICONRACE_BASE.
-    bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE)
-      || 'https://wvsailing.b-cdn.net/icon-race',
+    // If NEXT_PUBLIC_ICONRACE_BASE is set (a public pull-zone fronting the
+    // smartsailinganalytics storage zone, CORS enabled) we fetch from it
+    // directly; otherwise (default) we go through the app's own same-origin
+    // storage proxy /api/bunny/storage — no pull zone, no CORS needed.
+    bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
     // Venue boxes (must match each domain's venues.csv: half = half-width in deg).
     // Grid lives at  <bunnyBase>/<domain>/<name>/grid.json .
     venues: [
       { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.15 },
-      { name: 'st_tropez', domain: 'riviera_2km', clon: 6.57, clat: 43.25, half: 0.15 },
+      { name: 'st_tropez', domain: 'riviera_2km', clon: 6.678, clat: 43.275, half: 0.23 }, // ~20 nm race box (43 16.5N 006 40.7E)
       // Porto Cervo (Maxi Worlds) — enable when its grid is published:
       // { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.15 },
     ],
@@ -170,7 +171,11 @@ async function fetchBunnyModel(m, latitude, longitude) {
     (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
   )
   if (!v) return null
-  const grid = await getIconRaceGrid(`${m.bunnyBase}/${v.domain}/${v.name}/grid.json`)
+  const path = `icon-race/${v.domain}/${v.name}/grid.json`
+  const url = m.bunnyBase
+    ? `${m.bunnyBase}/${v.domain}/${v.name}/grid.json`     // public CDN pull-zone
+    : `/api/bunny/storage?key=${encodeURIComponent(path)}` // same-origin proxy (default)
+  const grid = await getIconRaceGrid(url)
   if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return null
   // nearest cell (equirectangular distance is plenty over a ~30 km box)
   const cosLat = Math.cos((latitude * Math.PI) / 180)
