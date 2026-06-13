@@ -14,7 +14,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import PlotlyChart from './PlotlyChart'
 import {
-  MODELS, MODEL_ORDER, COMPARE_ORDER,
+  MODELS, COMPARE_ORDER,
   fetchAllForPoint, pickDefaultActiveModel, hasValidSpeed,
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
@@ -25,13 +25,16 @@ import {
 } from './mos'
 import {
   fetchWindField, fetchIconRaceField, toVelocityData, speedImageURL, sampleField,
-  fieldModelKeys, fieldHeightsFor,
+  fieldHeightsFor,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
 // 2026). magnetic = true − variation (east positive). Adjust if you extend
 // beyond the Med.
 const MAG_VAR_DEG = 3
+
+// Model picker order — Icon-Race first (left-most), then the global models.
+const MODEL_PICK_ORDER = ['ICONRACE', ...COMPARE_ORDER.filter((k) => k !== 'ICONRACE')]
 
 // Small pill button for the model/height selectors.
 function PillBtn({ active, color = '#06B6D4', onClick, children }) {
@@ -112,6 +115,7 @@ export default function ForecastView({
 
   // ── Animated wind-field overlay (appears once all 3 points are set) ──
   const [velocityReady, setVelocityReady] = useState(false)
+  const [mapReady, setMapReady] = useState(false)   // true once the Leaflet map exists (re-draws markers/field on remount)
   const [fieldModel, setFieldModel] = useState(() => persist.fieldModel || 'AROME')
   const [fieldHeight, setFieldHeight] = useState(() => persist.fieldHeight ?? 10) // number, or 'mast'
   const [fieldHourIdx, setFieldHourIdx] = useState(() => persist.fieldHourIdx || 0)
@@ -204,7 +208,7 @@ export default function ForecastView({
     } else {
       velocityLayerRef.current.setData(data)
     }
-  }, [field, fieldHourIdx, velocityReady])
+  }, [field, fieldHourIdx, velocityReady, mapReady])
 
   // Frame the map to the field's box whenever a new field loads (the box can
   // change between models — Open-Meteo 20 nm box vs Icon-Race venue box).
@@ -212,7 +216,7 @@ export default function ForecastView({
     const map = mapRef.current
     if (!map || !field || !velocityReady) return
     map.fitBounds([[field.box.south, field.box.west], [field.box.north, field.box.east]], { padding: [10, 10] })
-  }, [field, velocityReady])
+  }, [field, velocityReady, mapReady])
 
   // Remove both layers when the field turns off (e.g. a point cleared).
   useEffect(() => {
@@ -246,7 +250,7 @@ export default function ForecastView({
     const onOut = () => { if (readoutRef.current) readoutRef.current.style.display = 'none' }
     map.on('mousemove', onMove); map.on('mouseout', onOut)
     return () => { map.off('mousemove', onMove); map.off('mouseout', onOut) }
-  }, [field, fieldHourIdx])
+  }, [field, fieldHourIdx, mapReady])
 
   // ── Map bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
@@ -294,13 +298,16 @@ export default function ForecastView({
 
     // No pre-dropped marker — locations start empty so clicks number 1 → 2 → 3.
     mapRef.current = map
+    setMapReady(true)
     return () => {
       try { map.remove() } catch { /* ignore */ }
       mapRef.current = null
+      markersRef.current = {}   // drop stale markers bound to the removed map
+      setMapReady(false)
     }
   }, [leafletReady])
 
-  // Mirror `locations` state to the map markers.
+  // Mirror `locations` state to the map markers (re-runs once the map exists).
   useEffect(() => {
     const map = mapRef.current
     if (!map || !window.L) return
@@ -319,7 +326,7 @@ export default function ForecastView({
         markersRef.current[k].setLatLng([coords.lat, coords.lon])
       }
     }
-  }, [locations])
+  }, [locations, mapReady])
 
   function addMarker(map, key, lat, lon) {
     const L = window.L
@@ -384,7 +391,6 @@ export default function ForecastView({
       setProgress(null)
     }
   }
-  const setActiveModel = (key) => onActiveModelChange?.(key)
 
   // Which models actually returned data at any selected point (for greying).
   const modelAvailable = useMemo(() => {
@@ -465,13 +471,9 @@ export default function ForecastView({
             🌀 Wind field {allThree ? '· point 1 (20 nm)' : ''}
           </div>
           {!allThree && <div style={{ fontSize: 11, color: '#64748B' }}>Set 3 points to load the field.</div>}
-          <div>
-            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Model</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {fieldModelKeys().map((k) => (
-                <PillBtn key={k} active={fieldModel === k} color={MODELS[k].color} onClick={() => setFieldModel(k)}>{MODELS[k].label}</PillBtn>
-              ))}
-            </div>
+          <div style={{ fontSize: 11, color: '#94A3B8' }}>
+            Model: <span style={{ color: MODELS[fieldModel]?.color, fontWeight: 700 }}>{MODELS[fieldModel]?.label}</span>
+            <span style={{ color: '#475569' }}> — pick below</span>
           </div>
           <div>
             <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Height</div>
@@ -506,27 +508,33 @@ export default function ForecastView({
        </div>{/* end flex row */}
       </Card>
 
-      {/* Models auto-loaded for the selected area (greyed = no data here) */}
+      {/* Single model picker — drives BOTH the wind field and the hourly tables.
+          Icon-Race first; available models coloured, others greyed; selected highlighted. */}
       {hasResults && (
         <Card>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, color: '#94A3B8' }}>Models in this area:</span>
-            {COMPARE_ORDER.map((k) => {
+            <span style={{ fontSize: 11, color: '#94A3B8' }}>Select model:</span>
+            {MODEL_PICK_ORDER.map((k) => {
               const m = MODELS[k]
               const avail = modelAvailable[k]
+              const selected = activeModel === k
               return (
-                <span
+                <button
                   key={k}
-                  style={{
-                    fontSize: 11, color: avail ? '#E2E8F0' : '#475569', opacity: avail ? 1 : 0.55,
-                    border: `1px solid ${avail ? m.color : '#1E3A5A'}`,
-                    background: avail ? m.color + '22' : 'transparent',
-                    padding: '3px 8px', borderRadius: 999,
-                  }}
+                  disabled={!avail}
+                  onClick={() => { onActiveModelChange?.(k); setFieldModel(k) }}
                   title={avail ? (m.subtitle || '') : `${m.label} has no data here`}
+                  style={{
+                    fontSize: 11, fontWeight: 700, padding: '4px 11px', borderRadius: 999,
+                    cursor: avail ? 'pointer' : 'not-allowed',
+                    border: `1px solid ${selected ? m.color : (avail ? m.color + '88' : '#1E3A5A')}`,
+                    background: selected ? m.color : (avail ? m.color + '22' : 'transparent'),
+                    color: selected ? '#001018' : (avail ? '#E2E8F0' : '#475569'),
+                    opacity: avail ? 1 : 0.5,
+                  }}
                 >
                   {m.label}
-                </span>
+                </button>
               )
             })}
             {loading && <span style={{ fontSize: 11, color: '#7DD3FC' }}>loading…</span>}
@@ -548,36 +556,10 @@ export default function ForecastView({
         <Card>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>
-              📊 Hourly Wind Tables (08:00–18:00 {tzLabel})
+              📊 Hourly Wind Tables (08:00–18:00 {tzLabel}) — <span style={{ color: MODELS[activeModel]?.color }}>{MODELS[activeModel]?.label}</span>
             </span>
             <div style={{ flex: 1 }} />
-            {/* Surface model toggle */}
-            <div style={{ display: 'flex', gap: 4 }}>
-              {MODEL_ORDER.map((k) => {
-                const m = MODELS[k]
-                const on = activeModel === k
-                const data = Object.values(windData).some(
-                  (d) => d.surfaceByModel[k] && hasValidSpeed(d.surfaceByModel[k].hourly)
-                )
-                return (
-                  <button
-                    key={k}
-                    onClick={() => setActiveModel(k)}
-                    disabled={!data}
-                    title={data ? m.subtitle : `${m.label} has no data here`}
-                    style={{
-                      fontSize: 11, fontWeight: 700,
-                      padding: '5px 12px', borderRadius: 6,
-                      border: `1px solid ${on ? m.color : '#1E3A5A'}`,
-                      background: on ? m.color : 'transparent',
-                      color: on ? '#000' : (data ? '#E2E8F0' : '#475569'),
-                      cursor: data ? 'pointer' : 'not-allowed',
-                      opacity: data ? 1 : 0.5,
-                    }}
-                  >{m.label}</button>
-                )
-              })}
-            </div>
+            <span style={{ fontSize: 10, color: '#475569' }}>model selected above</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
             {Object.entries(windData).map(([key, point]) => (
