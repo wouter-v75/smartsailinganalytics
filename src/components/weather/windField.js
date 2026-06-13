@@ -16,9 +16,22 @@
 // nx*ny === data.length. Components are in m/s; met wind direction is FROM.
 // ----------------------------------------------------------------------------
 
-import { MODELS } from './openMeteo'
+import { MODELS, iconRaceGridForPoint } from './openMeteo'
 
 const NM_DEG = 1 / 60 // 1 nautical mile in degrees latitude
+
+// Local-time label "Sat 14:00". isUTC=true converts from UTC to `timezone`;
+// otherwise the ISO is treated as already-local wall-clock (Open-Meteo output).
+function localLabel(iso, timezone, isUTC) {
+  if (!iso) return ''
+  if (isUTC) {
+    const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`)
+    return d.toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: timezone })
+  }
+  const d = new Date(iso.length <= 16 ? `${iso}:00Z` : `${iso.slice(0, 19)}Z`)
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()]
+  return `${wd} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+}
 
 // Heights available for the field selector for a given model: the model's own
 // `heights`, but capped at a sensible ceiling for sailing (<=200 m).
@@ -28,10 +41,10 @@ export function fieldHeightsFor(modelKey) {
   return m.heights.filter((h) => h <= 200)
 }
 
-// Models usable for the field (Open-Meteo backed). Icon-Race is self-hosted on
-// a venue grid, not an Open-Meteo endpoint, so it is excluded here for now.
+// Models usable for the field: Open-Meteo-backed models plus Icon-Race, which
+// is read from its own published grid.json (see fetchIconRaceField).
 export function fieldModelKeys() {
-  return Object.keys(MODELS).filter((k) => MODELS[k].endpoint && k !== 'ICONRACE')
+  return Object.keys(MODELS).filter((k) => MODELS[k].endpoint || k === 'ICONRACE')
 }
 
 // 20 nm box (half = 10 nm) around a centre; lon span widened by 1/cos(lat).
@@ -129,7 +142,67 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
     }
     frames.push({ u, v })
   }
-  return { times, frames, header, maxSpeed, box }
+  const labels = times.map((t) => localLabel(t, timezone, false))
+  return { times, labels, frames, header, maxSpeed, box }
+}
+
+// Build the field from Icon-Race's own grid.json (self-hosted model). The grid
+// is a regular lon/lat box over the venue; we read every cell, interpolate to
+// `height`, and emit the same {times,labels,frames,header,maxSpeed,box} shape.
+export async function fetchIconRaceField({ lat, lon, height, timezone }) {
+  const got = await iconRaceGridForPoint(lat, lon)
+  if (!got) throw new Error('no Icon-Race coverage at point 1')
+  const { grid, venue } = got
+  const heights = (grid.heights || []).map(Number).sort((a, b) => a - b)
+  const round = (x) => Math.round(x * 1000) / 1000
+  const lons = [...new Set(grid.cells.map((c) => round(c.lon)))].sort((a, b) => a - b)   // W->E
+  const lats = [...new Set(grid.cells.map((c) => round(c.lat)))].sort((a, b) => b - a)   // N->S
+  const nx = lons.length; const ny = lats.length
+  if (nx < 2 || ny < 2) throw new Error('Icon-Race grid too small to render')
+  const lonIdx = new Map(lons.map((v, i) => [v, i]))
+  const latIdx = new Map(lats.map((v, i) => [v, i]))
+  const cellAt = new Array(nx * ny).fill(null)
+  for (const c of grid.cells) {
+    const i = lonIdx.get(round(c.lon)); const j = latIdx.get(round(c.lat))
+    if (i != null && j != null) cellAt[j * nx + i] = c
+  }
+  const header = {
+    nx, ny, lo1: lons[0], la1: lats[0],
+    dx: (lons[nx - 1] - lons[0]) / (nx - 1), dy: (lats[0] - lats[ny - 1]) / (ny - 1),
+  }
+  const times = grid.time || []
+  const frames = []
+  let maxSpeed = 1
+  for (let t = 0; t < times.length; t++) {
+    const u = new Array(nx * ny); const v = new Array(nx * ny)
+    for (let p = 0; p < nx * ny; p++) {
+      const c = cellAt[p]
+      let s = null; let d = null
+      if (c) { const r = cellAtHeight(c, height, heights, t); s = r.s; d = r.d }
+      const sms = s == null ? null : s / 3.6   // km/h -> m/s
+      const [uu, vv] = toUV(sms, d)
+      u[p] = uu; v[p] = vv
+      if (sms != null && sms > maxSpeed) maxSpeed = sms
+    }
+    frames.push({ u, v })
+  }
+  const labels = times.map((tt) => localLabel(tt, timezone, true))
+  const box = { north: venue.clat + venue.half, south: venue.clat - venue.half, west: venue.clon - venue.half, east: venue.clon + venue.half }
+  return { times, labels, frames, header, maxSpeed, box }
+}
+
+// speed (km/h) + dir at a height from an Icon-Race cell's spd/dir maps.
+function cellAtHeight(c, h, heights, t) {
+  const sp = (hh) => c.spd?.[String(hh)]?.[t]
+  const di = (hh) => c.dir?.[String(hh)]?.[t]
+  if (sp(h) != null) return { s: sp(h), d: di(h) }
+  const avail = heights.filter((hh) => sp(hh) != null).sort((a, b) => a - b)
+  if (!avail.length) return { s: null, d: null }
+  let lo = avail[0]; let hi = avail[avail.length - 1]
+  for (let k = 0; k < avail.length; k++) { if (avail[k] <= h) lo = avail[k]; if (avail[k] >= h) { hi = avail[k]; break } }
+  if (lo === hi) return { s: sp(lo), d: di(lo) }
+  const f = (Math.log(Math.max(1, h)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))
+  return { s: sp(lo) + (sp(hi) - sp(lo)) * f, d: di(Math.abs(h - lo) <= Math.abs(hi - h) ? lo : hi) }
 }
 
 // Convert one frame to the leaflet-velocity [uObj, vObj] data array.

@@ -24,7 +24,7 @@ import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
 import {
-  fetchWindField, toVelocityData, fieldModelKeys, fieldHeightsFor,
+  fetchWindField, fetchIconRaceField, toVelocityData, fieldModelKeys, fieldHeightsFor,
 } from './windField'
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -32,15 +32,6 @@ const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
 // Animated particle-flow wind layer (loaded after Leaflet — it extends L).
 const VELOCITY_JS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.js'
 const VELOCITY_CSS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.css'
-
-// Label an Open-Meteo local-time string ("YYYY-MM-DDTHH:MM", already in the
-// requested tz) as "Sat 14:00" without a second tz conversion.
-function fieldTimeLabel(iso) {
-  if (!iso) return ''
-  const d = new Date(iso.length <= 16 ? `${iso}:00Z` : `${iso.slice(0, 19)}Z`)
-  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()]
-  return `${wd} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
-}
 
 // Point markers — colour each by index. The standalone tool uses red /
 // green / orange; we keep the same emoji convention so existing users
@@ -135,7 +126,10 @@ export default function ForecastView({
     let cancelled = false
     setFieldLoading(true); setFieldErr('')
     const hVal = fieldHeight === 'mast' ? mastHeight : fieldHeight
-    fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
+    const req = fieldModel === 'ICONRACE'
+      ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
+      : fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
+    req
       .then((f) => { if (!cancelled) { setField(f); setFieldHourIdx((i) => Math.min(i, Math.max(0, f.times.length - 1))) } })
       .catch((e) => { if (!cancelled) { setField(null); setFieldErr(e?.message || 'fetch failed') } })
       .finally(() => { if (!cancelled) setFieldLoading(false) })
@@ -161,11 +155,18 @@ export default function ForecastView({
         velocityScale: 0.012,
         particleMultiplier: 1 / 250,
       }).addTo(map)
-      map.fitBounds([[field.box.south, field.box.west], [field.box.north, field.box.east]], { padding: [10, 10] })
     } else {
       velocityLayerRef.current.setData(data)
     }
   }, [field, fieldHourIdx, velocityReady])
+
+  // Frame the map to the field's box whenever a new field loads (the box can
+  // change between models — Open-Meteo 20 nm box vs Icon-Race venue box).
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !field || !velocityReady) return
+    map.fitBounds([[field.box.south, field.box.west], [field.box.north, field.box.east]], { padding: [10, 10] })
+  }, [field, velocityReady])
 
   // Remove the layer + reset zoom when the field turns off (e.g. a point cleared).
   useEffect(() => {
@@ -371,7 +372,7 @@ export default function ForecastView({
               <>
                 <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
                 <input type="range" min={0} max={field.times.length - 1} value={Math.min(fieldHourIdx, field.times.length - 1)} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ flex: '1 1 160px' }} />
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 80, textAlign: 'right' }}>{fieldTimeLabel(field.times[Math.min(fieldHourIdx, field.times.length - 1)])}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 80, textAlign: 'right' }}>{field.labels?.[Math.min(fieldHourIdx, field.times.length - 1)] || ''}</div>
               </>
             )}
             {fieldLoading && <span style={{ fontSize: 11, color: '#FBBF24' }}>loading field…</span>}

@@ -199,6 +199,24 @@ async function fetchBunnyModel(m, latitude, longitude) {
   return hasValidSpeed(hourly) ? { latitude: c.lat, longitude: c.lon, elevation: 0, hourly } : null
 }
 
+// Full Icon-Race grid for the venue box containing (lat,lon) — used by the
+// animated wind-field overlay (which needs every cell, not just the nearest).
+// Returns { grid:{time,heights,cells:[{lat,lon,spd,dir}]}, venue } or null.
+export async function iconRaceGridForPoint(latitude, longitude) {
+  const m = MODELS.ICONRACE
+  const v = (m.venues || []).find(
+    (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
+  )
+  if (!v) return null
+  const path = `icon-race/${v.domain}/${v.name}/grid.json`
+  const url = m.bunnyBase
+    ? `${m.bunnyBase}/${v.domain}/${v.name}/grid.json`
+    : `/api/bunny/storage?key=${encodeURIComponent(path)}`
+  const grid = await getIconRaceGrid(url)
+  if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return null
+  return { grid, venue: v }
+}
+
 // Fetch one surface model at one point -> the Open-Meteo hourly envelope (or
 // null if missing/empty). Icon-Race delegates to fetchBunnyModel above.
 
