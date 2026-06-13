@@ -168,7 +168,7 @@ export default function ForecastView({
     const sUrl = speedImageURL(field.frames[idx], field.header, field.maxSpeed)
     if (sUrl) {
       if (!speedOverlayRef.current) {
-        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: 0.65, interactive: false, pane: 'speedField' }).addTo(map)
+        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: 0.4, interactive: false, pane: 'speedField' }).addTo(map)
       } else {
         speedOverlayRef.current.setUrl(sUrl); speedOverlayRef.current.setBounds(bounds)
       }
@@ -181,10 +181,11 @@ export default function ForecastView({
         displayValues: false,   // we render our own knots + magnetic readout
         data,
         maxVelocity: Math.max(12, field.maxSpeed),
-        velocityScale: 0.013,
-        particleMultiplier: 1 / 180,
-        lineWidth: 2,
-        colorScale: ['rgba(255,255,255,0.55)', 'rgba(255,255,255,0.95)'],
+        velocityScale: 0.011,
+        particleMultiplier: 1 / 700,   // sparse — let the colour wash + coast show
+        particleAge: 70,
+        lineWidth: 1.3,
+        colorScale: ['rgba(255,255,255,0.5)', 'rgba(255,255,255,0.9)'],
       }).addTo(map)
     } else {
       velocityLayerRef.current.setData(data)
@@ -245,6 +246,9 @@ export default function ForecastView({
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
       attribution: '© OpenStreetMap © CARTO', subdomains: 'abcd', maxZoom: 20,
     }).addTo(map)
+    // Lift the very dark CARTO tiles so coastline + labels stay readable under
+    // the wind field. (Tweak the brightness factor to taste.)
+    try { map.getPane('tilePane').style.filter = 'brightness(1.7) contrast(0.92)' } catch { /* */ }
 
     // Draw Icon-Race coverage boxes (each venue's grid extent). A clicked point
     // inside one of these has self-hosted Icon-Race data; outside, it greys out.
