@@ -33,6 +33,24 @@ import {
 // beyond the Med.
 const MAG_VAR_DEG = 3
 
+// Small pill button for the model/height selectors.
+function PillBtn({ active, color = '#06B6D4', onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 700,
+        cursor: 'pointer', whiteSpace: 'nowrap',
+        border: `1px solid ${active ? color : '#1E3A5A'}`,
+        background: active ? color : 'transparent',
+        color: active ? '#001018' : '#94A3B8',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
 // Animated particle-flow wind layer (loaded after Leaflet — it extends L).
@@ -83,13 +101,11 @@ export default function ForecastView({
   const mapRef = useRef(null)
   const markersRef = useRef({}) // { '1': marker, '2': marker, '3': marker }
 
-  // Form state stays local — only the post-fetch results are lifted.
-  const [date, setDate] = useState(today())
-  const [timezone, setTimezone] = useState('auto')
+  // Form state stays local — only the post-fetch results are lifted. Date is
+  // always "today" (forecast_days window) and timezone is always auto; models
+  // are always all-fetched (greyed where a model has no data in the area).
   const [locations, setLocations] = useState(() => persist.locations || {}) // restored across tab switches
-  const [enabledModels, setEnabledModels] = useState(
-    () => Object.fromEntries(COMPARE_ORDER.map((k) => [k, true]))
-  )
+  const ALL_MODELS = useMemo(() => Object.fromEntries(COMPARE_ORDER.map((k) => [k, true])), [])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
   const [progress, setProgress] = useState(null) // { done, total, label } during fetch
@@ -112,9 +128,7 @@ export default function ForecastView({
   useEffect(() => {
     onPersistChange?.({ locations, fieldModel, fieldHeight, fieldHourIdx, field })
   }, [locations, fieldModel, fieldHeight, fieldHourIdx, field])
-  const tzResolved = timezone === 'auto'
-    ? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
-    : timezone
+  const tzResolved = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   const allThree = !!(locations['1'] && locations['2'] && locations['3'])
 
   // Load leaflet-velocity AFTER Leaflet (it extends the global L).
@@ -331,15 +345,14 @@ export default function ForecastView({
     }
   }
 
-  // ── Fetch all models for every selected location ─────────────────────
-  async function fetchAll() {
-    setLoading(true); setErr(null); onDataChange?.({}, activeModel, resolvedTz)
-    const tz = timezone === 'auto'
-      ? Intl.DateTimeFormat().resolvedOptions().timeZone
-      : timezone
+  // ── Fetch all models for every selected location (auto-triggered) ─────
+  async function fetchAll(locs = locations) {
+    setLoading(true); setErr(null)
+    const tz = tzResolved
     const labelFor = (k) => (k === 'GFS' ? 'GFS (upper air)' : (MODELS[k]?.label || k))
-    const locEntries = Object.entries(locations)
-    const perPoint = COMPARE_ORDER.filter((k) => enabledModels[k]).length + 1 // +GFS
+    const locEntries = Object.entries(locs)
+    if (!locEntries.length) { setLoading(false); return }
+    const perPoint = COMPARE_ORDER.length + 1 // +GFS
     const total = locEntries.length * perPoint
     let done = 0
     setProgress({ done: 0, total, label: 'Starting…' })
@@ -351,7 +364,7 @@ export default function ForecastView({
           latitude: coords.lat,
           longitude: coords.lon,
           timezone: tz,
-          enabledModels,
+          enabledModels: ALL_MODELS,
           onProgress: ({ modelKey, phase }) => {
             if (phase === 'start') {
               setProgress({ done, total, label: `Loading ${labelFor(modelKey)} — Location ${key}` })
@@ -377,26 +390,34 @@ export default function ForecastView({
   const modelAvailable = useMemo(() => {
     const out = {}
     for (const k of COMPARE_ORDER) {
-      out[k] = enabledModels[k] && Object.values(windData).some(
+      out[k] = Object.values(windData).some(
         (d) => d.surfaceByModel[k] && hasValidSpeed(d.surfaceByModel[k].hourly)
       )
     }
     return out
-  }, [enabledModels, windData])
+  }, [windData])
+
+  // Auto-fetch all models whenever the points change (debounced for drags).
+  const fetchAllRef = useRef(null)
+  fetchAllRef.current = fetchAll
+  useEffect(() => {
+    if (!Object.keys(locations).length) return
+    const id = setTimeout(() => { fetchAllRef.current(locations) }, 500)
+    return () => clearTimeout(id)
+  }, [locations])
 
   const hasResults = Object.keys(windData).length > 0
   const tzLabel = resolvedTz === 'UTC' ? 'UTC' : resolvedTz
 
   return (
     <div style={{ padding: '16px 20px 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Map + location cards */}
+      {/* Map (half width in landscape) + wind-field controls beside it */}
       <Card>
+       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        {/* LEFT — map + point chips */}
+        <div style={{ flex: '1 1 460px', minWidth: 300 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
-          📍 Select up to 3 locations
-        </div>
-        <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 8 }}>
-          Click the map to drop a marker. Click again to add a 2nd / 3rd point.
-          Drag any marker to fine-tune. Markers persist until you Clear.
+          📍 Click 3 points — models load automatically
         </div>
         <div style={{ position: 'relative' }}>
           <div
@@ -421,149 +442,97 @@ export default function ForecastView({
           />
         </div>
 
-        {/* Animated wind-field overlay controls — appear once all 3 points set */}
-        {allThree && (
-          <div style={{ marginTop: 10, padding: 10, background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>🌀 Wind field · 20 nm around point 1</div>
-            <label style={{ fontSize: 11, color: '#94A3B8' }}>Model{' '}
-              <select value={fieldModel} onChange={(e) => setFieldModel(e.target.value)} style={{ background: '#071624', color: '#E2E8F0', border: '1px solid #1E3A5A', borderRadius: 4, padding: '2px 4px', fontSize: 11 }}>
-                {fieldModelKeys().map((k) => <option key={k} value={k}>{MODELS[k].label}</option>)}
-              </select>
-            </label>
-            <label style={{ fontSize: 11, color: '#94A3B8' }}>Height{' '}
-              <select value={String(fieldHeight)} onChange={(e) => setFieldHeight(e.target.value === 'mast' ? 'mast' : Number(e.target.value))} style={{ background: '#071624', color: '#E2E8F0', border: '1px solid #1E3A5A', borderRadius: 4, padding: '2px 4px', fontSize: 11 }}>
-                <option value="10">10 m</option>
-                <option value="mast">Mast ({mastHeight} m)</option>
-                {fieldHeightsFor(fieldModel).filter((h) => h >= 50).map((h) => <option key={h} value={h}>{h} m</option>)}
-              </select>
-            </label>
-            {field && field.times.length > 0 && (
-              <>
-                <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
-                <input type="range" min={0} max={field.times.length - 1} value={Math.min(fieldHourIdx, field.times.length - 1)} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ flex: '1 1 160px' }} />
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 80, textAlign: 'right' }}>{field.labels?.[Math.min(fieldHourIdx, field.times.length - 1)] || ''}</div>
-              </>
-            )}
-            {fieldLoading && <span style={{ fontSize: 11, color: '#FBBF24' }}>loading field…</span>}
-            {fieldErr && <span style={{ fontSize: 11, color: '#F87171' }}>field: {fieldErr}</span>}
-            {!velocityReady && !fieldErr && <span style={{ fontSize: 11, color: '#94A3B8' }}>loading particles…</span>}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+        {/* compact point chips */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
           {LOCATION_META.map((m) => {
             const c = locations[m.key]
             return (
-              <div
-                key={m.key}
-                style={{
-                  flex: '1 1 200px',
-                  background: '#0A1929',
-                  border: `1px solid ${c ? m.accent + '88' : '#1E3A5A'}`,
-                  borderRadius: 8,
-                  padding: 10,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                  <span style={{ fontSize: 14 }}>{m.emoji}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0' }}>Location {m.key}</span>
-                  <div style={{ flex: 1 }} />
-                  <span style={{ fontSize: 10, color: c ? '#10B981' : '#475569' }}>
-                    {c ? 'Selected' : 'Empty'}
-                  </span>
-                  {c && (
-                    <button onClick={() => clearLocation(m.key)} style={btnGhost}>Clear</button>
-                  )}
-                </div>
-                {c ? (
-                  <div style={{ fontFamily: 'monospace', fontSize: 11, color: '#94A3B8' }}>
-                    <div>Lat&nbsp;{decimalToDMS(c.lat, false)}</div>
-                    <div>Lon&nbsp;{decimalToDMS(c.lon, true)}</div>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 11, color: '#475569' }}>Click map to select</div>
-                )}
+              <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0A1929', border: `1px solid ${c ? m.accent + '88' : '#1E3A5A'}`, borderRadius: 6, padding: '4px 8px', fontSize: 11 }}>
+                <span style={{ fontWeight: 700, color: c ? m.accent : '#475569' }}>{m.emoji} {m.key}</span>
+                {c
+                  ? <span style={{ fontFamily: 'monospace', color: '#94A3B8' }}>{decimalToDMS(c.lat, false)} {decimalToDMS(c.lon, true)}</span>
+                  : <span style={{ color: '#475569' }}>click map</span>}
+                {c && <button onClick={() => clearLocation(m.key)} style={btnGhost}>✕</button>}
               </div>
             )
           })}
         </div>
-      </Card>
+        </div>{/* end LEFT column */}
 
-      {/* Controls */}
-      <Card>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Field label="Start date">
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} />
-          </Field>
-          <Field label="Timezone">
-            <select value={timezone} onChange={(e) => setTimezone(e.target.value)} style={inputStyle}>
-              {TZ_OPTIONS.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
-            </select>
-          </Field>
-          <div style={{ flex: 1 }} />
-          <Field label="Mast height (m)">
-            <input
-              type="number" min="1" max="120" step="1"
-              value={mastHeight}
-              onChange={(e) => onMastHeightChange?.(Math.max(0, Number(e.target.value) || 0))}
-              style={{ ...inputStyle, width: 92 }}
-              title="Interpolated masthead wind — fit through the 3 nearest model heights"
-            />
-          </Field>
-          <button
-            onClick={fetchAll}
-            disabled={loading || Object.keys(locations).length === 0}
-            style={btnPrimary}
-          >
-            {loading ? 'Fetching…' : '🌬 Fetch wind data'}
-          </button>
-        </div>
-
-        {/* Fetch progress — which models are loading. */}
-        {loading && progress && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ height: 8, background: '#071624', border: '1px solid #1E3A5A', borderRadius: 999, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%`, background: '#06B6D4', transition: 'width 0.2s ease' }} />
-            </div>
-            <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 6, display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <span>{progress.label}</span>
-              <span style={{ color: '#64748B', fontVariantNumeric: 'tabular-nums' }}>{progress.done}/{progress.total}</span>
+        {/* RIGHT — wind-field controls as buttons */}
+        <div style={{ flex: '1 1 300px', minWidth: 240, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>
+            🌀 Wind field {allThree ? '· point 1 (20 nm)' : ''}
+          </div>
+          {!allThree && <div style={{ fontSize: 11, color: '#64748B' }}>Set 3 points to load the field.</div>}
+          <div>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Model</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {fieldModelKeys().map((k) => (
+                <PillBtn key={k} active={fieldModel === k} color={MODELS[k].color} onClick={() => setFieldModel(k)}>{MODELS[k].label}</PillBtn>
+              ))}
             </div>
           </div>
-        )}
-
-        {/* Model checkboxes — tick which to fetch. */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 12, paddingTop: 10, borderTop: '1px solid #1E3A5A' }}>
-          <span style={{ fontSize: 11, color: '#94A3B8' }}>Models to fetch:</span>
-          {COMPARE_ORDER.map((k) => {
-            const m = MODELS[k]
-            const greyed = hasResults && !modelAvailable[k]
-            return (
-              <label
-                key={k}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6,
-                  fontSize: 11,
-                  color: greyed ? '#475569' : '#E2E8F0',
-                  cursor: 'pointer',
-                  opacity: greyed ? 0.55 : 1,
-                  border: `1px solid ${enabledModels[k] ? m.color : '#1E3A5A'}`,
-                  background: enabledModels[k] ? m.color + '22' : 'transparent',
-                  padding: '3px 8px', borderRadius: 999,
-                }}
-                title={greyed ? `${m.label} has no data at the selected points` : (m.subtitle || '')}
-              >
-                <input
-                  type="checkbox"
-                  checked={!!enabledModels[k]}
-                  onChange={(e) => setEnabledModels((prev) => ({ ...prev, [k]: e.target.checked }))}
-                />
-                {m.label}
-              </label>
-            )
-          })}
-        </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Height</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <PillBtn active={fieldHeight === 10} onClick={() => setFieldHeight(10)}>10 m</PillBtn>
+              <PillBtn active={fieldHeight === 'mast'} onClick={() => setFieldHeight('mast')}>Mast {mastHeight} m</PillBtn>
+              {fieldHeightsFor(fieldModel).filter((h) => h >= 50).map((h) => (
+                <PillBtn key={h} active={fieldHeight === h} onClick={() => setFieldHeight(h)}>{h} m</PillBtn>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Mast height (m)</div>
+            <input type="number" min="1" max="120" step="1" value={mastHeight}
+              onChange={(e) => onMastHeightChange?.(Math.max(0, Number(e.target.value) || 0))}
+              style={{ ...inputStyle, width: 92 }} />
+          </div>
+          {field && field.times.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
+              <input type="range" min={0} max={field.times.length - 1} value={Math.min(fieldHourIdx, field.times.length - 1)} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ flex: 1 }} />
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 76, textAlign: 'right' }}>{field.labels?.[Math.min(fieldHourIdx, field.times.length - 1)] || ''}</div>
+            </div>
+          )}
+          <div style={{ fontSize: 11, minHeight: 14 }}>
+            {fieldLoading && <span style={{ color: '#FBBF24' }}>loading field…</span>}
+            {fieldErr && <span style={{ color: '#F87171' }}>field: {fieldErr}</span>}
+            {!velocityReady && !fieldErr && allThree && <span style={{ color: '#94A3B8' }}>loading particles…</span>}
+            {loading && <span style={{ color: '#7DD3FC' }}> · loading models…</span>}
+          </div>
+        </div>{/* end RIGHT column */}
+       </div>{/* end flex row */}
       </Card>
+
+      {/* Models auto-loaded for the selected area (greyed = no data here) */}
+      {hasResults && (
+        <Card>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: '#94A3B8' }}>Models in this area:</span>
+            {COMPARE_ORDER.map((k) => {
+              const m = MODELS[k]
+              const avail = modelAvailable[k]
+              return (
+                <span
+                  key={k}
+                  style={{
+                    fontSize: 11, color: avail ? '#E2E8F0' : '#475569', opacity: avail ? 1 : 0.55,
+                    border: `1px solid ${avail ? m.color : '#1E3A5A'}`,
+                    background: avail ? m.color + '22' : 'transparent',
+                    padding: '3px 8px', borderRadius: 999,
+                  }}
+                  title={avail ? (m.subtitle || '') : `${m.label} has no data here`}
+                >
+                  {m.label}
+                </span>
+              )
+            })}
+            {loading && <span style={{ fontSize: 11, color: '#7DD3FC' }}>loading…</span>}
+          </div>
+        </Card>
+      )}
 
       {err && (
         <Card><div style={{ color: '#EF4444', fontSize: 13 }}>⚠ {err}</div></Card>
