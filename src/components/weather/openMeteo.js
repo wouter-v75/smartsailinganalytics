@@ -94,8 +94,11 @@ export const MODELS = {
     heights: [10, 30, 50, 100, 180],
     tableCols: [10, 30, 50, 100, 180],
     upperHeight: 100,
-    mosModel: null, // no MOS column yet — needs an Icon-Race correction trained
-                    // from >=1 regatta of obs; until then ship raw winds only.
+    // MOS: reuse the ICON-EU verification-based correction as a proxy (flagged
+    // approximate) so a MOS 30 m column shows for learning/comparison. Replace
+    // with an Icon-Race-specific correction once enough regatta verification
+    // (wv_model_score) exists for it.
+    mosModel: 'icon_eu', mosApprox: true,
   },
 }
 
