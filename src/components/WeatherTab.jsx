@@ -49,6 +49,9 @@ export default function WeatherTab({ isMobile = false }) {
   const [activeModel, setActiveModel] = useState('AROME')
   const [resolvedTz, setResolvedTz] = useState('UTC')
   const [mastHeight, setMastHeight] = useState(20) // metres; interpolated masthead wind
+  // Forecast input + wind-field state, lifted so the 3 points and the last 2D
+  // wind field survive sub-tab switches (ForecastView unmounts when hidden).
+  const [forecastPersist, setForecastPersist] = useState({})
 
   function handleDataChange(next, modelKey, tz) {
     setWindData(next)
@@ -135,6 +138,8 @@ export default function WeatherTab({ isMobile = false }) {
             onMastHeightChange={setMastHeight}
             onDataChange={handleDataChange}
             onActiveModelChange={setActiveModel}
+            persist={forecastPersist}
+            onPersistChange={setForecastPersist}
           />
         )}
         {sub === 'compare' && (

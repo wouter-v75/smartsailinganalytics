@@ -24,7 +24,7 @@ import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
 import {
-  fetchWindField, fetchIconRaceField, toVelocityData, fieldModelKeys, fieldHeightsFor,
+  fetchWindField, fetchIconRaceField, toVelocityData, speedImageURL, fieldModelKeys, fieldHeightsFor,
 } from './windField'
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -69,6 +69,8 @@ export default function ForecastView({
   onMastHeightChange,
   onDataChange,
   onActiveModelChange,
+  persist = {},
+  onPersistChange,
 }) {
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
   const mapDivRef = useRef(null)
@@ -78,7 +80,7 @@ export default function ForecastView({
   // Form state stays local — only the post-fetch results are lifted.
   const [date, setDate] = useState(today())
   const [timezone, setTimezone] = useState('auto')
-  const [locations, setLocations] = useState({}) // empty → first click fills slot 1, then 2, then 3
+  const [locations, setLocations] = useState(() => persist.locations || {}) // restored across tab switches
   const [enabledModels, setEnabledModels] = useState(
     () => Object.fromEntries(COMPARE_ORDER.map((k) => [k, true]))
   )
@@ -88,14 +90,21 @@ export default function ForecastView({
 
   // ── Animated wind-field overlay (appears once all 3 points are set) ──
   const [velocityReady, setVelocityReady] = useState(false)
-  const [fieldModel, setFieldModel] = useState('AROME')
-  const [fieldHeight, setFieldHeight] = useState(10)   // number, or 'mast'
-  const [fieldHourIdx, setFieldHourIdx] = useState(0)
+  const [fieldModel, setFieldModel] = useState(() => persist.fieldModel || 'AROME')
+  const [fieldHeight, setFieldHeight] = useState(() => persist.fieldHeight ?? 10) // number, or 'mast'
+  const [fieldHourIdx, setFieldHourIdx] = useState(() => persist.fieldHourIdx || 0)
   const [fieldPlaying, setFieldPlaying] = useState(false)
-  const [field, setField] = useState(null)             // { times, frames, header, maxSpeed, box }
+  const [field, setField] = useState(() => persist.field || null) // { times, labels, frames, header, maxSpeed, box }
   const [fieldLoading, setFieldLoading] = useState(false)
   const [fieldErr, setFieldErr] = useState('')
   const velocityLayerRef = useRef(null)
+  const speedOverlayRef = useRef(null)
+
+  // Persist points + field selection up to WeatherTab so they survive sub-tab
+  // switches (ForecastView is dynamically imported and unmounts when hidden).
+  useEffect(() => {
+    onPersistChange?.({ locations, fieldModel, fieldHeight, fieldHourIdx, field })
+  }, [locations, fieldModel, fieldHeight, fieldHourIdx, field])
   const tzResolved = timezone === 'auto'
     ? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
     : timezone
@@ -136,15 +145,29 @@ export default function ForecastView({
     return () => { cancelled = true }
   }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved])
 
-  // Render / update the velocity layer for the current frame.
+  // Render the speed-colour wash + white particles for the current frame.
   useEffect(() => {
     const map = mapRef.current; const L = window.L
     if (!map || !L || !velocityReady) return
-    if (!field || !field.frames.length) {
+    const clearLayers = () => {
       if (velocityLayerRef.current) { try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null }
-      return
+      if (speedOverlayRef.current) { try { map.removeLayer(speedOverlayRef.current) } catch { /* */ } speedOverlayRef.current = null }
     }
+    if (!field || !field.frames.length) { clearLayers(); return }
     const idx = Math.min(fieldHourIdx, field.frames.length - 1)
+    const bounds = [[field.box.south, field.box.west], [field.box.north, field.box.east]]
+
+    // 1) translucent speed-shaded colour wash, under the particles
+    const sUrl = speedImageURL(field.frames[idx], field.header, field.maxSpeed)
+    if (sUrl) {
+      if (!speedOverlayRef.current) {
+        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: 0.65, interactive: false, pane: 'speedField' }).addTo(map)
+      } else {
+        speedOverlayRef.current.setUrl(sUrl); speedOverlayRef.current.setBounds(bounds)
+      }
+    }
+
+    // 2) white animated particles on top
     const data = toVelocityData(field.frames[idx], field.header, field.times[idx])
     if (!velocityLayerRef.current) {
       velocityLayerRef.current = L.velocityLayer({
@@ -152,8 +175,10 @@ export default function ForecastView({
         displayOptions: { velocityType: 'Wind', position: 'bottomleft', emptyString: 'No wind data', speedUnit: 'k/h', angleConvention: 'meteoCW' },
         data,
         maxVelocity: Math.max(12, field.maxSpeed),
-        velocityScale: 0.012,
-        particleMultiplier: 1 / 250,
+        velocityScale: 0.013,
+        particleMultiplier: 1 / 180,
+        lineWidth: 2,
+        colorScale: ['rgba(255,255,255,0.55)', 'rgba(255,255,255,0.95)'],
       }).addTo(map)
     } else {
       velocityLayerRef.current.setData(data)
@@ -168,11 +193,12 @@ export default function ForecastView({
     map.fitBounds([[field.box.south, field.box.west], [field.box.north, field.box.east]], { padding: [10, 10] })
   }, [field, velocityReady])
 
-  // Remove the layer + reset zoom when the field turns off (e.g. a point cleared).
+  // Remove both layers when the field turns off (e.g. a point cleared).
   useEffect(() => {
     if (allThree) return
     const map = mapRef.current
     if (map && velocityLayerRef.current) { try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null }
+    if (map && speedOverlayRef.current) { try { map.removeLayer(speedOverlayRef.current) } catch { /* */ } speedOverlayRef.current = null }
     setFieldPlaying(false)
   }, [allThree])
 
@@ -189,8 +215,11 @@ export default function ForecastView({
     const L = window.L
     if (!L) return
     const map = L.map(mapDivRef.current, { zoomControl: true, scrollWheelZoom: true }).setView([48.8566, 2.3522], 6)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap', maxZoom: 18,
+    // Pane for the speed colour wash: above tiles (200), below the particle
+    // canvas (overlayPane 400) and the location markers (markerPane 600).
+    map.createPane('speedField'); map.getPane('speedField').style.zIndex = 250
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '© OpenStreetMap © CARTO', subdomains: 'abcd', maxZoom: 20,
     }).addTo(map)
 
     // Draw Icon-Race coverage boxes (each venue's grid extent). A clicked point

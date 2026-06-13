@@ -205,6 +205,38 @@ function cellAtHeight(c, h, heights, t) {
   return { s: sp(lo) + (sp(hi) - sp(lo)) * f, d: di(Math.abs(h - lo) <= Math.abs(hi - h) ? lo : hi) }
 }
 
+// Wind-speed colour ramp (m/s) -> [r,g,b]. Calm deep-blue -> teal -> green ->
+// yellow -> orange -> red, for the shaded speed field behind the particles.
+function speedRamp(s, maxS) {
+  const stops = [
+    [0.00, [12, 34, 72]], [0.18, [20, 110, 165]], [0.36, [26, 178, 150]],
+    [0.55, [150, 200, 70]], [0.72, [240, 180, 45]], [0.88, [232, 100, 40]], [1.0, [205, 45, 60]],
+  ]
+  const f = Math.max(0, Math.min(1, s / Math.max(1, maxS)))
+  let a = stops[0]; let b = stops[stops.length - 1]
+  for (let i = 0; i < stops.length - 1; i++) { if (f >= stops[i][0] && f <= stops[i + 1][0]) { a = stops[i]; b = stops[i + 1]; break } }
+  const t = (f - a[0]) / ((b[0] - a[0]) || 1)
+  return a[1].map((v, k) => Math.round(v + (b[1][k] - v) * t))
+}
+
+// Build a small nx*ny canvas coloured by wind speed -> dataURL. Used as a
+// Leaflet imageOverlay that the browser scales smoothly over the field box, so
+// the speed reads as a translucent colour wash under the white particles.
+export function speedImageURL(frame, header, maxSpeed) {
+  if (typeof document === 'undefined') return null
+  const { nx, ny } = header
+  const cv = document.createElement('canvas'); cv.width = nx; cv.height = ny
+  const ctx = cv.getContext('2d')
+  const img = ctx.createImageData(nx, ny)   // row 0 = north (matches frame order)
+  for (let p = 0; p < nx * ny; p++) {
+    const s = Math.hypot(frame.u[p] || 0, frame.v[p] || 0)
+    const [r, g, b] = speedRamp(s, maxSpeed)
+    img.data[p * 4] = r; img.data[p * 4 + 1] = g; img.data[p * 4 + 2] = b; img.data[p * 4 + 3] = 180
+  }
+  ctx.putImageData(img, 0, 0)
+  return cv.toDataURL()
+}
+
 // Convert one frame to the leaflet-velocity [uObj, vObj] data array.
 export function toVelocityData(frame, header, refTimeISO) {
   const base = {
