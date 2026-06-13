@@ -23,9 +23,24 @@ import {
 import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
+import {
+  fetchWindField, toVelocityData, fieldModelKeys, fieldHeightsFor,
+} from './windField'
 
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+// Animated particle-flow wind layer (loaded after Leaflet — it extends L).
+const VELOCITY_JS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.js'
+const VELOCITY_CSS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.css'
+
+// Label an Open-Meteo local-time string ("YYYY-MM-DDTHH:MM", already in the
+// requested tz) as "Sat 14:00" without a second tz conversion.
+function fieldTimeLabel(iso) {
+  if (!iso) return ''
+  const d = new Date(iso.length <= 16 ? `${iso}:00Z` : `${iso.slice(0, 19)}Z`)
+  const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()]
+  return `${wd} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+}
 
 // Point markers — colour each by index. The standalone tool uses red /
 // green / orange; we keep the same emoji convention so existing users
@@ -80,6 +95,93 @@ export default function ForecastView({
   const [err, setErr] = useState(null)
   const [progress, setProgress] = useState(null) // { done, total, label } during fetch
 
+  // ── Animated wind-field overlay (appears once all 3 points are set) ──
+  const [velocityReady, setVelocityReady] = useState(false)
+  const [fieldModel, setFieldModel] = useState('AROME')
+  const [fieldHeight, setFieldHeight] = useState(10)   // number, or 'mast'
+  const [fieldHourIdx, setFieldHourIdx] = useState(0)
+  const [fieldPlaying, setFieldPlaying] = useState(false)
+  const [field, setField] = useState(null)             // { times, frames, header, maxSpeed, box }
+  const [fieldLoading, setFieldLoading] = useState(false)
+  const [fieldErr, setFieldErr] = useState('')
+  const velocityLayerRef = useRef(null)
+  const tzResolved = timezone === 'auto'
+    ? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+    : timezone
+  const allThree = !!(locations['1'] && locations['2'] && locations['3'])
+
+  // Load leaflet-velocity AFTER Leaflet (it extends the global L).
+  useEffect(() => {
+    if (!leafletReady) return
+    if (window.L && window.L.velocityLayer) { setVelocityReady(true); return }
+    if (!document.querySelector(`link[href="${VELOCITY_CSS}"]`)) {
+      const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = VELOCITY_CSS; document.head.appendChild(l)
+    }
+    const done = () => { if (window.L && window.L.velocityLayer) setVelocityReady(true) }
+    let s = document.querySelector(`script[src="${VELOCITY_JS}"]`)
+    if (s) { if (s.dataset.loaded === '1') done(); else s.addEventListener('load', done) }
+    else {
+      s = document.createElement('script'); s.src = VELOCITY_JS; s.async = true
+      s.onload = () => { s.dataset.loaded = '1'; done() }
+      s.onerror = () => { /* leave overlay disabled */ }
+      document.head.appendChild(s)
+    }
+  }, [leafletReady])
+
+  // Fetch the field grid for point 1's 20 nm box on point/model/height change.
+  const p1lat = locations['1']?.lat; const p1lon = locations['1']?.lon
+  useEffect(() => {
+    if (!allThree || p1lat == null) { setField(null); return }
+    let cancelled = false
+    setFieldLoading(true); setFieldErr('')
+    const hVal = fieldHeight === 'mast' ? mastHeight : fieldHeight
+    fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
+      .then((f) => { if (!cancelled) { setField(f); setFieldHourIdx((i) => Math.min(i, Math.max(0, f.times.length - 1))) } })
+      .catch((e) => { if (!cancelled) { setField(null); setFieldErr(e?.message || 'fetch failed') } })
+      .finally(() => { if (!cancelled) setFieldLoading(false) })
+    return () => { cancelled = true }
+  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved])
+
+  // Render / update the velocity layer for the current frame.
+  useEffect(() => {
+    const map = mapRef.current; const L = window.L
+    if (!map || !L || !velocityReady) return
+    if (!field || !field.frames.length) {
+      if (velocityLayerRef.current) { try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null }
+      return
+    }
+    const idx = Math.min(fieldHourIdx, field.frames.length - 1)
+    const data = toVelocityData(field.frames[idx], field.header, field.times[idx])
+    if (!velocityLayerRef.current) {
+      velocityLayerRef.current = L.velocityLayer({
+        displayValues: true,
+        displayOptions: { velocityType: 'Wind', position: 'bottomleft', emptyString: 'No wind data', speedUnit: 'k/h', angleConvention: 'meteoCW' },
+        data,
+        maxVelocity: Math.max(12, field.maxSpeed),
+        velocityScale: 0.012,
+        particleMultiplier: 1 / 250,
+      }).addTo(map)
+      map.fitBounds([[field.box.south, field.box.west], [field.box.north, field.box.east]], { padding: [10, 10] })
+    } else {
+      velocityLayerRef.current.setData(data)
+    }
+  }, [field, fieldHourIdx, velocityReady])
+
+  // Remove the layer + reset zoom when the field turns off (e.g. a point cleared).
+  useEffect(() => {
+    if (allThree) return
+    const map = mapRef.current
+    if (map && velocityLayerRef.current) { try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null }
+    setFieldPlaying(false)
+  }, [allThree])
+
+  // Play/pause: advance the hour, looping.
+  useEffect(() => {
+    if (!fieldPlaying || !field || !field.times.length) return
+    const id = setInterval(() => setFieldHourIdx((i) => (i + 1) % field.times.length), 650)
+    return () => clearInterval(id)
+  }, [fieldPlaying, field])
+
   // ── Map bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
     if (!leafletReady || !mapDivRef.current || mapRef.current) return
@@ -89,6 +191,19 @@ export default function ForecastView({
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap', maxZoom: 18,
     }).addTo(map)
+
+    // Draw Icon-Race coverage boxes (each venue's grid extent). A clicked point
+    // inside one of these has self-hosted Icon-Race data; outside, it greys out.
+    try {
+      const venues = (MODELS.ICONRACE && MODELS.ICONRACE.venues) || []
+      venues.forEach((v) => {
+        const bounds = [[v.clat - v.half, v.clon - v.half], [v.clat + v.half, v.clon + v.half]]
+        L.rectangle(bounds, {
+          color: '#e36209', weight: 1.5, fillColor: '#e36209', fillOpacity: 0.06,
+          dashArray: '5 4', interactive: false,
+        }).addTo(map).bindTooltip(`Icon-Race: ${v.name}`, { sticky: true, direction: 'top' })
+      })
+    } catch { /* venues optional */ }
 
     // Click → place / cycle markers (1 → 2 → 3 → replace 1 again).
     map.on('click', (e) => {
@@ -235,6 +350,36 @@ export default function ForecastView({
             background: '#0A1929',
           }}
         />
+
+        {/* Animated wind-field overlay controls — appear once all 3 points set */}
+        {allThree && (
+          <div style={{ marginTop: 10, padding: 10, background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>🌀 Wind field · 20 nm around point 1</div>
+            <label style={{ fontSize: 11, color: '#94A3B8' }}>Model{' '}
+              <select value={fieldModel} onChange={(e) => setFieldModel(e.target.value)} style={{ background: '#071624', color: '#E2E8F0', border: '1px solid #1E3A5A', borderRadius: 4, padding: '2px 4px', fontSize: 11 }}>
+                {fieldModelKeys().map((k) => <option key={k} value={k}>{MODELS[k].label}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 11, color: '#94A3B8' }}>Height{' '}
+              <select value={String(fieldHeight)} onChange={(e) => setFieldHeight(e.target.value === 'mast' ? 'mast' : Number(e.target.value))} style={{ background: '#071624', color: '#E2E8F0', border: '1px solid #1E3A5A', borderRadius: 4, padding: '2px 4px', fontSize: 11 }}>
+                <option value="10">10 m</option>
+                <option value="mast">Mast ({mastHeight} m)</option>
+                {fieldHeightsFor(fieldModel).filter((h) => h >= 50).map((h) => <option key={h} value={h}>{h} m</option>)}
+              </select>
+            </label>
+            {field && field.times.length > 0 && (
+              <>
+                <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '2px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
+                <input type="range" min={0} max={field.times.length - 1} value={Math.min(fieldHourIdx, field.times.length - 1)} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ flex: '1 1 160px' }} />
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 80, textAlign: 'right' }}>{fieldTimeLabel(field.times[Math.min(fieldHourIdx, field.times.length - 1)])}</div>
+              </>
+            )}
+            {fieldLoading && <span style={{ fontSize: 11, color: '#FBBF24' }}>loading field…</span>}
+            {fieldErr && <span style={{ fontSize: 11, color: '#F87171' }}>field: {fieldErr}</span>}
+            {!velocityReady && !fieldErr && <span style={{ fontSize: 11, color: '#94A3B8' }}>loading particles…</span>}
+          </div>
+        )}
+
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
           {LOCATION_META.map((m) => {
             const c = locations[m.key]
