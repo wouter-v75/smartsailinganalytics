@@ -451,7 +451,9 @@ function WindTable({ locationKey, point, model, timezone, mastHeight }) {
   // Speed columns = the model's display heights plus the mast height, sorted
   // ascending so the row reads low→high. The mast height is interpolated and
   // highlighted; if it coincides with a native column the two merge into one.
-  const speedHeights = Array.from(new Set([...model.tableCols, mastHeight]))
+  // Table shows sailing-relevant heights only: drop model columns above 100 m
+  // (the user's mast height is always kept, even if set higher).
+  const speedHeights = Array.from(new Set([...model.tableCols.filter((h) => h <= 100), mastHeight]))
     .filter((h) => Number.isFinite(h) && h > 0)
     .sort((a, b) => a - b)
 
