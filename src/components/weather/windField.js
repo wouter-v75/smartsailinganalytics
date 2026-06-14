@@ -307,28 +307,22 @@ export const BEAUFORT_BANDS = [
   { f: 12, max: 1e9, c: [80, 20, 120] },  // hurricane
 ]
 const MS_TO_KN = 1.94384
-// Continuous colour ramp: interpolate between the Beaufort anchor colours by
-// wind speed instead of snapping to one discrete band. This reveals within-band
-// variation (e.g. 8 vs 12 kt, which otherwise both read as one flat green) for
-// much more contrast across the sailing TWS range. Still an ABSOLUTE mapping
-// (a given kt -> a fixed colour), so the banded legend stays a valid reference.
+// Full colour range stretched across 0..PALETTE_MAX_KT so almost all the colour
+// resolution lands in the racing wind range (everything above saturates at the
+// top colour). Continuous interpolation between the colour anchors -> smooth,
+// high-contrast gradient that reveals within-band variation.
+export const PALETTE_MAX_KT = 40
 function speedRamp(speedMs) {
-  const kt = speedMs * MS_TO_KN
   const B = BEAUFORT_BANDS
-  if (kt <= B[0].max) return B[0].c
-  for (let i = 0; i < B.length - 1; i++) {
-    const lo = B[i].max
-    let hi = B[i + 1].max
-    if (hi > 1e8) hi = lo + 8            // cap the open-ended top (hurricane) band
-    if (kt <= hi) {
-      const t = (kt - lo) / (hi - lo)
-      const a = B[i].c; const b = B[i + 1].c
-      return [Math.round(a[0] + (b[0] - a[0]) * t),
-        Math.round(a[1] + (b[1] - a[1]) * t),
-        Math.round(a[2] + (b[2] - a[2]) * t)]
-    }
-  }
-  return B[B.length - 1].c
+  const N = B.length
+  const x = Math.max(0, Math.min(0.999999, (speedMs * MS_TO_KN) / PALETTE_MAX_KT))
+  const pos = x * (N - 1)               // colour index position 0..N-1
+  const i = Math.floor(pos)
+  const t = pos - i
+  const a = B[i].c; const b = B[Math.min(N - 1, i + 1)].c
+  return [Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t)]
 }
 
 // Build a small nx*ny canvas coloured by ABSOLUTE wind speed (Beaufort) ->

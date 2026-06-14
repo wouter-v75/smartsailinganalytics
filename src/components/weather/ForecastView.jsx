@@ -27,7 +27,7 @@ import {
 } from './mos'
 import {
   fetchWindField, fetchIconRaceField, toVelocityData, speedImageURL, sampleField,
-  applyMosToField, fieldHeightsFor, BEAUFORT_BANDS,
+  applyMosToField, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
@@ -588,16 +588,17 @@ export default function ForecastView({
             {!velocityReady && !fieldErr && allThree && <span style={{ color: '#94A3B8' }}>loading particles…</span>}
             {loading && <span style={{ color: '#7DD3FC' }}> · loading models…</span>}
           </div>
-          {/* Absolute Beaufort colour scale legend */}
+          {/* Wind-speed colour scale — full palette stretched across 0..PALETTE_MAX_KT */}
           <div>
-            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Wind colour (Beaufort · kt)</div>
-            <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid #1E3A5A' }}>
-              {BEAUFORT_BANDS.slice(0, 11).map((b) => (
-                <div key={b.f} title={`Force ${b.f} · <${b.max} kt`} style={{ flex: 1, height: 12, background: `rgb(${b.c[0]},${b.c[1]},${b.c[2]})` }} />
-              ))}
-            </div>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Wind colour (kt)</div>
+            <div style={{
+              height: 12, borderRadius: 4, border: '1px solid #1E3A5A',
+              background: `linear-gradient(to right, ${BEAUFORT_BANDS.map((b) => `rgb(${b.c[0]},${b.c[1]},${b.c[2]})`).join(',')})`,
+            }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#64748B', marginTop: 2 }}>
-              <span>0</span><span>7</span><span>17</span><span>27</span><span>40</span><span>48+</span>
+              {[0, 0.25, 0.5, 0.75, 1].map((f) => (
+                <span key={f}>{Math.round(f * PALETTE_MAX_KT)}{f === 1 ? '+' : ''}</span>
+              ))}
             </div>
           </div>
         </div>{/* end RIGHT column */}
