@@ -24,6 +24,7 @@ import {
   SOUNDING_SOURCES, SOUNDING_ORDER,
   fetchSoundingPoint, decimalToDMS,
 } from './openMeteo'
+import { useModelCycles } from './modelCycles'
 
 const D3_JS = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js'
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -356,6 +357,10 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
   // A user-picked 4th sounding point, fetched on demand (the 'S' key).
   const [extraPoint, setExtraPoint] = useState(null)
   const [source, setSource] = useState('GFS')
+  // Source labels carry the model run cycle (ICON/ECMWF -> "ICON 06z"); GFS has
+  // no cycle in the map so it stays plain.
+  const cycles = useModelCycles()
+  const srcLabel = (k) => `${SOUNDING_SOURCES[k].label}${cycles[k] ? ` ${cycles[k]}` : ''}`
   const [locKey, setLocKey] = useState(null)
   const [timeIdx, setTimeIdx] = useState(0)
   const [note, setNote] = useState('Defaults to your analysis area; the picked point is added as "Selected sounding position".')
@@ -550,7 +555,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
           </Field>
           <Field label="🛰️ Source">
             <select value={source} onChange={(e) => setSource(e.target.value)} style={inputStyle}>
-              {availableSources.map((k) => <option key={k} value={k}>{SOUNDING_SOURCES[k].label}</option>)}
+              {availableSources.map((k) => <option key={k} value={k}>{srcLabel(k)}</option>)}
             </select>
           </Field>
           <Field label="📅 Time">

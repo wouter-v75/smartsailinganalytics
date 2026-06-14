@@ -5,6 +5,7 @@
 import React, { useState } from 'react'
 import { specFor } from './mos'
 import { FINDINGS, GUIDANCE, VENUE_LABEL, VENUE_KEYS } from './venueNotes'
+import ModelUpdates from './ModelUpdates'
 
 // MOS coefficients are keyed by Open-Meteo model id; show friendly labels.
 const MODEL_LABEL = {
@@ -26,6 +27,9 @@ export default function VenueMOSView() {
 
   return (
     <div style={{ padding: '16px 20px 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Live model-freshness overview (Open-Meteo metas + Icon-Race pipeline). */}
+      <ModelUpdates />
+
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>📐 Venue MOS</span>

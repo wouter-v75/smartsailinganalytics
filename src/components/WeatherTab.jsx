@@ -13,6 +13,7 @@
 
 import React, { useState } from 'react'
 import dynamic from 'next/dynamic'
+import { ModelCyclesProvider } from './weather/modelCycles'
 
 const ForecastView = dynamic(() => import('./weather/ForecastView'), {
   ssr: false,
@@ -28,7 +29,7 @@ const SoundingView = dynamic(() => import('./weather/SoundingView'), {
 })
 const VenueMOSView = dynamic(() => import('./weather/VenueMOSView'), {
   ssr: false,
-  loading: () => <TabLoading label="Loading venue MOS…" />,
+  loading: () => <TabLoading label="Loading admin…" />,
 })
 
 // Role hierarchy. MOS adjustments + Icon-Race require TL2 and up; Venue MOS is
@@ -39,7 +40,7 @@ const SUB_TABS = [
   { id: 'forecast',   label: 'Forecast',         enabled: true  },
   { id: 'compare',    label: 'Model Comparison', enabled: true  },
   { id: 'sounding',   label: 'Sounding',         enabled: true  },
-  { id: 'venuemos',   label: 'Venue MOS',        enabled: true, adminOnly: true },
+  { id: 'venuemos',   label: 'Admin',            enabled: true, adminOnly: true },
 ]
 
 export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
@@ -72,6 +73,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
   const hasData = Object.keys(windData).length > 0
 
   return (
+    <ModelCyclesProvider>
     <div
       style={{
         height: '100%',
@@ -158,6 +160,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
         )}
       </div>
     </div>
+    </ModelCyclesProvider>
   )
 }
 

@@ -19,6 +19,7 @@ export const MODELS = {
     color: '#2e7d32',
     endpoint: 'https://api.open-meteo.com/v1/meteofrance',
     modelParam: 'meteofrance_arome_france_hd',
+    metaModel: 'meteofrance_arome_france_hd',
     mosModel: 'meteofrance_arome_france_hd',
     heights: [10, 20, 50, 100, 150, 200],
     tableCols: [10, 20, 50],
@@ -29,6 +30,7 @@ export const MODELS = {
     color: '#1565c0',
     endpoint: 'https://api.open-meteo.com/v1/ecmwf',
     modelParam: null,
+    metaModel: 'ecmwf_ifs025',
     mosModel: 'ecmwf_ifs025', mosApprox: true,
     heights: [10, 100, 200],
     tableCols: [10, 100, 200],
@@ -40,6 +42,9 @@ export const MODELS = {
     color: '#ad1457',
     endpoint: 'https://api.open-meteo.com/v1/dwd-icon',
     modelParam: 'icon_seamless',
+    // 'icon_seamless' is a virtual blend with no single run cycle; report
+    // freshness from the ICON-EU member (the one the MOS correction uses).
+    metaModel: 'dwd_icon_eu',
     mosModel: 'icon_eu', mosApprox: true,
     heights: [10, 80, 120, 180],
     tableCols: [10, 80, 180],
@@ -52,12 +57,14 @@ export const MODELS = {
     key: 'DMI', label: 'DMI Harmonie', color: '#00838f',
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'dmi_harmonie_arome_europe',
+    metaModel: 'dmi_harmonie_arome_europe',
     heights: [10, 100],
   },
   ITALIA: {
     key: 'ITALIA', label: 'ItaliaMeteo', subtitle: 'ARPAE ICON-2I 2 km', color: '#ef6c00',
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'italia_meteo_arpae_icon_2i',
+    metaModel: 'italia_meteo_arpae_icon_2i',
     mosModel: 'italia_meteo_arpae_icon_2i',
     heights: [10],
     tableCols: [10],
@@ -66,6 +73,7 @@ export const MODELS = {
     key: 'ARPEGE', label: 'ARPEGE', subtitle: 'Météo-France 11 km', color: '#5d4037',
     endpoint: 'https://api.open-meteo.com/v1/meteofrance',
     modelParam: 'meteofrance_arpege_europe',
+    metaModel: 'meteofrance_arpege_europe',
     mosModel: 'meteofrance_arpege_europe',
     heights: [10, 20, 50, 80, 100],
     tableCols: [10, 50, 100],
@@ -215,6 +223,101 @@ export async function iconRaceGridForPoint(latitude, longitude) {
   const grid = await getIconRaceGrid(url)
   if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return null
   return { grid, venue: v }
+}
+
+// ── Model freshness (Weather ▸ Admin "Model updates" table) ─────────────────
+// Open-Meteo publishes a tiny per-model meta.json with the latest run's
+// initialisation time, when it became available, and the run cadence. We read
+// it client-side (same origin policy as the forecast calls) to show, per model:
+// which cycle (00/06/12/18…), when it landed, and the next run + ETA.
+const META_BASE = 'https://api.open-meteo.com/data'
+const _metaCache = new Map() // metaModel -> { at, promise }
+
+export async function fetchModelMeta(metaModel) {
+  if (!metaModel) return null
+  const c = _metaCache.get(metaModel)
+  // cache for 60 s so a 1-min table refresh doesn't hammer the endpoint
+  if (c && Date.now() - c.at < 60_000) return c.promise
+  const promise = (async () => {
+    try {
+      const res = await fetch(`${META_BASE}/${metaModel}/static/meta.json`, { cache: 'no-store' })
+      if (!res.ok) return null
+      const j = await res.json()
+      const init = j.last_run_initialisation_time ?? null // unix seconds, UTC
+      const available = j.last_run_availability_time ?? j.last_run_modification_time ?? null
+      const interval = j.update_interval_seconds ?? null   // seconds between runs
+      return {
+        initSec: init,
+        availableSec: available,
+        intervalSec: interval,
+        nextSec: (init != null && interval != null) ? init + interval : null,
+      }
+    } catch {
+      return null
+    }
+  })()
+  _metaCache.set(metaModel, { at: Date.now(), promise })
+  return promise
+}
+
+// Live Icon-Race pipeline status, published once a minute by the box
+// (scripts/publish_status.sh -> www/icon-race/status.json). Same delivery path
+// as the venue grids: public pull-zone if configured, else the same-origin
+// storage proxy. Returns the parsed status object or null.
+export async function fetchIconRaceStatus() {
+  const base = MODELS.ICONRACE.bunnyBase
+  const url = base
+    ? `${base}/status.json`
+    : `/api/bunny/storage?key=${encodeURIComponent('icon-race/status.json')}`
+  try {
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
+// Init-cycle tag like "00z" / "06z" from a unix-seconds run-initialisation time.
+export function cycleTagFromSec(sec) {
+  if (sec == null) return ''
+  return `${String(new Date(sec * 1000).getUTCHours()).padStart(2, '0')}z`
+}
+
+// Latest run cycle (UTC init hour) for every downloaded model + the self-hosted
+// Icon-Race. Returns e.g. { AROME:'00z', ICON:'06z', ICONRACE:'00z' }. Models
+// whose meta is unavailable are simply omitted (their label stays plain).
+export async function loadAllModelCycles() {
+  const out = {}
+  const omKeys = COMPARE_ORDER.filter((k) => k !== 'ICONRACE')
+  await Promise.all(omKeys.map(async (k) => {
+    const meta = await fetchModelMeta(MODELS[k]?.metaModel)
+    if (meta && meta.initSec != null) out[k] = cycleTagFromSec(meta.initSec)
+  }))
+  try {
+    const s = await fetchIconRaceStatus()
+    if (s) {
+      const init = (s.init != null && String(s.init) !== '')
+        ? `${String(s.init).padStart(2, '0')}z`
+        : (typeof s.cycle === 'string' && s.cycle.length >= 10 ? `${s.cycle.slice(8, 10)}z` : '')
+      if (init) out.ICONRACE = init
+    }
+  } catch { /* leave Icon-Race label plain */ }
+  return out
+}
+
+// "AROME" + cycles.AROME -> "AROME 00z" (plain label when no cycle is known).
+export function labelWithCycle(modelKey, cycles) {
+  const base = MODELS[modelKey]?.label || modelKey
+  const tag = cycles && cycles[modelKey]
+  return tag ? `${base} ${tag}` : base
+}
+
+// Shallow-clone a MODELS entry with the cycle folded into its `label`, so child
+// components that render `model.label` show the cycle with no further changes.
+export function withCycleLabel(model, tag) {
+  if (!model) return model
+  return tag ? { ...model, label: `${model.label} ${tag}` } : model
 }
 
 // Fetch one surface model at one point -> the Open-Meteo hourly envelope (or

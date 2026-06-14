@@ -19,7 +19,9 @@ import {
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
   interpolateSpeedAtHeight,
+  labelWithCycle, withCycleLabel,
 } from './openMeteo'
+import { useModelCycles } from './modelCycles'
 import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
@@ -113,6 +115,11 @@ export default function ForecastView({
   const [locations, setLocations] = useState(() => persist.locations || {}) // restored across tab switches
   // Fetch all models; Icon-Race only for TL2+ (so its data never reaches lower roles).
   const ALL_MODELS = useMemo(() => Object.fromEntries(COMPARE_ORDER.map((k) => [k, k !== 'ICONRACE' || canIconRace])), [canIconRace])
+  // Model run cycles (00/06/12/18z) -> shown in every model name. activeModelObj
+  // is the active model with its cycle folded into `label`, so the tables /
+  // charts it's passed to render e.g. "AROME 00z" with no further changes.
+  const cycles = useModelCycles()
+  const activeModelObj = useMemo(() => withCycleLabel(MODELS[activeModel], cycles[activeModel]), [activeModel, cycles])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
   const [progress, setProgress] = useState(null) // { done, total, label } during fetch
@@ -505,7 +512,7 @@ export default function ForecastView({
           </div>
           {!allThree && <div style={{ fontSize: 11, color: '#64748B' }}>Set 3 points to load the field.</div>}
           <div style={{ fontSize: 11, color: '#94A3B8' }}>
-            Model: <span style={{ color: MODELS[fieldModel]?.color, fontWeight: 700 }}>{MODELS[fieldModel]?.label}</span>
+            Model: <span style={{ color: MODELS[fieldModel]?.color, fontWeight: 700 }}>{labelWithCycle(fieldModel, cycles)}</span>
             <span style={{ color: '#475569' }}> — pick below</span>
           </div>
           <div>
@@ -583,7 +590,7 @@ export default function ForecastView({
                     opacity: avail ? 1 : 0.5,
                   }}
                 >
-                  {m.label}
+                  {labelWithCycle(k, cycles)}
                 </button>
               )
             })}
@@ -598,7 +605,7 @@ export default function ForecastView({
 
       {/* Multi-location summary strip — appears as soon as we have data. */}
       {hasResults && (
-        <LocationSummaryStrip windData={windData} model={MODELS[activeModel]} />
+        <LocationSummaryStrip windData={windData} model={activeModelObj} />
       )}
 
       {/* Hourly tables */}
@@ -606,7 +613,7 @@ export default function ForecastView({
         <Card>
           <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>
-              📊 Hourly Wind Tables (08:00–18:00 {tzLabel}) — <span style={{ color: MODELS[activeModel]?.color }}>{MODELS[activeModel]?.label}</span>
+              📊 Hourly Wind Tables (08:00–18:00 {tzLabel}) — <span style={{ color: MODELS[activeModel]?.color }}>{activeModelObj?.label}</span>
             </span>
             <div style={{ flex: 1 }} />
             <span style={{ fontSize: 10, color: '#475569' }}>model selected above</span>
@@ -617,7 +624,7 @@ export default function ForecastView({
                 key={key}
                 locationKey={key}
                 point={point}
-                model={MODELS[activeModel]}
+                model={activeModelObj}
                 timezone={resolvedTz}
                 mastHeight={mastHeight}
                 mosAllowed={canMos}
@@ -633,9 +640,9 @@ export default function ForecastView({
       {hasResults && (
         <Card>
           <ChartTitle>
-            🌬 Wind Speed Comparison — All Locations ({MODELS[activeModel].label})
+            🌬 Wind Speed Comparison — All Locations ({activeModelObj.label})
           </ChartTitle>
-          <WindCompareChart windData={windData} model={MODELS[activeModel]} timezone={resolvedTz} />
+          <WindCompareChart windData={windData} model={activeModelObj} timezone={resolvedTz} />
         </Card>
       )}
 
@@ -644,7 +651,7 @@ export default function ForecastView({
       {hasResults && (
         <WindProfileSection
           windData={windData}
-          model={MODELS[activeModel]}
+          model={activeModelObj}
           timezone={resolvedTz}
         />
       )}

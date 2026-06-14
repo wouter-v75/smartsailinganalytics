@@ -11,7 +11,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
 import PlotlyChart from './PlotlyChart'
-import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight } from './openMeteo'
+import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight, labelWithCycle } from './openMeteo'
+import { useModelCycles } from './modelCycles'
 import { matchVenue, specFor, mosSeries } from './mos'
 
 const LOCATION_META = [
@@ -133,6 +134,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
 }
 
 function ComparePanel({ title, point, seriesFn, yTitle, isDir }) {
+  const cycles = useModelCycles()
   const data = useMemo(() => {
     if (!point) return []
     const traces = []
@@ -141,22 +143,23 @@ function ComparePanel({ title, point, seriesFn, yTitle, isDir }) {
       if (!surf || !surf.hourly) continue
       const y = seriesFn(surf.hourly, key)
       if (!y) continue
+      const name = labelWithCycle(key, cycles)
       traces.push({
         x: surf.hourly.time.map((t) => new Date(t)),
         y,
         type: 'scatter',
         mode: isDir ? 'markers' : 'lines+markers',
-        name: MODELS[key].label,
+        name,
         line: { color: MODELS[key].color, width: 2 },
         marker: { color: MODELS[key].color, size: isDir ? 5 : 4 },
         connectgaps: true,
-        hovertemplate: `<b>${MODELS[key].label}</b><br>%{x|%a %d %H:%M}<br>` +
+        hovertemplate: `<b>${name}</b><br>%{x|%a %d %H:%M}<br>` +
           (isDir ? '%{y:.0f}°' : '%{y:.1f} kt') + '<extra></extra>',
       })
     }
     return traces
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [point, isDir])
+  }, [point, isDir, cycles])
 
   const layout = {
     xaxis: { title: 'Time', type: 'date' },
