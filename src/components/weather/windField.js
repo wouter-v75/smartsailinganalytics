@@ -62,6 +62,30 @@ function localLabel(iso, timezone, isUTC) {
   return `${wd} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 }
 
+// Structured local stamp for the field time slider: weekday, day, month, hour,
+// minute. Mirrors localLabel's UTC-vs-local handling so the hours line up with
+// the short labels the MOS step parses. UTC sources (Icon-Race) are formatted in
+// `timezone`; Open-Meteo's already-local wall-clock strings are read with getUTC*.
+const STAMP_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const STAMP_WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+function localStamp(iso, timezone, isUTC) {
+  if (!iso) return null
+  if (isUTC) {
+    const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`)
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone, weekday: 'short', day: '2-digit', month: 'short',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(d)
+    const g = (t) => parts.find((p) => p.type === t)?.value || ''
+    return { wd: g('weekday'), dd: g('day'), mon: g('month'), hh: Number(g('hour')) % 24, mm: g('minute') }
+  }
+  const d = new Date(iso.length <= 16 ? `${iso}:00Z` : `${iso.slice(0, 19)}Z`)
+  return {
+    wd: STAMP_WD[d.getUTCDay()], dd: String(d.getUTCDate()).padStart(2, '0'), mon: STAMP_MON[d.getUTCMonth()],
+    hh: d.getUTCHours(), mm: String(d.getUTCMinutes()).padStart(2, '0'),
+  }
+}
+
 // Heights available for the field selector for a given model: the model's own
 // `heights`, but capped at a sensible ceiling for sailing (<=200 m).
 export function fieldHeightsFor(modelKey) {
@@ -172,7 +196,8 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
     frames.push({ u, v })
   }
   const labels = times.map((t) => localLabel(t, timezone, false))
-  return { times, labels, frames, header, maxSpeed, box }
+  const stamps = times.map((t) => localStamp(t, timezone, false))
+  return { times, labels, stamps, frames, header, maxSpeed, box }
 }
 
 // Build the field from Icon-Race's own grid.json (self-hosted model). The grid
@@ -216,8 +241,9 @@ export async function fetchIconRaceField({ lat, lon, height, timezone }) {
     frames.push({ u, v })
   }
   const labels = times.map((tt) => localLabel(tt, timezone, true))
+  const stamps = times.map((tt) => localStamp(tt, timezone, true))
   const box = { north: venue.clat + venue.half, south: venue.clat - venue.half, west: venue.clon - venue.half, east: venue.clon + venue.half }
-  return { times, labels, frames, header, maxSpeed, box }
+  return { times, labels, stamps, frames, header, maxSpeed, box }
 }
 
 // speed (km/h) + dir at a height from an Icon-Race cell's spd/dir maps.

@@ -536,13 +536,46 @@ export default function ForecastView({
               style={{ ...inputStyle, width: 92 }} />
           </div>
           )}
-          {field && field.times.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
-              <input type="range" min={0} max={field.times.length - 1} value={Math.min(fieldHourIdx, field.times.length - 1)} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ flex: 1 }} />
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 76, textAlign: 'right' }}>{field.labels?.[Math.min(fieldHourIdx, field.times.length - 1)] || ''}</div>
-            </div>
-          )}
+          {field && field.times.length > 0 && (() => {
+            const n = field.times.length
+            const cur = Math.min(fieldHourIdx, n - 1)
+            const stamps = field.stamps || []
+            const st = stamps[cur]
+            // Readout: day, date and time, e.g. "Sun 14 Jun · 12:00".
+            const curLabel = st
+              ? `${st.wd} ${st.dd} ${st.mon} · ${String(st.hh).padStart(2, '0')}:${st.mm}`
+              : (field.labels?.[cur] || '')
+            // Tick axis at 6-hour wall-clock marks (00/06/12/18); date under midnight.
+            const ticks = []
+            for (let i = 0; i < n; i++) {
+              const s = stamps[i]
+              if (!s || s.hh % 6 !== 0) continue
+              ticks.push({
+                i,
+                pct: n > 1 ? (i / (n - 1)) * 100 : 0,
+                time: `${String(s.hh).padStart(2, '0')}:00`,
+                date: (s.hh === 0 || ticks.length === 0) ? `${s.wd} ${s.dd} ${s.mon}` : '',
+              })
+            }
+            return (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <input type="range" min={0} max={n - 1} value={cur} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ width: '100%' }} />
+                  <div style={{ position: 'relative', height: 24 }}>
+                    {ticks.map((tk) => (
+                      <div key={tk.i} style={{ position: 'absolute', left: `${tk.pct}%`, transform: 'translateX(-50%)', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <div style={{ width: 1, height: 4, background: '#334C66', margin: '0 auto 1px' }} />
+                        <div style={{ fontSize: 9, color: '#94A3B8', lineHeight: 1.1 }}>{tk.time}</div>
+                        {tk.date && <div style={{ fontSize: 8, color: '#64748B', lineHeight: 1.1 }}>{tk.date}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 116, textAlign: 'right' }}>{curLabel}</div>
+              </div>
+            )
+          })()}
           <div style={{ fontSize: 11, minHeight: 14 }}>
             {fieldLoading && <span style={{ color: '#FBBF24' }}>loading field…</span>}
             {fieldErr && <span style={{ color: '#F87171' }}>field: {fieldErr}</span>}
