@@ -34,7 +34,7 @@ function mergeLayout(base, over) {
   return out
 }
 
-export default function PlotlyChart({ data, layout, config, height = 320, placeholder }) {
+export default function PlotlyChart({ data, layout, config, height = 320, placeholder, onHover, onUnhover }) {
   const ready = useScriptsOnce([PLOTLY_JS])
   const ref = useRef(null)
 
@@ -45,12 +45,17 @@ export default function PlotlyChart({ data, layout, config, height = 320, placeh
       return
     }
     const merged = mergeLayout(DARK_LAYOUT, layout || {})
+    const gd = ref.current
     window.Plotly.newPlot(
-      ref.current,
+      gd,
       data,
       merged,
       { responsive: true, scrollZoom: true, displaylogo: false, ...config }
     )
+    // Optional hover handlers (e.g. highlight the hovered series). gd.on is
+    // attached by Plotly after newPlot.
+    if (onHover) gd.on('plotly_hover', (e) => onHover(gd, e))
+    if (onUnhover) gd.on('plotly_unhover', () => onUnhover(gd))
     // Resize when the container width changes (sub-tab open, etc.)
     const ro = new ResizeObserver(() => {
       try { window.Plotly.Plots.resize(ref.current) } catch { /* ignore */ }
@@ -60,7 +65,7 @@ export default function PlotlyChart({ data, layout, config, height = 320, placeh
       ro.disconnect()
       try { window.Plotly.purge(ref.current) } catch { /* ignore */ }
     }
-  }, [ready, data, layout, config])
+  }, [ready, data, layout, config, onHover, onUnhover])
 
   if (!ready) {
     return (
