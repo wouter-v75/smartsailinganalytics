@@ -110,13 +110,29 @@ export const MODELS = {
     // (wv_model_score) exists for it.
     mosModel: 'icon_eu', mosApprox: true,
   },
+  // A/B twin of Icon-Race, fed by grid_v2.json (the v2 turbulence-tuning run).
+  // Riviera-only for now; appears in Model Comparison next to Icon-Race so the
+  // tuning difference is visible. Remove once v2 is promoted to operational.
+  ICONRACE_V2: {
+    key: 'ICONRACE_V2', label: 'Icon-Race v2', subtitle: 'self-hosted 2 km — turbulence v2', color: '#7c3aed',
+    bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
+    gridFile: 'grid_v2.json',
+    venues: [
+      { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.15 },
+      { name: 'st_tropez', domain: 'riviera_2km', clon: 6.678, clat: 43.275, half: 0.23 },
+    ],
+    heights: [10, 30, 50, 100, 180],
+    tableCols: [10, 30, 50, 100, 180],
+    upperHeight: 100,
+    mosModel: 'icon_eu', mosApprox: true,
+  },
 }
 
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
 // venue MOS corrections (e.g. ARPEGE sector at Porto Cervo) surface here too.
 export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ARPEGE', 'ITALIA']
 // All models fetched (Phase 2 Compare consumes the extras).
-export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'DMI', 'ITALIA', 'ARPEGE']
+export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_V2', 'DMI', 'ITALIA', 'ARPEGE']
 
 // Quick sanity check: does this model's hourly payload have any wind_speed
 // data at all? Open-Meteo returns the structure even when a model has no
@@ -184,9 +200,10 @@ async function fetchBunnyModel(m, latitude, longitude) {
     (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
   )
   if (!v) return null
-  const path = `icon-race/${v.domain}/${v.name}/grid.json`
+  const gf = m.gridFile || 'grid.json'                    // v1 -> grid.json, v2 -> grid_v2.json
+  const path = `icon-race/${v.domain}/${v.name}/${gf}`
   const url = m.bunnyBase
-    ? `${m.bunnyBase}/${v.domain}/${v.name}/grid.json`     // public CDN pull-zone
+    ? `${m.bunnyBase}/${v.domain}/${v.name}/${gf}`         // public CDN pull-zone
     : `/api/bunny/storage?key=${encodeURIComponent(path)}` // same-origin proxy (default)
   const grid = await getIconRaceGrid(url)
   if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return null

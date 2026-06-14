@@ -59,7 +59,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
   const [windData, setWindData] = useState({})
   const [activeModel, setActiveModel] = useState('AROME')
   const [resolvedTz, setResolvedTz] = useState('UTC')
-  const [mastHeight, setMastHeight] = useState(20) // metres; interpolated masthead wind
+  const [mastHeight, setMastHeight] = useState(30) // metres; interpolated masthead wind (default 30 m = racing/MOS height)
   // Forecast input + wind-field state, lifted so the 3 points and the last 2D
   // wind field survive sub-tab switches (ForecastView unmounts when hidden).
   const [forecastPersist, setForecastPersist] = useState({})

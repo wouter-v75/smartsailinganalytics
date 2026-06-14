@@ -36,7 +36,9 @@ import {
 const MAG_VAR_DEG = 3
 
 // Model picker order — Icon-Race first (left-most), then the global models.
-const MODEL_PICK_ORDER = ['ICONRACE', ...COMPARE_ORDER.filter((k) => k !== 'ICONRACE')]
+// Forecast model picker: Icon-Race first, then the globals. The v2 A/B twin is
+// comparison-only, so it's excluded from the Forecast picker (and the field).
+const MODEL_PICK_ORDER = ['ICONRACE', ...COMPARE_ORDER.filter((k) => k !== 'ICONRACE' && k !== 'ICONRACE_V2')]
 
 // Small pill button for the model/height selectors.
 function PillBtn({ active, color = '#06B6D4', onClick, children }) {
@@ -114,7 +116,8 @@ export default function ForecastView({
   // are always all-fetched (greyed where a model has no data in the area).
   const [locations, setLocations] = useState(() => persist.locations || {}) // restored across tab switches
   // Fetch all models; Icon-Race only for TL2+ (so its data never reaches lower roles).
-  const ALL_MODELS = useMemo(() => Object.fromEntries(COMPARE_ORDER.map((k) => [k, k !== 'ICONRACE' || canIconRace])), [canIconRace])
+  // Icon-Race (and its v2 A/B twin) are TL2+ only; everything else is open.
+  const ALL_MODELS = useMemo(() => Object.fromEntries(COMPARE_ORDER.map((k) => [k, !k.startsWith('ICONRACE') || canIconRace])), [canIconRace])
   // Model run cycles (00/06/12/18z) -> shown in every model name. activeModelObj
   // is the active model with its cycle folded into `label`, so the tables /
   // charts it's passed to render e.g. "AROME 00z" with no further changes.
