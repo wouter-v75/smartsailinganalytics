@@ -21,6 +21,7 @@ export const MODELS = {
     modelParam: 'meteofrance_arome_france_hd',
     metaModel: 'meteofrance_arome_france_hd',
     mosModel: 'meteofrance_arome_france_hd',
+    fieldGrid: 16,                 // high-res wind-field sampling (1.5 km model)
     heights: [10, 20, 50, 100, 150, 200],
     tableCols: [10, 20, 50],
     upperHeight: 50,
@@ -46,6 +47,7 @@ export const MODELS = {
     // freshness from the ICON-EU member (the one the MOS correction uses).
     metaModel: 'dwd_icon_eu',
     mosModel: 'icon_eu', mosApprox: true,
+    fieldGrid: 16,                 // high-res wind-field sampling (ICON-D2 ~2 km)
     heights: [10, 80, 120, 180],
     tableCols: [10, 80, 180],
     upperHeight: 120,
@@ -58,6 +60,7 @@ export const MODELS = {
     endpoint: 'https://api.open-meteo.com/v1/forecast',
     modelParam: 'dmi_harmonie_arome_europe',
     metaModel: 'dmi_harmonie_arome_europe',
+    fieldGrid: 16,                 // high-res wind-field sampling (~2 km model)
     heights: [10, 100],
   },
   ITALIA: {
@@ -66,6 +69,7 @@ export const MODELS = {
     modelParam: 'italia_meteo_arpae_icon_2i',
     metaModel: 'italia_meteo_arpae_icon_2i',
     mosModel: 'italia_meteo_arpae_icon_2i',
+    fieldGrid: 16,                 // high-res wind-field sampling (ICON-2I 2 km)
     heights: [10],
     tableCols: [10],
   },

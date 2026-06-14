@@ -155,9 +155,14 @@ function interpAtHeight(hourly, idx, h, heights) {
 // Fetch + build the field. Returns { times:[ISO...], frames:[{u:[],v:[]}...],
 // header, maxSpeed }. Speeds in m/s. `height` may be any value (mast height is
 // interpolated from the model's native levels).
-export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm = 20, nx = 10, ny = 10 }) {
+export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm = 20, nx, ny }) {
   const m = MODELS[modelKey]
   if (!m || !m.endpoint) throw new Error(`model ${modelKey} has no Open-Meteo endpoint`)
+  // Per-model sample resolution: high-res models (m.fieldGrid=16) sample a 16x16
+  // grid (~2.3 km over a 20 nm box, ≈ native for AROME/ICON-2km); coarse models
+  // stay at 10x10 to avoid oversampling into blocky duplicates.
+  const gN = m.fieldGrid || 10
+  nx = nx || gN; ny = ny || gN
   const box = boxAround(lat, lon, nm)
   const { lats, lons, header } = sampleGrid(box, nx, ny)
 
@@ -310,16 +315,35 @@ function speedRamp(speedMs) {
 
 // Build a small nx*ny canvas coloured by ABSOLUTE wind speed (Beaufort) ->
 // dataURL. Used as a Leaflet imageOverlay scaled smoothly over the field box.
-export function speedImageURL(frame, header) {
+export function speedImageURL(frame, header, scale = 8) {
   if (typeof document === 'undefined') return null
   const { nx, ny } = header
-  const cv = document.createElement('canvas'); cv.width = nx; cv.height = ny
+  if (nx < 1 || ny < 1) return null
+  // Per-cell speed (m/s), then SUPERSAMPLE: render an nx*scale × ny*scale canvas
+  // where each output pixel's speed is bilinearly interpolated from the four
+  // surrounding cell centres, with smoothstep weights. This gives smooth, ROUNDED
+  // colour-band edges (no hard squares) while keeping the exact cell-centre values
+  // — so the native model structure stays, just without the boxiness.
+  const spd = new Float32Array(nx * ny)
+  for (let p = 0; p < nx * ny; p++) spd[p] = Math.hypot(frame.u[p] || 0, frame.v[p] || 0)
+  const at = (ix, iy) => spd[Math.min(ny - 1, Math.max(0, iy)) * nx + Math.min(nx - 1, Math.max(0, ix))]
+  const smooth = (t) => t * t * (3 - 2 * t)            // smoothstep -> rounder transitions
+  const ow = nx * scale; const oh = ny * scale
+  const cv = document.createElement('canvas'); cv.width = ow; cv.height = oh
   const ctx = cv.getContext('2d')
-  const img = ctx.createImageData(nx, ny)   // row 0 = north (matches frame order)
-  for (let p = 0; p < nx * ny; p++) {
-    const s = Math.hypot(frame.u[p] || 0, frame.v[p] || 0)
-    const [r, g, b] = speedRamp(s)
-    img.data[p * 4] = r; img.data[p * 4 + 1] = g; img.data[p * 4 + 2] = b; img.data[p * 4 + 3] = 180
+  const img = ctx.createImageData(ow, oh)
+  for (let oy = 0; oy < oh; oy++) {
+    const gy = (oy + 0.5) / scale - 0.5
+    const y0 = Math.floor(gy); const fy = smooth(gy - y0)
+    for (let ox = 0; ox < ow; ox++) {
+      const gx = (ox + 0.5) / scale - 0.5
+      const x0 = Math.floor(gx); const fx = smooth(gx - x0)
+      const s = at(x0, y0) * (1 - fx) * (1 - fy) + at(x0 + 1, y0) * fx * (1 - fy)
+              + at(x0, y0 + 1) * (1 - fx) * fy + at(x0 + 1, y0 + 1) * fx * fy
+      const [r, g, b] = speedRamp(s)
+      const o = (oy * ow + ox) * 4
+      img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 180
+    }
   }
   ctx.putImageData(img, 0, 0)
   return cv.toDataURL()
