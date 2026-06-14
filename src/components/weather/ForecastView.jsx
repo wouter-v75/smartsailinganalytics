@@ -230,11 +230,21 @@ export default function ForecastView({
     const idx = Math.min(fieldHourIdx, field.frames.length - 1)
     const bounds = [[field.box.south, field.box.west], [field.box.north, field.box.east]]
 
-    // 1) translucent speed-shaded colour wash, under the particles
+    // 1) translucent speed-shaded colour wash, under the particles.
+    //    Render the per-cell canvas with NEAREST-NEIGHBOUR (image-rendering:
+    //    pixelated), not the browser's default bilinear blur — otherwise the
+    //    native ~2 km model structure is smeared away on display, defeating the
+    //    point of the high-res model. The grid (remapnn) + canvas are crisp;
+    //    only the on-screen upscaling needs this.
     const sUrl = speedImageURL(field.frames[idx], field.header)
     if (sUrl) {
+      if (typeof document !== 'undefined' && !document.getElementById('rg-speed-pixel-css')) {
+        const st = document.createElement('style'); st.id = 'rg-speed-pixel-css'
+        st.textContent = '.rg-speed-pixel{image-rendering:pixelated;image-rendering:crisp-edges;}'
+        document.head.appendChild(st)
+      }
       if (!speedOverlayRef.current) {
-        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: 0.4, interactive: false, pane: 'speedField' }).addTo(map)
+        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: 0.4, interactive: false, pane: 'speedField', className: 'rg-speed-pixel' }).addTo(map)
       } else {
         speedOverlayRef.current.setUrl(sUrl); speedOverlayRef.current.setBounds(bounds)
       }
