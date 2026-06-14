@@ -188,20 +188,19 @@ function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles })
     margin: { t: 16, b: 48, l: 60, r: 20 },
   }
 
-  // Highlight the hovered curve (bold it, dim the rest); restore on unhover.
+  // Highlight the hovered curve by thickening it only — leave every other
+  // series exactly as it was (full opacity, normal width) so they all stay
+  // clearly visible for comparison. Restore the hovered one on unhover.
   const onHover = useCallback((gd, e) => {
     const ci = e && e.points && e.points[0] && e.points[0].curveNumber
     if (ci == null || !window.Plotly) return
     const n = gd.data.length
-    window.Plotly.restyle(gd, {
-      'line.width': Array.from({ length: n }, (_, i) => (i === ci ? 4 : 1.2)),
-      opacity: Array.from({ length: n }, (_, i) => (i === ci ? 1 : 0.25)),
-    })
+    window.Plotly.restyle(gd, { 'line.width': Array.from({ length: n }, (_, i) => (i === ci ? 4.5 : 2)) })
   }, [])
   const onUnhover = useCallback((gd) => {
     if (!window.Plotly) return
     const n = gd.data.length
-    window.Plotly.restyle(gd, { 'line.width': Array(n).fill(2), opacity: Array(n).fill(1) })
+    window.Plotly.restyle(gd, { 'line.width': Array(n).fill(2) })
   }, [])
 
   return (
