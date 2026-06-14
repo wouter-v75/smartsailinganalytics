@@ -278,6 +278,16 @@ export async function fetchIconRaceStatus() {
   }
 }
 
+// [start, end] Dates for a fixed local-time forecast window: today 00:00 local
+// to +`days` 00:00. Used to PIN the comparison-chart x-axes so a stray earlier
+// cycle (e.g. an old Icon-Race grid spanning yesterday) can't widen the view —
+// the window is always "00 today → 00 +N days" regardless of the data extent.
+export function localForecastWindow(days = 2) {
+  const start = new Date(); start.setHours(0, 0, 0, 0)
+  const end = new Date(start); end.setDate(end.getDate() + days)
+  return [start, end]
+}
+
 // Init-cycle tag like "00z" / "06z" from a unix-seconds run-initialisation time.
 export function cycleTagFromSec(sec) {
   if (sec == null) return ''

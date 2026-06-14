@@ -19,7 +19,7 @@ import {
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
   interpolateSpeedAtHeight,
-  labelWithCycle, withCycleLabel,
+  labelWithCycle, withCycleLabel, localForecastWindow,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 import {
@@ -905,7 +905,8 @@ function WindCompareChart({ windData, model, timezone }) {
   }, [windData, model.key, timezone])
 
   const layout = {
-    xaxis: { title: 'Time', type: 'date' },
+    // Fixed 2-day local window (00 today → 00 +2d); ignores any earlier data.
+    xaxis: { title: 'Time', type: 'date', range: localForecastWindow(2), autorange: false },
     yaxis: { title: 'Wind speed (knots)', rangemode: 'tozero' },
     hovermode: 'x unified',
     legend: { orientation: 'h', y: -0.2 },

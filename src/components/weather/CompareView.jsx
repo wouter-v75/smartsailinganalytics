@@ -11,7 +11,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
 import PlotlyChart from './PlotlyChart'
-import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight, labelWithCycle } from './openMeteo'
+import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight, labelWithCycle, localForecastWindow } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 import { matchVenue, specFor, mosSeries } from './mos'
 
@@ -162,7 +162,8 @@ function ComparePanel({ title, point, seriesFn, yTitle, isDir }) {
   }, [point, isDir, cycles])
 
   const layout = {
-    xaxis: { title: 'Time', type: 'date' },
+    // Fixed 2-day local window (00 today → 00 +2d); ignores any earlier data.
+    xaxis: { title: 'Time', type: 'date', range: localForecastWindow(2), autorange: false },
     yaxis: {
       title: yTitle,
       rangemode: isDir ? 'normal' : 'tozero',
