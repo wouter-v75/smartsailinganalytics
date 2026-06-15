@@ -89,7 +89,7 @@ export const MODELS = {
   // and greys out for clicks outside every venue box. 30 m is a NATIVE model
   // output here, so its column is exact, not interpolated.
   ICONRACE: {
-    key: 'ICONRACE', label: 'Icon-Race', subtitle: 'self-hosted ICON-LAM 2 km', color: '#e11d48',
+    key: 'ICONRACE', label: 'SSA-Race 2 km', subtitle: 'self-hosted ICON-LAM 2 km', color: '#e11d48',
     // If NEXT_PUBLIC_ICONRACE_BASE is set (a public pull-zone fronting the
     // smartsailinganalytics storage zone, CORS enabled) we fetch from it
     // directly; otherwise (default) we go through the app's own same-origin
@@ -114,16 +114,15 @@ export const MODELS = {
     // (wv_model_score) exists for it.
     mosModel: 'icon_eu', mosApprox: true,
   },
-  // A/B twin of Icon-Race, fed by grid_v2.json (the v2 turbulence-tuning run).
-  // Riviera-only for now; appears in Model Comparison next to Icon-Race so the
-  // tuning difference is visible. Remove once v2 is promoted to operational.
-  ICONRACE_V2: {
-    key: 'ICONRACE_V2', label: 'Icon-Race v2', subtitle: 'self-hosted 2 km — turbulence v2', color: '#7c3aed',
+  // SSA-Race 1 km — the nested 1 km inner (La Spezia first). Fetched from its own
+  // grid.json under the la_spezia_1km domain path, so it sits next to the 2 km in
+  // the picker / comparison and the resolution step is directly visible. Add more
+  // venues here as their 1 km nests come online.
+  ICONRACE_1KM: {
+    key: 'ICONRACE_1KM', label: 'SSA-Race 1 km', subtitle: 'self-hosted nest 1 km', color: '#7c3aed',
     bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
-    gridFile: 'grid_v2.json',
     venues: [
-      { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.15 },
-      { name: 'st_tropez', domain: 'riviera_2km', clon: 6.678, clat: 43.275, half: 0.23 },
+      { name: 'la_spezia', domain: 'la_spezia_1km', clon: 9.85, clat: 44.05, half: 0.18 },
     ],
     heights: [10, 30, 50, 100, 180],
     tableCols: [10, 30, 50, 100, 180],
@@ -134,9 +133,9 @@ export const MODELS = {
 
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
 // venue MOS corrections (e.g. ARPEGE sector at Porto Cervo) surface here too.
-export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ARPEGE', 'ITALIA']
+export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA']
 // All models fetched (Phase 2 Compare consumes the extras).
-export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_V2', 'DMI', 'ITALIA', 'ARPEGE']
+export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE']
 
 // Quick sanity check: does this model's hourly payload have any wind_speed
 // data at all? Open-Meteo returns the structure even when a model has no
@@ -204,7 +203,7 @@ async function fetchBunnyModel(m, latitude, longitude) {
     (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
   )
   if (!v) return null
-  const gf = m.gridFile || 'grid.json'                    // v1 -> grid.json, v2 -> grid_v2.json
+  const gf = m.gridFile || 'grid.json'                    // per-model grid file (default grid.json)
   const path = `icon-race/${v.domain}/${v.name}/${gf}`
   const url = m.bunnyBase
     ? `${m.bunnyBase}/${v.domain}/${v.name}/${gf}`         // public CDN pull-zone
@@ -231,15 +230,16 @@ async function fetchBunnyModel(m, latitude, longitude) {
 // Full Icon-Race grid for the venue box containing (lat,lon) — used by the
 // animated wind-field overlay (which needs every cell, not just the nearest).
 // Returns { grid:{time,heights,cells:[{lat,lon,spd,dir}]}, venue } or null.
-export async function iconRaceGridForPoint(latitude, longitude) {
-  const m = MODELS.ICONRACE
+export async function iconRaceGridForPoint(latitude, longitude, modelKey = 'ICONRACE') {
+  const m = MODELS[modelKey] || MODELS.ICONRACE
   const v = (m.venues || []).find(
     (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
   )
   if (!v) return null
-  const path = `icon-race/${v.domain}/${v.name}/grid.json`
+  const gf = m.gridFile || 'grid.json'
+  const path = `icon-race/${v.domain}/${v.name}/${gf}`
   const url = m.bunnyBase
-    ? `${m.bunnyBase}/${v.domain}/${v.name}/grid.json`
+    ? `${m.bunnyBase}/${v.domain}/${v.name}/${gf}`
     : `/api/bunny/storage?key=${encodeURIComponent(path)}`
   const grid = await getIconRaceGrid(url)
   if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return null
@@ -320,7 +320,7 @@ export function cycleTagFromSec(sec) {
 // whose meta is unavailable are simply omitted (their label stays plain).
 export async function loadAllModelCycles() {
   const out = {}
-  const omKeys = COMPARE_ORDER.filter((k) => k !== 'ICONRACE')
+  const omKeys = COMPARE_ORDER.filter((k) => !k.startsWith('ICONRACE'))
   await Promise.all(omKeys.map(async (k) => {
     const meta = await fetchModelMeta(MODELS[k]?.metaModel)
     if (meta && meta.initSec != null) out[k] = cycleTagFromSec(meta.initSec)
@@ -331,9 +331,9 @@ export async function loadAllModelCycles() {
       const init = (s.init != null && String(s.init) !== '')
         ? `${String(s.init).padStart(2, '0')}z`
         : (typeof s.cycle === 'string' && s.cycle.length >= 10 ? `${s.cycle.slice(8, 10)}z` : '')
-      if (init) out.ICONRACE = init
+      if (init) { out.ICONRACE = init; out.ICONRACE_1KM = init }  // self-hosted models share the 00z cycle
     }
-  } catch { /* leave Icon-Race label plain */ }
+  } catch { /* leave label plain */ }
   return out
 }
 

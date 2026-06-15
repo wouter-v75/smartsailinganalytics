@@ -97,7 +97,7 @@ export function fieldHeightsFor(modelKey) {
 // Models usable for the field: Open-Meteo-backed models plus Icon-Race, which
 // is read from its own published grid.json (see fetchIconRaceField).
 export function fieldModelKeys() {
-  return Object.keys(MODELS).filter((k) => MODELS[k].endpoint || k === 'ICONRACE')
+  return Object.keys(MODELS).filter((k) => MODELS[k].endpoint || k.startsWith('ICONRACE'))
 }
 
 // 20 nm box (half = 10 nm) around a centre; lon span widened by 1/cos(lat).
@@ -208,8 +208,8 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
 // Build the field from Icon-Race's own grid.json (self-hosted model). The grid
 // is a regular lon/lat box over the venue; we read every cell, interpolate to
 // `height`, and emit the same {times,labels,frames,header,maxSpeed,box} shape.
-export async function fetchIconRaceField({ lat, lon, height, timezone }) {
-  const got = await iconRaceGridForPoint(lat, lon)
+export async function fetchIconRaceField({ lat, lon, height, timezone, modelKey = 'ICONRACE' }) {
+  const got = await iconRaceGridForPoint(lat, lon, modelKey)
   if (!got) throw new Error('no Icon-Race coverage at point 1')
   const { grid, venue } = got
   const heights = (grid.heights || []).map(Number).sort((a, b) => a - b)

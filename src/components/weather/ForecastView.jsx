@@ -36,9 +36,9 @@ import {
 const MAG_VAR_DEG = 3
 
 // Model picker order — Icon-Race first (left-most), then the global models.
-// Forecast model picker: Icon-Race first, then the globals. The v2 A/B twin is
-// comparison-only, so it's excluded from the Forecast picker (and the field).
-const MODEL_PICK_ORDER = ['ICONRACE', ...COMPARE_ORDER.filter((k) => k !== 'ICONRACE' && k !== 'ICONRACE_V2')]
+// Forecast model picker: the self-hosted SSA-Race models (2 km, 1 km) first,
+// then the global/regional models.
+const MODEL_PICK_ORDER = ['ICONRACE', 'ICONRACE_1KM', ...COMPARE_ORDER.filter((k) => !k.startsWith('ICONRACE'))]
 
 // Small pill button for the model/height selectors.
 function PillBtn({ active, color = '#06B6D4', onClick, children }) {
@@ -182,8 +182,8 @@ export default function ForecastView({
     setFieldLoading(true); setFieldErr('')
     const isMos = fieldHeight === 'mastMOS' && fieldMosAvail && canMos
     const hVal = (fieldHeight === 'mast' || fieldHeight === 'mastMOS') ? mastHeight : fieldHeight
-    const req = fieldModel === 'ICONRACE'
-      ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
+    const req = fieldModel.startsWith('ICONRACE')
+      ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved, modelKey: fieldModel })
       : fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
     req
       .then((f) => {
@@ -209,8 +209,8 @@ export default function ForecastView({
   // Below TL2: never leave Icon-Race selected (e.g. restored from a prior session).
   useEffect(() => {
     if (canIconRace) return
-    if (fieldModel === 'ICONRACE') setFieldModel('AROME')
-    if (activeModel === 'ICONRACE') onActiveModelChange?.('AROME')
+    if (fieldModel.startsWith('ICONRACE')) setFieldModel('AROME')
+    if (activeModel.startsWith('ICONRACE')) onActiveModelChange?.('AROME')
   }, [canIconRace, fieldModel, activeModel]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // tl1/guest: 10 m winds only — force the wind-field height to 10 m.
@@ -611,7 +611,7 @@ export default function ForecastView({
         <Card>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: 15, fontWeight: 700, color: '#CBD5E1' }}>Select model:</span>
-            {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => k !== 'ICONRACE')).map((k) => {
+            {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => !k.startsWith('ICONRACE'))).map((k) => {
               const m = MODELS[k]
               const avail = modelAvailable[k]
               const selected = activeModel === k
