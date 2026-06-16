@@ -26,7 +26,7 @@ import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
 import {
-  fetchWindField, fetchIconRaceField, fetchCurrentField, toVelocityData, speedImageURL, sampleField,
+  fetchWindField, fetchIconRaceField, fetchCurrentField, currentsCovered, toVelocityData, speedImageURL, sampleField,
   applyMosToField, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
 } from './windField'
 
@@ -477,8 +477,11 @@ export default function ForecastView({
         (d) => d.surfaceByModel[k] && hasValidSpeed(d.surfaceByModel[k].hourly)
       )
     }
+    // Currents is a FIELD-ONLY layer (not a wind model): available when point 1 is
+    // inside the Channel current coverage.
+    out.CURRENTS = !!(p1lat != null && p1lon != null && currentsCovered(p1lat, p1lon))
     return out
-  }, [windData])
+  }, [windData, p1lat, p1lon])
 
   // Auto-fetch all models whenever the points change (debounced for drags).
   const fetchAllRef = useRef(null)
@@ -630,13 +633,16 @@ export default function ForecastView({
             {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => !k.startsWith('ICONRACE'))).map((k) => {
               const m = MODELS[k]
               const avail = modelAvailable[k]
-              const selected = activeModel === k
+              // CURRENTS drives the FIELD only (default off, leaves the tables on
+              // their wind model); every other pill drives both field + tables.
+              const isCur = k === 'CURRENTS'
+              const selected = isCur ? fieldModel === 'CURRENTS' : activeModel === k
               return (
                 <button
                   key={k}
                   disabled={!avail}
-                  onClick={() => { onActiveModelChange?.(k); setFieldModel(k) }}
-                  title={avail ? (m.subtitle || '') : `${m.label} has no data here`}
+                  onClick={() => { if (isCur) { setFieldModel('CURRENTS') } else { onActiveModelChange?.(k); setFieldModel(k) } }}
+                  title={avail ? (m.subtitle || '') : (isCur ? 'Currents cover the English Channel — set point 1 there' : `${m.label} has no data here`)}
                   style={{
                     fontSize: 15, fontWeight: 700, padding: '8px 18px', borderRadius: 999,
                     cursor: avail ? 'pointer' : 'not-allowed',
