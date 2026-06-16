@@ -26,8 +26,8 @@ import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
 import {
-  fetchWindField, fetchIconRaceField, toVelocityData, speedImageURL, sampleField,
-  applyMosToField, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT,
+  fetchWindField, fetchIconRaceField, fetchCurrentField, toVelocityData, speedImageURL, sampleField,
+  applyMosToField, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
@@ -38,7 +38,7 @@ const MAG_VAR_DEG = 3
 // Model picker order — Icon-Race first (left-most), then the global models.
 // Forecast model picker: the self-hosted SSA-Race models (2 km, 1 km) first,
 // then the global/regional models.
-const MODEL_PICK_ORDER = ['ICONRACE', 'ICONRACE_1KM', ...COMPARE_ORDER.filter((k) => !k.startsWith('ICONRACE'))]
+const MODEL_PICK_ORDER = ['ICONRACE', 'ICONRACE_1KM', ...COMPARE_ORDER.filter((k) => !k.startsWith('ICONRACE')), 'CURRENTS']
 
 // Small pill button for the model/height selectors.
 function PillBtn({ active, color = '#06B6D4', onClick, children }) {
@@ -138,6 +138,7 @@ export default function ForecastView({
   const [fieldLoading, setFieldLoading] = useState(false)
   const [fieldErr, setFieldErr] = useState('')
   const velocityLayerRef = useRef(null)
+  const velocityKindRef = useRef(null)   // 'wind' | 'current' — recreate the layer when this flips
   const speedOverlayRef = useRef(null)
   const readoutRef = useRef(null)
   const selLabelRef = useRef(null)   // local-time label of the currently scrubbed hour (kept across model switches)
@@ -182,9 +183,11 @@ export default function ForecastView({
     setFieldLoading(true); setFieldErr('')
     const isMos = fieldHeight === 'mastMOS' && fieldMosAvail && canMos
     const hVal = (fieldHeight === 'mast' || fieldHeight === 'mastMOS') ? mastHeight : fieldHeight
-    const req = fieldModel.startsWith('ICONRACE')
-      ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved, modelKey: fieldModel })
-      : fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
+    const req = fieldModel === 'CURRENTS'
+      ? fetchCurrentField({ lat: p1lat, lon: p1lon, timezone: tzResolved })
+      : fieldModel.startsWith('ICONRACE')
+        ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved, modelKey: fieldModel })
+        : fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
     req
       .then((f) => {
         if (cancelled) return
@@ -234,24 +237,31 @@ export default function ForecastView({
     //    is supersampled + smoothstep-interpolated in speedImageURL (rounded band
     //    edges that still preserve the native cell values), so normal scaling
     //    here gives a smooth-but-detailed field — neither washed-out nor boxy.
-    const sUrl = speedImageURL(field.frames[idx], field.header)
+    const isCur = !!field.isCurrent   // currents: red@5kn colour wash + current-tuned particles
+    const sUrl = speedImageURL(field.frames[idx], field.header, 8, isCur ? currentRamp : undefined)
     if (sUrl) {
       if (!speedOverlayRef.current) {
-        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: 0.4, interactive: false, pane: 'speedField' }).addTo(map)
+        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: isCur ? 0.55 : 0.4, interactive: false, pane: 'speedField' }).addTo(map)
       } else {
-        speedOverlayRef.current.setUrl(sUrl); speedOverlayRef.current.setBounds(bounds)
+        speedOverlayRef.current.setUrl(sUrl); speedOverlayRef.current.setBounds(bounds); speedOverlayRef.current.setOpacity(isCur ? 0.55 : 0.4)
       }
     }
 
-    // 2) white animated particles on top
+    // 2) animated particles on top. Recreate the layer when the field KIND flips
+    //    (wind<->current) so maxVelocity/scale match the data range.
+    const kind = isCur ? 'current' : 'wind'
+    if (velocityLayerRef.current && velocityKindRef.current !== kind) {
+      try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null
+    }
     const data = toVelocityData(field.frames[idx], field.header, field.times[idx])
     if (!velocityLayerRef.current) {
+      velocityKindRef.current = kind
       velocityLayerRef.current = L.velocityLayer({
         displayValues: false,   // we render our own knots + magnetic readout
         data,
-        maxVelocity: Math.max(12, field.maxSpeed),
-        velocityScale: 0.011,
-        particleMultiplier: 1 / 700,   // sparse — let the colour wash + coast show
+        maxVelocity: isCur ? 2.6 : Math.max(12, field.maxSpeed),   // 2.6 m/s ≈ 5 kn
+        velocityScale: isCur ? 0.016 : 0.011,
+        particleMultiplier: isCur ? 1 / 400 : 1 / 700,
         particleAge: 70,
         lineWidth: 1.3,
         colorScale: ['rgba(255,255,255,0.5)', 'rgba(255,255,255,0.9)'],
@@ -299,8 +309,14 @@ export default function ForecastView({
       const el = readoutRef.current; if (!el) return
       const s = sampleField(field, idx, e.latlng.lat, e.latlng.lng)
       if (!s) { el.style.display = 'none'; return }
-      const mag = ((Math.round(s.dirTrue - MAG_VAR_DEG) % 360) + 360) % 360
-      el.textContent = `${String(mag).padStart(3, '0')}°M   ${s.kt.toFixed(1)} kt`
+      if (field.isCurrent) {
+        // current SET = direction it flows TOWARD (true); speed = drift (knots)
+        const toward = (((Math.round(s.dirTrue + 180)) % 360) + 360) % 360
+        el.textContent = `${String(toward).padStart(3, '0')}°T   ${s.kt.toFixed(1)} kn`
+      } else {
+        const mag = ((Math.round(s.dirTrue - MAG_VAR_DEG) % 360) + 360) % 360
+        el.textContent = `${String(mag).padStart(3, '0')}°M   ${s.kt.toFixed(1)} kt`
+      }
       el.style.display = 'block'
     }
     const onOut = () => { if (readoutRef.current) readoutRef.current.style.display = 'none' }

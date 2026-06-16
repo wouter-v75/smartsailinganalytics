@@ -31,6 +31,10 @@ const VenueMOSView = dynamic(() => import('./weather/VenueMOSView'), {
   ssr: false,
   loading: () => <TabLoading label="Loading admin…" />,
 })
+const ChannelCurrents = dynamic(() => import('./weather/ChannelCurrents'), {
+  ssr: false,
+  loading: () => <TabLoading label="Loading currents…" />,
+})
 
 // Role hierarchy. MOS adjustments + Icon-Race require TL2 and up; Venue MOS is
 // admin-only. Weather itself is open to every role.
@@ -39,6 +43,7 @@ const ROLE_RANK = { guest: 0, consultant: 1, tl1: 2, tl2: 3, tl3: 4, coach: 5, t
 const SUB_TABS = [
   { id: 'forecast',   label: 'Forecast',         enabled: true  },
   { id: 'compare',    label: 'Model Comparison', enabled: true  },
+  { id: 'currents',   label: 'Currents',         enabled: true  },
   { id: 'sounding',   label: 'Sounding',         enabled: true  },
   { id: 'venuemos',   label: 'Admin',            enabled: true, adminOnly: true },
 ]
@@ -151,6 +156,9 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
         )}
         {sub === 'compare' && (
           <CompareView windData={windData} mastHeight={mastHeight} resolvedTz={resolvedTz} canMos={canMos} canHeights={canHeights} />
+        )}
+        {sub === 'currents' && (
+          <ChannelCurrents point1={forecastPersist?.locations?.['1']} />
         )}
         {sub === 'sounding' && (
           <SoundingView windData={windData} resolvedTz={resolvedTz} />

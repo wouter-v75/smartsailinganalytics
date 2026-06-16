@@ -129,6 +129,15 @@ export const MODELS = {
     upperHeight: 100,
     mosModel: 'icon_eu', mosApprox: true,
   },
+  // Tidal currents (CMEMS NWS FOAM-AMM15, ~1.5 km, tide-coupled) — a SELECTABLE
+  // FIELD in the wind player (default off). Not a wind model: no endpoint / heights
+  // / MOS. The overlay reads its own field JSON via fetchCurrentField, gated on
+  // point 1 being inside the English Channel coverage.
+  CURRENTS: {
+    key: 'CURRENTS', label: 'Currents (AMM15)', subtitle: 'tidal current — English Channel', color: '#38BDF8',
+    bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
+    isCurrent: true, heights: [],
+  },
 }
 
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their

@@ -327,7 +327,7 @@ function speedRamp(speedMs) {
 
 // Build a small nx*ny canvas coloured by ABSOLUTE wind speed (Beaufort) ->
 // dataURL. Used as a Leaflet imageOverlay scaled smoothly over the field box.
-export function speedImageURL(frame, header, scale = 8) {
+export function speedImageURL(frame, header, scale = 8, ramp = speedRamp) {
   if (typeof document === 'undefined') return null
   const { nx, ny } = header
   if (nx < 1 || ny < 1) return null
@@ -352,13 +352,57 @@ export function speedImageURL(frame, header, scale = 8) {
       const x0 = Math.floor(gx); const fx = smooth(gx - x0)
       const s = at(x0, y0) * (1 - fx) * (1 - fy) + at(x0 + 1, y0) * fx * (1 - fy)
               + at(x0, y0 + 1) * (1 - fx) * fy + at(x0 + 1, y0 + 1) * fx * fy
-      const [r, g, b] = speedRamp(s)
+      const [r, g, b] = ramp(s)
       const o = (oy * ow + ox) * 4
       img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 180
     }
   }
   ctx.putImageData(img, 0, 0)
   return cv.toDataURL()
+}
+
+// ── Tidal currents (CMEMS NWS FOAM-AMM15) ───────────────────────────────────
+// A SELECTABLE FIELD in the same wind player. Reads its own field JSON (box ->
+// Bunny) and returns the same {times,labels,stamps,frames,header,maxSpeed,box}
+// shape, flagged isCurrent so the overlay renders it with the current colour
+// ramp (red @ 5 kn) + current-tuned particles. Channel coverage only.
+
+const CUR_COV = { west: -2.5, east: -1.0, south: 49.3, north: 50.8 }
+export function currentsCovered(lat, lon) {
+  return lat >= CUR_COV.south - 0.45 && lat <= CUR_COV.north + 0.45
+      && lon >= CUR_COV.west - 0.7 && lon <= CUR_COV.east + 0.7
+}
+
+// Current speed (m/s) -> colour, RED saturating at 5 kn (Channel races run past it).
+const CUR_ANCHORS = [[40, 60, 90], [40, 130, 190], [40, 180, 165], [120, 200, 85], [240, 190, 55], [220, 45, 45]]
+export const CURRENT_MAX_KN = 5
+export function currentRamp(speedMs) {
+  const x = Math.max(0, Math.min(0.999999, (speedMs * MS_TO_KN) / CURRENT_MAX_KN))
+  const N = CUR_ANCHORS.length; const pos = x * (N - 1); const i = Math.floor(pos); const t = pos - i
+  const a = CUR_ANCHORS[i]; const b = CUR_ANCHORS[Math.min(N - 1, i + 1)]
+  return [Math.round(a[0] + (b[0] - a[0]) * t), Math.round(a[1] + (b[1] - a[1]) * t), Math.round(a[2] + (b[2] - a[2]) * t)]
+}
+
+// Load the whole-Channel ~3 km overview field for the player (point 1 must be in
+// coverage). Times are UTC (Z); labels/stamps are localised like the UTC models.
+export async function fetchCurrentField({ lat, lon, timezone }) {
+  if (!currentsCovered(lat, lon)) throw new Error('Currents cover the English Channel only — set point 1 there')
+  const base = MODELS.CURRENTS && MODELS.CURRENTS.bunnyBase
+  const url = base
+    ? `${base}/currents/channel/field.json`
+    : `/api/bunny/storage?key=${encodeURIComponent('icon-race/currents/channel/field.json')}`
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`currents ${res.status}`)
+  const j = await res.json()
+  const times = j.times || []
+  const frames = j.frames || []
+  let maxSpeed = 1
+  for (const fr of frames) for (let i = 0; i < fr.u.length; i++) { const s = Math.hypot(fr.u[i], fr.v[i]); if (s > maxSpeed) maxSpeed = s }
+  const h = j.header
+  const box = { north: h.la1, south: h.la1 - h.dy * (h.ny - 1), west: h.lo1, east: h.lo1 + h.dx * (h.nx - 1) }
+  const labels = times.map((t) => localLabel(t, timezone, true))
+  const stamps = times.map((t) => localStamp(t, timezone, true))
+  return { times, labels, stamps, frames, header: h, maxSpeed, box, isCurrent: true, resKm: j.res_km }
 }
 
 // Convert one frame to the leaflet-velocity [uObj, vObj] data array.
