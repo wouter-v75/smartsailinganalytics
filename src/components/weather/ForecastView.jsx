@@ -26,7 +26,7 @@ import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
 import {
-  fetchWindField, fetchIconRaceField, fetchCurrentField, currentsCovered, toVelocityData, speedImageURL, sampleField,
+  fetchWindField, fetchIconRaceField, fetchCurrentField, fetchCurrentHires, currentsCovered, toVelocityData, speedImageURL, sampleField,
   applyMosToField, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
 } from './windField'
 
@@ -140,6 +140,8 @@ export default function ForecastView({
   const velocityLayerRef = useRef(null)
   const velocityKindRef = useRef(null)   // 'wind' | 'current' — recreate the layer when this flips
   const speedOverlayRef = useRef(null)
+  const curOverviewRef = useRef(null)    // cached ~3 km currents overview, to swap back on zoom-out
+  const curTierRef = useRef('overview')  // 'overview' | 'hires'
   const readoutRef = useRef(null)
   const selLabelRef = useRef(null)   // local-time label of the currently scrubbed hour (kept across model switches)
   const venueBoxesRef = useRef([])   // Icon-Race coverage rectangles (TL2+ only)
@@ -192,6 +194,7 @@ export default function ForecastView({
       .then((f) => {
         if (cancelled) return
         const ff = isMos ? applyMosToField(f, specFor(fieldVenue), fieldMosId) : f
+        if (fieldModel === 'CURRENTS') { curOverviewRef.current = ff; curTierRef.current = 'overview' }
         setField(ff)
         // keep the same wall-clock hour selected across model switches
         const want = selLabelRef.current
@@ -203,6 +206,28 @@ export default function ForecastView({
       .finally(() => { if (!cancelled) setFieldLoading(false) })
     return () => { cancelled = true }
   }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, fieldMosAvail, canMos])
+
+  // Currents LOD: when the current field is showing, zoom IN (≥10) loads the native
+  // ~1.5 km clip (20 km around point 1) and zoom OUT swaps back to the ~3 km overview.
+  // fitBounds-on-field-change re-frames each tier; the tier guard prevents loops.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || fieldModel !== 'CURRENTS' || p1lat == null) return
+    const onZoom = async () => {
+      const z = map.getZoom()
+      if (z >= 10 && curTierRef.current !== 'hires') {
+        try {
+          const hf = await fetchCurrentHires({ lat: p1lat, lon: p1lon, timezone: tzResolved })
+          if (curTierRef.current === 'hires' || fieldModel !== 'CURRENTS') return
+          curTierRef.current = 'hires'; setField(hf)
+        } catch { /* keep the overview */ }
+      } else if (z < 10 && curTierRef.current !== 'overview' && curOverviewRef.current) {
+        curTierRef.current = 'overview'; setField(curOverviewRef.current)
+      }
+    }
+    map.on('zoomend', onZoom)
+    return () => map.off('zoomend', onZoom)
+  }, [fieldModel, p1lat, p1lon, tzResolved, mapReady])
 
   // If MOS becomes unavailable (model/venue change) while it's selected, fall back to raw mast.
   useEffect(() => {
@@ -528,6 +553,58 @@ export default function ForecastView({
           />
         </div>
 
+        {/* Time bar + colour legend sit DIRECTLY under the map (mobile usability). */}
+        {field && field.times.length > 0 && (() => {
+          const n = field.times.length
+          const cur = Math.min(fieldHourIdx, n - 1)
+          const stamps = field.stamps || []
+          const st = stamps[cur]
+          const curLabel = st
+            ? `${st.wd} ${st.dd} ${st.mon} · ${String(st.hh).padStart(2, '0')}:${st.mm}`
+            : (field.labels?.[cur] || '')
+          const ticks = []
+          for (let i = 0; i < n; i++) {
+            const s = stamps[i]
+            if (!s || s.hh % 6 !== 0) continue
+            ticks.push({ i, pct: n > 1 ? (i / (n - 1)) * 100 : 0, time: `${String(s.hh).padStart(2, '0')}:00`, date: (s.hh === 0 || ticks.length === 0) ? `${s.wd} ${s.dd} ${s.mon}` : '' })
+          }
+          return (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 8 }}>
+              <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <input type="range" min={0} max={n - 1} value={cur} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ width: '100%' }} />
+                <div style={{ position: 'relative', height: 24 }}>
+                  {ticks.map((tk) => (
+                    <div key={tk.i} style={{ position: 'absolute', left: `${tk.pct}%`, transform: 'translateX(-50%)', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <div style={{ width: 1, height: 4, background: '#334C66', margin: '0 auto 1px' }} />
+                      <div style={{ fontSize: 9, color: '#94A3B8', lineHeight: 1.1 }}>{tk.time}</div>
+                      {tk.date && <div style={{ fontSize: 8, color: '#64748B', lineHeight: 1.1 }}>{tk.date}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 116, textAlign: 'right' }}>{curLabel}</div>
+            </div>
+          )
+        })()}
+        {field && (field.isCurrent ? (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Current (kn) — red ≥ 5</div>
+            <div style={{ height: 12, borderRadius: 4, border: '1px solid #1E3A5A', background: 'linear-gradient(to right, rgb(40,60,90), rgb(40,130,190), rgb(40,180,165), rgb(120,200,85), rgb(240,190,55), rgb(220,45,45))' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#64748B', marginTop: 2 }}>
+              {[0, 1, 2, 3, 4, 5].map((kt) => <span key={kt}>{kt}{kt === 5 ? '+' : ''}</span>)}
+            </div>
+          </div>
+        ) : (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Wind colour (kt)</div>
+            <div style={{ height: 12, borderRadius: 4, border: '1px solid #1E3A5A', background: `linear-gradient(to right, ${BEAUFORT_BANDS.map((b) => `rgb(${b.c[0]},${b.c[1]},${b.c[2]})`).join(',')})` }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#64748B', marginTop: 2 }}>
+              {[0, 0.25, 0.5, 0.75, 1].map((f) => <span key={f}>{Math.round(f * PALETTE_MAX_KT)}{f === 1 ? '+' : ''}</span>)}
+            </div>
+          </div>
+        ))}
+
         </div>{/* end LEFT column */}
 
         {/* RIGHT — wind-field controls as buttons */}
@@ -561,65 +638,14 @@ export default function ForecastView({
               style={{ ...inputStyle, width: 92 }} />
           </div>
           )}
-          {field && field.times.length > 0 && (() => {
-            const n = field.times.length
-            const cur = Math.min(fieldHourIdx, n - 1)
-            const stamps = field.stamps || []
-            const st = stamps[cur]
-            // Readout: day, date and time, e.g. "Sun 14 Jun · 12:00".
-            const curLabel = st
-              ? `${st.wd} ${st.dd} ${st.mon} · ${String(st.hh).padStart(2, '0')}:${st.mm}`
-              : (field.labels?.[cur] || '')
-            // Tick axis at 6-hour wall-clock marks (00/06/12/18); date under midnight.
-            const ticks = []
-            for (let i = 0; i < n; i++) {
-              const s = stamps[i]
-              if (!s || s.hh % 6 !== 0) continue
-              ticks.push({
-                i,
-                pct: n > 1 ? (i / (n - 1)) * 100 : 0,
-                time: `${String(s.hh).padStart(2, '0')}:00`,
-                date: (s.hh === 0 || ticks.length === 0) ? `${s.wd} ${s.dd} ${s.mon}` : '',
-              })
-            }
-            return (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <input type="range" min={0} max={n - 1} value={cur} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ width: '100%' }} />
-                  <div style={{ position: 'relative', height: 24 }}>
-                    {ticks.map((tk) => (
-                      <div key={tk.i} style={{ position: 'absolute', left: `${tk.pct}%`, transform: 'translateX(-50%)', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                        <div style={{ width: 1, height: 4, background: '#334C66', margin: '0 auto 1px' }} />
-                        <div style={{ fontSize: 9, color: '#94A3B8', lineHeight: 1.1 }}>{tk.time}</div>
-                        {tk.date && <div style={{ fontSize: 8, color: '#64748B', lineHeight: 1.1 }}>{tk.date}</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 116, textAlign: 'right' }}>{curLabel}</div>
-              </div>
-            )
-          })()}
+          {/* time bar moved directly under the map (above) for mobile usability */}
           <div style={{ fontSize: 11, minHeight: 14 }}>
             {fieldLoading && <span style={{ color: '#FBBF24' }}>loading field…</span>}
             {fieldErr && <span style={{ color: '#F87171' }}>field: {fieldErr}</span>}
             {!velocityReady && !fieldErr && allThree && <span style={{ color: '#94A3B8' }}>loading particles…</span>}
             {loading && <span style={{ color: '#7DD3FC' }}> · loading models…</span>}
           </div>
-          {/* Wind-speed colour scale — full palette stretched across 0..PALETTE_MAX_KT */}
-          <div>
-            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Wind colour (kt)</div>
-            <div style={{
-              height: 12, borderRadius: 4, border: '1px solid #1E3A5A',
-              background: `linear-gradient(to right, ${BEAUFORT_BANDS.map((b) => `rgb(${b.c[0]},${b.c[1]},${b.c[2]})`).join(',')})`,
-            }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#64748B', marginTop: 2 }}>
-              {[0, 0.25, 0.5, 0.75, 1].map((f) => (
-                <span key={f}>{Math.round(f * PALETTE_MAX_KT)}{f === 1 ? '+' : ''}</span>
-              ))}
-            </div>
-          </div>
+          {/* colour legend moved directly under the map (above) */}
         </div>{/* end RIGHT column */}
        </div>{/* end flex row */}
       </Card>

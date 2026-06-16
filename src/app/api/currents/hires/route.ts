@@ -5,8 +5,9 @@ import { NextRequest, NextResponse } from "next/server";
 // (lat,lon). The full hires file is fetched server-side (fast, cached ~15 min) so
 // the browser/mobile downloads just the small clip — not the whole 0.8 MB field.
 
-const API_KEY = process.env.BUNNY_STORAGE_API_KEY!;
-const ZONE = process.env.BUNNY_STORAGE_ZONE!;
+const PULL_BASE = process.env.NEXT_PUBLIC_ICONRACE_BASE; // public pull-zone fronting Caddy www/icon-race
+const API_KEY = process.env.BUNNY_STORAGE_API_KEY;
+const ZONE = process.env.BUNNY_STORAGE_ZONE;
 const REGION = process.env.BUNNY_STORAGE_REGION || "de";
 const KEY = "icon-race/currents/channel/field_hires.json";
 const HALF_KM = 10; // 20x20 km box
@@ -17,24 +18,27 @@ function storageBase() {
     : `https://${REGION}.storage.bunnycdn.com`;
 }
 
+// The box publishes via Caddy -> pull zone (same place the overview is read from),
+// so prefer the public base; fall back to the storage zone only if no base is set.
+async function fetchFullHires() {
+  if (PULL_BASE) return fetch(`${PULL_BASE}/currents/channel/field_hires.json`, { next: { revalidate: 900 } });
+  if (API_KEY && ZONE) return fetch(`${storageBase()}/${ZONE}/${KEY}`, { headers: { AccessKey: API_KEY }, next: { revalidate: 900 } });
+  return null;
+}
+
 type Frame = { u: number[]; v: number[] };
 type Header = { nx: number; ny: number; lo1: number; la1: number; dx: number; dy: number };
 
 export async function GET(req: NextRequest) {
-  if (!API_KEY || !ZONE)
-    return NextResponse.json({ error: "Bunny Storage not configured" }, { status: 503 });
-
   const lat = parseFloat(req.nextUrl.searchParams.get("lat") || "");
   const lon = parseFloat(req.nextUrl.searchParams.get("lon") || "");
   if (Number.isNaN(lat) || Number.isNaN(lon))
     return NextResponse.json({ error: "lat & lon required" }, { status: 400 });
 
   try {
-    // fetch the full hires once; cache server-side (the AMM15 forecast refreshes daily)
-    const res = await fetch(`${storageBase()}/${ZONE}/${KEY}`, {
-      headers: { AccessKey: API_KEY },
-      next: { revalidate: 900 },
-    });
+    const res = await fetchFullHires();
+    if (!res)
+      return NextResponse.json({ error: "currents source not configured" }, { status: 503 });
     if (res.status === 404)
       return NextResponse.json({ error: "no hires field" }, { status: 404 });
     if (!res.ok)

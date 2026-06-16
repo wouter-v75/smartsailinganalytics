@@ -385,15 +385,8 @@ export function currentRamp(speedMs) {
 
 // Load the whole-Channel ~3 km overview field for the player (point 1 must be in
 // coverage). Times are UTC (Z); labels/stamps are localised like the UTC models.
-export async function fetchCurrentField({ lat, lon, timezone }) {
-  if (!currentsCovered(lat, lon)) throw new Error('Currents cover the English Channel only — set point 1 there')
-  const base = MODELS.CURRENTS && MODELS.CURRENTS.bunnyBase
-  const url = base
-    ? `${base}/currents/channel/field.json`
-    : `/api/bunny/storage?key=${encodeURIComponent('icon-race/currents/channel/field.json')}`
-  const res = await fetch(url, { cache: 'no-store' })
-  if (!res.ok) throw new Error(`currents ${res.status}`)
-  const j = await res.json()
+// Wrap a current field JSON (overview OR a hires clip) into the player field shape.
+export function currentJsonToField(j, timezone) {
   const times = j.times || []
   const frames = j.frames || []
   let maxSpeed = 1
@@ -403,6 +396,24 @@ export async function fetchCurrentField({ lat, lon, timezone }) {
   const labels = times.map((t) => localLabel(t, timezone, true))
   const stamps = times.map((t) => localStamp(t, timezone, true))
   return { times, labels, stamps, frames, header: h, maxSpeed, box, isCurrent: true, resKm: j.res_km }
+}
+
+export async function fetchCurrentField({ lat, lon, timezone }) {
+  if (!currentsCovered(lat, lon)) throw new Error('Currents cover the English Channel only — set point 1 there')
+  const base = MODELS.CURRENTS && MODELS.CURRENTS.bunnyBase
+  const url = base
+    ? `${base}/currents/channel/field.json`
+    : `/api/bunny/storage?key=${encodeURIComponent('icon-race/currents/channel/field.json')}`
+  const res = await fetch(url, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`currents ${res.status}`)
+  return currentJsonToField(await res.json(), timezone)
+}
+
+// Fetch a ~20 km native (1.5 km) clip around (lat,lon) via the server clip route.
+export async function fetchCurrentHires({ lat, lon, timezone }) {
+  const res = await fetch(`/api/currents/hires?lat=${lat}&lon=${lon}`, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`currents hires ${res.status}`)
+  return currentJsonToField(await res.json(), timezone)
 }
 
 // Convert one frame to the leaflet-velocity [uObj, vObj] data array.
