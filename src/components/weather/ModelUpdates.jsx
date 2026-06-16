@@ -49,7 +49,9 @@ function cycleInitHour(cycle) {
   if (!cycle || cycle.length < 10) return '–'
   return `${cycle.slice(8, 10)}z`
 }
-const prettyDomain = (d) => (d || '').replace(/_2km$/, '').replace(/_/g, ' ')
+// "la_spezia_1km" -> "la spezia 1 km", "porto_cervo_2km" -> "porto cervo 2 km"
+// (keep the resolution visible now that a venue can run at 2 km AND 1 km).
+const prettyDomain = (d) => (d || '').replace(/_(\d+)km$/, ' $1 km').replace(/_/g, ' ')
 
 // ── state pill colours ──────────────────────────────────────────────────────
 const STATE_COLOR = {
