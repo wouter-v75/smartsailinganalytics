@@ -286,7 +286,7 @@ export default function ForecastView({
         data,
         maxVelocity: isCur ? 2.6 : Math.max(12, field.maxSpeed),   // 2.6 m/s ≈ 5 kn
         velocityScale: isCur ? 0.016 : 0.011,
-        particleMultiplier: isCur ? 1 / 400 : 1 / 700,
+        particleMultiplier: isCur ? 1 / 400 : 1 / 1400,   // wind: halved density (was 1/700) — less cluttered
         particleAge: 70,
         lineWidth: 1.3,
         colorScale: ['rgba(255,255,255,0.5)', 'rgba(255,255,255,0.9)'],
