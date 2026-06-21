@@ -138,6 +138,14 @@ export const MODELS = {
     bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
     isCurrent: true, heights: [],
   },
+  // Boundary-layer height (hpbl) — a SELECTABLE SCALAR FIELD in the wind player
+  // (default off). Read from the SSA-Race grid.json's per-cell `hpbl` series, so
+  // it is available wherever an SSA-Race venue covers point 1. Not a wind model:
+  // no endpoint / heights / MOS; renders as a coloured shading overlay (no arrows).
+  HPBL: {
+    key: 'HPBL', label: 'Boundary layer', subtitle: 'PBL height — SSA-Race', color: '#A855F7',
+    isHpbl: true, heights: [],
+  },
 }
 
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
@@ -233,6 +241,10 @@ async function fetchBunnyModel(m, latitude, longitude) {
     hourly[`wind_speed_${h}m`] = c.spd?.[String(h)] ?? null
     hourly[`wind_direction_${h}m`] = c.dir?.[String(h)] ?? null
   }
+  // Convective boundary-layer height (m), if this cycle carries it. Flows through
+  // the SAME `boundary_layer_height` column the GFS PBL chart already reads, so it
+  // surfaces in the forecast + comparison views with no further plumbing.
+  if (Array.isArray(c.hpbl)) hourly.boundary_layer_height = c.hpbl
   return hasValidSpeed(hourly) ? { latitude: c.lat, longitude: c.lon, elevation: 0, hourly } : null
 }
 

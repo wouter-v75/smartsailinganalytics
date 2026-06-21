@@ -138,6 +138,12 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
       />
       )}
       <ComparePanel
+        title="🌡️ Boundary-layer height (PBL — SSA-Race bulk Richardson)"
+        point={point} hidden={hidden} cycles={cycles}
+        seriesFn={(h) => (h.boundary_layer_height && h.boundary_layer_height.some((x) => x != null && x > 0) ? h.boundary_layer_height : null)}
+        yTitle="PBL height (m)" isDir={false} unit="m"
+      />
+      <ComparePanel
         title="10 m wind direction"
         point={point} hidden={hidden} cycles={cycles}
         seriesFn={(h) => h.wind_direction_10m || null}
@@ -147,7 +153,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
   )
 }
 
-function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles }) {
+function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, unit = 'kt' }) {
   const data = useMemo(() => {
     if (!point) return []
     const traces = []
@@ -169,7 +175,7 @@ function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles })
         connectgaps: true,
         // 'closest' hovermode -> this template shows ONLY the hovered model.
         hovertemplate: `<b>${name}</b><br>%{x|%a %d %H:%M}<br>` +
-          (isDir ? '%{y:.0f}°' : '%{y:.1f} kt') + '<extra></extra>',
+          (isDir ? '%{y:.0f}°' : (unit === 'm' ? '%{y:.0f} m' : '%{y:.1f} kt')) + '<extra></extra>',
       })
     }
     return traces

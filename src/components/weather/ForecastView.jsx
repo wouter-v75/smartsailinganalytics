@@ -28,6 +28,7 @@ import {
 import {
   fetchWindField, fetchIconRaceField, fetchCurrentField, fetchCurrentHires, currentsCovered, toVelocityData, speedImageURL, sampleField,
   applyMosToField, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
+  fetchIconRaceHpblField, scalarImageURL, sampleScalarField, hpblRamp, HPBL_MAX_M,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
@@ -38,7 +39,7 @@ const MAG_VAR_DEG = 3
 // Model picker order — Icon-Race first (left-most), then the global models.
 // Forecast model picker: the self-hosted SSA-Race models (2 km, 1 km) first,
 // then the global/regional models.
-const MODEL_PICK_ORDER = ['ICONRACE', 'ICONRACE_1KM', ...COMPARE_ORDER.filter((k) => !k.startsWith('ICONRACE')), 'CURRENTS']
+const MODEL_PICK_ORDER = ['ICONRACE', 'ICONRACE_1KM', ...COMPARE_ORDER.filter((k) => !k.startsWith('ICONRACE')), 'HPBL', 'CURRENTS']
 
 // Small pill button for the model/height selectors.
 function PillBtn({ active, color = '#06B6D4', onClick, children }) {
@@ -187,9 +188,11 @@ export default function ForecastView({
     const hVal = (fieldHeight === 'mast' || fieldHeight === 'mastMOS') ? mastHeight : fieldHeight
     const req = fieldModel === 'CURRENTS'
       ? fetchCurrentField({ lat: p1lat, lon: p1lon, timezone: tzResolved })
-      : fieldModel.startsWith('ICONRACE')
-        ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved, modelKey: fieldModel })
-        : fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
+      : fieldModel === 'HPBL'
+        ? fetchIconRaceHpblField({ lat: p1lat, lon: p1lon, timezone: tzResolved, modelKey: 'ICONRACE' })
+        : fieldModel.startsWith('ICONRACE')
+          ? fetchIconRaceField({ lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved, modelKey: fieldModel })
+          : fetchWindField({ modelKey: fieldModel, lat: p1lat, lon: p1lon, height: hVal, timezone: tzResolved })
     req
       .then((f) => {
         if (cancelled) return
@@ -263,13 +266,24 @@ export default function ForecastView({
     //    edges that still preserve the native cell values), so normal scaling
     //    here gives a smooth-but-detailed field — neither washed-out nor boxy.
     const isCur = !!field.isCurrent   // currents: red@5kn colour wash + current-tuned particles
-    const sUrl = speedImageURL(field.frames[idx], field.header, 8, isCur ? currentRamp : undefined)
+    const isHpbl = !!field.isHpbl     // boundary-layer height: scalar shading, NO particles
+    const opacity = isHpbl ? 0.62 : (isCur ? 0.55 : 0.4)
+    const sUrl = isHpbl
+      ? scalarImageURL(field.frames[idx], field.header, 8, hpblRamp)
+      : speedImageURL(field.frames[idx], field.header, 8, isCur ? currentRamp : undefined)
     if (sUrl) {
       if (!speedOverlayRef.current) {
-        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity: isCur ? 0.55 : 0.4, interactive: false, pane: 'speedField' }).addTo(map)
+        speedOverlayRef.current = L.imageOverlay(sUrl, bounds, { opacity, interactive: false, pane: 'speedField' }).addTo(map)
       } else {
-        speedOverlayRef.current.setUrl(sUrl); speedOverlayRef.current.setBounds(bounds); speedOverlayRef.current.setOpacity(isCur ? 0.55 : 0.4)
+        speedOverlayRef.current.setUrl(sUrl); speedOverlayRef.current.setBounds(bounds); speedOverlayRef.current.setOpacity(opacity)
       }
+    }
+
+    // hpbl is a scalar field — shading only, no particle layer. Drop any existing
+    // particles (e.g. switching from a wind/current model) and stop here.
+    if (isHpbl) {
+      if (velocityLayerRef.current) { try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null; velocityKindRef.current = null }
+      return
     }
 
     // 2) animated particles on top. Recreate the layer when the field KIND flips
@@ -332,6 +346,13 @@ export default function ForecastView({
     const idx = Math.min(fieldHourIdx, field.frames.length - 1)
     const onMove = (e) => {
       const el = readoutRef.current; if (!el) return
+      if (field.isHpbl) {
+        const r = sampleScalarField(field, idx, e.latlng.lat, e.latlng.lng)
+        if (!r) { el.style.display = 'none'; return }
+        el.textContent = `PBL ${Math.round(r.value)} m`
+        el.style.display = 'block'
+        return
+      }
       const s = sampleField(field, idx, e.latlng.lat, e.latlng.lng)
       if (!s) { el.style.display = 'none'; return }
       if (field.isCurrent) {
@@ -505,8 +526,11 @@ export default function ForecastView({
     // Currents is a FIELD-ONLY layer (not a wind model): available when point 1 is
     // inside the Channel current coverage.
     out.CURRENTS = !!(p1lat != null && p1lon != null && currentsCovered(p1lat, p1lon))
+    // Boundary-layer height is a FIELD-ONLY scalar layer from SSA-Race: available
+    // when point 1 sits inside an SSA-Race venue box (same gate as the model).
+    out.HPBL = !!canIconRace
     return out
-  }, [windData, p1lat, p1lon])
+  }, [windData, p1lat, p1lon, canIconRace])
 
   // Auto-fetch all models whenever the points change (debounced for drags).
   const fetchAllRef = useRef(null)
@@ -587,7 +611,15 @@ export default function ForecastView({
             </div>
           )
         })()}
-        {field && (field.isCurrent ? (
+        {field && (field.isHpbl ? (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Boundary layer (m) — shallow = clean breeze, deep = mixed</div>
+            <div style={{ height: 12, borderRadius: 4, border: '1px solid #1E3A5A', background: 'linear-gradient(to right, rgb(38,70,120), rgb(40,150,165), rgb(85,180,95), rgb(230,200,60), rgb(235,130,40), rgb(150,55,40))' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#64748B', marginTop: 2 }}>
+              {[0, 0.25, 0.5, 0.75, 1].map((f) => <span key={f}>{Math.round(f * HPBL_MAX_M)}{f === 1 ? '+' : ''}</span>)}
+            </div>
+          </div>
+        ) : field.isCurrent ? (
           <div style={{ marginTop: 6 }}>
             <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Current (kn) — red ≥ 5</div>
             <div style={{ height: 12, borderRadius: 4, border: '1px solid #1E3A5A', background: 'linear-gradient(to right, rgb(40,60,90), rgb(40,130,190), rgb(40,180,165), rgb(120,200,85), rgb(240,190,55), rgb(220,45,45))' }} />
@@ -659,16 +691,21 @@ export default function ForecastView({
             {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => !k.startsWith('ICONRACE'))).map((k) => {
               const m = MODELS[k]
               const avail = modelAvailable[k]
-              // CURRENTS drives the FIELD only (default off, leaves the tables on
-              // their wind model); every other pill drives both field + tables.
-              const isCur = k === 'CURRENTS'
-              const selected = isCur ? fieldModel === 'CURRENTS' : activeModel === k
+              // CURRENTS and HPBL drive the FIELD only (default off, leaving the
+              // tables on their wind model); every other pill drives field + tables.
+              const fieldOnly = k === 'CURRENTS' || k === 'HPBL'
+              const selected = fieldOnly ? fieldModel === k : activeModel === k
+              const offTitle = k === 'CURRENTS'
+                ? 'Currents cover the English Channel — set point 1 there'
+                : k === 'HPBL'
+                  ? 'Boundary-layer height — set point 1 in an SSA-Race venue'
+                  : `${m.label} has no data here`
               return (
                 <button
                   key={k}
                   disabled={!avail}
-                  onClick={() => { if (isCur) { setFieldModel('CURRENTS') } else { onActiveModelChange?.(k); setFieldModel(k) } }}
-                  title={avail ? (m.subtitle || '') : (isCur ? 'Currents cover the English Channel — set point 1 there' : `${m.label} has no data here`)}
+                  onClick={() => { if (fieldOnly) { setFieldModel(k) } else { onActiveModelChange?.(k); setFieldModel(k) } }}
+                  title={avail ? (m.subtitle || '') : offTitle}
                   style={{
                     fontSize: 15, fontWeight: 700, padding: '8px 18px', borderRadius: 999,
                     cursor: avail ? 'pointer' : 'not-allowed',
@@ -1119,28 +1156,58 @@ function WindProfileSection({ windData, model, timezone }) {
   )
 }
 
-// GFS boundary layer height — one line per location.
+// Boundary-layer height per location: SSA-Race hpbl (self-hosted, bulk-Richardson,
+// solid) plus the GFS PBL as a coarse global reference (dotted). SSA-Race times are
+// UTC; the GFS column is venue-local wall-clock — both are mapped to venue-local
+// wall-clock so the lines align on the shared x-axis.
 function BoundaryLayerChart({ windData, timezone }) {
   const data = useMemo(() => {
+    // UTC ISO -> venue-local wall-clock string (parsed as the same basis as GFS).
+    const toLocalWall = (iso) => {
+      const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`)
+      const p = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      }).formatToParts(d)
+      const g = (t) => p.find((x) => x.type === t)?.value
+      return `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}`
+    }
     const traces = []
     for (const [key, point] of Object.entries(windData)) {
       const meta = LOCATION_META.find((m) => m.key === key)
+      // SSA-Race hpbl — solid, one line per self-hosted resolution present.
+      for (const mk of ['ICONRACE', 'ICONRACE_1KM']) {
+        const sh = point.surfaceByModel?.[mk]?.hourly
+        const sb = sh?.boundary_layer_height; const st = sh?.time
+        if (sb && st && sb.some((h) => h != null && h > 0)) {
+          traces.push({
+            x: st.map((t) => new Date(toLocalWall(t))),
+            y: sb,
+            type: 'scatter', mode: 'lines+markers',
+            name: `${meta.emoji} Loc ${key} · ${MODELS[mk].label}`,
+            line: { color: meta.accent, width: 3 }, marker: { size: 5 },
+            connectgaps: true,
+          })
+        }
+      }
+      // GFS PBL — dotted global reference.
       const hr = point.gfs?.hourly || {}
       const blh = hr.boundary_layer_height
       const time = hr.time
-      if (!blh || !time || !blh.some((h) => h != null && h > 0)) continue
-      traces.push({
-        x: time.map((t) => new Date(t)),
-        y: blh,
-        type: 'scatter', mode: 'lines+markers',
-        name: `${meta.emoji} Loc ${key}`,
-        line: { color: meta.accent, width: 3 }, marker: { size: 5 },
-        connectgaps: true,
-      })
+      if (blh && time && blh.some((h) => h != null && h > 0)) {
+        traces.push({
+          x: time.map((t) => new Date(t)),
+          y: blh,
+          type: 'scatter', mode: 'lines',
+          name: `${meta.emoji} Loc ${key} · GFS`,
+          line: { color: meta.accent, width: 1.5, dash: 'dot' },
+          opacity: 0.7, connectgaps: true,
+        })
+      }
     }
     return traces
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windData])
+  }, [windData, timezone])
   const layout = {
     xaxis: { title: 'Time', type: 'date' },
     yaxis: { title: 'PBL height (m)', rangemode: 'tozero' },

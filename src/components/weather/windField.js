@@ -416,6 +416,124 @@ export async function fetchCurrentHires({ lat, lon, timezone }) {
   return currentJsonToField(await res.json(), timezone)
 }
 
+// ── Boundary-layer height (hpbl) ────────────────────────────────────────────
+// A SELECTABLE SCALAR FIELD in the same player (default off). Read from the
+// SSA-Race grid.json (which now carries a per-cell `hpbl` series), it renders as
+// a coloured shading overlay only — NO particles (it's a scalar, not a vector).
+// Shallow PBL (cool) = decoupled, clean sea breeze; deep PBL (warm) = mixed /
+// gradient-dominated. Computed on the box (bulk Richardson) so the colours mean
+// the same metres at every venue.
+
+// hpbl (m) -> colour. Cool (shallow marine) -> warm (deep convective). Saturates
+// at HPBL_MAX_M so the racing-relevant 0-1500 m band gets most of the resolution.
+export const HPBL_MAX_M = 2500
+const HPBL_ANCHORS = [
+  [38, 70, 120],   // 0 m     deep blue  (very shallow / stable)
+  [40, 150, 165],  // ~500 m  teal
+  [85, 180, 95],   // ~1000 m green
+  [230, 200, 60],  // ~1500 m yellow
+  [235, 130, 40],  // ~2000 m orange
+  [150, 55, 40],   // 2500 m+ brown/red (deep, well-mixed)
+]
+export function hpblRamp(metres) {
+  const x = Math.max(0, Math.min(0.999999, (metres || 0) / HPBL_MAX_M))
+  const N = HPBL_ANCHORS.length; const pos = x * (N - 1); const i = Math.floor(pos); const t = pos - i
+  const a = HPBL_ANCHORS[i]; const b = HPBL_ANCHORS[Math.min(N - 1, i + 1)]
+  return [Math.round(a[0] + (b[0] - a[0]) * t), Math.round(a[1] + (b[1] - a[1]) * t), Math.round(a[2] + (b[2] - a[2]) * t)]
+}
+
+// Like speedImageURL but colours by a per-cell SCALAR (frame.scalar) instead of
+// vector magnitude. Same supersample + smoothstep for rounded band edges.
+export function scalarImageURL(frame, header, scale = 8, ramp = hpblRamp) {
+  if (typeof document === 'undefined') return null
+  const { nx, ny } = header
+  if (nx < 1 || ny < 1) return null
+  const sc = new Float32Array(nx * ny)
+  for (let p = 0; p < nx * ny; p++) { const v = frame.scalar[p]; sc[p] = (v == null || Number.isNaN(v)) ? 0 : v }
+  const at = (ix, iy) => sc[Math.min(ny - 1, Math.max(0, iy)) * nx + Math.min(nx - 1, Math.max(0, ix))]
+  const smooth = (t) => t * t * (3 - 2 * t)
+  const ow = nx * scale; const oh = ny * scale
+  const cv = document.createElement('canvas'); cv.width = ow; cv.height = oh
+  const ctx = cv.getContext('2d')
+  const img = ctx.createImageData(ow, oh)
+  for (let oy = 0; oy < oh; oy++) {
+    const gy = (oy + 0.5) / scale - 0.5
+    const y0 = Math.floor(gy); const fy = smooth(gy - y0)
+    for (let ox = 0; ox < ow; ox++) {
+      const gx = (ox + 0.5) / scale - 0.5
+      const x0 = Math.floor(gx); const fx = smooth(gx - x0)
+      const s = at(x0, y0) * (1 - fx) * (1 - fy) + at(x0 + 1, y0) * fx * (1 - fy)
+              + at(x0, y0 + 1) * (1 - fx) * fy + at(x0 + 1, y0 + 1) * fx * fy
+      const [r, g, b] = ramp(s)
+      const o = (oy * ow + ox) * 4
+      img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 200
+    }
+  }
+  ctx.putImageData(img, 0, 0)
+  return cv.toDataURL()
+}
+
+// Build the hpbl scalar field from SSA-Race's grid.json (per-cell `hpbl`). Same
+// {times,labels,stamps,frames,header,box} shape as the wind field, but frames
+// carry `scalar:[m...]` and the field is flagged isHpbl.
+export async function fetchIconRaceHpblField({ lat, lon, timezone, modelKey = 'ICONRACE' }) {
+  const got = await iconRaceGridForPoint(lat, lon, modelKey)
+  if (!got) throw new Error('no SSA-Race coverage at point 1')
+  const { grid, venue } = got
+  if (!grid.hasHpbl || !grid.cells.some((c) => Array.isArray(c.hpbl))) {
+    throw new Error('this SSA-Race cycle has no boundary-layer data yet')
+  }
+  const round = (x) => Math.round(x * 1000) / 1000
+  const lons = [...new Set(grid.cells.map((c) => round(c.lon)))].sort((a, b) => a - b)   // W->E
+  const lats = [...new Set(grid.cells.map((c) => round(c.lat)))].sort((a, b) => b - a)   // N->S
+  const nx = lons.length; const ny = lats.length
+  if (nx < 2 || ny < 2) throw new Error('SSA-Race grid too small to render')
+  const lonIdx = new Map(lons.map((v, i) => [v, i]))
+  const latIdx = new Map(lats.map((v, i) => [v, i]))
+  const cellAt = new Array(nx * ny).fill(null)
+  for (const c of grid.cells) {
+    const i = lonIdx.get(round(c.lon)); const j = latIdx.get(round(c.lat))
+    if (i != null && j != null) cellAt[j * nx + i] = c
+  }
+  const header = {
+    nx, ny, lo1: lons[0], la1: lats[0],
+    dx: (lons[nx - 1] - lons[0]) / (nx - 1), dy: (lats[0] - lats[ny - 1]) / (ny - 1),
+  }
+  const times = grid.time || []
+  const frames = []
+  let scalarMax = 1
+  for (let t = 0; t < times.length; t++) {
+    const scalar = new Array(nx * ny)
+    for (let p = 0; p < nx * ny; p++) {
+      const c = cellAt[p]
+      const v = c && Array.isArray(c.hpbl) ? c.hpbl[t] : null
+      scalar[p] = v
+      if (v != null && v > scalarMax) scalarMax = v
+    }
+    frames.push({ scalar })
+  }
+  const labels = times.map((tt) => localLabel(tt, timezone, true))
+  const stamps = times.map((tt) => localStamp(tt, timezone, true))
+  const box = { north: venue.clat + venue.half, south: venue.clat - venue.half, west: venue.clon - venue.half, east: venue.clon + venue.half }
+  return { times, labels, stamps, frames, header, scalarMax, box, isHpbl: true }
+}
+
+// Bilinear sample of a scalar field at (lat,lon) -> { value } (or null outside).
+export function sampleScalarField(field, idx, lat, lon) {
+  if (!field || !field.frames || !field.frames[idx]) return null
+  const { nx, ny, lo1, la1, dx, dy } = field.header
+  const cx = (lon - lo1) / dx; const cy = (la1 - lat) / dy
+  if (cx < 0 || cx > nx - 1 || cy < 0 || cy > ny - 1) return null
+  const x0 = Math.floor(cx); const y0 = Math.floor(cy)
+  const x1 = Math.min(x0 + 1, nx - 1); const y1 = Math.min(y0 + 1, ny - 1)
+  const fx = cx - x0; const fy = cy - y0
+  const a = field.frames[idx].scalar
+  const g = (ix, iy) => { const v = a[iy * nx + ix]; return v == null ? NaN : v }
+  const v = (g(x0, y0) * (1 - fx) + g(x1, y0) * fx) * (1 - fy)
+          + (g(x0, y1) * (1 - fx) + g(x1, y1) * fx) * fy
+  return Number.isNaN(v) ? null : { value: v }
+}
+
 // Convert one frame to the leaflet-velocity [uObj, vObj] data array.
 export function toVelocityData(frame, header, refTimeISO) {
   const base = {
