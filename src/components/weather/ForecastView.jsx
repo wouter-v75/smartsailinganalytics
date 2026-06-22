@@ -28,7 +28,7 @@ import {
 import {
   fetchWindField, fetchIconRaceField, fetchCurrentField, fetchCurrentHires, currentsCovered, toVelocityData, speedImageURL, sampleField,
   applyMosToField, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
-  fetchIconRaceHpblField, scalarImageURL, sampleScalarField, hpblRamp, HPBL_MAX_M,
+  fetchIconRaceHpblField, scalarImageURL, sampleScalarField, hpblRamp, HPBL_MAX_M, buildHpblContourSvg,
 } from './windField'
 
 // Approx magnetic variation for the western Mediterranean venues (~+3° E in
@@ -141,6 +141,7 @@ export default function ForecastView({
   const velocityLayerRef = useRef(null)
   const velocityKindRef = useRef(null)   // 'wind' | 'current' — recreate the layer when this flips
   const speedOverlayRef = useRef(null)
+  const contourOverlayRef = useRef(null) // hpbl contour-line + label SVG overlay
   const curOverviewRef = useRef(null)    // cached ~3 km currents overview, to swap back on zoom-out
   const curTierRef = useRef('overview')  // 'overview' | 'hires'
   const readoutRef = useRef(null)
@@ -256,6 +257,7 @@ export default function ForecastView({
     const clearLayers = () => {
       if (velocityLayerRef.current) { try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null }
       if (speedOverlayRef.current) { try { map.removeLayer(speedOverlayRef.current) } catch { /* */ } speedOverlayRef.current = null }
+      if (contourOverlayRef.current) { try { map.removeLayer(contourOverlayRef.current) } catch { /* */ } contourOverlayRef.current = null }
     }
     if (!field || !field.frames.length) { clearLayers(); return }
     const idx = Math.min(fieldHourIdx, field.frames.length - 1)
@@ -279,12 +281,17 @@ export default function ForecastView({
       }
     }
 
-    // hpbl is a scalar field — shading only, no particle layer. Drop any existing
-    // particles (e.g. switching from a wind/current model) and stop here.
+    // hpbl is a scalar field — shading + contour lines, no particle layer. Drop any
+    // existing particles, (re)build the contour+label overlay for this frame, stop.
     if (isHpbl) {
       if (velocityLayerRef.current) { try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null; velocityKindRef.current = null }
+      if (contourOverlayRef.current) { try { map.removeLayer(contourOverlayRef.current) } catch { /* */ } contourOverlayRef.current = null }
+      const svg = buildHpblContourSvg(field.frames[idx], field.header)
+      if (svg) contourOverlayRef.current = L.svgOverlay(svg, bounds, { interactive: false, opacity: 0.95 }).addTo(map)
       return
     }
+    // leaving hpbl for a wind/current model — make sure contours are gone
+    if (contourOverlayRef.current) { try { map.removeLayer(contourOverlayRef.current) } catch { /* */ } contourOverlayRef.current = null }
 
     // 2) animated particles on top. Recreate the layer when the field KIND flips
     //    (wind<->current) so maxVelocity/scale match the data range.
@@ -324,6 +331,7 @@ export default function ForecastView({
     const map = mapRef.current
     if (map && velocityLayerRef.current) { try { map.removeLayer(velocityLayerRef.current) } catch { /* */ } velocityLayerRef.current = null }
     if (map && speedOverlayRef.current) { try { map.removeLayer(speedOverlayRef.current) } catch { /* */ } speedOverlayRef.current = null }
+    if (map && contourOverlayRef.current) { try { map.removeLayer(contourOverlayRef.current) } catch { /* */ } contourOverlayRef.current = null }
     setFieldPlaying(false)
   }, [allThree])
 
@@ -613,10 +621,12 @@ export default function ForecastView({
         })()}
         {field && (field.isHpbl ? (
           <div style={{ marginTop: 6 }}>
-            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Boundary layer (m) — shallow = clean breeze, deep = mixed</div>
-            <div style={{ height: 12, borderRadius: 4, border: '1px solid #1E3A5A', background: 'linear-gradient(to right, rgb(38,70,120), rgb(40,150,165), rgb(85,180,95), rgb(230,200,60), rgb(235,130,40), rgb(150,55,40))' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#64748B', marginTop: 2 }}>
-              {[0, 0.25, 0.5, 0.75, 1].map((f) => <span key={f}>{Math.round(f * HPBL_MAX_M)}{f === 1 ? '+' : ''}</span>)}
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Boundary layer (m) — shallow = clean breeze · contours 25 / 100 / 500 m</div>
+            <div style={{ height: 12, borderRadius: 4, border: '1px solid #1E3A5A', background: 'linear-gradient(to right, rgb(38,70,120) 0%, rgb(40,130,185) 6.7%, rgb(45,178,172) 13.3%, rgb(95,192,96) 23.3%, rgb(222,200,70) 33.3%, rgb(235,130,45) 66.7%, rgb(150,52,42) 100%)' }} />
+            <div style={{ position: 'relative', height: 10, fontSize: 8, color: '#64748B', marginTop: 2 }}>
+              {[0, 200, 500, 1000, 1500].map((v) => (
+                <span key={v} style={{ position: 'absolute', left: `${(v / HPBL_MAX_M) * 100}%`, transform: 'translateX(-50%)' }}>{v}{v === 1500 ? '+' : ''}</span>
+              ))}
             </div>
           </div>
         ) : field.isCurrent ? (
@@ -1176,10 +1186,12 @@ function BoundaryLayerChart({ windData, timezone }) {
     for (const [key, point] of Object.entries(windData)) {
       const meta = LOCATION_META.find((m) => m.key === key)
       // SSA-Race hpbl — solid, one line per self-hosted resolution present.
+      let hasRace = false
       for (const mk of ['ICONRACE', 'ICONRACE_1KM']) {
         const sh = point.surfaceByModel?.[mk]?.hourly
         const sb = sh?.boundary_layer_height; const st = sh?.time
         if (sb && st && sb.some((h) => h != null && h > 0)) {
+          hasRace = true
           traces.push({
             x: st.map((t) => new Date(toLocalWall(t))),
             y: sb,
@@ -1190,19 +1202,22 @@ function BoundaryLayerChart({ windData, timezone }) {
           })
         }
       }
-      // GFS PBL — dotted global reference.
-      const hr = point.gfs?.hourly || {}
-      const blh = hr.boundary_layer_height
-      const time = hr.time
-      if (blh && time && blh.some((h) => h != null && h > 0)) {
-        traces.push({
-          x: time.map((t) => new Date(t)),
-          y: blh,
-          type: 'scatter', mode: 'lines',
-          name: `${meta.emoji} Loc ${key} · GFS`,
-          line: { color: meta.accent, width: 1.5, dash: 'dot' },
-          opacity: 0.7, connectgaps: true,
-        })
+      // GFS PBL — coarse global reference, shown ONLY where no SSA-Race hpbl exists
+      // (when the high-res self-hosted model covers the point, GFS adds noise).
+      if (!hasRace) {
+        const hr = point.gfs?.hourly || {}
+        const blh = hr.boundary_layer_height
+        const time = hr.time
+        if (blh && time && blh.some((h) => h != null && h > 0)) {
+          traces.push({
+            x: time.map((t) => new Date(t)),
+            y: blh,
+            type: 'scatter', mode: 'lines',
+            name: `${meta.emoji} Loc ${key} · GFS`,
+            line: { color: meta.accent, width: 1.5, dash: 'dot' },
+            opacity: 0.7, connectgaps: true,
+          })
+        }
       }
     }
     return traces

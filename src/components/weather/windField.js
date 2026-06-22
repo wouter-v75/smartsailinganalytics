@@ -424,22 +424,113 @@ export async function fetchCurrentHires({ lat, lon, timezone }) {
 // gradient-dominated. Computed on the box (bulk Richardson) so the colours mean
 // the same metres at every venue.
 
-// hpbl (m) -> colour. Cool (shallow marine) -> warm (deep convective). Saturates
-// at HPBL_MAX_M so the racing-relevant 0-1500 m band gets most of the resolution.
-export const HPBL_MAX_M = 2500
-const HPBL_ANCHORS = [
-  [38, 70, 120],   // 0 m     deep blue  (very shallow / stable)
-  [40, 150, 165],  // ~500 m  teal
-  [85, 180, 95],   // ~1000 m green
-  [230, 200, 60],  // ~1500 m yellow
-  [235, 130, 40],  // ~2000 m orange
-  [150, 55, 40],   // 2500 m+ brown/red (deep, well-mixed)
+// hpbl (m) -> colour. VALUE-anchored stops (not evenly spaced) so the racing-
+// relevant lowest ~500 m get most of the colour resolution; shading saturates at
+// HPBL_MAX_M (1500 m). Cool (shallow / clean sea breeze) -> warm (deep / mixed).
+export const HPBL_MAX_M = 1500
+const HPBL_STOPS = [
+  [0,    [38, 70, 120]],   // very shallow / stable — deep blue
+  [100,  [40, 130, 185]],  // shallow marine layer — blue
+  [200,  [45, 178, 172]],  // teal
+  [350,  [95, 192, 96]],   // green
+  [500,  [222, 200, 70]],  // yellow
+  [1000, [235, 130, 45]],  // orange
+  [1500, [150, 52, 42]],   // deep / well-mixed — brown-red
 ]
 export function hpblRamp(metres) {
-  const x = Math.max(0, Math.min(0.999999, (metres || 0) / HPBL_MAX_M))
-  const N = HPBL_ANCHORS.length; const pos = x * (N - 1); const i = Math.floor(pos); const t = pos - i
-  const a = HPBL_ANCHORS[i]; const b = HPBL_ANCHORS[Math.min(N - 1, i + 1)]
-  return [Math.round(a[0] + (b[0] - a[0]) * t), Math.round(a[1] + (b[1] - a[1]) * t), Math.round(a[2] + (b[2] - a[2]) * t)]
+  const m = Math.max(0, Math.min(HPBL_MAX_M, metres || 0))
+  let a = HPBL_STOPS[0]; let b = HPBL_STOPS[HPBL_STOPS.length - 1]
+  for (let i = 0; i < HPBL_STOPS.length - 1; i++) {
+    if (m >= HPBL_STOPS[i][0] && m <= HPBL_STOPS[i + 1][0]) { a = HPBL_STOPS[i]; b = HPBL_STOPS[i + 1]; break }
+  }
+  const t = b[0] === a[0] ? 0 : (m - a[0]) / (b[0] - a[0])
+  return [Math.round(a[1][0] + (b[1][0] - a[1][0]) * t),
+    Math.round(a[1][1] + (b[1][1] - a[1][1]) * t),
+    Math.round(a[1][2] + (b[1][2] - a[1][2]) * t)]
+}
+
+// Multi-resolution contour levels: fine (25 m) through the shallow 0-200 m band,
+// 100 m from 200-500 m, then 500 m up to the 1500 m cap. Only levels inside the
+// current frame's data range are drawn, so the displayed set is effectively dynamic.
+export const HPBL_CONTOUR_LEVELS = [25, 50, 75, 100, 125, 150, 175, 200, 300, 400, 500, 1000, 1500]
+
+// Marching-squares iso-segments for one level. Returns [[[gx,gy],[gx,gy]]...] in
+// fractional GRID coords (gx = col W->E, gy = row N->S).
+export function hpblContourSegments(scalar, header, level) {
+  const { nx, ny } = header
+  const v = (ix, iy) => { const s = scalar[iy * nx + ix]; return (s == null || Number.isNaN(s)) ? null : s }
+  const cut = (ax, ay, av, bx, by, bv) => { const t = (level - av) / (bv - av); return [ax + t * (bx - ax), ay + t * (by - ay)] }
+  const segs = []
+  for (let iy = 0; iy < ny - 1; iy++) {
+    for (let ix = 0; ix < nx - 1; ix++) {
+      const v00 = v(ix, iy); const v10 = v(ix + 1, iy); const v11 = v(ix + 1, iy + 1); const v01 = v(ix, iy + 1)
+      if (v00 == null || v10 == null || v11 == null || v01 == null) continue
+      let c = 0
+      if (v00 >= level) c |= 1
+      if (v10 >= level) c |= 2
+      if (v11 >= level) c |= 4
+      if (v01 >= level) c |= 8
+      if (c === 0 || c === 15) continue
+      const top = () => cut(ix, iy, v00, ix + 1, iy, v10)
+      const right = () => cut(ix + 1, iy, v10, ix + 1, iy + 1, v11)
+      const bot = () => cut(ix + 1, iy + 1, v11, ix, iy + 1, v01)
+      const left = () => cut(ix, iy + 1, v01, ix, iy, v00)
+      switch (c) {
+        case 1: case 14: segs.push([left(), top()]); break
+        case 2: case 13: segs.push([top(), right()]); break
+        case 3: case 12: segs.push([left(), right()]); break
+        case 4: case 11: segs.push([right(), bot()]); break
+        case 5: segs.push([left(), top()]); segs.push([right(), bot()]); break
+        case 6: case 9: segs.push([top(), bot()]); break
+        case 7: case 8: segs.push([left(), bot()]); break
+        case 10: segs.push([top(), right()]); segs.push([left(), bot()]); break
+        default: break
+      }
+    }
+  }
+  return segs
+}
+
+// Build an SVG element (contour lines + value labels) sized to the field grid, for
+// a Leaflet svgOverlay over the field box. Lines coloured by the (darkened) ramp,
+// labelled in metres; thicker for the 500 m-step lines.
+export function buildHpblContourSvg(frame, header, levels = HPBL_CONTOUR_LEVELS) {
+  if (typeof document === 'undefined') return null
+  const { nx, ny } = header
+  const NS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', `0 0 ${nx} ${ny}`)
+  svg.setAttribute('preserveAspectRatio', 'none')
+  let mn = Infinity; let mx = -Infinity
+  for (const s of frame.scalar) { if (s != null && !Number.isNaN(s)) { if (s < mn) mn = s; if (s > mx) mx = s } }
+  for (const lev of levels) {
+    if (lev < mn || lev > mx) continue
+    const segs = hpblContourSegments(frame.scalar, header, lev)
+    if (!segs.length) continue
+    const [r, g, b] = hpblRamp(lev)
+    const col = `rgb(${Math.round(r * 0.5)},${Math.round(g * 0.5)},${Math.round(b * 0.5)})`
+    let d = ''
+    for (const s of segs) d += `M${(s[0][0] + 0.5).toFixed(2)} ${(s[0][1] + 0.5).toFixed(2)}L${(s[1][0] + 0.5).toFixed(2)} ${(s[1][1] + 0.5).toFixed(2)}`
+    const path = document.createElementNS(NS, 'path')
+    path.setAttribute('d', d); path.setAttribute('fill', 'none'); path.setAttribute('stroke', col)
+    path.setAttribute('stroke-width', String(lev % 500 === 0 ? 0.13 : (lev <= 200 ? 0.06 : 0.09)))
+    path.setAttribute('stroke-opacity', '0.92'); path.setAttribute('stroke-linejoin', 'round')
+    svg.appendChild(path)
+    const step = Math.max(1, Math.floor(segs.length / 3)); let placed = 0
+    for (let i = 0; i < segs.length && placed < 2; i += step) {
+      const s = segs[i]
+      const lx = (s[0][0] + s[1][0]) / 2 + 0.5; const ly = (s[0][1] + s[1][1]) / 2 + 0.5
+      const t = document.createElementNS(NS, 'text')
+      t.setAttribute('x', lx.toFixed(2)); t.setAttribute('y', ly.toFixed(2))
+      t.setAttribute('font-size', '0.85'); t.setAttribute('font-weight', '700')
+      t.setAttribute('fill', col); t.setAttribute('stroke', 'rgba(255,255,255,0.78)')
+      t.setAttribute('stroke-width', '0.05'); t.setAttribute('paint-order', 'stroke')
+      t.setAttribute('text-anchor', 'middle'); t.setAttribute('dominant-baseline', 'central')
+      t.textContent = String(lev)
+      svg.appendChild(t); placed++
+    }
+  }
+  return svg
 }
 
 // Like speedImageURL but colours by a per-cell SCALAR (frame.scalar) instead of
