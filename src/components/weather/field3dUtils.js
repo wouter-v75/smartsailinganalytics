@@ -7,6 +7,9 @@ import { BEAUFORT_BANDS, PALETTE_MAX_KT, speedImageURL, scalarImageURL, currentR
 
 export const MAPLIBRE_JS = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js'
 export const MAPLIBRE_CSS = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css'
+export const DECK_JS = 'https://unpkg.com/deck.gl@9.0.36/dist.min.js'   // exposes window.deck (incl. MapboxOverlay, SimpleMeshLayer)
+// default vertical levels shown in the 3D multi-level view (metres ASL)
+export const DEFAULT_LEVELS = [10, 50, 100, 300, 600]
 export const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 export const DEM_TILES = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'
 export const KN = 1.94384
@@ -140,6 +143,63 @@ export async function captureField3DSeries(ML, field, opts) {
       out.push({ idx: fidx, png })
     }
   } catch { /* */ } finally { try { map?.remove() } catch { /* */ } try { document.body.removeChild(cont) } catch { /* */ } }
+  return out
+}
+
+// ── multi-level 3D wind field (deck.gl) ──────────────────────────────────────
+// Beaufort colour as [r,g,b,a] for deck.gl getColor.
+export function beaufortRGBA(kn, a = 235) {
+  const N = BEAUFORT_BANDS.length
+  const x = Math.max(0, Math.min(0.999, (kn || 0) / PALETTE_MAX_KT))
+  const pos = x * (N - 1); const i = Math.floor(pos); const t = pos - i
+  const c0 = BEAUFORT_BANDS[i].c; const c1 = BEAUFORT_BANDS[Math.min(N - 1, i + 1)].c
+  return [Math.round(c0[0] + (c1[0] - c0[0]) * t), Math.round(c0[1] + (c1[1] - c0[1]) * t), Math.round(c0[2] + (c1[2] - c0[2]) * t), a]
+}
+
+// A flat arrow mesh in the local XY plane pointing +X (east at yaw 0), for
+// SimpleMeshLayer. Triangles: shaft rectangle + head triangle. z = 0 (laid flat).
+export function arrowMesh() {
+  const positions = new Float32Array([
+    // shaft quad (two tris)
+    -0.5, -0.09, 0, 0.18, -0.09, 0, 0.18, 0.09, 0,
+    -0.5, -0.09, 0, 0.18, 0.09, 0, -0.5, 0.09, 0,
+    // head tri
+    0.18, -0.24, 0, 0.62, 0, 0, 0.18, 0.24, 0,
+  ])
+  const normals = new Float32Array(positions.length)
+  for (let i = 2; i < normals.length; i += 3) normals[i] = 1   // +Z up
+  return { positions, normals }
+}
+
+/**
+ * Build multi-level wind vectors from a field's RAW vertical stack (field.volume).
+ * @param {object} volume { cellAt, heights, header }
+ * @param {number} frameIdx
+ * @param {number[]} levels  metres ASL to include (intersected with available heights)
+ * @param {object} [o] { step } horizontal sub-sample (cells)
+ * @returns {Array<{lon,lat,altM,kn,toward,band}>}
+ */
+export function buildProfileVectors(volume, frameIdx, levels, o = {}) {
+  if (!volume?.cellAt) return []
+  const { cellAt, heights, header } = volume
+  const { nx, ny, lo1, la1, dx, dy } = header
+  const avail = new Set((heights || []).map(Number))
+  const lv = (levels || []).filter((h) => avail.has(Number(h)))
+  const step = o.step || Math.max(1, Math.round(nx / 12))
+  const out = []
+  for (let j = 0; j < ny; j += step) {
+    for (let i = 0; i < nx; i += step) {
+      const c = cellAt[j * nx + i]; if (!c) continue
+      const lon = lo1 + i * dx; const lat = la1 - j * dy
+      for (const h of lv) {
+        const sp = c.spd?.[String(h)]?.[frameIdx]; const di = c.dir?.[String(h)]?.[frameIdx]
+        if (sp == null || di == null) continue
+        const kn = sp * 0.539957             // km/h → kn
+        if (kn < 0.4) continue
+        out.push({ lon, lat, altM: Number(h), kn: Math.round(kn), toward: (di + 180) % 360, band: 0 })
+      }
+    }
+  }
   return out
 }
 

@@ -250,7 +250,11 @@ export async function fetchIconRaceField({ lat, lon, height, timezone, modelKey 
   // box = the ACTUAL published cell extent (centres ± half a cell), so the overlay
   // always aligns with the grid regardless of the venue.half / grid-extent match.
   const box = { north: lats[0] + header.dy / 2, south: lats[ny - 1] - header.dy / 2, west: lons[0] - header.dx / 2, east: lons[nx - 1] + header.dx / 2 }
-  return { times, labels, stamps, frames, header, maxSpeed, box }
+  // volume = the RAW multi-height stack (every cell carries spd/dir at all `heights`),
+  // kept so the 3D viewer can render arrows at multiple altitudes. cellAt is the
+  // j*nx+i grid of raw cells; heights are metres ASL.
+  const volume = { cellAt, heights, header }
+  return { times, labels, stamps, frames, header, maxSpeed, box, volume }
 }
 
 // speed (km/h) + dir at a height from an Icon-Race cell's spd/dir maps.
