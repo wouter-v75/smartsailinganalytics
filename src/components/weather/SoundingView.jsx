@@ -363,6 +363,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
   const srcLabel = (k) => `${SOUNDING_SOURCES[k].label}${cycles[k] ? ` ${cycles[k]}` : ''}`
   const [locKey, setLocKey] = useState(null)
   const [timeIdx, setTimeIdx] = useState(0)
+  const [playing, setPlaying] = useState(false)
   const [note, setNote] = useState('Defaults to your analysis area; the picked point is added as "Selected sounding position".')
   const [fetching, setFetching] = useState(false)
   const [indices, setIndices] = useState('')
@@ -451,6 +452,12 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locKey, source, windData, extraPoint, locKeys, ssaByLoc])
   useEffect(() => { if (timeIdx >= times.length) setTimeIdx(0) }, [times, timeIdx])
+  // Animate through the time steps when playing (▶), like the wind-field bar.
+  useEffect(() => {
+    if (!playing || times.length < 2) return
+    const id = setInterval(() => setTimeIdx((i) => (i + 1) % times.length), 700)
+    return () => clearInterval(id)
+  }, [playing, times])
 
   // ── Leaflet picker map ────────────────────────────────────────────────
   useEffect(() => {
@@ -600,17 +607,6 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
               {availableSources.map((k) => <option key={k} value={k}>{srcLabel(k)}</option>)}
             </select>
           </Field>
-          <Field label="📅 Time">
-            <select value={timeIdx} onChange={(e) => setTimeIdx(Number(e.target.value))} style={inputStyle} disabled={!times.length}>
-              {times.length === 0 && <option value={0}>No times</option>}
-              {times.map((t, i) => (
-                <option key={i} value={i}>
-                  {new Date(t).toLocaleString('en-GB', { timeZone: resolvedTz, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  {resolvedTz === 'UTC' ? ' UTC' : ''}
-                </option>
-              ))}
-            </select>
-          </Field>
         </div>
       </Card>
 
@@ -635,6 +631,50 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
           <div style={{ background: '#ffffff', borderRadius: 8, padding: 8, minHeight: 360, display: 'flex', justifyContent: 'center' }}>
             <div ref={chartRef} style={{ width: '100%', display: 'flex', justifyContent: 'center' }} />
           </div>
+
+          {/* Time bar directly under the plot — same style as the forecast wind-field bar. */}
+          {times.length > 1 && (() => {
+            const n = times.length
+            const cur = Math.min(timeIdx, n - 1)
+            const curPct = (cur / (n - 1)) * 100
+            const parts = (t) => {
+              const p = new Intl.DateTimeFormat('en-GB', { timeZone: resolvedTz, weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date(t))
+              const g = (ty) => p.find((x) => x.type === ty)?.value || ''
+              return { wd: g('weekday'), dd: g('day'), mon: g('month'), hh: g('hour'), mm: g('minute') }
+            }
+            const cp = parts(times[cur])
+            const curLabel = `${cp.wd} ${cp.dd} ${cp.mon} · ${cp.hh}:${cp.mm}`
+            const stride = Math.max(1, Math.round((n - 1) / 6))
+            const ticks = []; let lastDay = ''
+            for (let i = 0; i < n; i += stride) {
+              const pp = parts(times[i]); const day = `${pp.dd} ${pp.mon}`
+              ticks.push({ i, pct: (i / (n - 1)) * 100, time: `${pp.hh}:${pp.mm}`, date: day !== lastDay ? `${pp.wd} ${pp.dd} ${pp.mon}` : '' })
+              lastDay = day
+            }
+            return (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10 }}>
+                <button onClick={() => setPlaying((p) => !p)} style={{ marginTop: 26, background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{playing ? '⏸' : '▶'}</button>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ position: 'relative', paddingTop: 26 }}>
+                    <div style={{ position: 'absolute', top: 0, left: `${curPct}%`, transform: 'translateX(-50%)', whiteSpace: 'nowrap', background: '#D97706', color: '#fff', fontWeight: 700, fontSize: 12, padding: '3px 9px', borderRadius: 8, pointerEvents: 'none', zIndex: 2, boxShadow: '0 1px 4px rgba(0,0,0,0.45)' }}>
+                      {curLabel}
+                      <div style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '6px solid #D97706' }} />
+                    </div>
+                    <input type="range" min={0} max={n - 1} value={cur} onChange={(e) => { setPlaying(false); setTimeIdx(Number(e.target.value)) }} style={{ width: '100%', display: 'block' }} />
+                  </div>
+                  <div style={{ position: 'relative', height: 24 }}>
+                    {ticks.map((tk) => (
+                      <div key={tk.i} style={{ position: 'absolute', left: `${tk.pct}%`, transform: 'translateX(-50%)', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <div style={{ width: 1, height: 4, background: '#334C66', margin: '0 auto 1px' }} />
+                        <div style={{ fontSize: 9, color: '#94A3B8', lineHeight: 1.1 }}>{tk.time}</div>
+                        {tk.date && <div style={{ fontSize: 8, color: '#64748B', lineHeight: 1.1 }}>{tk.date}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
           {indices && (
             <div style={{ textAlign: 'center', fontSize: 13, color: '#E2E8F0', marginTop: 12, fontWeight: 700 }}>{indices}</div>
           )}
