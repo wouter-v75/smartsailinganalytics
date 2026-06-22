@@ -162,6 +162,14 @@ export default function ForecastView({
     return undefined
   }, [viewMode])
 
+  // Persist points + field selection up to WeatherTab so they survive sub-tab
+  // switches (ForecastView is dynamically imported and unmounts when hidden).
+  useEffect(() => {
+    onPersistChange?.({ locations, fieldModel, fieldHeight, fieldHourIdx, field })
+  }, [locations, fieldModel, fieldHeight, fieldHourIdx, field])
+  const tzResolved = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const allThree = !!(locations['1'] && locations['2'] && locations['3'])
+
   // Auto-switch to 3D once the 3 points are set and the field has loaded (once
   // per load; resets if points/field are cleared so reselecting re-triggers).
   const auto3dRef = useRef(false)
@@ -172,14 +180,6 @@ export default function ForecastView({
       auto3dRef.current = false
     }
   }, [allThree, field])
-
-  // Persist points + field selection up to WeatherTab so they survive sub-tab
-  // switches (ForecastView is dynamically imported and unmounts when hidden).
-  useEffect(() => {
-    onPersistChange?.({ locations, fieldModel, fieldHeight, fieldHourIdx, field })
-  }, [locations, fieldModel, fieldHeight, fieldHourIdx, field])
-  const tzResolved = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-  const allThree = !!(locations['1'] && locations['2'] && locations['3'])
 
   // Load leaflet-velocity AFTER Leaflet (it extends the global L).
   useEffect(() => {
