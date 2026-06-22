@@ -31,10 +31,11 @@ const CARD = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW'
 const cardinal = (deg) => (deg == null || Number.isNaN(deg) ? '' : CARD[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16])
 const pad2 = (n) => String(n).padStart(2, '0')
 const round5 = (x) => (x == null ? null : Math.round(x / 5) * 5)
-// 8-way glyph pointing the way the wind BLOWS (toward = TWD+180), scaled by speed.
+// 8-way glyph pointing the way the wind BLOWS (toward = TWD+180). Fixed size (same
+// for every direction); U+FE0E forces a plain text arrow rather than an emoji.
 const ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
-const arrowGlyph = (twd) => (twd == null ? '' : ARROWS[Math.round((((twd + 180) % 360) + 360) % 360 / 45) % 8])
-const arrowSize = (kn) => Math.round(Math.max(12, Math.min(30, 11 + (kn || 0) * 1.1)))
+const ARROW_SIZE = 16
+const arrowGlyph = (twd) => (twd == null ? '' : ARROWS[Math.round((((twd + 180) % 360) + 360) % 360 / 45) % 8] + '\uFE0E')
 
 function circMean(d) { if (!d.length) return null; let s = 0; let c = 0; for (const x of d) { const r = (x * Math.PI) / 180; s += Math.sin(r); c += Math.cos(r) } return (((Math.atan2(s, c) * 180) / Math.PI) % 360 + 360) % 360 }
 function circStd(d) { if (d.length < 2) return 0; let s = 0; let c = 0; for (const x of d) { const r = (x * Math.PI) / 180; s += Math.sin(r); c += Math.cos(r) } const R = Math.hypot(s, c) / d.length; return R <= 0 ? 180 : (Math.sqrt(-2 * Math.log(Math.min(1, R))) * 180) / Math.PI }
@@ -50,6 +51,17 @@ function mastKn(hourly, heights, mastH, i, mosArr) { if (mosArr && mosArr[i] != 
 const dirAt = (m, i) => m.hourly.wind_direction_10m?.[i] ?? m.hourly[`wind_direction_${m.heights[0]}m`]?.[i]
 const idxAtL = (m, dateStr, hh) => m.lt.findIndex((t) => t.startsWith(`${dateStr}T${pad2(hh)}:`))
 const idxByKey = (m, key) => m.lt.findIndex((t) => t.slice(0, 13) === key)
+
+// Ask the server-side Claude proxy for the executive brief. Returns null on any
+// failure (no key, network, parse) so the deck still builds with editable blanks.
+async function aiSummary(payload) {
+  try {
+    const res = await fetch('/api/ai/forecast-summary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: payload }) })
+    if (!res.ok) return null
+    const j = await res.json()
+    return j && !j.error ? j : null
+  } catch { return null }
+}
 
 async function fetchModelDays(modelKey, lat, lon, tz, days) { const m = MODELS[modelKey]; if (!m || !m.endpoint) throw new Error(`${modelKey} no endpoint`); const params = []; for (const h of (m.heights || [10])) params.push(`wind_speed_${h}m`, `wind_direction_${h}m`); let url = `${m.endpoint}?latitude=${lat}&longitude=${lon}&hourly=${params.join(',')}&wind_speed_unit=kmh&timezone=${encodeURIComponent(tz)}&forecast_days=${days}`; if (m.modelParam) url += `&models=${m.modelParam}`; const res = await fetch(url); if (!res.ok) throw new Error(`${modelKey} ${res.status}`); return res.json() }
 
@@ -248,16 +260,26 @@ const fit = (iw, ih, x, y, w, h) => { const r = Math.min(w / (iw || 1), h / (ih 
 function arrowCell(twdMean, kn, trailing, fill, dark) {
   const color = fill ? (dark ? 'FFFFFF' : '0F1723') : INK
   const runs = []
-  if (twdMean != null) runs.push({ text: arrowGlyph(twdMean), options: { fontFace: FONT, fontSize: arrowSize(kn), color, bold: true } })
+  if (twdMean != null) runs.push({ text: arrowGlyph(twdMean), options: { fontFace: FONT, fontSize: ARROW_SIZE, color, bold: true } })
   runs.push({ text: (twdMean != null ? '  ' : '') + (trailing || ''), options: { fontFace: FONT, fontSize: 12, color } })
   return { text: runs, options: { ...(fill ? { fill: { color: fill } } : {}), valign: 'middle', align: 'left' } }
 }
 const oCell = (b) => { if (!b) return txtCell('—'); const bf = beaufort(b.twsMid); return arrowCell(b.twdMean, b.twsMid, `${b.tws[0]}-${b.tws[1]}kn`, bf.hex, bf.dark) }
-const arrowOnly = (twd, kn) => ({ text: arrowGlyph(twd), options: { fontFace: FONT, fontSize: arrowSize(kn), color: INK, align: 'center', valign: 'middle', bold: true } })
+// daily TWD cell: fixed-size arrow + the mean TWD (rounded to 5 deg), no fill
+const twdCell = (twdMean) => arrowCell(twdMean, null, twdMean != null ? `${round5(twdMean)}` : '')
 
 function buildDeck(P, d) {
   const pptx = new P(); pptx.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 }); pptx.layout = 'WIDE'
-  let s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
+  // 0) Title + executive brief
+  let s = pptx.addSlide()
+  s.addText('Weather and strategy brief', { x: 0.6, y: 0.5, w: 12.1, h: 0.9, fontFace: FONT, fontSize: 40, bold: true, color: NAVY })
+  const meta = [d.typeOfDay, d.raceDay ? `Race day ${d.raceDay}` : null].filter(Boolean).join('   ·   ')
+  s.addText([{ text: d.venue, options: { fontFace: FONT, fontSize: 18, bold: true, color: INK, breakLine: true } }, { text: meta, options: { fontFace: FONT, fontSize: 13, color: GREY } }], { x: 0.6, y: 1.55, w: 12.1, h: 0.8, valign: 'top' })
+  s.addText('Executive summary', { x: 0.6, y: 2.55, w: 12, h: 0.4, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
+  const sec = (label, txt) => ([{ text: `${label}:  `, options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 14 } }, { text: txt || '—', options: { color: INK, fontFace: FONT, fontSize: 14, breakLine: true } }])
+  s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook)], { x: 0.6, y: 3.05, w: 12.1, h: 3.6, fontFace: FONT, valign: 'top', paraSpaceAfter: 12 })
+  if (!d.ai) s.addText('AI summary unavailable — set ANTHROPIC_API_KEY (or edit these lines directly).', { x: 0.6, y: 6.95, w: 12, h: 0.3, fontFace: FONT, fontSize: 10, color: GREY })
+  s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
   s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.5, y: 1.6, w: 5.2, h: 5.0, fontFace: FONT, fontSize: 17, color: INK })
   if (d.windfieldImg) { s.addImage({ data: d.windfieldImg.data, ...fit(d.windfieldImg.w, d.windfieldImg.h, 6.1, 1.6, 6.8, 4.7) }); s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 6.1, y: 6.4, w: 6.8, h: 0.3, align: 'center', fontFace: FONT, fontSize: 11, color: GREY }) } else ph(s, 6.1, 1.6, 6.8, 4.7, 'Wind field — 12:00 local\n(coastline capture unavailable)')
   s = pptx.addSlide(); addTitle(s, 'Outlook')
@@ -268,9 +290,9 @@ function buildDeck(P, d) {
   s.addText('AM/Mid/PM = 10:00/12:00/15:00 local · TWD (cardinal) & TWS ranges = weighted models (all day 1-2, ARPEGE+ECMWF beyond)', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'Details for today')
   s.addText(d.dailyBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true } })), { x: 0.5, y: 1.05, w: 12.3, h: 0.7, fontFace: FONT, fontSize: 12, color: INK })
-  const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('TWD range'), hdrCell(`TWS ${d.venue}`), hdrCell('TWS min&max'), hdrCell('Trend'), hdrCell('Notes')]
-  const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), arrowOnly(r.twdMean, r.kn), txtCell(r.twd), spdCell(r.tws), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend), txtCell('')])
-  s.addTable([dHead, ...dRows], { x: 0.5, y: 1.85, w: 12.33, colW: [1.0, 0.9, 1.5, 1.4, 1.7, 2.3, 3.53], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+  const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell(`TWS ${d.venue}`), hdrCell('TWD range'), hdrCell('TWS min&max'), hdrCell('Trend'), hdrCell('Notes')]
+  const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), twdCell(r.twdMean), spdCell(r.tws), txtCell(r.twd), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend), txtCell('')])
+  s.addTable([dHead, ...dRows], { x: 0.5, y: 1.85, w: 12.33, colW: [1.0, 1.5, 1.2, 1.5, 1.6, 2.4, 3.13], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   // Stability — boundary-layer height + 13:00 sounding
   s = pptx.addSlide(); addTitle(s, 'Stability')
@@ -284,7 +306,8 @@ function buildDeck(P, d) {
 }
 
 // ── component ───────────────────────────────────────────────────────────────
-export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, resolvedTz = 'UTC' }) {
+export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, resolvedTz = 'UTC', raceDay = null }) {
+  const campaignRaceDay = raceDay
   const pptxReady = useScriptsOnce([PPTX_JS]); useScriptsOnce([PLOTLY_JS])
   const point1 = windData?.['1']; const haveP1 = p1lat != null && p1lon != null && !!point1
   const shortModels = useMemo(() => { const sb = point1?.surfaceByModel || {}; return Object.keys(MODELS).filter((k) => sb[k] && hasValidSpeed(sb[k].hourly)) }, [point1])
@@ -324,8 +347,23 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       } catch { /* */ }
 
       const peak = dailyRows.reduce((m, r) => (r.hi > (m?.hi ?? -1) ? r : m), null)
+
+      // ── executive summary: AI brief over the forecast data (heuristic fallback) ──
+      const morn = dailyRows.find((r) => r.time === '09:00') || dailyRows[0]
+      const aftn = dailyRows.find((r) => r.time === '15:00') || dailyRows[dailyRows.length - 1]
+      const typeHeur = (morn && aftn && aftn.kn - morn.kn >= 3) ? 'Sea-breeze day' : 'Gradient day'
+      const aiPayload = {
+        venue: venueName,
+        date: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', timeZone: tz }),
+        outlook: outlookRows.map((r) => ({ day: r.day, morning: r.mor && { twd: r.mor.twd, tws: r.mor.tws }, midday: r.mid && { twd: r.mid.twd, tws: r.mid.tws }, afternoon: r.aft && { twd: r.aft.twd, tws: r.aft.tws } })),
+        today: dailyRows.map((r) => ({ time: r.time, twd: r.twd, twsKn: r.kn, range: `${r.lo}-${r.hi}kn`, trend: r.trend })),
+        haveBoundaryLayer: !!hpblImg, haveSounding: !!soundingImg,
+      }
+      let ai = null; try { ai = await aiSummary(aiPayload) } catch { /* */ }
+
       const deck = buildDeck(P, {
         venue: venueName,
+        typeOfDay: ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg,
