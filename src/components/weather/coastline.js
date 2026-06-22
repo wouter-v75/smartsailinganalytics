@@ -37,7 +37,7 @@ export async function deriveCoastNormal(lat, lon, o = {}) {
   for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { latArg.push(lats[i].toFixed(4)); lonArg.push(lons[j].toFixed(4)) }
   let elev
   try {
-    const res = await fetch(`${ELEV_URL}?latitude=${latArg.join(',')}&longitude=${lonArg.join(',')}`)
+    const res = await fetch(`${ELEV_URL}?latitude=${latArg.join(',')}&longitude=${lonArg.join(',')}`, { signal: AbortSignal.timeout?.(6000) })
     if (!res.ok) return { deg: null, source: 'none' }
     const j = await res.json()
     elev = j.elevation

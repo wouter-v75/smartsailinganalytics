@@ -323,7 +323,7 @@ async function fetchLandSector(p1lat, p1lon, coastNormalDeg, tz) {
     const lat = pts.map((p) => p.lat.toFixed(4)).join(',')
     const lon = pts.map((p) => p.lon.toFixed(4)).join(',')
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=cloud_cover,temperature_2m&timezone=${encodeURIComponent(tz)}&forecast_days=1`
-    const res = await fetch(url); if (!res.ok) return out
+    const res = await fetch(url, { signal: AbortSignal.timeout?.(6000) }); if (!res.ok) return out
     const j = await res.json()
     const arr = Array.isArray(j) ? j : [j]
     const okta = (pct) => (pct == null ? null : (pct / 100) * 8)
@@ -346,6 +346,16 @@ async function fetchLandSector(p1lat, p1lon, coastNormalDeg, tz) {
 function readVenueSST(point1) {
   const c = point1 || {}
   return c.ssaSst ?? c.sst ?? c.ssaSounding?.sst ?? null
+}
+
+// Resolve `fallback` if `promise` hasn't settled within `ms` — so no single
+// network call can hang deck generation. The underlying fetch keeps running but
+// we stop awaiting it.
+function withTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    Promise.resolve(promise).catch(() => fallback),
+    new Promise((res) => setTimeout(() => res(fallback), ms)),
+  ])
 }
 
 // ── diagnostics orchestrator ─────────────────────────────────────────────────
@@ -605,14 +615,19 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       } catch { /* */ }
 
       // ── deterministic racing diagnostics (feed the slides + the AI brief) ──
+      // TIME-BOUNDED: the diagnostics make extra network calls (elevation /
+      // land-sector). They must NEVER block the deck — if they stall, the deck
+      // still builds (diag = null → slides just omit the diagnostic chips).
       let diag = null
       try {
-        const coast = await coastNormalForPoint(venueKey, p1lat, p1lon)
-        const landSector = await fetchLandSector(p1lat, p1lon, coast.deg, tz)
-        diag = await buildDiagnostics({
-          snd, todayModels, mastH: mastHeight, tz, p1lat, p1lon, point1, venueKey, coast,
-          hemisphere: p1lat >= 0 ? 'N' : 'S', field, sst: readVenueSST(point1), landSector,
-        })
+        diag = await withTimeout((async () => {
+          const coast = await coastNormalForPoint(venueKey, p1lat, p1lon)
+          const landSector = await fetchLandSector(p1lat, p1lon, coast.deg, tz)
+          return buildDiagnostics({
+            snd, todayModels, mastH: mastHeight, tz, p1lat, p1lon, point1, venueKey, coast,
+            hemisphere: p1lat >= 0 ? 'N' : 'S', field, sst: readVenueSST(point1), landSector,
+          })
+        })(), 9000, null)
       } catch { /* */ }
 
       const peak = dailyRows.reduce((m, r) => (r.hi > (m?.hi ?? -1) ? r : m), null)
@@ -628,7 +643,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         today: dailyRows.map((r) => ({ time: r.time, twd: r.twd, twsKn: r.kn, range: `${r.lo}-${r.hi}kn`, trend: r.trend })),
         diagnostics: diag,
       }
-      let ai = null; try { ai = await aiSummary(aiPayload) } catch { /* */ }
+      let ai = null; try { ai = await withTimeout(aiSummary(aiPayload), 20000, null) } catch { /* */ }
 
       const deck = buildDeck(P, {
         venue: venueName,
