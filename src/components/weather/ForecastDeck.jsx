@@ -38,10 +38,11 @@ const CARD = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW'
 const cardinal = (deg) => (deg == null || Number.isNaN(deg) ? '' : CARD[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16])
 const pad2 = (n) => String(n).padStart(2, '0')
 const round5 = (x) => (x == null ? null : Math.round(x / 5) * 5)
-// 8-way glyph pointing the way the wind BLOWS (toward = TWD+180). Fixed size (same
-// for every direction); U+FE0E forces a plain text arrow rather than an emoji.
-const ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
-const ARROW_SIZE = 16
+// 8-way SOLID BLACK arrow pointing the way the wind BLOWS (toward = TWD+180).
+// Heavy/filled glyphs (U+2B06 family + U+27A1); U+FE0E forces the monochrome
+// black text form rather than a coloured emoji. Fixed size for every direction.
+const ARROWS = ['⬆', '⬈', '➡', '⬊', '⬇', '⬋', '⬅', '⬉']
+const ARROW_SIZE = 15
 const arrowGlyph = (twd) => (twd == null ? '' : ARROWS[Math.round((((twd + 180) % 360) + 360) % 360 / 45) % 8] + '\uFE0E')
 
 function circMean(d) { if (!d.length) return null; let s = 0; let c = 0; for (const x of d) { const r = (x * Math.PI) / 180; s += Math.sin(r); c += Math.cos(r) } return (((Math.atan2(s, c) * 180) / Math.PI) % 360 + 360) % 360 }
@@ -412,7 +413,11 @@ async function buildDiagnostics(o) {
   const gStab = stabilityGate({ hMix, capBaseM: stab.capBaseM, capStrengthC: stab.capStrengthC, nearDryAdiabatic: stab.nearDryAdiabatic })
   const gateHealthy = (gStab * gSolar) >= 0.35
   const quadFav = !!(quad && quad.scoreMod > 0)
-  const thermalActive = (sbi != null && sbi > 0.08) || (thermalBendDeg != null && Math.abs(thermalBendDeg) > 20) || quadFav
+  // ONSHORE gradient days (Q3/Q4-type) get thermal enhancement that reinforces the
+  // onshore flow — there is NO closed circulation (low/zero SBI) and often little
+  // veering bend, so the enhancement signal is simply "onshore gradient + heating".
+  const onshoreEnhance = gateHealthy && crossKt != null && crossKt < -1
+  const thermalActive = (sbi != null && sbi > 0.08) || (thermalBendDeg != null && Math.abs(thermalBendDeg) > 20) || quadFav || onshoreEnhance
   const favourable = gateHealthy && thermalActive
   const sbScore = seaBreezeScore({ gStab, gSolar, offshoreKt: crossKt ?? 0, deltaT, lapseRateCkm: stab.lapseRateCkm, hMix, quadMod: quad?.scoreMod ?? 0 })
 
