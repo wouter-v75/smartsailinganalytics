@@ -18,6 +18,13 @@ import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding,
 import { matchVenue, specFor, mosSeries } from './mos'
 import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField } from './windField'
 import { getWeatherSession } from './weatherSession'
+import {
+  mean as dMean, ensureHeights, stabilityFromSounding, stabilityGate,
+  thermalBend, seaBreezeIndex, crossShoreComponent, quadrantModifier,
+  seaBreezeScore, isFavourable, typeOfDay as dTypeOfDay, cloudTrend, confidence,
+  modelSpread, funnelDiagnostics, funnelFlag, clamp01,
+} from './forecastDiagnostics'
+import { coastNormalForPoint } from './coastline'
 
 const PPTX_JS = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'
 const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotly.min.js'
@@ -245,7 +252,177 @@ async function captureSounding(p1lat, p1lon, windData1, tz) {
   ]
   const layout = { title: { text: `Sounding 13:00 — ${label} (${isP1 ? 'point 1' : 'sounding pt'})`, font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.1 }, margin: { t: 40, b: 44, l: 54, r: 70 }, xaxis: { title: '°C', gridcolor: '#e5e7eb', zeroline: true, zerolinecolor: '#cbd5e1' }, yaxis: { title: 'hPa', type: 'log', range: [Math.log10(1050), Math.log10(ptop)], gridcolor: '#e5e7eb', tickvals: ticks, ticktext: ticks.map(String) }, annotations: ann }
   let png = null; try { png = await plotPNG(div, data, layout, 820, 900) } catch { png = null }
-  try { window.Plotly.purge(div) } catch { /* */ } div.remove(); return png
+  try { window.Plotly.purge(div) } catch { /* */ } div.remove()
+  return { png, h, levels, idx, lat, lon, label }
+}
+
+// Build a {press,tempC,z,rh,wspdKt,wdir} profile (surface→up) from a sounding
+// hourly for the diagnostics. Uses geopotential height when present; else heights
+// are filled hypsometrically downstream (ensureHeights).
+function buildSoundingProfile(h, levels, idx) {
+  const out = []
+  for (const p of levels) {
+    const t = h[`temperature_${p}hPa`]?.[idx]; if (t == null) continue
+    const z = h[`geopotential_height_${p}hPa`]?.[idx]
+    const rh = h[`relative_humidity_${p}hPa`]?.[idx]
+    const ws = h[`wind_speed_${p}hPa`]?.[idx]
+    const wd = h[`wind_direction_${p}hPa`]?.[idx]
+    out.push({ press: p, tempC: t, z: z != null ? z : undefined, rh, wspdKt: ws != null ? ws * KN : null, wdir: wd })
+  }
+  return out
+}
+const nearestByZ = (prof, targetZ) => prof.reduce((best, o) => (o.z != null && (best == null || Math.abs(o.z - targetZ) < Math.abs(best.z - targetZ)) ? o : best), null)
+
+// Inland land-sector probe: cloud_cover (oktas) AM/midday + 2 m air Tmax over the
+// land upwind of the course (toward land = coast normal + 180°). Small Open-Meteo
+// call; returns { cloudAm, cloudMid, airTmaxC } (oktas 0-8), or nulls on failure.
+async function fetchLandSector(p1lat, p1lon, coastNormalDeg, tz) {
+  const out = { cloudAm: null, cloudMid: null, airTmaxC: null }
+  if (coastNormalDeg == null) return out
+  const inland = (coastNormalDeg + 180) * (Math.PI / 180)   // bearing toward land
+  const cosLat = Math.max(0.2, Math.cos(p1lat * Math.PI / 180))
+  // sample three points ~5/10/15 km inland and average
+  const pts = [0.045, 0.09, 0.135].map((d) => ({
+    lat: p1lat + d * Math.cos(inland), lon: p1lon + (d / cosLat) * Math.sin(inland),
+  }))
+  try {
+    const lat = pts.map((p) => p.lat.toFixed(4)).join(',')
+    const lon = pts.map((p) => p.lon.toFixed(4)).join(',')
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=cloud_cover,temperature_2m&timezone=${encodeURIComponent(tz)}&forecast_days=1`
+    const res = await fetch(url); if (!res.ok) return out
+    const j = await res.json()
+    const arr = Array.isArray(j) ? j : [j]
+    const okta = (pct) => (pct == null ? null : (pct / 100) * 8)
+    const hourIdx = (h, hh) => (h.time || []).findIndex((t) => t.slice(11, 13) === pad2(hh))
+    const am = []; const mid = []; const tmax = []
+    for (const g of arr) {
+      const h = g.hourly; if (!h) continue
+      const ia = hourIdx(h, 10); const im = hourIdx(h, 12)
+      if (ia >= 0) am.push(okta(h.cloud_cover?.[ia]))
+      if (im >= 0) mid.push(okta(h.cloud_cover?.[im]))
+      if (Array.isArray(h.temperature_2m)) tmax.push(Math.max(...h.temperature_2m.filter((x) => x != null)))
+    }
+    out.cloudAm = dMean(am); out.cloudMid = dMean(mid); out.airTmaxC = dMean(tmax)
+  } catch { /* */ }
+  return out
+}
+
+// SST for ΔT: read from a box-published SSA-Race field if present (CMEMS SST is
+// already ingested on the box). Graceful null until the box publishes it (task #24).
+function readVenueSST(point1) {
+  const c = point1 || {}
+  return c.ssaSst ?? c.sst ?? c.ssaSounding?.sst ?? null
+}
+
+// ── diagnostics orchestrator ─────────────────────────────────────────────────
+// Assembles the deterministic racing diagnostics from the already-fetched data.
+// All terms degrade gracefully to null (the scores treat missing inputs neutrally).
+async function buildDiagnostics(o) {
+  const { snd, todayModels, mastH, tz, p1lat, p1lon, venueKey, hemisphere, field, sst, landSector } = o
+  // coast normal (override → DEM mask) — reuse a precomputed value when given
+  let coast = o.coast
+  if (!coast) { try { coast = await coastNormalForPoint(venueKey, p1lat, p1lon) } catch { coast = { deg: null, source: 'none' } } }
+  const θ = coast?.deg ?? null
+
+  // sounding-derived stability + low-level / gradient winds
+  let stab = { lapseRateCkm: null, capBaseM: null, capStrengthC: null, nearDryAdiabatic: false, hasLowCap: false }
+  let lowLevelKt = null; let gradDir = null; let gradKt = null; let blTopDir = null; let surfDir = null
+  if (snd?.h) {
+    const prof = ensureHeights(buildSoundingProfile(snd.h, snd.levels, snd.idx)
+      .filter((x) => x.tempC != null).sort((a, b) => b.press - a.press))
+    if (prof.length >= 2) {
+      stab = stabilityFromSounding(prof)
+      const band = prof.filter((x) => x.z >= 100 && x.z <= 900 && x.wspdKt != null)
+      lowLevelKt = band.length ? dMean(band.map((x) => x.wspdKt)) : null
+      const g = nearestByZ(prof, 600); gradDir = g?.wdir ?? null; gradKt = g?.wspdKt ?? null
+      blTopDir = nearestByZ(prof, 900)?.wdir ?? null
+      surfDir = prof[0]?.wdir ?? null
+    }
+  }
+
+  // hpbl (mixed-layer depth) — peak over the racing window for the gate
+  let hMix = null
+  for (const k of ['ICONRACE', 'ICONRACE_1KM']) {
+    const hh = o.point1?.surfaceByModel?.[k]?.hourly?.boundary_layer_height
+    if (Array.isArray(hh)) { const m = Math.max(...hh.filter((v) => v != null)); if (Number.isFinite(m)) { hMix = m; break } }
+  }
+  if (hMix == null) { const hh = o.point1?.gfs?.hourly?.boundary_layer_height; if (Array.isArray(hh)) { const m = Math.max(...hh.filter((v) => v != null)); if (Number.isFinite(m)) hMix = m } }
+
+  // coast-relative wind primitives
+  const thermalBendDeg = (surfDir != null && gradDir != null) ? thermalBend(surfDir, gradDir) : null
+  const sbi = (θ != null && surfDir != null && blTopDir != null) ? seaBreezeIndex(surfDir, blTopDir, θ) : null
+  const crossKt = (θ != null && gradDir != null && gradKt != null) ? crossShoreComponent(gradDir, gradKt, θ) : null
+  const quad = (θ != null && gradDir != null && gradKt != null) ? quadrantModifier(θ, gradDir, gradKt, hemisphere) : null
+
+  // insolation gate + thermal contrast
+  const cloud = cloudTrend({ landCloudAm: landSector?.cloudAm, landCloudMid: landSector?.cloudMid })
+  const gSolar = landSector?.cloudAm != null ? clamp01(1 - 0.8 * (landSector.cloudAm / 8)) : 1
+  const deltaT = (landSector?.airTmaxC != null && sst != null) ? landSector.airTmaxC - sst : null
+
+  // gates + score
+  const gStab = stabilityGate({ hMix, capBaseM: stab.capBaseM, capStrengthC: stab.capStrengthC, nearDryAdiabatic: stab.nearDryAdiabatic })
+  const favourable = isFavourable({ gStab, gSolar, sbi, quadMod: quad?.scoreMod })
+  const sbScore = seaBreezeScore({ gStab, gSolar, offshoreKt: crossKt ?? 0, deltaT, lapseRateCkm: stab.lapseRateCkm, hMix, quadMod: quad?.scoreMod ?? 0 })
+
+  // funnelling on the wind field (frame nearest 12:00 local)
+  let funnel = null; let funnelHit = false
+  if (field?.frames?.length) {
+    const labels = field.stamps || field.labels || []
+    let fi = labels.findIndex((s) => String(s).includes('12:00'))
+    if (fi < 0) fi = Math.floor(field.frames.length / 2)
+    const fr = field.frames[fi]
+    if (fr) {
+      try {
+        funnel = funnelDiagnostics({ ...field.header, u: fr.u, v: fr.v })
+        funnelHit = funnelFlag(funnel, p1lat, p1lon, 6)
+      } catch { /* */ }
+    }
+  }
+
+  // type of day (4 classes)
+  const tod = dTypeOfDay({ lowLevelKt, favourable, thermalBendDeg, sbi, funnelFlag: funnelHit })
+
+  // multi-model spread + confidence at the racing window (13:00 local)
+  const dirs = []; const spds = []
+  for (const m of todayModels || []) {
+    const j = idxAtL(m, m.lt[0]?.slice(0, 10), 13)
+    if (j < 0) continue
+    const d = dirAt(m, j); if (d != null) dirs.push(d)
+    const s = mastKn(m.hourly, m.heights, mastH, j, m.mos); if (s != null) spds.push(s)
+  }
+  const spread = modelSpread(dirs, spds)
+  const twsKn = spds.length ? dMean(spds) : null
+  const marginality = clamp01(0.4 + 0.6 * Math.abs((sbScore.score ?? 5) - 5) / 5)
+  const conf = confidence({ seaBreezeMarginality: marginality, sigmaTwd: spread.sigmaTwd, sigmaTws: spread.sigmaTws, twsKn })
+
+  return {
+    coast: { deg: θ != null ? Math.round(θ) : null, source: coast.source },
+    typeOfDay: tod.label, typeClass: tod.cls,
+    seaBreeze: {
+      score: sbScore.score,
+      quadrant: quad?.quadrant ?? null,
+      expectedDirFrom: quad?.dirOnsetFrom ?? null,
+      veerToFrom: quad?.dirPeakFrom ?? null,
+      timing: quad?.timing ?? null,
+      sbi: sbi != null ? Math.round(sbi * 100) / 100 : null,
+      crossShoreKt: crossKt != null ? Math.round(crossKt * 10) / 10 : null,
+      thermalBendDeg: thermalBendDeg != null ? Math.round(thermalBendDeg) : null,
+      lowLevelKt: lowLevelKt != null ? Math.round(lowLevelKt) : null,
+      deltaT: deltaT != null ? Math.round(deltaT * 10) / 10 : null,
+      favourable,
+    },
+    stability: {
+      hMixM: hMix != null ? Math.round(hMix) : null,
+      capBaseM: stab.capBaseM != null ? Math.round(stab.capBaseM) : null,
+      capStrengthC: stab.capStrengthC != null ? Math.round(stab.capStrengthC * 10) / 10 : null,
+      lapseRateCkm: stab.lapseRateCkm != null ? Math.round(stab.lapseRateCkm * 10) / 10 : null,
+      gate: Math.round(gStab * 100) / 100,
+      hasLowCap: stab.hasLowCap,
+    },
+    cloud,
+    confidence: conf,
+    funnelling: { flag: funnelHit, cores: funnel ? funnel.cores.length : 0, rMax: funnel ? Math.round((funnel.sMax / funnel.sRef) * 100) / 100 : null },
+  }
 }
 
 // ── deck builder ─────────────────────────────────────────────────────────────
@@ -274,10 +451,20 @@ function buildDeck(P, d) {
   let s = pptx.addSlide()
   s.addText('Weather and strategy brief', { x: 0.6, y: 0.5, w: 12.1, h: 0.9, fontFace: FONT, fontSize: 40, bold: true, color: NAVY })
   const meta = [d.typeOfDay, d.raceDay ? `Race day ${d.raceDay}` : null].filter(Boolean).join('   ·   ')
-  s.addText([{ text: d.venue, options: { fontFace: FONT, fontSize: 18, bold: true, color: INK, breakLine: true } }, { text: meta, options: { fontFace: FONT, fontSize: 13, color: GREY } }], { x: 0.6, y: 1.55, w: 12.1, h: 0.8, valign: 'top' })
+  s.addText([{ text: d.venue, options: { fontFace: FONT, fontSize: 18, bold: true, color: INK, breakLine: true } }, { text: meta, options: { fontFace: FONT, fontSize: 13, color: GREY } }], { x: 0.6, y: 1.55, w: 12.1, h: 0.55, valign: 'top' })
+  const dg = d.diag
+  if (dg) {
+    const ch = []
+    if (dg.seaBreeze?.score != null) ch.push(`Sea-breeze ${dg.seaBreeze.score}/10${dg.seaBreeze.quadrant ? ` (${dg.seaBreeze.quadrant})` : ''}`)
+    if (dg.confidence?.label) ch.push(`Confidence ${dg.confidence.label}${dg.confidence.sigmaTwd != null ? ` (σTWD ${dg.confidence.sigmaTwd}°)` : ''}`)
+    if (dg.stability?.hMixM != null) ch.push(`BL ${dg.stability.hMixM} m`)
+    ch.push(dg.stability?.hasLowCap ? 'capped' : 'no low cap')
+    if (dg.funnelling?.flag) ch.push('funnelling ⚑')
+    if (ch.length) s.addText(ch.join('    ·    '), { x: 0.6, y: 2.14, w: 12.1, h: 0.34, fontFace: FONT, fontSize: 12, bold: true, color: NAVY })
+  }
   s.addText('Executive summary', { x: 0.6, y: 2.55, w: 12, h: 0.4, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
   const sec = (label, txt) => ([{ text: `${label}:  `, options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 14 } }, { text: txt || '—', options: { color: INK, fontFace: FONT, fontSize: 14, breakLine: true } }])
-  s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook)], { x: 0.6, y: 3.05, w: 12.1, h: 3.6, fontFace: FONT, valign: 'top', paraSpaceAfter: 12 })
+  s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook), ...sec('Confidence', d.ai?.confidenceNote)], { x: 0.6, y: 3.05, w: 12.1, h: 3.6, fontFace: FONT, valign: 'top', paraSpaceAfter: 12 })
   if (!d.ai) s.addText('AI summary unavailable — set ANTHROPIC_API_KEY (or edit these lines directly).', { x: 0.6, y: 6.95, w: 12, h: 0.3, fontFace: FONT, fontSize: 10, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
   s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.5, y: 1.6, w: 5.2, h: 5.0, fontFace: FONT, fontSize: 17, color: INK })
@@ -296,6 +483,13 @@ function buildDeck(P, d) {
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   // Stability — boundary-layer height + 13:00 sounding
   s = pptx.addSlide(); addTitle(s, 'Stability')
+  if (dg) {
+    const st = dg.stability || {}; const sbb = dg.seaBreeze || {}
+    const cap = st.hasLowCap ? `low cap +${st.capStrengthC}°C @ ${st.capBaseM} m` : (st.capBaseM != null ? `cap aloft @ ${st.capBaseM} m` : 'no cap')
+    const line = `Stability: ${cap} · lapse ${st.lapseRateCkm ?? '—'} °C/km · h_mix ${st.hMixM ?? '—'} m · gate ${st.gate ?? '—'}     |     `
+      + `Sea-breeze ${sbb.score ?? '—'}/10${sbb.quadrant ? ` (${sbb.quadrant})` : ''}: SBI ${sbb.sbi ?? '—'}, cross-shore ${sbb.crossShoreKt ?? '—'} kt, bend ${sbb.thermalBendDeg ?? '—'}°${sbb.deltaT != null ? `, ΔT ${sbb.deltaT} °C` : ''}`
+    s.addText(line, { x: 0.4, y: 0.98, w: 12.55, h: 0.34, fontFace: FONT, fontSize: 10.5, color: NAVY })
+  }
   if (d.hpblImg) s.addImage({ data: d.hpblImg, ...fit(1000, 560, 0.4, 1.7, 6.4, 4.6) }); else ph(s, 0.4, 1.7, 6.4, 4.6, 'Boundary-layer height\n(no SSA / GFS hpbl data)')
   if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.0, 1.3, 5.9, 5.5) }); else ph(s, 7.0, 1.3, 5.9, 5.5, 'Vertical sounding @ 13:00\n(no sounding data here)')
   s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
@@ -338,17 +532,30 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       try { cmp = await captureComparison(todayModels, mastHeight) } catch { /* */ }
       try { longRange = await captureLongRange(globals, mastHeight) } catch { /* */ }
       try { hpblImg = await captureHpbl(point1, tz) } catch { /* */ }
-      try { soundingImg = await captureSounding(p1lat, p1lon, point1, tz) } catch { /* */ }
+      let snd = null
+      try { snd = await captureSounding(p1lat, p1lon, point1, tz); soundingImg = snd?.png } catch { /* */ }
+      let field = null
       try {
-        const field = shortSel.startsWith('ICONRACE')
+        field = shortSel.startsWith('ICONRACE')
           ? await fetchIconRaceField({ lat: p1lat, lon: p1lon, height: mastHeight, timezone: tz, modelKey: shortSel })
           : (MODELS[shortSel]?.endpoint ? await fetchWindField({ modelKey: shortSel, lat: p1lat, lon: p1lon, height: mastHeight, timezone: tz }) : null)
         if (field) windfieldImg = await windfieldCoast(field, p1lat, p1lon)
       } catch { /* */ }
 
+      // ── deterministic racing diagnostics (feed the slides + the AI brief) ──
+      let diag = null
+      try {
+        const coast = await coastNormalForPoint(venueKey, p1lat, p1lon)
+        const landSector = await fetchLandSector(p1lat, p1lon, coast.deg, tz)
+        diag = await buildDiagnostics({
+          snd, todayModels, mastH: mastHeight, tz, p1lat, p1lon, point1, venueKey, coast,
+          hemisphere: p1lat >= 0 ? 'N' : 'S', field, sst: readVenueSST(point1), landSector,
+        })
+      } catch { /* */ }
+
       const peak = dailyRows.reduce((m, r) => (r.hi > (m?.hi ?? -1) ? r : m), null)
 
-      // ── executive summary: AI brief over the forecast data (heuristic fallback) ──
+      // ── executive summary: AI brief grounded in the diagnostics (heuristic fallback) ──
       const morn = dailyRows.find((r) => r.time === '09:00') || dailyRows[0]
       const aftn = dailyRows.find((r) => r.time === '15:00') || dailyRows[dailyRows.length - 1]
       const typeHeur = (morn && aftn && aftn.kn - morn.kn >= 3) ? 'Sea-breeze day' : 'Gradient day'
@@ -357,13 +564,13 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         date: new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', timeZone: tz }),
         outlook: outlookRows.map((r) => ({ day: r.day, morning: r.mor && { twd: r.mor.twd, tws: r.mor.tws }, midday: r.mid && { twd: r.mid.twd, tws: r.mid.tws }, afternoon: r.aft && { twd: r.aft.twd, tws: r.aft.tws } })),
         today: dailyRows.map((r) => ({ time: r.time, twd: r.twd, twsKn: r.kn, range: `${r.lo}-${r.hi}kn`, trend: r.trend })),
-        haveBoundaryLayer: !!hpblImg, haveSounding: !!soundingImg,
+        diagnostics: diag,
       }
       let ai = null; try { ai = await aiSummary(aiPayload) } catch { /* */ }
 
       const deck = buildDeck(P, {
         venue: venueName,
-        typeOfDay: ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai,
+        typeOfDay: diag?.typeOfDay || ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai, diag,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg,
