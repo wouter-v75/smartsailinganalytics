@@ -14,6 +14,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import PlotlyChart from './PlotlyChart'
 import ForecastDeck from './ForecastDeck'
+import Venue3D from './Venue3D'
 import {
   MODELS, COMPARE_ORDER,
   fetchAllForPoint, pickDefaultActiveModel, hasValidSpeed,
@@ -593,6 +594,12 @@ export default function ForecastView({
       {isAdmin && (
         <ForecastDeck
           p1lat={p1lat} p1lon={p1lon} windData={windData}
+          modelAvailable={modelAvailable} mastHeight={mastHeight} resolvedTz={tzResolved}
+        />
+      )}
+      {isAdmin && (
+        <Venue3D
+          p1lat={p1lat} p1lon={p1lon}
           modelAvailable={modelAvailable} mastHeight={mastHeight} resolvedTz={tzResolved}
         />
       )}
