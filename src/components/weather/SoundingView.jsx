@@ -97,15 +97,15 @@ function moistLapseDtDp(Tk, pHpa) {
 }
 
 // Parcel through an anchor (Ta °C, Pa hPa): dry adiabat below, moist above.
-function parcelThrough(Ta, Pa, P0) {
+function parcelThrough(Ta, Pa, P0, ptop = SKEWT_PTOP) {
   if (!isFinite(Ta) || !isFinite(Pa)) return []
   const pts = []
   const thetaK = (Ta + 273.15) * Math.pow(1000 / Pa, 0.2854)
   for (let p = P0; p > Pa; p -= 5) pts.push({ press: p, temp: thetaK * Math.pow(p / 1000, 0.2854) - 273.15 })
   pts.push({ press: Pa, temp: Ta })
   let Tk = Ta + 273.15, p = Pa
-  while (p > SKEWT_PTOP) {
-    const dp = Math.min(5, p - SKEWT_PTOP)
+  while (p > ptop) {
+    const dp = Math.min(5, p - ptop)
     Tk = Tk - moistLapseDtDp(Tk, p) * dp
     p -= dp
     pts.push({ press: p, temp: Tk - 273.15 })
@@ -188,7 +188,7 @@ function drawBarb(g, cx, cy, dir, kt) {
 // pressure (y) scales from the zoom transform and redraws, so axes re-tick,
 // gridlines re-space and stroke widths stay constant — not a css-transform
 // "picture" zoom of the whole SVG.
-function drawSkewT(container, data) {
+function drawSkewT(container, data, ptop = SKEWT_PTOP, pbot = SKEWT_PBOT) {
   const d3 = window.d3
   const W = Math.max(360, Math.min(560, container.clientWidth || 520))
   const H = Math.round(W * 0.96)
@@ -198,7 +198,7 @@ function drawSkewT(container, data) {
   // Base (identity) scales. The zoom transform rescales copies of THESE and we
   // redraw against the rescaled scales (zx / zy).
   const x0 = d3.scaleLinear().domain([-10, 35]).range([0, w])
-  const y0 = d3.scaleLog().domain([SKEWT_PBOT, SKEWT_PTOP]).range([h, 0])
+  const y0 = d3.scaleLog().domain([pbot, ptop]).range([h, 0])
   const SK = (0.55 * w) / h
   let zx = x0, zy = y0
   const sxFor = (sx_, sy_) => (t, p) => sx_(t) + (h - sy_(p)) * SK
@@ -218,8 +218,8 @@ function drawSkewT(container, data) {
   const parcelPath = gDyn.append('path').attr('class', 'sktx-parcel').style('display', 'none')
   const dewLine = gDyn.append('path').attr('class', 'sktx-dewline').style('display', 'none')
 
-  const ISOBARS = [1000, 950, 900, 850, 800, 750, 700, 650, 600, 550, 500]
-  const pgrid = d3.range(SKEWT_PBOT, SKEWT_PTOP - 1, -10)
+  const ISOBARS = [1000, 950, 900, 850, 800, 750, 700, 650, 600, 550, 500].filter((p) => p >= ptop && p <= pbot)
+  const pgrid = d3.range(pbot, ptop - 1, -10)
   const lineXY = d3.line().x((d) => d[0]).y((d) => d[1])
 
   // Redraw everything that depends on the current (zoomed) scales.
@@ -241,8 +241,8 @@ function drawSkewT(container, data) {
     d3.range(-120, 61, 10).forEach((T) => {
       gStatic.append('line')
         .attr('class', T === 0 ? 'sktx-isotherm-zero' : 'sktx-isotherm')
-        .attr('x1', sx(T, SKEWT_PBOT)).attr('y1', zy(SKEWT_PBOT))
-        .attr('x2', sx(T, SKEWT_PTOP)).attr('y2', zy(SKEWT_PTOP))
+        .attr('x1', sx(T, pbot)).attr('y1', zy(pbot))
+        .attr('x2', sx(T, ptop)).attr('y2', zy(ptop))
     })
 
     // Dry adiabats
@@ -328,7 +328,7 @@ function drawSkewT(container, data) {
 
       const Pa = Math.min(pCursor, P0)
       const Ta = zx.invert(mx - (h - zy(Pa)) * SK)
-      const pp = parcelThrough(Ta, Pa, P0).filter((o) => o.press >= SKEWT_PTOP && o.press <= P0 + 1)
+      const pp = parcelThrough(Ta, Pa, P0, ptop).filter((o) => o.press >= ptop && o.press <= P0 + 1)
       parcelPath.attr('d', parcelLine(pp))
     })
 
@@ -356,7 +356,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
 
   // A user-picked 4th sounding point, fetched on demand (the 'S' key).
   const [extraPoint, setExtraPoint] = useState(null)
-  const [source, setSource] = useState('GFS')
+  const [source, setSource] = useState('ECMWF')
   // Source labels carry the model run cycle (ICON/ECMWF -> "ICON 06z"); GFS has
   // no cycle in the map so it stays plain.
   const cycles = useModelCycles()
@@ -531,14 +531,17 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
       el.innerHTML = placeholderHTML('🚫', `No ${SOUNDING_SOURCES[source].label} data here`, 'Try a different source for this point/time.')
       return
     }
+    // SSA-Race tops out at ~700 hPa (3 km), so zoom the diagram into the low levels
+    // for it (and any low-level source) instead of drawing a half-empty 500 hPa chart.
+    const ptop = SOUNDING_SOURCES[source]?.lowLevel ? 650 : SKEWT_PTOP
     const data = buildSounding(dataFor(locKey), source, timeIdx)
-      .filter((d) => d.press >= SKEWT_PTOP)
+      .filter((d) => d.press >= ptop)
       .sort((a, b) => b.press - a.press)
     if (data.length < 3) {
       el.innerHTML = placeholderHTML('❌', 'Not enough levels', 'This source has too few pressure levels here.')
       return
     }
-    drawSkewT(el, data)
+    drawSkewT(el, data, ptop)
 
     const ci = computeConvectiveIndices(data)
     const fmtH = (v) => (v != null && isFinite(v)) ? `${Math.round(v)} m` : '—'

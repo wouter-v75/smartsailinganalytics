@@ -580,7 +580,10 @@ export const ECMWF_SOUNDING_LEVELS = [1000, 925, 850, 700, 600, 500]
 // SSA-Race low-level sounding: standard pressure levels 1000-700 hPa (within ~3 km),
 // computed on the box from the _pbl height profile and read from the point's
 // `ssaSounding` field (attached on demand in SoundingView via fetchIconRaceSounding).
-export const SSARACE_SOUNDING_LEVELS = [1000, 975, 950, 925, 900, 850, 800, 750, 700]
+// Dense below 900 hPa (~12 hPa) to use the maximum low-level detail of the SSA-Race
+// _pbl ladder; 25 hPa from 900 to 700. MUST match LEVELS in scripts/sounding_from_tab.py.
+export const SSARACE_SOUNDING_LEVELS = [1010, 998, 986, 974, 962, 950, 938, 925, 912, 900,
+  875, 850, 825, 800, 775, 750, 725, 700]
 
 export const SOUNDING_SOURCES = {
   SSARACE: { label: 'SSA-Race 2 km', levels: SSARACE_SOUNDING_LEVELS, lowLevel: true, hourly: (d) => d && d.ssaSounding },
