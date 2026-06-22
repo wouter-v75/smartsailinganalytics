@@ -22,7 +22,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import {
   SOUNDING_SOURCES, SOUNDING_ORDER,
-  fetchSoundingPoint, decimalToDMS,
+  fetchSoundingPoint, fetchIconRaceSounding, decimalToDMS,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 
@@ -374,7 +374,14 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
   const selMarkerRef = useRef(null)
   const chartRef = useRef(null)
 
-  const dataFor = (k) => (k === 'S' ? extraPoint : windData[k])
+  // SSA-Race low-level soundings, fetched on demand (this view only mounts in the
+  // Sounding tab) for each displayed point and merged into the point so the generic
+  // buildSounding/hasSounding read it like any pressure-level source.
+  const [ssaByLoc, setSsaByLoc] = useState({})
+  const dataFor = (k) => {
+    const base = k === 'S' ? extraPoint : windData[k]
+    return base && ssaByLoc[k] ? { ...base, ssaSounding: ssaByLoc[k] } : base
+  }
 
   // Selectable locations: fetched analysis points + the picked one.
   const locKeys = useMemo(
@@ -382,12 +389,44 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
     [windData, extraPoint],
   )
 
+  // Pull the SSA-Race sounding for any displayed point that doesn't have one yet.
+  useEffect(() => {
+    let cancelled = false
+    const pts = []
+    for (const k of Object.keys(windData)) {
+      const c = windData[k]?.coords
+      if (c) pts.push([k, c.latitude, c.longitude])
+    }
+    if (extraPoint?.coords) pts.push(['S', extraPoint.coords.latitude, extraPoint.coords.longitude])
+    ;(async () => {
+      for (const [k, lat, lon] of pts) {
+        if (ssaByLoc[k]) continue
+        // eslint-disable-next-line no-await-in-loop
+        const h = await fetchIconRaceSounding({ latitude: lat, longitude: lon })
+        if (cancelled) return
+        if (h) setSsaByLoc((prev) => ({ ...prev, [k]: h }))
+      }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windData, extraPoint])
+
   // Source list — only sources that have data somewhere; default order keeps GFS first.
   const availableSources = useMemo(() => {
-    const avail = SOUNDING_ORDER.filter((k) => locKeys.some((loc) => hasSounding(dataFor(loc), k, timeIdx)))
+    // Time-agnostic: a source is offered if it has data at ANY time for some point
+    // (sources differ in cadence — SSA-Race is 3-hourly, GFS hourly — so don't hide
+    // one just because the current index is out of its range).
+    const hasAny = (loc, k) => {
+      const h = SOUNDING_SOURCES[k].hourly(dataFor(loc))
+      return !!h && SOUNDING_SOURCES[k].levels.some((p) => {
+        const t = h[`temperature_${p}hPa`]
+        return Array.isArray(t) && t.some((v) => v != null)
+      })
+    }
+    const avail = SOUNDING_ORDER.filter((k) => locKeys.some((loc) => hasAny(loc, k)))
     return avail.length ? avail : SOUNDING_ORDER
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locKeys, windData, extraPoint, timeIdx])
+  }, [locKeys, windData, extraPoint, timeIdx, ssaByLoc])
 
   // Keep selections valid as data changes.
   useEffect(() => {
@@ -410,7 +449,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
     }
     return []
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locKey, source, windData, extraPoint, locKeys])
+  }, [locKey, source, windData, extraPoint, locKeys, ssaByLoc])
   useEffect(() => { if (timeIdx >= times.length) setTimeIdx(0) }, [times, timeIdx])
 
   // ── Leaflet picker map ────────────────────────────────────────────────
@@ -506,7 +545,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
     const fmtT = (v) => (v != null && isFinite(v)) ? `${Math.round(v)} °C` : '—'
     setIndices(ci ? `TCON: ${fmtT(ci.Tcon)}  ·  CCL: ${fmtH(ci.Hccl)}  ·  LCL: ${fmtH(ci.Hlcl)}` : '')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d3Ready, locKey, source, timeIdx, extraPoint, windData, chartW])
+  }, [d3Ready, locKey, source, timeIdx, extraPoint, windData, chartW, ssaByLoc])
 
   // Redraw when the chart container resizes (sub-tab open, window resize).
   useEffect(() => {

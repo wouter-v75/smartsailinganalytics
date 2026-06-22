@@ -577,12 +577,52 @@ export const ECMWF_SOUNDING_LEVELS = [1000, 925, 850, 700, 600, 500]
 // Sounding source registry — mirrors SOUNDING_SOURCES in index.html. Each
 // `hourly(point)` resolves the Open-Meteo payload that carries that source's
 // pressure-level columns for a windData point.
+// SSA-Race low-level sounding: standard pressure levels 1000-700 hPa (within ~3 km),
+// computed on the box from the _pbl height profile and read from the point's
+// `ssaSounding` field (attached on demand in SoundingView via fetchIconRaceSounding).
+export const SSARACE_SOUNDING_LEVELS = [1000, 975, 950, 925, 900, 850, 800, 750, 700]
+
 export const SOUNDING_SOURCES = {
+  SSARACE: { label: 'SSA-Race 2 km', levels: SSARACE_SOUNDING_LEVELS, lowLevel: true, hourly: (d) => d && d.ssaSounding },
   GFS:   { label: 'GFS · 25 hPa', levels: GFS_SOUNDING_LEVELS,   hourly: (d) => d && d.gfs && d.gfs.hourly },
   ICON:  { label: 'ICON',         levels: ICON_SOUNDING_LEVELS,  hourly: (d) => d && d.surfaceByModel && d.surfaceByModel.ICON  && d.surfaceByModel.ICON.hourly },
   ECMWF: { label: 'ECMWF',        levels: ECMWF_SOUNDING_LEVELS, hourly: (d) => d && d.surfaceByModel && d.surfaceByModel.ECMWF && d.surfaceByModel.ECMWF.hourly },
 }
-export const SOUNDING_ORDER = ['GFS', 'ICON', 'ECMWF']
+export const SOUNDING_ORDER = ['SSARACE', 'GFS', 'ICON', 'ECMWF']
+
+// SSA-Race per-venue sounding.json (published next to grid.json). Snaps the point
+// to the nearest sounding cell and returns its Open-Meteo-shaped `hourly` (pressure
+// levels), so the Skew-T treats SSA-Race exactly like ICON/ECMWF. Cached per venue.
+const _iconRaceSoundings = new Map()
+function getIconRaceSounding(url) {
+  if (_iconRaceSoundings.has(url)) return _iconRaceSoundings.get(url)
+  const p = (async () => {
+    try { const r = await fetch(url); if (!r.ok) return null; return await r.json() } catch { return null }
+  })()
+  _iconRaceSoundings.set(url, p)
+  return p
+}
+export async function fetchIconRaceSounding({ latitude, longitude, modelKey = 'ICONRACE' }) {
+  const m = MODELS[modelKey] || MODELS.ICONRACE
+  const v = (m.venues || []).find(
+    (ven) => Math.abs(latitude - ven.clat) <= ven.half && Math.abs(longitude - ven.clon) <= ven.half
+  )
+  if (!v) return null
+  const path = `icon-race/${v.domain}/${v.name}/sounding.json`
+  const url = m.bunnyBase
+    ? `${m.bunnyBase}/${v.domain}/${v.name}/sounding.json`
+    : `/api/bunny/storage?key=${encodeURIComponent(path)}`
+  const snd = await getIconRaceSounding(url)
+  if (!snd || !Array.isArray(snd.cells) || !snd.cells.length) return null
+  const cosLat = Math.cos((latitude * Math.PI) / 180)
+  let best = null
+  for (const c of snd.cells) {
+    const dLat = latitude - c.lat; const dLon = (longitude - c.lon) * cosLat
+    const d2 = dLat * dLat + dLon * dLon
+    if (!best || d2 < best.d2) best = { c, d2 }
+  }
+  return best.c.hourly
+}
 
 // Fetch a single user-picked sounding point. Lighter than fetchAllForPoint —
 // only the sources the Skew-T can use (ICON + ECMWF surface upper-air, GFS
