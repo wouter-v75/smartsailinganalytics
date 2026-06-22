@@ -150,11 +150,13 @@ function keyGrid(models) { const ks = new Set(); models.forEach((m) => m.lt.forE
 async function captureComparison(models, mastH) {
   if (!window.Plotly || !models.length) return [null, null]
   const div = offDiv(); const keys = keyGrid(models); const xs = keys.map((k) => new Date(`${k}:00`)); const out = []
+  const today = keys[0]?.slice(0, 10)
+  const xax = { title: 'Time', gridcolor: '#e5e7eb', ...(today ? { range: [new Date(`${today}T08:00`), new Date(`${today}T20:00`)], autorange: false } : {}) }
   const ser = (m, kind) => keys.map((key) => { const i = idxByKey(m, key); if (i < 0) return null; return kind === 'spd' ? mastKn(m.hourly, m.heights, mastH, i, m.mos) : (dirAt(m, i) ?? null) })
   const spd = models.map((m) => ser(m, 'spd')); const dir = models.map((m) => ser(m, 'dir'))
   const lines = (series, mode) => models.map((m, k) => ({ x: xs, y: series[k], name: MODELS[m.key]?.label || m.key, type: 'scatter', mode, line: { color: MODELS[m.key]?.color, width: 2 }, marker: { size: 4, color: MODELS[m.key]?.color }, connectgaps: true }))
-  try { out.push(await plotPNG(div, [...bandTraces(xs, bandStats(spd)), ...lines(spd, 'lines+markers')], { title: { text: `Wind speed @ ${mastH} m`, font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.2 }, xaxis: { title: 'Time', gridcolor: '#e5e7eb' }, yaxis: { title: 'knots', rangemode: 'tozero', gridcolor: '#e5e7eb' }, shapes: raceShapes(keys, [['x', 'y domain']]) })) } catch { out.push(null) }
-  try { out.push(await plotPNG(div, [...bandTraces(xs, dirBand(dir)), ...lines(dir, 'markers')], { title: { text: 'Wind direction (TWD)', font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.2 }, xaxis: { title: 'Time', gridcolor: '#e5e7eb' }, yaxis: { title: '°', range: [0, 360], dtick: 45, gridcolor: '#e5e7eb' }, shapes: raceShapes(keys, [['x', 'y domain']]) })) } catch { out.push(null) }
+  try { out.push(await plotPNG(div, [...bandTraces(xs, bandStats(spd)), ...lines(spd, 'lines+markers')], { title: { text: `Wind speed @ ${mastH} m`, font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.2 }, xaxis: xax, yaxis: { title: 'knots', rangemode: 'tozero', gridcolor: '#e5e7eb' }, shapes: raceShapes(keys, [['x', 'y domain']]) })) } catch { out.push(null) }
+  try { out.push(await plotPNG(div, [...bandTraces(xs, dirBand(dir)), ...lines(dir, 'markers')], { title: { text: 'Wind direction (TWD)', font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.2 }, xaxis: xax, yaxis: { title: '°', range: [0, 360], dtick: 45, gridcolor: '#e5e7eb' }, shapes: raceShapes(keys, [['x', 'y domain']]) })) } catch { out.push(null) }
   try { window.Plotly.purge(div) } catch { /* */ } div.remove(); return out
 }
 
