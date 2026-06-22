@@ -3,7 +3,7 @@
 // Shared helpers for the MapLibre 3D wind-field views (inline Field3D viewer +
 // the deck-capture Venue3D tool). Pure functions — no React, no fetch.
 // ----------------------------------------------------------------------------
-import { BEAUFORT_BANDS, PALETTE_MAX_KT } from './windField'
+import { BEAUFORT_BANDS, PALETTE_MAX_KT, speedImageURL, scalarImageURL, currentRamp, hpblRamp } from './windField'
 
 export const MAPLIBRE_JS = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js'
 export const MAPLIBRE_CSS = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css'
@@ -32,10 +32,12 @@ export const bandOf = (kn) => {
 
 export function addArrowIcons(map) {
   BEAUFORT_BANDS.forEach((b, i) => { const id = `arrow-${i}`; if (!map.hasImage(id)) map.addImage(id, arrowIcon(b.c)) })
+  if (!map.hasImage('arrow-mono')) map.addImage('arrow-mono', arrowIcon([20, 30, 45]))   // currents: direction-only, colour is in the drape
 }
 
 // wind/current field frame → GeoJSON arrow points (subsampled, skips calm cells)
-export function fieldToGeoJSON(field, frameIdx) {
+export function fieldToGeoJSON(field, frameIdx, opts = {}) {
+  const minKn = opts.minKn ?? 0.6
   const fr = field?.frames?.[frameIdx]; if (!fr || !fr.u) return { type: 'FeatureCollection', features: [] }
   const { nx, ny, lo1, la1, dx, dy } = field.header
   const step = Math.max(1, Math.round(nx / 16))
@@ -44,7 +46,7 @@ export function fieldToGeoJSON(field, frameIdx) {
     for (let i = 0; i < nx; i += step) {
       const p = j * nx + i; const u = fr.u[p]; const v = fr.v[p]
       const spd = Math.hypot(u || 0, v || 0) * KN
-      if (spd < 0.6) continue
+      if (spd < minKn) continue
       const toward = ((Math.atan2(u, v) * 180) / Math.PI + 360) % 360
       features.push({
         type: 'Feature',
@@ -55,6 +57,20 @@ export function fieldToGeoJSON(field, frameIdx) {
   }
   return { type: 'FeatureCollection', features }
 }
+
+// kind of field for the 3D view
+export const fieldKind = (field) => (field?.isHpbl ? 'hpbl' : field?.isCurrent ? 'current' : 'wind')
+
+// translucent colour image (speed / current / hpbl) to DRAPE on the terrain
+export function drapeImageURL(field, frameIdx) {
+  const fr = field?.frames?.[frameIdx]; if (!fr) return null
+  const k = fieldKind(field)
+  if (k === 'hpbl') return scalarImageURL(fr, field.header, 8, hpblRamp)
+  return speedImageURL(fr, field.header, 8, k === 'current' ? currentRamp : undefined)
+}
+export const drapeOpacity = (field) => (field?.isHpbl ? 0.62 : field?.isCurrent ? 0.55 : 0.4)
+// image-source corner coordinates (TL, TR, BR, BL) from the field bounding box
+export const boxCoords = (box) => [[box.west, box.north], [box.east, box.north], [box.east, box.south], [box.west, box.south]]
 
 // mean TWD (meteorological FROM bearing) over the race area — orient camera UPWIND
 export function meanFromDir(field, frameIdx, lat, lon, nm) {
@@ -75,6 +91,56 @@ export function meanFromDir(field, frameIdx, lat, lon, nm) {
   if (!n) return null
   const toward = (Math.atan2(su, sv) * 180) / Math.PI
   return (((toward + 180) % 360) + 360) % 360
+}
+
+// Render a field on an OFFSCREEN MapLibre 3D map and capture PNG stills at a set
+// of frame indices (used by the deck for the 4×3D "general weather" snapshots).
+// Reuses one map: builds terrain+drape+arrows once, then per frame updates the
+// sources, re-orients upwind, waits for idle, and captures. Returns [{idx,png}].
+export async function captureField3DSeries(ML, field, opts) {
+  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [] } = opts || {}
+  if (!ML || !field?.frames?.length || !frameIndices.length) return []
+  const cont = document.createElement('div')
+  cont.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px;background:#071624;`
+  document.body.appendChild(cont)
+  const kind = fieldKind(field)
+  const minKn = kind === 'current' ? 0.2 : 0.6
+  const twd0 = kind !== 'hpbl' ? meanFromDir(field, frameIndices[0], lat, lon, 5) : null
+  let map
+  const out = []
+  try {
+    map = new ML.Map({
+      container: cont,
+      style: { version: 8, sources: { sat: { type: 'raster', tiles: [SAT_TILES], tileSize: 256, maxzoom: 19 } }, layers: [{ id: 'sat', type: 'raster', source: 'sat' }] },
+      center: [lon, lat], zoom: 10.4, pitch: 66, bearing: twd0 != null ? twd0 : 0,
+      preserveDrawingBuffer: true, attributionControl: false, interactive: false, fadeDuration: 0,
+    })
+    const idle = () => new Promise((res) => { let done = false; const f = () => { if (done) return; done = true; res() }; map.once('idle', f); setTimeout(f, 4000) })
+    await new Promise((res) => { let done = false; const f = () => { if (done) return; done = true; res() }; map.on('load', f); setTimeout(f, 9000) })
+    map.addSource('dem', { type: 'raster-dem', tiles: [DEM_TILES], encoding: 'terrarium', tileSize: 256, maxzoom: 14 })
+    map.setTerrain({ source: 'dem', exaggeration })
+    const url0 = drapeImageURL(field, frameIndices[0])
+    if (url0) { map.addSource('drape', { type: 'image', url: url0, coordinates: boxCoords(field.box) }); map.addLayer({ id: 'drape', type: 'raster', source: 'drape', paint: { 'raster-opacity': drapeOpacity(field) } }) }
+    if (kind !== 'hpbl') {
+      addArrowIcons(map)
+      map.addSource('wind', { type: 'geojson', data: fieldToGeoJSON(field, frameIndices[0], { minKn }) })
+      map.addLayer({ id: 'wind', type: 'symbol', source: 'wind', layout: { 'icon-image': kind === 'current' ? 'arrow-mono' : ['concat', 'arrow-', ['to-string', ['get', 'band']]], 'icon-rotate': ['get', 'toward'], 'icon-rotation-alignment': 'map', 'icon-size': ['interpolate', ['linear'], ['get', 'spd'], 0, 0.4, 30, 1.1], 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
+    }
+    map.addSource('ring', { type: 'geojson', data: ringGeoJSON(lat, lon, 5) })
+    map.addLayer({ id: 'ring', type: 'line', source: 'ring', paint: { 'line-color': '#ef4444', 'line-width': 2, 'line-dasharray': [2, 1.5] } })
+    await idle()
+    for (const fidx of frameIndices) {
+      const twd = kind !== 'hpbl' ? meanFromDir(field, fidx, lat, lon, 5) : null
+      if (twd != null) map.setBearing(twd)
+      const u2 = drapeImageURL(field, fidx); const ds = map.getSource('drape'); if (ds && u2) ds.updateImage({ url: u2, coordinates: boxCoords(field.box) })
+      const ws = map.getSource('wind'); if (ws) ws.setData(fieldToGeoJSON(field, fidx, { minKn }))
+      await idle()
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      let png = null; try { png = map.getCanvas().toDataURL('image/png') } catch { /* */ }
+      out.push({ idx: fidx, png })
+    }
+  } catch { /* */ } finally { try { map?.remove() } catch { /* */ } try { document.body.removeChild(cont) } catch { /* */ } }
+  return out
 }
 
 export function ringGeoJSON(lat, lon, nm) {

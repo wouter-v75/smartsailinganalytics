@@ -14,7 +14,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import PlotlyChart from './PlotlyChart'
 import ForecastDeck from './ForecastDeck'
-import Venue3D from './Venue3D'
 import Field3D from './Field3D'
 import {
   MODELS, COMPARE_ORDER,
@@ -162,6 +161,17 @@ export default function ForecastView({
     }
     return undefined
   }, [viewMode])
+
+  // Auto-switch to 3D once the 3 points are set and the field has loaded (once
+  // per load; resets if points/field are cleared so reselecting re-triggers).
+  const auto3dRef = useRef(false)
+  useEffect(() => {
+    if (allThree && field?.frames?.length) {
+      if (!auto3dRef.current) { auto3dRef.current = true; setViewMode('3D') }
+    } else {
+      auto3dRef.current = false
+    }
+  }, [allThree, field])
 
   // Persist points + field selection up to WeatherTab so they survive sub-tab
   // switches (ForecastView is dynamically imported and unmounts when hidden).
@@ -608,12 +618,6 @@ export default function ForecastView({
           modelAvailable={modelAvailable} mastHeight={mastHeight} resolvedTz={tzResolved}
         />
       )}
-      {isAdmin && (
-        <Venue3D
-          p1lat={p1lat} p1lon={p1lon}
-          modelAvailable={modelAvailable} mastHeight={mastHeight} resolvedTz={tzResolved}
-        />
-      )}
       {/* Map (half width in landscape) + wind-field controls beside it */}
       <Card>
        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
@@ -666,11 +670,11 @@ export default function ForecastView({
             }}
           />
           {viewMode === '3D' && (
-            (field && !field.isHpbl && field.frames?.length)
+            (field && field.frames?.length)
               ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} height={640} exaggeration={3} />
               : (
                 <div style={{ height: 640, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: '#64748B', fontSize: 13, border: '1px solid #1E3A5A', borderRadius: 8, background: '#0A1929', padding: 20 }}>
-                  {field?.isHpbl ? 'The 3D view shows wind arrows — switch the field model to a wind model, then 3D.' : 'Select 3 points in 2D and let the wind field load, then switch to 3D.'}
+                  Select 3 points in 2D and let the field load, then switch to 3D.
                 </div>
               )
           )}
@@ -793,6 +797,35 @@ export default function ForecastView({
               style={{ ...inputStyle, width: 92 }} />
           </div>
           )}
+          {/* Model picker — next to the wind viewer; drives BOTH field and tables. */}
+          {hasResults && (
+            <div>
+              <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Model (field + tables)</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => !k.startsWith('ICONRACE'))).map((k) => {
+                  const m = MODELS[k]; const avail = modelAvailable[k]
+                  const fieldOnly = k === 'CURRENTS' || k === 'HPBL'
+                  const selected = fieldOnly ? fieldModel === k : activeModel === k
+                  const offTitle = k === 'CURRENTS' ? 'Currents cover the English Channel — set point 1 there'
+                    : k === 'HPBL' ? 'Boundary-layer height — set point 1 in an SSA-Race venue' : `${m.label} has no data here`
+                  return (
+                    <button key={k} disabled={!avail}
+                      onClick={() => { if (fieldOnly) { setFieldModel(k) } else { onActiveModelChange?.(k); setFieldModel(k) } }}
+                      title={avail ? (m.subtitle || '') : offTitle}
+                      style={{
+                        fontSize: 12, fontWeight: 700, padding: '5px 11px', borderRadius: 999, cursor: avail ? 'pointer' : 'not-allowed',
+                        border: `1px solid ${selected ? m.color : (avail ? m.color + '88' : '#1E3A5A')}`,
+                        background: selected ? m.color : (avail ? m.color + '22' : 'transparent'),
+                        color: selected ? '#001018' : (avail ? '#E2E8F0' : '#475569'), opacity: avail ? 1 : 0.5,
+                      }}>
+                      {labelWithCycle(k, cycles)}
+                    </button>
+                  )
+                })}
+                {loading && <span style={{ fontSize: 11, color: '#7DD3FC', alignSelf: 'center' }}>loading…</span>}
+              </div>
+            </div>
+          )}
           {/* time bar moved directly under the map (above) for mobile usability */}
           <div style={{ fontSize: 11, minHeight: 14 }}>
             {fieldLoading && <span style={{ color: '#FBBF24' }}>loading field…</span>}
@@ -804,48 +837,6 @@ export default function ForecastView({
         </div>{/* end RIGHT column */}
        </div>{/* end flex row */}
       </Card>
-
-      {/* Single model picker — drives BOTH the wind field and the hourly tables.
-          Icon-Race first; available models coloured, others greyed; selected highlighted. */}
-      {hasResults && (
-        <Card>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: '#CBD5E1' }}>Select model:</span>
-            {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => !k.startsWith('ICONRACE'))).map((k) => {
-              const m = MODELS[k]
-              const avail = modelAvailable[k]
-              // CURRENTS and HPBL drive the FIELD only (default off, leaving the
-              // tables on their wind model); every other pill drives field + tables.
-              const fieldOnly = k === 'CURRENTS' || k === 'HPBL'
-              const selected = fieldOnly ? fieldModel === k : activeModel === k
-              const offTitle = k === 'CURRENTS'
-                ? 'Currents cover the English Channel — set point 1 there'
-                : k === 'HPBL'
-                  ? 'Boundary-layer height — set point 1 in an SSA-Race venue'
-                  : `${m.label} has no data here`
-              return (
-                <button
-                  key={k}
-                  disabled={!avail}
-                  onClick={() => { if (fieldOnly) { setFieldModel(k) } else { onActiveModelChange?.(k); setFieldModel(k) } }}
-                  title={avail ? (m.subtitle || '') : offTitle}
-                  style={{
-                    fontSize: 15, fontWeight: 700, padding: '8px 18px', borderRadius: 999,
-                    cursor: avail ? 'pointer' : 'not-allowed',
-                    border: `1px solid ${selected ? m.color : (avail ? m.color + '88' : '#1E3A5A')}`,
-                    background: selected ? m.color : (avail ? m.color + '22' : 'transparent'),
-                    color: selected ? '#001018' : (avail ? '#E2E8F0' : '#475569'),
-                    opacity: avail ? 1 : 0.5,
-                  }}
-                >
-                  {labelWithCycle(k, cycles)}
-                </button>
-              )
-            })}
-            {loading && <span style={{ fontSize: 12, color: '#7DD3FC' }}>loading…</span>}
-          </div>
-        </Card>
-      )}
 
       {err && (
         <Card><div style={{ color: '#EF4444', fontSize: 13 }}>⚠ {err}</div></Card>
@@ -864,7 +855,7 @@ export default function ForecastView({
               📊 Hourly Wind Tables (08:00–18:00 {tzLabel}) — <span style={{ color: MODELS[activeModel]?.color }}>{activeModelObj?.label}</span>
             </span>
             <div style={{ flex: 1 }} />
-            <span style={{ fontSize: 10, color: '#475569' }}>model selected above</span>
+            <span style={{ fontSize: 10, color: '#475569' }}>model selected by the wind field</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
             {Object.entries(windData).map(([key, point]) => (
