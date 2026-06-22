@@ -648,11 +648,24 @@ export default function ForecastView({
             if (!s || s.hh % 6 !== 0) continue
             ticks.push({ i, pct: n > 1 ? (i / (n - 1)) * 100 : 0, time: `${String(s.hh).padStart(2, '0')}:00`, date: (s.hh === 0 || ticks.length === 0) ? `${s.wd} ${s.dd} ${s.mon}` : '' })
           }
+          const curPct = n > 1 ? (cur / (n - 1)) * 100 : 0
           return (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 8 }}>
-              <button onClick={() => setFieldPlaying((p) => !p)} style={{ background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
+              <button onClick={() => setFieldPlaying((p) => !p)} style={{ marginTop: 26, background: '#1E3A5A', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: 'pointer', fontSize: 13 }}>{fieldPlaying ? '⏸' : '▶'}</button>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <input type="range" min={0} max={n - 1} value={cur} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ width: '100%' }} />
+                {/* current time in a box ABOVE the slider thumb (follows its position) */}
+                <div style={{ position: 'relative', paddingTop: 26 }}>
+                  <div style={{
+                    position: 'absolute', top: 0, left: `${curPct}%`, transform: 'translateX(-50%)',
+                    whiteSpace: 'nowrap', background: '#D97706', color: '#fff', fontWeight: 700, fontSize: 12,
+                    padding: '3px 9px', borderRadius: 8, pointerEvents: 'none', zIndex: 2,
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.45)',
+                  }}>
+                    {curLabel}
+                    <div style={{ position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)', width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent', borderTop: '6px solid #D97706' }} />
+                  </div>
+                  <input type="range" min={0} max={n - 1} value={cur} onChange={(e) => { setFieldPlaying(false); setFieldHourIdx(Number(e.target.value)) }} style={{ width: '100%', display: 'block' }} />
+                </div>
                 <div style={{ position: 'relative', height: 24 }}>
                   {ticks.map((tk) => (
                     <div key={tk.i} style={{ position: 'absolute', left: `${tk.pct}%`, transform: 'translateX(-50%)', textAlign: 'center', whiteSpace: 'nowrap' }}>
@@ -663,7 +676,6 @@ export default function ForecastView({
                   ))}
                 </div>
               </div>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', minWidth: 116, textAlign: 'right' }}>{curLabel}</div>
             </div>
           )
         })()}
