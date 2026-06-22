@@ -11,9 +11,10 @@
 // instantly renders without re-querying Open-Meteo. The input state
 // (locations, date, etc.) stays inside ForecastView.
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import { ModelCyclesProvider } from './weather/modelCycles'
+import { getWeatherSession, patchWeatherSession } from './weather/weatherSession'
 
 const ForecastView = dynamic(() => import('./weather/ForecastView'), {
   ssr: false,
@@ -59,15 +60,22 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
   const [sub, setSub] = useState('forecast')
 
   // Shared post-fetch state. Forecast emits updates via callbacks; Compare
-  // reads them straight from here. Empty until the user clicks "Fetch wind
-  // data" in Forecast.
-  const [windData, setWindData] = useState({})
-  const [activeModel, setActiveModel] = useState('AROME')
-  const [resolvedTz, setResolvedTz] = useState('UTC')
-  const [mastHeight, setMastHeight] = useState(30) // metres; interpolated masthead wind (default 30 m = racing/MOS height)
+  // reads them straight from here. Seeded from the module-level session store so
+  // it survives leaving + returning to the Weather tab (WeatherTab unmounts on a
+  // top-level tab switch); empty on the first visit of a fresh page load.
+  const [windData, setWindData] = useState(() => getWeatherSession().windData)
+  const [activeModel, setActiveModel] = useState(() => getWeatherSession().activeModel)
+  const [resolvedTz, setResolvedTz] = useState(() => getWeatherSession().resolvedTz)
+  const [mastHeight, setMastHeight] = useState(() => getWeatherSession().mastHeight) // metres; masthead wind (default 30 m)
   // Forecast input + wind-field state, lifted so the 3 points and the last 2D
-  // wind field survive sub-tab switches (ForecastView unmounts when hidden).
-  const [forecastPersist, setForecastPersist] = useState({})
+  // wind/hpbl field survive sub-tab switches (ForecastView unmounts when hidden).
+  const [forecastPersist, setForecastPersist] = useState(() => getWeatherSession().forecastPersist)
+
+  // Mirror the shared state into the session store on every change, so a remount
+  // (after visiting another top-level tab) re-seeds it instead of resetting.
+  useEffect(() => {
+    patchWeatherSession({ windData, activeModel, resolvedTz, mastHeight, forecastPersist })
+  }, [windData, activeModel, resolvedTz, mastHeight, forecastPersist])
 
   function handleDataChange(next, modelKey, tz) {
     setWindData(next)

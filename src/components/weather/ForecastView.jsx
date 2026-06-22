@@ -483,6 +483,18 @@ export default function ForecastView({
     }
   }
 
+  // Reset everything: clear all 3 points, the fetched model data, and the 2D
+  // field. Map markers drop via the locations->markers effect; field overlays
+  // clear via the allThree-off effect. The session store updates through the
+  // usual persist/onDataChange callbacks.
+  function resetAll() {
+    setLocations({})
+    setField(null)
+    setFieldErr('')
+    setFieldHourIdx(0)
+    onDataChange?.({}, activeModel, resolvedTz)
+  }
+
   // ── Fetch all models for every selected location (auto-triggered) ─────
   async function fetchAll(locs = locations) {
     setLoading(true); setErr(null)
@@ -559,8 +571,23 @@ export default function ForecastView({
        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         {/* LEFT — map + point chips */}
         <div style={{ flex: '1 1 460px', minWidth: 300 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
-          📍 Click 3 points — models load automatically
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>
+            📍 Click 3 points — models load automatically
+          </div>
+          <div style={{ flex: 1 }} />
+          {Object.keys(locations).length > 0 && (
+            <button
+              onClick={resetAll}
+              title="Clear the 3 points and all forecast data"
+              style={{
+                fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6,
+                cursor: 'pointer', border: '1px solid #7F1D1D', background: '#2A0F12', color: '#FCA5A5',
+              }}
+            >
+              ✕ Reset points
+            </button>
+          )}
         </div>
         <div style={{ position: 'relative' }}>
           <div
