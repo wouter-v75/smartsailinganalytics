@@ -176,7 +176,7 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
     + `&forecast_days=2&models=${m.modelParam}`
 
   const res = await fetch(url)
-  if (!res.ok) throw new Error(`Open-Meteo ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 429 ? 'too many open meteo requests, try later' : `Open-Meteo ${res.status}`)
   const json = await res.json()
   const points = Array.isArray(json) ? json : [json]   // multi-coord => array
   if (points.length !== lats.length) {

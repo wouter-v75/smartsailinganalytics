@@ -439,13 +439,23 @@ export async function fetchGFSPressureLevels({ latitude, longitude, timezone }) 
 // the upstream tool's `windData[locKey]` object expects.
 export async function fetchAllForPoint({ latitude, longitude, timezone, enabledModels, onProgress }) {
   const surfaceByModel = {}
-  for (const modelKey of COMPARE_ORDER) {
-    if (!enabledModels[modelKey]) { surfaceByModel[modelKey] = null; continue }
+  for (const k of COMPARE_ORDER) if (!enabledModels[k]) surfaceByModel[k] = null
+  const enabled = COMPARE_ORDER.filter((k) => enabledModels[k])
+  // SSA-Race / self-hosted (Bunny) models are NOT Open-Meteo — load them FIRST and
+  // in parallel so the ICON data is always there even when Open-Meteo is throttled.
+  const ssaKeys = enabled.filter((k) => MODELS[k]?.bunnyBase)
+  const omKeys = enabled.filter((k) => !MODELS[k]?.bunnyBase)
+  await Promise.all(ssaKeys.map(async (modelKey) => {
+    onProgress?.({ modelKey, phase: 'start' })
+    surfaceByModel[modelKey] = await fetchSurfaceModel({ modelKey, latitude, longitude, timezone })
+    onProgress?.({ modelKey, phase: 'done' })
+  }))
+  // Then the Open-Meteo models, sequential + spaced to be gentle on the rate limit.
+  for (const modelKey of omKeys) {
     onProgress?.({ modelKey, phase: 'start' })
     // eslint-disable-next-line no-await-in-loop
     surfaceByModel[modelKey] = await fetchSurfaceModel({ modelKey, latitude, longitude, timezone })
     onProgress?.({ modelKey, phase: 'done' })
-    // Be gentle on Open-Meteo's rate limit (matches the 300ms spacing in v1.3).
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, 300))
   }
