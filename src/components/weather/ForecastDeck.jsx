@@ -69,6 +69,14 @@ function buildDaily(short, mastH, bandModels) {
     const twd = dr ? `${round5(dr[0])}-${round5(dr[1])}` : (twdMean != null ? `${round5(twdMean)}` : '')
     rows.push({ time: `${pad2(hh)}:00`, twdMean, twd, tws: `${kn}kn`, kn, lo: band[0], hi: band[1] })
   }
+  // hour-over-hour trend: TWD shift (right=veer / left=back) + TWS (increasing/dropping)
+  for (let r = 1; r < rows.length; r++) {
+    const a = rows[r - 1]; const b = rows[r]; let dt = ''; let st = ''
+    if (a.twdMean != null && b.twdMean != null) { const dd = (((b.twdMean - a.twdMean + 540) % 360) - 180); if (dd > 6) dt = 'Right'; else if (dd < -6) dt = 'Left' }
+    const dk = b.kn - a.kn; if (dk >= 1) st = 'increasing'; else if (dk <= -1) st = 'dropping'
+    b.trend = [dt, st].filter(Boolean).join(' · ') || 'steady'
+  }
+  if (rows[0]) rows[0].trend = ''
   return rows
 }
 
@@ -194,23 +202,24 @@ function arrowCell(twdMean, kn, trailing, fill, dark) {
   return { text: runs, options: { ...(fill ? { fill: { color: fill } } : {}), valign: 'middle', align: 'left' } }
 }
 const oCell = (b) => { if (!b) return txtCell('—'); const bf = beaufort(b.twsMid); return arrowCell(b.twdMean, b.twsMid, `${b.tws[0]}-${b.tws[1]}kn`, bf.hex, bf.dark) }
+const arrowOnly = (twd, kn) => ({ text: arrowGlyph(twd), options: { fontFace: FONT, fontSize: arrowSize(kn), color: INK, align: 'center', valign: 'middle', bold: true } })
 
 function buildDeck(P, d) {
   const pptx = new P(); pptx.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 }); pptx.layout = 'WIDE'
   let s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
   s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.5, y: 1.6, w: 5.2, h: 5.0, fontFace: FONT, fontSize: 17, color: INK })
   if (d.windfieldImg) { s.addImage({ data: d.windfieldImg.data, ...fit(d.windfieldImg.w, d.windfieldImg.h, 6.1, 1.6, 6.8, 4.7) }); s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 6.1, y: 6.4, w: 6.8, h: 0.3, align: 'center', fontFace: FONT, fontSize: 11, color: GREY }) } else ph(s, 6.1, 1.6, 6.8, 4.7, 'Wind field — 12:00 local\n(coastline capture unavailable)')
-  s = pptx.addSlide(); addTitle(s, `Outlook — ${d.outlookModelLabel}`)
+  s = pptx.addSlide(); addTitle(s, 'Outlook')
   const oHead = [hdrCell('Time'), hdrCell('Morning (10:00)'), hdrCell('Midday (12:00)'), hdrCell('Afternoon (15:00)')]
   const oRows = d.outlookRows.map((r) => [txtCell(r.day, { bold: true, fill: { color: LIGHTF } }), oCell(r.mor), oCell(r.mid), oCell(r.aft)])
   s.addTable([oHead, ...oRows], { x: 0.5, y: 1.4, w: 12.33, colW: [1.8, 3.51, 3.51, 3.51], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
   if (d.longRange) s.addImage({ data: d.longRange, ...fit(1400, 520, 0.5, 3.5, 12.33, 3.3) }); else ph(s, 0.5, 3.5, 12.33, 3.3, '4-day TWS & TWD (±2σ, racing window)')
   s.addText('AM/Mid/PM = 10:00/12:00/15:00 local · TWD (cardinal) & TWS ranges = weighted models (all day 1-2, ARPEGE+ECMWF beyond)', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'Details for today')
-  s.addText(d.dailyBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.5, y: 1.6, w: 4.7, h: 5.2, fontFace: FONT, fontSize: 17, color: INK })
-  const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell(`TWS ${d.venue}`), hdrCell('TWS min&max')]
-  const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), arrowCell(r.twdMean, r.kn, r.twd), spdCell(r.tws), spdCell(`${r.lo}-${r.hi}kn`)])
-  s.addTable([dHead, ...dRows], { x: 5.5, y: 1.5, w: 7.33, colW: [1.3, 2.3, 1.9, 1.83], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+  s.addText(d.dailyBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true } })), { x: 0.5, y: 1.05, w: 12.3, h: 0.7, fontFace: FONT, fontSize: 12, color: INK })
+  const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('TWD range'), hdrCell(`TWS ${d.venue}`), hdrCell('TWS min&max'), hdrCell('Trend'), hdrCell('Notes')]
+  const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), arrowOnly(r.twdMean, r.kn), txtCell(r.twd), spdCell(r.tws), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend), txtCell('')])
+  s.addTable([dHead, ...dRows], { x: 0.5, y: 1.85, w: 12.33, colW: [1.0, 0.9, 1.5, 1.4, 1.7, 2.3, 3.53], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'Model comparison — wind speed & TWD (±2σ)')
   if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.4, 1.5, 6.3, 4.9) }); else ph(s, 0.4, 1.5, 6.3, 4.9, 'Wind-speed comparison')
