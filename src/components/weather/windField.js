@@ -452,7 +452,7 @@ export function hpblRamp(metres) {
 // Multi-resolution contour levels: fine (25 m) through the shallow 0-200 m band,
 // 100 m from 200-500 m, then 500 m up to the 1500 m cap. Only levels inside the
 // current frame's data range are drawn, so the displayed set is effectively dynamic.
-export const HPBL_CONTOUR_LEVELS = [25, 50, 75, 100, 125, 150, 175, 200, 300, 400, 500, 1000, 1500]
+export const HPBL_CONTOUR_LEVELS = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 125, 150, 175, 200, 300, 400, 500, 1000, 1500]
 
 // Marching-squares iso-segments for one level. Returns [[[gx,gy],[gx,gy]]...] in
 // fractional GRID coords (gx = col W->E, gy = row N->S).
@@ -513,7 +513,7 @@ export function buildHpblContourSvg(frame, header, levels = HPBL_CONTOUR_LEVELS)
     for (const s of segs) d += `M${(s[0][0] + 0.5).toFixed(2)} ${(s[0][1] + 0.5).toFixed(2)}L${(s[1][0] + 0.5).toFixed(2)} ${(s[1][1] + 0.5).toFixed(2)}`
     const path = document.createElementNS(NS, 'path')
     path.setAttribute('d', d); path.setAttribute('fill', 'none'); path.setAttribute('stroke', col)
-    path.setAttribute('stroke-width', String(lev % 500 === 0 ? 0.13 : (lev <= 200 ? 0.06 : 0.09)))
+    path.setAttribute('stroke-width', String(lev % 500 === 0 ? 0.065 : (lev <= 200 ? 0.03 : 0.045)))
     path.setAttribute('stroke-opacity', '0.92'); path.setAttribute('stroke-linejoin', 'round')
     svg.appendChild(path)
     const step = Math.max(1, Math.floor(segs.length / 3)); let placed = 0
@@ -522,9 +522,9 @@ export function buildHpblContourSvg(frame, header, levels = HPBL_CONTOUR_LEVELS)
       const lx = (s[0][0] + s[1][0]) / 2 + 0.5; const ly = (s[0][1] + s[1][1]) / 2 + 0.5
       const t = document.createElementNS(NS, 'text')
       t.setAttribute('x', lx.toFixed(2)); t.setAttribute('y', ly.toFixed(2))
-      t.setAttribute('font-size', '0.85'); t.setAttribute('font-weight', '700')
+      t.setAttribute('font-size', '0.43'); t.setAttribute('font-weight', '700')
       t.setAttribute('fill', col); t.setAttribute('stroke', 'rgba(255,255,255,0.78)')
-      t.setAttribute('stroke-width', '0.05'); t.setAttribute('paint-order', 'stroke')
+      t.setAttribute('stroke-width', '0.025'); t.setAttribute('paint-order', 'stroke')
       t.setAttribute('text-anchor', 'middle'); t.setAttribute('dominant-baseline', 'central')
       t.textContent = String(lev)
       svg.appendChild(t); placed++

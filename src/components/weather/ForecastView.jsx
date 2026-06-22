@@ -621,7 +621,7 @@ export default function ForecastView({
         })()}
         {field && (field.isHpbl ? (
           <div style={{ marginTop: 6 }}>
-            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Boundary layer (m) — shallow = clean breeze · contours 25 / 100 / 500 m</div>
+            <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Boundary layer (m) — shallow = clean breeze · contours 10 / 100 / 500 m</div>
             <div style={{ height: 12, borderRadius: 4, border: '1px solid #1E3A5A', background: 'linear-gradient(to right, rgb(38,70,120) 0%, rgb(40,130,185) 6.7%, rgb(45,178,172) 13.3%, rgb(95,192,96) 23.3%, rgb(222,200,70) 33.3%, rgb(235,130,45) 66.7%, rgb(150,52,42) 100%)' }} />
             <div style={{ position: 'relative', height: 10, fontSize: 8, color: '#64748B', marginTop: 2 }}>
               {[0, 200, 500, 1000, 1500].map((v) => (
