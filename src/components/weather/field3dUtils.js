@@ -71,7 +71,7 @@ export function drapeImageURL(field, frameIdx) {
   if (k === 'hpbl') return scalarImageURL(fr, field.header, 8, hpblRamp)
   return speedImageURL(fr, field.header, 8, k === 'current' ? currentRamp : undefined)
 }
-export const drapeOpacity = (field) => (field?.isHpbl ? 0.62 : field?.isCurrent ? 0.55 : 0.4)
+export const drapeOpacity = (field) => (field?.isHpbl ? 0.5 : field?.isCurrent ? 0.45 : 0.28)
 // image-source corner coordinates (TL, TR, BR, BL) from the field bounding box
 export const boxCoords = (box) => [[box.west, box.north], [box.east, box.north], [box.east, box.south], [box.west, box.south]]
 

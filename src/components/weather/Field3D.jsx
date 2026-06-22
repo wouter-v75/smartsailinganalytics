@@ -14,7 +14,7 @@ import {
   MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, DEFAULT_LEVELS, SAT_TILES, DEM_TILES,
   addArrowIcons, fieldToGeoJSON, meanFromDir, ringGeoJSON,
   fieldKind, drapeImageURL, drapeOpacity, boxCoords,
-  buildProfileVectors, beaufortRGBA, arrowMesh,
+  buildProfileVectors, beaufortRGBA,
 } from './field3dUtils'
 
 export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 640, exaggeration = 3 }) {
@@ -30,16 +30,32 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
   const hasVolume = !!field?.volume?.cellAt && kind === 'wind'
   const [levels, setLevels] = useState(() => DEFAULT_LEVELS.filter((h) => heights.includes(h)))
 
-  const meshLayer = () => {
+  // Arrows as PathLayer polylines (shaft + 2 head segments) — positions computed
+  // directly in [lng,lat,altitude], so no mesh/orientation ambiguity. Length ∝
+  // speed, colour ∝ Beaufort, drawn at each selected altitude (× exaggeration).
+  const D2R = Math.PI / 180
+  const windLayer = () => {
     if (!hasVolume || !window.deck || !levels.length) return []
     const data = buildProfileVectors(field.volume, fi, levels)
-    return [new window.deck.SimpleMeshLayer({
-      id: 'wind3d', data, mesh: arrowMesh(),
-      getPosition: (d) => [d.lon, d.lat, d.altM * exaggeration],   // altitude scaled to match exaggerated terrain
-      getOrientation: (d) => [0, 0, 90 - d.toward],                // roll about up-axis; flip sign here if arrows point wrong
-      getColor: (d) => beaufortRGBA(d.kn),
-      getScale: (d) => { const s = Math.max(0.5, Math.min(2.3, d.kn / 9)); return [s, s, s] },
-      sizeScale: 550, _instanced: true, pickable: false,
+    const lat0 = p1lat ?? field.header.la1
+    const cosLat = Math.cos(lat0 * D2R) || 1
+    const pathOf = (d) => {
+      const z = d.altM * exaggeration
+      const L = 0.014 * Math.max(0.45, Math.min(2.1, d.kn / 11))      // shaft length (deg)
+      const tR = d.toward * D2R; const e = Math.sin(tR) / cosLat; const n = Math.cos(tR)
+      const tipLon = d.lon + L * e; const tipLat = d.lat + L * n
+      const hL = 0.42 * L
+      const al = (d.toward + 180 - 26) * D2R; const ar = (d.toward + 180 + 26) * D2R
+      return [
+        [d.lon, d.lat, z], [tipLon, tipLat, z],
+        [tipLon + hL * Math.sin(al) / cosLat, tipLat + hL * Math.cos(al), z],
+        [tipLon, tipLat, z],
+        [tipLon + hL * Math.sin(ar) / cosLat, tipLat + hL * Math.cos(ar), z],
+      ]
+    }
+    return [new window.deck.PathLayer({
+      id: 'wind3d', data, getPath: pathOf, getColor: (d) => beaufortRGBA(d.kn),
+      getWidth: 2.4, widthUnits: 'pixels', widthMinPixels: 1.4, capRounded: true, jointRounded: true, pickable: false,
     })]
   }
 
@@ -75,9 +91,11 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
         }
         if (p1lat != null && p1lon != null) { map.addSource('ring', { type: 'geojson', data: ringGeoJSON(p1lat, p1lon, 5) }); map.addLayer({ id: 'ring', type: 'line', source: 'ring', paint: { 'line-color': '#ef4444', 'line-width': 2, 'line-dasharray': [2, 1.5] } }) }
         // multi-level deck.gl arrows
-        if (hasVolume && window.deck) {
-          const overlay = new window.deck.MapboxOverlay({ interleaved: true, layers: meshLayer() })
+        if (hasVolume && window.deck?.MapboxOverlay) {
+          const overlay = new window.deck.MapboxOverlay({ interleaved: false, layers: windLayer() })
           map.addControl(overlay); overlayRef.current = overlay
+        } else if (hasVolume) {
+          setErr('deck.gl overlay unavailable')
         }
         loadedRef.current = true
       } catch (e) { setErr(e?.message || 'layer build failed') }
@@ -91,7 +109,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
     try {
       const url = drapeImageURL(field, fi); const ds = map.getSource('drape'); if (ds && url) ds.updateImage({ url, coordinates: boxCoords(field.box) })
       const ws = map.getSource('wind'); if (ws) ws.setData(fieldToGeoJSON(field, fi, { minKn: kind === 'current' ? 0.2 : 0.6 }))
-      if (overlayRef.current) overlayRef.current.setProps({ layers: meshLayer() })
+      if (overlayRef.current) overlayRef.current.setProps({ layers: windLayer() })
     } catch { /* */ }
   }, [fi, levels, exaggeration, field]) // eslint-disable-line react-hooks/exhaustive-deps
 
