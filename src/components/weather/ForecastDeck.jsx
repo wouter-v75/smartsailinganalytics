@@ -14,9 +14,10 @@
 // ----------------------------------------------------------------------------
 import React, { useMemo, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
-import { MODELS, interpolateSpeedAtHeight, hasValidSpeed } from './openMeteo'
+import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, SSARACE_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS } from './openMeteo'
 import { matchVenue, specFor, mosSeries } from './mos'
 import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField } from './windField'
+import { getWeatherSession } from './weatherSession'
 
 const PPTX_JS = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'
 const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotly.min.js'
@@ -185,6 +186,56 @@ async function captureLongRange(globals, mastH) {
   try { window.Plotly.purge(div) } catch { /* */ } div.remove(); return png
 }
 
+// boundary-layer-height development (point 1): SSA hpbl if present, else GFS; today 08-20
+async function captureHpbl(point1, tz) {
+  if (!window.Plotly || !point1) return null
+  let h = null; let label = ''
+  for (const k of ['ICONRACE', 'ICONRACE_1KM']) { const hh = point1.surfaceByModel?.[k]?.hourly; if (hh?.boundary_layer_height?.some((v) => v != null)) { h = hh; label = MODELS[k]?.label || k; break } }
+  if (!h) { const hh = point1.gfs?.hourly; if (hh?.boundary_layer_height?.some((v) => v != null)) { h = hh; label = 'GFS' } }
+  if (!h) return null
+  const lt = localTimes(h, tz); const today = lt[0]?.slice(0, 10)
+  const xs = lt.map((t) => new Date(`${t.slice(0, 16)}`)); const ys = h.boundary_layer_height
+  const div = offDiv()
+  const xr = today ? [new Date(`${today}T08:00`), new Date(`${today}T20:00`)] : undefined
+  const shapes = today ? [{ type: 'rect', xref: 'x', yref: 'y domain', x0: new Date(`${today}T${pad2(RACE0)}:00`), x1: new Date(`${today}T${pad2(RACE1)}:00`), y0: 0, y1: 1, fillcolor: RACE_FILL, line: { width: 0 }, layer: 'below' }] : []
+  const data = [{ x: xs, y: ys, type: 'scatter', mode: 'lines+markers', name: `hpbl (${label})`, line: { color: '1F4E79', width: 2.5 }, marker: { size: 4 }, connectgaps: true }]
+  const layout = { title: { text: `Boundary-layer height — ${label}`, font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.18 }, xaxis: { title: 'Time', gridcolor: '#e5e7eb', ...(xr ? { range: xr, autorange: false } : {}) }, yaxis: { title: 'height (m)', rangemode: 'tozero', gridcolor: '#e5e7eb' }, shapes }
+  let png = null; try { png = await plotPNG(div, data, layout, 1000, 560) } catch { png = null }
+  try { window.Plotly.purge(div) } catch { /* */ } div.remove(); return png
+}
+
+// low-level vertical sounding @ 13:00 local (T/Td vs pressure + wind), zoomed like the SSA sounding
+function dewpoint(tc, rh) { const a = 17.625; const b = 243.04; const r = Math.max(1, Math.min(100, rh)); const al = Math.log(r / 100) + (a * tc) / (b + tc); return (b * al) / (a - al) }
+function soundingArr(h, levels, idx) {
+  const arr = []
+  for (const p of levels) { const t = h[`temperature_${p}hPa`]?.[idx]; if (t == null) continue; const rh = h[`relative_humidity_${p}hPa`]?.[idx]; const ws = h[`wind_speed_${p}hPa`]?.[idx]; const wd = h[`wind_direction_${p}hPa`]?.[idx]; arr.push({ press: p, temp: t, dwpt: rh != null ? Math.min(dewpoint(t, rh), t) : t, wspd: ws != null ? ws * 0.539957 : null, wdir: wd }) }
+  return arr
+}
+async function captureSounding(p1lat, p1lon, windData1, tz) {
+  if (!window.Plotly) return null
+  const sp = getWeatherSession()?.soundingPoint; const isP1 = !sp
+  const lat = sp?.lat ?? p1lat; const lon = sp?.lon ?? p1lon
+  let h = null; let levels = null; let label = null; let ptop = 650
+  try { const ss = await fetchIconRaceSounding({ latitude: lat, longitude: lon }); if (ss?.time) { h = ss; levels = SSARACE_SOUNDING_LEVELS; label = 'SSA-Race 2 km'; ptop = 650 } } catch { /* */ }
+  if (!h && isP1) { const e = windData1?.surfaceByModel?.ECMWF?.hourly; if (e && (e.temperature_1000hPa || e.temperature_850hPa)) { h = e; levels = ECMWF_SOUNDING_LEVELS; label = 'ECMWF'; ptop = 500 } }
+  if (!h) return null
+  const lt = localTimes(h, tz); const day0 = lt[0]?.slice(0, 10)
+  let idx = lt.findIndex((t) => t.slice(0, 10) === day0 && t.slice(11, 13) === '13')
+  if (idx < 0) idx = lt.findIndex((t) => t.slice(11, 13) === '13'); if (idx < 0) idx = Math.floor(lt.length / 2)
+  const arr = soundingArr(h, levels, idx).filter((o) => o.press >= ptop).sort((a, b) => b.press - a.press)
+  if (arr.length < 3) return null
+  const div = offDiv()
+  const ticks = [1000, 950, 900, 850, 800, 750, 700, 650, 600, 550, 500].filter((p) => p >= ptop && p <= 1050)
+  const ann = arr.map((o) => ({ xref: 'paper', x: 1.01, y: o.press, yref: 'y', text: `${arrowGlyph(o.wdir)} ${o.wspd != null ? Math.round(o.wspd) : ''}`, showarrow: false, font: { size: 10, color: '#334155' }, xanchor: 'left' }))
+  const data = [
+    { x: arr.map((o) => o.temp), y: arr.map((o) => o.press), type: 'scatter', mode: 'lines+markers', name: 'Temp', line: { color: '#d62728', width: 2.5 }, marker: { size: 5 } },
+    { x: arr.map((o) => o.dwpt), y: arr.map((o) => o.press), type: 'scatter', mode: 'lines+markers', name: 'Dewpt', line: { color: '#2ca02c', width: 2.5 }, marker: { size: 5 } },
+  ]
+  const layout = { title: { text: `Sounding 13:00 — ${label} (${isP1 ? 'point 1' : 'sounding pt'})`, font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.1 }, margin: { t: 40, b: 44, l: 54, r: 70 }, xaxis: { title: '°C', gridcolor: '#e5e7eb', zeroline: true, zerolinecolor: '#cbd5e1' }, yaxis: { title: 'hPa', type: 'log', range: [Math.log10(1050), Math.log10(ptop)], gridcolor: '#e5e7eb', tickvals: ticks, ticktext: ticks.map(String) }, annotations: ann }
+  let png = null; try { png = await plotPNG(div, data, layout, 820, 900) } catch { png = null }
+  try { window.Plotly.purge(div) } catch { /* */ } div.remove(); return png
+}
+
 // ── deck builder ─────────────────────────────────────────────────────────────
 const NAVY = '1F4E79'; const INK = '202020'; const GREY = '6B7280'; const HEADER = 'D6DCE5'; const LIGHTF = 'F2F4F7'; const FONT = 'Helvetica Neue'
 function spdCell(text) { const nums = (text.match(/\d+/g) || []).map(Number).filter((x) => x <= 60); if (!nums.length) return { text, options: { color: INK, fontFace: FONT, fontSize: 12, valign: 'middle', align: 'left' } }; const bf = beaufort(nums.reduce((a, b) => a + b, 0) / nums.length); return { text, options: { fill: { color: bf.hex }, color: bf.dark ? 'FFFFFF' : '0F1723', fontFace: FONT, fontSize: 12, valign: 'middle', align: 'left' } } }
@@ -221,6 +272,11 @@ function buildDeck(P, d) {
   const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), arrowOnly(r.twdMean, r.kn), txtCell(r.twd), spdCell(r.tws), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend), txtCell('')])
   s.addTable([dHead, ...dRows], { x: 0.5, y: 1.85, w: 12.33, colW: [1.0, 0.9, 1.5, 1.4, 1.7, 2.3, 3.53], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
+  // Stability — boundary-layer height + 13:00 sounding
+  s = pptx.addSlide(); addTitle(s, 'Stability')
+  if (d.hpblImg) s.addImage({ data: d.hpblImg, ...fit(1000, 560, 0.4, 1.7, 6.4, 4.6) }); else ph(s, 0.4, 1.7, 6.4, 4.6, 'Boundary-layer height\n(no SSA / GFS hpbl data)')
+  if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.0, 1.3, 5.9, 5.5) }); else ph(s, 7.0, 1.3, 5.9, 5.5, 'Vertical sounding @ 13:00\n(no sounding data here)')
+  s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'Model comparison — wind speed & TWD (±2σ)')
   if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.4, 1.5, 6.3, 4.9) }); else ph(s, 0.4, 1.5, 6.3, 4.9, 'Wind-speed comparison')
   if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, 6.9, 1.5, 6.0, 4.9) }); else ph(s, 6.9, 1.5, 6.0, 4.9, 'Wind-direction (TWD) comparison')
@@ -255,9 +311,11 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       const dates = [...new Set(centralLt.map((t) => t.slice(0, 10)))].slice(0, OUTLOOK_DAYS)
       const outlookRows = buildOutlook(dates, (di) => (di < 2 ? [...todayModels, ...globals] : globals), mastHeight)
 
-      let cmp = [null, null]; let longRange = null; let windfieldImg = null
+      let cmp = [null, null]; let longRange = null; let windfieldImg = null; let hpblImg = null; let soundingImg = null
       try { cmp = await captureComparison(todayModels, mastHeight) } catch { /* */ }
       try { longRange = await captureLongRange(globals, mastHeight) } catch { /* */ }
+      try { hpblImg = await captureHpbl(point1, tz) } catch { /* */ }
+      try { soundingImg = await captureSounding(p1lat, p1lon, point1, tz) } catch { /* */ }
       try {
         const field = shortSel.startsWith('ICONRACE')
           ? await fetchIconRaceField({ lat: p1lat, lon: p1lon, height: mastHeight, timezone: tz, modelKey: shortSel })
@@ -270,7 +328,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         venue: venueName,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
-        mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg,
+        mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg,
         generalBullets: ['Synoptic setup — edit', 'Sea-breeze timing & strength — edit', 'Local effects / hazards — edit'],
         dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze build through the day — edit', 'Morning: light/variable — edit', 'Local effects — edit'],
       })

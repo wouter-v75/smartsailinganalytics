@@ -25,6 +25,7 @@ import {
   fetchSoundingPoint, fetchIconRaceSounding, decimalToDMS,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
+import { patchWeatherSession } from './weatherSession'
 
 const D3_JS = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js'
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -509,6 +510,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
       const tz = resolvedTz || 'UTC'
       const pt = await fetchSoundingPoint({ latitude: lat, longitude: lon, timezone: tz })
       setExtraPoint(pt)
+      patchWeatherSession({ soundingPoint: { lat, lon } })   // share with the forecast deck's Stability slide
       setLocKey('S')
       setNote(`Selected: ${decimalToDMS(lat, false)}, ${decimalToDMS(lon, true)} — shown as "Selected sounding position".`)
     } catch (err) {

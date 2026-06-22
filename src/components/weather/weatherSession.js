@@ -17,6 +17,7 @@ const store = {
   resolvedTz: 'UTC',
   mastHeight: 30,
   forecastPersist: {},   // { locations, fieldModel, fieldHeight, fieldHourIdx, field }
+  soundingPoint: null,   // { lat, lon } — the Sounding tab's picked point, for the deck's Stability slide
 }
 
 export function getWeatherSession() {
