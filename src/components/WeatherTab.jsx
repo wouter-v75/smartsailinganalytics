@@ -160,6 +160,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null }) {
             canMos={canMos}
             canIconRace={canIconRace}
             canHeights={canHeights}
+            isAdmin={isAdmin}
           />
         )}
         {sub === 'compare' && (

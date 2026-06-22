@@ -13,6 +13,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import PlotlyChart from './PlotlyChart'
+import ForecastDeck from './ForecastDeck'
 import {
   MODELS, COMPARE_ORDER,
   fetchAllForPoint, pickDefaultActiveModel, hasValidSpeed,
@@ -106,6 +107,7 @@ export default function ForecastView({
   canMos = false,
   canIconRace = false,
   canHeights = false,
+  isAdmin = false,
 }) {
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
   const mapDivRef = useRef(null)
@@ -587,6 +589,13 @@ export default function ForecastView({
 
   return (
     <div style={{ padding: '16px 20px 40px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Admin-only forecast-deck generator at the very top of the Forecast tab. */}
+      {isAdmin && (
+        <ForecastDeck
+          p1lat={p1lat} p1lon={p1lon} windData={windData}
+          modelAvailable={modelAvailable} mastHeight={mastHeight} resolvedTz={tzResolved}
+        />
+      )}
       {/* Map (half width in landscape) + wind-field controls beside it */}
       <Card>
        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
