@@ -3,13 +3,18 @@
 // Shared helpers for the MapLibre 3D wind-field views (inline Field3D viewer +
 // the deck-capture Venue3D tool). Pure functions — no React, no fetch.
 // ----------------------------------------------------------------------------
-import { BEAUFORT_BANDS, PALETTE_MAX_KT, speedImageURL, scalarImageURL, currentRamp, hpblRamp } from './windField'
+import { BEAUFORT_BANDS, PALETTE_MAX_KT, speedImageURL, scalarImageURL, currentRamp, hpblRamp, hpblContourSegments } from './windField'
+
+// TWS contour levels (kn) for the 3D shading
+export const TWS_CONTOUR_KN = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 30, 35]
 
 export const MAPLIBRE_JS = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js'
 export const MAPLIBRE_CSS = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css'
 export const DECK_JS = 'https://unpkg.com/deck.gl@9.0.36/dist.min.js'   // exposes window.deck (incl. MapboxOverlay, SimpleMeshLayer)
-// default vertical levels shown in the 3D multi-level view (metres ASL)
-export const DEFAULT_LEVELS = [10, 50, 100, 300, 600]
+// default vertical levels shown in the 3D multi-level view (metres ASL).
+// Intersected with whatever the grid.json publishes; 300/500/900 appear once the
+// box re-runs with the extended _hl stream.
+export const DEFAULT_LEVELS = [10, 50, 100, 300, 900]
 export const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 export const DEM_TILES = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'
 export const KN = 1.94384
@@ -201,6 +206,31 @@ export function buildProfileVectors(volume, frameIdx, levels, o = {}) {
     }
   }
   return out
+}
+
+// TWS iso-speed contour lines (kn) of the selected-height frame, as lng/lat paths
+// + label points, for the 3D shading. Reuses the marching-squares from windField.
+export function buildContoursKn(field, frameIdx, levels = TWS_CONTOUR_KN) {
+  const fr = field?.frames?.[frameIdx]; if (!fr?.u) return { paths: [], labels: [] }
+  const { nx, ny, lo1, la1, dx, dy } = field.header
+  const scalar = new Float32Array(nx * ny)
+  let mn = Infinity; let mx = -Infinity
+  for (let p = 0; p < nx * ny; p++) { const s = Math.hypot(fr.u[p] || 0, fr.v[p] || 0) * KN; scalar[p] = s; if (s < mn) mn = s; if (s > mx) mx = s }
+  const toLL = (x, y) => [lo1 + x * dx, la1 - y * dy, 0]
+  const paths = []; const labels = []
+  for (const lev of levels) {
+    if (lev < mn || lev > mx) continue
+    const segs = hpblContourSegments(scalar, field.header, lev)
+    if (!segs.length) continue
+    const major = lev % 10 === 0
+    for (const s of segs) paths.push({ path: [toLL(s[0][0], s[0][1]), toLL(s[1][0], s[1][1])], major })
+    const step = Math.max(1, Math.floor(segs.length / 3)); let placed = 0
+    for (let i = 0; i < segs.length && placed < 2; i += step) {
+      const s = segs[i]
+      labels.push({ position: toLL((s[0][0] + s[1][0]) / 2, (s[0][1] + s[1][1]) / 2), text: String(lev) }); placed++
+    }
+  }
+  return { paths, labels }
 }
 
 export function ringGeoJSON(lat, lon, nm) {

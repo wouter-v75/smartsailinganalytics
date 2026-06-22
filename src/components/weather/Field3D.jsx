@@ -14,7 +14,7 @@ import {
   MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, DEFAULT_LEVELS, SAT_TILES, DEM_TILES,
   addArrowIcons, fieldToGeoJSON, meanFromDir, ringGeoJSON,
   fieldKind, drapeImageURL, drapeOpacity, boxCoords,
-  buildProfileVectors, beaufortRGBA,
+  buildProfileVectors, beaufortRGBA, buildContoursKn, TWS_CONTOUR_KN,
 } from './field3dUtils'
 
 export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 640, exaggeration = 3 }) {
@@ -59,6 +59,23 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
     })]
   }
 
+  // Full deck overlay for the multi-level view: flat BitmapLayer drape (covers the
+  // whole box, immune to terrain-draping clipping) + TWS contour lines & labels
+  // (selected/mast height) + the multi-level arrows on top.
+  const deckLayers = () => {
+    const D = window.deck; if (!D) return []
+    const out = []
+    const url = drapeImageURL(field, fi)
+    if (url) out.push(new D.BitmapLayer({ id: 'drape-bmp', image: url, bounds: [field.box.west, field.box.south, field.box.east, field.box.north], opacity: drapeOpacity(field) }))
+    if (kind !== 'hpbl') {
+      const { paths, labels } = buildContoursKn(field, fi, TWS_CONTOUR_KN)
+      if (paths.length) out.push(new D.PathLayer({ id: 'tws-contours', data: paths, getPath: (d) => d.path, getColor: [15, 23, 42, 205], getWidth: (d) => (d.major ? 2.2 : 1.2), widthUnits: 'pixels', widthMinPixels: 1, capRounded: true, pickable: false }))
+      if (labels.length) out.push(new D.TextLayer({ id: 'tws-labels', data: labels, getPosition: (d) => d.position, getText: (d) => d.text, getSize: 12, getColor: [12, 18, 28], getBackgroundColor: [255, 255, 255, 205], background: true, backgroundPadding: [3, 1], fontWeight: 700, getTextAnchor: 'middle', getAlignmentBaseline: 'center', pickable: false }))
+    }
+    if (hasVolume) out.push(...windLayer())
+    return out
+  }
+
   // build the map once
   useEffect(() => {
     if (!ready || !divRef.current || !field?.frames?.length || mapRef.current) return
@@ -81,8 +98,12 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
       try {
         map.addSource('dem', { type: 'raster-dem', tiles: [DEM_TILES], encoding: 'terrarium', tileSize: 256, maxzoom: 14 })
         map.setTerrain({ source: 'dem', exaggeration })
-        const url = drapeImageURL(field, fi)
-        if (url) { map.addSource('drape', { type: 'image', url, coordinates: boxCoords(field.box) }); map.addLayer({ id: 'drape', type: 'raster', source: 'drape', paint: { 'raster-opacity': drapeOpacity(field), 'raster-resampling': 'linear' } }) }
+        // MapLibre terrain-draped image ONLY for non-volume fields; the multi-level
+        // view drapes via a flat deck BitmapLayer (full coverage, see deckLayers).
+        if (!hasVolume) {
+          const url = drapeImageURL(field, fi)
+          if (url) { map.addSource('drape', { type: 'image', url, coordinates: boxCoords(field.box) }); map.addLayer({ id: 'drape', type: 'raster', source: 'drape', paint: { 'raster-opacity': drapeOpacity(field), 'raster-resampling': 'linear' } }) }
+        }
         // flat single-level arrows ONLY when there's no vertical stack
         if (kind !== 'hpbl' && !hasVolume) {
           addArrowIcons(map)
@@ -92,7 +113,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
         if (p1lat != null && p1lon != null) { map.addSource('ring', { type: 'geojson', data: ringGeoJSON(p1lat, p1lon, 5) }); map.addLayer({ id: 'ring', type: 'line', source: 'ring', paint: { 'line-color': '#ef4444', 'line-width': 2, 'line-dasharray': [2, 1.5] } }) }
         // multi-level deck.gl arrows
         if (hasVolume && window.deck?.MapboxOverlay) {
-          const overlay = new window.deck.MapboxOverlay({ interleaved: false, layers: windLayer() })
+          const overlay = new window.deck.MapboxOverlay({ interleaved: false, layers: deckLayers() })
           map.addControl(overlay); overlayRef.current = overlay
         } else if (hasVolume) {
           setErr('deck.gl overlay unavailable')
@@ -109,7 +130,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
     try {
       const url = drapeImageURL(field, fi); const ds = map.getSource('drape'); if (ds && url) ds.updateImage({ url, coordinates: boxCoords(field.box) })
       const ws = map.getSource('wind'); if (ws) ws.setData(fieldToGeoJSON(field, fi, { minKn: kind === 'current' ? 0.2 : 0.6 }))
-      if (overlayRef.current) overlayRef.current.setProps({ layers: windLayer() })
+      if (overlayRef.current) overlayRef.current.setProps({ layers: deckLayers() })
     } catch { /* */ }
   }, [fi, levels, exaggeration, field]) // eslint-disable-line react-hooks/exhaustive-deps
 
