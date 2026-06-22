@@ -155,7 +155,7 @@ function interpAtHeight(hourly, idx, h, heights) {
 // Fetch + build the field. Returns { times:[ISO...], frames:[{u:[],v:[]}...],
 // header, maxSpeed }. Speeds in m/s. `height` may be any value (mast height is
 // interpolated from the model's native levels).
-export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm = 20, nx, ny }) {
+export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm = 30, nx, ny }) {
   const m = MODELS[modelKey]
   if (!m || !m.endpoint) throw new Error(`model ${modelKey} has no Open-Meteo endpoint`)
   // Per-model sample resolution: high-res models (m.fieldGrid=16) sample a 16x16
@@ -211,7 +211,7 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
 export async function fetchIconRaceField({ lat, lon, height, timezone, modelKey = 'ICONRACE' }) {
   const got = await iconRaceGridForPoint(lat, lon, modelKey)
   if (!got) throw new Error('no Icon-Race coverage at point 1')
-  const { grid, venue } = got
+  const { grid } = got
   const heights = (grid.heights || []).map(Number).sort((a, b) => a - b)
   const round = (x) => Math.round(x * 1000) / 1000
   const lons = [...new Set(grid.cells.map((c) => round(c.lon)))].sort((a, b) => a - b)   // W->E
@@ -247,7 +247,9 @@ export async function fetchIconRaceField({ lat, lon, height, timezone, modelKey 
   }
   const labels = times.map((tt) => localLabel(tt, timezone, true))
   const stamps = times.map((tt) => localStamp(tt, timezone, true))
-  const box = { north: venue.clat + venue.half, south: venue.clat - venue.half, west: venue.clon - venue.half, east: venue.clon + venue.half }
+  // box = the ACTUAL published cell extent (centres ± half a cell), so the overlay
+  // always aligns with the grid regardless of the venue.half / grid-extent match.
+  const box = { north: lats[0] + header.dy / 2, south: lats[ny - 1] - header.dy / 2, west: lons[0] - header.dx / 2, east: lons[nx - 1] + header.dx / 2 }
   return { times, labels, stamps, frames, header, maxSpeed, box }
 }
 
@@ -570,7 +572,7 @@ export function scalarImageURL(frame, header, scale = 8, ramp = hpblRamp) {
 export async function fetchIconRaceHpblField({ lat, lon, timezone, modelKey = 'ICONRACE' }) {
   const got = await iconRaceGridForPoint(lat, lon, modelKey)
   if (!got) throw new Error('no SSA-Race coverage at point 1')
-  const { grid, venue } = got
+  const { grid } = got
   if (!grid.hasHpbl || !grid.cells.some((c) => Array.isArray(c.hpbl))) {
     throw new Error('this SSA-Race cycle has no boundary-layer data yet')
   }
@@ -605,7 +607,9 @@ export async function fetchIconRaceHpblField({ lat, lon, timezone, modelKey = 'I
   }
   const labels = times.map((tt) => localLabel(tt, timezone, true))
   const stamps = times.map((tt) => localStamp(tt, timezone, true))
-  const box = { north: venue.clat + venue.half, south: venue.clat - venue.half, west: venue.clon - venue.half, east: venue.clon + venue.half }
+  // box = the ACTUAL published cell extent (centres ± half a cell), so the overlay
+  // always aligns with the grid regardless of the venue.half / grid-extent match.
+  const box = { north: lats[0] + header.dy / 2, south: lats[ny - 1] - header.dy / 2, west: lons[0] - header.dx / 2, east: lons[nx - 1] + header.dx / 2 }
   return { times, labels, stamps, frames, header, scalarMax, box, isHpbl: true }
 }
 

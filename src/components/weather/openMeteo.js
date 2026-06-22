@@ -97,13 +97,16 @@ export const MODELS = {
     bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
     // Venue boxes (must match each domain's venues.csv: half = half-width in deg).
     // Grid lives at  <bunnyBase>/<domain>/<name>/grid.json .
+    // half 0.25° ≈ a 30 nm (N-S) box — must match each domain's venues.csv. The 2 km
+    // parent domains are large, so 0.25° sits well inside them, clear of the boundary
+    // relaxation zone.
     venues: [
-      { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.15 },
-      { name: 'st_tropez', domain: 'riviera_2km', clon: 6.678, clat: 43.275, half: 0.23 }, // ~20 nm race box (43 16.5N 006 40.7E)
+      { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.25 },
+      { name: 'st_tropez', domain: 'riviera_2km', clon: 6.678, clat: 43.275, half: 0.25 },
       // La Spezia (early training, 22-26 June) — points grey out until its grid publishes:
-      { name: 'la_spezia', domain: 'la_spezia_2km', clon: 9.85, clat: 44.05, half: 0.18 },
+      { name: 'la_spezia', domain: 'la_spezia_2km', clon: 9.85, clat: 44.05, half: 0.25 },
       // Porto Cervo (Maxi Worlds, 1-12 Sept) — points grey out until its grid publishes:
-      { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.15 },
+      { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.25 },
     ],
     heights: [10, 30, 50, 100, 180],
     tableCols: [10, 30, 50, 100, 180],
@@ -121,8 +124,11 @@ export const MODELS = {
   ICONRACE_1KM: {
     key: 'ICONRACE_1KM', label: 'SSA-Race 1 km', subtitle: 'self-hosted nest 1 km', color: '#7c3aed',
     bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
+    // half 0.25° ≈ 30 nm (N-S). The 1 km nest is ±0.45° around the centre with a
+    // 12-cell (grf 4 + nudge 8 ≈ 12 km) boundary buffer; a 0.25° box leaves ~0.20°
+    // (16-22 cells) to the nest edge, so it stays clear of the boundary instabilities.
     venues: [
-      { name: 'la_spezia', domain: 'la_spezia_1km', clon: 9.85, clat: 44.05, half: 0.18 },
+      { name: 'la_spezia', domain: 'la_spezia_1km', clon: 9.85, clat: 44.05, half: 0.25 },
     ],
     heights: [10, 30, 50, 100, 180],
     tableCols: [10, 30, 50, 100, 180],
