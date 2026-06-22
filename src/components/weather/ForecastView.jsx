@@ -15,6 +15,7 @@ import { useScriptsOnce } from './useScriptOnce'
 import PlotlyChart from './PlotlyChart'
 import ForecastDeck from './ForecastDeck'
 import Venue3D from './Venue3D'
+import Field3D from './Field3D'
 import {
   MODELS, COMPARE_ORDER,
   fetchAllForPoint, pickDefaultActiveModel, hasValidSpeed,
@@ -138,6 +139,7 @@ export default function ForecastView({
   const [fieldHeight, setFieldHeight] = useState(() => persist.fieldHeight ?? 10) // number, or 'mast'
   const [fieldHourIdx, setFieldHourIdx] = useState(() => persist.fieldHourIdx || 0)
   const [fieldPlaying, setFieldPlaying] = useState(false)
+  const [viewMode, setViewMode] = useState('2D')   // '2D' Leaflet field overlay · '3D' MapLibre terrain
   const [field, setField] = useState(() => persist.field || null) // { times, labels, frames, header, maxSpeed, box }
   const [fieldLoading, setFieldLoading] = useState(false)
   const [fieldErr, setFieldErr] = useState('')
@@ -151,6 +153,15 @@ export default function ForecastView({
   const readoutRef = useRef(null)
   const selLabelRef = useRef(null)   // local-time label of the currently scrubbed hour (kept across model switches)
   const venueBoxesRef = useRef([])   // Icon-Race coverage rectangles (TL2+ only)
+
+  // Leaflet was display:none while 3D was showing — recompute its size on return.
+  useEffect(() => {
+    if (viewMode === '2D' && mapRef.current) {
+      const t = setTimeout(() => { try { mapRef.current.invalidateSize() } catch { /* */ } }, 60)
+      return () => clearTimeout(t)
+    }
+    return undefined
+  }, [viewMode])
 
   // Persist points + field selection up to WeatherTab so they survive sub-tab
   // switches (ForecastView is dynamically imported and unmounts when hidden).
@@ -610,9 +621,25 @@ export default function ForecastView({
         <div style={{ flex: '1 1 460px', minWidth: 300 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>
-            📍 Click 3 points — models load automatically
+            {viewMode === '3D' ? '🏔️ 3D wind field — drag to rotate / tilt' : '📍 Click 3 points — models load automatically'}
           </div>
           <div style={{ flex: 1 }} />
+          {/* 2D / 3D view toggle */}
+          <div style={{ display: 'inline-flex', border: '1px solid #1E3A5A', borderRadius: 6, overflow: 'hidden', marginRight: 8 }}>
+            {['2D', '3D'].map((m) => (
+              <button
+                key={m}
+                onClick={() => setViewMode(m)}
+                title={m === '3D' ? '3D terrain view of the wind field' : '2D map — select points'}
+                style={{
+                  fontSize: 11, fontWeight: 700, padding: '4px 12px', cursor: 'pointer', border: 'none',
+                  background: viewMode === m ? '#0EA5E9' : 'transparent', color: viewMode === m ? '#031018' : '#94A3B8',
+                }}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
           {Object.keys(locations).length > 0 && (
             <button
               onClick={resetAll}
@@ -635,8 +662,18 @@ export default function ForecastView({
               border: '1px solid #1E3A5A',
               borderRadius: 8,
               background: '#0A1929',
+              display: viewMode === '3D' ? 'none' : 'block',
             }}
           />
+          {viewMode === '3D' && (
+            (field && !field.isHpbl && field.frames?.length)
+              ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} height={640} exaggeration={3} />
+              : (
+                <div style={{ height: 640, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: '#64748B', fontSize: 13, border: '1px solid #1E3A5A', borderRadius: 8, background: '#0A1929', padding: 20 }}>
+                  {field?.isHpbl ? 'The 3D view shows wind arrows — switch the field model to a wind model, then 3D.' : 'Select 3 points in 2D and let the wind field load, then switch to 3D.'}
+                </div>
+              )
+          )}
           <div
             ref={readoutRef}
             style={{
