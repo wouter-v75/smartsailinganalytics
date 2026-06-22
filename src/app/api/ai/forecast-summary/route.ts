@@ -17,14 +17,20 @@ TREAT "diagnostics" AS GROUND TRUTH. Do not invent figures — phrase the brief 
   - funnelling: { flag, cores, rMax } — topographic acceleration near the course.
 Any field may be null (missing data) — then speak qualitatively and do not fabricate a number.
 
-Return ONLY valid JSON (no markdown, no prose outside JSON) with exactly these keys:
+Return ONLY valid JSON (no markdown, no prose outside JSON) with exactly these keys.
+The first group is the SHORT executive-summary lines on slide 1:
   "typeOfDay":  the regime (use diagnostics.typeOfDay if present).
   "situation":  1-2 sentences on the synoptic/thermal setup (use quadrant, cross-shore gradient, stability).
   "todaysWind": 1-2 sentences on the racing-day wind — timing, expected direction & veer, strength, shifts to play.
   "stability":  1 sentence on boundary-layer depth / cap / sounding implications for the sea breeze.
   "outlook":    1 sentence on the multi-day trend.
   "confidenceNote": 1 short sentence pairing the confidence label with the named risk/trigger (model split, marginal breeze, light air).
-Be specific, use the actual numbers (knots, degrees, local times), keep a racing-tactical tone. Concise.`
+The second group is fuller PROSE PARAGRAPHS (3-5 sentences each, flowing prose, no bullet lists) for the body slides, written like a professional race-meteorology briefing:
+  "generalWeather": the synoptic + meteorology picture — surface flow, 925 hPa gradient and the surface-to-gradient separation, cloud, boundary-layer mixing, air-SST contrast and what it means for the day.
+  "modelComparison": how the models agree or differ on TWD/TWS through the racing window, the spread, which to trust, and the resulting uncertainty.
+  "sideNotes": local effects, terrain channelling / funnelling, sea-breeze front or convergence positioning, and the tactical triggers to watch (what would change the call).
+Any field may be null (missing data) — then speak qualitatively and do not fabricate a number.
+Be specific, use the actual numbers (knots, degrees, local times), keep a racing-tactical tone. Concise but complete.`
 
 export async function POST(req: NextRequest) {
   if (!KEY) return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 503 })
@@ -36,7 +42,7 @@ export async function POST(req: NextRequest) {
       headers: { 'content-type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 700,
+        max_tokens: 1300,
         system: SYSTEM,
         messages: [{ role: 'user', content: JSON.stringify(data) }],
       }),

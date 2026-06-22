@@ -516,6 +516,17 @@ function arrowCell(twdMean, kn, trailing, fill, dark) {
 const oCell = (b) => { if (!b) return txtCell('—'); const bf = beaufort(b.twsMid); return arrowCell(b.twdMean, b.twsMid, `${b.tws[0]}-${b.tws[1]}kn`, bf.hex, bf.dark) }
 // daily TWD cell: fixed-size arrow + the mean TWD (rounded to 5 deg), no fill
 const twdCell = (twdMean) => arrowCell(twdMean, null, twdMean != null ? `${round5(twdMean)}` : '')
+// one-line diagnostics chips (sea-breeze score, confidence, BL, cap, funnelling)
+function diagChips(dg) {
+  if (!dg) return []
+  const ch = []
+  if (dg.seaBreeze?.score != null) ch.push(`Sea-breeze ${dg.seaBreeze.score}/10${dg.seaBreeze.quadrant ? ` (${dg.seaBreeze.quadrant})` : ''}`)
+  if (dg.confidence?.label) ch.push(`Confidence ${dg.confidence.label}${dg.confidence.sigmaTwd != null ? ` (σTWD ${dg.confidence.sigmaTwd}°)` : ''}`)
+  if (dg.stability?.hMixM != null) ch.push(`BL ${dg.stability.hMixM} m`)
+  ch.push(dg.stability?.hasLowCap ? 'capped' : 'no low cap')
+  if (dg.funnelling?.flag) ch.push('funnelling ⚑')
+  return ch
+}
 
 function buildDeck(P, d) {
   const pptx = new P(); pptx.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 }); pptx.layout = 'WIDE'
@@ -525,21 +536,31 @@ function buildDeck(P, d) {
   const meta = [d.typeOfDay, d.raceDay ? `Race day ${d.raceDay}` : null].filter(Boolean).join('   ·   ')
   s.addText([{ text: d.venue, options: { fontFace: FONT, fontSize: 18, bold: true, color: INK, breakLine: true } }, { text: meta, options: { fontFace: FONT, fontSize: 13, color: GREY } }], { x: 0.6, y: 1.55, w: 12.1, h: 0.55, valign: 'top' })
   const dg = d.diag
-  if (dg) {
-    const ch = []
-    if (dg.seaBreeze?.score != null) ch.push(`Sea-breeze ${dg.seaBreeze.score}/10${dg.seaBreeze.quadrant ? ` (${dg.seaBreeze.quadrant})` : ''}`)
-    if (dg.confidence?.label) ch.push(`Confidence ${dg.confidence.label}${dg.confidence.sigmaTwd != null ? ` (σTWD ${dg.confidence.sigmaTwd}°)` : ''}`)
-    if (dg.stability?.hMixM != null) ch.push(`BL ${dg.stability.hMixM} m`)
-    ch.push(dg.stability?.hasLowCap ? 'capped' : 'no low cap')
-    if (dg.funnelling?.flag) ch.push('funnelling ⚑')
-    if (ch.length) s.addText(ch.join('    ·    '), { x: 0.6, y: 2.14, w: 12.1, h: 0.34, fontFace: FONT, fontSize: 12, bold: true, color: NAVY })
+  // Key Numbers box (TWS range / peak / TWD net change) — like the team report
+  const rws = d.dailyRows || []
+  if (rws.length) {
+    const los = rws.map((r) => r.lo).filter((x) => x != null)
+    const his = rws.map((r) => r.hi).filter((x) => x != null)
+    const twsMin = los.length ? Math.min(...los) : null
+    const twsMax = his.length ? Math.max(...his) : null
+    const tm0 = rws.find((r) => r.twdMean != null)?.twdMean
+    const tm1 = [...rws].reverse().find((r) => r.twdMean != null)?.twdMean
+    const netd = (tm0 != null && tm1 != null) ? ((((tm1 - tm0) % 360) + 540) % 360) - 180 : null
+    s.addShape('roundRect', { x: 0.6, y: 2.1, w: 12.1, h: 0.62, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.08 })
+    const kv = (k, v) => ([{ text: `${k} `, options: { color: GREY, fontFace: FONT, fontSize: 12 } }, { text: v, options: { color: NAVY, bold: true, fontFace: FONT, fontSize: 13 } }, { text: '        ', options: {} }])
+    const parts = []
+    if (twsMin != null) parts.push(...kv('TWS range', `${twsMin}–${twsMax} kn`))
+    if (twsMax != null) parts.push(...kv('Peak', `${twsMax} kn`))
+    if (netd != null) parts.push(...kv('TWD net', `${netd >= 0 ? '+' : ''}${Math.round(netd)}° (${round5(tm0)}→${round5(tm1)})`))
+    if (parts.length) s.addText(parts, { x: 0.85, y: 2.1, w: 11.6, h: 0.62, valign: 'middle', fontFace: FONT })
   }
-  s.addText('Executive summary', { x: 0.6, y: 2.55, w: 12, h: 0.4, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
+  s.addText('Executive summary', { x: 0.6, y: 2.9, w: 12, h: 0.4, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
   const sec = (label, txt) => ([{ text: `${label}:  `, options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 14 } }, { text: txt || '—', options: { color: INK, fontFace: FONT, fontSize: 14, breakLine: true } }])
-  s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook), ...sec('Confidence', d.ai?.confidenceNote)], { x: 0.6, y: 3.05, w: 12.1, h: 3.6, fontFace: FONT, valign: 'top', paraSpaceAfter: 12 })
+  s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook), ...sec('Confidence', d.ai?.confidenceNote)], { x: 0.6, y: 3.35, w: 12.1, h: 3.3, fontFace: FONT, valign: 'top', paraSpaceAfter: 12 })
   if (!d.ai) s.addText('AI summary unavailable — set ANTHROPIC_API_KEY (or edit these lines directly).', { x: 0.6, y: 6.95, w: 12, h: 0.3, fontFace: FONT, fontSize: 10, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
-  s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.5, y: 1.6, w: 5.2, h: 5.0, fontFace: FONT, fontSize: 17, color: INK })
+  if (d.ai?.generalWeather) s.addText(d.ai.generalWeather, { x: 0.5, y: 1.6, w: 5.2, h: 5.0, fontFace: FONT, fontSize: 14, color: INK, valign: 'top', paraSpaceAfter: 10 })
+  else s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.5, y: 1.6, w: 5.2, h: 5.0, fontFace: FONT, fontSize: 17, color: INK })
   if (d.windfieldImg) { s.addImage({ data: d.windfieldImg.data, ...fit(d.windfieldImg.w, d.windfieldImg.h, 6.1, 1.6, 6.8, 4.7) }); s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 6.1, y: 6.4, w: 6.8, h: 0.3, align: 'center', fontFace: FONT, fontSize: 11, color: GREY }) } else ph(s, 6.1, 1.6, 6.8, 4.7, 'Wind field — 12:00 local\n(coastline capture unavailable)')
   s = pptx.addSlide(); addTitle(s, 'Outlook')
   const oHead = [hdrCell('Time'), hdrCell('Morning (10:00)'), hdrCell('Midday (12:00)'), hdrCell('Afternoon (15:00)')]
@@ -566,8 +587,16 @@ function buildDeck(P, d) {
   if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.0, 1.3, 5.9, 5.5) }); else ph(s, 7.0, 1.3, 5.9, 5.5, 'Vertical sounding @ 13:00\n(no sounding data here)')
   s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'Model comparison — wind speed & TWD (±1σ)')
-  if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.4, 1.5, 6.3, 4.9) }); else ph(s, 0.4, 1.5, 6.3, 4.9, 'Wind-speed comparison')
-  if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, 6.9, 1.5, 6.0, 4.9) }); else ph(s, 6.9, 1.5, 6.0, 4.9, 'Wind-direction (TWD) comparison')
+  if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.4, 1.5, 6.3, 4.7) }); else ph(s, 0.4, 1.5, 6.3, 4.7, 'Wind-speed comparison')
+  if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, 6.9, 1.5, 6.0, 4.7) }); else ph(s, 6.9, 1.5, 6.0, 4.7, 'Wind-direction (TWD) comparison')
+  if (d.ai?.modelComparison) s.addText(d.ai.modelComparison, { x: 0.4, y: 6.4, w: 12.5, h: 0.95, fontFace: FONT, fontSize: 11.5, color: INK, valign: 'top' })
+
+  // Confidence & side notes — diagnostics chip line + local-effects / triggers prose
+  s = pptx.addSlide(); addTitle(s, 'Confidence & side notes')
+  const chips = diagChips(dg)
+  if (chips.length) s.addText(chips.join('    ·    '), { x: 0.5, y: 1.25, w: 12.3, h: 0.4, fontFace: FONT, fontSize: 13, bold: true, color: NAVY })
+  s.addText(d.ai?.sideNotes || 'Local effects, terrain channelling and tactical triggers — edit. (AI side notes unavailable.)',
+    { x: 0.5, y: 1.95, w: 12.3, h: 4.7, fontFace: FONT, fontSize: 14, color: INK, valign: 'top', paraSpaceAfter: 10 })
   return pptx
 }
 
