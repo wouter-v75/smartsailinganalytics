@@ -142,6 +142,7 @@ export default function ForecastView({
   const velocityKindRef = useRef(null)   // 'wind' | 'current' — recreate the layer when this flips
   const speedOverlayRef = useRef(null)
   const contourOverlayRef = useRef(null) // hpbl contour-line + label SVG overlay
+  const firstFieldRunRef = useRef(true)  // keep a session-restored field instead of re-fetching on remount
   const curOverviewRef = useRef(null)    // cached ~3 km currents overview, to swap back on zoom-out
   const curTierRef = useRef('overview')  // 'overview' | 'hires'
   const readoutRef = useRef(null)
@@ -183,6 +184,12 @@ export default function ForecastView({
   const fieldMosAvail = !!(fieldVenue && fieldMosId && correctionInfo(fieldVenue, fieldMosId))
   useEffect(() => {
     if (!allThree || p1lat == null) { setField(null); return }
+    // On the first run after a remount (returning to the Weather tab), keep the
+    // field restored from the session store instead of re-fetching it.
+    if (firstFieldRunRef.current) {
+      firstFieldRunRef.current = false
+      if (field) { setFieldLoading(false); return }
+    }
     let cancelled = false
     setFieldLoading(true); setFieldErr('')
     const isMos = fieldHeight === 'mastMOS' && fieldMosAvail && canMos
@@ -209,6 +216,9 @@ export default function ForecastView({
       .catch((e) => { if (!cancelled) { setField(null); setFieldErr(e?.message || 'fetch failed') } })
       .finally(() => { if (!cancelled) setFieldLoading(false) })
     return () => { cancelled = true }
+    // `field` is read only for the first-run restore guard; it must NOT be a dep
+    // (this effect SETS field, so depending on it would loop).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, fieldMosAvail, canMos])
 
   // Currents LOD: when the current field is showing, zoom IN (≥10) loads the native
@@ -556,9 +566,20 @@ export default function ForecastView({
   const fetchAllRef = useRef(null)
   fetchAllRef.current = fetchAll
   useEffect(() => {
-    if (!Object.keys(locations).length) return
+    const keys = Object.keys(locations)
+    if (!keys.length) return
+    // Skip the fetch when the data already in hand (restored from the session
+    // store on a tab return) exactly covers these points — no need to re-query
+    // Open-Meteo, so no "loading models" flash. An added or moved point won't be
+    // covered (key missing or coords differ), so it still triggers a fetch.
+    const covered = keys.length === Object.keys(windData).length && keys.every((k) => {
+      const c = windData[k]?.coords
+      return c && Math.abs(c.latitude - locations[k].lat) < 1e-4 && Math.abs(c.longitude - locations[k].lon) < 1e-4
+    })
+    if (covered) return
     const id = setTimeout(() => { fetchAllRef.current(locations) }, 500)
     return () => clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locations, canIconRace])
 
   const hasResults = Object.keys(windData).length > 0
