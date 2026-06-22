@@ -416,17 +416,22 @@ export function typeOfDay(a) {
   if (a.funnelFlag) {
     return { cls: 'funnelled', label: 'Funnelled gradient wind' }
   }
-  const thermalActive = (a.sbi != null && a.sbi > 0.05) ||
-    (a.thermalBendDeg != null && Math.abs(a.thermalBendDeg) > friction + 10)
+  // A THERMALLY-ENHANCED (reinforced) gradient has LOW SBI by design — no opposing
+  // return cell — so its thermal signal is the surface-vs-gradient BEND (and/or a
+  // favourable quadrant), NOT a closed-cell SBI. Use bend OR sbi OR quadrant.
+  const thermalActive = a.thermalActive != null ? a.thermalActive
+    : ((a.sbi != null && a.sbi > 0.08)
+      || (a.thermalBendDeg != null && Math.abs(a.thermalBendDeg) > friction + 5)
+      || !!a.quadFav)
+  const gateOk = !!a.favourable    // stability + insolation healthy
   if (a.lowLevelKt != null && a.lowLevelKt < 10) {
-    return a.favourable
+    return (gateOk && (thermalActive || (a.sbi != null && a.sbi > 0.05)))
       ? { cls: 'pure_seabreeze', label: 'Pure sea breeze' }
       : { cls: 'gradient_light', label: 'Gradient / light residual + trend' }
   }
-  if (a.favourable && thermalActive) {
-    return { cls: 'thermally_enhanced', label: 'Thermally-enhanced gradient' }
-  }
-  return { cls: 'gradient', label: 'Gradient wind day + trend' }
+  return (gateOk && thermalActive)
+    ? { cls: 'thermally_enhanced', label: 'Thermally-enhanced gradient' }
+    : { cls: 'gradient', label: 'Gradient wind day + trend' }
 }
 
 // ── Cloud-cover trend (insolation) ───────────────────────────────────────────

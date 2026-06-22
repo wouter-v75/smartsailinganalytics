@@ -142,7 +142,10 @@ ok('funnel flag → funnelled', typeOfDay({ funnelFlag: true, lowLevelKt: 14 }).
 ok('<10kn + favourable → pure sea breeze', typeOfDay({ lowLevelKt: 7, favourable: true, sbi: 0.5 }).cls === 'pure_seabreeze', true)
 ok('<10kn + unfavourable → gradient_light', typeOfDay({ lowLevelKt: 7, favourable: false }).cls === 'gradient_light', true)
 ok('>10kn + favourable + bend → thermally_enhanced', typeOfDay({ lowLevelKt: 14, favourable: true, sbi: 0.3 }).cls === 'thermally_enhanced', true)
+ok('>10kn + LOW sbi but strong bend → thermally_enhanced (reinforced)', typeOfDay({ lowLevelKt: 14, favourable: true, sbi: 0.02, thermalBendDeg: 28 }).cls === 'thermally_enhanced', typeOfDay({ lowLevelKt: 14, favourable: true, sbi: 0.02, thermalBendDeg: 28 }))
+ok('>10kn + favourable quadrant only → thermally_enhanced', typeOfDay({ lowLevelKt: 13, favourable: true, quadFav: true, sbi: 0 }).cls === 'thermally_enhanced', true)
 ok('>10kn + unfavourable → gradient', typeOfDay({ lowLevelKt: 16, favourable: false, thermalBendDeg: 8 }).cls === 'gradient', true)
+ok('>10kn + gate ok but no thermal signal → gradient', typeOfDay({ lowLevelKt: 16, favourable: true, sbi: 0.01, thermalBendDeg: 6 }).cls === 'gradient', typeOfDay({ lowLevelKt: 16, favourable: true, sbi: 0.01, thermalBendDeg: 6 }))
 
 console.log('cloud trend')
 ok('clear AM → favourable +ve', cloudTrend({ landCloudAm: 1, landCloudMid: 1 }).signal > 0.5, cloudTrend({ landCloudAm: 1 }))

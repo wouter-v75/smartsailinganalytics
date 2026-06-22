@@ -10,7 +10,7 @@
 //  • Outlook: Morning/Midday/Afternoon = 10:00/12:00/15:00 local, weighted CARDINAL TWD
 //    range + TWS range (all models day 1-2, ARPEGE+ECMWF beyond).
 //  • Details for today (08:00-18:00): TWD numeric range + weighted TWS min&max.
-//  • Comparison + 4-day plots: day-mode Plotly, grey ±2σ band, racing-window (10-17) shading.
+//  • Comparison + 4-day plots: day-mode Plotly, grey ±1σ band, racing-window (10-17) shading.
 // ----------------------------------------------------------------------------
 import React, { useMemo, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
@@ -21,7 +21,7 @@ import { getWeatherSession } from './weatherSession'
 import {
   mean as dMean, ensureHeights, stabilityFromSounding, stabilityGate,
   thermalBend, seaBreezeIndex, crossShoreComponent, quadrantModifier,
-  seaBreezeScore, isFavourable, typeOfDay as dTypeOfDay, cloudTrend, confidence,
+  seaBreezeScore, typeOfDay as dTypeOfDay, cloudTrend, confidence,
   modelSpread, funnelDiagnostics, funnelFlag, clamp01,
 } from './forecastDiagnostics'
 import { coastNormalForPoint } from './coastline'
@@ -156,12 +156,12 @@ async function windfieldCoast(field, p1lat, p1lon) {
   return { data: cc.toDataURL(), w: w2, h: h2 }
 }
 
-// ── Plotly captures (day mode, ±2σ band, racing-window shading) ──────────────
-function bandStats(series, k = 2) { const n = series[0]?.length || 0; const mean = []; const lo = []; const hi = []; for (let i = 0; i < n; i++) { const vs = series.map((s) => s[i]).filter((v) => v != null && Number.isFinite(v)); if (vs.length < 2) { mean.push(vs[0] ?? null); lo.push(null); hi.push(null); continue } const m = vs.reduce((a, b) => a + b, 0) / vs.length; const sd = Math.sqrt(vs.reduce((a, b) => a + (b - m) ** 2, 0) / vs.length); mean.push(m); lo.push(m - k * sd); hi.push(m + k * sd) } return { mean, lo, hi } }
-function dirBand(series) { const n = series[0]?.length || 0; const mean = []; const lo = []; const hi = []; for (let i = 0; i < n; i++) { const ds = series.map((s) => s[i]).filter((v) => v != null); if (ds.length < 2) { mean.push(ds[0] ?? null); lo.push(null); hi.push(null); continue } const mu = circMean(ds); const sd = circStd(ds); mean.push(mu); lo.push(mu - 2 * sd); hi.push(mu + 2 * sd) } return { mean, lo, hi } }
+// ── Plotly captures (day mode, ±1σ band, racing-window shading) ──────────────
+function bandStats(series, k = 1) { const n = series[0]?.length || 0; const mean = []; const lo = []; const hi = []; for (let i = 0; i < n; i++) { const vs = series.map((s) => s[i]).filter((v) => v != null && Number.isFinite(v)); if (vs.length < 2) { mean.push(vs[0] ?? null); lo.push(null); hi.push(null); continue } const m = vs.reduce((a, b) => a + b, 0) / vs.length; const sd = Math.sqrt(vs.reduce((a, b) => a + (b - m) ** 2, 0) / vs.length); mean.push(m); lo.push(m - k * sd); hi.push(m + k * sd) } return { mean, lo, hi } }
+function dirBand(series) { const n = series[0]?.length || 0; const mean = []; const lo = []; const hi = []; for (let i = 0; i < n; i++) { const ds = series.map((s) => s[i]).filter((v) => v != null); if (ds.length < 2) { mean.push(ds[0] ?? null); lo.push(null); hi.push(null); continue } const mu = circMean(ds); const sd = circStd(ds); mean.push(mu); lo.push(mu - sd); hi.push(mu + sd) } return { mean, lo, hi } }
 const bandTraces = (xs, b, ax = 'x', ay = 'y') => ([
   { x: xs, y: b.lo, type: 'scatter', mode: 'lines', line: { width: 0 }, showlegend: false, hoverinfo: 'skip', connectgaps: true, xaxis: ax, yaxis: ay },
-  { x: xs, y: b.hi, type: 'scatter', mode: 'lines', line: { width: 0 }, fill: 'tonexty', fillcolor: 'rgba(120,120,120,0.18)', name: '±2σ', hoverinfo: 'skip', connectgaps: true, xaxis: ax, yaxis: ay },
+  { x: xs, y: b.hi, type: 'scatter', mode: 'lines', line: { width: 0 }, fill: 'tonexty', fillcolor: 'rgba(120,120,120,0.18)', name: '±1σ', hoverinfo: 'skip', connectgaps: true, xaxis: ax, yaxis: ay },
 ])
 function raceShapes(keys, pairs) {            // pairs: [[xref, yref]...]
   const dates = [...new Set(keys.map((k) => k.slice(0, 10)))]
@@ -200,7 +200,7 @@ async function captureLongRange(globals, mastH) {
     ...bandTraces(xs, db, 'x2', 'y2').map((tr) => ({ ...tr, showlegend: false })),
     { x: xs, y: db.mean, name: 'TWD mean', type: 'scatter', mode: 'lines', line: { color: 'B85042', width: 2 }, xaxis: 'x2', yaxis: 'y2', connectgaps: true },
   ]
-  const layout = { grid: { rows: 2, columns: 1, pattern: 'independent', roworder: 'top to bottom' }, title: { text: '4-day outlook — TWS & TWD (±2σ, racing window shaded)', font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.12 }, margin: { t: 40, b: 40, l: 56, r: 20 }, yaxis: { title: 'TWS (kn)', rangemode: 'tozero', gridcolor: '#e5e7eb' }, yaxis2: { title: 'TWD (°)', range: [0, 360], dtick: 90, gridcolor: '#e5e7eb' }, xaxis: { gridcolor: '#eef2f6' }, xaxis2: { gridcolor: '#eef2f6' }, shapes: raceShapes(keys, [['x', 'y domain'], ['x2', 'y2 domain']]) }
+  const layout = { grid: { rows: 2, columns: 1, pattern: 'independent', roworder: 'top to bottom' }, title: { text: '4-day outlook — TWS & TWD (±1σ, racing window shaded)', font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.12 }, margin: { t: 40, b: 40, l: 56, r: 20 }, yaxis: { title: 'TWS (kn)', rangemode: 'tozero', gridcolor: '#e5e7eb' }, yaxis2: { title: 'TWD (°)', range: [0, 360], dtick: 90, gridcolor: '#e5e7eb' }, xaxis: { gridcolor: '#eef2f6' }, xaxis2: { gridcolor: '#eef2f6' }, shapes: raceShapes(keys, [['x', 'y domain'], ['x2', 'y2 domain']]) }
   let png = null; try { png = await plotPNG(div, data, layout, 1400, 520) } catch { png = null }
   try { window.Plotly.purge(div) } catch { /* */ } div.remove(); return png
 }
@@ -230,6 +230,30 @@ function soundingArr(h, levels, idx) {
   for (const p of levels) { const t = h[`temperature_${p}hPa`]?.[idx]; if (t == null) continue; const rh = h[`relative_humidity_${p}hPa`]?.[idx]; const ws = h[`wind_speed_${p}hPa`]?.[idx]; const wd = h[`wind_direction_${p}hPa`]?.[idx]; arr.push({ press: p, temp: t, dwpt: rh != null ? Math.min(dewpoint(t, rh), t) : t, wspd: ws != null ? ws * 0.539957 : null, wdir: wd }) }
   return arr
 }
+// Standard meteorological wind barb as Plotly paper-space shapes — ported from
+// SoundingView.drawBarb so the deck matches the SSA Skew-T. Staff points toward
+// the wind SOURCE; 50 kt = filled flag, 10 kt = full barb, 5 kt = half barb.
+// Local geometry is in px (SVG y-down), rotated by `dir`, mapped to paper coords
+// (y-up) using the plot-area pixel size.
+function barbShapes(kt, dir, yfrac, plotW, plotH, x0frac) {
+  const shapes = []; const col = '#2c3e50'
+  if (kt == null || dir == null || !Number.isFinite(yfrac)) return shapes
+  const th = (dir * Math.PI) / 180; const cos = Math.cos(th); const sin = Math.sin(th)
+  const toP = (lx, ly) => { const rx = lx * cos - ly * sin; const ry = lx * sin + ly * cos; return [x0frac + rx / plotW, yfrac - ry / plotH] }
+  const line = (a, b) => { const [x0, y0] = toP(a[0], a[1]); const [x1, y1] = toP(b[0], b[1]); shapes.push({ type: 'line', xref: 'paper', yref: 'paper', x0, y0, x1, y1, line: { color: col, width: 1.2 } }) }
+  const poly = (pts) => { const p = pts.map((q) => toP(q[0], q[1])); shapes.push({ type: 'path', xref: 'paper', yref: 'paper', path: `M ${p[0][0]},${p[0][1]} L ${p[1][0]},${p[1][1]} L ${p[2][0]},${p[2][1]} Z`, fillcolor: col, line: { color: col, width: 0.5 } }) }
+  if (kt < 2.5) { const c = toP(0, 0); const r = 3; shapes.push({ type: 'circle', xref: 'paper', yref: 'paper', x0: c[0] - r / plotW, y0: c[1] - r / plotH, x1: c[0] + r / plotW, y1: c[1] + r / plotH, line: { color: col, width: 1 } }); return shapes }
+  const L = 24; const step = 4
+  line([0, 0], [0, -L])
+  let spd = Math.round(kt / 5) * 5; let pos = -L
+  const f50 = Math.floor(spd / 50); spd -= f50 * 50
+  const f10 = Math.floor(spd / 10); spd -= f10 * 10
+  const f5 = Math.floor(spd / 5)
+  for (let i = 0; i < f50; i++) { poly([[0, pos], [10, pos + 2], [0, pos + 5]]); pos += 6 }
+  for (let i = 0; i < f10; i++) { line([0, pos], [10, pos - 3]); pos += step }
+  for (let i = 0; i < f5; i++) { line([0, pos], [5, pos - 2]); pos += step }
+  return shapes
+}
 async function captureSounding(p1lat, p1lon, windData1, tz) {
   if (!window.Plotly) return null
   const sp = getWeatherSession()?.soundingPoint; const isP1 = !sp
@@ -245,12 +269,21 @@ async function captureSounding(p1lat, p1lon, windData1, tz) {
   if (arr.length < 3) return null
   const div = offDiv()
   const ticks = [1000, 950, 900, 850, 800, 750, 700, 650, 600, 550, 500].filter((p) => p >= ptop && p <= 1050)
-  const ann = arr.map((o) => ({ xref: 'paper', x: 1.01, y: o.press, yref: 'y', text: `${arrowGlyph(o.wdir)} ${o.wspd != null ? Math.round(o.wspd) : ''}`, showarrow: false, font: { size: 10, color: '#334155' }, xanchor: 'left' }))
+  // wind barbs down the right margin (matches the SSA Skew-T). Paper-space, so we
+  // compute the plot-area pixel size from the image dims + margins below.
+  const IMG_W = 820; const IMG_H = 900; const MARG = { t: 40, b: 44, l: 54, r: 128 }
+  const plotW = IMG_W - MARG.l - MARG.r; const plotH = IMG_H - MARG.t - MARG.b
+  const x0frac = 1.0 + 48 / plotW
+  const lo10 = Math.log10(1050); const hi10 = Math.log10(ptop)
+  const yFrac = (p) => (Math.log10(p) - lo10) / (hi10 - lo10)
+  const barbAll = []
+  for (const o of arr) { if (o.wspd == null && o.wdir == null) continue; barbAll.push(...barbShapes(o.wspd, o.wdir, yFrac(o.press), plotW, plotH, x0frac)) }
+  const whead = { xref: 'paper', x: x0frac, yref: 'paper', y: 1.03, text: 'Wind (kn)', showarrow: false, font: { size: 11, color: '6B7280' }, xanchor: 'center' }
   const data = [
     { x: arr.map((o) => o.temp), y: arr.map((o) => o.press), type: 'scatter', mode: 'lines+markers', name: 'Temp', line: { color: '#d62728', width: 2.5 }, marker: { size: 5 } },
     { x: arr.map((o) => o.dwpt), y: arr.map((o) => o.press), type: 'scatter', mode: 'lines+markers', name: 'Dewpt', line: { color: '#2ca02c', width: 2.5 }, marker: { size: 5 } },
   ]
-  const layout = { title: { text: `Sounding 13:00 — ${label} (${isP1 ? 'point 1' : 'sounding pt'})`, font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.1 }, margin: { t: 40, b: 44, l: 54, r: 70 }, xaxis: { title: '°C', gridcolor: '#e5e7eb', zeroline: true, zerolinecolor: '#cbd5e1' }, yaxis: { title: 'hPa', type: 'log', range: [Math.log10(1050), Math.log10(ptop)], gridcolor: '#e5e7eb', tickvals: ticks, ticktext: ticks.map(String) }, annotations: ann }
+  const layout = { title: { text: `Sounding 13:00 — ${label} (${isP1 ? 'point 1' : 'sounding pt'})`, font: { size: 15, color: '1F4E79' } }, legend: { orientation: 'h', y: -0.1 }, margin: MARG, xaxis: { title: '°C', gridcolor: '#e5e7eb', zeroline: true, zerolinecolor: '#cbd5e1' }, yaxis: { title: 'hPa', type: 'log', range: [Math.log10(1050), Math.log10(ptop)], gridcolor: '#e5e7eb', tickvals: ticks, ticktext: ticks.map(String) }, annotations: [whead], shapes: barbAll }
   let png = null; try { png = await plotPNG(div, data, layout, 820, 900) } catch { png = null }
   try { window.Plotly.purge(div) } catch { /* */ } div.remove()
   return { png, h, levels, idx, lat, lon, label }
@@ -324,20 +357,36 @@ async function buildDiagnostics(o) {
   if (!coast) { try { coast = await coastNormalForPoint(venueKey, p1lat, p1lon) } catch { coast = { deg: null, source: 'none' } } }
   const θ = coast?.deg ?? null
 
-  // sounding-derived stability + low-level / gradient winds
+  // sounding-derived stability + low-level / gradient winds, averaged over the
+  // CLASSIFICATION WINDOW 13:00-15:00 local (peak sea-breeze) — a single 13:00
+  // snapshot under-reads a breeze that is still filling.
   let stab = { lapseRateCkm: null, capBaseM: null, capStrengthC: null, nearDryAdiabatic: false, hasLowCap: false }
   let lowLevelKt = null; let gradDir = null; let gradKt = null; let blTopDir = null; let surfDir = null
   if (snd?.h) {
-    const prof = ensureHeights(buildSoundingProfile(snd.h, snd.levels, snd.idx)
-      .filter((x) => x.tempC != null).sort((a, b) => b.press - a.press))
-    if (prof.length >= 2) {
-      stab = stabilityFromSounding(prof)
+    const lt = localTimes(snd.h, tz)
+    const day0 = (lt[snd.idx] || lt[0] || '').slice(0, 10)
+    const widx = [13, 14, 15].map((hh) => lt.findIndex((t) => t.slice(0, 10) === day0 && t.slice(11, 13) === pad2(hh))).filter((k) => k >= 0)
+    if (!widx.length) widx.push(snd.idx)
+    const surfDirs = []; const gradDirs = []; const blTopDirs = []; const gradKts = []; const lowKts = []
+    let stabProf = null
+    const midIx = widx[Math.floor(widx.length / 2)]
+    for (const ix of widx) {
+      const prof = ensureHeights(buildSoundingProfile(snd.h, snd.levels, ix)
+        .filter((x) => x.tempC != null).sort((a, b) => b.press - a.press))
+      if (prof.length < 2) continue
+      if (ix === midIx || !stabProf) stabProf = prof
       const band = prof.filter((x) => x.z >= 100 && x.z <= 900 && x.wspdKt != null)
-      lowLevelKt = band.length ? dMean(band.map((x) => x.wspdKt)) : null
-      const g = nearestByZ(prof, 600); gradDir = g?.wdir ?? null; gradKt = g?.wspdKt ?? null
-      blTopDir = nearestByZ(prof, 900)?.wdir ?? null
-      surfDir = prof[0]?.wdir ?? null
+      if (band.length) lowKts.push(dMean(band.map((x) => x.wspdKt)))
+      const g = nearestByZ(prof, 600); if (g?.wdir != null) gradDirs.push(g.wdir); if (g?.wspdKt != null) gradKts.push(g.wspdKt)
+      const bt = nearestByZ(prof, 900); if (bt?.wdir != null) blTopDirs.push(bt.wdir)
+      if (prof[0]?.wdir != null) surfDirs.push(prof[0].wdir)
     }
+    if (stabProf) stab = stabilityFromSounding(stabProf)
+    surfDir = surfDirs.length ? circMean(surfDirs) : null
+    gradDir = gradDirs.length ? circMean(gradDirs) : null
+    blTopDir = blTopDirs.length ? circMean(blTopDirs) : null
+    gradKt = gradKts.length ? dMean(gradKts) : null
+    lowLevelKt = lowKts.length ? dMean(lowKts) : null
   }
 
   // hpbl (mixed-layer depth) — peak over the racing window for the gate
@@ -361,7 +410,10 @@ async function buildDiagnostics(o) {
 
   // gates + score
   const gStab = stabilityGate({ hMix, capBaseM: stab.capBaseM, capStrengthC: stab.capStrengthC, nearDryAdiabatic: stab.nearDryAdiabatic })
-  const favourable = isFavourable({ gStab, gSolar, sbi, quadMod: quad?.scoreMod })
+  const gateHealthy = (gStab * gSolar) >= 0.35
+  const quadFav = !!(quad && quad.scoreMod > 0)
+  const thermalActive = (sbi != null && sbi > 0.08) || (thermalBendDeg != null && Math.abs(thermalBendDeg) > 20) || quadFav
+  const favourable = gateHealthy && thermalActive
   const sbScore = seaBreezeScore({ gStab, gSolar, offshoreKt: crossKt ?? 0, deltaT, lapseRateCkm: stab.lapseRateCkm, hMix, quadMod: quad?.scoreMod ?? 0 })
 
   // funnelling on the wind field (frame nearest 12:00 local)
@@ -379,16 +431,21 @@ async function buildDiagnostics(o) {
     }
   }
 
-  // type of day (4 classes)
-  const tod = dTypeOfDay({ lowLevelKt, favourable, thermalBendDeg, sbi, funnelFlag: funnelHit })
+  // type of day (4 classes) — gate-healthy + thermal signal (bend/sbi/quadrant)
+  const tod = dTypeOfDay({ lowLevelKt, favourable: gateHealthy, thermalActive, quadFav, thermalBendDeg, sbi, funnelFlag: funnelHit })
 
-  // multi-model spread + confidence at the racing window (13:00 local)
+  // multi-model spread + confidence over the racing window (13:00-15:00 local)
   const dirs = []; const spds = []
   for (const m of todayModels || []) {
-    const j = idxAtL(m, m.lt[0]?.slice(0, 10), 13)
-    if (j < 0) continue
-    const d = dirAt(m, j); if (d != null) dirs.push(d)
-    const s = mastKn(m.hourly, m.heights, mastH, j, m.mos); if (s != null) spds.push(s)
+    const day0 = m.lt[0]?.slice(0, 10)
+    const md = []; const ms = []
+    for (const hh of [13, 14, 15]) {
+      const j = idxAtL(m, day0, hh); if (j < 0) continue
+      const d = dirAt(m, j); if (d != null) md.push(d)
+      const s = mastKn(m.hourly, m.heights, mastH, j, m.mos); if (s != null) ms.push(s)
+    }
+    if (md.length) dirs.push(circMean(md))
+    if (ms.length) spds.push(dMean(ms))
   }
   const spread = modelSpread(dirs, spds)
   const twsKn = spds.length ? dMean(spds) : null
@@ -473,7 +530,7 @@ function buildDeck(P, d) {
   const oHead = [hdrCell('Time'), hdrCell('Morning (10:00)'), hdrCell('Midday (12:00)'), hdrCell('Afternoon (15:00)')]
   const oRows = d.outlookRows.map((r) => [txtCell(r.day, { bold: true, fill: { color: LIGHTF } }), oCell(r.mor), oCell(r.mid), oCell(r.aft)])
   s.addTable([oHead, ...oRows], { x: 0.5, y: 1.4, w: 12.33, colW: [1.8, 3.51, 3.51, 3.51], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
-  if (d.longRange) s.addImage({ data: d.longRange, ...fit(1400, 520, 0.5, 3.5, 12.33, 3.3) }); else ph(s, 0.5, 3.5, 12.33, 3.3, '4-day TWS & TWD (±2σ, racing window)')
+  if (d.longRange) s.addImage({ data: d.longRange, ...fit(1400, 520, 0.5, 3.5, 12.33, 3.3) }); else ph(s, 0.5, 3.5, 12.33, 3.3, '4-day TWS & TWD (±1σ, racing window)')
   s.addText('AM/Mid/PM = 10:00/12:00/15:00 local · TWD (cardinal) & TWS ranges = weighted models (all day 1-2, ARPEGE+ECMWF beyond)', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'Details for today')
   s.addText(d.dailyBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true } })), { x: 0.5, y: 1.05, w: 12.3, h: 0.7, fontFace: FONT, fontSize: 12, color: INK })
@@ -493,7 +550,7 @@ function buildDeck(P, d) {
   if (d.hpblImg) s.addImage({ data: d.hpblImg, ...fit(1000, 560, 0.4, 1.7, 6.4, 4.6) }); else ph(s, 0.4, 1.7, 6.4, 4.6, 'Boundary-layer height\n(no SSA / GFS hpbl data)')
   if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.0, 1.3, 5.9, 5.5) }); else ph(s, 7.0, 1.3, 5.9, 5.5, 'Vertical sounding @ 13:00\n(no sounding data here)')
   s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
-  s = pptx.addSlide(); addTitle(s, 'Model comparison — wind speed & TWD (±2σ)')
+  s = pptx.addSlide(); addTitle(s, 'Model comparison — wind speed & TWD (±1σ)')
   if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.4, 1.5, 6.3, 4.9) }); else ph(s, 0.4, 1.5, 6.3, 4.9, 'Wind-speed comparison')
   if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, 6.9, 1.5, 6.0, 4.9) }); else ph(s, 6.9, 1.5, 6.0, 4.9, 'Wind-direction (TWD) comparison')
   return pptx
