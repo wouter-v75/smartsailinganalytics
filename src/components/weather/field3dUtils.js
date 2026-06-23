@@ -80,6 +80,26 @@ export const drapeOpacity = (field) => (field?.isHpbl ? 0.5 : field?.isCurrent ?
 // image-source corner coordinates (TL, TR, BR, BL) from the field bounding box
 export const boxCoords = (box) => [[box.west, box.north], [box.east, box.north], [box.east, box.south], [box.west, box.south]]
 
+// single-level surface vectors (for non-volume fields) — same shape as
+// buildProfileVectors but from the frame's u/v at one notional altitude.
+export function buildSurfaceVectors(field, frameIdx, o = {}) {
+  const fr = field?.frames?.[frameIdx]; if (!fr?.u) return []
+  const { nx, ny, lo1, la1, dx, dy } = field.header
+  const step = o.step || Math.max(1, Math.round(nx / 16))
+  const minKn = o.minKn ?? 0.6
+  const altM = o.altM ?? 15
+  const out = []
+  for (let j = 0; j < ny; j += step) {
+    for (let i = 0; i < nx; i += step) {
+      const p = j * nx + i; const u = fr.u[p]; const v = fr.v[p]
+      const kn = Math.hypot(u || 0, v || 0) * KN
+      if (kn < minKn) continue
+      out.push({ lon: lo1 + i * dx, lat: la1 - j * dy, altM, kn: Math.round(kn), toward: ((Math.atan2(u, v) * 180) / Math.PI + 360) % 360 })
+    }
+  }
+  return out
+}
+
 // mean TWD (meteorological FROM bearing) over the race area — orient camera UPWIND
 export function meanFromDir(field, frameIdx, lat, lon, nm) {
   const fr = field?.frames?.[frameIdx]; if (!fr || !fr.u) return null
@@ -210,12 +230,30 @@ export function buildProfileVectors(volume, frameIdx, levels, o = {}) {
 
 // TWS iso-speed contour lines (kn) of the selected-height frame, as lng/lat paths
 // + label points, for the 3D shading. Reuses the marching-squares from windField.
+// light box-blur of a scalar grid (rounder contours)
+function blurScalar(s, nx, ny, passes = 2) {
+  let cur = s
+  for (let k = 0; k < passes; k++) {
+    const out = new Float32Array(nx * ny)
+    for (let y = 0; y < ny; y++) {
+      for (let x = 0; x < nx; x++) {
+        let sum = 0; let n = 0
+        for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) { const xx = x + i; const yy = y + j; if (xx < 0 || yy < 0 || xx >= nx || yy >= ny) continue; sum += cur[yy * nx + xx]; n++ }
+        out[y * nx + x] = sum / n
+      }
+    }
+    cur = out
+  }
+  return cur
+}
+
 export function buildContoursKn(field, frameIdx, levels = TWS_CONTOUR_KN) {
   const fr = field?.frames?.[frameIdx]; if (!fr?.u) return { paths: [], labels: [] }
   const { nx, ny, lo1, la1, dx, dy } = field.header
-  const scalar = new Float32Array(nx * ny)
+  let scalar = new Float32Array(nx * ny)
   let mn = Infinity; let mx = -Infinity
   for (let p = 0; p < nx * ny; p++) { const s = Math.hypot(fr.u[p] || 0, fr.v[p] || 0) * KN; scalar[p] = s; if (s < mn) mn = s; if (s > mx) mx = s }
+  scalar = blurScalar(scalar, nx, ny, 2)
   const toLL = (x, y) => [lo1 + x * dx, la1 - y * dy, 0]
   const paths = []; const labels = []
   for (const lev of levels) {

@@ -203,17 +203,21 @@ function surfaceUrl(modelKey, latitude, longitude, timezone) {
 // clicked points don't each re-download the same venue grid.
 const _iconRaceGrids = new Map()
 function getIconRaceGrid(url) {
-  if (_iconRaceGrids.has(url)) return _iconRaceGrids.get(url)
+  // Cache-bust on a 5-min bucket so a freshly-published grid.json is picked up
+  // within ~5 min instead of being pinned to a stale CDN/browser copy (the
+  // grid.json URL is otherwise fixed per venue, with no cycle in the path).
+  const bust = `${url}${url.includes('?') ? '&' : '?'}t=${Math.floor(Date.now() / 300000)}`
+  if (_iconRaceGrids.has(bust)) return _iconRaceGrids.get(bust)
   const p = (async () => {
     try {
-      const res = await fetch(url)
+      const res = await fetch(bust, { cache: 'no-store' })
       if (!res.ok) { console.warn(`[weather] ICONRACE grid HTTP ${res.status}`); return null }
       return await res.json()
     } catch (err) {
       console.warn('[weather] ICONRACE grid fetch failed:', err?.message || err); return null
     }
   })()
-  _iconRaceGrids.set(url, p)
+  _iconRaceGrids.set(bust, p)
   return p
 }
 
