@@ -586,6 +586,20 @@ export default function ForecastView({
     return out
   }, [windData, p1lat, p1lon, canIconRace])
 
+  // Once per point-set, default the selected model to the best available in order
+  // SSA-Race 1 km -> SSA-Race 2 km -> AROME (SSA loads first, so it's picked as
+  // soon as it arrives; AROME only once loading is done and no SSA is available).
+  const autoModelRef = useRef(false)
+  useEffect(() => {
+    const has = Object.keys(windData).length > 0
+    if (!has) { autoModelRef.current = false; return }
+    if (autoModelRef.current) return
+    let pref = ['ICONRACE_1KM', 'ICONRACE'].find((k) => modelAvailable[k])
+    if (!pref && !loading) pref = modelAvailable.AROME ? 'AROME' : null
+    if (pref) { autoModelRef.current = true; setFieldModel(pref); onActiveModelChange?.(pref) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, windData, modelAvailable])
+
   // Auto-fetch all models whenever the points change (debounced for drags).
   const fetchAllRef = useRef(null)
   fetchAllRef.current = fetchAll
