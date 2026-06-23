@@ -14,7 +14,7 @@ export const DECK_JS = 'https://unpkg.com/deck.gl@9.0.36/dist.min.js'   // expos
 // default vertical levels shown in the 3D multi-level view (metres ASL).
 // Intersected with whatever the grid.json publishes; 300/500/900 appear once the
 // box re-runs with the extended _hl stream.
-export const DEFAULT_LEVELS = [10, 50, 100, 300, 900]
+export const DEFAULT_LEVELS = [10, 100, 300, 500, 1000]
 export const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 export const DEM_TILES = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'
 export const KN = 1.94384
