@@ -13,12 +13,12 @@ import { sampleField } from './windField'
 import {
   MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, DEFAULT_LEVELS, SAT_TILES, DEM_TILES,
   meanFromDir, ringGeoJSON, fieldKind, drapeImageURL, drapeOpacity, boxCoords,
-  buildProfileVectors, buildSurfaceVectors, beaufortRGBA, buildContoursKn, TWS_CONTOUR_KN,
+  buildProfileVectors, buildSurfaceVectors, beaufortRGBA, buildContoursKn, TWS_CONTOUR_KN, sampleVolumeAtHeight,
 } from './field3dUtils'
 
 const D2R = Math.PI / 180
 
-export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 640, exaggeration = 3 }) {
+export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, mastHeight = 30, height = 640, exaggeration = 3 }) {
   const ready = useScriptsOnce([MAPLIBRE_JS, DECK_JS], [MAPLIBRE_CSS])
   const divRef = useRef(null)
   const mapRef = useRef(null)
@@ -109,9 +109,12 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
         loadedRef.current = true
       } catch (e) { setErr(e?.message || 'layer build failed') }
     })
-    // hover readout — wind value at the cursor (selected/mast height)
+    // hover readout — MAST-height wind at the cursor. Prefer the vertical stack
+    // (SSA-Race) so it's mast regardless of the displayed height; otherwise fall
+    // back to the displayed field (which defaults to mast, else its lowest level).
     map.on('mousemove', (e) => {
-      const s = sampleField(field, fi, e.lngLat.lat, e.lngLat.lng)
+      let s = field.volume ? sampleVolumeAtHeight(field.volume, fi, mastHeight, e.lngLat.lat, e.lngLat.lng) : null
+      if (!s || s.kt == null) s = sampleField(field, fi, e.lngLat.lat, e.lngLat.lng)
       if (s && s.kt != null) setReadout({ x: e.point.x, y: e.point.y, kt: Math.round(s.kt), dir: Math.round(s.dirTrue) })
       else setReadout(null)
     })

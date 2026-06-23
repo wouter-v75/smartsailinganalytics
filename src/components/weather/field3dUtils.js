@@ -100,6 +100,23 @@ export function buildSurfaceVectors(field, frameIdx, o = {}) {
   return out
 }
 
+// Sample the vertical stack (field.volume) at the nearest grid cell + nearest
+// published height to `targetH` — used so the cursor readout can report MAST
+// height regardless of the displayed field height. Returns { kt, dirTrue }.
+export function sampleVolumeAtHeight(volume, frameIdx, targetH, lat, lon) {
+  if (!volume?.cellAt || !volume.heights?.length) return null
+  const { cellAt, heights, header } = volume
+  const { nx, ny, lo1, la1, dx, dy } = header
+  let h = heights[0]
+  for (const hh of heights) if (Math.abs(hh - targetH) < Math.abs(h - targetH)) h = hh
+  const i = Math.round((lon - lo1) / dx); const j = Math.round((la1 - lat) / dy)
+  if (i < 0 || j < 0 || i >= nx || j >= ny) return null
+  const c = cellAt[j * nx + i]; if (!c) return null
+  const sp = c.spd?.[String(h)]?.[frameIdx]; const di = c.dir?.[String(h)]?.[frameIdx]
+  if (sp == null || di == null) return null
+  return { kt: sp * 0.539957, dirTrue: di, usedH: h }   // spd km/h -> kn; dir = met FROM bearing
+}
+
 // mean TWD (meteorological FROM bearing) over the race area — orient camera UPWIND
 export function meanFromDir(field, frameIdx, lat, lon, nm) {
   const fr = field?.frames?.[frameIdx]; if (!fr || !fr.u) return null

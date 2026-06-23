@@ -135,7 +135,7 @@ export default function ForecastView({
   const [velocityReady, setVelocityReady] = useState(false)
   const [mapReady, setMapReady] = useState(false)   // true once the Leaflet map exists (re-draws markers/field on remount)
   const [fieldModel, setFieldModel] = useState(() => persist.fieldModel || 'AROME')
-  const [fieldHeight, setFieldHeight] = useState(() => persist.fieldHeight ?? 10) // number, or 'mast'
+  const [fieldHeight, setFieldHeight] = useState(() => persist.fieldHeight ?? (canHeights ? 'mast' : 10)) // number, or 'mast'
   const [fieldHourIdx, setFieldHourIdx] = useState(() => persist.fieldHourIdx || 0)
   const [fieldPlaying, setFieldPlaying] = useState(false)
   const [viewMode, setViewMode] = useState('2D')   // '2D' Leaflet field overlay · '3D' MapLibre terrain
@@ -671,7 +671,7 @@ export default function ForecastView({
           />
           {viewMode === '3D' && (
             (field && field.frames?.length)
-              ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} height={640} exaggeration={3} />
+              ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} mastHeight={mastHeight} height={640} exaggeration={3} />
               : (
                 <div style={{ height: 640, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: '#64748B', fontSize: 13, border: '1px solid #1E3A5A', borderRadius: 8, background: '#0A1929', padding: 20 }}>
                   Select 3 points in 2D and let the field load, then switch to 3D.
