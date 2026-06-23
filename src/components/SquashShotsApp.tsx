@@ -300,9 +300,12 @@ export default function SquashShotsApp() {
       }
 
       if (isPanning && touchMoved.current) {
-        // Pan 1.5x faster than finger movement for snappier feel
-        const dx = (e.touches[0].clientX - panStart.x) * 1.5 / zoom;
-        const dy = (e.touches[0].clientY - panStart.y) * 1.5 / zoom;
+        // scale finger movement to the canvas resolution so the image tracks 1:1
+        const c = pointsCanvasRef.current; const r = c?.getBoundingClientRect();
+        const sx = c && r ? c.width / (r.width || 1) : 1;
+        const sy = c && r ? c.height / (r.height || 1) : 1;
+        const dx = (e.touches[0].clientX - panStart.x) * sx / zoom;
+        const dy = (e.touches[0].clientY - panStart.y) * sy / zoom;
         setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
       }
     }
@@ -339,8 +342,11 @@ export default function SquashShotsApp() {
       const coords = getCanvasCoords(e.clientX, e.clientY);
       setPoints(prev => prev.map((p, i) => i === draggingPoint ? coords : p));
     } else if (isPanning) {
-      const dx = (e.clientX - panStart.x) / zoom;
-      const dy = (e.clientY - panStart.y) / zoom;
+      const c = pointsCanvasRef.current; const r = c?.getBoundingClientRect();
+      const sx = c && r ? c.width / (r.width || 1) : 1;
+      const sy = c && r ? c.height / (r.height || 1) : 1;
+      const dx = (e.clientX - panStart.x) * sx / zoom;
+      const dy = (e.clientY - panStart.y) * sy / zoom;
       setPan({ x: initialPan.x + dx, y: initialPan.y + dy });
     }
   };
@@ -744,7 +750,9 @@ export default function SquashShotsApp() {
       setCropBox(prev => prev ? { ...prev, x: prev.x + dx, y: prev.y + dy } : prev);
       setCropPanStart({ x: clientX, y: clientY });
     } else if (cropIsPanning) {
-      const dx = (clientX - cropPanStart.x) / cropZoom; const dy = (clientY - cropPanStart.y) / cropZoom;
+      const canvas = cropCanvasRef.current!; const rect = canvas.getBoundingClientRect();
+      const sx = canvas.width / (rect.width || 1); const sy = canvas.height / (rect.height || 1);
+      const dx = (clientX - cropPanStart.x) * sx / cropZoom; const dy = (clientY - cropPanStart.y) * sy / cropZoom;
       setCropPan({ x: cropInitialPan.x + dx, y: cropInitialPan.y + dy });
     }
   };
@@ -919,9 +927,11 @@ export default function SquashShotsApp() {
         setCropBox(prev => prev ? { ...prev, x: prev.x + dx, y: prev.y + dy } : prev);
         setCropPanStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
       } else if (cropIsPanning) {
-        // Pan image
-        const dx = (e.touches[0].clientX - cropPanStart.x) / cropZoom;
-        const dy = (e.touches[0].clientY - cropPanStart.y) / cropZoom;
+        // Pan image — scale finger movement to canvas resolution (1:1 tracking)
+        const canvas = cropCanvasRef.current!; const rect = canvas.getBoundingClientRect();
+        const sx = canvas.width / (rect.width || 1); const sy = canvas.height / (rect.height || 1);
+        const dx = (e.touches[0].clientX - cropPanStart.x) * sx / cropZoom;
+        const dy = (e.touches[0].clientY - cropPanStart.y) * sy / cropZoom;
         setCropPan({ x: cropInitialPan.x + dx, y: cropInitialPan.y + dy });
       }
     }
