@@ -61,7 +61,13 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, height = 64
     if (kind !== 'hpbl') {
       const { paths, labels } = buildContoursKn(field, fi, TWS_CONTOUR_KN)
       if (paths.length) out.push(new Dk.PathLayer({ id: 'tws-contours', data: paths, getPath: (d) => d.path, getColor: [20, 30, 46, 190], getWidth: (d) => (d.major ? 2.0 : 1.1), widthUnits: 'pixels', widthMinPixels: 0.9, capRounded: true, jointRounded: true, pickable: false }))
-      if (labels.length) out.push(new Dk.TextLayer({ id: 'tws-labels', data: labels, getPosition: (d) => d.position, getText: (d) => d.text, getSize: 13, getColor: [255, 255, 255, 255], outlineColor: [12, 20, 32, 255], outlineWidth: 3, fontSettings: { sdf: true }, background: false, billboard: true, getPixelOffset: [0, -10], getTextAnchor: 'middle', getAlignmentBaseline: 'center', fontWeight: 700, pickable: false }))
+      if (labels.length) out.push(new Dk.TextLayer({
+        id: 'tws-labels', data: labels,
+        getPosition: (d) => [d.position[0], d.position[1], 60 * exaggeration],   // lift off the surface so it isn't buried
+        getText: (d) => d.text, getSize: 13, sizeUnits: 'pixels', getColor: [255, 255, 255, 255],
+        background: true, getBackgroundColor: [10, 18, 28, 150], backgroundPadding: [4, 2, 4, 2],
+        billboard: true, getTextAnchor: 'middle', getAlignmentBaseline: 'center', fontWeight: 700, pickable: false,
+      }))
     }
     const arrows = hasVolume ? buildProfileVectors(field.volume, fi, levels) : (kind !== 'hpbl' ? buildSurfaceVectors(field, fi) : [])
     if (arrows.length) out.push(arrowPathLayer(arrows))
