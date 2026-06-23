@@ -27,6 +27,8 @@ export default function SquashShotsApp() {
 
   const [points, setPoints] = useState<Point[]>([]);
   const [draggingPoint, setDraggingPoint] = useState<number | null>(null);
+  const [perpT, setPerpT] = useState(0.5);            // 0..1 along level line p0->p1; orange perpendicular position
+  const [draggingPerp, setDraggingPerp] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -213,6 +215,31 @@ export default function SquashShotsApp() {
     return null;
   };
 
+  // Geometry of the orange perpendicular line (⟂ to the level line p0->p1, at
+  // parameter perpT along it). Returns null until both points exist.
+  const perpGeom = () => {
+    if (points.length !== 2) return null;
+    const p0 = points[0]; const p1 = points[1];
+    const dx = p1.x - p0.x; const dy = p1.y - p0.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len; const uy = dy / len;        // level unit dir
+    const nx = -uy; const ny = ux;                    // perpendicular unit dir
+    const cx = p0.x + perpT * dx; const cy = p0.y + perpT * dy;
+    return { p0, p1, dx, dy, len, ux, uy, nx, ny, cx, cy };
+  };
+  // is the cursor near the perpendicular line? (distance measured ALONG the level dir)
+  const nearPerpLine = (coords: Point): boolean => {
+    const g = perpGeom(); if (!g) return false;
+    const threshold = (44 * getImageScale()) / zoom;
+    return Math.abs((coords.x - g.cx) * g.ux + (coords.y - g.cy) * g.uy) < threshold;
+  };
+  // project a cursor point onto the level line -> parameter t in [0,1]
+  const projectPerpT = (coords: Point): number => {
+    const g = perpGeom(); if (!g) return perpT;
+    const t = ((coords.x - g.p0.x) * g.dx + (coords.y - g.p0.y) * g.dy) / (g.len * g.len);
+    return Math.max(0, Math.min(1, t));
+  };
+
   const handlePointsTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     touchMoved.current = false;
@@ -239,6 +266,14 @@ export default function SquashShotsApp() {
       const nearIdx = findNearPoint(coords);
       if (nearIdx !== null) {
         setDraggingPoint(nearIdx);
+        return;
+      }
+
+      // Grab the orange perpendicular line (drag it along the level line)
+      if (points.length === 2 && nearPerpLine(coords)) {
+        clearLongPress();
+        setDraggingPerp(true);
+        setPerpT(projectPerpT(coords));
         return;
       }
 
@@ -299,6 +334,11 @@ export default function SquashShotsApp() {
         return;
       }
 
+      if (draggingPerp) {
+        setPerpT(projectPerpT(getCanvasCoords(e.touches[0].clientX, e.touches[0].clientY)));
+        return;
+      }
+
       if (isPanning && touchMoved.current) {
         // scale finger movement to the canvas resolution so the image tracks 1:1
         const c = pointsCanvasRef.current; const r = c?.getBoundingClientRect();
@@ -317,6 +357,7 @@ export default function SquashShotsApp() {
     setIsPanning(false);
     setInitialDistance(0);
     setDraggingPoint(null);
+    setDraggingPerp(false);
   };
 
   // Mouse support for desktop
@@ -325,6 +366,12 @@ export default function SquashShotsApp() {
     const nearIdx = findNearPoint(coords);
     if (nearIdx !== null) {
       setDraggingPoint(nearIdx);
+      return;
+    }
+    // Grab the orange perpendicular line (double-click or click-drag on/near it)
+    if (points.length === 2 && nearPerpLine(coords)) {
+      setDraggingPerp(true);
+      setPerpT(projectPerpT(coords));
       return;
     }
     setIsPanning(true);
@@ -338,7 +385,9 @@ export default function SquashShotsApp() {
   };
 
   const handlePointsMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (draggingPoint !== null) {
+    if (draggingPerp) {
+      setPerpT(projectPerpT(getCanvasCoords(e.clientX, e.clientY)));
+    } else if (draggingPoint !== null) {
       const coords = getCanvasCoords(e.clientX, e.clientY);
       setPoints(prev => prev.map((p, i) => i === draggingPoint ? coords : p));
     } else if (isPanning) {
@@ -352,6 +401,7 @@ export default function SquashShotsApp() {
   };
 
   const handlePointsMouseUp = () => {
+    setDraggingPerp(false);
     setIsPanning(false);
     setDraggingPoint(null);
   };
@@ -485,6 +535,22 @@ export default function SquashShotsApp() {
         ctx.lineTo(points[1].x, points[1].y);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        // Orange perpendicular line (draggable left/right along the level line)
+        const g = perpGeom();
+        if (g) {
+          const reach = Math.hypot(canvas.width, canvas.height);   // span the whole image
+          const ax = g.cx - g.nx * reach; const ay = g.cy - g.ny * reach;
+          const bx = g.cx + g.nx * reach; const by = g.cy + g.ny * reach;
+          ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = px(4.5);
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+          ctx.strokeStyle = draggingPerp ? 'rgba(255,170,40,1)' : 'rgba(255,140,0,0.95)'; ctx.lineWidth = px(2.5);
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+          // grab handle at the centre
+          ctx.fillStyle = 'rgba(255,140,0,0.98)';
+          ctx.beginPath(); ctx.arc(g.cx, g.cy, px(7), 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'white'; ctx.lineWidth = px(1.5); ctx.stroke();
+        }
       }
 
       ctx.restore();
@@ -502,7 +568,7 @@ export default function SquashShotsApp() {
       };
       img.src = imageSrc;
     }
-  }, [imageSrc, points, zoom, pan]);
+  }, [imageSrc, points, zoom, pan, perpT, draggingPerp]);
 
   const rotateImage = async () => {
     if (points.length !== 2 || !imageSrc || !canvasRef.current) return;
@@ -533,12 +599,37 @@ export default function SquashShotsApp() {
       ctx.rotate(-angle);
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
 
+      // Bake the level + perpendicular lines onto the rotated image (same rotate
+      // transform, so they rotate with it: level -> horizontal, perpendicular ->
+      // vertical) and carry through crop + squash as pixels.
+      {
+        const p0 = points[0]; const p1 = points[1];
+        const ldx = p1.x - p0.x; const ldy = p1.y - p0.y;
+        const llen = Math.hypot(ldx, ldy) || 1;
+        const nx = -ldy / llen; const ny = ldx / llen;
+        const cx = p0.x + perpT * ldx; const cy = p0.y + perpT * ldy;
+        const reach = Math.hypot(img.width, img.height);
+        const lw = Math.max(2, img.width / 600);
+        ctx.save();
+        ctx.translate(-img.width / 2, -img.height / 2);   // (0,0) = image top-left, inside the rotate transform
+        const stroke = (x1: number, y1: number, x2: number, y2: number, color: string) => {
+          ctx.lineWidth = lw + 2; ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+          ctx.lineWidth = lw; ctx.strokeStyle = color;
+          ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        };
+        stroke(p0.x, p0.y, p1.x, p1.y, 'rgba(59,130,246,0.95)');                                   // level (blue)
+        stroke(cx - nx * reach, cy - ny * reach, cx + nx * reach, cy + ny * reach, 'rgba(255,140,0,0.97)'); // perpendicular (orange)
+        ctx.restore();
+      }
+
       // Convert to blob URL for fast subsequent loading (lossless PNG)
       canvas.toBlob((blob) => {
         if (!blob) return;
         const rotatedUrl = URL.createObjectURL(blob);
         setRotatedImageSrc(rotatedUrl);
         setPoints([]);
+        setPerpT(0.5);
         setZoom(1);
         setPan({ x: 0, y: 0 });
         setCropZoom(1);
@@ -1156,6 +1247,7 @@ export default function SquashShotsApp() {
     setCroppedImageSrc('');
     setSquashedImageSrc('');
     setPoints([]);
+    setPerpT(0.5);
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setCropBox(null);
@@ -1360,7 +1452,7 @@ export default function SquashShotsApp() {
                 <p className="text-slate-500 text-xs">
                   {points.length < 2
                     ? 'Hold 1.5s to place • Drag points to move • Pinch to zoom'
-                    : 'Drag points to adjust • Double-click on desktop'}
+                    : 'Drag points to adjust • Drag the orange ⟂ line to set the section'}
                 </p>
               </div>
 
