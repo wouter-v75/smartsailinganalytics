@@ -4382,9 +4382,9 @@ function MobileShell(props){
         {activeTab==="tools"&&(
           <div style={{position:"absolute",inset:0,overflowY:"auto",zIndex:2,background:"#030F1A"}}>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
-            <div style={{position:"relative",height:"85vh"}}><SquashShotsApp/></div>
+            <div style={{position:"relative",height:"85dvh"}}><SquashShotsApp/></div>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
-            <div style={{position:"relative",height:"85vh"}}><SailScanTab/></div>
+            <div style={{position:"relative",height:"85dvh"}}><SailScanTab/></div>
           </div>
         )}
 
@@ -6702,9 +6702,9 @@ function SSAApp(){
         {activeTab==="tools"&&(
           <div style={{position:"absolute",inset:0,overflowY:"auto",zIndex:2,background:"#030F1A"}}>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
-            <div style={{position:"relative",height:"85vh"}}><SquashShotsApp/></div>
+            <div style={{position:"relative",height:"85dvh"}}><SquashShotsApp/></div>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
-            <div style={{position:"relative",height:"85vh"}}><SailScanTab/></div>
+            <div style={{position:"relative",height:"85dvh"}}><SailScanTab/></div>
           </div>
         )}
         {activeTab==="admin"&&(

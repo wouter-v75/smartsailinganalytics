@@ -659,6 +659,100 @@ export default function SquashShotsApp() {
     };
   };
 
+  // Shared single-pointer crop logic, used by BOTH touch and mouse so the crop
+  // box can be resized/moved on desktop (mouse) as well as mobile (touch).
+  const cropPointerDown = (clientX: number, clientY: number) => {
+    if (!cropBox) return;
+    const coords = getCropCanvasCoords(clientX, clientY);
+    const canvas = cropCanvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    const cropImgScale = canvas.width / (rect.width || 1);
+    const handleThreshold = (60 * cropImgScale) / cropZoom;
+    const corners = [
+      { name: 'tl', x: cropBox.x, y: cropBox.y },
+      { name: 'tr', x: cropBox.x + cropBox.width, y: cropBox.y },
+      { name: 'bl', x: cropBox.x, y: cropBox.y + cropBox.height },
+      { name: 'br', x: cropBox.x + cropBox.width, y: cropBox.y + cropBox.height },
+    ];
+    const edges = [
+      { name: 'tl', x: cropBox.x + cropBox.width * 0.25, y: cropBox.y },
+      { name: 'tr', x: cropBox.x + cropBox.width * 0.75, y: cropBox.y },
+      { name: 'bl', x: cropBox.x + cropBox.width * 0.25, y: cropBox.y + cropBox.height },
+      { name: 'br', x: cropBox.x + cropBox.width * 0.75, y: cropBox.y + cropBox.height },
+    ];
+    for (const corner of corners) {
+      const dx = coords.x - corner.x; const dy = coords.y - corner.y;
+      if (Math.sqrt(dx * dx + dy * dy) < handleThreshold) { setCropDragging(corner.name); return; }
+    }
+    const edgeThreshold = handleThreshold * 0.7;
+    for (const edge of edges) {
+      const dx = coords.x - edge.x; const dy = coords.y - edge.y;
+      if (Math.sqrt(dx * dx + dy * dy) < edgeThreshold) { setCropDragging(edge.name); return; }
+    }
+    const borderInset = handleThreshold * 0.6;
+    const isNearBorder = (
+      coords.x > cropBox.x && coords.x < cropBox.x + cropBox.width &&
+      coords.y > cropBox.y && coords.y < cropBox.y + cropBox.height
+    ) && (
+      coords.x - cropBox.x < borderInset || cropBox.x + cropBox.width - coords.x < borderInset ||
+      coords.y - cropBox.y < borderInset || cropBox.y + cropBox.height - coords.y < borderInset
+    );
+    if (isNearBorder) {
+      let nearest = corners[0].name; let minDist = Infinity;
+      for (const c of corners) { const d = Math.sqrt(Math.pow(coords.x - c.x, 2) + Math.pow(coords.y - c.y, 2)); if (d < minDist) { minDist = d; nearest = c.name; } }
+      setCropDragging(nearest); return;
+    }
+    if (coords.x > cropBox.x && coords.x < cropBox.x + cropBox.width && coords.y > cropBox.y && coords.y < cropBox.y + cropBox.height) {
+      setCropDragging('move'); setCropPanStart({ x: clientX, y: clientY }); return;
+    }
+    setCropIsPanning(true); setCropPanStart({ x: clientX, y: clientY }); setCropInitialPan(cropPan);
+  };
+
+  const cropPointerMove = (clientX: number, clientY: number) => {
+    if (!cropBox) return;
+    const coords = getCropCanvasCoords(clientX, clientY);
+    if (cropDragging && cropDragging !== 'move') {
+      const newBox = { ...cropBox }; const minSize = 80;
+      switch (cropDragging) {
+        case 'tl':
+          newBox.width = cropBox.width + (cropBox.x - coords.x);
+          newBox.height = cropBox.height + (cropBox.y - coords.y);
+          if (newBox.width >= minSize) newBox.x = coords.x; else newBox.width = cropBox.width;
+          if (newBox.height >= minSize) newBox.y = coords.y; else newBox.height = cropBox.height;
+          break;
+        case 'tr':
+          newBox.width = Math.max(minSize, coords.x - cropBox.x);
+          newBox.height = cropBox.height + (cropBox.y - coords.y);
+          if (newBox.height >= minSize) newBox.y = coords.y; else newBox.height = cropBox.height;
+          break;
+        case 'bl':
+          newBox.width = cropBox.width + (cropBox.x - coords.x);
+          if (newBox.width >= minSize) newBox.x = coords.x; else newBox.width = cropBox.width;
+          newBox.height = Math.max(minSize, coords.y - cropBox.y);
+          break;
+        case 'br':
+          newBox.width = Math.max(minSize, coords.x - cropBox.x);
+          newBox.height = Math.max(minSize, coords.y - cropBox.y);
+          break;
+      }
+      setCropBox(newBox);
+    } else if (cropDragging === 'move') {
+      const canvas = cropCanvasRef.current!; const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const dx = ((clientX - cropPanStart.x) * scaleX) / cropZoom;
+      const dy = ((clientY - cropPanStart.y) * (canvas.height / rect.height)) / cropZoom;
+      setCropBox(prev => prev ? { ...prev, x: prev.x + dx, y: prev.y + dy } : prev);
+      setCropPanStart({ x: clientX, y: clientY });
+    } else if (cropIsPanning) {
+      const dx = (clientX - cropPanStart.x) / cropZoom; const dy = (clientY - cropPanStart.y) / cropZoom;
+      setCropPan({ x: cropInitialPan.x + dx, y: cropInitialPan.y + dy });
+    }
+  };
+
+  const handleCropMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => { e.preventDefault(); cropPointerDown(e.clientX, e.clientY); };
+  const handleCropMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => { if (!cropDragging && !cropIsPanning) return; cropPointerMove(e.clientX, e.clientY); };
+  const handleCropMouseUp = () => { setCropDragging(null); setCropIsPanning(false); };
+
   const handleCropTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     if (!cropBox) return;
@@ -1289,8 +1383,12 @@ export default function SquashShotsApp() {
                 onTouchStart={handleCropTouchStart}
                 onTouchMove={handleCropTouchMove}
                 onTouchEnd={handleCropTouchEnd}
+                onMouseDown={handleCropMouseDown}
+                onMouseMove={handleCropMouseMove}
+                onMouseUp={handleCropMouseUp}
+                onMouseLeave={handleCropMouseUp}
                 className="w-full h-full"
-                style={{ maxWidth: '100%', maxHeight: '100%', touchAction: 'none' }}
+                style={{ maxWidth: '100%', maxHeight: '100%', touchAction: 'none', cursor: cropDragging ? 'grabbing' : 'crosshair' }}
               />
             </div>
 
