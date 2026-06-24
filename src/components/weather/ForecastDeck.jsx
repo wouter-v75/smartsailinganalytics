@@ -16,7 +16,7 @@ import React, { useMemo, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, SSARACE_SOUNDING_LEVELS, ICON_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS, GFS_SOUNDING_LEVELS } from './openMeteo'
 import { matchVenue, specFor, mosSeries } from './mos'
-import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField } from './windField'
+import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField, sampleField } from './windField'
 import { getWeatherSession } from './weatherSession'
 import {
   mean as dMean, ensureHeights, stabilityFromSounding, stabilityGate,
@@ -587,6 +587,62 @@ function diagChips(dg) {
   return ch
 }
 
+// ── Racecourse wind analysis ────────────────────────────────────────────────
+// Bend + TWS gradient over a windward/leeward course of side 2·legNm (default
+// 2 nm) centred on point 1, from the actual wind field. This is DETERMINISTIC —
+// the AI can't see the spatial field, only summarised point data, so we compute
+// it here and feed it to both the deck and the AI brief.
+function offsetLL(lat, lon, nm, brgDeg) {
+  const R = nm / 60
+  const b = (brgDeg * Math.PI) / 180
+  return [lat + R * Math.cos(b), lon + (R * Math.sin(b)) / Math.max(0.2, Math.cos((lat * Math.PI) / 180))]
+}
+// Average the field over a grid of points across a `sideNm`-square box (default
+// 4 nm) centred on point 1, rotated into the wind axis (along = upwind, cross =
+// right looking upwind). Gives robust TWS gradients (left/right, top/bottom) and
+// a vector-averaged TWD bend from many gridpoints rather than 4 single samples.
+function analyseCourse(field, lat, lon, frameIdx, sideNm = 4) {
+  if (!field) return null
+  const c0 = sampleField(field, frameIdx, lat, lon)
+  if (!c0 || c0.kt == null || c0.dirTrue == null) return null
+  const twd = c0.dirTrue
+  const tr = (twd * Math.PI) / 180; const D2R = Math.PI / 180
+  const cosLat = Math.max(0.2, Math.cos(lat * D2R))
+  const half = sideNm / 2; const n = 4; const step = half / n   // 9×9 grid
+  let L = 0, Lk = 0, R = 0, Rk = 0, T = 0, Tk = 0, B = 0, Bk = 0
+  let Lu = 0, Lv = 0, Ln = 0, Ru = 0, Rv = 0, Rn = 0
+  for (let ia = -n; ia <= n; ia++) for (let ic = -n; ic <= n; ic++) {
+    const a = ia * step, cc = ic * step          // along (upwind+) / cross (right+) nm
+    const dlat = (a * Math.cos(tr) - cc * Math.sin(tr)) / 60
+    const dlon = (a * Math.sin(tr) + cc * Math.cos(tr)) / (60 * cosLat)
+    const s = sampleField(field, frameIdx, lat + dlat, lon + dlon)
+    if (!s || s.kt == null) continue
+    if (cc > 0) { R += s.kt; Rk++; if (s.dirTrue != null) { Ru += Math.sin(s.dirTrue * D2R); Rv += Math.cos(s.dirTrue * D2R); Rn++ } }
+    else if (cc < 0) { L += s.kt; Lk++; if (s.dirTrue != null) { Lu += Math.sin(s.dirTrue * D2R); Lv += Math.cos(s.dirTrue * D2R); Ln++ } }
+    if (a > 0) { T += s.kt; Tk++ } else if (a < 0) { B += s.kt; Bk++ }
+  }
+  const r1 = (x) => Math.round(x * 10) / 10
+  const out = { twd: Math.round(twd), centreKt: r1(c0.kt), sideNm }
+  if (Rk && Lk) out.twsLeftRight = r1(R / Rk - L / Lk)   // + = more wind right
+  if (Tk && Bk) out.twsTopBottom = r1(T / Tk - B / Bk)   // + = more wind windward (top)
+  if (Rn && Ln) {
+    const rd = (Math.atan2(Ru / Rn, Rv / Rn) * 180 / Math.PI + 360) % 360
+    const ld = (Math.atan2(Lu / Ln, Lv / Ln) * 180 / Math.PI + 360) % 360
+    const bd = Math.round((((rd - ld + 540) % 360) - 180))   // + = right side more veered
+    out.bendDeg = bd
+    out.bend = bd > 4 ? 'right' : bd < -4 ? 'left' : 'straight'
+  }
+  return out
+}
+// Human text for the TWS gradient across the course.
+function gradientText(course) {
+  if (!course) return null
+  const parts = []
+  if (course.twsLeftRight != null && Math.abs(course.twsLeftRight) >= 0.5) parts.push(`+${Math.abs(course.twsLeftRight)} kt ${course.twsLeftRight > 0 ? 'right' : 'left'}`)
+  if (course.twsTopBottom != null && Math.abs(course.twsTopBottom) >= 0.5) parts.push(`+${Math.abs(course.twsTopBottom)} kt ${course.twsTopBottom > 0 ? 'top' : 'bottom'}`)
+  return parts.length ? parts.join(' · ') : 'even across course'
+}
+
 // Split prose into sentence-ish paragraphs (rough: break after . ! ? before a capital/digit).
 function toSentences(text) {
   if (!text) return []
@@ -603,9 +659,16 @@ function asItems(val) {
   if (typeof val === 'string' && val.trim()) return toSentences(val)
   return []
 }
-// pptxgenjs runs: short bullet list.
-function bulletRuns(items, { color, size = 13, spaceAfter = 7 } = {}) {
-  return (items || []).filter(Boolean).map((t) => ({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: spaceAfter, color, fontFace: FONT, fontSize: size } }))
+// pptxgenjs runs: short bullet list. `spacer` (pt) inserts a real EMPTY paragraph
+// between bullets — survives the Keynote import (paraSpaceAfter often doesn't).
+function bulletRuns(items, { color, size = 13, spaceAfter = 7, spacer = 0 } = {}) {
+  const arr = (items || []).filter(Boolean)
+  const out = []
+  arr.forEach((t, i) => {
+    out.push({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: spaceAfter, color, fontFace: FONT, fontSize: size } })
+    if (spacer && i < arr.length - 1) out.push({ text: ' ', options: { breakLine: true, fontSize: spacer } })
+  })
+  return out
 }
 
 function buildDeck(P, d) {
@@ -624,6 +687,20 @@ function buildDeck(P, d) {
   const tm1 = [...stat].reverse().find((r) => r.twdMean != null)?.twdMean
   const netd = (tm0 != null && tm1 != null) ? ((((tm1 - tm0) % 360) + 540) % 360) - 180 : null
   const midRow = stat.find((r) => r.time === '13:00') || stat.find((r) => r.time === '12:00') || stat[Math.floor(stat.length / 2)] || null
+  // Team-comms classifications (AI first, deterministic fallback from diagnostics).
+  const gate = dg?.stability?.gate; const hMix = dg?.stability?.hMixM
+  const windTrend = d.ai?.windTrend || (netd != null ? (netd > 8 ? 'right' : netd < -8 ? 'left' : 'steady') : null)
+  // Bend is computed from the field over the course (preferred); AI is fallback.
+  const courseBend = d.course?.bend
+    ? (d.course.bend === 'straight' ? 'straight' : `${d.course.bend}${d.course.bendDeg != null ? ` ${Math.abs(d.course.bendDeg)}°` : ''}`)
+    : null
+  const windBend = courseBend || d.ai?.windBend || null
+  const twsGrad = gradientText(d.course)
+  const mixing = d.ai?.mixing || (gate != null ? (gate >= 0.66 ? 'well mixed' : gate >= 0.33 ? 'moderate' : 'poor')
+    : (hMix != null ? (hMix > 800 ? 'well mixed' : hMix > 400 ? 'moderate' : 'poor') : null))
+  const dayType = d.ai?.dayType || (d.typeOfDay
+    ? (/funnel/i.test(d.typeOfDay) ? 'funnelled' : /cloud/i.test(d.typeOfDay) ? 'cloud-dominated'
+      : /sea.?breeze/i.test(d.typeOfDay) ? 'oscillating' : 'irregular') : null)
 
   // ── 1) TITLE (dark navy, per template) ──────────────────────────────────────
   let s = pptx.addSlide(); s.background = { color: '003462' }
@@ -634,8 +711,9 @@ function buildDeck(P, d) {
   // ── 2) Weather and strategy brief (executive) ───────────────────────────────
   s = pptx.addSlide()
   s.addText('Summary', { x: 0.65, y: 0.5, w: 12.0, h: 0.8, fontFace: FONT, fontSize: 40, bold: true, color: NAVY })
-  // Wind-summary card, top-right (racing window). Bold title + two rows.
-  s.addShape('roundRect', { x: 7.39, y: 1.7, w: 4.95, h: 1.7, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.06 })
+  // Wind-summary card, top-right (racing window). Title + two number rows + a
+  // classification row (bend / trend / mixing / type) from team comms.
+  s.addShape('roundRect', { x: 7.39, y: 1.7, w: 4.95, h: 2.0, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.06 })
   s.addText('Wind summary', { x: 7.55, y: 1.82, w: 4.7, h: 0.3, fontFace: FONT, fontSize: 12, bold: true, color: NAVY })
   const kv = (k, v, brk) => ([{ text: `${k} `, options: { color: GREY, fontFace: FONT, fontSize: 11 } }, { text: v, options: { color: NAVY, bold: true, fontFace: FONT, fontSize: 12 } }, { text: brk ? '' : '     ', options: brk ? { breakLine: true } : {} }])
   const kn = []
@@ -643,22 +721,30 @@ function buildDeck(P, d) {
   if (twsMin != null) kn.push(...kv('range', `${twsMin}–${twsMax} kn`))
   if (twsMax != null) kn.push(...kv('peak', `${twsMax} kn`, true))
   if (midRow?.twdMean != null) kn.push(...kv('TWD avg', `${round5(midRow.twdMean)}°`))
-  if (midRow?.twd) kn.push(...kv('range', `${midRow.twd}`))
-  if (netd != null) kn.push(...kv('trend', `${netd >= 0 ? '+' : ''}${Math.round(netd)}°`, true))
-  if (kn.length) s.addText(kn, { x: 7.55, y: 2.2, w: 4.7, h: 1.1, fontFace: FONT, valign: 'top', paraSpaceAfter: 5 })
-  // Type-of-day header line, then the bulleted summary (a clear empty line between each).
+  if (midRow?.twd) kn.push(...kv('range', `${midRow.twd}`, true))
+  if (kn.length) s.addText(kn, { x: 7.55, y: 2.2, w: 4.7, h: 0.75, fontFace: FONT, valign: 'top', paraSpaceAfter: 5 })
+  const kv2 = (k, v) => ([{ text: `${k}: `, options: { color: GREY, fontFace: FONT, fontSize: 10.5 } }, { text: String(v), options: { color: NAVY, bold: true, fontFace: FONT, fontSize: 10.5 } }, { text: '   ', options: {} }])
+  const box4 = []
+  if (windBend) box4.push(...kv2('bend', windBend))
+  if (windTrend) box4.push(...kv2('trend', windTrend))
+  if (mixing) box4.push(...kv2('mixing', mixing))
+  if (dayType) box4.push(...kv2('type', dayType))
+  if (box4.length) s.addText(box4, { x: 7.55, y: 3.12, w: 4.7, h: 0.5, fontFace: FONT, valign: 'top' })
+  // Type-of-day header line, then the bulleted summary (real empty line between each).
   const summaryItems = [
-    ['Situation', d.ai?.situation], ["Today's wind", d.ai?.todaysWind],
+    ['Situation', d.ai?.situation], ["Today's wind", d.ai?.todaysWind], ['Strategy', d.ai?.strategyNote],
     ['Stability', d.ai?.stability], ['Outlook', d.ai?.outlook], ['Confidence', d.ai?.confidenceNote],
   ].filter(([, v]) => v)
   const sumRuns = []
   if (d.typeOfDay) {
     sumRuns.push({ text: 'Type of day:  ', options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 16 } })
-    sumRuns.push({ text: d.typeOfDay, options: { breakLine: true, bold: true, color: INK, fontFace: FONT, fontSize: 16, paraSpaceAfter: 26 } })
+    sumRuns.push({ text: d.typeOfDay, options: { breakLine: true, bold: true, color: INK, fontFace: FONT, fontSize: 16 } })
+    sumRuns.push({ text: ' ', options: { breakLine: true, fontSize: 12 } })
   }
-  summaryItems.forEach(([label, txt]) => {
-    sumRuns.push({ text: `${label}: `, options: { bullet: { indent: 18 }, bold: true, color: NAVY, fontFace: FONT, fontSize: 14 } })
-    sumRuns.push({ text: txt, options: { breakLine: true, color: INK, fontFace: FONT, fontSize: 14, paraSpaceAfter: 24 } })
+  summaryItems.forEach(([label, txt], i) => {
+    sumRuns.push({ text: `${label}: `, options: { bullet: { indent: 18 }, bold: true, color: NAVY, fontFace: FONT, fontSize: 13 } })
+    sumRuns.push({ text: txt, options: { breakLine: true, color: INK, fontFace: FONT, fontSize: 13 } })
+    if (i < summaryItems.length - 1) sumRuns.push({ text: ' ', options: { breakLine: true, fontSize: 11 } })
   })
   if (sumRuns.length) s.addText(sumRuns, { x: 0.66, y: 2.2, w: 6.5, h: 4.8, fontFace: FONT, valign: 'top' })
   else s.addText('AI summary unavailable — generate with the key set, or edit these lines directly.', { x: 0.66, y: 2.2, w: 6.5, h: 0.4, fontFace: FONT, fontSize: 12, color: GREY })
@@ -716,13 +802,22 @@ function buildDeck(P, d) {
   overlayWindArrows(s, d.dailyRows, { y: dY, rowH: dRowH, size: 0.2, cols: [{ cx: dX + dColW[0] + 0.24, twdOf: (r) => r.twdMean ?? null }] })
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.55, y: 7.08, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
 
-  // ── 5b) Strategic considerations — today's tactical bullets ─────────────────
+  // ── 5b) Strategic considerations — team-comms framing + tactical bullets ────
   s = pptx.addSlide(); addTitle(s, 'Strategic considerations')
+  // Classification header: TWD trend · TWD bend (upwind) · Type · Mixing.
+  const stratHdr = []
+  const sh = (k, v) => { if (!v) return; stratHdr.push({ text: `${k}  `, options: { color: GREY, fontFace: FONT, fontSize: 14 } }, { text: String(v), options: { color: NAVY, bold: true, fontFace: FONT, fontSize: 14 } }, { text: '        ', options: {} }) }
+  sh('TWD trend', windTrend); sh('TWD bend', windBend); sh('Type', dayType); sh('Mixing', mixing); sh('TWS grad', twsGrad)
+  if (stratHdr.length) {
+    s.addShape('roundRect', { x: 0.7, y: 1.4, w: 12.0, h: 0.55, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.06 })
+    s.addText(stratHdr, { x: 0.9, y: 1.5, w: 11.6, h: 0.38, fontFace: FONT, valign: 'middle', fontSize: 13 })
+  }
+  // Bend looking upwind likely changes through the day — bullets carry the detail.
   const stratItems = asItems(d.ai?.strategy)
   s.addText(stratItems.length
-    ? bulletRuns(stratItems, { color: INK, size: 16, spaceAfter: 12 })
+    ? bulletRuns(stratItems, { color: INK, size: 16, spaceAfter: 6, spacer: 12 })
     : [{ text: 'Tactical considerations — edit. (AI strategy unavailable.)', options: { color: GREY, fontFace: FONT, fontSize: 14 } }],
-    { x: 0.7, y: 1.5, w: 12.0, h: 5.4, fontFace: FONT, valign: 'top' })
+    { x: 0.7, y: 2.25, w: 12.0, h: 4.7, fontFace: FONT, valign: 'top' })
 
   // ── 6) Model guidance — 4× 3D snapshots (30 m wind), text left ───────────────
   if (d.views3d && d.views3d.length) {
@@ -827,6 +922,17 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         if (field) windfieldImg = await windfieldCoast(field, p1lat, p1lon)
       } catch { /* */ }
 
+      // Racecourse bend + TWS gradient over a 2 nm W/L course centred on point 1,
+      // at the mid-racing frame (~13:00). Deterministic from the field.
+      let course = null
+      try {
+        const fst = field?.stamps || []
+        let fi = fst.findIndex((x) => x && x.hh === 13)
+        if (fi < 0) fi = fst.findIndex((x) => x && x.hh === 12)
+        if (fi < 0) fi = Math.floor((field?.frames?.length || 1) / 2)
+        course = analyseCourse(field, p1lat, p1lon, Math.max(0, fi), 4)
+      } catch { /* */ }
+
       // ── 4× 3D snapshots (SSA-Race 1 km if available, else AROME) @ 10/12/14/16 ──
       // for the General weather slide. Captured at 30 m wind. Time-bounded; falls
       // back to the 2D windfield.
@@ -882,6 +988,10 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         outlook: outlookRows.map((r) => ({ day: r.day, morning: r.mor && { twd: r.mor.twd, tws: r.mor.tws }, midday: r.mid && { twd: r.mid.twd, tws: r.mid.tws }, afternoon: r.aft && { twd: r.aft.twd, tws: r.aft.tws } })),
         today: dailyRows.map((r) => ({ time: r.time, twd: r.twd, twsKn: r.kn, range: `${r.lo}-${r.hi}kn`, trend: r.trend })),
         diagnostics: diag,
+        // Computed from the wind field over a 2 nm W/L course centred on point 1
+        // (the AI cannot see the spatial field): twd, bend (left/right looking
+        // upwind, degrees), and TWS gradient left-right / top-bottom (kn).
+        course,
       }
       let ai = null
       setAiErr('writing AI brief…')
@@ -898,7 +1008,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         boatName: boatName || null, eventName: eventName || null,
         day: aiPayload.date,                                  // "Wednesday, 24 June"
         year: String(new Date().getFullYear()),
-        typeOfDay: diag?.typeOfDay || ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai, diag,
+        typeOfDay: diag?.typeOfDay || ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai, diag, course,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,

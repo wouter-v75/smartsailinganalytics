@@ -20,6 +20,7 @@ TREAT "diagnostics" AS GROUND TRUTH. Do not invent figures — phrase the brief 
   - cloud: { signal -1..1, verdict, note } — insolation / cloud-trend control.
   - confidence: { label HIGH/MODERATE/LOW, sigmaTwd (model spread) }. Light air (<7 kn) caps confidence.
   - funnelling: { flag, cores, rMax } — topographic acceleration near the course.
+You are ALSO given a top-level "course" object computed from the actual wind field over a ~4 nm windward/leeward course centred on point 1 (the AI cannot see the spatial field, so trust these): { twd, bend ("left"/"right"/"straight" looking upwind), bendDeg, twsLeftRight (kn; + = more wind on the RIGHT), twsTopBottom (kn; + = more wind WINDWARD/top) }. Use course.bend for "windBend" and weave the TWS gradient (which side / top vs bottom has more pressure) into the strategy bullets.
 Any field may be null (missing data) — then speak qualitatively and do not fabricate a number.
 
 Return ONLY valid JSON (no markdown, no prose outside JSON) with exactly these keys.
@@ -33,12 +34,17 @@ SHORT one-line strings (each ≤ ~14 words):
   "stability":  boundary-layer depth / cap implication, in a phrase.
   "outlook":    multi-day trend, in a phrase.
   "confidenceNote": confidence label + the single key risk, in a phrase.
+  "strategyNote": ONE short line — the headline strategic call for today (favoured side / shift to play).
+  "windTrend":  one word — "right", "left", or "steady" (TWD trend across 10:00–16:00; right = veering clockwise).
+  "windBend":   short (≤ 6 words) — the course wind bend looking UPWIND ("left bend" / "right bend"), noting if it changes through the day (e.g. "right AM, left PM").
+  "mixing":     one of "poor", "moderate", "well mixed" (boundary-layer mixing).
+  "dayType":    one of "irregular", "oscillating", "funnelled", "cloud-dominated".
 
 ARRAYS of short bullet strings (each bullet ≤ ~12 words, fragments not full sentences):
   "outlookDays":     one bullet PER upcoming day in data order, starting with the day name (e.g. "Sat: NE 10-14 kn, building midday, veering W").
   "generalWeather":  3-4 bullets on the meteorology (surface flow, 925 hPa gradient & separation, cloud, BL mixing, air-SST).
   "stabilityNotes":  2-3 bullets: (1) boundary-layer depth / mixing, (2) cap or INVERSION — note its height if present in the profile/diagnostics, (3) thermal / sea-breeze implication for the racing window.
-  "strategy":        3-5 TACTICAL bullets for TODAY's racing — favoured side, shifts to play, start bias, pressure/gates, what to watch. Tactics/strategy go ONLY here.
+  "strategy":        3-5 TACTICAL bullets for TODAY, framed on our team's vocabulary: TWD TREND (right/left/steady), TWD BEND looking UPWIND (left/right bend — and it LIKELY CHANGES through the day, so say when), oscillation TYPE (irregular / regular oscillations / funnelled / cloud-dominated), favoured side, pressure/gates, what to watch. Tactics/strategy go ONLY here.
   "notes":           2-4 bullets on TODAY's local effects / hazards (terrain channelling, sea-breeze front, convergence) — NON-tactical.
   "modelComparison": 2-3 bullets on model agreement/spread through the racing window and which to trust.
 Any field may be null or [] (missing data) — then omit it; do not fabricate numbers.
