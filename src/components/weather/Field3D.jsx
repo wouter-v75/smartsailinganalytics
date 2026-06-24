@@ -32,6 +32,23 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, mastHeight 
   const hasVolume = !!field?.volume?.cellAt && kind === 'wind'
   const [levels, setLevels] = useState(() => DEFAULT_LEVELS.filter((h) => heights.includes(h)))
 
+  // Keep the selected levels valid for the current field. The state is seeded
+  // once at mount, so when the field swaps to one with a different vertical
+  // stack (e.g. AROME → SSA-Race during the model auto-select), stale or empty
+  // levels would leave NO arrows drawn. Reconcile: drop levels the new field
+  // doesn't have, and if nothing valid remains fall back to a sensible default
+  // so arrows always show.
+  const heightsKey = heights.join(',')
+  useEffect(() => {
+    if (!hasVolume || !heights.length) return
+    setLevels((cur) => {
+      const valid = cur.filter((h) => heights.includes(h))
+      if (valid.length) return valid.length === cur.length ? cur : valid
+      const def = DEFAULT_LEVELS.filter((h) => heights.includes(h))
+      return def.length ? def : heights.slice(0, 1)
+    })
+  }, [heightsKey, hasVolume]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // arrow PathLayer (shaft + 2 head segments, positions in [lng,lat,altitude])
   const arrowPathLayer = (data) => {
     const lat0 = p1lat ?? field.header.la1

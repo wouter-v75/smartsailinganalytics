@@ -790,6 +790,9 @@ export default function ForecastView({
             Model: <span style={{ color: MODELS[fieldModel]?.color, fontWeight: 700 }}>{labelWithCycle(fieldModel, cycles)}</span>
             <span style={{ color: '#475569' }}> — pick below</span>
           </div>
+          {/* Height pills drive the 2D field only. In 3D the in-viewer "levels"
+              buttons select altitude, so this duplicate row is hidden there. */}
+          {viewMode !== '3D' && (
           <div>
             <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Height</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -803,6 +806,7 @@ export default function ForecastView({
               ))}
             </div>
           </div>
+          )}
           {canHeights && (
           <div>
             <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Mast height (m)</div>

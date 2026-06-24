@@ -487,8 +487,14 @@ export async function fetchAllForPoint({ latitude, longitude, timezone, enabledM
 
 // Pick the default active model for the surface toggle: first model in
 // MODEL_ORDER that has data at any of the points we fetched.
+// Default active model after a fetch. Prefer the self-hosted SSA-Race models
+// (1 km, then 2 km) so the active model matches the wind-field viewer's own
+// auto-selection — otherwise the table/active model flips to AROME on a late
+// fetch completion while the field stays on SSA-Race. Falls through to the
+// standard MODEL_ORDER (AROME first) when no SSA-Race data is present.
+const DEFAULT_ACTIVE_ORDER = ['ICONRACE_1KM', 'ICONRACE', ...MODEL_ORDER.filter((k) => !k.startsWith('ICONRACE'))]
 export function pickDefaultActiveModel(allPoints) {
-  for (const k of MODEL_ORDER) {
+  for (const k of DEFAULT_ACTIVE_ORDER) {
     if (allPoints.some((p) => p.surfaceByModel[k] && hasValidSpeed(p.surfaceByModel[k].hourly))) return k
   }
   return 'AROME'

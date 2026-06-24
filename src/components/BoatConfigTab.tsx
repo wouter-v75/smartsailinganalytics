@@ -310,7 +310,7 @@ export default function BoatConfigTab({
               )}
             </div>
 
-            <TargetsTable targets={targets} />
+            <TargetsTable targets={targets} uploadedAt={polar?.created_at} />
 
             <div style={{ display: 'flex', gap: 6, margin: '18px 0 10px', flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ fontSize: 11, color: C.dim, marginRight: 4 }}>Matrix:</span>
@@ -321,7 +321,7 @@ export default function BoatConfigTab({
                 }}>{targets.matrix_meta?.[k]?.label || k}</button>
               ))}
             </div>
-            <MatrixTable targets={targets} mkey={matrixKey} />
+            <MatrixTable targets={targets} mkey={matrixKey} uploadedAt={polar?.created_at} />
           </div>
         )
       )}
@@ -340,8 +340,18 @@ function heat(v: number | null, lo: number, hi: number): string {
   return `rgba(${r},${g},${Math.max(0, b)},0.55)`
 }
 
+// Screen-only "uploaded" caption (bottom-right). Not part of the print sheet.
+function UploadedCaption({ uploadedAt }: { uploadedAt?: string | null }) {
+  if (!uploadedAt) return null
+  return (
+    <div style={{ textAlign: 'right', fontSize: 10, color: C.dim, marginTop: 4 }}>
+      Uploaded {new Date(uploadedAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
+    </div>
+  )
+}
+
 // ── Headline TARGETS sheet (upwind | TWS | downwind) ─────────────────────────
-function TargetsTable({ targets }: { targets: any }) {
+function TargetsTable({ targets, uploadedAt }: { targets: any; uploadedAt?: string | null }) {
   const rows = targets.headline || []
   const th: React.CSSProperties = { padding: '5px 8px', fontSize: 11, fontWeight: 700, color: '#0b1f33', borderBottom: '1px solid #1E3A5A', textAlign: 'center' }
   const td: React.CSSProperties = { padding: '5px 8px', fontSize: 12, color: '#0b1f33', textAlign: 'center', borderBottom: '1px solid #d7e2ee' }
@@ -381,12 +391,13 @@ function TargetsTable({ targets }: { targets: any }) {
           ))}
         </tbody>
       </table>
+      <UploadedCaption uploadedAt={uploadedAt} />
     </div>
   )
 }
 
 // ── One TWS×TWA matrix (BSP / Heel / Rudder / AWA) with heat shading ─────────
-function MatrixTable({ targets, mkey }: { targets: any; mkey: string }) {
+function MatrixTable({ targets, mkey, uploadedAt }: { targets: any; mkey: string; uploadedAt?: string | null }) {
   const m: number[][] = targets.matrices?.[mkey] || []
   const twa: number[] = targets.twa || []
   const tws: number[] = targets.tws || []
@@ -415,6 +426,7 @@ function MatrixTable({ targets, mkey }: { targets: any; mkey: string }) {
           ))}
         </tbody>
       </table>
+      <UploadedCaption uploadedAt={uploadedAt} />
     </div>
   )
 }
