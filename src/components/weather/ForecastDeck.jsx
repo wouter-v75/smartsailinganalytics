@@ -61,15 +61,16 @@ const dirAt = (m, i) => m.hourly.wind_direction_10m?.[i] ?? m.hourly[`wind_direc
 const idxAtL = (m, dateStr, hh) => m.lt.findIndex((t) => t.startsWith(`${dateStr}T${pad2(hh)}:`))
 const idxByKey = (m, key) => m.lt.findIndex((t) => t.slice(0, 13) === key)
 
-// Ask the server-side Claude proxy for the executive brief. Returns null on any
-// failure (no key, network, parse) so the deck still builds with editable blanks.
+// Ask the server-side Claude proxy for the executive brief. Returns the parsed
+// brief, or { __error } describing why it failed (so the deck still builds with
+// editable blanks AND the panel can show the real reason).
 async function aiSummary(payload) {
   try {
     const res = await fetch('/api/ai/forecast-summary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data: payload }) })
-    if (!res.ok) return null
-    const j = await res.json()
-    return j && !j.error ? j : null
-  } catch { return null }
+    const j = await res.json().catch(() => null)
+    if (!res.ok || (j && j.error)) return { __error: (j && j.error) || `HTTP ${res.status}` }
+    return j || { __error: 'empty response' }
+  } catch (e) { return { __error: e?.message || 'network error' } }
 }
 
 async function fetchModelDays(modelKey, lat, lon, tz, days) { const m = MODELS[modelKey]; if (!m || !m.endpoint) throw new Error(`${modelKey} no endpoint`); const params = []; for (const h of (m.heights || [10])) params.push(`wind_speed_${h}m`, `wind_direction_${h}m`); let url = `${m.endpoint}?latitude=${lat}&longitude=${lon}&hourly=${params.join(',')}&wind_speed_unit=kmh&timezone=${encodeURIComponent(tz)}&forecast_days=${days}`; if (m.modelParam) url += `&models=${m.modelParam}`; const res = await fetch(url); if (!res.ok) throw new Error(`${modelKey} ${res.status}`); return res.json() }
@@ -714,7 +715,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
   // extended data isn't available). Default short-term model preference:
   // SSA-Race 1 km → SSA-Race 2 km → AROME → ECMWF.
   const SHORT_PREF = ['ICONRACE_1KM', 'ICONRACE', 'AROME', 'ECMWF']
-  const [outlookModel, setOutlookModel] = useState('ARPEGE'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
+  const [outlookModel, setOutlookModel] = useState('ARPEGE'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState(''); const [aiErr, setAiErr] = useState('')
   const shortSel = shortModel && shortModels.includes(shortModel) ? shortModel : (SHORT_PREF.find((k) => shortModels.includes(k)) || shortModels[0] || '')
 
   async function generate() {
@@ -807,7 +808,11 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         today: dailyRows.map((r) => ({ time: r.time, twd: r.twd, twsKn: r.kn, range: `${r.lo}-${r.hi}kn`, trend: r.trend })),
         diagnostics: diag,
       }
-      let ai = null; try { ai = await withTimeout(aiSummary(aiPayload), 20000, null) } catch { /* */ }
+      let ai = null
+      try {
+        const r = await withTimeout(aiSummary(aiPayload), 30000, { __error: 'timed out (30s)' })
+        if (r && r.__error) { setAiErr(r.__error); ai = null } else { ai = r; setAiErr('') }
+      } catch (e) { setAiErr(e?.message || 'failed') }
 
       const deck = buildDeck(P, {
         venue: venueName, location: venueName,
@@ -848,6 +853,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         <span style={{ fontSize: 11, color: err ? '#F87171' : '#64748B', alignSelf: 'center' }}>
           {err || (!haveP1 ? 'Set point 1 to enable' : 'Editable .pptx · mast-height · day-mode · Keynote-ready')}
         </span>
+        {aiErr && <span style={{ fontSize: 11, color: '#FBBF24', alignSelf: 'center' }}>AI brief skipped — {aiErr}</span>}
       </div>
     </div>
   )

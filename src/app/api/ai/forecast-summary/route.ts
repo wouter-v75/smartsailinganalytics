@@ -32,6 +32,19 @@ The second group is fuller PROSE PARAGRAPHS (3-5 sentences each, flowing prose, 
 Any field may be null (missing data) — then speak qualitatively and do not fabricate a number.
 Be specific, use the actual numbers (knots, degrees, local times), keep a racing-tactical tone. Concise but complete.`
 
+const MODEL = process.env.ANTHROPIC_FORECAST_MODEL || 'claude-sonnet-4-6'
+
+// Health check — confirms whether the server has the key WITHOUT exposing it.
+// GET /api/ai/forecast-summary → { configured, keyVar, model }
+export async function GET() {
+  return NextResponse.json({
+    configured: !!KEY,
+    keyVar: process.env.ANTHROPIC_API_KEY ? 'ANTHROPIC_API_KEY'
+      : (process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY ? 'NEXT_PUBLIC_ANTHROPIC_API_KEY' : null),
+    model: MODEL,
+  })
+}
+
 export async function POST(req: NextRequest) {
   if (!KEY) return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 503 })
   let data: unknown
@@ -41,13 +54,18 @@ export async function POST(req: NextRequest) {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: MODEL,
         max_tokens: 1300,
         system: SYSTEM,
         messages: [{ role: 'user', content: JSON.stringify(data) }],
       }),
     })
-    if (!res.ok) return NextResponse.json({ error: `anthropic ${res.status}` }, { status: 502 })
+    if (!res.ok) {
+      // Surface Anthropic's own error text (e.g. invalid model, 401 auth) so the
+      // client can show WHY it failed instead of a generic "unavailable".
+      const detail = await res.text().catch(() => '')
+      return NextResponse.json({ error: `anthropic ${res.status}: ${detail.slice(0, 300)}` }, { status: 502 })
+    }
     const j = await res.json()
     const text = (j.content || []).find((b: { type?: string }) => b.type === 'text')?.text || '{}'
     const parsed = JSON.parse(text.replace(/```json|```/g, '').trim())
