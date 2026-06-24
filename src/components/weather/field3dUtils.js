@@ -164,8 +164,28 @@ export async function captureField3DSeries(ML, field, opts) {
     await new Promise((res) => { let done = false; const f = () => { if (done) return; done = true; res() }; map.on('load', f); setTimeout(f, 9000) })
     map.addSource('dem', { type: 'raster-dem', tiles: [DEM_TILES], encoding: 'terrarium', tileSize: 256, maxzoom: 14 })
     map.setTerrain({ source: 'dem', exaggeration })
-    const url0 = drapeImageURL(field, frameIndices[0])
-    if (url0) { map.addSource('drape', { type: 'image', url: url0, coordinates: boxCoords(field.box) }); map.addLayer({ id: 'drape', type: 'raster', source: 'drape', paint: { 'raster-opacity': drapeOpacity(field) } }) }
+    // Speed drape. Render it as a FLAT (sea-level) deck.gl BitmapLayer so it
+    // stays aligned with the wind arrows — a MapLibre raster image gets draped
+    // over the 3× terrain and stretches out of the field box. Fall back to the
+    // terrain-draped raster only if deck.gl isn't available.
+    const useDeckDrape = !!window.deck?.MapboxOverlay
+    let drapeOverlay = null
+    const bitmapFor = (fidx) => {
+      const u = drapeImageURL(field, fidx); if (!u) return null
+      return new window.deck.BitmapLayer({
+        id: 'drape-bmp', image: u,
+        bounds: [field.box.west, field.box.south, field.box.east, field.box.north],
+        opacity: drapeOpacity(field),
+      })
+    }
+    if (useDeckDrape) {
+      const l0 = bitmapFor(frameIndices[0])
+      drapeOverlay = new window.deck.MapboxOverlay({ interleaved: false, layers: l0 ? [l0] : [] })
+      map.addControl(drapeOverlay)
+    } else {
+      const url0 = drapeImageURL(field, frameIndices[0])
+      if (url0) { map.addSource('drape', { type: 'image', url: url0, coordinates: boxCoords(field.box) }); map.addLayer({ id: 'drape', type: 'raster', source: 'drape', paint: { 'raster-opacity': drapeOpacity(field) } }) }
+    }
     if (kind !== 'hpbl') {
       addArrowIcons(map)
       map.addSource('wind', { type: 'geojson', data: fieldToGeoJSON(field, frameIndices[0], { minKn }) })
@@ -177,7 +197,8 @@ export async function captureField3DSeries(ML, field, opts) {
     for (const fidx of frameIndices) {
       const twd = kind !== 'hpbl' ? meanFromDir(field, fidx, lat, lon, 5) : null
       if (twd != null) map.setBearing(twd)
-      const u2 = drapeImageURL(field, fidx); const ds = map.getSource('drape'); if (ds && u2) ds.updateImage({ url: u2, coordinates: boxCoords(field.box) })
+      if (drapeOverlay) { const l = bitmapFor(fidx); if (l) drapeOverlay.setProps({ layers: [l] }) }
+      else { const u2 = drapeImageURL(field, fidx); const ds = map.getSource('drape'); if (ds && u2) ds.updateImage({ url: u2, coordinates: boxCoords(field.box) }) }
       const ws = map.getSource('wind'); if (ws) ws.setData(fieldToGeoJSON(field, fidx, { minKn }))
       await idle()
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))

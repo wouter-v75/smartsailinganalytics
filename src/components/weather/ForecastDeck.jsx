@@ -25,7 +25,7 @@ import {
   modelSpread, funnelDiagnostics, funnelFlag, clamp01,
 } from './forecastDiagnostics'
 import { coastNormalForPoint } from './coastline'
-import { MAPLIBRE_JS, MAPLIBRE_CSS, captureField3DSeries } from './field3dUtils'
+import { MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, captureField3DSeries } from './field3dUtils'
 
 const PPTX_JS = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'
 const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotly.min.js'
@@ -560,18 +560,26 @@ function buildDeck(P, d) {
   s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook), ...sec('Confidence', d.ai?.confidenceNote)], { x: 0.6, y: 3.35, w: 12.1, h: 3.3, fontFace: FONT, valign: 'top', paraSpaceAfter: 12 })
   if (!d.ai) s.addText('AI summary unavailable — set ANTHROPIC_API_KEY (or edit these lines directly).', { x: 0.6, y: 6.95, w: 12, h: 0.3, fontFace: FONT, fontSize: 10, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
-  if (d.ai?.generalWeather) s.addText(d.ai.generalWeather, { x: 0.5, y: 1.6, w: 5.2, h: 5.0, fontFace: FONT, fontSize: 14, color: INK, valign: 'top', paraSpaceAfter: 10 })
-  else s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.5, y: 1.6, w: 5.2, h: 5.0, fontFace: FONT, fontSize: 17, color: INK })
+  if (d.ai?.generalWeather) s.addText(d.ai.generalWeather, { x: 0.5, y: 1.6, w: 12.3, h: 5.2, fontFace: FONT, fontSize: 15, color: INK, valign: 'top', paraSpaceAfter: 12 })
+  else s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 12 } })), { x: 0.5, y: 1.6, w: 12.3, h: 5.2, fontFace: FONT, fontSize: 18, color: INK })
+
+  // Second General weather page — the 4× 3D wind-field snapshots (30 m wind),
+  // SSA-Race 1 km when available. Full-slide 2×2 grid.
   if (d.views3d && d.views3d.length) {
-    // 2×2 grid of 3D snapshots (10/12/14/16) — replaces the single 2D wind field
-    const cells = [[6.1, 1.55], [9.55, 1.55], [6.1, 3.95], [9.55, 3.95]]
+    s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
+    const cells = [[0.7, 1.5], [6.95, 1.5], [0.7, 4.45], [6.95, 4.45]]
     d.views3d.slice(0, 4).forEach((v, i) => {
       const [cx, cy] = cells[i]
-      s.addImage({ data: v.png, ...fit(760, 460, cx, cy, 3.35, 2.2) })
-      s.addText(`${v.label} local`, { x: cx, y: cy + 2.0, w: 3.35, h: 0.26, align: 'center', fontFace: FONT, fontSize: 10, bold: true, color: NAVY })
+      s.addImage({ data: v.png, ...fit(760, 460, cx, cy, 5.65, 2.6) })
+      s.addText(`${v.label} local`, { x: cx, y: cy + 2.62, w: 5.65, h: 0.26, align: 'center', fontFace: FONT, fontSize: 11, bold: true, color: NAVY })
     })
-    s.addText(`3D wind field — ${d.views3d[0].model} · oriented upwind · 5 nm racing area`, { x: 6.1, y: 6.35, w: 6.85, h: 0.3, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
-  } else if (d.windfieldImg) { s.addImage({ data: d.windfieldImg.data, ...fit(d.windfieldImg.w, d.windfieldImg.h, 6.1, 1.6, 6.8, 4.7) }); s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 6.1, y: 6.4, w: 6.8, h: 0.3, align: 'center', fontFace: FONT, fontSize: 11, color: GREY }) } else ph(s, 6.1, 1.6, 6.8, 4.7, 'Wind field — 12:00 local\n(coastline capture unavailable)')
+    const h3d = d.views3d[0].height
+    s.addText(`3D wind field — ${d.views3d[0].model}${h3d ? ` · ${h3d} m wind` : ''} · oriented upwind · 5 nm racing area`, { x: 0.7, y: 7.08, w: 12.3, h: 0.3, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
+  } else if (d.windfieldImg) {
+    s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
+    s.addImage({ data: d.windfieldImg.data, ...fit(d.windfieldImg.w, d.windfieldImg.h, 2.8, 1.6, 7.7, 5.3) })
+    s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 2.8, y: 7.0, w: 7.7, h: 0.3, align: 'center', fontFace: FONT, fontSize: 11, color: GREY })
+  }
   s = pptx.addSlide(); addTitle(s, 'Outlook')
   const oHead = [hdrCell('Time'), hdrCell('Morning (10:00)'), hdrCell('Midday (12:00)'), hdrCell('Afternoon (15:00)')]
   const oRows = d.outlookRows.map((r) => [txtCell(r.day, { bold: true, fill: { color: LIGHTF } }), oCell(r.mor), oCell(r.mid), oCell(r.aft)])
@@ -613,7 +621,7 @@ function buildDeck(P, d) {
 // ── component ───────────────────────────────────────────────────────────────
 export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, resolvedTz = 'UTC', raceDay = null }) {
   const campaignRaceDay = raceDay
-  const pptxReady = useScriptsOnce([PPTX_JS]); useScriptsOnce([PLOTLY_JS]); useScriptsOnce([MAPLIBRE_JS], [MAPLIBRE_CSS])
+  const pptxReady = useScriptsOnce([PPTX_JS]); useScriptsOnce([PLOTLY_JS]); useScriptsOnce([MAPLIBRE_JS, DECK_JS], [MAPLIBRE_CSS])
   const point1 = windData?.['1']; const haveP1 = p1lat != null && p1lon != null && !!point1
   const shortModels = useMemo(() => { const sb = point1?.surfaceByModel || {}; return Object.keys(MODELS).filter((k) => sb[k] && hasValidSpeed(sb[k].hourly)) }, [point1])
   const [outlookModel, setOutlookModel] = useState('ECMWF'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
@@ -654,19 +662,21 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       } catch { /* */ }
 
       // ── 4× 3D snapshots (SSA-Race 1 km if available, else AROME) @ 10/12/14/16 ──
-      // for the General weather slide. Time-bounded; falls back to the 2D windfield.
+      // for the General weather slide. Captured at 30 m wind. Time-bounded; falls
+      // back to the 2D windfield.
+      const VIEW3D_HEIGHT_M = 30
       let views3d = []
       try {
         const m3dKey = (sb.ICONRACE_1KM && hasValidSpeed(sb.ICONRACE_1KM.hourly)) ? 'ICONRACE_1KM' : 'AROME'
         const f3d = m3dKey.startsWith('ICONRACE')
-          ? await fetchIconRaceField({ lat: p1lat, lon: p1lon, height: mastHeight, timezone: tz, modelKey: m3dKey })
-          : await fetchWindField({ modelKey: m3dKey, lat: p1lat, lon: p1lon, height: mastHeight, timezone: tz })
+          ? await fetchIconRaceField({ lat: p1lat, lon: p1lon, height: VIEW3D_HEIGHT_M, timezone: tz, modelKey: m3dKey })
+          : await fetchWindField({ modelKey: m3dKey, lat: p1lat, lon: p1lon, height: VIEW3D_HEIGHT_M, timezone: tz })
         const stamps = f3d?.stamps || []
         const frameIndices = [10, 12, 14, 16].map((H) => stamps.findIndex((s) => s && s.hh === H)).filter((i) => i >= 0)
         const ML = window.maplibregl
         if (ML && f3d?.frames?.length && frameIndices.length) {
           const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices }), 55000, [])
-          views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: MODELS[m3dKey]?.label || m3dKey, png: c.png } }).filter((v) => v.png)
+          views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: MODELS[m3dKey]?.label || m3dKey, height: VIEW3D_HEIGHT_M, png: c.png } }).filter((v) => v.png)
         }
       } catch { /* */ }
 
