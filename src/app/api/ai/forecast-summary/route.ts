@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       headers: { 'content-type': 'application/json', 'x-api-key': KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 1300,
+        max_tokens: 2400,
         system: SYSTEM,
         messages: [{ role: 'user', content: JSON.stringify(data) }],
       }),
