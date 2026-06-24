@@ -23,18 +23,23 @@ TREAT "diagnostics" AS GROUND TRUTH. Do not invent figures — phrase the brief 
 Any field may be null (missing data) — then speak qualitatively and do not fabricate a number.
 
 Return ONLY valid JSON (no markdown, no prose outside JSON) with exactly these keys.
-The first group is the SHORT executive-summary lines on slide 1:
+KEEP EVERYTHING TERSE AND PUNCHY — short phrases, NOT flowing sentences. Bullet-style. Use the actual numbers (kn, °, local times).
+
+SHORT one-line strings (each ≤ ~14 words):
   "typeOfDay":  the regime (use diagnostics.typeOfDay if present).
-  "situation":  1-2 sentences on the synoptic/thermal setup (use quadrant, cross-shore gradient, stability).
-  "todaysWind": 1-2 sentences on the racing-day wind — timing, expected direction & veer, strength, shifts to play.
-  "stability":  1 sentence on boundary-layer depth / cap / sounding implications for the sea breeze.
-  "outlook":    1 sentence on the multi-day trend.
-  "confidenceNote": 1 short sentence pairing the confidence label with the named risk/trigger (model split, marginal breeze, light air).
-The second group is fuller PROSE PARAGRAPHS (3-5 sentences each, flowing prose, no bullet lists) for the body slides, written like a professional race-meteorology briefing:
-  "generalWeather": the synoptic + meteorology picture — surface flow, 925 hPa gradient and the surface-to-gradient separation, cloud, boundary-layer mixing, air-SST contrast and what it means for the day.
-  "modelComparison": how the models agree or differ on TWD/TWS through the racing window, the spread, which to trust, and the resulting uncertainty.
-  "sideNotes": local effects, terrain channelling / funnelling, sea-breeze front or convergence positioning, and the tactical triggers to watch (what would change the call).
-Any field may be null (missing data) — then speak qualitatively and do not fabricate a number.
+  "situation":  synoptic/thermal setup, in a phrase.
+  "todaysWind": today's wind in a phrase — timing, dir & veer, strength.
+  "stability":  boundary-layer depth / cap implication, in a phrase.
+  "outlook":    multi-day trend, in a phrase.
+  "confidenceNote": confidence label + the single key risk, in a phrase.
+
+ARRAYS of short bullet strings (each bullet ≤ ~12 words, fragments not full sentences):
+  "outlookDays":     one bullet PER upcoming day in data order, starting with the day name (e.g. "Sat: NE 10-14 kn, building midday, veering W").
+  "generalWeather":  3-4 bullets on the meteorology (surface flow, 925 hPa gradient & separation, cloud, BL mixing, air-SST).
+  "strategy":        3-5 TACTICAL bullets for TODAY's racing — favoured side, shifts to play, start bias, pressure/gates, what to watch. Tactics/strategy go ONLY here.
+  "notes":           2-4 bullets on TODAY's local effects / hazards (terrain channelling, sea-breeze front, convergence) — NON-tactical.
+  "modelComparison": 2-3 bullets on model agreement/spread through the racing window and which to trust.
+Any field may be null or [] (missing data) — then omit it; do not fabricate numbers.
 Be specific, use the actual numbers (knots, degrees, local times), keep a racing-tactical tone. Concise but complete.`
 
 const MODEL = process.env.ANTHROPIC_FORECAST_MODEL || 'claude-sonnet-4-6'

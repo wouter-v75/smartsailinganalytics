@@ -578,6 +578,27 @@ function diagChips(dg) {
   return ch
 }
 
+// Split prose into sentence-ish paragraphs (rough: break after . ! ? before a capital/digit).
+function toSentences(text) {
+  if (!text) return []
+  return String(text).split(/(?<=[.!?])\s+(?=[A-Z0-9“"])/).map((s) => s.trim()).filter(Boolean)
+}
+// pptxgenjs runs: one paragraph per item, with inter-paragraph spacing.
+function paraRuns(items, { color, size = 13, spaceAfter = 12 } = {}) {
+  const arr = (items || []).filter(Boolean)
+  return arr.map((t) => ({ text: t, options: { breakLine: true, paraSpaceAfter: spaceAfter, color, fontFace: FONT, fontSize: size } }))
+}
+// Accept either an AI array field or a legacy string (split to sentences).
+function asItems(val) {
+  if (Array.isArray(val)) return val.filter(Boolean)
+  if (typeof val === 'string' && val.trim()) return toSentences(val)
+  return []
+}
+// pptxgenjs runs: short bullet list.
+function bulletRuns(items, { color, size = 13, spaceAfter = 7 } = {}) {
+  return (items || []).filter(Boolean).map((t) => ({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: spaceAfter, color, fontFace: FONT, fontSize: size } }))
+}
+
 function buildDeck(P, d) {
   const pptx = new P(); pptx.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 }); pptx.layout = 'WIDE'
   const dg = d.diag
@@ -599,7 +620,7 @@ function buildDeck(P, d) {
 
   // ── 2) Weather and strategy brief (executive) ───────────────────────────────
   s = pptx.addSlide()
-  s.addText('Weather and strategy brief', { x: 0.65, y: 0.5, w: 12.0, h: 0.8, fontFace: FONT, fontSize: 40, bold: true, color: NAVY })
+  s.addText('Summary', { x: 0.65, y: 0.5, w: 12.0, h: 0.8, fontFace: FONT, fontSize: 40, bold: true, color: NAVY })
   const meta = [d.typeOfDay, d.raceDay ? `Race day ${d.raceDay}` : null].filter(Boolean).join('   ·   ')
   s.addText([{ text: d.location || d.venue, options: { fontFace: FONT, fontSize: 20, bold: true, color: INK, breakLine: true } }, { text: meta, options: { fontFace: FONT, fontSize: 12, color: GREY } }], { x: 0.65, y: 1.5, w: 6.5, h: 0.55, valign: 'top' })
   // Key-numbers card, top-right.
@@ -613,17 +634,26 @@ function buildDeck(P, d) {
   if (netd != null) kn.push(...kv('trend', `${netd >= 0 ? '+' : ''}${Math.round(netd)}°`, true))
   kn.push(...kv('Type of day', d.typeOfDay || '—', true))
   if (kn.length) s.addText(kn, { x: 7.5, y: 2.2, w: 4.75, h: 1.35, fontFace: FONT, valign: 'top', paraSpaceAfter: 4 })
-  s.addText('Executive summary', { x: 0.65, y: 2.1, w: 6.4, h: 0.36, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
-  const sec = (label, txt) => ([{ text: `${label}:  `, options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 13 } }, { text: txt || '—', options: { color: INK, fontFace: FONT, fontSize: 13, breakLine: true } }])
-  s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook), ...sec('Confidence', d.ai?.confidenceNote)], { x: 0.66, y: 2.6, w: 6.5, h: 4.3, fontFace: FONT, valign: 'top', paraSpaceAfter: 10 })
-  if (!d.ai) s.addText('AI summary unavailable — set ANTHROPIC_API_KEY (or edit these lines directly).', { x: 0.65, y: 6.97, w: 11.9, h: 0.26, fontFace: FONT, fontSize: 10, color: GREY })
+  // Bulleted summary — each exec line as its own bullet (bold label + text).
+  const summaryItems = [
+    ['Situation', d.ai?.situation], ["Today's wind", d.ai?.todaysWind],
+    ['Stability', d.ai?.stability], ['Outlook', d.ai?.outlook], ['Confidence', d.ai?.confidenceNote],
+  ].filter(([, v]) => v)
+  const sumRuns = []
+  summaryItems.forEach(([label, txt]) => {
+    sumRuns.push({ text: `${label}: `, options: { bullet: { indent: 18 }, bold: true, color: NAVY, fontFace: FONT, fontSize: 14 } })
+    sumRuns.push({ text: txt, options: { breakLine: true, color: INK, fontFace: FONT, fontSize: 14, paraSpaceAfter: 10 } })
+  })
+  if (sumRuns.length) s.addText(sumRuns, { x: 0.66, y: 2.2, w: 6.5, h: 4.8, fontFace: FONT, valign: 'top' })
+  else s.addText('AI summary unavailable — generate with the key set, or edit these lines directly.', { x: 0.66, y: 2.2, w: 6.5, h: 0.4, fontFace: FONT, fontSize: 12, color: GREY })
 
   // ── 3) General weather (text left + hero 3D field right) ─────────────────────
   s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
-  s.addText(d.ai?.generalWeather
-    ? [{ text: d.ai.generalWeather, options: { breakLine: true } }]
-    : d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })),
-    { x: 0.55, y: 2.15, w: 4.97, h: 4.4, fontFace: FONT, fontSize: d.ai?.generalWeather ? 13 : 16, color: INK, valign: 'top' })
+  // Situation (synoptic/thermal setup) as short bullets.
+  const gwItems = asItems(d.ai?.situation)
+  s.addText(gwItems.length ? bulletRuns(gwItems, { color: INK, size: 14, spaceAfter: 8 })
+    : d.generalBullets.map((t) => ({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: 8, color: INK, fontFace: FONT, fontSize: 15 } })),
+    { x: 0.55, y: 2.15, w: 5.0, h: 4.4, fontFace: FONT, valign: 'top' })
   const hero = d.heroView || (d.views3d || []).find((v) => v.label === '12:00') || (d.views3d || [])[0] || null
   if (hero) {
     s.addImage({ data: hero.png, ...fit(900, 540, 5.73, 2.06, 6.89, 4.17) })
@@ -635,7 +665,9 @@ function buildDeck(P, d) {
 
   // ── 4) Outlook (transposed table + long-range, right; AI outlook left) ───────
   s = pptx.addSlide(); addTitle(s, 'Outlook')
-  if (d.ai?.outlook) s.addText(d.ai.outlook, { x: 0.55, y: 1.7, w: 3.95, h: 4.7, fontFace: FONT, fontSize: 13, color: INK, valign: 'top', paraSpaceAfter: 10 })
+  // One bullet per day.
+  const outlookItems = asItems(d.ai?.outlookDays).length ? asItems(d.ai.outlookDays) : asItems(d.ai?.outlook)
+  if (outlookItems.length) s.addText(bulletRuns(outlookItems, { color: INK, size: 13, spaceAfter: 12 }), { x: 0.55, y: 1.7, w: 3.95, h: 5.0, fontFace: FONT, valign: 'top' })
   const oDays = d.outlookRows
   const oX = 4.81, oY = 1.68, oW = 7.39, oFirstW = 1.5, oRowH = 0.5
   const oDayW = (oW - oFirstW) / Math.max(1, oDays.length)
@@ -652,7 +684,12 @@ function buildDeck(P, d) {
 
   // ── 5) Details for today (text left + table right) ───────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Details for today')
-  s.addText(d.dailyBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 8 } })), { x: 0.87, y: 1.62, w: 4.76, h: 4.7, fontFace: FONT, fontSize: 14, color: INK })
+  // General-weather bullets (meteorology), kept short.
+  const detItems = asItems(d.ai?.generalWeather)
+  s.addText(detItems.length
+    ? bulletRuns(detItems, { color: INK, size: 13, spaceAfter: 8 })
+    : d.dailyBullets.map((t) => ({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: 8, color: INK, fontFace: FONT, fontSize: 14 } })),
+    { x: 0.87, y: 1.62, w: 4.76, h: 4.9, fontFace: FONT, valign: 'top' })
   const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('TWS'), hdrCell('TWD range'), hdrCell('TWS min&max'), hdrCell('Trend')]
   const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), twdCell(r.twdMean), spdCell(r.tws), txtCell(r.twd), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend)])
   // Trend column is wide enough that "Right · increasing" etc. stay on ONE line —
@@ -663,25 +700,33 @@ function buildDeck(P, d) {
   overlayWindArrows(s, d.dailyRows, { y: dY, rowH: dRowH, size: 0.2, cols: [{ cx: dX + dColW[0] + 0.24, twdOf: (r) => r.twdMean ?? null }] })
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.55, y: 7.08, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
 
+  // ── 5b) Strategic considerations — today's tactical bullets ─────────────────
+  s = pptx.addSlide(); addTitle(s, 'Strategic considerations')
+  const stratItems = asItems(d.ai?.strategy)
+  s.addText(stratItems.length
+    ? bulletRuns(stratItems, { color: INK, size: 16, spaceAfter: 12 })
+    : [{ text: 'Tactical considerations — edit. (AI strategy unavailable.)', options: { color: GREY, fontFace: FONT, fontSize: 14 } }],
+    { x: 0.7, y: 1.5, w: 12.0, h: 5.4, fontFace: FONT, valign: 'top' })
+
   // ── 6) Model guidance — 4× 3D snapshots (30 m wind), text left ───────────────
   if (d.views3d && d.views3d.length) {
     s = pptx.addSlide(); addTitle(s, 'Model guidance')
-    s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.69, y: 1.28, w: 2.75, h: 5.0, fontFace: FONT, fontSize: 13, color: INK })
-    const cells = [[3.78, 1.24], [8.47, 1.24], [3.78, 4.39], [8.47, 4.39]]
+    // No side text — spread the 4 snapshots evenly across the full slide (2×2).
+    const cells = [[0.55, 1.4], [6.9, 1.4], [0.55, 4.35], [6.9, 4.35]]
     d.views3d.slice(0, 4).forEach((v, i) => {
       const [cx, cy] = cells[i]
-      s.addImage({ data: v.png, ...fit(760, 460, cx, cy, 4.3, 2.6) })
-      s.addText(`${v.label} local`, { x: cx, y: cy + 2.6, w: 4.3, h: 0.26, align: 'center', fontFace: FONT, fontSize: 11, bold: true, color: NAVY })
+      s.addImage({ data: v.png, ...fit(760, 460, cx, cy, 5.9, 2.75) })
+      s.addText(`${v.label} local`, { x: cx, y: cy + 2.78, w: 5.9, h: 0.26, align: 'center', fontFace: FONT, fontSize: 11, bold: true, color: NAVY })
     })
     const h3d = d.views3d[0].height
-    s.addText(`3D wind field — ${d.views3d[0].model}${h3d ? ` · ${h3d} m wind` : ''} · oriented upwind · 5 nm racing area`, { x: 1.16, y: 7.26, w: 12.0, h: 0.26, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
+    s.addText(`3D wind field — ${d.views3d[0].model}${h3d ? ` · ${h3d} m wind` : ''} · oriented upwind · 5 nm racing area`, { x: 0.55, y: 7.26, w: 12.2, h: 0.24, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
   }
 
   // ── 7) Model comparison ──────────────────────────────────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Model comparison — wind speed & TWD (±1σ)')
-  if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.5, 1.86, 6.3, 3.78) }); else ph(s, 0.5, 1.86, 6.3, 3.78, 'Wind-speed comparison')
-  if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, 6.9, 2.05, 6.0, 3.6) }); else ph(s, 6.9, 2.05, 6.0, 3.6, 'Wind-direction (TWD) comparison')
-  if (d.ai?.modelComparison) s.addText(d.ai.modelComparison, { x: 0.5, y: 6.0, w: 12.4, h: 1.2, fontFace: FONT, fontSize: 11.5, color: INK, valign: 'top' })
+  // Charts only — the model-comparison narrative moves to Confidence & side notes.
+  if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.5, 1.7, 6.3, 5.0) }); else ph(s, 0.5, 1.7, 6.3, 5.0, 'Wind-speed comparison')
+  if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, 6.9, 1.8, 6.0, 4.8) }); else ph(s, 6.9, 1.8, 6.0, 4.8, 'Wind-direction (TWD) comparison')
 
   // ── 8) Stability ─────────────────────────────────────────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Stability')
@@ -690,18 +735,29 @@ function buildDeck(P, d) {
     const cap = st.hasLowCap ? `low cap +${st.capStrengthC}°C @ ${st.capBaseM} m` : (st.capBaseM != null ? `cap aloft @ ${st.capBaseM} m` : 'no cap')
     const line = `Stability: ${cap} · lapse ${st.lapseRateCkm ?? '—'} °C/km · h_mix ${st.hMixM ?? '—'} m · gate ${st.gate ?? '—'}     |     `
       + `Sea-breeze ${sbb.score ?? '—'}/10${sbb.quadrant ? ` (${sbb.quadrant})` : ''}: SBI ${sbb.sbi ?? '—'}, cross-shore ${sbb.crossShoreKt ?? '—'} kt, bend ${sbb.thermalBendDeg ?? '—'}°${sbb.deltaT != null ? `, ΔT ${sbb.deltaT} °C` : ''}`
-    s.addText(line, { x: 0.45, y: 1.02, w: 12.45, h: 0.26, fontFace: FONT, fontSize: 10.5, color: NAVY })
+    s.addText(line, { x: 0.45, y: 1.0, w: 12.45, h: 0.26, fontFace: FONT, fontSize: 10.5, color: NAVY })
   }
-  if (d.hpblImg) s.addImage({ data: d.hpblImg, ...fit(1000, 560, 0.4, 2.21, 6.4, 3.58) }); else ph(s, 0.4, 2.21, 6.4, 3.58, 'Boundary-layer height\n(no SSA / GFS hpbl data)')
-  if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.44, 1.3, 5.01, 5.5) }); else ph(s, 7.44, 1.3, 5.01, 5.5, 'Vertical sounding @ 13:00\n(no sounding data here)')
-  s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.55, y: 7.08, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
+  // Stability bullets (from the summary) above the graphs; graphs shrunk to fit.
+  if (d.ai?.stability) s.addText(bulletRuns(asItems(d.ai.stability), { color: INK, size: 13, spaceAfter: 5 }), { x: 0.5, y: 1.4, w: 12.4, h: 1.25, fontFace: FONT, valign: 'top' })
+  const stImgY = d.ai?.stability ? 2.85 : 1.7
+  if (d.hpblImg) s.addImage({ data: d.hpblImg, ...fit(1000, 560, 0.5, stImgY, 6.1, 3.85) }); else ph(s, 0.5, stImgY, 6.1, 3.85, 'Boundary-layer height\n(no SSA / GFS hpbl data)')
+  if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.1, stImgY - 0.1, 5.2, 4.1) }); else ph(s, 7.1, stImgY - 0.1, 5.2, 4.1, 'Vertical sounding @ 13:00\n(no sounding data here)')
+  s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.55, y: 7.1, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
 
   // ── 9) Confidence & side notes ───────────────────────────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Confidence & side notes')
   const chips = diagChips(dg)
-  if (chips.length) s.addText(chips.join('    ·    '), { x: 0.55, y: 1.29, w: 12.2, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: NAVY })
-  s.addText(d.ai?.sideNotes || 'Local effects, terrain channelling and tactical triggers — edit. (AI side notes unavailable.)',
-    { x: 0.55, y: 1.95, w: 12.2, h: 4.7, fontFace: FONT, fontSize: 14, color: INK, valign: 'top', paraSpaceAfter: 10 })
+  if (chips.length) s.addText(chips.join('    ·    '), { x: 0.55, y: 1.29, w: 12.2, h: 0.32, fontFace: FONT, fontSize: 12, bold: true, color: NAVY })
+  // Two blocks, both about TODAY: Confidence (left) and Notes (right).
+  s.addText('Confidence', { x: 0.55, y: 1.85, w: 6.0, h: 0.32, fontFace: FONT, fontSize: 15, bold: true, color: NAVY })
+  s.addText(bulletRuns([d.ai?.confidenceNote, ...asItems(d.ai?.modelComparison)].filter(Boolean), { color: INK, size: 13, spaceAfter: 7 }),
+    { x: 0.55, y: 2.25, w: 6.0, h: 4.7, fontFace: FONT, valign: 'top' })
+  s.addText('Notes', { x: 6.85, y: 1.85, w: 6.0, h: 0.32, fontFace: FONT, fontSize: 15, bold: true, color: NAVY })
+  const noteItems = asItems(d.ai?.notes).length ? asItems(d.ai.notes) : asItems(d.ai?.sideNotes)
+  s.addText(noteItems.length
+    ? bulletRuns(noteItems, { color: INK, size: 13, spaceAfter: 7 })
+    : [{ text: 'Local effects / hazards — edit. (AI notes unavailable.)', options: { color: GREY, fontFace: FONT, fontSize: 13 } }],
+    { x: 6.85, y: 2.25, w: 6.0, h: 4.7, fontFace: FONT, valign: 'top' })
   return pptx
 }
 
