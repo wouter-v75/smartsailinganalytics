@@ -24,6 +24,7 @@ Any field may be null (missing data) — then speak qualitatively and do not fab
 
 Return ONLY valid JSON (no markdown, no prose outside JSON) with exactly these keys.
 KEEP EVERYTHING TERSE AND PUNCHY — short phrases, NOT flowing sentences. Bullet-style. Use the actual numbers (kn, °, local times).
+FOCUS EVERY LINE ON THE RACING WINDOW 10:00–16:00 LOCAL. Ignore pre-race / early-morning conditions (dawn variability, sunrise land breeze, etc.) — the boats are not racing then, so do not mention them. Timing references should sit inside or adjacent to 10:00–16:00.
 
 SHORT one-line strings (each ≤ ~14 words):
   "typeOfDay":  the regime (use diagnostics.typeOfDay if present).
@@ -36,6 +37,7 @@ SHORT one-line strings (each ≤ ~14 words):
 ARRAYS of short bullet strings (each bullet ≤ ~12 words, fragments not full sentences):
   "outlookDays":     one bullet PER upcoming day in data order, starting with the day name (e.g. "Sat: NE 10-14 kn, building midday, veering W").
   "generalWeather":  3-4 bullets on the meteorology (surface flow, 925 hPa gradient & separation, cloud, BL mixing, air-SST).
+  "stabilityNotes":  2-3 bullets: (1) boundary-layer depth / mixing, (2) cap or INVERSION — note its height if present in the profile/diagnostics, (3) thermal / sea-breeze implication for the racing window.
   "strategy":        3-5 TACTICAL bullets for TODAY's racing — favoured side, shifts to play, start bias, pressure/gates, what to watch. Tactics/strategy go ONLY here.
   "notes":           2-4 bullets on TODAY's local effects / hazards (terrain channelling, sea-breeze front, convergence) — NON-tactical.
   "modelComparison": 2-3 bullets on model agreement/spread through the racing window and which to trust.

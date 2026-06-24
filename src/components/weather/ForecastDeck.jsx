@@ -603,14 +603,18 @@ function buildDeck(P, d) {
   const pptx = new P(); pptx.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 }); pptx.layout = 'WIDE'
   const dg = d.diag
   const rws = d.dailyRows || []
-  const los = rws.map((r) => r.lo).filter((x) => x != null)
-  const his = rws.map((r) => r.hi).filter((x) => x != null)
+  // Headline numbers are for the RACING window only (10:00–16:00) — early-morning
+  // light/variable air is not relevant to the start.
+  const race = rws.filter((r) => r.time >= '10:00' && r.time <= '16:00')
+  const stat = race.length ? race : rws
+  const los = stat.map((r) => r.lo).filter((x) => x != null)
+  const his = stat.map((r) => r.hi).filter((x) => x != null)
   const twsMin = los.length ? Math.min(...los) : null
   const twsMax = his.length ? Math.max(...his) : null
-  const tm0 = rws.find((r) => r.twdMean != null)?.twdMean
-  const tm1 = [...rws].reverse().find((r) => r.twdMean != null)?.twdMean
+  const tm0 = stat.find((r) => r.twdMean != null)?.twdMean
+  const tm1 = [...stat].reverse().find((r) => r.twdMean != null)?.twdMean
   const netd = (tm0 != null && tm1 != null) ? ((((tm1 - tm0) % 360) + 540) % 360) - 180 : null
-  const midRow = rws.find((r) => r.time === '12:00') || rws[Math.floor(rws.length / 2)] || null
+  const midRow = stat.find((r) => r.time === '13:00') || stat.find((r) => r.time === '12:00') || stat[Math.floor(stat.length / 2)] || null
 
   // ── 1) TITLE (dark navy, per template) ──────────────────────────────────────
   let s = pptx.addSlide(); s.background = { color: '003462' }
@@ -621,10 +625,8 @@ function buildDeck(P, d) {
   // ── 2) Weather and strategy brief (executive) ───────────────────────────────
   s = pptx.addSlide()
   s.addText('Summary', { x: 0.65, y: 0.5, w: 12.0, h: 0.8, fontFace: FONT, fontSize: 40, bold: true, color: NAVY })
-  const meta = [d.typeOfDay, d.raceDay ? `Race day ${d.raceDay}` : null].filter(Boolean).join('   ·   ')
-  s.addText([{ text: d.location || d.venue, options: { fontFace: FONT, fontSize: 20, bold: true, color: INK, breakLine: true } }, { text: meta, options: { fontFace: FONT, fontSize: 12, color: GREY } }], { x: 0.65, y: 1.5, w: 6.5, h: 0.55, valign: 'top' })
-  // Key-numbers card, top-right.
-  s.addShape('roundRect', { x: 7.39, y: 2.1, w: 4.95, h: 1.55, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.06 })
+  // Key-numbers card, top-right (racing window).
+  s.addShape('roundRect', { x: 7.39, y: 1.7, w: 4.95, h: 1.45, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.06 })
   const kv = (k, v, brk) => ([{ text: `${k} `, options: { color: GREY, fontFace: FONT, fontSize: 11 } }, { text: v, options: { color: NAVY, bold: true, fontFace: FONT, fontSize: 12 } }, { text: brk ? '' : '     ', options: brk ? { breakLine: true } : {} }])
   const kn = []
   if (midRow?.kn != null) kn.push(...kv('TWS', `${midRow.kn} kn`))
@@ -632,27 +634,30 @@ function buildDeck(P, d) {
   if (twsMax != null) kn.push(...kv('peak', `${twsMax} kn`, true))
   if (midRow?.twdMean != null) kn.push(...kv('TWD', `${round5(midRow.twdMean)}°${midRow.twd ? ` ${midRow.twd}` : ''}`))
   if (netd != null) kn.push(...kv('trend', `${netd >= 0 ? '+' : ''}${Math.round(netd)}°`, true))
-  kn.push(...kv('Type of day', d.typeOfDay || '—', true))
-  if (kn.length) s.addText(kn, { x: 7.5, y: 2.2, w: 4.75, h: 1.35, fontFace: FONT, valign: 'top', paraSpaceAfter: 4 })
-  // Bulleted summary — each exec line as its own bullet (bold label + text).
+  if (kn.length) s.addText(kn, { x: 7.5, y: 1.8, w: 4.75, h: 1.25, fontFace: FONT, valign: 'top', paraSpaceAfter: 4 })
+  // Type-of-day header line, then the bulleted summary (1 line spacing between).
   const summaryItems = [
     ['Situation', d.ai?.situation], ["Today's wind", d.ai?.todaysWind],
     ['Stability', d.ai?.stability], ['Outlook', d.ai?.outlook], ['Confidence', d.ai?.confidenceNote],
   ].filter(([, v]) => v)
   const sumRuns = []
+  if (d.typeOfDay) {
+    sumRuns.push({ text: 'Type of day:  ', options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 16 } })
+    sumRuns.push({ text: d.typeOfDay, options: { breakLine: true, bold: true, color: INK, fontFace: FONT, fontSize: 16, paraSpaceAfter: 18 } })
+  }
   summaryItems.forEach(([label, txt]) => {
     sumRuns.push({ text: `${label}: `, options: { bullet: { indent: 18 }, bold: true, color: NAVY, fontFace: FONT, fontSize: 14 } })
-    sumRuns.push({ text: txt, options: { breakLine: true, color: INK, fontFace: FONT, fontSize: 14, paraSpaceAfter: 10 } })
+    sumRuns.push({ text: txt, options: { breakLine: true, color: INK, fontFace: FONT, fontSize: 14, paraSpaceAfter: 16 } })
   })
   if (sumRuns.length) s.addText(sumRuns, { x: 0.66, y: 2.2, w: 6.5, h: 4.8, fontFace: FONT, valign: 'top' })
   else s.addText('AI summary unavailable — generate with the key set, or edit these lines directly.', { x: 0.66, y: 2.2, w: 6.5, h: 0.4, fontFace: FONT, fontSize: 12, color: GREY })
 
   // ── 3) General weather (text left + hero 3D field right) ─────────────────────
   s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
-  // Situation (synoptic/thermal setup) as short bullets.
-  const gwItems = asItems(d.ai?.situation)
-  s.addText(gwItems.length ? bulletRuns(gwItems, { color: INK, size: 14, spaceAfter: 8 })
-    : d.generalBullets.map((t) => ({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: 8, color: INK, fontFace: FONT, fontSize: 15 } })),
+  // Meteorology as short bullet points (lead with the situation one-liner).
+  const gwItems = [d.ai?.situation, ...asItems(d.ai?.generalWeather)].filter(Boolean)
+  s.addText(gwItems.length ? bulletRuns(gwItems, { color: INK, size: 14, spaceAfter: 9 })
+    : d.generalBullets.map((t) => ({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: 9, color: INK, fontFace: FONT, fontSize: 15 } })),
     { x: 0.55, y: 2.15, w: 5.0, h: 4.4, fontFace: FONT, valign: 'top' })
   const hero = d.heroView || (d.views3d || []).find((v) => v.label === '12:00') || (d.views3d || [])[0] || null
   if (hero) {
@@ -684,10 +689,10 @@ function buildDeck(P, d) {
 
   // ── 5) Details for today (text left + table right) ───────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Details for today')
-  // General-weather bullets (meteorology), kept short.
-  const detItems = asItems(d.ai?.generalWeather)
+  // Today's racing-day wind, as short bullets (table at right carries the detail).
+  const detItems = asItems(d.ai?.todaysWind)
   s.addText(detItems.length
-    ? bulletRuns(detItems, { color: INK, size: 13, spaceAfter: 8 })
+    ? bulletRuns(detItems, { color: INK, size: 14, spaceAfter: 8 })
     : d.dailyBullets.map((t) => ({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: 8, color: INK, fontFace: FONT, fontSize: 14 } })),
     { x: 0.87, y: 1.62, w: 4.76, h: 4.9, fontFace: FONT, valign: 'top' })
   const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('TWS'), hdrCell('TWD range'), hdrCell('TWS min&max'), hdrCell('Trend')]
@@ -711,12 +716,13 @@ function buildDeck(P, d) {
   // ── 6) Model guidance — 4× 3D snapshots (30 m wind), text left ───────────────
   if (d.views3d && d.views3d.length) {
     s = pptx.addSlide(); addTitle(s, 'Model guidance')
-    // No side text — spread the 4 snapshots evenly across the full slide (2×2).
-    const cells = [[0.55, 1.4], [6.9, 1.4], [0.55, 4.35], [6.9, 4.35]]
+    // No side text — spread the 4 snapshots over the slide, with a clear gap
+    // between the top and bottom rows for each row's time caption.
+    const cells = [[0.55, 1.35], [6.9, 1.35], [0.55, 4.55], [6.9, 4.55]]
     d.views3d.slice(0, 4).forEach((v, i) => {
       const [cx, cy] = cells[i]
-      s.addImage({ data: v.png, ...fit(760, 460, cx, cy, 5.9, 2.75) })
-      s.addText(`${v.label} local`, { x: cx, y: cy + 2.78, w: 5.9, h: 0.26, align: 'center', fontFace: FONT, fontSize: 11, bold: true, color: NAVY })
+      s.addImage({ data: v.png, ...fit(760, 460, cx, cy, 5.9, 2.5) })
+      s.addText(`${v.label} local`, { x: cx, y: cy + 2.52, w: 5.9, h: 0.26, align: 'center', fontFace: FONT, fontSize: 12, bold: true, color: NAVY })
     })
     const h3d = d.views3d[0].height
     s.addText(`3D wind field — ${d.views3d[0].model}${h3d ? ` · ${h3d} m wind` : ''} · oriented upwind · 5 nm racing area`, { x: 0.55, y: 7.26, w: 12.2, h: 0.24, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
@@ -737,9 +743,11 @@ function buildDeck(P, d) {
       + `Sea-breeze ${sbb.score ?? '—'}/10${sbb.quadrant ? ` (${sbb.quadrant})` : ''}: SBI ${sbb.sbi ?? '—'}, cross-shore ${sbb.crossShoreKt ?? '—'} kt, bend ${sbb.thermalBendDeg ?? '—'}°${sbb.deltaT != null ? `, ΔT ${sbb.deltaT} °C` : ''}`
     s.addText(line, { x: 0.45, y: 1.0, w: 12.45, h: 0.26, fontFace: FONT, fontSize: 10.5, color: NAVY })
   }
-  // Stability bullets (from the summary) above the graphs; graphs shrunk to fit.
-  if (d.ai?.stability) s.addText(bulletRuns(asItems(d.ai.stability), { color: INK, size: 13, spaceAfter: 5 }), { x: 0.5, y: 1.4, w: 12.4, h: 1.25, fontFace: FONT, valign: 'top' })
-  const stImgY = d.ai?.stability ? 2.85 : 1.7
+  // Stability bullets above the graphs: separate BL/cap, inversion, and thermal/
+  // sea-breeze notes (falls back to the one-line stability if no detailed array).
+  const stabItems = asItems(d.ai?.stabilityNotes).length ? asItems(d.ai.stabilityNotes) : asItems(d.ai?.stability)
+  if (stabItems.length) s.addText(bulletRuns(stabItems, { color: INK, size: 13, spaceAfter: 5 }), { x: 0.5, y: 1.4, w: 12.4, h: 1.5, fontFace: FONT, valign: 'top' })
+  const stImgY = stabItems.length ? 3.05 : 1.7
   if (d.hpblImg) s.addImage({ data: d.hpblImg, ...fit(1000, 560, 0.5, stImgY, 6.1, 3.85) }); else ph(s, 0.5, stImgY, 6.1, 3.85, 'Boundary-layer height\n(no SSA / GFS hpbl data)')
   if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.1, stImgY - 0.1, 5.2, 4.1) }); else ph(s, 7.1, stImgY - 0.1, 5.2, 4.1, 'Vertical sounding @ 13:00\n(no sounding data here)')
   s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.55, y: 7.1, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
@@ -884,7 +892,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
         generalBullets: ['Synoptic setup — edit', 'Sea-breeze timing & strength — edit', 'Local effects / hazards — edit'],
-        dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze build through the day — edit', 'Morning: light/variable — edit', 'Local effects — edit'],
+        dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze through the racing window — edit', 'Racing window 10:00–16:00 — edit', 'Local effects — edit'],
       })
       await deck.writeFile({ fileName: `forecast_${venueName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.pptx` })
     } catch (e) { setErr(e?.message || 'generation failed') } finally { setBusy(false) }
