@@ -14,7 +14,7 @@
 // ----------------------------------------------------------------------------
 import React, { useMemo, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
-import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, SSARACE_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS } from './openMeteo'
+import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, SSARACE_SOUNDING_LEVELS, ICON_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS, GFS_SOUNDING_LEVELS } from './openMeteo'
 import { matchVenue, specFor, mosSeries } from './mos'
 import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField } from './windField'
 import { getWeatherSession } from './weatherSession'
@@ -262,7 +262,17 @@ async function captureSounding(p1lat, p1lon, windData1, tz) {
   const lat = sp?.lat ?? p1lat; const lon = sp?.lon ?? p1lon
   let h = null; let levels = null; let label = null; let ptop = 650
   try { const ss = await fetchIconRaceSounding({ latitude: lat, longitude: lon }); if (ss?.time) { h = ss; levels = SSARACE_SOUNDING_LEVELS; label = 'SSA-Race 2 km'; ptop = 650 } } catch { /* */ }
-  if (!h && isP1) { const e = windData1?.surfaceByModel?.ECMWF?.hourly; if (e && (e.temperature_1000hPa || e.temperature_850hPa)) { h = e; levels = ECMWF_SOUNDING_LEVELS; label = 'ECMWF'; ptop = 500 } }
+  // Fallback chain (point-1 only, since these come from point 1's fetched data):
+  // SSA-Race 2 km → ICON → ECMWF → GFS.
+  if (!h && isP1) {
+    const hasT = (x) => x && (x.temperature_1000hPa || x.temperature_850hPa)
+    const icon = windData1?.surfaceByModel?.ICON?.hourly
+    const ecmwf = windData1?.surfaceByModel?.ECMWF?.hourly
+    const gfs = windData1?.gfs?.hourly
+    if (hasT(icon)) { h = icon; levels = ICON_SOUNDING_LEVELS; label = 'ICON'; ptop = 500 }
+    else if (hasT(ecmwf)) { h = ecmwf; levels = ECMWF_SOUNDING_LEVELS; label = 'ECMWF'; ptop = 500 }
+    else if (hasT(gfs)) { h = gfs; levels = GFS_SOUNDING_LEVELS; label = 'GFS'; ptop = 500 }
+  }
   if (!h) return null
   const lt = localTimes(h, tz); const day0 = lt[0]?.slice(0, 10)
   let idx = lt.findIndex((t) => t.slice(0, 10) === day0 && t.slice(11, 13) === '13')
@@ -569,105 +579,125 @@ function diagChips(dg) {
 
 function buildDeck(P, d) {
   const pptx = new P(); pptx.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 }); pptx.layout = 'WIDE'
-  // 0) Title + executive brief
-  let s = pptx.addSlide()
-  s.addText('Weather and strategy brief', { x: 0.6, y: 0.5, w: 12.1, h: 0.9, fontFace: FONT, fontSize: 40, bold: true, color: NAVY })
-  const meta = [d.typeOfDay, d.raceDay ? `Race day ${d.raceDay}` : null].filter(Boolean).join('   ·   ')
-  s.addText([{ text: d.venue, options: { fontFace: FONT, fontSize: 18, bold: true, color: INK, breakLine: true } }, { text: meta, options: { fontFace: FONT, fontSize: 13, color: GREY } }], { x: 0.6, y: 1.55, w: 12.1, h: 0.55, valign: 'top' })
   const dg = d.diag
-  // Key Numbers box (TWS range / peak / TWD net change) — like the team report
   const rws = d.dailyRows || []
-  if (rws.length) {
-    const los = rws.map((r) => r.lo).filter((x) => x != null)
-    const his = rws.map((r) => r.hi).filter((x) => x != null)
-    const twsMin = los.length ? Math.min(...los) : null
-    const twsMax = his.length ? Math.max(...his) : null
-    const tm0 = rws.find((r) => r.twdMean != null)?.twdMean
-    const tm1 = [...rws].reverse().find((r) => r.twdMean != null)?.twdMean
-    const netd = (tm0 != null && tm1 != null) ? ((((tm1 - tm0) % 360) + 540) % 360) - 180 : null
-    s.addShape('roundRect', { x: 0.6, y: 2.1, w: 12.1, h: 0.62, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.08 })
-    const kv = (k, v) => ([{ text: `${k} `, options: { color: GREY, fontFace: FONT, fontSize: 12 } }, { text: v, options: { color: NAVY, bold: true, fontFace: FONT, fontSize: 13 } }, { text: '        ', options: {} }])
-    const parts = []
-    if (twsMin != null) parts.push(...kv('TWS range', `${twsMin}–${twsMax} kn`))
-    if (twsMax != null) parts.push(...kv('Peak', `${twsMax} kn`))
-    if (netd != null) parts.push(...kv('TWD net', `${netd >= 0 ? '+' : ''}${Math.round(netd)}° (${round5(tm0)}→${round5(tm1)})`))
-    if (parts.length) s.addText(parts, { x: 0.85, y: 2.1, w: 11.6, h: 0.62, valign: 'middle', fontFace: FONT })
-  }
-  s.addText('Executive summary', { x: 0.6, y: 2.9, w: 12, h: 0.4, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
-  const sec = (label, txt) => ([{ text: `${label}:  `, options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 14 } }, { text: txt || '—', options: { color: INK, fontFace: FONT, fontSize: 14, breakLine: true } }])
-  s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook), ...sec('Confidence', d.ai?.confidenceNote)], { x: 0.6, y: 3.35, w: 12.1, h: 3.3, fontFace: FONT, valign: 'top', paraSpaceAfter: 12 })
-  if (!d.ai) s.addText('AI summary unavailable — set ANTHROPIC_API_KEY (or edit these lines directly).', { x: 0.6, y: 6.95, w: 12, h: 0.3, fontFace: FONT, fontSize: 10, color: GREY })
-  s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
-  if (d.ai?.generalWeather) s.addText(d.ai.generalWeather, { x: 0.5, y: 1.6, w: 12.3, h: 5.2, fontFace: FONT, fontSize: 15, color: INK, valign: 'top', paraSpaceAfter: 12 })
-  else s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 12 } })), { x: 0.5, y: 1.6, w: 12.3, h: 5.2, fontFace: FONT, fontSize: 18, color: INK })
+  const los = rws.map((r) => r.lo).filter((x) => x != null)
+  const his = rws.map((r) => r.hi).filter((x) => x != null)
+  const twsMin = los.length ? Math.min(...los) : null
+  const twsMax = his.length ? Math.max(...his) : null
+  const tm0 = rws.find((r) => r.twdMean != null)?.twdMean
+  const tm1 = [...rws].reverse().find((r) => r.twdMean != null)?.twdMean
+  const netd = (tm0 != null && tm1 != null) ? ((((tm1 - tm0) % 360) + 540) % 360) - 180 : null
+  const midRow = rws.find((r) => r.time === '12:00') || rws[Math.floor(rws.length / 2)] || null
 
-  // Second General weather page — the 4× 3D wind-field snapshots (30 m wind),
-  // SSA-Race 1 km when available. Full-slide 2×2 grid.
-  if (d.views3d && d.views3d.length) {
-    s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
-    const cells = [[0.7, 1.5], [6.95, 1.5], [0.7, 4.45], [6.95, 4.45]]
-    d.views3d.slice(0, 4).forEach((v, i) => {
-      const [cx, cy] = cells[i]
-      s.addImage({ data: v.png, ...fit(760, 460, cx, cy, 5.65, 2.6) })
-      s.addText(`${v.label} local`, { x: cx, y: cy + 2.62, w: 5.65, h: 0.26, align: 'center', fontFace: FONT, fontSize: 11, bold: true, color: NAVY })
-    })
-    const h3d = d.views3d[0].height
-    s.addText(`3D wind field — ${d.views3d[0].model}${h3d ? ` · ${h3d} m wind` : ''} · oriented upwind · 5 nm racing area`, { x: 0.7, y: 7.08, w: 12.3, h: 0.3, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
+  // ── 1) TITLE (dark navy, per template) ──────────────────────────────────────
+  let s = pptx.addSlide(); s.background = { color: '003462' }
+  s.addText(`Weather & strategy brief - ${d.day}`, { x: 0.66, y: 1.41, w: 12.0, h: 2.4, fontFace: FONT, fontSize: 48, bold: true, color: 'FFFFFF', valign: 'top' })
+  s.addText(`<Boatname>   <Event>   ${d.year}`, { x: 0.66, y: 3.94, w: 12.0, h: 0.7, fontFace: FONT, fontSize: 22, bold: true, color: '8FB8E6' })
+  s.addText(`Wouter · ${d.day}`, { x: 0.66, y: 6.48, w: 12.0, h: 0.35, fontFace: FONT, fontSize: 12, color: 'AFC4DE' })
+
+  // ── 2) Weather and strategy brief (executive) ───────────────────────────────
+  s = pptx.addSlide()
+  s.addText('Weather and strategy brief', { x: 0.65, y: 0.5, w: 12.0, h: 0.8, fontFace: FONT, fontSize: 40, bold: true, color: NAVY })
+  const meta = [d.typeOfDay, d.raceDay ? `Race day ${d.raceDay}` : null].filter(Boolean).join('   ·   ')
+  s.addText([{ text: d.location || d.venue, options: { fontFace: FONT, fontSize: 20, bold: true, color: INK, breakLine: true } }, { text: meta, options: { fontFace: FONT, fontSize: 12, color: GREY } }], { x: 0.65, y: 1.5, w: 6.5, h: 0.55, valign: 'top' })
+  // Key-numbers card, top-right.
+  s.addShape('roundRect', { x: 7.39, y: 2.1, w: 4.95, h: 1.55, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.06 })
+  const kv = (k, v, brk) => ([{ text: `${k} `, options: { color: GREY, fontFace: FONT, fontSize: 11 } }, { text: v, options: { color: NAVY, bold: true, fontFace: FONT, fontSize: 12 } }, { text: brk ? '' : '     ', options: brk ? { breakLine: true } : {} }])
+  const kn = []
+  if (midRow?.kn != null) kn.push(...kv('TWS', `${midRow.kn} kn`))
+  if (twsMin != null) kn.push(...kv('range', `${twsMin}–${twsMax} kn`))
+  if (twsMax != null) kn.push(...kv('peak', `${twsMax} kn`, true))
+  if (midRow?.twdMean != null) kn.push(...kv('TWD', `${round5(midRow.twdMean)}°${midRow.twd ? ` ${midRow.twd}` : ''}`))
+  if (netd != null) kn.push(...kv('trend', `${netd >= 0 ? '+' : ''}${Math.round(netd)}°`, true))
+  kn.push(...kv('Type of day', d.typeOfDay || '—', true))
+  if (kn.length) s.addText(kn, { x: 7.5, y: 2.2, w: 4.75, h: 1.35, fontFace: FONT, valign: 'top', paraSpaceAfter: 4 })
+  s.addText('Executive summary', { x: 0.65, y: 2.1, w: 6.4, h: 0.36, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
+  const sec = (label, txt) => ([{ text: `${label}:  `, options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 13 } }, { text: txt || '—', options: { color: INK, fontFace: FONT, fontSize: 13, breakLine: true } }])
+  s.addText([...sec('Situation', d.ai?.situation), ...sec("Today's wind", d.ai?.todaysWind), ...sec('Stability', d.ai?.stability), ...sec('Outlook', d.ai?.outlook), ...sec('Confidence', d.ai?.confidenceNote)], { x: 0.66, y: 2.6, w: 6.5, h: 4.3, fontFace: FONT, valign: 'top', paraSpaceAfter: 10 })
+  if (!d.ai) s.addText('AI summary unavailable — set ANTHROPIC_API_KEY (or edit these lines directly).', { x: 0.65, y: 6.97, w: 11.9, h: 0.26, fontFace: FONT, fontSize: 10, color: GREY })
+
+  // ── 3) General weather (text left + hero 3D field right) ─────────────────────
+  s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
+  s.addText(d.ai?.generalWeather
+    ? [{ text: d.ai.generalWeather, options: { breakLine: true } }]
+    : d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })),
+    { x: 0.55, y: 2.15, w: 4.97, h: 4.4, fontFace: FONT, fontSize: d.ai?.generalWeather ? 13 : 16, color: INK, valign: 'top' })
+  const hero = (d.views3d || []).find((v) => v.label === '12:00') || (d.views3d || [])[0] || null
+  if (hero) {
+    s.addImage({ data: hero.png, ...fit(760, 460, 5.73, 2.06, 6.89, 4.17) })
+    s.addText(`3D wind field — ${hero.model}${hero.height ? ` · ${hero.height} m` : ''} · ${hero.label} local · 5 nm racing area`, { x: 5.73, y: 6.32, w: 6.89, h: 0.3, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
   } else if (d.windfieldImg) {
-    s = pptx.addSlide(); addTitle(s, 'General weather', d.subtitle)
-    s.addImage({ data: d.windfieldImg.data, ...fit(d.windfieldImg.w, d.windfieldImg.h, 2.8, 1.6, 7.7, 5.3) })
-    s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 2.8, y: 7.0, w: 7.7, h: 0.3, align: 'center', fontFace: FONT, fontSize: 11, color: GREY })
-  }
+    s.addImage({ data: d.windfieldImg.data, ...fit(d.windfieldImg.w, d.windfieldImg.h, 5.73, 2.06, 6.89, 4.17) })
+    s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 5.73, y: 6.32, w: 6.89, h: 0.3, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
+  } else ph(s, 5.73, 2.06, 6.89, 4.17, '3D wind field — 12:00\n(capture unavailable)')
+
+  // ── 4) Outlook (transposed table + long-range, right; AI outlook left) ───────
   s = pptx.addSlide(); addTitle(s, 'Outlook')
-  // Transposed: days across the top (columns), time-of-day down the side (rows).
+  if (d.ai?.outlook) s.addText(d.ai.outlook, { x: 0.55, y: 1.7, w: 3.95, h: 4.7, fontFace: FONT, fontSize: 13, color: INK, valign: 'top', paraSpaceAfter: 10 })
   const oDays = d.outlookRows
-  const oX = 0.5, oY = 1.4, oFirstW = 1.9, oRowH = 0.5
-  const oDayW = (12.33 - oFirstW) / Math.max(1, oDays.length)
-  const oPeriods = [['Morning (10:00)', 'mor'], ['Midday (12:00)', 'mid'], ['Afternoon (15:00)', 'aft']]
+  const oX = 4.81, oY = 1.68, oW = 7.39, oFirstW = 1.5, oRowH = 0.5
+  const oDayW = (oW - oFirstW) / Math.max(1, oDays.length)
+  const oPeriods = [['Morning', 'mor'], ['Midday', 'mid'], ['Afternoon', 'aft']]
   const oHead = [hdrCell(''), ...oDays.map((r) => hdrCell(r.day))]
   const oRows = oPeriods.map(([label, key]) => [txtCell(label, { bold: true, fill: { color: LIGHTF } }), ...oDays.map((r) => oCell(r[key]))])
-  s.addTable([oHead, ...oRows], { x: oX, y: oY, w: 12.33, colW: [oFirstW, ...oDays.map(() => oDayW)], rowH: oRowH, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
-  // One arrow per (period row × day column). Period rows are the table "rows";
-  // each day column gets its own centre-x and reads that period's TWD.
+  s.addTable([oHead, ...oRows], { x: oX, y: oY, w: oW, colW: [oFirstW, ...oDays.map(() => oDayW)], rowH: oRowH, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
   overlayWindArrows(s, oPeriods.map(([, key]) => ({ key })), {
-    y: oY, rowH: oRowH,
-    cols: oDays.map((r, j) => ({ cx: oX + oFirstW + j * oDayW + 0.30, twdOf: (p) => r[p.key]?.twdMean ?? null })),
+    y: oY, rowH: oRowH, size: 0.2,
+    cols: oDays.map((r, j) => ({ cx: oX + oFirstW + j * oDayW + 0.24, twdOf: (p) => r[p.key]?.twdMean ?? null })),
   })
-  if (d.longRange) s.addImage({ data: d.longRange, ...fit(1400, 520, 0.5, 3.5, 12.33, 3.3) }); else ph(s, 0.5, 3.5, 12.33, 3.3, '4-day TWS & TWD (±1σ, racing window)')
-  s.addText('AM/Mid/PM = 10:00/12:00/15:00 local · TWD (cardinal) & TWS ranges = weighted models (all day 1-2, ARPEGE+ECMWF beyond)', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
+  if (d.longRange) s.addImage({ data: d.longRange, ...fit(1400, 520, 4.81, 3.96, 7.39, 2.74) }); else ph(s, 4.81, 3.96, 7.39, 2.74, '4-day TWS & TWD (±1σ)')
+  s.addText('AM/Mid/PM = 10:00/12:00/15:00 local · TWD (cardinal) & TWS ranges = weighted models (all day 1-2, ARPEGE+ECMWF beyond)', { x: 0.55, y: 7.08, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
+
+  // ── 5) Details for today (text left + table right) ───────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Details for today')
-  s.addText(d.dailyBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true } })), { x: 0.5, y: 1.05, w: 12.3, h: 0.7, fontFace: FONT, fontSize: 12, color: INK })
-  const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell(`TWS ${d.venue}`), hdrCell('TWD range'), hdrCell('TWS min&max'), hdrCell('Trend'), hdrCell('Notes')]
-  const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), twdCell(r.twdMean), spdCell(r.tws), txtCell(r.twd), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend), txtCell('')])
-  s.addTable([dHead, ...dRows], { x: 0.5, y: 1.85, w: 12.33, colW: [1.0, 1.5, 1.2, 1.5, 1.6, 2.4, 3.13], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
-  // TWD col left = 0.5+1.0 = 1.5 (width 1.5); arrow near its left, number centred.
-  overlayWindArrows(s, d.dailyRows, { y: 1.85, rowH: 0.4, cols: [
-    { cx: 1.5 + 0.30, twdOf: (r) => r.twdMean ?? null },
-  ] })
-  s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
-  // Stability — boundary-layer height + 13:00 sounding
+  s.addText(d.dailyBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 8 } })), { x: 0.87, y: 1.62, w: 4.76, h: 4.7, fontFace: FONT, fontSize: 14, color: INK })
+  const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('TWS'), hdrCell('TWD range'), hdrCell('TWS min&max'), hdrCell('Trend')]
+  const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), twdCell(r.twdMean), spdCell(r.tws), txtCell(r.twd), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend)])
+  const dX = 6.5, dY = 1.59, dColW = [0.8, 1.0, 0.9, 1.2, 1.3, 1.13], dRowH = 0.38
+  s.addTable([dHead, ...dRows], { x: dX, y: dY, w: dColW.reduce((a, b) => a + b, 0), colW: dColW, rowH: dRowH, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+  overlayWindArrows(s, d.dailyRows, { y: dY, rowH: dRowH, size: 0.2, cols: [{ cx: dX + dColW[0] + 0.28, twdOf: (r) => r.twdMean ?? null }] })
+  s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.55, y: 7.08, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
+
+  // ── 6) Model guidance — 4× 3D snapshots (30 m wind), text left ───────────────
+  if (d.views3d && d.views3d.length) {
+    s = pptx.addSlide(); addTitle(s, 'Model guidance')
+    s.addText(d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })), { x: 0.69, y: 1.28, w: 2.75, h: 5.0, fontFace: FONT, fontSize: 13, color: INK })
+    const cells = [[3.78, 1.24], [8.47, 1.24], [3.78, 4.39], [8.47, 4.39]]
+    d.views3d.slice(0, 4).forEach((v, i) => {
+      const [cx, cy] = cells[i]
+      s.addImage({ data: v.png, ...fit(760, 460, cx, cy, 4.3, 2.6) })
+      s.addText(`${v.label} local`, { x: cx, y: cy + 2.6, w: 4.3, h: 0.26, align: 'center', fontFace: FONT, fontSize: 11, bold: true, color: NAVY })
+    })
+    const h3d = d.views3d[0].height
+    s.addText(`3D wind field — ${d.views3d[0].model}${h3d ? ` · ${h3d} m wind` : ''} · oriented upwind · 5 nm racing area`, { x: 1.16, y: 7.26, w: 12.0, h: 0.26, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
+  }
+
+  // ── 7) Model comparison ──────────────────────────────────────────────────────
+  s = pptx.addSlide(); addTitle(s, 'Model comparison — wind speed & TWD (±1σ)')
+  if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.5, 1.86, 6.3, 3.78) }); else ph(s, 0.5, 1.86, 6.3, 3.78, 'Wind-speed comparison')
+  if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, 6.9, 2.05, 6.0, 3.6) }); else ph(s, 6.9, 2.05, 6.0, 3.6, 'Wind-direction (TWD) comparison')
+  if (d.ai?.modelComparison) s.addText(d.ai.modelComparison, { x: 0.5, y: 6.0, w: 12.4, h: 1.2, fontFace: FONT, fontSize: 11.5, color: INK, valign: 'top' })
+
+  // ── 8) Stability ─────────────────────────────────────────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Stability')
   if (dg) {
     const st = dg.stability || {}; const sbb = dg.seaBreeze || {}
     const cap = st.hasLowCap ? `low cap +${st.capStrengthC}°C @ ${st.capBaseM} m` : (st.capBaseM != null ? `cap aloft @ ${st.capBaseM} m` : 'no cap')
     const line = `Stability: ${cap} · lapse ${st.lapseRateCkm ?? '—'} °C/km · h_mix ${st.hMixM ?? '—'} m · gate ${st.gate ?? '—'}     |     `
       + `Sea-breeze ${sbb.score ?? '—'}/10${sbb.quadrant ? ` (${sbb.quadrant})` : ''}: SBI ${sbb.sbi ?? '—'}, cross-shore ${sbb.crossShoreKt ?? '—'} kt, bend ${sbb.thermalBendDeg ?? '—'}°${sbb.deltaT != null ? `, ΔT ${sbb.deltaT} °C` : ''}`
-    s.addText(line, { x: 0.4, y: 0.98, w: 12.55, h: 0.34, fontFace: FONT, fontSize: 10.5, color: NAVY })
+    s.addText(line, { x: 0.45, y: 1.02, w: 12.45, h: 0.26, fontFace: FONT, fontSize: 10.5, color: NAVY })
   }
-  if (d.hpblImg) s.addImage({ data: d.hpblImg, ...fit(1000, 560, 0.4, 1.7, 6.4, 4.6) }); else ph(s, 0.4, 1.7, 6.4, 4.6, 'Boundary-layer height\n(no SSA / GFS hpbl data)')
-  if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.0, 1.3, 5.9, 5.5) }); else ph(s, 7.0, 1.3, 5.9, 5.5, 'Vertical sounding @ 13:00\n(no sounding data here)')
-  s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
-  s = pptx.addSlide(); addTitle(s, 'Model comparison — wind speed & TWD (±1σ)')
-  if (d.cmpSpeed) s.addImage({ data: d.cmpSpeed, ...fit(1000, 600, 0.4, 1.5, 6.3, 4.7) }); else ph(s, 0.4, 1.5, 6.3, 4.7, 'Wind-speed comparison')
-  if (d.cmpDir) s.addImage({ data: d.cmpDir, ...fit(1000, 600, 6.9, 1.5, 6.0, 4.7) }); else ph(s, 6.9, 1.5, 6.0, 4.7, 'Wind-direction (TWD) comparison')
-  if (d.ai?.modelComparison) s.addText(d.ai.modelComparison, { x: 0.4, y: 6.4, w: 12.5, h: 0.95, fontFace: FONT, fontSize: 11.5, color: INK, valign: 'top' })
+  if (d.hpblImg) s.addImage({ data: d.hpblImg, ...fit(1000, 560, 0.4, 2.21, 6.4, 3.58) }); else ph(s, 0.4, 2.21, 6.4, 3.58, 'Boundary-layer height\n(no SSA / GFS hpbl data)')
+  if (d.soundingImg) s.addImage({ data: d.soundingImg, ...fit(820, 900, 7.44, 1.3, 5.01, 5.5) }); else ph(s, 7.44, 1.3, 5.01, 5.5, 'Vertical sounding @ 13:00\n(no sounding data here)')
+  s.addText('hpbl: point 1, racing window shaded · sounding: 13:00 local, low-level zoom', { x: 0.55, y: 7.08, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
 
-  // Confidence & side notes — diagnostics chip line + local-effects / triggers prose
+  // ── 9) Confidence & side notes ───────────────────────────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Confidence & side notes')
   const chips = diagChips(dg)
-  if (chips.length) s.addText(chips.join('    ·    '), { x: 0.5, y: 1.25, w: 12.3, h: 0.4, fontFace: FONT, fontSize: 13, bold: true, color: NAVY })
+  if (chips.length) s.addText(chips.join('    ·    '), { x: 0.55, y: 1.29, w: 12.2, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: NAVY })
   s.addText(d.ai?.sideNotes || 'Local effects, terrain channelling and tactical triggers — edit. (AI side notes unavailable.)',
-    { x: 0.5, y: 1.95, w: 12.3, h: 4.7, fontFace: FONT, fontSize: 14, color: INK, valign: 'top', paraSpaceAfter: 10 })
+    { x: 0.55, y: 1.95, w: 12.2, h: 4.7, fontFace: FONT, fontSize: 14, color: INK, valign: 'top', paraSpaceAfter: 10 })
   return pptx
 }
 
@@ -732,8 +762,9 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         const frameIndices = [10, 12, 14, 16].map((H) => stamps.findIndex((s) => s && s.hh === H)).filter((i) => i >= 0)
         const ML = window.maplibregl
         if (ML && f3d?.frames?.length && frameIndices.length) {
-          // Zoomed tighter (≈ 5 nm racing radius) than the live viewer's 10.4.
-          const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices, zoom: 11.6 }), 55000, [])
+          // Zoomed tighter (≈ 5 nm racing radius) than the live viewer's 10.4;
+          // arrowStep 1 = every native grid cell (full SSA-Race 1 km density).
+          const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices, zoom: 11.6, arrowStep: 1 }), 55000, [])
           views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: MODELS[m3dKey]?.label || m3dKey, height: VIEW3D_HEIGHT_M, png: c.png } }).filter((v) => v.png)
         }
       } catch { /* */ }
@@ -770,7 +801,9 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       let ai = null; try { ai = await withTimeout(aiSummary(aiPayload), 20000, null) } catch { /* */ }
 
       const deck = buildDeck(P, {
-        venue: venueName,
+        venue: venueName, location: venueName,
+        day: aiPayload.date,                                  // "Wednesday, 24 June"
+        year: String(new Date().getFullYear()),
         typeOfDay: diag?.typeOfDay || ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai, diag,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,

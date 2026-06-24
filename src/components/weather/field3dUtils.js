@@ -48,7 +48,8 @@ export function fieldToGeoJSON(field, frameIdx, opts = {}) {
   const minKn = opts.minKn ?? 0.6
   const fr = field?.frames?.[frameIdx]; if (!fr || !fr.u) return { type: 'FeatureCollection', features: [] }
   const { nx, ny, lo1, la1, dx, dy } = field.header
-  const step = Math.max(1, Math.round(nx / 16))
+  // opts.step overrides the default subsample (1 = every native grid cell).
+  const step = opts.step ? Math.max(1, Math.round(opts.step)) : Math.max(1, Math.round(nx / 16))
   const features = []
   for (let j = 0; j < ny; j += step) {
     for (let i = 0; i < nx; i += step) {
@@ -143,7 +144,7 @@ export function meanFromDir(field, frameIdx, lat, lon, nm) {
 // Reuses one map: builds terrain+drape+arrows once, then per frame updates the
 // sources, re-orients upwind, waits for idle, and captures. Returns [{idx,png}].
 export async function captureField3DSeries(ML, field, opts) {
-  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [], zoom = 10.4 } = opts || {}
+  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [], zoom = 10.4, arrowStep } = opts || {}
   if (!ML || !field?.frames?.length || !frameIndices.length) return []
   const cont = document.createElement('div')
   cont.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px;background:#071624;`
@@ -168,19 +169,25 @@ export async function captureField3DSeries(ML, field, opts) {
     // stays aligned with the wind arrows — a MapLibre raster image gets draped
     // over the 3× terrain and stretches out of the field box. Fall back to the
     // terrain-draped raster only if deck.gl isn't available.
+    // FLAT (sea-level) deck.gl overlay: the speed drape PLUS the TWS contour
+    // lines + labels — both rendered flat so they stay aligned with the arrows
+    // (a terrain-draped raster stretches over the 3× terrain). Falls back to a
+    // raster drape (no contours) only if deck.gl isn't available.
     const useDeckDrape = !!window.deck?.MapboxOverlay
     let drapeOverlay = null
-    const bitmapFor = (fidx) => {
-      const u = drapeImageURL(field, fidx); if (!u) return null
-      return new window.deck.BitmapLayer({
-        id: 'drape-bmp', image: u,
-        bounds: [field.box.west, field.box.south, field.box.east, field.box.north],
-        opacity: drapeOpacity(field),
-      })
+    const overlayLayersFor = (fidx) => {
+      const layers = []
+      const u = drapeImageURL(field, fidx)
+      if (u) layers.push(new window.deck.BitmapLayer({ id: 'drape-bmp', image: u, bounds: [field.box.west, field.box.south, field.box.east, field.box.north], opacity: drapeOpacity(field) }))
+      if (kind !== 'hpbl') {
+        const { paths, labels } = buildContoursKn(field, fidx, TWS_CONTOUR_KN)
+        if (paths.length) layers.push(new window.deck.PathLayer({ id: 'tws-contours', data: paths, getPath: (d) => d.path, getColor: [20, 30, 46, 190], getWidth: (d) => (d.major ? 2.0 : 1.1), widthUnits: 'pixels', widthMinPixels: 0.9, capRounded: true, jointRounded: true, pickable: false }))
+        if (labels.length) layers.push(new window.deck.TextLayer({ id: 'tws-labels', data: labels, getPosition: (d) => [d.position[0], d.position[1], 60 * exaggeration], getText: (d) => d.text, getSize: 12, sizeUnits: 'pixels', getColor: [255, 255, 255, 255], background: true, getBackgroundColor: [10, 18, 28, 150], backgroundPadding: [3, 1, 3, 1], billboard: true, getTextAnchor: 'middle', getAlignmentBaseline: 'center', fontWeight: 700, pickable: false }))
+      }
+      return layers
     }
     if (useDeckDrape) {
-      const l0 = bitmapFor(frameIndices[0])
-      drapeOverlay = new window.deck.MapboxOverlay({ interleaved: false, layers: l0 ? [l0] : [] })
+      drapeOverlay = new window.deck.MapboxOverlay({ interleaved: false, layers: overlayLayersFor(frameIndices[0]) })
       map.addControl(drapeOverlay)
     } else {
       const url0 = drapeImageURL(field, frameIndices[0])
@@ -188,7 +195,7 @@ export async function captureField3DSeries(ML, field, opts) {
     }
     if (kind !== 'hpbl') {
       addArrowIcons(map)
-      map.addSource('wind', { type: 'geojson', data: fieldToGeoJSON(field, frameIndices[0], { minKn }) })
+      map.addSource('wind', { type: 'geojson', data: fieldToGeoJSON(field, frameIndices[0], { minKn, step: arrowStep }) })
       map.addLayer({ id: 'wind', type: 'symbol', source: 'wind', layout: { 'icon-image': kind === 'current' ? 'arrow-mono' : ['concat', 'arrow-', ['to-string', ['get', 'band']]], 'icon-rotate': ['get', 'toward'], 'icon-rotation-alignment': 'map', 'icon-size': ['interpolate', ['linear'], ['get', 'spd'], 0, 0.4, 30, 1.1], 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
     }
     map.addSource('ring', { type: 'geojson', data: ringGeoJSON(lat, lon, 5) })
@@ -197,9 +204,9 @@ export async function captureField3DSeries(ML, field, opts) {
     for (const fidx of frameIndices) {
       const twd = kind !== 'hpbl' ? meanFromDir(field, fidx, lat, lon, 5) : null
       if (twd != null) map.setBearing(twd)
-      if (drapeOverlay) { const l = bitmapFor(fidx); if (l) drapeOverlay.setProps({ layers: [l] }) }
+      if (drapeOverlay) drapeOverlay.setProps({ layers: overlayLayersFor(fidx) })
       else { const u2 = drapeImageURL(field, fidx); const ds = map.getSource('drape'); if (ds && u2) ds.updateImage({ url: u2, coordinates: boxCoords(field.box) }) }
-      const ws = map.getSource('wind'); if (ws) ws.setData(fieldToGeoJSON(field, fidx, { minKn }))
+      const ws = map.getSource('wind'); if (ws) ws.setData(fieldToGeoJSON(field, fidx, { minKn, step: arrowStep }))
       await idle()
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
       let png = null; try { png = map.getCanvas().toDataURL('image/png') } catch { /* */ }
