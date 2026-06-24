@@ -20,7 +20,7 @@ TREAT "diagnostics" AS GROUND TRUTH. Do not invent figures — phrase the brief 
   - cloud: { signal -1..1, verdict, note } — insolation / cloud-trend control.
   - confidence: { label HIGH/MODERATE/LOW, sigmaTwd (model spread) }. Light air (<7 kn) caps confidence.
   - funnelling: { flag, cores, rMax } — topographic acceleration near the course.
-You are ALSO given a top-level "course" object computed from the actual wind field over a ~4 nm windward/leeward course centred on point 1 (the AI cannot see the spatial field, so trust these): { twd, bend ("left"/"right"/"straight" looking upwind), bendDeg, twsLeftRight (kn; + = more wind on the RIGHT), twsTopBottom (kn; + = more wind WINDWARD/top) }. Use course.bend for "windBend" and weave the TWS gradient (which side / top vs bottom has more pressure) into the strategy bullets.
+You are ALSO given course data computed from the actual wind field over a ~4 nm windward/leeward course centred on point 1 (the AI cannot see the spatial field, so trust these): "course" = the mid-window snapshot { twd, bend ("left"/"right"/"straight" looking upwind), bendDeg, twsLeftRight (kn; + = more wind on the RIGHT), twsTopBottom (kn; + = more wind WINDWARD/top) }, and "courseSeries" = the SAME computed HOURLY across 10:00–16:00. Use the series to state how the bend and pressure gradient EVOLVE (e.g. "right bend AM → left PM"). Use course.bend for "windBend" (note the change through the day) and weave the TWS gradient (which side / top vs bottom has more pressure, and its trend) into the strategy bullets.
 Any field may be null (missing data) — then speak qualitatively and do not fabricate a number.
 
 Return ONLY valid JSON (no markdown, no prose outside JSON) with exactly these keys.

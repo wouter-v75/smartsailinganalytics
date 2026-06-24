@@ -812,12 +812,28 @@ function buildDeck(P, d) {
     s.addShape('roundRect', { x: 0.7, y: 1.4, w: 12.0, h: 0.55, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.06 })
     s.addText(stratHdr, { x: 0.9, y: 1.5, w: 11.6, h: 0.38, fontFace: FONT, valign: 'middle', fontSize: 13 })
   }
-  // Bend looking upwind likely changes through the day — bullets carry the detail.
+  // Strategy bullets (left) + hourly course-gradient table (right) showing how
+  // bend / TWS gradient evolve through the racing window.
+  const hasCourseTbl = d.courseSeries && d.courseSeries.length
   const stratItems = asItems(d.ai?.strategy)
   s.addText(stratItems.length
-    ? bulletRuns(stratItems, { color: INK, size: 16, spaceAfter: 6, spacer: 12 })
+    ? bulletRuns(stratItems, { color: INK, size: 15, spaceAfter: 6, spacer: 11 })
     : [{ text: 'Tactical considerations — edit. (AI strategy unavailable.)', options: { color: GREY, fontFace: FONT, fontSize: 14 } }],
-    { x: 0.7, y: 2.25, w: 12.0, h: 4.7, fontFace: FONT, valign: 'top' })
+    { x: 0.7, y: 2.25, w: hasCourseTbl ? 6.3 : 12.0, h: 4.7, fontFace: FONT, valign: 'top' })
+  if (hasCourseTbl) {
+    const fmtg = (v, pos, neg) => (v == null ? '—' : Math.abs(v) < 0.3 ? '~0' : `${v > 0 ? '+' : '−'}${Math.abs(v)} ${v > 0 ? pos : neg}`)
+    const cHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('Bend'), hdrCell('TWS L/R'), hdrCell('TWS ↑/↓')]
+    const cRows = d.courseSeries.map((c) => [
+      txtCell(`${c.hh}:00`, { bold: true, fill: { color: LIGHTF } }),
+      txtCell(`${c.twd}°`),
+      txtCell(c.bend == null || c.bend === 'straight' ? '—' : `${c.bend === 'right' ? 'R' : 'L'} ${Math.abs(c.bendDeg)}°`),
+      txtCell(fmtg(c.twsLeftRight, 'R', 'L')),
+      txtCell(fmtg(c.twsTopBottom, 'top', 'bot')),
+    ])
+    s.addText('Course gradient — hourly (4 nm box, point 1)', { x: 7.2, y: 2.2, w: 5.7, h: 0.3, fontFace: FONT, fontSize: 12, bold: true, color: NAVY })
+    s.addTable([cHead, ...cRows], { x: 7.2, y: 2.55, w: 5.65, colW: [0.95, 0.95, 1.15, 1.3, 1.3], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle', fontFace: FONT, fontSize: 11, color: INK })
+    s.addText('Bend looking upwind (R/L); TWS grad: + = right / windward', { x: 7.2, y: 6.0, w: 5.7, h: 0.4, fontFace: FONT, fontSize: 9, color: GREY })
+  }
 
   // ── 6) Model guidance — 4× 3D snapshots (30 m wind), text left ───────────────
   if (d.views3d && d.views3d.length) {
@@ -922,15 +938,19 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         if (field) windfieldImg = await windfieldCoast(field, p1lat, p1lon)
       } catch { /* */ }
 
-      // Racecourse bend + TWS gradient over a 2 nm W/L course centred on point 1,
-      // at the mid-racing frame (~13:00). Deterministic from the field.
-      let course = null
+      // Racecourse bend + TWS gradient over a 4 nm W/L course centred on point 1,
+      // HOURLY across the racing window (the field is already in memory, so this
+      // is ~free). `course` = the mid-window (13:00) snapshot for the box.
+      let course = null; let courseSeries = []
       try {
         const fst = field?.stamps || []
-        let fi = fst.findIndex((x) => x && x.hh === 13)
-        if (fi < 0) fi = fst.findIndex((x) => x && x.hh === 12)
-        if (fi < 0) fi = Math.floor((field?.frames?.length || 1) / 2)
-        course = analyseCourse(field, p1lat, p1lon, Math.max(0, fi), 4)
+        for (const H of [10, 11, 12, 13, 14, 15, 16]) {
+          const fi = fst.findIndex((x) => x && x.hh === H)
+          if (fi < 0) continue
+          const ca = analyseCourse(field, p1lat, p1lon, fi, 4)
+          if (ca) courseSeries.push({ hh: H, ...ca })
+        }
+        course = courseSeries.find((c) => c.hh === 13) || courseSeries.find((c) => c.hh === 12) || courseSeries[Math.floor(courseSeries.length / 2)] || null
       } catch { /* */ }
 
       // ── 4× 3D snapshots (SSA-Race 1 km if available, else AROME) @ 10/12/14/16 ──
@@ -988,10 +1008,11 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         outlook: outlookRows.map((r) => ({ day: r.day, morning: r.mor && { twd: r.mor.twd, tws: r.mor.tws }, midday: r.mid && { twd: r.mid.twd, tws: r.mid.tws }, afternoon: r.aft && { twd: r.aft.twd, tws: r.aft.tws } })),
         today: dailyRows.map((r) => ({ time: r.time, twd: r.twd, twsKn: r.kn, range: `${r.lo}-${r.hi}kn`, trend: r.trend })),
         diagnostics: diag,
-        // Computed from the wind field over a 2 nm W/L course centred on point 1
+        // Computed from the wind field over a 4 nm W/L course centred on point 1
         // (the AI cannot see the spatial field): twd, bend (left/right looking
-        // upwind, degrees), and TWS gradient left-right / top-bottom (kn).
-        course,
+        // upwind, degrees), and TWS gradient left-right / top-bottom (kn). The
+        // hourly series shows how the bend / gradient EVOLVE through the racing window.
+        course, courseSeries,
       }
       let ai = null
       setAiErr('writing AI brief…')
@@ -1008,7 +1029,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         boatName: boatName || null, eventName: eventName || null,
         day: aiPayload.date,                                  // "Wednesday, 24 June"
         year: String(new Date().getFullYear()),
-        typeOfDay: diag?.typeOfDay || ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai, diag, course,
+        typeOfDay: diag?.typeOfDay || ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai, diag, course, courseSeries,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
