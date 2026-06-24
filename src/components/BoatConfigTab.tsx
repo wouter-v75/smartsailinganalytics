@@ -9,9 +9,9 @@
 //   • Polar           — target speed reference (design VPP, via lib/polarCalc).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useEffect, useMemo, useState } from 'react'
-import { loadPolarFromLS, preparePolar, polarVMGTarget } from '../lib/polarCalc'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
+import targetsV14 from '../data/targets-v1.4.json'
 
 interface Sail {
   id: string
@@ -53,7 +53,9 @@ export default function BoatConfigTab({
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState<string>('') // sail id being mutated
-  const [polar, setPolar] = useState<{ name: string; polar: any } | null>(null)
+  const [polar, setPolar] = useState<any>(null)          // active polar row (DB)
+  const [matrixKey, setMatrixKey] = useState<'bsp' | 'heel' | 'rudder' | 'awa'>('bsp')
+  const [importing, setImporting] = useState(false)
 
   const loadSails = () =>
     fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`).then((r) => r.json())
@@ -76,12 +78,35 @@ export default function BoatConfigTab({
     return () => { alive = false }
   }, [teamId, boatId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
+  const loadPolar = useCallback(() => {
+    if (!teamId || !boatId) return
+    fetch(`/api/teams/${teamId}/polars?boat_id=${boatId}&active=1`)
+      .then((r) => (r.ok ? r.json() : { polars: [] }))
+      .then((j) => setPolar((j.polars || [])[0] || null))
+      .catch(() => {})
+  }, [teamId, boatId])
+  useEffect(() => { loadPolar() }, [loadPolar])
+
+  // Import the bundled V1.4 targets (parsed from the JV VPP) as the boat's
+  // active polar. TL3+ only (RLS also enforces it).
+  const importTargets = async () => {
+    setImporting(true); setErr('')
     try {
-      const stored: any = loadPolarFromLS()
-      if (stored?.data) setPolar({ name: stored.filename || 'polar', polar: preparePolar(stored.data) })
-    } catch { /* none */ }
-  }, [])
+      const r = await fetch(`/api/teams/${teamId}/polars`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boat_id: boatId,
+          name: (targetsV14 as any).name || 'V1.4 Targets',
+          source: 'design_vpp',
+          valid_from: (targetsV14 as any).valid_from || null,
+          data: targetsV14,
+          activate: true,
+        }),
+      }).then((x) => x.json())
+      if (r.error) setErr(r.error); else loadPolar()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    finally { setImporting(false) }
+  }
 
   const refreshSails = async () => {
     const s = await loadSails()
@@ -141,14 +166,7 @@ export default function BoatConfigTab({
   }
 
   const sailById = useMemo(() => Object.fromEntries(sails.map((s) => [s.id, s])), [sails])
-  const polarTargets = useMemo(() => {
-    if (!polar?.polar) return []
-    const out: any[] = []
-    for (const tws of [6, 8, 10, 12, 14, 16, 18, 20]) {
-      try { const t: any = polarVMGTarget(polar.polar, tws); if (t) out.push({ tws, t }) } catch {}
-    }
-    return out
-  }, [polar])
+  const targets: any = polar?.data || null  // { tws, twa, headline, matrices, matrix_meta }
 
   // ── shared styles ──
   const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', color: C.dim, fontWeight: 600, fontSize: 11, borderBottom: `1px solid ${C.border}` }
@@ -172,7 +190,7 @@ export default function BoatConfigTab({
         {subBtn('inventory', 'Sail inventory')}
         {subBtn('shapes', 'Sail shapes')}
         {subBtn('rig', 'Rig settings')}
-        {subBtn('polar', 'Polar')}
+        {subBtn('polar', 'Targets')}
       </div>
 
       {err && <div style={{ color: C.warn, fontSize: 12, marginBottom: 12 }}>Error: {err}</div>}
@@ -263,34 +281,200 @@ export default function BoatConfigTab({
         </div>
       )}
 
-      {/* ── POLAR ──────────────────────────────────────────────────── */}
+      {/* ── TARGETS (active polar) ─────────────────────────────────── */}
       {view === 'polar' && (
-        !polar ? (
-          <div style={{ color: C.dim, fontSize: 12 }}>No polar loaded. Import a design/VPP polar (used across the analytics view).</div>
-        ) : polarTargets.length === 0 ? (
-          <div style={{ color: C.dim, fontSize: 12 }}>Polar loaded ({polar.name}) — targets not available in this build.</div>
+        !targets ? (
+          <div style={{ border: `1px dashed ${C.border}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', color: C.dim }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.head, marginBottom: 6 }}>No targets loaded</div>
+            <div style={{ fontSize: 12, maxWidth: 460, margin: '0 auto 12px', lineHeight: 1.5 }}>
+              Load the boat’s VPP targets — the laminated TARGETS sheet plus the BSP (polar),
+              heel, rudder and AWA matrices.
+            </div>
+            {canEdit && (
+              <button onClick={importTargets} disabled={importing} style={{ ...btn('#06B6D4'), opacity: importing ? 0.6 : 1 }}>
+                {importing ? 'Importing…' : 'Import V1.4 Targets (JV VPP)'}
+              </button>
+            )}
+          </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <div style={{ fontSize: 11, color: C.dim, marginBottom: 6 }}>{polar.name}</div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={th}>TWS</th><th style={th}>Up tgt</th><th style={th}>Up TWA</th><th style={th}>Dn tgt</th><th style={th}>Dn TWA</th></tr></thead>
-              <tbody>
-                {polarTargets.map(({ tws, t }) => (
-                  <tr key={tws}>
-                    <td style={td}>{tws} kn</td>
-                    <td style={td}>{fmt(t.up?.bsp ?? t.up?.speed)}</td>
-                    <td style={td}>{fmt(t.up?.twa ?? t.up?.angle, 0)}°</td>
-                    <td style={td}>{fmt(t.dn?.bsp ?? t.dn?.speed)}</td>
-                    <td style={td}>{fmt(t.dn?.twa ?? t.dn?.angle, 0)}°</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: C.head }}>{polar?.name || targets.name}</span>
+              {targets.source_note && <span style={{ fontSize: 11, color: C.dim }}>{targets.source_note}</span>}
+              {targets.wind_reference && <span style={{ fontSize: 10, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px' }}>{targets.wind_reference}</span>}
+              <button onClick={() => printTargets(targets, polar?.name || targets.name)} style={{ ...btn('#10B981'), marginLeft: 'auto' }}>⎙ Print</button>
+              {canEdit && (
+                <button onClick={importTargets} disabled={importing} style={{ ...btn('#0F2A45'), color: C.head, opacity: importing ? 0.6 : 1 }}>
+                  {importing ? 'Re-importing…' : 'Re-import'}
+                </button>
+              )}
+            </div>
+
+            <TargetsTable targets={targets} />
+
+            <div style={{ display: 'flex', gap: 6, margin: '18px 0 10px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 11, color: C.dim, marginRight: 4 }}>Matrix:</span>
+              {(['bsp', 'heel', 'rudder', 'awa'] as const).map((k) => (
+                <button key={k} onClick={() => setMatrixKey(k)} style={{
+                  fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', border: 'none',
+                  background: matrixKey === k ? C.accent : '#0F2A45', color: matrixKey === k ? '#001018' : '#94A3B8',
+                }}>{targets.matrix_meta?.[k]?.label || k}</button>
+              ))}
+            </div>
+            <MatrixTable targets={targets} mkey={matrixKey} />
           </div>
         )
       )}
     </div>
   )
+}
+
+// ── Heat shade for a value within a matrix's range (blue→white→red) ───────────
+function heat(v: number | null, lo: number, hi: number): string {
+  if (v == null || Number.isNaN(v)) return 'transparent'
+  const t = hi === lo ? 0.5 : Math.max(0, Math.min(1, (v - lo) / (hi - lo)))
+  // 0 = cool blue, 1 = warm red
+  const r = Math.round(t < 0.5 ? 120 + t * 270 : 255)
+  const g = Math.round(t < 0.5 ? 150 + t * 210 : 255 - (t - 0.5) * 300)
+  const b = Math.round(t < 0.5 ? 235 - t * 120 : 200 - (t - 0.5) * 300)
+  return `rgba(${r},${g},${Math.max(0, b)},0.55)`
+}
+
+// ── Headline TARGETS sheet (upwind | TWS | downwind) ─────────────────────────
+function TargetsTable({ targets }: { targets: any }) {
+  const rows = targets.headline || []
+  const th: React.CSSProperties = { padding: '5px 8px', fontSize: 11, fontWeight: 700, color: '#0b1f33', borderBottom: '1px solid #1E3A5A', textAlign: 'center' }
+  const td: React.CSSProperties = { padding: '5px 8px', fontSize: 12, color: '#0b1f33', textAlign: 'center', borderBottom: '1px solid #d7e2ee' }
+  const up = 'rgba(244,176,132,0.45)'   // orange tint (upwind)
+  const dn = 'rgba(180,199,231,0.45)'   // blue tint (downwind)
+  const tws = 'rgba(217,217,217,0.6)'
+  return (
+    <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
+      <table style={{ borderCollapse: 'collapse', margin: '0 auto', minWidth: 560 }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, background: up }} colSpan={5}>UPWIND</th>
+            <th style={{ ...th, background: tws }}></th>
+            <th style={{ ...th, background: dn }} colSpan={5}>DOWNWIND</th>
+          </tr>
+          <tr>
+            {['RUDD', 'AWA', 'HEEL', 'TWA', 'BSP'].map((h) => <th key={'u' + h} style={{ ...th, background: up }}>{h}</th>)}
+            <th style={{ ...th, background: tws }}>TWS</th>
+            {['BSP', 'TWA', 'HEEL', 'AWA', 'RUDD'].map((h) => <th key={'d' + h} style={{ ...th, background: dn }}>{h}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r: any) => (
+            <tr key={r.tws}>
+              <td style={{ ...td, background: up }}>{fmt(r.up.rudd)}</td>
+              <td style={{ ...td, background: up, fontWeight: 700 }}>{fmt(r.up.awa, 0)}</td>
+              <td style={{ ...td, background: up }}>{fmt(r.up.heel, 0)}</td>
+              <td style={{ ...td, background: up, fontWeight: 700 }}>{fmt(r.up.twa, 0)}</td>
+              <td style={{ ...td, background: up }}>{fmt(r.up.bsp)}</td>
+              <td style={{ ...td, background: tws, fontWeight: 800 }}>{r.tws}</td>
+              <td style={{ ...td, background: dn }}>{fmt(r.dn.bsp)}</td>
+              <td style={{ ...td, background: dn, fontWeight: 700 }}>{fmt(r.dn.twa, 0)}</td>
+              <td style={{ ...td, background: dn }}>{fmt(r.dn.heel, 0)}</td>
+              <td style={{ ...td, background: dn, fontWeight: 700 }}>{fmt(r.dn.awa, 0)}</td>
+              <td style={{ ...td, background: dn }}>{fmt(r.dn.rudd)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ── One TWS×TWA matrix (BSP / Heel / Rudder / AWA) with heat shading ─────────
+function MatrixTable({ targets, mkey }: { targets: any; mkey: string }) {
+  const m: number[][] = targets.matrices?.[mkey] || []
+  const twa: number[] = targets.twa || []
+  const tws: number[] = targets.tws || []
+  const dec = targets.matrix_meta?.[mkey]?.decimals ?? 1
+  const flat = m.flat().filter((v) => typeof v === 'number' && !Number.isNaN(v))
+  const lo = Math.min(...flat), hi = Math.max(...flat)
+  const cell: React.CSSProperties = { padding: '3px 6px', fontSize: 11, textAlign: 'center', color: '#0b1f33', border: '1px solid #e2e8f0', minWidth: 30 }
+  const hcell: React.CSSProperties = { ...cell, fontWeight: 700, color: C.dim, background: '#0a1c2e', borderColor: C.border }
+  return (
+    <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
+      <table style={{ borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...hcell, color: C.head }}>TWS\TWA</th>
+            {twa.map((a) => <th key={a} style={{ ...cell, fontWeight: 700, background: '#eef2f7' }}>{a}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {m.map((row, i) => (
+            <tr key={tws[i]}>
+              <td style={{ ...cell, fontWeight: 700, background: '#eef2f7' }}>{tws[i]}</td>
+              {row.map((v, j) => (
+                <td key={j} style={{ ...cell, background: heat(v, lo, hi) }}>{fmt(v, dec)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ── Print the targets as a clean, laminate-ready sheet (new window) ──────────
+function printTargets(targets: any, title: string) {
+  const esc = (s: any) => String(s)
+  const fmtN = (v: any, d = 1) => (v == null || Number.isNaN(Number(v)) ? '' : Number(v).toFixed(d))
+  const headline = targets.headline || []
+  const twa: number[] = targets.twa || []
+  const tws: number[] = targets.tws || []
+
+  const headlineRows = headline.map((r: any) => `
+    <tr>
+      <td class="up">${fmtN(r.up.rudd)}</td><td class="up b">${fmtN(r.up.awa,0)}</td><td class="up">${fmtN(r.up.heel,0)}</td><td class="up b">${fmtN(r.up.twa,0)}</td><td class="up">${fmtN(r.up.bsp)}</td>
+      <td class="tws">${r.tws}</td>
+      <td class="dn">${fmtN(r.dn.bsp)}</td><td class="dn b">${fmtN(r.dn.twa,0)}</td><td class="dn">${fmtN(r.dn.heel,0)}</td><td class="dn b">${fmtN(r.dn.awa,0)}</td><td class="dn">${fmtN(r.dn.rudd)}</td>
+    </tr>`).join('')
+
+  const matrix = (mkey: string) => {
+    const m: number[][] = targets.matrices?.[mkey] || []
+    const dec = targets.matrix_meta?.[mkey]?.decimals ?? 1
+    const label = targets.matrix_meta?.[mkey]?.label || mkey
+    const head = `<tr><th>TWS\\TWA</th>${twa.map((a) => `<th>${a}</th>`).join('')}</tr>`
+    const body = m.map((row, i) => `<tr><th>${tws[i]}</th>${row.map((v) => `<td>${fmtN(v, dec)}</td>`).join('')}</tr>`).join('')
+    return `<h3>${esc(label)}</h3><table class="mx">${head}${body}</table>`
+  }
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+  <style>
+    @page { size: landscape; margin: 10mm; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; padding: 12px; }
+    h1 { font-size: 20px; margin: 0 0 2px; } h2 { font-size: 12px; font-weight: normal; color: #555; margin: 0 0 12px; }
+    h3 { font-size: 13px; margin: 16px 0 4px; }
+    table { border-collapse: collapse; }
+    .hl td, .hl th { border: 1px solid #999; padding: 4px 8px; text-align: center; font-size: 12px; }
+    .hl .grp { font-weight: 700; }
+    .up { background: #f8d8bf; } .dn { background: #cdd9f0; } .tws { background: #dcdcdc; font-weight: 800; } .b { font-weight: 700; }
+    .mx td, .mx th { border: 1px solid #ccc; padding: 2px 5px; text-align: center; font-size: 10px; }
+    .mx th { background: #eef2f7; }
+    .page-break { page-break-before: always; }
+  </style></head><body>
+    <h1>${esc(title)}</h1>
+    <h2>${esc(targets.source_note || '')}${targets.wind_reference ? ' · ' + esc(targets.wind_reference) : ''}</h2>
+    <table class="hl">
+      <tr><td class="up grp" colspan="5">UPWIND</td><td class="tws"></td><td class="dn grp" colspan="5">DOWNWIND</td></tr>
+      <tr><td class="up">RUDD</td><td class="up">AWA</td><td class="up">HEEL</td><td class="up">TWA</td><td class="up">BSP</td><td class="tws">TWS</td><td class="dn">BSP</td><td class="dn">TWA</td><td class="dn">HEEL</td><td class="dn">AWA</td><td class="dn">RUDD</td></tr>
+      ${headlineRows}
+    </table>
+    <div class="page-break"></div>
+    ${matrix('bsp')}
+    ${matrix('heel')}
+    ${matrix('rudder')}
+    ${matrix('awa')}
+    <script>window.onload = function(){ window.print(); }<\/script>
+  </body></html>`
+
+  const w = window.open('', '_blank')
+  if (!w) return
+  w.document.open(); w.document.write(html); w.document.close()
 }
 
 // ── Add-sail form ────────────────────────────────────────────────────────────
