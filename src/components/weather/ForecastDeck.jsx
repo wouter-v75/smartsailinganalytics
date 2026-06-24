@@ -654,9 +654,12 @@ function buildDeck(P, d) {
   s.addText(d.dailyBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 8 } })), { x: 0.87, y: 1.62, w: 4.76, h: 4.7, fontFace: FONT, fontSize: 14, color: INK })
   const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('TWS'), hdrCell('TWD range'), hdrCell('TWS min&max'), hdrCell('Trend')]
   const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), twdCell(r.twdMean), spdCell(r.tws), txtCell(r.twd), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend)])
-  const dX = 6.5, dY = 1.59, dColW = [0.8, 1.0, 0.9, 1.2, 1.3, 1.13], dRowH = 0.38
-  s.addTable([dHead, ...dRows], { x: dX, y: dY, w: dColW.reduce((a, b) => a + b, 0), colW: dColW, rowH: dRowH, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
-  overlayWindArrows(s, d.dailyRows, { y: dY, rowH: dRowH, size: 0.2, cols: [{ cx: dX + dColW[0] + 0.28, twdOf: (r) => r.twdMean ?? null }] })
+  // Trend column is wide enough that "Right · increasing" etc. stay on ONE line —
+  // so every row is the same height and the overlaid TWD arrows don't drift down.
+  const dX = 5.9, dY = 1.59, dColW = [0.7, 1.05, 0.78, 1.07, 1.1, 2.2], dRowH = 0.42
+  s.addTable([dHead, ...dRows], { x: dX, y: dY, w: dColW.reduce((a, b) => a + b, 0), colW: dColW, rowH: dRowH, autoPage: false, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+  // Arrow sits at the left of the (centred) TWD number, in the same cell/row.
+  overlayWindArrows(s, d.dailyRows, { y: dY, rowH: dRowH, size: 0.2, cols: [{ cx: dX + dColW[0] + 0.24, twdOf: (r) => r.twdMean ?? null }] })
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.55, y: 7.08, w: 12.2, h: 0.25, fontFace: FONT, fontSize: 9.5, color: GREY })
 
   // ── 6) Model guidance — 4× 3D snapshots (30 m wind), text left ───────────────
