@@ -143,7 +143,7 @@ export function meanFromDir(field, frameIdx, lat, lon, nm) {
 // Reuses one map: builds terrain+drape+arrows once, then per frame updates the
 // sources, re-orients upwind, waits for idle, and captures. Returns [{idx,png}].
 export async function captureField3DSeries(ML, field, opts) {
-  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [] } = opts || {}
+  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [], zoom = 10.4 } = opts || {}
   if (!ML || !field?.frames?.length || !frameIndices.length) return []
   const cont = document.createElement('div')
   cont.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px;background:#071624;`
@@ -157,7 +157,7 @@ export async function captureField3DSeries(ML, field, opts) {
     map = new ML.Map({
       container: cont,
       style: { version: 8, sources: { sat: { type: 'raster', tiles: [SAT_TILES], tileSize: 256, maxzoom: 19 } }, layers: [{ id: 'sat', type: 'raster', source: 'sat' }] },
-      center: [lon, lat], zoom: 10.4, pitch: 66, bearing: twd0 != null ? twd0 : 0,
+      center: [lon, lat], zoom, pitch: 66, bearing: twd0 != null ? twd0 : 0,
       preserveDrawingBuffer: true, attributionControl: false, interactive: false, fadeDuration: 0,
     })
     const idle = () => new Promise((res) => { let done = false; const f = () => { if (done) return; done = true; res() }; map.once('idle', f); setTimeout(f, 4000) })

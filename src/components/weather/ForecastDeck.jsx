@@ -619,15 +619,20 @@ function buildDeck(P, d) {
     s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 2.8, y: 7.0, w: 7.7, h: 0.3, align: 'center', fontFace: FONT, fontSize: 11, color: GREY })
   }
   s = pptx.addSlide(); addTitle(s, 'Outlook')
-  const oHead = [hdrCell('Time'), hdrCell('Morning (10:00)'), hdrCell('Midday (12:00)'), hdrCell('Afternoon (15:00)')]
-  const oRows = d.outlookRows.map((r) => [txtCell(r.day, { bold: true, fill: { color: LIGHTF } }), oCell(r.mor), oCell(r.mid), oCell(r.aft)])
-  s.addTable([oHead, ...oRows], { x: 0.5, y: 1.4, w: 12.33, colW: [1.8, 3.51, 3.51, 3.51], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
-  // Day col left = 0.5+1.8 = 2.3; each period col is 3.51 wide. Arrow near the cell's left edge.
-  overlayWindArrows(s, d.outlookRows, { y: 1.4, rowH: 0.42, cols: [
-    { cx: 2.3 + 0.30, twdOf: (r) => r.mor?.twdMean ?? null },
-    { cx: 2.3 + 3.51 + 0.30, twdOf: (r) => r.mid?.twdMean ?? null },
-    { cx: 2.3 + 3.51 * 2 + 0.30, twdOf: (r) => r.aft?.twdMean ?? null },
-  ] })
+  // Transposed: days across the top (columns), time-of-day down the side (rows).
+  const oDays = d.outlookRows
+  const oX = 0.5, oY = 1.4, oFirstW = 1.9, oRowH = 0.5
+  const oDayW = (12.33 - oFirstW) / Math.max(1, oDays.length)
+  const oPeriods = [['Morning (10:00)', 'mor'], ['Midday (12:00)', 'mid'], ['Afternoon (15:00)', 'aft']]
+  const oHead = [hdrCell(''), ...oDays.map((r) => hdrCell(r.day))]
+  const oRows = oPeriods.map(([label, key]) => [txtCell(label, { bold: true, fill: { color: LIGHTF } }), ...oDays.map((r) => oCell(r[key]))])
+  s.addTable([oHead, ...oRows], { x: oX, y: oY, w: 12.33, colW: [oFirstW, ...oDays.map(() => oDayW)], rowH: oRowH, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+  // One arrow per (period row × day column). Period rows are the table "rows";
+  // each day column gets its own centre-x and reads that period's TWD.
+  overlayWindArrows(s, oPeriods.map(([, key]) => ({ key })), {
+    y: oY, rowH: oRowH,
+    cols: oDays.map((r, j) => ({ cx: oX + oFirstW + j * oDayW + 0.30, twdOf: (p) => r[p.key]?.twdMean ?? null })),
+  })
   if (d.longRange) s.addImage({ data: d.longRange, ...fit(1400, 520, 0.5, 3.5, 12.33, 3.3) }); else ph(s, 0.5, 3.5, 12.33, 3.3, '4-day TWS & TWD (±1σ, racing window)')
   s.addText('AM/Mid/PM = 10:00/12:00/15:00 local · TWD (cardinal) & TWS ranges = weighted models (all day 1-2, ARPEGE+ECMWF beyond)', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'Details for today')
@@ -672,8 +677,12 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
   const pptxReady = useScriptsOnce([PPTX_JS]); useScriptsOnce([PLOTLY_JS]); useScriptsOnce([MAPLIBRE_JS, DECK_JS], [MAPLIBRE_CSS])
   const point1 = windData?.['1']; const haveP1 = p1lat != null && p1lon != null && !!point1
   const shortModels = useMemo(() => { const sb = point1?.surfaceByModel || {}; return Object.keys(MODELS).filter((k) => sb[k] && hasValidSpeed(sb[k].hourly)) }, [point1])
-  const [outlookModel, setOutlookModel] = useState('ECMWF'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
-  const shortSel = shortModel && shortModels.includes(shortModel) ? shortModel : (shortModels.find((k) => k.startsWith('ICONRACE')) || shortModels[0] || '')
+  // Default outlook model: ARPEGE (falls back to ECMWF at generate time if its
+  // extended data isn't available). Default short-term model preference:
+  // SSA-Race 1 km → SSA-Race 2 km → AROME → ECMWF.
+  const SHORT_PREF = ['ICONRACE_1KM', 'ICONRACE', 'AROME', 'ECMWF']
+  const [outlookModel, setOutlookModel] = useState('ARPEGE'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
+  const shortSel = shortModel && shortModels.includes(shortModel) ? shortModel : (SHORT_PREF.find((k) => shortModels.includes(k)) || shortModels[0] || '')
 
   async function generate() {
     setErr(''); setBusy(true)
@@ -723,7 +732,8 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         const frameIndices = [10, 12, 14, 16].map((H) => stamps.findIndex((s) => s && s.hh === H)).filter((i) => i >= 0)
         const ML = window.maplibregl
         if (ML && f3d?.frames?.length && frameIndices.length) {
-          const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices }), 55000, [])
+          // Zoomed tighter (≈ 5 nm racing radius) than the live viewer's 10.4.
+          const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices, zoom: 11.6 }), 55000, [])
           views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: MODELS[m3dKey]?.label || m3dKey, height: VIEW3D_HEIGHT_M, png: c.png } }).filter((v) => v.png)
         }
       } catch { /* */ }
