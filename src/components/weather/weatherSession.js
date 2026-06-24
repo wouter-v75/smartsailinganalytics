@@ -15,7 +15,7 @@ const store = {
   windData: {},
   activeModel: 'AROME',
   resolvedTz: 'UTC',
-  mastHeight: 30,
+  mastHeight: 34,
   forecastPersist: {},   // { locations, fieldModel, fieldHeight, fieldHourIdx, field }
   soundingPoint: null,   // { lat, lon } — the Sounding tab's picked point, for the deck's Stability slide
 }
