@@ -809,9 +809,13 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         diagnostics: diag,
       }
       let ai = null
+      setAiErr('writing AI brief…')
       try {
-        const r = await withTimeout(aiSummary(aiPayload), 30000, { __error: 'timed out (30s)' })
-        if (r && r.__error) { setAiErr(r.__error); ai = null } else { ai = r; setAiErr('') }
+        // Client cap (65s) sits just beyond the server's 55s upstream abort, so a
+        // real server error/timing wins instead of a blind client timeout.
+        const r = await withTimeout(aiSummary(aiPayload), 65000, { __error: 'client timeout (65s) — server never responded' })
+        if (r && r.__error) { setAiErr(r.__error); ai = null }
+        else { ai = r; setAiErr(r?._ms ? `AI brief ok (${(r._ms / 1000).toFixed(1)}s)` : '') }
       } catch (e) { setAiErr(e?.message || 'failed') }
 
       const deck = buildDeck(P, {
@@ -853,7 +857,12 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         <span style={{ fontSize: 11, color: err ? '#F87171' : '#64748B', alignSelf: 'center' }}>
           {err || (!haveP1 ? 'Set point 1 to enable' : 'Editable .pptx · mast-height · day-mode · Keynote-ready')}
         </span>
-        {aiErr && <span style={{ fontSize: 11, color: '#FBBF24', alignSelf: 'center' }}>AI brief skipped — {aiErr}</span>}
+        {aiErr && (() => {
+          const ok = aiErr.startsWith('AI brief ok'); const working = aiErr.includes('writing')
+          const color = ok ? '#34D399' : (working ? '#7DD3FC' : '#FBBF24')
+          const label = (ok || working) ? aiErr : `AI brief skipped — ${aiErr}`
+          return <span style={{ fontSize: 11, color, alignSelf: 'center' }}>{label}</span>
+        })()}
       </div>
     </div>
   )
