@@ -144,7 +144,7 @@ export function meanFromDir(field, frameIdx, lat, lon, nm) {
 // Reuses one map: builds terrain+drape+arrows once, then per frame updates the
 // sources, re-orients upwind, waits for idle, and captures. Returns [{idx,png}].
 export async function captureField3DSeries(ML, field, opts) {
-  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [], zoom = 10.4, arrowStep } = opts || {}
+  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [], zoom = 10.4, arrowStep, ringNm = 5 } = opts || {}
   if (!ML || !field?.frames?.length || !frameIndices.length) return []
   const cont = document.createElement('div')
   cont.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px;background:#071624;`
@@ -175,19 +175,25 @@ export async function captureField3DSeries(ML, field, opts) {
     // raster drape (no contours) only if deck.gl isn't available.
     const useDeckDrape = !!window.deck?.MapboxOverlay
     let drapeOverlay = null
+    // depthCompare 'always' so the flat sea-level layers draw on top of the
+    // terrain (not occluded by the sea-level DEM) and stay visible in the shot.
+    const flatParams = { depthCompare: 'always', depthWriteEnabled: false, depthTest: false }
     const overlayLayersFor = (fidx) => {
       const layers = []
       const u = drapeImageURL(field, fidx)
-      if (u) layers.push(new window.deck.BitmapLayer({ id: 'drape-bmp', image: u, bounds: [field.box.west, field.box.south, field.box.east, field.box.north], opacity: drapeOpacity(field) }))
+      if (u) layers.push(new window.deck.BitmapLayer({ id: 'drape-bmp', image: u, bounds: [field.box.west, field.box.south, field.box.east, field.box.north], opacity: drapeOpacity(field), parameters: flatParams }))
       if (kind !== 'hpbl') {
         const { paths, labels } = buildContoursKn(field, fidx, TWS_CONTOUR_KN)
-        if (paths.length) layers.push(new window.deck.PathLayer({ id: 'tws-contours', data: paths, getPath: (d) => d.path, getColor: [20, 30, 46, 190], getWidth: (d) => (d.major ? 2.0 : 1.1), widthUnits: 'pixels', widthMinPixels: 0.9, capRounded: true, jointRounded: true, pickable: false }))
+        if (paths.length) layers.push(new window.deck.PathLayer({ id: 'tws-contours', data: paths, getPath: (d) => d.path, getColor: [20, 30, 46, 190], getWidth: (d) => (d.major ? 2.0 : 1.1), widthUnits: 'pixels', widthMinPixels: 0.9, capRounded: true, jointRounded: true, pickable: false, parameters: flatParams }))
         if (labels.length) layers.push(new window.deck.TextLayer({ id: 'tws-labels', data: labels, getPosition: (d) => [d.position[0], d.position[1], 60 * exaggeration], getText: (d) => d.text, getSize: 12, sizeUnits: 'pixels', getColor: [255, 255, 255, 255], background: true, getBackgroundColor: [10, 18, 28, 150], backgroundPadding: [3, 1, 3, 1], billboard: true, getTextAnchor: 'middle', getAlignmentBaseline: 'center', fontWeight: 700, pickable: false }))
       }
       return layers
     }
     if (useDeckDrape) {
-      drapeOverlay = new window.deck.MapboxOverlay({ interleaved: false, layers: overlayLayersFor(frameIndices[0]) })
+      // interleaved:true renders deck INTO the basemap GL canvas, so the drape +
+      // contours are part of map.getCanvas().toDataURL() (interleaved:false uses a
+      // separate canvas that the screenshot misses).
+      drapeOverlay = new window.deck.MapboxOverlay({ interleaved: true, layers: overlayLayersFor(frameIndices[0]) })
       map.addControl(drapeOverlay)
     } else {
       const url0 = drapeImageURL(field, frameIndices[0])
@@ -198,7 +204,7 @@ export async function captureField3DSeries(ML, field, opts) {
       map.addSource('wind', { type: 'geojson', data: fieldToGeoJSON(field, frameIndices[0], { minKn, step: arrowStep }) })
       map.addLayer({ id: 'wind', type: 'symbol', source: 'wind', layout: { 'icon-image': kind === 'current' ? 'arrow-mono' : ['concat', 'arrow-', ['to-string', ['get', 'band']]], 'icon-rotate': ['get', 'toward'], 'icon-rotation-alignment': 'map', 'icon-size': ['interpolate', ['linear'], ['get', 'spd'], 0, 0.4, 30, 1.1], 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
     }
-    map.addSource('ring', { type: 'geojson', data: ringGeoJSON(lat, lon, 5) })
+    map.addSource('ring', { type: 'geojson', data: ringGeoJSON(lat, lon, ringNm) })
     map.addLayer({ id: 'ring', type: 'line', source: 'ring', paint: { 'line-color': '#ef4444', 'line-width': 2, 'line-dasharray': [2, 1.5] } })
     await idle()
     for (const fidx of frameIndices) {

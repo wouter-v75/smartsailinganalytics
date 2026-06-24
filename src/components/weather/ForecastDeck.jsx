@@ -593,7 +593,7 @@ function buildDeck(P, d) {
   // ── 1) TITLE (dark navy, per template) ──────────────────────────────────────
   let s = pptx.addSlide(); s.background = { color: '003462' }
   s.addText(`Weather & strategy brief - ${d.day}`, { x: 0.66, y: 1.41, w: 12.0, h: 2.4, fontFace: FONT, fontSize: 48, bold: true, color: 'FFFFFF', valign: 'top' })
-  s.addText(`<Boatname>   <Event>   ${d.year}`, { x: 0.66, y: 3.94, w: 12.0, h: 0.7, fontFace: FONT, fontSize: 22, bold: true, color: '8FB8E6' })
+  s.addText(`${d.boatName || '<Boatname>'}   ${d.eventName || '<Event>'}   ${d.year}`, { x: 0.66, y: 3.94, w: 12.0, h: 0.7, fontFace: FONT, fontSize: 22, bold: true, color: '8FB8E6' })
   s.addText(`Wouter · ${d.day}`, { x: 0.66, y: 6.48, w: 12.0, h: 0.35, fontFace: FONT, fontSize: 12, color: 'AFC4DE' })
 
   // ── 2) Weather and strategy brief (executive) ───────────────────────────────
@@ -623,10 +623,10 @@ function buildDeck(P, d) {
     ? [{ text: d.ai.generalWeather, options: { breakLine: true } }]
     : d.generalBullets.map((t) => ({ text: t, options: { bullet: true, breakLine: true, paraSpaceAfter: 10 } })),
     { x: 0.55, y: 2.15, w: 4.97, h: 4.4, fontFace: FONT, fontSize: d.ai?.generalWeather ? 13 : 16, color: INK, valign: 'top' })
-  const hero = (d.views3d || []).find((v) => v.label === '12:00') || (d.views3d || [])[0] || null
+  const hero = d.heroView || (d.views3d || []).find((v) => v.label === '12:00') || (d.views3d || [])[0] || null
   if (hero) {
-    s.addImage({ data: hero.png, ...fit(760, 460, 5.73, 2.06, 6.89, 4.17) })
-    s.addText(`3D wind field — ${hero.model}${hero.height ? ` · ${hero.height} m` : ''} · ${hero.label} local · 5 nm racing area`, { x: 5.73, y: 6.32, w: 6.89, h: 0.3, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
+    s.addImage({ data: hero.png, ...fit(900, 540, 5.73, 2.06, 6.89, 4.17) })
+    s.addText(`3D wind field — ${hero.model}${hero.height ? ` · ${hero.height} m` : ''} · ${hero.label} local · 20 nm view · 10 nm ring`, { x: 5.73, y: 6.32, w: 6.89, h: 0.3, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
   } else if (d.windfieldImg) {
     s.addImage({ data: d.windfieldImg.data, ...fit(d.windfieldImg.w, d.windfieldImg.h, 5.73, 2.06, 6.89, 4.17) })
     s.addText('Wind field — 12:00 local · 5 nm racing area', { x: 5.73, y: 6.32, w: 6.89, h: 0.3, align: 'center', fontFace: FONT, fontSize: 10, color: GREY })
@@ -702,7 +702,7 @@ function buildDeck(P, d) {
 }
 
 // ── component ───────────────────────────────────────────────────────────────
-export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, resolvedTz = 'UTC', raceDay = null }) {
+export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, resolvedTz = 'UTC', raceDay = null, boatName = null, eventName = null }) {
   const campaignRaceDay = raceDay
   const pptxReady = useScriptsOnce([PPTX_JS]); useScriptsOnce([PLOTLY_JS]); useScriptsOnce([MAPLIBRE_JS, DECK_JS], [MAPLIBRE_CSS])
   const point1 = windData?.['1']; const haveP1 = p1lat != null && p1lon != null && !!point1
@@ -752,7 +752,8 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       // for the General weather slide. Captured at 30 m wind. Time-bounded; falls
       // back to the 2D windfield.
       const VIEW3D_HEIGHT_M = 30
-      let views3d = []
+      let views3d = []        // Model guidance: 4× 5 nm snapshots (2 nm ring)
+      let heroView = null     // General weather: 1× zoomed-out 20 nm overview (10 nm ring)
       try {
         const m3dKey = (sb.ICONRACE_1KM && hasValidSpeed(sb.ICONRACE_1KM.hourly)) ? 'ICONRACE_1KM' : 'AROME'
         const f3d = m3dKey.startsWith('ICONRACE')
@@ -761,11 +762,16 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         const stamps = f3d?.stamps || []
         const frameIndices = [10, 12, 14, 16].map((H) => stamps.findIndex((s) => s && s.hh === H)).filter((i) => i >= 0)
         const ML = window.maplibregl
+        const modelLabel = MODELS[m3dKey]?.label || m3dKey
         if (ML && f3d?.frames?.length && frameIndices.length) {
-          // Zoomed tighter (≈ 5 nm racing radius) than the live viewer's 10.4;
-          // arrowStep 1 = every native grid cell (full SSA-Race 1 km density).
-          const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices, zoom: 11.6, arrowStep: 1 }), 55000, [])
-          views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: MODELS[m3dKey]?.label || m3dKey, height: VIEW3D_HEIGHT_M, png: c.png } }).filter((v) => v.png)
+          // Model guidance: tight ≈ 5 nm racing view, 2 nm ring, full grid density.
+          const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices, zoom: 11.6, arrowStep: 1, ringNm: 2 }), 55000, [])
+          views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: modelLabel, height: VIEW3D_HEIGHT_M, png: c.png } }).filter((v) => v.png)
+          // General weather hero: zoomed-OUT ≈ 20 nm overview, 10 nm ring, midday.
+          const midIdx = frameIndices[1] ?? frameIndices[0]
+          const heroCaps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 900, height: 540, exaggeration: 3, frameIndices: [midIdx], zoom: 9.8, arrowStep: 1, ringNm: 10 }), 45000, [])
+          const hc = (heroCaps || [])[0]
+          if (hc?.png) { const s = stamps[hc.idx]; heroView = { label: s ? `${pad2(s.hh)}:00` : '12:00', model: modelLabel, height: VIEW3D_HEIGHT_M, png: hc.png } }
         }
       } catch { /* */ }
 
@@ -802,12 +808,13 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
 
       const deck = buildDeck(P, {
         venue: venueName, location: venueName,
+        boatName: boatName || null, eventName: eventName || null,
         day: aiPayload.date,                                  // "Wednesday, 24 June"
         year: String(new Date().getFullYear()),
         typeOfDay: diag?.typeOfDay || ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai, diag,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
-        mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d,
+        mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
         generalBullets: ['Synoptic setup — edit', 'Sea-breeze timing & strength — edit', 'Local effects / hazards — edit'],
         dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze build through the day — edit', 'Morning: light/variable — edit', 'Local effects — edit'],
       })

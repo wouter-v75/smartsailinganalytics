@@ -4408,7 +4408,7 @@ function MobileShell(props){
         {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
         {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <WeatherTab isMobile={true} effectiveRole={props.effectiveRole}/>
+            <WeatherTab isMobile={true} effectiveRole={props.effectiveRole} boatName={props.campaignCfg?.boatName} eventName={props.campaignCfg?.event}/>
           </div>
         )}
 
@@ -6745,7 +6745,7 @@ function SSAApp(){
         {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
         {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <WeatherTab isMobile={false} effectiveRole={effectiveRole}/>
+            <WeatherTab isMobile={false} effectiveRole={effectiveRole} boatName={campaignCfg?.boatName} eventName={campaignCfg?.event}/>
           </div>
         )}
       </div>

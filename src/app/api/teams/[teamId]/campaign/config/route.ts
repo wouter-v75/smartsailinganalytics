@@ -92,8 +92,27 @@ export async function GET(
     if (u && !memberMap.has(u.id)) memberMap.set(u.id, { id: u.id, name: u.name })
   }
 
+  // Boat name + current event (for the forecast deck's title slide). The
+  // "current" event is the one attached to today's session for this boat, else
+  // the most recent dated session's event. Both optional.
+  let boatName: string | null = null
+  let event: string | null = null
+  if (boatId) {
+    const today = new Date().toISOString().slice(0, 10)
+    const [{ data: boatRow }, { data: evRows }] = await Promise.all([
+      service.from('boats').select('name').eq('id', boatId).maybeSingle(),
+      service.from('sessions').select('date, event').eq('team_id', params.teamId).eq('boat_id', boatId)
+        .not('event', 'is', null).order('date', { ascending: false }).limit(60),
+    ])
+    boatName = (boatRow?.name as string) || null
+    const rows = (evRows || []) as Array<{ date: string; event: string | null }>
+    event = (rows.find((r) => r.date === today)?.event) || (rows[0]?.event) || null
+  }
+
   return NextResponse.json({
     campaignOn: true,
+    boatName,
+    event,
     subteams: subteams || [],
     mySubteamIds,
     meId: user.id,

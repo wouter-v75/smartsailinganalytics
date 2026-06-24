@@ -109,6 +109,8 @@ export default function ForecastView({
   canIconRace = false,
   canHeights = false,
   isAdmin = false,
+  boatName = null,
+  eventName = null,
 }) {
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
   const mapDivRef = useRef(null)
@@ -640,6 +642,7 @@ export default function ForecastView({
         <ForecastDeck
           p1lat={p1lat} p1lon={p1lon} windData={windData}
           modelAvailable={modelAvailable} mastHeight={mastHeight} resolvedTz={tzResolved}
+          boatName={boatName} eventName={eventName}
         />
       )}
       {/* Map (half width in landscape) + wind-field controls beside it */}
