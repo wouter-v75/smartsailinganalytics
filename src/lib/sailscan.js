@@ -143,6 +143,7 @@ export function computeStripeMetrics(stripe) {
       chordLen, chordAngleDeg,
       draftPct: 0, draftPositionPct: 50, draftSign: 0, maxDraft: 0,
       entryAngleDeg: 0, exitAngleDeg: 0,
+      foreCamberPct: 0, backCamberPct: 0,
       samples: [{t: 0, d: 0}, {t: 1, d: 0}],
     };
   }
@@ -164,6 +165,15 @@ export function computeStripeMetrics(stripe) {
     if (ad > maxAbsD) { maxAbsD = ad; draftSign = Math.sign(d) || 1; draftT = t; }
   }
 
+  // Fore/back camber (North's "Front%" / "Back%"): the curve's depth at the
+  // 25%- and 75%-chord stations expressed as a % of the max camber depth.
+  // Describes entry vs exit fullness; draft-forward sails read high Front%,
+  // lower Back%. NOTE: definition matches North's magnitudes to a few %;
+  // calibrate the exact stations once we score our spline on North's photo.
+  const dAt = (tt) => Math.abs(spl.yAt(tt));
+  const foreCamberPct = maxAbsD > 1e-6 ? (dAt(0.25) / maxAbsD) * 100 : 0;
+  const backCamberPct = maxAbsD > 1e-6 ? (dAt(0.75) / maxAbsD) * 100 : 0;
+
   // Slope of d(t) at endpoints; convert to angle relative to chord.
   // d(t) is in pixels; t is dimensionless in [0,1] over a chord of chordLen
   // pixels, so along-chord pixels per t-unit = chordLen.
@@ -184,6 +194,7 @@ export function computeStripeMetrics(stripe) {
     draftPositionPct: draftT * 100,
     draftSign, maxDraft: maxAbsD,
     entryAngleDeg, exitAngleDeg,
+    foreCamberPct, backCamberPct,
     samples,
   };
 }
@@ -201,6 +212,68 @@ export function computeTwist(stripeA, stripeB) {
   while (d > 90) d -= 180;
   while (d < -90) d += 180;
   return d;
+}
+
+// ── Seed stripes from an AI-pipeline result ─────────────────────────────────
+// The box pipeline (Hugo's analyze_sail) exports, per photo, a JSON of the form
+//   { image, width, height, stripes: [ { luff:[x,y], leech:[x,y],
+//       interior: [[x,y] near max curvature, [x,y] second], metrics:{...} } ] }
+// Convert that into the {luff, leech, mid[]} stripes the SailScan tab edits, so
+// the user gets AI-placed control points they can then drag (2 ends + 2 interior).
+export function stripesFromAIResult(result) {
+  const toP = (a) => (Array.isArray(a) ? { x: a[0], y: a[1] } : null);
+  return (result?.stripes || [])
+    .map((s) => ({
+      luff: toP(s.luff),
+      leech: toP(s.leech),
+      mid: (s.interior || []).map(toP).filter(Boolean),
+      userTaps: [],
+    }))
+    .filter((s) => s.luff && s.leech);
+}
+
+// ── Training-label export ───────────────────────────────────────────────────
+// Turn a user-corrected stripe into a label for fine-tuning the keypoint model:
+// the two endpoints + N-2 evenly-spaced interior points sampled along the
+// fitted spline (default 8 keypoints total, matching Hugo's stripe_keypoints
+// model, ordered luff -> leech), plus an enclosing bbox. Coordinates are in
+// image-pixel space; the box trainer normalises by image width/height.
+export function stripeToLabel(stripe, nKeypoints = 8) {
+  const m = computeStripeMetrics(stripe);
+  if (!m || !m.hasCurve) return null;
+  const poly = splinePolyline(stripe);            // 201 points luff->leech
+  if (poly.length < 2) return null;
+  const kpts = [];
+  for (let k = 0; k < nKeypoints; k++) {
+    const idx = Math.round((k / (nKeypoints - 1)) * (poly.length - 1));
+    kpts.push([poly[idx].x, poly[idx].y]);
+  }
+  const xs = poly.map(p => p.x), ys = poly.map(p => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const y0 = Math.min(...ys), y1 = Math.max(...ys);
+  return {
+    luff: [stripe.luff.x, stripe.luff.y],
+    leech: [stripe.leech.x, stripe.leech.y],
+    keypoints: kpts,                              // [[x,y] x nKeypoints]
+    bbox: [x0, y0, x1, y1],
+    metrics: {
+      camberPct: m.draftPct, draftPositionPct: m.draftPositionPct,
+      entryAngleDeg: m.entryAngleDeg, exitAngleDeg: m.exitAngleDeg,
+      foreCamberPct: m.foreCamberPct, backCamberPct: m.backCamberPct,
+    },
+  };
+}
+
+// Build the full per-image label object for export/download.
+export function buildLabelExport(stripes, { image, width, height } = {}) {
+  return {
+    image: image || 'sail',
+    width: width || null,
+    height: height || null,
+    stripes: stripes
+      .map(s => stripeToLabel(s))
+      .filter(Boolean),
+  };
 }
 
 // ── Helper for overlay rendering ────────────────────────────────────────────

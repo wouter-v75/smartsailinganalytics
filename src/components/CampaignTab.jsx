@@ -78,9 +78,11 @@ const hhmmToMin = (s) => {
 }
 
 export default function CampaignTab({ teamId, boatId, role, config, isMobile, onOpenVideo }) {
-  // Consultants only get the Day sub-tab (no Plan / Backlog).
+  // Plan + Backlog pruned (non-compounding planning/task surfaces). The tab now
+  // exposes only the data spine: Regattas (event reference) + Day (runs/configs/
+  // debriefs). Default to Day.
   const consultantOnly = role === 'consultant'
-  const [sub, setSub] = useState(consultantOnly ? 'day' : 'plan')
+  const [sub, setSub] = useState('day')
   const effSub = consultantOnly ? 'day' : sub
   const canEditPlan = EDIT_ROLES.includes(role)
   // Cross-boat editors (admin + team_manager) manage the team as a whole —
@@ -91,7 +93,7 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
   // Clicking a backlog-item link in a debrief jumps to the Backlog sub-tab and
   // highlights that item.
   const [highlightItem, setHighlightItem] = useState(null)
-  const onOpenItem = (id) => { if (!consultantOnly) { setSub('backlog'); setHighlightItem(id) } }
+  const onOpenItem = () => { /* backlog pruned — debrief→item links are no-ops */ }
   // Clicking "Day details" on a Plan DayCard jumps to the Day sub-tab on that
   // date. DayView consumes pendingDayDate via initialDate (one-shot consume).
   const [pendingDayDate, setPendingDayDate] = useState(null)
@@ -152,10 +154,8 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
     >
       {!consultantOnly && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          {subTab('plan', 'Plan')}
           {subTab('regattas', 'Regattas')}
           {subTab('day', 'Day')}
-          {subTab('backlog', 'Backlog')}
           <div style={{ flex: 1 }} />
           {/* Boat selector — visible whenever the user can see >1 boat on the
               team. The Plan is team-wide regardless of selection; Day and

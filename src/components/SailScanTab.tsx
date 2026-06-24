@@ -19,7 +19,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { computeStripeMetrics, splinePolyline, computeTwist } from '../lib/sailscan';
+import { computeStripeMetrics, splinePolyline, computeTwist, stripesFromAIResult, buildLabelExport } from '../lib/sailscan';
+import SailScanReportTable from './SailScanReportTable';
 import {
   ensureOpenCV, getCV, applyClahe, structureTensor,
   horizontalOnlyEdges, colorizeOrientation, matToCanvas, imageToMat,
@@ -100,6 +101,13 @@ export default function SailScanTab() {
   // ── file inputs ───────────────────────────────────────────────────────────
   const fileAlbumRef = useRef<HTMLInputElement>(null);
   const fileBrowserRef = useRef<HTMLInputElement>(null);
+  const fileAIRef = useRef<HTMLInputElement>(null);
+  const fileBatchRef = useRef<HTMLInputElement>(null);
+  // Batch-correction queue: each item = a photo + its AI result + (once edited)
+  // the corrected stripes. Lets the user step through 20 sails and label them.
+  type BatchItem = { name: string; url: string; result: any; stripes: Stripe[] | null };
+  const [batch, setBatch] = useState<BatchItem[]>([]);
+  const [batchIdx, setBatchIdx] = useState(-1);
   const [activeButton, setActiveButton] = useState<string | null>(null);
   // Original File handle, kept so we can extract EXIF later (object URLs lose it)
   const originalFile = useRef<File | null>(null);
@@ -215,6 +223,119 @@ export default function SailScanTab() {
     setActiveButton(null);
     setStep('mark');
     e.target.value = '';
+  };
+
+  // Load an AI-pipeline result JSON (from the box analyze_sail export) and seed
+  // the stripes with its endpoints + 2 interior control points, ready to drag.
+  // Load the matching photo first, then this JSON (coords are in that image's
+  // full-res pixel space).
+  const handleAIResult = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const result = JSON.parse(String(reader.result));
+        const seeded = stripesFromAIResult(result);
+        if (seeded.length) {
+          setStripes(seeded as typeof stripes);
+          setActiveIdx(0);
+          setStep(imageSrc ? 'results' : 'mark');
+        } else {
+          alert('No stripes found in that result file.');
+        }
+      } catch (err) {
+        alert('Could not read AI result JSON: ' + (err as Error).message);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // Export the user-corrected stripes as a training label (8 keypoints/stripe
+  // along the corrected spline) for fine-tuning the detector on our own sails.
+  const exportLabel = () => {
+    const img = cachedImage.current;
+    const name = (originalFile.current?.name || 'sail').replace(/\.[^.]+$/, '');
+    const label = buildLabelExport(stripes as any, {
+      image: name,
+      width: img?.naturalWidth,
+      height: img?.naturalHeight,
+    });
+    if (!label.stripes.length) { alert('No completed stripes to export — add midpoints first.'); return; }
+    const blob = new Blob([JSON.stringify(label, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${name}.label.json`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Batch correction queue ────────────────────────────────────────────────
+  // Import many photos + their AI .json results at once, pair by basename, and
+  // step through correcting each. Corrections persist per item; "Export all"
+  // writes a single labels file for the box trainer.
+  const handleBatchImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const imgs: Record<string, File> = {};
+    const jsons: Record<string, File> = {};
+    for (const f of files) {
+      const stem = f.name.replace(/\.[^.]+$/, '').replace(/\.label$/, '');
+      if (/\.(jpe?g|png|heic|heif|webp|tiff?|bmp)$/i.test(f.name)) imgs[stem] = f;
+      else if (/\.json$/i.test(f.name)) jsons[stem] = f;
+    }
+    const items: BatchItem[] = [];
+    for (const stem of Object.keys(imgs)) {
+      const jf = jsons[stem];
+      if (!jf) continue;
+      let result: any = null;
+      try { result = JSON.parse(await jf.text()); } catch { continue; }
+      items.push({ name: stem, url: URL.createObjectURL(imgs[stem]), result, stripes: null });
+    }
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    if (!items.length) {
+      alert('No image+JSON pairs found. Select the photos AND their matching .json files together.');
+      e.target.value = ''; return;
+    }
+    setBatch(items);
+    const first = items[0];
+    originalFile.current = imgs[first.name];
+    const seeded = stripesFromAIResult(first.result) as typeof stripes;
+    setImageSrc(first.url);
+    setStripes(seeded.length ? seeded : [newStripe()]);
+    setActiveIdx(0); setBatchIdx(0); setStep('mark');
+    e.target.value = '';
+  };
+
+  const gotoBatch = (i: number) => {
+    if (i < 0 || i >= batch.length) return;
+    // save current corrections back into the active item
+    setBatch(prev => {
+      const next = prev.slice();
+      if (batchIdx >= 0 && batchIdx < next.length) next[batchIdx] = { ...next[batchIdx], stripes };
+      return next;
+    });
+    const item = batch[i];
+    originalFile.current = null;
+    const seeded = ((item.stripes && item.stripes.length)
+      ? item.stripes : stripesFromAIResult(item.result)) as typeof stripes;
+    setImageSrc(item.url);
+    setStripes(seeded.length ? seeded : [newStripe()]);
+    setActiveIdx(0); setBatchIdx(i); setStep('mark');
+  };
+
+  const exportAllLabels = () => {
+    const cur = batch.slice();
+    if (batchIdx >= 0 && batchIdx < cur.length) cur[batchIdx] = { ...cur[batchIdx], stripes };
+    const out = cur.map(it => {
+      const st = (it.stripes && it.stripes.length) ? it.stripes : stripesFromAIResult(it.result);
+      return buildLabelExport(st as any, { image: it.name, width: it.result?.width, height: it.result?.height });
+    }).filter(o => o.stripes.length);
+    if (!out.length) { alert('Nothing to export yet — correct at least one sail.'); return; }
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'labels_all.json'; a.click();
+    URL.revokeObjectURL(url);
   };
 
   // ── coordinate helpers (canvas-pixel ↔ image-pixel) ──────────────────────
@@ -1177,6 +1298,19 @@ export default function SailScanTab() {
                 }`}
               >{activeButton === 'files' ? '⏳ Loading…' : '📁 Browse Files'}</button>
             </div>
+            <div className="w-full pt-2 border-t border-slate-800">
+              <button
+                onClick={() => fileAIRef.current?.click()}
+                className="w-full px-4 py-2.5 font-semibold text-xs rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 active:scale-95"
+              >🤖 Load AI scan result (.json)</button>
+              <button
+                onClick={() => fileBatchRef.current?.click()}
+                className="w-full mt-2 px-4 py-2.5 font-semibold text-xs rounded-lg bg-indigo-700 hover:bg-indigo-600 text-white active:scale-95"
+              >📦 Import batch to correct (photos + .json)</button>
+              <p className="text-[10px] text-slate-500 mt-1 text-center">Single: load the photo then its AI result. Batch: select all photos and their .json files together, then step through correcting each.</p>
+            </div>
+            <input ref={fileAIRef} type="file" accept=".json,application/json" className="hidden" onChange={handleAIResult} />
+            <input ref={fileBatchRef} type="file" multiple accept="image/*,.json,application/json" className="hidden" onChange={handleBatchImport} />
           </div>
         )}
 
@@ -1250,6 +1384,20 @@ export default function SailScanTab() {
               <button onClick={addStripe}
                 className="px-3 py-1.5 rounded-full text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white active:scale-95 flex-shrink-0">+ Add stripe</button>
             </div>
+
+            {/* Batch-correction navigation bar */}
+            {batchIdx >= 0 && batch.length > 0 && (
+              <div className="flex-shrink-0 flex items-center gap-2 px-3 py-1.5 bg-indigo-950/60 border-b border-indigo-800 text-xs">
+                <button onClick={() => gotoBatch(batchIdx - 1)} disabled={batchIdx === 0}
+                  className="px-2 py-1 rounded bg-slate-700 disabled:opacity-40 active:scale-95">‹ Prev</button>
+                <span className="font-semibold text-indigo-200">{batchIdx + 1} / {batch.length}</span>
+                <span className="text-slate-400 truncate max-w-[40%]">{batch[batchIdx]?.name}</span>
+                <button onClick={() => gotoBatch(batchIdx + 1)} disabled={batchIdx === batch.length - 1}
+                  className="px-2 py-1 rounded bg-slate-700 disabled:opacity-40 active:scale-95">Next ›</button>
+                <button onClick={exportAllLabels}
+                  className="ml-auto px-2.5 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-semibold active:scale-95">💾 Export all labels</button>
+              </div>
+            )}
 
             {/* Canvas + (optional) CV debug overlay */}
             <div className="flex-1 min-h-0 flex items-center justify-center bg-black relative overflow-hidden">
@@ -1400,6 +1548,12 @@ export default function SailScanTab() {
               <canvas ref={canvasRef} style={{ maxWidth: '100%', maxHeight: '100%', display: 'block' }} />
             </div>
             <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 bg-slate-900">
+              <SailScanReportTable stripes={stripes} />
+              <button
+                onClick={exportLabel}
+                className="w-full px-4 py-2 text-xs font-semibold rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white active:scale-95"
+                title="Save the corrected stripes as a training label (8 keypoints/stripe) to fine-tune the detector"
+              >💾 Export training label (.json)</button>
               <h2 className="text-base font-bold text-slate-200">Per-stripe metrics</h2>
               {stripes.map((s, i) => {
                 const m = stripeMetrics[i];
