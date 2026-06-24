@@ -97,6 +97,29 @@ export default function BoatConfigTab({
       if (r.error) setErr(r.error); else await refreshSails()
     } finally { setBusy('') }
   }
+  const createSailReturning = async (body: any): Promise<Sail> => {
+    const r = await fetch(`/api/teams/${teamId}/sails`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boat_id: boatId, ...body }),
+    }).then((x) => x.json())
+    if (r.error) throw new Error(r.error)
+    await refreshSails()
+    return r.sail
+  }
+  const refreshScans = async () => {
+    const r = await fetch(`/api/teams/${teamId}/sail-scans?boat_id=${boatId}&limit=40`).then((x) => x.json())
+    if (r.error) setErr(r.error); else setScans(r.scans || [])
+  }
+  const importScan = async (file: File, sailId: string | null) => {
+    const fd = new FormData()
+    fd.append('boat_id', boatId)
+    if (sailId) fd.append('sail_id', sailId)
+    fd.append('file', file)
+    const r = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd }).then((x) => x.json())
+    if (r.error) throw new Error(r.error)
+    await refreshScans()
+    return r.parsed
+  }
   const patchSail = async (id: string, fields: any) => {
     setBusy(id); setErr('')
     try {
@@ -185,10 +208,15 @@ export default function BoatConfigTab({
 
       {/* ── SAIL SHAPES (scans) ────────────────────────────────────── */}
       {view === 'shapes' && (
-        scans.length === 0 && !loading ? (
-          <div style={{ color: C.dim, fontSize: 12 }}>No scans yet. Ingested from North / thesailcloud reports.</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div>
+          {canEdit && (
+            <ImportScanForm sails={sails} input={input} btn={btn}
+              onImport={importScan} onCreateSail={createSailReturning} />
+          )}
+          {scans.length === 0 && !loading ? (
+            <div style={{ color: C.dim, fontSize: 12, marginTop: 8 }}>No scans yet. Import a North report above, or ingest via the API.</div>
+          ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
             {scans.map((sc) => {
               const sail = sc.sail_id ? sailById[sc.sail_id] : null
               const stripes = Array.isArray(sc.stripes) ? sc.stripes : []
@@ -218,7 +246,8 @@ export default function BoatConfigTab({
               )
             })}
           </div>
-        )
+          )}
+        </div>
       )}
 
       {/* ── POLAR ──────────────────────────────────────────────────── */}
@@ -271,6 +300,62 @@ function AddSailForm({ onAdd, busy, input, btn }: any) {
       </select>
       <label style={{ fontSize: 11, color: '#64748B' }}>Build <input type="date" style={input} value={build} onChange={(e) => setBuild(e.target.value)} /></label>
       <button onClick={submit} disabled={busy || !name.trim()} style={{ ...btn('#06B6D4'), opacity: busy || !name.trim() ? 0.5 : 1 }}>{busy ? '…' : '+ Add sail'}</button>
+    </div>
+  )
+}
+
+// ── Import-and-assign a North scan ───────────────────────────────────────────
+// File-picker for a North SailScan PDF + a sail selector (existing inventory,
+// "assign later", or inline-create a new sail tag). Posts to /sail-scans, which
+// parses the report into a structured row linked to the chosen sail.
+function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
+  const active = (sails || []).filter((s: any) => !s.retired)
+  const [file, setFile] = useState<File | null>(null)
+  const [sailId, setSailId] = useState<string>('')   // '' = assign later, '__new' = create
+  const [newName, setNewName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const fileRef = React.useRef<HTMLInputElement>(null)
+
+  const submit = async () => {
+    if (!file) { setErr('Pick a North report PDF first.'); return }
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      let assignTo: string | null = sailId && sailId !== '__new' ? sailId : null
+      if (sailId === '__new') {
+        if (!newName.trim()) { setErr('Name the new sail, or choose “assign later”.'); setBusy(false); return }
+        const created = await onCreateSail({ name: newName.trim() })
+        assignTo = created?.id || null
+      }
+      const parsed = await onImport(file, assignTo)
+      const n = parsed?.stripes?.length ?? 0
+      setMsg(`Imported ${parsed?.sailName || 'scan'} — ${n} stripe${n === 1 ? '' : 's'}${parsed?.tws != null ? `, ${parsed.tws} kn` : ''}.`)
+      setFile(null); setNewName(''); setSailId('')
+      if (fileRef.current) fileRef.current.value = ''
+    } catch (e: any) {
+      setErr(e?.message || 'Import failed.')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
+      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 700 }}>Import North scan</span>
+      <input ref={fileRef} type="file" accept="application/pdf,.pdf" style={{ ...input, padding: 4 }}
+        onChange={(e) => { setFile(e.target.files?.[0] || null); setErr(''); setMsg('') }} />
+      <select style={input} value={sailId} onChange={(e) => setSailId(e.target.value)}>
+        <option value="">— assign later —</option>
+        {active.map((s: any) => (
+          <option key={s.id} value={s.id}>{s.category ? `${s.category} · ${s.name}` : s.name}</option>
+        ))}
+        <option value="__new">+ New sail…</option>
+      </select>
+      {sailId === '__new' && (
+        <input style={{ ...input, width: 150 }} placeholder="New sail name *" value={newName} onChange={(e) => setNewName(e.target.value)} />
+      )}
+      <button onClick={submit} disabled={busy || !file} style={{ ...btn('#06B6D4'), opacity: busy || !file ? 0.5 : 1 }}>{busy ? '…' : 'Import'}</button>
+      {msg && <span style={{ fontSize: 11, color: '#10B981' }}>{msg}</span>}
+      {err && <span style={{ fontSize: 11, color: '#F59E0B' }}>{err}</span>}
     </div>
   )
 }
