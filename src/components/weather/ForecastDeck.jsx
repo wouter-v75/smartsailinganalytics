@@ -506,17 +506,55 @@ const hdrCell = (text) => ({ text, options: { fill: { color: HEADER }, color: IN
 function addTitle(s, title, sub) { s.addText(title, { x: 0.5, y: 0.3, w: 12.3, h: 0.7, fontFace: FONT, fontSize: 34, bold: true, color: NAVY }); if (sub) s.addText(sub, { x: 0.52, y: 1.0, w: 12.3, h: 0.35, fontFace: FONT, fontSize: 12, color: GREY }) }
 function ph(s, x, y, w, h, label) { s.addShape('roundRect', { x, y, w, h, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.1 }); s.addText(label, { x, y, w, h, align: 'center', valign: 'middle', fontFace: FONT, fontSize: 14, color: GREY }) }
 const fit = (iw, ih, x, y, w, h) => { const r = Math.min(w / (iw || 1), h / (ih || 1)); const dw = (iw || 1) * r; const dh = (ih || 1) * r; return { x: x + (w - dw) / 2, y: y + (h - dh) / 2, w: dw, h: dh } }
-// cell with a speed-scaled wind arrow + trailing text. fill = Beaufort hex (or none).
+// TWD cell = trailing text only (Beaufort fill kept). The wind arrow is NOT a
+// glyph here — it's a single PNG overlaid on the cell and ROTATED continuously
+// (constant size, any angle) by overlayWindArrows() after the table is laid out.
 function arrowCell(twdMean, kn, trailing, fill, dark) {
   const color = fill ? (dark ? 'FFFFFF' : '0F1723') : INK
-  const runs = []
-  if (twdMean != null) runs.push({ text: arrowGlyph(twdMean), options: { fontFace: FONT, fontSize: ARROW_SIZE, color, bold: true } })
-  runs.push({ text: (twdMean != null ? '  ' : '') + (trailing || ''), options: { fontFace: FONT, fontSize: 12, color } })
-  return { text: runs, options: { ...(fill ? { fill: { color: fill } } : {}), valign: 'middle', align: 'left' } }
+  return { text: trailing || '', options: { ...(fill ? { fill: { color: fill } } : {}), valign: 'middle', align: 'center', color, fontFace: FONT, fontSize: 12 } }
 }
 const oCell = (b) => { if (!b) return txtCell('—'); const bf = beaufort(b.twsMid); return arrowCell(b.twdMean, b.twsMid, `${b.tws[0]}-${b.tws[1]}kn`, bf.hex, bf.dark) }
-// daily TWD cell: fixed-size arrow + the mean TWD (rounded to 5 deg), no fill
+// daily TWD cell: the mean TWD (rounded to 5 deg), no fill; arrow overlaid.
 const twdCell = (twdMean) => arrowCell(twdMean, null, twdMean != null ? `${round5(twdMean)}` : '')
+
+// One reusable wind-arrow PNG (points UP / north at 0°). Dark fill + white halo
+// so it reads on both light and Beaufort-coloured cells. Built once.
+let _windArrowPng = null
+function windArrowPng() {
+  if (_windArrowPng) return _windArrowPng
+  if (typeof document === 'undefined') return null
+  const N = 96, cv = document.createElement('canvas'); cv.width = cv.height = N
+  const ctx = cv.getContext('2d'); if (!ctx) return null
+  ctx.translate(N / 2, N / 2)
+  const s = N * 0.36, hw = N * 0.18, sw = N * 0.065, neck = -s + hw * 1.25
+  ctx.beginPath()
+  ctx.moveTo(0, -s)            // tip (north)
+  ctx.lineTo(hw, neck); ctx.lineTo(sw, neck); ctx.lineTo(sw, s)
+  ctx.lineTo(-sw, s); ctx.lineTo(-sw, neck); ctx.lineTo(-hw, neck)
+  ctx.closePath()
+  ctx.lineJoin = 'round'
+  ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = N * 0.085; ctx.stroke()  // halo
+  ctx.fillStyle = '#16263A'; ctx.fill()
+  _windArrowPng = cv.toDataURL('image/png')
+  return _windArrowPng
+}
+
+// Overlay rotated wind arrows on a just-added table. `cols` maps a table column
+// to a centre-x and a row→TWD accessor. Arrow points the way the wind BLOWS
+// (toward = TWD+180), rotated clockwise from north. rowH must be honoured by the
+// table (single-line cells), which the deck's tables are.
+function overlayWindArrows(s, rows, { y, rowH, headerRows = 1, cols, size = 0.22 }) {
+  const png = windArrowPng(); if (!png) return
+  rows.forEach((row, i) => {
+    const cy = y + rowH * (headerRows + i) + rowH / 2
+    cols.forEach((col) => {
+      const twd = col.twdOf(row)
+      if (twd == null) return
+      const toward = Math.round(((((twd + 180) % 360) + 360) % 360))
+      s.addImage({ data: png, x: col.cx - size / 2, y: cy - size / 2, w: size, h: size, rotate: toward })
+    })
+  })
+}
 // one-line diagnostics chips (sea-breeze score, confidence, BL, cap, funnelling)
 function diagChips(dg) {
   if (!dg) return []
@@ -584,6 +622,12 @@ function buildDeck(P, d) {
   const oHead = [hdrCell('Time'), hdrCell('Morning (10:00)'), hdrCell('Midday (12:00)'), hdrCell('Afternoon (15:00)')]
   const oRows = d.outlookRows.map((r) => [txtCell(r.day, { bold: true, fill: { color: LIGHTF } }), oCell(r.mor), oCell(r.mid), oCell(r.aft)])
   s.addTable([oHead, ...oRows], { x: 0.5, y: 1.4, w: 12.33, colW: [1.8, 3.51, 3.51, 3.51], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+  // Day col left = 0.5+1.8 = 2.3; each period col is 3.51 wide. Arrow near the cell's left edge.
+  overlayWindArrows(s, d.outlookRows, { y: 1.4, rowH: 0.42, cols: [
+    { cx: 2.3 + 0.30, twdOf: (r) => r.mor?.twdMean ?? null },
+    { cx: 2.3 + 3.51 + 0.30, twdOf: (r) => r.mid?.twdMean ?? null },
+    { cx: 2.3 + 3.51 * 2 + 0.30, twdOf: (r) => r.aft?.twdMean ?? null },
+  ] })
   if (d.longRange) s.addImage({ data: d.longRange, ...fit(1400, 520, 0.5, 3.5, 12.33, 3.3) }); else ph(s, 0.5, 3.5, 12.33, 3.3, '4-day TWS & TWD (±1σ, racing window)')
   s.addText('AM/Mid/PM = 10:00/12:00/15:00 local · TWD (cardinal) & TWS ranges = weighted models (all day 1-2, ARPEGE+ECMWF beyond)', { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   s = pptx.addSlide(); addTitle(s, 'Details for today')
@@ -591,6 +635,10 @@ function buildDeck(P, d) {
   const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell(`TWS ${d.venue}`), hdrCell('TWD range'), hdrCell('TWS min&max'), hdrCell('Trend'), hdrCell('Notes')]
   const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), twdCell(r.twdMean), spdCell(r.tws), txtCell(r.twd), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend), txtCell('')])
   s.addTable([dHead, ...dRows], { x: 0.5, y: 1.85, w: 12.33, colW: [1.0, 1.5, 1.2, 1.5, 1.6, 2.4, 3.13], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+  // TWD col left = 0.5+1.0 = 1.5 (width 1.5); arrow near its left, number centred.
+  overlayWindArrows(s, d.dailyRows, { y: 1.85, rowH: 0.4, cols: [
+    { cx: 1.5 + 0.30, twdOf: (r) => r.twdMean ?? null },
+  ] })
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · min&max = weighted blend`, { x: 0.5, y: 7.04, w: 12.3, h: 0.32, fontFace: FONT, fontSize: 9.5, color: GREY })
   // Stability — boundary-layer height + 13:00 sounding
   s = pptx.addSlide(); addTitle(s, 'Stability')
