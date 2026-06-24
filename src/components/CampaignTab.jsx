@@ -1002,8 +1002,16 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} />
         {allDates.length > 0 && (
           <select value={allDates.includes(date) ? date : ''} onChange={(e) => e.target.value && setDate(e.target.value)} style={inputStyle}>
-            <option value="">Jump to planned day…</option>
-            {allDates.map((d) => <option key={d} value={d}>{fmtDay(d)}</option>)}
+            <option value="">Select day…</option>
+            {allDates.map((d) => {
+              const isToday = d === todayStr()
+              // Days that have data are bold; today is marked with a dot.
+              return (
+                <option key={d} value={d} style={{ fontWeight: 700 }}>
+                  {isToday ? `● ${fmtDay(d)} · today` : fmtDay(d)}
+                </option>
+              )
+            })}
           </select>
         )}
         {date === todayStr() && <span style={{ fontSize: 11, color: '#1D9E75', fontWeight: 700 }}>● Today</span>}
@@ -1027,7 +1035,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
         <WeatherCard base={base} date={date} canEdit={canEditForecast} />
       )}
 
-      {/* Row 1 — Plan | On-the-water Tests & tasks */}
+      {/* Row 1 — Plan | Boat config (sail list for the day) */}
       <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch' }}>
         <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>Plan for {fmtDay(date)}</div>
@@ -1068,16 +1076,13 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
           <PlanConditions base={base} date={date} canEdit={canEditPlan} />
         </div>
 
-        <OnWaterCard
+        <BoatConfigDayCard
+          teamId={teamId}
+          boatId={boatId}
           base={base}
-          items={items}
-          allDays={allDays}
-          sessionId={session?.id || null}
-          subteams={(config?.subteams || []).filter((s) => s.active !== false && (s.category === 'racing' || s.category === 'technical'))}
-          canSeeTestNow={canSeeTestNow}
-          canMoveTests={canMoveTests}
+          date={date}
+          canEdit={canEditDebrief}
           isMobile={isMobile}
-          onChanged={reloadItems}
         />
       </div>
 
@@ -1421,6 +1426,157 @@ function OnWaterCard({ base, items, allDays, sessionId, subteams = [], canSeeTes
                 {allDays.filter((d) => d.id !== sessionId).map((d) => <option key={d.id} value={d.id}>{fmtDay(d.date)}</option>)}
               </select>
               <button onClick={move} disabled={moving || !targetDay} style={btnSmall}>{moving ? 'Moving…' : 'Move'}</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Boat config for the day — the sail list that was up. Entered manually at the
+// start of the day (picked from the boat's sail inventory, or typed); once the
+// day's actual boat config (event file) is uploaded it overwrites this with
+// source='uploaded'. Stored in sessions.conditions.sail_list via /conditions.
+function BoatConfigDayCard({ teamId, boatId, base, date, canEdit, isMobile }) {
+  const [inventory, setInventory] = useState([])      // active sails [{id, name, category}]
+  const [sails, setSails] = useState([])              // [{id?, name}] for the day
+  const [source, setSource] = useState(null)          // 'manual' | 'uploaded' | null
+  const [updatedAt, setUpdatedAt] = useState(null)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState([])              // working copy while editing
+  const [custom, setCustom] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  // Inventory (once per boat).
+  useEffect(() => {
+    let live = true
+    fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`)
+      .then((r) => (r.ok ? r.json() : { sails: [] }))
+      .then((j) => { if (live) setInventory((j.sails || []).filter((s) => !s.retired)) })
+      .catch(() => {})
+    return () => { live = false }
+  }, [teamId, boatId])
+
+  // The day's stored sail list.
+  const load = useCallback(() => {
+    setLoading(true); setEditing(false)
+    fetch(`${base}/conditions?date=${date}`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((j) => {
+        const sl = j.sailList || null
+        setSails(Array.isArray(sl?.sails) ? sl.sails : [])
+        setSource(sl?.source || null)
+        setUpdatedAt(sl?.updated_at || null)
+      })
+      .catch(() => { setSails([]); setSource(null); setUpdatedAt(null) })
+      .finally(() => setLoading(false))
+  }, [base, date])
+  useEffect(() => { load() }, [load])
+
+  const label = (s) => (s.category ? `${s.category} · ${s.name}` : s.name)
+  const inDraft = (s) => draft.some((d) => (d.id && d.id === s.id) || (!d.id && d.name === s.name))
+  const toggleInv = (s) =>
+    setDraft((d) => inDraft(s) ? d.filter((x) => !((x.id && x.id === s.id) || (!x.id && x.name === s.name)))
+                              : [...d, { id: s.id, name: s.name }])
+  const addCustom = () => {
+    const n = custom.trim()
+    if (!n || draft.some((d) => d.name.toLowerCase() === n.toLowerCase())) { setCustom(''); return }
+    setDraft((d) => [...d, { name: n }]); setCustom('')
+  }
+  const removeDraft = (i) => setDraft((d) => d.filter((_, k) => k !== i))
+  const startEdit = () => { setDraft(sails.map((s) => ({ ...s }))); setCustom(''); setEditing(true) }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await fetch(`${base}/conditions`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, sailList: { source: 'manual', sails: draft } }),
+      })
+      load()
+    } finally { setSaving(false) }
+  }
+
+  const chip = (text, key, onRemove) => (
+    <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#E2E8F0',
+      background: '#071624', border: '1px solid #1E3A5A', borderRadius: 6, padding: '4px 8px' }}>
+      {text}
+      {onRemove && <button onClick={onRemove} style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>}
+    </span>
+  )
+
+  return (
+    <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>Boat config — sails for {fmtDay(date)}</span>
+        {source === 'uploaded' && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#1D9E75', background: '#0F2A45', borderRadius: 4, padding: '2px 6px' }}>uploaded</span>
+        )}
+        {source === 'manual' && (
+          <span style={{ fontSize: 10, fontWeight: 700, color: '#7DD3FC', background: '#0F2A45', borderRadius: 4, padding: '2px 6px' }}>manual</span>
+        )}
+        {canEdit && !editing && (
+          <button onClick={startEdit} style={{ marginLeft: 'auto', ...btnGhostSmall }}>
+            {sails.length ? 'Edit' : '+ Add sails'}
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div style={{ color: '#475569', fontSize: 13 }}>Loading…</div>
+      ) : editing ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {inventory.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, color: '#64748B', marginBottom: 6 }}>From inventory — tap to add/remove</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {inventory.map((s) => {
+                  const on = inDraft(s)
+                  return (
+                    <button key={s.id} onClick={() => toggleInv(s)} style={{
+                      fontSize: 12, cursor: 'pointer', borderRadius: 6, padding: '4px 8px',
+                      border: `1px solid ${on ? '#06B6D4' : '#1E3A5A'}`,
+                      background: on ? '#06B6D4' : '#071624', color: on ? '#001018' : '#94A3B8', fontWeight: on ? 700 : 500,
+                    }}>{on ? '✓ ' : ''}{label(s)}</button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+          <div>
+            <div style={{ fontSize: 11, color: '#64748B', marginBottom: 6 }}>Selected for {fmtDay(date)}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 24 }}>
+              {draft.length === 0
+                ? <span style={{ fontSize: 12, color: '#475569' }}>None yet.</span>
+                : draft.map((d, i) => chip(d.name, d.id || `c${i}`, () => removeDraft(i)))}
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input value={custom} onChange={(e) => setCustom(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustom() } }}
+              placeholder="Add sail not in inventory…" style={{ ...inputStyle, flex: '1 1 160px', minWidth: 140 }} />
+            <button onClick={addCustom} disabled={!custom.trim()} style={{ ...btnGhostSmall, opacity: custom.trim() ? 1 : 0.5 }}>Add</button>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={save} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? 'Saving…' : 'Save sail list'}</button>
+            <button onClick={() => setEditing(false)} disabled={saving} style={btnGhostSmall}>Cancel</button>
+          </div>
+        </div>
+      ) : sails.length === 0 ? (
+        <div style={{ fontSize: 12, color: '#475569' }}>
+          No sail list for this day yet.{canEdit ? ' Add it manually, or it will fill in when the day’s boat config is uploaded.' : ''}
+        </div>
+      ) : (
+        <div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {sails.map((s, i) => chip(s.name, s.id || `s${i}`))}
+          </div>
+          {updatedAt && (
+            <div style={{ fontSize: 10, color: '#475569', marginTop: 8 }}>
+              {source === 'uploaded' ? 'From uploaded boat config' : 'Entered manually'} · {new Date(updatedAt).toLocaleString()}
             </div>
           )}
         </div>
@@ -3002,5 +3158,15 @@ const btnGhost = {
   color: '#94A3B8',
   fontSize: 12,
   padding: '6px 12px',
+  cursor: 'pointer',
+}
+const btnGhostSmall = {
+  background: '#1E3A5A',
+  border: 'none',
+  borderRadius: 6,
+  color: '#94A3B8',
+  fontSize: 11,
+  fontWeight: 700,
+  padding: '4px 10px',
   cursor: 'pointer',
 }

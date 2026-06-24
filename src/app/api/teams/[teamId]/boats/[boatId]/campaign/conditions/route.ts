@@ -45,8 +45,15 @@ export async function GET(
     details: (sess?.conditions?.details_today as unknown) || null,
     timings: (sess?.conditions?.timings as string) || '',
     plan: (sess?.conditions?.plan as string) || '',
+    sailList: (sess?.conditions?.sail_list as unknown) || null,
   })
 }
+
+// Shape of the day's sail list stored in sessions.conditions.sail_list:
+//   { source: 'manual' | 'uploaded', sails: [{ id?: string, name: string }],
+//     updated_at: ISO }
+// Entered manually at the start of the day; overwritten by the actual list
+// once the day's boat config (event file) is uploaded.
 
 export async function PATCH(
   req: NextRequest,
@@ -57,7 +64,13 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const body = (await req.json().catch(() => null)) as
-    | { date?: string; details?: { comments?: string; rows?: unknown[] } | null; timings?: string | null; plan?: string | null }
+    | {
+        date?: string
+        details?: { comments?: string; rows?: unknown[] } | null
+        timings?: string | null
+        plan?: string | null
+        sailList?: { source?: string; sails?: Array<{ id?: string; name: string }> } | null
+      }
     | null
   if (!body?.date || !DATE_RE.test(body.date)) {
     return NextResponse.json({ error: 'valid date required' }, { status: 400 })
@@ -78,6 +91,11 @@ export async function PATCH(
   if ('details' in body) conditions.details_today = body.details ?? null
   if ('timings' in body) conditions.timings = body.timings ?? null
   if ('plan' in body) conditions.plan = body.plan ?? null
+  if ('sailList' in body) {
+    conditions.sail_list = body.sailList
+      ? { ...body.sailList, updated_at: new Date().toISOString() }
+      : null
+  }
   const { error } = await supabase.from('sessions').update({ conditions }).eq('id', sess.id)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

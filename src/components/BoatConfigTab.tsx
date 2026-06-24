@@ -47,7 +47,7 @@ export default function BoatConfigTab({
   teamId, boatId, role, isMobile,
 }: { teamId: string; boatId: string; role?: string; config?: any; isMobile?: boolean }) {
   const canEdit = EDIT_ROLES.includes(role || '')
-  const [view, setView] = useState<'inventory' | 'shapes' | 'polar'>('inventory')
+  const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar'>('inventory')
   const [sails, setSails] = useState<Sail[]>([])
   const [scans, setScans] = useState<Scan[]>([])
   const [loading, setLoading] = useState(true)
@@ -171,6 +171,7 @@ export default function BoatConfigTab({
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
         {subBtn('inventory', 'Sail inventory')}
         {subBtn('shapes', 'Sail shapes')}
+        {subBtn('rig', 'Rig settings')}
         {subBtn('polar', 'Polar')}
       </div>
 
@@ -247,6 +248,18 @@ export default function BoatConfigTab({
             })}
           </div>
           )}
+        </div>
+      )}
+
+      {/* ── RIG SETTINGS (placeholder) ─────────────────────────────── */}
+      {view === 'rig' && (
+        <div style={{ border: `1px dashed ${C.border}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', color: C.dim }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.head, marginBottom: 6 }}>Rig settings</div>
+          <div style={{ fontSize: 12, maxWidth: 460, margin: '0 auto', lineHeight: 1.5 }}>
+            Rig tuning matrix — coming soon. Upload a rig-tune table here and SSA will
+            store it as the boat's tuning baseline (wind-banded settings linked to runs).
+            Share the table format you use and this view will be built to match it.
+          </div>
         </div>
       )}
 
