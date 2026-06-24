@@ -18,12 +18,13 @@ import {
 
 const D2R = Math.PI / 180
 
-export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, mastHeight = 30, height = 640, exaggeration = 3 }) {
+export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = [], mastHeight = 30, height = 640, exaggeration = 3 }) {
   const ready = useScriptsOnce([MAPLIBRE_JS, DECK_JS], [MAPLIBRE_CSS])
   const divRef = useRef(null)
   const mapRef = useRef(null)
   const overlayRef = useRef(null)
   const loadedRef = useRef(false)
+  const pointMarkersRef = useRef([])
   const [err, setErr] = useState('')
   const [readout, setReadout] = useState(null)   // { x, y, kt, dir }
   const fi = field?.frames?.length ? Math.min(frameIdx, field.frames.length - 1) : 0
@@ -149,6 +150,27 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, mastHeight 
   }, [fi, levels, exaggeration, field]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { const map = mapRef.current; if (map && loadedRef.current) { try { map.setTerrain({ source: 'dem', exaggeration }) } catch { /* */ } } }, [exaggeration])
+
+  // The 3 selected points, as numbered colour-coded markers (matching the 2D
+  // map). Re-added whenever the map rebuilds (field change) or the points move.
+  const pointsKey = points.map((p) => `${p.key}:${p.lat},${p.lon},${p.color}`).join('|')
+  useEffect(() => {
+    const map = mapRef.current; const ML = window.maplibregl
+    if (!map || !ML) return undefined
+    pointMarkersRef.current.forEach((m) => { try { m.remove() } catch { /* */ } })
+    pointMarkersRef.current = []
+    points.forEach((p) => {
+      if (p.lat == null || p.lon == null) return
+      const el = document.createElement('div')
+      el.style.cssText = `background:${p.color};color:#fff;font-weight:700;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.5);font-size:11px;cursor:default`
+      el.textContent = p.key
+      try {
+        const mk = new ML.Marker({ element: el, anchor: 'center' }).setLngLat([p.lon, p.lat]).addTo(map)
+        pointMarkersRef.current.push(mk)
+      } catch { /* */ }
+    })
+    return () => { pointMarkersRef.current.forEach((m) => { try { m.remove() } catch { /* */ } }); pointMarkersRef.current = [] }
+  }, [pointsKey, ready, field]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const rotateBy = (d) => { const m = mapRef.current; if (m) m.easeTo({ bearing: m.getBearing() + d, duration: 300 }) }
   const tiltBy = (d) => { const m = mapRef.current; if (m) m.easeTo({ pitch: Math.max(0, Math.min(85, m.getPitch() + d)), duration: 300 }) }

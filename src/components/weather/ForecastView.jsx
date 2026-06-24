@@ -170,6 +170,16 @@ export default function ForecastView({
   const tzResolved = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
   const allThree = !!(locations['1'] && locations['2'] && locations['3'])
 
+  // The placed points, with their marker colour — passed to the 3D viewer so the
+  // same numbered markers shown on the 2D map are visible in 3D.
+  const fieldPoints = useMemo(
+    () => Object.entries(locations).map(([key, c]) => ({
+      key, lat: c.lat, lon: c.lon,
+      color: LOCATION_META.find((m) => m.key === key)?.accent || '#38BDF8',
+    })),
+    [locations]
+  )
+
   // Auto-switch to 3D once the 3 points are set and the field has loaded (once
   // per load; resets if points/field are cleared so reselecting re-triggers).
   const auto3dRef = useRef(false)
@@ -685,7 +695,7 @@ export default function ForecastView({
           />
           {viewMode === '3D' && (
             (field && field.frames?.length)
-              ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} mastHeight={mastHeight} height={640} exaggeration={3} />
+              ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} points={fieldPoints} mastHeight={mastHeight} height={640} exaggeration={3} />
               : (
                 <div style={{ height: 640, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: '#64748B', fontSize: 13, border: '1px solid #1E3A5A', borderRadius: 8, background: '#0A1929', padding: 20 }}>
                   Select 3 points in 2D and let the field load, then switch to 3D.
