@@ -143,7 +143,7 @@ export default function BoatConfigTab({
     const r = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd }).then((x) => x.json())
     if (r.error) throw new Error(r.error)
     await refreshScans()
-    return r.parsed
+    return r // { scans, parsed: ParsedScan[], count, format }
   }
   const patchSail = async (id: string, fields: any) => {
     setBusy(id); setErr('')
@@ -537,9 +537,11 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
         const created = await onCreateSail({ name: newName.trim() })
         assignTo = created?.id || null
       }
-      const parsed = await onImport(file, assignTo)
-      const n = parsed?.stripes?.length ?? 0
-      setMsg(`Imported ${parsed?.sailName || 'scan'} — ${n} stripe${n === 1 ? '' : 's'}${parsed?.tws != null ? `, ${parsed.tws} kn` : ''}.`)
+      const res = await onImport(file, assignTo)
+      const scans = res?.parsed || []
+      const total = scans.reduce((a: number, s: any) => a + (s?.stripes?.length || 0), 0)
+      const names = scans.map((s: any) => s?.sailName).filter(Boolean).join(', ')
+      setMsg(`Imported ${res?.count ?? scans.length} scan${(res?.count ?? scans.length) === 1 ? '' : 's'}${names ? ` — ${names}` : ''}, ${total} stripe${total === 1 ? '' : 's'}.`)
       setFile(null); setNewName(''); setSailId('')
       if (fileRef.current) fileRef.current.value = ''
     } catch (e: any) {
@@ -549,7 +551,7 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
 
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
-      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 700 }}>Import North scan</span>
+      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 700 }}>Import SailScan report</span>
       <input ref={fileRef} type="file" accept="application/pdf,.pdf" style={{ ...input, padding: 4 }}
         onChange={(e) => { setFile(e.target.files?.[0] || null); setErr(''); setMsg('') }} />
       <select style={input} value={sailId} onChange={(e) => setSailId(e.target.value)}>

@@ -4400,7 +4400,7 @@ function MobileShell(props){
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
             <div style={{position:"relative",height:"85dvh"}}><SquashShotsApp/></div>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
-            <div style={{position:"relative",height:"85dvh"}}><SailScanTab/></div>
+            <div style={{position:"relative",height:"85dvh"}}><SailScanTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId}/></div>
           </div>
         )}
 
@@ -6780,7 +6780,7 @@ function SSAApp(){
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
             <div style={{position:"relative",height:"85dvh"}}><SquashShotsApp/></div>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
-            <div style={{position:"relative",height:"85dvh"}}><SailScanTab/></div>
+            <div style={{position:"relative",height:"85dvh"}}><SailScanTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId}/></div>
           </div>
         )}
         {activeTab==="admin"&&(

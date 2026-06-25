@@ -21,6 +21,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { computeStripeMetrics, splinePolyline, computeTwist, stripesFromAIResult, buildLabelExport } from '../lib/sailscan';
 import SailScanReportTable from './SailScanReportTable';
+import SailScanImport from './SailScanImport';
 import {
   ensureOpenCV, getCV, applyClahe, structureTensor,
   horizontalOnlyEdges, colorizeOrientation, matToCanvas, imageToMat,
@@ -62,7 +63,7 @@ const newStripe = (): Stripe => ({ luff: null, leech: null, mid: [], userTaps: [
 // by which version of the algorithm produced them.
 const ALGORITHM_VERSION = 'v2.4-ridgeprior';
 
-export default function SailScanTab() {
+export default function SailScanTab({ teamId = null, boatId = null }: { teamId?: string | null; boatId?: string | null } = {}) {
   const [step, setStep] = useState<Step>('select');
   const [previewSrc, setPreviewSrc] = useState<string>('');
   const [imageSrc, setImageSrc] = useState<string>('');
@@ -1276,6 +1277,9 @@ export default function SailScanTab() {
         {/* ── SELECT ─────────────────────────────────────────────────────── */}
         {step === 'select' && (
           <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4 py-6">
+            <div className="w-full">
+              <SailScanImport teamId={teamId} boatId={boatId} />
+            </div>
             <div className="text-center mb-4">
               <p className="text-slate-300 text-sm font-semibold mb-1">Photograph your sail from below, looking up.</p>
               <p className="text-slate-500 text-xs">Trim stripes should be clearly visible, ideally horizontal in the image.</p>

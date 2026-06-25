@@ -10,7 +10,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../lib/supabase/server'
-import { parseNorthScan } from '../../../../../lib/northScanParse'
+import { parseSailScanReport, ParsedScan } from '../../../../../lib/sailScanParse'
+import { extractPdfText } from '../../../../../lib/pdfText'
 
 export async function GET(
   req: NextRequest,
@@ -70,17 +71,12 @@ export async function POST(
   if (!boatId) return NextResponse.json({ error: 'boat_id required' }, { status: 400 })
 
   // Get the report text: pre-extracted (preferred — no server dep) or from a
-  // PDF via a dynamic pdf-parse import (so the build never hard-depends on it).
+  // PDF via the spacing-aware extractor (so column numbers don't concatenate).
   if (!text && file) {
     reportRef = file.name || null
     try {
       const buf = Buffer.from(await file.arrayBuffer())
-      // optional dep — handled at runtime; suppress missing-types if not installed
-      // @ts-ignore
-      const mod: any = await import('pdf-parse/lib/pdf-parse.js')
-      const pdf = mod.default || mod
-      const parsed = await pdf(buf)
-      text = parsed.text || ''
+      text = await extractPdfText(buf)
     } catch (e: any) {
       return NextResponse.json(
         { error: 'PDF parsing unavailable — install pdf-parse, or POST extracted text. ' + (e?.message || '') },
@@ -88,28 +84,50 @@ export async function POST(
       )
     }
   }
-  if (!text) return NextResponse.json({ error: 'provide a North PDF file or extracted text' }, { status: 400 })
+  if (!text) return NextResponse.json({ error: 'provide a SailScan PDF file or extracted text' }, { status: 400 })
 
-  const scan = parseNorthScan(text)
-  if (!scan.stripes.length) {
-    return NextResponse.json({ error: 'no stripe rows found in the report' }, { status: 422 })
+  // One report may yield several scans: a two-sail thesailcloud overlay holds
+  // two columns → two scans. Each becomes its own sail_scans row. The chosen
+  // sail_id is only applied when the report has a single scan (otherwise we'd
+  // mis-tag both columns with the same sail — leave them for later assignment).
+  const report = parseSailScanReport(text)
+  const parsedScans = report.scans.filter((s) => s.stripes.length)
+  if (!parsedScans.length) {
+    return NextResponse.json(
+      { error: report.format === 'unknown' ? 'unrecognised report format' : 'no stripe rows found in the report' },
+      { status: 422 }
+    )
   }
+  const applySailId = parsedScans.length === 1 ? sailId : null
 
-  const row = {
+  const rows = parsedScans.map((s: ParsedScan) => ({
     team_id: params.teamId,
     boat_id: boatId,
-    sail_id: sailId,
+    sail_id: applySailId,
     session_id: sessionId,
-    source: 'north' as const,
-    captured_at: scan.capturedAt,
-    tws_kn: scan.tws,
-    conditions: { sail_name_in_report: scan.sailName },
-    stripes: scan.stripes,
-    summary: scan.summary,
-    report_ref: reportRef || scan.imageRef,
+    source: s.source,
+    captured_at: s.capturedAt,
+    tws_kn: s.tws,
+    twa_deg: s.twa,
+    conditions: {
+      sail_name_in_report: s.sailName,
+      sail_type: s.sailType, // 'main' | 'headsail'
+      image_name: s.imageName,
+      captured_local: s.capturedLocal, // wall-clock as written (captured_at is UTC)
+      tags: s.tags,
+      venue: s.venue,
+      event: s.event,
+      awa_deg: s.awa,
+      bsp_kn: s.bsp,
+      report_format: s.format,
+    },
+    stripes: s.stripes,
+    summary: s.summary,
+    report_ref: reportRef || s.imageName,
     created_by_user_id: user.id,
-  }
-  const { data, error } = await supabase.from('sail_scans').insert(row).select().single()
+  }))
+
+  const { data, error } = await supabase.from('sail_scans').insert(rows).select()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ scan: data, parsed: scan })
+  return NextResponse.json({ scans: data, parsed: parsedScans, format: report.format, count: rows.length })
 }
