@@ -1,0 +1,11 @@
+# Local back-fill data — keep raw logs/reports/event files out of git.
+*.csv
+*.pdf
+*.xml
+*.gpx
+*.json
+*.zip
+# but keep the folder structure + docs
+!.gitignore
+!README.md
+!*/.gitkeep
