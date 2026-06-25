@@ -9,7 +9,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import PlotlyChart from './PlotlyChart'
-import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight, labelWithCycle, localForecastWindow } from './openMeteo'
+import { MODELS, COMPARE_ORDER, kmhToKnots, speed100mSeries, interpolateSpeedAtHeight, labelWithCycle, localRacingWindow } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 import { matchVenue, specFor, mosSeries } from './mos'
 
@@ -183,12 +183,15 @@ function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, u
   }, [point, isDir, cycles, hidden])
 
   const layout = {
-    xaxis: { title: 'Time', type: 'date', range: localForecastWindow(2), autorange: false },
+    // Open zoomed to the racing window; pan (drag) is the default tool, scroll to
+    // zoom, and the data extends either side so you can pan to the full forecast.
+    xaxis: { title: 'Time', type: 'date', range: localRacingWindow(), autorange: false },
     yaxis: {
       title: yTitle,
       rangemode: isDir ? 'normal' : 'tozero',
       ...(isDir ? { range: [0, 360], dtick: 45 } : {}),
     },
+    dragmode: 'pan',
     hovermode: 'closest',          // single hovered series, not a unified all-models tooltip
     showlegend: false,             // the shared chip legend above replaces per-panel legends
     margin: { t: 16, b: 48, l: 60, r: 20 },

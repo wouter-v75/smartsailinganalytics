@@ -26,6 +26,7 @@ import {
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 import { patchWeatherSession } from './weatherSession'
+import { BoundaryLayerChart } from './ForecastView'
 
 const D3_JS = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js'
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -680,6 +681,13 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
           {indices && (
             <div style={{ textAlign: 'center', fontSize: 13, color: '#E2E8F0', marginTop: 12, fontWeight: 700 }}>{indices}</div>
           )}
+        </Card>
+
+        {/* Boundary-layer height — SSA-Race (solid) with GFS fallback where SSA
+            is absent. Moved here from the Forecast tab. */}
+        <Card>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 6 }}>🌫 Boundary-layer height — SSA-Race, GFS fallback</div>
+          <BoundaryLayerChart windData={windData} timezone={resolvedTz} />
         </Card>
       </div>
     </div>

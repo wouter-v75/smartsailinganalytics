@@ -139,12 +139,40 @@ export function meanFromDir(field, frameIdx, lat, lon, nm) {
   return (((toward + 180) % 360) + 360) % 360
 }
 
+// Numbered, colour-coded point markers AS MAP LAYERS (so they're captured into
+// the canvas — DOM markers aren't). Each marker is a generated RGBA icon: a
+// coloured disc with a white ring + the point number.
+function addPointMarkers(map, points) {
+  const feats = []
+  for (const p of (points || [])) {
+    if (p.lat == null || p.lon == null) continue
+    const id = `ptmark-${p.key}`
+    try {
+      if (!map.hasImage(id) && typeof document !== 'undefined') {
+        const N = 64, cv = document.createElement('canvas'); cv.width = cv.height = N
+        const ctx = cv.getContext('2d')
+        ctx.beginPath(); ctx.arc(N / 2, N / 2, N / 2 - 6, 0, 2 * Math.PI)
+        ctx.fillStyle = p.color || '#38BDF8'; ctx.fill()
+        ctx.lineWidth = 5; ctx.strokeStyle = '#ffffff'; ctx.stroke()
+        ctx.fillStyle = '#ffffff'; ctx.font = 'bold 34px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        ctx.fillText(String(p.key), N / 2, N / 2 + 1)
+        const img = ctx.getImageData(0, 0, N, N)
+        map.addImage(id, { width: N, height: N, data: new Uint8Array(img.data.buffer) })
+      }
+      feats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, properties: { icon: id } })
+    } catch { /* */ }
+  }
+  if (!feats.length) return
+  map.addSource('ptmarks', { type: 'geojson', data: { type: 'FeatureCollection', features: feats } })
+  map.addLayer({ id: 'ptmarks', type: 'symbol', source: 'ptmarks', layout: { 'icon-image': ['get', 'icon'], 'icon-size': 0.55, 'icon-allow-overlap': true, 'icon-ignore-placement': true } })
+}
+
 // Render a field on an OFFSCREEN MapLibre 3D map and capture PNG stills at a set
 // of frame indices (used by the deck for the 4×3D "general weather" snapshots).
 // Reuses one map: builds terrain+drape+arrows once, then per frame updates the
 // sources, re-orients upwind, waits for idle, and captures. Returns [{idx,png}].
 export async function captureField3DSeries(ML, field, opts) {
-  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [], zoom = 10.4, arrowStep, ringNm = 5 } = opts || {}
+  const { lat, lon, width = 760, height = 460, exaggeration = 3, frameIndices = [], zoom = 10.4, arrowStep, ringNm = 5, points } = opts || {}
   if (!ML || !field?.frames?.length || !frameIndices.length) return []
   const cont = document.createElement('div')
   cont.style.cssText = `position:fixed;left:-99999px;top:0;width:${width}px;height:${height}px;background:#071624;`
@@ -206,6 +234,7 @@ export async function captureField3DSeries(ML, field, opts) {
     }
     map.addSource('ring', { type: 'geojson', data: ringGeoJSON(lat, lon, ringNm) })
     map.addLayer({ id: 'ring', type: 'line', source: 'ring', paint: { 'line-color': '#ef4444', 'line-width': 2, 'line-dasharray': [2, 1.5] } })
+    addPointMarkers(map, points)
     await idle()
     for (const fidx of frameIndices) {
       const twd = kind !== 'hpbl' ? meanFromDir(field, fidx, lat, lon, 5) : null

@@ -340,6 +340,14 @@ export function localForecastWindow(days = 2) {
   return [start, end]
 }
 
+// Today's racing window [10:00, 16:00] local — default zoom for the comparison
+// charts (pannable to the full forecast either side).
+export function localRacingWindow() {
+  const a = new Date(); a.setHours(10, 0, 0, 0)
+  const b = new Date(); b.setHours(16, 0, 0, 0)
+  return [a, b]
+}
+
 // Init-cycle tag like "00z" / "06z" from a unix-seconds run-initialisation time.
 export function cycleTagFromSec(sec) {
   if (sec == null) return ''

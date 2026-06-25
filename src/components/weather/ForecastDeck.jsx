@@ -968,13 +968,18 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         const frameIndices = [10, 12, 14, 16].map((H) => stamps.findIndex((s) => s && s.hh === H)).filter((i) => i >= 0)
         const ML = window.maplibregl
         const modelLabel = MODELS[m3dKey]?.label || m3dKey
+        // The 3 selected points as numbered markers on the exported maps.
+        const LOC_COLORS = { '1': '#EF4444', '2': '#10B981', '3': '#F97316' }
+        const deckPoints = Object.entries(windData || {})
+          .map(([k, pt]) => ({ key: k, lat: pt?.coords?.latitude ?? (k === '1' ? p1lat : null), lon: pt?.coords?.longitude ?? (k === '1' ? p1lon : null), color: LOC_COLORS[k] || '#38BDF8' }))
+          .filter((p) => p.lat != null && p.lon != null)
         if (ML && f3d?.frames?.length && frameIndices.length) {
           // Model guidance: tight ≈ 5 nm racing view, 2 nm ring, full grid density.
-          const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices, zoom: 11.6, arrowStep: 1, ringNm: 2 }), 55000, [])
+          const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices, zoom: 11.6, arrowStep: 1, ringNm: 2, points: deckPoints }), 55000, [])
           views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: modelLabel, height: VIEW3D_HEIGHT_M, png: c.png } }).filter((v) => v.png)
           // General weather hero: zoomed-OUT ≈ 20 nm overview, 10 nm ring, midday.
           const midIdx = frameIndices[1] ?? frameIndices[0]
-          const heroCaps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 900, height: 540, exaggeration: 3, frameIndices: [midIdx], zoom: 9.8, arrowStep: 1, ringNm: 10 }), 45000, [])
+          const heroCaps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 900, height: 540, exaggeration: 3, frameIndices: [midIdx], zoom: 9.8, arrowStep: 1, ringNm: 10, points: deckPoints }), 45000, [])
           const hc = (heroCaps || [])[0]
           if (hc?.png) { const s = stamps[hc.idx]; heroView = { label: s ? `${pad2(s.hh)}:00` : '12:00', model: modelLabel, height: VIEW3D_HEIGHT_M, png: hc.png } }
         }

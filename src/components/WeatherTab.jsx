@@ -45,7 +45,7 @@ const SUB_TABS = [
   { id: 'forecast',   label: 'Forecast',         short: 'Forecast', enabled: true  },
   { id: 'compare',    label: 'Model Comparison', short: 'Models',   enabled: true  },
   { id: 'currents',   label: 'Currents',         short: 'Currents', enabled: true  },
-  { id: 'sounding',   label: 'Sounding',         short: 'Sounding', enabled: true  },
+  { id: 'sounding',   label: 'Stability',        short: 'Stability', enabled: true  },
   { id: 'venuemos',   label: 'Admin',            short: 'Admin',    enabled: true, adminOnly: true },
 ]
 

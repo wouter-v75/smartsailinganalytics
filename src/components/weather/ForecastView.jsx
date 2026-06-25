@@ -928,14 +928,7 @@ export default function ForecastView({
         />
       )}
 
-      {/* GFS planetary boundary layer height — single line per location, not
-          model-dependent (GFS only). Useful sea-breeze / convection signal. */}
-      {hasResults && (
-        <Card>
-          <ChartTitle>🌫 Planetary Boundary Layer Height (GFS)</ChartTitle>
-          <BoundaryLayerChart windData={windData} timezone={resolvedTz} />
-        </Card>
-      )}
+      {/* Boundary-layer height chart moved to the Stability (Sounding) tab. */}
     </div>
   )
 }
@@ -1307,7 +1300,7 @@ function WindProfileSection({ windData, model, timezone }) {
 // solid) plus the GFS PBL as a coarse global reference (dotted). SSA-Race times are
 // UTC; the GFS column is venue-local wall-clock — both are mapped to venue-local
 // wall-clock so the lines align on the shared x-axis.
-function BoundaryLayerChart({ windData, timezone }) {
+export function BoundaryLayerChart({ windData, timezone }) {
   const data = useMemo(() => {
     // UTC ISO -> venue-local wall-clock string (parsed as the same basis as GFS).
     const toLocalWall = (iso) => {
