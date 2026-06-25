@@ -32,6 +32,19 @@ const CampaignTab    = dynamic(() => import("./CampaignTab"),    { ssr:false, lo
 const BoatConfigTab  = dynamic(() => import("./BoatConfigTab"),  { ssr:false, loading:TabLoading });
 const WeatherTab     = dynamic(() => import("./WeatherTab"),     { ssr:false, loading:TabLoading });
 
+// Connection quality, for network-aware auto-sync. `good` (wifi/ethernet/4g,
+// not Save-Data) gates the HEAVY push (videos); `online` gates the light pull.
+// Falls back to "usable" when the Network Information API is unavailable (iOS).
+function connInfo() {
+  const online = typeof navigator === "undefined" ? true : navigator.onLine !== false;
+  const c = typeof navigator !== "undefined" ? (navigator.connection || navigator.mozConnection || navigator.webkitConnection) : null;
+  if (!c) return { online, good: online, metered: false };
+  const type = c.type; const eff = c.effectiveType; const saveData = !!c.saveData;
+  const good = online && !saveData && (type === "wifi" || type === "ethernet" || (!type && eff === "4g") || eff === "4g");
+  const metered = type === "cellular" || saveData;
+  return { online, good, metered, type, eff };
+}
+
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
 function getSyncOffsets() { try { const v=localStorage.getItem(OFFSET_KEY); return v?JSON.parse(v):{};} catch{return{};} }
@@ -4291,37 +4304,36 @@ function MobileShell(props){
           button + status left-aligned means they can never end up hidden
           underneath it, on any screen width. */}
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",
-        padding:"0 14px",height:48,display:"flex",alignItems:"center",
-        gap:8,flexShrink:0,position:"relative",zIndex:50}}>
-        <span style={{fontSize:14,fontWeight:700,color:"#E2E8F0"}}>Shared</span>
-        <span style={{fontSize:14,fontWeight:700,color:"#06B6D4"}}>Sailing</span>
-        {/* Connection dot */}
-        <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11}}>
-          <div style={{width:6,height:6,borderRadius:"50%",
-            background:props.cloudStatus?.available?"#1D9E75":props.cloudStatus===null?"#334155":"#F59E0B"}}/>
-          <span style={{color:"#475569"}}>{props.cloudStatus?.available?"Cloud":"Local"}</span>
-        </div>
-        {/* ── Cloud sync / refresh button ─────────────────────────────────── */}
-        {/* Clearly labelled, tappable 36px target. Always visible when cloud */}
-        {/* is available — pulls fresh session data (thumbnails) and pushes   */}
-        {/* any unsynced local data. Shows a spinner while running.           */}
-        <button onClick={()=>props.onMobileSync?.()}
-          disabled={!props.cloudStatus?.available||props.mobileSyncState?.phase==="pulling"||props.mobileSyncState?.phase==="pushing"}
-          aria-label="Sync with cloud"
-          style={{background:props.unsyncedCount>0?"#F59E0B":"#06B6D420",
-            border:`1px solid ${props.unsyncedCount>0?"#F59E0B":"#06B6D4"}`,
-            borderRadius:8,padding:"6px 10px",
-            color:props.unsyncedCount>0?"#000":"#06B6D4",
-            fontSize:12,fontWeight:700,cursor:"pointer",
-            display:"flex",alignItems:"center",gap:5,minHeight:32,
-            opacity:props.cloudStatus?.available?1:0.4}}>
-          <span style={{fontSize:13,display:"inline-block",
-            transform:(props.mobileSyncState?.phase==="pulling"||props.mobileSyncState?.phase==="pushing")?"rotate(360deg)":"none",
-            animation:(props.mobileSyncState?.phase==="pulling"||props.mobileSyncState?.phase==="pushing")?"ssa-spin 1s linear infinite":"none"}}>
-            {props.mobileSyncState?.phase==="done"?"✓":props.mobileSyncState?.phase==="error"?"⚠":"⟳"}
-          </span>
-          <span>{props.unsyncedCount>0?`Sync (${props.unsyncedCount})`:"Sync"}</span>
-        </button>
+        padding:"0 12px",height:34,display:"flex",alignItems:"center",
+        gap:7,flexShrink:0,position:"relative",zIndex:50}}>
+        <span style={{fontSize:12,fontWeight:700,color:"#06B6D4"}}>Sailing</span>
+        {/* ── Passive sync status pill (auto-syncs; tap to force a sync now) ── */}
+        {/* The dot reflects the connection; the label auto-updates with sync   */}
+        {/* state. No manual sync needed — it fires on foreground / reconnect.  */}
+        {(()=>{
+          const ph=props.mobileSyncState?.phase;
+          const uc=props.unsyncedCount||0;
+          const avail=props.cloudStatus?.available;
+          const busy=ph==="pulling"||ph==="pushing";
+          const dot=!avail?(props.cloudStatus===null?"#334155":"#F59E0B"):(busy?"#06B6D4":uc>0?"#F59E0B":"#1D9E75");
+          let label="Cloud", color="#475569";
+          if(!avail){label="Local";}
+          else if(busy){label="syncing…";color="#06B6D4";}
+          else if(ph==="done"){label="synced";color="#1D9E75";}
+          else if(ph==="error"){label="sync failed";color="#F59E0B";}
+          else if(uc>0){label=`${uc} pending`;color="#F59E0B";}
+          return (
+            <div onClick={()=>{ if(avail&&!busy) props.onMobileSync?.(); }}
+              title="Cloud sync is automatic — tap to sync now"
+              style={{display:"flex",alignItems:"center",gap:5,fontSize:10,fontWeight:600,
+                cursor:avail&&!busy?"pointer":"default",userSelect:"none"}}>
+              {busy
+                ? <span style={{fontSize:12,display:"inline-block",animation:"ssa-spin 1s linear infinite"}}>⟳</span>
+                : <span style={{width:7,height:7,borderRadius:"50%",background:dot,display:"inline-block"}}/>}
+              <span style={{color}}>{label}</span>
+            </div>
+          );
+        })()}
         <div style={{flex:1}}/>
       </header>
       {/* ── Sync progress toast — slides in below header ─────────────────── */}
@@ -5879,7 +5891,10 @@ function SSAApp(){
   //   2. PUSH — if the user has unsynced local data + canSync, upload it.
   // Progress is reported via mobileSyncState so the top-bar button can show
   // a spinner and the content area can show a non-blocking toast.
-  async function handleMobileCloudSync(){
+  async function handleMobileCloudSync(opts){
+    // heavy = run the upload PUSH (log/xml/videos). Auto-sync sets heavy=false on
+    // a metered/poor link so only the light session-list PULL runs there.
+    const heavy = !opts || opts.heavy !== false;
     if(!cloudStatus?.available){
       setMobileSyncState({phase:"error",message:"Cloud not configured",progress:0});
       setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2500);
@@ -5940,9 +5955,9 @@ function SSAApp(){
       await loadDate(activeDate);
       setMobileSyncState({phase:"pulling",message:"Thumbnails refreshed",progress:70});
 
-      // PUSH phase — only if user has permission + unsynced local
+      // PUSH phase — only if heavy (good link), user has permission + unsynced local
       const uc=getUnsyncedCount();
-      if(uc>0 && perms.canSync){
+      if(heavy && uc>0 && perms.canSync){
         setMobileSyncState({phase:"pushing",message:`Uploading ${uc} unsynced…`,progress:75});
         const logD=await getLogData(activeDate);
         const xmlD=await getXmlData(activeDate);
@@ -5969,6 +5984,53 @@ function SSAApp(){
       setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),3500);
     }
   }
+
+  // ── Automatic cloud sync — event-driven, network-aware ────────────────────
+  // No timers: fires on app foreground, when connectivity returns, and once on
+  // mount. The light session-list PULL runs on any online link; the heavy upload
+  // PUSH (logs/videos) only on a good/unmetered link. Debounced + exponential
+  // backoff so a flaky offshore signal never spins or drains the battery. The
+  // video transcode/upload queues are NOT touched here.
+  const autoSyncMetaRef = useRef({ last: 0, running: false, backoffUntil: 0 });
+  async function autoCloudSync(reason){
+    const st = autoSyncMetaRef.current;
+    if(!cloudStatus?.available) return;
+    const ci = connInfo();
+    if(!ci.online) return;
+    if(st.running) return;
+    if(mobileSyncState?.phase==="pulling"||mobileSyncState?.phase==="pushing") return; // a sync is already active
+    const now = Date.now();
+    if(now < st.backoffUntil) return;
+    if(reason!=="online" && now - st.last < 20000) return; // debounce (a regained link bypasses)
+    st.running = true;
+    try {
+      await handleMobileCloudSync({ heavy: ci.good });
+      st.last = Date.now(); st.backoffUntil = 0;
+    } catch {
+      st.backoffUntil = Date.now() + Math.min(Math.max((st.backoffUntil - now) * 2, 15000), 5*60*1000);
+    } finally { st.running = false; }
+  }
+  const autoSyncFnRef = useRef(null);
+  autoSyncFnRef.current = autoCloudSync;
+  useEffect(() => {
+    const fire = (reason) => { try { autoSyncFnRef.current?.(reason); } catch { /* */ } };
+    const onVis = () => { if (document.visibilityState === "visible") fire("foreground"); };
+    const onOnline = () => fire("online");
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", onOnline);
+    const t = setTimeout(() => fire("mount"), 1500); // let the initial load settle first
+    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("online", onOnline); clearTimeout(t); };
+  }, []); // register once
+  // Fire once when cloud status first resolves to available (mount may race it).
+  const cloudReadyFiredRef = useRef(false);
+  useEffect(() => {
+    if (cloudStatus?.available && !cloudReadyFiredRef.current) {
+      cloudReadyFiredRef.current = true;
+      autoSyncFnRef.current?.("cloud-ready");
+    } else if (!cloudStatus?.available) {
+      cloudReadyFiredRef.current = false;
+    }
+  }, [cloudStatus]);
 
   async function runAiQuery(){
     if(!aiQuery.trim()||!allVideos.length)return;

@@ -111,7 +111,9 @@ export default function ForecastView({
   isAdmin = false,
   boatName = null,
   eventName = null,
+  isMobile = false,
 }) {
+  const mapH = isMobile ? 420 : 640   // shorter wind-field viewer on phones
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
   const mapDivRef = useRef(null)
   const mapRef = useRef(null)
@@ -689,7 +691,7 @@ export default function ForecastView({
             ref={mapDivRef}
             style={{
               width: '100%',
-              height: 640,
+              height: mapH,
               border: '1px solid #1E3A5A',
               borderRadius: 8,
               background: '#0A1929',
@@ -698,9 +700,9 @@ export default function ForecastView({
           />
           {viewMode === '3D' && (
             (field && field.frames?.length)
-              ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} points={fieldPoints} mastHeight={mastHeight} height={640} exaggeration={3} />
+              ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} points={fieldPoints} mastHeight={mastHeight} height={mapH} exaggeration={3} />
               : (
-                <div style={{ height: 640, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: '#64748B', fontSize: 13, border: '1px solid #1E3A5A', borderRadius: 8, background: '#0A1929', padding: 20 }}>
+                <div style={{ height: mapH, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: '#64748B', fontSize: 13, border: '1px solid #1E3A5A', borderRadius: 8, background: '#0A1929', padding: 20 }}>
                   Select 3 points in 2D and let the field load, then switch to 3D.
                 </div>
               )

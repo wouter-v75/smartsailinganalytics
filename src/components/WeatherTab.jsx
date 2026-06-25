@@ -42,11 +42,11 @@ const ChannelCurrents = dynamic(() => import('./weather/ChannelCurrents'), {
 const ROLE_RANK = { guest: 0, consultant: 1, tl1: 2, tl2: 3, tl3: 4, coach: 5, team_manager: 6, admin: 7 }
 
 const SUB_TABS = [
-  { id: 'forecast',   label: 'Forecast',         enabled: true  },
-  { id: 'compare',    label: 'Model Comparison', enabled: true  },
-  { id: 'currents',   label: 'Currents',         enabled: true  },
-  { id: 'sounding',   label: 'Sounding',         enabled: true  },
-  { id: 'venuemos',   label: 'Admin',            enabled: true, adminOnly: true },
+  { id: 'forecast',   label: 'Forecast',         short: 'Forecast', enabled: true  },
+  { id: 'compare',    label: 'Model Comparison', short: 'Models',   enabled: true  },
+  { id: 'currents',   label: 'Currents',         short: 'Currents', enabled: true  },
+  { id: 'sounding',   label: 'Sounding',         short: 'Sounding', enabled: true  },
+  { id: 'venuemos',   label: 'Admin',            short: 'Admin',    enabled: true, adminOnly: true },
 ]
 
 export default function WeatherTab({ isMobile = false, effectiveRole = null, boatName = null, eventName = null }) {
@@ -99,29 +99,31 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
       {/* Sub-tab chrome — same pattern as Campaign tab. */}
       <div
         style={{
-          padding: isMobile ? '10px 12px' : '14px 20px 0',
+          padding: isMobile ? '6px 8px' : '14px 20px 0',
           background: '#030F1A',
           borderBottom: '1px solid #1E3A5A',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
-          flexWrap: 'wrap',
+          gap: isMobile ? 5 : 8,
+          flexWrap: isMobile ? 'nowrap' : 'wrap',
+          overflowX: isMobile ? 'auto' : 'visible',
           flexShrink: 0,
         }}
       >
-        <span style={{ fontSize: 13, fontWeight: 800, marginRight: 8 }}>🌦 Weather</span>
+        {!isMobile && <span style={{ fontSize: 13, fontWeight: 800, marginRight: 8 }}>🌦 Weather</span>}
         {subTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => t.enabled && setSub(t.id)}
             disabled={!t.enabled}
             style={{
-              padding: '7px 14px',
+              padding: isMobile ? '5px 9px' : '7px 14px',
               borderRadius: 8,
               border: 'none',
               cursor: t.enabled ? 'pointer' : 'not-allowed',
-              fontSize: 12,
+              fontSize: isMobile ? 11 : 12,
               fontWeight: 700,
+              whiteSpace: 'nowrap',
               background: sub === t.id ? '#06B6D4' : '#0F2A45',
               color: sub === t.id ? '#000' : t.enabled ? '#94A3B8' : '#475569',
               opacity: t.enabled ? 1 : 0.55,
@@ -129,7 +131,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
             }}
             title={!t.enabled ? `${t.badge} — not yet ported` : ''}
           >
-            {t.label}
+            {isMobile ? (t.short || t.label) : t.label}
             {!t.enabled && (
               <span style={{ fontSize: 9, fontWeight: 700, color: '#7DD3FC', background: '#0A1929', border: '1px solid #1E3A5A', padding: '0 5px', borderRadius: 3 }}>
                 {t.badge}
@@ -163,6 +165,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
             isAdmin={isAdmin}
             boatName={boatName}
             eventName={eventName}
+            isMobile={isMobile}
           />
         )}
         {sub === 'compare' && (

@@ -25,6 +25,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
   const overlayRef = useRef(null)
   const loadedRef = useRef(false)
   const pointMarkersRef = useRef([])
+  const [loaded, setLoaded] = useState(false)   // reactive: triggers a layer refresh once the map is ready
   const [err, setErr] = useState('')
   const [readout, setReadout] = useState(null)   // { x, y, kt, dir }
   const fi = field?.frames?.length ? Math.min(frameIdx, field.frames.length - 1) : 0
@@ -124,7 +125,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
           if (url) { map.addSource('drape', { type: 'image', url, coordinates: boxCoords(field.box) }); map.addLayer({ id: 'drape', type: 'raster', source: 'drape', paint: { 'raster-opacity': drapeOpacity(field) } }) }
           setErr('deck.gl unavailable — arrows hidden')
         }
-        loadedRef.current = true
+        loadedRef.current = true; setLoaded(true)
       } catch (e) { setErr(e?.message || 'layer build failed') }
     })
     // hover readout — MAST-height wind at the cursor. Prefer the vertical stack
@@ -137,17 +138,19 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
       else setReadout(null)
     })
     map.on('mouseout', () => setReadout(null))
-    return () => { try { map.remove() } catch { /* */ } mapRef.current = null; overlayRef.current = null; loadedRef.current = false }
+    return () => { try { map.remove() } catch { /* */ } mapRef.current = null; overlayRef.current = null; loadedRef.current = false; setLoaded(false) }
   }, [ready, field]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // refresh deck layers on time / level / exaggeration change
+  // Refresh deck layers on time / level / exaggeration change — AND once the map
+  // finishes loading (`loaded`), so arrows draw on the first frame instead of
+  // only after the first scrub.
   useEffect(() => {
     const map = mapRef.current; if (!map || !loadedRef.current) return
     try {
       if (overlayRef.current) overlayRef.current.setProps({ layers: deckLayers() })
       const ds = map.getSource('drape'); if (ds) { const url = drapeImageURL(field, fi); if (url) ds.updateImage({ url, coordinates: boxCoords(field.box) }) }
     } catch { /* */ }
-  }, [fi, levels, exaggeration, field]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fi, levels, exaggeration, field, loaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { const map = mapRef.current; if (map && loadedRef.current) { try { map.setTerrain({ source: 'dem', exaggeration }) } catch { /* */ } } }, [exaggeration])
 
