@@ -1195,6 +1195,7 @@ function WindCompareChart({ windData, model, timezone }) {
       data={data}
       layout={layout}
       height={340}
+      config={{ doubleClick: 'reset' }}
       placeholder={`No ${model.label} data to compare`}
     />
   )

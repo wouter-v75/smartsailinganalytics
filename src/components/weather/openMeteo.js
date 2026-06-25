@@ -619,7 +619,7 @@ export const SOUNDING_SOURCES = {
   ICON:  { label: 'ICON',         levels: ICON_SOUNDING_LEVELS,  hourly: (d) => d && d.surfaceByModel && d.surfaceByModel.ICON  && d.surfaceByModel.ICON.hourly },
   ECMWF: { label: 'ECMWF',        levels: ECMWF_SOUNDING_LEVELS, hourly: (d) => d && d.surfaceByModel && d.surfaceByModel.ECMWF && d.surfaceByModel.ECMWF.hourly },
 }
-export const SOUNDING_ORDER = ['SSARACE', 'ICON', 'ECMWF', 'GFS']
+export const SOUNDING_ORDER = ['SSARACE', 'ECMWF', 'GFS', 'ICON']
 
 // SSA-Race per-venue sounding.json (published next to grid.json). Snaps the point
 // to the nearest sounding cell and returns its Open-Meteo-shaped `hourly` (pressure

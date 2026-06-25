@@ -148,7 +148,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
   )
 }
 
-export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, unit = 'kt' }) {
+export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, unit = 'kt', legend = false }) {
   const data = useMemo(() => {
     if (!point) return []
     const traces = []
@@ -178,10 +178,10 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
   }, [point, isDir, cycles, hidden])
 
   // ±1σ shading across the visible model series (matches the forecast-deck
-  // comparison band). Computed where ≥2 models share a timestamp. Skipped for
-  // direction panels (circular mean/σ isn't meaningful on a 0–360 axis).
+  // comparison band). For direction it uses CIRCULAR mean/σ so the band is
+  // meaningful on the 0–360 axis (clipped to range near 0/360).
   const bandTraces = useMemo(() => {
-    if (isDir || data.length < 2) return []
+    if (data.length < 2) return []
     const byT = new Map()
     for (const tr of data) {
       for (let i = 0; i < tr.x.length; i++) {
@@ -190,12 +190,22 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
       }
     }
     const ts = [...byT.keys()].sort((a, b) => a - b)
+    const D2R = Math.PI / 180
     const x = [], lo = [], hi = []
     for (const t of ts) {
       const a = byT.get(t); if (a.length < 2) continue
-      const m = a.reduce((s, v) => s + v, 0) / a.length
-      const sd = Math.sqrt(a.reduce((s, v) => s + (v - m) * (v - m), 0) / a.length)
-      x.push(new Date(t)); lo.push(m - sd); hi.push(m + sd)
+      if (isDir) {
+        let su = 0, sv = 0; for (const d of a) { su += Math.sin(d * D2R); sv += Math.cos(d * D2R) }
+        const n = a.length; const mu = su / n, mv = sv / n
+        const meanDir = ((Math.atan2(mu, mv) * 180 / Math.PI) + 360) % 360
+        const R = Math.min(1, Math.hypot(mu, mv))
+        const sd = R > 1e-6 ? Math.min(90, Math.sqrt(-2 * Math.log(R)) * 180 / Math.PI) : 90
+        x.push(new Date(t)); lo.push(meanDir - sd); hi.push(meanDir + sd)
+      } else {
+        const m = a.reduce((s, v) => s + v, 0) / a.length
+        const sd = Math.sqrt(a.reduce((s, v) => s + (v - m) * (v - m), 0) / a.length)
+        x.push(new Date(t)); lo.push(m - sd); hi.push(m + sd)
+      }
     }
     if (x.length < 2) return []
     return [
@@ -217,8 +227,9 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
     },
     dragmode: 'pan',
     hovermode: 'closest',          // single hovered series, not a unified all-models tooltip
-    showlegend: false,             // the shared chip legend above replaces per-panel legends
-    margin: { t: 16, b: 48, l: 60, r: 20 },
+    showlegend: legend,            // per-panel legend (used where there's no shared chip legend)
+    ...(legend ? { legend: { orientation: 'h', y: -0.25, font: { size: 10 } } } : {}),
+    margin: { t: 16, b: legend ? 70 : 48, l: 60, r: 20 },
   }
 
   // Highlight the hovered curve by thickening it only — leave every other
@@ -242,7 +253,7 @@ export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cy
       <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
         {title}
       </div>
-      <PlotlyChart data={allData} layout={layout} height={320} onHover={onHover} onUnhover={onUnhover} placeholder={`No model data for ${title.toLowerCase()}`} />
+      <PlotlyChart data={allData} layout={layout} height={320} onHover={onHover} onUnhover={onUnhover} config={{ doubleClick: 'reset' }} placeholder={`No model data for ${title.toLowerCase()}`} />
     </Card>
   )
 }

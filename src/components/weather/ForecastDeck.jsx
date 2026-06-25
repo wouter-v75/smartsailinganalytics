@@ -273,15 +273,15 @@ async function captureSounding(p1lat, p1lon, windData1, tz) {
   let h = null; let levels = null; let label = null; let ptop = 650
   try { const ss = await fetchIconRaceSounding({ latitude: lat, longitude: lon }); if (ss?.time) { h = ss; levels = SSARACE_SOUNDING_LEVELS; label = 'SSA-Race 2 km'; ptop = 650 } } catch { /* */ }
   // Fallback chain (point-1 only, since these come from point 1's fetched data):
-  // SSA-Race 2 km → ICON → ECMWF → GFS.
+  // SSA-Race 2 km → ECMWF → GFS (→ ICON last).
   if (!h && isP1) {
     const hasT = (x) => x && (x.temperature_1000hPa || x.temperature_850hPa)
-    const icon = windData1?.surfaceByModel?.ICON?.hourly
     const ecmwf = windData1?.surfaceByModel?.ECMWF?.hourly
     const gfs = windData1?.gfs?.hourly
-    if (hasT(icon)) { h = icon; levels = ICON_SOUNDING_LEVELS; label = 'ICON'; ptop = 500 }
-    else if (hasT(ecmwf)) { h = ecmwf; levels = ECMWF_SOUNDING_LEVELS; label = 'ECMWF'; ptop = 500 }
+    const icon = windData1?.surfaceByModel?.ICON?.hourly
+    if (hasT(ecmwf)) { h = ecmwf; levels = ECMWF_SOUNDING_LEVELS; label = 'ECMWF'; ptop = 500 }
     else if (hasT(gfs)) { h = gfs; levels = GFS_SOUNDING_LEVELS; label = 'GFS'; ptop = 500 }
+    else if (hasT(icon)) { h = icon; levels = ICON_SOUNDING_LEVELS; label = 'ICON'; ptop = 500 }
   }
   if (!h) return null
   const lt = localTimes(h, tz); const day0 = lt[0]?.slice(0, 10)
