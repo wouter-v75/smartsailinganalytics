@@ -33,6 +33,10 @@ export interface RigColumn {
   mastbasePosition: string | null // "6 FWD"
   shimStack: string | null // "-18" | "Full"
   mastbaseLoadT: number | null // RIG LOADS Mastbase, 000 kg (tonnes)
+  headstayT: number | null // RIG LOADS Headstay, 000 kg
+  jibTackT: number | null // TACK LOADS Jib Tack, 000 kg
+  mainCunninghamT: number | null // RIG LOADS Main Cunningham, 000 kg
+  bowspritTackT: number | null // TACK LOADS Bowsprit Tack, 000 kg (reaching/downwind)
   upperDeflectorCylStroke: string | null // "% retracted", e.g. "95%"
   lowerDeflectorCylStroke: string | null
 }
@@ -165,6 +169,10 @@ function parseBlock(rows: Row[]): RigColumn[] {
   const shimRow = find(rows, /^Shim Stack\b/i)
   // RIG LOADS "Mastbase" (000 kg) — the bare "Mastbase" row, not "...Position".
   const mbLoadRow = rows.find((r) => /^Mastbase\b/i.test(labelOf(r)) && /000\s*kg/i.test(labelOf(r)))
+  const headstayRow = find(rows, /^Headstay\b/i)
+  const jibTackRow = find(rows, /^Jib Tack\b/i)
+  const mainCunnRow = find(rows, /^Main Cunningham\b/i)
+  const bowspritRow = find(rows, /^Bowsprit Tack\b/i)
   const upperStrokeRow = strokeRowUnder(rows, /UPPER\s+DEFLECTOR/i)
   const lowerStrokeRow = strokeRowUnder(rows, /LOWER\s+DEFLECTOR/i)
 
@@ -183,6 +191,10 @@ function parseBlock(rows: Row[]): RigColumn[] {
   const mbPos = rowByCol(mbPosRow, centres)
   const shim = rowByCol(shimRow, centres)
   const mbLoad = rowByCol(mbLoadRow, centres)
+  const headstay = rowByCol(headstayRow, centres)
+  const jibTack = rowByCol(jibTackRow, centres)
+  const mainCunn = rowByCol(mainCunnRow, centres)
+  const bowsprit = rowByCol(bowspritRow, centres)
   const upper = rowByCol(upperStrokeRow, centres)
   const lower = rowByCol(lowerStrokeRow, centres)
 
@@ -208,6 +220,10 @@ function parseBlock(rows: Row[]): RigColumn[] {
       mastbasePosition: mbPos[c],
       shimStack: shim[c],
       mastbaseLoadT: mbLoad[c] != null ? num(mbLoad[c]!) : null,
+      headstayT: headstay[c] != null ? num(headstay[c]!) : null,
+      jibTackT: jibTack[c] != null ? num(jibTack[c]!) : null,
+      mainCunninghamT: mainCunn[c] != null ? num(mainCunn[c]!) : null,
+      bowspritTackT: bowsprit[c] != null ? num(bowsprit[c]!) : null,
       upperDeflectorCylStroke: upper[c],
       lowerDeflectorCylStroke: lower[c],
     })

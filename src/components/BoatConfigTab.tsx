@@ -453,23 +453,31 @@ function UploadedCaption({ uploadedAt }: { uploadedAt?: string | null }) {
 }
 
 // ── Rig tuning baseline (per sail-combination columns, Targets-style) ─────────
-function RigTuneTable({ data }: { data: any }) {
-  const cols: any[] = Array.isArray(data?.columns) ? data.columns : []
-  const SEC_TINT: Record<string, string> = {
-    upwind: 'rgba(244,176,132,0.45)',   // orange
-    reaching: 'rgba(180,199,231,0.45)', // blue
-    downwind: 'rgba(168,213,186,0.5)',  // green
-  }
-  const fields: { key: string; label: string; render: (c: any) => string }[] = [
-    { key: 'twsAtMh', label: 'TWS @ MH (kt)', render: (c) => (c.twsAtMh ?? '—') },
-    { key: 'rakeDeg', label: 'Rake (°)', render: (c) => (c.rakeDeg != null ? fmt(c.rakeDeg, 2) : '—') },
-    { key: 'mastbasePosition', label: 'Mastbase Position', render: (c) => (c.mastbasePosition ?? '—') },
-    { key: 'shimStack', label: 'Shim Stack (mm)', render: (c) => (c.shimStack ?? '—') },
-    { key: 'mastbaseLoadT', label: 'Mastbase (t)', render: (c) => (c.mastbaseLoadT != null ? fmt(c.mastbaseLoadT, 1) : '—') },
-    { key: 'upperDeflectorCylStroke', label: 'Upper Defl. Stroke', render: (c) => (c.upperDeflectorCylStroke ?? '—') },
-    { key: 'lowerDeflectorCylStroke', label: 'Lower Defl. Stroke', render: (c) => (c.lowerDeflectorCylStroke ?? '—') },
-  ]
-  // section header bands (consecutive runs of the same section)
+const RIG_SEC_TINT: Record<string, string> = {
+  upwind: 'rgba(244,176,132,0.45)',   // orange
+  reaching: 'rgba(180,199,231,0.45)', // blue
+  downwind: 'rgba(168,213,186,0.5)',  // green
+}
+type RigField = { key: string; label: string; render: (c: any) => string; reachingOnly?: boolean }
+const RIG_FIELDS: RigField[] = [
+  { key: 'twsAtMh', label: 'TWS @ MH (kt)', render: (c) => (c.twsAtMh ?? '—') },
+  { key: 'rakeDeg', label: 'Rake (°)', render: (c) => (c.rakeDeg != null ? fmt(c.rakeDeg, 2) : '—') },
+  { key: 'mastbasePosition', label: 'Mastbase Position', render: (c) => (c.mastbasePosition ?? '—') },
+  { key: 'shimStack', label: 'Shim Stack (mm)', render: (c) => (c.shimStack ?? '—') },
+  { key: 'mastbaseLoadT', label: 'Mastbase (t)', render: (c) => (c.mastbaseLoadT != null ? fmt(c.mastbaseLoadT, 1) : '—') },
+  { key: 'headstayT', label: 'Headstay (t)', render: (c) => (c.headstayT != null ? fmt(c.headstayT, 1) : '—') },
+  { key: 'jibTackT', label: 'Jib Tack (t)', render: (c) => (c.jibTackT != null ? fmt(c.jibTackT, 1) : '—') },
+  { key: 'mainCunninghamT', label: 'Main Cunningham (t)', render: (c) => (c.mainCunninghamT != null ? fmt(c.mainCunninghamT, 1) : '—') },
+  { key: 'bowspritTackT', label: 'Bowsprit Tack (t)', render: (c) => (c.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '—'), reachingOnly: true },
+  { key: 'upperDeflectorCylStroke', label: 'Upper Defl. Stroke', render: (c) => (c.upperDeflectorCylStroke ?? '—') },
+  { key: 'lowerDeflectorCylStroke', label: 'Lower Defl. Stroke', render: (c) => (c.lowerDeflectorCylStroke ?? '—') },
+]
+
+function RigSubTable({ cols, heading }: { cols: any[]; heading: string }) {
+  if (!cols.length) return null
+  // Drop reaching-only fields when the block is upwind.
+  const isUpwindOnly = cols.every((c) => c.section === 'upwind')
+  const fields = RIG_FIELDS.filter((f) => !(f.reachingOnly && isUpwindOnly))
   const bands: { section: string; span: number }[] = []
   for (const c of cols) {
     const last = bands[bands.length - 1]
@@ -479,21 +487,21 @@ function RigTuneTable({ data }: { data: any }) {
   const th: React.CSSProperties = { padding: '5px 8px', fontSize: 11, fontWeight: 700, color: '#0b1f33', borderBottom: '1px solid #1E3A5A', textAlign: 'center', whiteSpace: 'nowrap' }
   const rh: React.CSSProperties = { padding: '5px 10px', fontSize: 11, fontWeight: 700, color: '#0b1f33', textAlign: 'left', borderBottom: '1px solid #d7e2ee', background: '#eef3f8', position: 'sticky', left: 0 }
   const td: React.CSSProperties = { padding: '5px 8px', fontSize: 12, color: '#0b1f33', textAlign: 'center', borderBottom: '1px solid #d7e2ee', whiteSpace: 'nowrap' }
-  if (!cols.length) return <div style={{ color: C.dim, fontSize: 12 }}>No rig columns parsed.</div>
   return (
     <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
-      <table style={{ borderCollapse: 'collapse', minWidth: 640 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', padding: '2px 4px 8px' }}>{heading}</div>
+      <table style={{ borderCollapse: 'collapse', minWidth: 560 }}>
         <thead>
           <tr>
             <th style={{ ...th, background: '#eef3f8' }}></th>
             {bands.map((b, i) => (
-              <th key={i} style={{ ...th, background: SEC_TINT[b.section] || '#eee' }} colSpan={b.span}>{b.section.toUpperCase()}</th>
+              <th key={i} style={{ ...th, background: RIG_SEC_TINT[b.section] || '#eee' }} colSpan={b.span}>{b.section.toUpperCase()}</th>
             ))}
           </tr>
           <tr>
             <th style={{ ...rh, background: '#dde6ef' }}>Sail combo</th>
             {cols.map((c, i) => (
-              <th key={i} style={{ ...th, background: SEC_TINT[c.section] || '#eee' }}>{c.headsail || '—'}</th>
+              <th key={i} style={{ ...th, background: RIG_SEC_TINT[c.section] || '#eee' }}>{c.headsail || '—'}</th>
             ))}
           </tr>
         </thead>
@@ -502,12 +510,25 @@ function RigTuneTable({ data }: { data: any }) {
             <tr key={f.key}>
               <td style={rh}>{f.label}</td>
               {cols.map((c, i) => (
-                <td key={i} style={{ ...td, background: (SEC_TINT[c.section] || '#fff').replace('0.45', '0.16').replace('0.5', '0.16') }}>{f.render(c)}</td>
+                <td key={i} style={{ ...td, background: (RIG_SEC_TINT[c.section] || '#fff').replace('0.45', '0.16').replace('0.5', '0.16') }}>{f.render(c)}</td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function RigTuneTable({ data }: { data: any }) {
+  const cols: any[] = Array.isArray(data?.columns) ? data.columns : []
+  if (!cols.length) return <div style={{ color: C.dim, fontSize: 12 }}>No rig columns parsed.</div>
+  const upwind = cols.filter((c) => c.section === 'upwind')
+  const reachDown = cols.filter((c) => c.section !== 'upwind')
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <RigSubTable cols={upwind} heading="Upwind" />
+      <RigSubTable cols={reachDown} heading="Reaching / Downwind" />
     </div>
   )
 }
@@ -600,19 +621,26 @@ function printRigTune(data: any, title: string, effectiveDate?: string | null) {
   const esc = (s: any) => String(s == null ? '' : s)
   const cols: any[] = Array.isArray(data?.columns) ? data.columns : []
   const SEC_TINT: Record<string, string> = { upwind: '#f8d8bf', reaching: '#cdd9f0', downwind: '#bfe3cd' }
-  const fields: { label: string; get: (c: any) => string }[] = [
+  const t1 = (v: any) => (v != null ? Number(v).toFixed(1) : '')
+  const fields: { label: string; get: (c: any) => string; reachingOnly?: boolean }[] = [
     { label: 'TWS @ MH (kt)', get: (c) => esc(c.twsAtMh) },
     { label: 'Rake (°)', get: (c) => (c.rakeDeg != null ? Number(c.rakeDeg).toFixed(2) : '') },
     { label: 'Mastbase Position', get: (c) => esc(c.mastbasePosition) },
     { label: 'Shim Stack (mm)', get: (c) => esc(c.shimStack) },
-    { label: 'Mastbase (t)', get: (c) => (c.mastbaseLoadT != null ? Number(c.mastbaseLoadT).toFixed(1) : '') },
+    { label: 'Mastbase (t)', get: (c) => t1(c.mastbaseLoadT) },
+    { label: 'Headstay (t)', get: (c) => t1(c.headstayT) },
+    { label: 'Jib Tack (t)', get: (c) => t1(c.jibTackT) },
+    { label: 'Main Cunningham (t)', get: (c) => t1(c.mainCunninghamT) },
+    { label: 'Bowsprit Tack (t)', get: (c) => t1(c.bowspritTackT), reachingOnly: true },
     { label: 'Upper Defl. Stroke', get: (c) => esc(c.upperDeflectorCylStroke) },
     { label: 'Lower Defl. Stroke', get: (c) => esc(c.lowerDeflectorCylStroke) },
   ]
   const tableFor = (subset: any[], heading: string) => {
     if (!subset.length) return ''
+    const isUpwindOnly = subset.every((c) => c.section === 'upwind')
+    const fs = fields.filter((f) => !(f.reachingOnly && isUpwindOnly))
     const head = `<tr><th class="rh">Sail combo</th>${subset.map((c) => `<th style="background:${SEC_TINT[c.section] || '#eee'}">${esc(c.headsail) || '—'}</th>`).join('')}</tr>`
-    const body = fields.map((f) => `<tr><th class="rh">${f.label}</th>${subset.map((c) => `<td style="background:${(SEC_TINT[c.section] || '#fff')}33">${f.get(c)}</td>`).join('')}</tr>`).join('')
+    const body = fs.map((f) => `<tr><th class="rh">${f.label}</th>${subset.map((c) => `<td style="background:${(SEC_TINT[c.section] || '#fff')}33">${f.get(c)}</td>`).join('')}</tr>`).join('')
     return `<h3>${esc(heading)}</h3><table class="rig">${head}${body}</table>`
   }
   const upwind = cols.filter((c) => c.section === 'upwind')
