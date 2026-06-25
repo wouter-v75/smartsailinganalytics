@@ -5149,9 +5149,10 @@ function SSAApp(){
   const canSeeSquashShotsTab  = effectiveRole !== 'guest';
   // Tools tab (Squash + SailScan combined): TL2 and above, plus consultant (in-period).
   const canSeeToolsTab        = ['admin','team_manager','coach','tl3','tl2','consultant'].includes(effectiveRole);
-  // Boat Config tab: TL2 and above (view). Edits (sails/polars/rig) stay TL3+
-  // via EDIT_ROLES in BoatConfigTab and the DB RLS.
-  const canSeeBoatConfig      = ['admin','team_manager','coach','tl3','tl2'].includes(effectiveRole);
+  // Boat Config tab: TL3 and above (the senior team-leadership ladder). Not
+  // visible to TL2 or lower. Edits (sails/polars/rig) are TL3+ via EDIT_ROLES
+  // in BoatConfigTab and the DB RLS.
+  const canSeeBoatConfig      = ['admin','team_manager','coach','tl3'].includes(effectiveRole);
   const canSeeAnalyticsData   = !['tl1','guest'].includes(effectiveRole);
   const canSeeSailScanPhotos  = !['tl1','guest'].includes(effectiveRole);
   const canUseAI              = effectiveRole === null || !['tl1','consultant','guest'].includes(effectiveRole);
