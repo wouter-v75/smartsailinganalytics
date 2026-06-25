@@ -11,6 +11,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
+import { parseSailList } from '../lib/sailListParse'
 import targetsV14 from '../data/targets-v1.4.json'
 
 interface Sail {
@@ -186,6 +187,19 @@ export default function BoatConfigTab({
     const r = await fetch(`/api/teams/${teamId}/sail-scans?boat_id=${boatId}&limit=40`).then((x) => x.json())
     if (r.error) setErr(r.error); else setScans(r.scans || [])
   }
+  // Import the boat's sail inventory from an Expedition event file's <saillist>.
+  const importSailList = async (file: File) => {
+    const text = await file.text()
+    const parsed = parseSailList(text)
+    if (!parsed.items.length) throw new Error('No <saillist> found in this event file.')
+    const r = await fetch(`/api/teams/${teamId}/sails/import`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boat_id: boatId, boat_name: parsed.boatName, sails: parsed.items }),
+    }).then((x) => x.json())
+    if (r.error) throw new Error(r.error)
+    if (r.sails) setSails(r.sails); else await refreshSails()
+    return { ...r, boatName: parsed.boatName }
+  }
   const importScan = async (file: File, sailId: string | null) => {
     const fd = new FormData()
     fd.append('boat_id', boatId)
@@ -250,15 +264,21 @@ export default function BoatConfigTab({
       {/* ── SAIL INVENTORY ─────────────────────────────────────────── */}
       {view === 'inventory' && (
         <div>
-          {canEdit && <AddSailForm onAdd={createSail} busy={busy === 'new'} input={input} btn={btn} />}
+          {canEdit && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <ImportSailListForm onImport={importSailList} btn={btn} input={input} />
+              <AddSailForm onAdd={createSail} busy={busy === 'new'} input={input} btn={btn} />
+            </div>
+          )}
           {sails.length === 0 && !loading ? (
-            <div style={{ color: C.dim, fontSize: 12, marginTop: 8 }}>No sails yet.{canEdit ? ' Add one above.' : ''}</div>
+            <div style={{ color: C.dim, fontSize: 12, marginTop: 8 }}>No sails yet.{canEdit ? ' Import an event file’s sail list, or add one above.' : ''}</div>
           ) : (
             <div style={{ overflowX: 'auto', marginTop: 8 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>
-                    <th style={th}>Cat</th><th style={th}>Sail name</th><th style={th}>Type</th>
+                    <th style={th}>Cat</th><th style={th}>Sail name</th><th style={th}>Kind</th>
+                    <th style={th}>Sail type</th><th style={th}>Grp</th><th style={th}>Wt (kg)</th>
                     <th style={th}>Build date</th><th style={th}>Status</th><th style={th}>Certificate</th>
                     {canEdit && <th style={th}></th>}
                   </tr>
@@ -726,6 +746,33 @@ function printTargets(targets: any, title: string) {
 }
 
 // ── Add-sail form ────────────────────────────────────────────────────────────
+// ── Import the sail inventory from an Expedition event file's <saillist> ──────
+function ImportSailListForm({ onImport, btn, input }: any) {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const fileRef = React.useRef<HTMLInputElement>(null)
+  const submit = async (file: File) => {
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const r = await onImport(file)
+      setMsg(`Imported ${r?.count ?? 0} sail${(r?.count ?? 0) === 1 ? '' : 's'} (${r?.inserted ?? 0} new, ${r?.updated ?? 0} updated)${r?.boatName ? ` · ${r.boatName}` : ''}.`)
+    } catch (e: any) { setErr(e?.message || 'Import failed.') }
+    finally { setBusy(false); if (fileRef.current) fileRef.current.value = '' }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
+      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 700 }}>Import sail list</span>
+      <span style={{ fontSize: 10, color: '#475569' }}>Expedition event file (.ev.xml) — its &lt;saillist&gt;</span>
+      <input ref={fileRef} type="file" accept=".xml,.ev.xml,text/xml,application/xml" disabled={busy} style={{ ...input, padding: 4 }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) submit(f) }} />
+      <button onClick={() => fileRef.current?.click()} disabled={busy} style={{ ...btn('#06B6D4'), opacity: busy ? 0.5 : 1 }}>{busy ? 'Importing…' : 'Choose file'}</button>
+      {msg && <span style={{ fontSize: 11, color: '#10B981' }}>{msg}</span>}
+      {err && <span style={{ fontSize: 11, color: '#F59E0B' }}>{err}</span>}
+    </div>
+  )
+}
+
 function AddSailForm({ onAdd, busy, input, btn }: any) {
   const [name, setName] = useState('')
   const [category, setCategory] = useState('')
@@ -816,12 +863,20 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert }: any) 
   const fileRef = React.useRef<HTMLInputElement>(null)
   const save = () => { onPatch({ name: name.trim(), category: category.trim() || null, build_date: build || null }); setEditing(false) }
 
+  const spec = sail.specs || {}
+  const sailType = spec.sail_type || '—'
+  const sailGroup = spec.sail_group || '—'
+  const weight = spec.weight_kg != null ? fmt(spec.weight_kg, 1) : '—'
+
   if (editing) {
     return (
       <tr>
         <td style={td}><input style={{ ...input, width: 60 }} value={category} onChange={(e) => setCategory(e.target.value)} /></td>
         <td style={td}><input style={{ ...input, width: 150 }} value={name} onChange={(e) => setName(e.target.value)} /></td>
         <td style={td}>{sail.kind || '—'}</td>
+        <td style={td}>{sailType}</td>
+        <td style={td}>{sailGroup}</td>
+        <td style={td}>{weight}</td>
         <td style={td}><input type="date" style={input} value={build || ''} onChange={(e) => setBuild(e.target.value)} /></td>
         <td style={td} colSpan={2}>
           <button onClick={save} disabled={busy} style={btn('#10B981')}>Save</button>{' '}
@@ -836,6 +891,9 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert }: any) 
       <td style={{ ...td, fontWeight: 700, color: '#06B6D4' }}>{sail.category || '—'}</td>
       <td style={td}>{sail.name}</td>
       <td style={td}>{sail.kind || '—'}</td>
+      <td style={td}>{sailType}</td>
+      <td style={td}>{sailGroup}</td>
+      <td style={td}>{weight}</td>
       <td style={td}>{sail.build_date ? new Date(sail.build_date).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</td>
       <td style={td}>
         {canEdit ? (
