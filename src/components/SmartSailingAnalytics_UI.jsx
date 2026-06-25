@@ -7,6 +7,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   buildSpline, evalSpline, goldenMax, preparePolar,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 import { getBrowserSupabase } from '../lib/supabase/browser';
+import { parseExpeditionLog, isExpeditionRawLog } from '../lib/expLogParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId } from '../lib/cloud-videos';
@@ -1870,7 +1871,20 @@ function UploadTab({role,cloudStatus,onImported}){
     if(!file)return;setCsvFile(file);
     const r=new FileReader();
     r.onload=e=>{
-      try{const p=parseCsvLog(e.target.result,tz);setCsvParsed(p);const tzLabel=TZ_OPTIONS.find(o=>o.offsetMin===tz)?.label||`UTC+${tz/60}`;addLog(`✓ Log: ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzLabel}`);}
+      try{
+        const text=e.target.result;
+        // Two log formats: the 2026 Northstar 7X uses the Expedition *raw* log
+        // (Utc is already UTC, so the tz offset is ignored); older flat-CSV
+        // exports (used by the N72 backfill) still go through parseCsvLog.
+        if(isExpeditionRawLog(text)){
+          const p=parseExpeditionLog(text);setCsvParsed(p);
+          addLog(`✓ Log (raw ${p.version||''}): ${p.rows.length.toLocaleString()} rows · ${file.name} · UTC`);
+        }else{
+          const p=parseCsvLog(text,tz);setCsvParsed(p);
+          const tzLabel=TZ_OPTIONS.find(o=>o.offsetMin===tz)?.label||`UTC+${tz/60}`;
+          addLog(`✓ Log: ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzLabel}`);
+        }
+      }
       catch(err){addLog(`✕ CSV: ${err instanceof Error?err.message:String(err)}`);}
     };
     r.readAsText(file);
