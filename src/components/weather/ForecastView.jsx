@@ -652,20 +652,20 @@ export default function ForecastView({
        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         {/* LEFT — map + point chips */}
         <div style={{ flex: '1 1 460px', minWidth: 300 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1 }}>
-            {viewMode === '3D' ? '🏔️ 3D wind field — drag to rotate / tilt' : '📍 Click 3 points — models load automatically'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'nowrap' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1, minWidth: 0 }}>
+            {viewMode === '3D' ? '🏔️ 3D wind field' : '📍 Click 3 points'}
           </div>
           <div style={{ flex: 1 }} />
           {/* 2D / 3D view toggle */}
-          <div style={{ display: 'inline-flex', border: '1px solid #1E3A5A', borderRadius: 6, overflow: 'hidden', marginRight: 8 }}>
+          <div style={{ display: 'inline-flex', border: '1px solid #1E3A5A', borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
             {['2D', '3D'].map((m) => (
               <button
                 key={m}
                 onClick={() => setViewMode(m)}
                 title={m === '3D' ? '3D terrain view of the wind field' : '2D map — select points'}
                 style={{
-                  fontSize: 11, fontWeight: 700, padding: '4px 12px', cursor: 'pointer', border: 'none',
+                  fontSize: 10, fontWeight: 700, padding: '3px 8px', cursor: 'pointer', border: 'none',
                   background: viewMode === m ? '#0EA5E9' : 'transparent', color: viewMode === m ? '#031018' : '#94A3B8',
                 }}
               >
@@ -678,11 +678,11 @@ export default function ForecastView({
               onClick={resetAll}
               title="Clear the 3 points and all forecast data"
               style={{
-                fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 6,
+                fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, flexShrink: 0, whiteSpace: 'nowrap',
                 cursor: 'pointer', border: '1px solid #7F1D1D', background: '#2A0F12', color: '#FCA5A5',
               }}
             >
-              ✕ Reset points
+              ✕ Reset
             </button>
           )}
         </div>
@@ -834,7 +834,7 @@ export default function ForecastView({
           {hasResults && (
             <div>
               <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Model (field + tables)</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                 {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => !k.startsWith('ICONRACE'))).map((k) => {
                   const m = MODELS[k]; const avail = modelAvailable[k]
                   const fieldOnly = k === 'CURRENTS' || k === 'HPBL'
@@ -846,7 +846,7 @@ export default function ForecastView({
                       onClick={() => { if (fieldOnly) { setFieldModel(k) } else { onActiveModelChange?.(k); setFieldModel(k) } }}
                       title={avail ? (m.subtitle || '') : offTitle}
                       style={{
-                        fontSize: 12, fontWeight: 700, padding: '5px 11px', borderRadius: 999, cursor: avail ? 'pointer' : 'not-allowed',
+                        fontSize: 10.5, fontWeight: 700, padding: '3px 8px', borderRadius: 999, cursor: avail ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap',
                         border: `1px solid ${selected ? m.color : (avail ? m.color + '88' : '#1E3A5A')}`,
                         background: selected ? m.color : (avail ? m.color + '22' : 'transparent'),
                         color: selected ? '#001018' : (avail ? '#E2E8F0' : '#475569'), opacity: avail ? 1 : 0.5,

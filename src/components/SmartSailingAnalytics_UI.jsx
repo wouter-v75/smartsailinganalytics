@@ -4306,7 +4306,8 @@ function MobileShell(props){
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",
         padding:"0 12px",height:34,display:"flex",alignItems:"center",
         gap:7,flexShrink:0,position:"relative",zIndex:50}}>
-        <span style={{fontSize:12,fontWeight:700,color:"#06B6D4"}}>Sailing</span>
+        <span style={{fontSize:13,fontWeight:700,color:"#E2E8F0"}}>Shared</span>
+        <span style={{fontSize:13,fontWeight:700,color:"#06B6D4",marginLeft:-3}}>Sailing Analytics</span>
         {/* ── Passive sync status pill (auto-syncs; tap to force a sync now) ── */}
         {/* The dot reflects the connection; the label auto-updates with sync   */}
         {/* state. No manual sync needed — it fires on foreground / reconnect.  */}

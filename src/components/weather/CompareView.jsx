@@ -68,7 +68,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
 
         {/* Shared clickable legend — toggles the model across every panel below. */}
         {present.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 10 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
             {present.map((k) => {
               const on = !hidden.has(k)
               const c = MODELS[k].color
@@ -78,16 +78,16 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
                   onClick={() => toggle(k)}
                   title={on ? 'click to hide' : 'click to show'}
                   style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6,
-                    padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '2px 7px', borderRadius: 999, cursor: 'pointer', whiteSpace: 'nowrap',
                     border: `1px solid ${on ? c : '#33455C'}`,
                     background: on ? `${c}22` : 'transparent',
                     color: on ? '#E2E8F0' : '#64748B',
-                    fontSize: 11, fontWeight: 600,
+                    fontSize: 10, fontWeight: 600,
                     textDecoration: on ? 'none' : 'line-through',
                   }}
                 >
-                  <span style={{ width: 10, height: 10, borderRadius: 3, background: on ? c : '#475569', flexShrink: 0 }} />
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: on ? c : '#475569', flexShrink: 0 }} />
                   {labelWithCycle(k, cycles)}
                 </button>
               )

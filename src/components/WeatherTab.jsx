@@ -44,7 +44,6 @@ const ROLE_RANK = { guest: 0, consultant: 1, tl1: 2, tl2: 3, tl3: 4, coach: 5, t
 const SUB_TABS = [
   { id: 'forecast',   label: 'Forecast',         short: 'Forecast', enabled: true  },
   { id: 'compare',    label: 'Model Comparison', short: 'Models',   enabled: true  },
-  { id: 'currents',   label: 'Currents',         short: 'Currents', enabled: true  },
   { id: 'sounding',   label: 'Stability',        short: 'Stability', enabled: true  },
   { id: 'venuemos',   label: 'Admin',            short: 'Admin',    enabled: true, adminOnly: true },
 ]
