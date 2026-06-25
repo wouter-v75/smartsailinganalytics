@@ -11,7 +11,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
-import { parseSailList } from '../lib/sailListParse'
+import { parseSailList, sailKindFromType } from '../lib/sailListParse'
 import targetsV14 from '../data/targets-v1.4.json'
 
 interface Sail {
@@ -38,7 +38,6 @@ const C = {
   bg: '#04101c', card: '#071624', border: '#1E3A5A', accent: '#06B6D4',
   text: '#cbd5e1', dim: '#64748B', head: '#e2e8f0', warn: '#F59E0B', ok: '#10B981',
 }
-const KINDS = ['jib', 'genoa', 'staysail', 'mainsail', 'spinnaker', 'gennaker', 'code', 'other']
 const EDIT_ROLES = ['admin', 'team_manager', 'coach', 'tl3']
 const fmt = (v: any, d = 1) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(d))
 const fmtDate = (iso?: string | null) =>
@@ -773,23 +772,61 @@ function ImportSailListForm({ onImport, btn, input }: any) {
   )
 }
 
+// Descriptive sail types (matches the Expedition <saillist> sailtype values).
+const SAIL_TYPES = [
+  'Mainsail', 'Jib', 'Genoa', 'Genoa Staysail', 'Spinnaker Staysail',
+  'Masthead Spinnaker', 'Fractional Spinnaker', 'Masthead Gennaker', 'Fractional Gennaker', 'Code', 'Other',
+]
+const SAIL_GROUPS = [
+  { v: 'M', label: 'M · main' },
+  { v: 'H', label: 'H · headsail' },
+  { v: 'S', label: 'S · spinnaker' },
+]
+// "A1.5_2026" → "A1.5"; otherwise the name as-is.
+const categoryFromName = (name: string): string => name.replace(/_\d{4}$/, '').trim() || name
+const groupForKind = (kind: string): string => (kind === 'mainsail' ? 'M' : kind === 'spinnaker' ? 'S' : 'H')
+
+// Manual add — same shape as the <saillist> import rows: name + sail type +
+// group + weight, with `kind` derived and the rest stored under `specs`.
 function AddSailForm({ onAdd, busy, input, btn }: any) {
   const [name, setName] = useState('')
-  const [category, setCategory] = useState('')
-  const [kind, setKind] = useState('jib')
+  const [sailType, setSailType] = useState('Jib')
+  const [group, setGroup] = useState('')
+  const [weight, setWeight] = useState('')
   const [build, setBuild] = useState('')
   const submit = () => {
     if (!name.trim()) return
-    onAdd({ name: name.trim(), category: category.trim() || null, kind, build_date: build || null })
-    setName(''); setCategory(''); setBuild('')
+    const kind = sailKindFromType(sailType, group)
+    const wt = weight.trim() ? parseFloat(weight.replace(',', '.')) : null
+    onAdd({
+      name: name.trim(),
+      kind,
+      category: categoryFromName(name.trim()),
+      build_date: build || null,
+      specs: {
+        sail_type: sailType || null,
+        sail_group: group || groupForKind(kind),
+        weight_kg: wt != null && !Number.isNaN(wt) ? wt : null,
+        source: 'manual',
+      },
+    })
+    setName(''); setSailType('Jib'); setGroup(''); setWeight(''); setBuild('')
   }
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
       <input style={{ ...input, width: 150 }} placeholder="Sail name *" value={name} onChange={(e) => setName(e.target.value)} />
-      <input style={{ ...input, width: 80 }} placeholder="Cat (J2)" value={category} onChange={(e) => setCategory(e.target.value)} />
-      <select style={input} value={kind} onChange={(e) => setKind(e.target.value)}>
-        {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
-      </select>
+      <label style={{ fontSize: 11, color: '#64748B' }}>Type
+        <select style={{ ...input, marginLeft: 4 }} value={sailType} onChange={(e) => setSailType(e.target.value)}>
+          {SAIL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </label>
+      <label style={{ fontSize: 11, color: '#64748B' }}>Grp
+        <select style={{ ...input, marginLeft: 4 }} value={group} onChange={(e) => setGroup(e.target.value)}>
+          <option value="">auto</option>
+          {SAIL_GROUPS.map((g) => <option key={g.v} value={g.v}>{g.label}</option>)}
+        </select>
+      </label>
+      <input style={{ ...input, width: 80 }} type="number" step="0.1" placeholder="Wt (kg)" value={weight} onChange={(e) => setWeight(e.target.value)} />
       <label style={{ fontSize: 11, color: '#64748B' }}>Build <input type="date" style={input} value={build} onChange={(e) => setBuild(e.target.value)} /></label>
       <button onClick={submit} disabled={busy || !name.trim()} style={{ ...btn('#06B6D4'), opacity: busy || !name.trim() ? 0.5 : 1 }}>{busy ? '…' : '+ Add sail'}</button>
     </div>
