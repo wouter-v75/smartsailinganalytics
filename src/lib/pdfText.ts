@@ -49,3 +49,33 @@ export async function extractPdfText(buf: Buffer): Promise<string> {
   const parsed = await pdf(buf, { pagerender: renderPageWithSpacing })
   return parsed.text || ''
 }
+
+// ── Positioned extraction (for coordinate-based table parsing) ────────────────
+// Wide engineering tables (e.g. the rig tuning sheet) need each glyph's x/y to
+// reconstruct columns; flowing text loses that. Returns one entry per page with
+// every text run's pixel position (PDF origin = bottom-left, so larger y = higher
+// on the page). Rounded to whole pixels — plenty for column binning.
+
+export interface PdfTextItem { x: number; y: number; str: string; width: number }
+export interface PdfPage { items: PdfTextItem[] }
+
+export async function extractPdfItems(buf: Buffer): Promise<PdfPage[]> {
+  const pages: PdfPage[] = []
+  const collect = (pageData: any): Promise<string> =>
+    pageData
+      .getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false })
+      .then((tc: { items: TextItem[] }) => {
+        const items: PdfTextItem[] = []
+        for (const it of tc.items) {
+          if (!it.str || !it.str.trim()) continue
+          items.push({ x: Math.round(it.transform[4]), y: Math.round(it.transform[5]), str: it.str, width: it.width || 0 })
+        }
+        pages.push({ items })
+        return ''
+      })
+  // @ts-ignore
+  const mod: any = await import('pdf-parse/lib/pdf-parse.js')
+  const pdf = mod.default || mod
+  await pdf(buf, { pagerender: collect })
+  return pages
+}

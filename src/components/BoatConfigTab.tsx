@@ -47,6 +47,7 @@ export default function BoatConfigTab({
   teamId, boatId, role, isMobile,
 }: { teamId: string; boatId: string; role?: string; config?: any; isMobile?: boolean }) {
   const canEdit = EDIT_ROLES.includes(role || '')
+  const isAdmin = role === 'admin'
   const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar'>('inventory')
   const [sails, setSails] = useState<Sail[]>([])
   const [scans, setScans] = useState<Scan[]>([])
@@ -56,6 +57,10 @@ export default function BoatConfigTab({
   const [polar, setPolar] = useState<any>(null)          // active polar row (DB)
   const [matrixKey, setMatrixKey] = useState<'bsp' | 'heel' | 'rudder' | 'awa'>('bsp')
   const [importing, setImporting] = useState(false)
+  const [rigTune, setRigTune] = useState<any>(null)      // active rig baseline row (DB)
+  const [rigBusy, setRigBusy] = useState(false)
+  const [rigErr, setRigErr] = useState('')
+  const [rigPdfUrl, setRigPdfUrl] = useState<string | null>(null) // admin-only signed PDF URL
 
   const loadSails = () =>
     fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`).then((r) => r.json())
@@ -86,6 +91,52 @@ export default function BoatConfigTab({
       .catch(() => {})
   }, [teamId, boatId])
   useEffect(() => { loadPolar() }, [loadPolar])
+
+  const loadRigTune = useCallback(() => {
+    if (!teamId || !boatId) return
+    fetch(`/api/teams/${teamId}/rig-tunes?boat_id=${boatId}&active=1`)
+      .then((r) => (r.ok ? r.json() : { rigTunes: [] }))
+      .then((j) => setRigTune((j.rigTunes || [])[0] || null))
+      .catch(() => {})
+  }, [teamId, boatId])
+  useEffect(() => { loadRigTune() }, [loadRigTune])
+
+  // Admin-only: fetch a short-lived signed URL for the stored source PDF.
+  useEffect(() => {
+    setRigPdfUrl(null)
+    if (!isAdmin || !rigTune?.id || !rigTune?.report_key) return
+    let alive = true
+    fetch(`/api/teams/${teamId}/rig-tunes/${rigTune.id}/url`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive && j?.url) setRigPdfUrl(j.url) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [isAdmin, rigTune?.id, rigTune?.report_key, teamId])
+
+  // Upload + parse a rig tuning sheet PDF → stored as the active baseline,
+  // effective-dated today. The original PDF is also stored (Bunny) so admins can
+  // download it. TL3+ only (RLS also enforces it).
+  const importRigTune = async (file: File) => {
+    setRigBusy(true); setRigErr('')
+    try {
+      // Stash the original PDF in storage first (non-fatal if it fails — the
+      // parsed table still gets saved).
+      let reportKey: string | null = null
+      try {
+        const key = `teams/${teamId}/boats/${boatId}/rig-tunes/${Date.now()}-${file.name}`
+        await uploadBlobToStorage({ key, blob: file, contentType: 'application/pdf' })
+        reportKey = key
+      } catch { /* keep going — store the parsed data regardless */ }
+
+      const fd = new FormData()
+      fd.append('boat_id', boatId)
+      fd.append('file', file)
+      if (reportKey) fd.append('report_key', reportKey)
+      const r = await fetch(`/api/teams/${teamId}/rig-tunes`, { method: 'POST', body: fd }).then((x) => x.json())
+      if (r.error) setRigErr(r.error); else loadRigTune()
+    } catch (e: any) { setRigErr(String(e?.message || e)) }
+    finally { setRigBusy(false) }
+  }
 
   // Import the bundled V1.4 targets (parsed from the JV VPP) as the boat's
   // active polar. TL3+ only (RLS also enforces it).
@@ -269,15 +320,66 @@ export default function BoatConfigTab({
         </div>
       )}
 
-      {/* ── RIG SETTINGS (placeholder) ─────────────────────────────── */}
+      {/* ── RIG SETTINGS (tuning baseline) ─────────────────────────── */}
       {view === 'rig' && (
-        <div style={{ border: `1px dashed ${C.border}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', color: C.dim }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.head, marginBottom: 6 }}>Rig settings</div>
-          <div style={{ fontSize: 12, maxWidth: 460, margin: '0 auto', lineHeight: 1.5 }}>
-            Rig tuning matrix — coming soon. Upload a rig-tune table here and SSA will
-            store it as the boat's tuning baseline (wind-banded settings linked to runs).
-            Share the table format you use and this view will be built to match it.
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: C.head }}>
+              {rigTune ? rigTune.name : 'Rig tuning baseline'}
+            </span>
+            {rigTune?.effective_date && (
+              <span style={{ fontSize: 11, color: C.accent, fontWeight: 700 }}>
+                effective {fmtDate(rigTune.effective_date)}
+              </span>
+            )}
+            {rigTune?.revision && <span style={{ fontSize: 10, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px' }}>{rigTune.revision}</span>}
+            {rigTune && (
+              <button onClick={() => printRigTune(rigTune.data, rigTune.name, rigTune.effective_date)} style={{ ...btn('#10B981'), marginLeft: 'auto' }}>⎙ Print</button>
+            )}
+            {canEdit && (
+              <label style={{ ...btn('#06B6D4'), marginLeft: rigTune ? 0 : 'auto', opacity: rigBusy ? 0.6 : 1, cursor: rigBusy ? 'default' : 'pointer' }}>
+                {rigBusy ? 'Parsing…' : rigTune ? 'Upload new sheet' : 'Upload rig PDF'}
+                <input type="file" accept="application/pdf,.pdf" disabled={rigBusy} style={{ display: 'none' }}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) importRigTune(f); e.currentTarget.value = '' }} />
+              </label>
+            )}
           </div>
+          {rigErr && <div style={{ fontSize: 11, color: '#F59E0B', marginBottom: 8 }}>{rigErr}</div>}
+
+          {!rigTune ? (
+            <div style={{ border: `1px dashed ${C.border}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', color: C.dim }}>
+              <div style={{ fontSize: 12, maxWidth: 520, margin: '0 auto', lineHeight: 1.5 }}>
+                Upload the JV76 “Sailing Info Summary” rig sheet (PDF). SSA parses the upwind and
+                reaching/downwind tables into per-sail-combination settings and stores them as the
+                boat’s active baseline, effective from today.
+              </div>
+            </div>
+          ) : (
+            <RigTuneTable data={rigTune.data} />
+          )}
+
+          {/* Admin-only: source PDF thumbnail + download. */}
+          {isAdmin && rigTune?.report_key && (
+            <div style={{ marginTop: 14, display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 11, color: C.dim, fontWeight: 700, width: '100%' }}>Source document (admin)</div>
+              <div style={{ width: 150, height: 200, border: `1px solid ${C.border}`, borderRadius: 6, overflow: 'hidden', background: '#0a1c2e' }}>
+                {rigPdfUrl ? (
+                  <embed src={`${rigPdfUrl}#toolbar=0&navpanes=0&view=FitH`} type="application/pdf" style={{ width: '100%', height: '100%' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.dim, fontSize: 11 }}>📄 loading…</div>
+                )}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <span style={{ fontSize: 12, color: C.text }}>{rigTune.report_ref || 'rig sheet.pdf'}</span>
+                {rigPdfUrl ? (
+                  <a href={rigPdfUrl} target="_blank" rel="noopener noreferrer" download
+                    style={{ ...btn('#06B6D4'), textDecoration: 'none', display: 'inline-block', width: 'fit-content' }}>⬇ Download PDF</a>
+                ) : (
+                  <span style={{ fontSize: 11, color: C.dim }}>preparing link…</span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -346,6 +448,66 @@ function UploadedCaption({ uploadedAt }: { uploadedAt?: string | null }) {
   return (
     <div style={{ textAlign: 'right', fontSize: 10, color: C.dim, marginTop: 4 }}>
       Uploaded {new Date(uploadedAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
+    </div>
+  )
+}
+
+// ── Rig tuning baseline (per sail-combination columns, Targets-style) ─────────
+function RigTuneTable({ data }: { data: any }) {
+  const cols: any[] = Array.isArray(data?.columns) ? data.columns : []
+  const SEC_TINT: Record<string, string> = {
+    upwind: 'rgba(244,176,132,0.45)',   // orange
+    reaching: 'rgba(180,199,231,0.45)', // blue
+    downwind: 'rgba(168,213,186,0.5)',  // green
+  }
+  const fields: { key: string; label: string; render: (c: any) => string }[] = [
+    { key: 'twsAtMh', label: 'TWS @ MH (kt)', render: (c) => (c.twsAtMh ?? '—') },
+    { key: 'rakeDeg', label: 'Rake (°)', render: (c) => (c.rakeDeg != null ? fmt(c.rakeDeg, 2) : '—') },
+    { key: 'mastbasePosition', label: 'Mastbase Position', render: (c) => (c.mastbasePosition ?? '—') },
+    { key: 'shimStack', label: 'Shim Stack (mm)', render: (c) => (c.shimStack ?? '—') },
+    { key: 'mastbaseLoadT', label: 'Mastbase (t)', render: (c) => (c.mastbaseLoadT != null ? fmt(c.mastbaseLoadT, 1) : '—') },
+    { key: 'upperDeflectorCylStroke', label: 'Upper Defl. Stroke', render: (c) => (c.upperDeflectorCylStroke ?? '—') },
+    { key: 'lowerDeflectorCylStroke', label: 'Lower Defl. Stroke', render: (c) => (c.lowerDeflectorCylStroke ?? '—') },
+  ]
+  // section header bands (consecutive runs of the same section)
+  const bands: { section: string; span: number }[] = []
+  for (const c of cols) {
+    const last = bands[bands.length - 1]
+    if (last && last.section === c.section) last.span++
+    else bands.push({ section: c.section, span: 1 })
+  }
+  const th: React.CSSProperties = { padding: '5px 8px', fontSize: 11, fontWeight: 700, color: '#0b1f33', borderBottom: '1px solid #1E3A5A', textAlign: 'center', whiteSpace: 'nowrap' }
+  const rh: React.CSSProperties = { padding: '5px 10px', fontSize: 11, fontWeight: 700, color: '#0b1f33', textAlign: 'left', borderBottom: '1px solid #d7e2ee', background: '#eef3f8', position: 'sticky', left: 0 }
+  const td: React.CSSProperties = { padding: '5px 8px', fontSize: 12, color: '#0b1f33', textAlign: 'center', borderBottom: '1px solid #d7e2ee', whiteSpace: 'nowrap' }
+  if (!cols.length) return <div style={{ color: C.dim, fontSize: 12 }}>No rig columns parsed.</div>
+  return (
+    <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
+      <table style={{ borderCollapse: 'collapse', minWidth: 640 }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, background: '#eef3f8' }}></th>
+            {bands.map((b, i) => (
+              <th key={i} style={{ ...th, background: SEC_TINT[b.section] || '#eee' }} colSpan={b.span}>{b.section.toUpperCase()}</th>
+            ))}
+          </tr>
+          <tr>
+            <th style={{ ...rh, background: '#dde6ef' }}>Sail combo</th>
+            {cols.map((c, i) => (
+              <th key={i} style={{ ...th, background: SEC_TINT[c.section] || '#eee' }}>{c.headsail || '—'}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {fields.map((f) => (
+            <tr key={f.key}>
+              <td style={rh}>{f.label}</td>
+              {cols.map((c, i) => (
+                <td key={i} style={{ ...td, background: (SEC_TINT[c.section] || '#fff').replace('0.45', '0.16').replace('0.5', '0.16') }}>{f.render(c)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -432,6 +594,52 @@ function MatrixTable({ targets, mkey, uploadedAt }: { targets: any; mkey: string
 }
 
 // ── Print the targets as a clean, laminate-ready sheet (new window) ──────────
+// Print the rig tuning baseline: upwind table + reaching/downwind table, both
+// on a single landscape page.
+function printRigTune(data: any, title: string, effectiveDate?: string | null) {
+  const esc = (s: any) => String(s == null ? '' : s)
+  const cols: any[] = Array.isArray(data?.columns) ? data.columns : []
+  const SEC_TINT: Record<string, string> = { upwind: '#f8d8bf', reaching: '#cdd9f0', downwind: '#bfe3cd' }
+  const fields: { label: string; get: (c: any) => string }[] = [
+    { label: 'TWS @ MH (kt)', get: (c) => esc(c.twsAtMh) },
+    { label: 'Rake (°)', get: (c) => (c.rakeDeg != null ? Number(c.rakeDeg).toFixed(2) : '') },
+    { label: 'Mastbase Position', get: (c) => esc(c.mastbasePosition) },
+    { label: 'Shim Stack (mm)', get: (c) => esc(c.shimStack) },
+    { label: 'Mastbase (t)', get: (c) => (c.mastbaseLoadT != null ? Number(c.mastbaseLoadT).toFixed(1) : '') },
+    { label: 'Upper Defl. Stroke', get: (c) => esc(c.upperDeflectorCylStroke) },
+    { label: 'Lower Defl. Stroke', get: (c) => esc(c.lowerDeflectorCylStroke) },
+  ]
+  const tableFor = (subset: any[], heading: string) => {
+    if (!subset.length) return ''
+    const head = `<tr><th class="rh">Sail combo</th>${subset.map((c) => `<th style="background:${SEC_TINT[c.section] || '#eee'}">${esc(c.headsail) || '—'}</th>`).join('')}</tr>`
+    const body = fields.map((f) => `<tr><th class="rh">${f.label}</th>${subset.map((c) => `<td style="background:${(SEC_TINT[c.section] || '#fff')}33">${f.get(c)}</td>`).join('')}</tr>`).join('')
+    return `<h3>${esc(heading)}</h3><table class="rig">${head}${body}</table>`
+  }
+  const upwind = cols.filter((c) => c.section === 'upwind')
+  const reachDown = cols.filter((c) => c.section !== 'upwind')
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+  <style>
+    @page { size: landscape; margin: 8mm; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; padding: 10px; }
+    h1 { font-size: 18px; margin: 0 0 2px; } h2 { font-size: 11px; font-weight: normal; color: #555; margin: 0 0 8px; }
+    h3 { font-size: 12px; margin: 12px 0 4px; }
+    table.rig { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    table.rig th, table.rig td { border: 1px solid #aaa; padding: 3px 4px; text-align: center; font-size: 10px; }
+    table.rig th.rh { text-align: left; background: #eef2f7; white-space: nowrap; width: 120px; }
+  </style></head><body>
+    <h1>${esc(title)}</h1>
+    <h2>Rig tuning baseline${effectiveDate ? ' · effective ' + esc(effectiveDate) : ''}${data?.revision ? ' · ' + esc(data.revision) : ''}</h2>
+    ${tableFor(upwind, 'UPWIND')}
+    ${tableFor(reachDown, 'REACHING / DOWNWIND')}
+    <script>window.onload = function(){ window.print(); }<\/script>
+  </body></html>`
+
+  const w = window.open('', '_blank')
+  if (!w) return
+  w.document.open(); w.document.write(html); w.document.close()
+}
+
 function printTargets(targets: any, title: string) {
   const esc = (s: any) => String(s)
   const fmtN = (v: any, d = 1) => (v == null || Number.isNaN(Number(v)) ? '' : Number(v).toFixed(d))
