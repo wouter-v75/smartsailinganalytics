@@ -756,7 +756,7 @@ function ImportSailListForm({ onImport, btn, input }: any) {
     setBusy(true); setErr(''); setMsg('')
     try {
       const r = await onImport(file)
-      setMsg(`Imported ${r?.count ?? 0} sail${(r?.count ?? 0) === 1 ? '' : 's'} (${r?.inserted ?? 0} new, ${r?.updated ?? 0} updated)${r?.boatName ? ` · ${r.boatName}` : ''}.`)
+      setMsg(`Imported ${r?.count ?? 0} sail${(r?.count ?? 0) === 1 ? '' : 's'} (${r?.inserted ?? 0} new, ${r?.updated ?? 0} updated, ${r?.retired ?? 0} retired)${r?.boatName ? ` · ${r.boatName}` : ''}.`)
     } catch (e: any) { setErr(e?.message || 'Import failed.') }
     finally { setBusy(false); if (fileRef.current) fileRef.current.value = '' }
   }

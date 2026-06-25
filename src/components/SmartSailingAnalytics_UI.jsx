@@ -1873,7 +1873,7 @@ function UploadTab({role,cloudStatus,onImported}){
     r.onload=e=>{
       try{
         const text=e.target.result;
-        // Two log formats: the 2026 Northstar 7X uses the Expedition *raw* log
+        // Two log formats: the 2026 Northstar 76 uses the Expedition *raw* log
         // (Utc is already UTC, so the tz offset is ignored); older flat-CSV
         // exports (used by the N72 backfill) still go through parseCsvLog.
         if(isExpeditionRawLog(text)){

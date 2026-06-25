@@ -185,11 +185,12 @@ export default function UserPill() {
       setMemberships(ms)
 
       // Pick active membership: persisted choice if still valid, else a default.
-      // Default preference: the "Northstar 7X" boat (the team's current boat) so
-      // Northstar members land on it; otherwise the first membership.
+      // Default preference: the "Northstar 76" boat (the team's current 2026 boat;
+      // the Northstar 72 is the retired old boat) so Northstar members land on it;
+      // otherwise the first membership.
       const stored = getActiveMembership(user.id)
       const valid = ms.find((m) => m.id === stored?.id)
-      const preferredDefault = ms.find((m) => m.boat_name === 'Northstar 7X') || ms[0]
+      const preferredDefault = ms.find((m) => m.boat_name === 'Northstar 76') || ms[0]
       if (valid) {
         setActiveId(valid.id)
         // Re-persist with up-to-date team/boat names in case they changed.

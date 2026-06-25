@@ -1,6 +1,6 @@
 // src/lib/expLogParse.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Parse an Expedition *raw instrument log* (the 2026 Northstar 7X format) into
+// Parse an Expedition *raw instrument log* (the 2026 Northstar 76 format) into
 // the same per-timestamp row shape the app already uses for charts/analysis,
 // plus the extra rig/target/rudder channels we now want.
 //
