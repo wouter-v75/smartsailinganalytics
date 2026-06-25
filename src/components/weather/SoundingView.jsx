@@ -360,7 +360,8 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
 
   // A user-picked 4th sounding point, fetched on demand (the 'S' key).
   const [extraPoint, setExtraPoint] = useState(null)
-  const [source, setSource] = useState('ECMWF')
+  const [source, setSource] = useState(null) // null → auto-pick first available (SSA-Race per SOUNDING_ORDER)
+  const userPickedSource = useRef(false)
   // Source labels carry the model run cycle (ICON/ECMWF -> "ICON 06z"); GFS has
   // no cycle in the map so it stays plain.
   const cycles = useModelCycles()
@@ -439,12 +440,16 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
     if (!locKey || !locKeys.includes(locKey)) setLocKey(locKeys[0])
   }, [locKeys, locKey])
   useEffect(() => {
-    if (!availableSources.includes(source)) setSource(availableSources[0])
+    // Auto-follow the preferred order (SSA-Race first) until the user picks a
+    // source by hand; after that only correct it if their choice goes away.
+    if (!source || (!userPickedSource.current && source !== availableSources[0]) || !availableSources.includes(source)) {
+      setSource(availableSources[0])
+    }
   }, [availableSources, source])
 
   // Time axis for the active source/location (falls back to any source's grid).
   const times = useMemo(() => {
-    const direct = locKey != null && SOUNDING_SOURCES[source].hourly(dataFor(locKey))?.time
+    const direct = locKey != null && source && SOUNDING_SOURCES[source].hourly(dataFor(locKey))?.time
     if (direct?.length) return direct
     for (const loc of locKeys) {
       for (const k of SOUNDING_ORDER) {
@@ -539,8 +544,8 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
       el.innerHTML = placeholderHTML('🎈', 'No sounding yet', 'Fetch wind data in Forecast, or pick a point on the map.')
       return
     }
-    if (!hasSounding(dataFor(locKey), source, timeIdx)) {
-      el.innerHTML = placeholderHTML('🚫', `No ${SOUNDING_SOURCES[source].label} data here`, 'Try a different source for this point/time.')
+    if (!source || !hasSounding(dataFor(locKey), source, timeIdx)) {
+      el.innerHTML = placeholderHTML('🚫', source ? `No ${SOUNDING_SOURCES[source].label} data here` : 'Loading…', 'Try a different source for this point/time.')
       return
     }
     // SSA-Race tops out at ~700 hPa (3 km), so zoom the diagram into the low levels
@@ -608,7 +613,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
             </select>
           </Field>
           <Field label="🛰️ Source">
-            <select value={source} onChange={(e) => setSource(e.target.value)} style={inputStyle}>
+            <select value={source || ''} onChange={(e) => { userPickedSource.current = true; setSource(e.target.value) }} style={inputStyle}>
               {availableSources.map((k) => <option key={k} value={k}>{srcLabel(k)}</option>)}
             </select>
           </Field>
