@@ -21,7 +21,7 @@ import {
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
   interpolateSpeedAtHeight,
-  labelWithCycle, withCycleLabel, localForecastWindow,
+  labelWithCycle, withCycleLabel, localForecastWindow, localRacingWindow,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 import {
@@ -461,7 +461,19 @@ export default function ForecastView({
     // No pre-dropped marker — locations start empty so clicks number 1 → 2 → 3.
     mapRef.current = map
     setMapReady(true)
+    // Leaflet caches the container size at init. On mobile the map often mounts
+    // before its box has settled (and the viewer height differs), leaving the
+    // projection origin stale so a tap lands offset (down/right). Recompute after
+    // layout settles and on every container resize so clicks hit the right point.
+    setTimeout(() => { try { map.invalidateSize() } catch { /* */ } }, 150)
+    setTimeout(() => { try { map.invalidateSize() } catch { /* */ } }, 600)
+    let ro = null
+    try {
+      ro = new ResizeObserver(() => { try { map.invalidateSize() } catch { /* */ } })
+      ro.observe(mapDivRef.current)
+    } catch { /* */ }
     return () => {
+      try { ro?.disconnect() } catch { /* */ }
       try { map.remove() } catch { /* ignore */ }
       mapRef.current = null
       markersRef.current = {}   // drop stale markers bound to the removed map
@@ -1170,9 +1182,10 @@ function WindCompareChart({ windData, model, timezone }) {
   }, [windData, model.key, timezone])
 
   const layout = {
-    // Fixed 2-day local window (00 today → 00 +2d); ignores any earlier data.
-    xaxis: { title: 'Time', type: 'date', range: localForecastWindow(2), autorange: false },
+    // Open zoomed to the racing window (10:00–16:00); pan to see the rest.
+    xaxis: { title: 'Time', type: 'date', range: localRacingWindow(), autorange: false },
     yaxis: { title: 'Wind speed (knots)', rangemode: 'tozero' },
+    dragmode: 'pan',
     hovermode: 'x unified',
     legend: { orientation: 'h', y: -0.2 },
     margin: { t: 20, b: 80, l: 60, r: 20 },

@@ -137,12 +137,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
         yTitle="Wind speed (knots)" isDir={false}
       />
       )}
-      <ComparePanel
-        title="🌡️ Boundary-layer height (PBL — SSA-Race bulk Richardson)"
-        point={point} hidden={hidden} cycles={cycles}
-        seriesFn={(h) => (h.boundary_layer_height && h.boundary_layer_height.some((x) => x != null && x > 0) ? h.boundary_layer_height : null)}
-        yTitle="PBL height (m)" isDir={false} unit="m"
-      />
+      {/* Boundary-layer height moved to the Stability tab. */}
       <ComparePanel
         title="10 m wind direction"
         point={point} hidden={hidden} cycles={cycles}
@@ -153,7 +148,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
   )
 }
 
-function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, unit = 'kt' }) {
+export function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, unit = 'kt' }) {
   const data = useMemo(() => {
     if (!point) return []
     const traces = []
@@ -182,6 +177,35 @@ function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, u
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [point, isDir, cycles, hidden])
 
+  // ±1σ shading across the visible model series (matches the forecast-deck
+  // comparison band). Computed where ≥2 models share a timestamp. Skipped for
+  // direction panels (circular mean/σ isn't meaningful on a 0–360 axis).
+  const bandTraces = useMemo(() => {
+    if (isDir || data.length < 2) return []
+    const byT = new Map()
+    for (const tr of data) {
+      for (let i = 0; i < tr.x.length; i++) {
+        const v = tr.y[i]; if (v == null || Number.isNaN(v)) continue
+        const t = +tr.x[i]; if (!byT.has(t)) byT.set(t, []); byT.get(t).push(v)
+      }
+    }
+    const ts = [...byT.keys()].sort((a, b) => a - b)
+    const x = [], lo = [], hi = []
+    for (const t of ts) {
+      const a = byT.get(t); if (a.length < 2) continue
+      const m = a.reduce((s, v) => s + v, 0) / a.length
+      const sd = Math.sqrt(a.reduce((s, v) => s + (v - m) * (v - m), 0) / a.length)
+      x.push(new Date(t)); lo.push(m - sd); hi.push(m + sd)
+    }
+    if (x.length < 2) return []
+    return [
+      { x, y: lo, type: 'scatter', mode: 'lines', line: { width: 0 }, hoverinfo: 'skip', showlegend: false, connectgaps: true },
+      { x, y: hi, type: 'scatter', mode: 'lines', line: { width: 0 }, fill: 'tonexty', fillcolor: 'rgba(150,160,180,0.18)', name: '±1σ', hoverinfo: 'skip', showlegend: false, connectgaps: true },
+    ]
+  }, [data, isDir])
+  const nBand = bandTraces.length
+  const allData = useMemo(() => [...bandTraces, ...data], [bandTraces, data])
+
   const layout = {
     // Open zoomed to the racing window; pan (drag) is the default tool, scroll to
     // zoom, and the data extends either side so you can pan to the full forecast.
@@ -200,24 +224,25 @@ function ComparePanel({ title, point, seriesFn, yTitle, isDir, hidden, cycles, u
   // Highlight the hovered curve by thickening it only — leave every other
   // series exactly as it was (full opacity, normal width) so they all stay
   // clearly visible for comparison. Restore the hovered one on unhover.
+  // The first nBand traces are the ±1σ band (width 0) — never thicken those.
   const onHover = useCallback((gd, e) => {
     const ci = e && e.points && e.points[0] && e.points[0].curveNumber
     if (ci == null || !window.Plotly) return
     const n = gd.data.length
-    window.Plotly.restyle(gd, { 'line.width': Array.from({ length: n }, (_, i) => (i === ci ? 4.5 : 2)) })
-  }, [])
+    window.Plotly.restyle(gd, { 'line.width': Array.from({ length: n }, (_, i) => (i < nBand ? 0 : i === ci ? 4.5 : 2)) })
+  }, [nBand])
   const onUnhover = useCallback((gd) => {
     if (!window.Plotly) return
     const n = gd.data.length
-    window.Plotly.restyle(gd, { 'line.width': Array(n).fill(2) })
-  }, [])
+    window.Plotly.restyle(gd, { 'line.width': Array.from({ length: n }, (_, i) => (i < nBand ? 0 : 2)) })
+  }, [nBand])
 
   return (
     <Card>
       <div style={{ fontSize: 12, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
         {title}
       </div>
-      <PlotlyChart data={data} layout={layout} height={320} onHover={onHover} onUnhover={onUnhover} placeholder={`No model data for ${title.toLowerCase()}`} />
+      <PlotlyChart data={allData} layout={layout} height={320} onHover={onHover} onUnhover={onUnhover} placeholder={`No model data for ${title.toLowerCase()}`} />
     </Card>
   )
 }

@@ -26,7 +26,9 @@ import {
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 import { patchWeatherSession } from './weatherSession'
-import { BoundaryLayerChart } from './ForecastView'
+import { ComparePanel } from './CompareView'
+
+const NO_HIDDEN = new Set()
 
 const D3_JS = 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js'
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
@@ -683,12 +685,19 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
           )}
         </Card>
 
-        {/* Boundary-layer height — SSA-Race (solid) with GFS fallback where SSA
-            is absent. Moved here from the Forecast tab. */}
-        <Card>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 6 }}>🌫 Boundary-layer height — SSA-Race, GFS fallback</div>
-          <BoundaryLayerChart windData={windData} timezone={resolvedTz} />
-        </Card>
+        {/* Boundary-layer height — the model-comparison PBL chart (moved here
+            from the Models tab) for the selected location. */}
+        {(() => {
+          const pblPoint = (locKey && windData[locKey]?.surfaceByModel) ? windData[locKey] : Object.values(windData).find((p) => p?.surfaceByModel) || null
+          return (
+            <ComparePanel
+              title="🌫 Boundary-layer height (PBL — model comparison)"
+              point={pblPoint} hidden={NO_HIDDEN} cycles={cycles}
+              seriesFn={(h) => (h.boundary_layer_height && h.boundary_layer_height.some((x) => x != null && x > 0) ? h.boundary_layer_height : null)}
+              yTitle="PBL height (m)" isDir={false} unit="m"
+            />
+          )
+        })()}
       </div>
     </div>
   )
