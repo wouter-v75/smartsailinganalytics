@@ -42,6 +42,26 @@ function loadJsPdf(): Promise<any> {
   }
   return jspdfPromise
 }
+// Draw a small line chart directly into a jsPDF doc (mm units). xs/ys are data;
+// rgb is the line colour. Returns nothing — caller manages layout.
+function pdfLineChart(doc: any, x: number, y: number, w: number, h: number, xs: number[], ys: (number | null)[], rgb: number[], label: string) {
+  doc.setFontSize(7); doc.setTextColor(40); doc.text(label, x, y - 1)
+  doc.setDrawColor(210); doc.setLineWidth(0.2)
+  doc.rect(x, y, w, h)
+  const pts = ys.map((v, i) => ({ x: xs[i], y: v })).filter((p) => p.y != null && Number.isFinite(p.y as number)) as { x: number; y: number }[]
+  if (pts.length < 1) { doc.setFontSize(6); doc.setTextColor(150); doc.text('no data', x + w / 2 - 3, y + h / 2); return }
+  const xmin = Math.min(...xs), xmax = Math.max(...xs)
+  const ymin = Math.min(...pts.map((p) => p.y)), ymax = Math.max(...pts.map((p) => p.y))
+  const ylo = ymin === ymax ? ymin - 1 : ymin, yhi = ymin === ymax ? ymax + 1 : ymax
+  doc.setFontSize(6); doc.setTextColor(120)
+  doc.text(String(Math.round(yhi)), x + 0.5, y + 3)
+  doc.text(String(Math.round(ylo)), x + 0.5, y + h - 0.5)
+  const px = (vx: number) => x + 4 + ((vx - xmin) / (xmax - xmin || 1)) * (w - 5)
+  const py = (vy: number) => y + 2 + (1 - (vy - ylo) / (yhi - ylo || 1)) * (h - 4)
+  doc.setDrawColor(rgb[0], rgb[1], rgb[2]); doc.setLineWidth(0.5)
+  for (let i = 1; i < pts.length; i++) doc.line(px(pts[i - 1].x), py(pts[i - 1].y), px(pts[i].x), py(pts[i].y))
+}
+
 // Best-effort: render an image URL to a JPEG data-URL via canvas (needs CORS on
 // the source; returns null if the canvas would be tainted).
 function imgToDataUrl(url: string): Promise<{ dataUrl: string; w: number; h: number } | null> {
@@ -103,8 +123,8 @@ const WIND: { key: string; label: string; color: string }[] = [
   { key: 'polarBspPct', label: 'Polar BSP %', color: '#F472B6' },
 ]
 
-export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, sailName, onReassign, onDelete, onClose }:
-  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
+export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onDelete, onClose }:
+  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; boatName?: string | null; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
   const cond = scan?.conditions || {}
   const stripes: Stripe[] = useMemo(
     () => (Array.isArray(scan?.stripes) ? [...scan.stripes].sort((a: Stripe, b: Stripe) => a.pos - b.pos) : []),
@@ -172,58 +192,108 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const share = async () => {
     setSharing(true)
     try {
+      // Make sure we have the 2-min window (compute from the local log if the
+      // effect hasn't finished, so the PDF always carries the data when present).
+      let w2 = win
+      if (!w2 && scan?.captured_at) {
+        const ms = new Date(scan.captured_at).getTime()
+        const localDate = (cond.captured_local || scan.captured_at || '').slice(0, 10)
+        try {
+          const ld: any = await getLogData(localDate)
+          const rows: any[] = Array.isArray(ld) ? ld : Array.isArray(ld?.rows) ? ld.rows : []
+          if (rows.length) w2 = computeScanWindow(rows, ms, 120)
+        } catch { /* none */ }
+      }
+      const a = w2?.averages || {}
+      // tags fall back into the averages when the log lacks a field.
+      const avgTws = a.tws ?? tags?.avgTws ?? scan?.tws_kn ?? null
+      const avgTwa = a.twa ?? tags?.avgTwa ?? null
+
       const jsPDF = await loadJsPdf()
       const doc = new jsPDF({ unit: 'mm', format: 'a4' })
-      const M = 12
+      const PW = 210, PH = 297, M = 12
       let y = 16
-      doc.setFontSize(16); doc.setTextColor(20); doc.text(String(title), M, y); y += 7
-      doc.setFontSize(10); doc.setTextColor(90)
+      const need = (mm: number) => { if (y + mm > PH - M) { doc.addPage(); y = M + 4 } }
+
+      // Title: boat name — sail
+      doc.setFontSize(16); doc.setTextColor(20); doc.setFont('helvetica', 'bold')
+      doc.text([boatName, String(title)].filter(Boolean).join(' — '), M, y); y += 7
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(90)
       doc.text([fmtDateTime(scan.captured_at), cond.sail_code ? `Code ${cond.sail_code}` : '', cond.sail_type || ''].filter(Boolean).join('   ·   '), M, y); y += 6
+      // tags (same as the thumbnail overview)
       const tg: string[] = []
       if (tags?.pointOfSail) tg.push(tags.pointOfSail)
       ;(tags?.activeSails || []).forEach((s: string) => tg.push(s))
-      if (tags?.location) tg.push(tags.location)
-      if (tg.length) { doc.text(tg.join('  ·  '), M, y); y += 6 }
+      if (tags?.location) tg.push(`📍 ${tags.location}`)
+      tg.push(`TWS ${fmt(avgTws)} kt`, `TWA ${avgTwa != null ? fmt(avgTwa, 0) : '—'}°`)
+      doc.setTextColor(60); doc.text(tg.join('  ·  '), M, y); y += 6
       const loads: string[] = []
-      if (scan.tws_kn != null) loads.push(`TWS ${fmt(scan.tws_kn)}kt`)
+      if (scan.tws_kn != null) loads.push(`Report TWS ${fmt(scan.tws_kn)}kt`)
       if (cond.forestay_t != null) loads.push(`Forestay ${fmt(cond.forestay_t)}T`)
       if (cond.rake_deg != null) loads.push(`Rake ${fmt(cond.rake_deg, 2)}`)
       if (cond.jib_tack_t != null) loads.push(`JibTack ${fmt(cond.jib_tack_t)}T`)
       if (loads.length) { doc.text(loads.join('    '), M, y); y += 6 }
 
+      // photo + stripe table side by side
+      const tableTop = y
+      let photoBottom = y
       if (photoUrl) {
         const pic = await imgToDataUrl(photoUrl)
-        if (pic) { const w = 90, h = Math.min(120, (w * pic.h) / pic.w); doc.addImage(pic.dataUrl, 'JPEG', M, y, w, h); y += h + 5 }
+        if (pic) { const w = 85, h = Math.min(110, (w * pic.h) / pic.w); doc.addImage(pic.dataUrl, 'JPEG', M, y, w, h); photoBottom = y + h }
       }
-
-      // stripe table
-      const cols = ['Stripe', 'Draft', 'Camber', 'Twist', 'Entry', 'Exit', 'Front%', 'Back%']
-      const cw = [16, 22, 22, 22, 20, 20, 22, 22]
-      const x0 = M
+      // table to the right of the photo (or below if no photo)
+      const tx = photoUrl ? M + 90 : M
+      let ty = photoUrl ? tableTop : y
+      const cols = ['St', 'Draft', 'Camb', 'Twist', 'Ent', 'Exit', 'Fr%', 'Bk%']
+      const cw = [10, 14, 14, 14, 12, 12, 14, 14]
       const drawRow = (cells: string[], bold = false) => {
-        doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(9); doc.setTextColor(20)
-        let x = x0
-        cells.forEach((c, i) => { doc.text(c, x, y); x += cw[i] })
-        y += 5
+        doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(8); doc.setTextColor(20)
+        let x = tx
+        cells.forEach((c, i) => { doc.text(c, x, ty); x += cw[i] })
+        ty += 5
       }
       drawRow(cols, true)
       for (const s of stripes) drawRow([`${s.pos}%`, fmt(s.draft), fmt(s.camber), fmt(s.twist), fmt(s.entry, 0), fmt(s.exit, 0), fmt(s.fore), fmt(s.back)])
       doc.setFont('helvetica', 'normal')
+      y = Math.max(photoBottom, ty) + 6
 
-      if (win?.averages) {
-        y += 3; doc.setFontSize(10); doc.setTextColor(60)
-        const a = win.averages
-        doc.text(`2-min avg — TWS ${fmt(a.tws)} · TWA ${fmt(a.twa, 0)}° · AWS ${fmt(a.aws)} · AWA ${fmt(a.awa, 0)}° · Polar ${fmt(a.polarBspPct, 0)}%`, M, y)
+      // 2-min averages line (full)
+      doc.setFontSize(10); doc.setTextColor(60)
+      doc.text(`2-min avg — TWS ${fmt(avgTws)} · TWA ${avgTwa != null ? fmt(avgTwa, 0) : '—'}° · AWS ${fmt(a.aws)} · AWA ${fmt(a.awa, 0)}° · Polar ${fmt(a.polarBspPct, 0)}%`, M, y); y += 7
+
+      // shape charts (value vs stripe %)
+      const posXs2 = stripes.map((s) => s.pos)
+      const cwd = (PW - 2 * M - 8) / 3, chh = 26
+      const rgbOf = (hex: string) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]
+      doc.setFontSize(11); doc.setTextColor(30); doc.text('Shape charts', M, y); y += 4
+      METRICS.forEach((m, i) => {
+        const col = i % 3, row = Math.floor(i / 3)
+        if (col === 0) { if (row > 0) y += chh + 8; need(chh + 6) }
+        pdfLineChart(doc, M + col * (cwd + 4), y + 3, cwd, chh, posXs2, stripes.map((s) => s[m.key] as number | null), rgbOf(m.color), m.label)
+      })
+      y += chh + 10
+
+      // 2-min wind graphs
+      if (w2?.series) {
+        need(10); doc.setFontSize(11); doc.setTextColor(30); doc.text('2-min graphs', M, y); y += 4
+        const t0 = w2.series.utc?.[0] || 0
+        const xs = (w2.series.utc || []).map((u: number) => (u - t0) / 1000)
+        WIND.forEach((wf, i) => {
+          const col = i % 3, row = Math.floor(i / 3)
+          if (col === 0) { if (row > 0) y += chh + 8; need(chh + 6) }
+          pdfLineChart(doc, M + col * (cwd + 4), y + 3, cwd, chh, xs, w2.series[wf.key] || [], rgbOf(wf.color), wf.label)
+        })
+        y += chh + 8
       }
 
       const blob = doc.output('blob') as Blob
-      const file = new File([blob], `SailScan_${String(title).replace(/[^\w.-]+/g, '_')}.pdf`, { type: 'application/pdf' })
+      const file = new File([blob], `SailScan_${[boatName, String(title)].filter(Boolean).join('_').replace(/[^\w.-]+/g, '_')}.pdf`, { type: 'application/pdf' })
       const nav = navigator as any
       if (nav.canShare && nav.canShare({ files: [file] })) {
         await nav.share({ files: [file], title: `SailScan — ${title}` })
       } else {
         const url = URL.createObjectURL(blob)
-        const a = document.createElement('a'); a.href = url; a.download = file.name; a.click()
+        const a2 = document.createElement('a'); a2.href = url; a2.download = file.name; a2.click()
         setTimeout(() => URL.revokeObjectURL(url), 4000)
       }
     } catch (e: any) {

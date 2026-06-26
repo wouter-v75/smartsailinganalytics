@@ -5077,7 +5077,7 @@ function SSAApp(){
         if(!res.ok||cancelled) return;
         const j=await res.json();
         if(cancelled) return;
-        setCampaignCfg(j?.campaignOn ? {...j, teamId:m.team_id, boatId:m.boat_id} : null);
+        setCampaignCfg(j?.campaignOn ? {...j, teamId:m.team_id, boatId:m.boat_id, boatName:m.boat_name} : null);
       } catch { /* non-fatal — campaign tab just stays hidden */ }
     }
     run();

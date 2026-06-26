@@ -48,8 +48,9 @@ const fmtDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'
 
 export default function BoatConfigTab({
-  teamId, boatId, role, isMobile,
+  teamId, boatId, role, isMobile, config,
 }: { teamId: string; boatId: string; role?: string; config?: any; isMobile?: boolean }) {
+  const boatName: string | null = config?.boatName || null
   const canEdit = EDIT_ROLES.includes(role || '')
   const isAdmin = role === 'admin'
   const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar'>('inventory')
@@ -579,6 +580,7 @@ export default function BoatConfigTab({
           teamId={teamId}
           sails={sails}
           canEdit={canEdit}
+          boatName={boatName}
           tags={scanTags[selectedScan.id]}
           sailName={(selectedScan.sail_id ? sailById[selectedScan.sail_id]?.name : null) || selectedScan.conditions?.sail_name_in_report}
           onReassign={async (sailId: string | null) => { await patchScanSail(selectedScan.id, sailId); setSelectedScan((p: any) => p ? { ...p, sail_id: sailId } : p) }}
