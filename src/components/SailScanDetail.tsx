@@ -12,6 +12,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useEffect, useMemo, useState } from 'react'
+import { getLogData } from '../lib/localStore'
+import { computeScanWindow } from '../lib/scanConditions'
 
 const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
@@ -66,25 +68,67 @@ const WIND: { key: string; label: string; color: string }[] = [
   { key: 'polarBspPct', label: 'Polar BSP %', color: '#F472B6' },
 ]
 
-export default function SailScanDetail({ scan, teamId, sailName, onClose }:
-  { scan: any; teamId: string; sailName?: string | null; onClose: () => void }) {
+export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, sailName, onReassign, onDelete, onClose }:
+  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
   const cond = scan?.conditions || {}
   const stripes: Stripe[] = useMemo(
     () => (Array.isArray(scan?.stripes) ? [...scan.stripes].sort((a: Stripe, b: Stripe) => a.pos - b.pos) : []),
     [scan]
   )
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
+  const [photoErr, setPhotoErr] = useState<string | null>(null)
   const [win, setWin] = useState<any>(null)
   const [winLoaded, setWinLoaded] = useState(false)
+  const [winSource, setWinSource] = useState<string>('') // 'local' | 'cloud' | ''
+  const [editing, setEditing] = useState(false)
+  const [sailIdSel, setSailIdSel] = useState<string>(scan?.sail_id || '')
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let alive = true
+    // Photo
     if (cond.photo_key) {
-      fetch(`/api/teams/${teamId}/sail-scans/${scan.id}/photo-url`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive && j?.url) setPhotoUrl(j.url) }).catch(() => {})
+      fetch(`/api/teams/${teamId}/sail-scans/${scan.id}/photo-url`)
+        .then((r) => r.json())
+        .then((j) => { if (!alive) return; if (j?.url) setPhotoUrl(j.url); else setPhotoErr(j?.error || 'could not load photo') })
+        .catch((e) => { if (alive) setPhotoErr(String(e?.message || e)) })
     }
-    fetch(`/api/teams/${teamId}/sail-scans/${scan.id}/conditions`).then((r) => (r.ok ? r.json() : null)).then((j) => { if (alive) { setWin(j?.window || null); setWinLoaded(true) } }).catch(() => { if (alive) setWinLoaded(true) })
+    // 2-min window: prefer the local log (where a just-uploaded log lives), fall
+    // back to the cloud session log.
+    const ms = scan?.captured_at ? new Date(scan.captured_at).getTime() : NaN
+    const localDate = (cond.captured_local || scan?.captured_at || '').slice(0, 10)
+    ;(async () => {
+      let w: any = null; let src = ''
+      try {
+        if (localDate && Number.isFinite(ms)) {
+          const ld: any = await getLogData(localDate)
+          const rows: any[] = Array.isArray(ld) ? ld : Array.isArray(ld?.rows) ? ld.rows : []
+          if (rows.length) { w = computeScanWindow(rows, ms, 120); if (w) src = 'local' }
+        }
+      } catch { /* ignore local errors */ }
+      if (!w) {
+        try {
+          const j = await fetch(`/api/teams/${teamId}/sail-scans/${scan.id}/conditions`).then((r) => r.json())
+          if (j?.window) { w = j.window; src = 'cloud' }
+        } catch { /* ignore */ }
+      }
+      if (alive) { setWin(w); setWinSource(src); setWinLoaded(true) }
+    })()
     return () => { alive = false }
-  }, [scan?.id, teamId, cond.photo_key])
+  }, [scan?.id, teamId, cond.photo_key]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const activeSails = (sails || []).filter((s) => !s.retired)
+  const doReassign = async () => {
+    if (!onReassign) return
+    setBusy(true)
+    try { await onReassign(sailIdSel || null); setEditing(false) } finally { setBusy(false) }
+  }
+  const doDelete = async () => {
+    if (!onDelete) return
+    if (!window.confirm('Delete this scan? This cannot be undone.')) return
+    setBusy(true)
+    try { await onDelete() } finally { setBusy(false) }
+  }
 
   const title = sailName || cond.sail_name_in_report || cond.sail_code || 'Sail scan'
   const posXs = stripes.map((s) => s.pos)
@@ -123,9 +167,23 @@ export default function SailScanDetail({ scan, teamId, sailName, onClose }:
           {cond.sail_type && <span style={{ fontSize: 11, color: cond.sail_type === 'main' ? '#34D399' : '#FBBF24' }}>{cond.sail_type}</span>}
           <span style={{ fontSize: 12, color: C.dim }}>{fmtDateTime(scan.captured_at)}</span>
           <div style={{ flex: 1 }} />
+          {canEdit && <button onClick={() => { setSailIdSel(scan?.sail_id || ''); setEditing((v) => !v) }} disabled={busy} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 8, color: C.head, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✎ Edit</button>}
+          {canEdit && <button onClick={doDelete} disabled={busy} style={{ background: '#3a1320', border: '1px solid #7f1d1d', borderRadius: 8, color: '#fca5a5', fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>🗑 Delete</button>}
           <button onClick={share} style={{ background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer' }}>↗ Share</button>
           <button onClick={onClose} style={{ background: '#0F2A45', border: 'none', borderRadius: 8, color: C.text, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✕</button>
         </div>
+
+        {editing && canEdit && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px', background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 12, color: C.dim }}>Sail tag</span>
+            <select value={sailIdSel} onChange={(e) => setSailIdSel(e.target.value)} style={{ background: '#0a1c2e', border: `1px solid ${C.border}`, borderRadius: 6, color: C.head, padding: '5px 7px', fontSize: 12 }}>
+              <option value="">— unassigned —</option>
+              {activeSails.map((s) => <option key={s.id} value={s.id}>{s.category ? `${s.category} · ${s.name}` : s.name}</option>)}
+            </select>
+            <button onClick={doReassign} disabled={busy} style={{ background: C.good, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>{busy ? '…' : 'Save'}</button>
+            <button onClick={() => setEditing(false)} style={{ background: '#334155', border: 'none', borderRadius: 6, color: '#cbd5e1', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>Cancel</button>
+          </div>
+        )}
 
         {/* loads at capture */}
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -142,11 +200,13 @@ export default function SailScanDetail({ scan, teamId, sailName, onClose }:
             {cond.photo_key ? (
               photoUrl ? (
                 <img src={photoUrl} alt="sail scan" style={{ width: '100%', borderRadius: 8, border: `1px solid ${C.border}` }} />
+              ) : photoErr ? (
+                <div style={{ width: '100%', minHeight: 120, background: C.panel, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.warn, fontSize: 12, padding: 12, textAlign: 'center' }}>Photo unavailable: {photoErr}</div>
               ) : (
                 <div style={{ width: '100%', height: 240, background: C.panel, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.dim, fontSize: 12 }}>loading photo…</div>
               )
             ) : (
-              <div style={{ width: '100%', height: 120, background: C.panel, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.dim, fontSize: 12 }}>No photo (re-import the PDF to capture it)</div>
+              <div style={{ width: '100%', height: 120, background: C.panel, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.dim, fontSize: 12 }}>No photo stored — re-import the PDF to capture it</div>
             )}
           </div>
 
@@ -182,7 +242,7 @@ export default function SailScanDetail({ scan, teamId, sailName, onClose }:
 
         {/* 2-minute window: averages + graphs */}
         <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, margin: '18px 0 6px' }}>
-          Boat state · 2-min window {win ? `(${win.count} pts)` : ''}
+          Boat state · 2-min window {win ? `(${win.count} pts · ${winSource} log)` : ''}
         </div>
         {!winLoaded ? (
           <div style={{ color: C.dim, fontSize: 12 }}>matching the day’s log…</div>

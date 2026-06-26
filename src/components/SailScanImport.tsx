@@ -33,6 +33,7 @@ interface ParsedScan {
 interface FileResult {
   name: string
   status: 'pending' | 'ok' | 'error'
+  stage?: string
   format?: string
   count?: number
   scans?: ParsedScan[]
@@ -78,17 +79,21 @@ export default function SailScanImport({
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
+      const stage = (s: string) => setResults((prev) => prev.map((row) => (row === list[i] ? { ...row, stage: s } : row)))
       const fd = new FormData()
       fd.append('boat_id', boatId)
       fd.append('file', file)
+      stage('Reading data…')
       try {
         const blob = await extractLargestJpegBlob(file)
         if (blob) {
+          stage('Uploading document…')
           const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-${i}-photo.jpg`
           await uploadBlobToStorage({ key, blob, contentType: 'image/jpeg' })
           fd.append('photo_key', key)
         }
       } catch { /* non-fatal */ }
+      stage('Importing…')
       try {
         const r = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd }).then((x) => x.json())
         setResults((prev) => prev.map((row) =>
@@ -142,8 +147,9 @@ export default function SailScanImport({
                   {r.status === 'ok' ? '✓' : r.status === 'error' ? '✕' : '…'}
                 </span>
                 <span style={{ color: C.head, fontWeight: 600 }}>{r.name}</span>
+                {r.status === 'pending' && r.stage && <span style={{ color: C.accent }}>{r.stage}</span>}
                 {r.format && <span style={{ fontSize: 10, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '0 5px' }}>{r.format}</span>}
-                {r.count != null && <span style={{ color: C.dim }}>{r.count} scan{r.count === 1 ? '' : 's'}</span>}
+                {r.status === 'ok' && r.count != null && <span style={{ color: C.ok }}>Imported {r.count} scan{r.count === 1 ? '' : 's'}</span>}
                 {r.error && <span style={{ color: C.warn }}>{r.error}</span>}
               </div>
               {r.scans && r.scans.length > 0 && (

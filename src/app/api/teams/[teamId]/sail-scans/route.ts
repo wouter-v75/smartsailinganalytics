@@ -138,3 +138,40 @@ export async function POST(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ scans: data, parsed: parsedScans, format: report.format, count: rows.length })
 }
+
+// ── PATCH: reassign a scan's sail (or notes) ──────────────────────────────────
+export async function PATCH(req: NextRequest, { params }: { params: { teamId: string } }) {
+  const supabase = getServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+
+  const body = await req.json().catch(() => null)
+  if (!body?.id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+  const patch: Record<string, any> = {}
+  if ('sail_id' in body) patch.sail_id = body.sail_id || null
+  if ('notes' in body) patch.notes = body.notes
+  if (!Object.keys(patch).length) return NextResponse.json({ error: 'no writable fields' }, { status: 400 })
+
+  const { data, error } = await supabase
+    .from('sail_scans')
+    .update(patch)
+    .eq('id', body.id)
+    .eq('team_id', params.teamId)
+    .select()
+    .single()
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ scan: data })
+}
+
+// ── DELETE: remove a scan (?id=) ──────────────────────────────────────────────
+export async function DELETE(req: NextRequest, { params }: { params: { teamId: string } }) {
+  const supabase = getServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+
+  const id = new URL(req.url).searchParams.get('id')
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+  const { error } = await supabase.from('sail_scans').delete().eq('id', id).eq('team_id', params.teamId)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}

@@ -202,24 +202,40 @@ export default function BoatConfigTab({
     if (r.sails) setSails(r.sails); else await refreshSails()
     return { ...r, boatName: parsed.boatName }
   }
-  const importScan = async (file: File, sailId: string | null) => {
+  const importScan = async (file: File, sailId: string | null, onStatus?: (m: string) => void) => {
     const fd = new FormData()
     fd.append('boat_id', boatId)
     if (sailId) fd.append('sail_id', sailId)
     fd.append('file', file)
     // Stash the analysed sail photo (largest embedded JPEG) for the detail view.
+    onStatus?.('Reading data…')
     try {
       const blob = await extractLargestJpegBlob(file)
       if (blob) {
+        onStatus?.('Uploading document…')
         const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-photo.jpg`
         await uploadBlobToStorage({ key, blob, contentType: 'image/jpeg' })
         fd.append('photo_key', key)
       }
     } catch { /* non-fatal: scan still imports without the photo */ }
+    onStatus?.('Importing…')
     const r = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd }).then((x) => x.json())
     if (r.error) throw new Error(r.error)
     await refreshScans()
     return r // { scans, parsed: ParsedScan[], count, format }
+  }
+  const patchScanSail = async (id: string, sail_id: string | null) => {
+    const r = await fetch(`/api/teams/${teamId}/sail-scans`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, sail_id }),
+    }).then((x) => x.json())
+    if (r.error) throw new Error(r.error)
+    await refreshScans()
+  }
+  const deleteScan = async (id: string) => {
+    const r = await fetch(`/api/teams/${teamId}/sail-scans?id=${id}`, { method: 'DELETE' }).then((x) => x.json())
+    if (r.error) throw new Error(r.error)
+    await refreshScans()
   }
   const patchSail = async (id: string, fields: any) => {
     setBusy(id); setErr('')
@@ -330,7 +346,8 @@ export default function BoatConfigTab({
                     {sc.tws_kn != null && <span style={{ fontSize: 11, color: C.dim }}>{fmt(sc.tws_kn, 0)} kn</span>}
                     {sc.conditions?.photo_key && <span style={{ fontSize: 10 }}>📷</span>}
                     {sc.source && <span style={{ fontSize: 10, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '0 5px' }}>{sc.source}</span>}
-                    <span style={{ fontSize: 10, color: C.accent, marginLeft: 'auto' }}>open ›</span>
+                    <button onClick={(e) => { e.stopPropagation(); setSelectedScan(sc) }}
+                      style={{ marginLeft: 'auto', background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 16px', cursor: 'pointer' }}>Details ›</button>
                   </div>
                   {stripes.length > 0 && (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -466,7 +483,11 @@ export default function BoatConfigTab({
         <SailScanDetail
           scan={selectedScan}
           teamId={teamId}
+          sails={sails}
+          canEdit={canEdit}
           sailName={(selectedScan.sail_id ? sailById[selectedScan.sail_id]?.name : null) || selectedScan.conditions?.sail_name_in_report}
+          onReassign={async (sailId: string | null) => { await patchScanSail(selectedScan.id, sailId); setSelectedScan((p: any) => p ? { ...p, sail_id: sailId } : p) }}
+          onDelete={async () => { await deleteScan(selectedScan.id); setSelectedScan(null) }}
           onClose={() => setSelectedScan(null)}
         />
       )}
@@ -881,7 +902,7 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
         const created = await onCreateSail({ name: newName.trim() })
         assignTo = created?.id || null
       }
-      const res = await onImport(file, assignTo)
+      const res = await onImport(file, assignTo, (m: string) => setMsg(m))
       const scans = res?.parsed || []
       const total = scans.reduce((a: number, s: any) => a + (s?.stripes?.length || 0), 0)
       const names = scans.map((s: any) => s?.sailName).filter(Boolean).join(', ')
