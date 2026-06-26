@@ -26,6 +26,41 @@ const fmtDateTime = (iso?: string | null) =>
 
 interface Stripe { pos: number; draft: number | null; camber: number | null; twist: number | null; entry: number | null; exit: number | null; fore: number | null; back: number | null }
 
+// jsPDF (UMD) loaded once from CDN for the Share-as-PDF action.
+let jspdfPromise: Promise<any> | null = null
+function loadJsPdf(): Promise<any> {
+  const w = window as any
+  if (w.jspdf?.jsPDF) return Promise.resolve(w.jspdf.jsPDF)
+  if (!jspdfPromise) {
+    jspdfPromise = new Promise((res, rej) => {
+      const s = document.createElement('script')
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+      s.onload = () => res((window as any).jspdf.jsPDF)
+      s.onerror = () => rej(new Error('failed to load jsPDF'))
+      document.head.appendChild(s)
+    })
+  }
+  return jspdfPromise
+}
+// Best-effort: render an image URL to a JPEG data-URL via canvas (needs CORS on
+// the source; returns null if the canvas would be tainted).
+function imgToDataUrl(url: string): Promise<{ dataUrl: string; w: number; h: number } | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const cv = document.createElement('canvas')
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight
+        cv.getContext('2d')!.drawImage(img, 0, 0)
+        resolve({ dataUrl: cv.toDataURL('image/jpeg', 0.85), w: img.naturalWidth, h: img.naturalHeight })
+      } catch { resolve(null) }
+    }
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
+
 // ── tiny inline SVG line chart ────────────────────────────────────────────────
 function LineChart({ xs, ys, color = '#06B6D4', w = 230, h = 90, xLabel = '' }:
   { xs: number[]; ys: (number | null)[]; color?: string; w?: number; h?: number; xLabel?: string }) {
@@ -68,8 +103,8 @@ const WIND: { key: string; label: string; color: string }[] = [
   { key: 'polarBspPct', label: 'Polar BSP %', color: '#F472B6' },
 ]
 
-export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, sailName, onReassign, onDelete, onClose }:
-  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
+export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, sailName, onReassign, onDelete, onClose }:
+  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
   const cond = scan?.conditions || {}
   const stripes: Stripe[] = useMemo(
     () => (Array.isArray(scan?.stripes) ? [...scan.stripes].sort((a: Stripe, b: Stripe) => a.pos - b.pos) : []),
@@ -133,22 +168,67 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const title = sailName || cond.sail_name_in_report || cond.sail_code || 'Sail scan'
   const posXs = stripes.map((s) => s.pos)
 
+  const [sharing, setSharing] = useState(false)
   const share = async () => {
-    const a = win?.averages || {}
-    const lines = [
-      `SailScan — ${title}`,
-      cond.sail_code ? `Code ${cond.sail_code}` : '',
-      `${fmtDateTime(scan.captured_at)}`,
-      scan.tws_kn != null ? `TWS ${fmt(scan.tws_kn)} kt` : '',
-      cond.forestay_t != null ? `Forestay ${fmt(cond.forestay_t)} T` : '',
-      a.polarBspPct != null ? `Polar ${fmt(a.polarBspPct, 0)}%` : '',
-    ].filter(Boolean)
-    const data: any = { title: `SailScan — ${title}`, text: lines.join('\n') }
-    if (photoUrl) data.url = photoUrl
+    setSharing(true)
     try {
-      if (navigator.share) { await navigator.share(data) }
-      else { await navigator.clipboard?.writeText(lines.join('\n') + (photoUrl ? `\n${photoUrl}` : '')); alert('Copied scan summary to clipboard.') }
-    } catch { /* user cancelled */ }
+      const jsPDF = await loadJsPdf()
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+      const M = 12
+      let y = 16
+      doc.setFontSize(16); doc.setTextColor(20); doc.text(String(title), M, y); y += 7
+      doc.setFontSize(10); doc.setTextColor(90)
+      doc.text([fmtDateTime(scan.captured_at), cond.sail_code ? `Code ${cond.sail_code}` : '', cond.sail_type || ''].filter(Boolean).join('   ·   '), M, y); y += 6
+      const tg: string[] = []
+      if (tags?.pointOfSail) tg.push(tags.pointOfSail)
+      ;(tags?.activeSails || []).forEach((s: string) => tg.push(s))
+      if (tags?.location) tg.push(tags.location)
+      if (tg.length) { doc.text(tg.join('  ·  '), M, y); y += 6 }
+      const loads: string[] = []
+      if (scan.tws_kn != null) loads.push(`TWS ${fmt(scan.tws_kn)}kt`)
+      if (cond.forestay_t != null) loads.push(`Forestay ${fmt(cond.forestay_t)}T`)
+      if (cond.rake_deg != null) loads.push(`Rake ${fmt(cond.rake_deg, 2)}`)
+      if (cond.jib_tack_t != null) loads.push(`JibTack ${fmt(cond.jib_tack_t)}T`)
+      if (loads.length) { doc.text(loads.join('    '), M, y); y += 6 }
+
+      if (photoUrl) {
+        const pic = await imgToDataUrl(photoUrl)
+        if (pic) { const w = 90, h = Math.min(120, (w * pic.h) / pic.w); doc.addImage(pic.dataUrl, 'JPEG', M, y, w, h); y += h + 5 }
+      }
+
+      // stripe table
+      const cols = ['Stripe', 'Draft', 'Camber', 'Twist', 'Entry', 'Exit', 'Front%', 'Back%']
+      const cw = [16, 22, 22, 22, 20, 20, 22, 22]
+      const x0 = M
+      const drawRow = (cells: string[], bold = false) => {
+        doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(9); doc.setTextColor(20)
+        let x = x0
+        cells.forEach((c, i) => { doc.text(c, x, y); x += cw[i] })
+        y += 5
+      }
+      drawRow(cols, true)
+      for (const s of stripes) drawRow([`${s.pos}%`, fmt(s.draft), fmt(s.camber), fmt(s.twist), fmt(s.entry, 0), fmt(s.exit, 0), fmt(s.fore), fmt(s.back)])
+      doc.setFont('helvetica', 'normal')
+
+      if (win?.averages) {
+        y += 3; doc.setFontSize(10); doc.setTextColor(60)
+        const a = win.averages
+        doc.text(`2-min avg — TWS ${fmt(a.tws)} · TWA ${fmt(a.twa, 0)}° · AWS ${fmt(a.aws)} · AWA ${fmt(a.awa, 0)}° · Polar ${fmt(a.polarBspPct, 0)}%`, M, y)
+      }
+
+      const blob = doc.output('blob') as Blob
+      const file = new File([blob], `SailScan_${String(title).replace(/[^\w.-]+/g, '_')}.pdf`, { type: 'application/pdf' })
+      const nav = navigator as any
+      if (nav.canShare && nav.canShare({ files: [file] })) {
+        await nav.share({ files: [file], title: `SailScan — ${title}` })
+      } else {
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a'); a.href = url; a.download = file.name; a.click()
+        setTimeout(() => URL.revokeObjectURL(url), 4000)
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') alert('Could not generate the PDF: ' + (e?.message || e))
+    } finally { setSharing(false) }
   }
 
   const td: React.CSSProperties = { padding: '4px 8px', fontSize: 12, color: C.text, textAlign: 'center', borderBottom: `1px solid ${C.border}` }
@@ -169,7 +249,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
           <div style={{ flex: 1 }} />
           {canEdit && <button onClick={() => { setSailIdSel(scan?.sail_id || ''); setEditing((v) => !v) }} disabled={busy} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 8, color: C.head, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✎ Edit</button>}
           {canEdit && <button onClick={doDelete} disabled={busy} style={{ background: '#3a1320', border: '1px solid #7f1d1d', borderRadius: 8, color: '#fca5a5', fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>🗑 Delete</button>}
-          <button onClick={share} style={{ background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer' }}>↗ Share</button>
+          <button onClick={share} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
           <button onClick={onClose} style={{ background: '#0F2A45', border: 'none', borderRadius: 8, color: C.text, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✕</button>
         </div>
 
@@ -182,6 +262,15 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             </select>
             <button onClick={doReassign} disabled={busy} style={{ background: C.good, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>{busy ? '…' : 'Save'}</button>
             <button onClick={() => setEditing(false)} style={{ background: '#334155', border: 'none', borderRadius: 6, color: '#cbd5e1', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>Cancel</button>
+          </div>
+        )}
+
+        {/* event-file tags */}
+        {tags && (tags.location || tags.pointOfSail || (tags.activeSails && tags.activeSails.length)) && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+            {tags.pointOfSail && <span style={{ fontSize: 11, color: C.head, background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 4, padding: '2px 8px' }}>{tags.pointOfSail}</span>}
+            {(tags.activeSails || []).map((s: string) => <span key={s} style={{ fontSize: 11, color: C.accent, background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 4, padding: '2px 8px' }}>{s}</span>)}
+            {tags.location && <span style={{ fontSize: 11, color: C.text, background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 4, padding: '2px 8px' }}>📍 {tags.location}</span>}
           </div>
         )}
 

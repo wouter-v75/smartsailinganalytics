@@ -13,6 +13,8 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 import { parseSailList, sailKindFromType } from '../lib/sailListParse'
 import { extractLargestJpegBlob } from '../lib/pdfImageExtract'
+import { getLogData, getXmlData } from '../lib/localStore'
+import { enrichScan, type ScanTags } from '../lib/scanEnrich'
 import SailScanDetail from './SailScanDetail'
 import targetsV14 from '../data/targets-v1.4.json'
 
@@ -33,7 +35,7 @@ interface Sail {
 interface Stripe { pos?: number; camber?: number; draft?: number; twist?: number; entry?: number; exit?: number }
 interface Scan {
   id: string; sail_id?: string | null; captured_at?: string | null; source?: string | null
-  tws_kn?: number | null; stripes?: Stripe[]; conditions?: any
+  tws_kn?: number | null; stripes?: Stripe[]; conditions?: any; photo_url?: string | null
 }
 
 const C = {
@@ -64,6 +66,7 @@ export default function BoatConfigTab({
   const [rigErr, setRigErr] = useState('')
   const [rigPdfUrl, setRigPdfUrl] = useState<string | null>(null) // admin-only signed PDF URL
   const [selectedScan, setSelectedScan] = useState<any>(null) // open scan detail modal
+  const [scanTags, setScanTags] = useState<Record<string, ScanTags>>({}) // scanId → derived tags/averages
 
   const loadSails = () =>
     fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`).then((r) => r.json())
@@ -103,6 +106,32 @@ export default function BoatConfigTab({
       .catch(() => {})
   }, [teamId, boatId])
   useEffect(() => { loadRigTune() }, [loadRigTune])
+
+  // Enrich scans with window averages + event-file tags from the day's local
+  // log/event file (point-of-sail, sail, location, avg TWS/TWA).
+  useEffect(() => {
+    if (view !== 'shapes' || !scans.length) return
+    let alive = true
+    ;(async () => {
+      const dayOf = (s: any) => String(s.conditions?.captured_local || s.captured_at || '').slice(0, 10)
+      const days = Array.from(new Set(scans.map(dayOf).filter(Boolean)))
+      const logByDay: Record<string, any> = {}, xmlByDay: Record<string, any> = {}
+      for (const d of days) {
+        try { logByDay[d] = await getLogData(d) } catch { /* none */ }
+        try { xmlByDay[d] = await getXmlData(d) } catch { /* none */ }
+      }
+      if (!alive) return
+      const map: Record<string, ScanTags> = {}
+      for (const s of scans) {
+        const d = dayOf(s)
+        const ld = logByDay[d]
+        const rows = Array.isArray(ld) ? ld : Array.isArray(ld?.rows) ? ld.rows : []
+        map[s.id] = enrichScan(s, rows, xmlByDay[d])
+      }
+      setScanTags(map)
+    })()
+    return () => { alive = false }
+  }, [view, scans])
 
   // Admin-only: fetch a short-lived signed URL for the stored source PDF.
   useEffect(() => {
@@ -333,36 +362,41 @@ export default function BoatConfigTab({
           {scans.length === 0 && !loading ? (
             <div style={{ color: C.dim, fontSize: 12, marginTop: 8 }}>No scans yet. Import a North report above, or ingest via the API.</div>
           ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
             {scans.map((sc) => {
               const sail = sc.sail_id ? sailById[sc.sail_id] : null
-              const stripes = Array.isArray(sc.stripes) ? sc.stripes : []
+              const tag = scanTags[sc.id]
+              const name = sail?.category || sail?.name || sc.conditions?.sail_code || tag?.activeSails?.[0] || 'unassigned'
+              const cap = sc.captured_at ? new Date(sc.captured_at) : null
+              const pos = tag?.pointOfSail
+              const posColor = pos === 'upwind' ? '#F4B084' : pos === 'downwind' ? '#A8D5BA' : pos === 'reaching' ? '#B4C7E7' : C.border
+              const chip = (t: string, bg = '#0F2A45', col = C.text) => (
+                <span style={{ fontSize: 10, color: col, background: bg, border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px' }}>{t}</span>
+              )
               return (
                 <div key={sc.id} onClick={() => setSelectedScan(sc)} title="Open scan detail"
-                  style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline', marginBottom: stripes.length ? 6 : 0 }}>
-                    <span style={{ fontWeight: 700, color: C.accent, fontSize: 12 }}>{sail?.category || sail?.name || sc.conditions?.sail_code || 'unassigned sail'}</span>
-                    <span style={{ fontSize: 11, color: C.text }}>{fmtDate(sc.captured_at)}</span>
-                    {sc.tws_kn != null && <span style={{ fontSize: 11, color: C.dim }}>{fmt(sc.tws_kn, 0)} kn</span>}
-                    {sc.conditions?.photo_key && <span style={{ fontSize: 10 }}>📷</span>}
-                    {sc.source && <span style={{ fontSize: 10, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '0 5px' }}>{sc.source}</span>}
-                    <button onClick={(e) => { e.stopPropagation(); setSelectedScan(sc) }}
-                      style={{ marginLeft: 'auto', background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 16px', cursor: 'pointer' }}>Details ›</button>
+                  style={{ display: 'flex', gap: 10, alignItems: 'center', border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px', cursor: 'pointer' }}>
+                  {/* thumbnail */}
+                  <div style={{ width: 54, height: 54, flexShrink: 0, borderRadius: 6, overflow: 'hidden', background: '#071624', border: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {sc.photo_url ? <img src={sc.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 18 }}>⛵</span>}
                   </div>
-                  {stripes.length > 0 && (
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead><tr><th style={th}>Pos</th><th style={th}>Camber</th><th style={th}>Draft</th><th style={th}>Twist</th><th style={th}>Entry</th><th style={th}>Exit</th></tr></thead>
-                      <tbody>
-                        {stripes.map((st, i) => (
-                          <tr key={i}>
-                            <td style={td}>{fmt(st.pos, 0)}%</td><td style={td}>{fmt(st.camber)}</td>
-                            <td style={td}>{fmt(st.draft)}</td><td style={td}>{fmt(st.twist)}</td>
-                            <td style={td}>{fmt(st.entry, 0)}</td><td style={td}>{fmt(st.exit, 0)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+                  {/* main */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 700, color: C.accent, fontSize: 13 }}>{name}</span>
+                      {sc.conditions?.sail_type && <span style={{ fontSize: 10, color: sc.conditions.sail_type === 'main' ? '#34D399' : '#FBBF24' }}>{sc.conditions.sail_type}</span>}
+                      {pos && chip(pos, posColor + '33', C.head)}
+                      {tag?.location && chip(`📍 ${tag.location}`)}
+                    </div>
+                    <div style={{ display: 'flex', gap: 12, fontSize: 11, color: C.dim, marginTop: 3, flexWrap: 'wrap' }}>
+                      <span>TWS <b style={{ color: C.text }}>{fmt(tag?.avgTws ?? sc.tws_kn)}</b> kt</span>
+                      <span>TWA <b style={{ color: C.text }}>{tag?.avgTwa != null ? fmt(tag.avgTwa, 0) : '—'}</b>°</span>
+                      <span>{cap ? cap.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
+                      <span>{cap ? cap.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                    </div>
+                  </div>
+                  <button onClick={(e) => { e.stopPropagation(); setSelectedScan(sc) }}
+                    style={{ background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer', flexShrink: 0 }}>Details ›</button>
                 </div>
               )
             })}
@@ -485,6 +519,7 @@ export default function BoatConfigTab({
           teamId={teamId}
           sails={sails}
           canEdit={canEdit}
+          tags={scanTags[selectedScan.id]}
           sailName={(selectedScan.sail_id ? sailById[selectedScan.sail_id]?.name : null) || selectedScan.conditions?.sail_name_in_report}
           onReassign={async (sailId: string | null) => { await patchScanSail(selectedScan.id, sailId); setSelectedScan((p: any) => p ? { ...p, sail_id: sailId } : p) }}
           onDelete={async () => { await deleteScan(selectedScan.id); setSelectedScan(null) }}

@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../lib/supabase/server'
 import { parseSailScanReport, ParsedScan } from '../../../../../lib/sailScanParse'
 import { extractPdfText } from '../../../../../lib/pdfText'
+import { signBunnyUrl, bunnyConfigured } from '../../../../../lib/bunny-signed-url'
 
 export async function GET(
   req: NextRequest,
@@ -41,7 +42,18 @@ export async function GET(
 
   const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ scans: data || [] })
+
+  // Attach a signed thumbnail URL per scan that has a stored photo (one round
+  // trip for the whole list).
+  const scans = (data || []).map((s: any) => {
+    const key = s?.conditions?.photo_key
+    if (key && bunnyConfigured()) {
+      const signed = signBunnyUrl({ path: key, ttlSec: 3600 })
+      if (signed) return { ...s, photo_url: signed.url }
+    }
+    return s
+  })
+  return NextResponse.json({ scans })
 }
 
 // ── POST: ingest a North SailScan report → structured sail_scans row ──────────
