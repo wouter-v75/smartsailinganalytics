@@ -8,6 +8,8 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 import { getBrowserSupabase } from '../lib/supabase/browser';
 import { parseExpeditionLog, isExpeditionRawLog } from '../lib/expLogParse';
+import { parseCsvLog } from '../lib/csvLogParse';
+import { parseXmlEvents } from '../lib/xmlEventParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId } from '../lib/cloud-videos';
@@ -144,21 +146,8 @@ const ROLES = {
   consultant: { label:"Consultant", canImport:false, canSync:false, seeLocal:false,canDelete:false },
 };
 
-function parseNmea(s){
-  if(!s||!s.trim())return{lat:0,lon:0};
-  const p=s.trim().split(/\s+/);
-  if(p.length<2)return{lat:0,lon:0};
-  const cvt=(str,degDigits)=>{
-    if(!str)return 0;
-    const hem=str.slice(-1);
-    const num=str.slice(0,-1);
-    const deg=parseFloat(num.slice(0,degDigits))||0;
-    const min=parseFloat(num.slice(degDigits))||0;
-    const v=deg+min/60;
-    return(hem==="S"||hem==="W")?-v:v;
-  };
-  try{return{lat:cvt(p[0],2),lon:cvt(p[1],3)};}catch{return{lat:0,lon:0};}
-}
+// parseNmea / expToUtc / parseCsvLog moved to src/lib/csvLogParse.js (shared
+// with the N72 backfill CLI).
 
 const TZ_OPTIONS = [
   { label:"UTC+0  (UTC / UK winter / Portugal summer)", offsetMin: 0   },
@@ -222,104 +211,7 @@ function injectMobileCSS(){
   document.head.appendChild(s);
 }
 
-function expToUtc(ds,ts,offsetMin=0){
-  const[d,m,y]=ds.split("/").map(Number);
-  const yr=y>99?y:(y<50?2000+y:1900+y);
-  const[h,mn,sc]=ts.split(":").map(Number);
-  return Date.UTC(yr,m-1,d,h,mn,sc) - offsetMin*60000;
-}
-function parseCsvLog(text,offsetMin=0){
-  const lines=text.replace(/\r/g,"").split("\n").filter(l=>l.trim());
-  if(!lines.length) return {rows:[],startUtc:0,endUtc:0};
-  const rows=[];
-
-  // Expedition writes a header row. Map column NAME → index so the parser
-  // reads by name and survives Expedition reordering or inserting columns.
-  // (The old fixed-index version read TTB_Port/TTB_Stbd from the
-  // TM_LINEP/TM_LINES columns.) The fixed positions below are fallbacks
-  // only — used when a name is absent, e.g. a header-less legacy export.
-  const H={};
-  // Normalise a header for tolerant matching: lowercase, "%" → "pct", then
-  // strip every other non-alphanumeric character. "Vs_targ%", "Vs targ %"
-  // and "VS-Targ%" all collapse to the same key, so the parser keeps working
-  // when Expedition tweaks header punctuation, spacing or casing.
-  const norm=s=>String(s||"").toLowerCase().replace(/%/g,"pct").replace(/[^a-z0-9]/g,"");
-  lines[0].split(",").forEach((name,i)=>{
-    const k=norm(name);
-    if(k&&!(k in H)) H[k]=i;
-  });
-  // Look up a column by one or more candidate header names; the fixed
-  // position is used only when none of the names appear in the header row.
-  const col=(names,fallback)=>{
-    for(const nm of [].concat(names)){const k=norm(nm);if(k in H)return H[k];}
-    return fallback;
-  };
-  const IX={
-    pos:col('pos[dddmm.mm]',0), date:col('dd/mm/yy',1), time:col('hhmmss',2),
-    heel:col('heel',3), bsp:col('boatspeed',4), awa:col('aw_angle',5),
-    twd:col('tw_dirn',10), twa:col('tw_angle',11), tws:col('tw_speed',12), vmg:col('vmg',19),
-    sog:col('ext_sog',20),
-    // Expedition exports the target columns as either "Vs_target"/"Vs_targ"
-    // and "Twa_targ"/"Twa_target" depending on version — accept both.
-    vsTarget:col(['vs_target','vs_targ'],22),    // target boat speed, kn
-    vsTargPct:col(['vs_targ%','vs_target%'],23), // boat speed as % of target
-    twaTarg:col(['twa_targ','twa_target'],24),   // target TWA, deg
-    vsPerf:col('vs_perf',25),       // polar boat speed, kn
-    vsPerfPct:col('vs_perf%',26),   // boat speed as % of polar = "Polar %"
-    dstLine:col('dst_line',29), tmLine:col('tm_line',30),
-    ttbPort:col('ttb_port',31), ttbStbd:col('ttb_stbd',32),
-    ttbPin:col('ttb_pin',52), ttbCB:col('ttb_cb',53),
-    timer1:col('timer-1',55), rudder:col('rudder',56), yawR:col('yawr',41),
-    magvar:col('magvar',74),        // MagVar — magnetic variation, deg (east +)
-  };
-
-  for(let i=1;i<lines.length;i++){
-    const c=lines[i].split(",");
-    if(c.length<27)continue; // need at least up to Vs_perf% (col 26)
-    const n=(ix)=>parseFloat(c[ix])||0;
-    const bsp=n(IX.bsp), tws=n(IX.tws);
-    if(bsp<0.05&&tws<0.3)continue;
-    const ds=c[IX.date]?.trim(), ts=c[IX.time]?.trim();
-    if(!ds?.includes("/")||!ts?.includes(":"))continue;
-    const utc=expToUtc(ds,ts,offsetMin);
-    if(isNaN(utc))continue;
-    const pos=parseNmea(c[IX.pos]);
-
-    // Starting data — null if zero/missing (Expedition outputs 0 when not applicable)
-    const opt=(ix,zeroNull=true)=>{if(ix==null||c.length<=ix)return null;const v=parseFloat(c[ix]);return(isNaN(v)||(zeroNull&&v===0))?null:v;};
-
-    rows.push({
-      utc, lat:pos.lat, lon:pos.lon,
-      heel: n(IX.heel),
-      bsp,
-      awa:  n(IX.awa),   // AW_angle — apparent wind angle directly from log
-      twd:  n(IX.twd),   // TW_Dirn — true wind direction, deg (orients OCS side)
-      twa:  n(IX.twa),
-      tws,
-      sog:  n(IX.sog),
-      vmg:  n(IX.vmg),
-      // Polar/target metrics straight from Expedition — no polar file needed.
-      vsTarget:  opt(IX.vsTarget),    // Vs_target — target boat speed, kn
-      vsTargPct: n(IX.vsTargPct),     // Vs_targ%  — % of target speed
-      twaTarg:   opt(IX.twaTarg),     // TWA_targ  — target true wind angle, deg
-      vsPerf:    opt(IX.vsPerf),      // Vs_perf   — polar boat speed, kn
-      vsPerfPct: n(IX.vsPerfPct),     // Vs_perf%  — % of polar speed ("Polar %")
-      dstLine: opt(IX.dstLine),       // DST_LINE — 0 = not in start zone
-      tmLine:  opt(IX.tmLine),        // TM_LINE  — 0 = not in start zone
-      ttbPort: opt(IX.ttbPort,false), // TTB_Port — keep 0 (perfectly timed start)
-      ttbStbd: opt(IX.ttbStbd,false), // TTB_Stbd — keep 0
-      ttbPin:  opt(IX.ttbPin,false),
-      ttbCB:   opt(IX.ttbCB,false),
-      // Timer-1: 0 = sequence not active yet → null so the event-UTC fallback
-      // is used. Expedition only runs Timer-1 in the ~5 min before the gun.
-      timer1:  opt(IX.timer1,true),
-      rudder:  n(IX.rudder),
-      yawR:    n(IX.yawR),
-      magvar:  n(IX.magvar),    // MagVar — for converting true bearings to magnetic
-    });
-  }
-  return{rows,startUtc:rows[0]?.utc||0,endUtc:rows[rows.length-1]?.utc||0};
-}
+// expToUtc + parseCsvLog moved to src/lib/csvLogParse.js.
 
 // Build a compact cloud copy of a parsed log. A full session log is tens of
 // MB (~65k rows) — over the Supabase upload route's request-size limit, and
@@ -391,109 +283,8 @@ function reduceLogForCloud(logData,xmlData){
   };
 }
 
-function isoUtc(s,offsetMin=0){
-  return new Date(s.trim().replace(" ","T")+"Z").getTime() - offsetMin*60000;
-}
-function parseXmlEvents(text,offsetMin=0){
-  // Strip UTF-8 BOM — must happen before any processing
-  const t = text.charCodeAt(0)===0xFEFF ? text.slice(1) : text;
-
-  // ── Pure text-based parsing — bypasses DOMParser entirely ─────────────────
-  // DOMParser for text/xml is fragile (BOM, undeclared entities, partial parse).
-  // Regex on the raw text is simpler and works on any well-structured XML.
-
-  // Return named attribute value from a tag string, case-insensitive
-  const getAttr=(str,attr)=>{
-    const m=str.match(new RegExp(`\\b${attr}="([^"]*)"`, 'i'));
-    return m?m[1]:'';
-  };
-
-  // Find all opening or self-closing tags named `name` → array of full tag strings
-  const findTags=name=>{
-    const rx=new RegExp(`<${name}\\b[^>]*?/?>`, 'gi');
-    return t.match(rx)||[];
-  };
-
-  // Single val="..." metadata element
-  const getMeta=tag=>{
-    const m=t.match(new RegExp(`<${tag}\\b[^>]*?\\bval="([^"]*)"`, 'i'));
-    return m?m[1]:'';
-  };
-
-  // ── Metadata ───────────────────────────────────────────────────────────────
-  const meta={
-    boat:     getMeta('boat'),
-    location: getMeta('location'),
-    date:     getMeta('date'),
-    dayType:  getMeta('daytypestr'),
-    sailsUsed:getMeta('sailsused').split(';').map(s=>s.trim()).filter(Boolean),
-  };
-
-  // ── Events ─────────────────────────────────────────────────────────────────
-  const sailsUpEvents=[],raceGuns=[];
-  let dayStartUtc=null,dayStopUtc=null;
-  for(const tag of findTags('event')){
-    const utc=isoUtc(`${getAttr(tag,'date')} ${getAttr(tag,'time')}`,offsetMin);
-    const type=getAttr(tag,'type'), attr=getAttr(tag,'attribute');
-    if(type==='SailsUp'){
-      const sails=attr.split(';').map(s=>s.trim()).filter(Boolean);
-      sailsUpEvents.push({utc,sails,label:sails.join(' + ')||'Sails changed'});
-    } else if(type==='RaceStartGun'){
-      raceGuns.push({utc,raceNum:parseInt(attr)||0,label:`Race ${attr||'?'} start`,color:'#EF4444'});
-    } else if(type==='DayStart'){ dayStartUtc=utc; }
-    else if(type==='DayStop'){   dayStopUtc=utc; }
-  }
-
-  // ── Mark roundings ─────────────────────────────────────────────────────────
-  const markRoundings=findTags('markrounding').map(tag=>({
-    utc:    isoUtc(getAttr(tag,'datetime'),offsetMin),
-    isTop:  getAttr(tag,'istopmark')==='true',
-    isValid:getAttr(tag,'isvalid')!=='false',
-    label:  getAttr(tag,'istopmark')==='true'?'Top mark':'Leeward gate',
-    color:  getAttr(tag,'istopmark')==='true'?'#EF4444':'#8B5CF6',
-  }));
-
-  // ── Tack / jibes ───────────────────────────────────────────────────────────
-  const tackJibes=findTags('tackjibe').map(tag=>({
-    utc:    isoUtc(getAttr(tag,'datetime'),offsetMin),
-    isTack: getAttr(tag,'istack')==='true',
-    isValid:getAttr(tag,'isvalidperf')==='true',
-    label:  getAttr(tag,'istack')==='true'?'Tack':'Gybe',
-    color:  getAttr(tag,'istack')==='true'?'#1D9E75':'#7F77DD',
-  }));
-
-  // ── Phases — 30/60s analysis windows with sailing mode ────────────────────
-  // sailingmode: 1=Upwind, 2=Reach, 4=Downwind, 8=Gybing/transitional
-  const phases=[];
-  // findTags matches self-closing <tag/> but phase has children — use a different approach
-  const phaseBlocks=t.match(/<phase\b[^>]*>[\s\S]*?<\/phase>/gi)||[];
-  for(const pb of phaseBlocks){
-    const dt  = getAttr(pb.match(/<startdatetime\b[^>]*/i)?.[0]||'','val');
-    const dur = getAttr(pb.match(/<duration\b[^>]*/i)?.[0]||'','val');
-    const sm  = getAttr(pb.match(/<sailingmode\b[^>]*/i)?.[0]||'','val');
-    if(!dt||!dur||!sm) continue;
-    const utc=isoUtc(dt, offsetMin);
-    if(utc) phases.push({utc, endUtc:utc+parseInt(dur)*1000, mode:parseInt(sm)});
-  }
-
-  const startLinesMap={};
-  for(const tag of findTags('mark')){
-    const mtype=getAttr(tag,'marktype');
-    if(mtype!=='StartBoat'&&mtype!=='StartPin') continue;
-    const name=getAttr(tag,'name');
-    const lat=parseFloat(getAttr(tag,'lat')); const lon=parseFloat(getAttr(tag,'lon'));
-    if(isNaN(lat)||isNaN(lon)) continue;
-    const nm=name.match(/(\d+)$/); const rn=nm?parseInt(nm[1]):0;
-    if(!startLinesMap[rn]) startLinesMap[rn]={};
-    if(mtype==='StartPin')  startLinesMap[rn].pin ={lat,lon,name};
-    if(mtype==='StartBoat') startLinesMap[rn].boat={lat,lon,name};
-  }
-  const startLines=Object.entries(startLinesMap)
-    .map(([rn,{pin,boat}])=>({raceNum:parseInt(rn),pin,boat}))
-    .filter(sl=>sl.pin&&sl.boat);
-
-  return{meta,sailsUpEvents,raceGuns,markRoundings,tackJibes,dayStartUtc,dayStopUtc,startLines,phases};
-}
+// isoUtc + parseXmlEvents moved to src/lib/xmlEventParse.js (shared with the N72
+// backfill CLI).
 
 // ─── POLAR (see src/lib/polarCalc.js) ──────────────────────────────────────
 // (imports moved to top of file)

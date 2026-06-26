@@ -15,7 +15,9 @@ import { parseSailList, sailKindFromType } from '../lib/sailListParse'
 import { extractLargestJpegBlob } from '../lib/pdfImageExtract'
 import { getLogData, getXmlData } from '../lib/localStore'
 import { enrichScan, type ScanTags } from '../lib/scanEnrich'
+import { parseDesignShapes } from '../lib/designShapeParse'
 import SailScanDetail from './SailScanDetail'
+import SailDesignShapes from './SailDesignShapes'
 import targetsV14 from '../data/targets-v1.4.json'
 
 interface Sail {
@@ -31,6 +33,7 @@ interface Sail {
   certificate_key?: string | null
   certificate_name?: string | null
   notes?: string | null
+  specs?: any
 }
 interface Stripe { pos?: number; camber?: number; draft?: number; twist?: number; entry?: number; exit?: number }
 interface Scan {
@@ -68,6 +71,7 @@ export default function BoatConfigTab({
   const [rigPdfUrl, setRigPdfUrl] = useState<string | null>(null) // admin-only signed PDF URL
   const [selectedScan, setSelectedScan] = useState<any>(null) // open scan detail modal
   const [scanTags, setScanTags] = useState<Record<string, ScanTags>>({}) // scanId → derived tags/averages
+  const [designSail, setDesignSail] = useState<any>(null) // open design-shapes popup
   const [scanSort, setScanSort] = useState<'sail' | 'date'>('sail') // default: by sail, then date
   const [scanTwsBand, setScanTwsBand] = useState<string>('') // '' = all, else '10-15' / '25+'
 
@@ -234,6 +238,48 @@ export default function BoatConfigTab({
     if (r.sails) setSails(r.sails); else await refreshSails()
     return { ...r, boatName: parsed.boatName }
   }
+  // Match a design sail code (MN / J1 / J1.5 / J2 / J3) to an inventory sail.
+  const matchDesignSail = (code: string): Sail | null => {
+    if (code === 'MN') return sails.find((s) => s.kind === 'mainsail' || /^(MAIN|MN)\b/i.test(s.category || s.name || '')) || null
+    const target = code.toUpperCase()
+    return sails.find((s) => {
+      const c = (s.category || s.name || '').toUpperCase().replace(/_\d{4}$/, '').trim()
+      return c === target
+    }) || null
+  }
+  // Parse the design CSV and store per-sail shapes in specs.design_shapes.
+  const importDesignShapes = async (file: File) => {
+    const text = await file.text()
+    const parsed = parseDesignShapes(text)
+    if (!parsed.rows.length) throw new Error('No design shapes found in this CSV.')
+    const bySail: Record<string, any[]> = {}
+    for (const r of parsed.rows) (bySail[r.sail] ||= []).push(r)
+
+    let matched = 0
+    const unmatched: string[] = []
+    for (const [code, rows] of Object.entries(bySail)) {
+      const inv = matchDesignSail(code)
+      if (!inv) { unmatched.push(code); continue }
+      // group rows into TWS condition blocks
+      const byCond: Record<string, any> = {}
+      for (const r of rows) {
+        const key = `${r.tws}|${r.pairedJib}`
+        ;(byCond[key] ||= { tws: r.tws, pairedJib: r.pairedJib, conditionName: r.conditionName, sections: [] }).sections.push({
+          posPct: r.posPct, section: r.section, frontPct: r.frontPct, draft: r.draft, camber: r.camber, backPct: r.backPct,
+          leadPct: r.leadPct, trailPct: r.trailPct, leadAngle: r.leadAngle, twist: r.twist, trailAngle: r.trailAngle, sectionAngle: r.sectionAngle,
+        })
+      }
+      const design = { source_file: file.name, units: 'design-fraction', uploaded_at: new Date().toISOString(), conditions: Object.values(byCond) }
+      const r = await fetch(`/api/teams/${teamId}/sails`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: inv.id, specs: { ...(inv.specs || {}), design_shapes: design } }),
+      }).then((x) => x.json())
+      if (r.error) throw new Error(r.error)
+      matched++
+    }
+    await refreshSails()
+    return { matched, unmatched, sails: parsed.sails }
+  }
   const importScan = async (file: File, sailId: string | null, onStatus?: (m: string) => void) => {
     const fd = new FormData()
     fd.append('boat_id', boatId)
@@ -368,6 +414,7 @@ export default function BoatConfigTab({
           {canEdit && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <ImportSailListForm onImport={importSailList} btn={btn} input={input} />
+              <ImportDesignShapesForm onImport={importDesignShapes} btn={btn} input={input} />
               <AddSailForm onAdd={createSail} busy={busy === 'new'} input={input} btn={btn} />
             </div>
           )}
@@ -381,6 +428,7 @@ export default function BoatConfigTab({
                     <th style={th}>Cat</th><th style={th}>Sail name</th><th style={th}>Kind</th>
                     <th style={th}>Sail type</th><th style={th}>Grp</th><th style={th}>Wt (kg)</th>
                     <th style={th}>Build date</th><th style={th}>Status</th><th style={th}>Certificate</th>
+                    <th style={th}>Sailshape design</th>
                     {canEdit && <th style={th}></th>}
                   </tr>
                 </thead>
@@ -388,7 +436,8 @@ export default function BoatConfigTab({
                   {sails.map((s) => (
                     <SailRow key={s.id} sail={s} canEdit={canEdit} busy={busy === s.id}
                       td={td} input={input} btn={btn}
-                      onPatch={(f: any) => patchSail(s.id, f)} onCert={(f: File) => uploadCert(s, f)} onDelete={() => deleteSail(s)} />
+                      onPatch={(f: any) => patchSail(s.id, f)} onCert={(f: File) => uploadCert(s, f)} onDelete={() => deleteSail(s)}
+                      onShowDesign={() => setDesignSail(s)} />
                   ))}
                 </tbody>
               </table>
@@ -596,6 +645,10 @@ export default function BoatConfigTab({
           onDelete={async () => { await deleteScan(selectedScan.id); setSelectedScan(null) }}
           onClose={() => setSelectedScan(null)}
         />
+      )}
+
+      {designSail && (
+        <SailDesignShapes sail={designSail} onClose={() => setDesignSail(null)} />
       )}
     </div>
   )
@@ -923,6 +976,34 @@ function ImportSailListForm({ onImport, btn, input }: any) {
   )
 }
 
+// Import the North "Target sail shapes" design CSV → store per-sail design shapes.
+function ImportDesignShapesForm({ onImport, btn, input }: any) {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const fileRef = React.useRef<HTMLInputElement>(null)
+  const submit = async (file: File) => {
+    setBusy(true); setErr(''); setMsg('')
+    try {
+      const r = await onImport(file)
+      const un = (r?.unmatched || []).length ? ` · no inventory match for ${r.unmatched.join(', ')}` : ''
+      setMsg(`Design shapes stored on ${r?.matched ?? 0} sail${(r?.matched ?? 0) === 1 ? '' : 's'}${un}.`)
+    } catch (e: any) { setErr(e?.message || 'Import failed.') }
+    finally { setBusy(false); if (fileRef.current) fileRef.current.value = '' }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
+      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 700 }}>Import design shapes</span>
+      <span style={{ fontSize: 10, color: '#475569' }}>North target-shapes (.csv) — matched to sails by code (MN/J1/J1.5/J2/J3)</span>
+      <input ref={fileRef} type="file" accept=".csv,text/csv" disabled={busy} style={{ ...input, padding: 4 }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) submit(f) }} />
+      <button onClick={() => fileRef.current?.click()} disabled={busy} style={{ ...btn('#06B6D4'), opacity: busy ? 0.5 : 1 }}>{busy ? 'Importing…' : 'Choose file'}</button>
+      {msg && <span style={{ fontSize: 11, color: '#10B981' }}>{msg}</span>}
+      {err && <span style={{ fontSize: 11, color: '#F59E0B' }}>{err}</span>}
+    </div>
+  )
+}
+
 // Descriptive sail types (matches the Expedition <saillist> sailtype values).
 const SAIL_TYPES = [
   'Mainsail', 'Jib', 'Genoa', 'Genoa Staysail', 'Spinnaker Staysail',
@@ -1043,7 +1124,7 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
 }
 
 // ── One inventory row (view + inline edit) ───────────────────────────────────
-function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete }: any) {
+function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete, onShowDesign }: any) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(sail.name)
   const [category, setCategory] = useState(sail.category || '')
@@ -1055,6 +1136,7 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelet
   const sailType = spec.sail_type || '—'
   const sailGroup = spec.sail_group || '—'
   const weight = spec.weight_kg != null ? fmt(spec.weight_kg, 1) : '—'
+  const nDesign = Array.isArray(spec.design_shapes?.conditions) ? spec.design_shapes.conditions.length : 0
 
   if (editing) {
     return (
@@ -1070,6 +1152,7 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelet
           <button onClick={save} disabled={busy} style={btn('#10B981')}>Save</button>{' '}
           <button onClick={() => setEditing(false)} style={{ ...btn('#334155'), color: '#cbd5e1' }}>Cancel</button>
         </td>
+        <td style={td}></td>
         <td style={td}></td>
       </tr>
     )
@@ -1100,6 +1183,11 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelet
             <input ref={fileRef} type="file" accept=".pdf,image/*" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) onCert(f); e.target.value = '' }} />
           </>
         )}
+      </td>
+      <td style={td}>
+        {nDesign > 0 ? (
+          <button onClick={onShowDesign} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>Details ({nDesign})</button>
+        ) : <span style={{ color: '#64748B' }}>—</span>}
       </td>
       {canEdit && (
         <td style={td}>
