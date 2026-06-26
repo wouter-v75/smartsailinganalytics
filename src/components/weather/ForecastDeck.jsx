@@ -610,25 +610,29 @@ function analyseCourse(field, lat, lon, frameIdx, sideNm = 4) {
   const cosLat = Math.max(0.2, Math.cos(lat * D2R))
   const half = sideNm / 2; const n = 4; const step = half / n   // 9×9 grid
   let L = 0, Lk = 0, R = 0, Rk = 0, T = 0, Tk = 0, B = 0, Bk = 0
-  let Lu = 0, Lv = 0, Ln = 0, Ru = 0, Rv = 0, Rn = 0
+  let Tu = 0, Tv = 0, Tn = 0, Bu = 0, Bv = 0, Bn = 0
   for (let ia = -n; ia <= n; ia++) for (let ic = -n; ic <= n; ic++) {
     const a = ia * step, cc = ic * step          // along (upwind+) / cross (right+) nm
     const dlat = (a * Math.cos(tr) - cc * Math.sin(tr)) / 60
     const dlon = (a * Math.sin(tr) + cc * Math.cos(tr)) / (60 * cosLat)
     const s = sampleField(field, frameIdx, lat + dlat, lon + dlon)
     if (!s || s.kt == null) continue
-    if (cc > 0) { R += s.kt; Rk++; if (s.dirTrue != null) { Ru += Math.sin(s.dirTrue * D2R); Rv += Math.cos(s.dirTrue * D2R); Rn++ } }
-    else if (cc < 0) { L += s.kt; Lk++; if (s.dirTrue != null) { Lu += Math.sin(s.dirTrue * D2R); Lv += Math.cos(s.dirTrue * D2R); Ln++ } }
-    if (a > 0) { T += s.kt; Tk++ } else if (a < 0) { B += s.kt; Bk++ }
+    if (cc > 0) { R += s.kt; Rk++ }
+    else if (cc < 0) { L += s.kt; Lk++ }
+    if (a > 0) { T += s.kt; Tk++; if (s.dirTrue != null) { Tu += Math.sin(s.dirTrue * D2R); Tv += Math.cos(s.dirTrue * D2R); Tn++ } }
+    else if (a < 0) { B += s.kt; Bk++; if (s.dirTrue != null) { Bu += Math.sin(s.dirTrue * D2R); Bv += Math.cos(s.dirTrue * D2R); Bn++ } }
   }
   const r1 = (x) => Math.round(x * 10) / 10
   const out = { twd: Math.round(twd), centreKt: r1(c0.kt), sideNm }
   if (Rk && Lk) out.twsLeftRight = r1(R / Rk - L / Lk)   // + = more wind right
   if (Tk && Bk) out.twsTopBottom = r1(T / Tk - B / Bk)   // + = more wind windward (top)
-  if (Rn && Ln) {
-    const rd = (Math.atan2(Ru / Rn, Rv / Rn) * 180 / Math.PI + 360) % 360
-    const ld = (Math.atan2(Lu / Ln, Lv / Ln) * 180 / Math.PI + 360) % 360
-    const bd = Math.round((((rd - ld + 540) % 360) - 180))   // + = right side more veered
+  // Wind bend looking upwind: compare mean TWD at the TOP (windward) vs BOTTOM
+  // (leeward) of the course. TWD veering up the beat (e.g. 180→220) = right bend;
+  // backing up the beat (e.g. 090→060) = left bend.
+  if (Tn && Bn) {
+    const td = (Math.atan2(Tu / Tn, Tv / Tn) * 180 / Math.PI + 360) % 360 // mean TWD top
+    const bdir = (Math.atan2(Bu / Bn, Bv / Bn) * 180 / Math.PI + 360) % 360 // mean TWD bottom
+    const bd = Math.round((((td - bdir + 540) % 360) - 180))   // + = veers up the course = right
     out.bendDeg = bd
     out.bend = bd > 4 ? 'right' : bd < -4 ? 'left' : 'straight'
   }
