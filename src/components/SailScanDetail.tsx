@@ -123,8 +123,8 @@ const WIND: { key: string; label: string; color: string }[] = [
   { key: 'polarBspPct', label: 'Polar BSP %', color: '#F472B6' },
 ]
 
-export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onDelete, onClose }:
-  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; boatName?: string | null; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
+export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onSaveNotes, onDelete, onClose }:
+  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; boatName?: string | null; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onSaveNotes?: (notes: string) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
   const cond = scan?.conditions || {}
   const stripes: Stripe[] = useMemo(
     () => (Array.isArray(scan?.stripes) ? [...scan.stripes].sort((a: Stripe, b: Stripe) => a.pos - b.pos) : []),
@@ -138,6 +138,14 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const [editing, setEditing] = useState(false)
   const [sailIdSel, setSailIdSel] = useState<string>(scan?.sail_id || '')
   const [busy, setBusy] = useState(false)
+  const [notes, setNotes] = useState<string>(scan?.notes || '')
+  const [notesBusy, setNotesBusy] = useState(false)
+  const [notesMsg, setNotesMsg] = useState('')
+  const saveNotes = async () => {
+    if (!onSaveNotes) return
+    setNotesBusy(true); setNotesMsg('')
+    try { await onSaveNotes(notes); setNotesMsg('Saved') } catch (e: any) { setNotesMsg(e?.message || 'Save failed') } finally { setNotesBusy(false) }
+  }
 
   useEffect(() => {
     let alive = true
@@ -260,6 +268,11 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
       // 2-min averages line (full)
       doc.setFontSize(10); doc.setTextColor(60)
       doc.text(`2-min avg — TWS ${fmt(avgTws)} · TWA ${avgTwa != null ? fmt(avgTwa, 0) : '—'}° · AWS ${fmt(a.aws)} · AWA ${fmt(a.awa, 0)}° · Polar ${fmt(a.polarBspPct, 0)}%`, M, y); y += 7
+      if (notes && notes.trim()) {
+        doc.setFontSize(9); doc.setTextColor(40)
+        const wrapped = doc.splitTextToSize(`Notes: ${notes.trim()}`, PW - 2 * M)
+        need(wrapped.length * 4 + 2); doc.text(wrapped, M, y); y += wrapped.length * 4 + 3
+      }
 
       // shape charts (value vs stripe %)
       const posXs2 = stripes.map((s) => s.pos)
@@ -386,6 +399,29 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* notes */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, marginBottom: 4 }}>Notes</div>
+          {canEdit ? (
+            <>
+              <textarea
+                value={notes}
+                onChange={(e) => { setNotes(e.target.value); setNotesMsg('') }}
+                placeholder="Add notes about this scan…"
+                rows={3}
+                style={{ width: '100%', resize: 'vertical', background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, color: C.head, fontSize: 13, padding: '8px 10px', fontFamily: 'inherit' }}
+              />
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                <button onClick={saveNotes} disabled={notesBusy || notes === (scan?.notes || '')}
+                  style={{ background: C.good, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 14px', cursor: 'pointer', opacity: notesBusy || notes === (scan?.notes || '') ? 0.5 : 1 }}>{notesBusy ? 'Saving…' : 'Save notes'}</button>
+                {notesMsg && <span style={{ fontSize: 11, color: notesMsg === 'Saved' ? C.good : C.warn }}>{notesMsg}</span>}
+              </div>
+            </>
+          ) : (
+            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', fontSize: 13, color: notes ? C.text : C.dim, whiteSpace: 'pre-wrap' }}>{notes || 'No notes.'}</div>
+          )}
         </div>
 
         {/* per-metric charts (value vs stripe %) */}

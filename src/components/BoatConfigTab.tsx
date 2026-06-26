@@ -269,6 +269,14 @@ export default function BoatConfigTab({
     if (r.error) throw new Error(r.error)
     await refreshScans()
   }
+  const patchScanNotes = async (id: string, notes: string) => {
+    const r = await fetch(`/api/teams/${teamId}/sail-scans`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, notes }),
+    }).then((x) => x.json())
+    if (r.error) throw new Error(r.error)
+    await refreshScans()
+  }
   const patchSail = async (id: string, fields: any) => {
     setBusy(id); setErr('')
     try {
@@ -584,6 +592,7 @@ export default function BoatConfigTab({
           tags={scanTags[selectedScan.id]}
           sailName={(selectedScan.sail_id ? sailById[selectedScan.sail_id]?.name : null) || selectedScan.conditions?.sail_name_in_report}
           onReassign={async (sailId: string | null) => { await patchScanSail(selectedScan.id, sailId); setSelectedScan((p: any) => p ? { ...p, sail_id: sailId } : p) }}
+          onSaveNotes={async (notes: string) => { await patchScanNotes(selectedScan.id, notes); setSelectedScan((p: any) => p ? { ...p, notes } : p) }}
           onDelete={async () => { await deleteScan(selectedScan.id); setSelectedScan(null) }}
           onClose={() => setSelectedScan(null)}
         />
