@@ -85,8 +85,8 @@ function imgToDataUrl(url: string): Promise<{ dataUrl: string; w: number; h: num
 }
 
 // ── tiny inline SVG line chart (+ optional grey design overlay) ───────────────
-function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel = '', xMin, xMax }:
-  { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string; xMin?: number; xMax?: number }) {
+function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel = '', xMin, xMax, xTicks }:
+  { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string; xMin?: number; xMax?: number; xTicks?: number[] }) {
   const pad = { l: 30, r: 6, t: 8, b: 16 }
   const inDomain = (x: number) => (xMin == null || x >= xMin) && (xMax == null || x <= xMax)
   const clean = (cxs: number[], cys: (number | null)[]) =>
@@ -109,7 +109,12 @@ function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel
       <text x={2} y={py(ylo) + 3} fontSize={9} fill={C.dim}>{ylo.toFixed(ylo % 1 ? 1 : 0)}</text>
       {ov.length > 0 && <path d={path(ov)} fill="none" stroke={overlay?.color || DESIGN_GREY} strokeWidth={1.3} strokeDasharray="3 2" />}
       <path d={path(valid)} fill="none" stroke={color} strokeWidth={1.6} />
-      {xLabel && <text x={(w + pad.l) / 2} y={h - 3} fontSize={9} fill={C.dim} textAnchor="middle">{xLabel}</text>}
+      {xTicks
+        ? xTicks.map((t) => (
+            <text key={t} x={px(t)} y={h - 3} fontSize={9} fill={C.dim}
+              textAnchor={t === xmin ? 'start' : t === xmax ? 'end' : 'middle'}>{t}</text>
+          ))
+        : xLabel && <text x={(w + pad.l) / 2} y={h - 3} fontSize={9} fill={C.dim} textAnchor="middle">{xLabel}</text>}
     </svg>
   )
 }
@@ -488,7 +493,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             return (
               <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px' }}>
                 <div style={{ fontSize: 11, color: C.head, fontWeight: 700, marginBottom: 2 }}>{m.label}</div>
-                <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay} xMin={0} xMax={100} xLabel="0 · 25 · 50 · 75 · 100" />
+                <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay} xMin={0} xMax={100} xTicks={[0, 25, 50, 75, 100]} />
               </div>
             )
           })}
