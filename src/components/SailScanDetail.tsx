@@ -85,8 +85,8 @@ function imgToDataUrl(url: string): Promise<{ dataUrl: string; w: number; h: num
 }
 
 // ── tiny inline SVG line chart (+ optional grey design overlay) ───────────────
-function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel = '' }:
-  { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string }) {
+function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel = '', xMin, xMax }:
+  { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string; xMin?: number; xMax?: number }) {
   const pad = { l: 30, r: 6, t: 8, b: 16 }
   const clean = (cxs: number[], cys: (number | null)[]) =>
     cys.map((y, i) => ({ x: cxs[i], y })).filter((p) => p.y != null && Number.isFinite(p.y as number)) as { x: number; y: number }[]
@@ -94,7 +94,7 @@ function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel
   const ov = overlay ? clean(overlay.xs, overlay.ys) : []
   const all = [...valid, ...ov]
   if (!all.length) return <div style={{ width: w, height: h, color: C.dim, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>no data</div>
-  const xmin = Math.min(...all.map((p) => p.x)), xmax = Math.max(...all.map((p) => p.x))
+  const xmin = xMin != null ? xMin : Math.min(...all.map((p) => p.x)), xmax = xMax != null ? xMax : Math.max(...all.map((p) => p.x))
   const ymin = Math.min(...all.map((p) => p.y)), ymax = Math.max(...all.map((p) => p.y))
   const ylo = ymin === ymax ? ymin - 1 : ymin, yhi = ymin === ymax ? ymax + 1 : ymax
   const px = (x: number) => pad.l + ((x - xmin) / (xmax - xmin || 1)) * (w - pad.l - pad.r)
@@ -404,7 +404,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             )}
           </div>
 
-          {/* stripe table */}
+          {/* stripe table (measured) + design target directly below it */}
           <div style={{ flex: '1 1 360px', minWidth: 320 }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', background: C.panel, borderRadius: 8 }}>
               <thead>
@@ -420,42 +420,39 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
                 ))}
               </tbody>
             </table>
+
+            {/* design target shapes (interpolated to the measured TWS) */}
+            {design && design.sections.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, margin: '12px 0 4px' }}>
+                  Design target ({design.sourceCode || targetSail?.category || '—'}) @ {fmt(design.tws, 0)} kn · % = fractions ×100
+                  {design.substituted && <span style={{ color: C.warn }}> · {targetSail?.category || 'jib'} outside window → {design.sourceCode}</span>}
+                  {design.clamped && !design.substituted && <span style={{ color: C.warn }}> · clamped {fmt(design.twsMin, 0)}–{fmt(design.twsMax, 0)} kn</span>}
+                  {activeJib && targetSail?.kind === 'mainsail' && <span style={{ color: C.dim }}> · with {activeJib}</span>}
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', background: C.panel, borderRadius: 8 }}>
+                  <thead>
+                    <tr><th style={th}>Stripe</th><th style={th}>Draft</th><th style={th}>Camber</th><th style={th}>Twist</th><th style={th}>Entry</th><th style={th}>Exit</th><th style={th}>Front%</th><th style={th}>Back%</th></tr>
+                  </thead>
+                  <tbody>
+                    {design.sections.map((s: any) => (
+                      <tr key={s.posPct}>
+                        <td style={{ ...td, fontWeight: 700, color: DESIGN_GREY }}>{s.posPct}%</td>
+                        <td style={td}>{fmt(s.draft != null ? s.draft * 100 : null)}</td>
+                        <td style={td}>{fmt(s.camber != null ? s.camber * 100 : null)}</td>
+                        <td style={td}>{fmt(s.twist)}</td>
+                        <td style={td}>{fmt(s.leadAngle, 0)}</td>
+                        <td style={td}>{fmt(s.trailAngle, 0)}</td>
+                        <td style={td}>{fmt(s.frontPct != null ? s.frontPct * 100 : null)}</td>
+                        <td style={td}>{fmt(s.backPct != null ? s.backPct * 100 : null)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
           </div>
         </div>
-
-        {/* design target shapes (interpolated to the measured TWS) */}
-        {design && design.sections.length > 0 && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, marginBottom: 4 }}>
-              Design target ({design.sourceCode || targetSail?.category || '—'}) @ {fmt(design.tws, 0)} kn
-              {design.substituted && <span style={{ color: C.warn }}> · {targetSail?.category || 'scanned jib'} used outside its window → {design.sourceCode} design ({fmt(design.requestedTws, 0)} kn)</span>}
-              {design.clamped && <span style={{ color: C.warn }}> · clamped to {fmt(design.twsMin, 0)}–{fmt(design.twsMax, 0)} kn (requested {fmt(design.requestedTws, 0)})</span>}
-              {activeJib && targetSail?.kind === 'mainsail' && <span style={{ color: C.dim }}> · paired with {activeJib}</span>}
-              <span style={{ color: C.dim }}> · design % = fractions ×100</span>
-            </div>
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', background: C.panel, borderRadius: 8 }}>
-                <thead>
-                  <tr><th style={th}>Stripe</th><th style={th}>Draft</th><th style={th}>Camber</th><th style={th}>Twist</th><th style={th}>Entry</th><th style={th}>Exit</th><th style={th}>Front%</th><th style={th}>Back%</th></tr>
-                </thead>
-                <tbody>
-                  {design.sections.map((s: any) => (
-                    <tr key={s.posPct}>
-                      <td style={{ ...td, fontWeight: 700, color: DESIGN_GREY }}>{s.posPct}%</td>
-                      <td style={td}>{fmt(s.draft != null ? s.draft * 100 : null)}</td>
-                      <td style={td}>{fmt(s.camber != null ? s.camber * 100 : null)}</td>
-                      <td style={td}>{fmt(s.twist)}</td>
-                      <td style={td}>{fmt(s.leadAngle, 0)}</td>
-                      <td style={td}>{fmt(s.trailAngle, 0)}</td>
-                      <td style={td}>{fmt(s.frontPct != null ? s.frontPct * 100 : null)}</td>
-                      <td style={td}>{fmt(s.backPct != null ? s.backPct * 100 : null)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
 
         {/* notes */}
         <div style={{ marginTop: 14 }}>
@@ -490,7 +487,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             return (
               <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px' }}>
                 <div style={{ fontSize: 11, color: C.head, fontWeight: 700, marginBottom: 2 }}>{m.label}</div>
-                <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay} xLabel="0 · 25 · 50 · 75 · 100" />
+                <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay} xMin={0} xMax={100} xLabel="0 · 25 · 50 · 75 · 100" />
               </div>
             )
           })}
