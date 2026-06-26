@@ -43,9 +43,11 @@ export type SailType = 'main' | 'headsail' | null
 
 export interface ParsedScan {
   source: 'north' | 'thesailcloud'
-  format: 'north-app' | 'thesailcloud-relative'
+  format: 'north-app' | 'north-sailscan' | 'thesailcloud-relative'
   sailName: string | null // best-effort sail code/name from the report
   sailType: SailType // main | headsail (jib) — from the sail/image name
+  sailCode: string | null // North "Code:" (e.g. "J1.5 A", "MN A 2026")
+  oeNumber: string | null // North order number "OE#:" (e.g. "ODE17508-002")
   imageName: string | null // full image / capture name — richest identifier
   capturedAt: string | null // ISO 8601 UTC — the report's local stamp converted to UTC
   capturedLocal: string | null // the report's wall-clock stamp as written (no zone)
@@ -56,12 +58,16 @@ export interface ParsedScan {
   twa: number | null
   awa: number | null
   bsp: number | null
+  // measured rig loads at capture (NS Sailscan report only)
+  forestayT: number | null
+  rakeDeg: number | null
+  jibTackT: number | null
   stripes: ParsedStripe[]
   summary: { maxCamberPct: number | null; draftPositionPct: number | null }
 }
 
 export interface ParsedReport {
-  format: 'north-app' | 'thesailcloud-relative' | 'unknown'
+  format: 'north-app' | 'north-sailscan' | 'thesailcloud-relative' | 'unknown'
   scans: ParsedScan[]
 }
 
@@ -187,45 +193,78 @@ export function detectFormat(text: string): ParsedReport['format'] {
   return 'unknown'
 }
 
-// ── New North-app format ─────────────────────────────────────────────────────
-function parseNorthApp(text: string, tz: string): ParsedScan[] {
-  const twsM = text.match(/\bTWS\s+(-?\d+(?:[.,]\d+)?)/i)
-  const sailM = text.match(/\bSail:\s*(\S.*?)\s*(?:Image:|Image\s+Time:|\n|$)/i)
-  const imgM = text.match(/\bImage:\s*(\S+)/i)
-  const timeM = text.match(/Image\s*Time:\s*(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/i)
+// ── North formats (header-aware) ─────────────────────────────────────────────
+// Handles both North inputs going forward:
+//   • NS App input  — "Stripe Draft Camber Entry Exit Front% Back%" (no Twist)
+//   • NS Sailscan   — "Stripe Draft Camber Twist Entry Exit Front% Back%" plus a
+//     Head twist row, an 87% main stripe, and rig loads (TWS/FORESTAY/RAKE/JIB
+//     TACK T) + OE#/Code metadata.
+// The metric column order is read from the header line, so a stripe row's values
+// map to the right fields regardless of whether Twist is present.
 
-  // pos% + 6 numbers: Draft Camber Entry Exit Front% Back%. Mains add an 87% head
-  // stripe on top of 75/50/25.
-  const rowRe =
-    /\b(87|75|50|25)\s*%\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g
+// header token → ParsedStripe field
+const NORTH_COL_FIELD: Record<string, keyof ParsedStripe> = {
+  draft: 'draft', camber: 'camber', twist: 'twist', entry: 'entry', exit: 'exit',
+  front: 'fore', frontpct: 'fore', fore: 'fore', back: 'back', backpct: 'back',
+}
+
+function parseNorthApp(text: string, tz: string): ParsedScan[] {
+  const lines = text.split('\n')
+
+  // Header: "Stripe Draft Camber [Twist] Entry Exit Front% Back%" → field order.
+  let cols: (keyof ParsedStripe)[] = []
+  const headerLine = lines.find((l) => /\bStripe\b\s+Draft\b/i.test(l))
+  if (headerLine) {
+    const toks = headerLine.replace(/.*\bStripe\b\s*/i, '').trim().split(/\s+/)
+    cols = toks.map((t) => NORTH_COL_FIELD[t.toLowerCase().replace(/%/g, 'pct').replace(/[^a-z]/g, '')]).filter(Boolean) as (keyof ParsedStripe)[]
+  }
+  const hasTwist = cols.includes('twist')
+
+  // Stripe rows: pos% then the numeric values, mapped by the header column order.
   const byPos = new Map<number, ParsedStripe>()
-  let m: RegExpExecArray | null
-  while ((m = rowRe.exec(text)) !== null) {
+  const rowRe = /^\s*(87|75|50|25)\s*%\s+(.+)$/
+  for (const line of lines) {
+    const m = line.match(rowRe)
+    if (!m) continue
     const pos = num(m[1])!
-    if (byPos.has(pos)) continue // table can repeat (list + chart)
-    byPos.set(pos, {
-      pos,
-      draft: num(m[2]),
-      camber: num(m[3]),
-      entry: num(m[4]),
-      exit: num(m[5]),
-      fore: num(m[6]),
-      back: num(m[7]),
-      twist: null,
-    })
+    if (byPos.has(pos)) continue
+    const vals = (m[2].match(/-?\d+(?:\.\d+)?/g) || []).map((v) => num(v))
+    const stripe: ParsedStripe = { pos, draft: null, camber: null, twist: null, entry: null, exit: null, fore: null, back: null }
+    const set = stripe as unknown as Record<string, number | null>
+    const order = cols.length ? cols : (['draft', 'camber', 'entry', 'exit', 'fore', 'back'] as (keyof ParsedStripe)[])
+    order.forEach((f, i) => { if (i < vals.length) set[f as string] = vals[i] })
+    byPos.set(pos, stripe)
   }
   const stripes = Array.from(byPos.values()).sort((a, b) => a.pos - b.pos)
   if (!stripes.length) return []
 
+  // Metadata + loads.
+  const twsM = text.match(/\bTWS\s+(-?\d+(?:[.,]\d+)?)/i)
+  const foreM = text.match(/\bFORESTAY\s+(-?\d+(?:[.,]\d+)?)/i)
+  const rakeM = text.match(/\bRAKE\s+(-?\d+(?:[.,]\d+)?)/i)
+  const jibTkM = text.match(/\bJIB\s*TACK\s*T\s+(-?\d+(?:[.,]\d+)?)/i)
+  const sailM = text.match(/\bSail:\s*(\S.*?)\s*(?:Code:|Image:|Image\s+Time:|\n|$)/i)
+  const codeM = text.match(/\bCode:\s*(\S.*?)\s*(?:Image:|\n|$)/i)
+  const oeM = text.match(/\bOE#:\s*(\S+)/i)
+  const imgM = text.match(/\bImage:\s*(\S+)/i)
+  const timeM = text.match(/Image\s*Time:\s*(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/i)
+
   const sailName = sailM ? sailM[1].trim() : null
+  const sailCode = codeM ? codeM[1].trim() : null
   const imageName = imgM ? imgM[1] : null
   const stamp = parseStamp(timeM ? timeM[1] : null, timeM ? timeM[2] : null, tz)
+  // NS Sailscan reports carry the richer metadata (OE#/Code/loads); the simpler
+  // app export does not.
+  const isSailscan = !!(oeM || codeM || foreM || rakeM || hasTwist)
+
   return [
     {
       source: 'north',
-      format: 'north-app',
+      format: isSailscan ? 'north-sailscan' : 'north-app',
       sailName,
-      sailType: classifySailType(sailName) || classifySailType(imageName),
+      sailType: classifySailType(sailName) || classifySailType(sailCode) || classifySailType(imageName),
+      sailCode,
+      oeNumber: oeM ? oeM[1].trim() : null,
       imageName,
       capturedAt: stamp.utc,
       capturedLocal: stamp.local,
@@ -236,6 +275,9 @@ function parseNorthApp(text: string, tz: string): ParsedScan[] {
       twa: null,
       awa: null,
       bsp: null,
+      forestayT: foreM ? num(foreM[1]) : null,
+      rakeDeg: rakeM ? num(rakeM[1]) : null,
+      jibTackT: jibTkM ? num(jibTkM[1]) : null,
       stripes,
       summary: summarise(stripes),
     },
@@ -420,6 +462,8 @@ function parseThesailcloud(text: string, tz: string): ParsedScan[] {
       format: 'thesailcloud-relative',
       sailName,
       sailType: classifySailType(sailName) || classifySailType(fullName),
+      sailCode: null,
+      oeNumber: null,
       imageName: fullName,
       capturedAt: hdr?.utc || null,
       capturedLocal: hdr?.local || null,
@@ -430,6 +474,9 @@ function parseThesailcloud(text: string, tz: string): ParsedScan[] {
       twa: gm?.twa ?? null,
       awa: gm?.awa ?? null,
       bsp: gm?.bsp ?? null,
+      forestayT: null,
+      rakeDeg: null,
+      jibTackT: null,
       stripes,
       summary: summarise(stripes),
     })
@@ -445,5 +492,6 @@ export function parseSailScanReport(rawText: string, opts: ParseOpts = {}): Pars
   let scans: ParsedScan[] = []
   if (format === 'north-app') scans = parseNorthApp(text, tz)
   else if (format === 'thesailcloud-relative') scans = parseThesailcloud(text, tz)
-  return { format, scans }
+  // Report format follows the actual parsed scan (NS App vs NS Sailscan).
+  return { format: (scans[0]?.format as ParsedReport['format']) || format, scans }
 }

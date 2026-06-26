@@ -112,6 +112,8 @@ export async function POST(
     conditions: {
       sail_name_in_report: s.sailName,
       sail_type: s.sailType, // 'main' | 'headsail'
+      sail_code: s.sailCode, // North "Code:" e.g. "J1.5 A"
+      oe_number: s.oeNumber, // North order number
       image_name: s.imageName,
       captured_local: s.capturedLocal, // wall-clock as written (captured_at is UTC)
       tags: s.tags,
@@ -119,6 +121,9 @@ export async function POST(
       event: s.event,
       awa_deg: s.awa,
       bsp_kn: s.bsp,
+      forestay_t: s.forestayT, // measured rig loads at capture (NS Sailscan)
+      rake_deg: s.rakeDeg,
+      jib_tack_t: s.jibTackT,
       report_format: s.format,
     },
     stripes: s.stripes,
