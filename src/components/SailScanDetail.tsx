@@ -14,7 +14,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { getLogData } from '../lib/localStore'
 import { computeScanWindow } from '../lib/scanConditions'
-import { designForScan, designCodeOf } from '../lib/designInterp'
+import { pickDesign, designCodeOf } from '../lib/designInterp'
 
 const DESIGN_GREY = '#94A3B8'
 
@@ -329,7 +329,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const targetSail = useMemo(() => (sails || []).find((s) => s.id === scan?.sail_id) || null, [sails, scan?.sail_id])
   const activeJib = useMemo(() => (tags?.activeSails || []).map(designCodeOf).find((c: any) => c && c !== 'MN') || null, [tags])
   const designTws = win?.averages?.tws ?? tags?.avgTws ?? scan?.tws_kn ?? null
-  const design = useMemo(() => designForScan(targetSail, activeJib, designTws), [targetSail, activeJib, designTws])
+  const design = useMemo(() => pickDesign(sails || [], targetSail, activeJib, designTws), [sails, targetSail, activeJib, designTws])
   const designByPos = useMemo(() => {
     const m: Record<number, any> = {}
     ;(design?.sections || []).forEach((s: any) => { if (s.posPct != null) m[s.posPct] = s })
@@ -427,8 +427,9 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
         {design && design.sections.length > 0 && (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, marginBottom: 4 }}>
-              Design target {targetSail?.category ? `(${targetSail.category})` : ''} @ {fmt(design.tws, 0)} kn
-              {design.clamped && <span style={{ color: C.warn }}> · clamped to design window {fmt(design.twsMin, 0)}–{fmt(design.twsMax, 0)} kn (requested {fmt(design.requestedTws, 0)})</span>}
+              Design target ({design.sourceCode || targetSail?.category || '—'}) @ {fmt(design.tws, 0)} kn
+              {design.substituted && <span style={{ color: C.warn }}> · {targetSail?.category || 'scanned jib'} used outside its window → {design.sourceCode} design ({fmt(design.requestedTws, 0)} kn)</span>}
+              {design.clamped && <span style={{ color: C.warn }}> · clamped to {fmt(design.twsMin, 0)}–{fmt(design.twsMax, 0)} kn (requested {fmt(design.requestedTws, 0)})</span>}
               {activeJib && targetSail?.kind === 'mainsail' && <span style={{ color: C.dim }}> · paired with {activeJib}</span>}
               <span style={{ color: C.dim }}> · design % = fractions ×100</span>
             </div>
@@ -496,7 +497,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
         </div>
         {design && design.sections.length > 0 && (
           <div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>
-            <span style={{ color: DESIGN_GREY }}>— — grey dashed</span> = design target @ {fmt(design.tws, 0)} kn{design.clamped ? ' (clamped)' : ''}
+            <span style={{ color: DESIGN_GREY }}>— — grey dashed</span> = design target {design.sourceCode ? `(${design.sourceCode})` : ''} @ {fmt(design.tws, 0)} kn{design.substituted ? ' · substituted by wind range' : design.clamped ? ' (clamped)' : ''}
           </div>
         )}
 

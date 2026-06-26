@@ -31,6 +31,8 @@ export interface InterpDesign {
   clamped: boolean
   twsMin: number
   twsMax: number
+  sourceCode?: string | null // which sail's design curve was actually used
+  substituted?: boolean // true when a different sail's curve was used (scanned sail out of its TWS window)
 }
 
 const METRIC_KEYS: (keyof DesignSectionVals)[] = [
@@ -98,4 +100,56 @@ export function designForScan(sail: any, activeJib: string | null, targetTws: nu
   if (!design || targetTws == null) return null
   const conds = selectDesignConditions(design, activeJib)
   return interpDesignAtTws(conds, targetTws)
+}
+
+const isMainSail = (sail: any): boolean =>
+  sail?.kind === 'mainsail' || designCodeOf(sail?.category || sail?.name) === 'MN'
+
+// Pick the right JIB design by TWS WINDOW: prefer the scanned jib's own design
+// when the wind falls inside its design window; otherwise use whichever jib is
+// actually designed for that wind (e.g. J1 flown at 20 kn → J3's curve, J1 at
+// 11 kn → J1.5's curve). Beyond all windows, clamp to the lightest/heaviest jib.
+export function designForJib(sails: any[], scanSail: any, targetTws: number | null): InterpDesign | null {
+  if (targetTws == null) return null
+  const cands = (sails || [])
+    .map((s) => {
+      const code = designCodeOf(s?.category || s?.name)
+      const conds = selectDesignConditions(s?.specs?.design_shapes, null)
+      const tw = conds.map((c: any) => c.tws).filter((x: any) => typeof x === 'number')
+      return code && code !== 'MN' && tw.length
+        ? { code, conds, min: Math.min(...tw), max: Math.max(...tw) }
+        : null
+    })
+    .filter(Boolean) as { code: string; conds: any[]; min: number; max: number }[]
+  if (!cands.length) return null
+
+  const scanCode = designCodeOf(scanSail?.category || scanSail?.name)
+  const scanned = cands.find((c) => c.code === scanCode) || null
+
+  // (a) prefer the scanned sail if the wind is within its own design window
+  let chosen = scanned && targetTws >= scanned.min && targetTws <= scanned.max ? scanned : null
+  // (b) else pick the jib whose window covers this wind (heaviest match if overlapping)
+  if (!chosen) {
+    const covering = cands.filter((c) => targetTws >= c.min && targetTws <= c.max)
+    if (covering.length) chosen = covering.sort((a, b) => b.min - a.min)[0]
+  }
+  // beyond every window: clamp to the lightest (light air) or heaviest (heavy air) jib
+  if (!chosen) {
+    const byMin = [...cands].sort((a, b) => a.min - b.min)
+    chosen = targetTws < byMin[0].min ? byMin[0] : byMin[byMin.length - 1]
+  }
+
+  const out = interpDesignAtTws(chosen.conds, targetTws)
+  if (out) {
+    out.sourceCode = chosen.code
+    out.substituted = !!scanCode && chosen.code !== scanCode
+  }
+  return out
+}
+
+// Single entry point used by the scan view: mains interpolate across their own
+// (paired-jib) TWS conditions; jibs pick the design by TWS window across sails.
+export function pickDesign(sails: any[], scanSail: any, activeJib: string | null, targetTws: number | null): InterpDesign | null {
+  if (isMainSail(scanSail)) return designForScan(scanSail, activeJib, targetTws)
+  return designForJib(sails, scanSail, targetTws)
 }
