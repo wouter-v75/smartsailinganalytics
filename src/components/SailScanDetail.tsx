@@ -126,8 +126,10 @@ const WIND: { key: string; label: string; color: string }[] = [
 export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onSaveNotes, onDelete, onClose }:
   { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; boatName?: string | null; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onSaveNotes?: (notes: string) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
   const cond = scan?.conditions || {}
+  // Head at the top (87% / 75% for jibs) down to 25% at the foot — matches the
+  // North report layout.
   const stripes: Stripe[] = useMemo(
-    () => (Array.isArray(scan?.stripes) ? [...scan.stripes].sort((a: Stripe, b: Stripe) => a.pos - b.pos) : []),
+    () => (Array.isArray(scan?.stripes) ? [...scan.stripes].sort((a: Stripe, b: Stripe) => b.pos - a.pos) : []),
     [scan]
   )
   const [photoUrl, setPhotoUrl] = useState<string | null>(null)
