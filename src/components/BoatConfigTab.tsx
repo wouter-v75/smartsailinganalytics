@@ -400,7 +400,7 @@ export default function BoatConfigTab({
       </div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
         {subBtn('inventory', 'Sail inventory')}
-        {subBtn('shapes', 'Sail shapes')}
+        {subBtn('shapes', 'Sail data')}
         {subBtn('rig', 'Rig settings')}
         {subBtn('polar', 'Targets')}
       </div>

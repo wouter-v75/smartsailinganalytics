@@ -88,8 +88,9 @@ function imgToDataUrl(url: string): Promise<{ dataUrl: string; w: number; h: num
 function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel = '', xMin, xMax }:
   { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string; xMin?: number; xMax?: number }) {
   const pad = { l: 30, r: 6, t: 8, b: 16 }
+  const inDomain = (x: number) => (xMin == null || x >= xMin) && (xMax == null || x <= xMax)
   const clean = (cxs: number[], cys: (number | null)[]) =>
-    cys.map((y, i) => ({ x: cxs[i], y })).filter((p) => p.y != null && Number.isFinite(p.y as number)) as { x: number; y: number }[]
+    cys.map((y, i) => ({ x: cxs[i], y })).filter((p) => p.y != null && Number.isFinite(p.y as number) && inDomain(p.x)) as { x: number; y: number }[]
   const valid = clean(xs, ys)
   const ov = overlay ? clean(overlay.xs, overlay.ys) : []
   const all = [...valid, ...ov]
