@@ -95,3 +95,19 @@ export async function PATCH(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ sail: data })
 }
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { teamId: string } }
+) {
+  const supabase = getServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+
+  const id = new URL(req.url).searchParams.get('id')
+  if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
+  // Linked scans keep their data; sail_scans.sail_id is ON DELETE SET NULL.
+  const { error } = await supabase.from('sails').delete().eq('id', id).eq('team_id', params.teamId)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}

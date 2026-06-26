@@ -67,6 +67,8 @@ export default function BoatConfigTab({
   const [rigPdfUrl, setRigPdfUrl] = useState<string | null>(null) // admin-only signed PDF URL
   const [selectedScan, setSelectedScan] = useState<any>(null) // open scan detail modal
   const [scanTags, setScanTags] = useState<Record<string, ScanTags>>({}) // scanId → derived tags/averages
+  const [scanSort, setScanSort] = useState<'sail' | 'date'>('sail') // default: by sail, then date
+  const [scanTwsBand, setScanTwsBand] = useState<string>('') // '' = all, else '10-15' / '25+'
 
   const loadSails = () =>
     fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`).then((r) => r.json())
@@ -276,6 +278,14 @@ export default function BoatConfigTab({
       if (r.error) setErr(r.error); else await refreshSails()
     } finally { setBusy('') }
   }
+  const deleteSail = async (sail: Sail) => {
+    if (!window.confirm(`Delete sail "${sail.name}"? Linked scans stay but become unassigned.`)) return
+    setBusy(sail.id); setErr('')
+    try {
+      const r = await fetch(`/api/teams/${teamId}/sails?id=${sail.id}`, { method: 'DELETE' }).then((x) => x.json())
+      if (r.error) setErr(r.error); else await refreshSails()
+    } finally { setBusy('') }
+  }
   const uploadCert = async (sail: Sail, file: File) => {
     setBusy(sail.id); setErr('')
     try {
@@ -288,6 +298,32 @@ export default function BoatConfigTab({
 
   const sailById = useMemo(() => Object.fromEntries(sails.map((s) => [s.id, s])), [sails])
   const targets: any = polar?.data || null  // { tws, twa, headline, matrices, matrix_meta }
+
+  // ── sail-shapes list: TWS-band filter + sort (by sail / by date) ──
+  const TWS_BANDS = ['0-5', '5-10', '10-15', '15-20', '20-25', '25+']
+  const scanTws = (sc: Scan) => scanTags[sc.id]?.avgTws ?? sc.tws_kn ?? null
+  const bandOf = (v: number | null): string | null => {
+    if (v == null || Number.isNaN(v)) return null
+    if (v >= 25) return '25+'
+    const lo = Math.floor(v / 5) * 5
+    return `${lo}-${lo + 5}`
+  }
+  const scanSailName = (sc: Scan) => {
+    const sail = sc.sail_id ? sailById[sc.sail_id] : null
+    return sail?.category || sail?.name || sc.conditions?.sail_code || scanTags[sc.id]?.activeSails?.[0] || 'unassigned'
+  }
+  const tMs = (sc: Scan) => (sc.captured_at ? new Date(sc.captured_at).getTime() : 0)
+  const displayedScans = useMemo(() => {
+    let list = scans.filter((sc) => !scanTwsBand || bandOf(scanTws(sc)) === scanTwsBand)
+    list = [...list].sort((a, b) => {
+      if (scanSort === 'sail') {
+        const c = scanSailName(a).localeCompare(scanSailName(b))
+        if (c) return c
+      }
+      return tMs(b) - tMs(a) // newest first
+    })
+    return list
+  }, [scans, scanTags, scanTwsBand, scanSort, sailById]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── shared styles ──
   const th: React.CSSProperties = { textAlign: 'left', padding: '6px 8px', color: C.dim, fontWeight: 600, fontSize: 11, borderBottom: `1px solid ${C.border}` }
@@ -343,7 +379,7 @@ export default function BoatConfigTab({
                   {sails.map((s) => (
                     <SailRow key={s.id} sail={s} canEdit={canEdit} busy={busy === s.id}
                       td={td} input={input} btn={btn}
-                      onPatch={(f: any) => patchSail(s.id, f)} onCert={(f: File) => uploadCert(s, f)} />
+                      onPatch={(f: any) => patchSail(s.id, f)} onCert={(f: File) => uploadCert(s, f)} onDelete={() => deleteSail(s)} />
                   ))}
                 </tbody>
               </table>
@@ -362,10 +398,28 @@ export default function BoatConfigTab({
           {scans.length === 0 && !loading ? (
             <div style={{ color: C.dim, fontSize: 12, marginTop: 8 }}>No scans yet. Import a North report above, or ingest via the API.</div>
           ) : (
+          <>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+            <span style={{ fontSize: 11, color: C.dim }}>TWS</span>
+            <select value={scanTwsBand} onChange={(e) => setScanTwsBand(e.target.value)} style={{ ...input, padding: '4px 6px' }}>
+              <option value="">all</option>
+              {TWS_BANDS.map((b) => <option key={b} value={b}>{b} kn</option>)}
+            </select>
+            <span style={{ fontSize: 11, color: C.dim, marginLeft: 6 }}>Sort</span>
+            {(['sail', 'date'] as const).map((s) => (
+              <button key={s} onClick={() => setScanSort(s)} style={{
+                fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', border: 'none',
+                background: scanSort === s ? C.accent : '#0F2A45', color: scanSort === s ? '#001018' : '#94A3B8',
+              }}>{s === 'sail' ? 'By sail · date' : 'By date'}</button>
+            ))}
+            <span style={{ fontSize: 11, color: C.dim, marginLeft: 'auto' }}>{displayedScans.length} of {scans.length}</span>
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
-            {scans.map((sc) => {
+            {displayedScans.map((sc, idx) => {
               const sail = sc.sail_id ? sailById[sc.sail_id] : null
               const tag = scanTags[sc.id]
+              const groupName = scanSailName(sc)
+              const showHeader = scanSort === 'sail' && (idx === 0 || scanSailName(displayedScans[idx - 1]) !== groupName)
               const name = sail?.category || sail?.name || sc.conditions?.sail_code || tag?.activeSails?.[0] || 'unassigned'
               const cap = sc.captured_at ? new Date(sc.captured_at) : null
               const pos = tag?.pointOfSail
@@ -374,7 +428,11 @@ export default function BoatConfigTab({
                 <span style={{ fontSize: 10, color: col, background: bg, border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px' }}>{t}</span>
               )
               return (
-                <div key={sc.id} onClick={() => setSelectedScan(sc)} title="Open scan detail"
+                <React.Fragment key={sc.id}>
+                {showHeader && (
+                  <div style={{ fontSize: 12, fontWeight: 800, color: C.head, margin: '8px 2px 2px' }}>{groupName}</div>
+                )}
+                <div onClick={() => setSelectedScan(sc)} title="Open scan detail"
                   style={{ display: 'flex', gap: 10, alignItems: 'center', border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px', cursor: 'pointer' }}>
                   {/* thumbnail */}
                   <div style={{ width: 54, height: 54, flexShrink: 0, borderRadius: 6, overflow: 'hidden', background: '#071624', border: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -398,9 +456,11 @@ export default function BoatConfigTab({
                   <button onClick={(e) => { e.stopPropagation(); setSelectedScan(sc) }}
                     style={{ background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer', flexShrink: 0 }}>Details ›</button>
                 </div>
+                </React.Fragment>
               )
             })}
           </div>
+          </>
           )}
         </div>
       )}
@@ -972,7 +1032,7 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
 }
 
 // ── One inventory row (view + inline edit) ───────────────────────────────────
-function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert }: any) {
+function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete }: any) {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(sail.name)
   const [category, setCategory] = useState(sail.category || '')
@@ -1030,7 +1090,16 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert }: any) 
           </>
         )}
       </td>
-      {canEdit && <td style={td}><button onClick={() => setEditing(true)} style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', fontSize: 13 }}>✎</button></td>}
+      {canEdit && (
+        <td style={td}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={() => setEditing(true)} disabled={busy}
+              style={{ background: 'none', border: '1px solid #1E3A5A', color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>✎ Edit</button>
+            <button onClick={onDelete} disabled={busy}
+              style={{ background: '#3a1320', border: '1px solid #7f1d1d', color: '#fca5a5', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>🗑</button>
+          </div>
+        </td>
+      )}
     </tr>
   )
 }
