@@ -16,6 +16,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef } from 'react'
+import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
+import { extractLargestJpegBlob } from '../lib/pdfImageExtract'
 
 interface ParsedStripe { pos: number; camber: number | null; draft: number | null; twist: number | null }
 interface ParsedScan {
@@ -79,6 +81,14 @@ export default function SailScanImport({
       const fd = new FormData()
       fd.append('boat_id', boatId)
       fd.append('file', file)
+      try {
+        const blob = await extractLargestJpegBlob(file)
+        if (blob) {
+          const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-${i}-photo.jpg`
+          await uploadBlobToStorage({ key, blob, contentType: 'image/jpeg' })
+          fd.append('photo_key', key)
+        }
+      } catch { /* non-fatal */ }
       try {
         const r = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd }).then((x) => x.json())
         setResults((prev) => prev.map((row) =>

@@ -64,6 +64,7 @@ export async function POST(
   const boatId = (form.get('boat_id') as string) || null
   const sailId = (form.get('sail_id') as string) || null
   const sessionId = (form.get('session_id') as string) || null
+  const photoKey = (form.get('photo_key') as string) || null // sail photo already in Bunny (client-extracted)
   const file = form.get('file') as File | null
   let text = (form.get('text') as string) || ''
   let reportRef: string | null = null
@@ -125,6 +126,7 @@ export async function POST(
       rake_deg: s.rakeDeg,
       jib_tack_t: s.jibTackT,
       report_format: s.format,
+      photo_key: photoKey, // sail photo (Bunny key) for the detail view
     },
     stripes: s.stripes,
     summary: s.summary,

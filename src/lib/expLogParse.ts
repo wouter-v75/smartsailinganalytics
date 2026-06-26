@@ -42,6 +42,13 @@ export interface ExpLogRow {
   cog: number | null
   vmg: number | null // computed: bsp·cos(twa)
   rudder: number | null
+  // for the SailScan 2-min window (best-guess channel names; correct once the
+  // 2026 Northstar 76 log field list is confirmed)
+  polarBspPct: number | null // boat speed as % of polar
+  forestay: number | null // forestay load
+  rake: number | null // mast rake
+  jibTackLoad: number | null // jib tack load
+  cunninghamLoad: number | null // cunningham load
   // requested rig / target / rudder channels
   mastAng: number | null
   mastButt: number | null
@@ -89,6 +96,8 @@ const FIELD_NAMES: Record<keyof Omit<ExpLogRow, 'utc' | 'vmg'>, string> = {
   lat: 'Lat', lon: 'Lon',
   bsp: 'BSP', awa: 'AWA', aws: 'AWS', twa: 'TWA', tws: 'TWS', twd: 'TWD',
   heel: 'Heel', trim: 'Trim', sog: 'SOG', cog: 'COG', rudder: 'Rudder',
+  polarBspPct: 'GunBspPol%', forestay: 'Forestay', rake: 'Rake',
+  jibTackLoad: 'JibTk Pin', cunninghamLoad: 'Cunningham',
   mastAng: 'MastAng', mastButt: 'MastButt', keelAng: 'KeelAng',
   upDflctPct: 'UpDFLCT %', lwDflctPct: 'LwDFCLT %', travPct: 'Trav%', cunnoPct: 'Cunno%',
   fstyPin: 'Fsty Pin', jibTkPin: 'JibTk Pin', dx900Lwy: 'Dx900 Lwy',
@@ -191,6 +200,8 @@ export function parseExpeditionLog(text: string): ParsedExpLog {
       bsp, awa: get('awa'), aws: get('aws'), twa, tws: get('tws'), twd: get('twd'),
       heel: get('heel'), trim: get('trim'), sog: get('sog'), cog: get('cog'),
       vmg, rudder: get('rudder'),
+      polarBspPct: get('polarBspPct'), forestay: get('forestay'), rake: get('rake'),
+      jibTackLoad: get('jibTackLoad'), cunninghamLoad: get('cunninghamLoad'),
       mastAng: get('mastAng'), mastButt: get('mastButt'), keelAng: get('keelAng'),
       upDflctPct: get('upDflctPct'), lwDflctPct: get('lwDflctPct'),
       travPct: get('travPct'), cunnoPct: get('cunnoPct'),

@@ -12,6 +12,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 import { parseSailList, sailKindFromType } from '../lib/sailListParse'
+import { extractLargestJpegBlob } from '../lib/pdfImageExtract'
+import SailScanDetail from './SailScanDetail'
 import targetsV14 from '../data/targets-v1.4.json'
 
 interface Sail {
@@ -31,7 +33,7 @@ interface Sail {
 interface Stripe { pos?: number; camber?: number; draft?: number; twist?: number; entry?: number; exit?: number }
 interface Scan {
   id: string; sail_id?: string | null; captured_at?: string | null; source?: string | null
-  tws_kn?: number | null; stripes?: Stripe[]
+  tws_kn?: number | null; stripes?: Stripe[]; conditions?: any
 }
 
 const C = {
@@ -61,6 +63,7 @@ export default function BoatConfigTab({
   const [rigBusy, setRigBusy] = useState(false)
   const [rigErr, setRigErr] = useState('')
   const [rigPdfUrl, setRigPdfUrl] = useState<string | null>(null) // admin-only signed PDF URL
+  const [selectedScan, setSelectedScan] = useState<any>(null) // open scan detail modal
 
   const loadSails = () =>
     fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`).then((r) => r.json())
@@ -204,6 +207,15 @@ export default function BoatConfigTab({
     fd.append('boat_id', boatId)
     if (sailId) fd.append('sail_id', sailId)
     fd.append('file', file)
+    // Stash the analysed sail photo (largest embedded JPEG) for the detail view.
+    try {
+      const blob = await extractLargestJpegBlob(file)
+      if (blob) {
+        const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-photo.jpg`
+        await uploadBlobToStorage({ key, blob, contentType: 'image/jpeg' })
+        fd.append('photo_key', key)
+      }
+    } catch { /* non-fatal: scan still imports without the photo */ }
     const r = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd }).then((x) => x.json())
     if (r.error) throw new Error(r.error)
     await refreshScans()
@@ -310,12 +322,15 @@ export default function BoatConfigTab({
               const sail = sc.sail_id ? sailById[sc.sail_id] : null
               const stripes = Array.isArray(sc.stripes) ? sc.stripes : []
               return (
-                <div key={sc.id} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
+                <div key={sc.id} onClick={() => setSelectedScan(sc)} title="Open scan detail"
+                  style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', cursor: 'pointer' }}>
                   <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline', marginBottom: stripes.length ? 6 : 0 }}>
-                    <span style={{ fontWeight: 700, color: C.accent, fontSize: 12 }}>{sail?.category || sail?.name || 'unassigned sail'}</span>
+                    <span style={{ fontWeight: 700, color: C.accent, fontSize: 12 }}>{sail?.category || sail?.name || sc.conditions?.sail_code || 'unassigned sail'}</span>
                     <span style={{ fontSize: 11, color: C.text }}>{fmtDate(sc.captured_at)}</span>
                     {sc.tws_kn != null && <span style={{ fontSize: 11, color: C.dim }}>{fmt(sc.tws_kn, 0)} kn</span>}
+                    {sc.conditions?.photo_key && <span style={{ fontSize: 10 }}>📷</span>}
                     {sc.source && <span style={{ fontSize: 10, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '0 5px' }}>{sc.source}</span>}
+                    <span style={{ fontSize: 10, color: C.accent, marginLeft: 'auto' }}>open ›</span>
                   </div>
                   {stripes.length > 0 && (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -445,6 +460,15 @@ export default function BoatConfigTab({
             <MatrixTable targets={targets} mkey={matrixKey} uploadedAt={polar?.created_at} />
           </div>
         )
+      )}
+
+      {selectedScan && (
+        <SailScanDetail
+          scan={selectedScan}
+          teamId={teamId}
+          sailName={(selectedScan.sail_id ? sailById[selectedScan.sail_id]?.name : null) || selectedScan.conditions?.sail_name_in_report}
+          onClose={() => setSelectedScan(null)}
+        />
       )}
     </div>
   )
