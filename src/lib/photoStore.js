@@ -20,6 +20,7 @@ import { uploadJsonToStorage } from './bunny'
 import { getLogData, getXmlData } from './localStore'
 import { upsertPhotoCloud } from './cloud-photos'
 import { getBrowserSupabase } from './supabase/browser'
+import { getActiveMembership } from './active-membership'
 
 const DB_NAME = 'ssa-db'
 const LS_PREFIX = 'ssa:photos-meta:'
@@ -81,6 +82,15 @@ export async function idbGetPhoto(id) {
     const r = tx.objectStore('photos').get(id)
     r.onsuccess = () => res(r.result?.blob || null)
     r.onerror = () => rej(r.error)
+  })
+}
+async function idbDeletePhoto(id) {
+  const db = await openDb()
+  return new Promise((res) => {
+    const tx = db.transaction('photos', 'readwrite')
+    const r = tx.objectStore('photos').delete(id)
+    r.onsuccess = () => res()
+    r.onerror = () => res()
   })
 }
 
@@ -351,6 +361,27 @@ export async function syncPhoto(photo, { force = false } = {}) {
   if (!p.thumbSynced) p = await uploadThumb(p)
   if (!p.originalSynced && (force || connectionIsGood())) p = await uploadOriginal(p)
   return p
+}
+
+// Wipe a whole day and start afresh: delete the cloud rows + Bunny objects (via
+// the photos DELETE endpoint), then clear the local blobs + metadata for that
+// date. Returns the server result. Admin/coach action.
+export async function clearDayCloud(date) {
+  const uid = await currentUid()
+  const m = uid ? getActiveMembership(uid) : null
+  let cloud = null
+  if (m?.team_id && m?.boat_id) {
+    try {
+      cloud = await fetch(`/api/teams/${m.team_id}/boats/${m.boat_id}/photos?date=${date}`, { method: 'DELETE' }).then((r) => r.json())
+    } catch (e) { cloud = { error: String(e && e.message || e) } }
+  } else {
+    cloud = { error: 'no active boat' }
+  }
+  // Local wipe (blobs + per-date metadata).
+  try { for (const p of loadDay(date)) await idbDeletePhoto(p.id) } catch {}
+  try { localStorage.removeItem(lsKey(date)) } catch {}
+  scheduleSaved(date)
+  return cloud
 }
 
 // Flush every not-fully-synced photo across all date buckets. Thumbnails always

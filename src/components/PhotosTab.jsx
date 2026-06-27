@@ -9,7 +9,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { uploadJsonToStorage, fetchFromStorage } from "../lib/bunny";
-import { syncPending as syncPendingPhotos, connectionIsGood } from "../lib/photoStore";
+import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud } from "../lib/photoStore";
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -541,6 +541,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [selected,setSelected] = useState(null);
   const [uploading,setUploading]= useState(false);
   const [syncing,setSyncing]   = useState(false);
+  const [clearingDay,setClearingDay] = useState(false);
   const [syncState,setSyncState] = useState(null); // { phase, current, total, msg }
   const [downloadingOriginal,setDownloadingOriginal] = useState(false);
   // Phase B — counter bumped after an import to auto-trigger a full sync
@@ -1036,6 +1037,27 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
               </button>
             );
           })()}
+
+          {/* ── Admin/Coach: clear this day (cloud + device) and start afresh ── */}
+          {canDelete && activeDate && (
+            <button
+              disabled={clearingDay}
+              onClick={async()=>{
+                if(!confirm(`Permanently delete ALL photos for ${activeDate} from the cloud (Bunny + database) and this device? This cannot be undone.`)) return;
+                setClearingDay(true);
+                try {
+                  const r = await clearDayCloud(activeDate);
+                  setPhotos([]); setSelected(null); setRefreshNonce(n=>n+1);
+                  addLog(r?.error ? `✕ Clear failed: ${r.error}` : `✓ Cleared ${activeDate}: ${r.deletedRows||0} rows · ${r.bunnyDeleted||0} files`);
+                } catch(e){ addLog(`✕ ${e.message||e}`); }
+                finally { setClearingDay(false); }
+              }}
+              style={{ width:"100%", marginBottom:8, background: clearingDay?"#0A1929":"#3a0d0d",
+                color: clearingDay?"#334155":"#F87171", border:"1px solid #7f1d1d",
+                borderRadius:6, padding:"7px 0", fontSize:10, fontWeight:700, cursor: clearingDay?"default":"pointer" }}>
+              {clearingDay ? "⟳ Clearing…" : "🗑 Clear day (cloud + device)"}
+            </button>
+          )}
 
           {/* ── Sync progress readout ── */}
           {syncState && (

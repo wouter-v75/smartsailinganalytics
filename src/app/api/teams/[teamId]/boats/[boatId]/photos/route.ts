@@ -5,6 +5,41 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../../../lib/supabase/server'
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
+import { signBunnyUrl, bunnyConfigured } from '../../../../../../../lib/bunny-signed-url'
+
+// Serve thumbnails over the Bunny CDN (signed) instead of the slow per-request
+// Vercel image proxy — the thumb key is deterministic from the original key.
+function fastThumb(bunnyOriginalPath: string | null): string | null {
+  if (!bunnyOriginalPath || !bunnyConfigured()) return null
+  const thumbKey = bunnyOriginalPath.replace(/\.jpe?g$/i, '_thumb.jpg')
+  const signed = signBunnyUrl({ path: thumbKey, ttlSec: 6 * 3600 })
+  return signed?.url || null
+}
+
+// ── Bunny Storage helpers (for the wipe) ──────────────────────────────────────
+const B_KEY = process.env.BUNNY_STORAGE_API_KEY
+const B_ZONE = process.env.BUNNY_STORAGE_ZONE
+const B_REGION = process.env.BUNNY_STORAGE_REGION || 'de'
+const bBase = () => (B_REGION === 'de' ? 'https://storage.bunnycdn.com' : `https://${B_REGION}.storage.bunnycdn.com`)
+
+// Delete every object under a Bunny Storage prefix (e.g. sessions/<date>/photos/).
+async function deleteBunnyPrefix(prefix: string): Promise<{ deleted: number; errors: number }> {
+  if (!B_KEY || !B_ZONE) return { deleted: 0, errors: 0 }
+  let deleted = 0, errors = 0
+  try {
+    const listRes = await fetch(`${bBase()}/${B_ZONE}/${prefix}`, { headers: { AccessKey: B_KEY } })
+    if (!listRes.ok) return { deleted: 0, errors: listRes.status === 404 ? 0 : 1 }
+    const items = (await listRes.json()) as Array<{ ObjectName: string; IsDirectory: boolean }>
+    for (const it of items) {
+      if (it.IsDirectory) continue
+      try {
+        const d = await fetch(`${bBase()}/${B_ZONE}/${prefix}${it.ObjectName}`, { method: 'DELETE', headers: { AccessKey: B_KEY } })
+        if (d.ok) deleted++; else errors++
+      } catch { errors++ }
+    }
+  } catch { errors++ }
+  return { deleted, errors }
+}
 
 export async function GET(
   req: NextRequest,
@@ -48,7 +83,12 @@ export async function GET(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
-  return NextResponse.json({ photos: data || [] })
+  // Prefer a fast CDN thumbnail URL; keep the stored value as fallback.
+  const photos = (data || []).map((p) => {
+    const cdn = fastThumb(p.bunny_storage_path)
+    return cdn ? { ...p, thumbnail_url: cdn } : p
+  })
+  return NextResponse.json({ photos })
 }
 
 interface PostBody {
@@ -158,4 +198,49 @@ export async function POST(
     await addToQuota(user.id, body.bytes)
   }
   return NextResponse.json({ photo: data, session_id: session.id, action: 'created' })
+}
+
+// ── DELETE: wipe all photos for a date (Supabase rows + Bunny objects) ─────────
+// DELETE /api/teams/<team>/boats/<boat>/photos?date=YYYY-MM-DD
+// Used to clear a day and start afresh. Bunny objects are only removed once the
+// session is resolved through RLS (so the caller is verified to own the date).
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { teamId: string; boatId: string } }
+) {
+  const supabase = getServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+
+  const date = req.nextUrl.searchParams.get('date')
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return NextResponse.json({ error: 'date=YYYY-MM-DD required' }, { status: 400 })
+  }
+
+  // Resolve the session via RLS — null ⇒ no access or nothing there.
+  const { data: ses } = await supabase
+    .from('sessions')
+    .select('id')
+    .eq('team_id', params.teamId)
+    .eq('boat_id', params.boatId)
+    .eq('date', date)
+    .maybeSingle()
+
+  let deletedRows = 0
+  if (ses?.id) {
+    const { data: del, error } = await supabase
+      .from('photos')
+      .delete()
+      .eq('team_id', params.teamId)
+      .eq('boat_id', params.boatId)
+      .eq('session_id', ses.id)
+      .select('id')
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    deletedRows = del?.length || 0
+  }
+
+  // Remove the Bunny objects for that day (only when the session was accessible).
+  const bunny = ses?.id ? await deleteBunnyPrefix(`sessions/${date}/photos/`) : { deleted: 0, errors: 0 }
+
+  return NextResponse.json({ ok: true, date, deletedRows, bunnyDeleted: bunny.deleted, bunnyErrors: bunny.errors, hadSession: !!ses?.id })
 }
