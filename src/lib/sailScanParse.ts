@@ -43,7 +43,7 @@ export type SailType = 'main' | 'headsail' | null
 
 export interface ParsedScan {
   source: 'north' | 'thesailcloud'
-  format: 'north-app' | 'north-sailscan' | 'thesailcloud-relative'
+  format: 'north-app' | 'north-sailscan' | 'north-comparison' | 'thesailcloud-relative'
   sailName: string | null // best-effort sail code/name from the report
   sailType: SailType // main | headsail (jib) — from the sail/image name
   sailCode: string | null // North "Code:" (e.g. "J1.5 A", "MN A 2026")
@@ -67,7 +67,7 @@ export interface ParsedScan {
 }
 
 export interface ParsedReport {
-  format: 'north-app' | 'north-sailscan' | 'thesailcloud-relative' | 'unknown'
+  format: 'north-app' | 'north-sailscan' | 'north-comparison' | 'thesailcloud-relative' | 'unknown'
   scans: ParsedScan[]
 }
 
@@ -184,6 +184,10 @@ function commonPrefixLen(a: string, b: string): number {
 
 // ── Format detection ─────────────────────────────────────────────────────────
 export function detectFormat(text: string): ParsedReport['format'] {
+  // North "Sail Comparison" — two scans side by side; the stripe table merges
+  // both into "LEFT / RIGHT" cells. Check before the single north-app layout
+  // (it shares the "Image Time" / "Stripe Draft Camber" markers).
+  if (/\bSail\s+Comparison\b/i.test(text)) return 'north-comparison'
   if (/SailScan:\s*Onboard\s+Sail/i.test(text) || /thesailcloud/i.test(text) || /Draft\s+Stripes/i.test(text)) {
     return 'thesailcloud-relative'
   }
@@ -281,6 +285,125 @@ function parseNorthApp(text: string, tz: string): ParsedScan[] {
       stripes,
       summary: summarise(stripes),
     },
+  ]
+}
+
+// ── North "Sail Comparison" format ───────────────────────────────────────────
+// Two scans of (usually) the same sail on two tacks/conditions. The stripe table
+// merges both as "LEFT / RIGHT" cells, each value rendered twice by the PDF
+// (e.g. "47.1 / 46.447.1 46.4"). We read the clean slash pair per metric with a
+// PDF (e.g. "47.1 / 46.447.1 46.4"). The render is "L / <R-glued-to-dupL> dupR",
+// so the clean RIGHT value is the *trailing* duplicate token — we capture
+// `L / <glued> R` and take L (leading) and R (trailing). This also fixes glued
+// integers like "15 / 1515 15" (entry/exit) → L 15 │ R 15, not 1515. The loads
+// line carries two values each (TWS 9 12 / FORESTAY 10 10
+// / RAKE 4.25 4.25); the two metadata + comment blocks appear in left→right
+// order. Emits TWO ParsedScans; photos are mapped to scans by the import layer.
+const blankStripe = (pos: number): ParsedStripe => ({ pos, draft: null, camber: null, twist: null, entry: null, exit: null, fore: null, back: null })
+
+function parseSailComparison(text: string, tz: string): ParsedScan[] {
+  const lines = text.split('\n')
+
+  // Metric column order from the header (Twist present in NS Sailscan).
+  let cols: (keyof ParsedStripe)[] = []
+  const headerLine = lines.find((l) => /\bStripe\b\s+Draft\b/i.test(l))
+  if (headerLine) {
+    const toks = headerLine.replace(/.*\bStripe\b\s*/i, '').trim().split(/\s+/)
+    cols = toks.map((t) => NORTH_COL_FIELD[t.toLowerCase().replace(/%/g, 'pct').replace(/[^a-z]/g, '')]).filter(Boolean) as (keyof ParsedStripe)[]
+  }
+  const order = cols.length ? cols : (['draft', 'camber', 'twist', 'entry', 'exit', 'fore', 'back'] as (keyof ParsedStripe)[])
+
+  // Stripe rows → split each "L / R" pair into the two scans, in column order.
+  const leftByPos = new Map<number, ParsedStripe>()
+  const rightByPos = new Map<number, ParsedStripe>()
+  const rowRe = /^\s*(87|75|50|25)\s*%\s+(.+)$/
+  // Each metric renders as "L / <R-glued-to-dupL> dupR" → L = leading clean
+  // token, R = trailing clean duplicate (so glued ints like "1515" don't poison R).
+  const pairRe = /(-?\d+(?:\.\d+)?)\s*\/\s*\S+\s+(-?\d+(?:\.\d+)?)/g
+  for (const line of lines) {
+    const m = line.match(rowRe)
+    if (!m) continue
+    const pos = num(m[1])!
+    if (leftByPos.has(pos)) continue
+    const Ls: (number | null)[] = []
+    const Rs: (number | null)[] = []
+    let mm: RegExpExecArray | null
+    pairRe.lastIndex = 0
+    while ((mm = pairRe.exec(m[2]))) { Ls.push(num(mm[1])); Rs.push(num(mm[2])) }
+    const L = blankStripe(pos)
+    const R = blankStripe(pos)
+    const setL = L as unknown as Record<string, number | null>
+    const setR = R as unknown as Record<string, number | null>
+    order.forEach((f, i) => { if (i < Ls.length) { setL[f as string] = Ls[i]; setR[f as string] = Rs[i] } })
+    leftByPos.set(pos, L)
+    rightByPos.set(pos, R)
+  }
+  const leftStripes = Array.from(leftByPos.values()).sort((a, b) => a.pos - b.pos)
+  const rightStripes = Array.from(rightByPos.values()).sort((a, b) => a.pos - b.pos)
+  if (!leftStripes.length) return []
+
+  // Shared metadata (same sail) + the two image names / capture times in order.
+  const sailM = text.match(/\bSail:\s*(\S.*?)\s*(?:Code:|Image:|Image\s+Time:|\n|$)/i)
+  const codeM = text.match(/\bCode:\s*(\S.*?)\s*(?:Image:|\n|$)/i)
+  const oeM = text.match(/\bOE#:\s*(\S+)/i)
+  const sailName = sailM ? sailM[1].trim() : null
+  const sailCode = codeM ? codeM[1].trim() : null
+  const oeNumber = oeM ? oeM[1].trim() : null
+
+  const imgs = Array.from(text.matchAll(/\bImage:\s*(\S+)/gi)).map((x) => x[1])
+  const times = Array.from(text.matchAll(/Image\s*Time:\s*(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/gi))
+
+  // Loads line: two values each (left, right).
+  const two = (re: RegExp): [number | null, number | null] => {
+    const mt = text.match(re)
+    return mt ? [num(mt[1]), num(mt[2])] : [null, null]
+  }
+  const [twsL, twsR] = two(/\bTWS\s+(-?\d+(?:[.,]\d+)?)\s+(-?\d+(?:[.,]\d+)?)/i)
+  const [foreL, foreR] = two(/\bFORESTAY\s+(-?\d+(?:[.,]\d+)?)\s+(-?\d+(?:[.,]\d+)?)/i)
+  const [rakeL, rakeR] = two(/\bRAKE\s+(-?\d+(?:[.,]\d+)?)\s+(-?\d+(?:[.,]\d+)?)/i)
+
+  // Two comment blocks (left, right), each starting with a "[code]:" marker.
+  let commentBlocks: string[] = []
+  const cIdx = text.search(/\bComments\b/i)
+  if (cIdx >= 0) {
+    const body = text.slice(cIdx + 8).split(/\n\s*Charts\b/i)[0]
+    commentBlocks = body.split(/\n(?=\s*\[)/).map((s) => s.trim()).filter(Boolean)
+  }
+
+  const sailType = classifySailType(sailName) || classifySailType(sailCode) || classifySailType(imgs[0] || null)
+
+  const mkScan = (side: 0 | 1, stripes: ParsedStripe[], tws: number | null, fore: number | null, rake: number | null): ParsedScan => {
+    const tm = times[side]
+    const stamp = parseStamp(tm ? tm[1] : null, tm ? tm[2] : null, tz)
+    const tags = commentBlocks[side] || null
+    return {
+      source: 'north',
+      format: 'north-comparison',
+      sailName,
+      sailType,
+      sailCode,
+      oeNumber,
+      imageName: imgs[side] || null,
+      capturedAt: stamp.utc,
+      capturedLocal: stamp.local,
+      tags,
+      venue: null,
+      event: null,
+      tws: tws ?? twsFromTags(tags),
+      twa: null,
+      awa: null,
+      bsp: null,
+      forestayT: fore,
+      rakeDeg: rake,
+      jibTackT: null,
+      stripes,
+      summary: summarise(stripes),
+    }
+  }
+
+  return [
+    mkScan(0, leftStripes, twsL, foreL, rakeL),
+    mkScan(1, rightStripes, twsR, foreR, rakeR),
   ]
 }
 
@@ -490,7 +613,8 @@ export function parseSailScanReport(rawText: string, opts: ParseOpts = {}): Pars
   const text = (rawText || '').replace(/ /g, ' ') // nbsp → space
   const format = detectFormat(text)
   let scans: ParsedScan[] = []
-  if (format === 'north-app') scans = parseNorthApp(text, tz)
+  if (format === 'north-comparison') scans = parseSailComparison(text, tz)
+  else if (format === 'north-app') scans = parseNorthApp(text, tz)
   else if (format === 'thesailcloud-relative') scans = parseThesailcloud(text, tz)
   // Report format follows the actual parsed scan (NS App vs NS Sailscan).
   return { format: (scans[0]?.format as ParsedReport['format']) || format, scans }

@@ -7,27 +7,41 @@
 // the photo (a small header graphic is the only other JPEG). No pdf.js needed.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Return the byte range of the largest embedded JPEG, or null if none.
-export function extractLargestJpegBytes(data: Uint8Array): Uint8Array | null {
+// All embedded JPEG byte-spans, in document (byte) order. Each span runs SOI…EOI
+// (FF D8 FF … FF D9), with the last EOI before the next SOI taken as the end so an
+// embedded EXIF thumbnail (whose EOI comes first) doesn't truncate the image.
+function jpegSpans(data: Uint8Array): Array<[number, number]> {
   const n = data.length
-  let best: [number, number] | null = null
+  const spans: Array<[number, number]> = []
   for (let i = 0; i + 3 < n; i++) {
     if (data[i] === 0xff && data[i + 1] === 0xd8 && data[i + 2] === 0xff) {
-      // Walk to the end of this JPEG: remember the last EOI before the next SOI
-      // (handles an embedded EXIF thumbnail, whose EOI comes before the real one).
       let end = -1
       let j = i + 2
       for (; j + 1 < n; j++) {
         if (data[j] === 0xff && data[j + 1] === 0xd8 && data[j + 2] === 0xff) break
         if (data[j] === 0xff && data[j + 1] === 0xd9) end = j + 1
       }
-      if (end > i) {
-        if (!best || end - i > best[1] - best[0]) best = [i, end]
-        i = end
-      }
+      if (end > i) { spans.push([i, end]); i = end }
     }
   }
+  return spans
+}
+
+// Return the byte range of the largest embedded JPEG, or null if none.
+export function extractLargestJpegBytes(data: Uint8Array): Uint8Array | null {
+  let best: [number, number] | null = null
+  for (const s of jpegSpans(data)) if (!best || s[1] - s[0] > best[1] - best[0]) best = s
   return best ? data.subarray(best[0], best[1] + 1) : null
+}
+
+// Return every embedded JPEG ≥ minSize, in document (byte) order — used by the
+// Sail Comparison import where one PDF carries the two analysed photos (left,
+// then right). The size floor drops the small NS logo (~64 KB) but keeps the
+// ~700 KB photos. Order = page draw order = left→right scan order.
+export function extractJpegBytesList(data: Uint8Array, minSize = 120000): Uint8Array[] {
+  return jpegSpans(data)
+    .filter(([a, b]) => b - a + 1 >= minSize)
+    .map(([a, b]) => data.subarray(a, b + 1))
 }
 
 // Browser helper: read a File/Blob and return the largest embedded JPEG as a
@@ -38,4 +52,11 @@ export async function extractLargestJpegBlob(file: Blob): Promise<Blob | null> {
   if (!bytes || bytes.length < 2000) return null // ignore tiny logos
   // Copy into a fresh ArrayBuffer so the Blob isn't a view over the whole PDF.
   return new Blob([bytes.slice()], { type: 'image/jpeg' })
+}
+
+// Browser helper: every embedded photo (≥ minSize) as Blobs, in byte order.
+// For a Sail Comparison PDF this is [leftPhoto, rightPhoto].
+export async function extractJpegBlobs(file: Blob, minSize = 120000): Promise<Blob[]> {
+  const buf = new Uint8Array(await file.arrayBuffer())
+  return extractJpegBytesList(buf, minSize).map((bytes) => new Blob([bytes.slice()], { type: 'image/jpeg' }))
 }

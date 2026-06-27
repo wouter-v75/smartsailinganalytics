@@ -12,11 +12,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 import { parseSailList, sailKindFromType } from '../lib/sailListParse'
-import { extractLargestJpegBlob } from '../lib/pdfImageExtract'
+import { extractLargestJpegBlob, extractJpegBlobs } from '../lib/pdfImageExtract'
 import { getLogData, getXmlData } from '../lib/localStore'
 import { enrichScan, type ScanTags } from '../lib/scanEnrich'
 import { parseDesignShapes } from '../lib/designShapeParse'
 import SailScanDetail from './SailScanDetail'
+import SailScanCompare from './SailScanCompare'
 import SailDesignShapes from './SailDesignShapes'
 import targetsV14 from '../data/targets-v1.4.json'
 
@@ -70,6 +71,9 @@ export default function BoatConfigTab({
   const [rigErr, setRigErr] = useState('')
   const [rigPdfUrl, setRigPdfUrl] = useState<string | null>(null) // admin-only signed PDF URL
   const [selectedScan, setSelectedScan] = useState<any>(null) // open scan detail modal
+  const [compareMode, setCompareMode] = useState(false) // multi-select to compare two scans
+  const [cmpIds, setCmpIds] = useState<string[]>([]) // up to 2 selected scan ids
+  const [comparePair, setComparePair] = useState<{ a: any; b: any } | null>(null)
   const [scanTags, setScanTags] = useState<Record<string, ScanTags>>({}) // scanId → derived tags/averages
   const [designSail, setDesignSail] = useState<any>(null) // open design-shapes popup
   const [scanSort, setScanSort] = useState<'sail' | 'date'>('sail') // default: by sail, then date
@@ -285,15 +289,29 @@ export default function BoatConfigTab({
     fd.append('boat_id', boatId)
     if (sailId) fd.append('sail_id', sailId)
     fd.append('file', file)
-    // Stash the analysed sail photo (largest embedded JPEG) for the detail view.
+    // Stash the analysed sail photo(s) for the detail view. A Comparison report
+    // embeds TWO photos (left, right) → upload both and send keys in scan order;
+    // a single report embeds one → the existing single-photo path.
     onStatus?.('Reading data…')
     try {
-      const blob = await extractLargestJpegBlob(file)
-      if (blob) {
-        onStatus?.('Uploading document…')
-        const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-photo.jpg`
-        await uploadBlobToStorage({ key, blob, contentType: 'image/jpeg' })
-        fd.append('photo_key', key)
+      const blobs = await extractJpegBlobs(file) // big photos only, byte order
+      if (blobs.length >= 2) {
+        onStatus?.('Uploading photos…')
+        const keys: string[] = []
+        for (let i = 0; i < blobs.length; i++) {
+          const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-${i}-photo.jpg`
+          await uploadBlobToStorage({ key, blob: blobs[i], contentType: 'image/jpeg' })
+          keys.push(key)
+        }
+        fd.append('photo_keys', JSON.stringify(keys))
+      } else {
+        const blob = await extractLargestJpegBlob(file)
+        if (blob) {
+          onStatus?.('Uploading document…')
+          const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-photo.jpg`
+          await uploadBlobToStorage({ key, blob, contentType: 'image/jpeg' })
+          fd.append('photo_key', key)
+        }
       }
     } catch { /* non-fatal: scan still imports without the photo */ }
     onStatus?.('Importing…')
@@ -470,6 +488,21 @@ export default function BoatConfigTab({
                 background: scanSort === s ? C.accent : '#0F2A45', color: scanSort === s ? '#001018' : '#94A3B8',
               }}>{s === 'sail' ? 'By sail · date' : 'By date'}</button>
             ))}
+            <button onClick={() => { setCompareMode((v) => !v); setCmpIds([]) }} style={{
+              fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', border: 'none', marginLeft: 8,
+              background: compareMode ? '#10B981' : '#0F2A45', color: compareMode ? '#001018' : '#94A3B8',
+            }}>{compareMode ? 'Comparing…' : '⇄ Compare'}</button>
+            {compareMode && (
+              <button
+                disabled={cmpIds.length !== 2}
+                onClick={() => {
+                  const a = scans.find((s) => s.id === cmpIds[0]); const b = scans.find((s) => s.id === cmpIds[1])
+                  if (a && b) setComparePair({ a, b })
+                }}
+                style={{ fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '4px 12px', border: 'none',
+                  cursor: cmpIds.length === 2 ? 'pointer' : 'default', opacity: cmpIds.length === 2 ? 1 : 0.45,
+                  background: C.accent, color: '#001018' }}>Compare {cmpIds.length}/2 ›</button>
+            )}
             <span style={{ fontSize: 11, color: C.dim, marginLeft: 'auto' }}>{displayedScans.length} of {scans.length}</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
@@ -490,8 +523,18 @@ export default function BoatConfigTab({
                 {showHeader && (
                   <div style={{ fontSize: 12, fontWeight: 800, color: C.head, margin: '8px 2px 2px' }}>{groupName}</div>
                 )}
-                <div onClick={() => setSelectedScan(sc)} title="Open scan detail"
-                  style={{ display: 'flex', gap: 10, alignItems: 'center', border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px', cursor: 'pointer' }}>
+                <div
+                  onClick={() => {
+                    if (compareMode) setCmpIds((prev) => prev.includes(sc.id) ? prev.filter((x) => x !== sc.id) : [...prev, sc.id].slice(-2))
+                    else setSelectedScan(sc)
+                  }}
+                  title={compareMode ? 'Select to compare' : 'Open scan detail'}
+                  style={{ display: 'flex', gap: 10, alignItems: 'center', borderRadius: 8, padding: '6px 8px', cursor: 'pointer',
+                    border: `1px solid ${compareMode && cmpIds.includes(sc.id) ? '#10B981' : C.border}`,
+                    boxShadow: compareMode && cmpIds.includes(sc.id) ? '0 0 0 1px #10B981 inset' : 'none' }}>
+                  {compareMode && (
+                    <span style={{ width: 18, height: 18, flexShrink: 0, borderRadius: 4, border: `1px solid ${cmpIds.includes(sc.id) ? '#10B981' : C.border}`, background: cmpIds.includes(sc.id) ? '#10B981' : 'transparent', color: '#001018', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{cmpIds.includes(sc.id) ? '✓' : ''}</span>
+                  )}
                   {/* thumbnail */}
                   <div style={{ width: 54, height: 54, flexShrink: 0, borderRadius: 6, overflow: 'hidden', background: '#071624', border: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {sc.photo_url ? <img src={sc.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 18 }}>⛵</span>}
@@ -511,8 +554,10 @@ export default function BoatConfigTab({
                       <span>{cap ? cap.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                     </div>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); setSelectedScan(sc) }}
-                    style={{ background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer', flexShrink: 0 }}>Details ›</button>
+                  {!compareMode && (
+                    <button onClick={(e) => { e.stopPropagation(); setSelectedScan(sc) }}
+                      style={{ background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer', flexShrink: 0 }}>Details ›</button>
+                  )}
                 </div>
                 </React.Fragment>
               )
@@ -644,6 +689,18 @@ export default function BoatConfigTab({
           onSaveNotes={async (notes: string) => { await patchScanNotes(selectedScan.id, notes); setSelectedScan((p: any) => p ? { ...p, notes } : p) }}
           onDelete={async () => { await deleteScan(selectedScan.id); setSelectedScan(null) }}
           onClose={() => setSelectedScan(null)}
+        />
+      )}
+
+      {comparePair && (
+        <SailScanCompare
+          scanA={comparePair.a}
+          scanB={comparePair.b}
+          sails={sails}
+          tagA={scanTags[comparePair.a.id]}
+          tagB={scanTags[comparePair.b.id]}
+          boatName={boatName}
+          onClose={() => setComparePair(null)}
         />
       )}
 

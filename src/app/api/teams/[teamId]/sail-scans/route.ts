@@ -77,6 +77,10 @@ export async function POST(
   const sailId = (form.get('sail_id') as string) || null
   const sessionId = (form.get('session_id') as string) || null
   const photoKey = (form.get('photo_key') as string) || null // sail photo already in Bunny (client-extracted)
+  // Comparison reports carry one photo per scan, in scan order (left, right).
+  let photoKeys: (string | null)[] | null = null
+  const photoKeysRaw = form.get('photo_keys') as string | null
+  if (photoKeysRaw) { try { const a = JSON.parse(photoKeysRaw); if (Array.isArray(a)) photoKeys = a } catch { /* ignore */ } }
   const file = form.get('file') as File | null
   let text = (form.get('text') as string) || ''
   let reportRef: string | null = null
@@ -111,9 +115,12 @@ export async function POST(
       { status: 422 }
     )
   }
-  const applySailId = parsedScans.length === 1 ? sailId : null
+  // Single scan, or a Comparison report (both scans are the same sail) → apply
+  // the chosen sail to every row. A thesailcloud two-sail overlay is two
+  // *different* sails, so leave those unassigned for per-column tagging.
+  const applySailId = parsedScans.length === 1 || report.format === 'north-comparison' ? sailId : null
 
-  const rows = parsedScans.map((s: ParsedScan) => ({
+  const rows = parsedScans.map((s: ParsedScan, i: number) => ({
     team_id: params.teamId,
     boat_id: boatId,
     sail_id: applySailId,
@@ -138,7 +145,8 @@ export async function POST(
       rake_deg: s.rakeDeg,
       jib_tack_t: s.jibTackT,
       report_format: s.format,
-      photo_key: photoKey, // sail photo (Bunny key) for the detail view
+      // per-scan photo (comparison: photoKeys[i]); else the single shared key
+      photo_key: (photoKeys && photoKeys[i]) || photoKey,
     },
     stripes: s.stripes,
     summary: s.summary,
