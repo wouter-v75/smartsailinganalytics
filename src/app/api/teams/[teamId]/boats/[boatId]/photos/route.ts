@@ -212,6 +212,15 @@ export async function DELETE(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
+  // Gate to Coach+ (coach / team-manager / global admin) — this is destructive.
+  const [{ data: mems }, { data: meRow }] = await Promise.all([
+    supabase.from('memberships').select('role').eq('team_id', params.teamId).eq('user_id', user.id),
+    supabase.from('users').select('global_role').eq('id', user.id).maybeSingle(),
+  ])
+  const COACH_PLUS = new Set(['admin', 'team_manager', 'coach'])
+  const allowed = meRow?.global_role === 'admin' || (mems || []).some((m) => COACH_PLUS.has(m.role))
+  if (!allowed) return NextResponse.json({ error: 'forbidden — Coach or above required' }, { status: 403 })
+
   const date = req.nextUrl.searchParams.get('date')
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'date=YYYY-MM-DD required' }, { status: 400 })
