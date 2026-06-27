@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { uploadJsonToStorage } from './bunny'
+import { getLogData, getXmlData } from './localStore'
 
 const DB_NAME = 'ssa-db'
 const LS_PREFIX = 'ssa:photos-meta:'
@@ -183,6 +184,47 @@ function dateOf(utc) {
 
 const isImage = (f) => f.type?.startsWith('image/') || /\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f.name)
 
+// ── Tagging at import (parity with video auto-tags) ───────────────────────────
+function nearestLogRow(rows, utc, maxMs = 300000) {
+  if (!rows?.length || !utc) return null
+  let lo = 0, hi = rows.length - 1
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (rows[mid].utc < utc) lo = mid + 1; else hi = mid }
+  if (lo > 0 && Math.abs(rows[lo - 1].utc - utc) < Math.abs(rows[lo].utc - utc)) lo--
+  return Math.abs(rows[lo].utc - utc) < maxMs ? rows[lo] : null
+}
+function activeSailsAt(evts, utc) {
+  if (!evts?.length || !utc) return []
+  return evts.filter((s) => s.utc <= utc).sort((a, b) => b.utc - a.utc)[0]?.sails || []
+}
+function raceTagsAt(xml, utc) {
+  if (!xml || !utc) return []
+  const B = 120000, tags = []
+  for (const m of (xml.markRoundings || [])) if (Math.abs(m.utc - utc) <= B) tags.push(m.isTop ? 'topmark' : 'mark')
+  for (const g of (xml.raceGuns || [])) if (Math.abs(g.utc - utc) <= B) tags.push('race-start')
+  for (const tj of (xml.tackJibes || [])) { if (tj.isValid === false) continue; if (Math.abs(tj.utc - utc) <= B) tags.push(tj.isTack ? 'tack' : 'gybe') }
+  return [...new Set(tags)]
+}
+// Mutates `photo` in place: instrument snapshot + sails/race/location tags, and
+// bundles them into `analysis` so the Supabase mirror (upsertPhotoCloud) carries
+// the tags cross-device. Mirrors PhotosTab.enrichPhoto.
+function enrichInto(photo, log, xml) {
+  if (log?.rows?.length && photo.utc) {
+    const row = nearestLogRow(log.rows, photo.utc)
+    if (row) { photo.tws = row.tws; photo.twa = row.twa; photo.awa = row.awa; photo.bsp = row.bsp; photo.heel = row.heel; photo.vmg = row.vmg }
+  }
+  if (xml) {
+    photo.sails = activeSailsAt(xml.sailsUpEvents, photo.utc)
+    photo.raceTags = raceTagsAt(xml, photo.utc)
+    photo.boat = xml.meta?.boat || null
+    photo.location = xml.meta?.location || null
+  }
+  photo.analysis = {
+    sails: photo.sails || [], raceTags: photo.raceTags || [], boat: photo.boat || null, location: photo.location || null,
+    inst: { tws: photo.tws ?? null, twa: photo.twa ?? null, awa: photo.awa ?? null, bsp: photo.bsp ?? null, heel: photo.heel ?? null, vmg: photo.vmg ?? null },
+  }
+  return photo
+}
+
 function dispatchSaved(id, date) {
   try { window.dispatchEvent(new CustomEvent('ssa:photo-saved', { detail: { id, date, source: 'upload' } })) } catch {}
 }
@@ -209,6 +251,12 @@ export async function importFiles(files, { onLog } = {}) {
         thumbnailUrl: null, bunnyPath: null,
         cloudSynced: false, thumbSynced: false, originalSynced: false, addedAt: Date.now(),
       }
+      // Tag from the day's log/event file if it's already local (e.g. imported in
+      // the same Upload session) — so the thumbnail uploads WITH tags.
+      try {
+        const [log, xml] = await Promise.all([getLogData(sessionDate).catch(() => null), getXmlData(sessionDate).catch(() => null)])
+        if (log || xml) enrichInto(photo, log, xml)
+      } catch { /* tags fill in later in the Photos tab */ }
       patchDay(sessionDate, photo)
       out.push(photo)
       onLog?.(`✓ ${file.name.slice(0, 28)} → ${sessionDate}`)

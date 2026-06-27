@@ -17,7 +17,7 @@ import { syncProxyForVideo } from '../lib/video-rendition-sync';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
-import PhotoUploadZone from './PhotoUploadZone';
+import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending as syncPendingPhotos, connectionIsGood as photoConnGood } from '../lib/photoStore';
 import { getActiveMembership } from '../lib/active-membership';
 
 // ── Lazy-loaded tab components ──────────────────────────────────────────────
@@ -1601,6 +1601,7 @@ function UploadTab({role,cloudStatus,onImported}){
   // ── Refs ──────────────────────────────────────────────────────────────────
   const vidRef=useRef(null),csvRef=useRef(null),xmlRef=useRef(null),polarRef=useRef(null);
   const[pendingVids,setPendingVids]=useState([]);
+  const[pendingPhotos,setPendingPhotos]=useState([]);
   const[csvParsed,setCsvParsed]=useState(null);
   const[xmlParsed,setXmlParsed]=useState(null);
   const[csvFile,setCsvFile]=useState(null);
@@ -1658,6 +1659,33 @@ function UploadTab({role,cloudStatus,onImported}){
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[vidTz]);
+
+  // Photos: import (EXIF-date bucketed + tagged from the day's log/event file if
+  // local), upload thumbnail immediately, defer the original to a good (WiFi)
+  // connection. Mirrors the video proxy/original tiering.
+  const handlePhotos=useCallback(async files=>{
+    const photos=await importPhotoFiles(files,{onLog:addLog});
+    if(!photos.length)return;
+    setPendingPhotos(p=>[...p,...photos.map(x=>({id:x.id,name:x.name,size:x.size,sessionDate:x.sessionDate,thumbSynced:false,originalSynced:false,error:null}))]);
+    if(!cloudStatus?.available){addLog("⚠ Cloud unavailable — photos saved locally; will sync later.");return;}
+    for(const ph of photos){
+      try{
+        const u=await syncOnePhoto(ph);
+        setPendingPhotos(p=>p.map(it=>it.id===ph.id?{...it,thumbSynced:u.thumbSynced,originalSynced:u.originalSynced}:it));
+      }catch(e){setPendingPhotos(p=>p.map(it=>it.id===ph.id?{...it,error:e.message}:it));}
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[cloudStatus]);
+
+  // One dropzone for both: route each file to the right handler.
+  const handleMixedDrop=useCallback(fileList=>{
+    const files=Array.from(fileList);
+    const vids=files.filter(f=>f.type.startsWith("video/")||/\.(mp4|mov|mts|avi|mkv|m4v)$/i.test(f.name));
+    const imgs=files.filter(f=>f.type.startsWith("image/")||/\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f.name));
+    if(vids.length)handleVids(vids);
+    if(imgs.length)handlePhotos(imgs);
+    if(!vids.length&&!imgs.length)addLog("✕ No video or photo files found.");
+  },[handleVids,handlePhotos]);
 
   const parseCsvWithTz=useCallback((file,tz)=>{
     if(!file)return;setCsvFile(file);
@@ -2032,15 +2060,24 @@ function UploadTab({role,cloudStatus,onImported}){
 
         {phase==="idle"||phase==="saving"?(
           <>
-            {/* Video drop zone */}
-            <div style={{background:"#0A1929",border:`1px solid ${pendingVids.length?"#06B6D4":"#1E3A5A"}`,borderRadius:12,padding:16}}>
-              <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:11}}>Video files</div>
-              <input ref={vidRef} type="file" accept="video/*,.mov,.mp4,.mts,.avi,.mkv,.m4v" multiple style={{display:"none"}} onChange={e=>handleVids(e.target.files)}/>
-              <div onClick={()=>vidRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);handleVids(e.dataTransfer.files);}} style={{border:`2px dashed ${dragOver?"#06B6D4":"#1E3A5A"}`,borderRadius:8,padding:"24px 16px",textAlign:"center",cursor:"pointer",background:dragOver?"#071E30":"transparent",marginBottom:pendingVids.length?11:0,transition:"all 0.12s"}}>
-                <div style={{fontSize:20,marginBottom:7}}>📹</div>
-                <div style={{fontSize:12,color:"#64748B"}}>Drop videos or click to browse</div>
-                <div style={{fontSize:10,color:"#334155",marginTop:3}}>MP4 · MOV · MTS · AVI · multiple files</div>
+            {/* Combined video + photo drop zone */}
+            <div style={{background:"#0A1929",border:`1px solid ${(pendingVids.length||pendingPhotos.length)?"#06B6D4":"#1E3A5A"}`,borderRadius:12,padding:16}}>
+              <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:11}}>Video &amp; photo files</div>
+              <input ref={vidRef} type="file" accept="video/*,image/*,.mov,.mp4,.mts,.avi,.mkv,.m4v,.heic,.heif" multiple style={{display:"none"}} onChange={e=>handleMixedDrop(e.target.files)}/>
+              <div onClick={()=>vidRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);handleMixedDrop(e.dataTransfer.files);}} style={{border:`2px dashed ${dragOver?"#06B6D4":"#1E3A5A"}`,borderRadius:8,padding:"24px 16px",textAlign:"center",cursor:"pointer",background:dragOver?"#071E30":"transparent",marginBottom:(pendingVids.length||pendingPhotos.length)?11:0,transition:"all 0.12s"}}>
+                <div style={{fontSize:20,marginBottom:7}}>📹 📷</div>
+                <div style={{fontSize:12,color:"#64748B"}}>Drop videos &amp; photos, or click to browse</div>
+                <div style={{fontSize:10,color:"#334155",marginTop:3}}>MP4 · MOV · MTS · JPEG · HEIC — mix freely, multiple files</div>
+                <div style={{fontSize:10,color:photoConnGood()?"#10B981":"#F59E0B",marginTop:4}}>{photoConnGood()?"WiFi — photo originals upload now":"Cellular — photo thumbnails now, originals on WiFi"}</div>
               </div>
+              {pendingPhotos.map(ph=>(
+                <div key={ph.id} style={{display:"flex",alignItems:"center",gap:9,padding:"4px 0",borderBottom:"1px solid #0F2030",fontSize:11}}>
+                  <span style={{fontSize:14,flexShrink:0}}>📷</span>
+                  <div style={{flex:1,minWidth:0}}><div style={{color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ph.name}</div><div style={{fontSize:10,color:"#475569"}}>{fmtSize(ph.size)} · {ph.sessionDate}</div></div>
+                  {ph.error?<span style={{color:"#EF4444",fontSize:10}}>✕ {ph.error.slice(0,16)}</span>
+                    :<span style={{fontSize:10,color:ph.originalSynced?"#10B981":ph.thumbSynced?"#F59E0B":"#475569"}}>{ph.originalSynced?"✓ original":ph.thumbSynced?"thumb ✓ · original ⏳":"…"}</span>}
+                </div>
+              ))}
               {pendingVids.map(v=>(
                 <div key={v.id} style={{display:"flex",alignItems:"center",gap:9,padding:"5px 0",borderBottom:"1px solid #0F2030"}}>
                   <video src={v.url} style={{width:52,height:33,borderRadius:3,objectFit:"cover",background:"#071624",flexShrink:0}} muted preload="metadata" onLoadedMetadata={e=>{
@@ -2057,9 +2094,6 @@ function UploadTab({role,cloudStatus,onImported}){
                 </div>
               ))}
             </div>
-
-            {/* Photo drop zone — thumbnail uploads now, original on WiFi */}
-            <PhotoUploadZone cloudStatus={cloudStatus}/>
 
             {/* CSV + XML with per-source timezone selectors */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
@@ -5019,6 +5053,22 @@ function SSAApp(){
     window.addEventListener("ssa:photo-saved",refresh);
     return ()=>window.removeEventListener("ssa:photo-saved",refresh);
   },[]);
+
+  // Seamless photo sync (like videos): on app open / tab refocus / coming back
+  // online, push any pending photo THUMBNAILS (with their tags) immediately and
+  // full ORIGINALS when on a good (WiFi) connection. No user action required.
+  useEffect(()=>{
+    if(!cloudStatus?.available) return;
+    const flush=()=>{ if(cloudStatus?.available) syncPendingPhotos({}).catch(()=>{}); };
+    flush(); // on open / when cloud becomes available
+    const onVis=()=>{ if(typeof document!=="undefined" && document.visibilityState==="visible") flush(); };
+    if(typeof document!=="undefined") document.addEventListener("visibilitychange",onVis);
+    if(typeof window!=="undefined") window.addEventListener("online",flush);
+    return ()=>{
+      if(typeof document!=="undefined") document.removeEventListener("visibilitychange",onVis);
+      if(typeof window!=="undefined") window.removeEventListener("online",flush);
+    };
+  },[cloudStatus?.available]);
 
   useEffect(()=>{
     async function boot(){
