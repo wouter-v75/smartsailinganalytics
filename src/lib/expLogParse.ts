@@ -114,7 +114,10 @@ export function isExpeditionRawLog(text: string): boolean {
   return /^\s*!Boat\s*,/i.test(head) && /^!boat\s*,/im.test(head)
 }
 
-export function parseExpeditionLog(text: string): ParsedExpLog {
+// `aliases` (optional): per-field normalised channel-label lists from the boat's
+// log profile, applied ON TOP of the built-in FIELD_NAMES — lets a boat whose
+// Expedition setup labels a channel differently resolve without a code change.
+export function parseExpeditionLog(text: string, aliases?: Record<string, string[]>): ParsedExpLog {
   const empty: ParsedExpLog = { rows: [], startUtc: 0, endUtc: 0, version: null, channels: {} }
   const lines = (text || '').replace(/\r/g, '').split('\n')
   if (!lines.length) return empty
@@ -161,6 +164,15 @@ export function parseExpeditionLog(text: string): ParsedExpLog {
     const ch = channels[norm(FIELD_NAMES[f])]
     fieldCh[f] = ch == null ? -1 : ch
   })
+  // Per-boat alias overlay: if the boat profile gives extra label(s) for a field
+  // and one matches a channel, use it (only fills/overrides — defaults untouched).
+  if (aliases) {
+    for (const f of Object.keys(fieldCh) as (keyof typeof FIELD_NAMES)[]) {
+      const al = aliases[f as string]
+      if (!al) continue
+      for (const a of al) { if (a in channels) { fieldCh[f] = channels[a]; break } }
+    }
+  }
   const utcCh = channels['utc']
 
   // ── data rows: carry-forward sparse channel values ──

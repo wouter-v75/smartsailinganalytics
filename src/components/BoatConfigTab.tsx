@@ -18,6 +18,7 @@ import { enrichScan, type ScanTags } from '../lib/scanEnrich'
 import { parseDesignShapes } from '../lib/designShapeParse'
 import SailScanDetail from './SailScanDetail'
 import SailScanCompare from './SailScanCompare'
+import LogProfilePanel from './LogProfilePanel'
 import SailDesignShapes from './SailDesignShapes'
 import targetsV14 from '../data/targets-v1.4.json'
 
@@ -57,7 +58,7 @@ export default function BoatConfigTab({
   const boatName: string | null = config?.boatName || null
   const canEdit = EDIT_ROLES.includes(role || '')
   const isAdmin = role === 'admin'
-  const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar'>('inventory')
+  const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar' | 'log'>('inventory')
   const [sails, setSails] = useState<Sail[]>([])
   const [scans, setScans] = useState<Scan[]>([])
   const [loading, setLoading] = useState(true)
@@ -421,6 +422,7 @@ export default function BoatConfigTab({
         {subBtn('shapes', 'Sail data')}
         {subBtn('rig', 'Rig settings')}
         {subBtn('polar', 'Targets')}
+        {subBtn('log', 'Log profile')}
       </div>
 
       {err && <div style={{ color: C.warn, fontSize: 12, marginBottom: 12 }}>Error: {err}</div>}
@@ -628,6 +630,14 @@ export default function BoatConfigTab({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── LOG PROFILE (per-boat channel aliases) ──────────────────── */}
+      {view === 'log' && (
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.head, marginBottom: 10 }}>Log profile</div>
+          <LogProfilePanel canEdit={canEdit} />
         </div>
       )}
 

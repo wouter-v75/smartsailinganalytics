@@ -7,9 +7,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   buildSpline, evalSpline, goldenMax, preparePolar,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 import { getBrowserSupabase } from '../lib/supabase/browser';
-import { parseExpeditionLog, isExpeditionRawLog } from '../lib/expLogParse';
-import { parseCsvLog } from '../lib/csvLogParse';
-import { parseFlatOleLog, isFlatOleLog } from '../lib/flatLogParse';
+import { parseLog } from '../lib/logParse';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
@@ -1703,22 +1701,17 @@ function UploadTab({role,cloudStatus,onImported}){
     r.onload=e=>{
       try{
         const text=e.target.result;
-        // Two log formats: the 2026 Northstar 76 uses the Expedition *raw* log
-        // (Utc is already UTC, so the tz offset is ignored); older flat-CSV
-        // exports (used by the N72 backfill) still go through parseCsvLog.
-        if(isExpeditionRawLog(text)){
-          const p=parseExpeditionLog(text);setCsvParsed(p);
-          addLog(`✓ Log (raw ${p.version||''}): ${p.rows.length.toLocaleString()} rows · ${file.name} · UTC`);
-        }else if(isFlatOleLog(text)){
-          // Header flat CSV with an OLE-serial Utc + separate Lat/Lon (2026 N76).
-          // Utc is already UTC, so the tz offset is ignored (like the raw log).
-          const p=parseFlatOleLog(text);setCsvParsed(p);
-          addLog(`✓ Log (flat UTC): ${p.rows.length.toLocaleString()} rows · ${file.name} · UTC`);
-        }else{
-          const p=parseCsvLog(text,tz);setCsvParsed(p);
-          const tzLabel=TZ_OPTIONS.find(o=>o.offsetMin===tz)?.label||`UTC+${tz/60}`;
-          addLog(`✓ Log: ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzLabel}`);
-        }
+        // Format is auto-detected from the file (raw / flat-OLE / flat-NMEA);
+        // the active boat's stored log profile (channel-label aliases) is applied
+        // on top. raw + flat-OLE are already UTC → the tz offset only affects the
+        // legacy flat-NMEA CSV.
+        let boatProfile=null;
+        try{ boatProfile=JSON.parse(localStorage.getItem('ssa:log-profile:active')||'null'); }catch{}
+        const p=parseLog(text,{boatProfile,tzOffsetMin:tz});
+        setCsvParsed(p);
+        const fmtLabel=p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':'flat CSV';
+        const tzNote=p.format==='flat-nmea'?(TZ_OPTIONS.find(o=>o.offsetMin===tz)?.label||`UTC+${tz/60}`):'UTC';
+        addLog(`✓ Log (${fmtLabel.trim()}): ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzNote}`);
       }
       catch(err){addLog(`✕ CSV: ${err instanceof Error?err.message:String(err)}`);}
     };

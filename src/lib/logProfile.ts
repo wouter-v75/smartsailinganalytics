@@ -1,0 +1,133 @@
+// src/lib/logProfile.ts
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-boat log profile = the layer that sits ON TOP of content-based format
+// auto-detection. The format (Expedition raw / flat-OLE CSV / flat-NMEA CSV) is
+// still detected from the file itself (robust to a boat changing its export, as
+// the N76 did). What's boat-specific is how that boat's Expedition setup LABELS
+// its channels — so the profile is a per-field alias map that EXTENDS the
+// built-in defaults consolidated here.
+//
+// Storage: boat.specs.log_profile = { aliases?: { <field>: string[] } } (JSONB,
+// no migration — same pattern as sails.specs). Empty/absent = pure defaults.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Normalise a column/channel label for tolerant matching (shared scheme with
+// every parser): lowercase, "%" → "pct", strip all other non-alphanumerics.
+export const normLabel = (s: string): string =>
+  String(s || '').toLowerCase().replace(/%/g, 'pct').replace(/[^a-z0-9]/g, '')
+
+// Our canonical instrument/rig/target fields (union across all log formats).
+export type LogField =
+  | 'lat' | 'lon' | 'bsp' | 'awa' | 'aws' | 'twa' | 'tws' | 'twd'
+  | 'heel' | 'trim' | 'sog' | 'cog' | 'vmg' | 'rudder'
+  | 'polarBspPct' | 'forestay' | 'rake' | 'keelAng'
+  | 'upDflctPct' | 'lwDflctPct' | 'travPct' | 'cunnoPct'
+  | 'jibTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt'
+  | 'leeway' | 'set' | 'drift' | 'hdg'
+  | 'polBsp' | 'targVmg' | 'targTwa' | 'targBsp'
+  | 'targHeel' | 'targFsty' | 'targBsty' | 'targKeel'
+
+// Built-in label aliases per field, consolidated from the raw-log channel names
+// (expLogParse) and the flat-CSV column headers (flatLogParse / csvLogParse).
+// Values are pre-normalised. A boat's override list is PREPENDED to these.
+export const DEFAULT_ALIASES: Record<LogField, string[]> = {
+  lat: ['lat'], lon: ['lon'],
+  bsp: ['bsp', 'boatspeed'],
+  awa: ['awa', 'awangle'],
+  aws: ['aws'],
+  twa: ['twa', 'twangle'],
+  tws: ['tws', 'twspeed'],
+  twd: ['twd', 'twdirn'],
+  heel: ['heel'],
+  trim: ['trim'],
+  sog: ['sog', 'extsog'],
+  cog: ['cog'],
+  vmg: ['vmg'],
+  rudder: ['rudder'],
+  polarBspPct: ['polbsppct', 'polbsp', 'gunbsppolpct', 'vsperfpct'],
+  forestay: ['forestay'],
+  rake: ['rake'],
+  keelAng: ['keelang'],
+  upDflctPct: ['updflctpct', 'updfclctpct'],
+  lwDflctPct: ['lwdflctpct', 'lwdfcltpct'],
+  travPct: ['travpct'],
+  cunnoPct: ['cunnopct'],
+  jibTackLoad: ['jibtkpin', 'jibtackt', 'jibtack'],
+  cunninghamLoad: ['cunningham'],
+  mastAng: ['mastang'],
+  mastButt: ['mastbutt'],
+  leeway: ['leeway', 'dx900lwy'],
+  set: ['set'],
+  drift: ['drift'],
+  hdg: ['hdg'],
+  polBsp: ['polbsp'],
+  targVmg: ['targvmg'],
+  targTwa: ['targtwa'],
+  targBsp: ['targbsp'],
+  targHeel: ['targheel'],
+  targFsty: ['targfsty'],
+  targBsty: ['targbsty'],
+  targKeel: ['targkeel'],
+}
+
+export interface BoatLogProfile {
+  aliases?: Partial<Record<LogField, string[]>>
+  // optional, advisory only — auto-detect still decides the format:
+  expectedFormat?: 'raw' | 'flat-ole' | 'flat-nmea'
+  note?: string | null
+}
+
+// Read a boat's stored log profile (boat.specs.log_profile), tolerant of shape.
+export function getBoatLogProfile(specs: unknown): BoatLogProfile {
+  const p = (specs && typeof specs === 'object' ? (specs as any).log_profile : null) || null
+  return p && typeof p === 'object' ? (p as BoatLogProfile) : {}
+}
+
+// Effective alias map = boat overrides PREPENDED to the defaults (normalised,
+// de-duplicated). Boat aliases win on ambiguity because they come first.
+export function effectiveAliases(profile?: BoatLogProfile | null): Record<LogField, string[]> {
+  const out = {} as Record<LogField, string[]>
+  const over = profile?.aliases || {}
+  for (const f of Object.keys(DEFAULT_ALIASES) as LogField[]) {
+    const boat = (over[f] || []).map(normLabel).filter(Boolean)
+    const merged: string[] = []
+    for (const a of [...boat, ...DEFAULT_ALIASES[f]]) if (!merged.includes(a)) merged.push(a)
+    out[f] = merged
+  }
+  return out
+}
+
+// Resolve a CSV header row (array of raw column names) → { field: columnIndex }.
+// Only fields whose alias matched a column are present. First match wins; a
+// column already claimed by an earlier field is not reused.
+export function resolveHeaderIndices(
+  headerCols: string[],
+  aliases: Record<LogField, string[]>
+): Partial<Record<LogField, number>> {
+  const byLabel = new Map<string, number>()
+  headerCols.forEach((name, i) => { const k = normLabel(name); if (k && !byLabel.has(k)) byLabel.set(k, i) })
+  const used = new Set<number>()
+  const out: Partial<Record<LogField, number>> = {}
+  for (const f of Object.keys(aliases) as LogField[]) {
+    for (const a of aliases[f]) {
+      const idx = byLabel.get(a)
+      if (idx != null && !used.has(idx)) { out[f] = idx; used.add(idx); break }
+    }
+  }
+  return out
+}
+
+// Resolve a raw-log channel map (normalised channel-name → channel number) →
+// { field: channelNumber } using the effective aliases.
+export function resolveChannelMap(
+  channels: Record<string, number>,
+  aliases: Record<LogField, string[]>
+): Partial<Record<LogField, number>> {
+  const out: Partial<Record<LogField, number>> = {}
+  for (const f of Object.keys(aliases) as LogField[]) {
+    for (const a of aliases[f]) {
+      if (a in channels) { out[f] = channels[a]; break }
+    }
+  }
+  return out
+}
