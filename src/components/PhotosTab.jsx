@@ -630,22 +630,24 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         if (!user) return;
         const cloudPhotos = await listPhotosCloud({ userId: user.id, date: activeDate });
         if (!cloudPhotos.length) return;
-        // Build display objects for the cloud-only photos (no local blob → show
-        // the thumbnail URL) and MERGE them into state directly — no refreshNonce
-        // bump (that was the reload loop). Dedupe by the stable thumbnail URL.
-        const seenKeys = new Set(meta.map(p => p.thumbnailUrl || p.bunnyPath || p.url).filter(Boolean));
+        // Merge cloud-only photos directly into state. Dedupe on the STABLE Bunny
+        // original path (bunny_storage_path) — identical on the local photo and
+        // its mirrored cloud row. (The thumbnail URL is now CDN-signed and differs
+        // from the local proxy URL, so it must NOT be used as the dedupe key.)
+        const stableKey = (p) => p.bunnyPath || p.url || null;
+        const seenKeys = new Set(meta.map(stableKey).filter(Boolean));
         const cloudOnly = [];
         for (const cp of cloudPhotos) {
-          const key = cp.thumbnail_url || cp.bunny_storage_path;
+          const key = cp.bunny_storage_path || null;
           if (key && seenKeys.has(key)) continue; // already local, or a duplicate cloud row
           if (key) seenKeys.add(key);
           const shape = toLegacyPhotoShape(cp);
-          cloudOnly.push({ ...shape, objectUrl: shape.thumbnailUrl || (shape.bunnyPath ? cloudImageUrl(shape.bunnyPath) : null), hasLocalOriginal: false });
+          cloudOnly.push({ ...shape, name: 'Photo', cloudSynced: true, objectUrl: shape.thumbnailUrl || (shape.bunnyPath ? cloudImageUrl(shape.bunnyPath) : null), hasLocalOriginal: false });
         }
         if (!cloudOnly.length) return;
         setPhotos(prev => {
-          const have = new Set(prev.map(p => p.thumbnailUrl || p.bunnyPath || p.url).filter(Boolean));
-          const add = cloudOnly.filter(p => !have.has(p.thumbnailUrl || p.bunnyPath || p.url));
+          const have = new Set(prev.map(stableKey).filter(Boolean));
+          const add = cloudOnly.filter(p => { const k = stableKey(p); return k && !have.has(k); });
           if (!add.length) return prev;
           return [...prev, ...add].sort((a, b) => (b.utc || 0) - (a.utc || 0));
         });

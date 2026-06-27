@@ -363,12 +363,19 @@ export async function uploadOriginal(photo) {
 }
 
 // Sync one photo: thumb if missing (always), original if missing (gated unless
-// force). Returns the updated photo.
+// force). Returns the updated photo. An in-flight guard prevents the same photo
+// being mirrored twice concurrently (the import sync + the app-open seamless
+// sync used to race and create DUPLICATE cloud rows).
+const _inflight = new Set()
 export async function syncPhoto(photo, { force = false } = {}) {
-  let p = photo
-  if (!p.thumbSynced) p = await uploadThumb(p)
-  if (!p.originalSynced && (force || connectionIsGood())) p = await uploadOriginal(p)
-  return p
+  if (_inflight.has(photo.id)) return photo
+  _inflight.add(photo.id)
+  try {
+    let p = photo
+    if (!p.thumbSynced) p = await uploadThumb(p)
+    if (!p.originalSynced && (force || connectionIsGood())) p = await uploadOriginal(p)
+    return p
+  } finally { _inflight.delete(photo.id) }
 }
 
 // Wipe a whole day and start afresh: delete the cloud rows + Bunny objects (via
