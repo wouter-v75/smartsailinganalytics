@@ -597,13 +597,17 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   // below re-runs without requiring a page reload. Filter to saves on the
   // currently-viewed date so an unrelated save doesn't churn the list.
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const savedTimerRef = useRef(null);
   useEffect(()=>{
     const onSaved = (e) => {
       const d = e?.detail?.date;
-      if(!d || d === activeDate) setRefreshNonce(n => n + 1);
+      if(d && d !== activeDate) return;
+      // Debounce: a burst of saves (importing many photos) → ONE reload, not N.
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(()=> setRefreshNonce(n => n + 1), 600);
     };
     window.addEventListener('ssa:photo-saved', onSaved);
-    return ()=>window.removeEventListener('ssa:photo-saved', onSaved);
+    return ()=>{ clearTimeout(savedTimerRef.current); window.removeEventListener('ssa:photo-saved', onSaved); };
   },[activeDate]);
 
   // Load metadata from localStorage, blobs from IDB, fill in cloud thumb URLs
@@ -625,20 +629,25 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         if (!user) return;
         const cloudPhotos = await listPhotosCloud({ userId: user.id, date: activeDate });
         if (!cloudPhotos.length) return;
-        const seen = new Set(meta.map(p => p.bunnyPath || p.url).filter(Boolean));
-        const merged = [...meta];
+        // Build display objects for the cloud-only photos (no local blob → show
+        // the thumbnail URL) and MERGE them into state directly — no refreshNonce
+        // bump (that was the reload loop). Dedupe by the stable thumbnail URL.
+        const seenKeys = new Set(meta.map(p => p.thumbnailUrl || p.bunnyPath || p.url).filter(Boolean));
+        const cloudOnly = [];
         for (const cp of cloudPhotos) {
-          const path = cp.bunny_storage_path;
-          if (path && seen.has(path)) continue;
-          merged.push(toLegacyPhotoShape(cp));
+          const key = cp.thumbnail_url || cp.bunny_storage_path;
+          if (key && seenKeys.has(key)) continue; // already local, or a duplicate cloud row
+          if (key) seenKeys.add(key);
+          const shape = toLegacyPhotoShape(cp);
+          cloudOnly.push({ ...shape, objectUrl: shape.thumbnailUrl || (shape.bunnyPath ? cloudImageUrl(shape.bunnyPath) : null), hasLocalOriginal: false });
         }
-        if (merged.length === meta.length) return;
-        // Re-render with merged list. Don't call savePhotos — we don't want
-        // to overwrite localStorage with cloud-only entries (they have no
-        // local blob).
-        meta = merged;
-        // Trigger a re-load by bumping refreshNonce.
-        setRefreshNonce(n => n + 1);
+        if (!cloudOnly.length) return;
+        setPhotos(prev => {
+          const have = new Set(prev.map(p => p.thumbnailUrl || p.bunnyPath || p.url).filter(Boolean));
+          const add = cloudOnly.filter(p => !have.has(p.thumbnailUrl || p.bunnyPath || p.url));
+          if (!add.length) return prev;
+          return [...prev, ...add].sort((a, b) => (b.utc || 0) - (a.utc || 0));
+        });
       } catch { /* non-fatal */ }
     })();
     // For each photo: prefer local blob URL; otherwise fall back to cloud thumb URL.

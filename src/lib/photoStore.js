@@ -18,6 +18,8 @@
 
 import { uploadJsonToStorage } from './bunny'
 import { getLogData, getXmlData } from './localStore'
+import { upsertPhotoCloud } from './cloud-photos'
+import { getBrowserSupabase } from './supabase/browser'
 
 const DB_NAME = 'ssa-db'
 const LS_PREFIX = 'ssa:photos-meta:'
@@ -225,8 +227,38 @@ function enrichInto(photo, log, xml) {
   return photo
 }
 
-function dispatchSaved(id, date) {
-  try { window.dispatchEvent(new CustomEvent('ssa:photo-saved', { detail: { id, date, source: 'upload' } })) } catch {}
+// Coalesced UI-refresh event: one `ssa:photo-saved` per date ~0.8s after the
+// last change in a batch, so importing 64 photos triggers ONE PhotosTab reload,
+// not 64 (which restarted the thumbnail loader endlessly). No `id` in the detail
+// → the parent's per-photo Supabase mirror is skipped (we mirror directly below).
+const _savedTimers = {}
+function scheduleSaved(date) {
+  if (typeof window === 'undefined') return
+  clearTimeout(_savedTimers[date])
+  _savedTimers[date] = setTimeout(() => { try { window.dispatchEvent(new CustomEvent('ssa:photo-saved', { detail: { date, source: 'upload' } })) } catch {} }, 800)
+}
+
+// Cached current user id (for the Supabase mirror).
+let _uidCache // undefined = unknown, null = none, string = id
+async function currentUid() {
+  if (_uidCache !== undefined) return _uidCache
+  try { const s = getBrowserSupabase(); const { data: { user } } = await s.auth.getUser(); _uidCache = user?.id || null } catch { _uidCache = null }
+  return _uidCache
+}
+
+// Mirror a photo's metadata to Supabase directly (deterministic, awaited) so the
+// cloud row exists from thumb time and dedupes on the stable bunnyPath. Carries
+// tags via `analysis`. Returns true on success.
+async function mirror(photo) {
+  try {
+    const uid = await currentUid()
+    if (!uid) return false
+    return await upsertPhotoCloud({
+      userId: uid, sessionDate: photo.sessionDate, takenUtc: photo.utc, exif: photo.exif,
+      thumbnailUrl: photo.thumbnailUrl, bunnyStoragePath: photo.bunnyPath || null,
+      bytes: photo.size, analysis: photo.analysis,
+    })
+  } catch { return false }
 }
 
 // ── Public: import dropped/selected files ─────────────────────────────────────
@@ -244,11 +276,16 @@ export async function importFiles(files, { onLog } = {}) {
       const id = `p_${Date.now()}_${Math.random().toString(36).slice(2)}`
       await idbPutPhoto(id, jpeg)
       const sessionDate = dateOf(exif.utc)
+      const keys = cloudKeys(sessionDate, id)
       const photo = {
         id, name: file.name, size: jpeg.size, utc: exif.utc || null,
         lat: exif.lat || null, lon: exif.lon || null, exif,
         sessionDate, objectUrl: URL.createObjectURL(jpeg),
-        thumbnailUrl: null, bunnyPath: null,
+        // Deterministic Bunny keys from the start so the cloud row always has a
+        // STABLE identity (dedupe key) — even before the thumb/original land.
+        // Without this the mirror wrote null-path rows that PhotosTab could never
+        // dedupe → an infinite "Loading thumbnails" reload loop.
+        thumbnailUrl: cloudImageUrl(keys.thumb), bunnyPath: keys.original,
         cloudSynced: false, thumbSynced: false, originalSynced: false, addedAt: Date.now(),
       }
       // Tag from the day's log/event file if it's already local (e.g. imported in
@@ -283,10 +320,11 @@ export async function uploadThumb(photo) {
   const thumb = await generateThumbnail(blob, 480, 0.78)
   const res = await fetch(`${host}/${zone}/${keys.thumb}`, { method: 'PUT', headers: { AccessKey: accessKey, 'Content-Type': 'image/jpeg' }, body: thumb })
   if (!res.ok && res.status !== 201) throw new Error(`thumb HTTP ${res.status}`)
-  const updated = { ...photo, thumbnailUrl: cloudImageUrl(keys.thumb), thumbSize: thumb.size, thumbSynced: true, cloudSynced: true }
+  const updated = { ...photo, thumbnailUrl: cloudImageUrl(keys.thumb), bunnyPath: keys.original, thumbSize: thumb.size, thumbSynced: true, cloudSynced: true }
   patchDay(updated.sessionDate, updated)
   try { await writeMeta(updated) } catch {}
-  dispatchSaved(updated.id, updated.sessionDate)
+  await mirror(updated) // create/refresh the Supabase row (stable dedupe key)
+  scheduleSaved(updated.sessionDate)
   return updated
 }
 
@@ -301,7 +339,8 @@ export async function uploadOriginal(photo) {
   const updated = { ...photo, bunnyPath: keys.original, originalSize: blob.size, originalSynced: true }
   patchDay(updated.sessionDate, updated)
   try { await writeMeta(updated) } catch {}
-  dispatchSaved(updated.id, updated.sessionDate)
+  await mirror(updated) // updates the same row now the original exists
+  scheduleSaved(updated.sessionDate)
   return updated
 }
 
