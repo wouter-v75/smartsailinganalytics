@@ -128,6 +128,18 @@ export function getSessionsForMembership(membership) {
   );
 }
 
+// Public: record/update the photo count for a date's session (workspace-tagged)
+// so the Photos sidebar surfaces the day immediately after an Upload-tab import,
+// without needing a page refresh.
+export function setPhotoSession(date, photoCount, membership) {
+  if (!date) return
+  upsertSession(date, {
+    photoCount: photoCount || 0,
+    team_id: membership?.team_id || null,
+    boat_id: membership?.boat_id || null,
+  })
+}
+
 function upsertSession(date, patch) {
   const sessions = getSessions();
   const idx = sessions.findIndex(

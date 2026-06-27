@@ -17,7 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { uploadJsonToStorage } from './bunny'
-import { getLogData, getXmlData } from './localStore'
+import { getLogData, getXmlData, setPhotoSession } from './localStore'
 import { upsertPhotoCloud } from './cloud-photos'
 import { getBrowserSupabase } from './supabase/browser'
 import { getActiveMembership } from './active-membership'
@@ -309,6 +309,14 @@ export async function importFiles(files, { onLog } = {}) {
       onLog?.(`✓ ${file.name.slice(0, 28)} → ${sessionDate}`)
     } catch (e) { onLog?.(`✕ ${file.name.slice(0, 20)}: ${e.message}`) }
   }
+  // Register/refresh the per-date photo session so the Photos sidebar shows the
+  // day right away (no page refresh). Tag with the active workspace.
+  try {
+    const uid = await currentUid()
+    const m = uid ? getActiveMembership(uid) : null
+    const dates = Array.from(new Set(out.map((p) => p.sessionDate)))
+    for (const d of dates) setPhotoSession(d, loadDay(d).length, m)
+  } catch { /* non-fatal */ }
   return out
 }
 

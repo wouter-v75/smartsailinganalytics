@@ -1602,6 +1602,8 @@ function UploadTab({role,cloudStatus,onImported}){
   const vidRef=useRef(null),csvRef=useRef(null),xmlRef=useRef(null),polarRef=useRef(null);
   const[pendingVids,setPendingVids]=useState([]);
   const[pendingPhotos,setPendingPhotos]=useState([]);
+  const[photosDone,setPhotosDone]=useState(0);
+  const[photoBusy,setPhotoBusy]=useState(false);
   const[csvParsed,setCsvParsed]=useState(null);
   const[xmlParsed,setXmlParsed]=useState(null);
   const[csvFile,setCsvFile]=useState(null);
@@ -1664,16 +1666,23 @@ function UploadTab({role,cloudStatus,onImported}){
   // local), upload thumbnail immediately, defer the original to a good (WiFi)
   // connection. Mirrors the video proxy/original tiering.
   const handlePhotos=useCallback(async files=>{
+    setPhotoBusy(true);
     const photos=await importPhotoFiles(files,{onLog:addLog});
-    if(!photos.length)return;
+    if(!photos.length){setPhotoBusy(false);return;}
     setPendingPhotos(p=>[...p,...photos.map(x=>({id:x.id,name:x.name,size:x.size,sessionDate:x.sessionDate,thumbSynced:false,originalSynced:false,error:null}))]);
-    if(!cloudStatus?.available){addLog("⚠ Cloud unavailable — photos saved locally; will sync later.");return;}
+    if(!cloudStatus?.available){addLog("⚠ Cloud unavailable — photos saved locally; will sync later.");setPhotoBusy(false);return;}
+    let ok=0;
     for(const ph of photos){
       try{
         const u=await syncOnePhoto(ph);
+        if(u.thumbSynced) ok++;
         setPendingPhotos(p=>p.map(it=>it.id===ph.id?{...it,thumbSynced:u.thumbSynced,originalSynced:u.originalSynced}:it));
       }catch(e){setPendingPhotos(p=>p.map(it=>it.id===ph.id?{...it,error:e.message}:it));}
     }
+    // Done: clear the in-progress list (keep only any that errored) + tally.
+    setPendingPhotos(p=>p.filter(it=>it.error));
+    setPhotosDone(d=>d+ok);
+    setPhotoBusy(false);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[cloudStatus]);
 
@@ -2070,6 +2079,16 @@ function UploadTab({role,cloudStatus,onImported}){
                 <div style={{fontSize:10,color:"#334155",marginTop:3}}>MP4 · MOV · MTS · JPEG · HEIC — mix freely, multiple files</div>
                 <div style={{fontSize:10,color:photoConnGood()?"#10B981":"#F59E0B",marginTop:4}}>{photoConnGood()?"WiFi — photo originals upload now":"Cellular — photo thumbnails now, originals on WiFi"}</div>
               </div>
+              {/* Photo status: in-progress count while uploading, then a done summary */}
+              {(photoBusy||photosDone>0)&&(
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",fontSize:11,color:photoBusy?"#06B6D4":"#10B981",borderBottom:"1px solid #0F2030"}}>
+                  <span style={{fontSize:14}}>📷</span>
+                  <span style={{fontWeight:700}}>{photoBusy?`Uploading photos… (${pendingPhotos.filter(p=>!p.thumbSynced&&!p.error).length} left)`:`✓ ${photosDone} photo${photosDone===1?"":"s"} uploaded`}</span>
+                  {!photoBusy&&photosDone>0&&<span style={{fontSize:10,color:"#475569"}}>· thumbnails + tags now, originals on WiFi</span>}
+                  {!photoBusy&&photosDone>0&&<button onClick={()=>setPhotosDone(0)} style={{marginLeft:"auto",background:"none",border:"none",color:"#475569",cursor:"pointer",fontSize:14}}>×</button>}
+                </div>
+              )}
+              {/* Only show individual rows while uploading or for any that errored */}
               {pendingPhotos.map(ph=>(
                 <div key={ph.id} style={{display:"flex",alignItems:"center",gap:9,padding:"4px 0",borderBottom:"1px solid #0F2030",fontSize:11}}>
                   <span style={{fontSize:14,flexShrink:0}}>📷</span>

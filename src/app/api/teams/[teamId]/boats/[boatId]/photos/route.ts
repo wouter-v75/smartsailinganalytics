@@ -3,7 +3,7 @@
 // since photos don't use Bunny Stream).
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSupabase } from '../../../../../../../lib/supabase/server'
+import { getServerSupabase, getServiceSupabase } from '../../../../../../../lib/supabase/server'
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
 import { signBunnyUrl, bunnyConfigured } from '../../../../../../../lib/bunny-signed-url'
 
@@ -226,30 +226,34 @@ export async function DELETE(
     return NextResponse.json({ error: 'date=YYYY-MM-DD required' }, { status: 400 })
   }
 
-  // Resolve the session via RLS — null ⇒ no access or nothing there.
-  const { data: ses } = await supabase
+  // The caller is verified Coach+ on this team → use the service client so the
+  // delete isn't silently filtered by row-level security (the bug that left the
+  // cloud rows behind and made re-uploads pile up duplicates).
+  const service = getServiceSupabase()
+  const { data: sessions } = await service
     .from('sessions')
     .select('id')
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)
     .eq('date', date)
-    .maybeSingle()
+  const sessionIds = (sessions || []).map((s) => s.id)
 
   let deletedRows = 0
-  if (ses?.id) {
-    const { data: del, error } = await supabase
+  if (sessionIds.length) {
+    const { data: del, error } = await service
       .from('photos')
       .delete()
       .eq('team_id', params.teamId)
       .eq('boat_id', params.boatId)
-      .eq('session_id', ses.id)
+      .in('session_id', sessionIds)
       .select('id')
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     deletedRows = del?.length || 0
   }
 
-  // Remove the Bunny objects for that day (only when the session was accessible).
-  const bunny = ses?.id ? await deleteBunnyPrefix(`sessions/${date}/photos/`) : { deleted: 0, errors: 0 }
+  // Remove every Bunny object under the day's photo prefix (catches duplicates
+  // and orphaned objects from earlier broken runs too).
+  const bunny = await deleteBunnyPrefix(`sessions/${date}/photos/`)
 
-  return NextResponse.json({ ok: true, date, deletedRows, bunnyDeleted: bunny.deleted, bunnyErrors: bunny.errors, hadSession: !!ses?.id })
+  return NextResponse.json({ ok: true, date, deletedRows, bunnyDeleted: bunny.deleted, bunnyErrors: bunny.errors, hadSession: sessionIds.length > 0 })
 }
