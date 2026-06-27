@@ -17,6 +17,7 @@ import { syncProxyForVideo } from '../lib/video-rendition-sync';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
+import PhotoUploadZone from './PhotoUploadZone';
 import { getActiveMembership } from '../lib/active-membership';
 
 // ── Lazy-loaded tab components ──────────────────────────────────────────────
@@ -2056,6 +2057,9 @@ function UploadTab({role,cloudStatus,onImported}){
                 </div>
               ))}
             </div>
+
+            {/* Photo drop zone — thumbnail uploads now, original on WiFi */}
+            <PhotoUploadZone cloudStatus={cloudStatus}/>
 
             {/* CSV + XML with per-source timezone selectors */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>

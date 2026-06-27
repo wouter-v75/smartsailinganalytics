@@ -9,6 +9,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { uploadJsonToStorage, fetchFromStorage } from "../lib/bunny";
+import { syncPending as syncPendingPhotos, connectionIsGood } from "../lib/photoStore";
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -675,8 +676,22 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     const meta = updated.map(({objectUrl,...p})=>p);
     try{ localStorage.setItem(LS_KEY, JSON.stringify(meta)); }
     catch(e){ console.error("savePhotos localStorage:", e); }
+    // (flush effect declared below handles deferred originals)
     onPhotosChange?.(updated);
   },[LS_KEY,onPhotosChange]);
+
+  // Deferred-original flush: photos imported in the Upload tab on cellular get
+  // their thumbnail up immediately but the full original waits. When this tab
+  // mounts on a good (WiFi) connection, push any still-pending originals.
+  useEffect(()=>{
+    if(!cloudStatus?.available) return;
+    if(!connectionIsGood()) return;
+    let cancelled=false;
+    (async()=>{
+      try{ const r=await syncPendingPhotos({}); if(!cancelled && (r.originals||r.thumbs)) setRefreshNonce(n=>n+1); }catch{}
+    })();
+    return ()=>{ cancelled=true; };
+  },[activeDate, cloudStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enrichPhoto = useCallback((photo,log,xml)=>{
     const e={...photo};
@@ -988,14 +1003,9 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         </div>
         <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
         <div style={{padding:"0 11px 8px"}}>
-          <input ref={fileRef} type="file" accept="image/*,.heic,.heif" multiple style={{display:"none"}} onChange={e=>handleFiles(e.target.files)}/>
-          <div onClick={()=>fileRef.current?.click()}
-            onDragOver={e=>{e.preventDefault();setDragOver(true);}}
-            onDragLeave={()=>setDragOver(false)}
-            onDrop={e=>{e.preventDefault();setDragOver(false);handleFiles(e.dataTransfer.files);}}
-            style={{border:`2px dashed ${dragOver?"#8B5CF6":"#1E3A5A"}`,borderRadius:7,padding:"8px 6px",textAlign:"center",cursor:"pointer",background:dragOver?"#0D1829":"transparent",marginBottom:8,transition:"all 0.12s"}}>
-            <div style={{fontSize:13,marginBottom:1}}>📷</div>
-            <div style={{fontSize:8,color:"#64748B"}}>Drop or click</div>
+          {/* Photo import lives in the Upload tab now; this gallery is view-only. */}
+          <div style={{fontSize:8,color:"#334155",textAlign:"center",marginBottom:8,lineHeight:1.5}}>
+            Add photos in the <span style={{color:"#64748B"}}>Upload</span> tab
           </div>
 
           {/* ── Sync All — push local + pull cloud ── */}
