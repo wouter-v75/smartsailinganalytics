@@ -524,6 +524,13 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               {kv('Rake', `${fmt(win.averages.rake, 2)}`)}
               {kv('Jib tack', `${fmt(win.averages.jibTackLoad)}`)}
               {kv('Cunningham', `${fmt(win.averages.cunninghamLoad)}`)}
+              {/* 2026 N76 flat-log rig + targets (shown only when the log carries them) */}
+              {win.averages.trim != null && kv('Trim', `${fmt(win.averages.trim, 2)}`)}
+              {win.averages.keelAng != null && kv('Keel angle', `${fmt(win.averages.keelAng, 2)}°`)}
+              {win.averages.upDflctPct != null && kv('Up deflector', `${fmt(win.averages.upDflctPct, 0)}%`)}
+              {win.averages.lwDflctPct != null && kv('Low deflector', `${fmt(win.averages.lwDflctPct, 0)}%`)}
+              {win.averages.targTwa != null && kv('Targ TWA', `${fmt(win.averages.targTwa, 0)}°`)}
+              {win.averages.targBsp != null && kv('Targ BSP', `${fmt(win.averages.targBsp)} kt`)}
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               {WIND.map((wf) => {

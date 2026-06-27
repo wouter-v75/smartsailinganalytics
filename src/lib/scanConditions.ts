@@ -19,11 +19,21 @@ export interface LogRowLike {
   rake?: number | null
   jibTackLoad?: number | null
   cunninghamLoad?: number | null
+  // 2026 N76 flat-CSV (flatLogParse) rig + target fields
+  trim?: number | null
+  keelAng?: number | null
+  upDflctPct?: number | null
+  lwDflctPct?: number | null
+  targTwa?: number | null
+  targBsp?: number | null
   // flat-CSV logs expose polar % under a different key
   vsPerfPct?: number | null
 }
 
-const AVG_FIELDS = ['tws', 'twa', 'aws', 'awa', 'polarBspPct', 'forestay', 'rake', 'jibTackLoad', 'cunninghamLoad'] as const
+const AVG_FIELDS = [
+  'tws', 'twa', 'aws', 'awa', 'polarBspPct', 'forestay', 'rake', 'jibTackLoad', 'cunninghamLoad',
+  'trim', 'keelAng', 'upDflctPct', 'lwDflctPct', 'targTwa', 'targBsp',
+] as const
 const SERIES_FIELDS = ['tws', 'twa', 'aws', 'awa', 'polarBspPct'] as const
 type AvgField = (typeof AVG_FIELDS)[number]
 type SeriesField = (typeof SERIES_FIELDS)[number]
