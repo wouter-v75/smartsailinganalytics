@@ -11,7 +11,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import { sampleField } from './windField'
 import {
-  MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, DEFAULT_LEVELS, SAT_TILES, DEM_TILES,
+  MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, defaultLevels, SAT_TILES, DEM_TILES,
   meanFromDir, ringGeoJSON, fieldKind, drapeImageURL, drapeOpacity, boxCoords,
   buildProfileVectors, buildSurfaceVectors, beaufortRGBA, buildContoursKn, TWS_CONTOUR_KN, sampleVolumeAtHeight,
 } from './field3dUtils'
@@ -32,7 +32,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
   const kind = fieldKind(field)
   const heights = field?.volume?.heights || []
   const hasVolume = !!field?.volume?.cellAt && kind === 'wind'
-  const [levels, setLevels] = useState(() => DEFAULT_LEVELS.filter((h) => heights.includes(h)))
+  const [levels, setLevels] = useState(() => defaultLevels(heights))
 
   // Keep the selected levels valid for the current field. The state is seeded
   // once at mount, so when the field swaps to one with a different vertical
@@ -46,7 +46,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
     setLevels((cur) => {
       const valid = cur.filter((h) => heights.includes(h))
       if (valid.length) return valid.length === cur.length ? cur : valid
-      const def = DEFAULT_LEVELS.filter((h) => heights.includes(h))
+      const def = defaultLevels(heights)
       return def.length ? def : heights.slice(0, 1)
     })
   }, [heightsKey, hasVolume]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -187,7 +187,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
         <div style={{ position: 'absolute', left: 8, top: 8, display: 'flex', gap: 5, flexWrap: 'wrap', maxWidth: 'calc(100% - 16px)', alignItems: 'center' }}>
           <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 700, background: 'rgba(8,22,38,0.85)', padding: '3px 6px', borderRadius: 5 }}>3D wind field — levels (m)</span>
           <button onClick={() => setLevels(heights.slice())} style={lvlBtn(levels.length === heights.length)}>All</button>
-          {heights.map((h) => <button key={h} onClick={() => toggleLevel(h)} style={lvlBtn(levels.includes(h))}>{h}</button>)}
+          {heights.map((h) => <button key={h} onClick={() => toggleLevel(h)} style={lvlBtn(levels.includes(h))}>{Math.round(h)}</button>)}
         </div>
       )}
       {readout && (

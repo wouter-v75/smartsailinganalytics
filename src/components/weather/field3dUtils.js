@@ -11,10 +11,19 @@ export const TWS_CONTOUR_KN = [2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 25, 30, 3
 export const MAPLIBRE_JS = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js'
 export const MAPLIBRE_CSS = 'https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css'
 export const DECK_JS = 'https://unpkg.com/deck.gl@9.0.36/dist.min.js'   // exposes window.deck (incl. MapboxOverlay, SimpleMeshLayer)
-// default vertical levels shown in the 3D multi-level view (metres ASL).
-// Intersected with whatever the grid.json publishes; 300/500/900 appear once the
-// box re-runs with the extended _hl stream.
-export const DEFAULT_LEVELS = [10, 30, 100]
+// TARGET heights (m ASL) whose NEAREST published model level switches on by
+// default in the 3D multi-level view. The grid may publish exact round levels
+// (10,20,30,50,75,100,…) or true model levels; defaultLevels() snaps each target
+// to the closest available level so the defaults always land on real data.
+export const DEFAULT_LEVELS = [10, 30, 50, 100]
+
+// Nearest available level to each DEFAULT_LEVELS target (deduped, ascending).
+export function defaultLevels(heights) {
+  const hs = (heights || []).map(Number).filter((h) => Number.isFinite(h))
+  if (!hs.length) return []
+  const nearest = (t) => hs.reduce((best, h) => (Math.abs(h - t) < Math.abs(best - t) ? h : best), hs[0])
+  return [...new Set(DEFAULT_LEVELS.map(nearest))].sort((a, b) => a - b)
+}
 export const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 export const DEM_TILES = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'
 export const KN = 1.94384

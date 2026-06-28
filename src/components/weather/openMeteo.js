@@ -103,8 +103,7 @@ export const MODELS = {
     venues: [
       { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.25 },
       { name: 'st_tropez', domain: 'riviera_2km', clon: 6.678, clat: 43.275, half: 0.25 },
-      // La Spezia (early training, 22-26 June) — points grey out until its grid publishes:
-      { name: 'la_spezia', domain: 'la_spezia_2km', clon: 9.85, clat: 44.05, half: 0.25 },
+      // La Spezia STOPPED 2026-06-27 (domain box removed; training window closed).
       // Porto Cervo (Maxi Worlds, 1-12 Sept) — points grey out until its grid publishes:
       { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.25 },
     ],
@@ -117,21 +116,25 @@ export const MODELS = {
     // (wv_model_score) exists for it.
     mosModel: 'icon_eu', mosApprox: true,
   },
-  // SSA-Race 1 km — the nested 1 km inner (La Spezia first). Fetched from its own
-  // grid.json under the la_spezia_1km domain path, so it sits next to the 2 km in
-  // the picker / comparison and the resolution step is directly visible. Add more
-  // venues here as their 1 km nests come online.
+  // SSA-Race 1 km — the nested 1 km inners off riviera_2km (La Spezia retired
+  // 2026-06-27). Each venue has its OWN 1 km domain + grid.json. `half` matches
+  // each domain's 1 km venues.csv racing box (la_ciotat 0.15°, st_tropez 0.23°);
+  // the published box already sits inside the nest's relaxation buffer.
+  // The 1 km nests serve the deep low-level stack (10→300 m) from the upgraded
+  // 76-level vertical grid — the rig + sea-breeze band (10/20/30 m) is now native.
   ICONRACE_1KM: {
     key: 'ICONRACE_1KM', label: 'SSA-Race 1 km', subtitle: 'self-hosted nest 1 km', color: '#7c3aed',
     bunnyBase: (typeof process !== 'undefined' && process.env && process.env.NEXT_PUBLIC_ICONRACE_BASE) || null,
-    // half 0.25° ≈ 30 nm (N-S). The 1 km nest is ±0.45° around the centre with a
-    // 12-cell (grf 4 + nudge 8 ≈ 12 km) boundary buffer; a 0.25° box leaves ~0.20°
-    // (16-22 cells) to the nest edge, so it stays clear of the boundary instabilities.
     venues: [
-      { name: 'la_spezia', domain: 'la_spezia_1km', clon: 9.85, clat: 44.05, half: 0.25 },
+      { name: 'la_ciotat', domain: 'la_ciotat_1km', clon: 5.61, clat: 43.16, half: 0.15 },
+      { name: 'st_tropez', domain: 'st_tropez_1km', clon: 6.678, clat: 43.275, half: 0.23 },
     ],
-    heights: [10, 30, 50, 100, 180],
-    tableCols: [10, 30, 50, 100, 180],
+    // Served h_levels from the 1 km hl stream (NAMELIST h_levels). The 3D viewer's
+    // level on/off buttons are data-driven from these (field.volume.heights).
+    heights: [10, 20, 30, 50, 75, 100, 150, 200, 300],
+    // Table stays rig-focused (the 1 km's whole value is the resolved low levels);
+    // the full 9-level stack is available in the 3D view + interpolation.
+    tableCols: [10, 20, 30, 50, 100],
     upperHeight: 100,
     mosModel: 'icon_eu', mosApprox: true,
   },
