@@ -129,9 +129,11 @@ export const MODELS = {
       { name: 'la_ciotat', domain: 'la_ciotat_1km', clon: 5.61, clat: 43.16, half: 0.15 },
       { name: 'st_tropez', domain: 'st_tropez_1km', clon: 6.678, clat: 43.275, half: 0.23 },
     ],
-    // Served h_levels from the 1 km hl stream (NAMELIST h_levels). The 3D viewer's
-    // level on/off buttons are data-driven from these (field.volume.heights).
-    heights: [10, 20, 30, 50, 75, 100, 150, 200, 300],
+    // Served wind levels in grid.json: the lean hl stream (10→300 m) PLUS the upper
+    // levels 500/750/1000 m that publish (grid_tab_to_json UPPER_FROM_PBL) folds in
+    // from the _pbl profile stream. The 3D viewer's level buttons are data-driven
+    // from grid.heights so they stay in sync; this mirrors it for the 2D selector.
+    heights: [10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 750, 1000],
     // Table stays rig-focused (the 1 km's whole value is the resolved low levels);
     // the full 9-level stack is available in the 3D view + interpolation.
     tableCols: [10, 20, 30, 50, 100],
