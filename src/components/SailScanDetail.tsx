@@ -347,6 +347,13 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const kv = (k: string, v: any) => (
     <span style={{ fontSize: 12, color: C.text }}><span style={{ color: C.dim }}>{k} </span><b>{v}</b></span>
   )
+  // Which rig controls to surface in the 2-min window depends on the sail being
+  // scanned: mainsail trim (outhaul/vang/cunningham/deflectors/traveller + the
+  // V0/V1 batten positions) on MAIN scans, headsail trim (jib tack + the
+  // up/down + in/out positions) on JIB (headsail) scans. sail_type = 'main' |
+  // 'headsail' (null ⇒ unknown, show neither sail-specific set).
+  const isMain = cond.sail_type === 'main'
+  const isHeadsail = cond.sail_type === 'headsail'
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '24px 12px' }}>
@@ -522,15 +529,30 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               {kv('Polar BSP', `${fmt(win.averages.polarBspPct, 0)}%`)}
               {kv('Forestay', `${fmt(win.averages.forestay)}`)}
               {kv('Rake', `${fmt(win.averages.rake, 2)}`)}
-              {kv('Jib tack', `${fmt(win.averages.jibTackLoad)}`)}
-              {kv('Cunningham', `${fmt(win.averages.cunninghamLoad)}`)}
-              {/* 2026 N76 flat-log rig + targets (shown only when the log carries them) */}
               {win.averages.trim != null && kv('Trim', `${fmt(win.averages.trim, 2)}`)}
               {win.averages.keelAng != null && kv('Keel angle', `${fmt(win.averages.keelAng, 2)}°`)}
-              {win.averages.upDflctPct != null && kv('Up deflector', `${fmt(win.averages.upDflctPct, 0)}%`)}
-              {win.averages.lwDflctPct != null && kv('Low deflector', `${fmt(win.averages.lwDflctPct, 0)}%`)}
+
+              {/* MAINSAIL trim — only on main scans, only when the log carries it */}
+              {isMain && win.averages.cunninghamLoad != null && kv('Cunningham', `${fmt(win.averages.cunninghamLoad)}`)}
+              {isMain && win.averages.outhaul != null && kv('Outhaul', `${fmt(win.averages.outhaul)}`)}
+              {isMain && win.averages.vang != null && kv('Vang', `${fmt(win.averages.vang)}`)}
+              {isMain && win.averages.upDflctPct != null && kv('Up deflector', `${fmt(win.averages.upDflctPct, 0)}%`)}
+              {isMain && win.averages.lwDflctPct != null && kv('Low deflector', `${fmt(win.averages.lwDflctPct, 0)}%`)}
+              {isMain && win.averages.travPct != null && kv('Traveller', `${fmt(win.averages.travPct, 0)}%`)}
+              {isMain && win.averages.v0p != null && kv('V0 P', `${fmt(win.averages.v0p, 0)}`)}
+              {isMain && win.averages.v0s != null && kv('V0 S', `${fmt(win.averages.v0s, 0)}`)}
+              {isMain && win.averages.v1p != null && kv('V1 P', `${fmt(win.averages.v1p, 0)}`)}
+              {isMain && win.averages.v1s != null && kv('V1 S', `${fmt(win.averages.v1s, 0)}`)}
+
+              {/* HEADSAIL trim — only on jib (headsail) scans */}
+              {isHeadsail && win.averages.jibTackLoad != null && kv('Jib tack', `${fmt(win.averages.jibTackLoad)}`)}
+              {isHeadsail && win.averages.jibUpDnStbd != null && kv('Jib U/D stbd', `${fmt(win.averages.jibUpDnStbd, 0)}`)}
+              {isHeadsail && win.averages.jibUpDnPort != null && kv('Jib U/D port', `${fmt(win.averages.jibUpDnPort, 0)}`)}
+              {isHeadsail && win.averages.jibInOut != null && kv('Jib in/out', `${fmt(win.averages.jibInOut, 0)}`)}
+
               {win.averages.targTwa != null && kv('Targ TWA', `${fmt(win.averages.targTwa, 0)}°`)}
               {win.averages.targBsp != null && kv('Targ BSP', `${fmt(win.averages.targBsp)} kt`)}
+              {win.averages.targHeel != null && kv('Targ heel', `${fmt(win.averages.targHeel, 1)}°`)}
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               {WIND.map((wf) => {

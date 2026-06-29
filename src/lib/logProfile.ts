@@ -22,6 +22,11 @@ export type LogField =
   | 'heel' | 'trim' | 'sog' | 'cog' | 'vmg' | 'rudder'
   | 'polarBspPct' | 'forestay' | 'rake' | 'keelAng'
   | 'upDflctPct' | 'lwDflctPct' | 'travPct' | 'cunnoPct'
+  | 'vang' | 'outhaul'
+  // mainsail-only batten/vang positions (port/starboard) — shown on MAIN scans
+  | 'v0p' | 'v0s' | 'v1p' | 'v1s'
+  // headsail-only trim positions — shown on JIB (headsail) scans
+  | 'jibUpDnStbd' | 'jibUpDnPort' | 'jibInOut'
   | 'jibTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt'
   | 'leeway' | 'set' | 'drift' | 'hdg'
   | 'polBsp' | 'targVmg' | 'targTwa' | 'targBsp'
@@ -48,12 +53,24 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   forestay: ['forestay'],
   rake: ['rake'],
   keelAng: ['keelang'],
-  upDflctPct: ['updflctpct', 'updfclctpct'],
-  lwDflctPct: ['lwdflctpct', 'lwdfcltpct'],
-  travPct: ['travpct'],
+  // 2026-06 N76 flat-CSV uses the longer 'UpperDflct%' / 'LowerDflct%' / 'Traveller%' headers.
+  upDflctPct: ['updflctpct', 'updfclctpct', 'upperdflctpct'],
+  lwDflctPct: ['lwdflctpct', 'lwdfcltpct', 'lowerdflctpct'],
+  travPct: ['travpct', 'travellerpct'],
   cunnoPct: ['cunnopct'],
+  vang: ['vang'],
+  outhaul: ['outhaul'],
+  // mainsail batten/vang positions, port & starboard (headers 'V0 P' / 'V0 S' / 'V1 P' / 'V1 S')
+  v0p: ['v0p'],
+  v0s: ['v0s'],
+  v1p: ['v1p'],
+  v1s: ['v1s'],
+  // headsail trim positions (headers 'JibUpDnStbdPos' / 'JibUpDnPortPos' / 'JibInOutPos')
+  jibUpDnStbd: ['jibupdnstbdpos'],
+  jibUpDnPort: ['jibupdnportpos'],
+  jibInOut: ['jibinoutpos'],
   jibTackLoad: ['jibtkpin', 'jibtackt', 'jibtack'],
-  cunninghamLoad: ['cunningham'],
+  cunninghamLoad: ['cunningham', 'cunno'],
   mastAng: ['mastang'],
   mastButt: ['mastbutt'],
   leeway: ['leeway', 'dx900lwy'],
@@ -64,7 +81,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   targVmg: ['targvmg'],
   targTwa: ['targtwa'],
   targBsp: ['targbsp'],
-  targHeel: ['targheel'],
+  targHeel: ['targheel', 'targetheel'],
   targFsty: ['targfsty'],
   targBsty: ['targbsty'],
   targKeel: ['targkeel'],

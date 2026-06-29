@@ -1,18 +1,18 @@
 // src/lib/flatLogParse.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Flat-CSV Expedition export with a HEADER row, an OLE/Excel date serial in the
-// `Utc` column, and SEPARATE decimal `Lat`/`Lon` columns. This is the format the
-// 2026 Northstar 76 export switched to (header: Boat,Utc,UtcDate,UtcTime,BSP,…).
+// Flat-CSV Expedition export with a HEADER row and SEPARATE decimal `Lat`/`Lon`
+// columns — the Northstar 76 export format. The `Utc` column is EITHER an
+// OLE/Excel date serial (older export) OR a `DD/MM/YYYY HH:MM` slash-date (the
+// 2026-06 export); both are handled per-row, so the parser survives the switch.
 //
-// It is NOT handled by the two existing parsers (both left untouched):
-//   • expLogParse.ts  — the Expedition *raw* sparse log (lines prefixed with !).
-//   • csvLogParse.ts  — the older flat CSV with a single NMEA `Pos` column and a
-//     `dd/mm/yy` + `hh:mm:ss` time (parseCsvLog skips every row here because the
-//     time is an OLE serial, not a slash date).
+// NOT handled here:
+//   • csvLogParse.ts — the older flat CSV with a single NMEA `Pos` column and a
+//     `dd/mm/yy` + `hh:mm:ss` time (N72 backfill; kept separate).
 //
-// Column NAME → index mapping (so reordering/insertions survive). Row field names
-// match expLogParse's output so every downstream consumer (instrument overlay,
-// 2-min SailScan window, windweight, dbSync) reads it unchanged. Pure / no deps.
+// Column NAME → index mapping via the shared per-boat alias profile (so
+// reordering/insertions/renames survive). Row field names match the downstream
+// consumers (instrument overlay, 2-min SailScan window, windweight, dbSync) so
+// they read it unchanged. Pure / no deps.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { effectiveAliases, resolveHeaderIndices, normLabel as norm, type LogField } from './logProfile'
@@ -31,6 +31,16 @@ export interface FlatLogRow {
   polBsp: number | null; polarBspPct: number | null; keelAng: number | null
   upDflctPct: number | null; lwDflctPct: number | null
   targVmg: number | null; targTwa: number | null; targBsp: number | null
+  // rig loads/settings + targets (2026-06 N76 flat-CSV): so the 2-min SailScan
+  // window can average them instead of only showing them at the scan instant.
+  rake: number | null; mastAng: number | null
+  jibTackLoad: number | null; cunninghamLoad: number | null
+  vang: number | null; outhaul: number | null; travPct: number | null; cunnoPct: number | null
+  // mainsail-only batten/vang positions (port/starboard)
+  v0p: number | null; v0s: number | null; v1p: number | null; v1s: number | null
+  // headsail-only trim positions
+  jibUpDnStbd: number | null; jibUpDnPort: number | null; jibInOut: number | null
+  targHeel: number | null
 }
 
 export interface FlatLogResult { rows: FlatLogRow[]; startUtc: number; endUtc: number }
@@ -66,13 +76,31 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
     return Number.isNaN(v) ? null : v
   }
 
+  // Utc is EITHER a `DD/MM/YYYY HH:MM[:SS]` slash-date (2026-06 export) OR an
+  // OLE/Excel date serial (older export). Detect per-cell -> epoch ms (UTC).
+  const utcMs = (cell: string | undefined): number | null => {
+    if (cell == null) return null
+    const s = cell.trim()
+    if (!s) return null
+    if (s.includes('/')) {
+      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?/)
+      if (!m) return null
+      const [, dd, mm, yyRaw, hh, mi, ss] = m
+      const yy = yyRaw.length === 2 ? 2000 + Number(yyRaw) : Number(yyRaw)
+      const t = Date.UTC(yy, Number(mm) - 1, Number(dd), Number(hh), Number(mi), Number(ss || '0'))
+      return Number.isFinite(t) ? t : null
+    }
+    const serial = parseFloat(s)
+    if (Number.isNaN(serial)) return null
+    const t = Math.round((serial - OLE_EPOCH_DAYS) * MS_PER_DAY)
+    return Number.isFinite(t) ? t : null
+  }
+
   const rows: FlatLogRow[] = []
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(',')
-    const serial = num(c, utcIdx)
-    if (serial == null) continue
-    const utc = Math.round((serial - OLE_EPOCH_DAYS) * MS_PER_DAY)
-    if (!Number.isFinite(utc)) continue
+    const utc = utcMs(utcIdx >= 0 ? c[utcIdx] : undefined)
+    if (utc == null) continue
     rows.push({
       utc, lat: num(c, M.lat), lon: num(c, M.lon),
       bsp: num(c, M.bsp), awa: num(c, M.awa), aws: num(c, M.aws),
@@ -83,6 +111,12 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       polBsp: num(c, M.polBsp), polarBspPct: num(c, M.polarBspPct), keelAng: num(c, M.keelAng),
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
       targVmg: num(c, M.targVmg), targTwa: num(c, M.targTwa), targBsp: num(c, M.targBsp),
+      rake: num(c, M.rake), mastAng: num(c, M.mastAng),
+      jibTackLoad: num(c, M.jibTackLoad), cunninghamLoad: num(c, M.cunninghamLoad),
+      vang: num(c, M.vang), outhaul: num(c, M.outhaul), travPct: num(c, M.travPct), cunnoPct: num(c, M.cunnoPct),
+      v0p: num(c, M.v0p), v0s: num(c, M.v0s), v1p: num(c, M.v1p), v1s: num(c, M.v1s),
+      jibUpDnStbd: num(c, M.jibUpDnStbd), jibUpDnPort: num(c, M.jibUpDnPort), jibInOut: num(c, M.jibInOut),
+      targHeel: num(c, M.targHeel),
     })
   }
   return { rows, startUtc: rows[0]?.utc || 0, endUtc: rows[rows.length - 1]?.utc || 0 }

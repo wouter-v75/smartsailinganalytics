@@ -12,12 +12,15 @@
 // dispatches + threads the aliases.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { isExpeditionRawLog, parseExpeditionLog } from './expLogParse'
 import { isFlatOleLog, parseFlatOleLog } from './flatLogParse'
 // @ts-ignore — JS module, typed as any
 import { parseCsvLog } from './csvLogParse'
 import { effectiveAliases, type BoatLogProfile } from './logProfile'
 
+// 'raw' (the Expedition sparse !-log, expLogParse) is RETIRED 2026-06-29 — the
+// Northstar 76 export moved to the flat-CSV (flat-ole) format. The literal is kept
+// in the union only so old UI labels comparing to it stay valid; it is never
+// produced by detectLogFormat anymore. (expLogParse.ts can be deleted.)
 export type LogFormat = 'raw' | 'flat-ole' | 'flat-nmea'
 
 export interface ParseLogResult {
@@ -34,9 +37,8 @@ export interface ParseLogOpts {
 }
 
 export function detectLogFormat(text: string): LogFormat {
-  if (isExpeditionRawLog(text)) return 'raw'
-  if (isFlatOleLog(text)) return 'flat-ole'
-  return 'flat-nmea'
+  if (isFlatOleLog(text)) return 'flat-ole'   // N76 flat-CSV (OLE serial OR slash-date Utc)
+  return 'flat-nmea'                           // legacy N72 NMEA-position CSV
 }
 
 export function parseLog(text: string, opts: ParseLogOpts = {}): ParseLogResult {
@@ -44,10 +46,6 @@ export function parseLog(text: string, opts: ParseLogOpts = {}): ParseLogResult 
   const tz = opts.tzOffsetMin || 0
   const format = detectLogFormat(text)
 
-  if (format === 'raw') {
-    const p = parseExpeditionLog(text, aliases)
-    return { format, rows: p.rows, startUtc: p.startUtc, endUtc: p.endUtc, version: p.version }
-  }
   if (format === 'flat-ole') {
     const p = parseFlatOleLog(text, aliases as any)
     return { format, rows: p.rows, startUtc: p.startUtc, endUtc: p.endUtc }

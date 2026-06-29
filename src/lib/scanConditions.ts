@@ -24,15 +24,30 @@ export interface LogRowLike {
   keelAng?: number | null
   upDflctPct?: number | null
   lwDflctPct?: number | null
+  travPct?: number | null
+  vang?: number | null
+  outhaul?: number | null
+  // mainsail-only batten/vang positions (port/starboard)
+  v0p?: number | null
+  v0s?: number | null
+  v1p?: number | null
+  v1s?: number | null
+  // headsail-only trim positions
+  jibUpDnStbd?: number | null
+  jibUpDnPort?: number | null
+  jibInOut?: number | null
   targTwa?: number | null
   targBsp?: number | null
+  targHeel?: number | null
   // flat-CSV logs expose polar % under a different key
   vsPerfPct?: number | null
 }
 
 const AVG_FIELDS = [
   'tws', 'twa', 'aws', 'awa', 'polarBspPct', 'forestay', 'rake', 'jibTackLoad', 'cunninghamLoad',
-  'trim', 'keelAng', 'upDflctPct', 'lwDflctPct', 'targTwa', 'targBsp',
+  'trim', 'keelAng', 'upDflctPct', 'lwDflctPct', 'travPct', 'vang', 'outhaul',
+  'v0p', 'v0s', 'v1p', 'v1s', 'jibUpDnStbd', 'jibUpDnPort', 'jibInOut',
+  'targTwa', 'targBsp', 'targHeel',
 ] as const
 const SERIES_FIELDS = ['tws', 'twa', 'aws', 'awa', 'polarBspPct'] as const
 type AvgField = (typeof AVG_FIELDS)[number]
