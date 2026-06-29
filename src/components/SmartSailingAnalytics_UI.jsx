@@ -8,6 +8,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 import { getBrowserSupabase } from '../lib/supabase/browser';
 import { parseLog } from '../lib/logParse';
+import { offsetFromCoords } from '../lib/tzFromCoords';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
@@ -1695,7 +1696,7 @@ function UploadTab({role,cloudStatus,onImported}){
     if(!vids.length&&!imgs.length)addLog("✕ No video or photo files found.");
   },[handleVids,handlePhotos]);
 
-  const parseCsvWithTz=useCallback((file,tz)=>{
+  const parseCsvWithTz=useCallback((file,tz,auto=false)=>{
     if(!file)return;setCsvFile(file);
     const r=new FileReader();
     r.onload=e=>{
@@ -1707,10 +1708,29 @@ function UploadTab({role,cloudStatus,onImported}){
         // legacy flat-NMEA CSV.
         let boatProfile=null;
         try{ boatProfile=JSON.parse(localStorage.getItem('ssa:log-profile:active')||'null'); }catch{}
-        const p=parseLog(text,{boatProfile,tzOffsetMin:tz});
+        let effTz=tz;
+        let p=parseLog(text,{boatProfile,tzOffsetMin:effTz});
+        // Auto-derive the LOCAL/venue timezone (display) from the log's GPS
+        // position, DST-aware — so the user never has to pick it. Manual changes
+        // via the dropdown call this with auto=false and are respected.
+        if(auto){
+          const gp=p.rows.find(rr=>Number.isFinite(rr.lat)&&Number.isFinite(rr.lon));
+          const at=p.startUtc||gp?.utc;
+          const z=gp&&at?offsetFromCoords(gp.lat,gp.lon,at):null;
+          if(z&&z.offsetMin!==effTz){
+            effTz=z.offsetMin;
+            setCsvTz(effTz);
+            // flat-NMEA timestamps were converted with the old offset → re-parse.
+            if(p.format==='flat-nmea') p=parseLog(text,{boatProfile,tzOffsetMin:effTz});
+            const lbl=TZ_OPTIONS.find(o=>o.offsetMin===effTz)?.label||`UTC${effTz>=0?'+':''}${effTz/60}`;
+            addLog(`🌍 Timezone auto-detected from position (${z.zone}) → ${lbl}`);
+          } else if(z){
+            addLog(`🌍 Timezone confirmed from position (${z.zone})`);
+          }
+        }
         setCsvParsed(p);
         const fmtLabel=p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':'flat CSV';
-        const tzNote=p.format==='flat-nmea'?(TZ_OPTIONS.find(o=>o.offsetMin===tz)?.label||`UTC+${tz/60}`):'UTC';
+        const tzNote=p.format==='flat-nmea'?(TZ_OPTIONS.find(o=>o.offsetMin===effTz)?.label||`UTC+${effTz/60}`):'UTC';
         addLog(`✓ Log (${fmtLabel.trim()}): ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzNote}`);
       }
       catch(err){addLog(`✕ CSV: ${err instanceof Error?err.message:String(err)}`);}
@@ -1728,7 +1748,7 @@ function UploadTab({role,cloudStatus,onImported}){
     r.readAsText(file);
   },[]);
 
-  const handleCsv=useCallback(file=>{parseCsvWithTz(file,csvTz);},[csvTz,parseCsvWithTz]);
+  const handleCsv=useCallback(file=>{parseCsvWithTz(file,csvTz,true);},[csvTz,parseCsvWithTz]);
   const handleXml=useCallback(file=>{parseXmlWithTz(file,xmlTz);},[xmlTz,parseXmlWithTz]);
 
   // ── Polar upload handler — parses and persists to localStorage ────────────
@@ -2123,7 +2143,11 @@ function UploadTab({role,cloudStatus,onImported}){
                   {csvParsed?`✓ ${csvFile.name}`:"Choose file"}
                 </button>
                 {csvParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{csvParsed.rows.length.toLocaleString()} rows</div>}
-                <TzSelect value={csvTz} onChange={onCsvTzChange} label="Log file timezone (times are local)"/>
+                <TzSelect value={csvTz} onChange={onCsvTzChange} label="Local / venue timezone (display)"/>
+                <div style={{fontSize:9,color:"#334155",marginTop:5}}>
+                  <strong style={{color:"#475569"}}>Auto-detected from the log's GPS position</strong> (DST-aware) when you choose a file — change it only to override.
+                  It sets the timezone everything is <strong style={{color:"#475569"}}>displayed</strong> in; for local-clock logs it also converts to UTC, while true-UTC logs (e.g. N76 <code>Utc</code>) keep their timestamps either way.
+                </div>
               </div>
               {/* Event file */}
               <div style={{background:"#0A1929",border:`1px solid ${xmlParsed?"#8B5CF6":"#1E3A5A"}`,borderRadius:10,padding:14}}>
