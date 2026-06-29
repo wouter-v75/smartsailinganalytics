@@ -75,6 +75,14 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   // through the shared profile so per-boat aliases extend the defaults.
   const headerCols = lines[0].split(',')
   const utcIdx = headerCols.findIndex((h) => norm(h) === 'utc')
+  // High-resolution clock: some exports write `Utc` only to the MINUTE (no
+  // seconds), which collapses every row in a minute onto one instant and makes
+  // the video overlay freeze. When a seconds-of-day column is present
+  // (`UTC_Time_min_sec`), use it for sub-second precision on top of the date.
+  const secIdx = headerCols.findIndex((h) => {
+    const k = norm(h)
+    return k === 'utctimeminsec' || k === 'secofday' || k === 'timeofday'
+  })
   const M = resolveHeaderIndices(headerCols, aliases || effectiveAliases())
 
   const num = (c: string[], i: number | undefined): number | null => {
@@ -84,8 +92,10 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   }
 
   // Utc is EITHER a `DD/MM/YYYY HH:MM[:SS]` slash-date (2026-06 export) OR an
-  // OLE/Excel date serial (older export). Detect per-cell -> epoch ms (UTC).
-  const utcMs = (cell: string | undefined): number | null => {
+  // OLE/Excel date serial (older export). Detect per-cell -> { ms, dayStart }
+  // where dayStart is UTC-midnight of that calendar day (used to re-anchor the
+  // time when a higher-resolution seconds-of-day column is available).
+  const utcParts = (cell: string | undefined): { ms: number; dayStart: number } | null => {
     if (cell == null) return null
     const s = cell.trim()
     if (!s) return null
@@ -94,20 +104,28 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       if (!m) return null
       const [, dd, mm, yyRaw, hh, mi, ss] = m
       const yy = yyRaw.length === 2 ? 2000 + Number(yyRaw) : Number(yyRaw)
-      const t = Date.UTC(yy, Number(mm) - 1, Number(dd), Number(hh), Number(mi), Number(ss || '0'))
-      return Number.isFinite(t) ? t : null
+      const dayStart = Date.UTC(yy, Number(mm) - 1, Number(dd), 0, 0, 0)
+      const ms = dayStart + ((Number(hh) * 3600 + Number(mi) * 60 + Number(ss || '0')) * 1000)
+      return Number.isFinite(ms) ? { ms, dayStart } : null
     }
     const serial = parseFloat(s)
     if (Number.isNaN(serial)) return null
-    const t = Math.round((serial - OLE_EPOCH_DAYS) * MS_PER_DAY)
-    return Number.isFinite(t) ? t : null
+    const ms = Math.round((serial - OLE_EPOCH_DAYS) * MS_PER_DAY)
+    const dayStart = Math.floor(serial - OLE_EPOCH_DAYS) * MS_PER_DAY
+    return Number.isFinite(ms) ? { ms, dayStart } : null
   }
 
   const rows: FlatLogRow[] = []
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(',')
-    const utc = utcMs(utcIdx >= 0 ? c[utcIdx] : undefined)
-    if (utc == null) continue
+    const up = utcParts(utcIdx >= 0 ? c[utcIdx] : undefined)
+    if (up == null) continue
+    // Prefer the seconds-of-day clock for resolution; fall back to the Utc cell.
+    let utc = up.ms
+    if (secIdx >= 0) {
+      const sod = parseFloat(c[secIdx])
+      if (Number.isFinite(sod) && sod >= 0 && sod < 86400) utc = up.dayStart + Math.round(sod * 1000)
+    }
     rows.push({
       utc, lat: num(c, M.lat), lon: num(c, M.lon),
       bsp: num(c, M.bsp), awa: num(c, M.awa), aws: num(c, M.aws),
