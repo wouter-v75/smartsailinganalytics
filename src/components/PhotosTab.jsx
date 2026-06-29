@@ -744,14 +744,18 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           const wallMs=dt instanceof Date?Date.UTC(dt.getFullYear(),dt.getMonth(),dt.getDate(),dt.getHours(),dt.getMinutes(),dt.getSeconds()):null;
           exif={wallMs,lat:data?.latitude??null,lon:data?.longitude??null,camera:data?.Model||null};
         }catch{const ex=await extractExif(file); exif=ex?{wallMs:ex.utc,lat:ex.lat,lon:ex.lon,camera:null}:null;}
-        // Convert camera local wall-clock → TRUE UTC via the venue offset from the
-        // photo's GPS (DST-aware), matching the video + logfile model. Falls back to
-        // the session display offset when the photo has no GPS. Photo epochs then
-        // line up with the log timeline, so nearest-row TWS/tags are correct.
+        // Convert camera local wall-clock → TRUE UTC via the venue offset, DST-aware.
+        // The venue is defined by the LOGFILE's lat/lon (the footage was shot at the
+        // same place — on board / from the RIB), NEVER the viewer's machine zone, so
+        // someone in NZ sees data in the venue's local time. Falls back to the photo's
+        // own GPS, then the session display offset. Photo epochs then line up with the
+        // log timeline, so nearest-row TWS/tags are correct.
         let utc=null;
         if(exif?.wallMs!=null){
-          const off=offsetFromCoords(exif.lat,exif.lon,exif.wallMs)?.offsetMin;
-          utc=exif.wallMs-(off!=null?off:sessionTzOffset)*60000;
+          const lr=(logData?.rows||[]).find(r=>Number.isFinite(r.lat)&&Number.isFinite(r.lon));
+          const logOff=lr?offsetFromCoords(lr.lat,lr.lon,exif.wallMs)?.offsetMin:null;
+          const off=logOff!=null?logOff:(offsetFromCoords(exif.lat,exif.lon,exif.wallMs)?.offsetMin ?? sessionTzOffset);
+          utc=exif.wallMs-off*60000;
         }
         addLog(`${file.name.slice(0,25)}: ${utc?fmtLocalHM(utc,sessionTzOffset)+" "+TZ_SHORT(sessionTzOffset):"no timestamp"}${exif?.lat?" 📍":""}`);
         let jpeg;
@@ -1039,25 +1043,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             Add photos in the <span style={{color:"#64748B"}}>Upload</span> tab
           </div>
 
-          {/* ── Sync All — push local + pull cloud ── */}
-          {(() => {
-            const unsynced = photos.filter(p => !p.cloudSynced).length;
-            const disabled = syncing || !cloudStatus?.available || !activeDate;
-            return (
-              <button onClick={handleSyncAll} disabled={disabled}
-                title={!cloudStatus?.available ? "Cloud not available" : (unsynced ? `Upload ${unsynced} photo${unsynced>1?"s":""} + pull cloud index` : "Pull cloud index")}
-                style={{
-                  width:"100%", marginBottom:8,
-                  background: disabled ? "#0A1929" : (unsynced>0 ? "#06B6D4" : "#1E3A5A"),
-                  color: disabled ? "#334155" : (unsynced>0 ? "#000" : "#06B6D4"),
-                  border: `1px solid ${disabled ? "#1E3A5A" : (unsynced>0 ? "#06B6D4" : "#06B6D440")}`,
-                  borderRadius:6, padding:"7px 0", fontSize:10, fontWeight:700,
-                  cursor: disabled ? "default" : "pointer", letterSpacing:0.3,
-                }}>
-                {syncing ? "⟳ Syncing…" : unsynced>0 ? `☁ Sync All (${unsynced})` : "⟳ Pull cloud"}
-              </button>
-            );
-          })()}
+          {/* Manual Sync/Pull button removed — photos auto-push to the cloud on
+              import (Phase B) and the cloud index auto-pulls on day load. */}
 
           {/* ── Admin/Coach: clear this day (cloud + device) and start afresh ── */}
           {canDelete && activeDate && (
