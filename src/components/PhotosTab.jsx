@@ -10,6 +10,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { uploadJsonToStorage, fetchFromStorage } from "../lib/bunny";
 import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud } from "../lib/photoStore";
+import { offsetFromCoords } from "../lib/tzFromCoords";
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -314,6 +315,13 @@ function renderOverlay(canvas,img,inst){
 const SAIL_SKIP = /^(main|msail|mainsail|main-)/;
 const fmtDate = d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
 const TODAY = ()=>new Date().toISOString().slice(0,10);
+
+// Local-time display helpers — photos are stored as true-UTC epochs (matching the
+// video + logfile model) and rendered in the venue/local zone (sessionTzOffset).
+const TZ_SHORT = off => off===120?"CEST":off===60?"UTC+1":off===0?"UTC":`UTC${off>=0?"+":""}${off/60}`;
+const fmtLocalHM = (u,off=0)=> u?new Date(u+off*60000).toISOString().slice(11,16):"--:--";
+const fmtLocalDate = (u,off=0)=> u?new Date(u+off*60000).toISOString().slice(0,10):null;
+const fmtLocalDT = (u,off=0)=> u?new Date(u+off*60000).toISOString().slice(0,19).replace("T"," "):null;
 const sailTagColor = {bg:"#8B5CF620",bd:"#8B5CF640",c:"#A78BFA"};
 
 // Narrow-viewport hook — matches the same threshold used by MobileShell
@@ -346,7 +354,7 @@ const raceTagColor = t => {
   return                               {bg:"#1E3A5A",  bd:"#2D4A6A",  c:"#7DD3FC"};
 };
 
-function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,onBatchToggle}){
+function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,onBatchToggle,tzOffset=0}){
   const sails = (photo.sails||[]).filter(s=>!SAIL_SKIP.test(s));
   const race  = photo.raceTags||[];
   const handleLoad = () => onThumbLoad?.(photo.id);
@@ -374,7 +382,7 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
         {/* GPS pin */}
         {photo.lat&&photo.lon&&<div style={{position:"absolute",bottom:3,left:4,fontSize:9,color:"#22C55E"}}>📍</div>}
         {/* Time badge bottom-right */}
-        <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{photo.utc?new Date(photo.utc).toISOString().slice(11,16)+" UTC":"--:--"}</div>
+        <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{photo.utc?fmtLocalHM(photo.utc,tzOffset)+" "+TZ_SHORT(tzOffset):"--:--"}</div>
       </div>
       <div style={{padding:"6px 9px"}}>
         {/* 1) Race tags */}
@@ -401,7 +409,7 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   );
 }
 
-function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose}){
+function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0}){
   const canvasRef=useRef(null);
   const [rendered,setRendered]=useState(false);
   useEffect(()=>{
@@ -418,7 +426,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
     a.download=`${photo.name?.replace(/\.[^.]+$/,"")||"photo"}_overlay.jpg`;
     a.href=canvasRef.current.toDataURL("image/jpeg",0.92);a.click();
   };
-  const dateStr = photo.utc ? new Date(photo.utc).toISOString().slice(0,10) : null;
+  const dateStr = photo.utc ? fmtLocalDate(photo.utc,tzOffset) : null;
   return(
     <div style={{flex:1,background:"#050E1C",borderLeft:onClose?"none":"1px solid #1E3A5A",overflowY:"auto",padding:onClose?"0 14px 20px":16,width:"100%"}}>
       {/* Mobile: sticky back bar at top */}
@@ -436,7 +444,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
       )}
       <div style={{position:"relative",marginBottom:12}}>
         <canvas ref={canvasRef} style={{width:"100%",borderRadius:8,border:"1px solid #1E3A5A",display:"block"}}/>
-        {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5}}>{fmtDate(new Date(photo.utc).toISOString().slice(0,10))} {new Date(photo.utc).toISOString().slice(11,16)} UTC</div>}
+        {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
       </div>
       <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
         <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Instrument data</div>
@@ -456,7 +464,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
           {photo.sails.filter(s=>!SAIL_SKIP.test(s)).map(t=>(<span key={t} style={{background:sailTagColor.bg,border:`1px solid ${sailTagColor.bd}`,color:sailTagColor.c,fontSize:9,borderRadius:3,padding:"1px 6px",fontFamily:"monospace"}}>{t}</span>))}
         </div>}
         {photo.lat&&photo.lon&&<div style={{marginTop:5,fontSize:9,color:"#22C55E"}}>📍 {photo.lat.toFixed(5)}°, {photo.lon.toFixed(5)}°</div>}
-        {photo.utc&&<div style={{marginTop:4,fontSize:9,color:"#475569"}}>🕐 {new Date(photo.utc).toISOString().slice(0,19).replace("T"," ")} UTC</div>}
+        {photo.utc&&<div style={{marginTop:4,fontSize:9,color:"#475569"}}>🕐 {fmtLocalDT(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
       </div>
 
       {/* SailScan analysis card — appears for photos saved from the SailScan
@@ -536,7 +544,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
 }
 
 // ── Main PhotosTab ────────────────────────────────────────────────────────────
-export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],loadDate,cloudStatus,onPhotosChange,canSeeSailScanPhotos=true}){
+export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],loadDate,cloudStatus,onPhotosChange,canSeeSailScanPhotos=true,sessionTzOffset=0}){
   const [photos,setPhotos]     = useState([]);   // metadata only — no blobs
   const [selected,setSelected] = useState(null);
   const [uploading,setUploading]= useState(false);
@@ -731,17 +739,28 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           const exifr=await loadExifr();
           const data=await exifr.parse(file,{tiff:true,exif:true,gps:true,ifd0:true});
           const dt=data?.DateTimeOriginal||data?.DateTime;
-          const utc=dt instanceof Date?dt.getTime():null;
-          exif={utc,lat:data?.latitude||null,lon:data?.longitude||null,camera:data?.Model||null};
-        }catch{exif=await extractExif(file);}
-        addLog(`${file.name.slice(0,25)}: ${exif?.utc?new Date(exif.utc).toISOString().slice(11,16)+" UTC":"no timestamp"}${exif?.lat?" 📍":""}`);
+          // EXIF datetime = camera LOCAL wall-clock with no zone. Capture it as a
+          // wall-clock-as-UTC epoch (local getters invert exifr's local build).
+          const wallMs=dt instanceof Date?Date.UTC(dt.getFullYear(),dt.getMonth(),dt.getDate(),dt.getHours(),dt.getMinutes(),dt.getSeconds()):null;
+          exif={wallMs,lat:data?.latitude??null,lon:data?.longitude??null,camera:data?.Model||null};
+        }catch{const ex=await extractExif(file); exif=ex?{wallMs:ex.utc,lat:ex.lat,lon:ex.lon,camera:null}:null;}
+        // Convert camera local wall-clock → TRUE UTC via the venue offset from the
+        // photo's GPS (DST-aware), matching the video + logfile model. Falls back to
+        // the session display offset when the photo has no GPS. Photo epochs then
+        // line up with the log timeline, so nearest-row TWS/tags are correct.
+        let utc=null;
+        if(exif?.wallMs!=null){
+          const off=offsetFromCoords(exif.lat,exif.lon,exif.wallMs)?.offsetMin;
+          utc=exif.wallMs-(off!=null?off:sessionTzOffset)*60000;
+        }
+        addLog(`${file.name.slice(0,25)}: ${utc?fmtLocalHM(utc,sessionTzOffset)+" "+TZ_SHORT(sessionTzOffset):"no timestamp"}${exif?.lat?" 📍":""}`);
         let jpeg;
         try{jpeg=await convertToJpeg(file);}catch{jpeg=file;}
         // Store blob in IDB
         const id=`p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         await idbPutPhoto(id, jpeg);
         const objectUrl = URL.createObjectURL(jpeg);
-        let photo={id,name:file.name,size:jpeg.size,utc:exif?.utc||null,lat:exif?.lat||null,lon:exif?.lon||null,
+        let photo={id,name:file.name,size:jpeg.size,utc,lat:exif?.lat||null,lon:exif?.lon||null,
           sessionDate:activeDate,objectUrl,cloudSynced:false,addedAt:Date.now()};
         photo=enrichPhoto(photo,logData,xmlData);
         newPhotos.push(photo);
@@ -982,7 +1001,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const groups = [];
   const seen = new Map();
   for(const p of displayed){
-    const d = p.utc ? new Date(p.utc).toISOString().slice(0,10) : "unknown";
+    const d = p.utc ? fmtLocalDate(p.utc,sessionTzOffset) : "unknown";
     if(!seen.has(d)){seen.set(d,[]);groups.push(d);}
     seen.get(d).push(p);
   }
@@ -1184,7 +1203,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
                   <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{plist.length} photo{plist.length!==1?"s":""}</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
-                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>{setSelected(p);if(isNarrow)setMobileDetailOpen(true);}} onThumbLoad={markThumbLoaded} batchMode={batchMode} batchSelected={batchSelected} onBatchToggle={toggleBatchSelect}/>)}
+                  {plist.map(p=><PhotoCard key={p.id} photo={p} selected={selected?.id===p.id} onClick={()=>{setSelected(p);if(isNarrow)setMobileDetailOpen(true);}} onThumbLoad={markThumbLoaded} batchMode={batchMode} batchSelected={batchSelected} onBatchToggle={toggleBatchSelect} tzOffset={sessionTzOffset}/>)}
                 </div>
               </div>
             );
@@ -1195,7 +1214,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {/* ── Detail panel — desktop-only (mobile renders as overlay below) ── */}
       {!isNarrow && (selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
-           canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}/>
+           canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal} tzOffset={sessionTzOffset}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155"}}>
           <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#475569"}}>Select a photo to view</div></div>
         </div>)}
@@ -1207,7 +1226,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           <PhotoDetail photo={selected} onDelete={()=>{handleDelete();setMobileDetailOpen(false);}}
             onUpload={handleUpload} uploading={uploading}
             canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}
-            onClose={()=>setMobileDetailOpen(false)}/>
+            onClose={()=>setMobileDetailOpen(false)} tzOffset={sessionTzOffset}/>
         </div>
       )}
     </div>
