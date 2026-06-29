@@ -16,13 +16,18 @@ const LS_KEY = 'ssa:log-profile:active'
 const FIELD_LABEL: Partial<Record<LogField, string>> = {
   bsp: 'Boat speed', awa: 'AWA', aws: 'AWS', twa: 'TWA', tws: 'TWS', twd: 'TWD',
   heel: 'Heel', trim: 'Trim', sog: 'SOG', cog: 'COG', vmg: 'VMG', rudder: 'Rudder',
-  polarBspPct: 'Polar BSP %', forestay: 'Forestay', rake: 'Rake', keelAng: 'Keel angle',
+  vsPerfPct: 'Polar BSP %', forestay: 'Forestay', rake: 'Rake', keelAng: 'Keel angle',
   upDflctPct: 'Upper deflector %', lwDflctPct: 'Lower deflector %', travPct: 'Traveller %', cunnoPct: 'Cunningham %',
+  vang: 'Vang', outhaul: 'Outhaul',
+  v0p: 'V0 P', v0s: 'V0 S', v1p: 'V1 P', v1s: 'V1 S',
+  jibUpDnStbd: 'Jib U/D stbd', jibUpDnPort: 'Jib U/D port', jibInOut: 'Jib in/out',
   jibTackLoad: 'Jib-tack load', cunninghamLoad: 'Cunningham load', mastAng: 'Mast angle', mastButt: 'Mast butt',
   leeway: 'Leeway', set: 'Set', drift: 'Drift', hdg: 'Heading',
-  targHeel: 'Target heel', targTwa: 'Target TWA', targBsp: 'Target BSP', targVmg: 'Target VMG',
-  targFsty: 'Target forestay', targBsty: 'Target backstay', targKeel: 'Target keel',
-  lat: 'Latitude', lon: 'Longitude', polBsp: 'Polar BSP',
+  vsTarget: 'Target BSP', vsTargPct: 'Target BSP %', vsPerf: 'Polar BSP', twaTarg: 'Target TWA',
+  dstLine: 'Distance to line', tmLine: 'Time to burn (line)', ttbPort: 'TTB port', ttbStbd: 'TTB stbd',
+  timer1: 'Race timer', yawR: 'Rate of turn', magvar: 'Mag variation',
+  targHeel: 'Target heel', targFsty: 'Target forestay', targBsty: 'Target backstay', targKeel: 'Target keel',
+  lat: 'Latitude', lon: 'Longitude',
 }
 
 type Overrides = Partial<Record<LogField, string[]>>
@@ -33,7 +38,7 @@ function load(): Overrides {
 
 export default function LogProfilePanel({ canEdit }: { canEdit: boolean }) {
   const [overrides, setOverrides] = useState<Overrides>(() => (typeof window === 'undefined' ? {} : load()))
-  const [field, setField] = useState<LogField>('polarBspPct')
+  const [field, setField] = useState<LogField>('vsPerfPct')
   const [labels, setLabels] = useState('')
   const [msg, setMsg] = useState('')
 

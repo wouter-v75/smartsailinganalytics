@@ -134,7 +134,7 @@ const WIND: { key: string; label: string; color: string }[] = [
   { key: 'twa', label: 'TWA (°)', color: '#34D399' },
   { key: 'aws', label: 'AWS (kt)', color: '#FBBF24' },
   { key: 'awa', label: 'AWA (°)', color: '#A78BFA' },
-  { key: 'polarBspPct', label: 'Polar BSP %', color: '#F472B6' },
+  { key: 'vsPerfPct', label: 'Polar BSP %', color: '#F472B6' },
 ]
 
 export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onSaveNotes, onDelete, onClose }:
@@ -283,7 +283,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
 
       // 2-min averages line (full)
       doc.setFontSize(10); doc.setTextColor(60)
-      doc.text(`2-min avg — TWS ${fmt(avgTws)} · TWA ${avgTwa != null ? fmt(avgTwa, 0) : '—'}° · AWS ${fmt(a.aws)} · AWA ${fmt(a.awa, 0)}° · Polar ${fmt(a.polarBspPct, 0)}%`, M, y); y += 7
+      doc.text(`2-min avg — TWS ${fmt(avgTws)} · TWA ${avgTwa != null ? fmt(avgTwa, 0) : '—'}° · AWS ${fmt(a.aws)} · AWA ${fmt(a.awa, 0)}° · Polar ${fmt(a.vsPerfPct, 0)}%`, M, y); y += 7
       if (notes && notes.trim()) {
         doc.setFontSize(9); doc.setTextColor(40)
         const wrapped = doc.splitTextToSize(`Notes: ${notes.trim()}`, PW - 2 * M)
@@ -526,9 +526,8 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               {kv('TWA', `${fmt(win.averages.twa, 0)}°`)}
               {kv('AWS', `${fmt(win.averages.aws)} kt`)}
               {kv('AWA', `${fmt(win.averages.awa, 0)}°`)}
-              {kv('Polar BSP', `${fmt(win.averages.polarBspPct, 0)}%`)}
+              {kv('Polar BSP', `${fmt(win.averages.vsPerfPct, 0)}%`)}
               {kv('Forestay', `${fmt(win.averages.forestay)}`)}
-              {kv('Rake', `${fmt(win.averages.rake, 2)}`)}
               {win.averages.trim != null && kv('Trim', `${fmt(win.averages.trim, 2)}`)}
               {win.averages.keelAng != null && kv('Keel angle', `${fmt(win.averages.keelAng, 2)}°`)}
 
@@ -539,10 +538,10 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               {isMain && win.averages.upDflctPct != null && kv('Up deflector', `${fmt(win.averages.upDflctPct, 0)}%`)}
               {isMain && win.averages.lwDflctPct != null && kv('Low deflector', `${fmt(win.averages.lwDflctPct, 0)}%`)}
               {isMain && win.averages.travPct != null && kv('Traveller', `${fmt(win.averages.travPct, 0)}%`)}
-              {isMain && win.averages.v0p != null && kv('V0 P', `${fmt(win.averages.v0p, 0)}`)}
-              {isMain && win.averages.v0s != null && kv('V0 S', `${fmt(win.averages.v0s, 0)}`)}
-              {isMain && win.averages.v1p != null && kv('V1 P', `${fmt(win.averages.v1p, 0)}`)}
-              {isMain && win.averages.v1s != null && kv('V1 S', `${fmt(win.averages.v1s, 0)}`)}
+              {isMain && kv('V0 P', `${fmt(win.averages.v0p, 0)}`)}
+              {isMain && kv('V0 S', `${fmt(win.averages.v0s, 0)}`)}
+              {isMain && kv('V1 P', `${fmt(win.averages.v1p, 0)}`)}
+              {isMain && kv('V1 S', `${fmt(win.averages.v1s, 0)}`)}
 
               {/* HEADSAIL trim — only on jib (headsail) scans */}
               {isHeadsail && win.averages.jibTackLoad != null && kv('Jib tack', `${fmt(win.averages.jibTackLoad)}`)}
@@ -550,8 +549,8 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               {isHeadsail && win.averages.jibUpDnPort != null && kv('Jib U/D port', `${fmt(win.averages.jibUpDnPort, 0)}`)}
               {isHeadsail && win.averages.jibInOut != null && kv('Jib in/out', `${fmt(win.averages.jibInOut, 0)}`)}
 
-              {win.averages.targTwa != null && kv('Targ TWA', `${fmt(win.averages.targTwa, 0)}°`)}
-              {win.averages.targBsp != null && kv('Targ BSP', `${fmt(win.averages.targBsp)} kt`)}
+              {win.averages.twaTarg != null && kv('Targ TWA', `${fmt(win.averages.twaTarg, 0)}°`)}
+              {win.averages.vsTarget != null && kv('Targ BSP', `${fmt(win.averages.vsTarget)} kt`)}
               {win.averages.targHeel != null && kv('Targ heel', `${fmt(win.averages.targHeel, 1)}°`)}
             </div>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>

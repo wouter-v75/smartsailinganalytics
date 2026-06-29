@@ -28,9 +28,16 @@ export interface FlatLogRow {
   heel: number | null; trim: number | null; forestay: number | null; vmg: number | null
   cog: number | null; sog: number | null
   leeway: number | null; set: number | null; drift: number | null; hdg: number | null
-  polBsp: number | null; polarBspPct: number | null; keelAng: number | null
+  keelAng: number | null
   upDflctPct: number | null; lwDflctPct: number | null
-  targVmg: number | null; targTwa: number | null; targBsp: number | null
+  // performance / targets — CANONICAL keys shared with csvLogParse + the video
+  // overlay + dbSync + autotags (so every consumer reads them unchanged).
+  vsTarget: number | null; vsTargPct: number | null; vsPerf: number | null
+  vsPerfPct: number | null; twaTarg: number | null
+  // start-line instruments (canonical)
+  dstLine: number | null; tmLine: number | null
+  ttbPort: number | null; ttbStbd: number | null; ttbPin: number | null; ttbCB: number | null
+  timer1: number | null; yawR: number | null; magvar: number | null; rudder: number | null
   // rig loads/settings + targets (2026-06 N76 flat-CSV): so the 2-min SailScan
   // window can average them instead of only showing them at the scan instant.
   rake: number | null; mastAng: number | null
@@ -108,9 +115,13 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       heel: num(c, M.heel), trim: num(c, M.trim), forestay: num(c, M.forestay), vmg: num(c, M.vmg),
       cog: num(c, M.cog), sog: num(c, M.sog),
       leeway: num(c, M.leeway), set: num(c, M.set), drift: num(c, M.drift), hdg: num(c, M.hdg),
-      polBsp: num(c, M.polBsp), polarBspPct: num(c, M.polarBspPct), keelAng: num(c, M.keelAng),
+      keelAng: num(c, M.keelAng),
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
-      targVmg: num(c, M.targVmg), targTwa: num(c, M.targTwa), targBsp: num(c, M.targBsp),
+      vsTarget: num(c, M.vsTarget), vsTargPct: num(c, M.vsTargPct), vsPerf: num(c, M.vsPerf),
+      vsPerfPct: num(c, M.vsPerfPct), twaTarg: num(c, M.twaTarg),
+      dstLine: num(c, M.dstLine), tmLine: num(c, M.tmLine),
+      ttbPort: num(c, M.ttbPort), ttbStbd: num(c, M.ttbStbd), ttbPin: num(c, M.ttbPin), ttbCB: num(c, M.ttbCB),
+      timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
       rake: num(c, M.rake), mastAng: num(c, M.mastAng),
       jibTackLoad: num(c, M.jibTackLoad), cunninghamLoad: num(c, M.cunninghamLoad),
       vang: num(c, M.vang), outhaul: num(c, M.outhaul), travPct: num(c, M.travPct), cunnoPct: num(c, M.cunnoPct),

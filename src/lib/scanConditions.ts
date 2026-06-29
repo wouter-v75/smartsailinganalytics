@@ -14,7 +14,6 @@ export interface LogRowLike {
   twa?: number | null
   aws?: number | null
   awa?: number | null
-  polarBspPct?: number | null
   forestay?: number | null
   rake?: number | null
   jibTackLoad?: number | null
@@ -36,20 +35,20 @@ export interface LogRowLike {
   jibUpDnStbd?: number | null
   jibUpDnPort?: number | null
   jibInOut?: number | null
-  targTwa?: number | null
-  targBsp?: number | null
-  targHeel?: number | null
-  // flat-CSV logs expose polar % under a different key
+  // performance / targets — canonical app-wide keys
   vsPerfPct?: number | null
+  vsTarget?: number | null
+  twaTarg?: number | null
+  targHeel?: number | null
 }
 
 const AVG_FIELDS = [
-  'tws', 'twa', 'aws', 'awa', 'polarBspPct', 'forestay', 'rake', 'jibTackLoad', 'cunninghamLoad',
+  'tws', 'twa', 'aws', 'awa', 'vsPerfPct', 'forestay', 'rake', 'jibTackLoad', 'cunninghamLoad',
   'trim', 'keelAng', 'upDflctPct', 'lwDflctPct', 'travPct', 'vang', 'outhaul',
   'v0p', 'v0s', 'v1p', 'v1s', 'jibUpDnStbd', 'jibUpDnPort', 'jibInOut',
-  'targTwa', 'targBsp', 'targHeel',
+  'twaTarg', 'vsTarget', 'targHeel',
 ] as const
-const SERIES_FIELDS = ['tws', 'twa', 'aws', 'awa', 'polarBspPct'] as const
+const SERIES_FIELDS = ['tws', 'twa', 'aws', 'awa', 'vsPerfPct'] as const
 type AvgField = (typeof AVG_FIELDS)[number]
 type SeriesField = (typeof SERIES_FIELDS)[number]
 
@@ -63,9 +62,8 @@ export interface ScanWindow {
 
 const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
 
-// flat-CSV logs put polar% in vsPerfPct; raw logs in polarBspPct.
-const polarOf = (r: LogRowLike): number | null =>
-  r.polarBspPct != null ? r.polarBspPct : r.vsPerfPct != null ? r.vsPerfPct : null
+// polar performance % — canonical key vsPerfPct across all log formats.
+const polarOf = (r: LogRowLike): number | null => (r.vsPerfPct != null ? r.vsPerfPct : null)
 
 export function computeScanWindow(
   rows: LogRowLike[],
@@ -78,7 +76,7 @@ export function computeScanWindow(
   const win = rows.filter((r) => r && Number.isFinite(r.utc) && Math.abs(r.utc - centerUtc) <= halfMs)
   if (!win.length) return null
 
-  const valOf = (r: LogRowLike, f: AvgField): number | null => (f === 'polarBspPct' ? polarOf(r) : (r as any)[f] ?? null)
+  const valOf = (r: LogRowLike, f: AvgField): number | null => (f === 'vsPerfPct' ? polarOf(r) : (r as any)[f] ?? null)
 
   const averages = {} as Record<AvgField, number | null>
   for (const f of AVG_FIELDS) {

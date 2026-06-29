@@ -20,7 +20,7 @@ export const normLabel = (s: string): string =>
 export type LogField =
   | 'lat' | 'lon' | 'bsp' | 'awa' | 'aws' | 'twa' | 'tws' | 'twd'
   | 'heel' | 'trim' | 'sog' | 'cog' | 'vmg' | 'rudder'
-  | 'polarBspPct' | 'forestay' | 'rake' | 'keelAng'
+  | 'vsPerfPct' | 'forestay' | 'rake' | 'keelAng'
   | 'upDflctPct' | 'lwDflctPct' | 'travPct' | 'cunnoPct'
   | 'vang' | 'outhaul'
   // mainsail-only batten/vang positions (port/starboard) — shown on MAIN scans
@@ -29,7 +29,12 @@ export type LogField =
   | 'jibUpDnStbd' | 'jibUpDnPort' | 'jibInOut'
   | 'jibTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt'
   | 'leeway' | 'set' | 'drift' | 'hdg'
-  | 'polBsp' | 'targVmg' | 'targTwa' | 'targBsp'
+  // performance / targets — CANONICAL app-wide names (shared with csvLogParse /
+  // the video overlay / dbSync / autotags). New log formats map their own column
+  // labels onto THESE keys via the alias table; the keys never change.
+  | 'vsTarget' | 'vsTargPct' | 'vsPerf' | 'twaTarg'
+  // start-line instruments (canonical names from the legacy parser)
+  | 'dstLine' | 'tmLine' | 'ttbPort' | 'ttbStbd' | 'ttbPin' | 'ttbCB' | 'timer1' | 'yawR' | 'magvar'
   | 'targHeel' | 'targFsty' | 'targBsty' | 'targKeel'
 
 // Built-in label aliases per field, consolidated from the raw-log channel names
@@ -49,7 +54,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   cog: ['cog'],
   vmg: ['vmg'],
   rudder: ['rudder'],
-  polarBspPct: ['polbsppct', 'polbsp', 'gunbsppolpct', 'vsperfpct'],
+  vsPerfPct: ['vsperfpct', 'polbsppct', 'gunbsppolpct'],
   forestay: ['forestay'],
   rake: ['rake'],
   keelAng: ['keelang'],
@@ -77,10 +82,21 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   set: ['set'],
   drift: ['drift'],
   hdg: ['hdg'],
-  polBsp: ['polbsp'],
-  targVmg: ['targvmg'],
-  targTwa: ['targtwa'],
-  targBsp: ['targbsp'],
+  // performance / targets — alias the per-format column labels onto canonical keys
+  vsTarget: ['vstarget', 'vstarg', 'targbsp', 'targetbsp'],   // target boat speed (kn)
+  vsTargPct: ['vstargpct', 'vstargetpct'],                    // BSP as % of target
+  vsPerf: ['vsperf', 'polbsp'],                               // polar boat speed (kn)
+  twaTarg: ['twatarg', 'twatarget', 'targtwa', 'targettwa'],  // target TWA
+  // start-line instruments
+  dstLine: ['dstline', 'distancetostartlineboatlengths'],
+  tmLine: ['tmline'],
+  ttbPort: ['ttbport'],
+  ttbStbd: ['ttbstbd'],
+  ttbPin: ['ttbpin'],
+  ttbCB: ['ttbcb'],
+  timer1: ['timer1', 'racetimerminsec'],
+  yawR: ['yawr', 'rot'],
+  magvar: ['magvar'],
   targHeel: ['targheel', 'targetheel'],
   targFsty: ['targfsty'],
   targBsty: ['targbsty'],
