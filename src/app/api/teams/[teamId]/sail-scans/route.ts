@@ -109,6 +109,22 @@ export async function POST(
   // mis-tag both columns with the same sail — leave them for later assignment).
   const report = parseSailScanReport(text)
   const parsedScans = report.scans.filter((s) => s.stripes.length)
+
+  // The report's stamp is a venue-local wall-clock with no zone. If the client
+  // sent a venue offset (it defaults to the uploader's machine zone, adjustable),
+  // recompute captured_at = wall-clock − offset → TRUE UTC, deterministically and
+  // independent of the SERVER's timezone. captured_local (the wall-clock string)
+  // is the display source and is left untouched.
+  const tzOffMin = Number(form.get('tz_offset_min'))
+  if (Number.isFinite(tzOffMin)) {
+    for (const s of parsedScans) {
+      const m = (s.capturedLocal || '').match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/)
+      if (m) {
+        const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0))
+        s.capturedAt = new Date(wall - tzOffMin * 60000).toISOString()
+      }
+    }
+  }
   if (!parsedScans.length) {
     return NextResponse.json(
       { error: report.format === 'unknown' ? 'unrecognised report format' : 'no stripe rows found in the report' },

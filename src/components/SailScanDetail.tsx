@@ -14,6 +14,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { getLogData } from '../lib/localStore'
 import { computeScanWindow } from '../lib/scanConditions'
+import { scanLocalDateTime } from '../lib/scanTime'
 import { pickDesign, designCodeOf } from '../lib/designInterp'
 
 const DESIGN_GREY = '#94A3B8'
@@ -137,8 +138,8 @@ const WIND: { key: string; label: string; color: string }[] = [
   { key: 'vsPerfPct', label: 'Polar BSP %', color: '#F472B6' },
 ]
 
-export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onSaveNotes, onDelete, onClose }:
-  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; boatName?: string | null; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onSaveNotes?: (notes: string) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void }) {
+export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onSaveNotes, onDelete, onClose, sessionTzOffset = 0 }:
+  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; boatName?: string | null; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onSaveNotes?: (notes: string) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void; sessionTzOffset?: number }) {
   const cond = scan?.conditions || {}
   // Head at the top (87% / 75% for jibs) down to 25% at the foot — matches the
   // North report layout.
@@ -243,7 +244,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
       doc.setFontSize(16); doc.setTextColor(20); doc.setFont('helvetica', 'bold')
       doc.text([boatName, String(title)].filter(Boolean).join(' — '), M, y); y += 7
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(90)
-      doc.text([fmtDateTime(scan.captured_at), cond.sail_code ? `Code ${cond.sail_code}` : '', cond.sail_type || ''].filter(Boolean).join('   ·   '), M, y); y += 6
+      doc.text([scanLocalDateTime(scan, sessionTzOffset), cond.sail_code ? `Code ${cond.sail_code}` : '', cond.sail_type || ''].filter(Boolean).join('   ·   '), M, y); y += 6
       // tags (same as the thumbnail overview)
       const tg: string[] = []
       if (tags?.pointOfSail) tg.push(tags.pointOfSail)
@@ -363,7 +364,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
           <span style={{ fontSize: 16, fontWeight: 800, color: C.head }}>{title}</span>
           {cond.sail_code && <span style={{ fontSize: 11, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px' }}>{cond.sail_code}</span>}
           {cond.sail_type && <span style={{ fontSize: 11, color: cond.sail_type === 'main' ? '#34D399' : '#FBBF24' }}>{cond.sail_type}</span>}
-          <span style={{ fontSize: 12, color: C.dim }}>{fmtDateTime(scan.captured_at)}</span>
+          <span style={{ fontSize: 12, color: C.dim }}>{scanLocalDateTime(scan, sessionTzOffset)}</span>
           <div style={{ flex: 1 }} />
           {canEdit && <button onClick={() => { setSailIdSel(scan?.sail_id || ''); setEditing((v) => !v) }} disabled={busy} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 8, color: C.head, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✎ Edit</button>}
           {canEdit && <button onClick={doDelete} disabled={busy} style={{ background: '#3a1320', border: '1px solid #7f1d1d', borderRadius: 8, color: '#fca5a5', fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>🗑 Delete</button>}

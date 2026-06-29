@@ -1627,17 +1627,31 @@ function UploadTab({role,cloudStatus,onImported}){
   const[csvTz, setCsvTz] =useState(DEFAULT_TZ);
   const[xmlTz, setXmlTz] =useState(DEFAULT_TZ);
   const[vidTz, setVidTz] =useState(DEFAULT_TZ);
+  // Ref mirror of vidTz so the log-driven auto-tz can re-base already-queued
+  // videos without a stale closure (parseCsvWithTz is a deps-[] callback).
+  const vidTzRef=useRef(vidTz); useEffect(()=>{vidTzRef.current=vidTz;},[vidTz]);
+  // No log = no GPS to detect the venue zone. Default the upload zones to THIS
+  // machine's current zone (a sensible "where I am" guess) until a log auto-detects
+  // the real venue zone from its lat/lon. Done on mount to avoid SSR hydration drift.
+  useEffect(()=>{ const m=-new Date().getTimezoneOffset(); setCsvTz(m); setXmlTz(m); setVidTz(m); vidTzRef.current=m; },[]);
 
   const addLog=msg=>setLog(p=>[...p.slice(-30),msg]);
 
-  const TzSelect=({value,onChange,label})=>(
-    <div style={{marginTop:8}}>
-      <div style={{fontSize:9,color:"#475569",letterSpacing:1,marginBottom:3}}>{label}</div>
-      <select value={value} onChange={e=>onChange(Number(e.target.value))} style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 7px",color:"#94A3B8",fontSize:10,cursor:"pointer"}}>
-        {TZ_OPTIONS.map(o=>(<option key={o.offsetMin} value={o.offsetMin}>{o.label}</option>))}
-      </select>
-    </div>
-  );
+  const TzSelect=({value,onChange,label})=>{
+    // Always include the current value (e.g. a viewer in NZ on UTC+12/+13, or a
+    // log-derived offset) even if it isn't one of the preset options.
+    const opts = TZ_OPTIONS.some(o=>o.offsetMin===value)
+      ? TZ_OPTIONS
+      : [{offsetMin:value,label:`UTC${value>=0?'+':''}${value/60}  (selected)`},...TZ_OPTIONS];
+    return (
+      <div style={{marginTop:8}}>
+        <div style={{fontSize:9,color:"#475569",letterSpacing:1,marginBottom:3}}>{label}</div>
+        <select value={value} onChange={e=>onChange(Number(e.target.value))} style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 7px",color:"#94A3B8",fontSize:10,cursor:"pointer"}}>
+          {opts.map(o=>(<option key={o.offsetMin} value={o.offsetMin}>{o.label}</option>))}
+        </select>
+      </div>
+    );
+  };
 
   const handleVids=useCallback(files=>{
     const valid=Array.from(files).filter(f=>f.type.startsWith("video/")||/\.(mp4|mov|mts|avi|mkv|m4v)$/i.test(f.name));
@@ -1717,15 +1731,26 @@ function UploadTab({role,cloudStatus,onImported}){
           const gp=p.rows.find(rr=>Number.isFinite(rr.lat)&&Number.isFinite(rr.lon));
           const at=p.startUtc||gp?.utc;
           const z=gp&&at?offsetFromCoords(gp.lat,gp.lon,at):null;
-          if(z&&z.offsetMin!==effTz){
+          if(z){
             effTz=z.offsetMin;
             setCsvTz(effTz);
             // flat-NMEA timestamps were converted with the old offset → re-parse.
             if(p.format==='flat-nmea') p=parseLog(text,{boatProfile,tzOffsetMin:effTz});
+            // The venue zone (from the LOG's lat/lon) is authoritative for the
+            // whole session — drive the VIDEO offset from it too, and re-base any
+            // already-queued clips so their camera wall-clock → true-UTC uses the
+            // venue offset, never the viewer's machine zone.
+            if(vidTzRef.current!==effTz){
+              const old=vidTzRef.current;
+              setPendingVids(pv=>pv.map(v=>{
+                if(v.startUtc==null||!v.tsSource)return v;
+                const raw=v.startUtc+old*60000;        // recover camera wall-clock-as-UTC
+                return {...v,startUtc:raw-effTz*60000}; // re-apply venue offset
+              }));
+              setVidTz(effTz); vidTzRef.current=effTz;
+            }
             const lbl=TZ_OPTIONS.find(o=>o.offsetMin===effTz)?.label||`UTC${effTz>=0?'+':''}${effTz/60}`;
-            addLog(`🌍 Timezone auto-detected from position (${z.zone}) → ${lbl}`);
-          } else if(z){
-            addLog(`🌍 Timezone confirmed from position (${z.zone})`);
+            addLog(`🌍 Timezone from log position (${z.zone}) → ${lbl} · applied to log, video & photos`);
           }
         }
         setCsvParsed(p);
@@ -2182,13 +2207,28 @@ function UploadTab({role,cloudStatus,onImported}){
               </div>
             </div>
 
+            {/* No-log timezone confirmation — when there's no log to pin the venue
+                zone from GPS, footage times can't be auto-placed. Ask the user to
+                confirm the zone (default = this machine's), adjustable. */}
+            {!csvParsed && pendingVids.length>0 && (
+              <div style={{background:"#3A2A0A",border:"1px solid #F59E0B55",borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:11,color:"#F59E0B",fontWeight:700,marginBottom:4}}>⚠ No log uploaded — confirm the footage timezone</div>
+                <div style={{fontSize:9,color:"#B8A06A",marginBottom:2}}>
+                  Without a log there's no GPS to detect the venue zone. Footage times are assumed to be in
+                  <strong style={{color:"#F59E0B"}}> this computer's timezone ({TZ_OPTIONS.find(o=>o.offsetMin===vidTz)?.label||`UTC${vidTz>=0?'+':''}${vidTz/60}`})</strong>.
+                  Change it below if the footage was recorded in another zone. (Uploading a log auto-detects the venue zone and overrides this.)
+                </div>
+                <TzSelect value={vidTz} onChange={onVidTzChange} label="Footage timezone (where it was recorded)"/>
+              </div>
+            )}
+
             {/* Video timezone */}
-            {pendingVids.length>0&&(
+            {pendingVids.length>0&&csvParsed&&(
               <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"12px 14px"}}>
                 <TzSelect value={vidTz} onChange={onVidTzChange} label="Video timestamp timezone"/>
                 <div style={{fontSize:9,color:"#334155",marginTop:5}}>
                   Most cameras (GoPro, Garmin, older iPhones) write <strong style={{color:"#475569"}}>local time</strong> in the video file.
-                  Newer iPhones write UTC. Default matches the log timezone ({TZ_OPTIONS.find(o=>o.offsetMin===DEFAULT_TZ)?.label}).
+                  <strong style={{color:"#475569"}}> Auto-set from the log's GPS position</strong> (the footage was shot at the same place) — change only to override.
                 </div>
               </div>
             )}
@@ -4299,7 +4339,7 @@ function MobileShell(props){
         {/* Boat config (read-only viewer) */}
         {activeTab==="boatconfig"&&props.campaignOn&&props.campaignCfg&&props.canSeeBoatConfig&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <BoatConfigTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true}/>
+            <BoatConfigTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} sessionTzOffset={props.sessionTzOffset}/>
           </div>
         )}
 
@@ -6705,7 +6745,7 @@ function SSAApp(){
         )}
         {activeTab==="boatconfig"&&campaignOn&&canSeeBoatConfig&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <BoatConfigTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false}/>
+            <BoatConfigTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} sessionTzOffset={sessionTzOffset}/>
           </div>
         )}
         {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}

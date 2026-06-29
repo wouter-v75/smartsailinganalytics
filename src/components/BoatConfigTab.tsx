@@ -16,6 +16,7 @@ import { extractLargestJpegBlob, extractJpegBlobs } from '../lib/pdfImageExtract
 import { getLogData, getXmlData } from '../lib/localStore'
 import { enrichScan, type ScanTags } from '../lib/scanEnrich'
 import { parseDesignShapes } from '../lib/designShapeParse'
+import { scanLocalDateISO, scanLocalHM } from '../lib/scanTime'
 import SailScanDetail from './SailScanDetail'
 import SailScanCompare from './SailScanCompare'
 import LogProfilePanel from './LogProfilePanel'
@@ -53,8 +54,8 @@ const fmtDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'
 
 export default function BoatConfigTab({
-  teamId, boatId, role, isMobile, config,
-}: { teamId: string; boatId: string; role?: string; config?: any; isMobile?: boolean }) {
+  teamId, boatId, role, isMobile, config, sessionTzOffset = 0,
+}: { teamId: string; boatId: string; role?: string; config?: any; isMobile?: boolean; sessionTzOffset?: number }) {
   const boatName: string | null = config?.boatName || null
   const canEdit = EDIT_ROLES.includes(role || '')
   const isAdmin = role === 'admin'
@@ -514,7 +515,6 @@ export default function BoatConfigTab({
               const groupName = scanSailName(sc)
               const showHeader = scanSort === 'sail' && (idx === 0 || scanSailName(displayedScans[idx - 1]) !== groupName)
               const name = sail?.category || sail?.name || sc.conditions?.sail_code || tag?.activeSails?.[0] || 'unassigned'
-              const cap = sc.captured_at ? new Date(sc.captured_at) : null
               const pos = tag?.pointOfSail
               const posColor = pos === 'upwind' ? '#F4B084' : pos === 'downwind' ? '#A8D5BA' : pos === 'reaching' ? '#B4C7E7' : C.border
               const chip = (t: string, bg = '#0F2A45', col = C.text) => (
@@ -552,8 +552,8 @@ export default function BoatConfigTab({
                     <div style={{ display: 'flex', gap: 12, fontSize: 11, color: C.dim, marginTop: 3, flexWrap: 'wrap' }}>
                       <span>TWS <b style={{ color: C.text }}>{fmt(tag?.avgTws ?? sc.tws_kn)}</b> kt</span>
                       <span>TWA <b style={{ color: C.text }}>{tag?.avgTwa != null ? fmt(tag.avgTwa, 0) : '—'}</b>°</span>
-                      <span>{cap ? cap.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
-                      <span>{cap ? cap.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                      <span>{fmtDate(scanLocalDateISO(sc, sessionTzOffset)) || '—'}</span>
+                      <span>{scanLocalHM(sc, sessionTzOffset)}</span>
                     </div>
                   </div>
                   {!compareMode && (
@@ -699,6 +699,7 @@ export default function BoatConfigTab({
           onSaveNotes={async (notes: string) => { await patchScanNotes(selectedScan.id, notes); setSelectedScan((p: any) => p ? { ...p, notes } : p) }}
           onDelete={async () => { await deleteScan(selectedScan.id); setSelectedScan(null) }}
           onClose={() => setSelectedScan(null)}
+          sessionTzOffset={sessionTzOffset}
         />
       )}
 
@@ -710,6 +711,7 @@ export default function BoatConfigTab({
           tagA={scanTags[comparePair.a.id]}
           tagB={scanTags[comparePair.b.id]}
           boatName={boatName}
+          sessionTzOffset={sessionTzOffset}
           onClose={() => setComparePair(null)}
         />
       )}

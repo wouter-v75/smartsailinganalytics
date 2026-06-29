@@ -13,6 +13,7 @@
 
 import React, { useMemo } from 'react'
 import { pickDesign, designCodeOf } from '../lib/designInterp'
+import { scanLocalDateTime } from '../lib/scanTime'
 
 const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
@@ -79,18 +80,16 @@ function scanModel(scan: any, sails: any[], tag: any) {
   return { stripes, sailRec, design, tws, cond, name, posXs }
 }
 
-export default function SailScanCompare({ scanA, scanB, sails, tagA, tagB, boatName, onClose }:
-  { scanA: any; scanB: any; sails: any[]; tagA?: any; tagB?: any; boatName?: string | null; onClose: () => void }) {
+export default function SailScanCompare({ scanA, scanB, sails, tagA, tagB, boatName, onClose, sessionTzOffset = 0 }:
+  { scanA: any; scanB: any; sails: any[]; tagA?: any; tagB?: any; boatName?: string | null; onClose: () => void; sessionTzOffset?: number }) {
   const A = useMemo(() => scanModel(scanA, sails, tagA), [scanA, sails, tagA])
   const B = useMemo(() => scanModel(scanB, sails, tagB), [scanB, sails, tagB])
 
   const td: React.CSSProperties = { padding: '3px 6px', fontSize: 11, color: C.text, textAlign: 'center', borderBottom: `1px solid ${C.border}` }
   const th: React.CSSProperties = { ...td, color: C.dim, fontWeight: 700, fontSize: 10 }
 
-  const timeOf = (scan: any) => {
-    const cap = scan?.captured_at ? new Date(scan.captured_at) : null
-    return cap ? cap.toLocaleString(undefined, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'
-  }
+  // Venue/local time from the report's wall-clock (or true-UTC + venue offset).
+  const timeOf = (scan: any) => scanLocalDateTime(scan, sessionTzOffset)
 
   // One sail column: header line, photo, measured table, design table.
   const Column = ({ scan, M, color, tag }: { scan: any; M: ReturnType<typeof scanModel>; color: string; tag: any }) => (

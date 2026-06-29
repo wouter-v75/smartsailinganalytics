@@ -15,7 +15,7 @@
 // backfill of dozens of old reports can be eyeballed as it runs.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 import { extractLargestJpegBlob } from '../lib/pdfImageExtract'
 
@@ -63,6 +63,13 @@ export default function SailScanImport({
   const [results, setResults] = useState<FileResult[]>([])
   const [busy, setBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // A SailScan report carries a wall-clock with NO timezone. The report is shown
+  // in that local time as-is; this zone is only used to place the scan on the true
+  // UTC timeline for log-matching. Default to THIS machine's zone (set on mount to
+  // avoid SSR drift); the user confirms/adjusts it below.
+  const [tzMin, setTzMin] = useState(0)
+  useEffect(() => { setTzMin(-new Date().getTimezoneOffset()) }, [])
+  const tzLabel = (m: number) => `UTC${m >= 0 ? '+' : ''}${m / 60}`
 
   if (!teamId || !boatId) {
     return (
@@ -83,6 +90,7 @@ export default function SailScanImport({
       const fd = new FormData()
       fd.append('boat_id', boatId)
       fd.append('file', file)
+      fd.append('tz_offset_min', String(tzMin)) // venue zone for the report wall-clock
       stage('Reading data…')
       try {
         const blob = await extractLargestJpegBlob(file)
@@ -136,6 +144,20 @@ export default function SailScanImport({
         >
           {busy ? 'Importing…' : 'Choose PDFs'}
         </button>
+      </div>
+
+      {/* Report timezone — the PDF time has no zone; confirm it (default = this
+          computer). Only used to align scans with a day's log on the UTC timeline;
+          the scan view always shows the report's own local wall-clock. */}
+      <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', background: '#0A1929', border: `1px solid ${C.border}`, borderRadius: 6, padding: '7px 10px' }}>
+        <span style={{ fontSize: 10, color: C.warn, fontWeight: 700 }}>Report timezone</span>
+        <span style={{ fontSize: 10, color: C.dim }}>SailScan PDFs carry no timezone — assumed to be this computer's ({tzLabel(tzMin)}). Adjust if the footage was shot elsewhere:</span>
+        <select value={tzMin} onChange={(e) => setTzMin(Number(e.target.value))} disabled={busy}
+          style={{ background: '#071624', border: `1px solid ${C.border}`, borderRadius: 5, padding: '4px 7px', color: C.text, fontSize: 11, cursor: 'pointer' }}>
+          {Array.from({ length: 27 }, (_, i) => (i - 12) * 60).map((m) => (
+            <option key={m} value={m}>{tzLabel(m)}{m === -new Date().getTimezoneOffset() ? ' (this computer)' : ''}</option>
+          ))}
+        </select>
       </div>
 
       {results.length > 0 && (
