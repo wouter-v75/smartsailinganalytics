@@ -9,6 +9,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
 import { getBrowserSupabase } from '../lib/supabase/browser';
 import { parseLog } from '../lib/logParse';
 import { offsetFromCoords } from '../lib/tzFromCoords';
+import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
@@ -5229,6 +5230,9 @@ function SSAApp(){
             for(let i=0;i<80 && !getActiveMembership(user.id);i++){
               await new Promise(r=>setTimeout(r,250));
             }
+            // Eagerly warm the Boat Config tab (sails/scans/polar/rig) so it's
+            // ready before the user opens it. Fire-and-forget.
+            { const am=getActiveMembership(user.id); if(am?.team_id&&am?.boat_id) prefetchBoatConfig(am.team_id,am.boat_id); }
             const cloudSessions=await listSessionsCloud({userId:user.id});
             if(cloudSessions.length>0){
               setSessions(p=>{

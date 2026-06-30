@@ -17,6 +17,7 @@ import { getLogData, getXmlData } from '../lib/localStore'
 import { enrichScan, type ScanTags } from '../lib/scanEnrich'
 import { parseDesignShapes } from '../lib/designShapeParse'
 import { scanLocalDateISO, scanLocalHM } from '../lib/scanTime'
+import { getPrefetchedBoatConfig } from '../lib/boatConfigPrefetch'
 import SailScanDetail from './SailScanDetail'
 import SailScanCompare from './SailScanCompare'
 import LogProfilePanel from './LogProfilePanel'
@@ -59,16 +60,20 @@ export default function BoatConfigTab({
   const boatName: string | null = config?.boatName || null
   const canEdit = EDIT_ROLES.includes(role || '')
   const isAdmin = role === 'admin'
+  // Seed from the on-open prefetch (lib/boatConfigPrefetch) so the tab renders
+  // instantly with the team's sails/scans/polar/rig; the effects below still
+  // revalidate in the background.
+  const pf = getPrefetchedBoatConfig(teamId, boatId)
   const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar' | 'log'>('inventory')
-  const [sails, setSails] = useState<Sail[]>([])
-  const [scans, setScans] = useState<Scan[]>([])
-  const [loading, setLoading] = useState(true)
+  const [sails, setSails] = useState<Sail[]>(() => (pf?.sails as Sail[]) || [])
+  const [scans, setScans] = useState<Scan[]>(() => (pf?.scans as Scan[]) || [])
+  const [loading, setLoading] = useState(!pf?.sails)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState<string>('') // sail id being mutated
-  const [polar, setPolar] = useState<any>(null)          // active polar row (DB)
+  const [polar, setPolar] = useState<any>(() => pf?.polar ?? null)          // active polar row (DB)
   const [matrixKey, setMatrixKey] = useState<'bsp' | 'heel' | 'rudder' | 'awa'>('bsp')
   const [importing, setImporting] = useState(false)
-  const [rigTune, setRigTune] = useState<any>(null)      // active rig baseline row (DB)
+  const [rigTune, setRigTune] = useState<any>(() => pf?.rigTune ?? null)      // active rig baseline row (DB)
   const [rigBusy, setRigBusy] = useState(false)
   const [rigErr, setRigErr] = useState('')
   const [rigPdfUrl, setRigPdfUrl] = useState<string | null>(null) // admin-only signed PDF URL
