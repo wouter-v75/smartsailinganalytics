@@ -15,7 +15,7 @@ import {
 } from '../../../../lib/supabase/server'
 
 type Action = 'approve' | 'disable' | 'reactivate'
-type Role = 'team_manager' | 'coach' | 'tl1' | 'tl2' | 'consultant' | 'guest'
+type Role = 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'tl2' | 'consultant' | 'guest'
 
 const STATUS_BY_ACTION: Record<Action, 'active' | 'disabled'> = {
   approve: 'active',
@@ -23,7 +23,7 @@ const STATUS_BY_ACTION: Record<Action, 'active' | 'disabled'> = {
   reactivate: 'active',
 }
 
-const ROLES: Role[] = ['team_manager', 'coach', 'tl1', 'tl2', 'consultant', 'guest']
+const ROLES: Role[] = ['team_manager', 'coach', 'tl3', 'tl1', 'tl2', 'consultant', 'guest']
 
 interface Membership {
   team_id: string
