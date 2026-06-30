@@ -817,6 +817,28 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     const metaPayload = {...meta, cloudSynced: true, originalSize: blob.size, thumbSize: thumbBlob.size};
     await uploadJsonToStorage(keys.meta, metaPayload);
 
+    // 4) Write the TEAM-scoped DB row so EVERY member sees this photo (not just
+    //    the uploader). The gallery loads from this `photos` table via
+    //    listPhotosCloud; without this insert the table stays empty and the
+    //    photo is visible only on the uploader's own device.
+    try {
+      const { getBrowserSupabase } = await import('../lib/supabase/browser');
+      const { upsertPhotoCloud } = await import('../lib/cloud-photos');
+      const { data:{ user } } = await getBrowserSupabase().auth.getUser();
+      if (user) {
+        await upsertPhotoCloud({
+          userId: user.id,
+          sessionDate: photo.sessionDate || activeDate,
+          takenUtc: photo.utc ?? null,
+          exif: photo.exif ?? null,
+          thumbnailUrl: cloudImageUrl(keys.thumb),
+          bunnyStoragePath: keys.original,
+          bytes: blob.size,
+          analysis: photo.sailscan_data ?? photo.analysis ?? null,
+        });
+      }
+    } catch { /* non-fatal — blob is in Bunny; row write can be retried on next sync */ }
+
     return {...photo, cloudSynced: true, thumbSize: thumbBlob.size, originalSize: blob.size};
   }, [activeDate, cloudStatus]);
 

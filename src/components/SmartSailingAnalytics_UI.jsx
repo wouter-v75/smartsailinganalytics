@@ -5166,10 +5166,14 @@ function SSAApp(){
       // ── Mobile progressive load ───────────────────────────────────────────
       // On mobile we only fetch full video blobs + log data for the latest session.
       // Older sessions show thumbnail/metadata only — full data loads on-demand.
-      const latestDate=localSessions[0]?.date||today;
-      const isRecent=(date)=>date===today||date===latestDate;
-
       const vids=await getAllVideosForMembership(bootMembership);
+      // Open the most recent day that actually has VIDEO footage — skip log-only
+      // or empty days (and today, if nothing was shot today). Falls back to the
+      // latest session day, then today, when there's no video anywhere.
+      const videoDates=vids.map(v=>v.sessionDate).filter(Boolean).sort();
+      const latestVideoDate=videoDates.length?videoDates[videoDates.length-1]:null;
+      const latestDate=latestVideoDate||localSessions[0]?.date||today;
+      const isRecent=(date)=>date===today||date===latestDate;
       // On mobile: skip expensive enrichVideo (requires full log read) for old sessions
       const enriched=await Promise.all(vids.map(async v=>{
         const d=v.sessionDate||today;
@@ -5256,14 +5260,16 @@ function SSAApp(){
               // Uses `latestDate` (the date boot() actually set active)
               // rather than the `activeDate` state var — that one's a
               // stale closure, frozen at TODAY() from the initial render.
-              const newestCloudDate = cloudSessions
-                .map(s => s.date)
-                .sort()
-                .reverse()[0];
-              const bestDate = [latestDate, newestCloudDate]
-                .filter(Boolean)
-                .sort()
-                .reverse()[0];
+              // Prefer the newest day that actually has VIDEO data (video_count>0)
+              // across local + cloud; only fall back to the newest session day
+              // when there's no video anywhere.
+              const newestCloudVideoDate = cloudSessions
+                .filter(s => s.video_count > 0).map(s => s.date).sort().reverse()[0];
+              const newestCloudDate = cloudSessions.map(s => s.date).sort().reverse()[0];
+              const haveVideo = latestVideoDate || newestCloudVideoDate;
+              const bestDate = haveVideo
+                ? [latestVideoDate, newestCloudVideoDate].filter(Boolean).sort().reverse()[0]
+                : [latestDate, newestCloudDate].filter(Boolean).sort().reverse()[0];
               if (bestDate && bestDate !== latestDate) {
                 await loadDate(bestDate);
               }
