@@ -5044,6 +5044,17 @@ function SSAApp(){
             return merged.sort((a,b)=>b.date.localeCompare(a.date));
           });
         }
+        // Open the most recent day that has VIDEO data for the NEW boat, and load
+        // it — so the switch lands on a populated folder with thumbnails already
+        // loading, instead of a blank date the user has to click into.
+        const localVideoDates=vids.map(v=>v.sessionDate).filter(Boolean);
+        const cloudVideoDates=cloudSessions.filter(s=>s.video_count>0).map(s=>s.date);
+        const bestDate=[...localVideoDates,...cloudVideoDates].sort().reverse()[0]
+          || [...localSessions.map(s=>s.date),...cloudSessions.map(s=>s.date)].sort().reverse()[0]
+          || null;
+        if(bestDate) await loadDate(bestDate);
+        // Warm the new boat's Boat Config tab too.
+        if(m?.team_id&&m?.boat_id) prefetchBoatConfig(m.team_id,m.boat_id);
       }catch{ /* non-fatal — boot will retry */ }
     }
     const onChange=()=>{ rescope(); };
