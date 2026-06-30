@@ -627,65 +627,59 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     setLoadedIds(new Set());
     setTotalThumbs(0);
     let meta = JSON.parse(localStorage.getItem(LS_KEY)||"[]");
-    // Merge in Supabase photos for this date (active membership scope).
-    // Async — we update meta in place once cloud responds, then re-render.
+    let cancelled = false;
+    // ONE unified load: local photos + team-shared cloud photos for this date,
+    // merged → display URLs resolved → ALL enriched with the day's log/event
+    // data → committed once. Previously cloud-only photos (everything a viewer
+    // who didn't upload, e.g. a TL3, sees) were added raw and never enriched,
+    // and the empty-local Promise.all cleared state + never selected one — so
+    // the folder showed unenriched photos with nothing opened. This fixes both.
     (async ()=>{
+      // 1) Cloud (team-shared) photos for this date. Dedupe against local by the
+      //    stable Bunny original path.
+      let cloudOnly = [];
       try {
         const { getBrowserSupabase } = await import('../lib/supabase/browser');
         const { listPhotosCloud, toLegacyPhotoShape } = await import('../lib/cloud-photos');
-        const supabase = getBrowserSupabase();
-        const { data:{ user } } = await supabase.auth.getUser();
-        if (!user) return;
-        const cloudPhotos = await listPhotosCloud({ userId: user.id, date: activeDate });
-        if (!cloudPhotos.length) return;
-        // Merge cloud-only photos directly into state. Dedupe on the STABLE Bunny
-        // original path (bunny_storage_path) — identical on the local photo and
-        // its mirrored cloud row. (The thumbnail URL is now CDN-signed and differs
-        // from the local proxy URL, so it must NOT be used as the dedupe key.)
-        const stableKey = (p) => p.bunnyPath || p.url || null;
-        const seenKeys = new Set(meta.map(stableKey).filter(Boolean));
-        const cloudOnly = [];
-        for (const cp of cloudPhotos) {
-          const key = cp.bunny_storage_path || null;
-          if (key && seenKeys.has(key)) continue; // already local, or a duplicate cloud row
-          if (key) seenKeys.add(key);
-          const shape = toLegacyPhotoShape(cp);
-          cloudOnly.push({ ...shape, name: 'Photo', cloudSynced: true, objectUrl: shape.thumbnailUrl || (shape.bunnyPath ? cloudImageUrl(shape.bunnyPath) : null), hasLocalOriginal: false });
+        const { data:{ user } } = await getBrowserSupabase().auth.getUser();
+        if (user) {
+          const cps = await listPhotosCloud({ userId: user.id, date: activeDate });
+          const stableKey = (p) => p.bunnyPath || p.url || null;
+          const localKeys = new Set(meta.map(stableKey).filter(Boolean));
+          for (const cp of cps) {
+            const shape = toLegacyPhotoShape(cp);
+            const k = shape.bunnyPath || null;
+            if (k && localKeys.has(k)) continue;
+            cloudOnly.push({ ...shape, name: 'Photo', cloudSynced: true, hasLocalOriginal: false });
+          }
         }
-        if (!cloudOnly.length) return;
-        setPhotos(prev => {
-          const have = new Set(prev.map(stableKey).filter(Boolean));
-          const add = cloudOnly.filter(p => { const k = stableKey(p); return k && !have.has(k); });
-          if (!add.length) return prev;
-          return [...prev, ...add].sort((a, b) => (b.utc || 0) - (a.utc || 0));
-        });
-      } catch { /* non-fatal */ }
-    })();
-    // For each photo: prefer local blob URL; otherwise fall back to cloud thumb URL.
-    Promise.all(meta.map(async p=>{
-      const blob = await idbGetPhoto(p.id).catch(()=>null);
-      const hasLocalOriginal = !!blob;
-      const keys = cloudKeys(p.sessionDate||activeDate, p.id);
-      // Display URL priority: local blob → cloud thumb (if cloud-synced) → null
-      const objectUrl = blob
-        ? URL.createObjectURL(blob)
-        : (p.cloudSynced ? cloudImageUrl(keys.thumb) : null);
-      return{...p, objectUrl, hasLocalOriginal};
-    })).then(restored=>{
-      // Enrich immediately with whatever log/xml is already available
-      // so tags + instrument data appear without waiting for a
-      // separate re-enrich cycle.
+      } catch { /* cloud optional */ }
+      if (cancelled) return;
+      // 2) Resolve display URLs (local blob → cloud thumb) for every photo.
+      const combined = [...meta, ...cloudOnly];
+      const restored = await Promise.all(combined.map(async p=>{
+        const blob = await idbGetPhoto(p.id).catch(()=>null);
+        const hasLocalOriginal = !!blob;
+        const keys = cloudKeys(p.sessionDate||activeDate, p.id);
+        const objectUrl = blob
+          ? URL.createObjectURL(blob)
+          : (p.thumbnailUrl || (p.cloudSynced ? cloudImageUrl(keys.thumb) : null));
+        return { ...p, objectUrl, hasLocalOriginal };
+      }));
+      if (cancelled) return;
+      // 3) Enrich ALL photos (local + shared) with the day's log/event data, then
+      //    commit once and open the most recent one.
       const willEnrich = !!(logData || xmlData);
-      const enriched = willEnrich
-        ? restored.map(p => enrichPhoto(p, logData, xmlData))
-        : restored;
+      const enriched = (willEnrich ? restored.map(p=>enrichPhoto(p, logData, xmlData)) : restored)
+        .sort((a,b)=>(b.utc||0)-(a.utc||0));
       setPhotos(enriched);
-      // Only count photos that actually have a thumbnail to load
       setTotalThumbs(enriched.filter(p => p.objectUrl).length);
       setMetaLoading(false);
-      if(enriched.length>0) setSelected(enriched[0]);
-      if(willEnrich) savePhotos(enriched);
-    });
+      if(enriched.length>0) setSelected(prev => prev || enriched[0]);
+      // Persist only locally-owned photos to localStorage (not team-shared rows).
+      if(willEnrich && meta.length) savePhotos(enriched.filter(p => !p.cloudSynced || p.hasLocalOriginal));
+    })();
+    return ()=>{ cancelled = true; };
   // logData/xmlData intentionally in deps so photos re-enrich when data arrives.
   // refreshNonce in deps lets ssa:photo-saved trigger a reload of the date.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -726,19 +720,6 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     }
     return e;
   },[]);
-
-  // Re-enrich EVERY photo currently in state (local AND cloud-shared from other
-  // members) whenever the day's log/event data arrives or changes. Without this,
-  // photos merged from the cloud were added raw and showed no tags/instrument
-  // data for viewers who didn't upload them (e.g. a TL3 opening a teammate's day).
-  useEffect(()=>{
-    if(!logData&&!xmlData) return;
-    setPhotos(prev=>{
-      if(!prev.length) return prev;
-      return prev.map(p=>enrichPhoto(p,logData,xmlData));
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[logData,xmlData,enrichPhoto]);
 
   const handleFiles = useCallback(async(files)=>{
     const imgs=Array.from(files).filter(f=>f.type.startsWith("image/")||/\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f.name));
