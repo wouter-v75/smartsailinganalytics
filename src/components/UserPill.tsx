@@ -185,18 +185,18 @@ export default function UserPill() {
       setMemberships(ms)
 
       // Pick active membership: persisted choice if still valid, else a default.
-      // Default preference: the team's CURRENT Northstar boat (the 2026 boat —
-      // "Northstar 76"/"7X") so every Northstar member lands on it; the
-      // "Northstar 72" is the retired old boat and must never be the default when
-      // a newer boat is available. Matched by pattern (not an exact string) so a
-      // rename between 76/7X doesn't silently fall back to the old boat.
+      // Default preference: the team's CURRENT Northstar boat ("Northstar 76", the
+      // 2026 boat) so every Northstar member lands on it; the "Northstar 72" is the
+      // retired old boat and must never be the default when a newer boat exists.
+      // Matched by pattern + a "not the retired 72" fallback so a rename doesn't
+      // silently drop members back onto the old boat.
       const isOldNorthstar = (m: MembershipRow) => /northstar\s*72\b/i.test(m.boat_name || '')
-      const isNewNorthstar = (m: MembershipRow) => /northstar\s*7\s*[6x]\b/i.test(m.boat_name || '')
+      const isCurrentNorthstar = (m: MembershipRow) => /northstar\s*76\b/i.test(m.boat_name || '')
       const stored = getActiveMembership(user.id)
       const valid = ms.find((m) => m.id === stored?.id)
       const preferredDefault =
-        ms.find(isNewNorthstar) ||         // the current Northstar boat (76 / 7X)
-        ms.find((m) => !isOldNorthstar(m)) || // any boat that isn't the retired 72
+        ms.find(isCurrentNorthstar) ||        // the current Northstar boat (76)
+        ms.find((m) => !isOldNorthstar(m)) ||  // any boat that isn't the retired 72
         ms[0]
       if (valid) {
         setActiveId(valid.id)

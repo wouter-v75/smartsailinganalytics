@@ -727,6 +727,19 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     return e;
   },[]);
 
+  // Re-enrich EVERY photo currently in state (local AND cloud-shared from other
+  // members) whenever the day's log/event data arrives or changes. Without this,
+  // photos merged from the cloud were added raw and showed no tags/instrument
+  // data for viewers who didn't upload them (e.g. a TL3 opening a teammate's day).
+  useEffect(()=>{
+    if(!logData&&!xmlData) return;
+    setPhotos(prev=>{
+      if(!prev.length) return prev;
+      return prev.map(p=>enrichPhoto(p,logData,xmlData));
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[logData,xmlData,enrichPhoto]);
+
   const handleFiles = useCallback(async(files)=>{
     const imgs=Array.from(files).filter(f=>f.type.startsWith("image/")||/\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f.name));
     if(!imgs.length){addLog("No image files found");return;}

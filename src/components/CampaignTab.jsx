@@ -253,8 +253,8 @@ const ANSWER_META = {
   partial: { label: 'Partial', c: '#F59E0B' },
   answered: { label: 'Answered', c: '#1D9E75' },
 }
-const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl1', 'tl2']
-const TAG_ROLES = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'] // TL2 and up
+const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl1', 'tl2']
+const TAG_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl2', 'consultant'] // TL2 and up
 // TL3 and above may EDIT plan / backlog / day / debrief / speed notes / weather.
 const EDIT_ROLES = ['admin', 'team_manager', 'coach', 'tl3']
 // TL2 and above may see the "what can we test now" picker.
