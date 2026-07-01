@@ -27,7 +27,7 @@ export type LogField =
   | 'v0p' | 'v0s' | 'v1p' | 'v1s'
   // headsail-only trim positions — shown on JIB (headsail) scans
   | 'jibUpDnStbd' | 'jibUpDnPort' | 'jibInOut'
-  | 'jibTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt'
+  | 'jibTackLoad' | 'gsTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt'
   | 'leeway' | 'set' | 'drift' | 'hdg'
   // performance / targets — CANONICAL app-wide names (shared with csvLogParse /
   // the video overlay / dbSync / autotags). New log formats map their own column
@@ -75,6 +75,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   jibUpDnPort: ['jibupdnportpos'],
   jibInOut: ['jibinoutpos'],
   jibTackLoad: ['jibtkpin', 'jibtackt', 'jibtack'],
+  gsTackLoad: ['gstacktfrombar', 'gstackload', 'gstackt'],
   cunninghamLoad: ['cunningham', 'cunno'],
   mastAng: ['mastang'],
   mastButt: ['mastbutt'],

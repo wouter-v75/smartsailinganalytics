@@ -41,7 +41,7 @@ export interface FlatLogRow {
   // rig loads/settings + targets (2026-06 N76 flat-CSV): so the 2-min SailScan
   // window can average them instead of only showing them at the scan instant.
   rake: number | null; mastAng: number | null
-  jibTackLoad: number | null; cunninghamLoad: number | null
+  jibTackLoad: number | null; gsTackLoad: number | null; cunninghamLoad: number | null
   vang: number | null; outhaul: number | null; travPct: number | null; cunnoPct: number | null
   // mainsail-only batten/vang positions (port/starboard)
   v0p: number | null; v0s: number | null; v1p: number | null; v1s: number | null
@@ -141,7 +141,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       ttbPort: num(c, M.ttbPort), ttbStbd: num(c, M.ttbStbd), ttbPin: num(c, M.ttbPin), ttbCB: num(c, M.ttbCB),
       timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
       rake: num(c, M.rake), mastAng: num(c, M.mastAng),
-      jibTackLoad: num(c, M.jibTackLoad), cunninghamLoad: num(c, M.cunninghamLoad),
+      jibTackLoad: num(c, M.jibTackLoad), gsTackLoad: num(c, M.gsTackLoad), cunninghamLoad: num(c, M.cunninghamLoad),
       vang: num(c, M.vang), outhaul: num(c, M.outhaul), travPct: num(c, M.travPct), cunnoPct: num(c, M.cunnoPct),
       v0p: num(c, M.v0p), v0s: num(c, M.v0s), v1p: num(c, M.v1p), v1s: num(c, M.v1s),
       jibUpDnStbd: num(c, M.jibUpDnStbd), jibUpDnPort: num(c, M.jibUpDnPort), jibInOut: num(c, M.jibInOut),

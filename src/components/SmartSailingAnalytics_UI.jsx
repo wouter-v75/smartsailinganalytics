@@ -456,6 +456,24 @@ function extractBoatLengthM(boatName){
   return 12; // fallback ~40 ft
 }
 
+// Log variables the user can ADD to the video overlay from the dropdown (on top
+// of each mode's fixed default gauges). key = the canonical row field.
+const OVERLAY_VARS = [
+  {key:'tws',label:'TWS',unit:'kn',dec:1},{key:'twa',label:'TWA',unit:'°',dec:0},
+  {key:'aws',label:'AWS',unit:'kn',dec:1},{key:'awa',label:'AWA',unit:'°',dec:0},
+  {key:'twd',label:'TWD',unit:'°',dec:0},{key:'bsp',label:'BSP',unit:'kn',dec:1},
+  {key:'sog',label:'SOG',unit:'kn',dec:1},{key:'vmg',label:'VMG',unit:'kn',dec:2},
+  {key:'heel',label:'Heel',unit:'°',dec:0},{key:'trim',label:'Trim',unit:'°',dec:1},
+  {key:'forestay',label:'Forestay',unit:'',dec:1},{key:'keelAng',label:'Keel',unit:'°',dec:1},
+  {key:'rudder',label:'Rudder',unit:'',dec:1},{key:'mastAng',label:'Mast ang',unit:'',dec:0},
+  {key:'vsPerfPct',label:'Polar %',unit:'%',dec:0},{key:'vsTarget',label:'Tgt BSP',unit:'kn',dec:1},
+  {key:'twaTarg',label:'Tgt TWA',unit:'°',dec:0},{key:'leeway',label:'Leeway',unit:'°',dec:1},
+  {key:'vang',label:'Vang',unit:'',dec:1},{key:'outhaul',label:'Outhaul',unit:'',dec:1},
+  {key:'cunninghamLoad',label:'Cunno',unit:'',dec:1},{key:'jibTackLoad',label:'Jib tack',unit:'',dec:1},
+  {key:'gsTackLoad',label:'GS tack',unit:'',dec:1},{key:'upDflctPct',label:'Up defl',unit:'%',dec:0},
+  {key:'lwDflctPct',label:'Low defl',unit:'%',dec:0},{key:'travPct',label:'Traveller',unit:'%',dec:0},
+];
+
 function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,
                       // Phase B crop UX — three callbacks + the current
                       // cut points + busy flag. All optional; toolbar
@@ -794,6 +812,20 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     return`${d<0?"OCS ":""}${Math.abs(d).toFixed(1)}`;
   };
 
+  // User-added overlay variables — SESSION ONLY (resets on reload; defaults for
+  // every mode stay exactly as-is). Appended below the fixed gauges.
+  const [extraGauges,setExtraGauges]=useState([]);
+  const extraOverlay = row && extraGauges.length>0 && (
+    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:5}}>
+      {extraGauges.map(k=>{
+        const o=OVERLAY_VARS.find(x=>x.key===k); if(!o) return null;
+        const v=row[k];
+        const val=v!=null?(o.unit==='°'?`${R(v,o.dec)}°`:R(v,o.dec)):"--";
+        return <Gauge key={k} label={o.label} value={val} unit={o.unit==='°'?'':o.unit} color="#A78BFA" size="sm"/>;
+      })}
+    </div>
+  );
+
   const overlay=row&&(()=>{
     if(mode==="start") return(
       <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
@@ -888,7 +920,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
         {/* On mobile, pin to all-but-bottom so tiles wrap within the
             frame width instead of overflowing off the right edge. */}
-        {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:mobileFs?52:(isMobile?6:undefined)}}>{overlay}</div>}
+        {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:mobileFs?52:(isMobile?6:undefined)}}>{overlay}{extraOverlay}</div>}
         {modeBadge}
         <div style={{position:"absolute",bottom:8,left:8,display:"flex",alignItems:"center",gap:6}}>
           {vidQuality&&<div style={{background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 6px",fontSize:9,color:"#7DD3FC",fontFamily:"monospace",letterSpacing:0.3}}>▾ {vidQuality}</div>}
@@ -906,6 +938,22 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
       </div>
       <div style={{padding:"8px 12px 0"}}>
+        {/* Overlay variables — add extra gauges for this session only. */}
+        {logData?.rows?.length>0 && (
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:8}}>
+            <span style={{fontSize:9,color:"#475569",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
+            {extraGauges.map(k=>{const o=OVERLAY_VARS.find(x=>x.key===k);return(
+              <span key={k} style={{display:"inline-flex",alignItems:"center",gap:4,background:"#8B5CF615",border:"1px solid #8B5CF640",borderRadius:4,padding:"1px 4px 1px 7px",fontSize:9,color:"#A78BFA"}}>
+                {o?.label||k}
+                <button onClick={()=>setExtraGauges(p=>p.filter(x=>x!==k))} style={{background:"none",border:"none",color:"#A78BFA",cursor:"pointer",fontSize:11,lineHeight:1,padding:0}}>×</button>
+              </span>);})}
+            <select value="" onChange={e=>{const v=e.target.value; if(v) setExtraGauges(p=>p.includes(v)?p:[...p,v]);}}
+              style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:4,padding:"3px 6px",color:"#7DD3FC",fontSize:10,cursor:"pointer"}}>
+              <option value="">+ add variable…</option>
+              {OVERLAY_VARS.filter(o=>!extraGauges.includes(o.key)).map(o=><option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+        )}
         <div style={{position:"relative",height:26,background:"#071624",borderRadius:4,cursor:"pointer",overflow:"hidden"}} onClick={seek}>
           <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${pct}%`,background:"#06B6D430",transition:"width 0.5s linear"}}/>
           <div style={{position:"absolute",left:`${pct}%`,top:0,bottom:0,width:2,background:"#06B6D4",transform:"translateX(-50%)"}}/>
@@ -1935,23 +1983,18 @@ function UploadTab({role,cloudStatus,onImported}){
     addLog(cloudStatus?.available && perms.canSync ? "Saved. Click Push to Cloud to upload." : "Saved to local storage. Ready in Videos.");
     setPhase("saved");
     onImported({ date: primaryDate, videos: saved, logData: csvParsed, xmlData: xmlParsed });
-    // Auto-continue to the cloud upload (mirrors the photo flow: import → upload,
-    // no extra click). Self-guards on cloud availability + canSync + savedDate.
-    if (autoFlowRef.current) { autoFlowRef.current = false; setTimeout(() => pushCloud(), 0); }
   };
 
-  // Auto-save + upload videos the way PHOTOS do — as soon as the queued clips
-  // finish processing (duration read), run saveLocal automatically instead of
-  // waiting for the "Save locally" button; saveLocal then chains to pushCloud.
+  // Auto-SAVE videos LOCALLY as soon as the queued clips finish processing
+  // (duration read) — no "Save locally" click. The cloud upload is NOT automatic:
+  // the user pushes originals later from the Videos tab ("Upload originals").
   // Fires once per batch; the "New import" reset re-arms it for the next batch.
   const autoVidDoneRef = useRef(false);
-  const autoFlowRef = useRef(false);
   useEffect(() => {
     if (!pendingVids.length) { autoVidDoneRef.current = false; return; }
     if (phase !== 'idle' || autoVidDoneRef.current) return;
     if (!pendingVids.every(v => v.duration != null)) return; // wait until processed
     autoVidDoneRef.current = true;
-    autoFlowRef.current = true; // let saveLocal know to chain the cloud push
     saveLocal();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingVids, phase]);
