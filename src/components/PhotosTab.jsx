@@ -414,9 +414,11 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   );
 }
 
-function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0}){
+function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime}){
   const canvasRef=useRef(null);
   const [rendered,setRendered]=useState(false);
+  const [editTime,setEditTime]=useState(false);
+  const [timeVal,setTimeVal]=useState('');
   useEffect(()=>{
     if(!photo?.objectUrl||!canvasRef.current){setRendered(false);return;}
     const img=new Image();
@@ -469,7 +471,27 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
           {photo.sails.filter(s=>!SAIL_SKIP.test(s)).map(t=>(<span key={t} style={{background:sailTagColor.bg,border:`1px solid ${sailTagColor.bd}`,color:sailTagColor.c,fontSize:9,borderRadius:3,padding:"1px 6px",fontFamily:"monospace"}}>{t}</span>))}
         </div>}
         {photo.lat&&photo.lon&&<div style={{marginTop:5,fontSize:9,color:"#22C55E"}}>📍 {photo.lat.toFixed(5)}°, {photo.lon.toFixed(5)}°</div>}
-        {photo.utc&&<div style={{marginTop:4,fontSize:9,color:"#475569"}}>🕐 {fmtLocalDT(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
+        {photo.utc&&!editTime&&(
+          <div style={{marginTop:4,fontSize:9,color:"#475569",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span>🕐 {fmtLocalDT(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</span>
+            {onEditTime&&<button onClick={()=>{setTimeVal(new Date(photo.utc+tzOffset*60000).toISOString().slice(0,16));setEditTime(true);}}
+              style={{background:"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"1px 6px",color:"#7DD3FC",cursor:"pointer",fontSize:9}}>✎ edit time</button>}
+          </div>
+        )}
+        {photo.utc&&editTime&&(
+          <div style={{marginTop:6,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <input type="datetime-local" value={timeVal} onChange={e=>setTimeVal(e.target.value)}
+              style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:4,padding:"3px 6px",color:"#E2E8F0",fontSize:10}}/>
+            <span style={{fontSize:9,color:"#64748B"}}>{TZ_SHORT(tzOffset)} (venue local)</span>
+            <button onClick={()=>{
+              if(!timeVal){setEditTime(false);return;}
+              const utc=new Date(timeVal+":00Z").getTime()-tzOffset*60000; // venue-local → true UTC
+              if(Number.isFinite(utc)) onEditTime(photo,utc);
+              setEditTime(false);
+            }} style={{background:"#06B6D4",border:"none",borderRadius:4,padding:"3px 10px",color:"#001018",fontWeight:700,cursor:"pointer",fontSize:10}}>Save</button>
+            <button onClick={()=>setEditTime(false)} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"3px 8px",color:"#64748B",cursor:"pointer",fontSize:10}}>Cancel</button>
+          </div>
+        )}
       </div>
 
       {/* SailScan analysis card — appears for photos saved from the SailScan
@@ -701,6 +723,40 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     // (flush effect declared below handles deferred originals)
     onPhotosChange?.(updated);
   },[LS_KEY,onPhotosChange]);
+
+  // Edit a photo's capture time (like the video start-time editor). The photo's
+  // day (folder) is derived from photo.utc, so changing it re-buckets the photo;
+  // we re-enrich with the log/event data at the new instant and persist the new
+  // taken_utc + session date to the cloud row so teammates see the move too.
+  const handleEditPhotoTime = useCallback(async (photo, newUtc)=>{
+    if(!photo || !Number.isFinite(newUtc)) return;
+    const updated = enrichPhoto({...photo, utc:newUtc}, logData, xmlData);
+    setPhotos(prev=>{
+      const next = prev.map(p=>p.id===photo.id?updated:p).sort((a,b)=>(b.utc||0)-(a.utc||0));
+      savePhotos(next);
+      return next;
+    });
+    setSelected(s=> (s && s.id===photo.id) ? updated : s);
+    // Update the team-shared DB row (same bunny path → route UPDATEs it, and
+    // re-points its session to the new day).
+    try {
+      const { getBrowserSupabase } = await import('../lib/supabase/browser');
+      const { upsertPhotoCloud } = await import('../lib/cloud-photos');
+      const { data:{ user } } = await getBrowserSupabase().auth.getUser();
+      if(user && (photo.bunnyPath || photo.url)){
+        await upsertPhotoCloud({
+          userId: user.id,
+          sessionDate: fmtLocalDate(newUtc, sessionTzOffset),
+          takenUtc: newUtc,
+          exif: photo.exif ?? null,
+          thumbnailUrl: photo.thumbnailUrl ?? null,
+          bunnyStoragePath: photo.bunnyPath || photo.url,
+          bytes: photo.size ?? null,
+          analysis: photo.analysis ?? photo.sailscan_data ?? null,
+        });
+      }
+    } catch { /* non-fatal — local edit still applied */ }
+  },[enrichPhoto,logData,xmlData,savePhotos,sessionTzOffset]);
 
   // Deferred-original flush: photos imported in the Upload tab on cellular get
   // their thumbnail up immediately but the full original waits. When this tab
@@ -1225,7 +1281,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {/* ── Detail panel — desktop-only (mobile renders as overlay below) ── */}
       {!isNarrow && (selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
-           canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal} tzOffset={sessionTzOffset}/>
+           canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155"}}>
           <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#475569"}}>Select a photo to view</div></div>
         </div>)}
@@ -1237,7 +1293,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           <PhotoDetail photo={selected} onDelete={()=>{handleDelete();setMobileDetailOpen(false);}}
             onUpload={handleUpload} uploading={uploading}
             canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}
-            onClose={()=>setMobileDetailOpen(false)} tzOffset={sessionTzOffset}/>
+            onClose={()=>setMobileDetailOpen(false)} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}/>
         </div>
       )}
     </div>
