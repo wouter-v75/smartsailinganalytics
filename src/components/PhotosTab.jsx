@@ -51,8 +51,12 @@ async function generateThumbnail(blob, maxSize=480, quality=0.78) {
 }
 
 // ── IndexedDB helpers for photos ─────────────────────────────────────────────
+// Cache the connection — opening a fresh IndexedDB handle per photo made loading
+// a folder with many photos slow (N opens). One shared handle for the session.
+let _photoDbPromise = null;
 function openDb() {
-  return new Promise((resolve,reject)=>{
+  if (_photoDbPromise) return _photoDbPromise;
+  _photoDbPromise = new Promise((resolve,reject)=>{
     const req = indexedDB.open(DB_NAME, 4); // bump to v4 to add photos store
     req.onupgradeneeded = e => {
       const db = e.target.result;
@@ -67,8 +71,9 @@ function openDb() {
       if(!db.objectStoreNames.contains("photos"))   db.createObjectStore("photos",{keyPath:"id"});
     };
     req.onsuccess = e=>resolve(e.target.result);
-    req.onerror   = e=>reject(e.target.error);
+    req.onerror   = e=>{ _photoDbPromise=null; reject(e.target.error); };
   });
+  return _photoDbPromise;
 }
 
 async function idbPutPhoto(id, blob) {
@@ -655,10 +660,13 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         }
       } catch { /* cloud optional */ }
       if (cancelled) return;
-      // 2) Resolve display URLs (local blob → cloud thumb) for every photo.
+      // 2) Resolve display URLs. Only LOCALLY-owned photos have a blob in IndexedDB;
+      //    cloud-shared photos (all a TL3 sees) never do, so skip the IDB lookup for
+      //    them entirely — that per-photo open was what made the folder slow.
+      const localIds = new Set(meta.map(m=>m.id));
       const combined = [...meta, ...cloudOnly];
       const restored = await Promise.all(combined.map(async p=>{
-        const blob = await idbGetPhoto(p.id).catch(()=>null);
+        const blob = localIds.has(p.id) ? await idbGetPhoto(p.id).catch(()=>null) : null;
         const hasLocalOriginal = !!blob;
         const keys = cloudKeys(p.sessionDate||activeDate, p.id);
         const objectUrl = blob
