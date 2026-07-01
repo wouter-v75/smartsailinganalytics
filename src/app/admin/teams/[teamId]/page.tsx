@@ -10,7 +10,6 @@ import {
 import TeamHeader from './TeamHeader'
 import BoatsPanel from './BoatsPanel'
 import MembershipsPanel from './MembershipsPanel'
-import SubteamsPanel from './SubteamsPanel'
 import InvitationsPanel from './InvitationsPanel'
 import PendingRequestsPanel from './PendingRequestsPanel'
 import BackfillPanel from './BackfillPanel'
@@ -91,35 +90,6 @@ export default async function TeamDetailPage({
 
   if (!team) notFound()
 
-  // ── Campaign engine (NORTHSTAR-gated) ──────────────────────────────────────
-  // Campaign engine is generic — every team can manage sub-teams. The
-  // 0014+ tables must exist (they do once that migration's been applied).
-  // supabase-js returns { error } rather than throwing, so a pre-migration
-  // environment just yields empty arrays here.
-  let subteams: Array<{
-    id: string
-    category: 'racing' | 'technical' | 'whole-team'
-    key: string
-    label: string
-    seq: number
-    active: boolean
-  }> = []
-  let subteamAssignments: Array<{ membership_id: string; subteam_id: string }> =
-    []
-  const [{ data: st }, { data: ms }] = await Promise.all([
-    service
-      .from('subteams')
-      .select('id, category, key, label, seq, active')
-      .eq('team_id', params.teamId)
-      .order('seq', { ascending: true }),
-    service
-      .from('membership_subteams')
-      .select('membership_id, subteam_id')
-      .eq('team_id', params.teamId),
-  ])
-  subteams = st || []
-  subteamAssignments = ms || []
-
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-8">
       <div className="max-w-4xl mx-auto">
@@ -160,13 +130,6 @@ export default async function TeamDetailPage({
                   (memberships || []).some((m) => m.user_id === u.id)
                 )
           }
-        />
-
-        <SubteamsPanel
-          teamId={team.id}
-          subteams={subteams}
-          memberships={memberships || []}
-          assignments={subteamAssignments}
         />
 
         <InvitationsPanel teamId={team.id} boats={boats || []} />

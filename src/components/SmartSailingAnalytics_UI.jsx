@@ -5036,7 +5036,7 @@ function SSAApp(){
 
   // Campaign engine config for the active team. Null unless the team has
   // features.campaign_engine = true AND the active membership has a boat. When
-  // set, it carries {teamId, boatId, subteams, mySubteamIds, targetDate} and
+  // set, it carries {teamId, boatId, members, targetDate, startDate} and
   // the Campaign tab becomes available.
   useEffect(()=>{
     let cancelled=false;

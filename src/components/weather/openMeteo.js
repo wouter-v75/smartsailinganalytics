@@ -103,6 +103,9 @@ export const MODELS = {
     venues: [
       { name: 'la_ciotat', domain: 'riviera_2km', clon: 5.61, clat: 43.16, half: 0.25 },
       { name: 'st_tropez', domain: 'riviera_2km', clon: 6.678, clat: 43.275, half: 0.25 },
+      // Solent / Cowes, Isle of Wight (UK) — own ICON-EU-driven 2 km parent. W lon is
+      // negative. Points grey out until solent_2km's grid publishes:
+      { name: 'solent', domain: 'solent_2km', clon: -1.30, clat: 50.76, half: 0.30 },
       // La Spezia STOPPED 2026-06-27 (domain box removed; training window closed).
       // Porto Cervo (Maxi Worlds, 1-12 Sept) — points grey out until its grid publishes:
       { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.25 },
@@ -128,6 +131,8 @@ export const MODELS = {
     venues: [
       { name: 'la_ciotat', domain: 'la_ciotat_1km', clon: 5.61, clat: 43.16, half: 0.15 },
       { name: 'st_tropez', domain: 'st_tropez_1km', clon: 6.678, clat: 43.275, half: 0.23 },
+      // Solent / Cowes 1 km nest off solent_2km (full-Solent race box, half 0.30):
+      { name: 'solent', domain: 'solent_1km', clon: -1.30, clat: 50.76, half: 0.30 },
     ],
     // Served wind levels in grid.json: the lean hl stream (10→300 m) PLUS the upper
     // levels 500/750/1000 m that publish (grid_tab_to_json UPPER_FROM_PBL) folds in

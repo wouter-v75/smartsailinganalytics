@@ -1,8 +1,8 @@
 // Campaign config for the active team.
 //
-// GET   → { campaignOn, subteams[], mySubteamIds[], targetDate, startDate }
+// GET   → { campaignOn, boatName, event, meId, members[], targetDate, startDate }
 //         Reads under the caller's RLS. Used by the SPA to decide whether to
-//         show the Campaign tab and to seed sub-team filters.
+//         show the Campaign tab and to seed owner pickers.
 // PATCH → set the campaign target/start dates (stored in teams.features).
 //         Manager/admin only.
 
@@ -30,47 +30,6 @@ export async function GET(
     .eq('id', params.teamId)
     .maybeSingle()
   const features = (team?.features as Record<string, unknown>) || {}
-
-  const [{ data: subteams }, { data: myMemberships }, { data: meRow }] = await Promise.all([
-    supabase
-      .from('subteams')
-      .select('id, category, key, label, seq, active')
-      .eq('team_id', params.teamId)
-      .order('seq', { ascending: true }),
-    supabase
-      .from('memberships')
-      .select('id, role')
-      .eq('team_id', params.teamId)
-      .eq('user_id', user.id),
-    supabase
-      .from('users')
-      .select('global_role')
-      .eq('id', user.id)
-      .maybeSingle(),
-  ])
-
-  // Compute "my sub-teams" — drives the Backlog "My sub-teams" chip and the
-  // ItemForm sub-team picker. Senior roles (admin, team_manager, coach, tl3)
-  // are implicitly members of every active sub-team on the team, so they
-  // can both view and triage everything without having to be assigned to
-  // each one manually.
-  const SENIOR_ROLES = new Set(['team_manager', 'coach', 'tl3'])
-  const isAdmin = meRow?.global_role === 'admin'
-  const isSenior = (myMemberships || []).some((m) => SENIOR_ROLES.has(m.role))
-  const membershipIds = (myMemberships || []).map((m) => m.id)
-  let mySubteamIds: string[] = []
-  if (isAdmin || isSenior) {
-    mySubteamIds = ((subteams as Array<{ id: string; active: boolean }> | null) || [])
-      .filter((s) => s.active !== false)
-      .map((s) => s.id)
-  } else if (membershipIds.length) {
-    const { data: links } = await supabase
-      .from('membership_subteams')
-      .select('subteam_id')
-      .eq('team_id', params.teamId)
-      .in('membership_id', membershipIds)
-    mySubteamIds = (links || []).map((l) => l.subteam_id)
-  }
 
   // Team members (id + name) for owner pickers. Scoped to the active boat
   // (this boat's memberships + team-wide null-boat memberships) when a boat_id
@@ -113,8 +72,6 @@ export async function GET(
     campaignOn: true,
     boatName,
     event,
-    subteams: subteams || [],
-    mySubteamIds,
     meId: user.id,
     members: Array.from(memberMap.values()).sort((a, b) =>
       (a.name || '').localeCompare(b.name || '')
