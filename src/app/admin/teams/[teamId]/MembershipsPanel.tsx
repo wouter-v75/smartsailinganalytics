@@ -62,6 +62,8 @@ export default function MembershipsPanel({
   const [role, setRole] = useState<Role>('tl2')
   const [validFrom, setValidFrom] = useState('')
   const [validTo, setValidTo] = useState('')
+  const [dataFrom, setDataFrom] = useState('') // session-date range the consultant may VIEW
+  const [dataTo, setDataTo] = useState('')
 
   async function add(e: React.FormEvent) {
     e.preventDefault()
@@ -84,6 +86,8 @@ export default function MembershipsPanel({
             role,
             valid_from: validFrom || null,
             valid_to: validTo || null,
+            data_from: dataFrom || null,
+            data_to: dataTo || null,
           }),
         }
       )
@@ -97,6 +101,8 @@ export default function MembershipsPanel({
       setRole('tl2')
       setValidFrom('')
       setValidTo('')
+      setDataFrom('')
+      setDataTo('')
       router.refresh()
     } finally {
       setBusy(false)
@@ -187,23 +193,49 @@ export default function MembershipsPanel({
         {role === 'consultant' && (
           <>
             <div>
-              <label className="block text-xs text-slate-500 mb-1">From</label>
+              <label className="block text-xs text-slate-500 mb-1">Access from</label>
               <input
                 type="date"
                 value={validFrom}
                 onChange={(e) => setValidFrom(e.target.value)}
+                title="When the consultant can start logging in"
                 className="w-full rounded-lg border border-slate-300 bg-white text-slate-900 px-2 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div>
-              <label className="block text-xs text-slate-500 mb-1">To</label>
+              <label className="block text-xs text-slate-500 mb-1">Access to</label>
               <input
                 type="date"
                 value={validTo}
                 onChange={(e) => setValidTo(e.target.value)}
+                title="When the consultant's login access ends"
                 className="w-full rounded-lg border border-slate-300 bg-white text-slate-900 px-2 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Data from</label>
+              <input
+                type="date"
+                value={dataFrom}
+                onChange={(e) => setDataFrom(e.target.value)}
+                title="Earliest SESSION DATE they may view (blank = all)"
+                className="w-full rounded-lg border border-slate-300 bg-white text-slate-900 px-2 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Data to</label>
+              <input
+                type="date"
+                value={dataTo}
+                onChange={(e) => setDataTo(e.target.value)}
+                title="Latest SESSION DATE they may view (blank = all)"
+                className="w-full rounded-lg border border-slate-300 bg-white text-slate-900 px-2 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <p className="sm:col-span-6 text-xs text-slate-500 -mt-1">
+              <strong>Access</strong> = when they can log in. <strong>Data</strong> = which session dates they can view
+              (leave blank for all). E.g. a sailmaker on 1 Jul viewing only 25–27 Jun: Access from today, Data 25 Jun → 27 Jun.
+            </p>
           </>
         )}
 

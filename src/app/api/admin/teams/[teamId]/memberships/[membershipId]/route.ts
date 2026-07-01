@@ -20,6 +20,8 @@ export async function PATCH(
         role?: Role
         valid_from?: string | null
         valid_to?: string | null
+        data_from?: string | null
+        data_to?: string | null
       }
     | null
 
@@ -33,6 +35,8 @@ export async function PATCH(
   }
   if (body && 'valid_from' in body) update.valid_from = body.valid_from || null
   if (body && 'valid_to' in body) update.valid_to = body.valid_to || null
+  if (body && 'data_from' in body) update.data_from = body.data_from || null
+  if (body && 'data_to' in body) update.data_to = body.data_to || null
 
   if (Object.keys(update).length === 0) {
     return NextResponse.json({ error: 'nothing to update' }, { status: 400 })
@@ -44,7 +48,7 @@ export async function PATCH(
     .update(update)
     .eq('id', params.membershipId)
     .eq('team_id', params.teamId)
-    .select('id, user_id, team_id, boat_id, role, valid_from, valid_to')
+    .select('id, user_id, team_id, boat_id, role, valid_from, valid_to, data_from, data_to')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

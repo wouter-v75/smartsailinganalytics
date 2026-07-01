@@ -22,6 +22,8 @@ export async function POST(
         role?: Role
         valid_from?: string | null
         valid_to?: string | null
+        data_from?: string | null // YYYY-MM-DD: earliest session date they may VIEW
+        data_to?: string | null   // YYYY-MM-DD: latest session date they may VIEW
       }
     | null
   if (!body?.user_id || !body?.role) {
@@ -72,8 +74,10 @@ export async function POST(
       role: body.role,
       valid_from: body.valid_from || null,
       valid_to: body.valid_to || null,
+      data_from: body.data_from || null,
+      data_to: body.data_to || null,
     })
-    .select('id, user_id, team_id, boat_id, role, valid_from, valid_to')
+    .select('id, user_id, team_id, boat_id, role, valid_from, valid_to, data_from, data_to')
     .single()
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
