@@ -19,6 +19,8 @@ interface Invitation {
   boat_id: string | null
   valid_from: string | null
   valid_to: string | null
+  data_from: string | null
+  data_to: string | null
   token: string
   auto_approve: boolean
   max_uses: number
@@ -50,6 +52,11 @@ export default function InvitationsPanel({
   const [email, setEmail] = useState('')
   const [emailRole, setEmailRole] = useState<Role>('tl2')
   const [emailBoatId, setEmailBoatId] = useState('')
+  // Consultant-only windows (shown when emailRole === 'consultant').
+  const [validFrom, setValidFrom] = useState('') // login access window
+  const [validTo, setValidTo] = useState('')
+  const [dataFrom, setDataFrom] = useState('') // session dates they may VIEW
+  const [dataTo, setDataTo] = useState('')
 
   // Form state — open
   const [openRole, setOpenRole] = useState<Role>('tl1')
@@ -88,6 +95,10 @@ export default function InvitationsPanel({
   async function createEmail(e: React.FormEvent) {
     e.preventDefault()
     if (!email.trim()) return
+    if (emailRole === 'consultant' && (!validFrom || !validTo)) {
+      setErr('Consultant invites need an Access from / to window.')
+      return
+    }
     setBusy(true)
     setErr(null)
     try {
@@ -98,6 +109,10 @@ export default function InvitationsPanel({
           email: email.trim(),
           role: emailRole,
           boat_id: emailBoatId || null,
+          valid_from: validFrom || null,
+          valid_to: validTo || null,
+          data_from: dataFrom || null,
+          data_to: dataTo || null,
         }),
       })
       const j = await res.json().catch(() => ({}))
@@ -113,6 +128,10 @@ export default function InvitationsPanel({
         )
       }
       setEmail('')
+      setValidFrom('')
+      setValidTo('')
+      setDataFrom('')
+      setDataTo('')
       reload()
     } finally {
       setBusy(false)
@@ -255,6 +274,56 @@ export default function InvitationsPanel({
           >
             Send
           </button>
+
+          {emailRole === 'consultant' && (
+            <div className="w-full mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <label className="text-xs text-slate-600">
+                Access from
+                <input
+                  type="date"
+                  value={validFrom}
+                  onChange={(e) => setValidFrom(e.target.value)}
+                  title="When the consultant can start logging in"
+                  className="block mt-1 w-full rounded-lg border border-slate-300 bg-white text-slate-900 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="text-xs text-slate-600">
+                Access to
+                <input
+                  type="date"
+                  value={validTo}
+                  onChange={(e) => setValidTo(e.target.value)}
+                  title="When the consultant's login access ends"
+                  className="block mt-1 w-full rounded-lg border border-slate-300 bg-white text-slate-900 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="text-xs text-slate-600">
+                Data from
+                <input
+                  type="date"
+                  value={dataFrom}
+                  onChange={(e) => setDataFrom(e.target.value)}
+                  title="Earliest session date they may view (blank = all)"
+                  className="block mt-1 w-full rounded-lg border border-slate-300 bg-white text-slate-900 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="text-xs text-slate-600">
+                Data to
+                <input
+                  type="date"
+                  value={dataTo}
+                  onChange={(e) => setDataTo(e.target.value)}
+                  title="Latest session date they may view (blank = all)"
+                  className="block mt-1 w-full rounded-lg border border-slate-300 bg-white text-slate-900 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <p className="col-span-2 sm:col-span-4 text-xs text-slate-500">
+                <strong>Access</strong> = login window. <strong>Data</strong> = which session dates they can
+                view (blank = all). E.g. inviting a sailmaker on 1 Jul to see only 25–27 Jun: Access from today,
+                Data 25 Jun → 27 Jun.
+              </p>
+            </div>
+          )}
         </form>
       </div>
 

@@ -28,7 +28,7 @@ export async function GET(
   const { data, error } = await service
     .from('invitations')
     .select(
-      'id, team_id, email, role, boat_id, valid_from, valid_to, token, auto_approve, max_uses, used_count, expires_at, revoked_at, created_by_user_id, created_at'
+      'id, team_id, email, role, boat_id, valid_from, valid_to, data_from, data_to, token, auto_approve, max_uses, used_count, expires_at, revoked_at, created_by_user_id, created_at'
     )
     .eq('team_id', params.teamId)
     .order('created_at', { ascending: false })
@@ -43,6 +43,8 @@ interface TargetedBody {
   boat_id?: string | null
   valid_from?: string | null
   valid_to?: string | null
+  data_from?: string | null // earliest session date the consultant may VIEW
+  data_to?: string | null   // latest session date the consultant may VIEW
   expires_in_days?: number
 }
 interface OpenBody {
@@ -111,6 +113,8 @@ export async function POST(
       boat_id: tb.boat_id || null,
       valid_from: tb.valid_from || null,
       valid_to: tb.valid_to || null,
+      data_from: tb.data_from || null,
+      data_to: tb.data_to || null,
       token: generateInviteToken(),
       auto_approve: true,
       max_uses: 1,

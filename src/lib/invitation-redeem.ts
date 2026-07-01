@@ -31,6 +31,8 @@ interface InviteRow {
   boat_id: string | null
   valid_from: string | null
   valid_to: string | null
+  data_from: string | null
+  data_to: string | null
   auto_approve: boolean
   max_uses: number
   used_count: number
@@ -56,7 +58,7 @@ export async function redeemInvitation({
   const { data: inv } = await service
     .from('invitations')
     .select(
-      'id, team_id, email, role, boat_id, valid_from, valid_to, auto_approve, max_uses, used_count, expires_at, revoked_at, created_by_user_id'
+      'id, team_id, email, role, boat_id, valid_from, valid_to, data_from, data_to, auto_approve, max_uses, used_count, expires_at, revoked_at, created_by_user_id'
     )
     .eq('token', token)
     .maybeSingle<InviteRow>()
@@ -104,6 +106,8 @@ export async function redeemInvitation({
       role: inv.role,
       valid_from: inv.valid_from,
       valid_to: inv.valid_to,
+      data_from: inv.data_from,
+      data_to: inv.data_to,
     })
     if (memErr && !String(memErr.message).includes('duplicate')) {
       return { ok: false, error: memErr.message, status: 500 }
