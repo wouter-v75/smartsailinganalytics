@@ -26,7 +26,14 @@ interface MembershipRow {
   role: 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'tl2' | 'consultant' | 'guest'
   valid_from: string | null
   valid_to: string | null
+  data_from: string | null
+  data_to: string | null
   users: JoinedUser | JoinedUser[] | null
+}
+
+// <input type="date"> wants YYYY-MM-DD; DB values may carry a time/zone suffix.
+function dateInput(v: string | null): string {
+  return v ? v.slice(0, 10) : ''
 }
 
 function firstUser(u: MembershipRow['users']): JoinedUser | null {
@@ -294,11 +301,25 @@ function MembershipListRow({
   const u = firstUser(membership.users)
   const [editing, setEditing] = useState(false)
   const [role, setRole] = useState<Role>(membership.role as Role)
+  const [validFrom, setValidFrom] = useState(dateInput(membership.valid_from))
+  const [validTo, setValidTo] = useState(dateInput(membership.valid_to))
+  const [dataFrom, setDataFrom] = useState(dateInput(membership.data_from))
+  const [dataTo, setDataTo] = useState(dateInput(membership.data_to))
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
+  function startEdit() {
+    // Re-seed from the current row each time the editor opens.
+    setRole(membership.role as Role)
+    setValidFrom(dateInput(membership.valid_from))
+    setValidTo(dateInput(membership.valid_to))
+    setDataFrom(dateInput(membership.data_from))
+    setDataTo(dateInput(membership.data_to))
+    setErr(null)
+    setEditing(true)
+  }
+
   async function save() {
-    if (role === membership.role) { setEditing(false); return }
     setBusy(true)
     setErr(null)
     try {
@@ -307,7 +328,13 @@ function MembershipListRow({
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role }),
+          body: JSON.stringify({
+            role,
+            valid_from: validFrom || null,
+            valid_to: validTo || null,
+            data_from: dataFrom || null,
+            data_to: dataTo || null,
+          }),
         }
       )
       if (!res.ok) {
@@ -345,9 +372,54 @@ function MembershipListRow({
         </div>
         <div className="text-xs text-slate-500">
           {u?.email} · {boatName}
-          {membership.valid_from && ` · from ${membership.valid_from.slice(0, 10)}`}
+          {membership.valid_from && ` · access from ${membership.valid_from.slice(0, 10)}`}
           {membership.valid_to && ` to ${membership.valid_to.slice(0, 10)}`}
+          {(membership.data_from || membership.data_to) &&
+            ` · data ${membership.data_from ? membership.data_from.slice(0, 10) : '…'} → ${membership.data_to ? membership.data_to.slice(0, 10) : '…'}`}
         </div>
+
+        {editing && (
+          <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 max-w-md">
+            <label className="text-[11px] text-slate-500">
+              Access from
+              <input
+                type="date"
+                value={validFrom}
+                onChange={(e) => setValidFrom(e.target.value)}
+                className="block mt-0.5 w-full rounded border border-slate-300 bg-white text-slate-900 px-1.5 py-1 text-xs"
+              />
+            </label>
+            <label className="text-[11px] text-slate-500">
+              Access to
+              <input
+                type="date"
+                value={validTo}
+                onChange={(e) => setValidTo(e.target.value)}
+                className="block mt-0.5 w-full rounded border border-slate-300 bg-white text-slate-900 px-1.5 py-1 text-xs"
+              />
+            </label>
+            <label className="text-[11px] text-slate-500">
+              Data from
+              <input
+                type="date"
+                value={dataFrom}
+                onChange={(e) => setDataFrom(e.target.value)}
+                title="Earliest session date they may view (blank = all)"
+                className="block mt-0.5 w-full rounded border border-slate-300 bg-white text-slate-900 px-1.5 py-1 text-xs"
+              />
+            </label>
+            <label className="text-[11px] text-slate-500">
+              Data to
+              <input
+                type="date"
+                value={dataTo}
+                onChange={(e) => setDataTo(e.target.value)}
+                title="Latest session date they may view (blank = all)"
+                className="block mt-0.5 w-full rounded border border-slate-300 bg-white text-slate-900 px-1.5 py-1 text-xs"
+              />
+            </label>
+          </div>
+        )}
         {err && <div className="text-xs text-red-600 mt-1">{err}</div>}
       </div>
       <div className="flex gap-2 shrink-0">
@@ -361,7 +433,7 @@ function MembershipListRow({
               {busy ? 'Saving…' : 'Save'}
             </button>
             <button
-              onClick={() => { setRole(membership.role as Role); setEditing(false); setErr(null) }}
+              onClick={() => { setEditing(false); setErr(null) }}
               className="rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 px-3 py-1.5 text-sm"
             >
               Cancel
@@ -370,7 +442,7 @@ function MembershipListRow({
         ) : (
           <>
             <button
-              onClick={() => setEditing(true)}
+              onClick={startEdit}
               className="text-sm text-blue-600 hover:underline"
             >
               Edit

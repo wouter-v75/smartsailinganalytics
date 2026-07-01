@@ -67,7 +67,7 @@ export default async function TeamDetailPage({
       service
         .from('memberships')
         .select(
-          'id, user_id, boat_id, role, valid_from, valid_to, users:users(id, name, email, status)'
+          'id, user_id, boat_id, role, valid_from, valid_to, data_from, data_to, users:users(id, name, email, status)'
         )
         .eq('team_id', params.teamId)
         .order('created_at', { ascending: true }),
