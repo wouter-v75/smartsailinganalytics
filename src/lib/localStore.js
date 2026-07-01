@@ -331,11 +331,14 @@ export async function updateVideoTags(id, tags) {
   }
 }
 
-export async function updateVideoStartUtc(id, startUtc) {
+export async function updateVideoStartUtc(id, startUtc, sessionDate = null) {
   const db    = await openDb();
   const entry = await idbGet(db, "videos", id);
   if (entry) {
     entry.startUtc   = startUtc;
+    // Editing the start time can move the clip to a different day — update its
+    // sessionDate too, otherwise it stays filed under the old date's folder.
+    if (sessionDate) entry.sessionDate = sessionDate;
     entry.syncedToDb = false;
     await idbPut(db, "videos", entry);
   }

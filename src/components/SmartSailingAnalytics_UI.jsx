@@ -6664,18 +6664,26 @@ function SSAApp(){
                   {['admin','coach'].includes(effectiveRole) && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}} onSave={async(secs)=>{ await saveSyncForVideos([selectedVideo], secs); }}/></div>}
                   <div style={{marginBottom:12}}>
                     <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
-                      await updateVideoStartUtc(id,startUtc);
-                      const updatedVideo={...selectedVideo,startUtc};
+                      // The clip's DAY = the venue-local date of the new start time.
+                      // Recompute it so the clip moves to the right folder (not just
+                      // its displayed time).
+                      const newDate=new Date(startUtc+(sessionTzOffset||0)*60000).toISOString().slice(0,10);
+                      const oldDate=selectedVideo.sessionDate||activeDate;
+                      await updateVideoStartUtc(id,startUtc,newDate);
+                      const updatedVideo={...selectedVideo,startUtc,sessionDate:newDate};
                       const autoTags=computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0);
                       const autoTags2=new Set(computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0));const manualTags=(selectedVideo.tags||[]).filter(t=>!autoTags2.has(t));
                       const mergedTags=[...new Set([...autoTags,...manualTags])];
                       await updateVideoTags(id,mergedTags);
-                      // Push to cloud so teammates / other devices pick
-                      // up the new start time + recomputed tag set.
-                      pushVideoMetadataToCloud(selectedVideo,{startUtc,tags:mergedTags});
+                      // Push to cloud so teammates / other devices pick up the new
+                      // start time, folder date + recomputed tag set.
+                      pushVideoMetadataToCloud(selectedVideo,{startUtc,tags:mergedTags,sessionDate:newDate});
                       const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData,xmlData,syncOffsets);
                       setAllVideos(p=>p.map(v=>v.id===id?enriched:v));
                       setSelectedVideo(enriched);
+                      // Day changed → open the corrected folder (and load its log)
+                      // so the clip doesn't appear to vanish from the old one.
+                      if(newDate!==oldDate) loadDate(newDate);
                     }}/>
                   </div>
                   {/* Crop status banner — only renders when there's an
