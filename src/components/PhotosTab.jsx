@@ -684,6 +684,27 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     return ()=>{ clearTimeout(savedTimerRef.current); window.removeEventListener('ssa:photo-saved', onSaved); };
   },[activeDate]);
 
+  // Merge a photo with the day's log/event data (instruments, sails, race tags).
+  // Declared BEFORE the load effect and handleEditPhotoTime so those can list it
+  // in their dependency arrays without hitting a temporal-dead-zone ReferenceError.
+  const enrichPhoto = useCallback((photo,log,xml)=>{
+    const e={...photo};
+    if(log?.rows?.length&&photo.utc){
+      const row=nearestLogRow(log.rows,photo.utc);
+      if(row){
+        e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;
+        // Carry the remaining overlay-able fields so the "add variable" picker has data.
+        for(const o of PHOTO_OVERLAY_VARS){ if(row[o.key]!=null) e[o.key]=row[o.key]; }
+      }
+    }
+    if(xml){
+      const sails=activeSailsAt(xml.sailsUpEvents,photo.utc);
+      const race=raceTagsAt(xml,photo.utc);
+      e.sails=sails;e.raceTags=race;e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;
+    }
+    return e;
+  },[]);
+
   // Load metadata from localStorage, blobs from IDB, fill in cloud thumb URLs
   useEffect(()=>{
     if(!activeDate)return;
@@ -809,23 +830,6 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     return ()=>{ cancelled=true; };
   },[activeDate, cloudStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const enrichPhoto = useCallback((photo,log,xml)=>{
-    const e={...photo};
-    if(log?.rows?.length&&photo.utc){
-      const row=nearestLogRow(log.rows,photo.utc);
-      if(row){
-        e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;
-        // Carry the remaining overlay-able fields so the "add variable" picker has data.
-        for(const o of PHOTO_OVERLAY_VARS){ if(row[o.key]!=null) e[o.key]=row[o.key]; }
-      }
-    }
-    if(xml){
-      const sails=activeSailsAt(xml.sailsUpEvents,photo.utc);
-      const race=raceTagsAt(xml,photo.utc);
-      e.sails=sails;e.raceTags=race;e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;
-    }
-    return e;
-  },[]);
 
   const handleFiles = useCallback(async(files)=>{
     const imgs=Array.from(files).filter(f=>f.type.startsWith("image/")||/\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f.name));
