@@ -60,6 +60,9 @@ export default function BoatConfigTab({
   const boatName: string | null = config?.boatName || null
   const canEdit = EDIT_ROLES.includes(role || '')
   const isAdmin = role === 'admin'
+  // Consultants (e.g. a sailmaker) may VIEW the sail inventory + sail data, but
+  // not the boat's proprietary tuning: Rig settings, Targets, Log profile.
+  const canSeeTuning = role !== 'consultant'
   // Seed from the on-open prefetch (lib/boatConfigPrefetch) so the tab renders
   // instantly with the team's sails/scans/polar/rig; the effects below still
   // revalidate in the background.
@@ -426,9 +429,9 @@ export default function BoatConfigTab({
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
         {subBtn('inventory', 'Sail inventory')}
         {subBtn('shapes', 'Sail data')}
-        {subBtn('rig', 'Rig settings')}
-        {subBtn('polar', 'Targets')}
-        {subBtn('log', 'Log profile')}
+        {canSeeTuning && subBtn('rig', 'Rig settings')}
+        {canSeeTuning && subBtn('polar', 'Targets')}
+        {canSeeTuning && subBtn('log', 'Log profile')}
       </div>
 
       {err && <div style={{ color: C.warn, fontSize: 12, marginBottom: 12 }}>Error: {err}</div>}
@@ -576,7 +579,7 @@ export default function BoatConfigTab({
       )}
 
       {/* ── RIG SETTINGS (tuning baseline) ─────────────────────────── */}
-      {view === 'rig' && (
+      {view === 'rig' && canSeeTuning && (
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
             <span style={{ fontSize: 14, fontWeight: 800, color: C.head }}>
@@ -639,7 +642,7 @@ export default function BoatConfigTab({
       )}
 
       {/* ── LOG PROFILE (per-boat channel aliases) ──────────────────── */}
-      {view === 'log' && (
+      {view === 'log' && canSeeTuning && (
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: C.head, marginBottom: 10 }}>Log profile</div>
           <LogProfilePanel canEdit={canEdit} />

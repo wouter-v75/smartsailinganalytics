@@ -5136,8 +5136,10 @@ function SSAApp(){
   const canSeeToolsTab        = ['admin','team_manager','coach','tl3','tl2','consultant'].includes(effectiveRole);
   // Boat Config tab: TL3 and above (the senior team-leadership ladder). Not
   // visible to TL2 or lower. Edits (sails/polars/rig) are TL3+ via EDIT_ROLES
-  // in BoatConfigTab and the DB RLS.
-  const canSeeBoatConfig      = ['admin','team_manager','coach','tl3'].includes(effectiveRole);
+  // in BoatConfigTab and the DB RLS. Consultants (e.g. a sailmaker) also get
+  // the tab but only see the Sail inventory + Sail data sub-tabs (Rig / Targets
+  // / Log profile are hidden for them inside BoatConfigTab via canSeeTuning).
+  const canSeeBoatConfig      = ['admin','team_manager','coach','tl3','consultant'].includes(effectiveRole);
   const canSeeAnalyticsData   = !['tl1','guest'].includes(effectiveRole);
   const canSeeSailScanPhotos  = !['tl1','guest'].includes(effectiveRole);
   const canUseAI              = effectiveRole === null || !['tl1','consultant','guest'].includes(effectiveRole);
