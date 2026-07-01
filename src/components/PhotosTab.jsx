@@ -250,6 +250,25 @@ function raceTagsAt(xml,utc){
   return [...new Set(tags)];
 }
 
+// Log variables the user can ADD to the photo overlay (on top of the fixed
+// TWS/TWA/AWA/BSP/Heel/VMG). key = canonical row field carried onto the photo by
+// enrichPhoto. Mirrors the video overlay catalog.
+const PHOTO_OVERLAY_VARS = [
+  {key:'tws',label:'TWS',unit:'kn',dec:1},{key:'twa',label:'TWA',unit:'°',dec:0},
+  {key:'aws',label:'AWS',unit:'kn',dec:1},{key:'awa',label:'AWA',unit:'°',dec:0},
+  {key:'twd',label:'TWD',unit:'°',dec:0},{key:'bsp',label:'BSP',unit:'kn',dec:1},
+  {key:'sog',label:'SOG',unit:'kn',dec:1},{key:'vmg',label:'VMG',unit:'kn',dec:2},
+  {key:'heel',label:'Heel',unit:'°',dec:0},{key:'trim',label:'Trim',unit:'°',dec:1},
+  {key:'forestay',label:'Forestay',unit:'',dec:1},{key:'keelAng',label:'Keel',unit:'°',dec:1},
+  {key:'rudder',label:'Rudder',unit:'',dec:1},{key:'mastAng',label:'Mast ang',unit:'',dec:0},
+  {key:'vsPerfPct',label:'Polar %',unit:'%',dec:0},{key:'vsTarget',label:'Tgt BSP',unit:'kn',dec:1},
+  {key:'twaTarg',label:'Tgt TWA',unit:'°',dec:0},{key:'leeway',label:'Leeway',unit:'°',dec:1},
+  {key:'vang',label:'Vang',unit:'',dec:1},{key:'outhaul',label:'Outhaul',unit:'',dec:1},
+  {key:'cunninghamLoad',label:'Cunno',unit:'',dec:1},{key:'jibTackLoad',label:'Jib tack',unit:'',dec:1},
+  {key:'gsTackLoad',label:'GS tack',unit:'',dec:1},{key:'upDflctPct',label:'Up defl',unit:'%',dec:0},
+  {key:'lwDflctPct',label:'Low defl',unit:'%',dec:0},{key:'travPct',label:'Traveller',unit:'%',dec:0},
+];
+
 function renderOverlay(canvas,img,inst){
   const ctx=canvas.getContext("2d");
   canvas.width=img.naturalWidth||img.width;canvas.height=img.naturalHeight||img.height;
@@ -265,6 +284,8 @@ function renderOverlay(canvas,img,inst){
     {l:"Heel",v:inst.heel!=null?R(inst.heel,0)+"°":"--",c:"#F97316"},
     {l:"VMG",v:inst.vmg!=null?R(inst.vmg)+" kn":"--",c:"#22C55E"},
   ];
+  // User-added variables (session only) drawn after the fixed gauges.
+  if(Array.isArray(inst.extra)) for(const g of inst.extra) gauges.push(g);
   const cols=3,rows=Math.ceil(gauges.length/cols);
   const sx=W-cols*bw-(cols-1)*gap-pad,sy=H-rows*bh-(rows-1)*gap-pad;
   gauges.forEach((g,i)=>{
@@ -419,14 +440,17 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
   const [rendered,setRendered]=useState(false);
   const [editTime,setEditTime]=useState(false);
   const [timeVal,setTimeVal]=useState('');
+  const [extraGauges,setExtraGauges]=useState([]); // session-only overlay vars
   useEffect(()=>{
     if(!photo?.objectUrl||!canvasRef.current){setRendered(false);return;}
     const img=new Image();
     img.crossOrigin="anonymous";
-    img.onload=()=>{renderOverlay(canvasRef.current,img,{tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2});setRendered(true);};
+    const extra=extraGauges.map(k=>{const o=PHOTO_OVERLAY_VARS.find(x=>x.key===k);if(!o)return null;const v=photo[k];
+      return {l:o.label,v:v!=null?(o.unit==='°'?R(v,o.dec)+'°':R(v,o.dec)+(o.unit?' '+o.unit:'')):'--',c:'#A78BFA'};}).filter(Boolean);
+    img.onload=()=>{renderOverlay(canvasRef.current,img,{tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2,extra});setRendered(true);};
     img.onerror=()=>setRendered(false);
     img.src=photo.objectUrl;
-  },[photo.id,photo.objectUrl,photo.tws,photo.twa,photo.sails]);
+  },[photo.id,photo.objectUrl,photo.tws,photo.twa,photo.sails,extraGauges]);
   const handleExport=()=>{
     if(!canvasRef.current)return;
     const a=document.createElement("a");
@@ -452,6 +476,20 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
       <div style={{position:"relative",marginBottom:12}}>
         <canvas ref={canvasRef} style={{width:"100%",borderRadius:8,border:"1px solid #1E3A5A",display:"block"}}/>
         {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
+      </div>
+      {/* Overlay variables — add extra gauges to the photo overlay, this session only. */}
+      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        <span style={{fontSize:9,color:"#475569",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
+        {extraGauges.map(k=>{const o=PHOTO_OVERLAY_VARS.find(x=>x.key===k);return(
+          <span key={k} style={{display:"inline-flex",alignItems:"center",gap:4,background:"#8B5CF615",border:"1px solid #8B5CF640",borderRadius:4,padding:"1px 4px 1px 7px",fontSize:9,color:"#A78BFA"}}>
+            {o?.label||k}
+            <button onClick={()=>setExtraGauges(p=>p.filter(x=>x!==k))} style={{background:"none",border:"none",color:"#A78BFA",cursor:"pointer",fontSize:11,lineHeight:1,padding:0}}>×</button>
+          </span>);})}
+        <select value="" onChange={e=>{const v=e.target.value;if(v)setExtraGauges(p=>p.includes(v)?p:[...p,v]);}}
+          style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:4,padding:"3px 6px",color:"#7DD3FC",fontSize:10,cursor:"pointer"}}>
+          <option value="">+ add variable…</option>
+          {PHOTO_OVERLAY_VARS.filter(o=>!extraGauges.includes(o.key)).map(o=><option key={o.key} value={o.key}>{o.label}</option>)}
+        </select>
       </div>
       <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
         <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Instrument data</div>
@@ -775,7 +813,11 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     const e={...photo};
     if(log?.rows?.length&&photo.utc){
       const row=nearestLogRow(log.rows,photo.utc);
-      if(row){e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;}
+      if(row){
+        e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;
+        // Carry the remaining overlay-able fields so the "add variable" picker has data.
+        for(const o of PHOTO_OVERLAY_VARS){ if(row[o.key]!=null) e[o.key]=row[o.key]; }
+      }
     }
     if(xml){
       const sails=activeSailsAt(xml.sailsUpEvents,photo.utc);
