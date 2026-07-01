@@ -1935,7 +1935,26 @@ function UploadTab({role,cloudStatus,onImported}){
     addLog(cloudStatus?.available && perms.canSync ? "Saved. Click Push to Cloud to upload." : "Saved to local storage. Ready in Videos.");
     setPhase("saved");
     onImported({ date: primaryDate, videos: saved, logData: csvParsed, xmlData: xmlParsed });
+    // Auto-continue to the cloud upload (mirrors the photo flow: import → upload,
+    // no extra click). Self-guards on cloud availability + canSync + savedDate.
+    if (autoFlowRef.current) { autoFlowRef.current = false; setTimeout(() => pushCloud(), 0); }
   };
+
+  // Auto-save + upload videos the way PHOTOS do — as soon as the queued clips
+  // finish processing (duration read), run saveLocal automatically instead of
+  // waiting for the "Save locally" button; saveLocal then chains to pushCloud.
+  // Fires once per batch; the "New import" reset re-arms it for the next batch.
+  const autoVidDoneRef = useRef(false);
+  const autoFlowRef = useRef(false);
+  useEffect(() => {
+    if (!pendingVids.length) { autoVidDoneRef.current = false; return; }
+    if (phase !== 'idle' || autoVidDoneRef.current) return;
+    if (!pendingVids.every(v => v.duration != null)) return; // wait until processed
+    autoVidDoneRef.current = true;
+    autoFlowRef.current = true; // let saveLocal know to chain the cloud push
+    saveLocal();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingVids, phase]);
 
   const pushCloud=async()=>{
     if(!cloudStatus?.available||!perms.canSync||!savedDate)return;
