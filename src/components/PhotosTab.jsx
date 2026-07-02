@@ -793,6 +793,24 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[activeDate, logData, xmlData, refreshNonce]);
 
+  // Mirror the Videos tab: when the Photos tab opens on a day with no photos
+  // (e.g. today has none yet), jump to the most recent day that DOES have
+  // photos. One-shot per mount (autoDayRef) so it never fights later manual
+  // day navigation.
+  const autoDayRef = useRef(false);
+  useEffect(()=>{
+    if(autoDayRef.current) return;
+    if(!sessions?.length) return;
+    const withPhotos = sessions.filter(s=>(s.photoCount||0)>0 && s.date<=TODAY());
+    if(!withPhotos.length) return; // nothing to jump to yet — wait for sessions
+    const activeHasPhotos = activeDate && withPhotos.some(s=>s.date===activeDate);
+    if(!activeHasPhotos){
+      const latest = withPhotos.map(s=>s.date).sort().slice(-1)[0];
+      if(latest && latest!==activeDate){ autoDayRef.current=true; loadDate?.(latest); return; }
+    }
+    autoDayRef.current=true; // active day already has photos → settled
+  },[sessions, activeDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const savePhotos = useCallback((updated)=>{
     // Save metadata to localStorage (no blobs)
     const meta = updated.map(({objectUrl,...p})=>p);
