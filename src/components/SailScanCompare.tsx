@@ -43,6 +43,42 @@ function loadJsPdf(): Promise<any> {
 }
 const rgbOf = (hex: string) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]
 
+// render an image URL to a JPEG data-URL via canvas (needs CORS; null if tainted).
+function imgToDataUrl(url: string): Promise<{ dataUrl: string; w: number; h: number } | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const cv = document.createElement('canvas')
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight
+        cv.getContext('2d')!.drawImage(img, 0, 0)
+        resolve({ dataUrl: cv.toDataURL('image/jpeg', 0.85), w: img.naturalWidth, h: img.naturalHeight })
+      } catch { resolve(null) }
+    }
+    img.onerror = () => resolve(null)
+    img.src = url
+  })
+}
+
+// Catmull-Rom sampled polyline through points (for a smooth PDF line — jsPDF has
+// no native spline, so we densify the curve and draw short segments).
+function crSamples(p: { x: number; y: number }[], seg = 16): { x: number; y: number }[] {
+  if (p.length < 3) return p
+  const out: { x: number; y: number }[] = [p[0]]
+  for (let i = 0; i < p.length - 1; i++) {
+    const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p2
+    for (let t = 1; t <= seg; t++) {
+      const s = t / seg, s2 = s * s, s3 = s2 * s
+      out.push({
+        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * s + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * s2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * s3),
+        y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * s + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * s2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * s3),
+      })
+    }
+  }
+  return out
+}
+
 // Multi-series line chart into a jsPDF doc (mm units), x-domain 25–100%.
 function pdfMultiChart(doc: any, x: number, y: number, w: number, h: number, label: string,
   series: { xs: number[]; ys: (number | null)[]; rgb: number[]; dash?: boolean }[]) {
@@ -66,7 +102,8 @@ function pdfMultiChart(doc: any, x: number, y: number, w: number, h: number, lab
     if (!s.pts.length) continue
     doc.setDrawColor(s.rgb[0], s.rgb[1], s.rgb[2])
     doc.setLineDashPattern(s.dash ? [0.8, 0.6] : [], 0)
-    for (let i = 1; i < s.pts.length; i++) doc.line(px(s.pts[i - 1].x), py(s.pts[i - 1].y), px(s.pts[i].x), py(s.pts[i].y))
+    const sm = crSamples(s.pts.map((p) => ({ x: px(p.x), y: py(p.y) })))
+    for (let i = 1; i < sm.length; i++) doc.line(sm[i - 1].x, sm[i - 1].y, sm[i].x, sm[i].y)
   }
   doc.setLineDashPattern([], 0)
 }
@@ -181,19 +218,27 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
       doc.text(models.map(({ M: mm }) => `${mm.name}${mm.tws != null ? ` @${fmt(mm.tws, 0)}kt` : ''}`).join('   ·   '), M, y); y += 7
 
       const cols = ['St', 'Draft', 'Camb', 'Twist', 'Ent', 'Exit', 'Fr%', 'Bk%']
-      const cw = [12, 15, 15, 15, 13, 13, 15, 15]
-      for (const { M: mm, color } of models) {
-        need(8 + (mm.stripes.length + 1) * 5)
+      const cw = [11, 14, 14, 14, 12, 12, 14, 14]
+      for (const { scan, M: mm, color } of models) {
         const rgb = rgbOf(color)
+        const pic = scan?.photo_url ? await imgToDataUrl(scan.photo_url) : null
+        const photoW = pic ? 42 : 0
+        const photoH = pic ? Math.min(52, (photoW * pic.h) / pic.w) : 0
+        const rowsH = (mm.stripes.length + 1) * 5
+        need(6 + Math.max(rowsH, photoH) + 4)
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(rgb[0], rgb[1], rgb[2])
         doc.text(`${mm.name}${mm.tws != null ? `   @${fmt(mm.tws, 0)}kt` : ''}`, M, y); y += 5
+        const bodyTop = y
+        const tableX = pic ? M + photoW + 4 : M
+        if (pic) doc.addImage(pic.dataUrl, 'JPEG', M, bodyTop, photoW, photoH)
+        let ty = bodyTop + 4
         const drawRow = (cells: string[], bold = false) => {
           doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(8); doc.setTextColor(20)
-          let x = M; cells.forEach((c, i) => { doc.text(c, x, y); x += cw[i] }); y += 5
+          let x = tableX; cells.forEach((c, i) => { doc.text(c, x, ty); x += cw[i] }); ty += 5
         }
         drawRow(cols, true)
         for (const s of mm.stripes) drawRow([`${s.pos}%`, fmt(s.draft), fmt(s.camber), fmt(s.twist), fmt(s.entry, 0), fmt(s.exit, 0), fmt(s.fore), fmt(s.back)])
-        y += 3
+        y = Math.max(ty, bodyTop + photoH) + 5
       }
 
       need(10); doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(30); doc.text('Shape charts (vs stripe height %)', M, y); y += 4

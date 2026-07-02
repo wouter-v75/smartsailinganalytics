@@ -54,6 +54,7 @@ function pdfLineChart(doc: any, x: number, y: number, w: number, h: number, xs: 
   doc.rect(x, y, w, h)
   const pts = ys.map((v, i) => ({ x: xs[i], y: v })).filter((p) => p.y != null && Number.isFinite(p.y as number)) as { x: number; y: number }[]
   if (pts.length < 1) { doc.setFontSize(6); doc.setTextColor(150); doc.text('no data', x + w / 2 - 3, y + h / 2); return }
+  pts.sort((a, b) => a.x - b.x)
   const xmin = Math.min(...xs), xmax = Math.max(...xs)
   const ymin = Math.min(...pts.map((p) => p.y)), ymax = Math.max(...pts.map((p) => p.y))
   const ylo = ymin === ymax ? ymin - 1 : ymin, yhi = ymin === ymax ? ymax + 1 : ymax
@@ -63,7 +64,25 @@ function pdfLineChart(doc: any, x: number, y: number, w: number, h: number, xs: 
   const px = (vx: number) => x + 4 + ((vx - xmin) / (xmax - xmin || 1)) * (w - 5)
   const py = (vy: number) => y + 2 + (1 - (vy - ylo) / (yhi - ylo || 1)) * (h - 4)
   doc.setDrawColor(rgb[0], rgb[1], rgb[2]); doc.setLineWidth(0.5)
-  for (let i = 1; i < pts.length; i++) doc.line(px(pts[i - 1].x), py(pts[i - 1].y), px(pts[i].x), py(pts[i].y))
+  const sm = crSamples(pts.map((p) => ({ x: px(p.x), y: py(p.y) })))
+  for (let i = 1; i < sm.length; i++) doc.line(sm[i - 1].x, sm[i - 1].y, sm[i].x, sm[i].y)
+}
+
+// Catmull-Rom sampled polyline (smooth PDF line; jsPDF has no native spline).
+function crSamples(p: { x: number; y: number }[], seg = 16): { x: number; y: number }[] {
+  if (p.length < 3) return p
+  const out: { x: number; y: number }[] = [p[0]]
+  for (let i = 0; i < p.length - 1; i++) {
+    const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p2
+    for (let t = 1; t <= seg; t++) {
+      const s = t / seg, s2 = s * s, s3 = s2 * s
+      out.push({
+        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * s + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * s2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * s3),
+        y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * s + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * s2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * s3),
+      })
+    }
+  }
+  return out
 }
 
 // Best-effort: render an image URL to a JPEG data-URL via canvas (needs CORS on
