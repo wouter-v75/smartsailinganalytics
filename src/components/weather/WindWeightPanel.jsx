@@ -136,16 +136,17 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
               <tbody>
                 {HOURS.map((hr) => {
                   const f = fcByHour[hr]; const o = obsByHour[hr]
-                  const d = (f && o) ? Math.round((o.ww - f.WW) * 10) / 10 : null
+                  const fCalm = f?.cls === 'Calm'; const oCalm = o?.cls === 'Calm'
+                  const d = (f && o && !fCalm && !oCalm) ? Math.round((o.ww - f.WW) * 10) / 10 : null
                   const active = hr === selHour
                   return (
                     <tr key={hr} onClick={() => setSelHour(hr)}
                       style={{ cursor: 'pointer', background: active ? '#0F2A45' : 'transparent', borderTop: '1px solid #0F2030' }}>
                       <td style={{ ...tdL, color: active ? '#06B6D4' : '#CBD5E1', fontWeight: active ? 700 : 400 }}>{String(hr).padStart(2, '0')}:00</td>
-                      <td style={{ ...td, color: f ? clsColor(f.cls) : '#334155', fontWeight: 700 }}>{f ? `${f.WW}%` : '—'}</td>
+                      <td style={{ ...td, color: f ? clsColor(f.cls) : '#334155', fontWeight: 700 }}>{f ? (fCalm ? '—' : `${f.WW}%`) : '—'}</td>
                       <td style={{ ...td, color: '#94A3B8' }}>{f ? `${f.V_eff}kt` : '—'}</td>
                       <td style={{ ...td, color: f ? clsColor(f.cls) : '#334155' }}>{f ? f.cls : '—'}</td>
-                      {hasObs && <td style={{ ...td, color: o ? clsColor(o.cls) : '#334155', fontWeight: 700 }}>{o ? `${o.ww}%` : '—'}</td>}
+                      {hasObs && <td style={{ ...td, color: o ? clsColor(o.cls) : '#334155', fontWeight: 700 }}>{o ? (oCalm ? '—' : `${o.ww}%`) : '—'}</td>}
                       {hasObs && <td style={{ ...td, color: d == null ? '#334155' : Math.abs(d) < 5 ? '#1D9E75' : '#F59E0B' }}>{d == null ? '—' : (d > 0 ? `+${d}` : d)}</td>}
                     </tr>
                   )
@@ -162,7 +163,9 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
             </div>
             <ProfilePlot fc={selFc?.profile} obs={selObs?.profile} H={mastHeight} />
             <div style={{ fontSize: 10, color: '#64748B', marginTop: 4 }}>
-              {selFc && <div>Fcst <b style={{ color: clsColor(selFc.cls) }}>{selFc.WW}%</b> {selFc.cls} · V_H {selFc.V_H}kt</div>}
+              {selFc && (selFc.cls === 'Calm'
+                ? <div>Fcst <b style={{ color: clsColor('Calm') }}>calm</b> · V_H {selFc.V_H}kt · WW n/a below ~4 kt</div>
+                : <div>Fcst <b style={{ color: clsColor(selFc.cls) }}>{selFc.WW}%</b> {selFc.cls} · V_H {selFc.V_H}kt</div>)}
               {selObs && <div>Obs <b style={{ color: clsColor(selObs.cls) }}>{selObs.ww}%</b> {selObs.cls} · V_H {windData && ''}{Math.round(selObs.veff)}kt eff · {selObs.n} samples</div>}
             </div>
           </div>
@@ -236,16 +239,16 @@ function Legend({ c, t, dash }) {
 // WW% development across the racing window — forecast (line) + observed (dots).
 function WWTimeChart({ fcByHour, obsByHour, hours, sel, onSel }) {
   const W = 470, HT = 128, padL = 26, padR = 8, padT = 10, padB = 16
-  const vals = []
-  hours.forEach((h) => { if (fcByHour[h]) vals.push(fcByHour[h].WW); if (obsByHour[h]) vals.push(obsByHour[h].ww) })
+  // exclude Calm hours entirely — WW is meaningless below ~4 kt
+  const fcPts = hours.filter((h) => fcByHour[h] && fcByHour[h].cls !== 'Calm').map((h) => ({ h, ww: fcByHour[h].WW, cls: fcByHour[h].cls }))
+  const obsPts = hours.filter((h) => obsByHour[h] && obsByHour[h].cls !== 'Calm').map((h) => ({ h, ww: obsByHour[h].ww, cls: obsByHour[h].cls }))
+  const vals = [...fcPts.map((p) => p.ww), ...obsPts.map((p) => p.ww)]
   if (!vals.length) return null
   const lo = Math.min(40, Math.floor(Math.min(...vals) / 10) * 10)
   const hi = Math.max(120, Math.ceil(Math.max(...vals) / 10) * 10)
   const h0 = hours[0], h1 = hours[hours.length - 1]
   const X = (h) => padL + ((h - h0) / (h1 - h0)) * (W - padL - padR)
   const Y = (ww) => padT + (1 - (ww - lo) / (hi - lo)) * (HT - padT - padB)
-  const fcPts = hours.filter((h) => fcByHour[h]).map((h) => ({ h, ww: fcByHour[h].WW, cls: fcByHour[h].cls }))
-  const obsPts = hours.filter((h) => obsByHour[h]).map((h) => ({ h, ww: obsByHour[h].ww, cls: obsByHour[h].cls }))
   const gridLines = [lo, 100, hi].filter((v, i, a) => a.indexOf(v) === i && v >= lo && v <= hi)
   return (
     <div style={{ marginTop: 10 }}>

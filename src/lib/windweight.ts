@@ -93,7 +93,7 @@ export function turbulenceIntensity(L: number): number {
   return Math.max(0.04, Math.min(0.25, 0.1 - 0.35 * zeta10))
 }
 
-const CALM_MS = 1.5 // ~3 kt: rig unloaded, WW ratio (÷ V_H) ill-conditioned → "Calm"
+const CALM_MS = 2.0 // ~4 kt: rig unloaded, WW ratio (÷ V_H) ill-conditioned → "Calm"
 function classify(ww: number, vHms?: number): WWResult['cls'] {
   if (vHms != null && vHms < CALM_MS) return 'Calm'
   if (ww < 92) return 'Light'
