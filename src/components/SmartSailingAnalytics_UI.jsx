@@ -5172,14 +5172,18 @@ function SSAApp(){
   // idempotent per (boat, hour), guarded to logs that actually carry the sensors.
   useEffect(()=>{
     if(!logData?.rows?.length || !activeDate) return;
-    const am = user?.id ? getActiveMembership(user.id) : null;
-    if(!am?.team_id || !am?.boat_id) return;
     let cancelled=false;
-    import('../lib/windweightSamples').then(({storeWindweightSamples})=>{
+    (async()=>{
+      let uid=null;
+      try{ const {data:{user}}=await getBrowserSupabase().auth.getUser(); uid=user?.id||null; }catch{}
+      if(cancelled||!uid) return;
+      const am = getActiveMembership(uid);
+      if(!am?.team_id || !am?.boat_id) return;
+      const { storeWindweightSamples } = await import('../lib/windweightSamples');
       if(cancelled) return;
       storeWindweightSamples({ logData, sessionDate: activeDate, teamId: am.team_id, boatId: am.boat_id,
         tzOffsetMin: sessionTzOffset||0, mastHeight: 34 }).catch(()=>{});
-    }).catch(()=>{});
+    })();
     return ()=>{ cancelled=true; };
   },[logData, activeDate]); // eslint-disable-line react-hooks/exhaustive-deps
   const canSeeSailScanPhotos  = !['tl1','guest'].includes(effectiveRole);
