@@ -85,13 +85,30 @@ function imgToDataUrl(url: string): Promise<{ dataUrl: string; w: number; h: num
   })
 }
 
-// ── tiny inline SVG line chart (+ optional grey design overlay) ───────────────
-function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel = '', xMin, xMax, xTicks }:
-  { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string; xMin?: number; xMax?: number; xTicks?: number[] }) {
-  const pad = { l: 30, r: 6, t: 8, b: 16 }
+// Smooth Catmull-Rom → cubic-Bézier through pixel points (sorted by x).
+function splinePath(p: { x: number; y: number }[]): string {
+  if (p.length === 0) return ''
+  if (p.length === 1) return `M${p[0].x.toFixed(1)},${p[0].y.toFixed(1)}`
+  if (p.length === 2) return `M${p[0].x.toFixed(1)},${p[0].y.toFixed(1)} L${p[1].x.toFixed(1)},${p[1].y.toFixed(1)}`
+  let d = `M${p[0].x.toFixed(1)},${p[0].y.toFixed(1)}`
+  for (let i = 0; i < p.length - 1; i++) {
+    const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p2
+    const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6
+    const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6
+    d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`
+  }
+  return d
+}
+
+// ── inline SVG spline chart (+ optional grey design overlay) ──────────────────
+// `hovered`: 'm' = measured emphasised, 'd' = design emphasised, null = both.
+function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 460, h = 200, xLabel = '', xMin, xMax, xTicks, hovered = null, onHover }:
+  { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string; xMin?: number; xMax?: number; xTicks?: number[]; hovered?: 'm' | 'd' | null; onHover?: (h: 'm' | 'd' | null) => void }) {
+  const pad = { l: 40, r: 10, t: 12, b: 22 }
   const inDomain = (x: number) => (xMin == null || x >= xMin) && (xMax == null || x <= xMax)
   const clean = (cxs: number[], cys: (number | null)[]) =>
-    cys.map((y, i) => ({ x: cxs[i], y })).filter((p) => p.y != null && Number.isFinite(p.y as number) && inDomain(p.x)) as { x: number; y: number }[]
+    (cys.map((y, i) => ({ x: cxs[i], y })).filter((p) => p.y != null && Number.isFinite(p.y as number) && inDomain(p.x)) as { x: number; y: number }[])
+      .sort((a, b) => a.x - b.x)
   const valid = clean(xs, ys)
   const ov = overlay ? clean(overlay.xs, overlay.ys) : []
   const all = [...valid, ...ov]
@@ -101,21 +118,27 @@ function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 230, h = 90, xLabel
   const ylo = ymin === ymax ? ymin - 1 : ymin, yhi = ymin === ymax ? ymax + 1 : ymax
   const px = (x: number) => pad.l + ((x - xmin) / (xmax - xmin || 1)) * (w - pad.l - pad.r)
   const py = (y: number) => pad.t + (1 - (y - ylo) / (yhi - ylo || 1)) * (h - pad.t - pad.b)
-  const path = (pts: { x: number; y: number }[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(' ')
+  const path = (pts: { x: number; y: number }[]) => splinePath(pts.map((p) => ({ x: px(p.x), y: py(p.y) })))
+  const mOp = hovered == null || hovered === 'm' ? 1 : 0.15
+  const dOp = hovered == null || hovered === 'd' ? 1 : 0.15
   return (
     <svg width={w} height={h} style={{ display: 'block' }}>
       <line x1={pad.l} y1={py(yhi)} x2={w - pad.r} y2={py(yhi)} stroke={C.border} strokeWidth={0.5} />
       <line x1={pad.l} y1={py(ylo)} x2={w - pad.r} y2={py(ylo)} stroke={C.border} strokeWidth={0.5} />
-      <text x={2} y={py(yhi) + 3} fontSize={9} fill={C.dim}>{yhi.toFixed(yhi % 1 ? 1 : 0)}</text>
-      <text x={2} y={py(ylo) + 3} fontSize={9} fill={C.dim}>{ylo.toFixed(ylo % 1 ? 1 : 0)}</text>
-      {ov.length > 0 && <path d={path(ov)} fill="none" stroke={overlay?.color || DESIGN_GREY} strokeWidth={1.3} strokeDasharray="3 2" />}
-      <path d={path(valid)} fill="none" stroke={color} strokeWidth={1.6} />
+      <text x={4} y={py(yhi) + 4} fontSize={12} fill={C.dim}>{yhi.toFixed(yhi % 1 ? 1 : 0)}</text>
+      <text x={4} y={py(ylo) + 4} fontSize={12} fill={C.dim}>{ylo.toFixed(ylo % 1 ? 1 : 0)}</text>
+      {ov.length > 0 && (
+        <path d={path(ov)} fill="none" stroke={overlay?.color || DESIGN_GREY} strokeWidth={hovered === 'd' ? 3 : 1.6} strokeDasharray="3 2" strokeOpacity={dOp}
+          onMouseEnter={() => onHover?.('d')} onMouseLeave={() => onHover?.(null)} style={{ cursor: onHover ? 'pointer' : 'default' }} />
+      )}
+      <path d={path(valid)} fill="none" stroke={color} strokeWidth={hovered === 'm' ? 4.2 : 2.4} strokeOpacity={mOp}
+        onMouseEnter={() => onHover?.('m')} onMouseLeave={() => onHover?.(null)} style={{ cursor: onHover ? 'pointer' : 'default' }} />
       {xTicks
         ? xTicks.map((t) => (
-            <text key={t} x={px(t)} y={h - 3} fontSize={9} fill={C.dim}
+            <text key={t} x={px(t)} y={h - 5} fontSize={12} fill={C.dim}
               textAnchor={t === xmin ? 'start' : t === xmax ? 'end' : 'middle'}>{t}</text>
           ))
-        : xLabel && <text x={(w + pad.l) / 2} y={h - 3} fontSize={9} fill={C.dim} textAnchor="middle">{xLabel}</text>}
+        : xLabel && <text x={(w + pad.l) / 2} y={h - 5} fontSize={12} fill={C.dim} textAnchor="middle">{xLabel}</text>}
     </svg>
   )
 }
@@ -158,6 +181,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const [notes, setNotes] = useState<string>(scan?.notes || '')
   const [notesBusy, setNotesBusy] = useState(false)
   const [notesMsg, setNotesMsg] = useState('')
+  const [shapeHover, setShapeHover] = useState<'m' | 'd' | null>(null) // highlight measured vs design
   const saveNotes = async () => {
     if (!onSaveNotes) return
     setNotesBusy(true); setNotesMsg('')
@@ -358,7 +382,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '24px 12px' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(960px, 100%)', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, color: C.text }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(1440px, 100%)', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, color: C.text }}>
         {/* header */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: C.head }}>{title}</span>
@@ -436,7 +460,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             </table>
 
             {/* design target shapes (interpolated to the measured TWS) */}
-            {design && design.sections.length > 0 && (
+            {design && design.sections.filter((s: any) => s.posPct !== 0).length > 0 && (
               <>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, margin: '12px 0 4px' }}>
                   Design target ({design.sourceCode || targetSail?.category || '—'}) @ {fmt(design.tws, 0)} kn · % = fractions ×100
@@ -449,7 +473,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
                     <tr><th style={th}>Stripe</th><th style={th}>Draft</th><th style={th}>Camber</th><th style={th}>Twist</th><th style={th}>Entry</th><th style={th}>Exit</th><th style={th}>Front%</th><th style={th}>Back%</th></tr>
                   </thead>
                   <tbody>
-                    {design.sections.map((s: any) => (
+                    {design.sections.filter((s: any) => s.posPct !== 0).map((s: any) => (
                       <tr key={s.posPct}>
                         <td style={{ ...td, fontWeight: 700, color: DESIGN_GREY }}>{s.posPct}%</td>
                         <td style={td}>{fmt(s.draft != null ? s.draft * 100 : null)}</td>
@@ -493,15 +517,23 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
 
         {/* per-metric charts (value vs stripe %) */}
         <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, margin: '16px 0 6px' }}>Shape charts (vs stripe height %)</div>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 11, color: C.dim, marginBottom: 6, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <span onMouseEnter={() => setShapeHover('m')} onMouseLeave={() => setShapeHover(null)}
+            style={{ color: C.accent, cursor: 'pointer', fontWeight: shapeHover === 'm' ? 800 : 400, opacity: shapeHover == null || shapeHover === 'm' ? 1 : 0.35 }}>━ measured</span>
+          <span onMouseEnter={() => setShapeHover('d')} onMouseLeave={() => setShapeHover(null)}
+            style={{ color: DESIGN_GREY, cursor: 'pointer', fontWeight: shapeHover === 'd' ? 800 : 400, opacity: shapeHover == null || shapeHover === 'd' ? 1 : 0.35 }}>— — design</span>
+          <span style={{ color: C.dim, opacity: 0.7 }}>· hover to highlight a curve</span>
+        </div>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
           {METRICS.map((m) => {
             const overlay = design && design.sections.length
               ? { xs: design.sections.map((s: any) => s.posPct), ys: design.sections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color: DESIGN_GREY }
               : undefined
             return (
-              <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px' }}>
-                <div style={{ fontSize: 11, color: C.head, fontWeight: 700, marginBottom: 2 }}>{m.label}</div>
-                <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay} xMin={0} xMax={100} xTicks={[0, 25, 50, 75, 100]} />
+              <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
+                <div style={{ fontSize: 13, color: C.head, fontWeight: 700, marginBottom: 4 }}>{m.label}</div>
+                <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay}
+                  xMin={25} xMax={100} xTicks={[25, 50, 75, 100]} w={720} h={280} hovered={shapeHover} onHover={setShapeHover} />
               </div>
             )
           })}
