@@ -27,6 +27,7 @@ import {
 import { useModelCycles } from './modelCycles'
 import { patchWeatherSession } from './weatherSession'
 import { ComparePanel } from './CompareView'
+import WindWeightPanel from './WindWeightPanel'
 
 const NO_HIDDEN = new Set()
 
@@ -354,7 +355,7 @@ function drawSkewT(container, data, ptop = SKEWT_PTOP, pbot = SKEWT_PBOT) {
 
 // ── React component ──────────────────────────────────────────────────────────
 
-export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
+export default function SoundingView({ windData = {}, resolvedTz = 'UTC', logData = null, mastHeight = 34 }) {
   const d3Ready = useScriptsOnce([D3_JS])
   const leafletReady = useScriptsOnce([LEAFLET_JS], [LEAFLET_CSS])
 
@@ -703,6 +704,9 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC' }) {
             />
           )
         })()}
+
+        {/* Wind weight — hourly racing-window table + rig profile + observed. */}
+        <WindWeightPanel windData={windData} locKey={locKey} resolvedTz={resolvedTz} logData={logData} mastHeight={mastHeight} />
       </div>
     </div>
   )

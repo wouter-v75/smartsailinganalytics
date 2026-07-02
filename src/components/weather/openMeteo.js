@@ -340,6 +340,24 @@ export async function fetchIconRaceStatus() {
   }
 }
 
+// Map a lat/lon to the nearest SSA-Race venue for the windweight product.
+// Prefers the 1 km nest (finer profile), falls back to the 2 km. Returns
+// { domain, venue } matching icon-race/<domain>/<venue>/windweight.json, or null.
+export function windweightVenueFor(lat, lon) {
+  if (lat == null || lon == null) return null
+  for (const modelKey of ['ICONRACE_1KM', 'ICONRACE']) {
+    const vens = MODELS[modelKey]?.venues || []
+    let best = null, bestD = Infinity
+    for (const v of vens) {
+      if (Math.abs(lat - v.clat) > v.half || Math.abs(lon - v.clon) > v.half) continue
+      const d = (lat - v.clat) ** 2 + (lon - v.clon) ** 2
+      if (d < bestD) { bestD = d; best = v }
+    }
+    if (best) return { domain: best.domain, venue: best.name }
+  }
+  return null
+}
+
 // Per-venue windweight time series published by the box
 // (scripts/publish_products.sh -> icon-race/<domain>/<venue>/windweight.json).
 // Hourly WW% / V_eff / sub-factors / rig profile. Returns parsed object or null.

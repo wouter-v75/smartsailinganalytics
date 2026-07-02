@@ -48,7 +48,7 @@ const SUB_TABS = [
   { id: 'venuemos',   label: 'Admin',            short: 'Admin',    enabled: true, adminOnly: true },
 ]
 
-export default function WeatherTab({ isMobile = false, effectiveRole = null, boatName = null, eventName = null }) {
+export default function WeatherTab({ isMobile = false, effectiveRole = null, boatName = null, eventName = null, logData = null }) {
   const isAdmin = effectiveRole === 'admin'
   const atLeastTL2 = (ROLE_RANK[effectiveRole] ?? -1) >= ROLE_RANK.tl2
   const canMos = atLeastTL2        // MOS adjustments (field button, table column, comparisons)
@@ -174,7 +174,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
           <ChannelCurrents point1={forecastPersist?.locations?.['1']} />
         )}
         {sub === 'sounding' && (
-          <SoundingView windData={windData} resolvedTz={resolvedTz} />
+          <SoundingView windData={windData} resolvedTz={resolvedTz} logData={logData} mastHeight={mastHeight} />
         )}
         {sub === 'venuemos' && isAdmin && (
           <VenueMOSView />
