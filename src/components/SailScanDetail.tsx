@@ -389,11 +389,12 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
           {cond.sail_code && <span style={{ fontSize: 11, color: C.dim, border: `1px solid ${C.border}`, borderRadius: 4, padding: '1px 6px' }}>{cond.sail_code}</span>}
           {cond.sail_type && <span style={{ fontSize: 11, color: cond.sail_type === 'main' ? '#34D399' : '#FBBF24' }}>{cond.sail_type}</span>}
           <span style={{ fontSize: 12, color: C.dim }}>{scanLocalDateTime(scan, sessionTzOffset)}</span>
-          <div style={{ flex: 1 }} />
-          {canEdit && <button onClick={() => { setSailIdSel(scan?.sail_id || ''); setEditing((v) => !v) }} disabled={busy} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 8, color: C.head, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✎ Edit</button>}
-          {canEdit && <button onClick={doDelete} disabled={busy} style={{ background: '#3a1320', border: '1px solid #7f1d1d', borderRadius: 8, color: '#fca5a5', fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>🗑 Delete</button>}
-          <button onClick={share} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 8, color: '#001018', fontWeight: 700, fontSize: 13, padding: '7px 14px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
-          <button onClick={onClose} style={{ background: '#0F2A45', border: 'none', borderRadius: 8, color: C.text, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✕</button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto', marginRight: 64, marginTop: 10 }}>
+            {canEdit && <button onClick={() => { setSailIdSel(scan?.sail_id || ''); setEditing((v) => !v) }} disabled={busy} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 9, color: C.head, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>✎ Edit</button>}
+            {canEdit && <button onClick={doDelete} disabled={busy} style={{ background: '#3a1320', border: '1px solid #7f1d1d', borderRadius: 9, color: '#fca5a5', fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>🗑 Delete</button>}
+            <button onClick={share} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 9, color: '#001018', fontWeight: 700, fontSize: 15, padding: '10px 20px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
+            <button onClick={onClose} style={{ background: '#0F2A45', border: 'none', borderRadius: 9, color: C.text, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>✕</button>
+          </div>
         </div>
 
         {editing && canEdit && (
@@ -592,9 +593,9 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
                 const t0 = win.series.utc?.[0] || 0
                 const xs = (win.series.utc || []).map((u: number) => (u - t0) / 1000)
                 return (
-                  <div key={wf.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px' }}>
-                    <div style={{ fontSize: 11, color: C.head, fontWeight: 700, marginBottom: 2 }}>{wf.label}</div>
-                    <LineChart xs={xs} ys={ys} color={wf.color} xLabel="seconds" />
+                  <div key={wf.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 13, color: C.head, fontWeight: 700, marginBottom: 4 }}>{wf.label}</div>
+                    <LineChart xs={xs} ys={ys} color={wf.color} xLabel="seconds" w={720} h={280} />
                   </div>
                 )
               })}

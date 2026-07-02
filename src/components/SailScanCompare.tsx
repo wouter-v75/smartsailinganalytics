@@ -25,6 +25,52 @@ const DESIGN_GREY = '#94A3B8'
 
 const fmt = (v: number | null | undefined, dp = 1) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(dp))
 
+// jsPDF (UMD) loaded once from CDN for Share-as-PDF.
+let jspdfPromise: Promise<any> | null = null
+function loadJsPdf(): Promise<any> {
+  const w = window as any
+  if (w.jspdf?.jsPDF) return Promise.resolve(w.jspdf.jsPDF)
+  if (!jspdfPromise) {
+    jspdfPromise = new Promise((res, rej) => {
+      const s = document.createElement('script')
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+      s.onload = () => res((window as any).jspdf.jsPDF)
+      s.onerror = () => rej(new Error('failed to load jsPDF'))
+      document.head.appendChild(s)
+    })
+  }
+  return jspdfPromise
+}
+const rgbOf = (hex: string) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]
+
+// Multi-series line chart into a jsPDF doc (mm units), x-domain 25–100%.
+function pdfMultiChart(doc: any, x: number, y: number, w: number, h: number, label: string,
+  series: { xs: number[]; ys: (number | null)[]; rgb: number[]; dash?: boolean }[]) {
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(30); doc.text(label, x, y - 1)
+  doc.setDrawColor(210); doc.setLineWidth(0.2); doc.setLineDashPattern([], 0); doc.rect(x, y, w, h)
+  const xMin = 25, xMax = 100
+  const clean = (xs: number[], ys: (number | null)[]) =>
+    (ys.map((v, i) => ({ x: xs[i], y: v })).filter((p) => p.y != null && Number.isFinite(p.y as number) && p.x >= xMin && p.x <= xMax) as { x: number; y: number }[])
+      .sort((a, b) => a.x - b.x)
+  const cleaned = series.map((s) => ({ ...s, pts: clean(s.xs, s.ys) }))
+  const all = cleaned.flatMap((s) => s.pts)
+  if (!all.length) { doc.setFontSize(6); doc.setTextColor(150); doc.text('no data', x + w / 2 - 4, y + h / 2); return }
+  const ymin = Math.min(...all.map((p) => p.y)), ymax = Math.max(...all.map((p) => p.y))
+  const ylo = ymin === ymax ? ymin - 1 : ymin, yhi = ymin === ymax ? ymax + 1 : ymax
+  doc.setFontSize(6); doc.setTextColor(120)
+  doc.text(String(Math.round(yhi)), x + 0.5, y + 3); doc.text(String(Math.round(ylo)), x + 0.5, y + h - 0.5)
+  const px = (vx: number) => x + 5 + ((vx - xMin) / (xMax - xMin)) * (w - 6)
+  const py = (vy: number) => y + 2 + (1 - (vy - ylo) / (yhi - ylo || 1)) * (h - 4)
+  doc.setLineWidth(0.4)
+  for (const s of cleaned) {
+    if (!s.pts.length) continue
+    doc.setDrawColor(s.rgb[0], s.rgb[1], s.rgb[2])
+    doc.setLineDashPattern(s.dash ? [0.8, 0.6] : [], 0)
+    for (let i = 1; i < s.pts.length; i++) doc.line(px(s.pts[i - 1].x), py(s.pts[i - 1].y), px(s.pts[i].x), py(s.pts[i].y))
+  }
+  doc.setLineDashPattern([], 0)
+}
+
 interface Stripe { pos: number; draft: number | null; camber: number | null; twist: number | null; entry: number | null; exit: number | null; fore: number | null; back: number | null }
 
 const METRICS: { key: keyof Stripe; label: string; dKey: string; dScale: number }[] = [
@@ -119,6 +165,61 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
     [scans, sails, tags],
   )
   const [hovered, setHovered] = useState<number | null>(null) // sail index to highlight
+  const [sharing, setSharing] = useState(false)
+
+  const share = async () => {
+    setSharing(true)
+    try {
+      const jsPDF = await loadJsPdf()
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+      const PW = 210, PH = 297, M = 12
+      let y = 16
+      const need = (mm: number) => { if (y + mm > PH - M) { doc.addPage(); y = M + 4 } }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(20)
+      doc.text(['Sail comparison', boatName].filter(Boolean).join(' — '), M, y); y += 7
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(80)
+      doc.text(models.map(({ M: mm }) => `${mm.name}${mm.tws != null ? ` @${fmt(mm.tws, 0)}kt` : ''}`).join('   ·   '), M, y); y += 7
+
+      const cols = ['St', 'Draft', 'Camb', 'Twist', 'Ent', 'Exit', 'Fr%', 'Bk%']
+      const cw = [12, 15, 15, 15, 13, 13, 15, 15]
+      for (const { M: mm, color } of models) {
+        need(8 + (mm.stripes.length + 1) * 5)
+        const rgb = rgbOf(color)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(rgb[0], rgb[1], rgb[2])
+        doc.text(`${mm.name}${mm.tws != null ? `   @${fmt(mm.tws, 0)}kt` : ''}`, M, y); y += 5
+        const drawRow = (cells: string[], bold = false) => {
+          doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(8); doc.setTextColor(20)
+          let x = M; cells.forEach((c, i) => { doc.text(c, x, y); x += cw[i] }); y += 5
+        }
+        drawRow(cols, true)
+        for (const s of mm.stripes) drawRow([`${s.pos}%`, fmt(s.draft), fmt(s.camber), fmt(s.twist), fmt(s.entry, 0), fmt(s.exit, 0), fmt(s.fore), fmt(s.back)])
+        y += 3
+      }
+
+      need(10); doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(30); doc.text('Shape charts (vs stripe height %)', M, y); y += 4
+      const cwd = (PW - 2 * M - 8) / 3, chh = 30
+      METRICS.forEach((m, i) => {
+        const col = i % 3, row = Math.floor(i / 3)
+        if (col === 0) { if (row > 0) y += chh + 8; need(chh + 8) }
+        const series: { xs: number[]; ys: (number | null)[]; rgb: number[]; dash?: boolean }[] = []
+        for (const { M: mm, color } of models) {
+          const rgb = rgbOf(color)
+          series.push({ xs: mm.posXs, ys: mm.stripes.map((s) => s[m.key] as number | null), rgb })
+          if (mm.design) series.push({ xs: mm.design.sections.map((s: any) => s.posPct), ys: mm.design.sections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), rgb, dash: true })
+        }
+        pdfMultiChart(doc, M + col * (cwd + 4), y + 3, cwd, chh, m.label, series)
+      })
+
+      const blob = doc.output('blob') as Blob
+      const nm = (boatName || 'sails').replace(/[^\w.-]+/g, '_')
+      const file = new File([blob], `SailComparison_${nm}.pdf`, { type: 'application/pdf' })
+      const nav = navigator as any
+      if (nav.canShare && nav.canShare({ files: [file] })) await nav.share({ files: [file], title: 'Sail comparison' })
+      else { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = file.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000) }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') alert('Could not generate the PDF: ' + (e?.message || e))
+    } finally { setSharing(false) }
+  }
 
   const td: React.CSSProperties = { padding: '3px 6px', fontSize: 11, color: C.text, textAlign: 'center', borderBottom: `1px solid ${C.border}` }
   const th: React.CSSProperties = { ...td, color: C.dim, fontWeight: 700, fontSize: 10 }
@@ -194,7 +295,10 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
             <span key={i} onMouseEnter={() => setHovered(i)} onMouseLeave={() => setHovered(null)}
               style={{ fontSize: 11, color, fontWeight: 700, cursor: 'pointer', opacity: hovered == null || hovered === i ? 1 : 0.35 }}>■ {M.name} {M.tws != null ? `@${fmt(M.tws, 0)}kt` : ''}</span>
           ))}
-          <button onClick={onClose} style={{ marginLeft: 'auto', background: '#0F2A45', border: 'none', borderRadius: 8, color: C.text, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✕</button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto', marginRight: 64, marginTop: 10 }}>
+            <button onClick={share} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 9, color: '#001018', fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
+            <button onClick={onClose} style={{ background: '#0F2A45', border: 'none', borderRadius: 9, color: C.text, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>✕</button>
+          </div>
         </div>
 
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
