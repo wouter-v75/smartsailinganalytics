@@ -193,11 +193,18 @@ export default function UserPill() {
       const isOldNorthstar = (m: MembershipRow) => /northstar\s*72\b/i.test(m.boat_name || '')
       const isCurrentNorthstar = (m: MembershipRow) => /northstar\s*76\b/i.test(m.boat_name || '')
       const stored = getActiveMembership(user.id)
-      const valid = ms.find((m) => m.id === stored?.id)
+      const storedRow = ms.find((m) => m.id === stored?.id)
       const preferredDefault =
         ms.find(isCurrentNorthstar) ||        // the current Northstar boat (76)
         ms.find((m) => !isOldNorthstar(m)) ||  // any boat that isn't the retired 72
         ms[0]
+      // Honour the persisted choice — EXCEPT a stale pin to the retired Northstar
+      // 72 while the current 76 is available: migrate those users onto 76 (and
+      // re-persist) so nobody keeps landing on the old boat from an old session.
+      const valid =
+        storedRow && !(isOldNorthstar(storedRow) && ms.some(isCurrentNorthstar))
+          ? storedRow
+          : undefined
       if (valid) {
         setActiveId(valid.id)
         // Re-persist with up-to-date team/boat names in case they changed.
