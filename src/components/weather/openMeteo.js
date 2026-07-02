@@ -340,11 +340,13 @@ export async function fetchIconRaceStatus() {
   }
 }
 
-// Map a lat/lon to the nearest SSA-Race venue for the windweight product.
-// Prefers the 1 km nest (finer profile), falls back to the 2 km. Returns
-// { domain, venue } matching icon-race/<domain>/<venue>/windweight.json, or null.
-export function windweightVenueFor(lat, lon) {
-  if (lat == null || lon == null) return null
+// Ordered SSA-Race venue candidates for a lat/lon — the 1 km nest FIRST (finer
+// profile), then the 2 km parent as fallback. Callers fetch each in turn and use
+// the first that has a published windweight.json (so a 2 km-only day still shows).
+// Each item: { domain, venue } → icon-race/<domain>/<venue>/windweight.json.
+export function windweightVenues(lat, lon) {
+  if (lat == null || lon == null) return []
+  const out = []
   for (const modelKey of ['ICONRACE_1KM', 'ICONRACE']) {
     const vens = MODELS[modelKey]?.venues || []
     let best = null, bestD = Infinity
@@ -353,7 +355,23 @@ export function windweightVenueFor(lat, lon) {
       const d = (lat - v.clat) ** 2 + (lon - v.clon) ** 2
       if (d < bestD) { bestD = d; best = v }
     }
-    if (best) return { domain: best.domain, venue: best.name }
+    if (best) out.push({ domain: best.domain, venue: best.name })
+  }
+  return out
+}
+
+// First candidate (1 km if present) — kept for callers that want a single venue.
+export function windweightVenueFor(lat, lon) {
+  return windweightVenues(lat, lon)[0] || null
+}
+
+// Fetch the windweight for the nearest venue that actually has a product
+// published (tries 1 km then 2 km). Returns { data, domain, venue } or null.
+export async function fetchWindweightNearest(lat, lon) {
+  for (const c of windweightVenues(lat, lon)) {
+    // eslint-disable-next-line no-await-in-loop
+    const data = await fetchWindweight(c.domain, c.venue)
+    if (data && Array.isArray(data.hours) && data.hours.length) return { data, domain: c.domain, venue: c.venue }
   }
   return null
 }

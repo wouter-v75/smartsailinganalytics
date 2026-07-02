@@ -8,7 +8,7 @@
 
 import { getBrowserSupabase } from './supabase/browser'
 import { windweightObserved } from './windweight'
-import { fetchWindweight, windweightVenueFor } from '../components/weather/openMeteo'
+import { fetchWindweightNearest } from '../components/weather/openMeteo'
 
 interface LogRow {
   utc?: number | null; lat?: number | null; lon?: number | null
@@ -43,8 +43,9 @@ export async function storeWindweightSamples(a: StoreArgs): Promise<{ n: number;
   // mean boat position → nearest SSA-Race venue (for the forecast product)
   let latS = 0, lonS = 0, np = 0
   for (const r of rows) { if (r.lat != null && r.lon != null) { latS += r.lat; lonS += r.lon; np++ } }
-  const ven = np ? windweightVenueFor(latS / np, lonS / np) : null
-  const fc = ven ? await fetchWindweight(ven.domain, ven.venue).catch(() => null) : null
+  const near = np ? await fetchWindweightNearest(latS / np, lonS / np).catch(() => null) : null
+  const ven = near ? { domain: near.domain, venue: near.venue } : null
+  const fc = near?.data ?? null
   const fcByHour: Record<number, { WW: number; V_eff: number; cls: string; factors: unknown; inputs: unknown }> = {}
   if (fc && Array.isArray((fc as { hours?: unknown[] }).hours)) {
     for (const h of (fc as { hours: Array<{ t: string; WW: number; V_eff: number; cls: string; factors: unknown; inputs: unknown }> }).hours) {

@@ -7,7 +7,7 @@
 // observed is computed client-side with src/lib/windweight.ts.
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { fetchWindweight, windweightVenueFor } from './openMeteo'
+import { fetchWindweightNearest, windweightVenues } from './openMeteo'
 import { windweightObserved } from '../../lib/windweight'
 
 const CLS_COLOR = { Light: '#7DD3FC', Standard: '#1D9E75', Heavy: '#F97316' }
@@ -31,19 +31,24 @@ function localDate(ms, tz) {
 
 export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'UTC', logData = null, mastHeight: mastHeightProp = 34 }) {
   const coords = (locKey && windData[locKey]?.coords) || Object.values(windData).find((p) => p?.coords)?.coords || null
-  const ven = coords ? windweightVenueFor(coords.latitude, coords.longitude) : null
+  const hasVenue = coords ? windweightVenues(coords.latitude, coords.longitude).length > 0 : false
 
   const [fc, setFc] = useState(undefined) // undefined loading, null none
+  const [ven, setVen] = useState(null)    // resolved { domain, venue } that had data
   const [selHour, setSelHour] = useState(13)
   const [mastHeight, setMastHeight] = useState(mastHeightProp) // the CHOSEN masthead height (m)
 
   useEffect(() => {
     let off = false
-    setFc(undefined)
-    if (!ven) { setFc(null); return }
-    fetchWindweight(ven.domain, ven.venue).then((d) => { if (!off) setFc(d) })
+    setFc(undefined); setVen(null)
+    if (!coords) { setFc(null); return }
+    fetchWindweightNearest(coords.latitude, coords.longitude).then((r) => {
+      if (off) return
+      setFc(r?.data ?? null)
+      setVen(r ? { domain: r.domain, venue: r.venue } : null)
+    })
     return () => { off = true }
-  }, [ven?.domain, ven?.venue])
+  }, [coords?.latitude, coords?.longitude])
 
   const todayLocal = coords ? localDate(Date.now(), resolvedTz) : null
 
@@ -97,7 +102,7 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>🪶 Wind weight — racing window</span>
         <span style={{ fontSize: 11, color: '#64748B' }}>
-          rig load vs a standard day · 100 = standard · {ven ? `${ven.venue} (${ven.domain})` : 'no SSA-Race venue near this point'}
+          rig load vs a standard day · 100 = standard · {ven ? `${ven.venue} (${ven.domain})` : hasVenue ? '…' : 'no SSA-Race venue near this point'}
         </span>
         <div style={{ flex: 1 }} />
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#7DD3FC' }}>
@@ -109,10 +114,10 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
       </div>
 
       {fc === undefined && <div style={{ fontSize: 11, color: '#64748B' }}>loading forecast…</div>}
-      {fc === null && ven && <div style={{ fontSize: 11, color: '#64748B' }}>No windweight product yet for {ven.venue} (runs once the box publishes it).</div>}
-      {!ven && <div style={{ fontSize: 11, color: '#64748B' }}>Pick a location inside a SSA-Race venue box (La Ciotat / St Tropez / …).</div>}
+      {fc === null && hasVenue && !hasObs && <div style={{ fontSize: 11, color: '#64748B' }}>No windweight product published yet for this venue (appears after the box run).</div>}
+      {!hasVenue && <div style={{ fontSize: 11, color: '#64748B' }}>Pick a location inside a SSA-Race venue box (La Ciotat / St Tropez / …).</div>}
 
-      {ven && (fc || hasObs) && (
+      {(fc || hasObs) && (
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 2fr) minmax(160px, 1fr)', gap: 14, alignItems: 'start' }}>
           {/* table */}
           <div style={{ overflowX: 'auto' }}>
