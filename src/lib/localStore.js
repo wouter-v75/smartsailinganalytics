@@ -2,6 +2,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // SmartSailingAnalytics — local data layer
 //
+// (import kept at top; used to fingerprint log/xml content so sync can skip
+//  re-uploading unchanged data — see docs/sync-caching-architecture-research.md)
+import { hashLogPayload, hashXmlPayload } from "./contentHash";
+//
 // Storage layout (v3):
 //   IndexedDB  "ssa-db"
 //     store "videos"    — blobs + metadata
@@ -152,6 +156,14 @@ function upsertSession(date, patch) {
   else sessions.push({ date, videoCount: 0, hasLog: false, hasXml: false, ...patch });
   sessions.sort((a, b) => b.date.localeCompare(a.date));
   lsSet("ssa:sessions", sessions);
+}
+
+// Merge a patch into a session index row (matched by date only). Used by the
+// sync reconciler to backfill content hashes / synced-hash state on load.
+export function updateSessionSync(date, patch) {
+  const sessions = getSessions();
+  const idx = sessions.findIndex(s => s.date === date);
+  if (idx >= 0) { sessions[idx] = { ...sessions[idx], ...patch }; lsSet("ssa:sessions", sessions); }
 }
 
 // ── Video store ───────────────────────────────────────────────────────────────
@@ -352,15 +364,20 @@ export async function deleteVideo(id) {
 // ── Log (CSV) store — IndexedDB ───────────────────────────────────────────────
 export async function saveLogData(date, rows, fileName, startUtc, endUtc, tzOffset = 0, membership = null) {
   const db = await openDb();
+  // Content fingerprint of the payload we'd upload. Sync compares this against
+  // the cloud manifest / last-synced hash and skips the upload when unchanged.
+  const contentHash = hashLogPayload({ rows, startUtc, endUtc });
   await idbPut(db, "log_data", {
     date, rows, fileName, startUtc, endUtc,
     tzOffset,
     team_id: membership?.team_id || null,
     boat_id: membership?.boat_id || null,
     addedAt: Date.now(), synced: false,
+    contentHash, syncedHash: null,
   });
   upsertSession(date, {
     hasLog: true, logFile: fileName, tzOffset,
+    logHash: contentHash, logSyncedHash: null,
     team_id: membership?.team_id || null,
     boat_id: membership?.boat_id || null,
   });
@@ -379,6 +396,7 @@ export async function getLogData(date) {
 // ── XML (event) store — IndexedDB ────────────────────────────────────────────
 export async function saveXmlData(date, parsed, fileName, membership = null) {
   const db = await openDb();
+  const contentHash = hashXmlPayload(parsed);
   await idbPut(db, "xml_data", {
     date,
     ...parsed,
@@ -387,9 +405,11 @@ export async function saveXmlData(date, parsed, fileName, membership = null) {
     boat_id: membership?.boat_id || null,
     addedAt: Date.now(),
     synced:  false,
+    contentHash, syncedHash: null,
   });
   upsertSession(date, {
     hasXml: true, xmlFile: fileName,
+    xmlHash: contentHash, xmlSyncedHash: null,
     team_id: membership?.team_id || null,
     boat_id: membership?.boat_id || null,
   });
@@ -530,30 +550,43 @@ function detectCamera(filename) {
 }
 
 // ── Sync status ───────────────────────────────────────────────────────────────
+// A log/xml is "unsynced" only when its current content hash differs from the
+// hash we last confirmed uploaded (logSyncedHash / xmlSyncedHash). This is
+// content-based, not a bare boolean, so it self-corrects: re-importing new data
+// bumps logHash and flags it dirty; an unchanged file already in the cloud reads
+// as synced and is never re-uploaded. See docs/sync-caching-architecture-research.md.
 export function getUnsyncedCount() {
   const sessions = getSessions();
   let count = 0;
   for (const s of sessions) {
-    const xml = s.hasXml ? lsGet(`ssa:xml:${s.date}`) : null;
-    if (xml && !xml.synced) count++;
-    if (s.hasLog && !s.logSynced) count++;
+    if (s.hasLog && s.logHash && s.logHash !== s.logSyncedHash) count++;
+    if (s.hasXml && s.xmlHash && s.xmlHash !== s.xmlSyncedHash) count++;
   }
   return count;
 }
 
-export function markSynced(date, type) {
-  const key  = `ssa:${type}:${date}`;
-  const data = lsGet(key);
-  if (data) { data.synced = true; lsSet(key, data); }
-}
-
-export function markCloudSynced(date) {
-  markSynced(date, "log");
-  markSynced(date, "xml");
+// Persist "this exact content is now in the cloud" for a session's log and/or
+// xml. Writes both the IndexedDB row (authoritative store that getLogData reads)
+// AND the localStorage session index (which getUnsyncedCount reads) so the flag
+// no longer evaporates on reload — the original bug.
+export async function markCloudSynced(date, { logHash = undefined, xmlHash = undefined } = {}) {
+  try {
+    const db = await openDb();
+    if (logHash !== undefined && logHash !== null) {
+      const row = await idbGet(db, "log_data", date);
+      if (row) { await idbPut(db, "log_data", { ...row, synced: true, syncedHash: logHash }); }
+    }
+    if (xmlHash !== undefined && xmlHash !== null) {
+      const row = await idbGet(db, "xml_data", date);
+      if (row) { await idbPut(db, "xml_data", { ...row, synced: true, syncedHash: xmlHash }); }
+    }
+  } catch {}
   const sessions = getSessions();
   const idx = sessions.findIndex(s => s.date === date);
   if (idx >= 0) {
     sessions[idx].cloudSynced = true;
+    if (logHash !== undefined && logHash !== null) sessions[idx].logSyncedHash = logHash;
+    if (xmlHash !== undefined && xmlHash !== null) sessions[idx].xmlSyncedHash = xmlHash;
     lsSet("ssa:sessions", sessions);
   }
 }

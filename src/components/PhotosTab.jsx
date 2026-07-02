@@ -9,8 +9,9 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { uploadJsonToStorage, fetchFromStorage } from "../lib/bunny";
-import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud } from "../lib/photoStore";
+import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, startAutoFlush } from "../lib/photoStore";
 import { offsetFromCoords } from "../lib/tzFromCoords";
+import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -390,9 +391,12 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   return(
     <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"4/3",background:"#071624",position:"relative",overflow:"hidden"}}>
+        {/* Instant blurred placeholder (LQIP) shown under the thumbnail until it
+            loads — a few hundred bytes stored in the photo's metadata row. */}
+        {photo.lqip&&<div style={{position:"absolute",inset:0,backgroundImage:`url(${photo.lqip})`,backgroundSize:"cover",backgroundPosition:"center",filter:"blur(8px)",transform:"scale(1.1)"}}/>}
         {photo.objectUrl
-          ?<img src={photo.objectUrl} alt="" loading="lazy" onLoad={handleLoad} onError={handleError} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-          :<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:22}}>📷</div>}
+          ?<img src={photo.objectUrl} alt="" loading="lazy" onLoad={handleLoad} onError={handleError} style={{position:"relative",width:"100%",height:"100%",objectFit:"cover"}}/>
+          :!photo.lqip&&<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:22}}>📷</div>}
         {/* Source badge top-right */}
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={photo.cloudSynced?"cloud":"local"}/></div>
         {/* Batch checkbox */}
@@ -830,6 +834,18 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     return ()=>{ cancelled=true; };
   },[activeDate, cloudStatus]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-flush deferred originals when the link improves (Wi-Fi returns / back
+  // online). Also the iOS fallback for the missing Background Sync API.
+  useEffect(()=>{
+    if(!cloudStatus?.available) return;
+    const stop = startAutoFlush({ onLog: addLog });
+    return stop;
+  },[cloudStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Wi-Fi-only-for-originals preference (persisted; honoured by the sync gate).
+  const [wifiOnly, setWifiOnlyState] = useState(()=>{ try { return getWifiOnly(); } catch { return false; } });
+  const toggleWifiOnly = ()=>{ const v=!wifiOnly; setWifiOnly(v); setWifiOnlyState(v); if(!v) syncPendingPhotos({}).then(r=>{ if(r.originals) setRefreshNonce(n=>n+1); }).catch(()=>{}); };
+
 
   const handleFiles = useCallback(async(files)=>{
     const imgs=Array.from(files).filter(f=>f.type.startsWith("image/")||/\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f.name));
@@ -1171,6 +1187,18 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
 
           {/* Manual Sync/Pull button removed — photos auto-push to the cloud on
               import (Phase B) and the cloud index auto-pulls on day load. */}
+
+          {/* Network-aware originals: thumbnails always sync; full-res originals
+              defer to a good link. Toggle Wi-Fi-only + force an upload now. */}
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:9,color:"#64748B",marginBottom:6,cursor:"pointer"}}>
+            <input type="checkbox" checked={wifiOnly} onChange={toggleWifiOnly}/>
+            Wi-Fi only for full-res <span style={{color:"#334155",marginLeft:"auto"}}>{connectionLabel()}</span>
+          </label>
+          <button
+            onClick={async()=>{ addLog("Uploading originals now…"); try{ const r=await syncPendingPhotos({force:true,onLog:addLog}); addLog(`✓ ${r.originals} original${r.originals!==1?"s":""} · ${r.thumbs} thumb${r.thumbs!==1?"s":""}`); if(r.originals||r.thumbs) setRefreshNonce(n=>n+1);}catch(e){addLog(`✕ ${e.message||e}`);} }}
+            style={{width:"100%",marginBottom:8,background:"#06B6D415",color:"#06B6D4",border:"1px solid #06B6D440",borderRadius:6,padding:"6px 0",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+            ↑ Upload originals now
+          </button>
 
           {/* ── Admin/Coach: clear this day (cloud + device) and start afresh ── */}
           {canDelete && activeDate && (

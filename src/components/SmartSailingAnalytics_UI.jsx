@@ -10,6 +10,9 @@ import { getBrowserSupabase } from '../lib/supabase/browser';
 import { parseLog } from '../lib/logParse';
 import { offsetFromCoords } from '../lib/tzFromCoords';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
+import { reconcileSessionSyncState } from '../lib/syncReconcile';
+import { requestPersistentStorage } from '../lib/storagePersist';
+import { startAutoFlush as startPhotoAutoFlush } from '../lib/photoStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
@@ -5141,6 +5144,16 @@ function SSAApp(){
   // / Log profile are hidden for them inside BoatConfigTab via canSeeTuning).
   const canSeeBoatConfig      = ['admin','team_manager','coach','tl3','consultant'].includes(effectiveRole);
   const canSeeAnalyticsData   = !['tl1','guest'].includes(effectiveRole);
+
+  // Durability + background sync (Phase 4): ask for persistent storage so
+  // unsynced captures survive eviction, and register an app-level pending-photo
+  // flush that fires when the link improves / the app resumes (the iOS fallback
+  // for the missing Background Sync API). Runs once for the app's lifetime.
+  useEffect(()=>{
+    requestPersistentStorage().catch(()=>{});
+    const stop = startPhotoAutoFlush({});
+    return stop;
+  },[]);
   const canSeeSailScanPhotos  = !['tl1','guest'].includes(effectiveRole);
   const canUseAI              = effectiveRole === null || !['tl1','consultant','guest'].includes(effectiveRole);
   const showOnlyLatestDay     = effectiveRole === 'guest';
@@ -5388,6 +5401,11 @@ function SSAApp(){
         }
       } catch { /* non-fatal */ }
     }
+
+    // Self-heal sync state against the cloud manifest, then refresh the unsynced
+    // badge — so a log/xml already in the cloud (from another device or a lost
+    // local flag) is recognised as synced and never re-uploaded (Phase 2).
+    reconcileSessionSyncState(date).then(()=>setUnsyncedCount(getUnsyncedCount())).catch(()=>{});
 
     if(log){setLogData({...log,source:log.source||"local"});setSessionTzOffset(log.tzOffset??DEFAULT_TZ);}
     // Bunny R2 fallback is GLOBAL (not team-scoped). Only admins can use

@@ -8,7 +8,9 @@
 // Reads go through Vercel proxy (read-only key).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getVideoBlob, markVideoCloudSynced } from "./localStore";
+import { getVideoBlob, markVideoCloudSynced, markCloudSynced } from "./localStore";
+import { hashLogPayload, hashXmlPayload } from "./contentHash";
+import { readSyncManifest, updateSyncManifest } from "./syncManifest";
 
 // ── Cached storage write credentials ─────────────────────────────────────────
 let _storageCreds = null;
@@ -150,26 +152,55 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
   const onVideoSynced = opts.onVideoSynced;
   const result = { success: false, streamIds: {} };
   try {
+    // Read the session manifest once (a few hundred bytes) so we can skip
+    // re-uploading log/xml that is already in the cloud unchanged. This replaces
+    // the old "upload whenever rows exist" behaviour that re-sent multi-MB logs
+    // every session. See docs/sync-caching-architecture-research.md.
+    let manifest = null;
+    try { manifest = await readSyncManifest(date); } catch {}
+    const manifestPatch = {};
+    let syncedLogHash, syncedXmlHash;
+
     // 1. Log rows → Bunny Storage (direct, no Vercel size limit)
     if (logData?.rows?.length) {
-      const approxMB = (JSON.stringify(logData.rows).length / 1e6).toFixed(1);
-      status(`Uploading log data to Bunny Storage (${logData.rows.length.toLocaleString()} rows · ~${approxMB} MB)…`);
-      const ok = await uploadJsonToStorage(`sessions/${date}/log.json`, {
-        rows: logData.rows, startUtc: logData.startUtc,
-        endUtc: logData.endUtc, uploadedAt: Date.now(),
-      });
-      if (!ok) status("⚠ Log upload failed — continuing…");
-      else     status("✓ Log data uploaded to Bunny Storage");
+      const logHash = hashLogPayload(logData);
+      if (manifest?.log?.hash && manifest.log.hash === logHash) {
+        status(`↩ Log already in cloud (unchanged) — skipping upload`);
+        syncedLogHash = logHash;
+      } else {
+        const approxMB = (JSON.stringify(logData.rows).length / 1e6).toFixed(1);
+        status(`Uploading log data to Bunny Storage (${logData.rows.length.toLocaleString()} rows · ~${approxMB} MB)…`);
+        const ok = await uploadJsonToStorage(`sessions/${date}/log.json`, {
+          rows: logData.rows, startUtc: logData.startUtc,
+          endUtc: logData.endUtc, uploadedAt: Date.now(),
+        });
+        if (!ok) status("⚠ Log upload failed — continuing…");
+        else {
+          status("✓ Log data uploaded to Bunny Storage");
+          syncedLogHash = logHash;
+          manifestPatch.log = { hash: logHash, rows: logData.rows.length, uploadedAt: Date.now() };
+        }
+      }
     }
 
     // 2. XML events → Bunny Storage (direct)
     if (xmlData) {
-      status("Uploading event data to Bunny Storage…");
-      const ok = await uploadJsonToStorage(`sessions/${date}/events.json`, {
-        ...xmlData, uploadedAt: Date.now(),
-      });
-      if (!ok) status("⚠ Events upload failed — continuing…");
-      else     status("✓ Event data uploaded to Bunny Storage");
+      const xmlHash = hashXmlPayload(xmlData);
+      if (manifest?.xml?.hash && manifest.xml.hash === xmlHash) {
+        status(`↩ Events already in cloud (unchanged) — skipping upload`);
+        syncedXmlHash = xmlHash;
+      } else {
+        status("Uploading event data to Bunny Storage…");
+        const ok = await uploadJsonToStorage(`sessions/${date}/events.json`, {
+          ...xmlData, uploadedAt: Date.now(),
+        });
+        if (!ok) status("⚠ Events upload failed — continuing…");
+        else {
+          status("✓ Event data uploaded to Bunny Storage");
+          syncedXmlHash = xmlHash;
+          manifestPatch.xml = { hash: xmlHash, uploadedAt: Date.now() };
+        }
+      }
     }
 
     // 3. Videos → Bunny Stream (direct via tus)
@@ -238,6 +269,16 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       syncedAt: Date.now(),
     };
     await uploadJsonToStorage(`sessions/${date}/meta.json`, meta);
+
+    // Record what's now in the cloud: update the session manifest with any
+    // newly-uploaded log/xml hashes (optimistic on the copy we read), and
+    // persist the same fingerprints locally so a future sync of unchanged data
+    // skips the transfer entirely.
+    if (Object.keys(manifestPatch).length) {
+      try { await updateSyncManifest(date, manifestPatch, manifest); } catch {}
+    }
+    try { await markCloudSynced(date, { logHash: syncedLogHash, xmlHash: syncedXmlHash }); } catch {}
+
     result.success = true;
     status(`✓ Session ${date} fully synced to Bunny Storage + Stream`);
     return result;
@@ -256,18 +297,37 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
     const existing = await fetchFromStorage(`sessions/${date}/meta.json`);
     if (!existing) return false; // session not yet in cloud — nothing to update
 
-    // 2. Upload log/events if provided (new data that wasn't there before)
+    // 2. Upload log/events if provided AND actually changed vs the cloud
+    //    manifest (content-hash guard — don't re-send unchanged data).
+    let manifest = null;
+    try { manifest = await readSyncManifest(date); } catch {}
+    const manifestPatch = {};
+    let syncedLogHash, syncedXmlHash;
     const uploads = [];
     if (logData?.rows?.length) {
-      uploads.push(uploadJsonToStorage(`sessions/${date}/log.json`, {
-        rows: logData.rows, startUtc: logData.startUtc,
-        endUtc: logData.endUtc, uploadedAt: Date.now(),
-      }));
+      const logHash = hashLogPayload(logData);
+      if (manifest?.log?.hash === logHash) {
+        syncedLogHash = logHash;
+      } else {
+        uploads.push(uploadJsonToStorage(`sessions/${date}/log.json`, {
+          rows: logData.rows, startUtc: logData.startUtc,
+          endUtc: logData.endUtc, uploadedAt: Date.now(),
+        }));
+        syncedLogHash = logHash;
+        manifestPatch.log = { hash: logHash, rows: logData.rows.length, uploadedAt: Date.now() };
+      }
     }
     if (xmlData && !xmlData.source) {  // skip cloud-sourced xml (already there)
-      uploads.push(uploadJsonToStorage(`sessions/${date}/events.json`, {
-        ...xmlData, uploadedAt: Date.now(),
-      }));
+      const xmlHash = hashXmlPayload(xmlData);
+      if (manifest?.xml?.hash === xmlHash) {
+        syncedXmlHash = xmlHash;
+      } else {
+        uploads.push(uploadJsonToStorage(`sessions/${date}/events.json`, {
+          ...xmlData, uploadedAt: Date.now(),
+        }));
+        syncedXmlHash = xmlHash;
+        manifestPatch.xml = { hash: xmlHash, uploadedAt: Date.now() };
+      }
     }
 
     // 3. Merge enriched video data into existing meta
@@ -326,6 +386,15 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
     }
 
     await Promise.all(uploads);
+
+    // Record the newly-uploaded log/xml in the manifest + locally so we don't
+    // re-send them next time.
+    if (Object.keys(manifestPatch).length) {
+      try { await updateSyncManifest(date, manifestPatch, manifest); } catch {}
+    }
+    if (syncedLogHash || syncedXmlHash) {
+      try { await markCloudSynced(date, { logHash: syncedLogHash, xmlHash: syncedXmlHash }); } catch {}
+    }
     return true;
   } catch (err) {
     console.error("[SSA:cloud] updateCloudSessionMetadata error:", err);

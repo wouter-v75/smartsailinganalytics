@@ -21,6 +21,7 @@ import { getLogData, getXmlData, setPhotoSession } from './localStore'
 import { upsertPhotoCloud } from './cloud-photos'
 import { getBrowserSupabase } from './supabase/browser'
 import { getActiveMembership } from './active-membership'
+import { goodForOriginals, onConnectionChange } from './netAware'
 
 const DB_NAME = 'ssa-db'
 const LS_PREFIX = 'ssa:photos-meta:'
@@ -111,6 +112,31 @@ function generateThumbnail(blob, maxSize = 480, quality = 0.78) {
     }
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('thumb load failed')) }
     img.src = url
+  })
+}
+
+// Tiny inline placeholder (LQIP): a ~20px JPEG data URL (~a few hundred bytes)
+// stored in the photo's metadata row so grids paint an instant blur before any
+// thumbnail byte arrives — no JS decoder needed (renders as a plain background).
+// See docs/sync-caching-architecture-research.md (Phase 3).
+function generateLqip(blob, size = 20, quality = 0.4) {
+  return new Promise((resolve) => {
+    try {
+      const url = URL.createObjectURL(blob)
+      const img = new Image()
+      img.onload = () => {
+        const w = img.naturalWidth, h = img.naturalHeight
+        const scale = Math.min(1, size / Math.max(w, h))
+        const c = document.createElement('canvas')
+        c.width = Math.max(1, Math.round(w * scale))
+        c.height = Math.max(1, Math.round(h * scale))
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
+        URL.revokeObjectURL(url)
+        try { resolve(c.toDataURL('image/jpeg', quality)) } catch { resolve(null) }
+      }
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null) }
+      img.src = url
+    } catch { resolve(null) }
   })
 }
 
@@ -277,6 +303,18 @@ async function mirror(photo) {
 export async function importFiles(files, { onLog } = {}) {
   const imgs = Array.from(files).filter(isImage)
   if (!imgs.length) { onLog?.('No image files found'); return [] }
+  // Pre-flight storage: if we're near the quota, LRU-evict our own already-synced
+  // originals (they're safe in the cloud) so a big import doesn't hit
+  // QuotaExceededError mid-way on a small-disk phone (Phase 4).
+  try {
+    if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
+      const { usage = 0, quota = 0 } = await navigator.storage.estimate()
+      if (quota && usage / quota > 0.9) {
+        const n = await evictSyncedOriginals({ keep: 40 })
+        if (n) onLog?.(`Freed space: dropped ${n} already-synced local original${n !== 1 ? 's' : ''}`)
+      }
+    }
+  } catch { /* non-fatal */ }
   const out = []
   for (const file of imgs) {
     try {
@@ -287,9 +325,10 @@ export async function importFiles(files, { onLog } = {}) {
       await idbPutPhoto(id, jpeg)
       const sessionDate = dateOf(exif.utc)
       const keys = cloudKeys(sessionDate, id)
+      const lqip = await generateLqip(jpeg)
       const photo = {
         id, name: file.name, size: jpeg.size, utc: exif.utc || null,
-        lat: exif.lat || null, lon: exif.lon || null, exif,
+        lat: exif.lat || null, lon: exif.lon || null, exif, lqip,
         sessionDate, objectUrl: URL.createObjectURL(jpeg),
         // Deterministic Bunny keys from the start so the cloud row always has a
         // STABLE identity (dedupe key) — even before the thumb/original land.
@@ -373,9 +412,60 @@ export async function syncPhoto(photo, { force = false } = {}) {
   try {
     let p = photo
     if (!p.thumbSynced) p = await uploadThumb(p)
-    if (!p.originalSynced && (force || connectionIsGood())) p = await uploadOriginal(p)
+    // Heavy original only on a good link (honours Save-Data + the user's
+    // Wi-Fi-only toggle) unless the caller forces an explicit "upload now".
+    if (!p.originalSynced && goodForOriginals({ force })) p = await uploadOriginal(p)
     return p
   } finally { _inflight.delete(photo.id) }
+}
+
+// Auto-flush deferred originals when the link improves (Wi-Fi returns / back
+// online). Register once from the UI; returns an unsubscribe. Debounced so a
+// burst of connection events triggers at most one flush.
+export function startAutoFlush({ onLog } = {}) {
+  if (typeof window === 'undefined') return () => {}
+  let timer = null
+  let running = false
+  const run = () => {
+    clearTimeout(timer)
+    timer = setTimeout(async () => {
+      if (running || !goodForOriginals()) return
+      running = true
+      try { await syncPending({ onLog }) } catch {} finally { running = false }
+    }, 1500)
+  }
+  const off = onConnectionChange(run)
+  // iOS Safari has no Background Sync API — so also flush when the tab becomes
+  // visible again (app resumed) and on window focus. This is the in-page
+  // fallback that replays the pending-original queue.
+  const onVis = () => { if (document.visibilityState === 'visible') run() }
+  document.addEventListener('visibilitychange', onVis)
+  window.addEventListener('focus', run)
+  return () => {
+    clearTimeout(timer); off()
+    document.removeEventListener('visibilitychange', onVis)
+    window.removeEventListener('focus', run)
+  }
+}
+
+// LRU-evict our own already-uploaded photo originals from IndexedDB to reclaim
+// space (their thumbnail + original remain in the cloud, so this is lossless).
+// Returns the number of blobs dropped. Oldest-first, stops once `keep` newest
+// are retained. Used before large writes when storage is tight (Phase 4).
+export async function evictSyncedOriginals({ keep = 40 } = {}) {
+  const candidates = []
+  for (const date of listPhotoDates()) {
+    for (const p of loadDay(date)) {
+      if (p.originalSynced && p.thumbSynced) candidates.push(p)
+    }
+  }
+  candidates.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0)) // oldest first
+  const drop = candidates.slice(0, Math.max(0, candidates.length - keep))
+  let n = 0
+  for (const p of drop) {
+    try { await idbDeletePhoto(p.id); n++ } catch { /* ignore */ }
+  }
+  return n
 }
 
 // Wipe a whole day and start afresh: delete the cloud rows + Bunny objects (via
