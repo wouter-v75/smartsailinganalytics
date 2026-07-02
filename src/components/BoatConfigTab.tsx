@@ -81,9 +81,9 @@ export default function BoatConfigTab({
   const [rigErr, setRigErr] = useState('')
   const [rigPdfUrl, setRigPdfUrl] = useState<string | null>(null) // admin-only signed PDF URL
   const [selectedScan, setSelectedScan] = useState<any>(null) // open scan detail modal
-  const [compareMode, setCompareMode] = useState(false) // multi-select to compare two scans
-  const [cmpIds, setCmpIds] = useState<string[]>([]) // up to 2 selected scan ids
-  const [comparePair, setComparePair] = useState<{ a: any; b: any } | null>(null)
+  const [compareMode, setCompareMode] = useState(false) // multi-select to compare scans
+  const [cmpIds, setCmpIds] = useState<string[]>([]) // up to 6 selected scan ids
+  const [compareScans, setCompareScans] = useState<any[] | null>(null)
   const [scanTags, setScanTags] = useState<Record<string, ScanTags>>({}) // scanId → derived tags/averages
   const [designSail, setDesignSail] = useState<any>(null) // open design-shapes popup
   const [scanSort, setScanSort] = useState<'sail' | 'date'>('sail') // default: by sail, then date
@@ -505,14 +505,14 @@ export default function BoatConfigTab({
             }}>{compareMode ? 'Comparing…' : '⇄ Compare'}</button>
             {compareMode && (
               <button
-                disabled={cmpIds.length !== 2}
+                disabled={cmpIds.length < 2}
                 onClick={() => {
-                  const a = scans.find((s) => s.id === cmpIds[0]); const b = scans.find((s) => s.id === cmpIds[1])
-                  if (a && b) setComparePair({ a, b })
+                  const picked = cmpIds.map((id) => scans.find((s) => s.id === id)).filter(Boolean)
+                  if (picked.length >= 2) setCompareScans(picked)
                 }}
                 style={{ fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '4px 12px', border: 'none',
-                  cursor: cmpIds.length === 2 ? 'pointer' : 'default', opacity: cmpIds.length === 2 ? 1 : 0.45,
-                  background: C.accent, color: '#001018' }}>Compare {cmpIds.length}/2 ›</button>
+                  cursor: cmpIds.length >= 2 ? 'pointer' : 'default', opacity: cmpIds.length >= 2 ? 1 : 0.45,
+                  background: C.accent, color: '#001018' }}>Compare {cmpIds.length}/6 ›</button>
             )}
             <span style={{ fontSize: 11, color: C.dim, marginLeft: 'auto' }}>{displayedScans.length} of {scans.length}</span>
           </div>
@@ -535,7 +535,7 @@ export default function BoatConfigTab({
                 )}
                 <div
                   onClick={() => {
-                    if (compareMode) setCmpIds((prev) => prev.includes(sc.id) ? prev.filter((x) => x !== sc.id) : [...prev, sc.id].slice(-2))
+                    if (compareMode) setCmpIds((prev) => prev.includes(sc.id) ? prev.filter((x) => x !== sc.id) : [...prev, sc.id].slice(-6))
                     else setSelectedScan(sc)
                   }}
                   title={compareMode ? 'Select to compare' : 'Open scan detail'}
@@ -711,16 +711,14 @@ export default function BoatConfigTab({
         />
       )}
 
-      {comparePair && (
+      {compareScans && (
         <SailScanCompare
-          scanA={comparePair.a}
-          scanB={comparePair.b}
+          scans={compareScans}
           sails={sails}
-          tagA={scanTags[comparePair.a.id]}
-          tagB={scanTags[comparePair.b.id]}
+          tags={compareScans.map((s) => scanTags[s.id])}
           boatName={boatName}
           sessionTzOffset={sessionTzOffset}
-          onClose={() => setComparePair(null)}
+          onClose={() => setCompareScans(null)}
         />
       )}
 

@@ -1,11 +1,11 @@
 'use client'
 // src/components/SailScanCompare.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Side-by-side comparison of two SailScan scans (e.g. the two photos/tacks of a
-// North "Sail Comparison" report, or any two scans picked from the Sail-data
+// Side-by-side comparison of up to SIX SailScan scans (e.g. the two photos/tacks
+// of a North "Sail Comparison" report, or any scans picked from the Sail-data
 // list). Shows, per sail: a header line (TWS / rake / forestay / time), the
 // analysed photo, the measured stripe table and its design-target table; then a
-// row of shape charts overlaying BOTH measured lines plus each sail's design.
+// row of shape charts overlaying every measured line plus each sail's design.
 //
 // Design targets reuse pickDesign() — main vs jib, TWS-window selection — exactly
 // like the single detail view, interpolated to each scan's own TWS.
@@ -19,8 +19,8 @@ const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
   head: '#E2E8F0', text: '#CBD5E1', dim: '#64748B', warn: '#F59E0B',
 }
-const A_COLOR = '#06B6D4' // sail A (left)
-const B_COLOR = '#FBBF24' // sail B (right)
+// distinct per-sail colours (up to 6 sails compared at once)
+const SAIL_COLORS = ['#06B6D4', '#FBBF24', '#34D399', '#F472B6', '#A78BFA', '#F87171']
 const DESIGN_GREY = '#94A3B8'
 
 const fmt = (v: number | null | undefined, dp = 1) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(dp))
@@ -39,13 +39,30 @@ const METRICS: { key: keyof Stripe; label: string; dKey: string; dScale: number 
 
 interface Series { xs: number[]; ys: (number | null)[]; color: string; dash?: string }
 
-// Multi-series line chart with a fixed x-domain (0–100% stripe height). Ticks at
-// their true coordinates so nothing reads beyond the axis.
+// Smooth Catmull-Rom → cubic-Bézier path through pixel-space points (points must
+// be sorted by x). Gives a fitted spline instead of straight segments.
+function splinePath(p: { x: number; y: number }[]): string {
+  if (p.length === 0) return ''
+  if (p.length === 1) return `M${p[0].x.toFixed(1)},${p[0].y.toFixed(1)}`
+  if (p.length === 2) return `M${p[0].x.toFixed(1)},${p[0].y.toFixed(1)} L${p[1].x.toFixed(1)},${p[1].y.toFixed(1)}`
+  let d = `M${p[0].x.toFixed(1)},${p[0].y.toFixed(1)}`
+  for (let i = 0; i < p.length - 1; i++) {
+    const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p2
+    const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6
+    const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6
+    d += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`
+  }
+  return d
+}
+
+// Multi-series spline chart over the 25–100% stripe-height domain (below 25% is
+// clipped — includes any 0% design rows). Ticks at true coordinates.
 function MultiLineChart({ series, w = 250, h = 96 }: { series: Series[]; w?: number; h?: number }) {
   const pad = { l: 30, r: 8, t: 8, b: 16 }
-  const xMin = 0, xMax = 100
+  const xMin = 25, xMax = 100
   const clean = (xs: number[], ys: (number | null)[]) =>
-    ys.map((y, i) => ({ x: xs[i], y })).filter((p) => p.y != null && Number.isFinite(p.y as number) && p.x >= xMin && p.x <= xMax) as { x: number; y: number }[]
+    (ys.map((y, i) => ({ x: xs[i], y })).filter((p) => p.y != null && Number.isFinite(p.y as number) && p.x >= xMin && p.x <= xMax) as { x: number; y: number }[])
+      .sort((a, b) => a.x - b.x)
   const cleaned = series.map((s) => ({ ...s, pts: clean(s.xs, s.ys) }))
   const all = cleaned.flatMap((s) => s.pts)
   if (!all.length) return <div style={{ width: w, height: h, color: C.dim, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>no data</div>
@@ -53,7 +70,7 @@ function MultiLineChart({ series, w = 250, h = 96 }: { series: Series[]; w?: num
   const ylo = ymin === ymax ? ymin - 1 : ymin, yhi = ymin === ymax ? ymax + 1 : ymax
   const px = (x: number) => pad.l + ((x - xMin) / (xMax - xMin)) * (w - pad.l - pad.r)
   const py = (y: number) => pad.t + (1 - (y - ylo) / (yhi - ylo || 1)) * (h - pad.t - pad.b)
-  const path = (pts: { x: number; y: number }[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(' ')
+  const path = (pts: { x: number; y: number }[]) => splinePath(pts.map((p) => ({ x: px(p.x), y: py(p.y) })))
   return (
     <svg width={w} height={h} style={{ display: 'block' }}>
       <line x1={pad.l} y1={py(yhi)} x2={w - pad.r} y2={py(yhi)} stroke={C.border} strokeWidth={0.5} />
@@ -61,8 +78,8 @@ function MultiLineChart({ series, w = 250, h = 96 }: { series: Series[]; w?: num
       <text x={2} y={py(yhi) + 3} fontSize={9} fill={C.dim}>{yhi.toFixed(yhi % 1 ? 1 : 0)}</text>
       <text x={2} y={py(ylo) + 3} fontSize={9} fill={C.dim}>{ylo.toFixed(ylo % 1 ? 1 : 0)}</text>
       {cleaned.map((s, i) => s.pts.length ? <path key={i} d={path(s.pts)} fill="none" stroke={s.color} strokeWidth={s.dash ? 1.3 : 1.7} strokeDasharray={s.dash || undefined} /> : null)}
-      {[0, 25, 50, 75, 100].map((t) => (
-        <text key={t} x={px(t)} y={h - 3} fontSize={9} fill={C.dim} textAnchor={t === 0 ? 'start' : t === 100 ? 'end' : 'middle'}>{t}</text>
+      {[25, 50, 75, 100].map((t) => (
+        <text key={t} x={px(t)} y={h - 3} fontSize={9} fill={C.dim} textAnchor={t === 25 ? 'start' : t === 100 ? 'end' : 'middle'}>{t}</text>
       ))}
     </svg>
   )
@@ -80,10 +97,13 @@ function scanModel(scan: any, sails: any[], tag: any) {
   return { stripes, sailRec, design, tws, cond, name, posXs }
 }
 
-export default function SailScanCompare({ scanA, scanB, sails, tagA, tagB, boatName, onClose, sessionTzOffset = 0 }:
-  { scanA: any; scanB: any; sails: any[]; tagA?: any; tagB?: any; boatName?: string | null; onClose: () => void; sessionTzOffset?: number }) {
-  const A = useMemo(() => scanModel(scanA, sails, tagA), [scanA, sails, tagA])
-  const B = useMemo(() => scanModel(scanB, sails, tagB), [scanB, sails, tagB])
+export default function SailScanCompare({ scans, sails, tags = [], boatName, onClose, sessionTzOffset = 0 }:
+  { scans: any[]; sails: any[]; tags?: any[]; boatName?: string | null; onClose: () => void; sessionTzOffset?: number }) {
+  // one model per selected scan, capped at 6, each with its own colour
+  const models = useMemo(
+    () => (scans || []).slice(0, 6).map((scan, i) => ({ scan, M: scanModel(scan, sails, tags[i]), color: SAIL_COLORS[i % SAIL_COLORS.length], tag: tags[i] })),
+    [scans, sails, tags],
+  )
 
   const td: React.CSSProperties = { padding: '3px 6px', fontSize: 11, color: C.text, textAlign: 'center', borderBottom: `1px solid ${C.border}` }
   const th: React.CSSProperties = { ...td, color: C.dim, fontWeight: 700, fontSize: 10 }
@@ -92,8 +112,8 @@ export default function SailScanCompare({ scanA, scanB, sails, tagA, tagB, boatN
   const timeOf = (scan: any) => scanLocalDateTime(scan, sessionTzOffset)
 
   // One sail column: header line, photo, measured table, design table.
-  const Column = ({ scan, M, color, tag }: { scan: any; M: ReturnType<typeof scanModel>; color: string; tag: any }) => (
-    <div style={{ flex: '1 1 360px', minWidth: 300 }}>
+  const Column = ({ scan, M, color }: { scan: any; M: ReturnType<typeof scanModel>; color: string; tag: any }) => (
+    <div style={{ flex: '1 1 320px', minWidth: 280, maxWidth: 460 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
         <span style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
         <span style={{ fontWeight: 800, color: C.head, fontSize: 14 }}>{M.name}</span>
@@ -121,7 +141,7 @@ export default function SailScanCompare({ scanA, scanB, sails, tagA, tagB, boatN
           ))}
         </tbody>
       </table>
-      {M.design && M.design.sections.length > 0 && (
+      {M.design && M.design.sections.filter((s: any) => s.posPct !== 0).length > 0 && (
         <>
           <div style={{ fontSize: 10, fontWeight: 700, color: C.dim, margin: '8px 0 3px' }}>
             Design ({M.design.sourceCode || M.cond.sail_code || '—'}) @ {fmt(M.design.tws, 0)} kn · % = ×100
@@ -130,7 +150,7 @@ export default function SailScanCompare({ scanA, scanB, sails, tagA, tagB, boatN
           <table style={{ width: '100%', borderCollapse: 'collapse', background: C.panel, borderRadius: 8 }}>
             <thead><tr><th style={th}>Stripe</th><th style={th}>Draft</th><th style={th}>Camber</th><th style={th}>Twist</th><th style={th}>Entry</th><th style={th}>Exit</th><th style={th}>Front%</th><th style={th}>Back%</th></tr></thead>
             <tbody>
-              {M.design.sections.map((s: any) => (
+              {M.design.sections.filter((s: any) => s.posPct !== 0).map((s: any) => (
                 <tr key={s.posPct}>
                   <td style={{ ...td, fontWeight: 700, color: DESIGN_GREY }}>{s.posPct}%</td>
                   <td style={td}>{fmt(s.draft != null ? s.draft * 100 : null)}</td>
@@ -151,33 +171,35 @@ export default function SailScanCompare({ scanA, scanB, sails, tagA, tagB, boatN
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1100, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '24px 12px' }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(1040px, 100%)', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, color: C.text }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(1440px, 100%)', background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, color: C.text }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: C.head }}>Sail comparison</span>
           {boatName && <span style={{ fontSize: 11, color: C.dim }}>{boatName}</span>}
-          <span style={{ fontSize: 11, color: A_COLOR, fontWeight: 700 }}>■ {A.name} {A.tws != null ? `@${fmt(A.tws, 0)}kt` : ''}</span>
-          <span style={{ fontSize: 11, color: B_COLOR, fontWeight: 700 }}>■ {B.name} {B.tws != null ? `@${fmt(B.tws, 0)}kt` : ''}</span>
+          {models.map(({ M, color }, i) => (
+            <span key={i} style={{ fontSize: 11, color, fontWeight: 700 }}>■ {M.name} {M.tws != null ? `@${fmt(M.tws, 0)}kt` : ''}</span>
+          ))}
           <button onClick={onClose} style={{ marginLeft: 'auto', background: '#0F2A45', border: 'none', borderRadius: 8, color: C.text, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✕</button>
         </div>
 
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-          <Column scan={scanA} M={A} color={A_COLOR} tag={tagA} />
-          <Column scan={scanB} M={B} color={B_COLOR} tag={tagB} />
+          {models.map(({ scan, M, color, tag }, i) => (
+            <Column key={i} scan={scan} M={M} color={color} tag={tag} />
+          ))}
         </div>
 
-        {/* shape charts — both measured lines + each design */}
+        {/* shape charts — every measured line + each design */}
         <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, margin: '16px 0 4px' }}>Shape charts (vs stripe height %)</div>
-        <div style={{ fontSize: 10, color: C.dim, marginBottom: 6 }}>
-          <span style={{ color: A_COLOR }}>━ {A.name}</span> · <span style={{ color: B_COLOR }}>━ {B.name}</span> · <span style={{ color: DESIGN_GREY }}>— — design</span>
+        <div style={{ fontSize: 10, color: C.dim, marginBottom: 6, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {models.map(({ M, color }, i) => <span key={i} style={{ color }}>━ {M.name}</span>)}
+          <span style={{ color: DESIGN_GREY }}>— — design (same colour, dashed)</span>
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           {METRICS.map((m) => {
-            const series: Series[] = [
-              { xs: A.posXs, ys: A.stripes.map((s) => s[m.key] as number | null), color: A_COLOR },
-              { xs: B.posXs, ys: B.stripes.map((s) => s[m.key] as number | null), color: B_COLOR },
-            ]
-            if (A.design) series.push({ xs: A.design.sections.map((s: any) => s.posPct), ys: A.design.sections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color: A_COLOR, dash: '3 2' })
-            if (B.design) series.push({ xs: B.design.sections.map((s: any) => s.posPct), ys: B.design.sections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color: B_COLOR, dash: '1 3' })
+            const series: Series[] = []
+            for (const { M, color } of models) {
+              series.push({ xs: M.posXs, ys: M.stripes.map((s) => s[m.key] as number | null), color })
+              if (M.design) series.push({ xs: M.design.sections.map((s: any) => s.posPct), ys: M.design.sections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color, dash: '3 2' })
+            }
             return (
               <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px' }}>
                 <div style={{ fontSize: 11, color: C.head, fontWeight: 700, marginBottom: 2 }}>{m.label}</div>
