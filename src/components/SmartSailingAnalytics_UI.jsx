@@ -398,6 +398,16 @@ function enrichVideo(v,log,xml,syncOffsets){
 }
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source==="supabase"?"cloud":source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
+// A video is "in the cloud" once it has a Stream ID or a cloud rendition —
+// even if its local `source` field still reads "local" (the sync sets
+// cloudSynced/streamId/hasProxy, not source). Returns a SrcBadge source string.
+function videoBadgeSrc(v){
+  if(!v) return "local";
+  if(v.source==="processing"||v.streamProcessing) return "processing";
+  if(v.streamId||v.hasProxy||v.hasOriginal||v.cloudSynced||v.source==="cloud"||v.source==="supabase") return "cloud";
+  return "local";
+}
+const videoInCloud = v => videoBadgeSrc(v)==="cloud";
 function Gauge({label,value,/* unit kept for call-site back-compat — not rendered */ unit:_unit,color="#06B6D4",size="md",highlight=false}){
   // Gauge is only used for the on-video instrument overlay. On phones the
   // desktop sizing covers half the frame, so shrink everything ~40 %. Units
@@ -1115,7 +1125,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
          (video.source==="processing"||video.streamProcessing)?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
-        <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={video.source||"local"}/></div>
+        <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={videoBadgeSrc(video)}/></div>
         {/* Batch checkbox */}
         {batchMode&&(
           <div style={{position:"absolute",top:4,left:4,width:22,height:22,borderRadius:4,
