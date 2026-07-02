@@ -693,18 +693,33 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   // in their dependency arrays without hitting a temporal-dead-zone ReferenceError.
   const enrichPhoto = useCallback((photo,log,xml)=>{
     const e={...photo};
+    let matched=false;
     if(log?.rows?.length&&photo.utc){
       const row=nearestLogRow(log.rows,photo.utc);
       if(row){
+        matched=true;
         e.tws=row.tws;e.twa=row.twa;e.awa=row.awa;e.bsp=row.bsp;e.heel=row.heel;e.vmg=row.vmg;
         // Carry the remaining overlay-able fields so the "add variable" picker has data.
         for(const o of PHOTO_OVERLAY_VARS){ if(row[o.key]!=null) e[o.key]=row[o.key]; }
       }
     }
+    // Fall back to the instrument snapshot baked into `analysis` at import/mirror
+    // time when the live log didn't match (e.g. log not loaded, cloud-only photo,
+    // or timestamp just outside the match window) — so the overlay still shows
+    // data, like a video's baked twsAvg does.
+    const inst=photo.analysis?.inst;
+    if(!matched&&inst){
+      if(e.tws==null)e.tws=inst.tws??null; if(e.twa==null)e.twa=inst.twa??null;
+      if(e.awa==null)e.awa=inst.awa??null; if(e.bsp==null)e.bsp=inst.bsp??null;
+      if(e.heel==null)e.heel=inst.heel??null; if(e.vmg==null)e.vmg=inst.vmg??null;
+    }
     if(xml){
       const sails=activeSailsAt(xml.sailsUpEvents,photo.utc);
       const race=raceTagsAt(xml,photo.utc);
-      e.sails=sails;e.raceTags=race;e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;
+      // Prefer live tags; keep baked ones if the live lookup found nothing.
+      e.sails=sails.length?sails:(e.sails||photo.analysis?.sails||[]);
+      e.raceTags=race.length?race:(e.raceTags||photo.analysis?.raceTags||[]);
+      e.boat=xml.meta?.boat||e.boat||null;e.location=xml.meta?.location||e.location||null;
     }
     return e;
   },[]);

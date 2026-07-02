@@ -83,6 +83,20 @@ export async function upsertPhotoCloud(args: UpsertArgs): Promise<boolean> {
 }
 
 export function toLegacyPhotoShape(p: CloudPhotoRow): Record<string, unknown> {
+  // Instrument snapshot + tags are baked into analysis_data at import/mirror
+  // time. The photo overlay reads TOP-LEVEL fields (photo.tws, photo.sails…),
+  // so hydrate them here — otherwise a cloud-loaded photo shows a blank overlay
+  // whenever the live log isn't loaded / doesn't match (videos avoid this by
+  // baking twsAvg onto the row). Live enrichment still overrides these when a
+  // log row matches.
+  const a = (p.analysis_data as {
+    inst?: Record<string, number | null>
+    sails?: string[]
+    raceTags?: string[]
+    boat?: string | null
+    location?: string | null
+  } | null) || {}
+  const inst = a.inst || {}
   return {
     id: p.id,
     utc: p.taken_utc ? new Date(p.taken_utc).getTime() : null,
@@ -92,6 +106,10 @@ export function toLegacyPhotoShape(p: CloudPhotoRow): Record<string, unknown> {
     url: p.bunny_storage_path,
     size: p.bytes,
     analysis: p.analysis_data,
+    tws: inst.tws ?? null, twa: inst.twa ?? null, awa: inst.awa ?? null,
+    bsp: inst.bsp ?? null, heel: inst.heel ?? null, vmg: inst.vmg ?? null,
+    sails: a.sails || [], raceTags: a.raceTags || [],
+    boat: a.boat ?? null, location: a.location ?? null,
     sessionDate: p.sessions?.date || '',
     source: 'supabase',
   }
