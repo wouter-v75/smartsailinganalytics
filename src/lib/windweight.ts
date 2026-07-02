@@ -21,7 +21,7 @@ export interface WWResult {
   ww: number // WW% (100 = standard)
   vEff: number // effective TWS, same units as input V_H
   vH: number
-  cls: 'Light' | 'Standard' | 'Heavy'
+  cls: 'Light' | 'Standard' | 'Heavy' | 'Calm'
   factors: { rho: number; profile: number; gust: number; funnel: number }
   inputs: { ustar: number; L: number; z0: number; rho: number; TI: number; dT: number | null }
   profile: Array<{ z: number; V: number }> // m/s over the rig
@@ -93,7 +93,9 @@ export function turbulenceIntensity(L: number): number {
   return Math.max(0.04, Math.min(0.25, 0.1 - 0.35 * zeta10))
 }
 
-function classify(ww: number): WWResult['cls'] {
+const CALM_MS = 1.5 // ~3 kt: rig unloaded, WW ratio (÷ V_H) ill-conditioned → "Calm"
+function classify(ww: number, vHms?: number): WWResult['cls'] {
+  if (vHms != null && vHms < CALM_MS) return 'Calm'
   if (ww < 92) return 'Light'
   if (ww > 108) return 'Heavy'
   return 'Standard'
@@ -148,20 +150,22 @@ export function windweightObserved(args: {
     return vH * (Math.log(zz / Z0_REF) / Math.log(H / Z0_REF))
   }
   const Sref = shearIntegral(vLog, H, vH, cf)
-  const fProfile = Sref > 0 ? Sact / Sref : 1
+  let fProfile = Sref > 0 ? Sact / Sref : 1
+  fProfile = Math.max(0.5, Math.min(1.5, fProfile)) // bound: near-calm can spike (V/V_H)²
   const TI = turbulenceIntensity(L)
   const Gf = 1 + 2.5 * TI
   const fGust = 1 + beta * (Gf * Gf - 1)
   const fFunnel = 1 // observed: no funnel term (that's a model/grid diagnostic)
 
-  const ww = 100 * fRho * fProfile * fGust * fFunnel
+  let ww = 100 * fRho * fProfile * fGust * fFunnel
+  ww = Math.max(45, Math.min(155, ww)) // keep the index in a physically sane band
   const vEff = vHKt * Math.sqrt(Math.max(ww, 1) / 100) // back to knots
   const heights = [5, 10, 15, 25, 34]
   return {
     ww: Math.round(ww * 10) / 10,
     vEff: Math.round(vEff * 100) / 100,
     vH: Math.round(vHKt * 100) / 100,
-    cls: classify(ww),
+    cls: classify(ww, vH),
     factors: {
       rho: round4(fRho),
       profile: round4(fProfile),

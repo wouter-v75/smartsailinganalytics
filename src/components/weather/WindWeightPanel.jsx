@@ -10,7 +10,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { fetchWindweightNearest, windweightVenues } from './openMeteo'
 import { windweightObserved } from '../../lib/windweight'
 
-const CLS_COLOR = { Light: '#7DD3FC', Standard: '#1D9E75', Heavy: '#F97316' }
+const CLS_COLOR = { Light: '#7DD3FC', Standard: '#1D9E75', Heavy: '#F97316', Calm: '#64748B' }
 const clsColor = (c) => CLS_COLOR[c] || '#94A3B8'
 const HOURS = Array.from({ length: 13 }, (_, i) => i + 8) // 8..20
 
@@ -118,6 +118,7 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
       {!hasVenue && <div style={{ fontSize: 11, color: '#64748B' }}>Pick a location inside a SSA-Race venue box (La Ciotat / St Tropez / …).</div>}
 
       {(fc || hasObs) && (
+        <>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 2fr) minmax(160px, 1fr)', gap: 14, alignItems: 'start' }}>
           {/* table */}
           <div style={{ overflowX: 'auto' }}>
@@ -166,14 +167,31 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
             </div>
           </div>
         </div>
+        <WWTimeChart fcByHour={fcByHour} obsByHour={obsByHour} hours={HOURS} sel={selHour} onSel={setSelHour} />
+        </>
       )}
     </div>
   )
 }
 
+// neutral open-sea log profile anchored at the forecast masthead speed — the
+// "standard day" the WW index is measured against, so you can see the shear.
+function stdLogProfile(fc, H) {
+  if (!Array.isArray(fc) || fc.length < 2) return null
+  const z0 = 2e-4
+  const top = fc.reduce((a, p) => (p.z > a.z ? p : a), fc[0])
+  const zTop = Math.max(top.z, 1), vTop = top.V
+  if (!(vTop > 0)) return null
+  const zs = [1, 3, 5, 8, 12, 18, 25, Math.min(zTop, H)]
+  const uniq = [...new Set(zs.filter((z) => z >= 0.5 && z <= Math.min(zTop, H)))].sort((a, b) => a - b)
+  return uniq.map((z) => ({ z, V: (vTop * Math.log(z / z0)) / Math.log(zTop / z0) }))
+}
+
 function ProfilePlot({ fc, obs, H = 34 }) {
   const W = 150, HT = 150, pad = 18
   const series = []
+  const ref = stdLogProfile(fc, H)
+  if (ref) series.push({ pts: ref, c: '#64748B', lbl: 'std', dash: '3 2', noDots: true })
   if (Array.isArray(fc) && fc.length > 1) series.push({ pts: fc, c: '#06B6D4', lbl: 'fcst' })
   if (Array.isArray(obs) && obs.length > 1) series.push({ pts: obs, c: '#F59E0B', lbl: 'obs' })
   if (!series.length) return <div style={{ height: HT, fontSize: 10, color: '#334155', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #1E3A5A', borderRadius: 6 }}>no profile</div>
@@ -181,21 +199,79 @@ function ProfilePlot({ fc, obs, H = 34 }) {
   const X = (v) => pad + (v / vMax) * (W - pad - 6)
   const Y = (z) => HT - pad - (Math.min(z, H) / H) * (HT - pad - 6)
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${HT}`} style={{ border: '1px solid #1E3A5A', borderRadius: 6, background: '#071624' }}>
-      {[0, H / 2, H].map((z) => (
-        <g key={z}>
-          <line x1={pad} y1={Y(z)} x2={W - 4} y2={Y(z)} stroke="#122435" strokeWidth="0.5" />
-          <text x="2" y={Y(z) + 3} fill="#334155" fontSize="7">{Math.round(z)}m</text>
-        </g>
-      ))}
-      {series.map((s) => (
-        <g key={s.lbl}>
-          <polyline points={s.pts.map((p) => `${X(p.V)},${Y(p.z)}`).join(' ')} fill="none" stroke={s.c} strokeWidth="1.6" />
-          {s.pts.map((p) => <circle key={p.z} cx={X(p.V)} cy={Y(p.z)} r="1.6" fill={s.c} />)}
-        </g>
-      ))}
-      <text x={W - 4} y={HT - 4} fill="#334155" fontSize="7" textAnchor="end">V (m/s)</text>
-    </svg>
+    <>
+      <svg width="100%" viewBox={`0 0 ${W} ${HT}`} style={{ border: '1px solid #1E3A5A', borderRadius: 6, background: '#071624' }}>
+        {[0, H / 2, H].map((z) => (
+          <g key={z}>
+            <line x1={pad} y1={Y(z)} x2={W - 4} y2={Y(z)} stroke="#122435" strokeWidth="0.5" />
+            <text x="2" y={Y(z) + 3} fill="#334155" fontSize="7">{Math.round(z)}m</text>
+          </g>
+        ))}
+        {series.map((s) => (
+          <g key={s.lbl}>
+            <polyline points={s.pts.map((p) => `${X(p.V)},${Y(p.z)}`).join(' ')} fill="none" stroke={s.c} strokeWidth="1.6" strokeDasharray={s.dash || undefined} />
+            {!s.noDots && s.pts.map((p) => <circle key={p.z} cx={X(p.V)} cy={Y(p.z)} r="1.6" fill={s.c} />)}
+          </g>
+        ))}
+        <text x={W - 4} y={HT - 4} fill="#334155" fontSize="7" textAnchor="end">V (m/s)</text>
+      </svg>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 3, fontSize: 8, color: '#64748B' }}>
+        {ref && <Legend c="#64748B" t="standard" dash />}
+        {Array.isArray(fc) && fc.length > 1 && <Legend c="#06B6D4" t="forecast" />}
+        {Array.isArray(obs) && obs.length > 1 && <Legend c="#F59E0B" t="observed" />}
+      </div>
+    </>
+  )
+}
+
+function Legend({ c, t, dash }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+      <svg width="14" height="4"><line x1="0" y1="2" x2="14" y2="2" stroke={c} strokeWidth="1.6" strokeDasharray={dash ? '3 2' : undefined} /></svg>
+      {t}
+    </span>
+  )
+}
+
+// WW% development across the racing window — forecast (line) + observed (dots).
+function WWTimeChart({ fcByHour, obsByHour, hours, sel, onSel }) {
+  const W = 470, HT = 128, padL = 26, padR = 8, padT = 10, padB = 16
+  const vals = []
+  hours.forEach((h) => { if (fcByHour[h]) vals.push(fcByHour[h].WW); if (obsByHour[h]) vals.push(obsByHour[h].ww) })
+  if (!vals.length) return null
+  const lo = Math.min(40, Math.floor(Math.min(...vals) / 10) * 10)
+  const hi = Math.max(120, Math.ceil(Math.max(...vals) / 10) * 10)
+  const h0 = hours[0], h1 = hours[hours.length - 1]
+  const X = (h) => padL + ((h - h0) / (h1 - h0)) * (W - padL - padR)
+  const Y = (ww) => padT + (1 - (ww - lo) / (hi - lo)) * (HT - padT - padB)
+  const fcPts = hours.filter((h) => fcByHour[h]).map((h) => ({ h, ww: fcByHour[h].WW, cls: fcByHour[h].cls }))
+  const obsPts = hours.filter((h) => obsByHour[h]).map((h) => ({ h, ww: obsByHour[h].ww, cls: obsByHour[h].cls }))
+  const gridLines = [lo, 100, hi].filter((v, i, a) => a.indexOf(v) === i && v >= lo && v <= hi)
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 10, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 3 }}>WW% through the day</div>
+      <svg width="100%" viewBox={`0 0 ${W} ${HT}`} style={{ border: '1px solid #1E3A5A', borderRadius: 6, background: '#071624' }}>
+        {gridLines.map((v) => (
+          <g key={v}>
+            <line x1={padL} y1={Y(v)} x2={W - padR} y2={Y(v)} stroke={v === 100 ? '#24425f' : '#122435'} strokeWidth={v === 100 ? 0.8 : 0.5} strokeDasharray={v === 100 ? '4 2' : undefined} />
+            <text x={padL - 3} y={Y(v) + 3} fill="#475569" fontSize="7" textAnchor="end">{v}</text>
+          </g>
+        ))}
+        {hours.filter((h) => h % 2 === 0).map((h) => (
+          <text key={h} x={X(h)} y={HT - 4} fill="#475569" fontSize="7" textAnchor="middle">{String(h).padStart(2, '0')}</text>
+        ))}
+        {sel != null && <line x1={X(sel)} y1={padT} x2={X(sel)} y2={HT - padB} stroke="#0F2A45" strokeWidth="1" />}
+        {fcPts.length > 1 && <polyline points={fcPts.map((p) => `${X(p.h)},${Y(p.ww)}`).join(' ')} fill="none" stroke="#334f6b" strokeWidth="1.2" />}
+        {fcPts.map((p) => (
+          <circle key={`f${p.h}`} cx={X(p.h)} cy={Y(p.ww)} r={p.h === sel ? 3 : 2} fill={clsColor(p.cls)} stroke={p.h === sel ? '#E2E8F0' : 'none'} strokeWidth="0.8"
+            style={{ cursor: 'pointer' }} onClick={() => onSel?.(p.h)}>
+            <title>{`${String(p.h).padStart(2, '0')}:00 · ${p.ww}% ${p.cls}`}</title>
+          </circle>
+        ))}
+        {obsPts.length > 1 && <polyline points={obsPts.map((p) => `${X(p.h)},${Y(p.ww)}`).join(' ')} fill="none" stroke="#F59E0B" strokeWidth="1" strokeDasharray="3 2" opacity="0.7" />}
+        {obsPts.map((p) => <circle key={`o${p.h}`} cx={X(p.h)} cy={Y(p.ww)} r="1.8" fill="none" stroke="#F59E0B" strokeWidth="1"><title>{`obs ${String(p.h).padStart(2, '0')}:00 · ${p.ww}%`}</title></circle>)}
+      </svg>
+    </div>
   )
 }
 
