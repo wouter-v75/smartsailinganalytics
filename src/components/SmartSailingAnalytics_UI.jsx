@@ -4032,7 +4032,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
         return sessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
           const isActive=activeDate===s.date;
-          const isLocal=!s.source||s.source==="local";
+          const isLocal=!(s.cloudSynced||s.source==="cloud"||s.source==="supabase");
           const ev=evMap.get(s.date);
           return(
           <div key={s.date} onClick={()=>{loadDate(s.date);setView("clips");}}
@@ -6221,7 +6221,7 @@ function SSAApp(){
                 for(const s of visibleSessions){ if(s.event){ if(!g.has(s.event)) g.set(s.event,[]); g.get(s.event).push(s.date); } }
                 for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
                 return visibleSessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
-                  const isLocal=!s.source||s.source==="local";const isActive=activeDate===s.date;
+                  const isLocal=!(s.cloudSynced||s.source==="cloud"||s.source==="supabase");const isActive=activeDate===s.date;
                   const ev=evMap.get(s.date);
                   return(<div key={s.date} onClick={()=>loadDate(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
                     <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
