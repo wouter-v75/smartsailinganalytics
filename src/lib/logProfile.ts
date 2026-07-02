@@ -36,6 +36,9 @@ export type LogField =
   // start-line instruments (canonical names from the legacy parser)
   | 'dstLine' | 'tmLine' | 'ttbPort' | 'ttbStbd' | 'ttbPin' | 'ttbCB' | 'timer1' | 'yawR' | 'magvar'
   | 'targHeel' | 'targFsty' | 'targBsty' | 'targKeel'
+  // On-board environment sensors — feed the OBSERVED windweight (air-sea ΔT,
+  // density) and the MOS join against the model. airTemp/seaTemp °C, rh %, baro hPa.
+  | 'airTemp' | 'seaTemp' | 'rh' | 'baro'
 
 // Built-in label aliases per field, consolidated from the raw-log channel names
 // (expLogParse) and the flat-CSV column headers (flatLogParse / csvLogParse).
@@ -102,6 +105,11 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   targFsty: ['targfsty'],
   targBsty: ['targbsty'],
   targKeel: ['targkeel'],
+  // On-board environment sensors (Expedition channels vary by boat).
+  airTemp: ['airtemp', 'airtmp', 'temp', 'airtemperature', 'tair'],
+  seaTemp: ['seatemp', 'seatmp', 'watertemp', 'seawatertemp', 'sst', 'tsea'],
+  rh: ['rh', 'humid', 'humidity', 'relhumidity', 'relativehumidity'],
+  baro: ['baro', 'barometer', 'pressure', 'airpressure', 'mslp', 'presssure'],
 }
 
 export interface BoatLogProfile {

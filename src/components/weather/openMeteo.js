@@ -340,6 +340,24 @@ export async function fetchIconRaceStatus() {
   }
 }
 
+// Per-venue windweight time series published by the box
+// (scripts/publish_products.sh -> icon-race/<domain>/<venue>/windweight.json).
+// Hourly WW% / V_eff / sub-factors / rig profile. Returns parsed object or null.
+export async function fetchWindweight(domain, venue) {
+  if (!domain || !venue) return null
+  const base = MODELS.ICONRACE?.bunnyBase
+  const key = `icon-race/${domain}/${venue}/windweight.json`
+  const url = base ? `${base}/${domain}/${venue}/windweight.json`
+    : `/api/bunny/storage?key=${encodeURIComponent(key)}`
+  try {
+    const res = await fetch(url, { cache: 'no-store' })
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
 // [start, end] Dates for a fixed local-time forecast window: today 00:00 local
 // to +`days` 00:00. Used to PIN the comparison-chart x-axes so a stray earlier
 // cycle (e.g. an old Icon-Race grid spanning yesterday) can't widen the view —

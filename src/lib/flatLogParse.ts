@@ -48,6 +48,8 @@ export interface FlatLogRow {
   // headsail-only trim positions
   jibUpDnStbd: number | null; jibUpDnPort: number | null; jibInOut: number | null
   targHeel: number | null
+  // on-board environment sensors — feed observed windweight + the MOS join
+  airTemp: number | null; seaTemp: number | null; rh: number | null; baro: number | null
 }
 
 export interface FlatLogResult { rows: FlatLogRow[]; startUtc: number; endUtc: number }
@@ -146,6 +148,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       v0p: num(c, M.v0p), v0s: num(c, M.v0s), v1p: num(c, M.v1p), v1s: num(c, M.v1s),
       jibUpDnStbd: num(c, M.jibUpDnStbd), jibUpDnPort: num(c, M.jibUpDnPort), jibInOut: num(c, M.jibInOut),
       targHeel: num(c, M.targHeel),
+      airTemp: num(c, M.airTemp), seaTemp: num(c, M.seaTemp), rh: num(c, M.rh), baro: num(c, M.baro),
     })
   }
   return { rows, startUtc: rows[0]?.utc || 0, endUtc: rows[rows.length - 1]?.utc || 0 }
