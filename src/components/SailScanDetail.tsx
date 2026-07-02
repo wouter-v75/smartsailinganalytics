@@ -257,7 +257,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const posXs = stripes.map((s) => s.pos)
 
   const [sharing, setSharing] = useState(false)
-  const share = async () => {
+  const share = async (download = false) => {
     setSharing(true)
     try {
       // Make sure we have the 2-min window (compute from the local log if the
@@ -362,7 +362,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
       const blob = doc.output('blob') as Blob
       const file = new File([blob], `SailScan_${[boatName, String(title)].filter(Boolean).join('_').replace(/[^\w.-]+/g, '_')}.pdf`, { type: 'application/pdf' })
       const nav = navigator as any
-      if (nav.canShare && nav.canShare({ files: [file] })) {
+      if (!download && nav.canShare && nav.canShare({ files: [file] })) {
         await nav.share({ files: [file], title: `SailScan — ${title}` })
       } else {
         const url = URL.createObjectURL(blob)
@@ -411,7 +411,8 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto', marginRight: 64, marginTop: 10 }}>
             {canEdit && <button onClick={() => { setSailIdSel(scan?.sail_id || ''); setEditing((v) => !v) }} disabled={busy} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 9, color: C.head, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>✎ Edit</button>}
             {canEdit && <button onClick={doDelete} disabled={busy} style={{ background: '#3a1320', border: '1px solid #7f1d1d', borderRadius: 9, color: '#fca5a5', fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>🗑 Delete</button>}
-            <button onClick={share} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 9, color: '#001018', fontWeight: 700, fontSize: 15, padding: '10px 20px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
+            <button onClick={() => share(false)} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 9, color: '#001018', fontWeight: 700, fontSize: 15, padding: '10px 20px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
+            <button onClick={() => share(true)} disabled={sharing} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 9, color: C.head, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>⬇ Download</button>
             <button onClick={onClose} style={{ background: '#0F2A45', border: 'none', borderRadius: 9, color: C.text, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>✕</button>
           </div>
         </div>

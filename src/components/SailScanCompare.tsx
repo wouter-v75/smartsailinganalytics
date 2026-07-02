@@ -204,7 +204,7 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
   const [hovered, setHovered] = useState<number | null>(null) // sail index to highlight
   const [sharing, setSharing] = useState(false)
 
-  const share = async () => {
+  const share = async (download = false) => {
     setSharing(true)
     try {
       const jsPDF = await loadJsPdf()
@@ -259,7 +259,7 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
       const nm = (boatName || 'sails').replace(/[^\w.-]+/g, '_')
       const file = new File([blob], `SailComparison_${nm}.pdf`, { type: 'application/pdf' })
       const nav = navigator as any
-      if (nav.canShare && nav.canShare({ files: [file] })) await nav.share({ files: [file], title: 'Sail comparison' })
+      if (!download && nav.canShare && nav.canShare({ files: [file] })) await nav.share({ files: [file], title: 'Sail comparison' })
       else { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = file.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000) }
     } catch (e: any) {
       if (e?.name !== 'AbortError') alert('Could not generate the PDF: ' + (e?.message || e))
@@ -341,7 +341,8 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
               style={{ fontSize: 11, color, fontWeight: 700, cursor: 'pointer', opacity: hovered == null || hovered === i ? 1 : 0.35 }}>■ {M.name} {M.tws != null ? `@${fmt(M.tws, 0)}kt` : ''}</span>
           ))}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto', marginRight: 64, marginTop: 10 }}>
-            <button onClick={share} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 9, color: '#001018', fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
+            <button onClick={() => share(false)} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 9, color: '#001018', fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
+            <button onClick={() => share(true)} disabled={sharing} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 9, color: C.head, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>⬇ Download</button>
             <button onClick={onClose} style={{ background: '#0F2A45', border: 'none', borderRadius: 9, color: C.text, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>✕</button>
           </div>
         </div>
