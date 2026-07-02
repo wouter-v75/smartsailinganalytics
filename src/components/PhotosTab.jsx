@@ -1141,6 +1141,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [searchQuery, setSearchQuery] = React.useState("");
   const [selectedTags, setSelectedTags] = React.useState([]);
   const [sortBy, setSortBy] = React.useState("date");
+  const [showSessionsMobile, setShowSessionsMobile] = React.useState(false);
 
   // All unique tags across photos
   const allTags = [...new Set(photos.flatMap(p => p.sails||[]))].sort();
@@ -1167,31 +1168,69 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     seen.get(d).push(p);
   }
 
-  return(
-    <div style={{flex:1,display:"flex",overflow:"hidden"}}>
+  // Session rows — shared by the desktop left sidebar and the mobile top bar.
+  const renderSessionRows = () => {
+    const evMap=new Map(); const g=new Map();
+    for(const s of sessions){ if(s.event){ if(!g.has(s.event)) g.set(s.event,[]); g.get(s.event).push(s.date); } }
+    for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
+    return sessions.filter(s=>(s.photoCount||0)>0 && s.date<=TODAY()).map(s=>{
+      const isLocal=!(s.cloudSynced||s.source==="cloud"||s.source==="supabase");const isActive=activeDate===s.date;
+      const ev=evMap.get(s.date);
+      return(<div key={s.date} onClick={()=>{loadDate?.(s.date);setShowSessionsMobile(false);}} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
+        {ev&&<div style={{fontSize:9,color:"#EF4444",fontWeight:700,marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={`${ev.event} Day ${ev.dayN}`}>🏁 {ev.event} Day {ev.dayN}</div>}
+        <div style={{fontSize:9,color:"#1E3A5A"}}>{s.videoCount||0}v{s.hasLog?" ·log":""}{s.hasXml?" ·ev":""}{s.location?` · ${s.location}`:""}</div>
+      </div>);
+    });
+  };
 
-      {/* ── Left sidebar — sessions + search + sort (matches Videos) ── */}
+  return(
+    <div style={{flex:1,display:"flex",flexDirection:isNarrow?"column":"row",overflow:"hidden"}}>
+
+      {/* ── Mobile: sessions + search as a TOP bar (matches Videos) ── */}
+      {isNarrow && (
+        <div style={{flexShrink:0,background:"#050E1C",borderBottom:"1px solid #1E3A5A"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px 8px"}}>
+            <button onClick={()=>setShowSessionsMobile(v=>!v)}
+              style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 12px",color:"#06B6D4",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+              {activeDate?(activeDate===TODAY()?"Today":fmtDate(activeDate)):"Sessions"} ▾
+            </button>
+            <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search photos…"
+              style={{flex:1,minWidth:0,background:"#071624",border:"1px solid #1E3A5A",borderRadius:6,padding:"8px 10px",color:"#E2E8F0",fontSize:14,outline:"none"}}/>
+            <button onClick={()=>setSortBy(sortBy==="date"?"tws":"date")}
+              style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 10px",color:"#7DD3FC",fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>
+              {sortBy==="date"?"Date":"TWS"}
+            </button>
+          </div>
+          {showSessionsMobile && (
+            <div style={{maxHeight:220,overflowY:"auto",padding:"2px 10px 8px",borderTop:"1px solid #0F2030"}}>
+              {sessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
+              {renderSessionRows()}
+              <label style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#64748B",margin:"8px 2px 4px",cursor:"pointer"}}>
+                <input type="checkbox" checked={wifiOnly} onChange={toggleWifiOnly}/>
+                Wi-Fi only for full-res <span style={{color:"#334155",marginLeft:"auto"}}>{connectionLabel()}</span>
+              </label>
+              {canClearDay && activeDate && (
+                <button disabled={clearingDay}
+                  onClick={async()=>{ if(!confirm(`Permanently delete ALL photos for ${activeDate} from the cloud (Bunny + database) and this device? This cannot be undone.`)) return; setClearingDay(true); try{ const r=await clearDayCloud(activeDate); setPhotos([]); setSelected(null); setRefreshNonce(n=>n+1); addLog(r?.error?`✕ Clear failed: ${r.error}`:`✓ Cleared ${activeDate}`);}catch(e){addLog(`✕ ${e.message||e}`);}finally{setClearingDay(false);} }}
+                  style={{width:"100%",background:clearingDay?"#0A1929":"#3a0d0d",color:clearingDay?"#334155":"#F87171",border:"1px solid #7f1d1d",borderRadius:6,padding:"7px 0",fontSize:10,fontWeight:700,cursor:clearingDay?"default":"pointer"}}>
+                  {clearingDay?"⟳ Clearing…":"🗑 Clear day (cloud + device)"}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+
+      {/* ── Left sidebar — sessions + search + sort (desktop only; mobile shows
+             the sessions as a top bar above) ── */}
+      {!isNarrow && (
       <aside style={{width:160,background:"#050E1C",borderRight:"1px solid #1E3A5A",display:"flex",flexDirection:"column",overflowY:"auto",flexShrink:0}}>
         <div style={{padding:"12px 11px 6px"}}>
           <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Sessions</div>
           {sessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
-          {(()=>{
-            // Day-N within each regatta. Compute once over the full session
-            // list so the numbering survives sessions that only have videos
-            // (or are otherwise filtered out below).
-            const evMap=new Map(); const g=new Map();
-            for(const s of sessions){ if(s.event){ if(!g.has(s.event)) g.set(s.event,[]); g.get(s.event).push(s.date); } }
-            for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
-            return sessions.filter(s=>(s.photoCount||0)>0 && s.date<=TODAY()).map(s=>{
-              const isLocal=!s.source||s.source==="local";const isActive=activeDate===s.date;
-              const ev=evMap.get(s.date);
-              return(<div key={s.date} onClick={()=>loadDate?.(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
-                <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
-                {ev&&<div style={{fontSize:9,color:"#EF4444",fontWeight:700,marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={`${ev.event} Day ${ev.dayN}`}>🏁 {ev.event} Day {ev.dayN}</div>}
-                <div style={{fontSize:9,color:"#1E3A5A"}}>{s.videoCount||0}v{s.hasLog?" ·log":""}{s.hasXml?" ·ev":""}{s.location?` · ${s.location}`:""}</div>
-              </div>);
-            });
-          })()}
+          {renderSessionRows()}
         </div>
         <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
         <div style={{padding:"0 11px 8px"}}>
@@ -1204,16 +1243,12 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
               import (Phase B) and the cloud index auto-pulls on day load. */}
 
           {/* Network-aware originals: thumbnails always sync; full-res originals
-              defer to a good link. Toggle Wi-Fi-only + force an upload now. */}
-          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:9,color:"#64748B",marginBottom:6,cursor:"pointer"}}>
+              upload automatically in the background on a good link (auto-flush on
+              reconnect / resume). Toggle restricts that to Wi-Fi. */}
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:9,color:"#64748B",marginBottom:8,cursor:"pointer"}}>
             <input type="checkbox" checked={wifiOnly} onChange={toggleWifiOnly}/>
             Wi-Fi only for full-res <span style={{color:"#334155",marginLeft:"auto"}}>{connectionLabel()}</span>
           </label>
-          <button
-            onClick={async()=>{ addLog("Uploading originals now…"); try{ const r=await syncPendingPhotos({force:true,onLog:addLog}); addLog(`✓ ${r.originals} original${r.originals!==1?"s":""} · ${r.thumbs} thumb${r.thumbs!==1?"s":""}`); if(r.originals||r.thumbs) setRefreshNonce(n=>n+1);}catch(e){addLog(`✕ ${e.message||e}`);} }}
-            style={{width:"100%",marginBottom:8,background:"#06B6D415",color:"#06B6D4",border:"1px solid #06B6D440",borderRadius:6,padding:"6px 0",fontSize:10,fontWeight:700,cursor:"pointer"}}>
-            ↑ Upload originals now
-          </button>
 
           {/* ── Coach and above (real membership role): clear this day
                  (cloud + device) and start afresh. Destructive → gated tighter
@@ -1288,9 +1323,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           </div>
         )}
       </aside>
+      )}
 
       {/* ── Photo grid ── */}
-      <div style={{width:280,minWidth:280,overflowY:"auto",padding:"10px 8px",flexShrink:0,borderRight:"1px solid #0F2030"}}>
+      <div style={{width:isNarrow?"100%":280,minWidth:isNarrow?0:280,flex:isNarrow?1:"none",overflowY:"auto",padding:"10px 8px",flexShrink:isNarrow?1:0,borderRight:isNarrow?"none":"1px solid #0F2030"}}>
         {!logData&&<div style={{fontSize:9,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:5,padding:"5px 8px",marginBottom:8}}>⚠ No log loaded — instrument data won't be available</div>}
 
         {/* ── Loading thumbnails banner ── */}
