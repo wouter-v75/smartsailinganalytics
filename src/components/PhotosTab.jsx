@@ -613,7 +613,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
 }
 
 // ── Main PhotosTab ────────────────────────────────────────────────────────────
-export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],loadDate,cloudStatus,onPhotosChange,canSeeSailScanPhotos=true,sessionTzOffset=0}){
+export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],loadDate,cloudStatus,onPhotosChange,canSeeSailScanPhotos=true,sessionTzOffset=0,canClearDay=false}){
   const [photos,setPhotos]     = useState([]);   // metadata only — no blobs
   const [selected,setSelected] = useState(null);
   const [uploading,setUploading]= useState(false);
@@ -1200,8 +1200,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             ↑ Upload originals now
           </button>
 
-          {/* ── Admin/Coach: clear this day (cloud + device) and start afresh ── */}
-          {canDelete && activeDate && (
+          {/* ── Coach and above (real membership role): clear this day
+                 (cloud + device) and start afresh. Destructive → gated tighter
+                 than per-photo delete; TL3 and below cannot see it. ── */}
+          {canClearDay && activeDate && (
             <button
               disabled={clearingDay}
               onClick={async()=>{

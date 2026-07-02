@@ -4388,7 +4388,8 @@ function MobileShell(props){
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
             <PhotosTab role={props.role} logData={props.logData} xmlData={props.xmlData}
               activeDate={props.activeDate} sessions={props.sessions} loadDate={props.loadDate}
-              cloudStatus={props.cloudStatus} onPhotosChange={props.setPhotos} sessionTzOffset={props.sessionTzOffset}/>
+              cloudStatus={props.cloudStatus} onPhotosChange={props.setPhotos} sessionTzOffset={props.sessionTzOffset}
+              canClearDay={['admin','team_manager','coach'].includes(props.effectiveRole)}/>
           </div>
         )}
         {activeTab==="upload"&&(
@@ -6831,7 +6832,7 @@ function SSAApp(){
         {/* ── UPLOAD & ADMIN — standard conditional render ─────────────────── */}
         {activeTab==="photos"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos} sessionTzOffset={sessionTzOffset}/>
+            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos} sessionTzOffset={sessionTzOffset} canClearDay={['admin','team_manager','coach'].includes(effectiveRole)}/>
           </div>
         )}
         {activeTab==="upload"&&(
