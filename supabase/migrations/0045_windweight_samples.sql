@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS public.windweight_samples (
   n_samples     INTEGER,                         -- rows averaged into this bin
 
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (session_id, ts)
+  -- one sample per boat per hour (session_id may be null for local-only sessions,
+  -- so we key on boat_id+ts, which upsert can dedupe on).
+  UNIQUE (boat_id, ts)
 );
 
 CREATE INDEX IF NOT EXISTS windweight_samples_team_boat_idx

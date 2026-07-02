@@ -5165,6 +5165,23 @@ function SSAApp(){
     const stop = startPhotoAutoFlush({});
     return stop;
   },[]);
+
+  // Windweight MOS producer: when a session's log with on-board air-temp/sea-temp
+  // /RH loads, store the hourly forecast-vs-observed windweight + Δheel samples
+  // into windweight_samples for calculated-vs-observed analysis. Fire-and-forget,
+  // idempotent per (boat, hour), guarded to logs that actually carry the sensors.
+  useEffect(()=>{
+    if(!logData?.rows?.length || !activeDate) return;
+    const am = user?.id ? getActiveMembership(user.id) : null;
+    if(!am?.team_id || !am?.boat_id) return;
+    let cancelled=false;
+    import('../lib/windweightSamples').then(({storeWindweightSamples})=>{
+      if(cancelled) return;
+      storeWindweightSamples({ logData, sessionDate: activeDate, teamId: am.team_id, boatId: am.boat_id,
+        tzOffsetMin: sessionTzOffset||0, mastHeight: 34 }).catch(()=>{});
+    }).catch(()=>{});
+    return ()=>{ cancelled=true; };
+  },[logData, activeDate]); // eslint-disable-line react-hooks/exhaustive-deps
   const canSeeSailScanPhotos  = !['tl1','guest'].includes(effectiveRole);
   const canUseAI              = effectiveRole === null || !['tl1','consultant','guest'].includes(effectiveRole);
   const showOnlyLatestDay     = effectiveRole === 'guest';
