@@ -879,6 +879,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <Gauge label="TWA"  value={`${R(row.twa,0)}°`} unit="true" color="#7DD3FC" size="sm"/>
         <Gauge label="TWD"  value={row?.twd!=null?`${R(row.twd,0)}°`:"--"}  unit="°"   color="#7DD3FC" size="sm"/>
         <Gauge label="Line Sqr" value={lineSqrMag!=null?`${R(lineSqrMag,0)}°`:"--"} unit="mag" color="#A78BFA" size="sm"/>
+        <Gauge label="Keel" value={row?.keelAng!=null?`${R(row.keelAng,1)}°`:"--"} unit="°" color="#F59E0B" size="sm"/>
       </div>
     );
     if(mode==="reach") return(
@@ -890,6 +891,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"       color="#7DD3FC" size="sm"/>
         <Gauge label="AWA"     value={awa!=null?`${R(awa,0)}°`:"--"}       unit="app"      color="#7DD3FC" size="sm"/>
         <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"        color="#F97316" size="sm"/>
+        <Gauge label="Keel"    value={row?.keelAng!=null?`${R(row.keelAng,1)}°`:"--"} unit="°" color="#F59E0B" size="sm"/>
       </div>
     );
     // upwind / downwind — VMG as % of polar optimal
@@ -903,6 +905,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         <Gauge label="TWS"     value={R(row.tws)}                          unit="kn"   color="#7DD3FC" size="sm"/>
         <Gauge label="AWA"     value={awa!=null?`${R(awa,0)}°`:"--"}       unit="app"  color="#7DD3FC" size="sm"/>
         <Gauge label="Heel"    value={`${R(row.heel,0)}°`}                 unit="°"    color="#F97316" size="sm"/>
+        <Gauge label="Keel"    value={row?.keelAng!=null?`${R(row.keelAng,1)}°`:"--"} unit="°" color="#F59E0B" size="sm"/>
       </div>
     );
   })();

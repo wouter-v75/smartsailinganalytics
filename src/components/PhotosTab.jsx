@@ -284,6 +284,7 @@ function renderOverlay(canvas,img,inst){
     {l:"BSP",v:inst.bsp!=null?R(inst.bsp)+" kn":"--",c:"#10B981"},
     {l:"Heel",v:inst.heel!=null?R(inst.heel,0)+"°":"--",c:"#F97316"},
     {l:"VMG",v:inst.vmg!=null?R(inst.vmg)+" kn":"--",c:"#22C55E"},
+    {l:"Keel",v:inst.keelAng!=null?R(inst.keelAng,1)+"°":"--",c:"#F59E0B"},
   ];
   // User-added variables (session only) drawn after the fixed gauges.
   if(Array.isArray(inst.extra)) for(const g of inst.extra) gauges.push(g);
