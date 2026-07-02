@@ -718,7 +718,7 @@ export default function BoatConfigTab({
           tags={compareScans.map((s) => scanTags[s.id])}
           boatName={boatName}
           sessionTzOffset={sessionTzOffset}
-          onClose={() => setCompareScans(null)}
+          onClose={() => { setCompareScans(null); setCompareMode(false); setCmpIds([]) }}
         />
       )}
 

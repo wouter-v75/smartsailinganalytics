@@ -11,7 +11,7 @@
 // like the single detail view, interpolated to each scan's own TWS.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import { pickDesign, designCodeOf } from '../lib/designInterp'
 import { scanLocalDateTime } from '../lib/scanTime'
 
@@ -37,7 +37,7 @@ const METRICS: { key: keyof Stripe; label: string; dKey: string; dScale: number 
   { key: 'back', label: 'Back%', dKey: 'backPct', dScale: 100 },
 ]
 
-interface Series { xs: number[]; ys: (number | null)[]; color: string; dash?: string }
+interface Series { xs: number[]; ys: (number | null)[]; color: string; dash?: string; idx?: number }
 
 // Smooth Catmull-Rom → cubic-Bézier path through pixel-space points (points must
 // be sorted by x). Gives a fitted spline instead of straight segments.
@@ -56,9 +56,11 @@ function splinePath(p: { x: number; y: number }[]): string {
 }
 
 // Multi-series spline chart over the 25–100% stripe-height domain (below 25% is
-// clipped — includes any 0% design rows). Ticks at true coordinates.
-function MultiLineChart({ series, w = 250, h = 96 }: { series: Series[]; w?: number; h?: number }) {
-  const pad = { l: 30, r: 8, t: 8, b: 16 }
+// clipped — includes any 0% design rows). Ticks at true coordinates. `hovered` is
+// a sail index: when set, that sail's lines pop and the rest dim.
+function MultiLineChart({ series, w = 720, h = 280, hovered = null, onHover }:
+  { series: Series[]; w?: number; h?: number; hovered?: number | null; onHover?: (i: number | null) => void }) {
+  const pad = { l: 40, r: 10, t: 12, b: 22 }
   const xMin = 25, xMax = 100
   const clean = (xs: number[], ys: (number | null)[]) =>
     (ys.map((y, i) => ({ x: xs[i], y })).filter((p) => p.y != null && Number.isFinite(p.y as number) && p.x >= xMin && p.x <= xMax) as { x: number; y: number }[])
@@ -75,11 +77,23 @@ function MultiLineChart({ series, w = 250, h = 96 }: { series: Series[]; w?: num
     <svg width={w} height={h} style={{ display: 'block' }}>
       <line x1={pad.l} y1={py(yhi)} x2={w - pad.r} y2={py(yhi)} stroke={C.border} strokeWidth={0.5} />
       <line x1={pad.l} y1={py(ylo)} x2={w - pad.r} y2={py(ylo)} stroke={C.border} strokeWidth={0.5} />
-      <text x={2} y={py(yhi) + 3} fontSize={9} fill={C.dim}>{yhi.toFixed(yhi % 1 ? 1 : 0)}</text>
-      <text x={2} y={py(ylo) + 3} fontSize={9} fill={C.dim}>{ylo.toFixed(ylo % 1 ? 1 : 0)}</text>
-      {cleaned.map((s, i) => s.pts.length ? <path key={i} d={path(s.pts)} fill="none" stroke={s.color} strokeWidth={s.dash ? 1.3 : 1.7} strokeDasharray={s.dash || undefined} /> : null)}
+      <text x={4} y={py(yhi) + 4} fontSize={12} fill={C.dim}>{yhi.toFixed(yhi % 1 ? 1 : 0)}</text>
+      <text x={4} y={py(ylo) + 4} fontSize={12} fill={C.dim}>{ylo.toFixed(ylo % 1 ? 1 : 0)}</text>
+      {cleaned.map((s, i) => {
+        if (!s.pts.length) return null
+        const on = hovered == null || s.idx == null || s.idx === hovered
+        return (
+          <path key={i} d={path(s.pts)} fill="none" stroke={s.color}
+            strokeWidth={s.idx != null && s.idx === hovered ? (s.dash ? 3 : 4.2) : (s.dash ? 1.5 : 2.4)}
+            strokeDasharray={s.dash || undefined}
+            strokeOpacity={on ? 1 : 0.12}
+            onMouseEnter={() => s.idx != null && onHover?.(s.idx)}
+            onMouseLeave={() => onHover?.(null)}
+            style={{ cursor: s.idx != null ? 'pointer' : 'default' }} />
+        )
+      })}
       {[25, 50, 75, 100].map((t) => (
-        <text key={t} x={px(t)} y={h - 3} fontSize={9} fill={C.dim} textAnchor={t === 25 ? 'start' : t === 100 ? 'end' : 'middle'}>{t}</text>
+        <text key={t} x={px(t)} y={h - 5} fontSize={12} fill={C.dim} textAnchor={t === 25 ? 'start' : t === 100 ? 'end' : 'middle'}>{t}</text>
       ))}
     </svg>
   )
@@ -104,6 +118,7 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
     () => (scans || []).slice(0, 6).map((scan, i) => ({ scan, M: scanModel(scan, sails, tags[i]), color: SAIL_COLORS[i % SAIL_COLORS.length], tag: tags[i] })),
     [scans, sails, tags],
   )
+  const [hovered, setHovered] = useState<number | null>(null) // sail index to highlight
 
   const td: React.CSSProperties = { padding: '3px 6px', fontSize: 11, color: C.text, textAlign: 'center', borderBottom: `1px solid ${C.border}` }
   const th: React.CSSProperties = { ...td, color: C.dim, fontWeight: 700, fontSize: 10 }
@@ -176,7 +191,8 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
           <span style={{ fontSize: 16, fontWeight: 800, color: C.head }}>Sail comparison</span>
           {boatName && <span style={{ fontSize: 11, color: C.dim }}>{boatName}</span>}
           {models.map(({ M, color }, i) => (
-            <span key={i} style={{ fontSize: 11, color, fontWeight: 700 }}>■ {M.name} {M.tws != null ? `@${fmt(M.tws, 0)}kt` : ''}</span>
+            <span key={i} onMouseEnter={() => setHovered(i)} onMouseLeave={() => setHovered(null)}
+              style={{ fontSize: 11, color, fontWeight: 700, cursor: 'pointer', opacity: hovered == null || hovered === i ? 1 : 0.35 }}>■ {M.name} {M.tws != null ? `@${fmt(M.tws, 0)}kt` : ''}</span>
           ))}
           <button onClick={onClose} style={{ marginLeft: 'auto', background: '#0F2A45', border: 'none', borderRadius: 8, color: C.text, fontWeight: 700, fontSize: 13, padding: '7px 12px', cursor: 'pointer' }}>✕</button>
         </div>
@@ -189,21 +205,25 @@ export default function SailScanCompare({ scans, sails, tags = [], boatName, onC
 
         {/* shape charts — every measured line + each design */}
         <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, margin: '16px 0 4px' }}>Shape charts (vs stripe height %)</div>
-        <div style={{ fontSize: 10, color: C.dim, marginBottom: 6, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          {models.map(({ M, color }, i) => <span key={i} style={{ color }}>━ {M.name}</span>)}
+        <div style={{ fontSize: 11, color: C.dim, marginBottom: 6, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {models.map(({ M, color }, i) => (
+            <span key={i} onMouseEnter={() => setHovered(i)} onMouseLeave={() => setHovered(null)}
+              style={{ color, cursor: 'pointer', fontWeight: hovered === i ? 800 : 400, opacity: hovered == null || hovered === i ? 1 : 0.35 }}>━ {M.name}</span>
+          ))}
           <span style={{ color: DESIGN_GREY }}>— — design (same colour, dashed)</span>
+          <span style={{ color: C.dim, opacity: 0.7 }}>· hover a sail to highlight its curve</span>
         </div>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
           {METRICS.map((m) => {
             const series: Series[] = []
-            for (const { M, color } of models) {
-              series.push({ xs: M.posXs, ys: M.stripes.map((s) => s[m.key] as number | null), color })
-              if (M.design) series.push({ xs: M.design.sections.map((s: any) => s.posPct), ys: M.design.sections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color, dash: '3 2' })
-            }
+            models.forEach(({ M, color }, si) => {
+              series.push({ xs: M.posXs, ys: M.stripes.map((s) => s[m.key] as number | null), color, idx: si })
+              if (M.design) series.push({ xs: M.design.sections.map((s: any) => s.posPct), ys: M.design.sections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color, dash: '3 2', idx: si })
+            })
             return (
-              <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '6px 8px' }}>
-                <div style={{ fontSize: 11, color: C.head, fontWeight: 700, marginBottom: 2 }}>{m.label}</div>
-                <MultiLineChart series={series} />
+              <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
+                <div style={{ fontSize: 13, color: C.head, fontWeight: 700, marginBottom: 4 }}>{m.label}</div>
+                <MultiLineChart series={series} hovered={hovered} onHover={setHovered} />
               </div>
             )
           })}
