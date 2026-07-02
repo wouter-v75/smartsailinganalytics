@@ -614,7 +614,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
 }
 
 // ── Main PhotosTab ────────────────────────────────────────────────────────────
-export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],loadDate,cloudStatus,onPhotosChange,canSeeSailScanPhotos=true,sessionTzOffset=0,canClearDay=false}){
+export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],loadDate,cloudStatus,onPhotosChange,canSeeSailScanPhotos=true,sessionTzOffset=0,canClearDay=false,sailInventory=[]}){
   const [photos,setPhotos]     = useState([]);   // metadata only — no blobs
   const [selected,setSelected] = useState(null);
   const [uploading,setUploading]= useState(false);
@@ -1161,9 +1161,13 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [selectedTags, setSelectedTags] = React.useState([]);
   const [sortBy, setSortBy] = React.useState("date");
   const [showSessionsMobile, setShowSessionsMobile] = React.useState(false);
+  const [sailFilter, setSailFilter] = React.useState(""); // inventory sail id, "" = all
 
   // All unique tags across photos
   const allTags = [...new Set(photos.flatMap(p => p.sails||[]))].sort();
+  // Selected inventory sail → the tag tokens a photo must carry to match.
+  const selectedSail = sailFilter ? sailInventory.find(s=>s.id===sailFilter) : null;
+  const sailTokens = selectedSail ? [selectedSail.name,selectedSail.category,selectedSail.design_code].filter(Boolean).map(s=>String(s).trim().toLowerCase()) : null;
 
   // Filtered + sorted photos. When canSeeSailScanPhotos is false (tl1, guest)
   // we drop photos that carry SailScan analysis. Detected via `analysis`
@@ -1174,7 +1178,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       const q = searchQuery.toLowerCase();
       const matchQ = !q || p.name?.toLowerCase().includes(q) || (p.sails||[]).some(s=>s.toLowerCase().includes(q));
       const matchT = selectedTags.length===0 || selectedTags.every(t=>(p.sails||[]).includes(t));
-      return matchQ && matchT;
+      const matchSail = !sailTokens || (p.sails||[]).some(s=>sailTokens.includes(String(s).trim().toLowerCase()));
+      return matchQ && matchT && matchSail;
     })
     .sort((a,b) => sortBy==="tws" ? (b.tws||0)-(a.tws||0) : (b.utc||0)-(a.utc||0));
 
@@ -1318,6 +1323,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
             placeholder="Search photos…"
             style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7}}/>
+          {sailInventory.length>0&&<select value={sailFilter} onChange={e=>setSailFilter(e.target.value)} style={{width:"100%",background:"#071624",border:`1px solid ${sailFilter?"#06B6D4":"#1E3A5A"}`,borderRadius:5,padding:"5px 8px",color:sailFilter?"#06B6D4":"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7,cursor:"pointer"}}>
+            <option value="">All sails</option>
+            {sailInventory.filter(s=>!s.retired).map(s=><option key={s.id} value={s.id}>{s.category?`${s.category} · ${s.name}`:s.name}</option>)}
+          </select>}
           {["date","tws"].map(s=>(
             <button key={s} onClick={()=>setSortBy(s)} style={{display:"block",width:"100%",textAlign:"left",background:sortBy===s?"#1E3A5A":"none",border:"none",borderRadius:4,padding:"3px 6px",color:sortBy===s?"#06B6D4":"#334155",cursor:"pointer",fontSize:10,marginBottom:1}}>
               {sortBy===s?"▸ ":"  "}{s==="date"?"Date":"Wind (TWS)"}

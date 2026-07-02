@@ -4520,6 +4520,9 @@ function SSAApp(){
   const[selectedTags,setSelectedTags]=useState([]);
   const[searchQuery,setSearchQuery]=useState("");
   const[sortBy,setSortBy]=useState("date");
+  // Sail inventory (BoatConfig) → sail-name filter dropdown in Videos + Photos.
+  const[sailInventory,setSailInventory]=useState([]);
+  const[sailFilter,setSailFilter]=useState(""); // selected sail id, "" = all
   const[sessions,setSessions]=useState([]);
   const[activeDate,setActiveDate]=useState(TODAY());
   // Effective "TAP TO ADD" suggestion list: union of the curated session tag
@@ -4554,6 +4557,16 @@ function SSAApp(){
   const[effectiveRole,setEffectiveRole]=useState(null);
   // Campaign engine config (null = off / unavailable). See the fetch effect below.
   const[campaignCfg,setCampaignCfg]=useState(null);
+  // Fetch the boat's sail inventory for the Videos/Photos sail-name filter.
+  useEffect(()=>{
+    const tId=campaignCfg?.teamId, bId=campaignCfg?.boatId;
+    if(!tId||!bId){setSailInventory([]);return;}
+    let alive=true;
+    fetch(`/api/teams/${tId}/sails?boat_id=${bId}`).then(r=>r.json())
+      .then(j=>{if(alive)setSailInventory(Array.isArray(j?.sails)?j.sails:[]);})
+      .catch(()=>{if(alive)setSailInventory([]);});
+    return ()=>{alive=false;};
+  },[campaignCfg?.teamId,campaignCfg?.boatId]);
   const[loaded,setLoaded]=useState(false);
   const[playUtc,setPlayUtc]=useState(null);
   const[photos,setPhotos]=useState([]);
@@ -6128,8 +6141,11 @@ function SSAApp(){
   }
 
   const aiIds=new Set(aiResult?.matches||[]);
+  const selectedSail=sailFilter?sailInventory.find(s=>s.id===sailFilter):null;
+  const sailTokens=selectedSail?[selectedSail.name,selectedSail.category,selectedSail.design_code].filter(Boolean).map(s=>String(s).trim().toLowerCase()):null;
+  const matchesSail=tags=>!sailTokens||(tags||[]).some(t=>sailTokens.includes(String(t).trim().toLowerCase()));
   const displayed=(aiResult?allVideos.filter(v=>aiIds.has(v.id)):allVideos)
-    .filter(v=>{const ok=selectedTags.length===0||selectedTags.every(t=>(v.tags||[]).includes(t));const q=searchQuery.toLowerCase();return ok&&(!q||v.title?.toLowerCase().includes(q)||(v.tags||[]).some(t=>t.includes(q)));})
+    .filter(v=>{const ok=selectedTags.length===0||selectedTags.every(t=>(v.tags||[]).includes(t));const q=searchQuery.toLowerCase();return ok&&matchesSail(v.tags)&&(!q||v.title?.toLowerCase().includes(q)||(v.tags||[]).some(t=>t.includes(q)));})
     .sort((a,b)=>sortBy==="tws"?(b.twsAvg||0)-(a.twsAvg||0):sortBy==="twa"?(Math.abs(a.twaAvg||0))-(Math.abs(b.twaAvg||0)):sortBy==="vmg"?(b.vmgAvg||0)-(a.vmgAvg||0):sortBy==="polar"?(b.polpercAvg||0)-(a.polpercAvg||0):(b.addedAt||0)-(a.addedAt||0));
 
   const allTags=[...new Set(allVideos.flatMap(v=>v.tags||[]))].sort();
@@ -6259,6 +6275,10 @@ function SSAApp(){
             <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
             <div style={{padding:"0 11px 8px"}}>
               <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search clips…" style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7}}/>
+              {sailInventory.length>0&&<select value={sailFilter} onChange={e=>setSailFilter(e.target.value)} style={{width:"100%",background:"#071624",border:`1px solid ${sailFilter?"#06B6D4":"#1E3A5A"}`,borderRadius:5,padding:"5px 8px",color:sailFilter?"#06B6D4":"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7,cursor:"pointer"}}>
+                <option value="">All sails</option>
+                {sailInventory.filter(s=>!s.retired).map(s=><option key={s.id} value={s.id}>{s.category?`${s.category} · ${s.name}`:s.name}</option>)}
+              </select>}
               {["date","tws","twa","vmg","polar"].map(s=><button key={s} onClick={()=>setSortBy(s)} style={{display:"block",width:"100%",textAlign:"left",background:sortBy===s?"#1E3A5A":"none",border:"none",borderRadius:4,padding:"3px 6px",color:sortBy===s?"#06B6D4":"#334155",cursor:"pointer",fontSize:10,marginBottom:1}}>{sortBy===s?"▸ ":"  "}{s==="date"?"Date":s==="tws"?"Wind (TWS)":s==="twa"?"Wind angle":s==="vmg"?"VMG":"Polar %"}</button>)}
             </div>
             {allTags.length>0&&<div style={{padding:"0 11px",flex:1}}>
@@ -6856,7 +6876,7 @@ function SSAApp(){
         {/* ── UPLOAD & ADMIN — standard conditional render ─────────────────── */}
         {activeTab==="photos"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos} sessionTzOffset={sessionTzOffset} canClearDay={['admin','team_manager','coach'].includes(effectiveRole)}/>
+            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos} sessionTzOffset={sessionTzOffset} sailInventory={sailInventory} canClearDay={['admin','team_manager','coach'].includes(effectiveRole)}/>
           </div>
         )}
         {activeTab==="upload"&&(
