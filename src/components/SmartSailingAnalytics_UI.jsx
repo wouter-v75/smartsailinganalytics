@@ -23,6 +23,8 @@ import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending as syncPendingPhotos, connectionIsGood as photoConnGood } from '../lib/photoStore';
 import { getActiveMembership } from '../lib/active-membership';
+import { unmatchedSails } from '../lib/sailResolve';
+import SailListDiffModal from './SailListDiffModal';
 
 // ── Lazy-loaded tab components ──────────────────────────────────────────────
 // Each ships as its own JS chunk the browser downloads only when the user
@@ -1950,6 +1952,15 @@ function UploadTab({role,cloudStatus,onImported}){
         } catch { mergeTagList(d, newTags); }
         addLog(`✓ Events saved · ${xmlParsed.meta.sailsUsed.length} sails → ${d}`);
       } else { addLog(`✓ Events saved → ${d}`); }
+      // Reconcile the event file's sail names against the SSA inventory.
+      try {
+        const rawSails=[...(xmlParsed.meta?.sailsUsed||[]),...((xmlParsed.sailsUpEvents||[]).flatMap(e=>e.sails||[]))];
+        const missing=unmatchedSails(rawSails, sailInventory);
+        if(missing.length && campaignCfg?.teamId && campaignCfg?.boatId){
+          setSailDiff({names:missing});
+          addLog(`⚠ ${missing.length} sail name${missing.length>1?'s':''} not in inventory — reconcile prompted`);
+        }
+      } catch {}
     }
 
     // ── Save each video to the date from its own timestamp ──────────────────
@@ -4557,16 +4568,16 @@ function SSAApp(){
   const[effectiveRole,setEffectiveRole]=useState(null);
   // Campaign engine config (null = off / unavailable). See the fetch effect below.
   const[campaignCfg,setCampaignCfg]=useState(null);
-  // Fetch the boat's sail inventory for the Videos/Photos sail-name filter.
-  useEffect(()=>{
+  // Fetch the boat's sail inventory for the Videos/Photos sail-name filter and
+  // the event-file saillist reconciliation.
+  const refetchSails=()=>{
     const tId=campaignCfg?.teamId, bId=campaignCfg?.boatId;
     if(!tId||!bId){setSailInventory([]);return;}
-    let alive=true;
     fetch(`/api/teams/${tId}/sails?boat_id=${bId}`).then(r=>r.json())
-      .then(j=>{if(alive)setSailInventory(Array.isArray(j?.sails)?j.sails:[]);})
-      .catch(()=>{if(alive)setSailInventory([]);});
-    return ()=>{alive=false;};
-  },[campaignCfg?.teamId,campaignCfg?.boatId]);
+      .then(j=>setSailInventory(Array.isArray(j?.sails)?j.sails:[])).catch(()=>{});
+  };
+  useEffect(()=>{refetchSails();},[campaignCfg?.teamId,campaignCfg?.boatId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const[sailDiff,setSailDiff]=useState(null); // {names:[]} when an event file's sails differ from inventory
   const[loaded,setLoaded]=useState(false);
   const[playUtc,setPlayUtc]=useState(null);
   const[photos,setPhotos]=useState([]);
@@ -6142,7 +6153,7 @@ function SSAApp(){
 
   const aiIds=new Set(aiResult?.matches||[]);
   const selectedSail=sailFilter?sailInventory.find(s=>s.id===sailFilter):null;
-  const sailTokens=selectedSail?[selectedSail.name,selectedSail.category,selectedSail.design_code].filter(Boolean).map(s=>String(s).trim().toLowerCase()):null;
+  const sailTokens=selectedSail?[selectedSail.name,selectedSail.category,selectedSail.design_code,...(Array.isArray(selectedSail.specs?.aliases)?selectedSail.specs.aliases:[])].filter(Boolean).map(s=>String(s).trim().toLowerCase()):null;
   const matchesSail=tags=>!sailTokens||(tags||[]).some(t=>sailTokens.includes(String(t).trim().toLowerCase()));
   const displayed=(aiResult?allVideos.filter(v=>aiIds.has(v.id)):allVideos)
     .filter(v=>{const ok=selectedTags.length===0||selectedTags.every(t=>(v.tags||[]).includes(t));const q=searchQuery.toLowerCase();return ok&&matchesSail(v.tags)&&(!q||v.title?.toLowerCase().includes(q)||(v.tags||[]).some(t=>t.includes(q)));})
@@ -6155,9 +6166,19 @@ function SSAApp(){
 
   if(!loaded)return<div style={{minHeight:"100vh",background:"#030F1A",display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:13}}>Loading Shared Sailing Analytics…</div>;
 
+  // Event-file saillist reconciliation modal (rendered over both layouts).
+  const sailDiffModal = sailDiff && campaignCfg?.teamId && campaignCfg?.boatId ? (
+    <SailListDiffModal
+      teamId={campaignCfg.teamId} boatId={campaignCfg.boatId}
+      canEdit={['admin','team_manager','coach'].includes(effectiveRole)}
+      inventory={sailInventory} names={sailDiff.names}
+      onClose={()=>setSailDiff(null)} onResolved={refetchSails}
+    />
+  ) : null;
+
   // ── Mobile render ────────────────────────────────────────────────────────────
   if(isMobile) return(
-    <MobileShell
+    <>{sailDiffModal}<MobileShell
       activeTab={activeTab} setActiveTab={setActiveTab}
       role={role} perms={perms}
       allVideos={allVideos} setAllVideos={setAllVideos}
@@ -6196,10 +6217,11 @@ function SSAApp(){
       videoThumbsLoading={videoThumbsLoading}
       videoLoadedIds={videoLoadedIds}
       videoTotalThumbs={videoTotalThumbs}
-    />
+    /></>
   );
 
   return(
+    <>{sailDiffModal}
     <div style={{minHeight:"100vh",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
@@ -6922,6 +6944,7 @@ function SSAApp(){
         )}
       </div>
     </div>
+    </>
   );
 }
 

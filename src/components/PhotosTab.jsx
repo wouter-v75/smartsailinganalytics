@@ -12,6 +12,7 @@ import { uploadJsonToStorage, fetchFromStorage } from "../lib/bunny";
 import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, startAutoFlush } from "../lib/photoStore";
 import { offsetFromCoords } from "../lib/tzFromCoords";
 import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
+import { buildSailResolver } from "../lib/sailResolve";
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -692,6 +693,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   // Merge a photo with the day's log/event data (instruments, sails, race tags).
   // Declared BEFORE the load effect and handleEditPhotoTime so those can list it
   // in their dependency arrays without hitting a temporal-dead-zone ReferenceError.
+  // Resolve event-file sail names → canonical SSA inventory names (via aliases).
+  const sailResolver = React.useMemo(()=>buildSailResolver(sailInventory),[sailInventory]);
   const enrichPhoto = useCallback((photo,log,xml)=>{
     const e={...photo};
     let matched=false;
@@ -722,8 +725,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       e.raceTags=race.length?race:(e.raceTags||photo.analysis?.raceTags||[]);
       e.boat=xml.meta?.boat||e.boat||null;e.location=xml.meta?.location||e.location||null;
     }
+    // Relabel event-file sail names to the SSA inventory name where linked.
+    if(Array.isArray(e.sails)&&e.sails.length) e.sails=e.sails.map(s=>sailResolver.resolve(s));
     return e;
-  },[]);
+  },[sailResolver]);
 
   // Load metadata from localStorage, blobs from IDB, fill in cloud thumb URLs
   useEffect(()=>{
@@ -1167,7 +1172,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const allTags = [...new Set(photos.flatMap(p => p.sails||[]))].sort();
   // Selected inventory sail → the tag tokens a photo must carry to match.
   const selectedSail = sailFilter ? sailInventory.find(s=>s.id===sailFilter) : null;
-  const sailTokens = selectedSail ? [selectedSail.name,selectedSail.category,selectedSail.design_code].filter(Boolean).map(s=>String(s).trim().toLowerCase()) : null;
+  const sailTokens = selectedSail ? [selectedSail.name,selectedSail.category,selectedSail.design_code,...(Array.isArray(selectedSail.specs?.aliases)?selectedSail.specs.aliases:[])].filter(Boolean).map(s=>String(s).trim().toLowerCase()) : null;
 
   // Filtered + sorted photos. When canSeeSailScanPhotos is false (tl1, guest)
   // we drop photos that carry SailScan analysis. Detected via `analysis`
