@@ -42,13 +42,18 @@ export default function TimelineDay({ nodes, tzOffset = 0 }: { nodes: TimelineNo
         const dayEvents = kids.filter((k) => k.kind !== 'race')
         return (
           <div key={day.id} className="grid gap-3">
-            <div className="flex flex-wrap items-baseline gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium text-fg">{day.title}</span>
               {day.subtitle && <span className="text-xs text-muted">{day.subtitle}</span>}
+              {day.metrics?.videos ? <Badge tone="accent">{day.metrics.videos} vid</Badge> : null}
+              {day.metrics?.photos ? <Badge tone="accent">{day.metrics.photos} ph</Badge> : null}
               <span className="ml-auto font-mono text-[11px] text-muted">{hms(day.t0, tzOffset)}–{hms(day.t1, tzOffset)}</span>
             </div>
 
             {dayEvents.length > 0 && <Card><EventList events={dayEvents} tz={tzOffset} /></Card>}
+            {races.length === 0 && dayEvents.length === 0 && (
+              <div className="px-1 text-xs text-muted">No race detail for this day — videos, photos and data only.</div>
+            )}
 
             {races.map((r) => (
               <Card key={r.id} className="overflow-hidden">

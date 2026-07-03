@@ -19,7 +19,7 @@ const KIND_ACCENT: Record<string, string> = {
 const SPANNING = new Set(['season', 'regatta', 'day', 'race'])
 const isSpanning = (n: TimelineNode) => n.t1 > n.t0 && SPANNING.has(n.kind)
 
-export default function TimelineZoom({ nodes: raw, tzOffset = 0 }: { nodes: TimelineNode[]; tzOffset?: number }) {
+export default function TimelineZoom({ nodes: raw, tzOffset = 0, initialFocusId }: { nodes: TimelineNode[]; tzOffset?: number; initialFocusId?: string }) {
   // Add season/regatta parents when the set spans multiple days.
   const nodes = React.useMemo(() => buildSeasonScaffold(raw), [raw])
   const byId = React.useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
@@ -34,10 +34,17 @@ export default function TimelineZoom({ nodes: raw, tzOffset = 0 }: { nodes: Time
   // Start the zoom at the highest structural level present.
   const rootNode = top.find((n) => n.kind === 'season') ?? top.find((n) => n.kind === 'regatta') ?? top.find((n) => n.kind === 'day') ?? top[0]
 
-  const [path, setPath] = React.useState<string[]>(rootNode ? [rootNode.id] : [])
-  React.useEffect(() => {
-    if (rootNode && (path.length === 0 || !byId.has(path[0]))) setPath([rootNode.id])
-  }, [rootNode, byId]) // reset when new data arrives
+  // Path from root down to the initial focus (so we can land on the last day but
+  // still zoom out via the breadcrumb).
+  const chainTo = React.useCallback((id?: string): string[] => {
+    if (!id || !byId.has(id)) return rootNode ? [rootNode.id] : []
+    const c: string[] = []
+    let cur: string | undefined = id
+    while (cur) { c.unshift(cur); cur = byId.get(cur)?.parentId ?? undefined }
+    return c
+  }, [byId, rootNode])
+  const [path, setPath] = React.useState<string[]>(() => chainTo(initialFocusId))
+  React.useEffect(() => { setPath(chainTo(initialFocusId)) }, [chainTo, initialFocusId])
 
   const stageRef = React.useRef<HTMLDivElement>(null)
   const anim = React.useRef<{ leftPx: number; w: number; dir: 'in' | 'out' } | null>(null)
@@ -124,11 +131,14 @@ export default function TimelineZoom({ nodes: raw, tzOffset = 0 }: { nodes: Time
                   <div className="whitespace-nowrap font-mono text-[11px] text-muted">
                     {hms(c.t0, tzOffset)}{c.t1 > c.t0 ? `–${hms(c.t1, tzOffset)}` : ''}
                   </div>
-                  {c.metrics && (c.metrics.tacks != null || c.metrics.marks != null) && (
+                  {c.metrics && (c.metrics.races || c.metrics.tacks != null || c.metrics.marks != null || c.metrics.videos || c.metrics.photos) && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
+                      {c.metrics.races ? <Badge>{c.metrics.races} races</Badge> : null}
                       {c.metrics.tacks != null && <Badge tone="success">{c.metrics.tacks}T</Badge>}
                       {c.metrics.gybes != null && <Badge>{c.metrics.gybes}G</Badge>}
                       {c.metrics.marks != null && <Badge tone="warning">{c.metrics.marks}M</Badge>}
+                      {c.metrics.videos ? <Badge tone="accent">{c.metrics.videos} vid</Badge> : null}
+                      {c.metrics.photos ? <Badge tone="accent">{c.metrics.photos} ph</Badge> : null}
                     </div>
                   )}
                 </button>

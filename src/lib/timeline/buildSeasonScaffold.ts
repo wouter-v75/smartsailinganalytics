@@ -13,6 +13,7 @@ const parseId = (id: string) => { const p = id.split(':'); return { boatId: p[0]
 const regattaKey = (d: TimelineNode) => (d.meta?.regatta as string) || d.subtitle || 'Regatta'
 
 export function buildSeasonScaffold(nodes: TimelineNode[]): TimelineNode[] {
+  if (nodes.some((n) => n.kind === 'season')) return nodes // already structured (campaign tree)
   const days = nodes.filter((n) => n.kind === 'day')
   if (days.length <= 1) return nodes // nothing to group
 
