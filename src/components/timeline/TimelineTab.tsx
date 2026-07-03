@@ -37,7 +37,7 @@ export default function TimelineTab({ teamId, boatId, tzOffset = 0 }: { teamId?:
         ) : !tree || tree.length === 0 ? (
           <Card><EmptyState title="No campaign entries yet" description="Sync your sessions, or upload a day's data — training days and events will appear here." /></Card>
         ) : (
-          <TimelineVertical nodes={tree} initialFocusId={lastDayId} tzOffset={tzOffset} />
+          <TimelineVertical nodes={tree} initialFocusId={lastDayId} tzOffset={tzOffset} teamId={teamId} boatId={boatId} />
         )}
       </div>
     </div>

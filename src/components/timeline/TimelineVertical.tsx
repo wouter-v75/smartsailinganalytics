@@ -6,6 +6,7 @@ import {
 import { Badge } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { buildSeasonScaffold } from '@/lib/timeline/buildSeasonScaffold'
+import DayMedia from './DayMedia'
 
 // Vertical, dynamic timeline (nested accordion). Each level is a stacked list;
 // spanning nodes (season/regatta/day/race) expand inline on click/tap to reveal
@@ -25,7 +26,7 @@ const GLYPH: Record<string, { icon: LucideIcon; color: string }> = {
 const hms = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 16)
 const ymd = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(0, 10)
 
-export default function TimelineVertical({ nodes: raw, tzOffset = 0, initialFocusId }: { nodes: TimelineNode[]; tzOffset?: number; initialFocusId?: string }) {
+export default function TimelineVertical({ nodes: raw, tzOffset = 0, initialFocusId, teamId, boatId }: { nodes: TimelineNode[]; tzOffset?: number; initialFocusId?: string; teamId?: string | null; boatId?: string | null }) {
   const nodes = React.useMemo(() => buildSeasonScaffold(raw), [raw])
   const byId = React.useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
   const byParent = React.useMemo(() => {
@@ -51,13 +52,13 @@ export default function TimelineVertical({ nodes: raw, tzOffset = 0, initialFocu
 
   return (
     <div className="text-fg">
-      {roots.map((n) => <Row key={n.id} node={n} tz={tzOffset} childrenOf={childrenOf} open={open} toggle={toggle} />)}
+      {roots.map((n) => <Row key={n.id} node={n} tz={tzOffset} childrenOf={childrenOf} open={open} toggle={toggle} teamId={teamId} boatId={boatId} />)}
     </div>
   )
 }
 
-function Row({ node, tz, childrenOf, open, toggle }: {
-  node: TimelineNode; tz: number; childrenOf: (id: string) => TimelineNode[]; open: Set<string>; toggle: (id: string) => void
+function Row({ node, tz, childrenOf, open, toggle, teamId, boatId }: {
+  node: TimelineNode; tz: number; childrenOf: (id: string) => TimelineNode[]; open: Set<string>; toggle: (id: string) => void; teamId?: string | null; boatId?: string | null
 }) {
   const kids = childrenOf(node.id)
   const expandable = SPANNING.has(node.kind) && kids.length > 0
@@ -94,7 +95,10 @@ function Row({ node, tz, childrenOf, open, toggle }: {
       </button>
       {expandable && isOpen && (
         <div className="tl-reveal-item ml-[8px] mt-0.5 border-l border-[color:var(--border)] pl-3">
-          {kids.map((c) => <Row key={c.id} node={c} tz={tz} childrenOf={childrenOf} open={open} toggle={toggle} />)}
+          {node.kind === 'day' && teamId && boatId && (
+            <DayMedia teamId={teamId} boatId={boatId} date={(node.meta?.date as string) || node.id.split(':')[1] || ''} />
+          )}
+          {kids.map((c) => <Row key={c.id} node={c} tz={tz} childrenOf={childrenOf} open={open} toggle={toggle} teamId={teamId} boatId={boatId} />)}
         </div>
       )}
     </div>
