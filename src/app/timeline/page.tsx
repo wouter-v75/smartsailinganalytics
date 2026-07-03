@@ -16,6 +16,7 @@ const today = () => new Date().toISOString().slice(0, 10)
 export default function TimelinePage() {
   const [m, setM] = React.useState<ActiveMembership | null | undefined>(undefined)
   const [view, setView] = React.useState<'zoom' | 'feed'>('zoom')
+  const [scope, setScope] = React.useState<'day' | 'season'>('day')
   const [date, setDate] = React.useState<string>(() => {
     try { return new URLSearchParams(window.location.search).get('date') || today() } catch { return today() }
   })
@@ -32,7 +33,7 @@ export default function TimelinePage() {
     return () => { alive = false }
   }, [])
 
-  const { nodes, error } = useTimeline(m?.team_id, m?.boat_id, date)
+  const { nodes, error } = useTimeline(m?.team_id, m?.boat_id, scope === 'season' ? null : date)
 
   return (
     <AppShell
@@ -43,21 +44,24 @@ export default function TimelinePage() {
         <>
           <div className="flex overflow-hidden rounded border border-[color:var(--border)]">
             {(['zoom', 'feed'] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`px-2.5 py-1.5 text-xs capitalize ${view === v ? 'bg-accent text-accent-fg' : 'text-secondary hover:bg-surface-1'}`}
-              >
-                {v}
-              </button>
+              <button key={v} onClick={() => setView(v)}
+                className={`px-2.5 py-1.5 text-xs capitalize ${view === v ? 'bg-accent text-accent-fg' : 'text-secondary hover:bg-surface-1'}`}>{v}</button>
             ))}
           </div>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="rounded border border-[color:var(--border)] bg-surface-1 px-2 py-1.5 text-sm text-fg"
-          />
+          <div className="flex overflow-hidden rounded border border-[color:var(--border)]">
+            {(['day', 'season'] as const).map((s) => (
+              <button key={s} onClick={() => setScope(s)}
+                className={`px-2.5 py-1.5 text-xs capitalize ${scope === s ? 'bg-accent text-accent-fg' : 'text-secondary hover:bg-surface-1'}`}>{s}</button>
+            ))}
+          </div>
+          {scope === 'day' && (
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="rounded border border-[color:var(--border)] bg-surface-1 px-2 py-1.5 text-sm text-fg"
+            />
+          )}
         </>
       }
     >

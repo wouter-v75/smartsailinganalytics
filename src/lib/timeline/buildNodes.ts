@@ -38,6 +38,7 @@ export function buildDayTimeline({ xml, boatId, date }: { xml: ParsedEventLike; 
     id: dayId, parentId: null, kind: 'day', t0: dayT0, t1: dayT1,
     title: 'Race day', subtitle: xml.meta?.location || undefined, source: 'auto', producer: 'eventfile',
     metrics: { races: guns.length },
+    meta: { date, regatta: xml.meta?.location || null },
   })
 
   // Race windows: [gun, next gun ?? day end].

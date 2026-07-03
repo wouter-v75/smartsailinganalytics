@@ -3,6 +3,7 @@ import * as React from 'react'
 import { ChevronRight, ChevronLeft } from 'lucide-react'
 import { Badge, Button } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
+import { buildSeasonScaffold } from '@/lib/timeline/buildSeasonScaffold'
 
 // Semantic-zoom timeline (Phase 2 flagship). Generic over the node tree: the
 // current focus node's children lay out on a time axis; a spanning child (race,
@@ -18,7 +19,9 @@ const KIND_ACCENT: Record<string, string> = {
 const SPANNING = new Set(['season', 'regatta', 'day', 'race'])
 const isSpanning = (n: TimelineNode) => n.t1 > n.t0 && SPANNING.has(n.kind)
 
-export default function TimelineZoom({ nodes, tzOffset = 0 }: { nodes: TimelineNode[]; tzOffset?: number }) {
+export default function TimelineZoom({ nodes: raw, tzOffset = 0 }: { nodes: TimelineNode[]; tzOffset?: number }) {
+  // Add season/regatta parents when the set spans multiple days.
+  const nodes = React.useMemo(() => buildSeasonScaffold(raw), [raw])
   const byId = React.useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
   const byParent = React.useMemo(() => {
     const m = new Map<string, TimelineNode[]>()
@@ -28,7 +31,8 @@ export default function TimelineZoom({ nodes, tzOffset = 0 }: { nodes: TimelineN
   }, [nodes])
   const childrenOf = (id: string) => byParent.get(id) ?? []
   const top = byParent.get('__root') ?? []
-  const rootNode = top.find((n) => n.kind === 'day') ?? top[0]
+  // Start the zoom at the highest structural level present.
+  const rootNode = top.find((n) => n.kind === 'season') ?? top.find((n) => n.kind === 'regatta') ?? top.find((n) => n.kind === 'day') ?? top[0]
 
   const [path, setPath] = React.useState<string[]>(rootNode ? [rootNode.id] : [])
   React.useEffect(() => {
