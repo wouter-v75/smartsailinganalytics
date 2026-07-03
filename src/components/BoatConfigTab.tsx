@@ -23,6 +23,8 @@ import SailScanCompare from './SailScanCompare'
 import LogProfilePanel from './LogProfilePanel'
 import SailDesignShapes from './SailDesignShapes'
 import targetsV14 from '../data/targets-v1.4.json'
+import { useUiNext } from '../lib/ui-flags'
+import BoatConfigNext from './boat/BoatConfigNext'
 
 interface Sail {
   id: string
@@ -68,6 +70,7 @@ export default function BoatConfigTab({
   // revalidate in the background.
   const pf = getPrefetchedBoatConfig(teamId, boatId)
   const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar' | 'log'>('inventory')
+  const uiNext = useUiNext() // ?ui=next → redesigned reference screen (Phase 1)
   const [sails, setSails] = useState<Sail[]>(() => (pf?.sails as Sail[]) || [])
   const [scans, setScans] = useState<Scan[]>(() => (pf?.scans as Scan[]) || [])
   const [loading, setLoading] = useState(!pf?.sails)
@@ -419,6 +422,8 @@ export default function BoatConfigTab({
       background: view === id ? C.accent : '#0F2A45', color: view === id ? '#001018' : '#94A3B8',
     }}>{label}</button>
   )
+
+  if (uiNext) return <BoatConfigNext teamId={teamId} boatId={boatId} boatName={boatName} />
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', background: C.bg, padding: isMobile ? 10 : 16 }}>
