@@ -26,7 +26,7 @@ export default function TimelineTab({ teamId, boatId, tzOffset = 0, onOpenVideo 
 
   return (
     <div className="h-full overflow-auto bg-bg text-fg" style={{ padding: 16 }}>
-      <div className="mx-auto w-full max-w-6xl">
+      <div className="w-full">
         <h2 className="mb-3 text-[15px] font-medium">Timeline</h2>
         {!boatId ? (
           <Card><EmptyState title="No active boat" description="Select a boat workspace to see its campaign timeline." /></Card>

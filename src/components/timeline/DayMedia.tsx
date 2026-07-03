@@ -125,7 +125,7 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
 // renderer). Display-only, so we deliberately don't set crossOrigin — the
 // canvas may become "tainted", which is fine since we never export it, and it
 // avoids CORS load failures on the CDN thumbnail.
-function PhotoOverlayImage({ src, inst }: { src: string | null; inst: Record<string, any> }) {
+export function PhotoOverlayImage({ src, inst }: { src: string | null; inst: Record<string, any> }) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null)
   const [ready, setReady] = React.useState(false)
   const [failed, setFailed] = React.useState(false)
@@ -155,7 +155,7 @@ function PhotoOverlayImage({ src, inst }: { src: string | null; inst: Record<str
 
 // Fallback only (standalone timeline page, no app player). The main app routes
 // clicks to the Videos-tab player which carries the instrument data overlay.
-function FallbackVideoPlayer({ videoId }: { videoId: string }) {
+export function FallbackVideoPlayer({ videoId }: { videoId: string }) {
   const ref = React.useRef<HTMLVideoElement>(null)
   const [err, setErr] = React.useState<string | null>(null)
   React.useEffect(() => {
