@@ -43,6 +43,7 @@ const AdminTab       = dynamic(() => import("./AdminTab"),       { ssr:false, lo
 const CampaignTab    = dynamic(() => import("./CampaignTab"),    { ssr:false, loading:TabLoading });
 const BoatConfigTab  = dynamic(() => import("./BoatConfigTab"),  { ssr:false, loading:TabLoading });
 const WeatherTab     = dynamic(() => import("./WeatherTab"),     { ssr:false, loading:TabLoading });
+const TimelineTab    = dynamic(() => import("./timeline/TimelineTab"), { ssr:false, loading:TabLoading });
 
 // Connection quality, for network-aware auto-sync. `good` (wifi/ethernet/4g,
 // not Save-Data) gates the HEAVY push (videos); `online` gates the light pull.
@@ -4304,6 +4305,7 @@ function MobileShell(props){
   const {activeTab, setActiveTab, ...rest} = props;
   React.useEffect(()=>{ injectMobileCSS(); },[]);
   const tabDefs=[
+    {id:"timeline", icon:"🧭", label:"Timeline"},
     {id:"campaign", icon:"🗓", label:"Plan"},
     {id:"boatconfig", icon:"⛵", label:"Boat"},
     {id:"weather",  icon:"🌦", label:"Weather"},
@@ -4454,6 +4456,11 @@ function MobileShell(props){
             <ErrorBoundary label="Weather"><WeatherTab isMobile={true} effectiveRole={props.effectiveRole} boatName={props.campaignCfg?.boatName} eventName={props.campaignCfg?.event} logData={props.logData}/></ErrorBoundary>
           </div>
         )}
+        {activeTab==="timeline"&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId} tzOffset={props.sessionTzOffset}/></ErrorBoundary>
+          </div>
+        )}
 
         {/* Admin */}
         {activeTab==="admin"&&(
@@ -4518,7 +4525,7 @@ function MobileShell(props){
 function SSAApp(){
   const isMobile = useIsMobile();
   const[role,setRole]=useState("coach");
-  const[activeTab,setActiveTab]=useState("library");
+  const[activeTab,setActiveTab]=useState("timeline");
   const[allVideos,setAllVideos]=useState([]);
   const[logData,setLogData]=useState(null);
   const[sessionTzOffset,setSessionTzOffset]=useState(DEFAULT_TZ);
@@ -6250,16 +6257,20 @@ function SSAApp(){
     <div style={{minHeight:"100vh",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
-        <nav style={{display:"flex",gap:2,marginLeft:10}}>
-          {["campaign","boatconfig","weather","library","photos","analytics","upload","tools","admin"].filter(tab => {
-            if (tab === "campaign" && (!campaignOn || effectiveRole === 'guest')) return false;
-            if (tab === "boatconfig" && (!campaignOn || !canSeeBoatConfig)) return false;
-            // Weather: available to all roles.
-            // Tools (Squash + SailScan): TL2+ and consultant-in-period.
-            if (tab === "tools" && !canSeeToolsTab) return false;
-            if (tab === "admin" && effectiveRole !== 'admin') return false;
-            return true;
-          }).map(tab=>(<button key={tab} style={tabStyle(tab)} onClick={()=>setActiveTab(tab)}>{tab==="upload"&&unsyncedCount>0?<span>{tab}<span style={{background:"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800,marginLeft:3}}>{unsyncedCount}</span></span>:tab==="tools"?"Tools":tab==="library"?"Videos":tab==="weather"?"Weather":tab==="boatconfig"?"Boat":tab.charAt(0).toUpperCase()+tab.slice(1)}</button>))}
+        <nav style={{marginLeft:10}}>
+          <select value={activeTab} onChange={e=>setActiveTab(e.target.value)} title="Menu"
+            style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"6px 12px",color:"#E2E8F0",fontSize:12,fontWeight:600,cursor:"pointer",outline:"none",minWidth:130}}>
+            {["timeline","campaign","boatconfig","weather","library","photos","analytics","upload","tools","admin"].filter(tab => {
+              if (tab === "campaign" && (!campaignOn || effectiveRole === 'guest')) return false;
+              if (tab === "boatconfig" && (!campaignOn || !canSeeBoatConfig)) return false;
+              if (tab === "tools" && !canSeeToolsTab) return false;
+              if (tab === "admin" && effectiveRole !== 'admin') return false;
+              return true;
+            }).map(tab=>{
+              const label = tab==="timeline"?"Timeline":tab==="library"?"Videos":tab==="weather"?"Weather":tab==="boatconfig"?"Boat":tab==="tools"?"Tools":tab.charAt(0).toUpperCase()+tab.slice(1);
+              return <option key={tab} value={tab} style={{background:"#0A1929"}}>{label}{tab==="upload"&&unsyncedCount>0?` (${unsyncedCount})`:""}</option>;
+            })}
+          </select>
         </nav>
         <div style={{flex:1}}/>
         {canUseAI && (
@@ -6965,6 +6976,11 @@ function SSAApp(){
         {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
             <ErrorBoundary label="Weather"><WeatherTab isMobile={false} effectiveRole={effectiveRole} boatName={campaignCfg?.boatName} eventName={campaignCfg?.event} logData={logData}/></ErrorBoundary>
+          </div>
+        )}
+        {activeTab==="timeline"&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} tzOffset={sessionTzOffset}/></ErrorBoundary>
           </div>
         )}
       </div>
