@@ -5,6 +5,9 @@ import { Card, EmptyState, ErrorState, Skeleton } from '@/components/ui'
 import { getBrowserSupabase } from '@/lib/supabase/browser'
 import { getActiveMembership, type ActiveMembership } from '@/lib/active-membership'
 import { useTimeline } from '@/lib/timeline/useTimeline'
+import type { TimelineNode } from '@/lib/timeline/types'
+import { buildDayTimeline } from '@/lib/timeline/buildNodes'
+import { getXmlData } from '@/lib/localStore'
 import TimelineDay from '@/components/timeline/TimelineDay'
 import TimelineZoom from '@/components/timeline/TimelineZoom'
 
@@ -33,7 +36,41 @@ export default function TimelinePage() {
     return () => { alive = false }
   }, [])
 
-  const { nodes, error } = useTimeline(m?.team_id, m?.boat_id, scope === 'season' ? null : date)
+  const { nodes: persisted, error } = useTimeline(m?.team_id, m?.boat_id, scope === 'season' ? null : date)
+
+  // Backfill: if nothing is stored yet for this day, build the timeline on the
+  // fly from the event data cached on this device (getXmlData) and persist it —
+  // so days uploaded before the producer existed still show, then stick.
+  const [localNodes, setLocalNodes] = React.useState<TimelineNode[] | null | undefined>(undefined)
+  React.useEffect(() => {
+    let alive = true
+    setLocalNodes(undefined)
+    if (scope !== 'day' || !m?.boat_id || persisted === null) return
+    if (persisted.length > 0) { setLocalNodes(null); return }
+    const boatId = m.boat_id
+    ;(async () => {
+      try {
+        const xml: any = await getXmlData(date)
+        if (!alive) return
+        const hasEvents = xml && (xml.raceGuns?.length || xml.tackJibes?.length || xml.markRoundings?.length || xml.sailsUpEvents?.length || xml.dayStartUtc != null)
+        if (hasEvents) {
+          const built = buildDayTimeline({ xml, boatId, date })
+          setLocalNodes(built)
+          if (built.length && m.team_id) {
+            fetch(`/api/teams/${m.team_id}/timeline`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ boat_id: boatId, session_date: date, nodes: built }),
+            }).catch(() => {})
+          }
+        } else setLocalNodes([])
+      } catch { if (alive) setLocalNodes([]) }
+    })()
+    return () => { alive = false }
+  }, [persisted, date, scope, m?.boat_id, m?.team_id])
+
+  const nodes: TimelineNode[] | null =
+    persisted && persisted.length > 0 ? persisted : (localNodes === undefined ? null : localNodes)
+  const loading = persisted === null || (scope === 'day' && persisted?.length === 0 && localNodes === undefined)
 
   return (
     <AppShell
@@ -71,10 +108,15 @@ export default function TimelinePage() {
         <Card><EmptyState title="No active boat" description="Open the main app and select a boat workspace first, then return here." /></Card>
       ) : error ? (
         <ErrorState description={error} />
-      ) : nodes === null ? (
+      ) : loading ? (
         <div className="grid gap-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
-      ) : nodes.length === 0 ? (
-        <Card><EmptyState title="No timeline for this day" description="Upload an event file for this date in the main app to build the race timeline." /></Card>
+      ) : !nodes || nodes.length === 0 ? (
+        <Card><EmptyState
+          title={scope === 'season' ? 'No timeline yet' : 'No timeline for this day'}
+          description={scope === 'season'
+            ? 'Open specific race days in Day scope first to build them, then switch back to Season.'
+            : 'No event file found on this device for this date. Load that day in the main app first, or pick a date you have data for.'}
+        /></Card>
       ) : view === 'zoom' ? (
         <TimelineZoom nodes={nodes} />
       ) : (

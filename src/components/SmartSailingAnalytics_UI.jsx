@@ -5497,6 +5497,17 @@ function SSAApp(){
     else if(cloudStatus?.available && effectiveRole==='admin'){const r2=await fetchCloudSession(date);xml=r2?.xmlData||null;setXmlData(xml?{...xml,source:"cloud"}:null);}
     else setXmlData(null);
 
+    // Auto-build this day's Timeline Tree (backfills days uploaded before the
+    // producer existed) — best-effort, persists to timeline_nodes.
+    try {
+      if(xml && campaignCfg?.teamId && campaignCfg?.boatId){
+        const tlNodes=buildDayTimeline({ xml, boatId: campaignCfg.boatId, date });
+        if(tlNodes.length){
+          fetch(`/api/teams/${campaignCfg.teamId}/timeline`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ boat_id: campaignCfg.boatId, session_date: date, nodes: tlNodes })}).catch(()=>{});
+        }
+      }
+    } catch {}
+
     // ── Load videos ─────────────────────────────────────────────────────────
     let vids=await getVideosForDate(date);
     if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
