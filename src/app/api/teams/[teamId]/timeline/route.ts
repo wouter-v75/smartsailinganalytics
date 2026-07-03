@@ -24,6 +24,19 @@ export async function GET(req: NextRequest, { params }: { params: { teamId: stri
   const date = searchParams.get('date')
   if (!boatId) return NextResponse.json({ error: 'boat_id required' }, { status: 400 })
 
+  // latest=1 → just the most recent day that has data (for "focus on last day").
+  if (searchParams.get('latest') === '1') {
+    const { data, error } = await supabase
+      .from('timeline_nodes')
+      .select('session_date,t0')
+      .eq('team_id', params.teamId).eq('boat_id', boatId)
+      .order('t0', { ascending: false }).limit(1)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    const row = data?.[0]
+    const latestDate = row?.session_date || (row?.t0 ? new Date(row.t0).toISOString().slice(0, 10) : null)
+    return NextResponse.json({ latestDate })
+  }
+
   let q = supabase.from('timeline_nodes').select(SELECT).eq('team_id', params.teamId).eq('boat_id', boatId)
   if (date) q = q.eq('session_date', date)
   q = q.order('t0', { ascending: true })

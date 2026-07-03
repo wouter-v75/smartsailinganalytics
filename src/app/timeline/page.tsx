@@ -20,8 +20,9 @@ export default function TimelinePage() {
   const [m, setM] = React.useState<ActiveMembership | null | undefined>(undefined)
   const [view, setView] = React.useState<'zoom' | 'feed'>('zoom')
   const [scope, setScope] = React.useState<'day' | 'season'>('day')
+  // Empty until resolved: no ?date means "focus on the last day with data".
   const [date, setDate] = React.useState<string>(() => {
-    try { return new URLSearchParams(window.location.search).get('date') || today() } catch { return today() }
+    try { return new URLSearchParams(window.location.search).get('date') || '' } catch { return '' }
   })
 
   React.useEffect(() => {
@@ -36,7 +37,19 @@ export default function TimelinePage() {
     return () => { alive = false }
   }, [])
 
-  const { nodes: persisted, error } = useTimeline(m?.team_id, m?.boat_id, scope === 'season' ? null : date)
+  // When no explicit date, ask the cloud for the last day that has data and land there.
+  React.useEffect(() => {
+    if (date || !m?.team_id || !m?.boat_id) return
+    let alive = true
+    fetch(`/api/teams/${m.team_id}/timeline?boat_id=${m.boat_id}&latest=1`)
+      .then((r) => r.json())
+      .then((j) => { if (alive) setDate(j?.latestDate || today()) })
+      .catch(() => { if (alive) setDate(today()) })
+    return () => { alive = false }
+  }, [m?.team_id, m?.boat_id, date])
+
+  const resolvingDate = scope === 'day' && !date // waiting on the latest-day lookup
+  const { nodes: persisted, error } = useTimeline(m?.team_id, resolvingDate ? null : m?.boat_id, scope === 'season' ? null : (date || null))
 
   // Backfill: if nothing is stored yet for this day, build the timeline on the
   // fly from the event data cached on this device (getXmlData) and persist it —
@@ -45,7 +58,7 @@ export default function TimelinePage() {
   React.useEffect(() => {
     let alive = true
     setLocalNodes(undefined)
-    if (scope !== 'day' || !m?.boat_id || persisted === null) return
+    if (scope !== 'day' || !m?.boat_id || persisted === null || !date) return
     if (persisted.length > 0) { setLocalNodes(null); return }
     const boatId = m.boat_id
     ;(async () => {
@@ -70,7 +83,10 @@ export default function TimelinePage() {
 
   const nodes: TimelineNode[] | null =
     persisted && persisted.length > 0 ? persisted : (localNodes === undefined ? null : localNodes)
-  const loading = persisted === null || (scope === 'day' && persisted?.length === 0 && localNodes === undefined)
+  const loading =
+    (resolvingDate && !!m?.boat_id) ||
+    persisted === null ||
+    (scope === 'day' && !!date && persisted?.length === 0 && localNodes === undefined)
 
   return (
     <AppShell
