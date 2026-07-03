@@ -4458,7 +4458,7 @@ function MobileShell(props){
         )}
         {activeTab==="timeline"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Timeline"><TimelineTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId} tzOffset={props.sessionTzOffset} onOpenVideo={props.openCampaignVideo}/></ErrorBoundary>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId} tzOffset={props.sessionTzOffset} onOpenVideo={props.openVideoModal}/></ErrorBoundary>
           </div>
         )}
 
@@ -4532,6 +4532,10 @@ function SSAApp(){
   const[sessionTagList,setSessionTagList]=useState([]);
   const[xmlData,setXmlData]=useState(null);
   const[selectedVideo,setSelectedVideo]=useState(null);
+  // Timeline clip playback: open the real overlay player in a modal ON TOP of
+  // the current view (usually the Timeline) instead of switching to the Videos
+  // tab — so you never leave the timeline.
+  const[videoModalOpen,setVideoModalOpen]=useState(false);
   // Phase B — crop state. The two cut markers are set by the player
   // toolbar buttons ("Delete UPTO here" / "Delete FROM here") and shown
   // as red lines on the timeline. The Save button commits via ffmpeg.
@@ -5258,6 +5262,24 @@ function SSAApp(){
       });
       campaignPendingClipRef.current = null;
     }
+  };
+
+  // Timeline → play a clip in a modal overlay with the full instrument data
+  // overlay, WITHOUT leaving the timeline. Loads that day's log/telemetry so
+  // the overlay has data, resolves the clip into selectedVideo (loadDate does
+  // this via campaignPendingClipRef), then opens the modal.
+  const openVideoModal = async (date, clipId) => {
+    campaignPendingClipRef.current = clipId || null;
+    if (date && date !== activeDate) {
+      await loadDate(date);
+    } else {
+      setSelectedVideo(prev => {
+        const m = allVideos.find(v => v.id === clipId || v.cloudId === clipId || v.externalId === clipId);
+        return m || prev;
+      });
+      campaignPendingClipRef.current = null;
+    }
+    setVideoModalOpen(true);
   };
 
   // Sessions visible in the sidebar — guests see only the latest day.
@@ -6208,9 +6230,28 @@ function SSAApp(){
     />
   ) : null;
 
+  // Timeline clip playback — the real overlay player in a modal over everything
+  // (incl. the Timeline). Minimal props: no crop / sync / HD-toggle toolbar
+  // buttons, but the base "Fullscreen (with data overlay)" control stays.
+  const videoModal = (videoModalOpen && selectedVideo) ? (
+    <div onClick={()=>setVideoModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(3,15,26,0.86)",display:"flex",alignItems:"center",justifyContent:"center",padding:isMobile?0:24}}>
+      <div onClick={e=>e.stopPropagation()} style={{position:"relative",width:"100%",maxWidth:1100,maxHeight:"92vh",overflowY:"auto",background:"#050E1C",border:"1px solid #1E3A5A",borderRadius:isMobile?0:14,padding:isMobile?"40px 12px 16px":18}}>
+        <button onClick={()=>setVideoModalOpen(false)} aria-label="Close" style={{position:"absolute",top:8,right:10,zIndex:3,width:34,height:34,borderRadius:8,border:"1px solid #1E3A5A",background:"#0A1929",color:"#E2E8F0",fontSize:18,lineHeight:"1",cursor:"pointer"}}>✕</button>
+        <VideoPlayer
+          video={selectedVideo}
+          logData={logData}
+          xmlData={xmlData}
+          syncOffset={syncOffsets[selectedVideo.id]||0}
+          sessionTzOffset={sessionTzOffset}
+          onPlayUtc={handlePlayUtc}
+        />
+      </div>
+    </div>
+  ) : null;
+
   // ── Mobile render ────────────────────────────────────────────────────────────
   if(isMobile) return(
-    <>{sailDiffModal}<MobileShell
+    <>{sailDiffModal}{videoModal}<MobileShell
       activeTab={activeTab} setActiveTab={setActiveTab}
       role={role} perms={perms}
       allVideos={allVideos} setAllVideos={setAllVideos}
@@ -6237,7 +6278,7 @@ function SSAApp(){
       canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab} canSeeToolsTab={canSeeToolsTab} canSeeBoatConfig={canSeeBoatConfig}
       canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
       showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
-      campaignOn={campaignOn} campaignCfg={campaignCfg} openCampaignVideo={openCampaignVideo}
+      campaignOn={campaignOn} campaignCfg={campaignCfg} openCampaignVideo={openCampaignVideo} openVideoModal={openVideoModal}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -6253,7 +6294,7 @@ function SSAApp(){
   );
 
   return(
-    <>{sailDiffModal}
+    <>{sailDiffModal}{videoModal}
     <div style={{minHeight:"100vh",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
@@ -6980,7 +7021,7 @@ function SSAApp(){
         )}
         {activeTab==="timeline"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} tzOffset={sessionTzOffset} onOpenVideo={openCampaignVideo}/></ErrorBoundary>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} tzOffset={sessionTzOffset} onOpenVideo={openVideoModal}/></ErrorBoundary>
           </div>
         )}
       </div>

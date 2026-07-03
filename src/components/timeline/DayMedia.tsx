@@ -2,6 +2,7 @@
 import * as React from 'react'
 import { Play, Camera } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
+import { renderOverlay } from '@/lib/photoOverlay'
 
 // Media for a day: photo + video thumbnails (TWS/TWD/tags baked from the log /
 // event file), fetched lazily from the cloud when a day becomes active in the
@@ -9,7 +10,7 @@ import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 // (which opens the real Videos-tab player *with* the instrument data overlay);
 // if no handler is supplied we fall back to an inline HLS/MP4 player. Clicking a
 // photo opens a lightbox with its TWS/TWD/TWA/sail data.
-interface PhotoItem { id: string; thumb: string | null; tws?: number | null; twd?: number | null; twa?: number | null; sails: string[] }
+interface PhotoItem { id: string; thumb: string | null; tws?: number | null; twd?: number | null; twa?: number | null; sails: string[]; inst: Record<string, any> }
 interface VideoItem { id: string; thumb: string | null; title: string | null; tags: string[] }
 
 const r = (v?: number | null, d = 0) => (v == null ? null : v.toFixed(d))
@@ -33,7 +34,8 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
         if (!alive) return
         setPhotos((j?.photos || []).map((p: any) => {
           const a = p.analysis_data || {}, inst = a.inst || {}
-          return { id: p.id, thumb: p.thumbnail_url, tws: inst.tws ?? null, twd: inst.twd ?? null, twa: inst.twa ?? null, sails: a.sails || [] }
+          const sails = a.sails ?? inst.sails ?? []
+          return { id: p.id, thumb: p.thumbnail_url, tws: inst.tws ?? null, twd: inst.twd ?? null, twa: inst.twa ?? null, sails, inst: { ...inst, sails } }
         }))
       })
       .catch(() => { if (alive) setPhotos([]) })
@@ -102,13 +104,7 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
       <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
         {openPhoto && (
           <DialogContent title="Photo">
-            {openPhoto.thumb && <img src={openPhoto.thumb} alt="" className="max-h-[60vh] w-full rounded object-contain" />}
-            <div className="mt-3 flex flex-wrap gap-2">
-              {openPhoto.tws != null && <Badge tone="accent">TWS {r(openPhoto.tws)} kt</Badge>}
-              {openPhoto.twd != null && <Badge>TWD {r(openPhoto.twd)}°</Badge>}
-              {openPhoto.twa != null && <Badge>TWA {r(openPhoto.twa)}°</Badge>}
-              {openPhoto.sails.map((s) => <Badge key={s}>{s}</Badge>)}
-            </div>
+            <PhotoOverlayImage src={openPhoto.thumb} inst={openPhoto.inst} />
           </DialogContent>
         )}
       </Dialog>
@@ -121,6 +117,38 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
           </DialogContent>
         )}
       </Dialog>
+    </div>
+  )
+}
+
+// Photo with the same instrument data overlay as the Photos tab (shared
+// renderer). Display-only, so we deliberately don't set crossOrigin — the
+// canvas may become "tainted", which is fine since we never export it, and it
+// avoids CORS load failures on the CDN thumbnail.
+function PhotoOverlayImage({ src, inst }: { src: string | null; inst: Record<string, any> }) {
+  const canvasRef = React.useRef<HTMLCanvasElement>(null)
+  const [ready, setReady] = React.useState(false)
+  const [failed, setFailed] = React.useState(false)
+  React.useEffect(() => {
+    setReady(false); setFailed(false)
+    if (!src) return
+    const img = new Image()
+    img.onload = () => {
+      const c = canvasRef.current
+      if (!c) return
+      try { renderOverlay(c, img, inst || {}); setReady(true) } catch { setFailed(true) }
+    }
+    img.onerror = () => setFailed(true)
+    img.src = src
+    return () => { img.onload = null; img.onerror = null }
+  }, [src, inst])
+
+  if (!src) return <div className="py-8 text-center text-sm text-muted">No image.</div>
+  if (failed) return <img src={src} alt="" className="max-h-[70vh] w-full rounded object-contain" />
+  return (
+    <div className="relative">
+      {!ready && <Skeleton className="h-56 w-full rounded" />}
+      <canvas ref={canvasRef} className="max-h-[70vh] w-full rounded object-contain" style={{ display: ready ? 'block' : 'none' }} />
     </div>
   )
 }
