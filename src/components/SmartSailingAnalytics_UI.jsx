@@ -492,7 +492,7 @@ const OVERLAY_VARS = [
   {key:'lwDflctPct',label:'Low defl',unit:'%',dec:0},{key:'travPct',label:'Traveller',unit:'%',dec:0},
 ];
 
-function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,
+function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,autoPlay=false,
                       // Phase B crop UX — three callbacks + the current
                       // cut points + busy flag. All optional; toolbar
                       // crop UI only renders when the setters are provided.
@@ -935,7 +935,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           <button onClick={(e)=>{e.stopPropagation();setMobileFs(false);}}
             style={{position:"absolute",top:10,right:10,zIndex:4,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         )}
-        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer"}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;}}}/>:
+        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer"}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
@@ -6234,8 +6234,9 @@ function SSAApp(){
   // (incl. the Timeline). Minimal props: no crop / sync / HD-toggle toolbar
   // buttons, but the base "Fullscreen (with data overlay)" control stays.
   const videoModal = (videoModalOpen && selectedVideo) ? (
-    <div onClick={()=>setVideoModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(3,15,26,0.86)",display:"flex",alignItems:"center",justifyContent:"center",padding:isMobile?0:24}}>
-      <div onClick={e=>e.stopPropagation()} style={{position:"relative",width:"100%",maxWidth:1100,maxHeight:"92vh",overflowY:"auto",background:"#050E1C",border:"1px solid #1E3A5A",borderRadius:isMobile?0:14,padding:isMobile?"40px 12px 16px":18}}>
+    <div onClick={()=>setVideoModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(3,15,26,0.55)",display:"flex",alignItems:"stretch",justifyContent:"flex-end"}}>
+      {/* Docked to the RIGHT — the timeline stays visible on the left. Autoplays. */}
+      <div onClick={e=>e.stopPropagation()} style={{position:"relative",width:isMobile?"100%":"min(680px, 92vw)",height:"100%",overflowY:"auto",background:"#050E1C",borderLeft:"1px solid #1E3A5A",boxShadow:"-12px 0 40px rgba(0,0,0,0.5)",padding:isMobile?"40px 12px 16px":"44px 18px 18px"}}>
         <button onClick={()=>setVideoModalOpen(false)} aria-label="Close" style={{position:"absolute",top:8,right:10,zIndex:3,width:34,height:34,borderRadius:8,border:"1px solid #1E3A5A",background:"#0A1929",color:"#E2E8F0",fontSize:18,lineHeight:"1",cursor:"pointer"}}>✕</button>
         <VideoPlayer
           video={selectedVideo}
@@ -6244,6 +6245,7 @@ function SSAApp(){
           syncOffset={syncOffsets[selectedVideo.id]||0}
           sessionTzOffset={sessionTzOffset}
           onPlayUtc={handlePlayUtc}
+          autoPlay
         />
       </div>
     </div>
