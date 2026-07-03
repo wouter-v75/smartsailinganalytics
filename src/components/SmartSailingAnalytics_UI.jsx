@@ -25,6 +25,7 @@ import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending
 import { getActiveMembership } from '../lib/active-membership';
 import { unmatchedSails } from '../lib/sailResolve';
 import SailListDiffModal from './SailListDiffModal';
+import { ErrorBoundary } from './ui';
 
 // ── Lazy-loaded tab components ──────────────────────────────────────────────
 // Each ships as its own JS chunk the browser downloads only when the user
@@ -6898,7 +6899,7 @@ function SSAApp(){
         {/* ── UPLOAD & ADMIN — standard conditional render ─────────────────── */}
         {activeTab==="photos"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos} sessionTzOffset={sessionTzOffset} sailInventory={sailInventory} canClearDay={['admin','team_manager','coach'].includes(effectiveRole)}/>
+            <ErrorBoundary label="Photos"><PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos} sessionTzOffset={sessionTzOffset} sailInventory={sailInventory} canClearDay={['admin','team_manager','coach'].includes(effectiveRole)}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="upload"&&(
@@ -6911,7 +6912,7 @@ function SSAApp(){
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
             <div style={{position:"relative",height:"85dvh"}}><SquashShotsApp/></div>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
-            <div style={{position:"relative",height:"85dvh"}}><SailScanTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId}/></div>
+            <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="SailScan"><SailScanTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId}/></ErrorBoundary></div>
           </div>
         )}
         {activeTab==="admin"&&(
@@ -6928,18 +6929,18 @@ function SSAApp(){
         )}
         {activeTab==="campaign"&&campaignOn&&effectiveRole!=='guest'&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <CampaignTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} onOpenVideo={openCampaignVideo}/>
+            <ErrorBoundary label="Campaign"><CampaignTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} onOpenVideo={openCampaignVideo}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="boatconfig"&&campaignOn&&canSeeBoatConfig&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <BoatConfigTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} sessionTzOffset={sessionTzOffset}/>
+            <ErrorBoundary label="Boat config"><BoatConfigTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} sessionTzOffset={sessionTzOffset}/></ErrorBoundary>
           </div>
         )}
         {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
         {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <WeatherTab isMobile={false} effectiveRole={effectiveRole} boatName={campaignCfg?.boatName} eventName={campaignCfg?.event} logData={logData}/>
+            <ErrorBoundary label="Weather"><WeatherTab isMobile={false} effectiveRole={effectiveRole} boatName={campaignCfg?.boatName} eventName={campaignCfg?.event} logData={logData}/></ErrorBoundary>
           </div>
         )}
       </div>
