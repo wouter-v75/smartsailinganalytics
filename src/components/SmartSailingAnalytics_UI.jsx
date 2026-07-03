@@ -26,6 +26,7 @@ import { getActiveMembership } from '../lib/active-membership';
 import { unmatchedSails } from '../lib/sailResolve';
 import SailListDiffModal from './SailListDiffModal';
 import { ErrorBoundary } from './ui';
+import { buildDayTimeline } from '../lib/timeline/buildNodes';
 
 // ── Lazy-loaded tab components ──────────────────────────────────────────────
 // Each ships as its own JS chunk the browser downloads only when the user
@@ -1960,6 +1961,18 @@ function UploadTab({role,cloudStatus,onImported}){
         if(missing.length && campaignCfg?.teamId && campaignCfg?.boatId){
           setSailDiff({names:missing});
           addLog(`⚠ ${missing.length} sail name${missing.length>1?'s':''} not in inventory — reconcile prompted`);
+        }
+      } catch {}
+      // Build the day's Timeline Tree (day → races → events) and persist it.
+      try {
+        if(campaignCfg?.teamId && campaignCfg?.boatId){
+          const nodes=buildDayTimeline({ xml: xmlParsed, boatId: campaignCfg.boatId, date: d });
+          if(nodes.length){
+            fetch(`/api/teams/${campaignCfg.teamId}/timeline`,{
+              method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({ boat_id: campaignCfg.boatId, session_date: d, nodes }),
+            }).then(r=>{ if(r.ok) addLog(`✓ Timeline built · ${nodes.length} nodes → ${d}`); }).catch(()=>{});
+          }
         }
       } catch {}
     }
