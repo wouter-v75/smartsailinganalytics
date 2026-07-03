@@ -4388,57 +4388,57 @@ function MobileShell(props){
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",
             visibility:activeTab==="analytics"?"visible":"hidden",
             pointerEvents:activeTab==="analytics"?"auto":"none",zIndex:activeTab==="analytics"?2:1}}>
-            <AnalyticsTab logData={props.logData} xmlData={props.xmlData}
+            <ErrorBoundary label="Analytics"><AnalyticsTab logData={props.logData} xmlData={props.xmlData}
               allVideos={props.allVideos} sessions={props.sessions}
               selectedVideo={props.selectedVideo} onSelectVideo={props.setSelectedVideo}
               setActiveTab={setActiveTab} activeDate={props.activeDate}
               onSelectDate={props.onSelectDate}
               playUtc={props.playUtc} visible={activeTab==="analytics"} photos={props.photos}
-              canUseAI={props.canUseAI} canSeeAnalyticsData={props.canSeeAnalyticsData}/>
+              canUseAI={props.canUseAI} canSeeAnalyticsData={props.canSeeAnalyticsData}/></ErrorBoundary>
           </div>
         )}
 
         {/* Photos */}
         {activeTab==="photos"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <PhotosTab role={props.role} logData={props.logData} xmlData={props.xmlData}
+            <ErrorBoundary label="Photos"><PhotosTab role={props.role} logData={props.logData} xmlData={props.xmlData}
               activeDate={props.activeDate} sessions={props.sessions} loadDate={props.loadDate}
               cloudStatus={props.cloudStatus} onPhotosChange={props.setPhotos} sessionTzOffset={props.sessionTzOffset}
-              canClearDay={['admin','team_manager','coach'].includes(props.effectiveRole)}/>
+              canClearDay={['admin','team_manager','coach'].includes(props.effectiveRole)}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="upload"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <UploadTab role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported}/>
+            <ErrorBoundary label="Upload"><UploadTab role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="tools"&&(
           <div style={{position:"absolute",inset:0,overflowY:"auto",zIndex:2,background:"#030F1A"}}>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
-            <div style={{position:"relative",height:"85dvh"}}><SquashShotsApp/></div>
+            <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="Squash"><SquashShotsApp/></ErrorBoundary></div>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
-            <div style={{position:"relative",height:"85dvh"}}><SailScanTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId}/></div>
+            <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="SailScan"><SailScanTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId}/></ErrorBoundary></div>
           </div>
         )}
 
         {/* Campaign */}
         {activeTab==="campaign"&&props.campaignOn&&props.campaignCfg&&props.effectiveRole!=='guest'&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <CampaignTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} onOpenVideo={props.openCampaignVideo}/>
+            <ErrorBoundary label="Campaign"><CampaignTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} onOpenVideo={props.openCampaignVideo}/></ErrorBoundary>
           </div>
         )}
 
         {/* Boat config (read-only viewer) */}
         {activeTab==="boatconfig"&&props.campaignOn&&props.campaignCfg&&props.canSeeBoatConfig&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <BoatConfigTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} sessionTzOffset={props.sessionTzOffset}/>
+            <ErrorBoundary label="Boat config"><BoatConfigTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} sessionTzOffset={props.sessionTzOffset}/></ErrorBoundary>
           </div>
         )}
 
         {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
         {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <WeatherTab isMobile={true} effectiveRole={props.effectiveRole} boatName={props.campaignCfg?.boatName} eventName={props.campaignCfg?.event} logData={props.logData}/>
+            <ErrorBoundary label="Weather"><WeatherTab isMobile={true} effectiveRole={props.effectiveRole} boatName={props.campaignCfg?.boatName} eventName={props.campaignCfg?.event} logData={props.logData}/></ErrorBoundary>
           </div>
         )}
 
@@ -6883,7 +6883,7 @@ function SSAApp(){
             pointerEvents:activeTab==="analytics"?"auto":"none",
             zIndex:activeTab==="analytics"?2:1,
           }}>
-            <AnalyticsTab
+            <ErrorBoundary label="Analytics"><AnalyticsTab
               logData={logData} xmlData={xmlData} allVideos={allVideos}
               sessions={sessions} selectedVideo={selectedVideo}
               onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab}
@@ -6892,7 +6892,7 @@ function SSAApp(){
               playUtc={playUtc}
               visible={activeTab==="analytics"} photos={photos}
               canUseAI={canUseAI} canSeeAnalyticsData={canSeeAnalyticsData}
-            />
+            /></ErrorBoundary>
           </div>
         )}
 
@@ -6904,27 +6904,27 @@ function SSAApp(){
         )}
         {activeTab==="upload"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/>
+            <ErrorBoundary label="Upload"><UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="tools"&&(
           <div style={{position:"absolute",inset:0,overflowY:"auto",zIndex:2,background:"#030F1A"}}>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
-            <div style={{position:"relative",height:"85dvh"}}><SquashShotsApp/></div>
+            <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="Squash"><SquashShotsApp/></ErrorBoundary></div>
             <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
             <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="SailScan"><SailScanTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId}/></ErrorBoundary></div>
           </div>
         )}
         {activeTab==="admin"&&(
           <div style={{position:"absolute",inset:0,overflowY:"auto",padding:20,zIndex:2}}>
-            <AdminTab
+            <ErrorBoundary label="Admin"><AdminTab
               unsyncedCount={unsyncedCount}
               cloudStatus={cloudStatus}
               sessions={sessions}
               setSessions={setSessions}
               setLogData={setLogData}
               setXmlData={setXmlData}
-            />
+            /></ErrorBoundary>
           </div>
         )}
         {activeTab==="campaign"&&campaignOn&&effectiveRole!=='guest'&&(
