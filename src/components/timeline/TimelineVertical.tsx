@@ -4,7 +4,7 @@ import { ChevronRight, Flag, Calendar, type LucideIcon } from 'lucide-react'
 import { Badge } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { buildSeasonScaffold } from '@/lib/timeline/buildSeasonScaffold'
-import DayTimeline from './DayTimeline'
+import DayPhases from './DayPhases'
 
 // A narrow campaign spine on the left (season → regatta → day). Clicking a DAY
 // expands its own vertical time-axis inline — pushing the following days down —
@@ -122,10 +122,12 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
         </div>
       )}
 
-      {/* Day → its own vertical time-axis, inline (pushes following days down). */}
+      {/* Day → its phases (weather · speed-team · sail call · sailing · debrief ·
+          performance). "Sailing" opens the vertical time-axis. Inline, so the
+          following days get pushed down. */}
       {isDay && isOpen && (
         <div className="tl-reveal-item ml-[10px] mt-1 border-l-2 border-[color:var(--accent)] pl-3">
-          <DayTimeline day={node} events={descendantsOf(node.id)} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo ? playForDay : undefined} />
+          <DayPhases day={node} events={descendantsOf(node.id)} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo ? playForDay : undefined} />
         </div>
       )}
     </div>
