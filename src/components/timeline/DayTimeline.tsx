@@ -5,12 +5,12 @@ import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { PhotoOverlayImage, FallbackVideoPlayer } from './DayMedia'
 
-// The day's own VERTICAL time-axis. A zoomable time bar (hover cursor + time box)
-// carrying the day's nodes and event-file tags (starts, mark roundings, tacks,
-// gybes, sail changes) coloured like the Videos tab. Media are anchored to their
-// timestamp: two decks — one for videos, one for photos. When zoomed out and
-// timestamps cluster, cards STACK like a hand of playing cards; zooming in
-// spreads them apart until they sit fully beneath one another.
+// The day's own VERTICAL time-axis. A zoomable, pinch/scrollable time bar (hover
+// cursor + time box) with the day's nodes and event-file tags coloured like the
+// Videos tab. Media are anchored to their timestamp and stacked BETWEEN events —
+// videos in one deck, photos in another, with clear space between the per-segment
+// stacks. Cards stack like playing cards when clustered; zooming/pinching spreads
+// them apart. Hovering a card doubles it and shows its sail/event/TWS/TWA.
 
 const EVENT_STYLE: Record<string, { c: string; label: string; notable: boolean }> = {
   race: { c: '#D85A30', label: 'Race', notable: true },
@@ -28,18 +28,28 @@ const VIDEO_C = '#06B6D4', PHOTO_C = '#F59E0B'
 const hms = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 16)
 const r = (v?: number | null, d = 0) => (v == null ? null : v.toFixed(d))
 
+// Tag chip colours (mirror the Videos-tab tagColor scheme).
+function chipStyle(t: string): { bg: string; c: string; bd: string } {
+  if (/^(race-start|topmark|mark|start|finish)$/.test(t)) return { bg: '#EF444422', c: '#EF4444', bd: '#EF444455' }
+  if (/^(upwind|reach|downwind)$/.test(t)) return { bg: '#06B6D422', c: '#06B6D4', bd: '#06B6D455' }
+  if (/^(tack|gybe)$/.test(t)) return { bg: '#1D9E7522', c: '#1D9E75', bd: '#1D9E7555' }
+  return { bg: '#8B5CF622', c: '#A78BFA', bd: '#8B5CF655' }
+}
+
 interface MediaItem {
   id: string; type: 'video' | 'photo'; thumb: string | null; t: number
-  title?: string | null; tags: string[]; tws?: number | null; twd?: number | null; inst?: Record<string, any>
+  title?: string | null; tags: string[]; tws?: number | null; twa?: number | null; twd?: number | null; sails: string[]; inst?: Record<string, any>
 }
+interface Placed { m: MediaItem; y: number; yt: number }
 
 // Geometry.
 const PAD = 30, AXIS_X = 12, EVENT_LABEL_X = 42
-const VIDEO_X = 196, VIDEO_W = 152, VIDEO_H = 90
-const PHOTO_X = 372, PHOTO_W = 120, PHOTO_H = 90
+const VIDEO_X = 196, VIDEO_W = 150, VIDEO_H = 88
+const PHOTO_X = 372, PHOTO_W = 120, PHOTO_H = 88
 const CONTENT_W = PHOTO_X + PHOTO_W + 16
-const CARD_OFFSET = 26        // stacked-card reveal when timestamps cluster
-const MIN_PPH = 40, MAX_PPH = 480, DEFAULT_PPH = 90
+const CARD_OFFSET = 26        // stacked-card reveal within a segment
+const SEGMENT_GAP = 46        // extra space between stacks in different segments
+const MIN_PPH = 40, MAX_PPH = 720, DEFAULT_PPH = 90
 
 export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVideo }: {
   day: TimelineNode; events: TimelineNode[]; tz: number
@@ -51,7 +61,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [openPhoto, setOpenPhoto] = React.useState<MediaItem | null>(null)
   const [openVideo, setOpenVideo] = React.useState<MediaItem | null>(null)
   const [cursor, setCursor] = React.useState<{ y: number; t: number } | null>(null)
-  const [pph, setPph] = React.useState(DEFAULT_PPH) // pixels per hour (zoom)
+  const [pph, setPph] = React.useState(DEFAULT_PPH)
 
   React.useEffect(() => {
     if (!teamId || !boatId || !date) { setMedia([]); return }
@@ -64,12 +74,12 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       if (!alive) return
       const vids: MediaItem[] = (vj?.videos || []).map((v: any) => ({
         id: v.id, type: 'video', thumb: v.thumbnail || v.thumbnail_url,
-        t: Date.parse(v.start_utc) || day.t0, title: v.title, tags: v.tags || [],
+        t: Date.parse(v.start_utc) || day.t0, title: v.title, tags: v.tags || [], sails: [],
       }))
       const phs: MediaItem[] = (pj?.photos || []).map((p: any) => {
         const a = p.analysis_data || {}, inst = a.inst || {}
         const sails = a.sails ?? inst.sails ?? []
-        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twd: inst.twd ?? null, inst: { ...inst, sails } }
+        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails } }
       })
       setMedia([...vids, ...phs].sort((a, b) => a.t - b.t))
     })
@@ -77,6 +87,14 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }, [teamId, boatId, date, day.t0])
 
   const markers = React.useMemo(() => events.filter((e) => e.kind !== 'day' && EVENT_STYLE[e.kind]), [events])
+  const eventTimes = React.useMemo(() => markers.map((e) => e.t0).sort((a, b) => a - b), [markers])
+  const segmentOf = React.useCallback((t: number) => { let i = 0; while (i < eventTimes.length && eventTimes[i] <= t) i++; return i }, [eventTimes])
+  const nearestEvent = React.useCallback((t: number) => {
+    let best: TimelineNode | null = null, bd = Infinity
+    for (const e of markers) { const d = Math.abs(e.t0 - t); if (d < bd) { bd = d; best = e } }
+    return best && bd <= 12 * 60000 ? best : null
+  }, [markers])
+
   const videos = React.useMemo(() => (media || []).filter((m) => m.type === 'video'), [media])
   const photos = React.useMemo(() => (media || []).filter((m) => m.type === 'photo'), [media])
 
@@ -89,23 +107,25 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }, [day.t0, day.t1, markers, media])
 
   const hoursSpan = (hi - lo) / 3600000
-  const axisH = Math.max(300, Math.min(6000, hoursSpan * pph))
+  const axisH = Math.max(300, Math.min(9000, hoursSpan * pph))
   const yOf = React.useCallback((t: number) => PAD + ((t - lo) / (hi - lo)) * (axisH - 2 * PAD), [lo, hi, axisH])
   const tOf = (y: number) => lo + ((y - PAD) / (axisH - 2 * PAD)) * (hi - lo)
 
-  // Place a column's items at their timestamp, but never closer than CARD_OFFSET
-  // to the previous one → clusters become a stacked deck; zoom spreads them.
-  const placeCol = React.useCallback((items: MediaItem[], h: number) => {
-    let prev = -Infinity
+  // Place a column at timestamps, keeping CARD_OFFSET within a segment and
+  // SEGMENT_GAP across event boundaries → stacks sit between events with space.
+  const placeCol = React.useCallback((items: MediaItem[]): Placed[] => {
+    let prev = -Infinity, prevSeg = -1
     return items.map((m) => {
+      const seg = segmentOf(m.t)
+      const gap = seg !== prevSeg ? SEGMENT_GAP : CARD_OFFSET
       const yt = yOf(m.t)
-      const y = Math.max(yt, prev + CARD_OFFSET)
-      prev = y
+      const y = Math.max(yt, prev + gap)
+      prev = y; prevSeg = seg
       return { m, y, yt }
     })
-  }, [yOf])
-  const vPlaced = React.useMemo(() => placeCol(videos, VIDEO_H), [videos, placeCol])
-  const pPlaced = React.useMemo(() => placeCol(photos, PHOTO_H), [photos, placeCol])
+  }, [yOf, segmentOf])
+  const vPlaced = React.useMemo(() => placeCol(videos), [videos, placeCol])
+  const pPlaced = React.useMemo(() => placeCol(photos), [photos, placeCol])
 
   const contentH = React.useMemo(() => {
     let bottom = axisH
@@ -127,7 +147,21 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     setCursor({ y, t: tOf(y) })
   }
   const zoom = (f: number) => setPph((p) => Math.max(MIN_PPH, Math.min(MAX_PPH, Math.round(p * f))))
-  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoom(e.deltaY < 0 ? 1.15 : 1 / 1.15) } }
+  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12) } }
+
+  // Pinch to stretch (two-finger). Single-finger drag falls through to native
+  // vertical scroll (touch-action: pan-y).
+  const pinch = React.useRef<{ dist: number; pph: number } | null>(null)
+  const dist = (a: React.Touch, b: React.Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+  const onTouchStart = (e: React.TouchEvent) => { if (e.touches.length === 2) pinch.current = { dist: dist(e.touches[0], e.touches[1]), pph } }
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && pinch.current) {
+      e.preventDefault()
+      const ratio = dist(e.touches[0], e.touches[1]) / (pinch.current.dist || 1)
+      setPph(Math.max(MIN_PPH, Math.min(MAX_PPH, Math.round(pinch.current.pph * ratio))))
+    }
+  }
+  const onTouchEnd = (e: React.TouchEvent) => { if (e.touches.length < 2) pinch.current = null }
 
   const clickMedia = (m: MediaItem) => m.type === 'video' ? (onPlayVideo ? onPlayVideo(m.id) : setOpenVideo(m)) : setOpenPhoto(m)
 
@@ -137,17 +171,20 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
   return (
     <div className="py-1">
-      {/* Zoom toolbar */}
       <div className="mb-1 flex items-center gap-2">
         <span className="text-[11px] text-muted">Zoom</span>
         <button onClick={() => zoom(1 / 1.5)} className="rounded border border-[color:var(--border)] bg-surface-1 p-1 hover:bg-surface-2" aria-label="Zoom out"><ZoomOut size={14} /></button>
         <button onClick={() => zoom(1.5)} className="rounded border border-[color:var(--border)] bg-surface-1 p-1 hover:bg-surface-2" aria-label="Zoom in"><ZoomIn size={14} /></button>
-        <span className="text-[10px] text-faint">⌘/Ctrl + scroll to zoom</span>
+        <span className="text-[10px] text-faint">pinch, or ⌘/Ctrl + scroll, to stretch</span>
       </div>
 
       <div className="overflow-x-auto">
-        <div className="relative" style={{ width: CONTENT_W, height: contentH }} onMouseMove={onMove} onMouseLeave={() => setCursor(null)} onWheel={onWheel}>
-          {/* SVG: axis, ticks, connectors, event dots, cursor */}
+        <div
+          className="relative"
+          style={{ width: CONTENT_W, height: contentH, touchAction: 'pan-y' }}
+          onMouseMove={onMove} onMouseLeave={() => setCursor(null)} onWheel={onWheel}
+          onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
+        >
           <svg className="pointer-events-none absolute inset-0" width={CONTENT_W} height={contentH} aria-hidden>
             <line x1={AXIS_X} y1={PAD} x2={AXIS_X} y2={axisH - PAD} stroke="var(--border-strong)" strokeWidth={2} />
             {ticks.map((t) => <line key={t} x1={AXIS_X - 4} y1={yOf(t)} x2={AXIS_X + 4} y2={yOf(t)} stroke="var(--text-muted)" strokeWidth={1} />)}
@@ -157,14 +194,11 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             {cursor && <line x1={0} y1={cursor.y} x2={CONTENT_W} y2={cursor.y} stroke="var(--accent)" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.7} />}
           </svg>
 
-          {/* Column headers */}
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: VIDEO_X, top: 6, color: VIDEO_C }}>Videos</div>
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: PHOTO_X, top: 6, color: PHOTO_C }}>Photos</div>
 
-          {/* Hour labels */}
           {ticks.map((t) => <div key={t} className="absolute font-mono text-[10px] text-muted" style={{ left: AXIS_X + 8, top: yOf(t) - 7 }}>{hms(t, tz)}</div>)}
 
-          {/* Event labels (notable only) */}
           {markers.filter((e) => EVENT_STYLE[e.kind].notable).map((e) => {
             const st = EVENT_STYLE[e.kind]
             return (
@@ -174,15 +208,12 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             )
           })}
 
-          {/* Cursor time box */}
           {cursor && (
             <div className="pointer-events-none absolute z-[60] rounded bg-[color:var(--accent)] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[color:var(--accent-fg)]" style={{ left: 0, top: cursor.y - 9 }}>{hms(cursor.t, tz)}</div>
           )}
 
-          {/* Video deck */}
-          {vPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={VIDEO_X} y={y} w={VIDEO_W} h={VIDEO_H} color={VIDEO_C} tz={tz} onClick={() => clickMedia(m)} />)}
-          {/* Photo deck */}
-          {pPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={PHOTO_X} y={y} w={PHOTO_W} h={PHOTO_H} color={PHOTO_C} tz={tz} onClick={() => clickMedia(m)} />)}
+          {vPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={VIDEO_X} y={y} w={VIDEO_W} h={VIDEO_H} color={VIDEO_C} tz={tz} side="left" ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
+          {pPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={PHOTO_X} y={y} w={PHOTO_W} h={PHOTO_H} color={PHOTO_C} tz={tz} side="right" ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
 
           {markers.length === 0 && (media || []).length === 0 && (
             <div className="absolute text-xs text-muted" style={{ left: VIDEO_X, top: PAD }}>No markers, photos or videos for this day.</div>
@@ -205,26 +236,40 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   )
 }
 
-// A single deck card. DOM order gives the stacked "playing cards" look (later
-// cards paint on top); hover lifts it above the deck and enlarges it.
-function MediaCard({ m, x, y, w, h, color, tz, onClick }: {
-  m: MediaItem; x: number; y: number; w: number; h: number; color: string; tz: number; onClick: () => void
+// Deck card. DOM order gives the stacked "playing cards" look; hover DOUBLES the
+// card (origin toward the axis so it stays on screen), lifts it above the deck,
+// and reveals its sail / event / TWS / TWA.
+function MediaCard({ m, x, y, w, h, color, tz, side, ev, onClick }: {
+  m: MediaItem; x: number; y: number; w: number; h: number; color: string; tz: number
+  side: 'left' | 'right'; ev: TimelineNode | null; onClick: () => void
 }) {
+  const evStyle = ev ? EVENT_STYLE[ev.kind] : null
   return (
     <button
       onClick={onClick}
       title={m.type === 'video' ? (m.title || 'Play video') : hms(m.t, tz)}
-      className="group/med absolute overflow-hidden rounded-lg text-left shadow-md transition-transform duration-150 hover:z-[80] hover:scale-[1.12] hover:shadow-xl motion-reduce:transition-none motion-reduce:hover:scale-100 focus-visible:outline-none focus-visible:ring-2"
-      style={{ left: x, top: y, width: w, height: h, border: `2px solid ${color}`, background: 'var(--surface-2)' }}
+      className="group/med absolute overflow-visible rounded-lg text-left shadow-md transition-transform duration-150 hover:z-[80] hover:scale-[2] motion-reduce:transition-none motion-reduce:hover:scale-100 focus-visible:outline-none focus-visible:ring-2"
+      style={{ left: x, top: y, width: w, height: h, transformOrigin: side === 'left' ? 'left center' : 'right center' }}
     >
-      <div className="relative h-full w-full">
+      <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ border: `2px solid ${color}`, background: 'var(--surface-2)' }}>
         {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="h-full w-full object-cover" />
           : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
         <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{hms(m.t, tz)}</span>
-        {m.type === 'video' && <span className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white transition-transform duration-150 group-hover/med:scale-110"><Play size={15} aria-hidden /></span>}
-        {m.type === 'video' && m.tags.length > 0 && <div className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1 py-0.5 text-[9px] text-white/90">{m.tags.slice(0, 3).join(' · ')}</div>}
-        {m.type === 'photo' && (m.tws != null || m.twd != null) && <div className="absolute inset-x-0 bottom-0 bg-black/55 px-1 py-0.5 font-mono text-[9px] text-white/90">{m.tws != null ? `${r(m.tws)}kt` : ''}{m.twd != null ? ` ${r(m.twd)}°` : ''}</div>}
+        {m.type === 'video' && <span className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white group-hover/med:opacity-0"><Play size={15} aria-hidden /></span>}
+
+        {/* Hover metadata (revealed when the card doubles). */}
+        <div className="absolute inset-x-0 bottom-0 hidden flex-wrap items-center gap-1 bg-black/72 px-1.5 py-1 group-hover/med:flex">
+          {m.tws != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWS {r(m.tws)}kn</Chip>}
+          {m.twa != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWA {r(m.twa)}°</Chip>}
+          {m.sails.slice(0, 2).map((sName) => <Chip key={sName} s={chipStyle(sName)}>{sName}</Chip>)}
+          {m.tags.slice(0, 3).map((t) => <Chip key={t} s={chipStyle(t)}>{t}</Chip>)}
+          {evStyle && <Chip s={{ bg: evStyle.c + '22', c: evStyle.c, bd: evStyle.c + '55' }}>{ev!.title || evStyle.label}</Chip>}
+        </div>
       </div>
     </button>
   )
+}
+
+function Chip({ children, s }: { children: React.ReactNode; s: { bg: string; c: string; bd: string } }) {
+  return <span className="rounded px-1 py-px text-[8px] font-medium" style={{ background: s.bg, color: s.c, border: `1px solid ${s.bd}` }}>{children}</span>
 }
