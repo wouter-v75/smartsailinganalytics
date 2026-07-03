@@ -26,6 +26,9 @@ const BLOCK_META = {
   'other':             { label: 'Other',             c: '#64748B', testing: false },
 }
 const BLOCK_ORDER = ['technical-testing', 'speed-testing', 'race-training', 'racing', 'shore', 'other']
+// Block types a Training block can be made of (everything except `racing`,
+// which is what defines a Regatta). Order = the order chips are shown in.
+const TRAINING_BLOCK_TYPES = ['race-training', 'speed-testing', 'technical-testing', 'shore', 'other']
 
 const todayStr = () => {
   const d = new Date()
@@ -35,9 +38,11 @@ const todayStr = () => {
 }
 const fmtDay = (iso) => {
   // Parse as local date (avoid TZ shift from Date('YYYY-MM-DD') = UTC midnight).
+  // Force en-GB so the label is always day-first (European), never US MM/DD,
+  // regardless of the viewer's browser locale.
   const [y, m, d] = iso.split('-').map(Number)
   const dt = new Date(y, m - 1, d)
-  return dt.toLocaleDateString(undefined, {
+  return dt.toLocaleDateString('en-GB', {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
@@ -50,16 +55,35 @@ const daysBetween = (fromIso, toIso) => {
   const b = Date.UTC(by, bm - 1, bd)
   return Math.round((b - a) / 86400000)
 }
+
+// ── Date-range safety ──────────────────────────────────────────────────────
+// Native <input type="date"> yields ISO (YYYY-MM-DD) values, so ordering is
+// unambiguous. But a fat-fingered / far-future "to" date used to silently
+// create ~120 days (June + 120 ≈ late October) and fire hundreds of sequential
+// writes → the "saving hangs" bug. We now reject invalid / reversed / oversized
+// ranges up front and hard-cap the generated list.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+const MAX_RANGE_DAYS = 45 // a training block or regatta never spans > ~6 weeks
+const isValidIso = (s) => typeof s === 'string' && ISO_DATE_RE.test(s) && Number(s.slice(0, 4)) >= 2000
+// Returns a human error string if the range can't be saved, else null.
+const rangeError = (aIso, bIso) => {
+  if (!isValidIso(aIso)) return 'pick a valid start date'
+  const end = bIso || aIso
+  if (bIso && !isValidIso(bIso)) return 'pick a valid end date'
+  if (end < aIso) return 'the end date is before the start date'
+  if (daysBetween(aIso, end) + 1 > MAX_RANGE_DAYS) return `that range is too long (max ${MAX_RANGE_DAYS} days)`
+  return null
+}
 const datesInRange = (aIso, bIso) => {
-  if (!aIso) return []
-  const end = bIso && bIso >= aIso ? bIso : aIso
+  if (!isValidIso(aIso)) return []
+  const end = bIso && isValidIso(bIso) && bIso >= aIso ? bIso : aIso
   const out = []
   const [y, m, d] = aIso.split('-').map(Number)
   let cur = new Date(y, m - 1, d)
   const [ey, em, ed] = end.split('-').map(Number)
   const stop = new Date(ey, em - 1, ed)
   let guard = 0
-  while (cur <= stop && guard < 120) {
+  while (cur <= stop && guard < MAX_RANGE_DAYS) {
     out.push(
       `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
     )
@@ -1558,6 +1582,7 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, crossBoatE
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
   const [adding, setAdding] = useState(false)
+  const [addingTraining, setAddingTraining] = useState(false)
 
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
   const showBoatChips = (boats || []).length > 1
@@ -1622,6 +1647,44 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, crossBoatE
     .slice()
     .sort((a, b) => b.dateFrom.localeCompare(a.dateFrom))
 
+  // ── Group sessions into training blocks ─────────────────────────────────
+  // A "training block" = consecutive days (gap ≤ 1) on the same boat that have
+  // at least one non-racing block and no racing block. This mirrors the regatta
+  // grouping so a 3-day training block shows as one entry — not one row per day,
+  // and never a single bar spanning the whole season.
+  const trainingBlocks = (() => {
+    const trainingDays = sessions
+      .filter((s) => {
+        const bl = s.blocks || []
+        return bl.some((b) => TRAINING_BLOCK_TYPES.includes(b.block_type)) &&
+          !bl.some((b) => b.block_type === 'racing')
+      })
+      .slice()
+      .sort((a, b) => (a.boat_id || '').localeCompare(b.boat_id || '') || a.date.localeCompare(b.date))
+    const groups = []
+    for (const s of trainingDays) {
+      const prev = groups[groups.length - 1]
+      const sameAsPrev = prev && prev.boat_id === s.boat_id && daysBetween(prev.dateTo, s.date) <= 1
+      const types = (s.blocks || []).filter((b) => TRAINING_BLOCK_TYPES.includes(b.block_type)).map((b) => b.block_type)
+      if (sameAsPrev) {
+        prev.dateTo = s.date
+        prev.sessions.push(s)
+        types.forEach((t) => prev.types.add(t))
+      } else {
+        groups.push({
+          key: `${s.boat_id}|train|${s.date}`,
+          boat_id: s.boat_id,
+          boat_name: s.boat_name,
+          dateFrom: s.date,
+          dateTo: s.date,
+          sessions: [s],
+          types: new Set(types),
+        })
+      }
+    }
+    return groups.sort((a, b) => b.dateFrom.localeCompare(a.dateFrom))
+  })()
+
   async function createRegatta({ dateFrom, dateTo, name, location }) {
     const dates = datesInRange(dateFrom, dateTo)
     if (dates.length === 0) throw new Error('pick a valid date range')
@@ -1652,17 +1715,64 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, crossBoatE
     }
   }
 
+  // Create a training block: one session per day in the range, each seeded with
+  // the picked non-racing block type. No event name (that's what makes it a
+  // regatta) — training blocks are typed by their block, grouped by their dates.
+  async function createTraining({ dateFrom, dateTo, blockType }) {
+    const dates = datesInRange(dateFrom, dateTo)
+    if (dates.length === 0) throw new Error('pick a valid date range')
+    const bt = TRAINING_BLOCK_TYPES.includes(blockType) ? blockType : 'race-training'
+    for (const date of dates) {
+      const r = await fetch(`${base}/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date }),
+      })
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `could not save ${date}`)
+      const j = await r.json().catch(() => ({}))
+      const sessionId = j?.session?.id
+      // Skip if this day already carries the same training block.
+      const existing = sessions.find((s) => s.date === date && s.boat_id === boatId)
+      const hasType = (existing?.blocks || []).some((b) => b.block_type === bt)
+      if (sessionId && !hasType) {
+        await fetch(`${base}/blocks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId, block_type: bt, seq: 0 }),
+        }).catch(() => {})
+      }
+    }
+  }
+
+  // Remove a training block: delete its typed blocks day-by-day. The session
+  // itself is kept (it may hold logs/videos/photos) — it just reverts to a
+  // plain day with no planned block.
+  async function deleteTraining(tb) {
+    const tbBase = tb.boat_id === boatId ? base : `/api/teams/${teamId}/boats/${tb.boat_id}/campaign`
+    for (const s of tb.sessions) {
+      for (const b of (s.blocks || [])) {
+        if (TRAINING_BLOCK_TYPES.includes(b.block_type)) {
+          await fetch(`${tbBase}/blocks/${b.id}`, { method: 'DELETE' }).catch(() => {})
+        }
+      }
+    }
+    await load()
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, color: '#94A3B8' }}>
-          {regattas.length === 0
-            ? 'No regattas yet.'
-            : `${regattas.length} regatta${regattas.length === 1 ? '' : 's'} on the calendar.`}
+          {regattas.length === 0 && trainingBlocks.length === 0
+            ? 'No regattas or training blocks yet.'
+            : `${regattas.length} regatta${regattas.length === 1 ? '' : 's'} · ${trainingBlocks.length} training block${trainingBlocks.length === 1 ? '' : 's'}.`}
         </span>
         <div style={{ flex: 1 }} />
-        {canEditPlan && !adding && (
-          <button onClick={() => setAdding(true)} style={btnPrimary}>+ Regatta</button>
+        {canEditPlan && (
+          <>
+            <button onClick={() => { setAddingTraining(true); setAdding(false) }} style={btnGhost} disabled={addingTraining}>+ Training</button>
+            <button onClick={() => { setAdding(true); setAddingTraining(false) }} style={btnPrimary} disabled={adding}>+ Regatta</button>
+          </>
         )}
       </div>
 
@@ -1673,6 +1783,19 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, crossBoatE
             try {
               await createRegatta(payload)
               setAdding(false)
+              await load()
+            } catch (e) { throw e }
+          }}
+        />
+      )}
+
+      {addingTraining && (
+        <TrainingForm
+          onCancel={() => setAddingTraining(false)}
+          onSubmit={async (payload) => {
+            try {
+              await createTraining(payload)
+              setAddingTraining(false)
               await load()
             } catch (e) { throw e }
           }}
@@ -1752,7 +1875,106 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, crossBoatE
           )}
         </>
       )}
+
+      {/* Training blocks — consecutive-day runs, most recent first. */}
+      {trainingBlocks.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#1D9E75', textTransform: 'uppercase', letterSpacing: 1, margin: '24px 0 10px' }}>
+            Training blocks ({trainingBlocks.length})
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {trainingBlocks.map((tb) => {
+              const isOwnBoat = tb.boat_id === boatId
+              const canEditTb = canEditPlan && (isOwnBoat || crossBoatEdit)
+              const nDays = tb.sessions.length
+              return (
+                <div key={tb.key} style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#E2E8F0' }}>
+                      {tb.dateFrom === tb.dateTo ? fmtDay(tb.dateFrom) : `${fmtDay(tb.dateFrom)} – ${fmtDay(tb.dateTo)}`}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                      {nDays} day{nDays === 1 ? '' : 's'}{showBoatChips && tb.boat_name ? ` · ${tb.boat_name}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                    {BLOCK_ORDER.filter((t) => tb.types.has(t)).map((t) => (
+                      <span key={t} style={{ fontSize: 11, borderRadius: 999, padding: '3px 9px', background: (BLOCK_META[t] || BLOCK_META.other).c, color: '#000', fontWeight: 700 }}>
+                        {(BLOCK_META[t] || BLOCK_META.other).label}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ flex: 1 }} />
+                  {canEditTb && (
+                    <button
+                      onClick={() => { if (confirm('Remove this training block? The days stay (with any logs/media) — only the planned training block is cleared.')) deleteTraining(tb) }}
+                      style={btnGhost}
+                    >Remove</button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
     </div>
+  )
+}
+
+// Add a training block over a date range: pick a block type + from/to dates.
+// Mirror of RegattaForm but with a type picker instead of a name/location.
+function TrainingForm({ onSubmit, onCancel }) {
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [blockType, setBlockType] = useState('race-training')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  async function submit(e) {
+    e.preventDefault()
+    if (!dateFrom) return
+    const re = rangeError(dateFrom, dateTo)
+    if (re) { setErr(re); return }
+    setBusy(true); setErr(null)
+    try {
+      await onSubmit({ dateFrom, dateTo: dateTo || dateFrom, blockType })
+    } catch (e2) {
+      setErr(e2?.message || 'could not save')
+    } finally { setBusy(false) }
+  }
+  return (
+    <form onSubmit={submit} style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} title="From" required />
+        <span style={{ color: '#475569', fontSize: 12 }}>to</span>
+        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} title="To (leave blank for a single day)" />
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: 12, color: '#94A3B8' }}>Type</span>
+        {TRAINING_BLOCK_TYPES.map((t) => {
+          const on = blockType === t
+          const meta = BLOCK_META[t] || BLOCK_META.other
+          return (
+            <button
+              type="button"
+              key={t}
+              onClick={() => setBlockType(t)}
+              style={{
+                fontSize: 11, borderRadius: 999, padding: '4px 10px', cursor: 'pointer',
+                border: `1px solid ${on ? meta.c : '#1E3A5A'}`,
+                background: on ? meta.c : 'transparent',
+                color: on ? '#000' : '#94A3B8',
+                fontWeight: on ? 700 : 500,
+              }}
+            >{meta.label}</button>
+          )
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button type="submit" disabled={busy || !dateFrom} style={btnPrimary}>{busy ? 'Saving…' : 'Save training block'}</button>
+        <button type="button" onClick={onCancel} style={btnGhost}>Cancel</button>
+        {err && <span style={{ color: '#EF4444', fontSize: 12, alignSelf: 'center' }}>{err}</span>}
+      </div>
+    </form>
   )
 }
 
@@ -1766,6 +1988,8 @@ function RegattaForm({ initial, onSubmit, onCancel }) {
   async function submit(e) {
     e.preventDefault()
     if (!dateFrom || !name.trim()) return
+    const re = rangeError(dateFrom, dateTo)
+    if (re) { setErr(re); return }
     setBusy(true); setErr(null)
     try {
       await onSubmit({ dateFrom, dateTo: dateTo || dateFrom, name, location })

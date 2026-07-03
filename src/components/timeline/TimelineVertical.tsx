@@ -24,7 +24,10 @@ const GLYPH: Record<string, { icon: LucideIcon; color: string }> = {
   debrief: { icon: ClipboardList, color: '#7f77dd' },
 }
 const hms = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 16)
-const ymd = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(0, 10)
+// Day-first European label (e.g. "2 Jul") — never US MM/DD. Formatted in UTC to
+// match the already-tz-shifted ms so the day doesn't jump.
+const dm = (ms: number, tz: number) =>
+  new Date(ms + tz * 60000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 
 export default function TimelineVertical({ nodes: raw, tzOffset = 0, initialFocusId, teamId, boatId }: { nodes: TimelineNode[]; tzOffset?: number; initialFocusId?: string; teamId?: string | null; boatId?: string | null }) {
   const nodes = React.useMemo(() => buildSeasonScaffold(raw), [raw])
@@ -67,8 +70,8 @@ function Row({ node, tz, childrenOf, open, toggle, teamId, boatId }: {
   const g = GLYPH[node.kind]
   const Icon = g?.icon
   const timeLabel = node.kind === 'season' || node.kind === 'regatta'
-    ? `${ymd(node.t0, tz)} – ${ymd(node.t1, tz)}`
-    : node.kind === 'day' ? ymd(node.t0, tz)
+    ? `${dm(node.t0, tz)} – ${dm(node.t1, tz)}`
+    : node.kind === 'day' ? dm(node.t0, tz)
     : node.t1 > node.t0 ? `${hms(node.t0, tz)}–${hms(node.t1, tz)}` : hms(node.t0, tz)
 
   return (

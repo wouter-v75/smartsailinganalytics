@@ -47,3 +47,33 @@ describe('buildCampaignTree', () => {
     expect(new Set(dayIds).size).toBe(dayIds.length)
   })
 })
+
+describe('buildCampaignTree — consecutive-run grouping', () => {
+  it('splits non-contiguous training days into separate blocks (no season-long bar)', () => {
+    const s: SessionRec[] = [
+      { date: '2026-06-25', event: null },
+      { date: '2026-06-26', event: null },
+      { date: '2026-06-27', event: null }, // block A (25–27 Jun)
+      { date: '2026-08-10', event: null }, // block B (weeks later)
+    ]
+    const out = buildCampaignTree({ sessions: s, detail: [], boatId: 'b' })
+    const trainings = out.filter((n) => n.kind === 'regatta' && n.title === 'Training')
+    expect(trainings).toHaveLength(2)
+    // The June block must END on 27 Jun, not stretch to August.
+    const june = trainings.find((r) => r.id.includes('2026-06-25'))!
+    expect(new Date(june.t1).toISOString().slice(0, 10)).toBe('2026-06-27')
+  })
+
+  it('ignores stray pre-2000 (1900) dates so the season does not start in 1900', () => {
+    const s: SessionRec[] = [
+      { date: '1900-01-01', event: null }, // bad legacy row
+      { date: '2026-06-25', event: null },
+      { date: '2026-06-26', event: null },
+    ]
+    const out = buildCampaignTree({ sessions: s, detail: [], boatId: 'b' })
+    const season = out.find((n) => n.kind === 'season')!
+    expect(season.title).toBe('Season 2026')
+    expect(new Date(season.t0).toISOString().slice(0, 4)).toBe('2026')
+    expect(out.filter((n) => n.kind === 'day')).toHaveLength(2)
+  })
+})

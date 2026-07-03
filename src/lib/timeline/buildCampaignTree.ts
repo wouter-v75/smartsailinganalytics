@@ -26,7 +26,11 @@ export function buildCampaignTree({ sessions, detail, boatId }: { sessions: Sess
   const detailDay = new Map<string, TimelineNode>() // date -> persisted day node
   for (const n of detail) if (n.kind === 'day') detailDay.set(n.id.split(':')[1] || '', n)
 
-  const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}/.test(s)
+  // Require a real, this-era date. The year>=2000 guard drops stray 1900-dated
+  // sessions (from an old bad save) so they can't drag the season start back.
+  const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}/.test(s) && Number(s.slice(0, 4)) >= 2000
+  const dayGap = (aIso: string, bIso: string) =>
+    Math.round((Date.parse(`${bIso}T00:00:00Z`) - Date.parse(`${aIso}T00:00:00Z`)) / 86400000)
   const bySession = new Map(sessions.map((s) => [s.date, s]))
   const dates = new Set<string>()
   sessions.forEach((s) => { if (isDate(s.date)) dates.add(s.date.slice(0, 10)) })
@@ -53,22 +57,35 @@ export function buildCampaignTree({ sessions, detail, boatId }: { sessions: Sess
   // Most recent day's year (fall back to the current year), never a bad 1900.
   const year = (dateList[dateList.length - 1] || '').slice(0, 4) || String(new Date().getUTCFullYear())
   const seasonId = `${boatId}:season:${year}`
+  // Group days into CONSECUTIVE RUNS sharing the same event. A new run starts
+  // whenever the event changes OR there's a gap of more than one day. This is
+  // what stops every no-event ("Training") day collapsing into a single bar
+  // spanning the whole season: a 3-day June training block is its own run, not
+  // June→October. `days` is already sorted ascending by date.
+  interface Run { event: string; days: DayInfo[] }
+  const runs: Run[] = []
+  for (const d of days) {
+    const prev = runs[runs.length - 1]
+    const contiguous = prev && prev.event === d.event && dayGap(prev.days[prev.days.length - 1].date, d.date) <= 1
+    if (contiguous) prev.days.push(d)
+    else runs.push({ event: d.event, days: [d] })
+  }
+
   out.push({
     id: seasonId, parentId: null, kind: 'season',
     t0: Math.min(...days.map((d) => d.t0)), t1: Math.max(...days.map((d) => d.t1)),
     title: `Season ${year}`, source: 'auto', producer: 'campaign',
-    metrics: { regattas: new Set(days.map((d) => d.event)).size, days: days.length },
+    metrics: { regattas: runs.length, days: days.length },
   })
 
-  const groups = new Map<string, DayInfo[]>()
-  for (const d of days) { const a = groups.get(d.event); if (a) a.push(d); else groups.set(d.event, [d]) }
   const dayParent = new Map<string, string>()
-  groups.forEach((ds, event) => {
-    const regId = `${boatId}:regatta:${slug(event)}:${ds[0].date}`
+  runs.forEach((run) => {
+    const ds = run.days
+    const regId = `${boatId}:regatta:${slug(run.event)}:${ds[0].date}`
     out.push({
       id: regId, parentId: seasonId, kind: 'regatta',
       t0: Math.min(...ds.map((d) => d.t0)), t1: Math.max(...ds.map((d) => d.t1)),
-      title: event, source: 'auto', producer: 'campaign', metrics: { days: ds.length },
+      title: run.event, source: 'auto', producer: 'campaign', metrics: { days: ds.length },
     })
     ds.forEach((d) => dayParent.set(d.date, regId))
   })
