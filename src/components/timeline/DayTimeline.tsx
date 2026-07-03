@@ -253,8 +253,8 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             <div className="pointer-events-none absolute z-[60] rounded bg-[color:var(--accent)] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[color:var(--accent-fg)]" style={{ left: 0, top: cursor.y - 9 }}>{hms(cursor.t, tz)}</div>
           )}
 
-          {vPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} side="left" ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
-          {pPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} side="right" ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
+          {vPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} scale={compact ? 1.5 : 1.85} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
+          {pPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} scale={compact ? 1.5 : 1.85} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
 
           {markers.length === 0 && (media || []).length === 0 && (
             <div className="absolute text-xs text-muted" style={{ left: G.VIDEO_X, top: PAD }}>No markers, photos or videos for this day.</div>
@@ -277,20 +277,29 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   )
 }
 
-// Deck card. DOM order gives the stacked "playing cards" look; hover DOUBLES the
-// card (origin toward the axis so it stays on screen), lifts it above the deck,
-// and reveals its sail / event / TWS / TWA.
-function MediaCard({ m, x, y, w, h, color, tz, side, ev, onClick }: {
+// Deck card. DOM order gives the stacked "playing cards" look. On hover the card
+// enlarges AND slides left (as far as fits on screen) so it uncovers the rest of
+// its stack — the other thumbnails stay visible and selectable — and reveals its
+// sail / event / TWS / TWA.
+function MediaCard({ m, x, y, w, h, color, tz, scale, ev, onClick }: {
   m: MediaItem; x: number; y: number; w: number; h: number; color: string; tz: number
-  side: 'left' | 'right'; ev: TimelineNode | null; onClick: () => void
+  scale: number; ev: TimelineNode | null; onClick: () => void
 }) {
   const evStyle = ev ? EVENT_STYLE[ev.kind] : null
+  const [hov, setHov] = React.useState(false)
+  // Slide left up to a card-width, but keep the enlarged card's left edge on
+  // screen (>= 4px). This pulls it off its column so the deck behind stays live.
+  const cx = x + w / 2
+  const maxShift = Math.max(0, cx - (scale * w) / 2 - 4)
+  const shift = Math.min(maxShift, w)
   return (
     <button
       onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
       title={m.type === 'video' ? (m.title || 'Play video') : hms(m.t, tz)}
-      className="group/med absolute overflow-visible rounded-lg text-left shadow-md transition-transform duration-150 hover:z-[80] hover:scale-[2] motion-reduce:transition-none motion-reduce:hover:scale-100 focus-visible:outline-none focus-visible:ring-2"
-      style={{ left: x, top: y, width: w, height: h, transformOrigin: side === 'left' ? 'left center' : 'right center' }}
+      className="group/med absolute overflow-visible rounded-lg text-left shadow-md transition-transform duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
+      style={{ left: x, top: y, width: w, height: h, transformOrigin: 'center', zIndex: hov ? 80 : undefined, transform: hov ? `translateX(${-shift}px) scale(${scale})` : 'none' }}
     >
       <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ border: `2px solid ${color}`, background: 'var(--surface-2)' }}>
         {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="h-full w-full object-cover" />

@@ -215,6 +215,14 @@ export default function UserPill() {
       } else {
         setActiveId(null)
       }
+      // Notify the app about the resolved workspace on FIRST LOAD too — not just
+      // on manual switches. Without this the default (e.g. Northstar 76) is
+      // written to localStorage but nothing re-scopes, so the timeline stays on
+      // "No active boat" until a manual reload.
+      const chosen = valid || (ms.length > 0 ? preferredDefault : null)
+      if (chosen) {
+        window.dispatchEvent(new CustomEvent('ssa:active-membership-changed', { detail: { membershipId: chosen.id, initial: true } }))
+      }
     })()
     return () => {
       cancelled = true

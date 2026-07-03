@@ -4458,7 +4458,7 @@ function MobileShell(props){
         )}
         {activeTab==="timeline"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Timeline"><TimelineTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId} tzOffset={props.sessionTzOffset} onOpenVideo={props.openVideoModal}/></ErrorBoundary>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={props.campaignCfg?.teamId||props.activeMem?.team_id} boatId={props.campaignCfg?.boatId||props.activeMem?.boat_id} tzOffset={props.sessionTzOffset} onOpenVideo={props.openVideoModal}/></ErrorBoundary>
           </div>
         )}
 
@@ -4593,6 +4593,17 @@ function SSAApp(){
   const[effectiveRole,setEffectiveRole]=useState(null);
   // Campaign engine config (null = off / unavailable). See the fetch effect below.
   const[campaignCfg,setCampaignCfg]=useState(null);
+  // Resolved active workspace (team+boat) — a fallback so the Timeline works even
+  // when the campaign feature flag is off (campaignCfg would be null then).
+  const[activeMem,setActiveMem]=useState(null);
+  useEffect(()=>{
+    let alive=true;
+    const read=async()=>{ try{ const {data:{user}}=await getBrowserSupabase().auth.getUser(); if(user&&alive) setActiveMem(getActiveMembership(user.id)); }catch{} };
+    read();
+    const on=()=>read();
+    window.addEventListener('ssa:active-membership-changed',on);
+    return ()=>{ alive=false; window.removeEventListener('ssa:active-membership-changed',on); };
+  },[]);
   // Fetch the boat's sail inventory for the Videos/Photos sail-name filter and
   // the event-file saillist reconciliation.
   const refetchSails=()=>{
@@ -6280,7 +6291,7 @@ function SSAApp(){
       canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab} canSeeToolsTab={canSeeToolsTab} canSeeBoatConfig={canSeeBoatConfig}
       canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
       showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
-      campaignOn={campaignOn} campaignCfg={campaignCfg} openCampaignVideo={openCampaignVideo} openVideoModal={openVideoModal}
+      campaignOn={campaignOn} campaignCfg={campaignCfg} activeMem={activeMem} openCampaignVideo={openCampaignVideo} openVideoModal={openVideoModal}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -7023,7 +7034,7 @@ function SSAApp(){
         )}
         {activeTab==="timeline"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} tzOffset={sessionTzOffset} onOpenVideo={openVideoModal}/></ErrorBoundary>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId||activeMem?.team_id} boatId={campaignCfg?.boatId||activeMem?.boat_id} tzOffset={sessionTzOffset} onOpenVideo={openVideoModal}/></ErrorBoundary>
           </div>
         )}
       </div>
