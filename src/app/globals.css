@@ -105,3 +105,15 @@ body {
     border: 1px solid var(--glass-border);
   }
 }
+
+/* Timeline: fade + slide children in when a node expands (transform/opacity only). */
+@keyframes tl-reveal {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.tl-reveal-item {
+  animation: tl-reveal 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-reveal-item { animation: none; }
+}

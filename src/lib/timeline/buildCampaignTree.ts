@@ -26,11 +26,12 @@ export function buildCampaignTree({ sessions, detail, boatId }: { sessions: Sess
   const detailDay = new Map<string, TimelineNode>() // date -> persisted day node
   for (const n of detail) if (n.kind === 'day') detailDay.set(n.id.split(':')[1] || '', n)
 
+  const isDate = (s: string) => /^\d{4}-\d{2}-\d{2}/.test(s)
   const bySession = new Map(sessions.map((s) => [s.date, s]))
   const dates = new Set<string>()
-  sessions.forEach((s) => dates.add(s.date))
-  detailDay.forEach((_, d) => dates.add(d))
-  const dateList = Array.from(dates).filter(Boolean).sort()
+  sessions.forEach((s) => { if (isDate(s.date)) dates.add(s.date.slice(0, 10)) })
+  detailDay.forEach((_, d) => { if (isDate(d)) dates.add(d) })
+  const dateList = Array.from(dates).sort()
   if (!dateList.length) return detail
 
   interface DayInfo { date: string; event: string; title: string; t0: number; t1: number; videos: number; photos: number }
@@ -49,7 +50,8 @@ export function buildCampaignTree({ sessions, detail, boatId }: { sessions: Sess
   })
 
   const out: TimelineNode[] = []
-  const year = dateList[0].slice(0, 4)
+  // Most recent day's year (fall back to the current year), never a bad 1900.
+  const year = (dateList[dateList.length - 1] || '').slice(0, 4) || String(new Date().getUTCFullYear())
   const seasonId = `${boatId}:season:${year}`
   out.push({
     id: seasonId, parentId: null, kind: 'season',
