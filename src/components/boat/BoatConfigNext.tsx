@@ -4,6 +4,7 @@ import { Sailboat, Anchor, Target, Ruler } from 'lucide-react'
 import { AppShell, type ShellTab } from '@/components/ui/app-shell'
 import { Card, Badge, Button, EmptyState, ErrorState, Skeleton } from '@/components/ui'
 import { setUiNext } from '@/lib/ui-flags'
+import targetsData from '@/data/targets-v1.4.json'
 
 // Reference migration (Phase 1): the Boat Config sail inventory, rebuilt on the
 // design system + AppShell, behind ?ui=next. Proves tokens/primitives/theme/
@@ -47,8 +48,10 @@ export default function BoatConfigNext({
       onTab={setTab}
       actions={<Button variant="ghost" size="sm" onClick={() => setUiNext(false)}>Classic view</Button>}
     >
-      {tab !== 'sails' ? (
-        <Card><EmptyState icon={Ruler} title={`${tab === 'rig' ? 'Rig' : 'Polar'} — coming to the new UI`} description="This section moves to the redesigned interface next." /></Card>
+      {tab === 'polar' ? (
+        <TargetsView />
+      ) : tab === 'rig' ? (
+        <Card><EmptyState icon={Ruler} title="Rig — coming to the new UI" description="Rig baseline + tuning tables migrate next." /></Card>
       ) : err ? (
         <ErrorState description="Couldn't load the sail inventory." onRetry={load} />
       ) : sails === null ? (
@@ -71,6 +74,52 @@ export default function BoatConfigNext({
         {sails ? `${sails.length} sail${sails.length === 1 ? '' : 's'} · ` : ''}reference migration behind <code>?ui=next</code>
       </div>
     </AppShell>
+  )
+}
+
+const T = targetsData as any
+const num = (v: number | undefined, d = 0) => (v == null || Number.isNaN(v) ? '—' : v.toFixed(d))
+
+function TargetsView() {
+  const rows: any[] = Array.isArray(T.headline) ? T.headline : []
+  const th = 'px-3 py-1 text-right font-normal'
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="text-sm font-medium text-fg">{T.name}</span>
+        <Badge>{T.version}</Badge>
+        <span className="text-xs text-muted">{T.source_note} · {T.wind_reference}</span>
+      </div>
+      <Card className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted">
+              <th className="px-3 py-2 text-left font-medium">TWS</th>
+              <th className="px-3 py-2 text-right font-medium text-accent" colSpan={3}>Upwind</th>
+              <th className="px-3 py-2 text-right font-medium" colSpan={3}>Downwind</th>
+            </tr>
+            <tr className="border-b border-[color:var(--border)] text-[11px] text-muted">
+              <th className="px-3 py-1 text-left font-normal">kt</th>
+              <th className={th}>TWA</th><th className={th}>BSP</th><th className={th}>Heel</th>
+              <th className={th}>TWA</th><th className={th}>BSP</th><th className={th}>Heel</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono">
+            {rows.map((r) => (
+              <tr key={r.tws} className="border-t border-[color:var(--border)]">
+                <td className="px-3 py-1.5 text-left font-medium text-fg">{r.tws}</td>
+                <td className="px-3 py-1.5 text-right text-accent">{num(r.up?.twa)}°</td>
+                <td className="px-3 py-1.5 text-right text-fg">{num(r.up?.bsp, 1)}</td>
+                <td className="px-3 py-1.5 text-right text-secondary">{num(r.up?.heel)}°</td>
+                <td className="px-3 py-1.5 text-right text-fg">{num(r.dn?.twa)}°</td>
+                <td className="px-3 py-1.5 text-right text-fg">{num(r.dn?.bsp, 1)}</td>
+                <td className="px-3 py-1.5 text-right text-secondary">{num(r.dn?.heel)}°</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
   )
 }
 
