@@ -4,6 +4,7 @@ import { Card, EmptyState, ErrorState, Skeleton } from '@/components/ui'
 import { useTimeline } from '@/lib/timeline/useTimeline'
 import { useSessions } from '@/lib/timeline/useSessions'
 import { buildCampaignTree } from '@/lib/timeline/buildCampaignTree'
+import { pickFocusDay } from '@/lib/timeline/focusDay'
 import TimelineVertical from './TimelineVertical'
 
 // The timeline as the app's main view (embedded — the app supplies the header).
@@ -17,17 +18,10 @@ export default function TimelineTab({ teamId, boatId, tzOffset = 0, onOpenVideo 
     () => (boatId && sessions && detail ? buildCampaignTree({ sessions, detail, boatId }) : null),
     [sessions, detail, boatId]
   )
-  // Land on the most recent day that has VIDEO (fall back to any media, then to
-  // the most recent day) and open its Sailing axis.
-  const lastDayId = React.useMemo(() => {
-    if (!tree) return undefined
-    const days = tree.filter((n) => n.kind === 'day')
-    if (!days.length) return undefined
-    const withVid = days.filter((d) => (d.metrics?.videos || 0) > 0)
-    const withMedia = days.filter((d) => (d.metrics?.videos || 0) > 0 || (d.metrics?.photos || 0) > 0)
-    const pool = withVid.length ? withVid : withMedia.length ? withMedia : days
-    return pool.reduce((a, b) => (b.t0 > a.t0 ? b : a)).id
-  }, [tree])
+  // If a training/regatta is on TODAY (a session exists for today's date), land
+  // there. Otherwise land on the most recent day with data — a logfile (event
+  // detail), photos or video — and open its Sailing axis.
+  const lastDayId = React.useMemo(() => pickFocusDay(tree, tzOffset), [tree, tzOffset])
   const loading = sessions === null || detail === null
 
   return (

@@ -26,6 +26,10 @@ const EVENT_STYLE: Record<string, { c: string; label: string; notable: boolean }
   gybe: { c: '#7F77DD', label: 'Gybe', notable: false },
 }
 const VIDEO_C = '#06B6D4', PHOTO_C = '#F59E0B'
+// Leg-mode colours for the time bar (derived from manoeuvres: tacks → upwind,
+// gybes → downwind, balanced/none → reach).
+const LEG_C: Record<string, string> = { upwind: '#EF4444', reach: '#F59E0B', downwind: '#22C55E' }
+const LEG_ORDER = ['upwind', 'reach', 'downwind'] as const
 const hms = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 16)
 const r = (v?: number | null, d = 0) => (v == null ? null : v.toFixed(d))
 
@@ -154,6 +158,25 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     return out
   }, [lo, hi])
 
+  // Leg bands: split the racing time at course points (start / mark / finish),
+  // classify each leg by its manoeuvres — more tacks ⇒ upwind, more gybes ⇒
+  // downwind, balanced/none ⇒ reach — and colour the time bar accordingly.
+  const legs = React.useMemo(() => {
+    const bounds = new Set<number>([lo, hi])
+    markers.forEach((e) => { if (['start', 'mark', 'finish', 'race'].includes(e.kind)) { bounds.add(e.t0); if (e.t1 > e.t0) bounds.add(e.t1) } })
+    const bs = Array.from(bounds).filter((t) => t >= lo && t <= hi).sort((a, b) => a - b)
+    const out: { t0: number; t1: number; mode: string }[] = []
+    for (let i = 0; i < bs.length - 1; i++) {
+      const a = bs[i], b = bs[i + 1]
+      if (b - a < 90000) continue // ignore sub-90s slivers
+      let tk = 0, gy = 0
+      for (const e of markers) { if (e.t0 >= a && e.t0 < b) { if (e.kind === 'tack') tk++; else if (e.kind === 'gybe') gy++ } }
+      out.push({ t0: a, t1: b, mode: tk > gy ? 'upwind' : gy > tk ? 'downwind' : 'reach' })
+    }
+    return out
+  }, [markers, lo, hi])
+  const hasLegManoeuvres = React.useMemo(() => markers.some((e) => e.kind === 'tack' || e.kind === 'gybe'), [markers])
+
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const y = Math.max(PAD, Math.min(axisH - PAD, e.clientY - rect.top))
@@ -187,6 +210,11 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         <button onClick={() => zoom(1 / 1.5)} className="rounded border border-[color:var(--border)] bg-surface-1 p-1 hover:bg-surface-2" aria-label="Zoom out"><ZoomOut size={14} /></button>
         <button onClick={() => zoom(1.5)} className="rounded border border-[color:var(--border)] bg-surface-1 p-1 hover:bg-surface-2" aria-label="Zoom in"><ZoomIn size={14} /></button>
         <span className="text-[10px] text-faint">{compact ? 'pinch to stretch' : 'pinch, or ⌘/Ctrl + scroll, to stretch'}</span>
+        {hasLegManoeuvres && (
+          <span className="ml-auto flex items-center gap-2 text-[10px] text-muted">
+            {LEG_ORDER.map((m) => <span key={m} className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: LEG_C[m] }} />{m}</span>)}
+          </span>
+        )}
       </div>
 
       <div className="overflow-x-auto">
@@ -197,7 +225,9 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         >
           <svg className="pointer-events-none absolute inset-0" width={G.CONTENT_W} height={contentH} aria-hidden>
-            <line x1={G.AXIS_X} y1={PAD} x2={G.AXIS_X} y2={axisH - PAD} stroke="var(--border-strong)" strokeWidth={2} />
+            {/* Leg colour rail (upwind / reach / downwind). */}
+            {hasLegManoeuvres && legs.map((lg, i) => <rect key={i} x={G.AXIS_X - 3} y={yOf(lg.t0)} width={6} height={Math.max(1, yOf(lg.t1) - yOf(lg.t0))} rx={2} fill={LEG_C[lg.mode]} opacity={0.5} />)}
+            <line x1={G.AXIS_X} y1={PAD} x2={G.AXIS_X} y2={axisH - PAD} stroke="var(--border-strong)" strokeWidth={1} />
             {ticks.map((t) => <line key={t} x1={G.AXIS_X - 4} y1={yOf(t)} x2={G.AXIS_X + 4} y2={yOf(t)} stroke="var(--text-muted)" strokeWidth={1} />)}
             {vPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.VIDEO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.VIDEO_X} ${y + 12}`} fill="none" stroke={VIDEO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {pPlaced.map(({ m, y, yt }) => { const mid = (G.VIDEO_X + G.PHOTO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.PHOTO_X} ${y + 12}`} fill="none" stroke={PHOTO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
