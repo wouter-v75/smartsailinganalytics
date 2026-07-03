@@ -4458,7 +4458,7 @@ function MobileShell(props){
         )}
         {activeTab==="timeline"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Timeline"><TimelineTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId} tzOffset={props.sessionTzOffset}/></ErrorBoundary>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId} tzOffset={props.sessionTzOffset} onOpenVideo={props.openCampaignVideo}/></ErrorBoundary>
           </div>
         )}
 
@@ -6980,7 +6980,7 @@ function SSAApp(){
         )}
         {activeTab==="timeline"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} tzOffset={sessionTzOffset}/></ErrorBoundary>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} tzOffset={sessionTzOffset} onOpenVideo={openCampaignVideo}/></ErrorBoundary>
           </div>
         )}
       </div>

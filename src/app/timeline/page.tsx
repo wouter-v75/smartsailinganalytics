@@ -52,7 +52,7 @@ export default function TimelinePage() {
       ) : !tree || tree.length === 0 ? (
         <Card><EmptyState title="No campaign entries yet" description="Sync your sessions in the main app, or upload a day's data." /></Card>
       ) : (
-        <div className="mx-auto w-full max-w-3xl"><TimelineVertical nodes={tree} initialFocusId={lastDayId} teamId={m.team_id} boatId={m.boat_id} /></div>
+        <div className="mx-auto w-full max-w-6xl"><TimelineVertical nodes={tree} initialFocusId={lastDayId} teamId={m.team_id} boatId={m.boat_id} /></div>
       )}
     </AppShell>
   )

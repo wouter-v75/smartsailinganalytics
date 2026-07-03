@@ -9,7 +9,7 @@ import TimelineVertical from './TimelineVertical'
 // The timeline as the app's main view (embedded — the app supplies the header).
 // Spine from the session list + event-file detail; lands expanded on the last
 // day with data. Vertical nested-accordion presentation.
-export default function TimelineTab({ teamId, boatId, tzOffset = 0 }: { teamId?: string | null; boatId?: string | null; tzOffset?: number }) {
+export default function TimelineTab({ teamId, boatId, tzOffset = 0, onOpenVideo }: { teamId?: string | null; boatId?: string | null; tzOffset?: number; onOpenVideo?: (date: string, clipId: string) => void }) {
   const sessions = useSessions(teamId, boatId)
   const { nodes: detail, error } = useTimeline(teamId, boatId, null)
 
@@ -26,7 +26,7 @@ export default function TimelineTab({ teamId, boatId, tzOffset = 0 }: { teamId?:
 
   return (
     <div className="h-full overflow-auto bg-bg text-fg" style={{ padding: 16 }}>
-      <div className="mx-auto w-full max-w-3xl">
+      <div className="mx-auto w-full max-w-6xl">
         <h2 className="mb-3 text-[15px] font-medium">Timeline</h2>
         {!boatId ? (
           <Card><EmptyState title="No active boat" description="Select a boat workspace to see its campaign timeline." /></Card>
@@ -37,7 +37,7 @@ export default function TimelineTab({ teamId, boatId, tzOffset = 0 }: { teamId?:
         ) : !tree || tree.length === 0 ? (
           <Card><EmptyState title="No campaign entries yet" description="Sync your sessions, or upload a day's data — training days and events will appear here." /></Card>
         ) : (
-          <TimelineVertical nodes={tree} initialFocusId={lastDayId} tzOffset={tzOffset} teamId={teamId} boatId={boatId} />
+          <TimelineVertical nodes={tree} initialFocusId={lastDayId} tzOffset={tzOffset} teamId={teamId} boatId={boatId} onPlayVideo={onOpenVideo} />
         )}
       </div>
     </div>
