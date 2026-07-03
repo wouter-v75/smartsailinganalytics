@@ -23,13 +23,14 @@ const PHASES: Phase[] = [
 interface Conditions { details: string | null; timings: string; plan: string; sailList: { source?: string; sails?: { name: string }[] } | null }
 interface Debrief { learnings?: string; next_focus?: string; speed_learnings?: string; speed_focus_today?: string; speed_long_term?: string }
 
-export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo }: {
+export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo, autoOpenSailing = false }: {
   day: TimelineNode; events: TimelineNode[]; tz: number
   teamId?: string | null; boatId?: string | null
   onPlayVideo?: (videoId: string) => void
+  autoOpenSailing?: boolean
 }) {
   const date = (day.meta?.date as string) || day.id.split(':')[1] || ''
-  const [open, setOpen] = React.useState<Set<string>>(new Set())
+  const [open, setOpen] = React.useState<Set<string>>(() => new Set(autoOpenSailing ? ['sailing'] : []))
   const [cond, setCond] = React.useState<Conditions | null>(null)
   const [deb, setDeb] = React.useState<Debrief | null>(null)
   const [loaded, setLoaded] = React.useState(false)

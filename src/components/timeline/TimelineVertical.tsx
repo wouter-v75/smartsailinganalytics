@@ -59,18 +59,19 @@ export default function TimelineVertical({ nodes: raw, tzOffset = 0, initialFocu
     <div className="mr-auto w-full max-w-5xl text-fg">
       {roots.map((n) => (
         <Row key={n.id} node={n} tz={tzOffset} childrenOf={childrenOf} descendantsOf={descendantsOf}
-          open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} />
+          open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} focusId={initialFocusId} />
       ))}
     </div>
   )
 }
 
-function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId, onPlayVideo }: {
+function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId, onPlayVideo, focusId }: {
   node: TimelineNode; tz: number
   childrenOf: (id: string) => TimelineNode[]; descendantsOf: (id: string) => TimelineNode[]
   open: Set<string>; toggle: (id: string) => void
   teamId?: string | null; boatId?: string | null
   onPlayVideo?: (date: string, videoId: string) => void
+  focusId?: string
 }) {
   const kids = childrenOf(node.id)
   const isDay = node.kind === 'day'
@@ -117,7 +118,7 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
         <div className="tl-reveal-item ml-[10px] mt-0.5 border-l border-[color:var(--border)] pl-3">
           {kids.map((c) => (
             <Row key={c.id} node={c} tz={tz} childrenOf={childrenOf} descendantsOf={descendantsOf}
-              open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} />
+              open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} focusId={focusId} />
           ))}
         </div>
       )}
@@ -127,7 +128,7 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
           following days get pushed down. */}
       {isDay && isOpen && (
         <div className="tl-reveal-item ml-[10px] mt-1 border-l-2 border-[color:var(--accent)] pl-3">
-          <DayPhases day={node} events={descendantsOf(node.id)} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo ? playForDay : undefined} />
+          <DayPhases day={node} events={descendantsOf(node.id)} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo ? playForDay : undefined} autoOpenSailing={node.id === focusId} />
         </div>
       )}
     </div>

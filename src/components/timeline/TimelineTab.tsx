@@ -17,10 +17,16 @@ export default function TimelineTab({ teamId, boatId, tzOffset = 0, onOpenVideo 
     () => (boatId && sessions && detail ? buildCampaignTree({ sessions, detail, boatId }) : null),
     [sessions, detail, boatId]
   )
+  // Land on the most recent day that has VIDEO (fall back to any media, then to
+  // the most recent day) and open its Sailing axis.
   const lastDayId = React.useMemo(() => {
     if (!tree) return undefined
-    const d = tree.filter((n) => n.kind === 'day')
-    return d.length ? d.reduce((a, b) => (b.t0 > a.t0 ? b : a)).id : undefined
+    const days = tree.filter((n) => n.kind === 'day')
+    if (!days.length) return undefined
+    const withVid = days.filter((d) => (d.metrics?.videos || 0) > 0)
+    const withMedia = days.filter((d) => (d.metrics?.videos || 0) > 0 || (d.metrics?.photos || 0) > 0)
+    const pool = withVid.length ? withVid : withMedia.length ? withMedia : days
+    return pool.reduce((a, b) => (b.t0 > a.t0 ? b : a)).id
   }, [tree])
   const loading = sessions === null || detail === null
 

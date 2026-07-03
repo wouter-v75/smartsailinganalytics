@@ -11,6 +11,7 @@ import { PhotoOverlayImage, FallbackVideoPlayer } from './DayMedia'
 // videos in one deck, photos in another, with clear space between the per-segment
 // stacks. Cards stack like playing cards when clustered; zooming/pinching spreads
 // them apart. Hovering a card doubles it and shows its sail/event/TWS/TWA.
+// Geometry is responsive: on phones both decks fit the screen (no half-off cards).
 
 const EVENT_STYLE: Record<string, { c: string; label: string; notable: boolean }> = {
   race: { c: '#D85A30', label: 'Race', notable: true },
@@ -28,7 +29,6 @@ const VIDEO_C = '#06B6D4', PHOTO_C = '#F59E0B'
 const hms = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 16)
 const r = (v?: number | null, d = 0) => (v == null ? null : v.toFixed(d))
 
-// Tag chip colours (mirror the Videos-tab tagColor scheme).
 function chipStyle(t: string): { bg: string; c: string; bd: string } {
   if (/^(race-start|topmark|mark|start|finish)$/.test(t)) return { bg: '#EF444422', c: '#EF4444', bd: '#EF444455' }
   if (/^(upwind|reach|downwind)$/.test(t)) return { bg: '#06B6D422', c: '#06B6D4', bd: '#06B6D455' }
@@ -42,14 +42,27 @@ interface MediaItem {
 }
 interface Placed { m: MediaItem; y: number; yt: number }
 
-// Geometry.
-const PAD = 30, AXIS_X = 12, EVENT_LABEL_X = 42
-const VIDEO_X = 196, VIDEO_W = 150, VIDEO_H = 88
-const PHOTO_X = 372, PHOTO_W = 120, PHOTO_H = 88
-const CONTENT_W = PHOTO_X + PHOTO_W + 16
+const PAD = 30
 const CARD_OFFSET = 26        // stacked-card reveal within a segment
 const SEGMENT_GAP = 46        // extra space between stacks in different segments
 const MIN_PPH = 40, MAX_PPH = 720, DEFAULT_PPH = 90
+
+function useCompact() {
+  const [c, setC] = React.useState(false)
+  React.useEffect(() => {
+    const mq = window.matchMedia('(max-width: 640px)')
+    const on = () => setC(mq.matches); on(); mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return c
+}
+// Responsive layout. On phones: tighter offsets + widths, event dots only (no
+// text labels), so BOTH decks fit within the viewport.
+function geometry(compact: boolean) {
+  return compact
+    ? { AXIS_X: 10, EVENT_LABEL_X: 18, showEventLabels: false, VIDEO_X: 52, VIDEO_W: 116, VIDEO_H: 78, PHOTO_X: 178, PHOTO_W: 104, PHOTO_H: 78, CONTENT_W: 178 + 104 + 10 }
+    : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, PHOTO_X: 372, PHOTO_W: 120, PHOTO_H: 88, CONTENT_W: 372 + 120 + 16 }
+}
 
 export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVideo }: {
   day: TimelineNode; events: TimelineNode[]; tz: number
@@ -57,6 +70,8 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   onPlayVideo?: (videoId: string) => void
 }) {
   const date = (day.meta?.date as string) || day.id.split(':')[1] || ''
+  const compact = useCompact()
+  const G = geometry(compact)
   const [media, setMedia] = React.useState<MediaItem[] | null>(null)
   const [openPhoto, setOpenPhoto] = React.useState<MediaItem | null>(null)
   const [openVideo, setOpenVideo] = React.useState<MediaItem | null>(null)
@@ -111,8 +126,6 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const yOf = React.useCallback((t: number) => PAD + ((t - lo) / (hi - lo)) * (axisH - 2 * PAD), [lo, hi, axisH])
   const tOf = (y: number) => lo + ((y - PAD) / (axisH - 2 * PAD)) * (hi - lo)
 
-  // Place a column at timestamps, keeping CARD_OFFSET within a segment and
-  // SEGMENT_GAP across event boundaries → stacks sit between events with space.
   const placeCol = React.useCallback((items: MediaItem[]): Placed[] => {
     let prev = -Infinity, prevSeg = -1
     return items.map((m) => {
@@ -129,10 +142,10 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
   const contentH = React.useMemo(() => {
     let bottom = axisH
-    vPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + VIDEO_H) })
-    pPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + PHOTO_H) })
+    vPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.VIDEO_H) })
+    pPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.PHOTO_H) })
     return bottom + PAD
-  }, [axisH, vPlaced, pPlaced])
+  }, [axisH, vPlaced, pPlaced, G.VIDEO_H, G.PHOTO_H])
 
   const ticks = React.useMemo(() => {
     const out: number[] = []
@@ -149,8 +162,6 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const zoom = (f: number) => setPph((p) => Math.max(MIN_PPH, Math.min(MAX_PPH, Math.round(p * f))))
   const onWheel = (e: React.WheelEvent<HTMLDivElement>) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12) } }
 
-  // Pinch to stretch (two-finger). Single-finger drag falls through to native
-  // vertical scroll (touch-action: pan-y).
   const pinch = React.useRef<{ dist: number; pph: number } | null>(null)
   const dist = (a: React.Touch, b: React.Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
   const onTouchStart = (e: React.TouchEvent) => { if (e.touches.length === 2) pinch.current = { dist: dist(e.touches[0], e.touches[1]), pph } }
@@ -175,34 +186,34 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         <span className="text-[11px] text-muted">Zoom</span>
         <button onClick={() => zoom(1 / 1.5)} className="rounded border border-[color:var(--border)] bg-surface-1 p-1 hover:bg-surface-2" aria-label="Zoom out"><ZoomOut size={14} /></button>
         <button onClick={() => zoom(1.5)} className="rounded border border-[color:var(--border)] bg-surface-1 p-1 hover:bg-surface-2" aria-label="Zoom in"><ZoomIn size={14} /></button>
-        <span className="text-[10px] text-faint">pinch, or ⌘/Ctrl + scroll, to stretch</span>
+        <span className="text-[10px] text-faint">{compact ? 'pinch to stretch' : 'pinch, or ⌘/Ctrl + scroll, to stretch'}</span>
       </div>
 
       <div className="overflow-x-auto">
         <div
           className="relative"
-          style={{ width: CONTENT_W, height: contentH, touchAction: 'pan-y' }}
+          style={{ width: G.CONTENT_W, height: contentH, touchAction: 'pan-y' }}
           onMouseMove={onMove} onMouseLeave={() => setCursor(null)} onWheel={onWheel}
           onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         >
-          <svg className="pointer-events-none absolute inset-0" width={CONTENT_W} height={contentH} aria-hidden>
-            <line x1={AXIS_X} y1={PAD} x2={AXIS_X} y2={axisH - PAD} stroke="var(--border-strong)" strokeWidth={2} />
-            {ticks.map((t) => <line key={t} x1={AXIS_X - 4} y1={yOf(t)} x2={AXIS_X + 4} y2={yOf(t)} stroke="var(--text-muted)" strokeWidth={1} />)}
-            {vPlaced.map(({ m, y, yt }) => { const mid = (AXIS_X + VIDEO_X) / 2; return <path key={m.id} d={`M ${AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${VIDEO_X} ${y + 12}`} fill="none" stroke={VIDEO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
-            {pPlaced.map(({ m, y, yt }) => { const mid = (VIDEO_X + PHOTO_X) / 2; return <path key={m.id} d={`M ${AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${PHOTO_X} ${y + 12}`} fill="none" stroke={PHOTO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
-            {markers.map((e) => { const st = EVENT_STYLE[e.kind]; return <circle key={e.id} cx={AXIS_X} cy={yOf(e.t0)} r={st.notable ? 4 : 3} fill={st.c} stroke="var(--bg)" strokeWidth={1} /> })}
-            {cursor && <line x1={0} y1={cursor.y} x2={CONTENT_W} y2={cursor.y} stroke="var(--accent)" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.7} />}
+          <svg className="pointer-events-none absolute inset-0" width={G.CONTENT_W} height={contentH} aria-hidden>
+            <line x1={G.AXIS_X} y1={PAD} x2={G.AXIS_X} y2={axisH - PAD} stroke="var(--border-strong)" strokeWidth={2} />
+            {ticks.map((t) => <line key={t} x1={G.AXIS_X - 4} y1={yOf(t)} x2={G.AXIS_X + 4} y2={yOf(t)} stroke="var(--text-muted)" strokeWidth={1} />)}
+            {vPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.VIDEO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.VIDEO_X} ${y + 12}`} fill="none" stroke={VIDEO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
+            {pPlaced.map(({ m, y, yt }) => { const mid = (G.VIDEO_X + G.PHOTO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.PHOTO_X} ${y + 12}`} fill="none" stroke={PHOTO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
+            {markers.map((e) => { const st = EVENT_STYLE[e.kind]; return <circle key={e.id} cx={G.AXIS_X} cy={yOf(e.t0)} r={st.notable ? 4 : 3} fill={st.c} stroke="var(--bg)" strokeWidth={1} /> })}
+            {cursor && <line x1={0} y1={cursor.y} x2={G.CONTENT_W} y2={cursor.y} stroke="var(--accent)" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.7} />}
           </svg>
 
-          <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: VIDEO_X, top: 6, color: VIDEO_C }}>Videos</div>
-          <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: PHOTO_X, top: 6, color: PHOTO_C }}>Photos</div>
+          <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.VIDEO_X, top: 6, color: VIDEO_C }}>Videos</div>
+          <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.PHOTO_X, top: 6, color: PHOTO_C }}>Photos</div>
 
-          {ticks.map((t) => <div key={t} className="absolute font-mono text-[10px] text-muted" style={{ left: AXIS_X + 8, top: yOf(t) - 7 }}>{hms(t, tz)}</div>)}
+          {ticks.map((t) => <div key={t} className="absolute font-mono text-[10px] text-muted" style={{ left: G.AXIS_X + 8, top: yOf(t) - 7 }}>{hms(t, tz)}</div>)}
 
-          {markers.filter((e) => EVENT_STYLE[e.kind].notable).map((e) => {
+          {G.showEventLabels && markers.filter((e) => EVENT_STYLE[e.kind].notable).map((e) => {
             const st = EVENT_STYLE[e.kind]
             return (
-              <div key={e.id} className="absolute whitespace-nowrap" style={{ left: EVENT_LABEL_X, top: yOf(e.t0) - 8 }}>
+              <div key={e.id} className="absolute whitespace-nowrap" style={{ left: G.EVENT_LABEL_X, top: yOf(e.t0) - 8 }}>
                 <span className="rounded px-1 py-px text-[9px] font-medium" style={{ background: st.c + '22', border: `1px solid ${st.c}55`, color: st.c }}>{e.title || st.label}</span>
               </div>
             )
@@ -212,11 +223,11 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             <div className="pointer-events-none absolute z-[60] rounded bg-[color:var(--accent)] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[color:var(--accent-fg)]" style={{ left: 0, top: cursor.y - 9 }}>{hms(cursor.t, tz)}</div>
           )}
 
-          {vPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={VIDEO_X} y={y} w={VIDEO_W} h={VIDEO_H} color={VIDEO_C} tz={tz} side="left" ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
-          {pPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={PHOTO_X} y={y} w={PHOTO_W} h={PHOTO_H} color={PHOTO_C} tz={tz} side="right" ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
+          {vPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} side="left" ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
+          {pPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} side="right" ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
 
           {markers.length === 0 && (media || []).length === 0 && (
-            <div className="absolute text-xs text-muted" style={{ left: VIDEO_X, top: PAD }}>No markers, photos or videos for this day.</div>
+            <div className="absolute text-xs text-muted" style={{ left: G.VIDEO_X, top: PAD }}>No markers, photos or videos for this day.</div>
           )}
         </div>
       </div>
