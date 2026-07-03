@@ -13,6 +13,8 @@ import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, star
 import { offsetFromCoords } from "../lib/tzFromCoords";
 import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
 import { buildSailResolver } from "../lib/sailResolve";
+import { useUiNext } from "../lib/ui-flags";
+import PhotosNext from "./photos/PhotosNext";
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -1167,6 +1169,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [sortBy, setSortBy] = React.useState("date");
   const [showSessionsMobile, setShowSessionsMobile] = React.useState(false);
   const [sailFilter, setSailFilter] = React.useState(""); // inventory sail id, "" = all
+  const uiNext = useUiNext(); // ?ui=next → redesigned browse view (Phase 1)
 
   // All unique tags across photos
   const allTags = [...new Set(photos.flatMap(p => p.sails||[]))].sort();
@@ -1212,6 +1215,11 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       </div>);
     });
   };
+
+  if (uiNext) return (
+    <PhotosNext photos={displayed} total={photos.length} searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+      sailInventory={sailInventory} sailFilter={sailFilter} setSailFilter={setSailFilter} tzOffset={sessionTzOffset} />
+  );
 
   return(
     <div style={{flex:1,display:"flex",flexDirection:isNarrow?"column":"row",overflow:"hidden"}}>
