@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:list": "supabase migration list",
     "db:push": "supabase db push",
     "db:new": "supabase migration new",
