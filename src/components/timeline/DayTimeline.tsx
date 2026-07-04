@@ -352,6 +352,7 @@ function SailScanDetails({ scan, t, tz }: { scan: SailScan; t: number; tz: numbe
   ]
   const stripes = (scan.stripes || []).filter((s) => stripeCols.some((c) => s?.[c.k] != null))
   return (
+    <div className="grid gap-4">
     <div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
       <div>
         {scan.photo
@@ -387,6 +388,56 @@ function SailScanDetails({ scan, t, tz }: { scan: SailScan; t: number; tz: numbe
           </div>
         )}
       </div>
+    </div>
+    <StripeCharts stripes={scan.stripes} />
+    </div>
+  )
+}
+
+// Trim-stripe profile charts: each metric plotted up the sail (height on the
+// vertical axis, value on the horizontal) — camber, twist and draft position.
+function StripeCharts({ stripes }: { stripes: any[] }) {
+  const pts = (stripes || []).filter((s) => s?.pos != null).slice().sort((a, b) => a.pos - b.pos)
+  if (pts.length < 2) return null
+  const metrics = [
+    { k: 'camber', label: 'Camber %', c: '#8B5CF6' },
+    { k: 'twist', label: 'Twist °', c: '#06B6D4' },
+    { k: 'draft', label: 'Draft %', c: '#F59E0B' },
+  ].filter((m) => pts.filter((p) => p[m.k] != null).length >= 2)
+  if (!metrics.length) return null
+  return (
+    <div>
+      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">Trim stripes</div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {metrics.map((m) => <MiniChart key={m.k} pts={pts} metric={m.k} label={m.label} color={m.c} />)}
+      </div>
+    </div>
+  )
+}
+
+function MiniChart({ pts, metric, label, color }: { pts: any[]; metric: string; label: string; color: string }) {
+  const rows = pts.filter((p) => p[metric] != null)
+  if (rows.length < 2) return null
+  const W = 120, H = 150, padX = 8, padY = 12
+  const poss = pts.map((p) => p.pos), vals = rows.map((p) => p[metric] as number)
+  const posMin = Math.min(...poss), posMax = Math.max(...poss)
+  const vMin = Math.min(...vals), vMax = Math.max(...vals), vRange = vMax - vMin || 1
+  const xOf = (v: number) => padX + ((v - vMin) / vRange) * (W - 2 * padX)
+  const yOf = (pos: number) => (H - padY) - ((pos - posMin) / ((posMax - posMin) || 1)) * (H - 2 * padY)
+  const line = rows.map((p) => `${xOf(p[metric]).toFixed(1)},${yOf(p.pos).toFixed(1)}`).join(' ')
+  return (
+    <div className="rounded-lg border border-[color:var(--border)] bg-surface-1 p-2">
+      <div className="mb-1 text-[10px] font-medium" style={{ color }}>{label}</div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 170 }} preserveAspectRatio="none">
+        <line x1={padX} y1={padY} x2={padX} y2={H - padY} stroke="var(--border)" strokeWidth={1} />
+        <line x1={padX} y1={H - padY} x2={W - padX} y2={H - padY} stroke="var(--border)" strokeWidth={1} />
+        <polyline points={line} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+        {rows.map((p, i) => <circle key={i} cx={xOf(p[metric])} cy={yOf(p.pos)} r={2.4} fill={color} />)}
+        <text x={padX} y={H - 2} fontSize="7" fill="var(--text-muted)">{vMin.toFixed(0)}</text>
+        <text x={W - padX} y={H - 2} fontSize="7" fill="var(--text-muted)" textAnchor="end">{vMax.toFixed(0)}</text>
+        <text x={padX + 1} y={padY + 6} fontSize="7" fill="var(--text-muted)">head</text>
+        <text x={padX + 1} y={H - padY - 2} fontSize="7" fill="var(--text-muted)">foot</text>
+      </svg>
     </div>
   )
 }

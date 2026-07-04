@@ -13,8 +13,9 @@ export function renderOverlay(canvas, img, inst) {
   canvas.height = img.naturalHeight || img.height
   ctx.drawImage(img, 0, 0)
   const W = canvas.width, H = canvas.height, scale = Math.min(W, H) / 1000
-  const fs = Math.max(11, Math.round(14 * scale)), pad = Math.round(12 * scale)
-  const bw = Math.round(90 * scale), bh = Math.round(52 * scale), gap = Math.round(8 * scale)
+  // Larger gauge boxes so the data reads clearly on big/full-res photos.
+  const fs = Math.max(14, Math.round(20 * scale)), pad = Math.round(14 * scale)
+  const bw = Math.round(128 * scale), bh = Math.round(74 * scale), gap = Math.round(10 * scale)
   const gauges = [
     { l: 'TWS', v: inst.tws != null ? R(inst.tws) + ' kn' : '--', c: '#7DD3FC' },
     { l: 'TWA', v: inst.twa != null ? R(inst.twa, 0) + '°' : '--', c: '#7DD3FC' },
