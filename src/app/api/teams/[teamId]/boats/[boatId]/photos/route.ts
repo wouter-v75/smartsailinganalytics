@@ -83,10 +83,15 @@ export async function GET(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
-  // Prefer a fast CDN thumbnail URL; keep the stored value as fallback.
+  // Prefer a fast CDN thumbnail URL; keep the stored value as fallback. Also
+  // hand back a signed URL for the FULL-RESOLUTION original so viewers (e.g. the
+  // timeline lightbox) can show full res instead of the thumbnail.
   const photos = (data || []).map((p) => {
     const cdn = fastThumb(p.bunny_storage_path)
-    return cdn ? { ...p, thumbnail_url: cdn } : p
+    const original_url = p.bunny_storage_path && bunnyConfigured()
+      ? (signBunnyUrl({ path: p.bunny_storage_path, ttlSec: 6 * 3600 })?.url || null)
+      : null
+    return { ...(cdn ? { ...p, thumbnail_url: cdn } : p), original_url }
   })
   return NextResponse.json({ photos })
 }

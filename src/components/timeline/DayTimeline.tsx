@@ -1,6 +1,6 @@
 'use client'
 import * as React from 'react'
-import { Play, Camera, ZoomIn, ZoomOut } from 'lucide-react'
+import { Play, Camera, ZoomIn, ZoomOut, Sailboat } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { PhotoOverlayImage, FallbackVideoPlayer } from './DayMedia'
@@ -25,7 +25,7 @@ const EVENT_STYLE: Record<string, { c: string; label: string; notable: boolean }
   tack: { c: '#1D9E75', label: 'Tack', notable: false },
   gybe: { c: '#7F77DD', label: 'Gybe', notable: false },
 }
-const VIDEO_C = '#06B6D4', PHOTO_C = '#F59E0B'
+const VIDEO_C = '#06B6D4', PHOTO_C = '#F59E0B', SCAN_C = '#8B5CF6'
 // Leg-mode colours for the time bar (derived from manoeuvres: tacks → upwind,
 // gybes → downwind, balanced/none → reach).
 const LEG_C: Record<string, string> = { upwind: '#EF4444', reach: '#F59E0B', downwind: '#22C55E' }
@@ -40,9 +40,16 @@ function chipStyle(t: string): { bg: string; c: string; bd: string } {
   return { bg: '#8B5CF622', c: '#A78BFA', bd: '#8B5CF655' }
 }
 
+interface SailScan {
+  id: string; sailName: string | null; sailCode: string | null; source: string | null
+  tws: number | null; twa: number | null
+  summary: { maxCamberPct?: number | null; draftPositionPct?: number | null }
+  stripes: any[]; photo: string | null; capturedLocal?: string | null
+}
 interface MediaItem {
-  id: string; type: 'video' | 'photo'; thumb: string | null; t: number
+  id: string; type: 'video' | 'photo' | 'sailscan'; thumb: string | null; t: number
   title?: string | null; tags: string[]; tws?: number | null; twa?: number | null; twaTarg?: number | null; twd?: number | null; sails: string[]; inst?: Record<string, any>
+  original?: string | null; sailName?: string | null; scan?: SailScan
 }
 
 // Leg mode from TWA vs target TWA (per Wouter's rule):
@@ -77,8 +84,8 @@ function useCompact() {
 // text labels), so BOTH decks fit within the viewport.
 function geometry(compact: boolean) {
   return compact
-    ? { AXIS_X: 10, EVENT_LABEL_X: 18, showEventLabels: false, VIDEO_X: 52, VIDEO_W: 116, VIDEO_H: 78, PHOTO_X: 178, PHOTO_W: 104, PHOTO_H: 78, CONTENT_W: 178 + 104 + 10 }
-    : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, PHOTO_X: 372, PHOTO_W: 120, PHOTO_H: 88, CONTENT_W: 372 + 120 + 16 }
+    ? { AXIS_X: 10, EVENT_LABEL_X: 18, showEventLabels: false, VIDEO_X: 46, VIDEO_W: 92, VIDEO_H: 74, PHOTO_X: 146, PHOTO_W: 88, PHOTO_H: 74, SCAN_X: 242, SCAN_W: 84, SCAN_H: 74, CONTENT_W: 242 + 84 + 8 }
+    : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, PHOTO_X: 372, PHOTO_W: 120, PHOTO_H: 88, SCAN_X: 508, SCAN_W: 120, SCAN_H: 88, CONTENT_W: 508 + 120 + 16 }
 }
 
 export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVideo }: {
@@ -92,6 +99,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [media, setMedia] = React.useState<MediaItem[] | null>(null)
   const [openPhoto, setOpenPhoto] = React.useState<MediaItem | null>(null)
   const [openVideo, setOpenVideo] = React.useState<MediaItem | null>(null)
+  const [openScan, setOpenScan] = React.useState<MediaItem | null>(null)
   const [cursor, setCursor] = React.useState<{ y: number; t: number } | null>(null)
   const [pph, setPph] = React.useState(DEFAULT_PPH)
 
@@ -99,10 +107,12 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     if (!teamId || !boatId || !date) { setMedia([]); return }
     let alive = true
     setMedia(null)
+    const ymd = (t: number) => new Date(t + tz * 60000).toISOString().slice(0, 10)
     Promise.all([
       fetch(`/api/teams/${teamId}/boats/${boatId}/videos?date=${date}`).then((res) => res.json()).catch(() => ({})),
       fetch(`/api/teams/${teamId}/boats/${boatId}/photos?date=${date}`).then((res) => res.json()).catch(() => ({})),
-    ]).then(([vj, pj]: [any, any]) => {
+      fetch(`/api/teams/${teamId}/sail-scans?boat_id=${boatId}&limit=200`).then((res) => res.json()).catch(() => ({})),
+    ]).then(([vj, pj, sj]: [any, any, any]) => {
       if (!alive) return
       const vids: MediaItem[] = (vj?.videos || []).map((v: any) => ({
         id: v.id, type: 'video', thumb: v.thumbnail || v.thumbnail_url,
@@ -111,12 +121,24 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       const phs: MediaItem[] = (pj?.photos || []).map((p: any) => {
         const a = p.analysis_data || {}, inst = a.inst || {}
         const sails = a.sails ?? inst.sails ?? []
-        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twaTarg: inst.twaTarg ?? inst.twa_targ ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails } }
+        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, original: p.original_url || null, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twaTarg: inst.twaTarg ?? inst.twa_targ ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails } }
       })
-      setMedia([...vids, ...phs].sort((a, b) => a.t - b.t))
+      // Sail scans are boat-scoped (no date filter on the API) → keep the ones
+      // captured on this day.
+      const scns: MediaItem[] = (sj?.scans || []).map((s: any) => {
+        const t = Date.parse(s.captured_at)
+        const c = s.conditions || {}
+        const name = c.sail_name_in_report || c.sail_code || null
+        return {
+          id: s.id, type: 'sailscan' as const, thumb: s.photo_url || null,
+          t: Number.isFinite(t) ? t : day.t0, tags: [], tws: s.tws_kn ?? null, twa: s.twa_deg ?? null, sails: [], sailName: name,
+          scan: { id: s.id, sailName: c.sail_name_in_report || null, sailCode: c.sail_code || null, source: s.source || null, tws: s.tws_kn ?? null, twa: s.twa_deg ?? null, summary: s.summary || {}, stripes: s.stripes || [], photo: s.photo_url || null, capturedLocal: c.captured_local || null },
+        }
+      }).filter((m: MediaItem) => ymd(m.t) === date)
+      setMedia([...vids, ...phs, ...scns].sort((a, b) => a.t - b.t))
     })
     return () => { alive = false }
-  }, [teamId, boatId, date, day.t0])
+  }, [teamId, boatId, date, day.t0, tz])
 
   const markers = React.useMemo(() => events.filter((e) => e.kind !== 'day' && EVENT_STYLE[e.kind]), [events])
   const eventTimes = React.useMemo(() => markers.map((e) => e.t0).sort((a, b) => a - b), [markers])
@@ -129,6 +151,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
   const videos = React.useMemo(() => (media || []).filter((m) => m.type === 'video'), [media])
   const photos = React.useMemo(() => (media || []).filter((m) => m.type === 'photo'), [media])
+  const scanItems = React.useMemo(() => (media || []).filter((m) => m.type === 'sailscan'), [media])
 
   const [lo, hi] = React.useMemo(() => {
     let a = day.t0, b = day.t1 > day.t0 ? day.t1 : day.t0 + 3600000
@@ -156,13 +179,15 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }, [yOf, segmentOf])
   const vPlaced = React.useMemo(() => placeCol(videos), [videos, placeCol])
   const pPlaced = React.useMemo(() => placeCol(photos), [photos, placeCol])
+  const sPlaced = React.useMemo(() => placeCol(scanItems), [scanItems, placeCol])
 
   const contentH = React.useMemo(() => {
     let bottom = axisH
     vPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.VIDEO_H) })
     pPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.PHOTO_H) })
+    sPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.SCAN_H) })
     return bottom + PAD
-  }, [axisH, vPlaced, pPlaced, G.VIDEO_H, G.PHOTO_H])
+  }, [axisH, vPlaced, pPlaced, sPlaced, G.VIDEO_H, G.PHOTO_H, G.SCAN_H])
 
   const ticks = React.useMemo(() => {
     const out: number[] = []
@@ -228,7 +253,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }
   const onTouchEnd = (e: React.TouchEvent) => { if (e.touches.length < 2) pinch.current = null }
 
-  const clickMedia = (m: MediaItem) => m.type === 'video' ? (onPlayVideo ? onPlayVideo(m.id) : setOpenVideo(m)) : setOpenPhoto(m)
+  const clickMedia = (m: MediaItem) => m.type === 'video' ? (onPlayVideo ? onPlayVideo(m.id) : setOpenVideo(m)) : m.type === 'sailscan' ? setOpenScan(m) : setOpenPhoto(m)
 
   if (media === null) {
     return <div className="grid gap-2 py-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}</div>
@@ -262,12 +287,14 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             {ticks.map((t) => <line key={t} x1={G.AXIS_X - 4} y1={yOf(t)} x2={G.AXIS_X + 4} y2={yOf(t)} stroke="var(--text-muted)" strokeWidth={1} />)}
             {vPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.VIDEO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.VIDEO_X} ${y + 12}`} fill="none" stroke={VIDEO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {pPlaced.map(({ m, y, yt }) => { const mid = (G.VIDEO_X + G.PHOTO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.PHOTO_X} ${y + 12}`} fill="none" stroke={PHOTO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
+            {sPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.SCAN_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.SCAN_X} ${y + 12}`} fill="none" stroke={SCAN_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {markers.map((e) => { const st = EVENT_STYLE[e.kind]; return <circle key={e.id} cx={G.AXIS_X} cy={yOf(e.t0)} r={st.notable ? 4 : 3} fill={st.c} stroke="var(--bg)" strokeWidth={1} /> })}
             {cursor && <line x1={0} y1={cursor.y} x2={G.CONTENT_W} y2={cursor.y} stroke="var(--accent)" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.7} />}
           </svg>
 
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.VIDEO_X, top: 6, color: VIDEO_C }}>Videos</div>
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.PHOTO_X, top: 6, color: PHOTO_C }}>Photos</div>
+          <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.SCAN_X, top: 6, color: SCAN_C }}>Sail scans</div>
 
           {ticks.map((t) => <div key={t} className="absolute font-mono text-[10px] text-muted" style={{ left: G.AXIS_X + 8, top: yOf(t) - 7 }}>{hms(t, tz)}</div>)}
 
@@ -286,6 +313,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
           {vPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} scale={compact ? 1.5 : 1.85} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
           {pPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} scale={compact ? 1.5 : 1.85} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
+          {sPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.SCAN_X} y={y} w={G.SCAN_W} h={G.SCAN_H} color={SCAN_C} tz={tz} scale={compact ? 1.5 : 1.85} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
 
           {markers.length === 0 && (media || []).length === 0 && (
             <div className="absolute text-xs text-muted" style={{ left: G.VIDEO_X, top: PAD }}>No markers, photos or videos for this day.</div>
@@ -294,7 +322,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       </div>
 
       <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
-        {openPhoto && <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3"><PhotoOverlayImage src={openPhoto.thumb} inst={openPhoto.inst || {}} /></DialogContent>}
+        {openPhoto && <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3"><PhotoOverlayImage src={openPhoto.original || openPhoto.thumb} inst={openPhoto.inst || {}} /></DialogContent>}
       </Dialog>
       <Dialog open={!!openVideo} onOpenChange={(o) => { if (!o) setOpenVideo(null) }}>
         {openVideo && (
@@ -304,6 +332,70 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           </DialogContent>
         )}
       </Dialog>
+      <Dialog open={!!openScan} onOpenChange={(o) => { if (!o) setOpenScan(null) }}>
+        {openScan?.scan && (
+          <DialogContent title={openScan.scan.sailName || openScan.scan.sailCode || 'Sail scan'} className="w-[min(1000px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-4">
+            <SailScanDetails scan={openScan.scan} t={openScan.t} tz={tz} />
+          </DialogContent>
+        )}
+      </Dialog>
+    </div>
+  )
+}
+
+// Sail-scan details: the trim photo plus the report's numbers (source, TWS/TWA,
+// max camber, draft position, and the per-stripe table).
+function SailScanDetails({ scan, t, tz }: { scan: SailScan; t: number; tz: number }) {
+  const stripeCols: { k: string; l: string }[] = [
+    { k: 'pos', l: 'Pos%' }, { k: 'camber', l: 'Camber%' }, { k: 'draft', l: 'Draft%' },
+    { k: 'twist', l: 'Twist°' }, { k: 'entry', l: 'Entry°' }, { k: 'exit', l: 'Exit°' },
+  ]
+  const stripes = (scan.stripes || []).filter((s) => stripeCols.some((c) => s?.[c.k] != null))
+  return (
+    <div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+      <div>
+        {scan.photo
+          ? <img src={scan.photo} alt="" className="max-h-[70vh] w-full rounded object-contain" />
+          : <div className="flex h-48 items-center justify-center rounded border border-[color:var(--border)] text-muted"><Sailboat size={26} aria-hidden /></div>}
+      </div>
+      <div className="min-w-0">
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {scan.sailCode && <Chip s={{ bg: SCAN_C + '22', c: '#C4B5FD', bd: SCAN_C + '55' }}>{scan.sailCode}</Chip>}
+          {scan.source && <Chip s={{ bg: '#1E3A5A', c: '#7DD3FC', bd: '#2D4A6A' }}>{scan.source}</Chip>}
+          <Chip s={{ bg: '#1E3A5A', c: '#94A3B8', bd: '#2D4A6A' }}>{scan.capturedLocal ? scan.capturedLocal.replace('T', ' ').slice(0, 16) : hms(t, tz)}</Chip>
+        </div>
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <Stat label="TWS" value={scan.tws != null ? `${scan.tws} kn` : '—'} />
+          <Stat label="TWA" value={scan.twa != null ? `${scan.twa}°` : '—'} />
+          <Stat label="Max camber" value={scan.summary?.maxCamberPct != null ? `${scan.summary.maxCamberPct}%` : '—'} />
+          <Stat label="Draft pos" value={scan.summary?.draftPositionPct != null ? `${scan.summary.draftPositionPct}%` : '—'} />
+        </div>
+        {stripes.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-[11px]">
+              <thead>
+                <tr className="text-muted">{stripeCols.map((c) => <th key={c.k} className="px-1.5 py-1 text-right font-medium first:text-left">{c.l}</th>)}</tr>
+              </thead>
+              <tbody>
+                {stripes.map((s, i) => (
+                  <tr key={i} className="border-t border-[color:var(--border)]">
+                    {stripeCols.map((c) => <td key={c.k} className="px-1.5 py-1 text-right font-mono first:text-left">{s?.[c.k] != null ? Number(s[c.k]).toFixed(c.k === 'pos' ? 0 : 1) : '—'}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-[color:var(--border)] bg-surface-1 px-2 py-1.5">
+      <div className="text-[9px] uppercase tracking-wide text-muted">{label}</div>
+      <div className="font-mono text-sm text-fg">{value}</div>
     </div>
   )
 }
@@ -342,13 +434,14 @@ function MediaCard({ m, x, y, w, h, color, tz, scale, ev, onClick }: {
     >
       <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ border: `2px solid ${color}`, background: 'var(--surface-2)' }}>
         {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="h-full w-full object-cover" />
-          : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
+          : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : m.type === 'sailscan' ? <Sailboat size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
         <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{hms(m.t, tz)}</span>
         {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${hov ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}
 
         {/* Metadata — revealed once the card has enlarged (hover-intent). */}
         {hov && (
           <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-1 bg-black/72 px-1.5 py-1">
+            {m.sailName && <Chip s={{ bg: SCAN_C + '22', c: '#C4B5FD', bd: SCAN_C + '55' }}>{m.sailName}</Chip>}
             {m.tws != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWS {r(m.tws)}kn</Chip>}
             {m.twa != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWA {r(m.twa)}°</Chip>}
             {m.sails.slice(0, 2).map((sName) => <Chip key={sName} s={chipStyle(sName)}>{sName}</Chip>)}
