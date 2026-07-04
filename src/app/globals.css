@@ -85,7 +85,11 @@
 
 html,
 body {
-  max-width: 100vw;
+  /* NB: use 100% (not 100vw) — 100vw includes the vertical scrollbar's width,
+     which makes the body a few px wider than the content area and produces a
+     persistent document-wide horizontal scrollbar on every page. */
+  max-width: 100%;
+  width: 100%;
   overflow-x: hidden;
   background: var(--bg);
   color: var(--text);
