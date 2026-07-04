@@ -144,11 +144,11 @@ export function PhotoOverlayImage({ src, inst }: { src: string | null; inst: Rec
   }, [src, inst])
 
   if (!src) return <div className="py-8 text-center text-sm text-muted">No image.</div>
-  if (failed) return <img src={src} alt="" className="max-h-[70vh] w-full rounded object-contain" />
+  if (failed) return <img src={src} alt="" className="max-h-[86vh] w-full rounded object-contain" />
   return (
     <div className="relative">
       {!ready && <Skeleton className="h-56 w-full rounded" />}
-      <canvas ref={canvasRef} className="max-h-[70vh] w-full rounded object-contain" style={{ display: ready ? 'block' : 'none' }} />
+      <canvas ref={canvasRef} className="max-h-[86vh] w-full rounded object-contain" style={{ display: ready ? 'block' : 'none' }} />
     </div>
   )
 }
@@ -184,5 +184,5 @@ export function FallbackVideoPlayer({ videoId }: { videoId: string }) {
     return () => { alive = false; if (hls) { try { hls.destroy() } catch { /* noop */ } } }
   }, [videoId])
   if (err) return <div className="py-8 text-center text-sm text-muted">{err}</div>
-  return <video ref={ref} controls autoPlay playsInline className="w-full rounded bg-black" style={{ maxHeight: '60vh' }} />
+  return <video ref={ref} controls autoPlay playsInline className="w-full rounded bg-black" style={{ maxHeight: '86vh' }} />
 }

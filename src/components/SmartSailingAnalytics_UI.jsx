@@ -6246,8 +6246,9 @@ function SSAApp(){
   // buttons, but the base "Fullscreen (with data overlay)" control stays.
   const videoModal = (videoModalOpen && selectedVideo) ? (
     <div onClick={()=>setVideoModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(3,15,26,0.55)",display:"flex",alignItems:"stretch",justifyContent:"flex-end"}}>
-      {/* Docked to the RIGHT — the timeline stays visible on the left. Autoplays. */}
-      <div onClick={e=>e.stopPropagation()} style={{position:"relative",width:isMobile?"100%":"min(680px, 92vw)",height:"100%",overflowY:"auto",background:"#050E1C",borderLeft:"1px solid #1E3A5A",boxShadow:"-12px 0 40px rgba(0,0,0,0.5)",padding:isMobile?"40px 12px 16px":"44px 18px 18px"}}>
+      {/* Fills the room to the RIGHT of the narrow timeline (full screen on
+          mobile) so the video is as large as possible; autoplays. */}
+      <div onClick={e=>e.stopPropagation()} style={{position:"relative",width:isMobile?"100%":"calc(100vw - 320px)",height:"100%",overflowY:"auto",background:"#050E1C",borderLeft:"1px solid #1E3A5A",boxShadow:"-12px 0 40px rgba(0,0,0,0.5)",padding:isMobile?"40px 10px 12px":"44px 16px 16px"}}>
         <button onClick={()=>setVideoModalOpen(false)} aria-label="Close" style={{position:"absolute",top:8,right:10,zIndex:3,width:34,height:34,borderRadius:8,border:"1px solid #1E3A5A",background:"#0A1929",color:"#E2E8F0",fontSize:18,lineHeight:"1",cursor:"pointer"}}>✕</button>
         <VideoPlayer
           video={selectedVideo}

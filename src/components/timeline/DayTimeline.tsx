@@ -294,11 +294,11 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       </div>
 
       <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
-        {openPhoto && <DialogContent title="Photo"><PhotoOverlayImage src={openPhoto.thumb} inst={openPhoto.inst || {}} /></DialogContent>}
+        {openPhoto && <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none p-3"><PhotoOverlayImage src={openPhoto.thumb} inst={openPhoto.inst || {}} /></DialogContent>}
       </Dialog>
       <Dialog open={!!openVideo} onOpenChange={(o) => { if (!o) setOpenVideo(null) }}>
         {openVideo && (
-          <DialogContent title={openVideo.title || 'Video'}>
+          <DialogContent title={openVideo.title || 'Video'} className="w-[min(1300px,calc(100vw-16px))] max-w-none p-3">
             <FallbackVideoPlayer videoId={openVideo.id} />
             {openVideo.tags.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{openVideo.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>}
           </DialogContent>
