@@ -415,6 +415,20 @@ function StripeCharts({ stripes }: { stripes: any[] }) {
   )
 }
 
+// Smooth (Catmull-Rom → cubic Bézier) spline through the points, like the
+// SailScan analysis charts.
+function smoothPath(p: [number, number][]): string {
+  if (p.length < 2) return p.length ? `M ${p[0][0]} ${p[0][1]}` : ''
+  let d = `M ${p[0][0].toFixed(1)} ${p[0][1].toFixed(1)}`
+  for (let i = 0; i < p.length - 1; i++) {
+    const p0 = p[i === 0 ? 0 : i - 1], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2 < p.length ? i + 2 : p.length - 1]
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6
+    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`
+  }
+  return d
+}
+
 function MiniChart({ pts, metric, label, color }: { pts: any[]; metric: string; label: string; color: string }) {
   const rows = pts.filter((p) => p[metric] != null)
   if (rows.length < 2) return null
@@ -424,14 +438,14 @@ function MiniChart({ pts, metric, label, color }: { pts: any[]; metric: string; 
   const vMin = Math.min(...vals), vMax = Math.max(...vals), vRange = vMax - vMin || 1
   const xOf = (v: number) => padX + ((v - vMin) / vRange) * (W - 2 * padX)
   const yOf = (pos: number) => (H - padY) - ((pos - posMin) / ((posMax - posMin) || 1)) * (H - 2 * padY)
-  const line = rows.map((p) => `${xOf(p[metric]).toFixed(1)},${yOf(p.pos).toFixed(1)}`).join(' ')
+  const d = smoothPath(rows.map((p) => [xOf(p[metric]), yOf(p.pos)] as [number, number]))
   return (
     <div className="rounded-lg border border-[color:var(--border)] bg-surface-1 p-2">
       <div className="mb-1 text-[10px] font-medium" style={{ color }}>{label}</div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 170 }} preserveAspectRatio="none">
         <line x1={padX} y1={padY} x2={padX} y2={H - padY} stroke="var(--border)" strokeWidth={1} />
         <line x1={padX} y1={H - padY} x2={W - padX} y2={H - padY} stroke="var(--border)" strokeWidth={1} />
-        <polyline points={line} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
+        <path d={d} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
         {rows.map((p, i) => <circle key={i} cx={xOf(p[metric])} cy={yOf(p.pos)} r={2.4} fill={color} />)}
         <text x={padX} y={H - 2} fontSize="7" fill="var(--text-muted)">{vMin.toFixed(0)}</text>
         <text x={W - padX} y={H - 2} fontSize="7" fill="var(--text-muted)" textAnchor="end">{vMax.toFixed(0)}</text>
