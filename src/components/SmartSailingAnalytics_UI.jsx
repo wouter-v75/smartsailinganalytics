@@ -6245,10 +6245,12 @@ function SSAApp(){
   // (incl. the Timeline). Minimal props: no crop / sync / HD-toggle toolbar
   // buttons, but the base "Fullscreen (with data overlay)" control stays.
   const videoModal = (videoModalOpen && selectedVideo) ? (
-    <div onClick={()=>setVideoModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(3,15,26,0.55)",display:"flex",alignItems:"stretch",justifyContent:"flex-end"}}>
-      {/* Fills the room to the RIGHT of the narrow timeline (full screen on
-          mobile) so the video is as large as possible; autoplays. */}
-      <div onClick={e=>e.stopPropagation()} style={{position:"relative",width:isMobile?"100%":"calc(100vw - 320px)",height:"100%",overflowY:"auto",background:"#050E1C",borderLeft:"1px solid #1E3A5A",boxShadow:"-12px 0 40px rgba(0,0,0,0.5)",padding:isMobile?"40px 10px 12px":"44px 16px 16px"}}>
+    <div onClick={()=>setVideoModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(3,15,26,0.55)",display:"flex",alignItems:"stretch",justifyContent:"flex-end",overflow:"hidden"}}>
+      {/* Left spacer keeps the narrow timeline visible; the drawer FLEXES to fill
+          the rest — no 100vw (which would include the scrollbar and cause a
+          document-wide horizontal scroll). Full screen on mobile. */}
+      {!isMobile && <div style={{width:320,flexShrink:0}} aria-hidden/>}
+      <div onClick={e=>e.stopPropagation()} style={{position:"relative",flex:"1 1 auto",minWidth:0,height:"100%",overflowY:"auto",background:"#050E1C",borderLeft:"1px solid #1E3A5A",boxShadow:"-12px 0 40px rgba(0,0,0,0.5)",padding:isMobile?"40px 10px 12px":"44px 16px 16px"}}>
         <button onClick={()=>setVideoModalOpen(false)} aria-label="Close" style={{position:"absolute",top:8,right:10,zIndex:3,width:34,height:34,borderRadius:8,border:"1px solid #1E3A5A",background:"#0A1929",color:"#E2E8F0",fontSize:18,lineHeight:"1",cursor:"pointer"}}>✕</button>
         {/* Cap the width so the 16:9 stage + controls fit the viewport height —
             the BOX fills the screen, the video sizes to fit inside it. */}
@@ -6313,7 +6315,7 @@ function SSAApp(){
 
   return(
     <>{sailDiffModal}{videoModal}
-    <div style={{minHeight:"100vh",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
+    <div style={{minHeight:"100vh",width:"100%",maxWidth:"100%",overflowX:"hidden",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
         <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
         <nav style={{marginLeft:10}}>
