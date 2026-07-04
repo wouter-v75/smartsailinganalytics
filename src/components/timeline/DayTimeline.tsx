@@ -4,6 +4,7 @@ import { Play, Camera, ZoomIn, ZoomOut, Sailboat } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { PhotoOverlayImage, FallbackVideoPlayer } from './DayMedia'
+import SailScanDetail from '@/components/SailScanDetail'
 
 // The day's own VERTICAL time-axis. A zoomable, pinch/scrollable time bar (hover
 // cursor + time box) with the day's nodes and event-file tags coloured like the
@@ -40,16 +41,10 @@ function chipStyle(t: string): { bg: string; c: string; bd: string } {
   return { bg: '#8B5CF622', c: '#A78BFA', bd: '#8B5CF655' }
 }
 
-interface SailScan {
-  id: string; sailName: string | null; sailCode: string | null; source: string | null
-  tws: number | null; twa: number | null
-  summary: { maxCamberPct?: number | null; draftPositionPct?: number | null }
-  stripes: any[]; photo: string | null; capturedLocal?: string | null
-}
 interface MediaItem {
   id: string; type: 'video' | 'photo' | 'sailscan'; thumb: string | null; t: number
   title?: string | null; tags: string[]; tws?: number | null; twa?: number | null; twaTarg?: number | null; twd?: number | null; sails: string[]; inst?: Record<string, any>
-  original?: string | null; sailName?: string | null; scan?: SailScan
+  original?: string | null; sailName?: string | null; raw?: any
 }
 
 // Leg mode from TWA vs target TWA (per Wouter's rule):
@@ -102,6 +97,15 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [openScan, setOpenScan] = React.useState<MediaItem | null>(null)
   const [cursor, setCursor] = React.useState<{ y: number; t: number } | null>(null)
   const [pph, setPph] = React.useState(DEFAULT_PPH)
+  // Boat sail inventory (with design shapes in specs) — passed to SailScanDetail
+  // so it can draw the design-target curves.
+  const [sailInventory, setSailInventory] = React.useState<any[]>([])
+  React.useEffect(() => {
+    if (!teamId || !boatId) return
+    let alive = true
+    fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`).then((r) => r.json()).then((j) => { if (alive) setSailInventory(j?.sails || []) }).catch(() => {})
+    return () => { alive = false }
+  }, [teamId, boatId])
 
   React.useEffect(() => {
     if (!teamId || !boatId || !date) { setMedia([]); return }
@@ -132,7 +136,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         return {
           id: s.id, type: 'sailscan' as const, thumb: s.photo_url || null,
           t: Number.isFinite(t) ? t : day.t0, tags: [], tws: s.tws_kn ?? null, twa: s.twa_deg ?? null, sails: [], sailName: name,
-          scan: { id: s.id, sailName: c.sail_name_in_report || null, sailCode: c.sail_code || null, source: s.source || null, tws: s.tws_kn ?? null, twa: s.twa_deg ?? null, summary: s.summary || {}, stripes: s.stripes || [], photo: s.photo_url || null, capturedLocal: c.captured_local || null },
+          raw: s, // the full row → passed straight to <SailScanDetail>
         }
       }).filter((m: MediaItem) => ymd(m.t) === date)
       setMedia([...vids, ...phs, ...scns].sort((a, b) => a.t - b.t))
@@ -332,135 +336,16 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           </DialogContent>
         )}
       </Dialog>
-      <Dialog open={!!openScan} onOpenChange={(o) => { if (!o) setOpenScan(null) }}>
-        {openScan?.scan && (
-          <DialogContent title={openScan.scan.sailName || openScan.scan.sailCode || 'Sail scan'} className="w-[min(1000px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-4">
-            <SailScanDetails scan={openScan.scan} t={openScan.t} tz={tz} />
-          </DialogContent>
-        )}
-      </Dialog>
-    </div>
-  )
-}
-
-// Sail-scan details: the trim photo plus the report's numbers (source, TWS/TWA,
-// max camber, draft position, and the per-stripe table).
-function SailScanDetails({ scan, t, tz }: { scan: SailScan; t: number; tz: number }) {
-  const stripeCols: { k: string; l: string }[] = [
-    { k: 'pos', l: 'Pos%' }, { k: 'camber', l: 'Camber%' }, { k: 'draft', l: 'Draft%' },
-    { k: 'twist', l: 'Twist°' }, { k: 'entry', l: 'Entry°' }, { k: 'exit', l: 'Exit°' },
-  ]
-  const stripes = (scan.stripes || []).filter((s) => stripeCols.some((c) => s?.[c.k] != null))
-  return (
-    <div className="grid gap-4">
-    <div className="grid gap-3 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-      <div>
-        {scan.photo
-          ? <img src={scan.photo} alt="" className="max-h-[70vh] w-full rounded object-contain" />
-          : <div className="flex h-48 items-center justify-center rounded border border-[color:var(--border)] text-muted"><Sailboat size={26} aria-hidden /></div>}
-      </div>
-      <div className="min-w-0">
-        <div className="mb-2 flex flex-wrap gap-1.5">
-          {scan.sailCode && <Chip s={{ bg: SCAN_C + '22', c: '#C4B5FD', bd: SCAN_C + '55' }}>{scan.sailCode}</Chip>}
-          {scan.source && <Chip s={{ bg: '#1E3A5A', c: '#7DD3FC', bd: '#2D4A6A' }}>{scan.source}</Chip>}
-          <Chip s={{ bg: '#1E3A5A', c: '#94A3B8', bd: '#2D4A6A' }}>{scan.capturedLocal ? scan.capturedLocal.replace('T', ' ').slice(0, 16) : hms(t, tz)}</Chip>
-        </div>
-        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Stat label="TWS" value={scan.tws != null ? `${scan.tws} kn` : '—'} />
-          <Stat label="TWA" value={scan.twa != null ? `${scan.twa}°` : '—'} />
-          <Stat label="Max camber" value={scan.summary?.maxCamberPct != null ? `${scan.summary.maxCamberPct}%` : '—'} />
-          <Stat label="Draft pos" value={scan.summary?.draftPositionPct != null ? `${scan.summary.draftPositionPct}%` : '—'} />
-        </div>
-        {stripes.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[11px]">
-              <thead>
-                <tr className="text-muted">{stripeCols.map((c) => <th key={c.k} className="px-1.5 py-1 text-right font-medium first:text-left">{c.l}</th>)}</tr>
-              </thead>
-              <tbody>
-                {stripes.map((s, i) => (
-                  <tr key={i} className="border-t border-[color:var(--border)]">
-                    {stripeCols.map((c) => <td key={c.k} className="px-1.5 py-1 text-right font-mono first:text-left">{s?.[c.k] != null ? Number(s[c.k]).toFixed(c.k === 'pos' ? 0 : 1) : '—'}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
-    <StripeCharts stripes={scan.stripes} />
-    </div>
-  )
-}
-
-// Trim-stripe profile charts: each metric plotted up the sail (height on the
-// vertical axis, value on the horizontal) — camber, twist and draft position.
-function StripeCharts({ stripes }: { stripes: any[] }) {
-  const pts = (stripes || []).filter((s) => s?.pos != null).slice().sort((a, b) => a.pos - b.pos)
-  if (pts.length < 2) return null
-  const metrics = [
-    { k: 'camber', label: 'Camber %', c: '#8B5CF6' },
-    { k: 'twist', label: 'Twist °', c: '#06B6D4' },
-    { k: 'draft', label: 'Draft %', c: '#F59E0B' },
-  ].filter((m) => pts.filter((p) => p[m.k] != null).length >= 2)
-  if (!metrics.length) return null
-  return (
-    <div>
-      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted">Trim stripes</div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {metrics.map((m) => <MiniChart key={m.k} pts={pts} metric={m.k} label={m.label} color={m.c} />)}
-      </div>
-    </div>
-  )
-}
-
-// Smooth (Catmull-Rom → cubic Bézier) spline through the points, like the
-// SailScan analysis charts.
-function smoothPath(p: [number, number][]): string {
-  if (p.length < 2) return p.length ? `M ${p[0][0]} ${p[0][1]}` : ''
-  let d = `M ${p[0][0].toFixed(1)} ${p[0][1].toFixed(1)}`
-  for (let i = 0; i < p.length - 1; i++) {
-    const p0 = p[i === 0 ? 0 : i - 1], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2 < p.length ? i + 2 : p.length - 1]
-    const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6
-    const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6
-    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)}, ${c2x.toFixed(1)} ${c2y.toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`
-  }
-  return d
-}
-
-function MiniChart({ pts, metric, label, color }: { pts: any[]; metric: string; label: string; color: string }) {
-  const rows = pts.filter((p) => p[metric] != null)
-  if (rows.length < 2) return null
-  const W = 120, H = 150, padX = 8, padY = 12
-  const poss = pts.map((p) => p.pos), vals = rows.map((p) => p[metric] as number)
-  const posMin = Math.min(...poss), posMax = Math.max(...poss)
-  const vMin = Math.min(...vals), vMax = Math.max(...vals), vRange = vMax - vMin || 1
-  const xOf = (v: number) => padX + ((v - vMin) / vRange) * (W - 2 * padX)
-  const yOf = (pos: number) => (H - padY) - ((pos - posMin) / ((posMax - posMin) || 1)) * (H - 2 * padY)
-  const d = smoothPath(rows.map((p) => [xOf(p[metric]), yOf(p.pos)] as [number, number]))
-  return (
-    <div className="rounded-lg border border-[color:var(--border)] bg-surface-1 p-2">
-      <div className="mb-1 text-[10px] font-medium" style={{ color }}>{label}</div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 170 }} preserveAspectRatio="none">
-        <line x1={padX} y1={padY} x2={padX} y2={H - padY} stroke="var(--border)" strokeWidth={1} />
-        <line x1={padX} y1={H - padY} x2={W - padX} y2={H - padY} stroke="var(--border)" strokeWidth={1} />
-        <path d={d} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />
-        {rows.map((p, i) => <circle key={i} cx={xOf(p[metric])} cy={yOf(p.pos)} r={2.4} fill={color} />)}
-        <text x={padX} y={H - 2} fontSize="7" fill="var(--text-muted)">{vMin.toFixed(0)}</text>
-        <text x={W - padX} y={H - 2} fontSize="7" fill="var(--text-muted)" textAnchor="end">{vMax.toFixed(0)}</text>
-        <text x={padX + 1} y={padY + 6} fontSize="7" fill="var(--text-muted)">head</text>
-        <text x={padX + 1} y={H - padY - 2} fontSize="7" fill="var(--text-muted)">foot</text>
-      </svg>
-    </div>
-  )
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-[color:var(--border)] bg-surface-1 px-2 py-1.5">
-      <div className="text-[9px] uppercase tracking-wide text-muted">{label}</div>
-      <div className="font-mono text-sm text-fg">{value}</div>
+      {openScan?.raw && teamId && (
+        <SailScanDetail
+          scan={openScan.raw}
+          teamId={teamId}
+          sails={sailInventory}
+          canEdit={false}
+          sessionTzOffset={tz}
+          onClose={() => setOpenScan(null)}
+        />
+      )}
     </div>
   )
 }
