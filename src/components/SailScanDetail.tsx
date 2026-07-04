@@ -398,6 +398,12 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   // 'headsail' (null ⇒ unknown, show neither sail-specific set).
   const isMain = cond.sail_type === 'main'
   const isHeadsail = cond.sail_type === 'headsail'
+  // Top stripe by sail type: mains have an 87% stripe, jibs (headsails) 75%.
+  // Drop design stripes above that (e.g. the 100% design row on mains) from both
+  // the table and the charts, and stop the graphs at that height.
+  const maxStripe = isMain ? 87 : isHeadsail ? 75 : 100
+  const xTicksArr = maxStripe === 75 ? [25, 50, 75] : maxStripe === 87 ? [25, 50, 75, 87] : [25, 50, 75, 100]
+  const designSections = (design?.sections || []).filter((s: any) => s.posPct !== 0 && s.posPct <= maxStripe)
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', overflowY: 'auto', padding: '24px 12px' }}>
@@ -481,7 +487,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             </table>
 
             {/* design target shapes (interpolated to the measured TWS) */}
-            {design && design.sections.filter((s: any) => s.posPct !== 0).length > 0 && (
+            {design && designSections.length > 0 && (
               <>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, margin: '12px 0 4px' }}>
                   Design target ({design.sourceCode || targetSail?.category || '—'}) @ {fmt(design.tws, 0)} kn · % = fractions ×100
@@ -494,7 +500,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
                     <tr><th style={th}>Stripe</th><th style={th}>Draft</th><th style={th}>Camber</th><th style={th}>Twist</th><th style={th}>Entry</th><th style={th}>Exit</th><th style={th}>Front%</th><th style={th}>Back%</th></tr>
                   </thead>
                   <tbody>
-                    {design.sections.filter((s: any) => s.posPct !== 0).map((s: any) => (
+                    {designSections.map((s: any) => (
                       <tr key={s.posPct}>
                         <td style={{ ...td, fontWeight: 700, color: DESIGN_GREY }}>{s.posPct}%</td>
                         <td style={td}>{fmt(s.draft != null ? s.draft * 100 : null)}</td>
@@ -547,14 +553,14 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
         </div>
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
           {METRICS.map((m) => {
-            const overlay = design && design.sections.length
-              ? { xs: design.sections.map((s: any) => s.posPct), ys: design.sections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color: DESIGN_GREY }
+            const overlay = design && designSections.length
+              ? { xs: designSections.map((s: any) => s.posPct), ys: designSections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color: DESIGN_GREY }
               : undefined
             return (
               <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
                 <div style={{ fontSize: 13, color: C.head, fontWeight: 700, marginBottom: 4 }}>{m.label}</div>
                 <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay}
-                  xMin={25} xMax={100} xTicks={[25, 50, 75, 100]} w={720} h={280} hovered={shapeHover} onHover={setShapeHover} />
+                  xMin={25} xMax={maxStripe} xTicks={xTicksArr} w={720} h={280} hovered={shapeHover} onHover={setShapeHover} />
               </div>
             )
           })}
