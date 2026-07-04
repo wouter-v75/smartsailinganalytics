@@ -42,7 +42,20 @@ function chipStyle(t: string): { bg: string; c: string; bd: string } {
 
 interface MediaItem {
   id: string; type: 'video' | 'photo'; thumb: string | null; t: number
-  title?: string | null; tags: string[]; tws?: number | null; twa?: number | null; twd?: number | null; sails: string[]; inst?: Record<string, any>
+  title?: string | null; tags: string[]; tws?: number | null; twa?: number | null; twaTarg?: number | null; twd?: number | null; sails: string[]; inst?: Record<string, any>
+}
+
+// Leg mode from TWA vs target TWA (per Wouter's rule):
+//   • upwind   = TWA < 90 AND within 20° of target TWA
+//   • downwind = TWA > 90 AND within 20° of target TWA
+//   • reach    = anything else (off-target, or a reaching angle)
+// If target TWA is unknown we can't check the 20° band, so we fall back to the
+// simple TWA<90 / TWA>90 split.
+function classifyTwa(twa: number, twaTarg: number | null | undefined): 'upwind' | 'downwind' | 'reach' {
+  const near = twaTarg == null ? true : Math.abs(twa - twaTarg) < 20
+  if (twa < 90) return near ? 'upwind' : 'reach'
+  if (twa > 90) return near ? 'downwind' : 'reach'
+  return 'reach'
 }
 interface Placed { m: MediaItem; y: number; yt: number }
 
@@ -98,7 +111,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       const phs: MediaItem[] = (pj?.photos || []).map((p: any) => {
         const a = p.analysis_data || {}, inst = a.inst || {}
         const sails = a.sails ?? inst.sails ?? []
-        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails } }
+        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twaTarg: inst.twaTarg ?? inst.twa_targ ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails } }
       })
       setMedia([...vids, ...phs].sort((a, b) => a.t - b.t))
     })
@@ -158,9 +171,18 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     return out
   }, [lo, hi])
 
-  // Leg bands: split the racing time at course points (start / mark / finish),
-  // classify each leg by its manoeuvres — more tacks ⇒ upwind, more gybes ⇒
-  // downwind, balanced/none ⇒ reach — and colour the time bar accordingly.
+  // Per-time TWA samples (from photos: the only timeline data carrying TWA + a
+  // target). Used to classify legs by the TWA rule.
+  const twaSamples = React.useMemo(
+    () => (media || []).filter((m) => m.type === 'photo' && m.twa != null).map((m) => ({ t: m.t, twa: m.twa as number, twaTarg: m.twaTarg ?? null })),
+    [media],
+  )
+
+  // Leg bands: split the racing time at course points (start / mark / finish).
+  // Classify each leg from its TWA samples via the rule (upwind = TWA<90 within
+  // 20° of target, downwind = TWA>90 within 20°, else reach). Where a leg has no
+  // TWA sample, fall back to manoeuvres (more tacks ⇒ upwind, more gybes ⇒
+  // downwind, balanced/none ⇒ reach).
   const legs = React.useMemo(() => {
     const bounds = new Set<number>([lo, hi])
     markers.forEach((e) => { if (['start', 'mark', 'finish', 'race'].includes(e.kind)) { bounds.add(e.t0); if (e.t1 > e.t0) bounds.add(e.t1) } })
@@ -169,13 +191,22 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     for (let i = 0; i < bs.length - 1; i++) {
       const a = bs[i], b = bs[i + 1]
       if (b - a < 90000) continue // ignore sub-90s slivers
-      let tk = 0, gy = 0
-      for (const e of markers) { if (e.t0 >= a && e.t0 < b) { if (e.kind === 'tack') tk++; else if (e.kind === 'gybe') gy++ } }
-      out.push({ t0: a, t1: b, mode: tk > gy ? 'upwind' : gy > tk ? 'downwind' : 'reach' })
+      const votes: Record<string, number> = { upwind: 0, downwind: 0, reach: 0 }
+      let n = 0
+      for (const s of twaSamples) { if (s.t >= a && s.t < b) { votes[classifyTwa(s.twa, s.twaTarg)]++; n++ } }
+      let mode: string
+      if (n > 0) {
+        mode = (['upwind', 'downwind', 'reach'] as const).reduce((best, m) => (votes[m] > votes[best] ? m : best), 'reach')
+      } else {
+        let tk = 0, gy = 0
+        for (const e of markers) { if (e.t0 >= a && e.t0 < b) { if (e.kind === 'tack') tk++; else if (e.kind === 'gybe') gy++ } }
+        mode = tk > gy ? 'upwind' : gy > tk ? 'downwind' : 'reach'
+      }
+      out.push({ t0: a, t1: b, mode })
     }
     return out
-  }, [markers, lo, hi])
-  const hasLegManoeuvres = React.useMemo(() => markers.some((e) => e.kind === 'tack' || e.kind === 'gybe'), [markers])
+  }, [markers, lo, hi, twaSamples])
+  const hasLegManoeuvres = React.useMemo(() => twaSamples.length > 0 || markers.some((e) => e.kind === 'tack' || e.kind === 'gybe'), [twaSamples, markers])
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -287,34 +318,44 @@ function MediaCard({ m, x, y, w, h, color, tz, scale, ev, onClick }: {
 }) {
   const evStyle = ev ? EVENT_STYLE[ev.kind] : null
   const [hov, setHov] = React.useState(false)
-  // Slide left up to a card-width, but keep the enlarged card's left edge on
-  // screen (>= 4px). This pulls it off its column so the deck behind stays live.
+  // Hover-intent: only enlarge after the pointer RESTS on a card (~180ms), so
+  // sweeping across the deck doesn't fire every card in turn.
+  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const enter = () => { if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => setHov(true), 180) }
+  const leave = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null } setHov(false) }
+  React.useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  // Slide left to reveal the deck, but ONLY as far as keeps the whole original
+  // footprint under the enlarged card — w·(scale−1)/2 — so the pointer never
+  // leaves the card (which would cause an enlarge/collapse flicker loop). Also
+  // clamp so the left edge stays on screen.
   const cx = x + w / 2
   const maxShift = Math.max(0, cx - (scale * w) / 2 - 4)
-  const shift = Math.min(maxShift, w)
+  const shift = Math.min(maxShift, (w * (scale - 1)) / 2)
   return (
     <button
       onClick={onClick}
-      onMouseEnter={() => setHov(true)}
-      onMouseLeave={() => setHov(false)}
+      onMouseEnter={enter}
+      onMouseLeave={leave}
       title={m.type === 'video' ? (m.title || 'Play video') : hms(m.t, tz)}
-      className="group/med absolute overflow-visible rounded-lg text-left shadow-md transition-transform duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
+      className="absolute overflow-visible rounded-lg text-left shadow-md transition-transform duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
       style={{ left: x, top: y, width: w, height: h, transformOrigin: 'center', zIndex: hov ? 80 : undefined, transform: hov ? `translateX(${-shift}px) scale(${scale})` : 'none' }}
     >
       <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ border: `2px solid ${color}`, background: 'var(--surface-2)' }}>
         {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="h-full w-full object-cover" />
           : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
         <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{hms(m.t, tz)}</span>
-        {m.type === 'video' && <span className="absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white group-hover/med:opacity-0"><Play size={15} aria-hidden /></span>}
+        {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${hov ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}
 
-        {/* Hover metadata (revealed when the card doubles). */}
-        <div className="absolute inset-x-0 bottom-0 hidden flex-wrap items-center gap-1 bg-black/72 px-1.5 py-1 group-hover/med:flex">
-          {m.tws != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWS {r(m.tws)}kn</Chip>}
-          {m.twa != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWA {r(m.twa)}°</Chip>}
-          {m.sails.slice(0, 2).map((sName) => <Chip key={sName} s={chipStyle(sName)}>{sName}</Chip>)}
-          {m.tags.slice(0, 3).map((t) => <Chip key={t} s={chipStyle(t)}>{t}</Chip>)}
-          {evStyle && <Chip s={{ bg: evStyle.c + '22', c: evStyle.c, bd: evStyle.c + '55' }}>{ev!.title || evStyle.label}</Chip>}
-        </div>
+        {/* Metadata — revealed once the card has enlarged (hover-intent). */}
+        {hov && (
+          <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-1 bg-black/72 px-1.5 py-1">
+            {m.tws != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWS {r(m.tws)}kn</Chip>}
+            {m.twa != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWA {r(m.twa)}°</Chip>}
+            {m.sails.slice(0, 2).map((sName) => <Chip key={sName} s={chipStyle(sName)}>{sName}</Chip>)}
+            {m.tags.slice(0, 3).map((t) => <Chip key={t} s={chipStyle(t)}>{t}</Chip>)}
+            {evStyle && <Chip s={{ bg: evStyle.c + '22', c: evStyle.c, bd: evStyle.c + '55' }}>{ev!.title || evStyle.label}</Chip>}
+          </div>
+        )}
       </div>
     </button>
   )
