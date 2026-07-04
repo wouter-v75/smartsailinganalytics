@@ -6250,15 +6250,19 @@ function SSAApp(){
           mobile) so the video is as large as possible; autoplays. */}
       <div onClick={e=>e.stopPropagation()} style={{position:"relative",width:isMobile?"100%":"calc(100vw - 320px)",height:"100%",overflowY:"auto",background:"#050E1C",borderLeft:"1px solid #1E3A5A",boxShadow:"-12px 0 40px rgba(0,0,0,0.5)",padding:isMobile?"40px 10px 12px":"44px 16px 16px"}}>
         <button onClick={()=>setVideoModalOpen(false)} aria-label="Close" style={{position:"absolute",top:8,right:10,zIndex:3,width:34,height:34,borderRadius:8,border:"1px solid #1E3A5A",background:"#0A1929",color:"#E2E8F0",fontSize:18,lineHeight:"1",cursor:"pointer"}}>✕</button>
-        <VideoPlayer
-          video={selectedVideo}
-          logData={logData}
-          xmlData={xmlData}
-          syncOffset={syncOffsets[selectedVideo.id]||0}
-          sessionTzOffset={sessionTzOffset}
-          onPlayUtc={handlePlayUtc}
-          autoPlay
-        />
+        {/* Cap the width so the 16:9 stage + controls fit the viewport height —
+            the BOX fills the screen, the video sizes to fit inside it. */}
+        <div style={{width:"100%",maxWidth:isMobile?"none":"calc((100vh - 190px) * 16 / 9)",margin:"0 auto"}}>
+          <VideoPlayer
+            video={selectedVideo}
+            logData={logData}
+            xmlData={xmlData}
+            syncOffset={syncOffsets[selectedVideo.id]||0}
+            sessionTzOffset={sessionTzOffset}
+            onPlayUtc={handlePlayUtc}
+            autoPlay
+          />
+        </div>
       </div>
     </div>
   ) : null;
