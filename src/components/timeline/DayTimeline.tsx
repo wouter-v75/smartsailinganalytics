@@ -75,6 +75,15 @@ function useCompact() {
   }, [])
   return c
 }
+function useNoHover() {
+  const [v, setV] = React.useState(false)
+  React.useEffect(() => {
+    const mq = window.matchMedia('(hover: none)')
+    const on = () => setV(mq.matches); on(); mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return v
+}
 // Responsive layout. On phones: tighter offsets + widths, event dots only (no
 // text labels), so BOTH decks fit within the viewport.
 function geometry(compact: boolean) {
@@ -97,6 +106,8 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [openScan, setOpenScan] = React.useState<MediaItem | null>(null)
   const [cursor, setCursor] = React.useState<{ y: number; t: number } | null>(null)
   const [ptr, setPtr] = React.useState<{ x: number; y: number } | null>(null)
+  const noHover = useNoHover()                    // touch device → scroll-driven "rolodex" focus
+  const contentRef = React.useRef<HTMLDivElement>(null)
   const [pph, setPph] = React.useState(DEFAULT_PPH)
   // Boat sail inventory (with design shapes in specs) — passed to SailScanDetail
   // so it can draw the design-target curves.
@@ -238,35 +249,59 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }, [markers, lo, hi, twaSamples])
   const hasLegManoeuvres = React.useMemo(() => twaSamples.length > 0 || markers.some((e) => e.kind === 'tack' || e.kind === 'gybe'), [twaSamples, markers])
 
-  // Pointer (mouse + touch + pen) so the fisheye works on mobile too: a finger
-  // drag over the deck drives it. Ignore while a two-finger pinch is active.
+  // Live fisheye follows a MOUSE only (best practice: continuous magnification on
+  // touch fights scrolling). Touch uses tap-to-peek / tap-to-open instead.
   const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (pinch.current) return
+    if (e.pointerType !== 'mouse' || pinch.current) return
     const rect = e.currentTarget.getBoundingClientRect()
     const rawY = e.clientY - rect.top
     setPtr({ x: e.clientX - rect.left, y: rawY })
     const y = Math.max(PAD, Math.min(axisH - PAD, rawY))
     setCursor({ y, t: tOf(y) })
   }
-  const clearPtr = () => { setCursor(null); setPtr(null) }
+  const clearHover = () => { if (noHover) return; setCursor(null); setPtr(null) }  // mouse leave (touch focus is scroll-driven)
+
+  // Touch "rolodex": centre the magnifier on the viewport, so scrolling the deck
+  // inflates whatever card is in the middle and tapers the rest. A capture-phase
+  // scroll listener catches whichever element actually scrolls.
+  React.useEffect(() => {
+    if (!noHover) return
+    let raf = 0
+    const update = () => {
+      raf = 0
+      const el = contentRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const focusScreen = window.innerHeight * 0.44
+      setPtr({ x: -1, y: Math.max(0, Math.min(rect.height, focusScreen - rect.top)) })
+    }
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(update) }
+    update()
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    return () => { window.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', onScroll); if (raf) cancelAnimationFrame(raf) }
+  }, [noHover, contentH])
   // macOS-Dock magnification: the card under the cursor inflates most; neighbours
   // above/below taper off with a cosine falloff over MAG_RADIUS, and magnified
   // cards push gently apart so the lens reads cleanly. Only the column the cursor
   // is over magnifies.
-  const MAG_AMP = compact ? 0.4 : 0.9
-  const MAG_RADIUS = compact ? 95 : 155
+  // ptr.x < 0 marks the touch "rolodex" focus (scroll-driven, all columns);
+  // ptr.x >= 0 is a mouse position (per-column gate).
+  const MAG_AMP = noHover ? 0.6 : (compact ? 0.4 : 0.9)
+  const MAG_RADIUS = noHover ? 150 : (compact ? 95 : 155)
   const magFor = (colX: number, colW: number, cy: number) => {
-    if (!ptr || ptr.x < colX - 14 || ptr.x > colX + colW + 14) return 1
+    if (!ptr) return 1
+    if (ptr.x >= 0 && (ptr.x < colX - 14 || ptr.x > colX + colW + 14)) return 1
     const d = Math.abs(cy - ptr.y)
     if (d >= MAG_RADIUS) return 1
     return 1 + MAG_AMP * 0.5 * (1 + Math.cos((d / MAG_RADIUS) * Math.PI))
   }
-  // The event dots + labels are their OWN column (left of the video column) —
-  // they only magnify when the cursor is over that band, not when hovering a
-  // media column.
-  const EV_AMP = compact ? 0.35 : 0.7
+  // Event dots + labels are their own column. With a mouse they only magnify
+  // when the cursor is over that band; in the rolodex they join the centre focus.
+  const EV_AMP = noHover ? 0.5 : (compact ? 0.35 : 0.7)
   const magForY = (cy: number) => {
-    if (!ptr || ptr.x >= G.VIDEO_X - 8) return 1
+    if (!ptr) return 1
+    if (ptr.x >= 0 && ptr.x >= G.VIDEO_X - 8) return 1
     const d = Math.abs(cy - ptr.y)
     if (d >= MAG_RADIUS) return 1
     return 1 + EV_AMP * 0.5 * (1 + Math.cos((d / MAG_RADIUS) * Math.PI))
@@ -308,9 +343,10 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
       <div className="overflow-x-auto">
         <div
+          ref={contentRef}
           className="relative"
           style={{ width: G.CONTENT_W, height: contentH, touchAction: 'pan-y' }}
-          onPointerMove={onMove} onPointerLeave={clearPtr} onPointerCancel={clearPtr} onWheel={onWheel}
+          onPointerMove={onMove} onPointerLeave={clearHover} onPointerCancel={clearHover} onWheel={onWheel}
           onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         >
           <svg className="pointer-events-none absolute inset-0" width={G.CONTENT_W} height={contentH} aria-hidden>

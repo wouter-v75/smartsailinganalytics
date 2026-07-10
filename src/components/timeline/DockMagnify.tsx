@@ -60,8 +60,9 @@ export default function DockMagnifier({ children, amp = 0.26, radius = 120 }: {
   const clear = () => { ptrY.current = null; schedule() }
   return (
     <DockCtx.Provider value={ctx}>
-      {/* Pointer events → works for mouse, touch and pen (mobile finger-drag). */}
-      <div onPointerMove={(e) => { ptrY.current = e.clientY; schedule() }} onPointerLeave={clear} onPointerCancel={clear}>
+      {/* Mouse only — continuous magnification on touch fights scrolling; on touch
+          the rows are simply tapped to expand. */}
+      <div onPointerMove={(e) => { if (e.pointerType !== 'mouse') return; ptrY.current = e.clientY; schedule() }} onPointerLeave={clear} onPointerCancel={clear}>
         {children}
       </div>
     </DockCtx.Provider>
