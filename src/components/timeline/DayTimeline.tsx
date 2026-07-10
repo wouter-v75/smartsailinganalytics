@@ -238,13 +238,17 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }, [markers, lo, hi, twaSamples])
   const hasLegManoeuvres = React.useMemo(() => twaSamples.length > 0 || markers.some((e) => e.kind === 'tack' || e.kind === 'gybe'), [twaSamples, markers])
 
-  const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
+  // Pointer (mouse + touch + pen) so the fisheye works on mobile too: a finger
+  // drag over the deck drives it. Ignore while a two-finger pinch is active.
+  const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (pinch.current) return
     const rect = e.currentTarget.getBoundingClientRect()
     const rawY = e.clientY - rect.top
     setPtr({ x: e.clientX - rect.left, y: rawY })
     const y = Math.max(PAD, Math.min(axisH - PAD, rawY))
     setCursor({ y, t: tOf(y) })
   }
+  const clearPtr = () => { setCursor(null); setPtr(null) }
   // macOS-Dock magnification: the card under the cursor inflates most; neighbours
   // above/below taper off with a cosine falloff over MAG_RADIUS, and magnified
   // cards push gently apart so the lens reads cleanly. Only the column the cursor
@@ -257,11 +261,12 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     if (d >= MAG_RADIUS) return 1
     return 1 + MAG_AMP * 0.5 * (1 + Math.cos((d / MAG_RADIUS) * Math.PI))
   }
-  // Same falloff for the axis event dots + labels, but purely by vertical
-  // proximity (any column) so the whole row breathes at the cursor's height.
+  // The event dots + labels are their OWN column (left of the video column) —
+  // they only magnify when the cursor is over that band, not when hovering a
+  // media column.
   const EV_AMP = compact ? 0.35 : 0.7
   const magForY = (cy: number) => {
-    if (!ptr) return 1
+    if (!ptr || ptr.x >= G.VIDEO_X - 8) return 1
     const d = Math.abs(cy - ptr.y)
     if (d >= MAG_RADIUS) return 1
     return 1 + EV_AMP * 0.5 * (1 + Math.cos((d / MAG_RADIUS) * Math.PI))
@@ -305,7 +310,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         <div
           className="relative"
           style={{ width: G.CONTENT_W, height: contentH, touchAction: 'pan-y' }}
-          onMouseMove={onMove} onMouseLeave={() => { setCursor(null); setPtr(null) }} onWheel={onWheel}
+          onPointerMove={onMove} onPointerLeave={clearPtr} onPointerCancel={clearPtr} onWheel={onWheel}
           onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         >
           <svg className="pointer-events-none absolute inset-0" width={G.CONTENT_W} height={contentH} aria-hidden>

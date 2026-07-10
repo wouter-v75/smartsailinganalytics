@@ -6,6 +6,7 @@ import type { TimelineNode } from '@/lib/timeline/types'
 import { buildSeasonScaffold } from '@/lib/timeline/buildSeasonScaffold'
 import DayPhases from './DayPhases'
 import Collapse from './Collapse'
+import DockMagnifier, { useDockItem } from './DockMagnify'
 
 // A narrow campaign spine on the left (season → regatta → day). Clicking a DAY
 // expands its own vertical time-axis inline — pushing the following days down —
@@ -57,12 +58,14 @@ export default function TimelineVertical({ nodes: raw, tzOffset = 0, initialFocu
   const toggle = React.useCallback((id: string) => setOpen((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n }), [])
 
   return (
-    <div className="mr-auto w-full max-w-5xl text-fg">
-      {roots.map((n) => (
-        <Row key={n.id} node={n} tz={tzOffset} childrenOf={childrenOf} descendantsOf={descendantsOf}
-          open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} focusId={initialFocusId} />
-      ))}
-    </div>
+    <DockMagnifier amp={0.26} radius={130}>
+      <div className="mr-auto w-full max-w-5xl text-fg">
+        {roots.map((n) => (
+          <Row key={n.id} node={n} tz={tzOffset} childrenOf={childrenOf} descendantsOf={descendantsOf}
+            open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} focusId={initialFocusId} />
+        ))}
+      </div>
+    </DockMagnifier>
   )
 }
 
@@ -84,16 +87,16 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
   const timeLabel = isSpanning ? `${dm(node.t0, tz)} – ${dm(node.t1, tz)}` : dm(node.t0, tz)
   const date = isDay ? ((node.meta?.date as string) || node.id.split(':')[1] || '') : ''
   const playForDay = React.useCallback((vid: string) => { if (onPlayVideo && date) onPlayVideo(date, vid) }, [onPlayVideo, date])
+  const dockRef = useDockItem()
 
   return (
     <div className="py-0.5">
       <button
+        ref={dockRef}
         onClick={() => expandable && toggle(node.id)}
         aria-expanded={expandable ? isOpen : undefined}
         className={[
-          'group flex w-[300px] max-w-full flex-col rounded-lg border px-3 py-2 text-left',
-          'transition-[transform,box-shadow,background-color,border-color] duration-[300ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] will-change-transform motion-reduce:transition-none',
-          'origin-left hover:-translate-y-0.5 hover:scale-[1.035] hover:shadow-lg motion-reduce:hover:scale-100',
+          'tl-dock-item group flex w-[300px] max-w-full flex-col rounded-lg border px-3 py-2 text-left hover:shadow-lg',
           expandable ? 'cursor-pointer' : 'cursor-default',
           isDay && isOpen ? 'border-[color:var(--accent)] bg-surface-2 shadow-md' : 'border-[color:var(--border)] bg-surface-1 hover:bg-surface-2',
         ].join(' ')}

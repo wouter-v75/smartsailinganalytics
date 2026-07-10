@@ -149,6 +149,18 @@ body {
   .tl-collapse-fade { transition: none; transform: none; }
 }
 
+/* Dock-magnifier rows (spine + phases): scale is written inline by the
+   magnifier; origin left-centre so growth goes rightward and the centre Y stays
+   put. Snappy transform follow, softer colour/shadow. */
+.tl-dock-item {
+  transform-origin: left center;
+  transition: transform 120ms ease-out, box-shadow 160ms ease-out, background-color 200ms ease, border-color 200ms ease;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-dock-item { transition: none; transform: none !important; }
+}
+
 /* Staggered spring entrance for media-deck cards. `backwards` fill so the
    finished animation reverts to the element's own (hover) transform. --i is the
    card's index → each lands a beat after the previous one. */

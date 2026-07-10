@@ -5,6 +5,7 @@ import { Badge, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import DayTimeline from './DayTimeline'
 import Collapse from './Collapse'
+import { useDockItem } from './DockMagnify'
 
 // The phases of a day, shown when a day is opened: Weather · Speed-team meeting ·
 // Sail call · Sailing · Debrief notes · Performance analysis. Each expands to its
@@ -71,48 +72,60 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
 
   return (
     <div className="grid gap-1 py-1">
-      {PHASES.map((ph) => {
-        const isOpen = open.has(ph.key)
-        const filled = has(ph.key)
-        const Icon = ph.icon
-        return (
-          <div key={ph.key}>
-            <button
-              onClick={() => toggle(ph.key)}
-              aria-expanded={isOpen}
-              className={[
-                'group flex w-[300px] max-w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-sm',
-                'transition-[transform,box-shadow,background-color] duration-[300ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] will-change-transform motion-reduce:transition-none hover:scale-[1.03] hover:shadow-md motion-reduce:hover:scale-100 origin-left',
-                isOpen ? 'border-[color:var(--border-strong)] bg-surface-2' : 'border-[color:var(--border)] bg-surface-1 hover:bg-surface-2',
-              ].join(' ')}
-              style={{ borderLeft: `3px solid ${filled || isOpen ? ph.color : 'var(--border)'}` }}
-            >
-              <Icon size={14} style={{ color: filled || isOpen ? ph.color : 'var(--text-muted)' }} aria-hidden />
-              <span className={filled || isOpen ? 'font-medium' : 'text-muted'}>{ph.label}</span>
-              {ph.key === 'sailing' && (nMarkers > 0 || nMedia > 0) && (
-                <span className="ml-1 flex gap-1">
-                  {(day.metrics?.videos || 0) > 0 && <Badge tone="accent">{day.metrics!.videos} vid</Badge>}
-                  {(day.metrics?.photos || 0) > 0 && <Badge tone="warning">{day.metrics!.photos} ph</Badge>}
-                </span>
-              )}
-              {ph.key !== 'sailing' && filled && <span className="h-1.5 w-1.5 rounded-full" style={{ background: ph.color }} aria-hidden />}
-              <ChevronRight size={14} className={`ml-auto shrink-0 text-muted transition-transform duration-[300ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none ${isOpen ? 'rotate-90' : ''}`} aria-hidden />
-            </button>
+      {PHASES.map((ph) => (
+        <PhaseRow
+          key={ph.key} ph={ph} isOpen={open.has(ph.key)} filled={has(ph.key)} onToggle={() => toggle(ph.key)}
+          day={day} events={events} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo}
+          loaded={loaded} cond={cond} deb={deb} nMarkers={nMarkers} nMedia={nMedia}
+        />
+      ))}
+    </div>
+  )
+}
 
-            <Collapse open={isOpen}>
-              <div className="ml-[10px] mt-1 border-l border-[color:var(--border)] pl-3">
-                {ph.key === 'sailing' ? (
-                  <DayTimeline day={day} events={events} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} />
-                ) : !loaded ? (
-                  <Skeleton className="h-10 w-full max-w-md rounded" />
-                ) : (
-                  <PhaseContent phaseKey={ph.key} cond={cond} deb={deb} />
-                )}
-              </div>
-            </Collapse>
-          </div>
-        )
-      })}
+function PhaseRow({ ph, isOpen, filled, onToggle, day, events, tz, teamId, boatId, onPlayVideo, loaded, cond, deb, nMarkers, nMedia }: {
+  ph: Phase; isOpen: boolean; filled: boolean; onToggle: () => void
+  day: TimelineNode; events: TimelineNode[]; tz: number; teamId?: string | null; boatId?: string | null
+  onPlayVideo?: (videoId: string) => void
+  loaded: boolean; cond: Conditions | null; deb: Debrief | null; nMarkers: number; nMedia: number
+}) {
+  const Icon = ph.icon
+  const dockRef = useDockItem()
+  return (
+    <div>
+      <button
+        ref={dockRef}
+        onClick={onToggle}
+        aria-expanded={isOpen}
+        className={[
+          'tl-dock-item group flex w-[300px] max-w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-sm hover:shadow-md',
+          isOpen ? 'border-[color:var(--border-strong)] bg-surface-2' : 'border-[color:var(--border)] bg-surface-1 hover:bg-surface-2',
+        ].join(' ')}
+        style={{ borderLeft: `3px solid ${filled || isOpen ? ph.color : 'var(--border)'}` }}
+      >
+        <Icon size={14} style={{ color: filled || isOpen ? ph.color : 'var(--text-muted)' }} aria-hidden />
+        <span className={filled || isOpen ? 'font-medium' : 'text-muted'}>{ph.label}</span>
+        {ph.key === 'sailing' && (nMarkers > 0 || nMedia > 0) && (
+          <span className="ml-1 flex gap-1">
+            {(day.metrics?.videos || 0) > 0 && <Badge tone="accent">{day.metrics!.videos} vid</Badge>}
+            {(day.metrics?.photos || 0) > 0 && <Badge tone="warning">{day.metrics!.photos} ph</Badge>}
+          </span>
+        )}
+        {ph.key !== 'sailing' && filled && <span className="h-1.5 w-1.5 rounded-full" style={{ background: ph.color }} aria-hidden />}
+        <ChevronRight size={14} className={`ml-auto shrink-0 text-muted transition-transform duration-[300ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none ${isOpen ? 'rotate-90' : ''}`} aria-hidden />
+      </button>
+
+      <Collapse open={isOpen}>
+        <div className="ml-[10px] mt-1 border-l border-[color:var(--border)] pl-3">
+          {ph.key === 'sailing' ? (
+            <DayTimeline day={day} events={events} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} />
+          ) : !loaded ? (
+            <Skeleton className="h-10 w-full max-w-md rounded" />
+          ) : (
+            <PhaseContent phaseKey={ph.key} cond={cond} deb={deb} />
+          )}
+        </div>
+      </Collapse>
     </div>
   )
 }
