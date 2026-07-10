@@ -249,15 +249,35 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }, [markers, lo, hi, twaSamples])
   const hasLegManoeuvres = React.useMemo(() => twaSamples.length > 0 || markers.some((e) => e.kind === 'tack' || e.kind === 'gybe'), [twaSamples, markers])
 
+  // Cards are displaced from their true time position by the deck stacking, so
+  // over a media column the vertical position no longer maps to the right time.
+  // Snap the readout to the nearest card's ACTUAL timestamp when over a column;
+  // otherwise interpolate from the axis.
+  const timeAt = (x: number, rawY: number): number => {
+    const cols: { X: number; W: number; h: number; placed: Placed[] }[] = [
+      { X: G.VIDEO_X, W: G.VIDEO_W, h: G.VIDEO_H, placed: vPlaced },
+      { X: G.PHOTO_X, W: G.PHOTO_W, h: G.PHOTO_H, placed: pPlaced },
+      { X: G.SCAN_X, W: G.SCAN_W, h: G.SCAN_H, placed: sPlaced },
+    ]
+    for (const c of cols) {
+      if (x >= c.X - 8 && x <= c.X + c.W + 8 && c.placed.length) {
+        let best = c.placed[0], bd = Infinity
+        for (const p of c.placed) { const d = Math.abs(p.y + c.h / 2 - rawY); if (d < bd) { bd = d; best = p } }
+        return best.m.t
+      }
+    }
+    return tOf(Math.max(PAD, Math.min(axisH - PAD, rawY)))
+  }
+
   // Live fisheye follows a MOUSE only (best practice: continuous magnification on
-  // touch fights scrolling). Touch uses tap-to-peek / tap-to-open instead.
+  // touch fights scrolling). Touch uses the scroll-driven rolodex instead.
   const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType !== 'mouse' || pinch.current) return
     const rect = e.currentTarget.getBoundingClientRect()
-    const rawY = e.clientY - rect.top
-    setPtr({ x: e.clientX - rect.left, y: rawY })
+    const rawY = e.clientY - rect.top, x = e.clientX - rect.left
+    setPtr({ x, y: rawY })
     const y = Math.max(PAD, Math.min(axisH - PAD, rawY))
-    setCursor({ y, t: tOf(y) })
+    setCursor({ y, t: timeAt(x, rawY) })
   }
   const clearHover = () => { if (noHover) return; setCursor(null); setPtr(null) }  // mouse leave (touch focus is scroll-driven)
 
