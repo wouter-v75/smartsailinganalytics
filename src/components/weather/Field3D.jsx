@@ -32,6 +32,12 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
   const kind = fieldKind(field)
   const heights = field?.volume?.heights || []
   const hasVolume = !!field?.volume?.cellAt && kind === 'wind'
+  // Refs so the map's mousemove handler (registered once per field) always reads
+  // the CURRENT time frame + mast height — otherwise the readout freezes on the
+  // frame selected when the map first initialised (it then never changes as you
+  // scrub the time bar).
+  const fiRef = useRef(fi); fiRef.current = fi
+  const mastRef = useRef(mastHeight); mastRef.current = mastHeight
   const [levels, setLevels] = useState(() => defaultLevels(heights))
 
   // Keep the selected levels valid for the current field. The state is seeded
@@ -132,8 +138,12 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
     // (SSA-Race) so it's mast regardless of the displayed height; otherwise fall
     // back to the displayed field (which defaults to mast, else its lowest level).
     map.on('mousemove', (e) => {
-      let s = field.volume ? sampleVolumeAtHeight(field.volume, fi, mastHeight, e.lngLat.lat, e.lngLat.lng) : null
-      if (!s || s.kt == null) s = sampleField(field, fi, e.lngLat.lat, e.lngLat.lng)
+      const cfi = fiRef.current
+      // Match what's drawn: the shading / contours / arrows all use the displayed
+      // FRAME field, so sample that (at the current time). Fall back to the mast-
+      // height volume only when there are no frames.
+      let s = sampleField(field, cfi, e.lngLat.lat, e.lngLat.lng)
+      if (!s || s.kt == null) s = field.volume ? sampleVolumeAtHeight(field.volume, cfi, mastRef.current, e.lngLat.lat, e.lngLat.lng) : null
       if (s && s.kt != null) setReadout({ x: e.point.x, y: e.point.y, kt: Math.round(s.kt), dir: Math.round(s.dirTrue) })
       else setReadout(null)
     })
