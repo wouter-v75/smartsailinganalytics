@@ -88,7 +88,7 @@ function useNoHover() {
 // text labels), so BOTH decks fit within the viewport.
 function geometry(compact: boolean) {
   return compact
-    ? { AXIS_X: 10, EVENT_LABEL_X: 18, showEventLabels: false, VIDEO_X: 46, VIDEO_W: 92, VIDEO_H: 74, PHOTO_X: 146, PHOTO_W: 88, PHOTO_H: 74, SCAN_X: 242, SCAN_W: 84, SCAN_H: 74, CONTENT_W: 242 + 84 + 8 }
+    ? { AXIS_X: 8, EVENT_LABEL_X: 16, showEventLabels: false, VIDEO_X: 46, VIDEO_W: 74, VIDEO_H: 64, PHOTO_X: 126, PHOTO_W: 72, PHOTO_H: 64, SCAN_X: 204, SCAN_W: 72, SCAN_H: 64, CONTENT_W: 204 + 72 + 6 }
     : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, PHOTO_X: 372, PHOTO_W: 120, PHOTO_H: 88, SCAN_X: 508, SCAN_W: 120, SCAN_H: 88, CONTENT_W: 508 + 120 + 16 }
 }
 

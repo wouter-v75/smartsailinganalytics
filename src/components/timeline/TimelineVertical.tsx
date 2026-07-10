@@ -120,7 +120,7 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
       {/* Season / regatta accordion children — smooth harmonica. */}
       {isSpanning && kids.length > 0 && (
         <Collapse open={isOpen}>
-          <div className="ml-[10px] mt-0.5 border-l border-[color:var(--border)] pl-3">
+          <div className="ml-0.5 mt-0.5 border-l border-[color:var(--border)] pl-1.5 sm:ml-[10px] sm:pl-3">
             {kids.map((c) => (
               <Row key={c.id} node={c} tz={tz} childrenOf={childrenOf} descendantsOf={descendantsOf}
                 open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} focusId={focusId} />
@@ -134,7 +134,7 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
           following days get pushed down. */}
       {isDay && (
         <Collapse open={isOpen}>
-          <div className="ml-[10px] mt-1 border-l-2 border-[color:var(--accent)] pl-3">
+          <div className="ml-0.5 mt-1 border-l-2 border-[color:var(--accent)] pl-1.5 sm:ml-[10px] sm:pl-3">
             <DayPhases day={node} events={descendantsOf(node.id)} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo ? playForDay : undefined} autoOpenSailing={node.id === focusId} />
           </div>
         </Collapse>

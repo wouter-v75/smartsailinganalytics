@@ -116,7 +116,7 @@ function PhaseRow({ ph, isOpen, filled, onToggle, day, events, tz, teamId, boatI
       </button>
 
       <Collapse open={isOpen}>
-        <div className="ml-[10px] mt-1 border-l border-[color:var(--border)] pl-3">
+        <div className="ml-0.5 mt-1 border-l border-[color:var(--border)] pl-1.5 sm:ml-[10px] sm:pl-3">
           {ph.key === 'sailing' ? (
             <DayTimeline day={day} events={events} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} />
           ) : !loaded ? (
