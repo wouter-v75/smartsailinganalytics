@@ -257,6 +257,15 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     if (d >= MAG_RADIUS) return 1
     return 1 + MAG_AMP * 0.5 * (1 + Math.cos((d / MAG_RADIUS) * Math.PI))
   }
+  // Same falloff for the axis event dots + labels, but purely by vertical
+  // proximity (any column) so the whole row breathes at the cursor's height.
+  const EV_AMP = compact ? 0.35 : 0.7
+  const magForY = (cy: number) => {
+    if (!ptr) return 1
+    const d = Math.abs(cy - ptr.y)
+    if (d >= MAG_RADIUS) return 1
+    return 1 + EV_AMP * 0.5 * (1 + Math.cos((d / MAG_RADIUS) * Math.PI))
+  }
   const zoom = (f: number) => setPph((p) => Math.max(MIN_PPH, Math.min(MAX_PPH, Math.round(p * f))))
   const onWheel = (e: React.WheelEvent<HTMLDivElement>) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12) } }
 
@@ -307,7 +316,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             {vPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.VIDEO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.VIDEO_X} ${y + 12}`} fill="none" stroke={VIDEO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {pPlaced.map(({ m, y, yt }) => { const mid = (G.VIDEO_X + G.PHOTO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.PHOTO_X} ${y + 12}`} fill="none" stroke={PHOTO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {sPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.SCAN_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.SCAN_X} ${y + 12}`} fill="none" stroke={SCAN_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
-            {markers.map((e) => { const st = EVENT_STYLE[e.kind]; return <circle key={e.id} cx={G.AXIS_X} cy={yOf(e.t0)} r={st.notable ? 4 : 3} fill={st.c} stroke="var(--bg)" strokeWidth={1} /> })}
+            {markers.map((e) => { const st = EVENT_STYLE[e.kind]; const my = magForY(yOf(e.t0)); return <circle key={e.id} cx={G.AXIS_X} cy={yOf(e.t0)} r={(st.notable ? 4 : 3) * my} fill={st.c} stroke="var(--bg)" strokeWidth={1} style={{ transition: 'r 110ms ease-out' }} /> })}
             {cursor && <line x1={0} y1={cursor.y} x2={G.CONTENT_W} y2={cursor.y} stroke="var(--accent)" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.7} />}
           </svg>
 
@@ -319,8 +328,9 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
           {G.showEventLabels && markers.filter((e) => EVENT_STYLE[e.kind].notable).map((e) => {
             const st = EVENT_STYLE[e.kind]
+            const my = magForY(yOf(e.t0))
             return (
-              <div key={e.id} className="absolute whitespace-nowrap" style={{ left: G.EVENT_LABEL_X, top: yOf(e.t0) - 8 }}>
+              <div key={e.id} className="absolute whitespace-nowrap will-change-transform" style={{ left: G.EVENT_LABEL_X, top: yOf(e.t0) - 8, transform: `scale(${my.toFixed(3)})`, transformOrigin: 'left center', zIndex: my > 1.05 ? 40 : undefined, transition: 'transform 110ms ease-out' }}>
                 <span className="rounded px-1 py-px text-[9px] font-medium" style={{ background: st.c + '22', border: `1px solid ${st.c}55`, color: st.c }}>{e.title || st.label}</span>
               </div>
             )
