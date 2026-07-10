@@ -108,6 +108,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [ptr, setPtr] = React.useState<{ x: number; y: number } | null>(null)
   const noHover = useNoHover()                    // touch device → scroll-driven "rolodex" focus
   const contentRef = React.useRef<HTMLDivElement>(null)
+  const touchX = React.useRef<number | null>(null) // last touched column x → gate the rolodex to it
   const [pph, setPph] = React.useState(DEFAULT_PPH)
   // Boat sail inventory (with design shapes in specs) — passed to SailScanDetail
   // so it can draw the design-target curves.
@@ -281,19 +282,20 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }
   const clearHover = () => { if (noHover) return; setCursor(null); setPtr(null) }  // mouse leave (touch focus is scroll-driven)
 
-  // Touch "rolodex": centre the magnifier on the viewport, so scrolling the deck
-  // inflates whatever card is in the middle and tapers the rest. A capture-phase
-  // scroll listener catches whichever element actually scrolls.
+  // Touch "rolodex": centre the vertical focus on the viewport (so scrolling the
+  // deck inflates the middle card), but gate it to the column the finger is on —
+  // only that column magnifies, not the whole row. A capture-phase scroll
+  // listener catches whichever element actually scrolls.
   React.useEffect(() => {
     if (!noHover) return
     let raf = 0
     const update = () => {
       raf = 0
       const el = contentRef.current
-      if (!el) return
+      if (!el || touchX.current == null) return
       const rect = el.getBoundingClientRect()
       const focusScreen = window.innerHeight * 0.44
-      setPtr({ x: -1, y: Math.max(0, Math.min(rect.height, focusScreen - rect.top)) })
+      setPtr({ x: touchX.current, y: Math.max(0, Math.min(rect.height, focusScreen - rect.top)) })
     }
     const onScroll = () => { if (!raf) raf = requestAnimationFrame(update) }
     update()
@@ -366,6 +368,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           ref={contentRef}
           className="relative"
           style={{ width: G.CONTENT_W, height: contentH, touchAction: 'pan-y' }}
+          onPointerDown={(e) => { if (e.pointerType === 'mouse') return; const r = e.currentTarget.getBoundingClientRect(); touchX.current = e.clientX - r.left; setPtr({ x: touchX.current, y: Math.max(0, Math.min(r.height, window.innerHeight * 0.44 - r.top)) }) }}
           onPointerMove={onMove} onPointerLeave={clearHover} onPointerCancel={clearHover} onWheel={onWheel}
           onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         >
