@@ -4,6 +4,7 @@ import { Cloud, Users, Sailboat, Activity, ClipboardList, LineChart, ChevronRigh
 import { Badge, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import DayTimeline from './DayTimeline'
+import Collapse from './Collapse'
 
 // The phases of a day, shown when a day is opened: Weather · Speed-team meeting ·
 // Sail call · Sailing · Debrief notes · Performance analysis. Each expands to its
@@ -81,7 +82,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
               aria-expanded={isOpen}
               className={[
                 'group flex w-[300px] max-w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-sm',
-                'transition-[transform,background-color] duration-150 motion-reduce:transition-none hover:scale-[1.01] motion-reduce:hover:scale-100 origin-left',
+                'transition-[transform,box-shadow,background-color] duration-[300ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] will-change-transform motion-reduce:transition-none hover:scale-[1.03] hover:shadow-md motion-reduce:hover:scale-100 origin-left',
                 isOpen ? 'border-[color:var(--border-strong)] bg-surface-2' : 'border-[color:var(--border)] bg-surface-1 hover:bg-surface-2',
               ].join(' ')}
               style={{ borderLeft: `3px solid ${filled || isOpen ? ph.color : 'var(--border)'}` }}
@@ -95,11 +96,11 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
                 </span>
               )}
               {ph.key !== 'sailing' && filled && <span className="h-1.5 w-1.5 rounded-full" style={{ background: ph.color }} aria-hidden />}
-              <ChevronRight size={14} className={`ml-auto shrink-0 text-muted transition-transform duration-150 motion-reduce:transition-none ${isOpen ? 'rotate-90' : ''}`} aria-hidden />
+              <ChevronRight size={14} className={`ml-auto shrink-0 text-muted transition-transform duration-[300ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none ${isOpen ? 'rotate-90' : ''}`} aria-hidden />
             </button>
 
-            {isOpen && (
-              <div className="tl-reveal-item ml-[10px] mt-1 border-l border-[color:var(--border)] pl-3">
+            <Collapse open={isOpen}>
+              <div className="ml-[10px] mt-1 border-l border-[color:var(--border)] pl-3">
                 {ph.key === 'sailing' ? (
                   <DayTimeline day={day} events={events} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} />
                 ) : !loaded ? (
@@ -108,7 +109,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
                   <PhaseContent phaseKey={ph.key} cond={cond} deb={deb} />
                 )}
               </div>
-            )}
+            </Collapse>
           </div>
         )
       })}

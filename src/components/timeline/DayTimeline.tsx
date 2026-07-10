@@ -379,7 +379,7 @@ function MediaCard({ m, x, y, w, h, color, tz, scale, ev, onClick }: {
       onMouseEnter={enter}
       onMouseLeave={leave}
       title={m.type === 'video' ? (m.title || 'Play video') : hms(m.t, tz)}
-      className="absolute overflow-visible rounded-lg text-left shadow-md transition-transform duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
+      className="absolute overflow-visible rounded-lg text-left shadow-md transition-[transform,box-shadow] duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform hover:shadow-xl motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
       style={{ left: x, top: y, width: w, height: h, transformOrigin: 'center', zIndex: hov ? 80 : undefined, transform: hov ? `translateX(${-shift}px) scale(${scale})` : 'none' }}
     >
       <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ border: `2px solid ${color}`, background: 'var(--surface-2)' }}>

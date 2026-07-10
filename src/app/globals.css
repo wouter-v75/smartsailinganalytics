@@ -121,3 +121,30 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .tl-reveal-item { animation: none; }
 }
+
+/* ── Timeline motion system ────────────────────────────────────────────────
+   Modern "harmonica": animate real height via grid-template-rows 0fr↔1fr
+   (works to intrinsic height, cross-browser), with a soft settle easing; hover
+   uses a spring/overshoot curve so elements gradually INFLATE and settle. */
+:root {
+  --ease-inflate: cubic-bezier(0.34, 1.56, 0.64, 1);   /* gentle overshoot */
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);        /* soft ease-out */
+  --tl-dur: 320ms;
+}
+.tl-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--tl-dur) var(--ease-smooth);
+}
+.tl-collapse[data-open='true'] { grid-template-rows: 1fr; }
+.tl-collapse > .tl-collapse-clip { overflow: hidden; min-height: 0; }
+.tl-collapse-fade {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity var(--tl-dur) var(--ease-smooth), transform var(--tl-dur) var(--ease-smooth);
+}
+.tl-collapse[data-open='true'] .tl-collapse-fade { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .tl-collapse { transition: none; }
+  .tl-collapse-fade { transition: none; transform: none; }
+}

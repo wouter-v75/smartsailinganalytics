@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { buildSeasonScaffold } from '@/lib/timeline/buildSeasonScaffold'
 import DayPhases from './DayPhases'
+import Collapse from './Collapse'
 
 // A narrow campaign spine on the left (season → regatta → day). Clicking a DAY
 // expands its own vertical time-axis inline — pushing the following days down —
@@ -91,8 +92,8 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
         aria-expanded={expandable ? isOpen : undefined}
         className={[
           'group flex w-[300px] max-w-full flex-col rounded-lg border px-3 py-2 text-left',
-          'transition-[transform,box-shadow,background-color,border-color] duration-150 motion-reduce:transition-none',
-          'origin-left hover:-translate-y-px hover:scale-[1.02] hover:shadow-md motion-reduce:hover:scale-100',
+          'transition-[transform,box-shadow,background-color,border-color] duration-[300ms] ease-[cubic-bezier(0.34,1.56,0.64,1)] will-change-transform motion-reduce:transition-none',
+          'origin-left hover:-translate-y-0.5 hover:scale-[1.035] hover:shadow-lg motion-reduce:hover:scale-100',
           expandable ? 'cursor-pointer' : 'cursor-default',
           isDay && isOpen ? 'border-[color:var(--accent)] bg-surface-2 shadow-md' : 'border-[color:var(--border)] bg-surface-1 hover:bg-surface-2',
         ].join(' ')}
@@ -113,23 +114,27 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
         )}
       </button>
 
-      {/* Season / regatta accordion children. */}
-      {isSpanning && isOpen && kids.length > 0 && (
-        <div className="tl-reveal-item ml-[10px] mt-0.5 border-l border-[color:var(--border)] pl-3">
-          {kids.map((c) => (
-            <Row key={c.id} node={c} tz={tz} childrenOf={childrenOf} descendantsOf={descendantsOf}
-              open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} focusId={focusId} />
-          ))}
-        </div>
+      {/* Season / regatta accordion children — smooth harmonica. */}
+      {isSpanning && kids.length > 0 && (
+        <Collapse open={isOpen}>
+          <div className="ml-[10px] mt-0.5 border-l border-[color:var(--border)] pl-3">
+            {kids.map((c) => (
+              <Row key={c.id} node={c} tz={tz} childrenOf={childrenOf} descendantsOf={descendantsOf}
+                open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} focusId={focusId} />
+            ))}
+          </div>
+        </Collapse>
       )}
 
       {/* Day → its phases (weather · speed-team · sail call · sailing · debrief ·
           performance). "Sailing" opens the vertical time-axis. Inline, so the
           following days get pushed down. */}
-      {isDay && isOpen && (
-        <div className="tl-reveal-item ml-[10px] mt-1 border-l-2 border-[color:var(--accent)] pl-3">
-          <DayPhases day={node} events={descendantsOf(node.id)} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo ? playForDay : undefined} autoOpenSailing={node.id === focusId} />
-        </div>
+      {isDay && (
+        <Collapse open={isOpen}>
+          <div className="ml-[10px] mt-1 border-l-2 border-[color:var(--accent)] pl-3">
+            <DayPhases day={node} events={descendantsOf(node.id)} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo ? playForDay : undefined} autoOpenSailing={node.id === focusId} />
+          </div>
+        </Collapse>
       )}
     </div>
   )
