@@ -96,6 +96,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [openVideo, setOpenVideo] = React.useState<MediaItem | null>(null)
   const [openScan, setOpenScan] = React.useState<MediaItem | null>(null)
   const [cursor, setCursor] = React.useState<{ y: number; t: number } | null>(null)
+  const [ptr, setPtr] = React.useState<{ x: number; y: number } | null>(null)
   const [pph, setPph] = React.useState(DEFAULT_PPH)
   // Boat sail inventory (with design shapes in specs) — passed to SailScanDetail
   // so it can draw the design-target curves.
@@ -239,8 +240,22 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
-    const y = Math.max(PAD, Math.min(axisH - PAD, e.clientY - rect.top))
+    const rawY = e.clientY - rect.top
+    setPtr({ x: e.clientX - rect.left, y: rawY })
+    const y = Math.max(PAD, Math.min(axisH - PAD, rawY))
     setCursor({ y, t: tOf(y) })
+  }
+  // macOS-Dock magnification: the card under the cursor inflates most; neighbours
+  // above/below taper off with a cosine falloff over MAG_RADIUS, and magnified
+  // cards push gently apart so the lens reads cleanly. Only the column the cursor
+  // is over magnifies.
+  const MAG_AMP = compact ? 0.4 : 0.9
+  const MAG_RADIUS = compact ? 95 : 155
+  const magFor = (colX: number, colW: number, cy: number) => {
+    if (!ptr || ptr.x < colX - 14 || ptr.x > colX + colW + 14) return 1
+    const d = Math.abs(cy - ptr.y)
+    if (d >= MAG_RADIUS) return 1
+    return 1 + MAG_AMP * 0.5 * (1 + Math.cos((d / MAG_RADIUS) * Math.PI))
   }
   const zoom = (f: number) => setPph((p) => Math.max(MIN_PPH, Math.min(MAX_PPH, Math.round(p * f))))
   const onWheel = (e: React.WheelEvent<HTMLDivElement>) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoom(e.deltaY < 0 ? 1.12 : 1 / 1.12) } }
@@ -281,7 +296,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         <div
           className="relative"
           style={{ width: G.CONTENT_W, height: contentH, touchAction: 'pan-y' }}
-          onMouseMove={onMove} onMouseLeave={() => setCursor(null)} onWheel={onWheel}
+          onMouseMove={onMove} onMouseLeave={() => { setCursor(null); setPtr(null) }} onWheel={onWheel}
           onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
         >
           <svg className="pointer-events-none absolute inset-0" width={G.CONTENT_W} height={contentH} aria-hidden>
@@ -315,9 +330,9 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             <div className="pointer-events-none absolute z-[60] rounded bg-[color:var(--accent)] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[color:var(--accent-fg)]" style={{ left: 0, top: cursor.y - 9 }}>{hms(cursor.t, tz)}</div>
           )}
 
-          {vPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} scale={compact ? 1.5 : 1.85} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
-          {pPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} scale={compact ? 1.5 : 1.85} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
-          {sPlaced.map(({ m, y }) => <MediaCard key={m.id} m={m} x={G.SCAN_X} y={y} w={G.SCAN_W} h={G.SCAN_H} color={SCAN_C} tz={tz} scale={compact ? 1.5 : 1.85} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} />)}
+          {vPlaced.map(({ m, y }, i) => { const cy = y + G.VIDEO_H / 2, mag = magFor(G.VIDEO_X, G.VIDEO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.VIDEO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
+          {pPlaced.map(({ m, y }, i) => { const cy = y + G.PHOTO_H / 2, mag = magFor(G.PHOTO_X, G.PHOTO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.PHOTO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
+          {sPlaced.map(({ m, y }, i) => { const cy = y + G.SCAN_H / 2, mag = magFor(G.SCAN_X, G.SCAN_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.SCAN_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.SCAN_X} y={y} w={G.SCAN_W} h={G.SCAN_H} color={SCAN_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
 
           {markers.length === 0 && (media || []).length === 0 && (
             <div className="absolute text-xs text-muted" style={{ left: G.VIDEO_X, top: PAD }}>No markers, photos or videos for this day.</div>
@@ -350,46 +365,30 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   )
 }
 
-// Deck card. DOM order gives the stacked "playing cards" look. On hover the card
-// enlarges AND slides left (as far as fits on screen) so it uncovers the rest of
-// its stack — the other thumbnails stay visible and selectable — and reveals its
-// sail / event / TWS / TWA.
-function MediaCard({ m, x, y, w, h, color, tz, scale, ev, onClick }: {
+// Deck card. DOM order gives the stacked "playing cards" look. Magnification is
+// driven by the cursor's proximity (macOS-Dock fisheye): `mag` is this card's
+// scale, `push` nudges it away from the cursor so the lens spreads cleanly, and
+// `focused` (card right under the cursor) reveals its sail / event / TWS / TWA.
+function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, onClick }: {
   m: MediaItem; x: number; y: number; w: number; h: number; color: string; tz: number
-  scale: number; ev: TimelineNode | null; onClick: () => void
+  index: number; mag: number; push: number; focused: boolean; ev: TimelineNode | null; onClick: () => void
 }) {
   const evStyle = ev ? EVENT_STYLE[ev.kind] : null
-  const [hov, setHov] = React.useState(false)
-  // Hover-intent: only enlarge after the pointer RESTS on a card (~180ms), so
-  // sweeping across the deck doesn't fire every card in turn.
-  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const enter = () => { if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => setHov(true), 180) }
-  const leave = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null } setHov(false) }
-  React.useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
-  // Slide left to reveal the deck, but ONLY as far as keeps the whole original
-  // footprint under the enlarged card — w·(scale−1)/2 — so the pointer never
-  // leaves the card (which would cause an enlarge/collapse flicker loop). Also
-  // clamp so the left edge stays on screen.
-  const cx = x + w / 2
-  const maxShift = Math.max(0, cx - (scale * w) / 2 - 4)
-  const shift = Math.min(maxShift, (w * (scale - 1)) / 2)
   return (
     <button
       onClick={onClick}
-      onMouseEnter={enter}
-      onMouseLeave={leave}
       title={m.type === 'video' ? (m.title || 'Play video') : hms(m.t, tz)}
-      className="absolute overflow-visible rounded-lg text-left shadow-md transition-[transform,box-shadow] duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform hover:shadow-xl motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
-      style={{ left: x, top: y, width: w, height: h, transformOrigin: 'center', zIndex: hov ? 80 : undefined, transform: hov ? `translateX(${-shift}px) scale(${scale})` : 'none' }}
+      className="tl-card-in absolute overflow-visible rounded-lg text-left shadow-md transition-[transform,box-shadow] duration-[110ms] ease-out will-change-transform motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
+      style={{ left: x, top: y, width: w, height: h, transformOrigin: 'center', ['--i' as any]: index, zIndex: 100 + Math.round((mag - 1) * 200), boxShadow: focused ? '0 8px 26px rgba(0,0,0,0.45)' : undefined, transform: `translateY(${push.toFixed(1)}px) scale(${mag.toFixed(3)})` }}
     >
       <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ border: `2px solid ${color}`, background: 'var(--surface-2)' }}>
-        {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="h-full w-full object-cover" />
+        {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="tl-parallax-img h-full w-full object-cover" />
           : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : m.type === 'sailscan' ? <Sailboat size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
         <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{hms(m.t, tz)}</span>
-        {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${hov ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}
+        {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${focused ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}
 
-        {/* Metadata — revealed once the card has enlarged (hover-intent). */}
-        {hov && (
+        {/* Metadata — revealed on the card directly under the cursor. */}
+        {focused && (
           <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-1 bg-black/72 px-1.5 py-1">
             {m.sailName && <Chip s={{ bg: SCAN_C + '22', c: '#C4B5FD', bd: SCAN_C + '55' }}>{m.sailName}</Chip>}
             {m.tws != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWS {r(m.tws)}kn</Chip>}

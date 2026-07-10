@@ -148,3 +148,34 @@ body {
   .tl-collapse { transition: none; }
   .tl-collapse-fade { transition: none; transform: none; }
 }
+
+/* Staggered spring entrance for media-deck cards. `backwards` fill so the
+   finished animation reverts to the element's own (hover) transform. --i is the
+   card's index → each lands a beat after the previous one. */
+@keyframes tl-card-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.94); }
+  to   { opacity: 1; transform: none; }
+}
+.tl-card-in {
+  animation: tl-card-in var(--tl-dur) var(--ease-inflate) backwards;
+  animation-delay: calc(var(--i, 0) * 28ms);
+}
+@media (prefers-reduced-motion: reduce) { .tl-card-in { animation: none; } }
+
+/* Subtle intra-thumbnail parallax: the image is scaled up a touch and drifts
+   within its fixed (overflow-hidden) card frame as the card passes through the
+   viewport. Progressive enhancement — only where CSS scroll-driven animations
+   exist (elsewhere the image is simply static). */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .tl-parallax-img {
+      animation: tl-img-parallax linear both;
+      animation-timeline: view();
+      animation-range: cover 0% cover 100%;
+    }
+    @keyframes tl-img-parallax {
+      from { transform: scale(1.14) translateY(-6%); }
+      to   { transform: scale(1.14) translateY(6%); }
+    }
+  }
+}
