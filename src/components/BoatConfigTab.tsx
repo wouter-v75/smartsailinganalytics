@@ -873,6 +873,12 @@ function seedSection(cols: any[], section: 'upwind' | 'reaching'): Record<string
 }
 const seedSettings = (cols: any[]): RigSettings => ({ upwind: seedSection(cols, 'upwind'), reaching: seedSection(cols, 'reaching') })
 
+// Column shading matches the boat's laminated rig card: alternating light-blue /
+// white columns across the TWS bands.
+const COL_BLUE = '#BDD7EE'
+const COL_BG = (i: number) => (i % 2 === 0 ? COL_BLUE : '#FFFFFF')
+const COL_BLUE_RGB: [number, number, number] = [189, 215, 238]
+
 // module-scope twin of the component's `btn` helper (which is defined inside the
 // main component, so it isn't visible to these sibling components).
 const rbtn = (bg: string): React.CSSProperties => ({ background: bg, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' })
@@ -959,17 +965,32 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
         const rowH = TABLE_H / nRows
         const colW = (TABLE_W - LABEL_W) / TWS_BANDS.length
         const baseline = rowH * 0.68
-        doc.setFontSize(6.5); doc.setDrawColor(150); doc.setLineWidth(0.15)
+        const FS = 6.5
+        doc.setFontSize(FS); doc.setDrawColor(90); doc.setLineWidth(0.15)
+        // Shrink-to-fit so a long sail combo ("BRO & J3 & GS") can't spill out of
+        // the cell — the table must stay exactly TABLE_W × TABLE_H.
+        const fitText = (v: string, cx: number, cy: number, maxW: number) => {
+          doc.setFontSize(FS)
+          const w = doc.getTextWidth(v)
+          if (w > maxW) doc.setFontSize(Math.max(3.4, (FS * maxW) / w))
+          doc.text(v, cx, cy, { align: 'center' })
+          doc.setFontSize(FS)
+        }
         const line = (label: string, vals: string[], bold: boolean) => {
+          // row label
           doc.setFont('helvetica', 'bold')
-          doc.rect(M, y, LABEL_W, rowH); doc.text(label, M + 1, y + baseline)
+          doc.setFillColor(238, 243, 248); doc.rect(M, y, LABEL_W, rowH, 'FD')
+          doc.setTextColor(20); doc.text(label, M + 1, y + baseline)
+          // value cells — alternating light-blue / white columns (the rig card)
           doc.setFont('helvetica', bold ? 'bold' : 'normal')
           let x = M + LABEL_W
-          for (const v of vals) {
-            doc.rect(x, y, colW, rowH)
-            doc.text(v || '—', x + colW / 2, y + baseline, { align: 'center' })
+          vals.forEach((v, i) => {
+            if (i % 2 === 0) doc.setFillColor(...COL_BLUE_RGB)
+            else doc.setFillColor(255, 255, 255)
+            doc.rect(x, y, colW, rowH, 'FD')
+            fitText(v || '—', x + colW / 2, y + baseline, colW - 1.2)
             x += colW
-          }
+          })
           y += rowH
         }
         line('TWS', TWS_BANDS.map((b) => b.label), true)
@@ -989,21 +1010,28 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
   const th: React.CSSProperties = { padding: '5px 8px', fontSize: 11, fontWeight: 700, color: '#0b1f33', border: '1px solid #d7e2ee', textAlign: 'center', whiteSpace: 'nowrap' }
   const rh: React.CSSProperties = { padding: '5px 10px', fontSize: 11, fontWeight: 700, color: '#0b1f33', textAlign: 'left', border: '1px solid #d7e2ee', background: '#eef3f8', whiteSpace: 'nowrap' }
   const cellStyle: React.CSSProperties = { border: '1px solid #d7e2ee', padding: 0 }
-  const inputStyle: React.CSSProperties = { width: '100%', minWidth: 62, boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', textAlign: 'center', fontSize: 12, color: '#0b1f33', padding: '5px 4px', fontFamily: 'inherit' }
+  const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', textAlign: 'center', fontSize: 12, color: '#0b1f33', padding: '5px 3px', fontFamily: 'inherit', textOverflow: 'ellipsis' }
+  // Both tables use the SAME fixed geometry so they line up exactly (and mirror
+  // the 130 × 30 mm printed proportions).
+  const LABEL_PX = 100, COL_PX = 90, TABLE_PX = LABEL_PX + COL_PX * TWS_BANDS.length
 
-  const Table = ({ title, sec, rows, tint }: { title: string; sec: 'upwind' | 'reaching'; rows: RigRow[]; tint: string }) => (
+  const Table = ({ title, sec, rows }: { title: string; sec: 'upwind' | 'reaching'; rows: RigRow[] }) => (
     <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
       <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', padding: '2px 4px 8px' }}>{title}</div>
-      <table style={{ borderCollapse: 'collapse', minWidth: 640 }}>
+      <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: TABLE_PX }}>
+        <colgroup>
+          <col style={{ width: LABEL_PX }} />
+          {TWS_BANDS.map((b) => <col key={b.key} style={{ width: COL_PX }} />)}
+        </colgroup>
         <thead>
           <tr>
             <th style={{ ...rh, background: '#dde6ef' }}>TWS</th>
-            {TWS_BANDS.map((b) => <th key={b.key} style={{ ...th, background: tint }}>{b.label}</th>)}
+            {TWS_BANDS.map((b, i) => <th key={b.key} style={{ ...th, background: COL_BG(i) }}>{b.label}</th>)}
           </tr>
           <tr>
             <th style={rh}>Sail</th>
-            {TWS_BANDS.map((b) => (
-              <td key={b.key} style={{ ...cellStyle, background: tint.replace('0.45', '0.16') }}>
+            {TWS_BANDS.map((b, i) => (
+              <td key={b.key} style={{ ...cellStyle, background: COL_BG(i) }}>
                 {canEdit ? (
                   <select
                     style={{ ...inputStyle, fontWeight: 700, cursor: 'pointer' }}
@@ -1024,8 +1052,8 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
           {rows.map((r) => (
             <tr key={r.key}>
               <td style={rh}>{r.label}</td>
-              {TWS_BANDS.map((b) => (
-                <td key={b.key} style={cellStyle}>
+              {TWS_BANDS.map((b, i) => (
+                <td key={b.key} style={{ ...cellStyle, background: COL_BG(i) }}>
                   <input style={inputStyle} value={tbl[sec]?.[b.key]?.[r.key] ?? ''} readOnly={!canEdit}
                     onChange={(e) => setCell(sec, b.key, r.key, e.target.value)} />
                 </td>
@@ -1048,8 +1076,8 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
         {canEdit && <button onClick={save} disabled={busy || !dirty} style={{ ...rbtn('#10B981'), opacity: busy || !dirty ? 0.5 : 1 }}>{busy ? 'Saving…' : 'Save'}</button>}
         {msg && <span style={{ fontSize: 11, color: msg === 'Saved' ? '#10B981' : '#F59E0B' }}>{msg}</span>}
       </div>
-      <Table title="Upwind" sec="upwind" rows={UPWIND_ROWS} tint="rgba(244,176,132,0.45)" />
-      <Table title="Reaching" sec="reaching" rows={REACHING_ROWS} tint="rgba(180,199,231,0.45)" />
+      <Table title="Upwind" sec="upwind" rows={UPWIND_ROWS} />
+      <Table title="Reaching" sec="reaching" rows={REACHING_ROWS} />
     </div>
   )
 }
