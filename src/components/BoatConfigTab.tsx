@@ -769,7 +769,6 @@ const RIG_FIELDS: RigField[] = [
   { key: 'twsAtMh', label: 'TWS @ MH (kt)', render: (c) => (c.twsAtMh ?? '—') },
   { key: 'rakeDeg', label: 'Rake (°)', render: (c) => (c.rakeDeg != null ? fmt(c.rakeDeg, 2) : '—') },
   { key: 'mastbasePosition', label: 'Mastbase Position', render: (c) => (c.mastbasePosition ?? '—') },
-  { key: 'sideChocks', label: 'Side Chocks', render: (c) => (c.sideChocks ?? '—') },
   { key: 'shimStack', label: 'Shim Stack (mm)', render: (c) => (c.shimStack ?? '—') },
   { key: 'mastbaseLoadT', label: 'Mastbase (t)', render: (c) => (c.mastbaseLoadT != null ? fmt(c.mastbaseLoadT, 1) : '—') },
   { key: 'headstayT', label: 'Headstay (t)', render: (c) => (c.headstayT != null ? fmt(c.headstayT, 1) : '—') },
@@ -796,7 +795,6 @@ const TWS_BANDS = [
 ]
 type RigRow = { key: string; label: string }
 const UPWIND_ROWS: RigRow[] = [
-  { key: 'sideChocks', label: 'Side chocks' },
   { key: 'shims', label: 'Shims' },
   { key: 'buttPos', label: 'Butt Pos' },
   { key: 'combHS', label: 'Comb HS (t)' },
@@ -804,7 +802,6 @@ const UPWIND_ROWS: RigRow[] = [
   { key: 'lowDefl', label: 'Low Defl' },
 ]
 const REACHING_ROWS: RigRow[] = [
-  { key: 'sideChocks', label: 'Side chocks' },
   { key: 'shims', label: 'Shims' },
   { key: 'tack', label: 'Tack (t)' },
   { key: 'hsLimit', label: 'HS Limit (t)' },
@@ -833,7 +830,6 @@ function seedSection(cols: any[], section: 'upwind' | 'reaching'): Record<string
     const c = secCols.find((cc) => { const t = twsNum(cc.twsAtMh); return t != null && t >= b.lo && t < b.hi })
     out[b.key] = {
       sail: c?.headsail ?? '',
-      sideChocks: c?.sideChocks ?? '',
       shims: c?.shimStack ?? '',
       buttPos: c?.mastbasePosition ?? '',
       combHS: combHSof(c),
@@ -906,51 +902,39 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
     setPdfBusy(true)
     try {
       const JsPDF = await loadJsPdf()
-      const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
-      const M = 12; let y = 16
-      doc.setFontSize(15); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
+      const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
+      const M = 15; let y = 16
+      doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
       doc.text([boatName, 'Rig settings'].filter(Boolean).join(' — '), M, y); y += 6
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90)
-      doc.text([rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   '), M, y); y += 6
+      doc.text([rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   '), M, y); y += 7
 
+      // Each table prints at EXACTLY 130 mm × 30 mm (13 cm × 3 cm).
+      const TABLE_W = 130, TABLE_H = 30, LABEL_W = 26
       const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[]) => {
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(20)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
         doc.text(title, M, y); y += 4
-        const labelW = 34
-        const colW = (297 - 2 * M - labelW) / TWS_BANDS.length
-        const lineH = 6
-        // header: band + sail
-        doc.setFontSize(8)
-        doc.setFont('helvetica', 'bold')
-        let x = M + labelW
-        doc.text('TWS', M + 1, y + 4)
-        for (const b of TWS_BANDS) {
-          doc.rect(x, y, colW, lineH)
-          doc.text(b.label, x + colW / 2, y + 4, { align: 'center' })
-          x += colW
-        }
-        doc.rect(M, y, labelW, lineH); y += lineH
-        x = M + labelW
-        doc.setFont('helvetica', 'normal')
-        doc.text('Sail', M + 1, y + 4)
-        for (const b of TWS_BANDS) {
-          doc.rect(x, y, colW, lineH)
-          doc.text(String(tbl[sec]?.[b.key]?.sail || '—'), x + colW / 2, y + 4, { align: 'center' })
-          x += colW
-        }
-        doc.rect(M, y, labelW, lineH); y += lineH
-        for (const r of rows) {
-          x = M + labelW
-          doc.setFont('helvetica', 'bold'); doc.text(r.label, M + 1, y + 4)
-          doc.setFont('helvetica', 'normal')
-          for (const b of TWS_BANDS) {
-            doc.rect(x, y, colW, lineH)
-            doc.text(String(tbl[sec]?.[b.key]?.[r.key] || '—'), x + colW / 2, y + 4, { align: 'center' })
+        const nRows = rows.length + 2                  // TWS header + Sail + setting rows
+        const rowH = TABLE_H / nRows
+        const colW = (TABLE_W - LABEL_W) / TWS_BANDS.length
+        const baseline = rowH * 0.68
+        doc.setFontSize(6.5); doc.setDrawColor(150); doc.setLineWidth(0.15)
+        const line = (label: string, vals: string[], bold: boolean) => {
+          doc.setFont('helvetica', 'bold')
+          doc.rect(M, y, LABEL_W, rowH); doc.text(label, M + 1, y + baseline)
+          doc.setFont('helvetica', bold ? 'bold' : 'normal')
+          let x = M + LABEL_W
+          for (const v of vals) {
+            doc.rect(x, y, colW, rowH)
+            doc.text(v || '—', x + colW / 2, y + baseline, { align: 'center' })
             x += colW
           }
-          doc.rect(M, y, labelW, lineH); y += lineH
+          y += rowH
         }
-        y += 6
+        line('TWS', TWS_BANDS.map((b) => b.label), true)
+        line('Sail', TWS_BANDS.map((b) => String(tbl[sec]?.[b.key]?.sail || '')), true)
+        for (const r of rows) line(r.label, TWS_BANDS.map((b) => String(tbl[sec]?.[b.key]?.[r.key] || '')), false)
+        y += 8
       }
       block('Upwind', 'upwind', UPWIND_ROWS)
       block('Reaching', 'reaching', REACHING_ROWS)
