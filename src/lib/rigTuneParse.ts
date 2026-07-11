@@ -31,6 +31,7 @@ export interface RigColumn {
   twsAtMh: string | null // numeric for upwind ("16"); textual for reaching ("Light Wind","35AWA")
   rakeDeg: number | null // Rake (°)
   mastbasePosition: string | null // "6 FWD"
+  sideChocks: string | null // mast side chocks (e.g. "2+2", "Full")
   shimStack: string | null // "-18" | "Full"
   mastbaseLoadT: number | null // RIG LOADS Mastbase, 000 kg (tonnes)
   headstayT: number | null // RIG LOADS Headstay, 000 kg
@@ -166,6 +167,7 @@ function parseBlock(rows: Row[]): RigColumn[] {
   const twsRow = find(rows, /Approx\.?\s*TWS\s*@\s*MH/i) || find(rows, /^Approx\.\s*TWS\b/i)
   const rakeRow = find(rows, /^Rake\b/i)
   const mbPosRow = find(rows, /^Mastbase Position\b/i)
+  const sideChockRow = find(rows, /^Side\s*Chocks?\b/i)
   const shimRow = find(rows, /^Shim Stack\b/i)
   // RIG LOADS "Mastbase" (000 kg) — the bare "Mastbase" row, not "...Position".
   const mbLoadRow = rows.find((r) => /^Mastbase\b/i.test(labelOf(r)) && /000\s*kg/i.test(labelOf(r)))
@@ -189,6 +191,7 @@ function parseBlock(rows: Row[]): RigColumn[] {
   const tws = rowByCol(twsRow, centres)
   const rake = rowByCol(rakeRow, centres)
   const mbPos = rowByCol(mbPosRow, centres)
+  const sideChock = rowByCol(sideChockRow, centres)
   const shim = rowByCol(shimRow, centres)
   const mbLoad = rowByCol(mbLoadRow, centres)
   const headstay = rowByCol(headstayRow, centres)
@@ -218,6 +221,7 @@ function parseBlock(rows: Row[]): RigColumn[] {
       twsAtMh: tws[c],
       rakeDeg: rake[c] != null ? num(rake[c]!) : null,
       mastbasePosition: mbPos[c],
+      sideChocks: sideChock[c],
       shimStack: shim[c],
       mastbaseLoadT: mbLoad[c] != null ? num(mbLoad[c]!) : null,
       headstayT: headstay[c] != null ? num(headstay[c]!) : null,

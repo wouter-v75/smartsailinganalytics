@@ -618,7 +618,10 @@ export default function BoatConfigTab({
               </div>
             </div>
           ) : (
-            <RigTuneTable data={rigTune.data} />
+            <>
+              <RigSettingsTables rigTune={rigTune} teamId={teamId} canEdit={canEdit} boatName={config?.boatName} />
+              <RigTuneTable data={rigTune.data} />
+            </>
           )}
 
           {/* Admin-only: source PDF thumbnail + download. */}
@@ -766,6 +769,7 @@ const RIG_FIELDS: RigField[] = [
   { key: 'twsAtMh', label: 'TWS @ MH (kt)', render: (c) => (c.twsAtMh ?? '—') },
   { key: 'rakeDeg', label: 'Rake (°)', render: (c) => (c.rakeDeg != null ? fmt(c.rakeDeg, 2) : '—') },
   { key: 'mastbasePosition', label: 'Mastbase Position', render: (c) => (c.mastbasePosition ?? '—') },
+  { key: 'sideChocks', label: 'Side Chocks', render: (c) => (c.sideChocks ?? '—') },
   { key: 'shimStack', label: 'Shim Stack (mm)', render: (c) => (c.shimStack ?? '—') },
   { key: 'mastbaseLoadT', label: 'Mastbase (t)', render: (c) => (c.mastbaseLoadT != null ? fmt(c.mastbaseLoadT, 1) : '—') },
   { key: 'headstayT', label: 'Headstay (t)', render: (c) => (c.headstayT != null ? fmt(c.headstayT, 1) : '—') },
@@ -775,6 +779,245 @@ const RIG_FIELDS: RigField[] = [
   { key: 'upperDeflectorCylStroke', label: 'Upper Defl. Stroke', render: (c) => (c.upperDeflectorCylStroke ?? '—') },
   { key: 'lowerDeflectorCylStroke', label: 'Lower Defl. Stroke', render: (c) => (c.lowerDeflectorCylStroke ?? '—') },
 ]
+
+// ── Rig SETTINGS grid — Upwind + Reaching by TWS band ────────────────────────
+// A compact, editable crib sheet: TWS bands across the top (each with the sail
+// carried in that band), the rig settings down the side. Seeded from the parsed
+// sheet (a column lands in the band its "Approx TWS @ MH" falls into), then
+// editable and saved onto the baseline (rig_tunes.data.settingsTable).
+const TWS_BANDS = [
+  { key: '6-7', label: '6-7 kn', lo: 6, hi: 8 },
+  { key: '8-9', label: '8-9 kn', lo: 8, hi: 10 },
+  { key: '10', label: '10 kn', lo: 10, hi: 12 },
+  { key: '12', label: '12 kn', lo: 12, hi: 14 },
+  { key: '14', label: '14 kn', lo: 14, hi: 18 },
+  { key: '18', label: '18 kn', lo: 18, hi: 20 },
+  { key: '20+', label: '20+ kn', lo: 20, hi: 1e9 },
+]
+type RigRow = { key: string; label: string }
+const UPWIND_ROWS: RigRow[] = [
+  { key: 'sideChocks', label: 'Side chocks' },
+  { key: 'shims', label: 'Shims' },
+  { key: 'buttPos', label: 'Butt Pos' },
+  { key: 'combHS', label: 'Comb HS (t)' },
+  { key: 'upDefl', label: 'Up Defl' },
+  { key: 'lowDefl', label: 'Low Defl' },
+]
+const REACHING_ROWS: RigRow[] = [
+  { key: 'sideChocks', label: 'Side chocks' },
+  { key: 'shims', label: 'Shims' },
+  { key: 'tack', label: 'Tack (t)' },
+  { key: 'hsLimit', label: 'HS Limit (t)' },
+  { key: 'upDefl', label: 'Up Defl' },
+  { key: 'lowDefl', label: 'Low Defl' },
+]
+type RigCell = Record<string, string>
+type RigSettings = { upwind: Record<string, RigCell>; reaching: Record<string, RigCell> }
+
+const twsNum = (s: any): number | null => {
+  if (s == null) return null
+  const m = String(s).match(/-?\d+(?:\.\d+)?/)
+  return m ? Number(m[0]) : null
+}
+// "Comb HS" = the combined headstay load = Headstay + Jib Tack.
+const combHSof = (c: any): string => {
+  if (!c) return ''
+  const a = c.headstayT; const b = c.jibTackT
+  if (a == null && b == null) return ''
+  return fmt((a || 0) + (b || 0), 1)
+}
+function seedSection(cols: any[], section: 'upwind' | 'reaching'): Record<string, RigCell> {
+  const secCols = (cols || []).filter((c) => c.section === section)
+  const out: Record<string, RigCell> = {}
+  for (const b of TWS_BANDS) {
+    const c = secCols.find((cc) => { const t = twsNum(cc.twsAtMh); return t != null && t >= b.lo && t < b.hi })
+    out[b.key] = {
+      sail: c?.headsail ?? '',
+      sideChocks: c?.sideChocks ?? '',
+      shims: c?.shimStack ?? '',
+      buttPos: c?.mastbasePosition ?? '',
+      combHS: combHSof(c),
+      tack: c?.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '',
+      hsLimit: c?.headstayT != null ? fmt(c.headstayT, 1) : '',
+      upDefl: c?.upperDeflectorCylStroke ?? '',
+      lowDefl: c?.lowerDeflectorCylStroke ?? '',
+    }
+  }
+  return out
+}
+const seedSettings = (cols: any[]): RigSettings => ({ upwind: seedSection(cols, 'upwind'), reaching: seedSection(cols, 'reaching') })
+
+// module-scope twin of the component's `btn` helper (which is defined inside the
+// main component, so it isn't visible to these sibling components).
+const rbtn = (bg: string): React.CSSProperties => ({ background: bg, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' })
+
+// jsPDF (UMD) from CDN — same pattern as the SailScan share.
+let rigJsPdf: Promise<any> | null = null
+function loadJsPdf(): Promise<any> {
+  const w = window as any
+  if (w.jspdf?.jsPDF) return Promise.resolve(w.jspdf.jsPDF)
+  if (!rigJsPdf) {
+    rigJsPdf = new Promise((res, rej) => {
+      const s = document.createElement('script')
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+      s.onload = () => res((window as any).jspdf.jsPDF)
+      s.onerror = () => rej(new Error('failed to load jsPDF'))
+      document.head.appendChild(s)
+    })
+  }
+  return rigJsPdf
+}
+
+function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
+  rigTune: any; teamId: string; canEdit: boolean; boatName?: string | null
+}) {
+  const cols: any[] = Array.isArray(rigTune?.data?.columns) ? rigTune.data.columns : []
+  const [tbl, setTbl] = useState<RigSettings>(() => (rigTune?.data?.settingsTable as RigSettings) || seedSettings(cols))
+  const [dirty, setDirty] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [pdfBusy, setPdfBusy] = useState(false)
+
+  useEffect(() => {
+    setTbl((rigTune?.data?.settingsTable as RigSettings) || seedSettings(Array.isArray(rigTune?.data?.columns) ? rigTune.data.columns : []))
+    setDirty(false); setMsg('')
+  }, [rigTune?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setCell = (sec: 'upwind' | 'reaching', band: string, key: string, val: string) => {
+    setTbl((p) => ({ ...p, [sec]: { ...p[sec], [band]: { ...(p[sec]?.[band] || {}), [key]: val } } }))
+    setDirty(true); setMsg('')
+  }
+  const reseed = () => { setTbl(seedSettings(cols)); setDirty(true); setMsg('Re-filled from the sheet — Save to keep.') }
+  const save = async () => {
+    if (!rigTune?.id) return
+    setBusy(true); setMsg('')
+    try {
+      const r = await fetch(`/api/teams/${teamId}/rig-tunes/${rigTune.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settingsTable: tbl }),
+      }).then((x) => x.json())
+      if (r?.error) setMsg(r.error)
+      else { setDirty(false); setMsg('Saved') }
+    } catch (e: any) { setMsg(String(e?.message || e)) }
+    finally { setBusy(false) }
+  }
+
+  const downloadPdf = async () => {
+    setPdfBusy(true)
+    try {
+      const JsPDF = await loadJsPdf()
+      const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
+      const M = 12; let y = 16
+      doc.setFontSize(15); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
+      doc.text([boatName, 'Rig settings'].filter(Boolean).join(' — '), M, y); y += 6
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90)
+      doc.text([rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   '), M, y); y += 6
+
+      const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[]) => {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(20)
+        doc.text(title, M, y); y += 4
+        const labelW = 34
+        const colW = (297 - 2 * M - labelW) / TWS_BANDS.length
+        const lineH = 6
+        // header: band + sail
+        doc.setFontSize(8)
+        doc.setFont('helvetica', 'bold')
+        let x = M + labelW
+        doc.text('TWS', M + 1, y + 4)
+        for (const b of TWS_BANDS) {
+          doc.rect(x, y, colW, lineH)
+          doc.text(b.label, x + colW / 2, y + 4, { align: 'center' })
+          x += colW
+        }
+        doc.rect(M, y, labelW, lineH); y += lineH
+        x = M + labelW
+        doc.setFont('helvetica', 'normal')
+        doc.text('Sail', M + 1, y + 4)
+        for (const b of TWS_BANDS) {
+          doc.rect(x, y, colW, lineH)
+          doc.text(String(tbl[sec]?.[b.key]?.sail || '—'), x + colW / 2, y + 4, { align: 'center' })
+          x += colW
+        }
+        doc.rect(M, y, labelW, lineH); y += lineH
+        for (const r of rows) {
+          x = M + labelW
+          doc.setFont('helvetica', 'bold'); doc.text(r.label, M + 1, y + 4)
+          doc.setFont('helvetica', 'normal')
+          for (const b of TWS_BANDS) {
+            doc.rect(x, y, colW, lineH)
+            doc.text(String(tbl[sec]?.[b.key]?.[r.key] || '—'), x + colW / 2, y + 4, { align: 'center' })
+            x += colW
+          }
+          doc.rect(M, y, labelW, lineH); y += lineH
+        }
+        y += 6
+      }
+      block('Upwind', 'upwind', UPWIND_ROWS)
+      block('Reaching', 'reaching', REACHING_ROWS)
+
+      const name = `Rig_settings_${[boatName, rigTune?.revision].filter(Boolean).join('_').replace(/[^\w.-]+/g, '_') || 'sheet'}.pdf`
+      doc.save(name)
+    } catch (e: any) { setMsg('Could not build the PDF: ' + (e?.message || e)) }
+    finally { setPdfBusy(false) }
+  }
+
+  const th: React.CSSProperties = { padding: '5px 8px', fontSize: 11, fontWeight: 700, color: '#0b1f33', border: '1px solid #d7e2ee', textAlign: 'center', whiteSpace: 'nowrap' }
+  const rh: React.CSSProperties = { padding: '5px 10px', fontSize: 11, fontWeight: 700, color: '#0b1f33', textAlign: 'left', border: '1px solid #d7e2ee', background: '#eef3f8', whiteSpace: 'nowrap' }
+  const cellStyle: React.CSSProperties = { border: '1px solid #d7e2ee', padding: 0 }
+  const inputStyle: React.CSSProperties = { width: '100%', minWidth: 62, boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', textAlign: 'center', fontSize: 12, color: '#0b1f33', padding: '5px 4px', fontFamily: 'inherit' }
+
+  const Table = ({ title, sec, rows, tint }: { title: string; sec: 'upwind' | 'reaching'; rows: RigRow[]; tint: string }) => (
+    <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', padding: '2px 4px 8px' }}>{title}</div>
+      <table style={{ borderCollapse: 'collapse', minWidth: 640 }}>
+        <thead>
+          <tr>
+            <th style={{ ...rh, background: '#dde6ef' }}>TWS</th>
+            {TWS_BANDS.map((b) => <th key={b.key} style={{ ...th, background: tint }}>{b.label}</th>)}
+          </tr>
+          <tr>
+            <th style={rh}>Sail</th>
+            {TWS_BANDS.map((b) => (
+              <td key={b.key} style={{ ...cellStyle, background: tint.replace('0.45', '0.16') }}>
+                <input style={{ ...inputStyle, fontWeight: 700 }} value={tbl[sec]?.[b.key]?.sail ?? ''} readOnly={!canEdit}
+                  onChange={(e) => setCell(sec, b.key, 'sail', e.target.value)} />
+              </td>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key}>
+              <td style={rh}>{r.label}</td>
+              {TWS_BANDS.map((b) => (
+                <td key={b.key} style={cellStyle}>
+                  <input style={inputStyle} value={tbl[sec]?.[b.key]?.[r.key] ?? ''} readOnly={!canEdit}
+                    onChange={(e) => setCell(sec, b.key, r.key, e.target.value)} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, fontWeight: 800, color: C.head }}>Rig settings by TWS</span>
+        <span style={{ fontSize: 10, color: C.dim }}>seeded from the sheet · editable</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={downloadPdf} disabled={pdfBusy} style={{ ...rbtn('#8B5CF6'), color: '#fff', opacity: pdfBusy ? 0.6 : 1 }}>{pdfBusy ? 'Building…' : '⬇ PDF'}</button>
+        {canEdit && <button onClick={reseed} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>↺ Re-fill from sheet</button>}
+        {canEdit && <button onClick={save} disabled={busy || !dirty} style={{ ...rbtn('#10B981'), opacity: busy || !dirty ? 0.5 : 1 }}>{busy ? 'Saving…' : 'Save'}</button>}
+        {msg && <span style={{ fontSize: 11, color: msg === 'Saved' ? '#10B981' : '#F59E0B' }}>{msg}</span>}
+      </div>
+      <Table title="Upwind" sec="upwind" rows={UPWIND_ROWS} tint="rgba(244,176,132,0.45)" />
+      <Table title="Reaching" sec="reaching" rows={REACHING_ROWS} tint="rgba(180,199,231,0.45)" />
+    </div>
+  )
+}
 
 function RigSubTable({ cols, heading }: { cols: any[]; heading: string }) {
   if (!cols.length) return null
