@@ -956,8 +956,8 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90)
       doc.text([rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   '), M, y); y += 7
 
-      // Each table prints at EXACTLY 130 mm × 30 mm (13 cm × 3 cm).
-      const TABLE_W = 130, TABLE_H = 30, LABEL_W = 26
+      // Each table prints at EXACTLY 115 mm × 30 mm (11.5 cm × 3 cm).
+      const TABLE_W = 115, TABLE_H = 30, LABEL_W = 24
       const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[]) => {
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
         doc.text(title, M, y); y += 4
