@@ -122,30 +122,85 @@ function extractTimestampFromFilename(name) {
   return Date.UTC(y, mo - 1, d, h, mi, s);
 }
 
-// Returns { utc, source } | null where source is "mp4-meta" or "filename"
+// Returns { utc, source, mvhdUtc, nameUtc } | null.
+//   source  — "mp4-meta" | "filename"
+//   mvhdUtc — raw mvhd clock (may be true UTC or camera-local; see resolveStartUtc)
+//   nameUtc — raw filename clock, ALWAYS camera-local. Returned even when mvhd
+//             won, because the gap between the two is what lets us tell whether
+//             this camera's mvhd is spec-correct UTC or local wall-clock.
 async function extractVideoCreationTime(file) {
+  const nameUtc = extractTimestampFromFilename(file.name || "");
   try {
     // 1) Scan the first 512KB — fast path, covers most consumer cameras.
     const head = await file.slice(0, 524288).arrayBuffer();
-    const fromHead = _scanMvhd(head);
-    if (fromHead) return { utc: fromHead, source: "mp4-meta" };
+    let mvhd = _scanMvhd(head);
 
     // 2) Scan the last 1MB — DJI HEVC / re-muxed files often put `moov` at
     //    the end of the file instead of the start. Without this pass we'd
     //    never find mvhd and the timestamp would fall back to mtime.
-    if (file.size > 524288) {
+    if (!mvhd && file.size > 524288) {
       const tailStart = Math.max(0, file.size - 1048576);
       const tail = await file.slice(tailStart, file.size).arrayBuffer();
-      const fromTail = _scanMvhd(tail);
-      if (fromTail) return { utc: fromTail, source: "mp4-meta" };
+      mvhd = _scanMvhd(tail);
     }
+    if (mvhd) return { utc: mvhd, source: "mp4-meta", mvhdUtc: mvhd, nameUtc };
 
     // 3) Filename fallback — DJI / Android / generic cameras embed the
     //    capture time directly in the filename (e.g. DJI_20250903122919_…).
-    const fromName = extractTimestampFromFilename(file.name || "");
-    if (fromName) return { utc: fromName, source: "filename" };
+    if (nameUtc) return { utc: nameUtc, source: "filename", mvhdUtc: null, nameUtc };
   } catch {}
+  if (nameUtc) return { utc: nameUtc, source: "filename", mvhdUtc: null, nameUtc };
   return null;
+}
+
+// ─── mvhd: UTC or local? ─────────────────────────────────────────────────────
+// The MP4 spec says mvhd.creation_time is UTC — and spec-compliant cameras write
+// it that way. Action cams (GoPro, DJI) commonly write LOCAL wall-clock instead.
+// Assuming either one blindly puts every clip a full timezone out (the 2026-07-11
+// bug: a 14:32 clip landed at 12:32 because a true-UTC mvhd had vidTz subtracted
+// from it a second time). So decide per FILE, from evidence:
+//
+//   1. Filename stamp — always local. If mvhd ≈ filename, mvhd is LOCAL; if mvhd
+//      ≈ filename − vidTz, mvhd is UTC. Definitive whenever the name carries digits.
+//   2. No filename stamp (e.g. GoPro GX010041.MP4) — try both candidates against
+//      the loaded log's true-UTC window; take whichever lands inside it.
+//   3. No evidence at all — trust the spec (UTC) and say so in the log, so a wrong
+//      guess is visible and fixable in the Videos tab's start-time editor.
+//
+// `raw` is the clock digits read as if they were UTC. Returns the true-UTC start
+// plus how we got there. localClock=true ⇒ vidTz was applied (and a later venue-tz
+// change must re-base it); localClock=false ⇒ the clock was already UTC.
+const TS_TOL_MS = 150000; // 2.5 min — camera clocks drift vs. the filename stamp
+function resolveStartUtc(result, vidTz, logWindow) {
+  const raw = result.utc;
+  const asUtc = raw;                       // clock was already true UTC
+  const asLocal = raw - vidTz * 60000;     // clock was camera-local
+  // Filename + lastModified are unambiguously local wall-clock.
+  if (result.source !== "mp4-meta") return { utc: asLocal, localClock: true, how: "local clock" };
+  if (vidTz === 0) return { utc: raw, localClock: true, how: "UTC venue" }; // both agree; keep re-basable
+
+  // 1) Calibrate against the filename, which is local BY DEFINITION. Both clocks
+  //    are "digits read as if UTC", so:
+  //      mvhd local ⇒ raw ≈ nameUtc            (same wall-clock digits)
+  //      mvhd UTC   ⇒ raw ≈ nameUtc − vidTz    (mvhd runs vidTz behind the local name)
+  if (result.nameUtc != null) {
+    if (Math.abs(raw - result.nameUtc) <= TS_TOL_MS)
+      return { utc: asLocal, localClock: true, how: "mvhd is local (matches filename)" };
+    if (Math.abs(raw + vidTz * 60000 - result.nameUtc) <= TS_TOL_MS)
+      return { utc: asUtc, localClock: false, how: "mvhd is UTC (filename is local)" };
+  }
+  // 2) Fall back to whichever candidate lands inside the log's true-UTC window.
+  //    The pad must stay TIGHTER than the offset we're trying to detect, or both
+  //    candidates fit and the test tells us nothing.
+  if (logWindow?.startUtc && logWindow?.endUtc) {
+    const pad = 30 * 60000;
+    const fits = (t) => t >= logWindow.startUtc - pad && t <= logWindow.endUtc + pad;
+    const okUtc = fits(asUtc), okLocal = fits(asLocal);
+    if (okUtc && !okLocal) return { utc: asUtc, localClock: false, how: "mvhd is UTC (fits log window)" };
+    if (okLocal && !okUtc) return { utc: asLocal, localClock: true, how: "mvhd is local (fits log window)" };
+  }
+  // 3) No evidence — the spec says UTC.
+  return { utc: asUtc, localClock: false, how: "mvhd assumed UTC (per spec — verify in Videos)" };
 }
 
 const ROLES = {
@@ -1675,6 +1730,9 @@ function UploadTab({role,cloudStatus,onImported}){
   const[photosDone,setPhotosDone]=useState(0);
   const[photoBusy,setPhotoBusy]=useState(false);
   const[csvParsed,setCsvParsed]=useState(null);
+  // Ref mirror — handleVids (deps [vidTz]) needs the log's true-UTC window to
+  // decide whether a clip's mvhd clock is UTC or local, without a stale closure.
+  const csvParsedRef=useRef(csvParsed); useEffect(()=>{csvParsedRef.current=csvParsed;},[csvParsed]);
   const[xmlParsed,setXmlParsed]=useState(null);
   const[csvFile,setCsvFile]=useState(null);
   const[xmlFile,setXmlFile]=useState(null);
@@ -1733,12 +1791,15 @@ function UploadTab({role,cloudStatus,onImported}){
       setPendingVids(p=>p.map(v=>{
         if(v.file!==f)return v;
         if(result){
-          const adjusted=result.utc - vidTz*60000;
+          // mvhd may be true UTC (spec) or camera-local (GoPro/DJI) — decide from
+          // evidence rather than subtracting vidTz blindly. `rawUtc`/`localClock`
+          // are kept so a later venue-tz change re-bases only the local-clock clips.
+          const r=resolveStartUtc(result,vidTz,csvParsedRef.current);
           const label=result.source==="filename"?"filename timestamp":"camera timestamp";
-          addLog(`✓ ${f.name}: ${label} ${fmtDateTime(adjusted)} UTC`);
-          return{...v,startUtc:adjusted,tsSource:result.source};
+          addLog(`✓ ${f.name}: ${label} ${fmtDateTime(r.utc)} UTC — ${r.how}`);
+          return{...v,startUtc:r.utc,tsSource:result.source,rawUtc:result.utc,localClock:r.localClock};
         }
-        if(f.lastModified&&v.duration){const ts=f.lastModified-v.duration*1000 - vidTz*60000;addLog(`✓ ${f.name}: using file modified time (no MP4 metadata)`);return{...v,startUtc:ts,tsSource:"lastmodified"};}
+        if(f.lastModified&&v.duration){const raw=f.lastModified-v.duration*1000;addLog(`✓ ${f.name}: using file modified time (no MP4 metadata)`);return{...v,startUtc:raw-vidTz*60000,tsSource:"lastmodified",rawUtc:raw,localClock:true};}
         addLog(`⚠ ${f.name}: no timestamp — set manually in Videos`);
         return v;
       }));
@@ -1814,8 +1875,12 @@ function UploadTab({role,cloudStatus,onImported}){
               const old=vidTzRef.current;
               setPendingVids(pv=>pv.map(v=>{
                 if(v.startUtc==null||!v.tsSource)return v;
-                const raw=v.startUtc+old*60000;        // recover camera wall-clock-as-UTC
-                return {...v,startUtc:raw-effTz*60000}; // re-apply venue offset
+                // Clips whose clock was already true UTC (spec-compliant mvhd) never
+                // had an offset applied — re-basing them would BREAK them. Only the
+                // local-clock clips need the venue offset swapped.
+                if(v.localClock===false)return v;
+                const raw=v.rawUtc??(v.startUtc+old*60000); // camera wall-clock-as-UTC
+                return {...v,startUtc:raw-effTz*60000,rawUtc:raw};
               }));
               setVidTz(effTz); vidTzRef.current=effTz;
             }
@@ -1868,9 +1933,10 @@ function UploadTab({role,cloudStatus,onImported}){
     setVidTz(tz);
     setPendingVids(p=>p.map(v=>{
       if(!v.startUtc||!v.tsSource)return v;
-      const rawUtc=v.startUtc+vidTz*60000;
-      const adjusted=rawUtc-tz*60000;
-      return{...v,startUtc:adjusted};
+      // A clip whose camera clock was already true UTC carries no offset to swap.
+      if(v.localClock===false)return v;
+      const rawUtc=v.rawUtc??(v.startUtc+vidTz*60000);
+      return{...v,startUtc:rawUtc-tz*60000,rawUtc};
     }));
   };
 
