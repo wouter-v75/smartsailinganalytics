@@ -20,6 +20,14 @@ import { effectiveAliases, resolveHeaderIndices, normLabel as norm, type LogFiel
 const OLE_EPOCH_DAYS = 25569 // days between 1899-12-30 (OLE epoch) and 1970-01-01
 const MS_PER_DAY = 86400000
 
+// Windows FILETIME: 100-nanosecond ticks since 1601-01-01 UTC. The 2026-07 N76
+// export writes `Utc` this way (e.g. 1.34282346237428E+17). Anything above this
+// threshold cannot be an OLE serial (an OLE serial of 1e12 is ~year 2.7 billion),
+// so the magnitude alone disambiguates the two encodings safely.
+const FILETIME_MIN = 1e12
+const FILETIME_EPOCH_MS = 11644473600000 // 1601-01-01 → 1970-01-01, in ms
+const FILETIME_TICKS_PER_MS = 10000
+
 export interface FlatLogRow {
   utc: number
   lat: number | null; lon: number | null
@@ -43,11 +51,18 @@ export interface FlatLogRow {
   rake: number | null; mastAng: number | null
   jibTackLoad: number | null; gsTackLoad: number | null; cunninghamLoad: number | null
   vang: number | null; outhaul: number | null; travPct: number | null; cunnoPct: number | null
+  // rig loads + control positions (2026-07 N76 export). fstyPin = forestay PIN LOAD
+  // (not `forestay`, which is the length/rake reading); fstyJibTk = the boat's own
+  // summed forestay + jib-tack load ("Comb HS" on the rig card).
+  fstyPin: number | null; fstyJibTk: number | null; mainsheetLoad: number | null
+  ruddP: number | null; ruddS: number | null
+  toeIn: number | null; futek: number | null; eBarPort: number | null; eBarStbd: number | null
   // mainsail-only batten/vang positions (port/starboard)
   v0p: number | null; v0s: number | null; v1p: number | null; v1s: number | null
   // headsail-only trim positions
   jibUpDnStbd: number | null; jibUpDnPort: number | null; jibInOut: number | null
   targHeel: number | null
+  targToe: number | null; targTrim: number | null; targVmg: number | null; targAwa: number | null
   // on-board environment sensors — feed observed windweight + the MOS join
   airTemp: number | null; seaTemp: number | null; rh: number | null; baro: number | null
 }
@@ -93,10 +108,23 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
     return Number.isNaN(v) ? null : v
   }
 
-  // Utc is EITHER a `DD/MM/YYYY HH:MM[:SS]` slash-date (2026-06 export) OR an
-  // OLE/Excel date serial (older export). Detect per-cell -> { ms, dayStart }
-  // where dayStart is UTC-midnight of that calendar day (used to re-anchor the
-  // time when a higher-resolution seconds-of-day column is available).
+  // `Utc` is the SINGLE SOURCE OF TRUTH for the timestamp, in one of three
+  // encodings (detected per-cell so a boat switching export never breaks us):
+  //   1. `DD/MM/YYYY HH:MM[:SS]` slash-date  — 2026-06 export
+  //   2. Windows FILETIME (100-ns ticks / 1601) — 2026-07 export
+  //   3. OLE/Excel date serial (days / 1899-12-30) — older export
+  //
+  // DELIBERATELY NOT USED: the `UtcDate` + `UtcTime` columns that sit beside it
+  // in the 2026-07 export. Despite the name they carry LOCAL wall-clock, not UTC:
+  // at La Spezia on 2026-07-11 the FILETIME decodes to 09:10:23.74Z while
+  // `UtcTime` reads 11:10:23.74 — exactly the +2 h CEST offset, and the row-to-row
+  // deltas and sub-seconds match to the centisecond, so it is the same clock
+  // merely rendered in venue time. Reading those columns as UTC would put every
+  // timestamp in the log 2 h late and silently desync video/photo overlays. We
+  // store true UTC everywhere and apply the venue offset only at render time.
+  //
+  // Returns { ms, dayStart } where dayStart is UTC-midnight of that calendar day
+  // (used to re-anchor when a higher-resolution seconds-of-day column exists).
   const utcParts = (cell: string | undefined): { ms: number; dayStart: number } | null => {
     if (cell == null) return null
     const s = cell.trim()
@@ -110,11 +138,15 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       const ms = dayStart + ((Number(hh) * 3600 + Number(mi) * 60 + Number(ss || '0')) * 1000)
       return Number.isFinite(ms) ? { ms, dayStart } : null
     }
-    const serial = parseFloat(s)
+    const serial = parseFloat(s) // handles both plain and 1.34e+17 exponent form
     if (Number.isNaN(serial)) return null
-    const ms = Math.round((serial - OLE_EPOCH_DAYS) * MS_PER_DAY)
-    const dayStart = Math.floor(serial - OLE_EPOCH_DAYS) * MS_PER_DAY
-    return Number.isFinite(ms) ? { ms, dayStart } : null
+    const ms =
+      serial >= FILETIME_MIN
+        ? Math.round(serial / FILETIME_TICKS_PER_MS) - FILETIME_EPOCH_MS
+        : Math.round((serial - OLE_EPOCH_DAYS) * MS_PER_DAY)
+    if (!Number.isFinite(ms)) return null
+    const dayStart = Math.floor(ms / MS_PER_DAY) * MS_PER_DAY
+    return { ms, dayStart }
   }
 
   const rows: FlatLogRow[] = []
@@ -147,7 +179,12 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       vang: num(c, M.vang), outhaul: num(c, M.outhaul), travPct: num(c, M.travPct), cunnoPct: num(c, M.cunnoPct),
       v0p: num(c, M.v0p), v0s: num(c, M.v0s), v1p: num(c, M.v1p), v1s: num(c, M.v1s),
       jibUpDnStbd: num(c, M.jibUpDnStbd), jibUpDnPort: num(c, M.jibUpDnPort), jibInOut: num(c, M.jibInOut),
+      fstyPin: num(c, M.fstyPin), fstyJibTk: num(c, M.fstyJibTk), mainsheetLoad: num(c, M.mainsheetLoad),
+      ruddP: num(c, M.ruddP), ruddS: num(c, M.ruddS),
+      toeIn: num(c, M.toeIn), futek: num(c, M.futek), eBarPort: num(c, M.eBarPort), eBarStbd: num(c, M.eBarStbd),
       targHeel: num(c, M.targHeel),
+      targToe: num(c, M.targToe), targTrim: num(c, M.targTrim),
+      targVmg: num(c, M.targVmg), targAwa: num(c, M.targAwa),
       airTemp: num(c, M.airTemp), seaTemp: num(c, M.seaTemp), rh: num(c, M.rh), baro: num(c, M.baro),
     })
   }

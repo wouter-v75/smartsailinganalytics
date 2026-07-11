@@ -28,6 +28,9 @@ export type LogField =
   // headsail-only trim positions — shown on JIB (headsail) scans
   | 'jibUpDnStbd' | 'jibUpDnPort' | 'jibInOut'
   | 'jibTackLoad' | 'gsTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt'
+  // rig loads + control positions added by the 2026-07 N76 export
+  | 'fstyPin' | 'fstyJibTk' | 'mainsheetLoad' | 'ruddP' | 'ruddS'
+  | 'toeIn' | 'futek' | 'eBarPort' | 'eBarStbd'
   | 'leeway' | 'set' | 'drift' | 'hdg'
   // performance / targets — CANONICAL app-wide names (shared with csvLogParse /
   // the video overlay / dbSync / autotags). New log formats map their own column
@@ -36,6 +39,7 @@ export type LogField =
   // start-line instruments (canonical names from the legacy parser)
   | 'dstLine' | 'tmLine' | 'ttbPort' | 'ttbStbd' | 'ttbPin' | 'ttbCB' | 'timer1' | 'yawR' | 'magvar'
   | 'targHeel' | 'targFsty' | 'targBsty' | 'targKeel'
+  | 'targToe' | 'targTrim' | 'targVmg' | 'targAwa'
   // On-board environment sensors — feed the OBSERVED windweight (air-sea ΔT,
   // density) and the MOS join against the model. airTemp/seaTemp °C, rh %, baro hPa.
   | 'airTemp' | 'seaTemp' | 'rh' | 'baro'
@@ -73,15 +77,29 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   v0s: ['v0s'],
   v1p: ['v1p'],
   v1s: ['v1s'],
-  // headsail trim positions (headers 'JibUpDnStbdPos' / 'JibUpDnPortPos' / 'JibInOutPos')
-  jibUpDnStbd: ['jibupdnstbdpos'],
-  jibUpDnPort: ['jibupdnportpos'],
-  jibInOut: ['jibinoutpos'],
+  // headsail trim positions. Older header: 'JibUpDnStbdPos' / 'JibUpDnPortPos' /
+  // 'JibInOutPos'. The 2026-07 N76 export shortens them to 'JibUpDnS' / 'JibUpDnP' / 'JibIO'.
+  jibUpDnStbd: ['jibupdnstbdpos', 'jibupdns'],
+  jibUpDnPort: ['jibupdnportpos', 'jibupdnp'],
+  jibInOut: ['jibinoutpos', 'jibio'],
   jibTackLoad: ['jibtkpin', 'jibtackt', 'jibtack'],
   gsTackLoad: ['gstacktfrombar', 'gstackload', 'gstackt'],
   cunninghamLoad: ['cunningham', 'cunno'],
   mastAng: ['mastang'],
   mastButt: ['mastbutt'],
+  // Rig loads + control positions carried by the 2026-07 N76 export.
+  // `fstyPin` is the forestay PIN LOAD — distinct from `forestay` (the length/rake
+  // reading). `fstyJibTk` is the boat's own summed forestay + jib-tack load (the
+  // same quantity the rig card calls "Comb HS"), logged directly rather than derived.
+  fstyPin: ['fstypin', 'forestaypin', 'fstypinload'],
+  fstyJibTk: ['fstyjibtk', 'fstyjibtkpin', 'combhs'],
+  mainsheetLoad: ['mainsheet', 'mainsheetload', 'mainsht'],
+  ruddP: ['ruddp', 'rudderport', 'rudderp'],
+  ruddS: ['rudds', 'rudderstbd', 'rudders'],
+  toeIn: ['toein'],
+  futek: ['futek'],
+  eBarPort: ['ebarport', 'ebarp'],
+  eBarStbd: ['ebarstbd', 'ebars'],
   leeway: ['leeway', 'dx900lwy'],
   set: ['set'],
   drift: ['drift'],
@@ -105,6 +123,10 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   targFsty: ['targfsty'],
   targBsty: ['targbsty'],
   targKeel: ['targkeel'],
+  targToe: ['targtoe', 'targettoe'],
+  targTrim: ['targtrim', 'targettrim'],
+  targVmg: ['targvmg', 'targetvmg'],
+  targAwa: ['targawa', 'targetawa'],
   // On-board environment sensors (Expedition channels vary by boat).
   airTemp: ['airtemp', 'airtmp', 'temp', 'airtemperature', 'tair'],
   seaTemp: ['seatemp', 'seatmp', 'watertemp', 'seawatertemp', 'sst', 'tsea'],
