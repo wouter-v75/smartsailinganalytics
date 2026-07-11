@@ -784,14 +784,15 @@ const RIG_FIELDS: RigField[] = [
 // carried in that band), the rig settings down the side. Seeded from the parsed
 // sheet (a column lands in the band its "Approx TWS @ MH" falls into), then
 // editable and saved onto the baseline (rig_tunes.data.settingsTable).
+// `rep` = the band's representative TWS, used to pick the closest sheet column.
 const TWS_BANDS = [
-  { key: '6-7', label: '6-7 kn', lo: 6, hi: 8 },
-  { key: '8-9', label: '8-9 kn', lo: 8, hi: 10 },
-  { key: '10', label: '10 kn', lo: 10, hi: 12 },
-  { key: '12', label: '12 kn', lo: 12, hi: 14 },
-  { key: '14', label: '14 kn', lo: 14, hi: 18 },
-  { key: '18', label: '18 kn', lo: 18, hi: 20 },
-  { key: '20+', label: '20+ kn', lo: 20, hi: 1e9 },
+  { key: '6-7', label: '6-7 kn', rep: 7 },
+  { key: '8-9', label: '8-9 kn', rep: 9 },
+  { key: '10', label: '10 kn', rep: 10 },
+  { key: '12', label: '12 kn', rep: 12 },
+  { key: '14', label: '14 kn', rep: 14 },
+  { key: '18', label: '18 kn', rep: 18 },
+  { key: '20+', label: '20+ kn', rep: 22 },
 ]
 type RigRow = { key: string; label: string }
 const UPWIND_ROWS: RigRow[] = [
@@ -811,10 +812,18 @@ const REACHING_ROWS: RigRow[] = [
 type RigCell = Record<string, string>
 type RigSettings = { upwind: Record<string, RigCell>; reaching: Record<string, RigCell> }
 
-const twsNum = (s: any): number | null => {
-  if (s == null) return null
-  const m = String(s).match(/-?\d+(?:\.\d+)?/)
-  return m ? Number(m[0]) : null
+// The parser resolves this for us: `twsMhKn` is the TWS @ MH in knots, and for
+// reaching/downwind it's inherited from the upwind column on the same grid column
+// (the reaching block is a continuation of the upwind table). Older baselines
+// stored before that change fall back to reading the raw cell — never treating an
+// "…AWA" apparent-wind angle as a wind speed.
+const twsNum = (c: any): number | null => {
+  if (c == null) return null
+  if (typeof c.twsMhKn === 'number') return c.twsMhKn
+  const str = String(c.twsAtMh ?? '').trim()
+  if (!str || /awa/i.test(str)) return null
+  const m = str.match(/^(\d+(?:\.\d+)?)/)
+  return m ? Number(m[1]) : null
 }
 // "Comb HS" = the combined headstay load = Headstay + Jib Tack.
 const combHSof = (c: any): string => {
@@ -823,21 +832,42 @@ const combHSof = (c: any): string => {
   if (a == null && b == null) return ''
   return fmt((a || 0) + (b || 0), 1)
 }
+// Columns of one section, in sheet order (index = the cell's `src` handle).
+const sectionCols = (cols: any[], section: 'upwind' | 'reaching') =>
+  (cols || []).filter((c) => c.section === section)
+
+const cellFromCol = (c: any, idx: number): RigCell => ({
+  src: c ? String(idx) : '',
+  sail: c?.headsail ?? '',
+  shims: c?.shimStack ?? '',
+  buttPos: c?.mastbasePosition ?? '',
+  combHS: combHSof(c),
+  tack: c?.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '',
+  hsLimit: c?.headstayT != null ? fmt(c.headstayT, 1) : '',
+  upDefl: c?.upperDeflectorCylStroke ?? '',
+  lowDefl: c?.lowerDeflectorCylStroke ?? '',
+})
+
+// Seed each band with the column whose TWS@MH is CLOSEST to the band (the sheet
+// publishes 7/9/11/14/16/18/21… — not our exact bands — so strict ranges would
+// leave 12 kn blank). Column choice advances monotonically so the sail progresses
+// with the breeze (J1 → J1.5 → J2 → J3). Reaching has no TWS on the sheet at all,
+// so it seeds empty — pick the sail per band and the settings auto-fill.
 function seedSection(cols: any[], section: 'upwind' | 'reaching'): Record<string, RigCell> {
-  const secCols = (cols || []).filter((c) => c.section === section)
+  const sec = sectionCols(cols, section)
   const out: Record<string, RigCell> = {}
+  let prev = -1
   for (const b of TWS_BANDS) {
-    const c = secCols.find((cc) => { const t = twsNum(cc.twsAtMh); return t != null && t >= b.lo && t < b.hi })
-    out[b.key] = {
-      sail: c?.headsail ?? '',
-      shims: c?.shimStack ?? '',
-      buttPos: c?.mastbasePosition ?? '',
-      combHS: combHSof(c),
-      tack: c?.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '',
-      hsLimit: c?.headstayT != null ? fmt(c.headstayT, 1) : '',
-      upDefl: c?.upperDeflectorCylStroke ?? '',
-      lowDefl: c?.lowerDeflectorCylStroke ?? '',
+    let best = -1; let bd = Infinity
+    for (let i = 0; i < sec.length; i++) {
+      if (i <= prev) continue                       // keep sails advancing with TWS
+      const t = twsNum(sec[i])
+      if (t == null) continue
+      const d = Math.abs(t - b.rep)
+      if (d < bd) { bd = d; best = i }
     }
+    if (best >= 0) prev = best
+    out[b.key] = cellFromCol(best >= 0 ? sec[best] : null, best)
   }
   return out
 }
@@ -883,6 +913,17 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
     setTbl((p) => ({ ...p, [sec]: { ...p[sec], [band]: { ...(p[sec]?.[band] || {}), [key]: val } } }))
     setDirty(true); setMsg('')
   }
+  // Picking a sail for a band pulls that column's settings straight off the sheet.
+  const pickSail = (sec: 'upwind' | 'reaching', band: string, idxStr: string) => {
+    const list = sectionCols(cols, sec)
+    const i = idxStr === '' ? -1 : Number(idxStr)
+    setTbl((p) => ({ ...p, [sec]: { ...p[sec], [band]: cellFromCol(i >= 0 ? list[i] : null, i) } }))
+    setDirty(true); setMsg('')
+  }
+  const sailOptions = (sec: 'upwind' | 'reaching') =>
+    sectionCols(cols, sec).map((c, i) => ({
+      i, label: [c.headsail || '—', c.twsAtMh ? `(${c.twsAtMh})` : ''].filter(Boolean).join(' '),
+    }))
   const reseed = () => { setTbl(seedSettings(cols)); setDirty(true); setMsg('Re-filled from the sheet — Save to keep.') }
   const save = async () => {
     if (!rigTune?.id) return
@@ -963,8 +1004,18 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
             <th style={rh}>Sail</th>
             {TWS_BANDS.map((b) => (
               <td key={b.key} style={{ ...cellStyle, background: tint.replace('0.45', '0.16') }}>
-                <input style={{ ...inputStyle, fontWeight: 700 }} value={tbl[sec]?.[b.key]?.sail ?? ''} readOnly={!canEdit}
-                  onChange={(e) => setCell(sec, b.key, 'sail', e.target.value)} />
+                {canEdit ? (
+                  <select
+                    style={{ ...inputStyle, fontWeight: 700, cursor: 'pointer' }}
+                    value={tbl[sec]?.[b.key]?.src ?? ''}
+                    onChange={(e) => pickSail(sec, b.key, e.target.value)}
+                  >
+                    <option value="">—</option>
+                    {sailOptions(sec).map((o) => <option key={o.i} value={o.i}>{o.label}</option>)}
+                  </select>
+                ) : (
+                  <input style={{ ...inputStyle, fontWeight: 700 }} value={tbl[sec]?.[b.key]?.sail ?? ''} readOnly />
+                )}
               </td>
             ))}
           </tr>

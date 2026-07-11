@@ -26,9 +26,11 @@ export interface RigPage { items: RigItem[] }
 
 export interface RigColumn {
   section: 'upwind' | 'reaching' | 'downwind'
+  x: number // column centre on the shared grid — reaching sits under the upwind column
   mainsail: string | null
   headsail: string | null
   twsAtMh: string | null // numeric for upwind ("16"); textual for reaching ("Light Wind","35AWA")
+  twsMhKn: number | null // TWS @ MH in knots; reaching/downwind inherit it from the aligned upwind column
   rakeDeg: number | null // Rake (°)
   mastbasePosition: string | null // "6 FWD"
   shimStack: string | null // "-18" | "Full"
@@ -213,9 +215,11 @@ function parseBlock(rows: Row[]): RigColumn[] {
     const section: RigColumn['section'] = isUpwind ? 'upwind' : centres[c] >= downwindX ? 'downwind' : 'reaching'
     cols.push({
       section,
+      x: centres[c],
       mainsail: mains[c],
       headsail: heads[c],
       twsAtMh: tws[c],
+      twsMhKn: null, // filled by backfillTws() once every block is parsed
       rakeDeg: rake[c] != null ? num(rake[c]!) : null,
       mastbasePosition: mbPos[c],
       shimStack: shim[c],
@@ -252,5 +256,35 @@ export function parseRigTune(pages: RigPage[]): RigTune {
     if (!find(rows, /^Headsail\b/i)) continue // not a table page
     columns.push(...parseBlock(rows))
   }
+  backfillTws(columns)
   return { revision: meta.revision, sheetDate: meta.sheetDate, columns }
+}
+
+// A real TWS in knots: the reaching/downwind "Approx. TWS" cells carry text like
+// "Light Wind", "Uprange" or "35AWA" (an apparent-wind ANGLE) — never read those
+// as a wind speed.
+function twsKn(s: string | null): number | null {
+  if (s == null) return null
+  const t = String(s).trim()
+  if (/awa/i.test(t)) return null
+  const m = t.match(/^(\d+(?:\.\d+)?)/)
+  return m ? Number(m[1]) : null
+}
+
+// The REACHING/DOWNWIND block is a continuation of the UPWIND table — the blocks
+// share one column grid (same x centres), so a reaching column carries the TWS of
+// the upwind column it sits under. Backfill `twsMhKn` accordingly: upwind columns
+// use their own "Approx TWS @ MH", the rest inherit from the x-aligned upwind one.
+function backfillTws(columns: RigColumn[]): void {
+  const upwind = columns.filter((c) => c.section === 'upwind')
+  for (const c of columns) {
+    const own = twsKn(c.twsAtMh)
+    if (c.section === 'upwind' || own != null) { c.twsMhKn = own; continue }
+    let best: RigColumn | null = null; let bd = Infinity
+    for (const u of upwind) {
+      const d = Math.abs(u.x - c.x)
+      if (d < bd) { bd = d; best = u }
+    }
+    c.twsMhKn = best && bd <= COL_TOL ? twsKn(best.twsAtMh) : null
+  }
 }
