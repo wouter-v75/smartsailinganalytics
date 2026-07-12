@@ -27,7 +27,7 @@ const PHASES: Phase[] = [
 ]
 
 interface Conditions { details: string | null; timings: string; plan: string; sailList: { source?: string; sails?: { name: string }[] } | null }
-interface DebriefDoc { key?: string; name?: string; url?: string | null; content_type?: string | null; scope?: string | null }
+interface DebriefDoc { key?: string; name?: string; url?: string | null; thumb_url?: string | null; content_type?: string | null; scope?: string | null }
 interface Debrief { learnings?: string; next_focus?: string; speed_learnings?: string; speed_focus_today?: string; speed_long_term?: string; documents?: DebriefDoc[] }
 
 // Pictures attached to the speed-team meeting in Campaign → Day. Same store as the
@@ -175,7 +175,7 @@ function SpeedPictures({ pics }: { pics: DebriefDoc[] }) {
             className="h-[70px] w-[94px] overflow-hidden rounded-md border border-[color:var(--border)] bg-surface-2 transition-transform duration-150 hover:z-10 hover:scale-[1.06] hover:shadow-lg motion-reduce:transition-none motion-reduce:hover:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
             style={{ cursor: 'zoom-in' }}
           >
-            <img src={d.url as string} alt={d.name || ''} loading="lazy" className="h-full w-full object-cover" />
+            <img src={(d.thumb_url || d.url) as string} alt={d.name || ''} loading="lazy" decoding="async" className="h-full w-full object-cover" />
           </button>
         ))}
       </div>

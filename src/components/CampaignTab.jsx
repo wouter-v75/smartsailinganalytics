@@ -16,6 +16,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
+import { generateThumbnail } from '../lib/photoStore'
 
 const BLOCK_META = {
   'technical-testing': { label: 'Technical testing', c: '#F59E0B', testing: true },
@@ -1177,10 +1178,26 @@ function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', w
           // Index in the key: a multi-file loop can share a millisecond on a fast disk.
           const key = `campaign/${folder}/${date}/${Date.now()}-${i}-${safeName(file.name)}`
           await uploadBlobToStorage({ key, blob: file, contentType: file.type })
+
+          // For PICTURES, also upload a small pre-scaled JPEG. Without it the grid
+          // renders the ORIGINAL in a ~94px box — a phone shot of a whiteboard is
+          // several MB, so a handful of them made the section crawl. 480px/q0.78 is
+          // the same thumbnail recipe the Photos tab uses.
+          let thumb_key = null
+          if (/^image\//.test(file.type || '')) {
+            try {
+              const tb = await generateThumbnail(file, 480, 0.78)
+              thumb_key = `${key}.thumb.jpg`
+              await uploadBlobToStorage({ key: thumb_key, blob: tb, contentType: 'image/jpeg' })
+            } catch {
+              thumb_key = null // non-fatal: fall back to the original in the grid
+            }
+          }
+
           const res = await fetch(`${base}/debrief/documents`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ date, name: file.name, key, bytes: file.size, content_type: file.type, scope: documentsScope }),
+            body: JSON.stringify({ date, name: file.name, key, thumb_key, bytes: file.size, content_type: file.type, scope: documentsScope }),
           })
           if (!res.ok) failed.push(`${file.name}: ${(await res.json().catch(() => ({}))).error || res.status}`)
         } catch (e2) {
@@ -1276,8 +1293,10 @@ function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', w
                         title={`Open ${d.name}`}
                         style={{ padding: 0, border: '1px solid #1E3A5A', borderRadius: 8, overflow: 'hidden', background: '#071624', cursor: d.url ? 'zoom-in' : 'default', width: 104, height: 78, display: 'block' }}
                       >
-                        {d.url
-                          ? <img src={d.url} alt={d.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                        {/* thumb_url = small pre-scaled JPEG; older rows have none,
+                            so fall back to the original rather than showing nothing. */}
+                        {(d.thumb_url || d.url)
+                          ? <img src={d.thumb_url || d.url} alt={d.name} loading="lazy" decoding="async" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
                           : <span style={{ fontSize: 22 }}>🖼</span>}
                       </button>
                       {canEdit && (

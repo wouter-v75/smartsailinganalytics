@@ -1,7 +1,9 @@
 // Debrief document records. The browser uploads the file straight to Bunny
 // Storage (via uploadBlobToStorage), then calls POST here to register it.
 //
-// POST   body { date, name, key, bytes?, content_type? } → append to documents[]
+// POST   body { date, name, key, thumb_key?, bytes?, content_type? } → append to documents[]
+//        thumb_key = a small pre-scaled JPEG for pictures, so grids don't download
+//        the multi-MB original just to paint a 94px box.
 // DELETE body { date, key } → remove the record (the Bunny object is left in
 //        place; storage cleanup is a separate housekeeping concern).
 //
@@ -46,7 +48,7 @@ export async function POST(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const body = (await req.json().catch(() => null)) as
-    | { date?: string; name?: string; key?: string; bytes?: number; content_type?: string; scope?: string }
+    | { date?: string; name?: string; key?: string; thumb_key?: string; bytes?: number; content_type?: string; scope?: string }
     | null
   if (!body?.date || !DATE_RE.test(body.date) || !body?.key || !body?.name) {
     return NextResponse.json({ error: 'date, name and key required' }, { status: 400 })
@@ -85,6 +87,9 @@ export async function POST(
 
   const doc = {
     key: body.key,
+    // Pre-scaled JPEG for picture grids. Null for non-images (and for older rows),
+    // in which case the client falls back to the original.
+    thumb_key: typeof body.thumb_key === 'string' ? body.thumb_key : null,
     name: body.name,
     bytes: typeof body.bytes === 'number' ? body.bytes : null,
     content_type: body.content_type || null,

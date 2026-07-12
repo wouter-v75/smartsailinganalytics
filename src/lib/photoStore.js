@@ -96,7 +96,7 @@ async function idbDeletePhoto(id) {
 }
 
 // ── Image helpers (thumbnail, EXIF, HEIC→JPEG) ────────────────────────────────
-function generateThumbnail(blob, maxSize = 480, quality = 0.78) {
+export function generateThumbnail(blob, maxSize = 480, quality = 0.78) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob)
     const img = new Image()

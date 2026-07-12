@@ -18,7 +18,11 @@ function signDocs(documents: unknown): Array<Record<string, unknown>> {
     const doc = d as Record<string, unknown>
     const key = typeof doc.key === 'string' ? doc.key : null
     const signed = key ? signBunnyUrl({ path: key, ttlSec: 3600 }) : null
-    return { ...doc, url: signed?.url || null }
+    // thumb_url = the small pre-scaled JPEG when one was uploaded. Grids render this
+    // so they don't pull a multi-MB original per tile; the lightbox still uses `url`.
+    const tkey = typeof doc.thumb_key === 'string' ? doc.thumb_key : null
+    const tsigned = tkey ? signBunnyUrl({ path: tkey, ttlSec: 3600 }) : null
+    return { ...doc, url: signed?.url || null, thumb_url: tsigned?.url || null }
   })
 }
 
