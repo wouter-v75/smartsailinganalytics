@@ -359,6 +359,15 @@ const R=(n,d=1)=>(n==null||isNaN(n))?"--":Number(n).toFixed(d);
 const TACK_COLORS=['#1D9E75','#06B6D4','#8B5CF6','#F59E0B','#EF4444','#EC4899','#34D399','#60A5FA','#A78BFA','#FCD34D'];
 const fmtT=s=>{const x=Math.max(0,Math.floor(s));return`${String(Math.floor(x/60)).padStart(2,"0")}:${String(x%60).padStart(2,"0")}`;};
 const fmtUtc=u=>u?new Date(u).toISOString().slice(11,19):"--:--:--";
+// ── Venue-local clock ────────────────────────────────────────────────────────
+// Everything is STORED in true UTC and rendered at venue-local (+ sessionTzOffset).
+// Analytics used to render raw UTC, so its clocks read 2 h behind the timeline and
+// the video player in CEST. Rather than thread the offset through LineChart /
+// PerfChart / GPSTrackMap / AnalyticsTab by prop, publish it once on a context.
+const TzCtx = React.createContext(0);
+const useTz = () => React.useContext(TzCtx);
+const hmLocal  = (u,tz=0)=>u?new Date(u+tz*60000).toISOString().slice(11,16):"--:--";
+const hmsLocal = (u,tz=0)=>u?new Date(u+tz*60000).toISOString().slice(11,19):"--:--:--";
 const TODAY=()=>new Date().toISOString().slice(0,10);
 const fmtDate=d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
 const fmtDateTime=u=>{if(!u)return"";const dt=new Date(u);const dd=String(dt.getUTCDate()).padStart(2,"0");const mm=String(dt.getUTCMonth()+1).padStart(2,"0");const yyyy=dt.getUTCFullYear();const hh=String(dt.getUTCHours()).padStart(2,"0");const mi=String(dt.getUTCMinutes()).padStart(2,"0");return`${dd}/${mm}/${yyyy} ${hh}:${mi}`;};
@@ -2464,6 +2473,7 @@ function linReg(pts){
 function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
                    yLines=[],showTrend=false,events=[],playUtc=null,
                    viewRange=null,onViewRange=null}){
+  const tz=useTz();
   const svgRef  = useRef(null);
   const dragRef = useRef(null);   // {startSvgX, startVR:[x0,x1]} while dragging
   const touchRef= useRef(null);   // touch state
@@ -2648,7 +2658,7 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
         {/* Axis labels (outside clip) */}
         {reg&&<text x={pad.l+W-2} y={pad.t+6} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
         {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(y<10?1:0)}</text>)}
-        {xTicks.map((x,i)=><text key={i} x={Math.max(pad.l+2,Math.min(pad.l+W-2,px(x)))} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
+        {xTicks.map((x,i)=><text key={i} x={Math.max(pad.l+2,Math.min(pad.l+W-2,px(x)))} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{hmLocal(x,tz)}</text>)}
         {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
         {/* Zoom-progress minimap bar at bottom */}
         {isZoomed&&(()=>{
@@ -2870,6 +2880,7 @@ function ManoeuvreChart({tackJibes,logRows,width=400,height=140}){
 }
 
 function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,playUtc=null}){
+  const tz=useTz();
   const svgRef=useRef(null);
   const dragRef=useRef(null);
   const clipId=useRef('pc'+Math.random().toString(36).slice(2,8)).current;
@@ -2921,7 +2932,7 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
           {isZoomed&&(()=>{const bx=pad.l,bw=W,by=pad.t+H+22,bh=3;const hx=bx+((vx0-allX0)/fullSpan)*bw;const hw=((vx1-vx0)/fullSpan)*bw;return(<g><rect x={bx} y={by} width={bw} height={bh} fill="#0F2030" rx="1"/><rect x={hx} y={by} width={Math.max(4,hw)} height={bh} fill="#F59E0B" rx="1" opacity="0.7"/></g>);})()}
         </g>
         {yTicks.map(y=><text key={y} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y}</text>)}
-        {xTicks.map((x,i)=><text key={i} x={Math.max(pad.l+2,Math.min(pad.l+W-2,px(x)))} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{new Date(x).toISOString().slice(11,16)}</text>)}
+        {xTicks.map((x,i)=><text key={i} x={Math.max(pad.l+2,Math.min(pad.l+W-2,px(x)))} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{hmLocal(x,tz)}</text>)}
         {polPts.length>0&&<><rect x={pad.l+4} y={4} width="8" height="5" fill="#22C55E" rx="1"/><text x={pad.l+15} y={9} fontSize="8" fill="#22C55E">Polar %</text></>}
         {tgtPts.length>0&&<><rect x={pad.l+60} y={4} width="8" height="5" fill="#22C55E" rx="1"/><text x={pad.l+71} y={9} fontSize="8" fill="#22C55E">Target %</text></>}
       </svg>
@@ -3008,6 +3019,7 @@ function AIChatPanel({rows, allVideos}){
 // visible   — whether the Analytics tab is currently shown (for Leaflet resize)
 
 function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, photos=[]}){
+  const tz=useTz();
   const containerRef = React.useRef(null);
   const mapRef       = React.useRef(null);
   const boatMarkerRef= React.useRef(null); // Leaflet marker for live boat position
@@ -3126,7 +3138,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       }
 
       // ── Day start / end markers ─────────────────────────────────────────────
-      const fmtU=utc=>{try{const d=new Date(utc);return isNaN(d)?'--:--':d.toISOString().slice(11,16);}catch{return'--:--';}};
+      const fmtU=utc=>{try{return isNaN(new Date(utc))?'--:--':hmLocal(utc,tz);}catch{return'--:--';}};
       const first=filteredRows[0],last=filteredRows[filteredRows.length-1];
       L.circleMarker([first.lat,first.lon],{radius:9,fillColor:'#22C55E',color:'#fff',weight:2,fillOpacity:1}).bindTooltip(`Day start ${fmtU(first.utc)} UTC`).addTo(map);
       L.circleMarker([last.lat,last.lon],{radius:9,fillColor:'#94A3B8',color:'#fff',weight:2,fillOpacity:1}).bindTooltip(`Day end ${fmtU(last.utc)} UTC`).addTo(map);
@@ -3297,10 +3309,10 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       <div style={{display:"flex",gap:16,marginTop:6,flexWrap:"wrap",fontSize:10,color:"#475569",alignItems:"center"}}>
         <span>{filteredRows.length.toLocaleString()} GPS pts{dayStart?" · DayStart–DayStop window":""}</span>
         <span>Distance: <strong style={{color:"#06B6D4"}}>{distNm} nm</strong></span>
-        {dayStart&&<span>Start: <strong style={{color:"#22C55E"}}>{new Date(dayStart).toISOString().slice(11,16)}</strong></span>}
-        {dayStop&&<span>End: <strong style={{color:"#F59E0B"}}>{new Date(dayStop).toISOString().slice(11,16)}</strong></span>}
+        {dayStart&&<span>Start: <strong style={{color:"#22C55E"}}>{hmLocal(dayStart,tz)}</strong></span>}
+        {dayStop&&<span>End: <strong style={{color:"#F59E0B"}}>{hmLocal(dayStop,tz)}</strong></span>}
         {hlRows.length>0&&<span style={{color:"#06B6D4",marginLeft:"auto"}}>● Clip: {hlRows.length} pts</span>}
-        {playUtc&&<span style={{color:"#F59E0B",marginLeft:"auto"}}>▲ Live: {new Date(playUtc).toISOString().slice(11,16)} UTC</span>}
+        {playUtc&&<span style={{color:"#F59E0B",marginLeft:"auto"}}>▲ Live: {hmLocal(playUtc,tz)}</span>}
       </div>
     </div>
   );
@@ -3308,6 +3320,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
 function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true,canSeeAnalyticsData=true}){
+  const tz=useTz();
   const rows=logData?.rows||[];
   const noData=!rows.length;
   const step=Math.max(1,Math.floor(rows.length/400));
@@ -3446,7 +3459,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
         {liveActive&&(
           <div style={{background:"#0A1929",border:"1px solid #F59E0B40",borderRadius:10,padding:"10px 14px",marginBottom:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:9,color:"#F59E0B",fontWeight:700,letterSpacing:1,textTransform:"uppercase",flexShrink:0}}>▶ Now playing</span>
-            <span style={{fontSize:11,fontFamily:"monospace",color:"#94A3B8"}}>{new Date(playUtc).toISOString().slice(11,19)} UTC</span>
+            <span style={{fontSize:11,fontFamily:"monospace",color:"#94A3B8"}}>{hmsLocal(playUtc,tz)}</span>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
               {[["TWS",liveRow.tws,"kn","#7DD3FC"],["TWA",liveRow.twa,"°","#7DD3FC"],["BSP",liveRow.bsp,"kn","#10B981"],["SOG",liveRow.sog,"kn","#FBBF24"],["VMG",liveRow.vmg,"kn","#22C55E"],["Heel",liveRow.heel,"°","#F97316"]].map(([l,v,u,c])=>(
                 <div key={l} style={{display:"flex",alignItems:"baseline",gap:3}}>
@@ -3502,7 +3515,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                   const fullSpan=allX1-allX0||1;
                   const [vx0,vx1]=viewRange??[allX0,allX1];
                   const span=vx1-vx0;
-                  const fmtUTC=u=>new Date(u).toISOString().slice(11,16);
+                  const fmtUTC=u=>hmLocal(u,tz);
                   const fmtSpan=ms=>{const m=Math.round(ms/60000);return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`;};
                   const zoom=(factor,center)=>{
                     const [cvx0,cvx1]=viewRange??[allX0,allX1];
@@ -3909,7 +3922,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                           background:selectedTackIdx===i?`${TACK_COLORS[i%TACK_COLORS.length]}25`:"transparent",
                           border:`1px solid ${selectedTackIdx===i?TACK_COLORS[i%TACK_COLORS.length]:"transparent"}`}}>
                         <span style={{display:"inline-block",width:10,height:3,background:TACK_COLORS[i%TACK_COLORS.length],borderRadius:1}}/>
-                        T{i+1} {new Date(tk.utc).toISOString().slice(11,16)}
+                        T{i+1} {hmLocal(tk.utc,tz)}
                       </span>
                     ))}
                     {selectedTackIdx!=null&&(
@@ -4008,7 +4021,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                                   T{i+1}
                                 </td>
                                 <td style={{padding:"5px 8px",textAlign:"right",color:"#94A3B8",fontFamily:"monospace"}}>
-                                  {tk?new Date(tk.utc).toISOString().slice(11,16):"--"}
+                                  {tk?hmLocal(tk.utc,tz):"--"}
                                 </td>
                                 <td style={{padding:"5px 8px",textAlign:"right",color:"#06B6D4",fontFamily:"monospace"}}>
                                   {R(baseVMG)} kn
@@ -5655,6 +5668,17 @@ function SSAApp(){
               // vice versa). Without this the merge kept the device's
               // stale IDB tags forever.
               if(Array.isArray(shaped.tags)) local.tags=shaped.tags;
+              // startUtc is CLOUD-AUTHORITATIVE too — same reasoning as tags, and
+              // for a bug that was live on 2026-07-11: the TIMELINE reads
+              // videos.start_utc straight from the API, while the library, the
+              // player and Analytics read this merged LOCAL entry. With no adoption
+              // here the two stores drift and the SAME clip renders at two different
+              // times (timeline 14:32, player 12:32). Take the cloud's start time and
+              // write it back into IDB so both stores converge instead of arguing.
+              if(shaped.startUtc!=null && shaped.startUtc!==local.startUtc){
+                local.startUtc=shaped.startUtc;
+                updateVideoStartUtc(local.id,shaped.startUtc).catch(()=>{});
+              }
               const localMtime = local.localBlobModifiedAt || 0;
               const proxyMtime = shaped.proxyUploadedAt ? new Date(shaped.proxyUploadedAt).getTime() : 0;
               const origMtime  = shaped.originalUploadedAt ? new Date(shaped.originalUploadedAt).getTime() : 0;
@@ -6337,6 +6361,7 @@ function SSAApp(){
 
   // ── Mobile render ────────────────────────────────────────────────────────────
   if(isMobile) return(
+    <TzCtx.Provider value={sessionTzOffset||0}>
     <>{sailDiffModal}{videoModal}<MobileShell
       activeTab={activeTab} setActiveTab={setActiveTab}
       role={role} perms={perms}
@@ -6377,9 +6402,11 @@ function SSAApp(){
       videoLoadedIds={videoLoadedIds}
       videoTotalThumbs={videoTotalThumbs}
     /></>
+    </TzCtx.Provider>
   );
 
   return(
+    <TzCtx.Provider value={sessionTzOffset||0}>
     <>{sailDiffModal}{videoModal}
     <div style={{minHeight:"100vh",width:"100%",maxWidth:"100%",overflowX:"hidden",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
       <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
@@ -7113,6 +7140,7 @@ function SSAApp(){
       </div>
     </div>
     </>
+    </TzCtx.Provider>
   );
 }
 
