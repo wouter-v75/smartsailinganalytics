@@ -4445,7 +4445,7 @@ function MobileShell(props){
           else if(ph==="error"){label="sync failed";color="#F59E0B";}
           else if(uc>0){label=`${uc} pending`;color="#F59E0B";}
           return (
-            <div onClick={()=>{ if(avail&&!busy) props.onMobileSync?.(); }}
+            <div onClick={()=>{ /* user-pressed sync: the ONLY path allowed to push video blobs */ if(avail&&!busy) props.onMobileSync?.({heavy:true,pushVideos:true}); }}
               title="Cloud sync is automatic — tap to sync now"
               style={{display:"flex",alignItems:"center",gap:5,fontSize:10,fontWeight:600,
                 cursor:avail&&!busy?"pointer":"default",userSelect:"none"}}>
@@ -6212,6 +6212,14 @@ function SSAApp(){
     // heavy = run the upload PUSH (log/xml/videos). Auto-sync sets heavy=false on
     // a metered/poor link so only the light session-list PULL runs there.
     const heavy = !opts || opts.heavy !== false;
+    // pushVideos = also upload the VIDEO BLOBS. Only ever true for a sync the user
+    // explicitly pressed. The automatic path must never do it: video originals are
+    // multi-GB, and auto-sync fires on mount / foreground / regained link, so it
+    // would silently start a huge upload for whatever session happens to be loaded
+    // — including an old boat's session — and then pin mobileSyncState to "pushing",
+    // which disables the whole BatchSyncPanel (that is the stuck 63% DJI upload).
+    // Logs + events still sync automatically; they are small.
+    const pushVideos = !!opts?.pushVideos;
     if(!cloudStatus?.available){
       setMobileSyncState({phase:"error",message:"Cloud not configured",progress:0});
       setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2500);
@@ -6278,7 +6286,8 @@ function SSAApp(){
         setMobileSyncState({phase:"pushing",message:`Uploading ${uc} unsynced…`,progress:75});
         const logD=await getLogData(activeDate);
         const xmlD=await getXmlData(activeDate);
-        const vids=await getVideosForDate(activeDate);
+        // Videos only when the user asked for it — see `pushVideos` above.
+        const vids=pushVideos?await getVideosForDate(activeDate):[];
         await syncSessionToCloud(activeDate,logD,xmlD,vids,msg=>{
           setMobileSyncState(p=>({...p,message:msg.length>48?msg.slice(0,45)+"…":msg}));
         },{
