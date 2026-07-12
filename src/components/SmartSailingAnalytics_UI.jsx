@@ -58,6 +58,23 @@ function connInfo() {
   return { online, good, metered, type, eff };
 }
 
+// Is this link actually Wi-Fi (or ethernet)?
+//
+// Deliberately stricter than connInfo().good, which counts "4g" as good — that's a
+// cellular data plan, and video is the one payload big enough to burn it. Phone clips
+// are smaller than a GoPro's, but a session is still hundreds of MB.
+//
+// When the Network Information API isn't available (iOS Safari, Firefox) we CANNOT
+// prove the link is unmetered, so we return false and leave it to the manual Upload
+// button. Failing closed costs a tap; failing open costs the user's data.
+function onWifi() {
+  if (typeof navigator === "undefined") return false;
+  if (navigator.onLine === false) return false;
+  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!c || c.saveData) return false;
+  return c.type === "wifi" || c.type === "ethernet";
+}
+
 // Sync offset persistence — inline to avoid module resolution issues
 const OFFSET_KEY = "ssa:syncOffsets";
 function getSyncOffsets() { try { const v=localStorage.getItem(OFFSET_KEY); return v?JSON.parse(v):{};} catch{return{};} }
@@ -1568,12 +1585,22 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
               </div>
             </div>
           )}
+          {/* Auto-upload is Wi-Fi-only. Say so, otherwise a crew member on 4G just
+              sees clips sitting there and assumes the app is broken. The buttons
+              below still work on any link — this is an explanation, not a block. */}
+          {showProxy && needProxy>0 && !busy && !onWifi() && (
+            <div style={{marginTop:8,fontSize:10,color:"#F59E0B",background:"#F59E0B12",
+              border:"1px solid #F59E0B30",borderRadius:5,padding:"5px 7px",lineHeight:1.35}}>
+              📶 Not on Wi-Fi — {needProxy} clip{needProxy===1?"":"s"} held. They upload automatically
+              when you're on Wi-Fi, or tap below to upload now on mobile data.
+            </div>
+          )}
           {showProxy && (
             <button onClick={onSyncProxies} disabled={busy||needProxy===0}
               style={{width:"100%",marginTop:8,background:needProxy===0?"#0A1929":"#06B6D4",border:"none",borderRadius:6,
                 padding:"7px 0",color:needProxy===0?"#475569":"#000",fontWeight:700,fontSize:11,
                 cursor:(busy||needProxy===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
-              {needProxy===0?"✓ All proxies synced":`☁ Sync ${needProxy} prox${needProxy===1?"y":"ies"}`}
+              {needProxy===0?"✓ All proxies synced":`☁ Upload ${needProxy} clip${needProxy===1?"":"s"} now`}
             </button>
           )}
           {/* Originals are the primary sync action on desktop (we skip the
@@ -6216,7 +6243,16 @@ function SSAApp(){
     // coaches crop clips first and then push everything with the batch
     // "Sync proxies" button (see BatchSyncPanel / handleBatchSyncProxies).
     if (isMobile && videos?.length && cloudStatus?.available) {
-      enqueueAutoSync(videos, date);
+      // WI-FI ONLY. Phone clips are smaller than a GoPro's, but a session is still
+      // hundreds of MB — never spend a crew member's cellular data without asking.
+      // On mobile data we hold the clips; `flushOnWifi` below picks them up the
+      // moment a Wi-Fi link appears, and the Upload button is always there to
+      // override. See onWifi() for why an unknown link counts as "not Wi-Fi".
+      if (onWifi()) {
+        enqueueAutoSync(videos, date);
+      } else {
+        addLog(`📶 ${videos.length} clip${videos.length === 1 ? '' : 's'} held — will upload automatically on Wi-Fi (or tap Upload now).`);
+      }
     }
 
     // ── Re-enrich & update cloud metadata ──────────────────────────────────
@@ -6388,6 +6424,40 @@ function SSAApp(){
       setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),3500);
     }
   }
+
+  // ── Wi-Fi flush — push clips that were held on mobile data ────────────────
+  // Clips imported on cellular are deliberately NOT auto-uploaded (see handleImported).
+  // They'd otherwise sit local forever, so re-check whenever the link changes, the app
+  // comes back to the foreground, or connectivity returns — and push the moment we're
+  // on Wi-Fi. Proxies only; originals stay manual (multi-GB, user's call).
+  const flushOnWifi = useCallback(() => {
+    if (!isMobile || !cloudStatus?.available || !perms.canImport) return;
+    if (!onWifi()) return;
+    const held = allVideos.filter(v => !v.hasProxy && v.hasLocalBlob);
+    if (!held.length) return;
+    addLog(`📶 Wi-Fi — uploading ${held.length} held clip${held.length === 1 ? '' : 's'}…`);
+    enqueueAutoSync(held, activeDate);
+  }, [isMobile, cloudStatus, perms.canImport, allVideos, activeDate]);
+
+  const flushRef = useRef(flushOnWifi);
+  flushRef.current = flushOnWifi;
+  useEffect(() => {
+    const fire = () => { try { flushRef.current?.(); } catch { /* */ } };
+    const onVis = () => { if (document.visibilityState === "visible") fire(); };
+    const c = typeof navigator !== "undefined"
+      ? (navigator.connection || navigator.mozConnection || navigator.webkitConnection)
+      : null;
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", fire);
+    c?.addEventListener?.("change", fire);          // wifi ⇄ cellular transitions
+    const t = setTimeout(fire, 2500);               // and once after the app settles
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("online", fire);
+      c?.removeEventListener?.("change", fire);
+      clearTimeout(t);
+    };
+  }, []); // register once — the ref keeps the callback fresh
 
   // ── Automatic cloud sync — event-driven, network-aware ────────────────────
   // No timers: fires on app foreground, when connectivity returns, and once on
