@@ -1533,7 +1533,7 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
 // un-proxied clip in the session; a second button uploads full-resolution
 // originals. Progress rides the shared `syncState` channel (mobileSyncState)
 // that the auto-sync queue also drives.
-function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
+function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, syncErrors=[]}){
   // Only clips whose source file is on this device can be synced from here,
   // so the panel counts (and the buttons) consider just those.
   const syncable  = videos.filter(v=>v.hasLocalBlob);
@@ -1583,6 +1583,22 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals}){
               <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
                 <div style={{height:"100%",width:`${syncState.progress||0}%`,background:"#06B6D4",transition:"width .3s"}}/>
               </div>
+            </div>
+          )}
+          {/* WHY an upload failed — shown here because addLog() only renders in the
+              Upload tab, which mobile users never see. Without this a rejected
+              upload finished instantly and looked like it simply did nothing. */}
+          {syncErrors.length>0 && (
+            <div style={{marginTop:8,background:"#EF444412",border:"1px solid #EF444440",
+              borderRadius:6,padding:"7px 8px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#EF4444",marginBottom:4}}>
+                {syncErrors.length} upload{syncErrors.length===1?"":"s"} failed
+              </div>
+              {syncErrors.slice(0,4).map((e,i)=>(
+                <div key={i} style={{fontSize:9,color:"#FCA5A5",lineHeight:1.4,marginBottom:2,wordBreak:"break-word"}}>
+                  <span style={{color:"#F87171",fontWeight:600}}>{e.label}</span>: {e.message}
+                </div>
+              ))}
             </div>
           )}
           {/* Auto-upload is Wi-Fi-only. Say so, otherwise a crew member on 4G just
@@ -4191,7 +4207,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         saveSyncForVideos,saveTagsForVideo,
                         sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
                         selectedTags,setSelectedTags,toggleTag,allTags,isManTag,displayed,perms,
-                        onSyncProxies,onUploadOriginals,mobileSyncState,
+                        onSyncProxies,onUploadOriginals,mobileSyncState,syncErrors,
                         setActiveTab,cloudStatus,updateVideoTagsFn,
                         computeAutoTagsFn,sessionTagList,setSessionTagList,tagSuggestionList,
                         handlePlayUtc,onDeleted,role,effectiveRole,
@@ -4312,6 +4328,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
             syncState={mobileSyncState}
             onSyncProxies={onSyncProxies}
             onUploadOriginals={onUploadOriginals}
+            syncErrors={syncErrors}
           />
         </div>
       )}
@@ -4796,6 +4813,13 @@ function SSAApp(){
   const libSyncTimerRef=useRef(null);
   // Mobile-specific sync state — phase: null | "pulling" | "pushing" | "done" | "error"
   const[mobileSyncState,setMobileSyncState]=useState({phase:null,message:"",progress:0});
+  // Upload failures, surfaced IN THE UI. addLog() only renders in the Upload tab's
+  // console — on mobile you're in the Videos tab and never see it, so a failing
+  // upload looked like a no-op. These are shown in the sync panel itself.
+  const[syncErrors,setSyncErrors]=useState([]);
+  const noteSyncError=useCallback((label,message)=>{
+    setSyncErrors(p=>[...p.filter(e=>e.label!==label),{label,message:String(message||'upload failed')}]);
+  },[]);
 
   // ── Phase B auto-sync queue ─────────────────────────────────────────────────
   // Background queue that uploads newly-imported videos to Bunny Storage as
@@ -5982,6 +6006,7 @@ function SSAApp(){
           if (!blob) {
             console.warn('[autoSync] no local blob for', item.videoId);
             addLog(`✕ ${label}: no video data on this device — re-import the clip.`);
+            noteSyncError(label,'no video data on this device — re-import the clip');
             autoSyncRef.current.failed++;
             autoSyncRef.current.done = idx; continue;
           }
@@ -5999,6 +6024,7 @@ function SSAApp(){
           if (!cloudId) {
             console.warn('[autoSync] no cloud row for', item.videoId);
             addLog(`✕ ${label}: no active boat workspace — can't create the cloud entry.`);
+            noteSyncError(label,"no active boat workspace — can't create the cloud entry");
             autoSyncRef.current.failed++;
             autoSyncRef.current.done = idx; continue;
           }
@@ -6033,6 +6059,7 @@ function SSAApp(){
           // in a second while nothing left the phone.
           console.error('[autoSync] failed for', item.videoId, e);
           addLog(`✕ ${label}: ${e?.message || 'upload failed'}`);
+          noteSyncError(label, e?.message || 'upload failed');
           autoSyncRef.current.failed++;
         }
         autoSyncRef.current.done = idx;
@@ -6106,6 +6133,7 @@ function SSAApp(){
           if (!blob) {
             console.warn('[originals] no local blob for', item.videoId);
             addLog(`✕ ${label}: no video data on this device — re-import the clip.`);
+            noteSyncError(label,'no video data on this device — re-import the clip');
             originalsSyncRef.current.failed = (originalsSyncRef.current.failed||0) + 1;
             originalsSyncRef.current.done = idx; continue;
           }
@@ -6185,6 +6213,7 @@ function SSAApp(){
         } catch (e) {
           console.error('[originals] failed for', item.videoId, e);
           addLog(`✕ ${label}: ${e?.message || 'original upload failed'}`);
+          noteSyncError(label, e?.message || 'original upload failed');
           originalsSyncRef.current.failed = (originalsSyncRef.current.failed||0) + 1;
         }
         originalsSyncRef.current.done = idx;
@@ -6211,6 +6240,7 @@ function SSAApp(){
   // so a slow link is never hit with a multi-GB upload by surprise.
   async function handleBatchSyncProxies(){
     if (!cloudStatus?.available) return;
+    setSyncErrors([]);
     // Only clips whose source file is on THIS device can be transcoded +
     // uploaded from here. Cloud-only clips (uploaded elsewhere) have no
     // local blob — skip them rather than erroring on a missing blob.
@@ -6226,6 +6256,7 @@ function SSAApp(){
   // this only when on fast wifi.
   function handleBatchUploadOriginals(){
     if (!cloudStatus?.available) return;
+    setSyncErrors([]);
     // Only clips with the source file on this device can be uploaded.
     const toUpload = allVideos.filter(v => !v.hasOriginal && v.hasLocalBlob);
     if (!toUpload.length) return;
@@ -6640,6 +6671,7 @@ function SSAApp(){
       onMobileSync={handleMobileCloudSync}
       onSyncProxies={handleBatchSyncProxies}
       onUploadOriginals={handleBatchUploadOriginals}
+      syncErrors={syncErrors}
       mobileSyncState={mobileSyncState}
       setMobileSyncState={setMobileSyncState}
       onThumbLoad={markVideoThumbLoaded}
@@ -6872,6 +6904,7 @@ function SSAApp(){
                   syncState={mobileSyncState}
                   onSyncProxies={handleBatchSyncProxies}
                   onUploadOriginals={handleBatchUploadOriginals}
+                  syncErrors={syncErrors}
                 />
               )}
               {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
