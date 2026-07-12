@@ -1025,6 +1025,14 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
 // Generic notes card used for both Debrief notes and Speed-team-meeting notes.
 // `fields` is [{key,label}]; all share one debrief row (one endpoint). Supports
 // #tag + @link editing and (optionally) document uploads.
+// A document is a PICTURE if its content type says so, or its name ends in an image
+// extension (older rows were registered before content_type was always sent).
+function isPictureDoc(d) {
+  const ct = String(d?.content_type || '')
+  if (/^image\//.test(ct)) return true
+  return /\.(png|jpe?g|gif|webp|heic|heif|avif)$/i.test(String(d?.name || ''))
+}
+
 function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', wrapperStyle, base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
   const [values, setValues] = useState({})
   const [docs, setDocs] = useState([])
@@ -1034,6 +1042,7 @@ function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', w
   const [drafts, setDrafts] = useState({})   // { [key]: string }
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [lightbox, setLightbox] = useState(null)
   const [err, setErr] = useState(null)
   const [availableTags, setAvailableTags] = useState([])
   const [links, setLinks] = useState([])
@@ -1149,31 +1158,46 @@ function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', w
     }
   }
 
-  async function onPickFile(e) {
-    const file = e.target.files?.[0]
-    e.target.value = ''
-    if (!file) return
+  // Pictures and documents share ONE store (debrief.documents) — they're told apart
+  // by content type, not by a separate scope. That keeps the API and the delete path
+  // unchanged; only the rendering differs (thumbnail grid vs. file row).
+  async function uploadMany(files) {
+    if (!files.length) return
     setUploading(true)
     setErr(null)
+    const failed = []
     try {
       // Separate Bunny paths per scope so files don't collide and the listing
       // stays tidy. The server records `scope` on the document entry too so
       // the right card can re-render only its own files.
       const folder = documentsScope === 'speed' ? 'speed' : 'debriefs'
-      const key = `campaign/${folder}/${date}/${Date.now()}-${safeName(file.name)}`
-      await uploadBlobToStorage({ key, blob: file, contentType: file.type })
-      const res = await fetch(`${base}/debrief/documents`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, name: file.name, key, bytes: file.size, content_type: file.type, scope: documentsScope }),
-      })
-      if (!res.ok) { setErr((await res.json().catch(() => ({}))).error || 'could not register document'); return }
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        try {
+          // Index in the key: a multi-file loop can share a millisecond on a fast disk.
+          const key = `campaign/${folder}/${date}/${Date.now()}-${i}-${safeName(file.name)}`
+          await uploadBlobToStorage({ key, blob: file, contentType: file.type })
+          const res = await fetch(`${base}/debrief/documents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date, name: file.name, key, bytes: file.size, content_type: file.type, scope: documentsScope }),
+          })
+          if (!res.ok) failed.push(`${file.name}: ${(await res.json().catch(() => ({}))).error || res.status}`)
+        } catch (e2) {
+          failed.push(`${file.name}: ${e2?.message || 'upload failed'}`)
+        }
+      }
+      if (failed.length) setErr(`Some files failed: ${failed.join('; ')}`)
       load()
-    } catch (e2) {
-      setErr(e2?.message || 'upload failed')
     } finally {
       setUploading(false)
     }
+  }
+
+  async function onPickFile(e) {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    await uploadMany(files)
   }
 
   async function removeDoc(key) {
@@ -1235,33 +1259,81 @@ function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', w
         )
       })}
 
-      {showDocuments && (
-        <div style={{ marginTop: 4 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Documents</div>
-          {docs.length === 0 && <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>None yet.</div>}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
-            {docs.map((d) => (
-              <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderRadius: 6, padding: '6px 9px' }}>
-                <span style={{ fontSize: 13 }}>📄</span>
-                {d.url ? (
-                  <a href={d.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#06B6D4', textDecoration: 'none', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</a>
-                ) : (
-                  <span style={{ fontSize: 12, color: '#94A3B8', flex: 1 }}>{d.name}</span>
-                )}
-                {canEdit && (
-                  <button onClick={() => removeDoc(d.key)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>✕</button>
-                )}
+      {showDocuments && (() => {
+        const pictures = docs.filter(isPictureDoc)
+        const files = docs.filter((d) => !isPictureDoc(d))
+        return (
+          <div style={{ marginTop: 4 }}>
+            {/* ── Pictures — whiteboard shots, screenshots, sketches from the meeting ── */}
+            {pictures.length > 0 && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Pictures</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                  {pictures.map((d) => (
+                    <div key={d.key} style={{ position: 'relative' }}>
+                      <button
+                        onClick={() => d.url && setLightbox(d)}
+                        title={`Open ${d.name}`}
+                        style={{ padding: 0, border: '1px solid #1E3A5A', borderRadius: 8, overflow: 'hidden', background: '#071624', cursor: d.url ? 'zoom-in' : 'default', width: 104, height: 78, display: 'block' }}
+                      >
+                        {d.url
+                          ? <img src={d.url} alt={d.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                          : <span style={{ fontSize: 22 }}>🖼</span>}
+                      </button>
+                      {canEdit && (
+                        <button onClick={() => removeDoc(d.key)} title="Remove"
+                          style={{ position: 'absolute', top: 2, right: 2, width: 18, height: 18, borderRadius: 9, border: 'none', background: 'rgba(0,0,0,0.6)', color: '#EF4444', cursor: 'pointer', fontSize: 11, lineHeight: 1 }}>✕</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Documents</div>
+            {files.length === 0 && <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>None yet.</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
+              {files.map((d) => (
+                <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderRadius: 6, padding: '6px 9px' }}>
+                  <span style={{ fontSize: 13 }}>📄</span>
+                  {d.url ? (
+                    <a href={d.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: '#06B6D4', textDecoration: 'none', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</a>
+                  ) : (
+                    <span style={{ fontSize: 12, color: '#94A3B8', flex: 1 }}>{d.name}</span>
+                  )}
+                  {canEdit && (
+                    <button onClick={() => removeDoc(d.key)} style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 12 }}>✕</button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {canEdit && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
+                  {uploading ? 'Uploading…' : '+ Upload document'}
+                  <input type="file" multiple onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
+                </label>
+                <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
+                  {uploading ? 'Uploading…' : '+ Upload pictures'}
+                  <input type="file" accept="image/*" multiple onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
+                </label>
               </div>
-            ))}
+            )}
+
+            {/* Lightbox — click the backdrop or ✕ to close. */}
+            {lightbox && (
+              <div onClick={() => setLightbox(null)}
+                style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(3,15,26,0.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                <button onClick={() => setLightbox(null)} aria-label="Close"
+                  style={{ position: 'absolute', top: 14, right: 16, width: 36, height: 32, borderRadius: 8, border: '1px solid #1E3A5A', background: '#0A1929', color: '#E2E8F0', fontSize: 16, cursor: 'pointer' }}>✕</button>
+                <img src={lightbox.url} alt={lightbox.name} onClick={(e) => e.stopPropagation()}
+                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 8, boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }} />
+                <div style={{ position: 'absolute', bottom: 14, left: 0, right: 0, textAlign: 'center', fontSize: 12, color: '#94A3B8' }}>{lightbox.name}</div>
+              </div>
+            )}
           </div>
-          {canEdit && (
-            <label style={{ ...btnGhost, display: 'inline-block', cursor: uploading ? 'default' : 'pointer' }}>
-              {uploading ? 'Uploading…' : '+ Upload document'}
-              <input type="file" onChange={onPickFile} disabled={uploading} style={{ display: 'none' }} />
-            </label>
-          )}
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

@@ -27,7 +27,17 @@ const PHASES: Phase[] = [
 ]
 
 interface Conditions { details: string | null; timings: string; plan: string; sailList: { source?: string; sails?: { name: string }[] } | null }
-interface Debrief { learnings?: string; next_focus?: string; speed_learnings?: string; speed_focus_today?: string; speed_long_term?: string }
+interface DebriefDoc { key?: string; name?: string; url?: string | null; content_type?: string | null; scope?: string | null }
+interface Debrief { learnings?: string; next_focus?: string; speed_learnings?: string; speed_focus_today?: string; speed_long_term?: string; documents?: DebriefDoc[] }
+
+// Pictures attached to the speed-team meeting in Campaign → Day. Same store as the
+// meeting's documents, told apart by content type (older rows predate content_type,
+// hence the filename fallback).
+const isPicture = (d: DebriefDoc): boolean =>
+  /^image\//.test(String(d?.content_type || '')) ||
+  /\.(png|jpe?g|gif|webp|heic|heif|avif)$/i.test(String(d?.name || ''))
+const speedPictures = (deb: Debrief | null): DebriefDoc[] =>
+  (deb?.documents || []).filter((d) => (d.scope || 'debrief') === 'speed' && isPicture(d) && d.url)
 
 export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo, autoOpenSailing = false }: {
   day: TimelineNode; events: TimelineNode[]; tz: number
@@ -66,7 +76,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
     switch (k) {
       case 'timings': return !!(cond?.timings && String(cond.timings).trim())
       case 'weather': return !!(cond?.details && String(cond.details).trim())
-      case 'speedteam': return !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term)
+      case 'speedteam': return !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term || speedPictures(deb).length)
       case 'sailcall': return !!(cond?.sailList?.sails?.length)
       case 'sailing': return nMarkers > 0 || nMedia > 0
       case 'debrief': return !!(deb?.learnings || deb?.next_focus)
@@ -149,6 +159,53 @@ function Empty({ what }: { what: string }) {
   return <div className="py-1 text-xs text-muted">No {what} yet — add it in Campaign → Day.</div>
 }
 
+// Speed-team meeting pictures (whiteboard shots, screenshots) — thumbnails that open
+// full-size. Read-only, like the rest of the day phases: upload lives in Campaign.
+function SpeedPictures({ pics }: { pics: DebriefDoc[] }) {
+  const [open, setOpen] = React.useState<DebriefDoc | null>(null)
+  return (
+    <>
+      <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-muted">Pictures</div>
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        {pics.map((d, i) => (
+          <button
+            key={d.key || i}
+            onClick={() => setOpen(d)}
+            title={`Open ${d.name || 'picture'}`}
+            className="h-[70px] w-[94px] overflow-hidden rounded-md border border-[color:var(--border)] bg-surface-2 transition-transform duration-150 hover:z-10 hover:scale-[1.06] hover:shadow-lg motion-reduce:transition-none motion-reduce:hover:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
+            style={{ cursor: 'zoom-in' }}
+          >
+            <img src={d.url as string} alt={d.name || ''} loading="lazy" className="h-full w-full object-cover" />
+          </button>
+        ))}
+      </div>
+      {open && (
+        <div
+          onClick={() => setOpen(null)}
+          className="fixed inset-0 z-[9999] flex items-center justify-center p-6"
+          style={{ background: 'rgba(3,15,26,0.82)' }}
+        >
+          <button
+            onClick={() => setOpen(null)}
+            aria-label="Close"
+            className="absolute right-4 top-3.5 h-8 w-9 rounded-md border border-[color:var(--border)] text-fg"
+            style={{ background: 'var(--surface-1)' }}
+          >
+            ✕
+          </button>
+          <img
+            src={open.url as string}
+            alt={open.name || ''}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
+          />
+          <div className="absolute inset-x-0 bottom-3.5 text-center text-xs text-muted">{open.name}</div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function PhaseContent({ phaseKey, cond, deb }: { phaseKey: string; cond: Conditions | null; deb: Debrief | null }) {
   const box = 'max-w-xl rounded-lg border border-[color:var(--border)] bg-surface-1 p-3'
   switch (phaseKey) {
@@ -156,18 +213,22 @@ function PhaseContent({ phaseKey, cond, deb }: { phaseKey: string; cond: Conditi
       return <div className={box}>{cond?.timings && String(cond.timings).trim() ? <Field label="Timings" value={String(cond.timings)} /> : <Empty what="timings" />}</div>
     case 'weather':
       return <div className={box}>{cond?.details ? <Field label="Conditions" value={String(cond.details)} /> : <Empty what="weather notes" />}</div>
-    case 'speedteam':
+    case 'speedteam': {
+      const pics = speedPictures(deb)
+      const hasText = !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term)
       return (
         <div className={box}>
-          {(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term) ? (
+          {hasText ? (
             <>
               <Field label="Learnings" value={deb?.speed_learnings} />
               <Field label="Focus for today" value={deb?.speed_focus_today} />
               <Field label="Long-term development" value={deb?.speed_long_term} />
             </>
-          ) : <Empty what="speed-team notes" />}
+          ) : pics.length === 0 ? <Empty what="speed-team notes" /> : null}
+          {pics.length > 0 && <SpeedPictures pics={pics} />}
         </div>
       )
+    }
     case 'sailcall':
       return (
         <div className={box}>
