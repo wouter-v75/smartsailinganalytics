@@ -4814,6 +4814,7 @@ function SSAApp(){
     activePromise: null,// in-flight drain promise — lets the batch flow await it
     done: 0,
     total: 0,
+    failed: 0,          // so the final state can report failure instead of a fake ✓
   });
 
   // ── Phase B.3 originals queue ───────────────────────────────────────────────
@@ -5972,7 +5973,7 @@ function SSAApp(){
           // manually once they sign in.
           const supabase = getBrowserSupabase();
           const { data: { user } } = await supabase.auth.getUser();
-          if (!user) { autoSyncRef.current.done = idx; continue; }
+          if (!user) { addLog(`✕ ${label}: not signed in — cannot upload.`); autoSyncRef.current.failed++; autoSyncRef.current.done = idx; continue; }
 
           // Source blob from IDB. If it's missing (e.g. mobile-skipped
           // storage on a small device) the user has no way to re-upload
@@ -5980,6 +5981,8 @@ function SSAApp(){
           const blob = await getVideoBlob(item.videoId);
           if (!blob) {
             console.warn('[autoSync] no local blob for', item.videoId);
+            addLog(`✕ ${label}: no video data on this device — re-import the clip.`);
+            autoSyncRef.current.failed++;
             autoSyncRef.current.done = idx; continue;
           }
 
@@ -5995,6 +5998,8 @@ function SSAApp(){
           });
           if (!cloudId) {
             console.warn('[autoSync] no cloud row for', item.videoId);
+            addLog(`✕ ${label}: no active boat workspace — can't create the cloud entry.`);
+            autoSyncRef.current.failed++;
             autoSyncRef.current.done = idx; continue;
           }
 
@@ -6024,18 +6029,33 @@ function SSAApp(){
             ? {...v, hasProxy: true, cloudId, streamProcessing: true, proxyUploadedAt: new Date().toISOString()}
             : v));
         } catch (e) {
+          // Surface it. Silently swallowing this is what made an upload "succeed"
+          // in a second while nothing left the phone.
           console.error('[autoSync] failed for', item.videoId, e);
+          addLog(`✕ ${label}: ${e?.message || 'upload failed'}`);
+          autoSyncRef.current.failed++;
         }
         autoSyncRef.current.done = idx;
       }
     } finally {
       autoSyncRef.current.running = false;
-      // Show a brief done state, then clear.
-      const finalCount = autoSyncRef.current.done;
-      setMobileSyncState({ phase: 'done', message: `✓ Synced ${finalCount} clip${finalCount===1?'':'s'}`, progress: 100 });
+      // Report the TRUTH. This used to always say "✓ Synced N" even when every clip
+      // had failed — which is precisely why an instant no-op looked like a success.
+      const nFailed = autoSyncRef.current.failed || 0;
+      const nOk = Math.max(0, autoSyncRef.current.done - nFailed);
+      if (nFailed) {
+        setMobileSyncState({
+          phase: 'error',
+          message: `${nFailed} clip${nFailed===1?'':'s'} failed to upload — see the log`,
+          progress: 0,
+        });
+      } else {
+        setMobileSyncState({ phase: 'done', message: `✓ Synced ${nOk} clip${nOk===1?'':'s'}`, progress: 100 });
+      }
       autoSyncRef.current.done = 0;
       autoSyncRef.current.total = 0;
-      syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
+      autoSyncRef.current.failed = 0;
+      syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), nFailed ? 6000 : 3000);
     }
     })();
     autoSyncRef.current.activePromise.finally(() => { autoSyncRef.current.activePromise = null; });
@@ -6085,6 +6105,8 @@ function SSAApp(){
           const blob = await getVideoBlob(item.videoId);
           if (!blob) {
             console.warn('[originals] no local blob for', item.videoId);
+            addLog(`✕ ${label}: no video data on this device — re-import the clip.`);
+            originalsSyncRef.current.failed = (originalsSyncRef.current.failed||0) + 1;
             originalsSyncRef.current.done = idx; continue;
           }
 
@@ -6162,16 +6184,24 @@ function SSAApp(){
             : v));
         } catch (e) {
           console.error('[originals] failed for', item.videoId, e);
+          addLog(`✕ ${label}: ${e?.message || 'original upload failed'}`);
+          originalsSyncRef.current.failed = (originalsSyncRef.current.failed||0) + 1;
         }
         originalsSyncRef.current.done = idx;
       }
     } finally {
       originalsSyncRef.current.running = false;
-      const finalCount = originalsSyncRef.current.done;
-      setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${finalCount} original${finalCount===1?'':'s'}`, progress: 100 });
+      const nFailed = originalsSyncRef.current.failed || 0;
+      const nOk = Math.max(0, originalsSyncRef.current.done - nFailed);
+      if (nFailed) {
+        setMobileSyncState({ phase: 'error', message: `${nFailed} original${nFailed===1?'':'s'} failed — see the log`, progress: 0 });
+      } else {
+        setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${nOk} original${nOk===1?'':'s'}`, progress: 100 });
+      }
       originalsSyncRef.current.done = 0;
       originalsSyncRef.current.total = 0;
-      syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3500);
+      originalsSyncRef.current.failed = 0;
+      syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), nFailed ? 6000 : 3500);
     }
   }
 

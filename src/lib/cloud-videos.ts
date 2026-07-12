@@ -246,11 +246,21 @@ export async function ensureCloudVideoId({
         body: JSON.stringify(body),
       }
     )
-    if (!res.ok) return null
+    if (!res.ok) {
+      // Do NOT swallow this. A null here made the sync queue skip the clip in
+      // silence, so an upload "finished" instantly and reported success while
+      // nothing reached the cloud. The status is the whole diagnosis: 403 = the
+      // role isn't allowed to write the videos row (RLS), 413 = storage quota.
+      const detail = await res.text().catch(() => '')
+      throw new Error(
+        `cloud video row rejected — HTTP ${res.status}${detail ? `: ${detail.slice(0, 160)}` : ''}`
+      )
+    }
     const j = (await res.json()) as { video?: { id: string } }
     return j.video?.id || null
-  } catch {
-    return null
+  } catch (e) {
+    if (e instanceof Error) throw e
+    throw new Error('cloud video row failed (network)')
   }
 }
 
