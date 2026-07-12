@@ -4163,7 +4163,8 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         logData,xmlData,loadDate,syncOffsets,setSyncOffsets,
                         saveSyncForVideos,saveTagsForVideo,
                         sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
-                        selectedTags,toggleTag,allTags,isManTag,displayed,perms,
+                        selectedTags,setSelectedTags,toggleTag,allTags,isManTag,displayed,perms,
+                        onSyncProxies,onUploadOriginals,mobileSyncState,
                         setActiveTab,cloudStatus,updateVideoTagsFn,
                         computeAutoTagsFn,sessionTagList,setSessionTagList,tagSuggestionList,
                         handlePlayUtc,onDeleted,role,effectiveRole,
@@ -4269,6 +4270,24 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
           style={{background:"none",border:"1px solid #EF444440",borderRadius:5,padding:"6px 8px",
             color:"#EF4444",fontSize:12,cursor:"pointer"}}>✕</button>}
       </div>
+      {/* ── Cloud upload — mobile ────────────────────────────────────────────
+          The desktop Videos tab has had BatchSyncPanel ("Sync proxies" /
+          "Upload originals") all along; mobile had NO upload control at all, so a
+          crew member (TL3) who shot the footage on their phone had no way to get it
+          off the device — it sat local forever and no coach ever saw it.
+          Gated on canImport, not canSync: if you're trusted to import footage you're
+          trusted to push the footage you imported. Hidden when there's nothing on
+          this device to upload (cloud-only clips have no blob to send). */}
+      {perms.canImport && cloudStatus?.available && allVideos.some(v=>v.hasLocalBlob) && (
+        <div style={{padding:"8px 14px",borderBottom:"1px solid #0F2030",flexShrink:0}}>
+          <BatchSyncPanel
+            videos={allVideos}
+            syncState={mobileSyncState}
+            onSyncProxies={onSyncProxies}
+            onUploadOriginals={onUploadOriginals}
+          />
+        </div>
+      )}
       {/* Tag filter pills */}
       {allTags.filter(isManTag).length>0&&(
         <div style={{display:"flex",gap:6,padding:"6px 14px",overflowX:"auto",flexShrink:0,borderBottom:"1px solid #0F2030"}}>
@@ -6519,6 +6538,8 @@ function SSAApp(){
       computeAutoTagsFn={computeAutoTags}
       photos={photos} setPhotos={setPhotos}
       onMobileSync={handleMobileCloudSync}
+      onSyncProxies={handleBatchSyncProxies}
+      onUploadOriginals={handleBatchUploadOriginals}
       mobileSyncState={mobileSyncState}
       setMobileSyncState={setMobileSyncState}
       onThumbLoad={markVideoThumbLoaded}
