@@ -62,6 +62,34 @@ export async function listVideosCloud({
   }
 }
 
+// Delete the Supabase row(s) for a clip, or for a whole day. WITHOUT this the
+// local/Bunny delete leaves an orphan `videos` row that merges straight back in
+// on the next load as a phantom cloud-only clip — which is how the library kept
+// resurrecting clips that had already been deleted.
+// Returns the removed rows' bunny ids so the caller can purge the blobs as well.
+export async function deleteVideosCloud({
+  userId,
+  id,
+  date,
+}: {
+  userId: string
+  id?: string | null
+  date?: string | null
+}): Promise<{ deleted: number; videos: CloudVideoRow[] }> {
+  const m = getActiveMembership(userId)
+  if (!m || !m.boat_id || (!id && !date)) return { deleted: 0, videos: [] }
+  const qs = id ? `id=${encodeURIComponent(id)}` : `date=${encodeURIComponent(date as string)}`
+  try {
+    const res = await fetch(`/api/teams/${m.team_id}/boats/${m.boat_id}/videos?${qs}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) return { deleted: 0, videos: [] }
+    return (await res.json()) as { deleted: number; videos: CloudVideoRow[] }
+  } catch {
+    return { deleted: 0, videos: [] }
+  }
+}
+
 interface UpsertArgs {
   userId: string
   sessionDate: string

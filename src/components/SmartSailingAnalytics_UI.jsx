@@ -16,7 +16,7 @@ import { startAutoFlush as startPhotoAutoFlush } from '../lib/photoStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
-import { listVideosCloud, upsertVideoCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId } from '../lib/cloud-videos';
+import { listVideosCloud, upsertVideoCloud, deleteVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId } from '../lib/cloud-videos';
 import { syncProxyForVideo } from '../lib/video-rendition-sync';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
@@ -4083,6 +4083,17 @@ function DeleteButton({video, cloudStatus, onDeleted}){
     setDeleting(true); setStatus("Deleting…");
     try {
       if (deleteCloud && hasStream) { setStatus("Removing from Bunny Stream…"); const ok = await deleteStreamVideo(video.streamId); if (!ok) { setStatus("⚠ Stream delete failed — removing locally only"); await new Promise(r => setTimeout(r, 1500)); } }
+      // The Supabase row MUST go too. Without this the clip is gone from IDB and
+      // from Bunny, but the orphan row merges back in on the next load as a
+      // phantom cloud-only entry — the clip "comes back from the dead".
+      if (deleteCloud) {
+        setStatus("Removing cloud row…");
+        try {
+          const supabase = getBrowserSupabase();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) await deleteVideosCloud({ userId: user.id, id: video.cloudId || video.id });
+        } catch {}
+      }
       if (isLocal) { await deleteVideo(video.id); }
       setStatus("✓ Deleted");
       await new Promise(r => setTimeout(r, 600));
@@ -4747,14 +4758,59 @@ function SSAApp(){
     setBatchSelected(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
   },[]);
   const clearBatch=useCallback(()=>{setBatchMode(false);setBatchSelected(new Set());},[]);
+  // A clip lives in THREE stores — IndexedDB (blob), Bunny (rendition) and the
+  // Supabase `videos` row. This used to delete only the first, so the cloud row
+  // survived and merged straight back in on the next load as a phantom cloud-only
+  // clip: deleted clips kept coming back. Delete all three, Bunny + cloud first so
+  // that if anything fails we still have the local entry to retry from.
   const handleBatchDelete=useCallback(async()=>{
     if(!batchSelected.size)return;
     const ids=[...batchSelected];
+    const targets=allVideos.filter(v=>batchSelected.has(v.id));
+    let supabaseUser=null;
+    try{
+      const supabase=getBrowserSupabase();
+      const {data:{user}}=await supabase.auth.getUser();
+      supabaseUser=user;
+    }catch{}
+    for(const v of targets){
+      if(v.streamId){try{await deleteStreamVideo(v.streamId);}catch{}}
+      if(supabaseUser){try{await deleteVideosCloud({userId:supabaseUser.id,id:v.cloudId||v.id});}catch{}}
+    }
     for(const id of ids){try{await deleteVideo(id);}catch{}}
     setAllVideos(p=>p.filter(v=>!batchSelected.has(v.id)));
     if(selectedVideo&&batchSelected.has(selectedVideo.id))setSelectedVideo(null);
     clearBatch();
-  },[batchSelected,selectedVideo,clearBatch]);
+    addLog(`🗑 Deleted ${ids.length} clip${ids.length>1?"s":""} — local + Bunny + cloud row`);
+  },[batchSelected,selectedVideo,clearBatch,allVideos]);
+
+  // Nuke every clip for the active day across all three stores. Unlike batch
+  // delete this also removes ORPHAN cloud rows — rows whose local entry is already
+  // gone, which the library can't always surface for selection, and which are the
+  // residue of the old delete path that never touched Supabase. Use to start a day
+  // fresh before re-importing.
+  const[clearDayBusy,setClearDayBusy]=useState(false);
+  const[clearDayArmed,setClearDayArmed]=useState(false);
+  const handleClearDay=useCallback(async()=>{
+    if(!activeDate)return;
+    setClearDayBusy(true);
+    try{
+      // 1. Bunny renditions — needs the stream ids, which only exist while the rows do.
+      for(const v of allVideos){ if(v.streamId){try{await deleteStreamVideo(v.streamId);}catch{}} }
+      // 2. Cloud rows for the whole day (catches orphans with no local entry).
+      let n=0;
+      try{
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(user){ const r=await deleteVideosCloud({userId:user.id,date:activeDate}); n=r.deleted; }
+      }catch{}
+      // 3. Local IDB.
+      const locals=await getVideosForDate(activeDate);
+      for(const v of locals){try{await deleteVideo(v.id);}catch{}}
+      setAllVideos([]); setSelectedVideo(null); clearBatch();
+      addLog(`🗑 Cleared ${activeDate}: ${locals.length} local + ${n} cloud row${n===1?"":"s"} removed. Re-import to start fresh.`);
+    } finally { setClearDayBusy(false); setClearDayArmed(false); }
+  },[activeDate,allVideos,clearBatch]);
 
   // Batch ↓ Save to disk — ask the user once for a destination folder,
   // then stream every selected clip's blob straight into it via the File
@@ -6630,6 +6686,23 @@ function SSAApp(){
                 />
               )}
               {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
+              {/* ── Clear-day nuke (admin/coach). Shown even with 0 local clips,
+                     because ORPHAN cloud rows are exactly what needs clearing. ── */}
+              {perms.canDelete && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                  {clearDayBusy ? (
+                    <span style={{fontSize:11,color:"#EF4444"}}>Clearing {activeDate}…</span>
+                  ) : clearDayArmed ? (
+                    <>
+                      <span style={{fontSize:11,color:"#EF4444",fontWeight:600}}>Delete ALL clips for {fmtDate(activeDate)} — local, Bunny and cloud?</span>
+                      <button onClick={handleClearDay} style={{background:"#EF4444",border:"none",borderRadius:6,padding:"5px 12px",color:"#fff",cursor:"pointer",fontSize:11,fontWeight:700}}>Delete all</button>
+                      <button onClick={()=>setClearDayArmed(false)} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:11}}>Cancel</button>
+                    </>
+                  ) : (
+                    <button onClick={()=>setClearDayArmed(true)} style={{background:"none",border:"1px solid #EF444430",borderRadius:6,padding:"5px 12px",color:"#EF4444",cursor:"pointer",fontSize:11,opacity:0.75}}>🗑 Clear all clips for this day</button>
+                  )}
+                </div>
+              )}
               {/* ── Batch select toolbar (admin/coach only) ── */}
               {perms.canDelete && allVideos.length > 0 && (
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>

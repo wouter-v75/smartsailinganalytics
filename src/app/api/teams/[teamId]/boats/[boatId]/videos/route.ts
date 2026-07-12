@@ -223,3 +223,58 @@ export async function POST(
 
   return NextResponse.json({ video: data, session_id: session.id, action: 'created' })
 }
+
+// DELETE ?id=<uuid>        → remove ONE video row
+//        ?date=YYYY-MM-DD  → remove EVERY video row for that session day
+//
+// Why this exists: the client's DeleteButton removed the clip from IndexedDB and
+// from Bunny Stream but never deleted the Supabase row, so every delete left an
+// orphan that merged back in on the next load as a phantom cloud-only clip. A
+// delete has to hit all three stores or the row resurrects.
+//
+// Returns the deleted rows' bunny ids so the caller can purge the blobs too —
+// they're gone from the DB after this, so it's the last chance to read them.
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { teamId: string; boatId: string } }
+) {
+  const supabase = getServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+
+  const id = req.nextUrl.searchParams.get('id')
+  const date = req.nextUrl.searchParams.get('date')
+  if (!id && !date) {
+    return NextResponse.json({ error: 'id or date required' }, { status: 400 })
+  }
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return NextResponse.json({ error: 'date must be YYYY-MM-DD' }, { status: 400 })
+  }
+
+  // Scope every delete to (team, boat) as well as the id/date, so a stray id from
+  // another boat can never be removed. RLS gates this again server-side.
+  let q = supabase
+    .from('videos')
+    .delete()
+    .eq('team_id', params.teamId)
+    .eq('boat_id', params.boatId)
+
+  if (id) {
+    q = q.eq('id', id)
+  } else {
+    const { data: session } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('team_id', params.teamId)
+      .eq('boat_id', params.boatId)
+      .eq('date', date as string)
+      .maybeSingle()
+    if (!session) return NextResponse.json({ deleted: 0, videos: [] })
+    q = q.eq('session_id', session.id)
+  }
+
+  const { data, error } = await q.select('id,bunny_stream_id,bunny_storage_path')
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  return NextResponse.json({ deleted: (data || []).length, videos: data || [] })
+}
