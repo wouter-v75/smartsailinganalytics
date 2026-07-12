@@ -168,11 +168,37 @@ export function updateSessionSync(date, patch) {
 
 // ── Video store ───────────────────────────────────────────────────────────────
 
-// Detect if we're on a mobile device — affects whether blob is stored locally.
-// On iPhone/iPad, Safari has tight storage limits so we skip blob storage.
-function isMobileDevice() {
+// Should we keep the source blob in IndexedDB?
+//
+// This USED to be "no, on any mobile UA" — which quietly broke Android entirely.
+// The video blob is the thing everything else hangs off: the thumbnail is grabbed
+// from it, local playback reads it, and BOTH cloud upload paths (proxy + originals)
+// skip any clip without it (`hasLocalBlob`). So on an Android phone a clip imported
+// fine, appeared in the Videos tab, and then had no thumbnail, wouldn't play, and
+// could never reach the cloud — so no admin ever saw it. All from this one flag.
+//
+// The real constraint is iOS Safari's small, hostile storage budget. Android/Chrome
+// has a generous quota, so it should store blobs exactly like desktop. Rather than
+// hardcode another UA guess, ASK the browser: use the Storage API's quota estimate
+// and only skip when the file genuinely won't fit. A real QuotaExceededError is
+// still caught at write time (below) as the final backstop.
+function isIosDevice() {
   if (typeof navigator === "undefined") return false;
-  return /iPhone|iPad|Android/i.test(navigator.userAgent);
+  const ua = navigator.userAgent;
+  // iPadOS 13+ reports as "Macintosh" — the touch-point check disambiguates.
+  return /iPhone|iPad|iPod/i.test(ua) ||
+    (/Macintosh/.test(ua) && typeof document !== "undefined" && navigator.maxTouchPoints > 1);
+}
+
+async function canStoreBlob(bytes) {
+  if (isIosDevice()) return false;              // Safari's budget is too small to rely on
+  try {
+    if (navigator?.storage?.estimate) {
+      const { quota = 0, usage = 0 } = await navigator.storage.estimate();
+      if (quota) return (quota - usage) > bytes * 1.25;  // headroom for the write itself
+    }
+  } catch { /* no Storage API — fall through and just try */ }
+  return true;
 }
 
 // `membership`: optional active-membership object {team_id, boat_id}. When
@@ -184,9 +210,10 @@ export async function saveVideo(file, parsedMeta, membership = null) {
   const date = parsedMeta.sessionDate || TODAY();
   const id   = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
-  // On mobile: skip storing the blob (storage limits, upload goes direct to cloud)
-  // On desktop: store the blob for local playback and background cloud sync
-  const storeBlob = !isMobileDevice();
+  // Keep the blob whenever the device can hold it — Android and desktop can, iOS
+  // Safari usually can't. Without it the clip is inert: no thumbnail, no playback,
+  // and both upload paths skip it, so it never reaches the cloud.
+  let storeBlob = await canStoreBlob(file.size);
 
   const teamId = membership?.team_id || null;
   const boatId = membership?.boat_id || null;
@@ -208,7 +235,20 @@ export async function saveVideo(file, parsedMeta, membership = null) {
     syncedToDb:  false,
     cloudSynced: false,   // tracks whether this video has been uploaded to Stream
   };
-  await idbPut(db, "videos", entry);
+  // Backstop: the quota estimate can be optimistic (and Safari lies about it). If the
+  // write blows up, keep the clip — retry WITHOUT the blob rather than losing the
+  // import entirely. `blobSkipped` marks why it has no local source.
+  try {
+    await idbPut(db, "videos", entry);
+  } catch (err) {
+    if (!storeBlob) throw err;                 // wasn't the blob's fault — surface it
+    console.warn("[localStore] blob write failed (quota?) — saving metadata only", err);
+    storeBlob = false;
+    entry.blob = null;
+    entry.blobSkipped = true;
+    await idbPut(db, "videos", entry);
+  }
+
   const existing = getSessions().find(
     (s) => s.date === date && (s.team_id || null) === teamId && (s.boat_id || null) === boatId
   );
