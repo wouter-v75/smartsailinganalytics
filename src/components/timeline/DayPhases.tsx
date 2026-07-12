@@ -1,19 +1,23 @@
 'use client'
 import * as React from 'react'
-import { Cloud, Users, Sailboat, Activity, ClipboardList, LineChart, ChevronRight, type LucideIcon } from 'lucide-react'
+import { Clock, Cloud, Users, Sailboat, Activity, ClipboardList, LineChart, ChevronRight, type LucideIcon } from 'lucide-react'
 import { Badge, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import DayTimeline from './DayTimeline'
 import Collapse from './Collapse'
 import { useDockItem } from './DockMagnify'
 
-// The phases of a day, shown when a day is opened: Weather · Speed-team meeting ·
-// Sail call · Sailing · Debrief notes · Performance analysis. Each expands to its
-// content (read-only here — edit in Campaign → Day). "Sailing" expands to the
+// The phases of a day, shown when a day is opened: Timings · Weather · Speed-team
+// meeting · Sail call · Sailing · Debrief notes · Performance analysis. Each expands
+// to its content (read-only here — edit in Campaign → Day). "Sailing" expands to the
 // day's vertical time-axis (events + media with the hover cursor).
 
 interface Phase { key: string; label: string; icon: LucideIcon; color: string }
 const PHASES: Phase[] = [
+  // Timings sits FIRST — it's the day's schedule (dock out, warning signal, first
+  // start), so it's what you want before the weather when opening a day. Same
+  // campaign/conditions record the weather comes from; edited in Campaign → Day.
+  { key: 'timings', label: 'Timings', icon: Clock, color: '#EF4444' },
   { key: 'weather', label: 'Weather', icon: Cloud, color: '#06B6D4' },
   { key: 'speedteam', label: 'Speed-team meeting', icon: Users, color: '#7F77DD' },
   { key: 'sailcall', label: 'Sail call', icon: Sailboat, color: '#F59E0B' },
@@ -60,6 +64,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
   const nMedia = (day.metrics?.videos || 0) + (day.metrics?.photos || 0)
   const has = (k: string): boolean => {
     switch (k) {
+      case 'timings': return !!(cond?.timings && String(cond.timings).trim())
       case 'weather': return !!(cond?.details && String(cond.details).trim())
       case 'speedteam': return !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term)
       case 'sailcall': return !!(cond?.sailList?.sails?.length)
@@ -147,6 +152,8 @@ function Empty({ what }: { what: string }) {
 function PhaseContent({ phaseKey, cond, deb }: { phaseKey: string; cond: Conditions | null; deb: Debrief | null }) {
   const box = 'max-w-xl rounded-lg border border-[color:var(--border)] bg-surface-1 p-3'
   switch (phaseKey) {
+    case 'timings':
+      return <div className={box}>{cond?.timings && String(cond.timings).trim() ? <Field label="Timings" value={String(cond.timings)} /> : <Empty what="timings" />}</div>
     case 'weather':
       return <div className={box}>{cond?.details ? <Field label="Conditions" value={String(cond.details)} /> : <Empty what="weather notes" />}</div>
     case 'speedteam':
