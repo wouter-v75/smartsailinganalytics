@@ -6283,6 +6283,22 @@ function SSAApp(){
       // PUSH phase — only if heavy (good link), user has permission + unsynced local
       const uc=getUnsyncedCount();
       if(heavy && uc>0 && perms.canSync){
+        // ── Boat guard ───────────────────────────────────────────────────────
+        // syncSessionToCloud files everything under the ACTIVE membership's
+        // team/boat, but activeDate can be a session belonging to a DIFFERENT
+        // boat (the local stores are keyed by date, not by boat). Pushing then
+        // would silently re-file e.g. old Northstar 72 footage and its log
+        // against Northstar 76. Refuse, and say exactly why.
+        const syncMem = supaUser ? getActiveMembership(supaUser.id) : null;
+        const ownsDay = getSessionsForMembership(syncMem).some(s=>s.date===activeDate);
+        if(!ownsDay){
+          const boat = syncMem?.boat_name || "the active boat";
+          const why = `⚠ ${fmtDate(activeDate)} belongs to a different boat — not uploaded. It would be filed under ${boat}. Switch to that session's boat to sync it.`;
+          addLog(why);
+          setMobileSyncState({phase:"error",message:`${fmtDate(activeDate)} is another boat's session — skipped`,progress:0});
+          setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),4000);
+          return;
+        }
         setMobileSyncState({phase:"pushing",message:`Uploading ${uc} unsynced…`,progress:75});
         const logD=await getLogData(activeDate);
         const xmlD=await getXmlData(activeDate);
