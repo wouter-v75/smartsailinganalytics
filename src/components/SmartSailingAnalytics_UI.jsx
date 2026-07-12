@@ -334,10 +334,43 @@ function reduceLogForCloud(logData,xmlData){
   //    (the interval widens for very long sessions so the cap always holds).
   const span=rows.length>1?rows[rows.length-1].utc-rows[0].utc:0;
   const interval=Math.max(1000,Math.ceil(span/TARGET_MAX_ROWS));
-  const out=[];
+  let out=[];
   let lastUtc=-Infinity;
   for(const r of rows){
     if(r.utc-lastUtc>=interval){ out.push(r); lastUtc=r.utc; }
+  }
+
+  // 3. Shrink the ROW SCHEMA. Capping the row COUNT alone was never enough: the
+  //    payload size is rows × columns, and the column set grows every time a boat's
+  //    export gains channels. At 71 fields, 7000 rows serialises to ~7 MB — over the
+  //    4.5 MB request-body limit — so the session PUT 413s and the log silently ends
+  //    up "saved on this device only". That is the bug this fixes; it had already
+  //    been failing at ~5.7 MB before the 2026-07 export added 16 more columns.
+  //
+  //    3a. Drop columns that are null in EVERY row. A given boat only populates a
+  //        subset of the union schema (no MastAng/Rake/Vang in the N76 export, etc.),
+  //        so this is free — it removes keys that carry no information at all.
+  const keep=new Set(['utc']);
+  for(const r of out){
+    for(const k in r){ if(r[k]!=null && !keep.has(k)) keep.add(k); }
+  }
+  //    3b. Round floats. Instrument data is meaningless past 2 dp, and a raw
+  //        parseFloat can serialise as 9.100000000000001 — 18 chars for one number.
+  const round=v=>(typeof v==='number'&&Number.isFinite(v)&&!Number.isInteger(v))?Math.round(v*100)/100:v;
+  const slim=r=>{ const o={}; for(const k of keep){ const v=r[k]; if(v!=null) o[k]=round(v); } return o; };
+  out=out.map(slim);
+
+  //    3c. Hard byte budget. Whatever the schema, the payload must fit — so if it
+  //        still doesn't, halve the row count until it does rather than let the PUT
+  //        fail. Time resolution degrades gracefully; the full log stays on-device.
+  //        4 MB (inside the 4.5 MB limit) rather than something more timid: the cloud
+  //        log is what drives the video overlay on OTHER devices, so row spacing is
+  //        worth paying for — 4 MB holds a 4 h session at 3 s, 3.5 MB would halve it
+  //        again to 6 s and make the overlay visibly steppy.
+  const BUDGET=4_000_000;
+  const bytes=rs=>JSON.stringify(rs).length;
+  while(out.length>500 && bytes(out)>BUDGET){
+    out=out.filter((_,i)=>i%2===0);
   }
 
   return{
@@ -1993,8 +2026,9 @@ function UploadTab({role,cloudStatus,onImported}){
             logData: cloudLog,
             tzOffsetMinutes: csvTz,
           });
-          if (ok) addLog(`☁ Log synced to cloud → ${d} · ${cloudLog.rows.length.toLocaleString()} of ${csvParsed.rows.length.toLocaleString()} rows`);
-          else addLog(`⚠ Log saved on this device only — could not reach the cloud (is an active boat workspace selected?)`);
+          const mb = (JSON.stringify(cloudLog).length / 1048576).toFixed(2);
+          if (ok) addLog(`☁ Log synced to cloud → ${d} · ${cloudLog.rows.length.toLocaleString()} of ${csvParsed.rows.length.toLocaleString()} rows · ${mb} MB`);
+          else addLog(`⚠ Log NOT synced (${mb} MB payload) — saved on this device only. Check the console for the HTTP status; an active boat workspace must be selected.`);
         }
       } catch (e) { addLog(`⚠ Log cloud sync failed — saved on this device only`); }
       addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows) → ${d}`);
