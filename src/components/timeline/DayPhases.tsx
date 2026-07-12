@@ -6,6 +6,7 @@ import type { TimelineNode } from '@/lib/timeline/types'
 import DayTimeline from './DayTimeline'
 import Collapse from './Collapse'
 import { useDockItem } from './DockMagnify'
+import { DocThumb } from './RegattaDocs'
 
 // The phases of a day, shown when a day is opened: Timings · Weather · Speed-team
 // meeting · Sail call · Sailing · Debrief notes · Performance analysis. Each expands
@@ -36,8 +37,11 @@ interface Debrief { learnings?: string; next_focus?: string; speed_learnings?: s
 const isPicture = (d: DebriefDoc): boolean =>
   /^image\//.test(String(d?.content_type || '')) ||
   /\.(png|jpe?g|gif|webp|heic|heif|avif)$/i.test(String(d?.name || ''))
-const speedPictures = (deb: Debrief | null): DebriefDoc[] =>
-  (deb?.documents || []).filter((d) => (d.scope || 'debrief') === 'speed' && isPicture(d) && d.url)
+const speedScoped = (deb: Debrief | null): DebriefDoc[] =>
+  (deb?.documents || []).filter((d) => (d.scope || 'debrief') === 'speed' && d.url)
+const speedPictures = (deb: Debrief | null): DebriefDoc[] => speedScoped(deb).filter(isPicture)
+// Everything that isn't a picture — PDFs, decks, spreadsheets attached to the meeting.
+const speedDocs = (deb: Debrief | null): DebriefDoc[] => speedScoped(deb).filter((d) => !isPicture(d))
 
 export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo, autoOpenSailing = false }: {
   day: TimelineNode; events: TimelineNode[]; tz: number
@@ -76,7 +80,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
     switch (k) {
       case 'timings': return !!(cond?.timings && String(cond.timings).trim())
       case 'weather': return !!(cond?.details && String(cond.details).trim())
-      case 'speedteam': return !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term || speedPictures(deb).length)
+      case 'speedteam': return !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term || speedPictures(deb).length || speedDocs(deb).length)
       case 'sailcall': return !!(cond?.sailList?.sails?.length)
       case 'sailing': return nMarkers > 0 || nMedia > 0
       case 'debrief': return !!(deb?.learnings || deb?.next_focus)
@@ -215,17 +219,30 @@ function PhaseContent({ phaseKey, cond, deb }: { phaseKey: string; cond: Conditi
       return <div className={box}>{cond?.details ? <Field label="Conditions" value={String(cond.details)} /> : <Empty what="weather notes" />}</div>
     case 'speedteam': {
       const pics = speedPictures(deb)
+      const docs = speedDocs(deb)
       const hasText = !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term)
+      const empty = !hasText && pics.length === 0 && docs.length === 0
       return (
         <div className={box}>
-          {hasText ? (
+          {hasText && (
             <>
               <Field label="Learnings" value={deb?.speed_learnings} />
               <Field label="Focus for today" value={deb?.speed_focus_today} />
               <Field label="Long-term development" value={deb?.speed_long_term} />
             </>
-          ) : pics.length === 0 ? <Empty what="speed-team notes" /> : null}
+          )}
+          {empty && <Empty what="speed-team notes" />}
           {pics.length > 0 && <SpeedPictures pics={pics} />}
+          {docs.length > 0 && (
+            <>
+              <div className="mt-2 text-[11px] font-medium uppercase tracking-wide text-muted">Documents</div>
+              <div className="mt-1.5 flex gap-2 overflow-x-auto pb-1">
+                {docs.map((d, i) => (
+                  <DocThumb key={d.key || i} doc={{ name: d.name || 'document', url: d.url, content_type: d.content_type }} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )
     }

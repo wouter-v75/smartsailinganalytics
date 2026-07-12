@@ -18,14 +18,17 @@ const THUMB_W = 92
 const THUMB_H = 120
 const DOC_KIND = 'regatta' // must match CampaignTab's REGATTA_DOC_KIND
 
-interface Doc {
-  id: string
+export interface Doc {
+  id?: string
   name: string
   url?: string | null
   content_type?: string | null
 }
 
-function DocThumb({ doc }: { doc: Doc }) {
+// Exported so the speed-team meeting phase can render its PDFs with exactly this
+// treatment (real first-page preview, click-through to a new tab) instead of a
+// third bespoke document renderer.
+export function DocThumb({ doc }: { doc: Doc }) {
   const isImg =
     /^image\//.test(doc.content_type || '') || /\.(png|jpe?g|gif|webp)$/i.test(doc.name || '')
   const isPdf = !isImg
