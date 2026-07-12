@@ -483,13 +483,36 @@ export function computeAutoTags(videoStartUtc, durationSec, logData, xmlData, of
       if (firstEver) firstEver.sails.forEach(s => activeSails.add(s.trim().toLowerCase()));
     }
     activeSails.forEach(s => { if (s) tags.push(s); });
+
+    // ── Spinnaker HOIST / DROP ────────────────────────────────────────────────
+    // The event file records which sails are UP at each change, never the
+    // manoeuvre itself. A hoist/drop is therefore the TRANSITION: the kite
+    // entering (hoist) or leaving (drop) the active set across a sail change that
+    // falls inside the clip. Without this the timeline has no way to label the two
+    // manoeuvres people most want to find footage of.
+    const isSpin = s => /(spin|kite|gennaker|code|^a\d|^s\d)/.test(String(s).trim().toLowerCase());
+    const hadSpin = sails => (sails || []).some(isSpin);
+    const changes = allSailEvents
+      .filter(s => s.utc >= winStart - BUFFER_MS && s.utc <= winEnd + BUFFER_MS)
+      .sort((a, b) => a.utc - b.utc);
+    let prevSpin = beforeClip ? hadSpin(beforeClip.sails) : false;
+    for (const ev of changes) {
+      const nowSpin = hadSpin(ev.sails);
+      if (nowSpin && !prevSpin) tags.push("spin-hoist");
+      if (!nowSpin && prevSpin) tags.push("spin-drop");
+      prevSpin = nowSpin;
+    }
   }
 
   const marks = (xmlData.markRoundings || []).filter(
     m => m.utc >= winStart - BUFFER_MS && m.utc <= winEnd + BUFFER_MS
   );
   for (const m of marks) {
-    tags.push(m.isTop ? "topmark" : "mark");
+    // A non-top rounding IS the leeward gate — dbSync already stores it as
+    // `leeward_gate`. Tag it "gate" so the racing tags read the way the crew
+    // talks. "mark" is kept alongside it so any older filter still matches.
+    tags.push(m.isTop ? "topmark" : "gate");
+    if (!m.isTop) tags.push("mark");
     if (logData?.rows?.length) {
       const nearest = logData.rows.reduce((best, r) =>
         Math.abs(r.utc - m.utc) < Math.abs(best.utc - m.utc) ? r : best,

@@ -448,6 +448,7 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
   index: number; mag: number; push: number; focused: boolean; ev: TimelineNode | null; onClick: () => void
 }) {
   const evStyle = ev ? EVENT_STYLE[ev.kind] : null
+  const racing = racingTagsOf(m.tags)
   return (
     <button
       onClick={onClick}
@@ -461,19 +462,63 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
         <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{hms(m.t, tz)}</span>
         {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${focused ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}
 
+        {/* Racing tags — ALWAYS on the card (not hover-only), so the manoeuvres are
+            scannable down the whole column. Hidden while focused only because the
+            metadata panel below takes the same strip and repeats them. */}
+        {!focused && racing.length > 0 && (
+          <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-0.5 bg-black/55 px-1 py-0.5">
+            {racing.slice(0, 2).map((t) => <RaceChip key={t}>{t}</RaceChip>)}
+          </div>
+        )}
+
         {/* Metadata — revealed on the card directly under the cursor. */}
         {focused && (
           <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-1 bg-black/72 px-1.5 py-1">
+            {racing.map((t) => <RaceChip key={t}>{t}</RaceChip>)}
             {m.sailName && <Chip s={{ bg: SCAN_C + '22', c: '#C4B5FD', bd: SCAN_C + '55' }}>{m.sailName}</Chip>}
             {m.tws != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWS {r(m.tws)}kn</Chip>}
             {m.twa != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWA {r(m.twa)}°</Chip>}
             {m.sails.slice(0, 2).map((sName) => <Chip key={sName} s={chipStyle(sName)}>{sName}</Chip>)}
-            {m.tags.slice(0, 3).map((t) => <Chip key={t} s={chipStyle(t)}>{t}</Chip>)}
             {evStyle && <Chip s={{ bg: evStyle.c + '22', c: evStyle.c, bd: evStyle.c + '55' }}>{ev!.title || evStyle.label}</Chip>}
           </div>
         )}
       </div>
     </button>
+  )
+}
+
+// ── Racing tags ──────────────────────────────────────────────────────────────
+// Only the manoeuvres you'd scrub the timeline looking for. Everything else the
+// auto-tagger emits — day type ("training-other"), sail names ("main_2026"), wind
+// bands ("tws-8-12kn"), point of sail — is deliberately NOT shown here: it's
+// either already on the card (TWS/TWA) or it's noise that buries the racing tag.
+// Whitelist, not blacklist, so a new tag can never leak onto the cards.
+const RACING_TAGS: Record<string, string> = {
+  'race-start': 'Race start',
+  'spin-hoist': 'Spin hoist',
+  'spin-drop': 'Spin drop',
+  topmark: 'Top mark',
+  gate: 'Gate',
+}
+const RACE_RED = '#EF4444'
+const racingTagsOf = (tags: string[]): string[] => {
+  const out: string[] = []
+  for (const t of tags || []) {
+    // "2x-gybe" style repeat-count tags share the base name — match the base.
+    const base = String(t).replace(/^\d+x-/, '').toLowerCase()
+    const label = RACING_TAGS[base]
+    if (label && !out.includes(label)) out.push(label)
+  }
+  return out
+}
+function RaceChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="rounded px-1 py-px text-[8px] font-bold uppercase tracking-wide"
+      style={{ background: RACE_RED, color: '#fff', border: `1px solid ${RACE_RED}` }}
+    >
+      {children}
+    </span>
   )
 }
 
