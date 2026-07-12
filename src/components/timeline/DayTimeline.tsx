@@ -5,6 +5,7 @@ import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { PhotoOverlayImage, FallbackVideoPlayer } from './DayMedia'
 import SailScanDetail from '@/components/SailScanDetail'
+import { racingTagsOf, isMainsailTag, RACE_RED } from '@/lib/racingTags'
 
 // The day's own VERTICAL time-axis. A zoomable, pinch/scrollable time bar (hover
 // cursor + time box) with the day's nodes and event-file tags coloured like the
@@ -478,7 +479,9 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
             {m.sailName && <Chip s={{ bg: SCAN_C + '22', c: '#C4B5FD', bd: SCAN_C + '55' }}>{m.sailName}</Chip>}
             {m.tws != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWS {r(m.tws)}kn</Chip>}
             {m.twa != null && <Chip s={{ bg: '#06B6D422', c: '#7DD3FC', bd: '#06B6D455' }}>TWA {r(m.twa)}°</Chip>}
-            {m.sails.slice(0, 2).map((sName) => <Chip key={sName} s={chipStyle(sName)}>{sName}</Chip>)}
+            {/* The main is up in essentially every frame — tagging it carries no
+                information and just eats the row. Headsails/kites are the signal. */}
+            {m.sails.filter((sName) => !isMainsailTag(sName)).slice(0, 2).map((sName) => <Chip key={sName} s={chipStyle(sName)}>{sName}</Chip>)}
             {evStyle && <Chip s={{ bg: evStyle.c + '22', c: evStyle.c, bd: evStyle.c + '55' }}>{ev!.title || evStyle.label}</Chip>}
           </div>
         )}
@@ -487,30 +490,8 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
   )
 }
 
-// ── Racing tags ──────────────────────────────────────────────────────────────
-// Only the manoeuvres you'd scrub the timeline looking for. Everything else the
-// auto-tagger emits — day type ("training-other"), sail names ("main_2026"), wind
-// bands ("tws-8-12kn"), point of sail — is deliberately NOT shown here: it's
-// either already on the card (TWS/TWA) or it's noise that buries the racing tag.
-// Whitelist, not blacklist, so a new tag can never leak onto the cards.
-const RACING_TAGS: Record<string, string> = {
-  'race-start': 'Race start',
-  'spin-hoist': 'Spin hoist',
-  'spin-drop': 'Spin drop',
-  topmark: 'Top mark',
-  gate: 'Gate',
-}
-const RACE_RED = '#EF4444'
-const racingTagsOf = (tags: string[]): string[] => {
-  const out: string[] = []
-  for (const t of tags || []) {
-    // "2x-gybe" style repeat-count tags share the base name — match the base.
-    const base = String(t).replace(/^\d+x-/, '').toLowerCase()
-    const label = RACING_TAGS[base]
-    if (label && !out.includes(label)) out.push(label)
-  }
-  return out
-}
+// Racing-tag whitelist + red chip live in lib/racingTags — shared with DayMedia so
+// the two decks can't drift apart on what counts as a racing tag.
 function RaceChip({ children }: { children: React.ReactNode }) {
   return (
     <span

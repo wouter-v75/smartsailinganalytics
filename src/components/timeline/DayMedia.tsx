@@ -3,6 +3,7 @@ import * as React from 'react'
 import { Play, Camera } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import { renderOverlay } from '@/lib/photoOverlay'
+import { racingTagsOf, RACE_RED } from '@/lib/racingTags'
 
 // Media for a day: photo + video thumbnails (TWS/TWD/tags baked from the log /
 // event file), fetched lazily from the cloud when a day becomes active in the
@@ -76,7 +77,14 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
                 className="group/med relative aspect-video w-44 shrink-0 overflow-hidden rounded-lg border border-[color:var(--border)] bg-surface-2 text-left shadow-sm transition-transform duration-150 hover:z-10 hover:scale-[1.06] hover:shadow-lg motion-reduce:transition-none motion-reduce:hover:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]">
                 {v.thumb ? <img src={v.thumb} alt="" loading="lazy" className="h-full w-full object-cover" /> : <div className="flex h-full w-full items-center justify-center text-muted"><Play size={20} aria-hidden /></div>}
                 <span className="absolute left-1/2 top-1/2 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white transition-transform duration-150 group-hover/med:scale-110"><Play size={16} aria-hidden /></span>
-                {v.tags.length > 0 && <div className="absolute inset-x-0 bottom-0 truncate bg-black/50 px-1.5 py-0.5 text-[10px] text-white/90">{v.tags.slice(0, 3).join(' · ')}</div>}
+                {racingTagsOf(v.tags).length > 0 && (
+                  <div className="absolute inset-x-0 bottom-0 flex flex-wrap gap-0.5 bg-black/55 px-1 py-0.5">
+                    {racingTagsOf(v.tags).slice(0, 2).map((t) => (
+                      <span key={t} className="rounded px-1 py-px text-[8px] font-bold uppercase tracking-wide"
+                        style={{ background: RACE_RED, color: '#fff' }}>{t}</span>
+                    ))}
+                  </div>
+                )}
               </button>
             ))}
           </div>
@@ -113,7 +121,7 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
         {fallbackVideo && (
           <DialogContent title={fallbackVideo.title || 'Video'}>
             <FallbackVideoPlayer videoId={fallbackVideo.id} />
-            {fallbackVideo.tags.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{fallbackVideo.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>}
+            {racingTagsOf(fallbackVideo.tags).length > 0 && <div className="mt-3 flex flex-wrap gap-2">{racingTagsOf(fallbackVideo.tags).map((t) => <Badge key={t}>{t}</Badge>)}</div>}
           </DialogContent>
         )}
       </Dialog>
