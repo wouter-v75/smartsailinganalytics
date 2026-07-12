@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { saveVideo, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
+import { saveVideo, pruneInertVideos, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
 import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady, createStreamUpload, uploadFileToStream } from "../lib/bunny";
 import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
@@ -5533,6 +5533,15 @@ function SSAApp(){
       const { data: { user: bootUser } } = await supaForBoot.auth.getUser();
       const bootMembership = bootUser ? getActiveMembership(bootUser.id) : null;
       const localSessions=getSessionsForMembership(bootMembership).sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
+
+      // Drop clips that have neither a local blob nor a cloud copy — they can't be
+      // played, thumbnailed or uploaded, so they're pure noise in the library. These
+      // are the leftovers of the Android "skip blob on mobile" bug; crew (TL3) can't
+      // delete clips themselves, so the app clears them out on load.
+      try {
+        const nDead = await pruneInertVideos();
+        if (nDead) addLog(`🧹 Removed ${nDead} unusable clip${nDead === 1 ? '' : 's'} (no video data, never reached the cloud) — re-import to upload them.`);
+      } catch { /* non-fatal */ }
 
       // ── Mobile progressive load ───────────────────────────────────────────
       // On mobile we only fetch full video blobs + log data for the latest session.

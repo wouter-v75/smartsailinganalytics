@@ -349,6 +349,33 @@ export async function getVideosForDate(date) {
   }));
 }
 
+// ── Prune INERT clips ────────────────────────────────────────────────────────
+// A clip with no local blob AND no cloud copy can do nothing at all: no thumbnail
+// (it's grabbed from the blob), no playback, and both upload paths skip it — so it
+// can never reach the cloud either. It just sits in the library looking broken.
+//
+// These are the residue of the Android bug where saveVideo skipped blob storage on
+// every mobile UA. Non-admins can't delete (canDelete is admin/coach), so the app
+// has to clean up after itself rather than stranding a crew member with clips they
+// can neither use nor remove.
+//
+// Deliberately conservative — an entry must have ALL of:
+//   • no blob            (nothing to play/upload/thumbnail from)
+//   • no streamId        (never uploaded to Bunny)
+//   • not cloudSynced    (no cloud copy to fall back on)
+// so a legitimately cloud-backed clip is never touched. Returns the number removed.
+export async function pruneInertVideos() {
+  const db = await openDb();
+  const entries = await idbGetAll(db, "videos");
+  const dead = entries.filter(
+    (e) => !e.blob && !e.streamId && !e.cloudSynced && !e.syncedToDb
+  );
+  for (const e of dead) {
+    try { await idbDelete(db, "videos", e.id); } catch { /* keep going */ }
+  }
+  return dead.length;
+}
+
 export async function getAllVideos() {
   const db      = await openDb();
   const entries = await idbGetAll(db, "videos");
