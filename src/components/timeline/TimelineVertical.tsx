@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { buildSeasonScaffold } from '@/lib/timeline/buildSeasonScaffold'
 import DayPhases from './DayPhases'
+import RegattaDocs from './RegattaDocs'
 import Collapse from './Collapse'
 import DockMagnifier, { useDockItem } from './DockMagnify'
 
@@ -86,6 +87,16 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
   const Icon = GLYPH[node.kind]
   const timeLabel = isSpanning ? `${dm(node.t0, tz)} – ${dm(node.t1, tz)}` : dm(node.t0, tz)
   const date = isDay ? ((node.meta?.date as string) || node.id.split(':')[1] || '') : ''
+  // Campaign anchors a regatta's documents to its FIRST day's date, so resolve that
+  // from the earliest day child rather than formatting node.t0 (which is a UTC
+  // instant and can land on the previous calendar day in a +ve venue offset).
+  const regattaFrom = React.useMemo(() => {
+    if (node.kind !== 'regatta') return null
+    const days = kids.filter((k) => k.kind === 'day').slice().sort((a, b) => a.t0 - b.t0)
+    const first = days[0]
+    if (!first) return null
+    return (first.meta?.date as string) || first.id.split(':')[1] || null
+  }, [node.kind, kids])
   const playForDay = React.useCallback((vid: string) => { if (onPlayVideo && date) onPlayVideo(date, vid) }, [onPlayVideo, date])
   const dockRef = useDockItem()
 
@@ -121,6 +132,12 @@ function Row({ node, tz, childrenOf, descendantsOf, open, toggle, teamId, boatId
       {isSpanning && kids.length > 0 && (
         <Collapse open={isOpen}>
           <div className="ml-0.5 mt-0.5 border-l border-[color:var(--border)] pl-1.5 sm:ml-[10px] sm:pl-3">
+            {/* Regatta paperwork (NOR / SI / course notices) — the same campaign
+                attachments, anchored to the regatta's FIRST day, shown as openable
+                thumbnails at the top of the block. Renders nothing when empty. */}
+            {node.kind === 'regatta' && (
+              <RegattaDocs teamId={teamId} boatId={boatId} dateFrom={regattaFrom} />
+            )}
             {kids.map((c) => (
               <Row key={c.id} node={c} tz={tz} childrenOf={childrenOf} descendantsOf={descendantsOf}
                 open={open} toggle={toggle} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo} focusId={focusId} />
