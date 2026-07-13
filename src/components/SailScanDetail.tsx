@@ -15,9 +15,13 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { getLogData } from '../lib/localStore'
 import { computeScanWindow } from '../lib/scanConditions'
 import { scanLocalDateTime } from '../lib/scanTime'
-import { pickDesign, designCodeOf } from '../lib/designInterp'
+import { pickDesign, designCodeOf, interpDesignAtTws } from '../lib/designInterp'
+import { northstarConditions, nsCell, nsSetCell, NS_STRIPES, NS_TWS, type NsCondition, type NsMetric } from '../lib/northstarTarget'
 
 const DESIGN_GREY = '#94A3B8'
+const NS_GREEN = '#22C55E' // Northstar target line
+// which curve is emphasised on hover: measured · design · Northstar
+type Hovered = 'm' | 'd' | 'n' | null
 
 const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
@@ -119,10 +123,10 @@ function splinePath(p: { x: number; y: number }[]): string {
   return d
 }
 
-// ── inline SVG spline chart (+ optional grey design overlay) ──────────────────
-// `hovered`: 'm' = measured emphasised, 'd' = design emphasised, null = both.
-function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 460, h = 200, xLabel = '', xMin, xMax, xTicks, hovered = null, onHover }:
-  { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string; xMin?: number; xMax?: number; xTicks?: number[]; hovered?: 'm' | 'd' | null; onHover?: (h: 'm' | 'd' | null) => void }) {
+// ── inline SVG spline chart (+ optional grey design overlay + Northstar target) ─
+// `hovered`: 'm' = measured emphasised, 'd' = design, 'n' = Northstar, null = all.
+function LineChart({ xs, ys, color = '#06B6D4', overlay, overlay2, w = 460, h = 200, xLabel = '', xMin, xMax, xTicks, hovered = null, onHover }:
+  { xs: number[]; ys: (number | null)[]; color?: string; overlay?: { xs: number[]; ys: (number | null)[]; color?: string }; overlay2?: { xs: number[]; ys: (number | null)[]; color?: string }; w?: number; h?: number; xLabel?: string; xMin?: number; xMax?: number; xTicks?: number[]; hovered?: Hovered; onHover?: (h: Hovered) => void }) {
   const pad = { l: 40, r: 10, t: 12, b: 22 }
   const inDomain = (x: number) => (xMin == null || x >= xMin) && (xMax == null || x <= xMax)
   const clean = (cxs: number[], cys: (number | null)[]) =>
@@ -130,7 +134,8 @@ function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 460, h = 200, xLabe
       .sort((a, b) => a.x - b.x)
   const valid = clean(xs, ys)
   const ov = overlay ? clean(overlay.xs, overlay.ys) : []
-  const all = [...valid, ...ov]
+  const ns = overlay2 ? clean(overlay2.xs, overlay2.ys) : []
+  const all = [...valid, ...ov, ...ns]
   if (!all.length) return <div style={{ width: w, height: h, color: C.dim, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>no data</div>
   const xmin = xMin != null ? xMin : Math.min(...all.map((p) => p.x)), xmax = xMax != null ? xMax : Math.max(...all.map((p) => p.x))
   const ymin = Math.min(...all.map((p) => p.y)), ymax = Math.max(...all.map((p) => p.y))
@@ -140,6 +145,7 @@ function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 460, h = 200, xLabe
   const path = (pts: { x: number; y: number }[]) => splinePath(pts.map((p) => ({ x: px(p.x), y: py(p.y) })))
   const mOp = hovered == null || hovered === 'm' ? 1 : 0.15
   const dOp = hovered == null || hovered === 'd' ? 1 : 0.15
+  const nOp = hovered == null || hovered === 'n' ? 1 : 0.15
   return (
     <svg width={w} height={h} style={{ display: 'block' }}>
       <line x1={pad.l} y1={py(yhi)} x2={w - pad.r} y2={py(yhi)} stroke={C.border} strokeWidth={0.5} />
@@ -149,6 +155,10 @@ function LineChart({ xs, ys, color = '#06B6D4', overlay, w = 460, h = 200, xLabe
       {ov.length > 0 && (
         <path d={path(ov)} fill="none" stroke={overlay?.color || DESIGN_GREY} strokeWidth={hovered === 'd' ? 3 : 1.6} strokeDasharray="3 2" strokeOpacity={dOp}
           onMouseEnter={() => onHover?.('d')} onMouseLeave={() => onHover?.(null)} style={{ cursor: onHover ? 'pointer' : 'default' }} />
+      )}
+      {ns.length > 0 && (
+        <path d={path(ns)} fill="none" stroke={overlay2?.color || NS_GREEN} strokeWidth={hovered === 'n' ? 3 : 1.8} strokeDasharray="6 3" strokeOpacity={nOp}
+          onMouseEnter={() => onHover?.('n')} onMouseLeave={() => onHover?.(null)} style={{ cursor: onHover ? 'pointer' : 'default' }} />
       )}
       <path d={path(valid)} fill="none" stroke={color} strokeWidth={hovered === 'm' ? 4.2 : 2.4} strokeOpacity={mOp}
         onMouseEnter={() => onHover?.('m')} onMouseLeave={() => onHover?.(null)} style={{ cursor: onHover ? 'pointer' : 'default' }} />
@@ -200,7 +210,11 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const [notes, setNotes] = useState<string>(scan?.notes || '')
   const [notesBusy, setNotesBusy] = useState(false)
   const [notesMsg, setNotesMsg] = useState('')
-  const [shapeHover, setShapeHover] = useState<'m' | 'd' | null>(null) // highlight measured vs design
+  const [shapeHover, setShapeHover] = useState<Hovered>(null) // highlight measured vs design vs Northstar
+  const [nsEditing, setNsEditing] = useState(false)
+  const [nsBusy, setNsBusy] = useState(false)
+  const [nsMsg, setNsMsg] = useState('')
+  const [nsConds, setNsConds] = useState<NsCondition[]>([])
   const saveNotes = async () => {
     if (!onSaveNotes) return
     setNotesBusy(true); setNotesMsg('')
@@ -386,6 +400,30 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
     return m
   }, [design])
 
+  // ── NORTHSTAR target (mainsail only) — the sailmaker's reference trim, held in
+  // the same units as the design shapes and interpolated to the same TWS, so it
+  // renders through the identical chart/table pipeline. Editable + saved onto the
+  // sail (specs.northstar_target); falls back to the shipped defaults. ──
+  const isMainScan = (scan?.conditions || {}).sail_type === 'main'
+  useEffect(() => { setNsConds(northstarConditions(targetSail)); setNsEditing(false); setNsMsg('') }, [targetSail, scan?.id])
+  const northstar = useMemo(
+    () => (isMainScan && nsConds.length && designTws != null ? interpDesignAtTws(nsConds as any[], Number(designTws)) : null),
+    [isMainScan, nsConds, designTws]
+  )
+  const saveNorthstar = async () => {
+    if (!targetSail?.id) { setNsMsg('Tag this scan to a sail first'); return }
+    setNsBusy(true); setNsMsg('')
+    try {
+      const r = await fetch(`/api/teams/${teamId}/sails`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: targetSail.id, specs: { ...(targetSail.specs || {}), northstar_target: { conditions: nsConds, updated_at: new Date().toISOString() } } }),
+      }).then((x) => x.json())
+      if (r?.error) setNsMsg(r.error)
+      else { setNsEditing(false); setNsMsg('Saved') }
+    } catch (e: any) { setNsMsg(String(e?.message || e)) }
+    finally { setNsBusy(false) }
+  }
+
   const td: React.CSSProperties = { padding: '4px 8px', fontSize: 12, color: C.text, textAlign: 'center', borderBottom: `1px solid ${C.border}` }
   const th: React.CSSProperties = { ...td, color: C.dim, fontWeight: 700, fontSize: 11 }
   const kv = (k: string, v: any) => (
@@ -516,6 +554,75 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
                 </table>
               </>
             )}
+
+            {/* ── Northstar target — MAINSAIL scans only ───────────────────────
+                The sailmaker's reference trim, tabulated by TWS across the stripe
+                heights. Same units as the design table (fractions ×100; Exit is
+                tabled as a magnitude but stored negative, so it plots on the same
+                axis as the measured exit angle). Editable in place: the values ship
+                as defaults and are persisted onto the mainsail's specs, so updating
+                them never needs a code change. */}
+            {isMainScan && (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, margin: '12px 0 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ color: NS_GREEN }}>Northstar target</span>
+                  <span>· by TWS · % = fractions ×100 · Exit (-ve)</span>
+                  <span style={{ flex: 1 }} />
+                  {canEdit && !nsEditing && (
+                    <button onClick={() => setNsEditing(true)}
+                      style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, color: C.dim, fontSize: 10, padding: '2px 8px', cursor: 'pointer' }}>Edit</button>
+                  )}
+                  {canEdit && nsEditing && (
+                    <>
+                      <button onClick={saveNorthstar} disabled={nsBusy}
+                        style={{ background: NS_GREEN, border: 'none', borderRadius: 5, color: '#03210F', fontSize: 10, fontWeight: 700, padding: '2px 10px', cursor: nsBusy ? 'default' : 'pointer' }}>
+                        {nsBusy ? 'Saving…' : 'Save'}
+                      </button>
+                      <button onClick={() => { setNsConds(northstarConditions(targetSail)); setNsEditing(false); setNsMsg('') }}
+                        style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 5, color: C.dim, fontSize: 10, padding: '2px 8px', cursor: 'pointer' }}>Cancel</button>
+                    </>
+                  )}
+                  {nsMsg && <span style={{ color: C.dim, fontSize: 10 }}>{nsMsg}</span>}
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', background: C.panel, borderRadius: 8 }}>
+                  <thead>
+                    <tr>
+                      <th style={th}>TWS</th>
+                      <th style={th}>Metric</th>
+                      {NS_STRIPES.map((p) => <th key={p} style={th}>{p}%</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {NS_TWS.map((tws) => (
+                      ([['camber', 'Camber'], ['draft', 'Posn'], ['trailAngle', 'Exit']] as [NsMetric, string][]).map(([metric, label], mi) => (
+                        <tr key={`${tws}-${metric}`}>
+                          {mi === 0 && (
+                            <td style={{ ...td, fontWeight: 700, color: NS_GREEN }} rowSpan={3}>{tws} kn</td>
+                          )}
+                          <td style={{ ...td, color: C.dim }}>{label}</td>
+                          {NS_STRIPES.map((posPct) => {
+                            const v = nsCell(nsConds, tws, metric, posPct)
+                            return (
+                              <td key={posPct} style={td}>
+                                {nsEditing && canEdit ? (
+                                  <input
+                                    value={v ?? ''}
+                                    onChange={(e) => setNsConds((c) => nsSetCell(c, tws, metric, posPct, e.target.value))}
+                                    style={{ width: 52, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 4, color: C.head, fontSize: 11, padding: '2px 4px', textAlign: 'right' }}
+                                  />
+                                ) : (
+                                  fmt(v)
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            )}
           </div>
         </div>
 
@@ -549,6 +656,10 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             style={{ color: C.accent, cursor: 'pointer', fontWeight: shapeHover === 'm' ? 800 : 400, opacity: shapeHover == null || shapeHover === 'm' ? 1 : 0.35 }}>━ measured</span>
           <span onMouseEnter={() => setShapeHover('d')} onMouseLeave={() => setShapeHover(null)}
             style={{ color: DESIGN_GREY, cursor: 'pointer', fontWeight: shapeHover === 'd' ? 800 : 400, opacity: shapeHover == null || shapeHover === 'd' ? 1 : 0.35 }}>— — design</span>
+          {isMainScan && northstar && northstar.sections.length > 0 && (
+            <span onMouseEnter={() => setShapeHover('n')} onMouseLeave={() => setShapeHover(null)}
+              style={{ color: NS_GREEN, cursor: 'pointer', fontWeight: shapeHover === 'n' ? 800 : 400, opacity: shapeHover == null || shapeHover === 'n' ? 1 : 0.35 }}>— — Northstar target</span>
+          )}
           <span style={{ color: C.dim, opacity: 0.7 }}>· hover to highlight a curve</span>
         </div>
         <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
@@ -556,10 +667,17 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             const overlay = design && designSections.length
               ? { xs: designSections.map((s: any) => s.posPct), ys: designSections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color: DESIGN_GREY }
               : undefined
+            // Northstar target — MAIN scans only, same shape/units as the design curve
+            // (it goes through interpDesignAtTws), so it maps through the identical
+            // dKey/dScale. Blank where the target has no value: never invent a point.
+            const nsSections: any[] = isMainScan && northstar ? (northstar.sections as any[]) : []
+            const overlay2 = nsSections.length
+              ? { xs: nsSections.map((s: any) => s.posPct), ys: nsSections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color: NS_GREEN }
+              : undefined
             return (
               <div key={m.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
                 <div style={{ fontSize: 13, color: C.head, fontWeight: 700, marginBottom: 4 }}>{m.label}</div>
-                <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay}
+                <LineChart xs={posXs} ys={stripes.map((s) => s[m.key] as number | null)} color={m.color} overlay={overlay} overlay2={overlay2}
                   xMin={25} xMax={maxStripe} xTicks={xTicksArr} w={720} h={280} hovered={shapeHover} onHover={setShapeHover} />
               </div>
             )
@@ -568,6 +686,11 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
         {design && design.sections.length > 0 && (
           <div style={{ fontSize: 10, color: C.dim, marginTop: 4 }}>
             <span style={{ color: DESIGN_GREY }}>— — grey dashed</span> = design target {design.sourceCode ? `(${design.sourceCode})` : ''} @ {fmt(design.tws, 0)} kn{design.substituted ? ' · substituted by wind range' : design.clamped ? ' (clamped)' : ''}
+          </div>
+        )}
+        {isMainScan && northstar && northstar.sections.length > 0 && (
+          <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>
+            <span style={{ color: NS_GREEN }}>— — green dashed</span> = Northstar target @ {fmt(designTws, 0)} kn
           </div>
         )}
 
