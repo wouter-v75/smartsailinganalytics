@@ -149,7 +149,27 @@ export function designForJib(sails: any[], scanSail: any, targetTws: number | nu
 
 // Single entry point used by the scan view: mains interpolate across their own
 // (paired-jib) TWS conditions; jibs pick the design by TWS window across sails.
-export function pickDesign(sails: any[], scanSail: any, activeJib: string | null, targetTws: number | null): InterpDesign | null {
+//
+// `sailTypeHint` is the SCAN's own sail_type ('main' | 'headsail'), used when the scan
+// hasn't been tagged to an inventory sail yet. Without it an untagged MAIN scan fell
+// through to designForJib() and was handed a JIB's design curve — and jib designs stop
+// at the 75% stripe, so the main's 87% design row silently vanished from the table and
+// the charts. The report tells us it's a main; believe it rather than guessing a jib.
+export function pickDesign(
+  sails: any[],
+  scanSail: any,
+  activeJib: string | null,
+  targetTws: number | null,
+  sailTypeHint?: string | null
+): InterpDesign | null {
+  // Explicitly tagged sail always wins — the user said what this is.
   if (isMainSail(scanSail)) return designForScan(scanSail, activeJib, targetTws)
+  if (scanSail) return designForJib(sails, scanSail, targetTws)
+
+  // Untagged: fall back to what the REPORT says the sail was.
+  if (sailTypeHint === 'main') {
+    const main = (sails || []).find(isMainSail)
+    return main ? designForScan(main, activeJib, targetTws) : null
+  }
   return designForJib(sails, scanSail, targetTws)
 }

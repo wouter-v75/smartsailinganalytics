@@ -393,7 +393,10 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const targetSail = useMemo(() => (sails || []).find((s) => s.id === scan?.sail_id) || null, [sails, scan?.sail_id])
   const activeJib = useMemo(() => (tags?.activeSails || []).map(designCodeOf).find((c: any) => c && c !== 'MN') || null, [tags])
   const designTws = win?.averages?.tws ?? tags?.avgTws ?? scan?.tws_kn ?? null
-  const design = useMemo(() => pickDesign(sails || [], targetSail, activeJib, designTws), [sails, targetSail, activeJib, designTws])
+  // cond.sail_type is the scan's OWN classification from the report. Pass it so an
+  // UNTAGGED main scan gets the mainsail's design curve instead of falling through to a
+  // jib's (which stops at the 75% stripe, hiding the main's 87% design row entirely).
+  const design = useMemo(() => pickDesign(sails || [], targetSail, activeJib, designTws, cond.sail_type), [sails, targetSail, activeJib, designTws, cond.sail_type])
   const designByPos = useMemo(() => {
     const m: Record<number, any> = {}
     ;(design?.sections || []).forEach((s: any) => { if (s.posPct != null) m[s.posPct] = s })
@@ -405,7 +408,10 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   // renders through the identical chart/table pipeline. Editable + saved onto the
   // sail (specs.northstar_target); falls back to the shipped defaults. ──
   const isMainScan = (scan?.conditions || {}).sail_type === 'main'
-  useEffect(() => { setNsConds(northstarConditions(targetSail)); setNsEditing(false); setNsMsg('') }, [targetSail, scan?.id])
+  // Same fallback for the Northstar target: read the override off the tagged sail when
+  // there is one, else off the boat's mainsail, else the shipped defaults.
+  const nsSail = useMemo(() => targetSail || (isMainScan ? (sails || []).find((x: any) => x?.kind === 'mainsail') : null) || null, [targetSail, isMainScan, sails])
+  useEffect(() => { setNsConds(northstarConditions(nsSail)); setNsEditing(false); setNsMsg('') }, [nsSail, scan?.id])
   const northstar = useMemo(
     () => (isMainScan && nsConds.length && designTws != null ? interpDesignAtTws(nsConds as any[], Number(designTws)) : null),
     [isMainScan, nsConds, designTws]
