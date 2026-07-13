@@ -89,7 +89,6 @@ export default function SailScanImport({
       const stage = (s: string) => setResults((prev) => prev.map((row) => (row === list[i] ? { ...row, stage: s } : row)))
       const fd = new FormData()
       fd.append('boat_id', boatId)
-      fd.append('file', file)
       fd.append('tz_offset_min', String(tzMin)) // venue zone for the report wall-clock
       stage('Reading data…')
       try {
@@ -101,9 +100,48 @@ export default function SailScanImport({
           fd.append('photo_key', key)
         }
       } catch { /* non-fatal */ }
+
+      // A photo-heavy SailScan report is 10–12 MB — far over the API's request-body
+      // limit, which rejects it with a plain-text "Request Entity Too Large" before
+      // any of our code runs. Only the report's TEXT is needed server-side, so for a
+      // large PDF we upload the file straight to Bunny (same path the sail photo
+      // already takes) and hand the API a key to fetch instead of the bytes.
+      // Small text-only exports (~350 KB) keep the simple inline path.
+      const INLINE_MAX = 3_500_000
+      if (file.size > INLINE_MAX) {
+        try {
+          stage('Uploading report…')
+          const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-${i}-report.pdf`
+          await uploadBlobToStorage({ key, blob: file, contentType: 'application/pdf' })
+          fd.append('file_key', key)
+          fd.append('file_name', file.name)
+        } catch (e: any) {
+          setResults((prev) => prev.map((row) =>
+            row.name === file.name && row.status === 'pending'
+              ? { ...row, status: 'error', error: `could not upload the report: ${e?.message || 'failed'}` }
+              : row
+          ))
+          continue
+        }
+      } else {
+        fd.append('file', file)
+      }
+
       stage('Importing…')
       try {
-        const r = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd }).then((x) => x.json())
+        const res = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd })
+        // NEVER res.json() blindly: an infrastructure-level rejection (413, 502…) is
+        // plain text or HTML, and parsing it threw `Unexpected token 'R'` — hiding the
+        // real problem behind a JSON error.
+        const raw = await res.text()
+        let r: any = null
+        try { r = JSON.parse(raw) } catch { /* not JSON — handled below */ }
+        if (!r) {
+          const msg = res.status === 413
+            ? `file too large for the server (${(file.size / 1048576).toFixed(1)} MB)`
+            : `server returned ${res.status}: ${raw.slice(0, 120)}`
+          throw new Error(msg)
+        }
         setResults((prev) => prev.map((row) =>
           row === list[i] || (row.name === file.name && row.status === 'pending')
             ? r.error

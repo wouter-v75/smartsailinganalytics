@@ -89,6 +89,33 @@ export async function POST(
 
   // Get the report text: pre-extracted (preferred — no server dep) or from a
   // PDF via the spacing-aware extractor (so column numbers don't concatenate).
+  //
+  // The PDF may arrive one of two ways:
+  //   • `file`     — inline in the multipart body. Fine for the small text-only
+  //                  exports (~350 KB).
+  //   • `file_key` — already uploaded to Bunny by the client, we fetch it here.
+  //                  Photo-heavy reports run to 10–12 MB, which blows the request
+  //                  body limit: the platform replies "Request Entity Too Large" as
+  //                  PLAIN TEXT, the client did res.json() on it, and the user saw
+  //                  `Unexpected token 'R'` instead of "your file is too big".
+  if (!text && !file) {
+    const fileKey = (form.get('file_key') as string) || null
+    if (fileKey) {
+      reportRef = (form.get('file_name') as string) || fileKey.split('/').pop() || null
+      try {
+        const signed = bunnyConfigured() ? signBunnyUrl({ path: fileKey, ttlSec: 300 }) : null
+        if (!signed?.url) throw new Error('could not sign the uploaded report')
+        const res = await fetch(signed.url)
+        if (!res.ok) throw new Error(`could not fetch the uploaded report (HTTP ${res.status})`)
+        text = await extractPdfText(Buffer.from(await res.arrayBuffer()))
+      } catch (e: any) {
+        return NextResponse.json(
+          { error: 'Could not read the uploaded PDF. ' + (e?.message || '') },
+          { status: 422 }
+        )
+      }
+    }
+  }
   if (!text && file) {
     reportRef = file.name || null
     try {
