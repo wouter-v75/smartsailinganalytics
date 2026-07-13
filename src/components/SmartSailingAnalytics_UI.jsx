@@ -4837,6 +4837,12 @@ function SSAApp(){
   // Upload failures, surfaced IN THE UI. addLog() only renders in the Upload tab's
   // console — on mobile you're in the Videos tab and never see it, so a failing
   // upload looked like a no-op. These are shown in the sync panel itself.
+  // Ref mirror — the sync queues need the current clip list while draining, WITHOUT
+  // calling getAllVideos(), which mints a brand-new blob: URL for every video on every
+  // call. Called once per queued item, that leaked N object URLs per clip and pinned
+  // every source Blob in memory.
+  const allVideosRef = useRef([]);
+  useEffect(()=>{ allVideosRef.current = allVideos; },[allVideos]);
   const[syncErrors,setSyncErrors]=useState([]);
   const noteSyncError=useCallback((label,message)=>{
     setSyncErrors(p=>[...p.filter(e=>e.label!==label),{label,message:String(message||'upload failed')}]);
@@ -5928,7 +5934,18 @@ function SSAApp(){
     );
     // Free any local blob URL we're about to replace with a cloud URL so the
     // browser can GC the underlying Blob handle.
-    const revokeIfBlob=u=>{ try{ if(u && String(u).startsWith('blob:')) URL.revokeObjectURL(u); }catch{} };
+    //
+    // DEFERRED on purpose. The clips are rendered EARLY (see setAllVideos(early)
+    // above) with their local blob: URLs, so by the time we swap in a cloud URL the
+    // old one is still the `src` of a live <video> element and the browser has already
+    // issued the request for it. Revoking synchronously killed that request mid-flight
+    // and spewed `net::ERR_FILE_NOT_FOUND` for every proxied clip — harmless, but it
+    // buried the real errors in the console. Let the re-render detach the element
+    // first, then release the handle.
+    const revokeIfBlob=u=>{
+      if(!u || !String(u).startsWith('blob:')) return;
+      setTimeout(()=>{ try{ URL.revokeObjectURL(u); }catch{} }, 15_000);
+    };
     if(needsResolve.length){
       await Promise.all(needsResolve.map(async v=>{
         // Phase B path — preferred when available. The signed-URL endpoint
@@ -6034,7 +6051,7 @@ function SSAApp(){
 
           // Find the in-memory video record for ensureCloudVideoId to work
           // out title/duration/etc.
-          const localVid = (await getAllVideos()).find(v => v.id === item.videoId)
+          const localVid = allVideosRef.current.find(v => v.id === item.videoId)
                           || { id: item.videoId, sessionDate: item.sessionDate };
 
           const cloudId = await ensureCloudVideoId({
@@ -6164,7 +6181,7 @@ function SSAApp(){
             originalsSyncRef.current.done = idx; continue;
           }
 
-          const localVid = (await getAllVideos()).find(v => v.id === item.videoId)
+          const localVid = allVideosRef.current.find(v => v.id === item.videoId)
                           || { id: item.videoId, sessionDate: item.sessionDate };
           const cloudId = await ensureCloudVideoId({
             userId: user.id,
