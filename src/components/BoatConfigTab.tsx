@@ -301,7 +301,6 @@ export default function BoatConfigTab({
     const fd = new FormData()
     fd.append('boat_id', boatId)
     if (sailId) fd.append('sail_id', sailId)
-    fd.append('file', file)
     // Stash the analysed sail photo(s) for the detail view. A Comparison report
     // embeds TWO photos (left, right) → upload both and send keys in scan order;
     // a single report embeds one → the existing single-photo path.
@@ -327,8 +326,38 @@ export default function BoatConfigTab({
         }
       }
     } catch { /* non-fatal: scan still imports without the photo */ }
+
+    // A photo-heavy SailScan PDF is 10-12 MB and blows the API's request-body limit:
+    // the platform rejects it with a PLAIN-TEXT "Request Entity Too Large" before any
+    // of our code runs, and `.then(x => x.json())` on that threw the mystifying
+    // `Unexpected token 'R'`. Only the report's TEXT is needed server-side (0.6 KB for
+    // an 11 MB file), so park a large PDF in Bunny and hand the API a key to fetch.
+    // The server deletes it as soon as it has read the text — transit only, never kept.
+    // Small text-only exports (~350 KB) keep the simple inline path.
+    const INLINE_MAX = 3_500_000
+    if (file.size > INLINE_MAX) {
+      onStatus?.('Uploading report…')
+      const key = `tmp/sail-scan-imports/${teamId}/${Date.now()}-report.pdf`
+      await uploadBlobToStorage({ key, blob: file, contentType: 'application/pdf' })
+      fd.append('file_key', key)
+      fd.append('file_name', file.name)
+    } else {
+      fd.append('file', file)
+    }
+
     onStatus?.('Importing…')
-    const r = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd }).then((x) => x.json())
+    const res = await fetch(`/api/teams/${teamId}/sail-scans`, { method: 'POST', body: fd })
+    // Never .json() blindly — an infrastructure rejection (413, 502…) is text/HTML.
+    const raw = await res.text()
+    let r: any = null
+    try { r = JSON.parse(raw) } catch { /* not JSON */ }
+    if (!r) {
+      throw new Error(
+        res.status === 413
+          ? `File too large for the server (${(file.size / 1048576).toFixed(1)} MB)`
+          : `Server returned ${res.status}: ${raw.slice(0, 120)}`
+      )
+    }
     if (r.error) throw new Error(r.error)
     await refreshScans()
     return r // { scans, parsed: ParsedScan[], count, format }
