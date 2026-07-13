@@ -1818,7 +1818,13 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
   );
 }
 
-function UploadTab({role,cloudStatus,onImported}){
+// NOTE: sailInventory / campaignCfg / setSailDiff / syncOffsets are USED in this
+// component's save path but were never declared as props — they're SSAApp state. Every
+// reference threw `ReferenceError`, and each one sits inside a `try {} catch {}`, so the
+// throw was swallowed and the feature silently did nothing: the event-file sail
+// reconcile never ran, the day's timeline nodes were never persisted, and the session
+// never pushed to the cloud. Declaring them here is the whole fix.
+function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=null,setSailDiff=()=>{},syncOffsets={}}){
   const perms=ROLES[role];
   // ── Refs ──────────────────────────────────────────────────────────────────
   const vidRef=useRef(null),csvRef=useRef(null),xmlRef=useRef(null),polarRef=useRef(null);
@@ -4702,7 +4708,7 @@ function MobileShell(props){
         )}
         {activeTab==="upload"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Upload"><UploadTab role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported}/></ErrorBoundary>
+            <ErrorBoundary label="Upload"><UploadTab role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported} sailInventory={props.sailInventory} campaignCfg={props.campaignCfg} setSailDiff={props.setSailDiff} syncOffsets={props.syncOffsets}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="tools"&&(
@@ -4904,8 +4910,22 @@ function SSAApp(){
   const libSyncTimerRef=useRef(null);
   // Mobile-specific sync state — phase: null | "pulling" | "pushing" | "done" | "error"
   const[mobileSyncState,setMobileSyncState]=useState({phase:null,message:"",progress:0});
-  // Upload failures, surfaced IN THE UI. addLog() only renders in the Upload tab's
-  // console — on mobile you're in the Videos tab and never see it, so a failing
+
+  // ── Logger ────────────────────────────────────────────────────────────────
+  // SSAApp has NO upload console — `addLog` belongs to UploadTab and is not in this
+  // scope. Calling it from here threw `ReferenceError: addLog is not defined`, and
+  // because several of those calls sit BEFORE the work they announce, they killed it:
+  //
+  //     addLog('📶 Wi-Fi — uploading N held clips…')   ← threw
+  //     enqueueAutoSync(held, activeDate)               ← never ran
+  //
+  // …which is exactly why clips never uploaded on Wi-Fi. Give SSAApp its own logger
+  // so every call site resolves. Anything the USER must act on goes to the sync-error
+  // panel / mobileSyncState, which are visible on mobile; this is the trace channel.
+  const addLog = useCallback((msg) => { try { console.log('[ssa]', msg); } catch { /* */ } }, []);
+
+  // Upload failures, surfaced IN THE UI. addLog() only writes to the console —
+  // on mobile you're in the Videos tab and would never see it, so a failing
   // upload looked like a no-op. These are shown in the sync panel itself.
   // Ref mirror — the sync queues need the current clip list while draining, WITHOUT
   // calling getAllVideos(), which mints a brand-new blob: URL for every video on every
@@ -6779,6 +6799,7 @@ function SSAApp(){
       canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
       showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
       campaignOn={campaignOn} campaignCfg={campaignCfg} activeMem={activeMem} openCampaignVideo={openCampaignVideo} openVideoModal={openVideoModal}
+      sailInventory={sailInventory} setSailDiff={setSailDiff}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -7503,7 +7524,7 @@ function SSAApp(){
         )}
         {activeTab==="upload"&&(
           <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Upload"><UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported}/></ErrorBoundary>
+            <ErrorBoundary label="Upload"><UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported} sailInventory={sailInventory} campaignCfg={campaignCfg} setSailDiff={setSailDiff} syncOffsets={syncOffsets}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="tools"&&(
