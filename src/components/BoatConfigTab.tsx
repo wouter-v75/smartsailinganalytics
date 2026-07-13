@@ -323,6 +323,10 @@ export default function BoatConfigTab({
     const fd = new FormData()
     fd.append('boat_id', boatId)
     if (sailId) fd.append('sail_id', sailId)
+    // The report's stamp is a venue-LOCAL wall-clock. Without this the server can't
+    // turn it into true UTC, and the scan lands one venue offset late (a 13:39 scan
+    // showed as 15:39 in CEST). SailScanImport always sent it; this path never did.
+    fd.append('tz_offset_min', String(sessionTzOffset ?? 0))
     // Stash the analysed sail photo(s) for the detail view. A Comparison report
     // embeds TWO photos (left, right) → upload both and send keys in scan order;
     // a single report embeds one → the existing single-photo path.

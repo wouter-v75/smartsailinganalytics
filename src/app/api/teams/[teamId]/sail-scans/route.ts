@@ -166,8 +166,15 @@ export async function POST(
   // recompute captured_at = wall-clock − offset → TRUE UTC, deterministically and
   // independent of the SERVER's timezone. captured_local (the wall-clock string)
   // is the display source and is left untouched.
-  const tzOffMin = Number(form.get('tz_offset_min'))
-  if (Number.isFinite(tzOffMin)) {
+  // MISSING is not the same as ZERO. `Number(form.get('tz_offset_min'))` on an absent
+  // field yields Number(null) === 0, which is finite — so a caller that simply forgot
+  // to send the offset got a silent "convert by subtracting nothing", storing the
+  // venue-local wall-clock as if it were UTC. The scan then rendered one offset late
+  // (13:39 CEST → stored 13:39Z → shown 15:39). Read the raw field first and only
+  // convert when a real number was sent.
+  const tzRaw = form.get('tz_offset_min')
+  const tzOffMin = tzRaw == null || tzRaw === '' ? null : Number(tzRaw)
+  if (tzOffMin != null && Number.isFinite(tzOffMin)) {
     for (const s of parsedScans) {
       const m = (s.capturedLocal || '').match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/)
       if (m) {
@@ -175,6 +182,10 @@ export async function POST(
         s.capturedAt = new Date(wall - tzOffMin * 60000).toISOString()
       }
     }
+  } else {
+    // No offset supplied — leave capturedAt as the parser produced it and say so, so a
+    // wrong clock is traceable to the caller rather than silently baked into the row.
+    console.warn('[sail-scans] no tz_offset_min sent — captured_at may not be true UTC')
   }
   if (!parsedScans.length) {
     return NextResponse.json(
