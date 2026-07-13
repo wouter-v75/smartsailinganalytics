@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../lib/supabase/server'
 import { parseSailScanReport, ParsedScan } from '../../../../../lib/sailScanParse'
+import { matchSailToInventory } from '../../../../../lib/sailCodeMatch'
 import { extractPdfText } from '../../../../../lib/pdfText'
 import { signBunnyUrl, bunnyConfigured } from '../../../../../lib/bunny-signed-url'
 
@@ -198,10 +199,30 @@ export async function POST(
   // *different* sails, so leave those unassigned for per-column tagging.
   const applySailId = parsedScans.length === 1 || report.format === 'north-comparison' ? sailId : null
 
+  // AUTO-TAG from the report's own "Code:" (e.g. "MN A 26") when the importer didn't
+  // pick a sail. An untagged scan can't resolve its design target and falls back to
+  // guessing — which gave main scans a JIB's curve, hiding the main's 87% design
+  // stripe. The report names the sail; use it. A user's explicit choice always wins,
+  // and an ambiguous code leaves the scan untagged rather than mis-tagging it.
+  let inventory: any[] = []
+  if (!applySailId) {
+    const { data: invSails } = await supabase
+      .from('sails')
+      .select('id,name,category,kind')
+      .eq('team_id', params.teamId)
+      .eq('boat_id', boatId)
+    inventory = invSails || []
+  }
+  const resolveSailId = (s: ParsedScan): string | null => {
+    if (applySailId) return applySailId
+    if (!inventory.length) return null
+    return matchSailToInventory(inventory, s.sailCode, s.sailName, s.sailType)
+  }
+
   const rows = parsedScans.map((s: ParsedScan, i: number) => ({
     team_id: params.teamId,
     boat_id: boatId,
-    sail_id: applySailId,
+    sail_id: resolveSailId(s),
     session_id: sessionId,
     source: s.source,
     captured_at: s.capturedAt,
