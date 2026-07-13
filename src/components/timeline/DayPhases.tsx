@@ -57,6 +57,10 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
   const [open, setOpen] = React.useState<Set<string>>(() => new Set(autoOpenSailing ? ['sailing'] : []))
   const [cond, setCond] = React.useState<Conditions | null>(null)
   const [deb, setDeb] = React.useState<Debrief | null>(null)
+  // Forecast decks uploaded to the day's Weather card. These live in the session
+  // ATTACHMENTS store (kind=weather) — a different place from the speed-team meeting's
+  // documents, which hang off the debrief record. Hence the third fetch.
+  const [wxDocs, setWxDocs] = React.useState<DebriefDoc[]>([])
   const [loaded, setLoaded] = React.useState(false)
 
   React.useEffect(() => {
@@ -66,10 +70,12 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
     Promise.all([
       fetch(`${base}/conditions?date=${date}`).then((r) => r.ok ? r.json() : {}).catch(() => ({})),
       fetch(`${base}/debrief?date=${date}`).then((r) => r.ok ? r.json() : {}).catch(() => ({})),
-    ]).then(([c, d]: [any, any]) => {
+      fetch(`${base}/attachments?date=${date}&kind=weather`).then((r) => r.ok ? r.json() : {}).catch(() => ({})),
+    ]).then(([c, d, w]: [any, any, any]) => {
       if (!alive) return
       setCond({ details: c?.details ?? null, timings: c?.timings || '', plan: c?.plan || '', sailList: c?.sailList ?? null })
       setDeb(d?.debrief || {})
+      setWxDocs(((w?.attachments || []) as DebriefDoc[]).filter((x) => x.url))
       setLoaded(true)
     })
     return () => { alive = false }
@@ -83,7 +89,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
   const has = (k: string): boolean => {
     switch (k) {
       case 'timings': return !!(cond?.timings && String(cond.timings).trim())
-      case 'weather': return !!(cond?.details?.comments && String(cond.details.comments).trim())
+      case 'weather': return !!((cond?.details?.comments && String(cond.details.comments).trim()) || wxDocs.length)
       case 'speedteam': return !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term || speedPictures(deb).length || speedDocs(deb).length)
       case 'sailcall': return !!(cond?.sailList?.sails?.length)
       case 'sailing': return nMarkers > 0 || nMedia > 0
@@ -99,18 +105,18 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
         <PhaseRow
           key={ph.key} ph={ph} isOpen={open.has(ph.key)} filled={has(ph.key)} onToggle={() => toggle(ph.key)}
           day={day} events={events} tz={tz} teamId={teamId} boatId={boatId} onPlayVideo={onPlayVideo}
-          loaded={loaded} cond={cond} deb={deb} nMarkers={nMarkers} nMedia={nMedia}
+          loaded={loaded} cond={cond} deb={deb} wxDocs={wxDocs} nMarkers={nMarkers} nMedia={nMedia}
         />
       ))}
     </div>
   )
 }
 
-function PhaseRow({ ph, isOpen, filled, onToggle, day, events, tz, teamId, boatId, onPlayVideo, loaded, cond, deb, nMarkers, nMedia }: {
+function PhaseRow({ ph, isOpen, filled, onToggle, day, events, tz, teamId, boatId, onPlayVideo, loaded, cond, deb, wxDocs, nMarkers, nMedia }: {
   ph: Phase; isOpen: boolean; filled: boolean; onToggle: () => void
   day: TimelineNode; events: TimelineNode[]; tz: number; teamId?: string | null; boatId?: string | null
   onPlayVideo?: (videoId: string) => void
-  loaded: boolean; cond: Conditions | null; deb: Debrief | null; nMarkers: number; nMedia: number
+  loaded: boolean; cond: Conditions | null; deb: Debrief | null; wxDocs: DebriefDoc[]; nMarkers: number; nMedia: number
 }) {
   const Icon = ph.icon
   const dockRef = useDockItem()
@@ -145,7 +151,7 @@ function PhaseRow({ ph, isOpen, filled, onToggle, day, events, tz, teamId, boatI
           ) : !loaded ? (
             <Skeleton className="h-10 w-full max-w-md rounded" />
           ) : (
-            <PhaseContent phaseKey={ph.key} cond={cond} deb={deb} />
+            <PhaseContent phaseKey={ph.key} cond={cond} deb={deb} wxDocs={wxDocs} />
           )}
         </div>
       </Collapse>
@@ -214,14 +220,30 @@ function SpeedPictures({ pics }: { pics: DebriefDoc[] }) {
   )
 }
 
-function PhaseContent({ phaseKey, cond, deb }: { phaseKey: string; cond: Conditions | null; deb: Debrief | null }) {
+function PhaseContent({ phaseKey, cond, deb, wxDocs = [] }: { phaseKey: string; cond: Conditions | null; deb: Debrief | null; wxDocs?: DebriefDoc[] }) {
   const box = 'max-w-xl rounded-lg border border-[color:var(--border)] bg-surface-1 p-3'
   switch (phaseKey) {
     case 'timings':
       return <div className={box}>{cond?.timings && String(cond.timings).trim() ? <Field label="Timings" value={String(cond.timings)} /> : <Empty what="timings" />}</div>
     case 'weather': {
       const notes = cond?.details?.comments
-      return <div className={box}>{notes && String(notes).trim() ? <Field label="Notes" value={String(notes)} /> : <Empty what="weather notes" />}</div>
+      const hasNotes = !!(notes && String(notes).trim())
+      return (
+        <div className={box}>
+          {hasNotes && <Field label="Notes" value={String(notes)} />}
+          {!hasNotes && wxDocs.length === 0 && <Empty what="weather notes" />}
+          {wxDocs.length > 0 && (
+            <>
+              <div className={hasNotes ? 'mt-2 text-[11px] font-medium uppercase tracking-wide text-muted' : 'text-[11px] font-medium uppercase tracking-wide text-muted'}>Forecast</div>
+              <div className="mt-1.5 flex gap-2 overflow-x-auto pb-1">
+                {wxDocs.map((d, i) => (
+                  <DocThumb key={d.key || i} doc={{ name: d.name || 'forecast', url: d.url, content_type: d.content_type }} />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )
     }
     case 'speedteam': {
       const pics = speedPictures(deb)
