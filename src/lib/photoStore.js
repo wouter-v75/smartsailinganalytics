@@ -300,9 +300,22 @@ async function mirror(photo) {
 // ── Public: import dropped/selected files ─────────────────────────────────────
 // Stores each blob + per-date meta (cloudSynced/thumbSynced/originalSynced all
 // false). Returns the new photo metas (with a local objectUrl for preview).
-export async function importFiles(files, { onLog } = {}) {
-  const imgs = Array.from(files).filter(isImage)
-  if (!imgs.length) { onLog?.('No image files found'); return [] }
+// `onError(name, message)` — called for every file that does NOT make it in. Without
+// it a failed import reported only to the log console, which a phone user never sees:
+// the caller got an empty array, showed no rows, and the status simply vanished.
+export async function importFiles(files, { onLog, onError } = {}) {
+  const all = Array.from(files)
+  const imgs = all.filter(isImage)
+  if (!imgs.length) {
+    onLog?.('No image files found')
+    // Say WHY each file was rejected — on Android the picker can hand back an empty
+    // MIME type, and an unusual extension then fails the isImage test silently.
+    for (const f of all) {
+      onError?.(f.name || 'file', `not recognised as an image (type="${f.type || 'unknown'}")`)
+    }
+    if (!all.length) onError?.('import', 'no files were received from the picker')
+    return []
+  }
   // Pre-flight storage: if we're near the quota, LRU-evict our own already-synced
   // originals (they're safe in the cloud) so a big import doesn't hit
   // QuotaExceededError mid-way on a small-disk phone (Phase 4).
@@ -346,7 +359,10 @@ export async function importFiles(files, { onLog } = {}) {
       patchDay(sessionDate, photo)
       out.push(photo)
       onLog?.(`✓ ${file.name.slice(0, 28)} → ${sessionDate}`)
-    } catch (e) { onLog?.(`✕ ${file.name.slice(0, 20)}: ${e.message}`) }
+    } catch (e) {
+      onLog?.(`✕ ${file.name.slice(0, 20)}: ${e.message}`)
+      onError?.(file.name || 'photo', e?.message || 'import failed')
+    }
   }
   // Register/refresh the per-date photo session so the Photos sidebar shows the
   // day right away (no page refresh). Tag with the active workspace.

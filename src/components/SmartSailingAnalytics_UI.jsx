@@ -1824,6 +1824,11 @@ function UploadTab({role,cloudStatus,onImported}){
   const vidRef=useRef(null),csvRef=useRef(null),xmlRef=useRef(null),polarRef=useRef(null);
   const[pendingVids,setPendingVids]=useState([]);
   const[pendingPhotos,setPendingPhotos]=useState([]);
+  // Photo failures, kept ON SCREEN. Previously every reason went only to addLog (the
+  // little console) or a chip truncated to 16 chars — and when the import dropped ALL
+  // the files there were no rows at all, so the status just flashed and vanished with
+  // no explanation. These persist until dismissed.
+  const[photoErrors,setPhotoErrors]=useState([]);
   const[photosDone,setPhotosDone]=useState(0);
   const[photoBusy,setPhotoBusy]=useState(false);
   const[csvParsed,setCsvParsed]=useState(null);
@@ -1909,17 +1914,39 @@ function UploadTab({role,cloudStatus,onImported}){
   // connection. Mirrors the video proxy/original tiering.
   const handlePhotos=useCallback(async files=>{
     setPhotoBusy(true);
-    const photos=await importPhotoFiles(files,{onLog:addLog});
-    if(!photos.length){setPhotoBusy(false);return;}
+    setPhotoErrors([]);
+    const fails=[];
+    const photos=await importPhotoFiles(files,{
+      onLog: addLog,
+      onError: (name,message)=>fails.push({name,message}),
+    });
+    if(fails.length) setPhotoErrors(p=>[...p,...fails]);
+    if(!photos.length){
+      // Used to return silently — the status vanished and the user was told nothing.
+      if(!fails.length) setPhotoErrors([{name:'import',message:'no photos were imported (no reason reported)'}]);
+      setPhotoBusy(false);
+      return;
+    }
     setPendingPhotos(p=>[...p,...photos.map(x=>({id:x.id,name:x.name,size:x.size,sessionDate:x.sessionDate,thumbSynced:false,originalSynced:false,error:null}))]);
-    if(!cloudStatus?.available){addLog("⚠ Cloud unavailable — photos saved locally; will sync later.");setPhotoBusy(false);return;}
+    if(!cloudStatus?.available){
+      const msg="Cloud unavailable — photos saved on this device only. They'll sync when the cloud is reachable.";
+      addLog("⚠ "+msg);
+      setPhotoErrors(p=>[...p,{name:'cloud',message:msg}]);
+      setPhotoBusy(false);
+      return;
+    }
     let ok=0;
     for(const ph of photos){
       try{
         const u=await syncOnePhoto(ph);
         if(u.thumbSynced) ok++;
         setPendingPhotos(p=>p.map(it=>it.id===ph.id?{...it,thumbSynced:u.thumbSynced,originalSynced:u.originalSynced}:it));
-      }catch(e){setPendingPhotos(p=>p.map(it=>it.id===ph.id?{...it,error:e.message}:it));}
+      }catch(e){
+        const msg=e?.message||'upload failed';
+        addLog(`✕ ${ph.name}: ${msg}`);
+        setPendingPhotos(p=>p.map(it=>it.id===ph.id?{...it,error:msg}:it));
+        setPhotoErrors(p=>[...p,{name:ph.name,message:msg}]);
+      }
     }
     // Done: clear the in-progress list (keep only any that errored) + tally.
     setPendingPhotos(p=>p.filter(it=>it.error));
@@ -2401,12 +2428,34 @@ function UploadTab({role,cloudStatus,onImported}){
                   {!photoBusy&&photosDone>0&&<button onClick={()=>setPhotosDone(0)} style={{marginLeft:"auto",background:"none",border:"none",color:"#475569",cursor:"pointer",fontSize:14}}>×</button>}
                 </div>
               )}
+              {/* WHY a photo import failed. Stays until dismissed — the status line
+                  above auto-clears, and when the import drops every file there are no
+                  rows at all, so this was previously invisible on a phone. */}
+              {photoErrors.length>0&&(
+                <div style={{background:"#EF444412",border:"1px solid #EF444440",borderRadius:8,padding:"8px 10px",margin:"8px 0"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
+                    <span style={{fontSize:11,fontWeight:700,color:"#EF4444",flex:1}}>
+                      {photoErrors.length} photo problem{photoErrors.length===1?"":"s"}
+                    </span>
+                    <button onClick={()=>{
+                      const txt=photoErrors.map(e=>`${e.name}: ${e.message}`).join('\n');
+                      try{navigator.clipboard?.writeText(txt);}catch{}
+                    }} style={{background:"none",border:"1px solid #EF444440",borderRadius:4,color:"#FCA5A5",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>Copy</button>
+                    <button onClick={()=>setPhotoErrors([])} style={{background:"none",border:"1px solid #EF444440",borderRadius:4,color:"#FCA5A5",fontSize:10,padding:"2px 7px",cursor:"pointer"}}>✕</button>
+                  </div>
+                  {photoErrors.slice(0,6).map((e,i)=>(
+                    <div key={i} style={{fontSize:10,color:"#FCA5A5",lineHeight:1.45,marginBottom:2,wordBreak:"break-word"}}>
+                      <span style={{color:"#F87171",fontWeight:600}}>{e.name}</span>: {e.message}
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Only show individual rows while uploading or for any that errored */}
               {pendingPhotos.map(ph=>(
                 <div key={ph.id} style={{display:"flex",alignItems:"center",gap:9,padding:"4px 0",borderBottom:"1px solid #0F2030",fontSize:11}}>
                   <span style={{fontSize:14,flexShrink:0}}>📷</span>
                   <div style={{flex:1,minWidth:0}}><div style={{color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ph.name}</div><div style={{fontSize:10,color:"#475569"}}>{fmtSize(ph.size)} · {ph.sessionDate}</div></div>
-                  {ph.error?<span style={{color:"#EF4444",fontSize:10}}>✕ {ph.error.slice(0,16)}</span>
+                  {ph.error?<span style={{color:"#EF4444",fontSize:10,maxWidth:180,wordBreak:"break-word"}}>✕ {ph.error}</span>
                     :<span style={{fontSize:10,color:ph.originalSynced?"#10B981":ph.thumbSynced?"#F59E0B":"#475569"}}>{ph.originalSynced?"✓ original":ph.thumbSynced?"thumb ✓ · original ⏳":"…"}</span>}
                 </div>
               ))}
