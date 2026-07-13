@@ -566,7 +566,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               <>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, margin: '12px 0 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ color: NS_GREEN }}>Northstar target</span>
-                  <span>· by TWS · % = fractions ×100 · Exit (-ve)</span>
+                  <span>@ {fmt(designTws, 0)} kn · % = fractions ×100</span>
                   <span style={{ flex: 1 }} />
                   {canEdit && !nsEditing && (
                     <button onClick={() => setNsEditing(true)}
@@ -584,43 +584,73 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
                   )}
                   {nsMsg && <span style={{ color: C.dim, fontSize: 10 }}>{nsMsg}</span>}
                 </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', background: C.panel, borderRadius: 8 }}>
-                  <thead>
-                    <tr>
-                      <th style={th}>TWS</th>
-                      <th style={th}>Metric</th>
-                      {NS_STRIPES.map((p) => <th key={p} style={th}>{p}%</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {NS_TWS.map((tws) => (
-                      ([['camber', 'Camber'], ['draft', 'Posn'], ['trailAngle', 'Exit']] as [NsMetric, string][]).map(([metric, label], mi) => (
-                        <tr key={`${tws}-${metric}`}>
-                          {mi === 0 && (
-                            <td style={{ ...td, fontWeight: 700, color: NS_GREEN }} rowSpan={3}>{tws} kn</td>
-                          )}
-                          <td style={{ ...td, color: C.dim }}>{label}</td>
-                          {NS_STRIPES.map((posPct) => {
-                            const v = nsCell(nsConds, tws, metric, posPct)
-                            return (
-                              <td key={posPct} style={td}>
-                                {nsEditing && canEdit ? (
+
+                {/* VIEW — identical shape to the measured + design tables above: one row
+                    per stripe (top first), the same eight metric columns, interpolated to
+                    this scan's TWS. Reading down the three tables now compares like with
+                    like. Columns the Northstar sheet doesn't define show "—" rather than
+                    being dropped, so the three tables stay column-aligned. */}
+                {!nsEditing && (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', background: C.panel, borderRadius: 8 }}>
+                    <thead>
+                      <tr><th style={th}>Stripe</th><th style={th}>Draft</th><th style={th}>Camber</th><th style={th}>Twist</th><th style={th}>Entry</th><th style={th}>Exit</th><th style={th}>Front%</th><th style={th}>Back%</th></tr>
+                    </thead>
+                    <tbody>
+                      {(northstar?.sections || []).map((s: any) => (
+                        <tr key={s.posPct}>
+                          <td style={{ ...td, fontWeight: 700, color: NS_GREEN }}>{s.posPct}%</td>
+                          <td style={td}>{fmt(s.draft != null ? s.draft * 100 : null)}</td>
+                          <td style={td}>{fmt(s.camber != null ? s.camber * 100 : null)}</td>
+                          <td style={td}>{fmt(s.twist)}</td>
+                          <td style={td}>{fmt(s.leadAngle, 0)}</td>
+                          <td style={td}>{fmt(s.trailAngle, 0)}</td>
+                          <td style={td}>{fmt(s.frontPct != null ? s.frontPct * 100 : null)}</td>
+                          <td style={td}>{fmt(s.backPct != null ? s.backPct * 100 : null)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+
+                {/* EDIT — the underlying source grid. The target is defined PER TWS
+                    (6/8/10/14 kn), which the view collapses to a single interpolated
+                    column; you can only edit the real thing, so the full grid appears
+                    here. Exit is entered as a magnitude and stored negative. */}
+                {nsEditing && (
+                  <>
+                    <div style={{ fontSize: 10, color: C.dim, marginBottom: 4 }}>
+                      Source values by TWS · Exit entered positive, stored as -ve · blank = no target
+                    </div>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', background: C.panel, borderRadius: 8 }}>
+                      <thead>
+                        <tr>
+                          <th style={th}>TWS</th>
+                          <th style={th}>Metric</th>
+                          {NS_STRIPES.map((p) => <th key={p} style={th}>{p}%</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {NS_TWS.map((tws) => (
+                          ([['draft', 'Draft'], ['camber', 'Camber'], ['trailAngle', 'Exit']] as [NsMetric, string][]).map(([metric, label], mi) => (
+                            <tr key={`${tws}-${metric}`}>
+                              {mi === 0 && <td style={{ ...td, fontWeight: 700, color: NS_GREEN }} rowSpan={3}>{tws} kn</td>}
+                              <td style={{ ...td, color: C.dim }}>{label}</td>
+                              {NS_STRIPES.map((posPct) => (
+                                <td key={posPct} style={td}>
                                   <input
-                                    value={v ?? ''}
+                                    value={nsCell(nsConds, tws, metric, posPct) ?? ''}
                                     onChange={(e) => setNsConds((c) => nsSetCell(c, tws, metric, posPct, e.target.value))}
                                     style={{ width: 52, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 4, color: C.head, fontSize: 11, padding: '2px 4px', textAlign: 'right' }}
                                   />
-                                ) : (
-                                  fmt(v)
-                                )}
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))
-                    ))}
-                  </tbody>
-                </table>
+                                </td>
+                              ))}
+                            </tr>
+                          ))
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
               </>
             )}
           </div>
