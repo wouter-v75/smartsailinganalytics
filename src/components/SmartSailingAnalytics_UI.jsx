@@ -1591,8 +1591,20 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, sy
           {syncErrors.length>0 && (
             <div style={{marginTop:8,background:"#EF444412",border:"1px solid #EF444440",
               borderRadius:6,padding:"7px 8px"}}>
-              <div style={{fontSize:10,fontWeight:700,color:"#EF4444",marginBottom:4}}>
-                {syncErrors.length} upload{syncErrors.length===1?"":"s"} failed
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <div style={{fontSize:10,fontWeight:700,color:"#EF4444",flex:1}}>
+                  {syncErrors.length} upload{syncErrors.length===1?"":"s"} failed
+                </div>
+                {/* No devtools on a phone — let the reason be copied out. */}
+                <button
+                  onClick={()=>{
+                    const txt=syncErrors.map(e=>`${e.label}: ${e.message}`).join('\n');
+                    try{navigator.clipboard?.writeText(txt);}catch{}
+                  }}
+                  style={{background:"none",border:"1px solid #EF444440",borderRadius:4,
+                    color:"#FCA5A5",fontSize:9,padding:"2px 6px",cursor:"pointer",flexShrink:0}}>
+                  Copy
+                </button>
               </div>
               {syncErrors.slice(0,4).map((e,i)=>(
                 <div key={i} style={{fontSize:9,color:"#FCA5A5",lineHeight:1.4,marginBottom:2,wordBreak:"break-word"}}>
@@ -4572,6 +4584,15 @@ function MobileShell(props){
               </div>
             )}
           </div>
+          {/* An error stays put until dismissed — it used to fade after a few seconds,
+              which meant the message you actually needed was the one you couldn't read.
+              Tapping it also reveals the per-clip reasons in the Videos tab panel. */}
+          {props.mobileSyncState.phase==="error"&&(
+            <button onClick={()=>props.setMobileSyncState?.({phase:null,message:"",progress:0})}
+              aria-label="Dismiss"
+              style={{background:"none",border:"1px solid #EF444440",borderRadius:5,color:"#EF4444",
+                fontSize:11,padding:"3px 8px",cursor:"pointer",flexShrink:0}}>✕</button>
+          )}
         </div>
       )}
 
@@ -6082,7 +6103,12 @@ function SSAApp(){
       autoSyncRef.current.done = 0;
       autoSyncRef.current.total = 0;
       autoSyncRef.current.failed = 0;
-      syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), nFailed ? 6000 : 3000);
+      // A SUCCESS may fade; a FAILURE must not. It used to auto-clear after a few
+      // seconds, so the one thing the user needed to read was the one thing they
+      // couldn't. Errors now stay until dismissed (or until the next upload run).
+      if (!nFailed) {
+        syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
+      }
     }
     })();
     autoSyncRef.current.activePromise.finally(() => { autoSyncRef.current.activePromise = null; });
@@ -6230,7 +6256,9 @@ function SSAApp(){
       originalsSyncRef.current.done = 0;
       originalsSyncRef.current.total = 0;
       originalsSyncRef.current.failed = 0;
-      syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), nFailed ? 6000 : 3500);
+      if (!nFailed) {
+        syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3500);
+      }
     }
   }
 
