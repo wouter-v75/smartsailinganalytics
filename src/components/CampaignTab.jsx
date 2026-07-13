@@ -723,6 +723,9 @@ function WeatherCard({ base, date, canEdit }) {
   const [docs, setDocs] = useState([])
   const [uploading, setUploading] = useState(false)
   const [err, setErr] = useState(null)
+  // Weather notes live in the session's conditions.details_today.comments — the same
+  // record the forecast rows use, and the one the timeline's Weather phase reads.
+  const [details, setDetails] = useState(null)
 
   const load = useCallback(async () => {
     setErr(null)
@@ -732,6 +735,27 @@ function WeatherCard({ base, date, canEdit }) {
     setDocs(j.attachments || [])
   }, [base, date])
   useEffect(() => { load() }, [load])
+
+  const loadDetails = useCallback(async () => {
+    const res = await fetch(`${base}/conditions?date=${date}`)
+    if (!res.ok) return
+    const j = await res.json()
+    setDetails(j.details || null)
+  }, [base, date])
+  useEffect(() => { loadDetails() }, [loadDetails])
+
+  // The PATCH replaces details_today wholesale, so carry the forecast `rows` through —
+  // otherwise saving a note would silently wipe the day's forecast table.
+  async function saveComments(text) {
+    const next = { ...(details || {}), comments: text }
+    const res = await fetch(`${base}/conditions`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date, details: next }),
+    })
+    if (!res.ok) { setErr('could not save the notes'); return }
+    setDetails(next)
+  }
 
   async function onPick(e) {
     const file = e.target.files?.[0]
@@ -792,6 +816,19 @@ function WeatherCard({ base, date, canEdit }) {
           ))}
         </div>
       )}
+
+      {/* Weather notes — the human read on the day: expected shifts, sea breeze
+          timing, what the forecast decks don't say. Saved to the same conditions
+          record, so the timeline's Weather phase picks them up unchanged. */}
+      <div style={{ marginTop: docs.length ? 12 : 10 }}>
+        <EditableTextBlock
+          label="Notes"
+          value={details?.comments || ''}
+          canEdit={canEdit}
+          placeholder="Expected shifts, sea-breeze timing, cloud, tide…"
+          onSave={saveComments}
+        />
+      </div>
     </div>
   )
 }

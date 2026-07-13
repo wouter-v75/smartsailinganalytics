@@ -27,7 +27,11 @@ const PHASES: Phase[] = [
   { key: 'performance', label: 'Performance analysis', icon: LineChart, color: '#D85A30' },
 ]
 
-interface Conditions { details: string | null; timings: string; plan: string; sailList: { source?: string; sails?: { name: string }[] } | null }
+// `details` is the session's conditions.details_today — an OBJECT ({comments, rows}),
+// not a string. It was typed as `string | null` and rendered with String(), which would
+// have printed "[object Object]" and made the has-content check always true.
+interface WeatherDetails { comments?: string | null; rows?: unknown[] | null }
+interface Conditions { details: WeatherDetails | null; timings: string; plan: string; sailList: { source?: string; sails?: { name: string }[] } | null }
 interface DebriefDoc { key?: string; name?: string; url?: string | null; thumb_url?: string | null; content_type?: string | null; scope?: string | null }
 interface Debrief { learnings?: string; next_focus?: string; speed_learnings?: string; speed_focus_today?: string; speed_long_term?: string; documents?: DebriefDoc[] }
 
@@ -79,7 +83,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
   const has = (k: string): boolean => {
     switch (k) {
       case 'timings': return !!(cond?.timings && String(cond.timings).trim())
-      case 'weather': return !!(cond?.details && String(cond.details).trim())
+      case 'weather': return !!(cond?.details?.comments && String(cond.details.comments).trim())
       case 'speedteam': return !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term || speedPictures(deb).length || speedDocs(deb).length)
       case 'sailcall': return !!(cond?.sailList?.sails?.length)
       case 'sailing': return nMarkers > 0 || nMedia > 0
@@ -215,8 +219,10 @@ function PhaseContent({ phaseKey, cond, deb }: { phaseKey: string; cond: Conditi
   switch (phaseKey) {
     case 'timings':
       return <div className={box}>{cond?.timings && String(cond.timings).trim() ? <Field label="Timings" value={String(cond.timings)} /> : <Empty what="timings" />}</div>
-    case 'weather':
-      return <div className={box}>{cond?.details ? <Field label="Conditions" value={String(cond.details)} /> : <Empty what="weather notes" />}</div>
+    case 'weather': {
+      const notes = cond?.details?.comments
+      return <div className={box}>{notes && String(notes).trim() ? <Field label="Notes" value={String(notes)} /> : <Empty what="weather notes" />}</div>
+    }
     case 'speedteam': {
       const pics = speedPictures(deb)
       const docs = speedDocs(deb)
