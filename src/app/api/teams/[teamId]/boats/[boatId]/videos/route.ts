@@ -131,25 +131,60 @@ export async function POST(
     )
   }
 
-  // Step 1 — ensure session row exists.
-  const { data: session, error: sErr } = await supabase
+  // Step 1 — ensure the session row exists. FIND-then-INSERT, deliberately NOT an
+  // upsert. The upsert was wrong twice over:
+  //
+  //  1. On conflict it ran an UPDATE, which is gated by `sessions_update` — and that
+  //     policy is `own_or_coach(...)`, so a crew member who didn't create the session
+  //     and isn't a coach was refused: "new row violates row-level security policy
+  //     (USING expression) for table sessions". Adding a video should never require
+  //     permission to MODIFY the day's session row.
+  //  2. It set created_by_user_id on conflict too, so whoever uploaded a clip last
+  //     silently took ownership of a session someone else had created.
+  //
+  // Reading first needs only SELECT (everyone on the boat has it), and we insert only
+  // when the day genuinely has no session yet.
+  let session: { id: string } | null = null
+  const { data: existingSession } = await supabase
     .from('sessions')
-    .upsert(
-      {
+    .select('id')
+    .eq('team_id', params.teamId)
+    .eq('boat_id', params.boatId)
+    .eq('date', body.session_date)
+    .maybeSingle()
+  session = existingSession ?? null
+
+  if (!session) {
+    const { data: created, error: sErr } = await supabase
+      .from('sessions')
+      .insert({
         team_id: params.teamId,
         boat_id: params.boatId,
         date: body.session_date,
         created_by_user_id: user.id,
-      },
-      { onConflict: 'boat_id,date', ignoreDuplicates: false }
-    )
-    .select('id')
-    .single()
-  if (sErr || !session) {
-    return NextResponse.json(
-      { error: sErr?.message || 'session upsert failed' },
-      { status: 500 }
-    )
+      })
+      .select('id')
+      .single()
+    if (sErr || !created) {
+      // A concurrent upload may have created it between our SELECT and INSERT —
+      // re-read rather than fail the upload.
+      const { data: raced } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('team_id', params.teamId)
+        .eq('boat_id', params.boatId)
+        .eq('date', body.session_date)
+        .maybeSingle()
+      if (!raced) {
+        return NextResponse.json(
+          { error: sErr?.message || 'could not create the session for this date' },
+          { status: 500 }
+        )
+      }
+      session = raced
+    } else {
+      session = created
+    }
   }
 
   // Step 2 — dedupe lookup. Prefer bunny_stream_id (legacy Stream flow),
