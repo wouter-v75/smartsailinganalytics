@@ -14,6 +14,23 @@ import { parseSailScanReport, ParsedScan } from '../../../../../lib/sailScanPars
 import { extractPdfText } from '../../../../../lib/pdfText'
 import { signBunnyUrl, bunnyConfigured } from '../../../../../lib/bunny-signed-url'
 
+// Remove a transit-only object from Bunny Storage. Used for the report PDF, which we
+// upload solely to get it past the request-body limit and parse — never to keep.
+// Deliberately swallows everything: cleanup must not be able to fail an import.
+async function deleteFromBunnyStorage(key: string): Promise<void> {
+  try {
+    const apiKey = process.env.BUNNY_STORAGE_API_KEY
+    const zone = process.env.BUNNY_STORAGE_ZONE
+    const region = process.env.BUNNY_STORAGE_REGION || 'de'
+    if (!apiKey || !zone) return
+    const host = region === 'de' ? 'https://storage.bunnycdn.com' : `https://${region}.storage.bunnycdn.com`
+    const safe = key.replace(/\.\./g, '').replace(/^\/+/, '')
+    await fetch(`${host}/${zone}/${safe}`, { method: 'DELETE', headers: { AccessKey: apiKey } })
+  } catch {
+    /* orphaned temp file at worst — never break the import over it */
+  }
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { teamId: string } }
@@ -113,6 +130,13 @@ export async function POST(
           { error: 'Could not read the uploaded PDF. ' + (e?.message || '') },
           { status: 422 }
         )
+      } finally {
+        // The PDF is a TRANSIT BUFFER, not an artefact — it only exists because the
+        // report is too big to inline in the request. We keep the extracted text and
+        // the sail photo; the 11 MB source is dead weight. Delete it either way, so a
+        // failed parse doesn't leave an orphan behind. Fire-and-forget: a failed
+        // cleanup must never fail the import.
+        void deleteFromBunnyStorage(fileKey)
       }
     }
   }

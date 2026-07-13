@@ -104,14 +104,19 @@ export default function SailScanImport({
       // A photo-heavy SailScan report is 10–12 MB — far over the API's request-body
       // limit, which rejects it with a plain-text "Request Entity Too Large" before
       // any of our code runs. Only the report's TEXT is needed server-side, so for a
-      // large PDF we upload the file straight to Bunny (same path the sail photo
-      // already takes) and hand the API a key to fetch instead of the bytes.
+      // large PDF we park the file in Bunny (same path the sail photo already takes)
+      // and hand the API a key to fetch instead of the bytes.
       // Small text-only exports (~350 KB) keep the simple inline path.
+      //
+      // The PDF is TRANSIT ONLY — we keep the parsed scan and the sail photo, not the
+      // source document. The server deletes this object as soon as it has read the
+      // text (see deleteFromBunnyStorage), hence the `tmp/` prefix: anything left
+      // under it is an orphan from a crashed request and is safe to sweep.
       const INLINE_MAX = 3_500_000
       if (file.size > INLINE_MAX) {
         try {
           stage('Uploading report…')
-          const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-${i}-report.pdf`
+          const key = `tmp/sail-scan-imports/${teamId}/${Date.now()}-${i}-report.pdf`
           await uploadBlobToStorage({ key, blob: file, contentType: 'application/pdf' })
           fd.append('file_key', key)
           fd.append('file_name', file.name)
