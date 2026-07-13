@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../lib/supabase/server'
 import { parseRigTune } from '../../../../../lib/rigTuneParse'
 import { extractPdfItems } from '../../../../../lib/pdfText'
+import { signBunnyUrl, bunnyConfigured } from '../../../../../lib/bunny-signed-url'
 
 const SELECT =
   'id,boat_id,name,source,revision,effective_date,is_active,data,report_ref,report_key,notes,created_at,updated_at'
@@ -60,11 +61,29 @@ export async function POST(req: NextRequest, { params }: { params: { teamId: str
     notes = (form.get('notes') as string) || null
     reportKey = (form.get('report_key') as string) || null // PDF already stored in Bunny by the client
     const file = form.get('file') as File | null
+    const fileName = (form.get('file_name') as string) || null
     if (file) {
       reportRef = file.name || null
       try {
         const buf = Buffer.from(await file.arrayBuffer())
         const pages = await extractPdfItems(buf)
+        data = parseRigTune(pages)
+      } catch (e: any) {
+        return NextResponse.json({ error: 'PDF parsing failed: ' + (e?.message || e) }, { status: 422 })
+      }
+    } else if (reportKey) {
+      // No inline file — the client parked a LARGE PDF in Bunny and sent only its key.
+      // A photo-heavy sheet exceeds the request-body limit, which the platform rejects
+      // with a plain-text "Request Entity Too Large" before any of this runs. The PDF
+      // is already in storage here (rig sheets are kept deliberately, unlike the
+      // transit-only SailScan reports), so just read it back and parse.
+      reportRef = fileName || reportKey.split('/').pop() || null
+      try {
+        const signed = bunnyConfigured() ? signBunnyUrl({ path: reportKey, ttlSec: 300 }) : null
+        if (!signed?.url) throw new Error('could not sign the stored report')
+        const res = await fetch(signed.url)
+        if (!res.ok) throw new Error(`could not fetch the stored report (HTTP ${res.status})`)
+        const pages = await extractPdfItems(Buffer.from(await res.arrayBuffer()))
         data = parseRigTune(pages)
       } catch (e: any) {
         return NextResponse.json({ error: 'PDF parsing failed: ' + (e?.message || e) }, { status: 422 })

@@ -186,9 +186,31 @@ export default function BoatConfigTab({
 
       const fd = new FormData()
       fd.append('boat_id', boatId)
-      fd.append('file', file)
       if (reportKey) fd.append('report_key', reportKey)
-      const r = await fetch(`/api/teams/${teamId}/rig-tunes`, { method: 'POST', body: fd }).then((x) => x.json())
+      fd.append('file_name', file.name)
+
+      // The rig PDF is ALREADY in Bunny (uploaded just above — we keep rig sheets, so
+      // this isn't a transit copy). Sending the bytes a second time in the request body
+      // is pure waste, and for a photo-heavy sheet it blows the body limit: the platform
+      // answers with a plain-text "Request Entity Too Large" and `.json()` on that threw
+      // `Unexpected token 'R'`. Above the limit, let the server read it back from storage.
+      // Below it, keep the inline path so a failed Bunny upload can still import.
+      const INLINE_MAX = 3_500_000
+      if (file.size <= INLINE_MAX || !reportKey) fd.append('file', file)
+
+      const res = await fetch(`/api/teams/${teamId}/rig-tunes`, { method: 'POST', body: fd })
+      // Never .json() blindly — an infrastructure rejection (413, 502…) is text/HTML.
+      const raw = await res.text()
+      let r: any = null
+      try { r = JSON.parse(raw) } catch { /* not JSON */ }
+      if (!r) {
+        setRigErr(
+          res.status === 413
+            ? `File too large for the server (${(file.size / 1048576).toFixed(1)} MB)`
+            : `Server returned ${res.status}: ${raw.slice(0, 120)}`
+        )
+        return
+      }
       if (r.error) setRigErr(r.error); else loadRigTune()
     } catch (e: any) { setRigErr(String(e?.message || e)) }
     finally { setRigBusy(false) }
