@@ -183,11 +183,26 @@ async function ensureFFmpeg(onLog?: (msg: string) => void): Promise<any> {
     ff.on('log', ({ message }: { message: string }) => onLog(message))
   }
   // Load WASM core from the unpkg CDN as recommended by the ffmpeg.wasm docs.
+  //
+  // This is a RUNTIME fetch to a third party from the user's device. When it fails —
+  // captive portal, flaky field wifi, DNS, an ad/tracker blocker — `toBlobURL` throws a
+  // bare `TypeError: Failed to fetch` with no hint of what it was fetching, which is
+  // exactly what a phone user was left staring at. Name the step.
   const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd'
-  await ff.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-  })
+  let coreURL: string, wasmURL: string
+  try {
+    coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript')
+    wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
+  } catch (e: any) {
+    throw new Error(
+      `could not download the video encoder from unpkg.com (${e?.message || 'network error'}) — check the connection, or a blocker may be stopping it`
+    )
+  }
+  try {
+    await ff.load({ coreURL, wasmURL })
+  } catch (e: any) {
+    throw new Error(`video encoder failed to start: ${e?.message || 'unknown error'}`)
+  }
   ffmpegInstance = ff
   return ff
 }
@@ -270,6 +285,7 @@ async function generateProxyFFmpeg({
 export async function generateProxy(
   args: GenerateProxyArgs
 ): Promise<ProxyResult> {
+  let webCodecsReason: string | null = null
   if (await webCodecsCanEncodeH264()) {
     try {
       const t0 = Date.now()
@@ -289,9 +305,22 @@ export async function generateProxy(
         '[proxy] WebCodecs engine failed, falling back to ffmpeg.wasm:',
         e?.message || e
       )
+      webCodecsReason = e?.message || String(e)
     }
   }
-  return generateProxyFFmpeg(args)
+  // If the fallback ALSO fails, surface both reasons — otherwise the ffmpeg error
+  // (typically "could not download the video encoder") hides the fact that the fast,
+  // dependency-free engine failed first, which is the thing actually worth fixing.
+  try {
+    return await generateProxyFFmpeg(args)
+  } catch (e: any) {
+    if (args.signal?.aborted || e?.name === 'AbortError') throw e
+    throw new Error(
+      webCodecsReason
+        ? `${e?.message || 'transcode failed'} (the built-in encoder failed first: ${webCodecsReason})`
+        : (e?.message || 'transcode failed')
+    )
+  }
 }
 
 /** Estimate the resulting proxy size in bytes without doing a real transcode.

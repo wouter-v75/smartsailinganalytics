@@ -118,35 +118,53 @@ export async function syncProxyForVideo({
     const proxyFile = new File([proxyBlob], `${videoId}.mp4`, {
       type: 'video/mp4',
     })
-    const uploadInfo = await createStreamUpload(proxyFile.name, proxyFile.size)
-    if (!uploadInfo?.streamId) {
-      throw new Error('Bunny Stream create failed')
+    // Each network step names itself. A bare `TypeError: Failed to fetch` (blocked or
+    // dropped request) is otherwise anonymous — the user is told the upload failed but
+    // not WHICH of the five round-trips died, which is what left us guessing.
+    let uploadInfo: any
+    try {
+      uploadInfo = await createStreamUpload(proxyFile.name, proxyFile.size)
+    } catch (e: any) {
+      throw new Error(`could not reach the app server to start the upload (${e?.message || 'network error'})`)
     }
-    const streamOk = await uploadFileToStream(
-      uploadInfo,
-      proxyFile,
-      (pct: number) => {
-        emit({
-          phase: 'uploading',
-          pct: (pct || 0) / 100,
-          message: `Uploading to Bunny Stream… ${pct || 0}%`,
-        })
-      }
-    )
-    if (!streamOk) throw new Error('Bunny Stream upload failed')
+    if (!uploadInfo?.streamId) {
+      throw new Error('Bunny Stream create failed (no stream id returned)')
+    }
+    let streamOk = false
+    try {
+      streamOk = await uploadFileToStream(
+        uploadInfo,
+        proxyFile,
+        (pct: number) => {
+          emit({
+            phase: 'uploading',
+            pct: (pct || 0) / 100,
+            message: `Uploading to Bunny Stream… ${pct || 0}%`,
+          })
+        }
+      )
+    } catch (e: any) {
+      throw new Error(`upload to Bunny Stream failed (${e?.message || 'network error'})`)
+    }
+    if (!streamOk) throw new Error('upload to Bunny Stream failed (rejected)')
 
     // ── 3. Mark in Supabase ──────────────────────────────────────────
     emit({ phase: 'marking', pct: 0, message: 'Recording rendition…' })
-    const res = await fetch(`/api/videos/${encodeURIComponent(videoId)}/renditions`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        proxyStream: { streamId: uploadInfo.streamId, bytes: proxyBlob.size },
-      }),
-    })
+    let res: Response
+    try {
+      res = await fetch(`/api/videos/${encodeURIComponent(videoId)}/renditions`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proxyStream: { streamId: uploadInfo.streamId, bytes: proxyBlob.size },
+        }),
+      })
+    } catch (e: any) {
+      throw new Error(`uploaded, but could not record it (${e?.message || 'network error'})`)
+    }
     if (!res.ok) {
       const j = await res.json().catch(() => null)
-      throw new Error(`PATCH renditions: ${j?.error || res.status}`)
+      throw new Error(`recording the rendition failed: ${j?.error || `HTTP ${res.status}`}`)
     }
 
     emit({ phase: 'done', pct: 1, message: 'Proxy ready' })
