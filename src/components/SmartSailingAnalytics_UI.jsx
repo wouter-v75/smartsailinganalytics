@@ -3144,13 +3144,31 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
   const playUtcRef = React.useRef(playUtc);
   React.useEffect(()=>{ playUtcRef.current = playUtc; },[playUtc]);
 
+  // Only the video MARKERS matter to the map — id + position in time. `allVideos`
+  // itself churns constantly (thumbnail loads, proxy/original flags, sync state), and
+  // it used to be a dep of the map effect, so the whole Leaflet map was destroyed and
+  // rebuilt on every one of those updates. Tearing a map down mid fitBounds/zoom
+  // animation is what threw `Cannot read properties of undefined (reading '_leaflet_pos')`
+  // — the animation frame lands on a pane that no longer exists.
+  const videoMarkerSig = React.useMemo(
+    // duration is included: it loads asynchronously after import, and the markers
+    // filter on it — leave it out and a clip never gets its marker.
+    () => (allVideos||[]).map(v=>`${v.id}:${v.startUtc||0}:${v.duration||0}`).join('|'),
+    [allVideos]
+  );
+  const allVideosMapRef = React.useRef(allVideos);
+  allVideosMapRef.current = allVideos;
+
   // ── Map init ─────────────────────────────────────────────────────────────────
   React.useEffect(()=>{
     if(!containerRef.current || filteredRows.length < 2) return;
+    let cancelled = false;   // the Leaflet <script> can finish loading AFTER unmount
 
     const initMap = () => {
       const L = window.L;
       if(!L) return;
+      // Don't build a map into a container React has already thrown away.
+      if(cancelled || !containerRef.current) return;
       if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
 
       const centre = [
@@ -3198,7 +3216,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       // ── Video coverage — all clips with a startUtc ──────────────────────────
       // Draw a bright magenta polyline over the GPS track for every clip's window,
       // so coaches can see at a glance which manoeuvres were recorded.
-      const covVideos=(allVideos||[]).filter(v=>v.startUtc&&v.duration);
+      const covVideos=(allVideosMapRef.current||[]).filter(v=>v.startUtc&&v.duration);
       for(const vid of covVideos){
         const vStart=vid.startUtc;
         const vEnd=vStart+vid.duration*1000;
@@ -3335,8 +3353,11 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       if(!document.getElementById('leaflet-css')){const css=document.createElement('link');css.id='leaflet-css';css.rel='stylesheet';css.href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';document.head.appendChild(css);}
       const js=document.createElement('script');js.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';js.onload=initMap;document.head.appendChild(js);
     } else { initMap(); }
-    return()=>{ if(mapRef.current){mapRef.current.remove();mapRef.current=null;boatMarkerRef.current=null;} };
-  },[filteredRows, hlRows, xmlData, polar, allVideos]);
+    return()=>{
+      cancelled = true;
+      if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
+    };
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
