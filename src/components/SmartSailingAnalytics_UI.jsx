@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { saveVideo, pruneInertVideos, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
+import { saveVideo, pruneInertVideos, dedupeVideos, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
 import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady, createStreamUpload, uploadFileToStream } from "../lib/bunny";
 import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
@@ -5729,6 +5729,10 @@ function SSAApp(){
       try {
         const nDead = await pruneInertVideos();
         if (nDead) addLog(`🧹 Removed ${nDead} unusable clip${nDead === 1 ? '' : 's'} (no video data, never reached the cloud) — re-import to upload them.`);
+        // Collapse duplicate rows left by retried imports — each copy was separately
+        // queued to sync, so the same footage would upload several times over.
+        const nDupe = await dedupeVideos();
+        if (nDupe) addLog(`🧹 Merged ${nDupe} duplicate clip entr${nDupe === 1 ? 'y' : 'ies'} from repeated imports.`);
       } catch { /* non-fatal */ }
 
       // ── Mobile progressive load ───────────────────────────────────────────

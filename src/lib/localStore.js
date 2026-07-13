@@ -205,10 +205,36 @@ async function canStoreBlob(bytes) {
 // provided, the saved video and its session-index row are tagged with the
 // workspace so getSessionsForMembership / getAllVideosForMembership can
 // later filter by workspace and keep tenants isolated.
+// Identity of a CLIP (not of a row). The same file re-imported is the same clip:
+// same name, same byte size, same day. `id` is a fresh random key on every import, so
+// without this a retry silently added another row — four upload attempts left EIGHT
+// entries for two clips, all of them queued to sync.
+const clipKey = (v) => `${v.sessionDate || ''}|${v.name || ''}|${v.size || 0}`;
+
 export async function saveVideo(file, parsedMeta, membership = null) {
   const db   = await openDb();
   const date = parsedMeta.sessionDate || TODAY();
   const id   = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+  // Already imported? Re-use that row. Top up the blob if the earlier attempt failed
+  // to store one (the Android bug), refresh the timestamp/tags from this parse, and
+  // return it — so re-importing is idempotent instead of duplicating.
+  const wanted = clipKey({ sessionDate: date, name: file.name, size: file.size });
+  const priorAll = await idbGetAll(db, "videos");
+  const prior = priorAll.find((v) => clipKey(v) === wanted);
+  if (prior) {
+    let changed = false;
+    if (!prior.blob && (await canStoreBlob(file.size))) {
+      try { prior.blob = file; changed = true; } catch { /* keep going */ }
+    }
+    if (parsedMeta.startUtc && prior.startUtc !== parsedMeta.startUtc) {
+      prior.startUtc = parsedMeta.startUtc;
+      prior.tsSource = parsedMeta.tsSource || prior.tsSource;
+      changed = true;
+    }
+    if (changed) { try { await idbPut(db, "videos", prior); } catch { /* non-fatal */ } }
+    return { ...prior, blob: undefined, objectUrl: prior.blob ? URL.createObjectURL(prior.blob) : null, hasLocalBlob: !!prior.blob };
+  }
 
   // Keep the blob whenever the device can hold it — Android and desktop can, iOS
   // Safari usually can't. Without it the clip is inert: no thumbnail, no playback,
@@ -364,6 +390,38 @@ export async function getVideosForDate(date) {
 //   • no streamId        (never uploaded to Bunny)
 //   • not cloudSynced    (no cloud copy to fall back on)
 // so a legitimately cloud-backed clip is never touched. Returns the number removed.
+// Collapse duplicate rows for the same clip, keeping the BEST one. Retried imports
+// (before saveVideo deduped) left several rows per clip, each queued to sync — which
+// would have uploaded the same footage several times over.
+//
+// "Best" = has a local blob (can actually be uploaded) > already reached the cloud >
+// oldest. Deliberately conservative: a cloud-backed row is never deleted, so we can't
+// orphan a Bunny asset or a Supabase row.
+export async function dedupeVideos() {
+  const db = await openDb();
+  const entries = await idbGetAll(db, "videos");
+  const groups = new Map();
+  for (const v of entries) {
+    const k = clipKey(v);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(v);
+  }
+  const score = (v) => (v.blob ? 4 : 0) + (v.streamId || v.cloudSynced || v.syncedToDb ? 2 : 0);
+  let removed = 0;
+  for (const [, rows] of groups) {
+    if (rows.length < 2) continue;
+    rows.sort((a, b) => score(b) - score(a) || (a.addedAt || 0) - (b.addedAt || 0));
+    const keep = rows[0];
+    for (const v of rows.slice(1)) {
+      // Never delete a row that exists in the cloud — it's not a stray, it's the copy.
+      if (v.streamId || v.cloudSynced || v.syncedToDb) continue;
+      if (v.id === keep.id) continue;
+      try { await idbDelete(db, "videos", v.id); removed++; } catch { /* keep going */ }
+    }
+  }
+  return removed;
+}
+
 export async function pruneInertVideos() {
   const db = await openDb();
   const entries = await idbGetAll(db, "videos");
