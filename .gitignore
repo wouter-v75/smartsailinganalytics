@@ -54,3 +54,32 @@ build.log
 /docs/sailscan/training-set/**/*.pdf
 /docs/sailscan/training-set/**/.DS_Store
 videos2compress/
+
+# ── Media scratch ────────────────────────────────────────────────────────────
+# Drop clips here to triage them before uploading to SSA:
+#     ./scripts/check-video-timestamps.sh media-in/
+# Nothing in here is ever committed.
+media-in/*
+!media-in/.gitkeep
+
+# Meeting audio + transcripts: private by definition, and the script writes them to
+# ~/SSA/meetings by default. Ignored here too in case anyone points it at the repo.
+*.wav
+*.WAV
+*.m4a
+*.M4A
+*.aiff
+*.mp3
+
+# Belt-and-braces: video files are never source, wherever they land in the tree.
+# (A clip committed by accident is painful to remove from history.)
+*.mp4
+*.MP4
+*.mov
+*.MOV
+*.m4v
+*.M4V
+*.mts
+*.MTS
+*.avi
+*.mkv
