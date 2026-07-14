@@ -955,6 +955,13 @@ function loadJsPdf(): Promise<any> {
   return rigJsPdf
 }
 
+// One saved rig settings table, as returned by …/rig-tunes/:id/versions.
+type RigVersion = { id: string; settings: RigSettings; notes: string | null; saved_at: string; saved_by: string | null }
+// European date, venue-agnostic: "24 Jun 2026, 14:32".
+const fmtWhen = (iso?: string | null) => (iso
+  ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  : '—')
+
 function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
   rigTune: any; teamId: string; canEdit: boolean; boatName?: string | null
 }) {
@@ -968,15 +975,57 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
   const snapshot = React.useRef<RigSettings | null>(null)
   const edit = canEdit && editing
 
+  // ── history ────────────────────────────────────────────────────────────────
+  // Saving APPENDS: the old table is kept, stamped, with the notes that went with
+  // it. `savedAt`/`savedNotes` describe the table currently on screen; `viewing`
+  // is set when you're looking at an OLD version (so nothing can be edited or
+  // saved by accident while a historical table is on the table).
+  const [savedAt, setSavedAt] = useState<string | null>(rigTune?.data?.settingsSavedAt || null)
+  const [savedNotes, setSavedNotes] = useState<string>(rigTune?.data?.settingsNotes || '')
+  const [noteDraft, setNoteDraft] = useState('')
+  const [versions, setVersions] = useState<RigVersion[] | null>(null)
+  const [showHist, setShowHist] = useState(false)
+  const [viewing, setViewing] = useState<RigVersion | null>(null)
+
+  const loadVersions = React.useCallback(async () => {
+    if (!rigTune?.id) return
+    try {
+      const j = await fetch(`/api/teams/${teamId}/rig-tunes/${rigTune.id}/versions`).then((x) => x.json())
+      setVersions(Array.isArray(j?.versions) ? j.versions : [])
+    } catch { setVersions([]) }
+  }, [teamId, rigTune?.id])
+
   useEffect(() => {
     setTbl((rigTune?.data?.settingsTable as RigSettings) || seedSettings(Array.isArray(rigTune?.data?.columns) ? rigTune.data.columns : []))
-    setDirty(false); setMsg(''); setEditing(false)
+    setSavedAt(rigTune?.data?.settingsSavedAt || null)
+    setSavedNotes(rigTune?.data?.settingsNotes || '')
+    setDirty(false); setMsg(''); setEditing(false); setViewing(null); setNoteDraft(''); setVersions(null)
   }, [rigTune?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const startEdit = () => { snapshot.current = tbl; setEditing(true); setMsg('') }
+  useEffect(() => { if (showHist && versions == null) loadVersions() }, [showHist, versions, loadVersions])
+
+  const current = React.useRef<{ tbl: RigSettings; at: string | null; notes: string } | null>(null)
+  const viewVersion = (v: RigVersion) => {
+    if (!viewing) current.current = { tbl, at: savedAt, notes: savedNotes }
+    setViewing(v); setTbl(v.settings); setEditing(false); setDirty(false); setMsg('')
+  }
+  const backToCurrent = () => {
+    const c = current.current
+    if (c) { setTbl(c.tbl); setSavedAt(c.at); setSavedNotes(c.notes) }
+    setViewing(null); setDirty(false); setMsg('')
+  }
+  // Restoring does NOT rewrite history — it loads the old numbers into the editor
+  // and the next Save appends them as a new version. The record stays a record.
+  const restoreVersion = (v: RigVersion) => {
+    setViewing(null); setTbl(v.settings); setEditing(true); setDirty(true)
+    setNoteDraft(`Restored the table saved ${fmtWhen(v.saved_at)}${v.notes ? ` — ${v.notes}` : ''}`)
+    setMsg('Restored into the editor — Save to keep it.')
+  }
+
+  const startEdit = () => { snapshot.current = tbl; setEditing(true); setNoteDraft(''); setMsg('') }
   const cancelEdit = () => {
     if (snapshot.current) setTbl(snapshot.current)
-    setEditing(false); setDirty(false); setMsg('')
+    setEditing(false); setDirty(false); setMsg(''); setNoteDraft('')
   }
 
   const setCell = (sec: 'upwind' | 'reaching', band: string, key: string, val: string) => {
@@ -1001,10 +1050,17 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
     try {
       const r = await fetch(`/api/teams/${teamId}/rig-tunes/${rigTune.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settingsTable: tbl }),
+        body: JSON.stringify({ settingsTable: tbl, settingsNotes: noteDraft.trim() || null }),
       }).then((x) => x.json())
       if (r?.error) setMsg(r.error)
-      else { setDirty(false); setEditing(false); setMsg('Saved') }
+      else {
+        setDirty(false); setEditing(false); setMsg('Saved')
+        setSavedAt(r?.savedAt || new Date().toISOString())
+        setSavedNotes(noteDraft.trim())
+        setNoteDraft('')
+        setVersions(null)                  // history list is now stale — refetch on open
+        if (showHist) loadVersions()
+      }
     } catch (e: any) { setMsg(String(e?.message || e)) }
     finally { setBusy(false) }
   }
@@ -1018,7 +1074,17 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
       doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
       doc.text([boatName, 'Rig settings'].filter(Boolean).join(' — '), M, y); y += 6
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90)
-      doc.text([rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   '), M, y); y += 7
+      doc.text([rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   '), M, y); y += 4.5
+      // The printed card goes on the boat — it must say WHICH version it is, or
+      // there's no telling the sheet on the nav station from the one in the bag.
+      const stampNotes = viewing ? viewing.notes : savedNotes
+      doc.text(`Settings as saved ${fmtWhen(viewing ? viewing.saved_at : savedAt)}${viewing ? '  (historical version)' : ''}`, M, y); y += 4.5
+      if (stampNotes) {
+        doc.setFontSize(8)
+        for (const ln of doc.splitTextToSize(`Notes: ${stampNotes}`, 170).slice(0, 3)) { doc.text(ln, M, y); y += 3.6 }
+        doc.setFontSize(9)
+      }
+      y += 3
 
       // Each table prints at EXACTLY 115 mm × 30 mm (11.5 cm × 3 cm).
       const TABLE_W = 115, TABLE_H = 30, LABEL_W = 24
@@ -1138,15 +1204,60 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, fontWeight: 800, color: C.head }}>Rig settings by TWS</span>
-        <span style={{ fontSize: 10, color: C.dim }}>seeded from the sheet · editable</span>
+        <span style={{ fontSize: 10, color: C.dim }}>
+          {viewing ? `history · saved ${fmtWhen(viewing.saved_at)}` : savedAt ? `as of ${fmtWhen(savedAt)}` : 'seeded from the sheet · not yet saved'}
+        </span>
         <div style={{ flex: 1 }} />
+        <button onClick={() => setShowHist((v) => !v)} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>
+          {showHist ? '▴ History' : `▾ History${versions?.length ? ` (${versions.length})` : ''}`}
+        </button>
         <button onClick={downloadPdf} disabled={pdfBusy} style={{ ...rbtn('#8B5CF6'), color: '#fff', opacity: pdfBusy ? 0.6 : 1 }}>{pdfBusy ? 'Building…' : '⬇ PDF'}</button>
-        {canEdit && !editing && <button onClick={startEdit} style={{ ...rbtn('#06B6D4') }}>✎ Edit</button>}
+        {viewing && <button onClick={backToCurrent} style={{ ...rbtn('#06B6D4') }}>← Back to current</button>}
+        {canEdit && !editing && !viewing && <button onClick={startEdit} style={{ ...rbtn('#06B6D4') }}>✎ Edit</button>}
         {edit && <button onClick={reseed} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>↺ Re-fill from sheet</button>}
         {edit && <button onClick={save} disabled={busy || !dirty} style={{ ...rbtn('#10B981'), opacity: busy || !dirty ? 0.5 : 1 }}>{busy ? 'Saving…' : 'Save'}</button>}
         {edit && <button onClick={cancelEdit} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>Cancel</button>}
         {msg && <span style={{ fontSize: 11, color: msg === 'Saved' ? '#10B981' : '#F59E0B' }}>{msg}</span>}
       </div>
+
+      {/* Notes for THIS table — stored with it, so the history says why, not just what. */}
+      {edit ? (
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Notes for this version</div>
+          <textarea
+            value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} rows={2}
+            placeholder="What changed and why — e.g. 'Softened lowers 2 turns above 14 kn, boat felt over-bent in the chop'"
+            style={{ width: '100%', boxSizing: 'border-box', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 6, color: '#E2E8F0', padding: '7px 9px', fontSize: 12, fontFamily: 'inherit', resize: 'vertical' }}
+          />
+        </div>
+      ) : ((viewing?.notes || savedNotes) ? (
+        <div style={{ fontSize: 12, color: '#94A3B8', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, padding: '7px 10px' }}>
+          <span style={{ color: '#7DD3FC', fontWeight: 700 }}>Notes: </span>
+          {viewing ? viewing.notes : savedNotes}
+        </div>
+      ) : null)}
+
+      {showHist && (
+        <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, padding: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', marginBottom: 6 }}>Saved versions — newest first</div>
+          {versions == null && <div style={{ fontSize: 11, color: C.dim }}>loading…</div>}
+          {versions?.length === 0 && <div style={{ fontSize: 11, color: C.dim }}>No saved versions yet. The next Save starts the record.</div>}
+          {versions?.map((v, i) => (
+            <div key={v.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '7px 0', borderTop: i ? '1px solid #12283E' : 'none' }}>
+              <div style={{ minWidth: 155 }}>
+                <div style={{ fontSize: 12, color: '#E2E8F0', fontWeight: 700 }}>{fmtWhen(v.saved_at)}</div>
+                <div style={{ fontSize: 10, color: C.dim }}>{v.saved_by || '—'}{i === 0 ? ' · current' : ''}</div>
+              </div>
+              <div style={{ flex: 1, fontSize: 12, color: v.notes ? '#94A3B8' : '#475569', minWidth: 0 }}>{v.notes || 'no notes'}</div>
+              <button onClick={() => viewVersion(v)} style={{ ...rbtn('#334155'), color: '#E2E8F0', fontSize: 11, padding: '4px 9px' }}>View</button>
+              {canEdit && i > 0 && (
+                <button onClick={() => restoreVersion(v)} style={{ ...rbtn('#F59E0B'), fontSize: 11, padding: '4px 9px' }}>Restore</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <Table title="Upwind" sec="upwind" rows={UPWIND_ROWS} />
       <Table title="Reaching" sec="reaching" rows={REACHING_ROWS} />
     </div>
