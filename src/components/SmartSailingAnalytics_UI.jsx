@@ -320,17 +320,30 @@ function probeVideo(file) {
       try { URL.revokeObjectURL(url); } catch {}
       resolve(res);
     };
-    const timer = setTimeout(() => finish({ ok: false, reason: 'timed out reading the video (10 s)' }), 10000);
+    const timer = setTimeout(() => finish({ ok: false, reason: 'timed out reading the video (10 s)' }), 15000);
     v.onloadedmetadata = () => {
-      clearTimeout(timer);
-      const w = v.videoWidth, h = v.videoHeight, d = v.duration;
+      const w = v.videoWidth, h = v.videoHeight;
       // Metadata parsed but no picture ⇒ the container is readable, the VIDEO CODEC is
       // not. That is the H.265/HEVC case: black frames, and an undecodable transcode.
       if (!w || !h) {
-        finish({ ok: false, duration: d, reason: 'this device’s browser cannot decode the video track (often H.265/HEVC) — record in H.264, or the clip will be black' });
+        clearTimeout(timer);
+        finish({ ok: false, duration: v.duration, reason: 'this device’s browser cannot decode the video track (often H.265/HEVC) — record in H.264, or the clip will be black' });
         return;
       }
-      finish({ ok: true, width: w, height: h, duration: d });
+      // DURATION. On many MP4/MOV files (notably re-encoded ones, where `moov` moved)
+      // `duration` is still Infinity/NaN at loadedmetadata — which is why the import
+      // reported `duration=0s`, and why the one number that distinguishes a
+      // start-of-recording stamp from an end-of-recording one was missing. Seeking far
+      // past the end forces the browser to resolve it, then `durationchange` fires with
+      // the real value. This is the standard workaround.
+      const done = () => {
+        clearTimeout(timer);
+        const d = Number.isFinite(v.duration) ? v.duration : 0;
+        finish({ ok: true, width: w, height: h, duration: d });
+      };
+      if (Number.isFinite(v.duration) && v.duration > 0) { done(); return; }
+      v.ondurationchange = () => { if (Number.isFinite(v.duration)) { v.ondurationchange = null; try { v.currentTime = 0; } catch {} done(); } };
+      try { v.currentTime = 1e101; } catch { done(); }
     };
     v.onerror = () => {
       clearTimeout(timer);
@@ -458,18 +471,36 @@ function resolveStartUtc(result, vidTz, logWindow, durationSec = 0) {
   //    clip. The filename (start) plus the probed duration prove it, so test for it —
   //    and only correct when the arithmetic actually matches.
   if (result.nameUtc != null) {
-    if (Math.abs(raw - result.nameUtc) <= TS_TOL_MS)
-      return { utc: asLocal, localClock: true, how: "mvhd is local (matches filename)" };
-    if (Math.abs(raw + vidTz * 60000 - result.nameUtc) <= TS_TOL_MS)
-      return { utc: asUtc, localClock: false, how: "mvhd is UTC (filename is local)" };
+    // The FILENAME stamps the START of the recording (the camera names the file when it
+    // opens it) and is local by definition. mvhd may be the start OR the moment the file
+    // was finalised — one whole duration later.
+    //
+    // A ±2.5 min tolerance used to be enough to call an end-stamp "a match" for the
+    // filename, and we then took mvhd — which is precisely how clips landed ~50 s late
+    // on a 56 s recording. So work out mvhd's OFFSET FROM THE FILENAME START and act on
+    // the size of it, rather than waving it through.
+    const nameStart = result.nameUtc - vidTz * 60000; // filename is local ⇒ true UTC start
+    const CLOCK_TOL = 5000;                            // genuine same-instant jitter
 
-    // End-of-recording stamps. Require a real duration, and a duration long enough that
-    // it can't be confused with clock jitter.
-    if (durMs > TS_TOL_MS) {
-      if (Math.abs(raw - (result.nameUtc + durMs)) <= TS_TOL_MS)
-        return { utc: asLocal - durMs, localClock: true, how: `mvhd is local END-of-recording — rewound ${Math.round(durMs / 1000)}s to the start` };
-      if (Math.abs(raw + vidTz * 60000 - (result.nameUtc + durMs)) <= TS_TOL_MS)
-        return { utc: asUtc - durMs, localClock: false, how: `mvhd is UTC END-of-recording — rewound ${Math.round(durMs / 1000)}s to the start` };
+    const dLocal = raw - result.nameUtc;               // if mvhd is local wall-clock
+    const dUtc = raw - nameStart;                      // if mvhd is already true UTC
+
+    if (Math.abs(dLocal) <= CLOCK_TOL)
+      return { utc: asLocal, localClock: true, how: "mvhd is local, same instant as the filename" };
+    if (Math.abs(dUtc) <= CLOCK_TOL)
+      return { utc: asUtc, localClock: false, how: "mvhd is UTC, same instant as the filename" };
+
+    // mvhd sits LATER than the filename start. That is the finalisation time — the
+    // recording's end (± encoder flush). The filename is the start, so use it, and say
+    // by how much they differed so a wrong assumption is visible rather than silent.
+    const lateBy = Math.min(Math.abs(dLocal), Math.abs(dUtc));
+    if (lateBy > CLOCK_TOL) {
+      const dur = durMs ? `${Math.round(durMs / 1000)}s clip` : 'duration unknown';
+      return {
+        utc: nameStart,
+        localClock: true,
+        how: `filename start used — mvhd is ${Math.round(lateBy / 1000)}s later (end-of-recording / finalisation; ${dur})`,
+      };
     }
   }
   // 2) Fall back to whichever candidate lands inside the log's true-UTC window.
@@ -2234,7 +2265,18 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               : 'gap does not match the duration → something else is going on';
             diag = `Keys=${new Date(keysUtc).toISOString().slice(11,19)}Z · mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z · gap=${gap}s · duration=${dur}s → ${verdict}`;
           } else if (mvhdUtc!=null) {
-            diag = `mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z · duration=${Math.round(durSec||0)}s · no Apple capture date in this file`;
+            const dur = Math.round(durSec||0);
+            const nameStart = result.nameUtc!=null ? result.nameUtc - vidTz*60000 : null;
+            if (nameStart!=null) {
+              const gap = Math.round((mvhdUtc - nameStart)/1000);
+              const verdict = !dur ? 'no duration to compare'
+                : Math.abs(gap - dur) <= 5 ? 'mvhd − filename == DURATION → mvhd is the END of recording; filename is the start'
+                : Math.abs(gap) <= 5 ? 'same instant → mvhd and the filename agree'
+                : 'gap does not match the duration → neither start nor clean end';
+              diag = `filename start=${new Date(nameStart).toISOString().slice(11,19)}Z · mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z · gap=${gap}s · duration=${dur}s → ${verdict}`;
+            } else {
+              diag = `mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z · duration=${dur}s · no Apple capture date and no filename timestamp`;
+            }
           }
           if (diag) addLog(`   ⓘ ${f.name}: ${diag}`);
           return{...v,startUtc:r.utc,tsSource:result.source,rawUtc:result.utc,localClock:r.localClock,
@@ -7085,7 +7127,22 @@ function SSAApp(){
   const matchesSail=tags=>!sailTokens||(tags||[]).some(t=>sailTokens.includes(String(t).trim().toLowerCase()));
   const displayed=(aiResult?allVideos.filter(v=>aiIds.has(v.id)):allVideos)
     .filter(v=>{const ok=selectedTags.length===0||selectedTags.every(t=>(v.tags||[]).includes(t));const q=searchQuery.toLowerCase();return ok&&matchesSail(v.tags)&&(!q||v.title?.toLowerCase().includes(q)||(v.tags||[]).some(t=>t.includes(q)));})
-    .sort((a,b)=>sortBy==="tws"?(b.twsAvg||0)-(a.twsAvg||0):sortBy==="twa"?(Math.abs(a.twaAvg||0))-(Math.abs(b.twaAvg||0)):sortBy==="vmg"?(b.vmgAvg||0)-(a.vmgAvg||0):sortBy==="polar"?(b.polpercAvg||0)-(a.polpercAvg||0):(b.addedAt||0)-(a.addedAt||0));
+    // "Date" means WHEN THE CLIP WAS SHOT, not when it was imported. It used to sort by
+    // addedAt, so uploading a day's footage in three batches interleaved them and the
+    // library read out of order. Sort by startUtc — the clip's place on the water —
+    // ASCENDING, so the session reads first-to-last like the day did. Clips with no
+    // start time yet sink to the bottom rather than jumping to the top.
+    .sort((a,b)=>{
+      if(sortBy==="tws")   return (b.twsAvg||0)-(a.twsAvg||0);
+      if(sortBy==="twa")   return (Math.abs(a.twaAvg||0))-(Math.abs(b.twaAvg||0));
+      if(sortBy==="vmg")   return (b.vmgAvg||0)-(a.vmgAvg||0);
+      if(sortBy==="polar") return (b.polpercAvg||0)-(a.polpercAvg||0);
+      const ta=a.startUtc??null, tb=b.startUtc??null;
+      if(ta==null && tb==null) return (b.addedAt||0)-(a.addedAt||0); // neither timed: newest import first
+      if(ta==null) return 1;                                          // untimed clips last
+      if(tb==null) return -1;
+      return ta-tb;                                                   // chronological, as sailed
+    });
 
   const allTags=[...new Set(allVideos.flatMap(v=>v.tags||[]))].sort();
   const isManTag=t=>["tack","gybe","topmark","mark","race-start","upwind","reach","downwind"].includes(t);
@@ -7270,7 +7327,7 @@ function SSAApp(){
                 <option value="">All sails</option>
                 {sailInventory.filter(s=>!s.retired).map(s=><option key={s.id} value={s.id}>{s.category?`${s.category} · ${s.name}`:s.name}</option>)}
               </select>}
-              {["date","tws","twa","vmg","polar"].map(s=><button key={s} onClick={()=>setSortBy(s)} style={{display:"block",width:"100%",textAlign:"left",background:sortBy===s?"#1E3A5A":"none",border:"none",borderRadius:4,padding:"3px 6px",color:sortBy===s?"#06B6D4":"#334155",cursor:"pointer",fontSize:10,marginBottom:1}}>{sortBy===s?"▸ ":"  "}{s==="date"?"Date":s==="tws"?"Wind (TWS)":s==="twa"?"Wind angle":s==="vmg"?"VMG":"Polar %"}</button>)}
+              {["date","tws","twa","vmg","polar"].map(s=><button key={s} onClick={()=>setSortBy(s)} style={{display:"block",width:"100%",textAlign:"left",background:sortBy===s?"#1E3A5A":"none",border:"none",borderRadius:4,padding:"3px 6px",color:sortBy===s?"#06B6D4":"#334155",cursor:"pointer",fontSize:10,marginBottom:1}}>{sortBy===s?"▸ ":"  "}{s==="date"?"Time (as sailed)":s==="tws"?"Wind (TWS)":s==="twa"?"Wind angle":s==="vmg"?"VMG":"Polar %"}</button>)}
             </div>
             {allTags.length>0&&<div style={{padding:"0 11px",flex:1}}>
               <div style={{fontSize:8,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:5}}>Filter</div>
