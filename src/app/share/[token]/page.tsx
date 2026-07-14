@@ -40,6 +40,49 @@ export default function SharePage({ params }: { params: { token: string } }) {
   const [err, setErr] = React.useState<string | null>(null)
   const [row, setRow] = React.useState<Row | null>(null)
   const vidRef = React.useRef<HTMLVideoElement | null>(null)
+  const stageRef = React.useRef<HTMLDivElement | null>(null)
+  const [narrow, setNarrow] = React.useState(false)
+  const [fs, setFs] = React.useState(false)
+
+  React.useEffect(() => {
+    const mq = window.matchMedia('(max-width: 820px)')
+    const on = () => setNarrow(mq.matches)
+    on(); mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+
+  // Turning the phone sideways should fill the screen WITH the data — the same
+  // behaviour the app's own player has. The trick is that fullscreen is requested on
+  // the STAGE (the wrapper), not on the <video>: the browser's own fullscreen button
+  // promotes only the video element, which leaves the overlay behind and is why the
+  // numbers vanished on rotate.
+  React.useEffect(() => {
+    const mq = window.matchMedia('(orientation: landscape)')
+    const on = (e: MediaQueryList | MediaQueryListEvent) => setFs(!!(e as any).matches && window.innerWidth <= 1024)
+    on(mq); mq.addEventListener('change', on as any)
+    return () => mq.removeEventListener('change', on as any)
+  }, [])
+
+  React.useEffect(() => {
+    if (!fs) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const el = stageRef.current
+    if (el && !document.fullscreenElement) {
+      try { ((el as any).requestFullscreen?.() || (el as any).webkitRequestFullscreen?.())?.catch?.(() => {}) } catch { /* */ }
+    }
+    return () => {
+      document.body.style.overflow = prev
+      try { if (document.fullscreenElement) ((document as any).exitFullscreen?.() || (document as any).webkitExitFullscreen?.())?.catch?.(() => {}) } catch { /* */ }
+    }
+  }, [fs])
+
+  // If the viewer leaves fullscreen with the browser's own gesture, come back in sync.
+  React.useEffect(() => {
+    const on = () => { if (!document.fullscreenElement) setFs(false) }
+    document.addEventListener('fullscreenchange', on)
+    return () => document.removeEventListener('fullscreenchange', on)
+  }, [])
 
   React.useEffect(() => {
     fetch(`/api/share/${params.token}`)
@@ -112,12 +155,23 @@ export default function SharePage({ params }: { params: { token: string } }) {
 
   const rot = data.rotation % 360
   const quarter = rot === 90 || rot === 270
-  const kv = (k: string, v: string) => (
-    <div style={{ display: 'flex', flexDirection: 'column', minWidth: 62 }}>
-      <span style={{ fontSize: 9, color: C.dim, letterSpacing: 1, textTransform: 'uppercase' }}>{k}</span>
-      <span style={{ fontSize: 15, fontWeight: 700, color: C.head, fontVariantNumeric: 'tabular-nums' }}>{v}</span>
-    </div>
-  )
+  const compact = narrow || fs
+
+  // On a phone the stacked label-over-value blocks ate the top third of a portrait
+  // video. Compact mode is ONE line: "TWS 12.4  ·  TWA 42°  ·  BSP 9.1 …" — same
+  // numbers, a fraction of the height.
+  const kv = (k: string, v: string) =>
+    compact ? (
+      <span key={k} style={{ fontSize: 11, color: C.head, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+        <span style={{ color: C.dim, fontSize: 9, letterSpacing: 0.5 }}>{k} </span>
+        <b>{v}</b>
+      </span>
+    ) : (
+      <div key={k} style={{ display: 'flex', flexDirection: 'column', minWidth: 62 }}>
+        <span style={{ fontSize: 9, color: C.dim, letterSpacing: 1, textTransform: 'uppercase' }}>{k}</span>
+        <span style={{ fontSize: 15, fontWeight: 700, color: C.head, fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+      </div>
+    )
 
   return (
     <main style={{ minHeight: '100vh', background: C.bg, color: C.head, fontFamily: 'system-ui, sans-serif', padding: '20px 16px' }}>
@@ -129,7 +183,17 @@ export default function SharePage({ params }: { params: { token: string } }) {
           </span>
         </div>
 
-        <div style={{ position: 'relative', background: '#000', borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}` }}>
+        {/* The STAGE is what goes fullscreen — video AND overlay together. Promoting the
+            <video> alone (what the browser's own fullscreen button does) is exactly what
+            dropped the data when the phone was turned. */}
+        <div
+          ref={stageRef}
+          style={
+            fs
+              ? { position: 'fixed', inset: 0, zIndex: 9999, background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }
+              : { position: 'relative', background: '#000', borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}` }
+          }
+        >
           <video
             ref={vidRef}
             controls
@@ -137,19 +201,51 @@ export default function SharePage({ params }: { params: { token: string } }) {
             onTimeUpdate={onTime}
             onLoadedMetadata={onTime}
             style={{
-              width: '100%', display: 'block', aspectRatio: '16 / 9', objectFit: 'contain', background: '#000',
+              width: '100%', display: 'block', objectFit: 'contain', background: '#000',
+              ...(fs ? { height: '100%', maxHeight: '100vh' } : { aspectRatio: '16 / 9' }),
               ...(rot ? { transform: `rotate(${rot}deg)${quarter ? ' scale(0.5625)' : ''}` } : {}),
             }}
           />
+
           {data.includeOverlay && row && (
-            <div style={{ position: 'absolute', top: 10, left: 10, display: 'flex', gap: 14, flexWrap: 'wrap', background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 12px', backdropFilter: 'blur(6px)', pointerEvents: 'none' }}>
-              {kv('TWS', `${fmt(row.tws)} kt`)}
+            <div
+              style={
+                compact
+                  ? {
+                      // ONE line across the top — minimal height on a portrait phone.
+                      position: 'absolute', top: 0, left: 0, right: 0,
+                      display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center',
+                      background: 'linear-gradient(180deg, rgba(3,15,26,0.82) 0%, rgba(3,15,26,0) 100%)',
+                      padding: '6px 10px 12px', pointerEvents: 'none',
+                      overflowX: 'auto', whiteSpace: 'nowrap',
+                    }
+                  : {
+                      position: 'absolute', top: 10, left: 10, display: 'flex', gap: 14, flexWrap: 'wrap',
+                      background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8,
+                      padding: '8px 12px', backdropFilter: 'blur(6px)', pointerEvents: 'none',
+                    }
+              }
+            >
+              {kv('TWS', `${fmt(row.tws)}`)}
               {kv('TWA', `${fmt(row.twa, 0)}°`)}
-              {kv('BSP', `${fmt(row.bsp)} kt`)}
-              {row.heel != null && kv('Heel', `${fmt(row.heel, 0)}°`)}
-              {row.vsPerfPct != null && kv('Polar', `${fmt(row.vsPerfPct, 0)}%`)}
+              {kv('BSP', `${fmt(row.bsp)}`)}
+              {row.heel != null && kv('HEEL', `${fmt(row.heel, 0)}°`)}
+              {row.vsPerfPct != null && kv('POLAR', `${fmt(row.vsPerfPct, 0)}%`)}
             </div>
           )}
+
+          {/* Our own fullscreen toggle — promotes the stage, so the data comes with it. */}
+          <button
+            onClick={() => setFs((x) => !x)}
+            aria-label={fs ? 'Exit fullscreen' : 'Fullscreen'}
+            style={{
+              position: 'absolute', top: fs ? 12 : 8, right: fs ? 12 : 8, zIndex: 3,
+              width: 34, height: 30, borderRadius: 7, border: `1px solid ${C.border}`,
+              background: 'rgba(3,15,26,0.7)', color: C.head, cursor: 'pointer', fontSize: 13, lineHeight: 1,
+            }}
+          >
+            {fs ? '✕' : '⛶'}
+          </button>
         </div>
 
         {data.includeOverlay && !data.rows?.length && (
