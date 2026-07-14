@@ -223,16 +223,20 @@ export async function saveVideo(file, parsedMeta, membership = null) {
   const priorAll = await idbGetAll(db, "videos");
   const prior = priorAll.find((v) => clipKey(v) === wanted);
   if (prior) {
-    let changed = false;
-    if (!prior.blob && (await canStoreBlob(file.size))) {
-      try { prior.blob = file; changed = true; } catch { /* keep going */ }
+    // Re-importing is a REPAIR, not a no-op: always take the fresh bytes. Same name,
+    // same size, same day ⇒ the same file, so replacing the blob is harmless — and it
+    // is the only way to fix a row whose stored blob is missing or bad. Topping up
+    // only when absent would leave a broken clip broken however often you re-import.
+    if (await canStoreBlob(file.size)) {
+      try { prior.blob = file; } catch { /* keep whatever we had */ }
     }
-    if (parsedMeta.startUtc && prior.startUtc !== parsedMeta.startUtc) {
+    if (parsedMeta.startUtc) {
       prior.startUtc = parsedMeta.startUtc;
       prior.tsSource = parsedMeta.tsSource || prior.tsSource;
-      changed = true;
     }
-    if (changed) { try { await idbPut(db, "videos", prior); } catch { /* non-fatal */ } }
+    if (parsedMeta.duration) prior.duration = parsedMeta.duration;
+    prior.localBlobModifiedAt = Date.now(); // tells the sync the local bytes are newer
+    try { await idbPut(db, "videos", prior); } catch { /* non-fatal */ }
     return { ...prior, blob: undefined, objectUrl: prior.blob ? URL.createObjectURL(prior.blob) : null, hasLocalBlob: !!prior.blob };
   }
 
@@ -442,6 +446,7 @@ export async function getAllVideos() {
     blob:        undefined,
     objectUrl:   e.blob ? URL.createObjectURL(e.blob) : null,
     hasLocalBlob: !!e.blob,
+    rotation:    e.rotation || 0,
   })).sort((a, b) => b.addedAt - a.addedAt);
 }
 
@@ -466,6 +471,18 @@ export async function updateVideoTags(id, tags) {
     entry.syncedToDb  = false;
     await idbPut(db, "videos", entry);
   }
+}
+
+// Display rotation (0/90/180/270). Stored, never baked into the file — re-encoding is
+// what destroys the capture metadata (see the QuickTime-rotate problem).
+export async function updateVideoRotation(id, rotation) {
+  const db = await openDb();
+  const entry = await idbGet(db, "videos", id);
+  if (entry) {
+    entry.rotation = rotation;
+    await idbPut(db, "videos", entry);
+  }
+  return rotation;
 }
 
 export async function updateVideoStartUtc(id, startUtc, sessionDate = null) {

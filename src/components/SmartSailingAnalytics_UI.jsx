@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { saveVideo, pruneInertVideos, dedupeVideos, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
+import { saveVideo, pruneInertVideos, dedupeVideos, updateVideoRotation, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
 import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady, createStreamUpload, uploadFileToStream } from "../lib/bunny";
 import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
@@ -16,7 +16,7 @@ import { startAutoFlush as startPhotoAutoFlush } from '../lib/photoStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
-import { listVideosCloud, upsertVideoCloud, deleteVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId } from '../lib/cloud-videos';
+import { listVideosCloud, upsertVideoCloud, deleteVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId, isCloudVideoId } from '../lib/cloud-videos';
 import { syncProxyForVideo } from '../lib/video-rendition-sync';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
@@ -116,6 +116,91 @@ function _scanMvhd(buf) {
   return null;
 }
 
+// Rotation is applied at DISPLAY, never baked into the file. 90/270 swap the aspect,
+// so the element is rotated about its centre and scaled to fit the box.
+const rotStyle = (deg, boxW, boxH) => {
+  const d = ((Number(deg) || 0) % 360 + 360) % 360;
+  if (!d) return {};
+  const quarter = d === 90 || d === 270;
+  const scale = quarter && boxW && boxH ? Math.min(boxW / boxH, boxH / boxW) : 1;
+  return { transform: `rotate(${d}deg)${quarter ? ` scale(${scale.toFixed(3)})` : ''}` };
+};
+
+// ─── Camera identity from the container's own metadata ───────────────────────
+// Filename sniffing (detectCamera) is a guess: it breaks the moment a file is renamed
+// or exported. The container states who made it — Apple writes
+// com.apple.quicktime.make/model ("Apple" / "iPhone 15 Pro"), DJI and GoPro write their
+// own make/model or handler strings. Knowing the SOURCE is what lets us treat the
+// timestamp correctly (an iPhone's capture date is authoritative; a GoPro's mvhd is
+// local), so read it rather than infer it.
+function _scanCameraMeta(buf) {
+  const u8 = new Uint8Array(buf);
+  let s = '';
+  const CHUNK = 65536;
+  for (let i = 0; i < u8.length; i += CHUNK) {
+    s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CHUNK, u8.length)));
+  }
+  const after = (key) => {
+    const i = s.indexOf(key);
+    if (i < 0) return null;
+    // The value follows within the next ilst 'data' box; grab the nearest run of
+    // printable ASCII after the key and strip the box header bytes.
+    const seg = s.slice(i + key.length, i + key.length + 96);
+    const m = seg.match(/[\x20-\x7e]{3,}/g);
+    if (!m) return null;
+    const val = m.map((x) => x.replace(/^[^\w]*data/i, '').trim()).find((x) => x.length >= 3);
+    return val ? val.replace(/[^\x20-\x7e]/g, '').trim() : null;
+  };
+  const make = after('com.apple.quicktime.make') || after('©mak') || null;
+  const model = after('com.apple.quicktime.model') || after('©mod') || null;
+  const sw = after('com.apple.quicktime.software') || null;
+
+  let vendor = null;
+  const hay = `${make || ''} ${model || ''} ${sw || ''}`.toLowerCase();
+  if (/apple|iphone|ipad/.test(hay)) vendor = 'iPhone';
+  else if (/dji|osmo|mavic|air ?\d|mini ?\d/.test(hay)) vendor = 'DJI';
+  else if (/gopro|hero/.test(hay)) vendor = 'GoPro';
+  else if (/insta360/.test(hay)) vendor = 'Insta360';
+  return { vendor, make, model, software: sw };
+}
+
+// ─── Apple `com.apple.quicktime.creationdate` (Keys:CreationDate) ─────────────
+// THE authoritative capture time on an iPhone, and the one we were ignoring.
+//
+//   • mvhd / QuickTime:CreateDate — UTC, but carries NO timezone, and on a
+//     re-encoded file it's whatever the encoder wrote.
+//   • Keys:CreationDate — the recording's LOCAL wall-clock WITH an explicit UTC
+//     offset, e.g. "2026-07-12T14:32:07+0200". Apple authors it on capture, it has
+//     seconds, and per ExifTool it OVERRIDES the other time tags.
+//
+// So we don't have to infer local-vs-UTC for Apple footage at all: the offset is in
+// the file. It's stored as an ISO-8601 string inside moov→meta→ilst, so rather than
+// walk the atom tree we scan for the string itself — cheap, and robust to the exact
+// ilst layout (which differs between iOS versions and Photos exports).
+function _scanAppleCreationDate(buf) {
+  const u8 = new Uint8Array(buf);
+  // Decode as latin1 so byte offsets line up; the timestamp is pure ASCII.
+  let s = '';
+  const CHUNK = 65536;
+  for (let i = 0; i < u8.length; i += CHUNK) {
+    s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CHUNK, u8.length)));
+  }
+  // 2026-07-12T14:32:07+0200 | ...+02:00 | ...Z
+  const m = s.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, sec, zone] = m;
+  let offMin = 0;
+  if (zone !== 'Z') {
+    const zm = zone.replace(':', '');
+    const sign = zm[0] === '-' ? -1 : 1;
+    offMin = sign * (Number(zm.slice(1, 3)) * 60 + Number(zm.slice(3, 5)));
+  }
+  const wall = Date.UTC(+y, +mo - 1, +d, +h, +mi, +sec);
+  const utc = wall - offMin * 60000; // local wall-clock − its own offset ⇒ true UTC
+  if (!Number.isFinite(utc) || utc < 946684800000 || utc > 4102444800000) return null;
+  return { utc, local: `${y}-${mo}-${d}T${h}:${mi}:${sec}`, offsetMin: offMin };
+}
+
 // Parse a timestamp out of common camera filename conventions.
 // Handles:
 //   DJI_20250903122919_0041_A2_drop.mp4          → DJI drones / Osmo (local time)
@@ -139,6 +224,54 @@ function extractTimestampFromFilename(name) {
   return Date.UTC(y, mo - 1, d, h, mi, s);
 }
 
+// ─── CAN THE BROWSER ACTUALLY DECODE THIS CLIP? ──────────────────────────────
+// Everything downstream assumes it can: the card thumbnail is a <video> showing the
+// first frame, playback is a <video>, and the proxy transcode has to DECODE the source
+// before it can encode. A file the browser can't decode therefore shows up as a black
+// card, black playback, and a transcode that dies — with nothing saying why.
+//
+// Phones commonly record H.265/HEVC (and HDR), which many browsers won't decode. So
+// probe once, at import, and report it in plain words instead of leaving three
+// downstream features to fail mysteriously.
+function probeVideo(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    let done = false;
+    const finish = (res) => {
+      if (done) return;
+      done = true;
+      try { URL.revokeObjectURL(url); } catch {}
+      resolve(res);
+    };
+    const timer = setTimeout(() => finish({ ok: false, reason: 'timed out reading the video (10 s)' }), 10000);
+    v.onloadedmetadata = () => {
+      clearTimeout(timer);
+      const w = v.videoWidth, h = v.videoHeight, d = v.duration;
+      // Metadata parsed but no picture ⇒ the container is readable, the VIDEO CODEC is
+      // not. That is the H.265/HEVC case: black frames, and an undecodable transcode.
+      if (!w || !h) {
+        finish({ ok: false, duration: d, reason: 'this device’s browser cannot decode the video track (often H.265/HEVC) — record in H.264, or the clip will be black' });
+        return;
+      }
+      finish({ ok: true, width: w, height: h, duration: d });
+    };
+    v.onerror = () => {
+      clearTimeout(timer);
+      const code = v.error?.code;
+      finish({
+        ok: false,
+        reason: code === 4
+          ? 'unsupported video format or codec (often H.265/HEVC) — record in H.264'
+          : `could not read the video (media error ${code ?? '?'})`,
+      });
+    };
+    v.preload = 'metadata';
+    v.muted = true;
+    v.src = url;
+  });
+}
+
 // Returns { utc, source, mvhdUtc, nameUtc } | null.
 //   source  — "mp4-meta" | "filename"
 //   mvhdUtc — raw mvhd clock (may be true UTC or camera-local; see resolveStartUtc)
@@ -148,23 +281,49 @@ function extractTimestampFromFilename(name) {
 async function extractVideoCreationTime(file) {
   const nameUtc = extractTimestampFromFilename(file.name || "");
   try {
-    // 1) Scan the first 512KB — fast path, covers most consumer cameras.
-    const head = await file.slice(0, 524288).arrayBuffer();
-    let mvhd = _scanMvhd(head);
+    // moov can sit at either end: iPhone recordings put it at the END; Photos exports
+    // and re-muxes often move it to the front. Read both and search each.
+    const head = await file.slice(0, 1048576).arrayBuffer();
+    const tail = file.size > 1048576
+      ? await file.slice(Math.max(0, file.size - 2097152), file.size).arrayBuffer()
+      : null;
 
-    // 2) Scan the last 1MB — DJI HEVC / re-muxed files often put `moov` at
-    //    the end of the file instead of the start. Without this pass we'd
-    //    never find mvhd and the timestamp would fall back to mtime.
-    if (!mvhd && file.size > 524288) {
-      const tailStart = Math.max(0, file.size - 1048576);
-      const tail = await file.slice(tailStart, file.size).arrayBuffer();
-      mvhd = _scanMvhd(tail);
+    // 1) APPLE first. Keys:CreationDate is the recording's local time WITH its offset —
+    //    unambiguous, to the second, and authoritative. Reading it means we never have
+    //    to guess local-vs-UTC for iPhone footage.
+    // Who shot it? Read it from the container rather than guessing at the filename.
+    const camHead = _scanCameraMeta(head);
+    const camTail = tail ? _scanCameraMeta(tail) : { vendor: null };
+    const cam = camHead.vendor ? camHead : (camTail.vendor ? camTail : camHead);
+
+    const apple = _scanAppleCreationDate(head) || (tail ? _scanAppleCreationDate(tail) : null);
+    if (apple) {
+      return {
+        utc: apple.utc,                 // already TRUE UTC — the file told us the offset
+        source: "apple-meta",
+        appleLocal: apple.local,
+        appleOffsetMin: apple.offsetMin,
+        mvhdUtc: _scanMvhd(head) || (tail ? _scanMvhd(tail) : null),
+        nameUtc,
+        camera: cam,
+      };
     }
-    if (mvhd) return { utc: mvhd, source: "mp4-meta", mvhdUtc: mvhd, nameUtc };
 
-    // 3) Filename fallback — DJI / Android / generic cameras embed the
-    //    capture time directly in the filename (e.g. DJI_20250903122919_…).
-    if (nameUtc) return { utc: nameUtc, source: "filename", mvhdUtc: null, nameUtc };
+    // 2) mvhd — UTC per spec, but GoPro/DJI write local. Ambiguous; resolveStartUtc
+    //    works it out from the filename / log window.
+    //    `appleLikely`: an Apple-authored container that has NO Keys:CreationDate has
+    //    been re-encoded — most often by QuickTime Player's rotate — so its mvhd is the
+    //    edit time. Flagged, not trusted.
+    // An APPLE-shot file with no Keys:CreationDate has been re-encoded (QuickTime
+    // rotate), so its mvhd is the edit time. Use the container's own vendor when we have
+    // it, and fall back to the extension only when the metadata is silent.
+    const appleLikely = cam.vendor === 'iPhone'
+      || (!cam.vendor && (/\.(mov|m4v)$/i.test(file.name || '') || /quicktime/i.test(file.type || '')));
+    const mvhd = _scanMvhd(head) || (tail ? _scanMvhd(tail) : null);
+    if (mvhd) return { utc: mvhd, source: "mp4-meta", mvhdUtc: mvhd, nameUtc, appleLikely, camera: cam };
+
+    // 3) Filename fallback — DJI / Android embed the capture time in the name.
+    if (nameUtc) return { utc: nameUtc, source: "filename", mvhdUtc: null, nameUtc, camera: cam };
   } catch {}
   if (nameUtc) return { utc: nameUtc, source: "filename", mvhdUtc: null, nameUtc };
   return null;
@@ -188,23 +347,54 @@ async function extractVideoCreationTime(file) {
 // plus how we got there. localClock=true ⇒ vidTz was applied (and a later venue-tz
 // change must re-base it); localClock=false ⇒ the clock was already UTC.
 const TS_TOL_MS = 150000; // 2.5 min — camera clocks drift vs. the filename stamp
-function resolveStartUtc(result, vidTz, logWindow) {
+function resolveStartUtc(result, vidTz, logWindow, durationSec = 0) {
   const raw = result.utc;
   const asUtc = raw;                       // clock was already true UTC
   const asLocal = raw - vidTz * 60000;     // clock was camera-local
+  const durMs = Math.max(0, Math.round((durationSec || 0) * 1000));
+
+  // Apple told us the offset — nothing to infer. `utc` is already true UTC, so it must
+  // NOT be re-based by the venue-tz selector (localClock:false).
+  if (result.source === "apple-meta") {
+    const off = result.appleOffsetMin;
+    const sign = off >= 0 ? '+' : '-';
+    const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0');
+    const mm = String(Math.abs(off) % 60).padStart(2, '0');
+    return {
+      utc: raw,
+      localClock: false,
+      how: `iPhone capture time ${result.appleLocal} (UTC${sign}${hh}:${mm}) — from the file, no guessing`,
+    };
+  }
+
   // Filename + lastModified are unambiguously local wall-clock.
   if (result.source !== "mp4-meta") return { utc: asLocal, localClock: true, how: "local clock" };
   if (vidTz === 0) return { utc: raw, localClock: true, how: "UTC venue" }; // both agree; keep re-basable
 
-  // 1) Calibrate against the filename, which is local BY DEFINITION. Both clocks
-  //    are "digits read as if UTC", so:
+  // 1) Calibrate against the filename, which is local BY DEFINITION and stamps the
+  //    START of the recording. Both clocks are "digits read as if UTC", so:
   //      mvhd local ⇒ raw ≈ nameUtc            (same wall-clock digits)
   //      mvhd UTC   ⇒ raw ≈ nameUtc − vidTz    (mvhd runs vidTz behind the local name)
+  //
+  //    …UNLESS the camera stamps mvhd when the file is CLOSED rather than opened, in
+  //    which case it sits one whole DURATION later. We placed such clips a duration too
+  //    late: the overlay ran ~3 min ahead and the boat marker sat past the end of the
+  //    clip. The filename (start) plus the probed duration prove it, so test for it —
+  //    and only correct when the arithmetic actually matches.
   if (result.nameUtc != null) {
     if (Math.abs(raw - result.nameUtc) <= TS_TOL_MS)
       return { utc: asLocal, localClock: true, how: "mvhd is local (matches filename)" };
     if (Math.abs(raw + vidTz * 60000 - result.nameUtc) <= TS_TOL_MS)
       return { utc: asUtc, localClock: false, how: "mvhd is UTC (filename is local)" };
+
+    // End-of-recording stamps. Require a real duration, and a duration long enough that
+    // it can't be confused with clock jitter.
+    if (durMs > TS_TOL_MS) {
+      if (Math.abs(raw - (result.nameUtc + durMs)) <= TS_TOL_MS)
+        return { utc: asLocal - durMs, localClock: true, how: `mvhd is local END-of-recording — rewound ${Math.round(durMs / 1000)}s to the start` };
+      if (Math.abs(raw + vidTz * 60000 - (result.nameUtc + durMs)) <= TS_TOL_MS)
+        return { utc: asUtc - durMs, localClock: false, how: `mvhd is UTC END-of-recording — rewound ${Math.round(durMs / 1000)}s to the start` };
+    }
   }
   // 2) Fall back to whichever candidate lands inside the log's true-UTC window.
   //    The pad must stay TIGHTER than the offset we're trying to detect, or both
@@ -216,7 +406,19 @@ function resolveStartUtc(result, vidTz, logWindow) {
     if (okUtc && !okLocal) return { utc: asUtc, localClock: false, how: "mvhd is UTC (fits log window)" };
     if (okLocal && !okUtc) return { utc: asLocal, localClock: true, how: "mvhd is local (fits log window)" };
   }
-  // 3) No evidence — the spec says UTC.
+  // 3) No evidence. For an Apple-family file this is a RED FLAG rather than a default:
+  //    an untouched iPhone clip always carries Keys:CreationDate. If it's gone, the file
+  //    has been re-encoded — and QuickTime Player's rotate-and-save does exactly that,
+  //    dropping the capture metadata and leaving mvhd holding the EDIT time. Trusting it
+  //    silently plants a wrong start time that only shows up later as a drifting overlay.
+  if (result.appleLikely) {
+    return {
+      utc: asUtc,
+      localClock: false,
+      suspect: true,
+      how: "no iPhone capture date in this file — it was re-encoded (QuickTime rotate?), so this is the EDIT time, not the recording time. Set the start manually in Videos.",
+    };
+  }
   return { utc: asUtc, localClock: false, how: "mvhd assumed UTC (per spec — verify in Videos)" };
 }
 
@@ -606,7 +808,7 @@ const OVERLAY_VARS = [
   {key:'lwDflctPct',label:'Low defl',unit:'%',dec:0},{key:'travPct',label:'Traveller',unit:'%',dec:0},
 ];
 
-function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,autoPlay=false,
+function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,autoPlay=false,onRotate=null,
                       // Phase B crop UX — three callbacks + the current
                       // cut points + busy flag. All optional; toolbar
                       // crop UI only renders when the setters are provided.
@@ -1049,7 +1251,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           <button onClick={(e)=>{e.stopPropagation();setMobileFs(false);}}
             style={{position:"absolute",top:10,right:10,zIndex:4,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         )}
-        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer"}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
+        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
@@ -1057,6 +1259,20 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             frame width instead of overflowing off the right edge. */}
         {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:mobileFs?52:(isMobile?6:undefined)}}>{overlay}{extraOverlay}</div>}
         {modeBadge}
+        {/* Rotate — TL3+ only (the parent supplies onRotate). Stores an ANGLE; the file
+            is never re-encoded, so its capture metadata (Apple Keys:CreationDate) is
+            preserved. Rotating in QuickTime Player transcodes and destroys it, which is
+            what left clips carrying the edit time instead of the recording time. */}
+        {onRotate&&(
+          <button
+            onClick={(e)=>{e.stopPropagation(); onRotate((((video.rotation||0)+90)%360));}}
+            title={`Rotate 90° (now ${video.rotation||0}°) — display only, the file is not re-encoded`}
+            style={{position:"absolute",top:8,right:8,zIndex:4,width:32,height:32,borderRadius:8,
+              border:"1px solid #1E3A5A",background:"rgba(3,15,26,0.72)",color:"#7DD3FC",
+              cursor:"pointer",fontSize:15,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            ⟳
+          </button>
+        )}
         <div style={{position:"absolute",bottom:8,left:8,display:"flex",alignItems:"center",gap:6}}>
           {vidQuality&&<div style={{background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 6px",fontSize:9,color:"#7DD3FC",fontFamily:"monospace",letterSpacing:0.3}}>▾ {vidQuality}</div>}
           {/* Coach/admin only: opt into local HD playback from the IndexedDB
@@ -1243,7 +1459,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
     <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
         {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" loading="eager" fetchpriority="high" decoding="async" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}}/>:
-         video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}} muted preload="metadata"/>:
+         video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none",...rotStyle(video.rotation,16,9)}} muted preload="metadata"/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
@@ -1894,7 +2110,22 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     if(!valid.length){addLog("✕ No video files found. MP4/MOV/MTS/AVI accepted.");return;}
     setPendingVids(p=>[...p,...valid.map(f=>({id:Math.random().toString(36).slice(2),file:f,name:f.name,size:f.size,url:URL.createObjectURL(f),duration:null,startUtc:null,tsSource:null}))]);
     addLog(`✓ ${valid.length} video${valid.length>1?"s":""} queued — reading timestamps…`);
+    // ONE pass per file: probe first (decodability + duration), then resolve the
+    // timestamp — the duration is needed to tell a start-of-recording stamp from an
+    // end-of-recording one, so the probe must come first.
     valid.forEach(async f=>{
+      const probe=await probeVideo(f);
+      if(!probe.ok){
+        // A clip the browser can't decode is black in the card, black on playback, and
+        // cannot be transcoded — say so here rather than letting three things fail.
+        addLog(`✕ ${f.name}: ${probe.reason}`);
+        setPendingVids(p=>p.map(v=>v.file===f?{...v,error:probe.reason,undecodable:true}:v));
+      } else {
+        addLog(`✓ ${f.name}: ${probe.width}×${probe.height}, ${Math.round(probe.duration||0)}s — decodes OK`);
+        setPendingVids(p=>p.map(v=>v.file===f?{...v,duration:probe.duration||v.duration||null}:v));
+      }
+      const durSec = probe.ok ? (probe.duration||0) : 0;
+
       const result=await extractVideoCreationTime(f);
       setPendingVids(p=>p.map(v=>{
         if(v.file!==f)return v;
@@ -1902,12 +2133,17 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           // mvhd may be true UTC (spec) or camera-local (GoPro/DJI) — decide from
           // evidence rather than subtracting vidTz blindly. `rawUtc`/`localClock`
           // are kept so a later venue-tz change re-bases only the local-clock clips.
-          const r=resolveStartUtc(result,vidTz,csvParsedRef.current);
-          const label=result.source==="filename"?"filename timestamp":"camera timestamp";
-          addLog(`✓ ${f.name}: ${label} ${fmtDateTime(r.utc)} UTC — ${r.how}`);
-          return{...v,startUtc:r.utc,tsSource:result.source,rawUtc:result.utc,localClock:r.localClock};
+          const r=resolveStartUtc(result,vidTz,csvParsedRef.current,durSec);
+          const label=result.source==="apple-meta"?"iPhone capture date"
+                     :result.source==="filename"?"filename timestamp":"camera timestamp";
+          const cam=result.camera||{};
+          const camName=cam.vendor?`${cam.vendor}${cam.model&&cam.model!==cam.vendor?` (${cam.model})`:''}`:null;
+          addLog(`${r.suspect?'⚠':'✓'} ${f.name}${camName?` [${camName}]`:''}: ${label} ${fmtDateTime(r.utc)} UTC — ${r.how}`);
+          return{...v,startUtc:r.utc,tsSource:result.source,rawUtc:result.utc,localClock:r.localClock,
+                 tsSuspect:!!r.suspect,tsHow:r.how,cameraVendor:cam.vendor||null,cameraModel:cam.model||null,
+                 duration:v.duration||durSec||null};
         }
-        if(f.lastModified&&v.duration){const raw=f.lastModified-v.duration*1000;addLog(`✓ ${f.name}: using file modified time (no MP4 metadata)`);return{...v,startUtc:raw-vidTz*60000,tsSource:"lastmodified",rawUtc:raw,localClock:true};}
+        if(f.lastModified&&durSec){const raw=f.lastModified-durSec*1000;addLog(`✓ ${f.name}: using file modified time (no MP4 metadata)`);return{...v,startUtc:raw-vidTz*60000,tsSource:"lastmodified",rawUtc:raw,localClock:true};}
         addLog(`⚠ ${f.name}: no timestamp — set manually in Videos`);
         return v;
       }));
@@ -4295,7 +4531,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         saveSyncForVideos,saveTagsForVideo,
                         sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
                         selectedTags,setSelectedTags,toggleTag,allTags,isManTag,displayed,perms,
-                        onSyncProxies,onUploadOriginals,mobileSyncState,syncErrors,
+                        onSyncProxies,onUploadOriginals,mobileSyncState,syncErrors,onRotateVideo,
                         setActiveTab,cloudStatus,updateVideoTagsFn,
                         computeAutoTagsFn,sessionTagList,setSessionTagList,tagSuggestionList,
                         handlePlayUtc,onDeleted,role,effectiveRole,
@@ -4355,6 +4591,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
       <VideoPlayer video={video} logData={logData} xmlData={xmlData}
         syncOffset={syncOffsets[video.id]||0} sessionTzOffset={sessionTzOffset}
         onPlayUtc={handlePlayUtc}
+        onRotate={onRotateVideo ? (deg)=>onRotateVideo(video, deg) : null}
         canPlayLocalHD={['admin','coach'].includes(effectiveRole)}/>
       <div style={{padding:"12px 16px"}}>
         {/* Sync offset — coach + admin only. Gate on effectiveRole (the real
@@ -5230,6 +5467,28 @@ function SSAApp(){
   // row + auto-tag recomputation in one shot. Used by both the per-clip Save
   // button in the SyncControl and the batch Sync apply path. Returns the
   // number of clips actually updated (clips with no startUtc are skipped).
+  // Rotate a clip — TL3 and above (the senior ladder, same as Boat Config). Writes the
+  // ANGLE to IndexedDB and to the cloud row; the source file is never re-encoded, which
+  // is the entire point: QuickTime Player's rotate transcodes and strips the capture
+  // metadata, so clips arrived carrying their edit time instead of their recording time.
+  const canRotate = ['admin','team_manager','coach','tl3'].includes(effectiveRole);
+  const rotateVideo = useCallback(async (video, deg) => {
+    if (!canRotate || !video?.id) return;
+    setAllVideos(p => p.map(v => v.id === video.id ? { ...v, rotation: deg } : v));
+    setSelectedVideo(v => (v && v.id === video.id ? { ...v, rotation: deg } : v));
+    try { await updateVideoRotation(video.id, deg); } catch { /* local only */ }
+    const cloudId = video.cloudId || (isCloudVideoId(video.id) ? video.id : null);
+    if (cloudId) {
+      try {
+        await fetch(`/api/videos/${encodeURIComponent(cloudId)}/rotation`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rotation: deg }),
+        });
+      } catch { /* stays local until the next sync */ }
+    }
+  }, [canRotate]);
+
   const saveSyncForVideos = useCallback(async (videos, offsetSecs) => {
     if (!offsetSecs || !videos?.length) return 0;
     let supabaseUser = null;
@@ -6765,6 +7024,7 @@ function SSAApp(){
             syncOffset={syncOffsets[selectedVideo.id]||0}
             sessionTzOffset={sessionTzOffset}
             onPlayUtc={handlePlayUtc}
+            onRotate={canRotate ? (deg)=>rotateVideo(selectedVideo, deg) : null}
             autoPlay
           />
         </div>
@@ -6804,6 +7064,7 @@ function SSAApp(){
       showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
       campaignOn={campaignOn} campaignCfg={campaignCfg} activeMem={activeMem} openCampaignVideo={openCampaignVideo} openVideoModal={openVideoModal}
       sailInventory={sailInventory} setSailDiff={setSailDiff}
+      onRotateVideo={canRotate ? rotateVideo : null}
       hasMountedAnalytics={hasMountedAnalytics}
       updateVideoTagsFn={updateVideoTags}
       computeAutoTagsFn={computeAutoTags}
@@ -7190,6 +7451,7 @@ function SSAApp(){
                   syncOffset={syncOffsets[selectedVideo.id]||0}
                   sessionTzOffset={sessionTzOffset}
                   onPlayUtc={handlePlayUtc}
+                  onRotate={canRotate ? (deg)=>rotateVideo(selectedVideo, deg) : null}
                   canPlayLocalHD={['admin','coach'].includes(effectiveRole)}
                   // Phase B crop UX: three toolbar buttons + timeline
                   // markers. Gated on perms.canSync + local original

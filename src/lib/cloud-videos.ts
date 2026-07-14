@@ -9,6 +9,7 @@ export interface CloudVideoRow {
   session_id: string
   title: string | null
   start_utc: string | null
+  rotation_deg?: number | null
   duration_ms: number | null
   tags: string[]
   sync_offset_secs: number
@@ -330,6 +331,7 @@ export function toLegacyVideoShape(v: CloudVideoRow): Record<string, unknown> {
     name: v.title,
     sessionDate: v.sessions?.date || '',
     startUtc: v.start_utc ? new Date(v.start_utc).getTime() : null,
+    rotation: v.rotation_deg ?? 0,
     duration: v.duration_ms ? v.duration_ms / 1000 : null,
     tags: v.tags || [],
     size: v.bytes,
