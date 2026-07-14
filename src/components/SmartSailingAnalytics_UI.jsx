@@ -2148,19 +2148,22 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           // relationship is read off the file instead of inferred.
           const keysUtc = result.source==='apple-meta' ? result.utc : null;
           const mvhdUtc = result.mvhdUtc ?? null;
+          let diag = null;
           if (keysUtc!=null && mvhdUtc!=null) {
             const gap = Math.round((keysUtc - mvhdUtc)/1000);
             const dur = Math.round(durSec||0);
             const verdict = !dur ? 'no duration to compare'
-              : Math.abs(Math.abs(gap) - dur) <= 3 ? `GAP == DURATION → one of them is the END of recording`
+              : Math.abs(Math.abs(gap) - dur) <= 3 ? 'GAP == DURATION → one of them is the END of recording'
               : Math.abs(gap) <= 3 ? 'same instant → both mark the same point'
               : 'gap does not match the duration → something else is going on';
-            addLog(`   ⓘ ${f.name}: Keys=${new Date(keysUtc).toISOString().slice(11,19)}Z  mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z  gap=${gap}s  duration=${dur}s → ${verdict}`);
+            diag = `Keys=${new Date(keysUtc).toISOString().slice(11,19)}Z · mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z · gap=${gap}s · duration=${dur}s → ${verdict}`;
           } else if (mvhdUtc!=null) {
-            addLog(`   ⓘ ${f.name}: mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z  duration=${Math.round(durSec||0)}s  (no Apple capture date in this file)`);
+            diag = `mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z · duration=${Math.round(durSec||0)}s · no Apple capture date in this file`;
           }
+          if (diag) addLog(`   ⓘ ${f.name}: ${diag}`);
           return{...v,startUtc:r.utc,tsSource:result.source,rawUtc:result.utc,localClock:r.localClock,
-                 tsSuspect:!!r.suspect,tsHow:r.how,cameraVendor:cam.vendor||null,cameraModel:cam.model||null,
+                 tsSuspect:!!r.suspect,tsHow:r.how,tsDiag:diag||null,
+                 cameraVendor:cam.vendor||null,cameraModel:cam.model||null,
                  duration:v.duration||durSec||null};
         }
         if(f.lastModified&&durSec){const raw=f.lastModified-durSec*1000;addLog(`✓ ${f.name}: using file modified time (no MP4 metadata)`);return{...v,startUtc:raw-vidTz*60000,tsSource:"lastmodified",rawUtc:raw,localClock:true};}
@@ -2460,6 +2463,8 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         const saveMembership = saveUser ? getActiveMembership(saveUser.id) : null;
         const s = await saveVideo(pv.file, {
           duration: pv.duration, startUtc: pv.startUtc, tsSource: pv.tsSource,
+          tsDiag: pv.tsDiag || null, tsHow: pv.tsHow || null,
+          cameraVendor: pv.cameraVendor || null, cameraModel: pv.cameraModel || null,
           tags, title: pv.name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " "),
           sessionDate: vidDate,
         }, saveMembership);
@@ -7710,6 +7715,30 @@ function SSAApp(){
                   </div>
                   {['admin','coach'].includes(effectiveRole) && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}} onSave={async(secs)=>{ await saveSyncForVideos([selectedVideo], secs); }}/></div>}
                   <div style={{marginBottom:12}}>
+                    {/* Where the start time CAME FROM. The import log lives in the
+                        Upload tab, which the app leaves the moment an import finishes —
+                        so this rode along on the clip instead. It states the two
+                        timestamps the file carries and how they relate to its duration,
+                        which is what decides whether a stamp marks the start or the end
+                        of the recording. */}
+                    {(selectedVideo.tsHow||selectedVideo.tsDiag)&&(
+                      <div style={{background:selectedVideo.tsSuspect?"#F59E0B12":"#071624",
+                        border:`1px solid ${selectedVideo.tsSuspect?"#F59E0B40":"#1E3A5A"}`,
+                        borderRadius:7,padding:"7px 9px",marginBottom:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                          <span style={{fontSize:10,fontWeight:700,color:selectedVideo.tsSuspect?"#F59E0B":"#7DD3FC",letterSpacing:0.5}}>
+                            TIMESTAMP{selectedVideo.cameraVendor?` · ${selectedVideo.cameraVendor}`:""}
+                          </span>
+                          <button onClick={()=>{
+                            const txt=[selectedVideo.name,selectedVideo.tsHow,selectedVideo.tsDiag].filter(Boolean).join('\n');
+                            try{navigator.clipboard?.writeText(txt);}catch{}
+                          }} style={{marginLeft:"auto",background:"none",border:"1px solid #1E3A5A",borderRadius:4,
+                            color:"#64748B",fontSize:9,padding:"1px 6px",cursor:"pointer"}}>Copy</button>
+                        </div>
+                        {selectedVideo.tsHow&&<div style={{fontSize:10,color:"#94A3B8",lineHeight:1.4}}>{selectedVideo.tsHow}</div>}
+                        {selectedVideo.tsDiag&&<div style={{fontSize:9,color:"#64748B",fontFamily:"monospace",marginTop:3,wordBreak:"break-word",lineHeight:1.45}}>{selectedVideo.tsDiag}</div>}
+                      </div>
+                    )}
                     <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
                       // The clip's DAY = the venue-local date of the new start time.
                       // Recompute it so the clip moves to the right folder (not just

@@ -254,6 +254,13 @@ export async function saveVideo(file, parsedMeta, membership = null) {
     duration:    parsedMeta.duration || null,
     startUtc:    parsedMeta.startUtc  || null,
     tsSource:    parsedMeta.tsSource  || null,
+    // Timestamp forensics from the container (Keys:CreationDate vs mvhd vs duration).
+    // Kept ON THE CLIP because the import log lives in the Upload tab, which the app
+    // navigates away from the moment an import finishes — so it was unreadable there.
+    tsDiag:      parsedMeta.tsDiag    || null,
+    tsHow:       parsedMeta.tsHow     || null,
+    cameraVendor: parsedMeta.cameraVendor || null,
+    cameraModel:  parsedMeta.cameraModel  || null,
     blob:        storeBlob ? file : null,
     addedAt:     Date.now(),
     sessionDate: date,
