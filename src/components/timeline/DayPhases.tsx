@@ -1,6 +1,6 @@
 'use client'
 import * as React from 'react'
-import { Clock, Cloud, Users, Sailboat, Activity, ClipboardList, LineChart, ChevronRight, type LucideIcon } from 'lucide-react'
+import { Clock, Cloud, Users, Sailboat, Map, Activity, ClipboardList, LineChart, ChevronRight, type LucideIcon } from 'lucide-react'
 import { Badge, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import DayTimeline from './DayTimeline'
@@ -23,6 +23,9 @@ const PHASES: Phase[] = [
   { key: 'weather', label: 'Weather', icon: Cloud, color: '#06B6D4' },
   { key: 'speedteam', label: 'Speed-team meeting', icon: Users, color: '#7F77DD' },
   { key: 'sailcall', label: 'Sail call', icon: Sailboat, color: '#F59E0B' },
+  // Plan sits between the sail call and the sailing itself: what we set out to do,
+  // read just before the day's events. Same conditions record as Timings/Weather.
+  { key: 'plan', label: 'Plan', icon: Map, color: '#2DD4BF' },
   { key: 'sailing', label: 'Sailing', icon: Activity, color: '#1D9E75' },
   { key: 'debrief', label: 'Debrief notes', icon: ClipboardList, color: '#7F77DD' },
   { key: 'performance', label: 'Performance analysis', icon: LineChart, color: '#D85A30' },
@@ -93,6 +96,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
       case 'weather': return !!((cond?.details?.comments && String(cond.details.comments).trim()) || wxDocs.length)
       case 'speedteam': return !!(deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term || speedPictures(deb).length || speedDocs(deb).length)
       case 'sailcall': return !!(cond?.sailList?.sails?.length)
+      case 'plan': return !!(cond?.plan && String(cond.plan).trim())
       case 'sailing': return nMarkers > 0 || nMedia > 0
       case 'debrief': return !!(deb?.learnings || deb?.next_focus)
       case 'performance': return false
@@ -286,6 +290,8 @@ function PhaseContent({ phaseKey, cond, deb, wxDocs = [] }: { phaseKey: string; 
           ) : <Empty what="sail call" />}
         </div>
       )
+    case 'plan':
+      return <div className={box}>{cond?.plan && String(cond.plan).trim() ? <Field label="Plan" value={String(cond.plan)} /> : <Empty what="plan" />}</div>
     case 'debrief':
       return (
         <div className={box}>
