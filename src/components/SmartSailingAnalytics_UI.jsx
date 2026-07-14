@@ -2139,6 +2139,26 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           const cam=result.camera||{};
           const camName=cam.vendor?`${cam.vendor}${cam.model&&cam.model!==cam.vendor?` (${cam.model})`:''}`:null;
           addLog(`${r.suspect?'⚠':'✓'} ${f.name}${camName?` [${camName}]`:''}: ${label} ${fmtDateTime(r.utc)} UTC — ${r.how}`);
+
+          // ── TIMESTAMP FORENSICS ────────────────────────────────────────────
+          // The file carries TWO independent times. On an untouched clip they mark the
+          // SAME instant. If one marks the start and the other the moment the file was
+          // finalised, they differ by exactly the DURATION — which is measurable, unlike
+          // an eyeballed sync offset. Print both, their gap, and the duration, so the
+          // relationship is read off the file instead of inferred.
+          const keysUtc = result.source==='apple-meta' ? result.utc : null;
+          const mvhdUtc = result.mvhdUtc ?? null;
+          if (keysUtc!=null && mvhdUtc!=null) {
+            const gap = Math.round((keysUtc - mvhdUtc)/1000);
+            const dur = Math.round(durSec||0);
+            const verdict = !dur ? 'no duration to compare'
+              : Math.abs(Math.abs(gap) - dur) <= 3 ? `GAP == DURATION → one of them is the END of recording`
+              : Math.abs(gap) <= 3 ? 'same instant → both mark the same point'
+              : 'gap does not match the duration → something else is going on';
+            addLog(`   ⓘ ${f.name}: Keys=${new Date(keysUtc).toISOString().slice(11,19)}Z  mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z  gap=${gap}s  duration=${dur}s → ${verdict}`);
+          } else if (mvhdUtc!=null) {
+            addLog(`   ⓘ ${f.name}: mvhd=${new Date(mvhdUtc).toISOString().slice(11,19)}Z  duration=${Math.round(durSec||0)}s  (no Apple capture date in this file)`);
+          }
           return{...v,startUtc:r.utc,tsSource:result.source,rawUtc:result.utc,localClock:r.localClock,
                  tsSuspect:!!r.suspect,tsHow:r.how,cameraVendor:cam.vendor||null,cameraModel:cam.model||null,
                  duration:v.duration||durSec||null};
