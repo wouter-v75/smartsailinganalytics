@@ -30,7 +30,13 @@ const PUBLIC_PATHS = new Set<string>([
 // non-active users can hit them). /join/<token> is an invite redemption
 // landing page that needs to work for unauth, pending, and active alike.
 function isAlwaysPublic(pathname: string): boolean {
-  return pathname.startsWith('/join/')
+  // /share/<token> — a PUBLIC watch page for one clip. The recipient has no account at
+  // all (that is the entire point), so the auth gate must not redirect them to /login.
+  // Authorisation is the token itself, validated in /api/share/[token]: it must exist,
+  // not be revoked and not have expired, and it grants exactly one clip. Letting the
+  // path through here does NOT weaken anything — the page renders nothing until that
+  // API call succeeds.
+  return pathname.startsWith('/join/') || pathname.startsWith('/share/')
 }
 
 function clearAuthCookies(request: NextRequest, redirectTo: URL) {
