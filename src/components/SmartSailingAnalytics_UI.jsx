@@ -179,14 +179,89 @@ function _scanCameraMeta(buf) {
 // ilst layout (which differs between iOS versions and Photos exports).
 function _scanAppleCreationDate(buf) {
   const u8 = new Uint8Array(buf);
-  // Decode as latin1 so byte offsets line up; the timestamp is pure ASCII.
-  let s = '';
-  const CHUNK = 65536;
-  for (let i = 0; i < u8.length; i += CHUNK) {
-    s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CHUNK, u8.length)));
+  const dv = new DataView(buf);
+  const fourcc = (o) => String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]);
+
+  // Walk the boxes at one level, calling fn(type, payloadStart, payloadEnd).
+  const walk = (from, to, fn) => {
+    let o = from;
+    while (o + 8 <= to) {
+      let size = dv.getUint32(o);
+      const type = fourcc(o + 4);
+      let hdr = 8;
+      if (size === 1) { // 64-bit size
+        if (o + 16 > to) break;
+        size = Number(dv.getBigUint64(o + 8));
+        hdr = 16;
+      } else if (size === 0) {
+        size = to - o; // extends to end
+      }
+      if (size < hdr || o + size > to) break;
+      if (fn(type, o + hdr, o + size) === false) return;
+      o += size;
+    }
+  };
+
+  // Find moov → meta → { keys, ilst }. `meta` is a FullBox in MP4 (4 bytes of
+  // version/flags) but a plain box in some QuickTime files — detect which by peeking
+  // at whether a sane child box follows immediately.
+  let keysBox = null, ilstBox = null;
+  const findMeta = (from, to) => {
+    walk(from, to, (type, ps, pe) => {
+      if (type === 'moov' || type === 'udta') { findMeta(ps, pe); return; }
+      if (type !== 'meta') return;
+      let inner = ps;
+      const looksLikeBox = (o) => {
+        if (o + 8 > pe) return false;
+        const sz = dv.getUint32(o);
+        return sz >= 8 && o + sz <= pe && /^[a-zA-Z0-9 ©-]{4}$/.test(fourcc(o + 4));
+      };
+      if (!looksLikeBox(inner) && looksLikeBox(inner + 4)) inner += 4; // skip version/flags
+      walk(inner, pe, (t2, s2, e2) => {
+        if (t2 === 'keys') keysBox = [s2, e2];
+        if (t2 === 'ilst') ilstBox = [s2, e2];
+      });
+    });
+  };
+  findMeta(0, u8.length);
+  if (!keysBox || !ilstBox) return null;
+
+  // keys: version/flags(4) + entry_count(4), then entries of size(4) + namespace(4) + name
+  const keyNames = [];
+  {
+    let o = keysBox[0] + 8;
+    while (o + 8 <= keysBox[1]) {
+      const sz = dv.getUint32(o);
+      if (sz < 8 || o + sz > keysBox[1]) break;
+      let name = '';
+      for (let i = o + 8; i < o + sz; i++) name += String.fromCharCode(u8[i]);
+      keyNames.push(name); // 1-based index in ilst
+      o += sz;
+    }
   }
-  // 2026-07-12T14:32:07+0200 | ...+02:00 | ...Z
-  const m = s.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})/);
+  const wanted = keyNames.findIndex((n) => n === 'com.apple.quicktime.creationdate');
+  if (wanted < 0) return null;
+  const wantedIndex = wanted + 1; // ilst items are 1-based
+
+  // ilst: items are size(4) + index(4), each containing a 'data' box:
+  //       size(4) + 'data' + type(4) + locale(4) + payload
+  let iso = null;
+  walk(ilstBox[0], ilstBox[1], (type, ps, pe) => {
+    // `type` here is the 4-byte INDEX, not a fourcc — read it as a number.
+    const idx = dv.getUint32(ps - 4);
+    if (idx !== wantedIndex) return;
+    walk(ps, pe, (t2, s2, e2) => {
+      if (t2 !== 'data') return;
+      let str = '';
+      for (let i = s2 + 8; i < e2; i++) str += String.fromCharCode(u8[i]); // skip type+locale
+      iso = str.trim();
+      return false;
+    });
+    return false;
+  });
+  if (!iso) return null;
+
+  const m = iso.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})/);
   if (!m) return null;
   const [, y, mo, d, h, mi, sec, zone] = m;
   let offMin = 0;
@@ -198,8 +273,9 @@ function _scanAppleCreationDate(buf) {
   const wall = Date.UTC(+y, +mo - 1, +d, +h, +mi, +sec);
   const utc = wall - offMin * 60000; // local wall-clock − its own offset ⇒ true UTC
   if (!Number.isFinite(utc) || utc < 946684800000 || utc > 4102444800000) return null;
-  return { utc, local: `${y}-${mo}-${d}T${h}:${mi}:${sec}`, offsetMin: offMin };
+  return { utc, local: `${y}-${mo}-${d}T${h}:${mi}:${sec}`, offsetMin: offMin, raw: iso };
 }
+
 
 // Parse a timestamp out of common camera filename conventions.
 // Handles:
