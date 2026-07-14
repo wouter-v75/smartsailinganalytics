@@ -17,6 +17,7 @@ import { computeScanWindow } from '../lib/scanConditions'
 import { scanLocalDateTime } from '../lib/scanTime'
 import { pickDesign, designCodeOf, interpDesignAtTws } from '../lib/designInterp'
 import { northstarConditions, nsCell, nsSetCell, NS_STRIPES, NS_TWS, type NsCondition, type NsMetric } from '../lib/northstarTarget'
+import { RichText } from './RichText'
 
 const DESIGN_GREY = '#94A3B8'
 const NS_GREEN = '#22C55E' // Northstar target line
@@ -681,7 +682,9 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               </div>
             </>
           ) : (
-            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', fontSize: 13, color: notes ? C.text : C.dim, whiteSpace: 'pre-wrap' }}>{notes || 'No notes.'}</div>
+            <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', fontSize: 13, color: notes ? C.text : C.dim }}>
+              {notes ? <RichText text={notes} /> : 'No notes.'}
+            </div>
           )}
         </div>
 

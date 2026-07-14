@@ -7,6 +7,7 @@ import DayTimeline from './DayTimeline'
 import Collapse from './Collapse'
 import { useDockItem } from './DockMagnify'
 import { DocThumb } from './RegattaDocs'
+import { RichText } from '@/components/RichText'
 
 // The phases of a day, shown when a day is opened: Timings · Weather · Speed-team
 // meeting · Sail call · Sailing · Debrief notes · Performance analysis. Each expands
@@ -164,7 +165,7 @@ function Field({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="mb-2">
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</div>
-      <div className="whitespace-pre-wrap text-sm text-fg">{value}</div>
+      <RichText text={value} className="text-sm text-fg" />
     </div>
   )
 }

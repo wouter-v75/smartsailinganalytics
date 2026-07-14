@@ -17,6 +17,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 import { generateThumbnail } from '../lib/photoStore'
+import { RichText, FormatHint } from './RichText'
 
 const BLOCK_META = {
   'technical-testing': { label: 'Technical testing', c: '#F59E0B', testing: true },
@@ -508,11 +509,14 @@ function EditableTextBlock({ label, value, canEdit, placeholder, onSave }) {
         )}
       </div>
       {editing ? (
-        <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} placeholder={placeholder}
-          autoFocus
-          style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }} />
+        <>
+          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} placeholder={placeholder}
+            autoFocus
+            style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }} />
+          <FormatHint />
+        </>
       ) : hasContent ? (
-        <div style={{ fontSize: 13, color: '#E2E8F0', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{value}</div>
+        <RichText text={value} style={{ fontSize: 13, color: '#E2E8F0' }} />
       ) : (
         <button onClick={() => setEditing(true)} style={{ ...btnGhost, alignSelf: 'flex-start' }}>
           + Add {label.toLowerCase()}
@@ -903,39 +907,8 @@ function noteClipTags(tags) {
   return [...events, ...sails]
 }
 
-function renderTagsSegment(seg, base) {
-  return seg.split(/(#[\w-]+)/g).map((p, i) =>
-    /^#[\w-]+$/.test(p)
-      ? <span key={base + 'h' + i} style={{ color: '#A78BFA', fontWeight: 600 }}>{p}</span>
-      : <span key={base + 't' + i}>{p}</span>
-  )
-}
-
-// Render read-only debrief text: colour #hashtags and turn [[clip:id|label]] /
-// [[item:id|label]] tokens into clickable chips (onOpenRef handles the click).
-function renderRich(text, onOpenRef) {
-  if (!text) return '—'
-  const linkRe = /\[\[(clip|item):([^|\]]+)\|([^\]]+)\]\]/g
-  const out = []
-  let last = 0
-  let m
-  let k = 0
-  while ((m = linkRe.exec(text)) !== null) {
-    if (m.index > last) out.push(...renderTagsSegment(text.slice(last, m.index), 's' + k++))
-    const kind = m[1]
-    const id = m[2]
-    const label = m[3]
-    out.push(
-      <button key={'lnk' + k++} type="button" onClick={() => onOpenRef && onOpenRef(kind, id, label)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, border: '1px solid #06B6D455', background: '#06B6D415', color: '#7DD3FC', borderRadius: 5, padding: '0 6px', cursor: 'pointer', margin: '0 1px' }}>
-        {kind === 'clip' ? '▶' : '◳'} {label}
-      </button>
-    )
-    last = linkRe.lastIndex
-  }
-  if (last < text.length) out.push(...renderTagsSegment(text.slice(last), 's' + k++))
-  return out
-}
+// Read-only notes rendering (headings, bullets, bold, #tags, [[clip]]/[[item]] chips)
+// now lives in one place — see components/RichText.tsx.
 
 // Textarea with inline autocomplete: '#' → tag picker, '@' → link picker
 // (clips / backlog items, only when allowLinks). Plus a click-to-insert palette.
@@ -1292,18 +1265,21 @@ function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', w
               )}
             </div>
             {isEditing ? (
-              <TagTextArea
-                value={drafts[f.key] || ''}
-                onChange={(v) => setDrafts((d) => ({ ...d, [f.key]: v }))}
-                placeholder={`${f.label}…`}
-                availableTags={availableTags}
-                onAddTag={addVocabTag}
-                links={links}
-                allowLinks={allowLinks}
-                rows={4}
-              />
+              <>
+                <TagTextArea
+                  value={drafts[f.key] || ''}
+                  onChange={(v) => setDrafts((d) => ({ ...d, [f.key]: v }))}
+                  placeholder={`${f.label}…`}
+                  availableTags={availableTags}
+                  onAddTag={addVocabTag}
+                  links={links}
+                  allowLinks={allowLinks}
+                  rows={4}
+                />
+                <FormatHint />
+              </>
             ) : hasContent ? (
-              <div style={{ fontSize: 13, color: '#E2E8F0', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{renderRich(cur, onOpenRef)}</div>
+              <RichText text={cur} onOpenRef={onOpenRef} style={{ fontSize: 13, color: '#E2E8F0' }} />
             ) : (
               <button onClick={() => startEdit(f.key)} style={{ ...btnGhost, alignSelf: 'flex-start' }}>
                 + Add {f.label.toLowerCase()}
