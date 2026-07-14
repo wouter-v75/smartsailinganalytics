@@ -22,17 +22,45 @@ interface Share {
 const C = { bg: '#030F1A', panel: 'rgba(3,15,26,0.72)', border: '#1E3A5A', head: '#E2E8F0', dim: '#64748B', accent: '#06B6D4' }
 const fmt = (v: number | null | undefined, d = 1) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(d))
 
-// Nearest sample to an instant — binary search, the rows are time-ordered.
-function nearest(rows: Row[], utc: number): Row | null {
-  if (!rows.length) return null
-  let lo = 0, hi = rows.length - 1
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if (rows[mid].utc < utc) lo = mid + 1
-    else hi = mid
+// The cloud log is DOWNSAMPLED (~1-3 s between samples — see reduceLogForCloud). Snapping
+// to the nearest sample makes the readout hold one value and then jump, which is the
+// stepping you see. Interpolate between the two bracketing samples instead, so the
+// numbers move continuously with the footage. (The app's own player does the same —
+// this mirrors interpRow there.)
+const NUM_KEYS: (keyof Row)[] = ['bsp', 'tws', 'twa', 'aws', 'awa', 'heel', 'trim', 'vmg', 'sog', 'vsPerfPct']
+
+// Circular mean for compass-style angles, so 359° → 001° doesn't sweep the long way.
+const lerpAngle = (a: number, b: number, t: number) => {
+  let d = ((b - a + 540) % 360) - 180
+  return (a + d * t + 360) % 360
+}
+
+function interpRow(rows: Row[], utc: number): Row | null {
+  if (!rows?.length) return null
+  const last = rows.length - 1
+  if (utc <= rows[0].utc) return Math.abs(rows[0].utc - utc) < 5000 ? rows[0] : null
+  if (utc >= rows[last].utc) return Math.abs(rows[last].utc - utc) < 5000 ? rows[last] : null
+
+  // Largest index with rows[lo].utc <= utc (utc is strictly interior here).
+  let lo = 0, hi = last
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (rows[mid].utc <= utc) lo = mid; else hi = mid - 1 }
+  const a = rows[lo], b = rows[lo + 1]
+  if (!b) return a
+
+  const span = b.utc - a.utc
+  if (span <= 0) return a
+  const t = Math.min(1, Math.max(0, (utc - a.utc) / span))
+
+  const out: Row = { utc }
+  for (const k of NUM_KEYS) {
+    const va = a[k] as number | undefined, vb = b[k] as number | undefined
+    if (va == null || vb == null) { (out as any)[k] = va ?? vb ?? undefined; continue }
+    ;(out as any)[k] = va + (vb - va) * t
   }
-  if (lo > 0 && Math.abs(rows[lo - 1].utc - utc) < Math.abs(rows[lo].utc - utc)) lo--
-  return Math.abs(rows[lo].utc - utc) < 5000 ? rows[lo] : null
+  // Heading/direction wrap around 360.
+  if (a.twd != null && b.twd != null) out.twd = lerpAngle(a.twd, b.twd, t)
+  if (a.cog != null && b.cog != null) out.cog = lerpAngle(a.cog, b.cog, t)
+  return out
 }
 
 export default function SharePage({ params }: { params: { token: string } }) {
@@ -128,11 +156,33 @@ export default function SharePage({ params }: { params: { token: string } }) {
     return () => { try { hls?.destroy() } catch { /* */ } }
   }, [data])
 
-  const onTime = React.useCallback(() => {
+  // `timeupdate` only fires ~4x a second, which adds its own coarseness on top of the
+  // sampling. Drive the readout from the frame clock while playing so it moves with the
+  // picture; fall back to timeupdate for seeks/pauses.
+  const tick = React.useCallback(() => {
     const v = vidRef.current
     if (!v || !data?.startUtc || !data.rows?.length) return
-    setRow(nearest(data.rows, data.startUtc + v.currentTime * 1000))
+    setRow(interpRow(data.rows, data.startUtc + v.currentTime * 1000))
   }, [data])
+
+  React.useEffect(() => {
+    const v = vidRef.current
+    if (!v || !data?.rows?.length) return
+    let raf = 0
+    const loop = () => { tick(); raf = requestAnimationFrame(loop) }
+    const start = () => { if (!raf) raf = requestAnimationFrame(loop) }
+    const stop = () => { if (raf) { cancelAnimationFrame(raf); raf = 0 } tick() }
+    v.addEventListener('play', start)
+    v.addEventListener('pause', stop)
+    v.addEventListener('ended', stop)
+    if (!v.paused) start()
+    return () => {
+      v.removeEventListener('play', start)
+      v.removeEventListener('pause', stop)
+      v.removeEventListener('ended', stop)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [data, tick])
 
   if (err) {
     return (
@@ -198,8 +248,9 @@ export default function SharePage({ params }: { params: { token: string } }) {
             ref={vidRef}
             controls
             playsInline
-            onTimeUpdate={onTime}
-            onLoadedMetadata={onTime}
+            onTimeUpdate={tick}
+            onSeeked={tick}
+            onLoadedMetadata={tick}
             style={{
               width: '100%', display: 'block', objectFit: 'contain', background: '#000',
               ...(fs ? { height: '100%', maxHeight: '100vh' } : { aspectRatio: '16 / 9' }),
