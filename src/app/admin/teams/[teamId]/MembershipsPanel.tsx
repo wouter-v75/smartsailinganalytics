@@ -271,6 +271,7 @@ export default function MembershipsPanel({
               key={m.id}
               membership={m}
               boatName={boatNameOf(m.boat_id)}
+              boats={boats}
               teamId={teamId}
               onChanged={() => router.refresh()}
               onRevoke={() => destroy(m.id)}
@@ -288,12 +289,14 @@ export default function MembershipsPanel({
 function MembershipListRow({
   membership,
   boatName,
+  boats,
   teamId,
   onChanged,
   onRevoke,
 }: {
   membership: MembershipRow
   boatName: string
+  boats: Boat[]
   teamId: string
   onChanged: () => void
   onRevoke: () => void
@@ -301,6 +304,7 @@ function MembershipListRow({
   const u = firstUser(membership.users)
   const [editing, setEditing] = useState(false)
   const [role, setRole] = useState<Role>(membership.role as Role)
+  const [boatId, setBoatId] = useState<string>(membership.boat_id || '') // '' = all boats
   const [validFrom, setValidFrom] = useState(dateInput(membership.valid_from))
   const [validTo, setValidTo] = useState(dateInput(membership.valid_to))
   const [dataFrom, setDataFrom] = useState(dateInput(membership.data_from))
@@ -311,6 +315,7 @@ function MembershipListRow({
   function startEdit() {
     // Re-seed from the current row each time the editor opens.
     setRole(membership.role as Role)
+    setBoatId(membership.boat_id || '')
     setValidFrom(dateInput(membership.valid_from))
     setValidTo(dateInput(membership.valid_to))
     setDataFrom(dateInput(membership.data_from))
@@ -330,6 +335,7 @@ function MembershipListRow({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             role,
+            boat_id: boatId || null,
             valid_from: validFrom || null,
             valid_to: validTo || null,
             data_from: dataFrom || null,
@@ -380,6 +386,22 @@ function MembershipListRow({
 
         {editing && (
           <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 max-w-md">
+            <label className="text-[11px] text-slate-500 col-span-2 sm:col-span-4">
+              Boat access
+              <select
+                value={boatId}
+                onChange={(e) => setBoatId(e.target.value)}
+                title="Which boat this member can see. 'All boats' = every boat in the team."
+                className="block mt-0.5 w-full rounded border border-slate-300 bg-white text-slate-900 px-1.5 py-1 text-xs"
+              >
+                <option value="">All boats ({boats.map((b) => b.name).join(' + ') || 'team-wide'})</option>
+                {boats.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} only
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="text-[11px] text-slate-500">
               Access from
               <input
