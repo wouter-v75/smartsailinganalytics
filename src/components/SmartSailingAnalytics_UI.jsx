@@ -34,7 +34,7 @@ import { buildDayTimeline } from '../lib/timeline/buildNodes';
 // phones / slow wifi). A user whose role hides a tab can never open it, so
 // its chunk is simply never downloaded for them.
 const TabLoading = () => (
-  <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",minHeight:240,color:"#475569",fontSize:13}}>Loading…</div>
+  <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",minHeight:240,color:"#64748B",fontSize:13}}>Loading…</div>
 );
 const PhotosTab      = dynamic(() => import("./PhotosTab"),      { ssr:false, loading:TabLoading });
 const SquashShotsApp = dynamic(() => import("./SquashShotsApp"), { ssr:false, loading:TabLoading });
@@ -728,6 +728,15 @@ const useTz = () => React.useContext(TzCtx);
 const hmLocal  = (u,tz=0)=>u?new Date(u+tz*60000).toISOString().slice(11,16):"--:--";
 const hmsLocal = (u,tz=0)=>u?new Date(u+tz*60000).toISOString().slice(11,19):"--:--:--";
 const TODAY=()=>new Date().toISOString().slice(0,10);
+const YESTERDAY=()=>{const t=new Date();t.setDate(t.getDate()-1);return t.toISOString().slice(0,10);};
+// The days the app will AUTO-SYNC / enrich: today, yesterday, and the most recent
+// day that actually has video. Everything older is left to on-demand loading when
+// its day is opened, so load time no longer grows with the whole season of clips.
+const recentSyncDates=(videos)=>{
+  const dates=(videos||[]).map(v=>v.sessionDate).filter(Boolean).sort();
+  const latestVideoDate=dates.length?dates[dates.length-1]:null;
+  return new Set([TODAY(),YESTERDAY(),latestVideoDate].filter(Boolean));
+};
 const fmtDate=d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
 const fmtDateTime=u=>{if(!u)return"";const dt=new Date(u);const dd=String(dt.getUTCDate()).padStart(2,"0");const mm=String(dt.getUTCMonth()+1).padStart(2,"0");const yyyy=dt.getUTCFullYear();const hh=String(dt.getUTCHours()).padStart(2,"0");const mi=String(dt.getUTCMinutes()).padStart(2,"0");return`${dd}/${mm}/${yyyy} ${hh}:${mi}`;};
 const fmtSize=b=>b>1e9?`${(b/1e9).toFixed(1)} GB`:`${(b/1e6).toFixed(0)} MB`;
@@ -764,10 +773,17 @@ function interpRow(rows,utc){
 // — sail names, boat/location/dayType — which are handled separately).
 const AUTO_TAG_EXACT = new Set([
   'upwind', 'reach', 'downwind',
-  'topmark', 'mark',
+  'mark',
   'race-start', 'tack', 'gybe',
   'race', 'training',
 ]);
+// Racing EVENTS the coach adds by hand when the auto-tagger misses one. They are
+// deliberately NOT in AUTO_TAG_EXACT (so a manual add survives the next re-enrich
+// instead of being stripped as "auto") and are always offered in the TAP-TO-ADD
+// picker below, even before any clip carries them. `topmark` is still emitted by
+// computeAutoTags when a rounding is detected — this only stops a hand-added one
+// from being wiped. These match the timeline's red racing tags (racingTags.ts).
+const MANUAL_EVENT_TAGS = ['topmark', 'gate', 'spin-hoist', 'spin-drop'];
 // Bucketed auto-tag patterns: TWS bands like "tws-12-16kn" / "tws-25+kn",
 // and manoeuvre count multipliers like "3x-tack" / "5x-gybe".
 const AUTO_TAG_REGEX = /^(tws-\d+(-\d+)?\+?kn|\d+x-(tack|gybe))$/;
@@ -854,7 +870,7 @@ function Gauge({label,value,/* unit kept for call-site back-compat — not rende
     : (size==="sm"?"5px 9px":"7px 11px");
   return(
     <div style={{background:highlight?"rgba(239,68,68,0.18)":"rgba(0,0,0,0.75)",border:`1px solid ${highlight?"#EF4444":color}40`,borderRadius:isMobile?5:7,padding:pad,minWidth:minW}}>
-      <div style={{fontSize:labelFs,color:"#64748B",letterSpacing:isMobile?1:2,textTransform:"uppercase",marginBottom:isMobile?0:2}}>{label}</div>
+      <div style={{fontSize:labelFs,color:"#8A97A9",letterSpacing:isMobile?1:2,textTransform:"uppercase",marginBottom:isMobile?0:2}}>{label}</div>
       <div style={{fontSize:fs,fontWeight:700,color:highlight?"#EF4444":color,fontFamily:"'Courier New',monospace",lineHeight:1}}>{value}</div>
     </div>
   );
@@ -1359,8 +1375,8 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             style={{position:"absolute",top:10,right:10,zIndex:4,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         )}
         {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
-         (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
-         <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
+         (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#64748B",marginTop:4}}>1–3 min typically</div></div>:
+         <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#4E5D71"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
         {/* On mobile, pin to all-but-bottom so tiles wrap within the
             frame width instead of overflowing off the right edge. */}
@@ -1393,13 +1409,13 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             </button>
           )}
         </div>
-        <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
+        <div style={{position:"absolute",bottom:8,right:8,background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#8A97A9",fontFamily:"monospace"}}>{fmtT(curTime)} / {fmtT(dur)}{logUtc&&row?`  ${(()=>{const d=new Date(logUtc+sessionTzOffset*60000);return String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0");})()} local`:""}</div>
       </div>
       <div style={{padding:"8px 12px 0"}}>
         {/* Overlay variables — add extra gauges for this session only. */}
         {logData?.rows?.length>0 && (
           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:8}}>
-            <span style={{fontSize:9,color:"#475569",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
+            <span style={{fontSize:9,color:"#64748B",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
             {extraGauges.map(k=>{const o=OVERLAY_VARS.find(x=>x.key===k);return(
               <span key={k} style={{display:"inline-flex",alignItems:"center",gap:4,background:"#8B5CF615",border:"1px solid #8B5CF640",borderRadius:4,padding:"1px 4px 1px 7px",fontSize:9,color:"#A78BFA"}}>
                 {o?.label||k}
@@ -1432,7 +1448,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             </>
           )}
           {markers.map((m,i)=><div key={i} onClick={e=>{e.stopPropagation();if(vidRef.current)vidRef.current.currentTime=m.vidSec;}} title={`${m.label} +${fmtT(m.vidSec)}`} style={{position:"absolute",left:`${(m.vidSec/Math.max(dur,1))*100}%`,top:0,bottom:0,width:2,background:m.color,opacity:m.isValid===false?0.3:1,cursor:"pointer"}}/>)}
-          <span style={{position:"absolute",left:6,top:"50%",transform:"translateY(-50%)",fontSize:9,color:"#334155",pointerEvents:"none",fontFamily:"monospace"}}>{markers.length>0?`${markers.length} events`:row?"● live data":"click to seek"}</span>
+          <span style={{position:"absolute",left:6,top:"50%",transform:"translateY(-50%)",fontSize:9,color:"#4E5D71",pointerEvents:"none",fontFamily:"monospace"}}>{markers.length>0?`${markers.length} events`:row?"● live data":"click to seek"}</span>
         </div>
       </div>
       <div style={{padding:"7px 12px 11px",display:"flex",gap:7,alignItems:"center"}}>
@@ -1526,7 +1542,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         )}
         <div style={{flex:1}}/>
         {row&&<span style={{fontSize:10,color:"#1D9E75"}}>● live instruments</span>}
-        {!polar&&row&&row.vsTarget==null&&<span style={{fontSize:9,color:"#475569"}}>· upload polar for target BSP</span>}
+        {!polar&&row&&row.vsTarget==null&&<span style={{fontSize:9,color:"#64748B"}}>· upload polar for target BSP</span>}
         {isHls&&<span style={{fontSize:9,color:"#8B5CF6"}}>HLS · Stream</span>}
       </div>
     </div>
@@ -1569,7 +1585,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
          video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none",...rotStyle(video.rotation,16,9)}} muted preload="metadata"/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
-        <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
+        <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#8A97A9",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={videoBadgeSrc(video)}/></div>
         {/* Batch checkbox */}
         {batchMode&&(
@@ -1598,7 +1614,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
         {/* 3) TWS & TWA */}
         <div style={{fontSize:9,color:"#7DD3FC",marginBottom:2,fontFamily:"monospace"}}>
           {video.twsAvg!=null?`TWS ${R(video.twsAvg)}kt`:""}{video.twsAvg!=null&&video.twaAvg!=null?" · ":""}{video.twaAvg!=null?`TWA ${R(video.twaAvg,0)}°`:""}
-          {video.twsAvg==null&&video.twaAvg==null&&<span style={{color:"#334155"}}>—</span>}
+          {video.twsAvg==null&&video.twaAvg==null&&<span style={{color:"#4E5D71"}}>—</span>}
         </div>
         {/* 4) Clip start time (session-local) at bottom — replaces filename */}
         <div title={video.title||""} style={{fontSize:11,fontWeight:600,color:"#E2E8F0",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{localStart}</div>
@@ -1640,21 +1656,21 @@ function TagEditor({video, onSave, tagList=[], suggestionList, sessionDate, onTa
   return(
     <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
-        <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase"}}>Tags</div>
+        <div style={{fontSize:9,fontWeight:700,color:"#64748B",letterSpacing:2,textTransform:"uppercase"}}>Tags</div>
         <div style={{display:"flex",gap:5}}>
           {dirty&&<button onClick={save} style={{background:"#1D9E75",border:"none",borderRadius:4,padding:"2px 9px",color:"#fff",fontSize:10,cursor:"pointer",fontWeight:700}}>Save</button>}
-          <button onClick={()=>setListMode(p=>!p)} style={{background:listMode?"#1E3A5A":"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 8px",color:"#64748B",fontSize:9,cursor:"pointer"}}>{listMode?"✕ Close":"☰ Tag list"}</button>
+          <button onClick={()=>setListMode(p=>!p)} style={{background:listMode?"#1E3A5A":"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 8px",color:"#8A97A9",fontSize:9,cursor:"pointer"}}>{listMode?"✕ Close":"☰ Tag list"}</button>
         </div>
       </div>
       <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8,minHeight:24}}>
         {tags.map(t=>(<span key={t} onClick={()=>remTag(t)} style={{background:"#1E3A5A",color:"#7DD3FC",fontSize:10,borderRadius:4,padding:"2px 7px",cursor:"pointer",display:"flex",gap:3,alignItems:"center"}}>#{t}<span style={{color:"#EF4444",fontSize:9}}>×</span></span>))}
-        {!tags.length&&<span style={{fontSize:10,color:"#334155"}}>No tags — click a suggestion or type below</span>}
+        {!tags.length&&<span style={{fontSize:10,color:"#4E5D71"}}>No tags — click a suggestion or type below</span>}
       </div>
       {suggestions.length>0&&(
         <div style={{marginBottom:8}}>
-          <div style={{fontSize:9,color:"#334155",letterSpacing:1,marginBottom:4}}>TAP TO ADD</div>
+          <div style={{fontSize:9,color:"#4E5D71",letterSpacing:1,marginBottom:4}}>TAP TO ADD</div>
           <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-            {suggestions.map(t=>(<button key={t} onClick={()=>addTag(t)} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 7px",color:"#475569",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>+{t}</button>))}
+            {suggestions.map(t=>(<button key={t} onClick={()=>addTag(t)} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 7px",color:"#64748B",fontSize:10,cursor:"pointer",fontFamily:"monospace"}}>+{t}</button>))}
           </div>
         </div>
       )}
@@ -1664,8 +1680,8 @@ function TagEditor({video, onSave, tagList=[], suggestionList, sessionDate, onTa
       </div>
       {listMode&&(
         <div style={{marginTop:10,borderTop:"1px solid #1E3A5A",paddingTop:10}}>
-          <div style={{fontSize:9,color:"#475569",letterSpacing:1,marginBottom:6}}>SESSION TAG LIST — click × to remove from list</div>
-          {tagList.length===0&&<div style={{fontSize:10,color:"#334155"}}>Empty — import an event file with &lt;sailsused&gt; to auto-populate, or add tags above.</div>}
+          <div style={{fontSize:9,color:"#64748B",letterSpacing:1,marginBottom:6}}>SESSION TAG LIST — click × to remove from list</div>
+          {tagList.length===0&&<div style={{fontSize:10,color:"#4E5D71"}}>Empty — import an event file with &lt;sailsused&gt; to auto-populate, or add tags above.</div>}
           <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
             {tagList.map(t=>(<span key={t} style={{display:"flex",alignItems:"center",gap:3,background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 7px",fontSize:10,color:"#94A3B8"}}>{t}<span onClick={()=>deleteFromList(t)} style={{color:"#EF4444",fontSize:9,cursor:"pointer",marginLeft:2}}>×</span></span>))}
           </div>
@@ -1735,7 +1751,7 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
         <span style={{color:"#1D9E75",fontSize:13}}>✓</span>
         <div style={{flex:1}}>
           <div style={{fontSize:11,color:"#1D9E75",fontWeight:600}}>Proxy ready{when?` · ${when}`:""}</div>
-          <div style={{fontSize:9,color:"#475569"}}>Teammates can stream the 720p preview now.</div>
+          <div style={{fontSize:9,color:"#64748B"}}>Teammates can stream the 720p preview now.</div>
         </div>
       </div>
     );
@@ -1812,8 +1828,8 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
   return (
     <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A",marginBottom:8}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-        <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase"}}>Proxy preview</div>
-        <div style={{fontSize:9,color:"#334155"}}>720p · ~30 MB</div>
+        <div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase"}}>Proxy preview</div>
+        <div style={{fontSize:9,color:"#4E5D71"}}>720p · ~30 MB</div>
       </div>
       {!isBusy && (
         <>
@@ -1838,7 +1854,7 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
             <div style={{height:"100%",width:`${Math.round((progress.pct||0)*100)}%`,background:progress.phase==='transcoding'?"#F59E0B":"#06B6D4",transition:"width 0.2s"}}/>
           </div>
           {progress.message && (
-            <div style={{fontSize:9,color:"#475569",marginTop:4,fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{progress.message}</div>
+            <div style={{fontSize:9,color:"#64748B",marginTop:4,fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{progress.message}</div>
           )}
         </div>
       )}
@@ -1878,8 +1894,8 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, sy
   const row = (label, have, color) => (
     <div style={{marginBottom:6}}>
       <div style={{display:"flex",justifyContent:"space-between",fontSize:9,marginBottom:3}}>
-        <span style={{color:"#475569",letterSpacing:1,textTransform:"uppercase"}}>{label}</span>
-        <span style={{color:total>0&&have===total?color:"#64748B",fontFamily:"monospace"}}>{have}/{total}</span>
+        <span style={{color:"#64748B",letterSpacing:1,textTransform:"uppercase"}}>{label}</span>
+        <span style={{color:total>0&&have===total?color:"#8A97A9",fontFamily:"monospace"}}>{have}/{total}</span>
       </div>
       <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
         <div style={{height:"100%",width:`${total?Math.round((have/total)*100):0}%`,background:color,transition:"width .3s"}}/>
@@ -1889,9 +1905,9 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, sy
 
   return (
     <div style={{background:"#071624",borderRadius:8,padding:"10px 11px",border:"1px solid #1E3A5A",marginBottom:12}}>
-      <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Cloud sync · session</div>
+      <div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Cloud sync · session</div>
       {total === 0 ? (
-        <div style={{fontSize:9,color:"#64748B",lineHeight:1.5}}>
+        <div style={{fontSize:9,color:"#8A97A9",lineHeight:1.5}}>
           No clips in this session have their source file on this device, so
           there is nothing to sync from here. Open the session on the device
           that imported the clips to sync their proxies and originals.
@@ -1974,7 +1990,7 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, sy
               cursor:(busy||needOrig===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
             {needOrig===0?"✓ All originals uploaded":`⇪ Upload ${needOrig} original${needOrig===1?"":"s"}`}
           </button>
-          <div style={{fontSize:8,color:"#334155",marginTop:6,lineHeight:1.4}}>
+          <div style={{fontSize:8,color:"#4E5D71",marginTop:6,lineHeight:1.4}}>
             Proxies stream instantly on phones. Originals are full quality — upload them with the button when on fast wifi.
           </div>
         </>
@@ -1987,7 +2003,7 @@ function SyncControl({offset,onChange,onSave,saving=false,saveLabel="💾 Save"}
   return(
     <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:"1px solid #1E3A5A"}}>
       <div style={{display:"flex",justifyContent:"space-between",marginBottom:7}}>
-        <span style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase"}}>Sync offset</span>
+        <span style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase"}}>Sync offset</span>
         <span style={{fontSize:11,fontFamily:"monospace",color:offset!==0?"#F59E0B":"#334155"}}>{offset>0?"+":""}{offset}s</span>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:3,marginBottom:offset!==0?5:0}}>
@@ -2032,12 +2048,12 @@ function StartTimeEditor({video, logData, onSave, sessionTzOffset=0}){
     <div style={{background:"#071624",borderRadius:7,padding:"9px 11px",border:`1px solid ${!hasStart?"#EF444440":inLog?"#1D9E7540":"#F59E0B40"}`,marginBottom:8}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
         <div style={{flex:1,minWidth:0}}>
-          <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:3}}>Video start time ({tzShort})</div>
+          <div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:3}}>Video start time ({tzShort})</div>
           {hasStart
             ? <div style={{fontSize:11,fontFamily:"monospace",color:inLog?"#1D9E75":"#F59E0B"}}>{fmtLocal(video.startUtc)} <span style={{opacity:0.5,fontSize:9}}>{tzShort}</span><span style={{fontSize:9,marginLeft:6}}>{inLog?"✓ within log":logData?"⚠ outside log — adjust":"(no log loaded)"}</span></div>
             : <div style={{fontSize:10,color:"#EF4444"}}>Not set — instruments and events won't show</div>
           }
-          {hasStart&&logData&&!inLog&&(<div style={{fontSize:9,color:"#475569",marginTop:3}}>Log: {fmtLocal(logData.startUtc).slice(11,16)}–{fmtLocal(logData.endUtc).slice(11,16)} {tzShort}{" · "}wrong timezone? Change in Upload tab.</div>)}
+          {hasStart&&logData&&!inLog&&(<div style={{fontSize:9,color:"#64748B",marginTop:3}}>Log: {fmtLocal(logData.startUtc).slice(11,16)}–{fmtLocal(logData.endUtc).slice(11,16)} {tzShort}{" · "}wrong timezone? Change in Upload tab.</div>)}
         </div>
         <button onClick={editing?save:open} style={{background:editing?"#1D9E75":"#1E3A5A",border:"none",borderRadius:4,padding:"3px 9px",color:editing?"#fff":"#94A3B8",cursor:"pointer",fontSize:10,fontWeight:editing?700:400,marginLeft:8,flexShrink:0}}>{editing?"Save":"Edit"}</button>
       </div>
@@ -2050,7 +2066,7 @@ function StartTimeEditor({video, logData, onSave, sessionTzOffset=0}){
               {logData.endUtc&&<button onClick={()=>setVal(toInputLocal(Math.round((logData.startUtc+logData.endUtc)/2)))} style={{flex:1,background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:4,padding:"4px 0",color:"#7DD3FC",cursor:"pointer",fontSize:10}}>Midpoint</button>}
             </div>
           )}
-          <div style={{fontSize:9,color:"#334155"}}>Enter in <strong style={{color:"#475569"}}>{tzShort}</strong> local time (same as log & events). Stored as UTC internally.</div>
+          <div style={{fontSize:9,color:"#4E5D71"}}>Enter in <strong style={{color:"#64748B"}}>{tzShort}</strong> local time (same as log & events). Stored as UTC internally.</div>
         </div>
       )}
     </div>
@@ -2077,7 +2093,7 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
         <span style={{fontSize:compact?11:13,fontWeight:700,color:done?"#1D9E75":"#8B5CF6"}}>
           {done?"✓ Sync complete":"⟳ Syncing to cloud…"}
         </span>
-        <span style={{fontSize:10,color:"#475569",marginLeft:2}}>{fmtElapsed(elapsed)}</span>
+        <span style={{fontSize:10,color:"#64748B",marginLeft:2}}>{fmtElapsed(elapsed)}</span>
         <div style={{flex:1}}/>
         <span style={{fontSize:11,fontWeight:700,color:done?"#1D9E75":"#06B6D4",fontFamily:"monospace"}}>
           {overall}%
@@ -2204,7 +2220,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       : [{offsetMin:value,label:`UTC${value>=0?'+':''}${value/60}  (selected)`},...TZ_OPTIONS];
     return (
       <div style={{marginTop:8}}>
-        <div style={{fontSize:9,color:"#475569",letterSpacing:1,marginBottom:3}}>{label}</div>
+        <div style={{fontSize:9,color:"#64748B",letterSpacing:1,marginBottom:3}}>{label}</div>
         <select value={value} onChange={e=>onChange(Number(e.target.value))} style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 7px",color:"#94A3B8",fontSize:10,cursor:"pointer"}}>
           {opts.map(o=>(<option key={o.offsetMin} value={o.offsetMin}>{o.label}</option>))}
         </select>
@@ -2778,7 +2794,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
 
   if(!perms.canImport)return(
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
-      <div style={{textAlign:"center",color:"#334155"}}><div style={{fontSize:32,marginBottom:12,opacity:0.3}}>🔒</div><div style={{fontSize:13,color:"#475569",marginBottom:4}}>Import requires Coach or Admin role</div><div style={{fontSize:11}}>Switch role in the header to test</div></div>
+      <div style={{textAlign:"center",color:"#4E5D71"}}><div style={{fontSize:32,marginBottom:12,opacity:0.3}}>🔒</div><div style={{fontSize:13,color:"#64748B",marginBottom:4}}>Import requires Coach or Admin role</div><div style={{fontSize:11}}>Switch role in the header to test</div></div>
     </div>
   );
 
@@ -2787,21 +2803,21 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       <div style={{maxWidth:660,margin:"0 auto",display:"flex",flexDirection:"column",gap:14}}>
         {/* Tier explanation */}
         <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"12px 14px",display:"flex",gap:16}}>
-          <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="local"/><span style={{fontSize:11,fontWeight:600,color:"#06B6D4"}}>① Local — instant</span></div><div style={{fontSize:10,color:"#475569"}}>Saved to browser IndexedDB + localStorage. Available in Videos immediately. Coach/Admin only.</div></div>
+          <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="local"/><span style={{fontSize:11,fontWeight:600,color:"#06B6D4"}}>① Local — instant</span></div><div style={{fontSize:10,color:"#64748B"}}>Saved to browser IndexedDB + localStorage. Available in Videos immediately. Coach/Admin only.</div></div>
           <div style={{width:1,background:"#1E3A5A"}}/>
-          <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="cloud"/><span style={{fontSize:11,fontWeight:600,color:"#8B5CF6"}}>② Cloud — background</span></div><div style={{fontSize:10,color:"#475569"}}>Log + events → Bunny Storage. Videos → Bunny Stream (HLS). Accessible to all team roles.</div></div>
+          <div style={{flex:1}}><div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}><SrcBadge source="cloud"/><span style={{fontSize:11,fontWeight:600,color:"#8B5CF6"}}>② Cloud — background</span></div><div style={{fontSize:10,color:"#64748B"}}>Log + events → Bunny Storage. Videos → Bunny Stream (HLS). Accessible to all team roles.</div></div>
         </div>
 
         {phase==="idle"||phase==="saving"?(
           <>
             {/* Combined video + photo drop zone */}
             <div style={{background:"#0A1929",border:`1px solid ${(pendingVids.length||pendingPhotos.length)?"#06B6D4":"#1E3A5A"}`,borderRadius:12,padding:16}}>
-              <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:11}}>Video &amp; photo files</div>
+              <div style={{fontSize:9,fontWeight:700,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:11}}>Video &amp; photo files</div>
               <input ref={vidRef} type="file" accept="video/*,image/*,.mov,.mp4,.mts,.avi,.mkv,.m4v,.heic,.heif" multiple style={{display:"none"}} onChange={e=>handleMixedDrop(e.target.files)}/>
               <div onClick={()=>vidRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);handleMixedDrop(e.dataTransfer.files);}} style={{border:`2px dashed ${dragOver?"#06B6D4":"#1E3A5A"}`,borderRadius:8,padding:"24px 16px",textAlign:"center",cursor:"pointer",background:dragOver?"#071E30":"transparent",marginBottom:(pendingVids.length||pendingPhotos.length)?11:0,transition:"all 0.12s"}}>
                 <div style={{fontSize:20,marginBottom:7}}>📹 📷</div>
-                <div style={{fontSize:12,color:"#64748B"}}>Drop videos &amp; photos, or click to browse</div>
-                <div style={{fontSize:10,color:"#334155",marginTop:3}}>MP4 · MOV · MTS · JPEG · HEIC — mix freely, multiple files</div>
+                <div style={{fontSize:12,color:"#8A97A9"}}>Drop videos &amp; photos, or click to browse</div>
+                <div style={{fontSize:10,color:"#4E5D71",marginTop:3}}>MP4 · MOV · MTS · JPEG · HEIC — mix freely, multiple files</div>
                 <div style={{fontSize:10,color:photoConnGood()?"#10B981":"#F59E0B",marginTop:4}}>{photoConnGood()?"WiFi — photo originals upload now":"Cellular — photo thumbnails now, originals on WiFi"}</div>
               </div>
               {/* Photo status: in-progress count while uploading, then a done summary */}
@@ -2809,8 +2825,8 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                 <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",fontSize:11,color:photoBusy?"#06B6D4":"#10B981",borderBottom:"1px solid #0F2030"}}>
                   <span style={{fontSize:14}}>📷</span>
                   <span style={{fontWeight:700}}>{photoBusy?`Uploading photos… (${pendingPhotos.filter(p=>!p.thumbSynced&&!p.error).length} left)`:`✓ ${photosDone} photo${photosDone===1?"":"s"} uploaded`}</span>
-                  {!photoBusy&&photosDone>0&&<span style={{fontSize:10,color:"#475569"}}>· thumbnails + tags now, originals on WiFi</span>}
-                  {!photoBusy&&photosDone>0&&<button onClick={()=>setPhotosDone(0)} style={{marginLeft:"auto",background:"none",border:"none",color:"#475569",cursor:"pointer",fontSize:14}}>×</button>}
+                  {!photoBusy&&photosDone>0&&<span style={{fontSize:10,color:"#64748B"}}>· thumbnails + tags now, originals on WiFi</span>}
+                  {!photoBusy&&photosDone>0&&<button onClick={()=>setPhotosDone(0)} style={{marginLeft:"auto",background:"none",border:"none",color:"#64748B",cursor:"pointer",fontSize:14}}>×</button>}
                 </div>
               )}
               {/* WHY a photo import failed. Stays until dismissed — the status line
@@ -2839,7 +2855,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               {pendingPhotos.map(ph=>(
                 <div key={ph.id} style={{display:"flex",alignItems:"center",gap:9,padding:"4px 0",borderBottom:"1px solid #0F2030",fontSize:11}}>
                   <span style={{fontSize:14,flexShrink:0}}>📷</span>
-                  <div style={{flex:1,minWidth:0}}><div style={{color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ph.name}</div><div style={{fontSize:10,color:"#475569"}}>{fmtSize(ph.size)} · {ph.sessionDate}</div></div>
+                  <div style={{flex:1,minWidth:0}}><div style={{color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ph.name}</div><div style={{fontSize:10,color:"#64748B"}}>{fmtSize(ph.size)} · {ph.sessionDate}</div></div>
                   {ph.error?<span style={{color:"#EF4444",fontSize:10,maxWidth:180,wordBreak:"break-word"}}>✕ {ph.error}</span>
                     :<span style={{fontSize:10,color:ph.originalSynced?"#10B981":ph.thumbSynced?"#F59E0B":"#475569"}}>{ph.originalSynced?"✓ original":ph.thumbSynced?"thumb ✓ · original ⏳":"…"}</span>}
                 </div>
@@ -2855,7 +2871,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                       return{...x,duration:dur,startUtc:x.startUtc||ts,tsSource:x.tsSource||(ts?"lastmodified":null)};
                     }));
                   }}/>
-                  <div style={{flex:1,minWidth:0}}><div style={{fontSize:11,fontWeight:500,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div><div style={{fontSize:10,color:"#475569"}}>{fmtSize(v.size)}{v.duration?` · ${fmtT(v.duration)}`:""}</div></div>
+                  <div style={{flex:1,minWidth:0}}><div style={{fontSize:11,fontWeight:500,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div><div style={{fontSize:10,color:"#64748B"}}>{fmtSize(v.size)}{v.duration?` · ${fmtT(v.duration)}`:""}</div></div>
                   <button onClick={()=>setPendingVids(p=>p.filter(x=>x.id!==v.id))} style={{background:"none",border:"none",color:"#EF4444",cursor:"pointer",fontSize:15}}>×</button>
                 </div>
               ))}
@@ -2865,26 +2881,26 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               {/* Log file */}
               <div style={{background:"#0A1929",border:`1px solid ${csvParsed?"#1D9E75":"#1E3A5A"}`,borderRadius:10,padding:14}}>
-                <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Expedition log (CSV)</div>
+                <div style={{fontSize:9,fontWeight:700,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Expedition log (CSV)</div>
                 <input ref={csvRef} type="file" accept=".csv,text/csv" style={{display:"none"}} onChange={e=>handleCsv(e.target.files[0])}/>
                 <button onClick={()=>csvRef.current?.click()} style={{width:"100%",background:csvParsed?"#1D9E7512":"#071624",border:`1px solid ${csvParsed?"#1D9E75":"#1E3A5A"}`,borderRadius:6,padding:"9px 0",color:csvParsed?"#1D9E75":"#7DD3FC",cursor:"pointer",fontSize:11}}>
                   {csvParsed?`✓ ${csvFile.name}`:"Choose file"}
                 </button>
-                {csvParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{csvParsed.rows.length.toLocaleString()} rows</div>}
+                {csvParsed&&<div style={{marginTop:6,fontSize:10,color:"#64748B"}}>{csvParsed.rows.length.toLocaleString()} rows</div>}
                 <TzSelect value={csvTz} onChange={onCsvTzChange} label="Local / venue timezone (display)"/>
-                <div style={{fontSize:9,color:"#334155",marginTop:5}}>
-                  <strong style={{color:"#475569"}}>Auto-detected from the log's GPS position</strong> (DST-aware) when you choose a file — change it only to override.
-                  It sets the timezone everything is <strong style={{color:"#475569"}}>displayed</strong> in; for local-clock logs it also converts to UTC, while true-UTC logs (e.g. N76 <code>Utc</code>) keep their timestamps either way.
+                <div style={{fontSize:9,color:"#4E5D71",marginTop:5}}>
+                  <strong style={{color:"#64748B"}}>Auto-detected from the log's GPS position</strong> (DST-aware) when you choose a file — change it only to override.
+                  It sets the timezone everything is <strong style={{color:"#64748B"}}>displayed</strong> in; for local-clock logs it also converts to UTC, while true-UTC logs (e.g. N76 <code>Utc</code>) keep their timestamps either way.
                 </div>
               </div>
               {/* Event file */}
               <div style={{background:"#0A1929",border:`1px solid ${xmlParsed?"#8B5CF6":"#1E3A5A"}`,borderRadius:10,padding:14}}>
-                <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Event file (XML)</div>
+                <div style={{fontSize:9,fontWeight:700,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Event file (XML)</div>
                 <input ref={xmlRef} type="file" accept=".xml,text/xml" style={{display:"none"}} onChange={e=>handleXml(e.target.files[0])}/>
                 <button onClick={()=>xmlRef.current?.click()} style={{width:"100%",background:xmlParsed?"#8B5CF612":"#071624",border:`1px solid ${xmlParsed?"#8B5CF6":"#1E3A5A"}`,borderRadius:6,padding:"9px 0",color:xmlParsed?"#8B5CF6":"#7DD3FC",cursor:"pointer",fontSize:11}}>
                   {xmlParsed?`✓ ${xmlFile.name}`:"Choose file"}
                 </button>
-                {xmlParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{xmlParsed.tackJibes.length} T/G · {xmlParsed.markRoundings.length} marks</div>}
+                {xmlParsed&&<div style={{marginTop:6,fontSize:10,color:"#64748B"}}>{xmlParsed.tackJibes.length} T/G · {xmlParsed.markRoundings.length} marks</div>}
                 <TzSelect value={xmlTz} onChange={onXmlTzChange} label="Event file timezone (times are local)"/>
               </div>
             </div>
@@ -2892,7 +2908,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             {/* Polar file — persists across sessions via localStorage */}
             <div style={{background:"#0A1929",border:`1px solid ${polarParsed?"#F59E0B":savedPolarName?"#F59E0B40":"#1E3A5A"}`,borderRadius:10,padding:14}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase"}}>Polar file (CSV / TXT)</div>
+                <div style={{fontSize:9,fontWeight:700,color:"#64748B",letterSpacing:2,textTransform:"uppercase"}}>Polar file (CSV / TXT)</div>
                 {savedPolarName&&!polarParsed&&(
                   <span style={{fontSize:9,color:"#F59E0B",background:"#F59E0B12",border:"1px solid #F59E0B30",borderRadius:3,padding:"1px 6px",marginLeft:"auto"}}>
                     ⬡ Active: {savedPolarName}
@@ -2903,9 +2919,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               <button onClick={()=>polarRef.current?.click()} style={{width:"100%",background:polarParsed?"#F59E0B12":"#071624",border:`1px solid ${polarParsed?"#F59E0B":savedPolarName?"#F59E0B40":"#1E3A5A"}`,borderRadius:6,padding:"9px 0",color:polarParsed?"#F59E0B":savedPolarName?"#F59E0B80":"#7DD3FC",cursor:"pointer",fontSize:11}}>
                 {polarParsed?`✓ ${polarFile.name}`:savedPolarName?`Replace — currently ${savedPolarName}`:"Choose polar file"}
               </button>
-              {polarParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{polarParsed.entries.length} TWS rows · {polarParsed.entries[0].points.length} TWA pts · TWS {polarParsed.tws[0]}–{polarParsed.tws[polarParsed.tws.length-1]} kn · saved to browser storage</div>}
+              {polarParsed&&<div style={{marginTop:6,fontSize:10,color:"#64748B"}}>{polarParsed.entries.length} TWS rows · {polarParsed.entries[0].points.length} TWA pts · TWS {polarParsed.tws[0]}–{polarParsed.tws[polarParsed.tws.length-1]} kn · saved to browser storage</div>}
               {!polarParsed&&savedPolarName&&<div style={{marginTop:6,fontSize:10,color:"#F59E0B80"}}>Loaded from last session — used for GPS track colour coding</div>}
-              <div style={{marginTop:6,fontSize:9,color:"#334155"}}>
+              <div style={{marginTop:6,fontSize:9,color:"#4E5D71"}}>
                 Tab/comma CSV: row 1 = TWS values, col 1 = TWA (0–180°). Persists between sessions. Used to colour the GPS track by VMG% (within 20° of target TWA) or BSP% (reaching).
               </div>
             </div>
@@ -2929,9 +2945,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             {pendingVids.length>0&&csvParsed&&(
               <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"12px 14px"}}>
                 <TzSelect value={vidTz} onChange={onVidTzChange} label="Video timestamp timezone"/>
-                <div style={{fontSize:9,color:"#334155",marginTop:5}}>
-                  Most cameras (GoPro, Garmin, older iPhones) write <strong style={{color:"#475569"}}>local time</strong> in the video file.
-                  <strong style={{color:"#475569"}}> Auto-set from the log's GPS position</strong> (the footage was shot at the same place) — change only to override.
+                <div style={{fontSize:9,color:"#4E5D71",marginTop:5}}>
+                  Most cameras (GoPro, Garmin, older iPhones) write <strong style={{color:"#64748B"}}>local time</strong> in the video file.
+                  <strong style={{color:"#64748B"}}> Auto-set from the log's GPS position</strong> (the footage was shot at the same place) — change only to override.
                 </div>
               </div>
             )}
@@ -2945,7 +2961,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           <div style={{background:"#0A1929",border:"1px solid #1D9E7540",borderRadius:12,padding:18}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
               <SrcBadge source="local"/><span style={{fontSize:12,fontWeight:600,color:"#1D9E75"}}>Session {fmtDate(savedDate)} saved locally</span>
-              <span style={{flex:1}}/><button onClick={reset} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:5,padding:"2px 8px",color:"#475569",cursor:"pointer",fontSize:10}}>New import</button>
+              <span style={{flex:1}}/><button onClick={reset} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:5,padding:"2px 8px",color:"#64748B",cursor:"pointer",fontSize:10}}>New import</button>
             </div>
             <div style={{borderTop:"1px solid #1E3A5A",paddingTop:14}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
@@ -2956,11 +2972,11 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               </div>
               {phase==="saved"&&cloudStatus?.available&&perms.canSync&&(
                 <div style={{marginBottom:12}}>
-                  <div style={{fontSize:10,color:"#475569",marginBottom:10}}>Uploads log + events to R2 and transcodes videos in Stream. All team roles can view once processing completes (~1–3 min per video).</div>
+                  <div style={{fontSize:10,color:"#64748B",marginBottom:10}}>Uploads log + events to R2 and transcodes videos in Stream. All team roles can view once processing completes (~1–3 min per video).</div>
                   <button onClick={pushCloud} style={{background:"#8B5CF6",border:"none",borderRadius:8,padding:"11px 0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",width:"100%"}}>② Push to Cloud — {savedVids.length} video{savedVids.length!==1?"s":""} + log + events</button>
                 </div>
               )}
-              {phase==="saved"&&!cloudStatus?.available&&<div style={{fontSize:10,color:"#334155",background:"#071624",borderRadius:6,padding:"8px 10px"}}>Cloud not configured. Set Bunny env vars in Vercel to enable sync. Session is fully usable from local storage.</div>}
+              {phase==="saved"&&!cloudStatus?.available&&<div style={{fontSize:10,color:"#4E5D71",background:"#071624",borderRadius:6,padding:"8px 10px"}}>Cloud not configured. Set Bunny env vars in Vercel to enable sync. Session is fully usable from local storage.</div>}
               {(phase==="syncing"||phase==="done")&&syncProgress&&(
                 <SyncProgressPanel progress={syncProgress} phase={phase}
                   onCancel={()=>{syncAbortRef.current=true;clearInterval(syncTimerRef.current);setPhase("saved");setSyncProgress(null);}}/>
@@ -3273,7 +3289,7 @@ function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200
   return(
     <div style={{position:"relative"}}>
       {hasTwa&&(
-        <div style={{display:"flex",gap:10,marginBottom:3,fontSize:9,color:"#475569"}}>
+        <div style={{display:"flex",gap:10,marginBottom:3,fontSize:9,color:"#64748B"}}>
           <span>
             <svg width="9" height="9" style={{verticalAlign:"middle",marginRight:3}}>
               <polygon points="4.5,0.5 0.5,8.5 8.5,8.5" fill={portColor} opacity="0.8"/>
@@ -3286,7 +3302,7 @@ function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200
             </svg>
             Stbd tack
           </span>
-          <span style={{color:"#334155"}}>· hover to highlight</span>
+          <span style={{color:"#4E5D71"}}>· hover to highlight</span>
         </div>
       )}
       <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
@@ -3340,7 +3356,7 @@ function AIChart({spec,rows,allVideos}){
   if(spec.type==="bar"&&allVideos?.length){
     const field=spec.xField||"twsAvg";
     const clips=allVideos.filter(v=>v[field]!=null).slice(0,12);
-    if(!clips.length)return<div style={{fontSize:10,color:"#334155"}}>No clip data for this field</div>;
+    if(!clips.length)return<div style={{fontSize:10,color:"#4E5D71"}}>No clip data for this field</div>;
     const maxV=Math.max(...clips.map(v=>v[field]));
     const W=520,H=160,pad={t:16,r:8,b:40,l:40};
     const bw=(W-pad.l-pad.r)/clips.length-3;
@@ -3477,61 +3493,110 @@ Return: {
 }
 Only produce a chart if it genuinely answers the question.`;
 
-function AIChatPanel({rows, allVideos}){
-  const [messages, setMessages] = useState([]);
+// Sovereign AI query tool. Routes through POST /api/ai/analyze (Scaleway
+// serverless Mistral, EU-hosted, zero-retention) — NOT the browser→Anthropic
+// call this used to be. Every answer is logged server-side to ai_query_log and
+// returns a logId, so 👍/👎 + coach corrections feed the eval/few-shot loop.
+// Scoped to the team's own trended data (datasets/configs/polars) via RLS.
+function AIChatPanel({teamId, boatId}){
+  const [messages, setMessages] = useState([]); // {q, answer?, figuresUsed?, caveats?, logId?, rating, corr, corrOpen, saving, corrSaved, error?}
   const [input, setInput]       = useState("");
   const [loading, setLoading]   = useState(false);
   const bottomRef = useRef(null);
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[messages]);
+
   const ask = async () => {
-    const q = input.trim(); if(!q) return;
-    setMessages(p=>[...p,{role:"user",text:q}]);
+    const q = input.trim(); if(!q||loading||!teamId) return;
     setInput(""); setLoading(true);
-    const history = messages.map(m=>({role: m.role==="user"?"user":"assistant",content: m.rawJson ? JSON.stringify(m.rawJson) : m.text}));
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body: JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system: CHART_SYSTEM,messages:[...history,{role:"user",content:q}]})});
-      const data = await res.json();
-      const text = data.content?.find(b=>b.type==="text")?.text||"{}";
-      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
-      setMessages(p=>[...p,{role:"assistant",text:parsed.answer||"",chart:parsed.chart,insight:parsed.insight,rawJson:parsed}]);
-    } catch(e) { setMessages(p=>[...p,{role:"assistant",text:`Error: ${e.message}`}]); }
+      const res = await fetch("/api/ai/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body: JSON.stringify({teamId,question:q,boatId:boatId||undefined})});
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) setMessages(p=>[...p,{q,error:data?.error||`Error ${res.status}`}]);
+      else setMessages(p=>[...p,{q,answer:data.answer||"",figuresUsed:data.figuresUsed||[],caveats:data.caveats||[],logId:data.logId||null,rating:0,corr:"",corrOpen:false,saving:false,corrSaved:false}]);
+    } catch(e) { setMessages(p=>[...p,{q,error:e.message}]); }
     setLoading(false);
   };
-  const hasData = rows?.length > 0 || allVideos?.some(v=>v.twsAvg!=null);
+
+  const patchMsg = (i,patch)=> setMessages(p=>p.map((m,idx)=>idx===i?{...m,...patch}:m));
+  const sendFeedback = (logId,payload)=> fetch("/api/ai/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({logId,...payload})});
+
+  const rate = async (i,r) => {
+    const m = messages[i]; if(!m?.logId) return;
+    const next = m.rating===r?0:r;           // click the active thumb again to clear
+    patchMsg(i,{rating:next});
+    try{ await sendFeedback(m.logId,{rating:next}); }catch{/* best-effort */}
+  };
+  const saveCorrection = async (i) => {
+    const m = messages[i]; if(!m?.logId) return;
+    patchMsg(i,{saving:true});
+    try{ await sendFeedback(m.logId,{correction:m.corr||""}); patchMsg(i,{saving:false,corrOpen:false,corrSaved:true}); }
+    catch{ patchMsg(i,{saving:false}); }
+  };
+
+  const ready = !!teamId;
+  const thumb = (active,color)=>({background:active?color:"#071624",border:`1px solid ${color}${active?"":"40"}`,borderRadius:6,padding:"3px 9px",color:active?"#fff":color,cursor:"pointer",fontSize:12,lineHeight:1});
+
   return(
     <div style={{background:"#0A1929",border:"1px solid #8B5CF640",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
         <span style={{fontSize:14,color:"#8B5CF6"}}>✦</span>
-        <div style={{fontSize:11,fontWeight:600,color:"#94A3B8",letterSpacing:1,textTransform:"uppercase"}}>Ask AI — get an answer + chart</div>
-        {!hasData&&<span style={{fontSize:9,color:"#EF4444",marginLeft:"auto"}}>Load a session first</span>}
+        <div style={{fontSize:11,fontWeight:600,color:"#94A3B8",letterSpacing:1,textTransform:"uppercase"}}>Ask AI — performance data analysis</div>
+        <span style={{fontSize:9,color:"#475569",marginLeft:"auto"}}>Mistral · EU-hosted · private</span>
       </div>
-      {messages.length===0&&(
+      <div style={{fontSize:9,color:"#475569",marginBottom:12}}>Reasons over your team&apos;s trended runs &amp; setups. Rate answers to make it better.</div>
+      {!ready&&<div style={{fontSize:10,color:"#EF4444",marginBottom:10}}>Open a campaign boat first — analysis is scoped to your team&apos;s data.</div>}
+      {messages.length===0&&ready&&(
         <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:12}}>
-          {["Plot TWS vs SOG","How does heel change with wind?","Show polar % over time","Compare VMG across clips","Which TWA gives best VMG?","Show rudder vs heel scatter"].map(s=>(<button key={s} onClick={()=>{setInput(s);}} style={{background:"#071624",border:"1px solid #8B5CF640",borderRadius:5,padding:"4px 10px",color:"#8B5CF6",cursor:"pointer",fontSize:10}}>{s}</button>))}
+          {["Is our upwind VMG trending up?","Which keel cant gave best VMG?","Compare our forestay settings","Best rake for light air?","Did the A2 make us faster downwind?"].map(s=>(<button key={s} onClick={()=>setInput(s)} style={{background:"#071624",border:"1px solid #8B5CF640",borderRadius:5,padding:"4px 10px",color:"#8B5CF6",cursor:"pointer",fontSize:10}}>{s}</button>))}
         </div>
       )}
       {messages.length>0&&(
-        <div style={{maxHeight:480,overflowY:"auto",marginBottom:10,display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{maxHeight:520,overflowY:"auto",marginBottom:10,display:"flex",flexDirection:"column",gap:12}}>
           {messages.map((m,i)=>(
-            <div key={i}>
-              {m.role==="user"&&(<div style={{display:"flex",justifyContent:"flex-end"}}><div style={{background:"#1E3A5A",borderRadius:"8px 8px 2px 8px",padding:"6px 10px",fontSize:11,color:"#E2E8F0",maxWidth:"70%"}}>{m.text}</div></div>)}
-              {m.role==="assistant"&&(
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  {m.text&&<div style={{background:"#071624",borderRadius:"8px 8px 8px 2px",padding:"8px 12px",fontSize:11,color:"#E2E8F0",lineHeight:1.5,maxWidth:"85%"}}>{m.text}</div>}
-                  {m.chart&&<AIChart spec={m.chart} rows={rows} allVideos={allVideos}/>}
-                  {m.insight&&<div style={{fontSize:10,color:"#475569",padding:"4px 8px",borderLeft:"2px solid #8B5CF640"}}>💡 {m.insight}</div>}
-                </div>
-              )}
+            <div key={i} style={{display:"flex",flexDirection:"column",gap:6}}>
+              <div style={{display:"flex",justifyContent:"flex-end"}}><div style={{background:"#1E3A5A",borderRadius:"8px 8px 2px 8px",padding:"6px 10px",fontSize:11,color:"#E2E8F0",maxWidth:"75%"}}>{m.q}</div></div>
+              {m.error&&<div style={{background:"#3A1520",borderRadius:8,padding:"8px 12px",fontSize:11,color:"#FCA5A5"}}>⚠ {m.error}</div>}
+              {m.answer!=null&&!m.error&&(<>
+                <div style={{background:"#071624",borderRadius:"8px 8px 8px 2px",padding:"9px 12px",fontSize:11.5,color:"#E2E8F0",lineHeight:1.55,whiteSpace:"pre-wrap"}}>{m.answer}</div>
+                {m.figuresUsed?.length>0&&(
+                  <div style={{fontSize:9.5,color:"#64748B",padding:"0 4px"}}>
+                    <div style={{textTransform:"uppercase",letterSpacing:0.5,color:"#475569",marginBottom:2}}>Figures used</div>
+                    {m.figuresUsed.map((f,k)=>(<div key={k}>· {f}</div>))}
+                  </div>
+                )}
+                {m.caveats?.length>0&&(
+                  <div style={{fontSize:10,color:"#D97706",padding:"4px 8px",borderLeft:"2px solid #B4530980",background:"#1F160A"}}>
+                    {m.caveats.map((c,k)=>(<div key={k}>⚠ {c}</div>))}
+                  </div>
+                )}
+                {m.logId?(
+                  <div style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#64748B",padding:"2px 4px"}}>
+                    <span>Was this useful?</span>
+                    <button title="Helpful" onClick={()=>rate(i,1)} style={thumb(m.rating===1,"#22C55E")}>👍</button>
+                    <button title="Not helpful" onClick={()=>rate(i,-1)} style={thumb(m.rating===-1,"#EF4444")}>👎</button>
+                    <button onClick={()=>patchMsg(i,{corrOpen:!m.corrOpen})} style={{background:"none",border:"none",color:"#8B5CF6",cursor:"pointer",fontSize:10,marginLeft:2}}>✎ suggest a better answer</button>
+                    {m.corrSaved&&<span style={{color:"#22C55E",marginLeft:"auto"}}>saved ✓</span>}
+                  </div>
+                ):(
+                  <div style={{fontSize:9,color:"#475569",padding:"2px 4px"}}>feedback unavailable — answer wasn&apos;t logged (run the ai_query_log migration)</div>
+                )}
+                {m.logId&&m.corrOpen&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:5,padding:"0 4px"}}>
+                    <textarea value={m.corr} onChange={e=>patchMsg(i,{corr:e.target.value})} placeholder="Write the ideal answer a coach would give…" rows={3} style={{background:"#071624",border:"1px solid #8B5CF640",borderRadius:6,padding:"7px 10px",color:"#E2E8F0",fontSize:11,outline:"none",resize:"vertical"}}/>
+                    <div><button onClick={()=>saveCorrection(i)} disabled={m.saving} style={{background:"#8B5CF6",border:"none",borderRadius:6,padding:"5px 12px",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:10}}>{m.saving?"Saving…":"Save correction"}</button></div>
+                  </div>
+                )}
+              </>)}
             </div>
           ))}
-          {loading&&<div style={{fontSize:10,color:"#8B5CF6",padding:"4px 8px"}}>Thinking…</div>}
+          {loading&&<div style={{fontSize:10,color:"#8B5CF6",padding:"4px 8px"}}>Analysing…</div>}
           <div ref={bottomRef}/>
         </div>
       )}
       <div style={{display:"flex",gap:6}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!loading&&ask()} placeholder={hasData?"Ask about your sailing data…":"Load a session in Videos first"} disabled={!hasData||loading} style={{flex:1,background:"#071624",border:"1px solid #8B5CF640",borderRadius:6,padding:"7px 11px",color:"#E2E8F0",fontSize:11,outline:"none",opacity:hasData?1:0.4}}/>
-        <button onClick={ask} disabled={!hasData||loading||!input.trim()} style={{background:loading||!input.trim()?"#1E3A5A":"#8B5CF6",border:"none",borderRadius:6,padding:"7px 14px",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>{loading?"…":"Ask"}</button>
-        {messages.length>0&&<button onClick={()=>setMessages([])} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 10px",color:"#475569",cursor:"pointer",fontSize:10}}>Clear</button>}
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!loading&&ask()} placeholder={ready?"Ask about your team's performance data…":"Open a campaign boat first"} disabled={!ready||loading} style={{flex:1,background:"#071624",border:"1px solid #8B5CF640",borderRadius:6,padding:"7px 11px",color:"#E2E8F0",fontSize:11,outline:"none",opacity:ready?1:0.4}}/>
+        <button onClick={ask} disabled={!ready||loading||!input.trim()} style={{background:loading||!input.trim()?"#1E3A5A":"#8B5CF6",border:"none",borderRadius:6,padding:"7px 14px",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>{loading?"…":"Ask"}</button>
+        {messages.length>0&&<button onClick={()=>setMessages([])} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 10px",color:"#64748B",cursor:"pointer",fontSize:10}}>Clear</button>}
       </div>
     </div>
   );
@@ -3844,13 +3909,13 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       {polar ? (
         <div style={{marginBottom:6,display:"flex",alignItems:"center",gap:8,fontSize:9,color:"#F59E0B",flexWrap:"wrap"}}>
           <span style={{background:"#F59E0B12",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px",fontWeight:600}}>⬡ {polar.filename} · TWS {polar.tws?.[0]}–{polar.tws?.[polar.tws.length-1]} kn</span>
-          <span style={{color:"#475569"}}>coloured by VMG% (±20° of target TWA) · BSP% (reaching)</span>
+          <span style={{color:"#64748B"}}>coloured by VMG% (±20° of target TWA) · BSP% (reaching)</span>
         </div>
       ) : (
-        <div style={{marginBottom:6,fontSize:9,color:"#475569"}}>No polar loaded — track in uniform blue. Upload a polar in Uploads tab.</div>
+        <div style={{marginBottom:6,fontSize:9,color:"#64748B"}}>No polar loaded — track in uniform blue. Upload a polar in Uploads tab.</div>
       )}
       <div ref={containerRef} style={{width:"100%",height:460,borderRadius:10,overflow:"hidden",border:"1px solid #1E3A5A",background:"#071624"}}/>
-      <div style={{display:"flex",gap:16,marginTop:6,flexWrap:"wrap",fontSize:10,color:"#475569",alignItems:"center"}}>
+      <div style={{display:"flex",gap:16,marginTop:6,flexWrap:"wrap",fontSize:10,color:"#64748B",alignItems:"center"}}>
         <span>{filteredRows.length.toLocaleString()} GPS pts{dayStart?" · DayStart–DayStop window":""}</span>
         <span>Distance: <strong style={{color:"#06B6D4"}}>{distNm} nm</strong></span>
         {dayStart&&<span>Start: <strong style={{color:"#22C55E"}}>{hmLocal(dayStart,tz)}</strong></span>}
@@ -3863,7 +3928,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 }
 
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
-function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true,canSeeAnalyticsData=true}){
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true,canSeeAnalyticsData=true,teamId=null,boatId=null}){
   const tz=useTz();
   const rows=logData?.rows||[];
   const noData=!rows.length;
@@ -3917,8 +3982,8 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const liveRow = playUtc && rows.length ? nearestRow(rows, playUtc) : null;
   const liveActive = liveRow && Math.abs(liveRow.utc - (playUtc||0)) < 60000;
 
-  const card=(label,val,unit,color)=>(<div style={{background:"#0A1929",border:`1px solid ${color}25`,borderRadius:8,padding:"12px 14px"}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace"}}>{val}<span style={{fontSize:11,color:"#475569",marginLeft:3}}>{unit}</span></div></div>);
-  const section=(title,children)=>(<div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"14px 16px",marginBottom:14}}><div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>{title}</div>{children}</div>);
+  const card=(label,val,unit,color)=>(<div style={{background:"#0A1929",border:`1px solid ${color}25`,borderRadius:8,padding:"12px 14px"}}><div style={{fontSize:9,color:"#4E5D71",letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace"}}>{val}<span style={{fontSize:11,color:"#64748B",marginLeft:3}}>{unit}</span></div></div>);
+  const section=(title,children)=>(<div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"14px 16px",marginBottom:14}}><div style={{fontSize:11,fontWeight:600,color:"#8A97A9",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>{title}</div>{children}</div>);
   // ── Prominent session date header ────────────────────────────────────────────
   // Analytics previously buried the session date inside a dense status pill,
   // which on mobile wrapped awkwardly and left users unsure which day they
@@ -3948,7 +4013,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
           display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
           <div style={{fontSize:18,lineHeight:1}}>📅</div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontSize:10,color:"#64748B",letterSpacing:1.5,textTransform:"uppercase",fontWeight:600}}>Session</div>
+            <div style={{fontSize:10,color:"#8A97A9",letterSpacing:1.5,textTransform:"uppercase",fontWeight:600}}>Session</div>
             <div style={{fontSize:15,fontWeight:700,color:"#E2E8F0",marginTop:1,
               overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
               {sessionDateLabel}
@@ -4007,9 +4072,9 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
               {[["TWS",liveRow.tws,"kn","#7DD3FC"],["TWA",liveRow.twa,"°","#7DD3FC"],["BSP",liveRow.bsp,"kn","#10B981"],["SOG",liveRow.sog,"kn","#FBBF24"],["VMG",liveRow.vmg,"kn","#22C55E"],["Heel",liveRow.heel,"°","#F97316"]].map(([l,v,u,c])=>(
                 <div key={l} style={{display:"flex",alignItems:"baseline",gap:3}}>
-                  <span style={{fontSize:9,color:"#334155"}}>{l}</span>
+                  <span style={{fontSize:9,color:"#4E5D71"}}>{l}</span>
                   <span style={{fontSize:13,fontWeight:700,fontFamily:"monospace",color:c}}>{R(v,l==="TWA"||l==="Heel"?0:1)}</span>
-                  <span style={{fontSize:9,color:"#475569"}}>{u}</span>
+                  <span style={{fontSize:9,color:"#64748B"}}>{u}</span>
                 </div>
               ))}
             </div>
@@ -4017,10 +4082,10 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
         )}
 
         {noData ? (
-          <div style={{textAlign:"center",padding:"50px 20px",color:"#334155"}}>
+          <div style={{textAlign:"center",padding:"50px 20px",color:"#4E5D71"}}>
             <div style={{fontSize:32,marginBottom:12,opacity:0.3}}>📊</div>
-            <div style={{fontSize:13,color:"#475569",marginBottom:6}}>No log data loaded</div>
-            <div style={{fontSize:11,color:"#334155",marginBottom:16}}>Select a session in the Library sidebar — click any date to load its log and event data.</div>
+            <div style={{fontSize:13,color:"#64748B",marginBottom:6}}>No log data loaded</div>
+            <div style={{fontSize:11,color:"#4E5D71",marginBottom:16}}>Select a session in the Library sidebar — click any date to load its log and event data.</div>
             <div style={{display:"flex",gap:8,justifyContent:"center"}}>
               <button onClick={()=>setActiveTab("library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Videos</button>
               <button onClick={()=>setActiveTab("upload")} style={{background:"#1E3A5A",border:"none",borderRadius:8,padding:"8px 20px",color:"#94A3B8",fontWeight:700,cursor:"pointer",fontSize:12}}>Re-import CSV</button>
@@ -4093,32 +4158,32 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                       {viewRange&&<button onClick={()=>setViewRange(null)} style={{...btnStyle,color:"#06B6D4",borderColor:"#06B6D440"}}>↩ Full session</button>}
                       {clipStart&&clipEnd&&<button onClick={()=>{ const pad=(clipEnd-clipStart)*0.15; setViewRange([Math.max(allX0,clipStart-pad),Math.min(allX1,clipEnd+pad)]); }} style={{...btnStyle,color:"#F59E0B",borderColor:"#F59E0B40"}}>▶ Clip window</button>}
                       <div style={{flex:1}}/>
-                      <span style={{fontSize:9,color:"#475569",fontFamily:"monospace"}}>
+                      <span style={{fontSize:9,color:"#64748B",fontFamily:"monospace"}}>
                         {viewRange?`${fmtUTC(vx0)} – ${fmtUTC(vx1)} UTC · ${fmtSpan(span)}`:`Full session · ${fmtSpan(fullSpan)}`}
                       </span>
-                      <span style={{fontSize:9,color:"#334155"}}>scroll to zoom · drag to pan</span>
+                      <span style={{fontSize:9,color:"#4E5D71"}}>scroll to zoom · drag to pan</span>
                     </div>
                   );
                 })()}
                 {/* ── Charts row 1: TWS + SOG ─────────────────────────────── */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                   <div>
-                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div>
+                    <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div>
                     <LineChart points={twsPts} color="#7DD3FC" height={110} yLabel="TWS kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                   <div>
-                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div>
+                    <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div>
                     <LineChart points={sogPts} color="#FBBF24" height={110} yLabel="SOG kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                 </div>
                 {/* ── Charts row 2: Heel + Polar % ─────────────────────────── */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                   <div>
-                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div>
+                    <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div>
                     <LineChart points={heelPts} color="#F97316" height={110} yLabel="Heel °" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                   <div>
-                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div>
+                    <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div>
                     <PerfChart rows={rows} height={110} viewRange={viewRange} onViewRange={setViewRange} playUtc={playUtc}/>
                   </div>
                 </div>
@@ -4188,7 +4253,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               const heelPts2=upRows.filter(r=>Math.abs(r.heel)>0.5&&Math.abs(r.heel)<60)
                 .map(r=>({x:r.tws,y:Math.abs(r.heel),twa:r.twa}));
 
-              const noData=<div style={{height:170,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:10}}>No upwind data{!hasPhases?" — re-import event file":""}</div>;
+              const noData=<div style={{height:170,display:"flex",alignItems:"center",justifyContent:"center",color:"#4E5D71",fontSize:10}}>No upwind data{!hasPhases?" — re-import event file":""}</div>;
               return(
                 <>
                   <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
@@ -4202,7 +4267,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                       {rcPhases.length>0&&<span style={{fontSize:9,color:"#06B6D4",background:"#06B6D410",border:"1px solid #06B6D430",borderRadius:3,padding:"2px 7px"}}>
                         ↗ {rcPhases.length} reaching · {rcMin} min
                       </span>}
-                      <span style={{fontSize:9,color:"#475569"}}>{upRows.length.toLocaleString()} upwind pts</span>
+                      <span style={{fontSize:9,color:"#64748B"}}>{upRows.length.toLocaleString()} upwind pts</span>
                     </> : (
                       <span style={{fontSize:9,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px"}}>
                         ⚠ No event file — showing all rows unfiltered
@@ -4212,19 +4277,19 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                     <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>a) VMG % OF POLAR OPTIMAL — vs TWS</div>
+                      <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>a) VMG % OF POLAR OPTIMAL — vs TWS</div>
                       {vmgPts.length>5?<XYPlot points={vmgPts} xLabel="TWS (kn)" yLabel="VMG %" color="#22C55E" height={170} showTrend yLines={[100]}/>:noData}
                     </div>
                     <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>b) TARGET BSP % (Vs_targ%) — vs TWS</div>
+                      <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>b) TARGET BSP % (Vs_targ%) — vs TWS</div>
                       {tgtPts.length>5?<XYPlot points={tgtPts} xLabel="TWS (kn)" yLabel="Target BSP %" color="#10B981" height={170} showTrend yLines={[100]}/>:noData}
                     </div>
                     <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>c) RUDDER ANGLE (|°|) — vs TWS</div>
+                      <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>c) RUDDER ANGLE (|°|) — vs TWS</div>
                       {rudPts.length>5?<XYPlot points={rudPts} xLabel="TWS (kn)" yLabel="Rudder |°|" color="#FBBF24" height={170} showTrend/>:noData}
                     </div>
                     <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>d) HEEL ANGLE (|°|) — vs TWS</div>
+                      <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>d) HEEL ANGLE (|°|) — vs TWS</div>
                       {heelPts2.length>5?<XYPlot points={heelPts2} xLabel="TWS (kn)" yLabel="Heel |°|" color="#F97316" height={170} showTrend/>:noData}
                     </div>
                   </div>
@@ -4235,22 +4300,22 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
                 <SpeedPolar rows={rows} width={280} height={280}/>
                 <div style={{flex:1}}>
-                  <div style={{fontSize:10,color:"#475569",marginBottom:10}}>Each dot is one second of sailing. Radial distance = BSP, angle = TWA. Colour = wind band.</div>
+                  <div style={{fontSize:10,color:"#64748B",marginBottom:10}}>Each dot is one second of sailing. Radial distance = BSP, angle = TWA. Colour = wind band.</div>
                   {[["Upwind (30-60°)",30,60],["Beam (60-120°)",60,120],["Downwind (120-180°)",120,180]].map(([label,lo,hi])=>{
                     const zone=rows.filter(r=>Math.abs(r.twa)>=lo&&Math.abs(r.twa)<hi);
                     const avgBsp=zone.length?zone.reduce((s,r)=>s+r.bsp,0)/zone.length:0;
                     const avgTws=zone.length?zone.reduce((s,r)=>s+r.tws,0)/zone.length:0;
                     const pct=rows.length?(zone.length/rows.length*100):0;
-                    return(<div key={label} style={{background:"#071624",borderRadius:6,padding:"8px 10px",marginBottom:6}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:10,color:"#94A3B8"}}>{label}</span><span style={{fontSize:9,color:"#475569"}}>{pct.toFixed(0)}% of session</span></div><div style={{display:"flex",gap:16}}><span style={{fontSize:11,fontFamily:"monospace",color:"#10B981"}}>BSP {R(avgBsp)} kn</span><span style={{fontSize:11,fontFamily:"monospace",color:"#7DD3FC"}}>TWS {R(avgTws)} kn</span><span style={{fontSize:11,fontFamily:"monospace",color:"#475569"}}>{zone.length.toLocaleString()} pts</span></div></div>);
+                    return(<div key={label} style={{background:"#071624",borderRadius:6,padding:"8px 10px",marginBottom:6}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:10,color:"#94A3B8"}}>{label}</span><span style={{fontSize:9,color:"#64748B"}}>{pct.toFixed(0)}% of session</span></div><div style={{display:"flex",gap:16}}><span style={{fontSize:11,fontFamily:"monospace",color:"#10B981"}}>BSP {R(avgBsp)} kn</span><span style={{fontSize:11,fontFamily:"monospace",color:"#7DD3FC"}}>TWS {R(avgTws)} kn</span><span style={{fontSize:11,fontFamily:"monospace",color:"#64748B"}}>{zone.length.toLocaleString()} pts</span></div></div>);
                   })}
                 </div>
               </div>
             ))}
             {canSeeAnalyticsData && xmlData?.tackJibes?.length>0&&section(`Manoeuvre analysis — ${xmlData.tackJibes.length} total`,(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>MANOEUVRES BY WIND STRENGTH</div><ManoeuvreChart tackJibes={xmlData.tackJibes} logRows={rows} width={360} height={130}/></div>
+                <div><div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>MANOEUVRES BY WIND STRENGTH</div><ManoeuvreChart tackJibes={xmlData.tackJibes} logRows={rows} width={360} height={130}/></div>
                 <div>
-                  <div style={{fontSize:9,color:"#475569",marginBottom:10,letterSpacing:1}}>MANOEUVRE BREAKDOWN</div>
+                  <div style={{fontSize:9,color:"#64748B",marginBottom:10,letterSpacing:1}}>MANOEUVRE BREAKDOWN</div>
                   {[["Valid tacks",tacks,"#1D9E75"],["Valid gybes",gybes,"#7F77DD"],["Top mark roundings",topMarks,"#EF4444"],["Leeward gates",marks-topMarks,"#8B5CF6"],["Invalid / flagged",(xmlData.tackJibes.length-tacks-gybes),"#475569"]].map(([label,val,color])=>(<div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid #0F2030"}}><span style={{fontSize:11,color:"#94A3B8"}}>{label}</span><span style={{fontSize:13,fontWeight:700,fontFamily:"monospace",color}}>{val}</span></div>))}
                 </div>
               </div>
@@ -4383,7 +4448,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                                   yMax:forcedYMax,yMin:forcedYMin,xMin:xMinProp,xMax:xMaxProp,
                                   selectedTack=null,onTackClick=null}){
                 if(!series?.length||series.every(s=>!s.length)) return(
-                  <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:10}}>No data</div>
+                  <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#4E5D71",fontSize:10}}>No data</div>
                 );
                 const VB_W=400;
                 const pad={t:10,r:8,b:28,l:42};
@@ -4471,42 +4536,42 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                     ))}
                     {selectedTackIdx!=null&&(
                       <button onClick={()=>setSelectedTackIdx(null)}
-                        style={{background:"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 8px",color:"#475569",cursor:"pointer",fontSize:9}}>
+                        style={{background:"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"2px 8px",color:"#64748B",cursor:"pointer",fontSize:9}}>
                         ✕ clear
                       </button>
                     )}
-                    <span style={{fontSize:9,color:"#334155",marginLeft:4}}>Click line or legend to highlight · Red = tack moment</span>
+                    <span style={{fontSize:9,color:"#4E5D71",marginLeft:4}}>Click line or legend to highlight · Red = tack moment</span>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                     <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>a) BOAT SPEED (BSP kn)</div>
+                      <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>a) BOAT SPEED (BSP kn)</div>
                       <TackChart series={tackSeries.bsp} yLabel="BSP kn" color="#10B981" height={130}
                         selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>b) RUDDER ANGLE (|°|)</div>
+                      <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>b) RUDDER ANGLE (|°|)</div>
                       <TackChart series={tackSeries.rudder} yLabel="Rudder |°|" color="#FBBF24" height={130}
                         selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>c) RATE OF TURN (°/s  YawR)</div>
+                      <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>c) RATE OF TURN (°/s  YawR)</div>
                       <TackChart series={tackSeries.yawR} yLabel="YawR °/s" color="#8B5CF6" height={130}
                         selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>d) TRUE WIND ANGLE (|°|)</div>
+                      <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>d) TRUE WIND ANGLE (|°|)</div>
                       <TackChart series={tackSeries.twa} yLabel="TWA |°|" color="#7DD3FC" height={130}
                         selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                     </div>
                     {tackPolar&&tackSeries.vmgPct.some(s=>s.length>1)&&(
                       <div style={{gridColumn:"1/-1"}}>
-                        <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>e) POLAR VMG % — relative to tack moment</div>
+                        <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>e) POLAR VMG % — relative to tack moment</div>
                         <TackChart series={tackSeries.vmgPct} yLabel="VMG %" color="#22C55E" height={130}
                           yLines={[100]} yMin={0}
                           selectedTack={selectedTackIdx} onTackClick={setSelectedTackIdx}/>
                       </div>
                     )}
-                    {!tackPolar&&<div style={{gridColumn:"1/-1",fontSize:9,color:"#475569",padding:"8px 0"}}>
+                    {!tackPolar&&<div style={{gridColumn:"1/-1",fontSize:9,color:"#64748B",padding:"8px 0"}}>
                       ⚠ Upload polar file to enable VMG % chart
                     </div>}
                   </div>
@@ -4514,10 +4579,10 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                   {/* ── Cumulative VMG loss ──────────────────────────────────────── */}
                   {vmgLossSeries.length>0&&<>
                     <div style={{height:1,background:"#0F2030",margin:"16px 0 12px"}}/>
-                    <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>
+                    <div style={{fontSize:9,color:"#64748B",marginBottom:4,letterSpacing:1}}>
                       e) ACCUMULATED VMG LOSS (boat lengths) — baseline: avg VMG {BASELINE_START}s → {BASELINE_END}s before tack
                     </div>
-                    <div style={{fontSize:9,color:"#334155",marginBottom:8}}>
+                    <div style={{fontSize:9,color:"#4E5D71",marginBottom:8}}>
                       Negative = lost distance vs baseline upwind VMG · Positive = briefly faster than baseline ·
                       Final value at +{POST}s = total tack cost (boat lengths below zero)
                     </div>
@@ -4536,7 +4601,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                     <div style={{marginTop:12,overflowX:"auto"}}>
                       <table style={{width:"100%",borderCollapse:"collapse",fontSize:10}}>
                         <thead>
-                          <tr style={{color:"#475569",letterSpacing:1}}>
+                          <tr style={{color:"#64748B",letterSpacing:1}}>
                             <th style={{textAlign:"left",padding:"4px 8px",borderBottom:"1px solid #1E3A5A",fontWeight:600,fontSize:9}}>TACK</th>
                             <th style={{textAlign:"right",padding:"4px 8px",borderBottom:"1px solid #1E3A5A",fontWeight:600,fontSize:9}}>TIME (UTC)</th>
                             <th style={{textAlign:"right",padding:"4px 8px",borderBottom:"1px solid #1E3A5A",fontWeight:600,fontSize:9}}>BASELINE VMG</th>
@@ -4584,7 +4649,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                             const rColor=avg<3?"#10B981":avg<5?"#22C55E":avg<8?"#F59E0B":"#EF4444";
                             return(
                               <tr style={{borderTop:"2px solid #1E3A5A",background:"#071624"}}>
-                                <td colSpan={3} style={{padding:"5px 8px",color:"#64748B",fontSize:9,letterSpacing:1}}>SESSION AVERAGE</td>
+                                <td colSpan={3} style={{padding:"5px 8px",color:"#8A97A9",fontSize:9,letterSpacing:1}}>SESSION AVERAGE</td>
                                 <td style={{padding:"5px 8px",textAlign:"right",fontFamily:"monospace",fontWeight:700,color:rColor,fontSize:12}}>{avg.toFixed(1)} BL</td>
                                 <td style={{padding:"5px 8px",textAlign:"right",color:rColor,fontSize:9}}>{avg<3?"★★★":avg<5?"★★":avg<8?"★":""}</td>
                               </tr>
@@ -4602,13 +4667,13 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 {allVideos.filter(v=>v.twsAvg!=null).map(v=>(
                   <div key={v.id} onClick={()=>{onSelectVideo(v);setActiveTab("library");}} style={{display:"flex",alignItems:"center",gap:10,background:"#071624",borderRadius:6,padding:"7px 10px",cursor:"pointer",border:"1px solid #1E3A5A"}}>
                     <div style={{fontSize:10,color:"#E2E8F0",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
-                    {[["TWS",v.twsAvg,"kt","#7DD3FC"],["TWA",v.twaAvg,"°","#7DD3FC"],["VMG",v.vmgAvg,"kt","#22C55E"],["Pol",v.polpercAvg,"%",v.polpercAvg==null?"#22C55E":v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"],["Tgt",v.vsTargPercAvg,"%",v.vsTargPercAvg==null?"#22C55E":v.vsTargPercAvg>=110?"#166534":v.vsTargPercAvg>=90?"#22C55E":"#EF4444"]].map(([l,val,u,c])=>(<div key={l} style={{textAlign:"center",minWidth:42}}><div style={{fontSize:8,color:"#334155"}}>{l}</div><div style={{fontSize:11,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}{u}</div></div>))}
-                    <div style={{fontSize:9,color:"#334155"}}>→</div>
+                    {[["TWS",v.twsAvg,"kt","#7DD3FC"],["TWA",v.twaAvg,"°","#7DD3FC"],["VMG",v.vmgAvg,"kt","#22C55E"],["Pol",v.polpercAvg,"%",v.polpercAvg==null?"#22C55E":v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"],["Tgt",v.vsTargPercAvg,"%",v.vsTargPercAvg==null?"#22C55E":v.vsTargPercAvg>=110?"#166534":v.vsTargPercAvg>=90?"#22C55E":"#EF4444"]].map(([l,val,u,c])=>(<div key={l} style={{textAlign:"center",minWidth:42}}><div style={{fontSize:8,color:"#4E5D71"}}>{l}</div><div style={{fontSize:11,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}{u}</div></div>))}
+                    <div style={{fontSize:9,color:"#4E5D71"}}>→</div>
                   </div>
                 ))}
               </div>
             ))}
-            {canUseAI && <AIChatPanel rows={rows} allVideos={allVideos}/>}
+            {canUseAI && <AIChatPanel teamId={teamId} boatId={boatId}/>}
           </>
         )}
       </div>
@@ -4667,7 +4732,7 @@ function ShareButton({ video, canShare }){
   if(!canShare) return null;
 
   if(!shareable) return (
-    <div style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"8px 10px",marginTop:14,fontSize:10,color:"#475569"}}>
+    <div style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"8px 10px",marginTop:14,fontSize:10,color:"#64748B"}}>
       Upload this clip to the cloud before sharing — the viewer streams it from there.
     </div>
   );
@@ -4684,7 +4749,7 @@ function ShareButton({ video, canShare }){
       ) : (
         <div style={{background:"#0A1929",border:"1px solid #06B6D440",borderRadius:7,padding:"11px 12px"}}>
           <div style={{fontSize:11,fontWeight:700,color:"#06B6D4",marginBottom:7}}>Share this clip</div>
-          <div style={{fontSize:10,color:"#64748B",lineHeight:1.5,marginBottom:9}}>
+          <div style={{fontSize:10,color:"#8A97A9",lineHeight:1.5,marginBottom:9}}>
             Anyone with the link can watch this one clip — no login. Nothing else about the
             session, boat or team is reachable from it.
           </div>
@@ -4708,12 +4773,12 @@ function ShareButton({ video, canShare }){
               {busy?"Creating…":"Create link + copy"}
             </button>
             <button onClick={()=>setOpen(false)}
-              style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 12px",color:"#64748B",fontSize:11,cursor:"pointer"}}>Close</button>
+              style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 12px",color:"#8A97A9",fontSize:11,cursor:"pointer"}}>Close</button>
           </div>
 
           {live.length>0 && (
             <div style={{marginTop:10,borderTop:"1px solid #1E3A5A",paddingTop:8}}>
-              <div style={{fontSize:9,color:"#475569",letterSpacing:1,marginBottom:5}}>ACTIVE LINKS</div>
+              <div style={{fontSize:9,color:"#64748B",letterSpacing:1,marginBottom:5}}>ACTIVE LINKS</div>
               {live.map(sh=>(
                 <div key={sh.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                   <button onClick={()=>{try{navigator.clipboard?.writeText(`${window.location.origin}/share/${sh.token}`);}catch{}}}
@@ -4765,11 +4830,11 @@ function DeleteButton({video, cloudStatus, onDeleted}){
   return(
     <div style={{background:"#0A1929",border:"1px solid #EF444440",borderRadius:7,padding:"12px 14px",marginTop:14}}>
       <div style={{fontSize:11,color:"#EF4444",fontWeight:600,marginBottom:4}}>Delete "{video.title}"?</div>
-      <div style={{fontSize:10,color:"#475569",marginBottom:12}}>{isLocal && "Removes video blob from your browser (IndexedDB). "}{hasStream && "Choose whether to also remove from Bunny Stream. "}{!isLocal && !hasStream && "This is a cloud-only entry — no local blob to remove."}</div>
+      <div style={{fontSize:10,color:"#64748B",marginBottom:12}}>{isLocal && "Removes video blob from your browser (IndexedDB). "}{hasStream && "Choose whether to also remove from Bunny Stream. "}{!isLocal && !hasStream && "This is a cloud-only entry — no local blob to remove."}</div>
       <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
         {isLocal && hasStream && cloudStatus?.available && (<button onClick={()=>execute(true)} style={{flex:1,background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"7px 0",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:600}}>Delete local + cloud</button>)}
         <button onClick={()=>execute(false)} style={{flex:1,background:"#1E3A5A",border:"1px solid #2D4A6A",borderRadius:6,padding:"7px 0",color:"#94A3B8",cursor:"pointer",fontSize:11}}>{hasStream && cloudStatus?.available ? "Local only" : "Confirm delete"}</button>
-        <button onClick={()=>setArmed(false)} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 10px",color:"#475569",cursor:"pointer",fontSize:11}}>Cancel</button>
+        <button onClick={()=>setArmed(false)} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 10px",color:"#64748B",cursor:"pointer",fontSize:11}}>Cancel</button>
       </div>
     </div>
   );
@@ -4823,7 +4888,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                 {s.date===TODAY()?"Today":fmtDate_(s.date)}
               </div>
               {ev&&<div style={{fontSize:11,color:"#EF4444",fontWeight:700,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>🏁 {ev.event} Day {ev.dayN}</div>}
-              <div style={{fontSize:12,color:"#475569",marginTop:2}}>
+              <div style={{fontSize:12,color:"#64748B",marginTop:2}}>
                 {s.videoCount||0} clips{s.hasLog?" · log":""}{s.hasXml?" · events":""}
                 {s.location?` · ${s.location}`:""}
               </div>
@@ -4951,9 +5016,9 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
           );
         })()}
         {displayed.length===0&&(
-          <div style={{textAlign:"center",padding:"60px 20px",color:"#334155"}}>
+          <div style={{textAlign:"center",padding:"60px 20px",color:"#4E5D71"}}>
             <div style={{fontSize:40,marginBottom:12,opacity:0.3}}>📹</div>
-            <div style={{fontSize:14,color:"#475569"}}>No clips for this session</div>
+            <div style={{fontSize:14,color:"#64748B"}}>No clips for this session</div>
           </div>
         )}
         {(()=>{
@@ -4963,7 +5028,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
             const vids=seen.get(date);
             return(
               <div key={date} style={{marginBottom:20}}>
-                <div style={{fontSize:12,fontWeight:700,color:"#475569",marginBottom:8,padding:"0 4px"}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#64748B",marginBottom:8,padding:"0 4px"}}>
                   {date===TODAY()?"Today":fmtDate_(date)} · {vids.length} clip{vids.length!==1?"s":""}
                 </div>
                 {/* Mobile: single column list with horizontal thumb */}
@@ -4998,7 +5063,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                               style={{display:"block",width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}} muted preload="none"/>
                           : <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:18}}>📹</div>}
                       <div style={{position:"absolute",bottom:2,right:4,background:"rgba(0,0,0,0.8)",
-                        borderRadius:2,padding:"0 3px",fontSize:9,color:"#64748B",fontFamily:"monospace"}}>
+                        borderRadius:2,padding:"0 3px",fontSize:9,color:"#8A97A9",fontFamily:"monospace"}}>
                         {v.duration?fmtT(v.duration):"--:--"}
                       </div>
                     </div>
@@ -5060,7 +5125,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         </div>
                       );
                     })()}
-                    <div style={{display:"flex",alignItems:"center",padding:"0 10px",color:"#334155",fontSize:18}}>›</div>
+                    <div style={{display:"flex",alignItems:"center",padding:"0 10px",color:"#4E5D71",fontSize:18}}>›</div>
                   </div>
                 ))}
               </div>
@@ -5189,7 +5254,8 @@ function MobileShell(props){
               setActiveTab={setActiveTab} activeDate={props.activeDate}
               onSelectDate={props.onSelectDate}
               playUtc={props.playUtc} visible={activeTab==="analytics"} photos={props.photos}
-              canUseAI={props.canUseAI} canSeeAnalyticsData={props.canSeeAnalyticsData}/></ErrorBoundary>
+              canUseAI={props.canUseAI} canSeeAnalyticsData={props.canSeeAnalyticsData}
+              teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId}/></ErrorBoundary>
           </div>
         )}
 
@@ -5252,8 +5318,8 @@ function MobileShell(props){
                 {title:"Cloud",items:[`Storage: ${props.cloudStatus?.storage?"✓":"—"}`,`Stream: ${props.cloudStatus?.stream?"✓":"—"}`]},
               ].map(c=>(
                 <div key={c.title} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:14}}>
-                  <div style={{fontSize:12,fontWeight:600,color:"#64748B",marginBottom:8}}>{c.title}</div>
-                  {c.items.map((item,i)=><div key={i} style={{fontSize:12,color:"#334155",padding:"4px 0",borderBottom:"1px solid #0F2030"}}>{item}</div>)}
+                  <div style={{fontSize:12,fontWeight:600,color:"#8A97A9",marginBottom:8}}>{c.title}</div>
+                  {c.items.map((item,i)=><div key={i} style={{fontSize:12,color:"#4E5D71",padding:"4px 0",borderBottom:"1px solid #0F2030"}}>{item}</div>)}
                 </div>
               ))}
               {/* Storage management */}
@@ -5352,7 +5418,10 @@ function SSAApp(){
   // TDZ "Cannot access 'P' before initialization" in the Vercel production
   // build (caught Mar 2026 prerender).
   const tagSuggestionList = useMemo(() => {
-    const set = new Set(sessionTagList);
+    // Always offer the manual racing events (topmark/gate/spin-hoist/spin-drop) so
+    // a coach can add one the auto-tagger missed, even on a fresh session where no
+    // clip carries them yet.
+    const set = new Set([...MANUAL_EVENT_TAGS, ...sessionTagList]);
     for (const v of allVideos) {
       if (v.sessionDate !== activeDate) continue;
       for (const t of (v.tags || [])) {
@@ -6263,11 +6332,16 @@ function SSAApp(){
       const videoDates=vids.map(v=>v.sessionDate).filter(Boolean).sort();
       const latestVideoDate=videoDates.length?videoDates[videoDates.length-1]:null;
       const latestDate=latestVideoDate||localSessions[0]?.date||today;
-      const isRecent=(date)=>date===today||date===latestDate;
-      // On mobile: skip expensive enrichVideo (requires full log read) for old sessions
+      // The RECENT WORKING SET: today, yesterday, and the last day that has video.
+      // enrichVideo does a full per-day log read, so enriching every past session
+      // on load made startup grow with the season. Enrich only the recent window
+      // (ALL platforms now, not just mobile); older clips render from metadata and
+      // are enriched on demand the moment their day is opened (loadDate). Same
+      // window the sync paths use — see recentSyncDates().
+      const isRecent=(date)=>date===today||date===YESTERDAY()||date===latestDate;
       const enriched=await Promise.all(vids.map(async v=>{
         const d=v.sessionDate||today;
-        if(isMobile && !isRecent(d)) return v; // mobile: skip log read for old clips
+        if(!isRecent(d)) return v; // skip the log read for old clips
         const log=await getLogData(d);
         const xml=await getXmlData(d);
         return enrichVideo(v,log,xml);
@@ -7151,7 +7225,12 @@ function SSAApp(){
   const flushOnWifi = useCallback(() => {
     if (!isMobile || !cloudStatus?.available || !perms.canImport) return;
     if (!onWifi()) return;
-    const held = allVideos.filter(v => !v.hasProxy && v.hasLocalBlob);
+    // Only auto-push clips from the recent window. An old clip that never uploaded
+    // (e.g. left behind by the Android blob bug) must NOT be re-attempted on every
+    // Wi-Fi flush for the rest of the season — open its day and use Upload to push
+    // it deliberately.
+    const recent = recentSyncDates(allVideos);
+    const held = allVideos.filter(v => !v.hasProxy && v.hasLocalBlob && recent.has(v.sessionDate || TODAY()));
     if (!held.length) return;
     addLog(`📶 Wi-Fi — uploading ${held.length} held clip${held.length === 1 ? '' : 's'}…`);
     enqueueAutoSync(held, activeDate);
@@ -7229,10 +7308,11 @@ function SSAApp(){
     setAiLoading(true);setAiResult(null);
     try{
       const vl=allVideos.map(v=>({id:v.id,title:v.title,date:v.sessionDate,source:v.source,tags:v.tags||[],tws:v.twsAvg!=null?+R(v.twsAvg):null,twa:v.twaAvg!=null?+R(v.twaAvg,0):null,vmg:v.vmgAvg!=null?+R(v.vmgAvg):null,polperc:v.polpercAvg!=null?+R(v.polpercAvg,0):null,vsTargPerc:v.vsTargPercAvg!=null?+R(v.vsTargPercAvg,0):null,sog:v.sogAvg!=null?+R(v.sogAvg):null}));
-      const systemPrompt=`You are the AI assistant for Shared Sailing Analytics. Fields per clip: id, title, date, tags, tws, twa, vmg, polperc, vsTargPerc, sog. Library: ${JSON.stringify(vl)}\nReturn ONLY valid JSON: {"matches":[],"explanation":"","insight":""}`;
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system:systemPrompt,messages:[{role:"user",content:aiQuery}]})});
-      const data=await res.json();const text=data.content?.find(b=>b.type==="text")?.text||"{}";
-      setAiResult(JSON.parse(text.replace(/```json|```/g,"").trim()));
+      // Sovereign route (Scaleway Mistral, EU) — replaces the old browser→Anthropic call.
+      const res=await fetch("/api/ai/library-search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({query:aiQuery,clips:vl})});
+      const data=await res.json();
+      if(!res.ok) setAiResult({matches:[],explanation:data?.error||"Search unavailable.",insight:""});
+      else setAiResult({matches:data.matches||[],explanation:data.explanation||"",insight:data.insight||""});
     }catch{setAiResult({matches:[],explanation:"Search unavailable.",insight:""});}
     setAiLoading(false);
   }
@@ -7261,11 +7341,11 @@ function SSAApp(){
     });
 
   const allTags=[...new Set(allVideos.flatMap(v=>v.tags||[]))].sort();
-  const isManTag=t=>["tack","gybe","topmark","mark","race-start","upwind","reach","downwind"].includes(t);
+  const isManTag=t=>["tack","gybe","topmark","gate","spin-hoist","spin-drop","mark","race-start","upwind","reach","downwind"].includes(t);
   const toggleTag=t=>setSelectedTags(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
   const tabStyle=tab=>({padding:"6px 15px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600,border:"none",background:activeTab===tab?"#06B6D4":"transparent",color:activeTab===tab?"#000":"#64748B"});
 
-  if(!loaded)return<div style={{minHeight:"100vh",background:"#030F1A",display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:13}}>Loading Shared Sailing Analytics…</div>;
+  if(!loaded)return<div style={{minHeight:"100vh",background:"#030F1A",display:"flex",alignItems:"center",justifyContent:"center",color:"#4E5D71",fontSize:13}}>Loading Shared Sailing Analytics…</div>;
 
   // Event-file saillist reconciliation modal (rendered over both layouts).
   const sailDiffModal = sailDiff && campaignCfg?.teamId && campaignCfg?.boatId ? (
@@ -7387,14 +7467,14 @@ function SSAApp(){
         </div>
         )}
         <div style={{display:"flex",alignItems:"center",gap:5,background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"4px 8px"}}>
-          <span style={{fontSize:8,color:"#334155",letterSpacing:1}}>ROLE</span>
+          <span style={{fontSize:8,color:"#4E5D71",letterSpacing:1}}>ROLE</span>
           <select value={role} onChange={e=>setRole(e.target.value)} style={{background:"transparent",border:"none",color:"#94A3B8",fontSize:11,cursor:"pointer",outline:"none"}}>
             {Object.entries(ROLES).map(([k,v])=><option key={k} value={k} style={{background:"#0A1929"}}>{v.label}</option>)}
           </select>
         </div>
       </header>
 
-      {aiResult&&<div style={{background:"#0D1829",borderBottom:"1px solid #8B5CF620",padding:"7px 18px",display:"flex",gap:10,alignItems:"flex-start",flexShrink:0}}><span style={{color:"#8B5CF6",fontSize:12}}>✦</span><div style={{flex:1}}><div style={{fontSize:11,color:"#A78BFA",fontWeight:600,marginBottom:1}}>{aiResult.matches?.length||0} clips — {aiResult.explanation}</div>{aiResult.insight&&<div style={{fontSize:10,color:"#334155"}}>💡 {aiResult.insight}</div>}</div></div>}
+      {aiResult&&<div style={{background:"#0D1829",borderBottom:"1px solid #8B5CF620",padding:"7px 18px",display:"flex",gap:10,alignItems:"flex-start",flexShrink:0}}><span style={{color:"#8B5CF6",fontSize:12}}>✦</span><div style={{flex:1}}><div style={{fontSize:11,color:"#A78BFA",fontWeight:600,marginBottom:1}}>{aiResult.matches?.length||0} clips — {aiResult.explanation}</div>{aiResult.insight&&<div style={{fontSize:10,color:"#4E5D71"}}>💡 {aiResult.insight}</div>}</div></div>}
 
       {/* ── Tab panes ────────────────────────────────────────────────────────────
           Library and Analytics stay mounted after first visit (visibility:hidden
@@ -7582,7 +7662,7 @@ function SSAApp(){
                   syncErrors={syncErrors}
                 />
               )}
-              {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
+              {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#4E5D71",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
               {/* ── Clear-day nuke (admin/coach). Shown even with 0 local clips,
                      because ORPHAN cloud rows are exactly what needs clearing. ── */}
               {perms.canDelete && (
@@ -7593,7 +7673,7 @@ function SSAApp(){
                     <>
                       <span style={{fontSize:11,color:"#EF4444",fontWeight:600}}>Delete ALL clips for {fmtDate(activeDate)} — local, Bunny and cloud?</span>
                       <button onClick={handleClearDay} style={{background:"#EF4444",border:"none",borderRadius:6,padding:"5px 12px",color:"#fff",cursor:"pointer",fontSize:11,fontWeight:700}}>Delete all</button>
-                      <button onClick={()=>setClearDayArmed(false)} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:11}}>Cancel</button>
+                      <button onClick={()=>setClearDayArmed(false)} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#8A97A9",cursor:"pointer",fontSize:11}}>Cancel</button>
                     </>
                   ) : (
                     <button onClick={()=>setClearDayArmed(true)} style={{background:"none",border:"1px solid #EF444430",borderRadius:6,padding:"5px 12px",color:"#EF4444",cursor:"pointer",fontSize:11,opacity:0.75}}>🗑 Clear all clips for this day</button>
@@ -7611,10 +7691,10 @@ function SSAApp(){
                   {batchMode&&(
                     <>
                       <button onClick={()=>{const allIds=new Set(displayed.map(v=>v.id));setBatchSelected(allIds);}}
-                        style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:10}}>All</button>
+                        style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#8A97A9",cursor:"pointer",fontSize:10}}>All</button>
                       <button onClick={()=>setBatchSelected(new Set())}
-                        style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:10}}>None</button>
-                      <span style={{fontSize:11,color:"#475569",fontFamily:"monospace"}}>{batchSelected.size} selected</span>
+                        style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#8A97A9",cursor:"pointer",fontSize:10}}>None</button>
+                      <span style={{fontSize:11,color:"#64748B",fontFamily:"monospace"}}>{batchSelected.size} selected</span>
                       {batchSelected.size>0&&(
                         <>
                           <button onClick={()=>setBatchSyncOpen(o=>!o)}
@@ -7703,9 +7783,9 @@ function SSAApp(){
                   const boat=(vids[0]?.tags||[]).find(t=>!SKIP_HDR.has(t)&&!t.startsWith("tws-")&&!t.includes("-")&&t.length>2&&!/^\d/.test(t))||null;
                   return(<div key={date} style={{marginBottom:18}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,paddingBottom:5,borderBottom:"1px solid #0F2030"}}>
-                      <div style={{fontSize:11,fontWeight:700,color:"#64748B",fontFamily:"monospace"}}>{date===TODAY()?"Today":fmtDate(date)}</div>
+                      <div style={{fontSize:11,fontWeight:700,color:"#8A97A9",fontFamily:"monospace"}}>{date===TODAY()?"Today":fmtDate(date)}</div>
                       {location&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"#06B6D420",border:"1px solid #06B6D440",color:"#06B6D4",fontWeight:600}}>{location}</span>}
-                      {boat&&<span style={{fontSize:9,color:"#334155",fontFamily:"monospace"}}>{boat}</span>}
+                      {boat&&<span style={{fontSize:9,color:"#4E5D71",fontFamily:"monospace"}}>{boat}</span>}
                       <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{vids.length} clip{vids.length!==1?"s":""}</span>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8}}>
@@ -7959,7 +8039,7 @@ function SSAApp(){
                     <SrcBadge source={selectedVideo.source||"local"}/>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-                    <div style={{fontSize:10,color:"#334155"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
+                    <div style={{fontSize:10,color:"#4E5D71"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
                     {selectedVideo.tsSource&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:selectedVideo.tsSource==="mp4-meta"?"#1D9E7515":"#F59E0B15",border:`1px solid ${selectedVideo.tsSource==="mp4-meta"?"#1D9E7530":"#F59E0B30"}`,color:selectedVideo.tsSource==="mp4-meta"?"#1D9E75":"#F59E0B"}}>{selectedVideo.tsSource==="mp4-meta"?"📷 camera metadata":"⚠ file modified time"}</span>)}
                   </div>
                   {['admin','coach'].includes(effectiveRole) && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}} onSave={async(secs)=>{ await saveSyncForVideos([selectedVideo], secs); }}/></div>}
@@ -7982,10 +8062,10 @@ function SSAApp(){
                             const txt=[selectedVideo.name,selectedVideo.tsHow,selectedVideo.tsDiag].filter(Boolean).join('\n');
                             try{navigator.clipboard?.writeText(txt);}catch{}
                           }} style={{marginLeft:"auto",background:"none",border:"1px solid #1E3A5A",borderRadius:4,
-                            color:"#64748B",fontSize:9,padding:"1px 6px",cursor:"pointer"}}>Copy</button>
+                            color:"#8A97A9",fontSize:9,padding:"1px 6px",cursor:"pointer"}}>Copy</button>
                         </div>
                         {selectedVideo.tsHow&&<div style={{fontSize:10,color:"#94A3B8",lineHeight:1.4}}>{selectedVideo.tsHow}</div>}
-                        {selectedVideo.tsDiag&&<div style={{fontSize:9,color:"#64748B",fontFamily:"monospace",marginTop:3,wordBreak:"break-word",lineHeight:1.45}}>{selectedVideo.tsDiag}</div>}
+                        {selectedVideo.tsDiag&&<div style={{fontSize:9,color:"#8A97A9",fontFamily:"monospace",marginTop:3,wordBreak:"break-word",lineHeight:1.45}}>{selectedVideo.tsDiag}</div>}
                       </div>
                     )}
                     <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
@@ -8077,6 +8157,7 @@ function SSAApp(){
               playUtc={playUtc}
               visible={activeTab==="analytics"} photos={photos}
               canUseAI={canUseAI} canSeeAnalyticsData={canSeeAnalyticsData}
+              teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId}
             /></ErrorBoundary>
           </div>
         )}
