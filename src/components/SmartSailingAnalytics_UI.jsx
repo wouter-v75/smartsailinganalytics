@@ -737,6 +737,18 @@ const recentSyncDates=(videos)=>{
   const latestVideoDate=dates.length?dates[dates.length-1]:null;
   return new Set([TODAY(),YESTERDAY(),latestVideoDate].filter(Boolean));
 };
+// How many recent days-with-data get their thumbnails/media loaded at startup.
+// Older days stay metadata-only and load when opened from the timeline.
+const RECENT_DAYS=5;
+// The startup LOADING window: the 5 most-recent days that actually have video or
+// photo data (from the sessions index, which is newest-first). Anything older is
+// left to on-demand loading via loadDate — so startup cost stops growing with the
+// whole season of clips. `today` is always included even if its session row hasn't
+// been written yet.
+const recentDataDates=(sessions)=>{
+  const withData=(sessions||[]).filter(s=>(s.videoCount||0)>0||(s.photoCount||0)>0);
+  return new Set([TODAY(), ...withData.slice(0,RECENT_DAYS).map(s=>s.date)]);
+};
 const fmtDate=d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
 const fmtDateTime=u=>{if(!u)return"";const dt=new Date(u);const dd=String(dt.getUTCDate()).padStart(2,"0");const mm=String(dt.getUTCMonth()+1).padStart(2,"0");const yyyy=dt.getUTCFullYear();const hh=String(dt.getUTCHours()).padStart(2,"0");const mi=String(dt.getUTCMinutes()).padStart(2,"0");return`${dd}/${mm}/${yyyy} ${hh}:${mi}`;};
 const fmtSize=b=>b>1e9?`${(b/1e9).toFixed(1)} GB`:`${(b/1e6).toFixed(0)} MB`;
@@ -6332,16 +6344,22 @@ function SSAApp(){
       const videoDates=vids.map(v=>v.sessionDate).filter(Boolean).sort();
       const latestVideoDate=videoDates.length?videoDates[videoDates.length-1]:null;
       const latestDate=latestVideoDate||localSessions[0]?.date||today;
-      // The RECENT WORKING SET: today, yesterday, and the last day that has video.
-      // enrichVideo does a full per-day log read, so enriching every past session
-      // on load made startup grow with the season. Enrich only the recent window
-      // (ALL platforms now, not just mobile); older clips render from metadata and
-      // are enriched on demand the moment their day is opened (loadDate). Same
-      // window the sync paths use — see recentSyncDates().
-      const isRecent=(date)=>date===today||date===YESTERDAY()||date===latestDate;
+      // The RECENT WORKING SET: the last RECENT_DAYS days that actually have video
+      // OR photo data. Two costs are bounded to this window:
+      //   1. enrichVideo — a full per-day log read (was already gated to 3 days).
+      //   2. the blob poster — getAllVideos() makes an object URL for EVERY local
+      //      clip, and the library renders each as a <video>; over a season that's
+      //      hundreds of video elements loading at startup. Older clips keep their
+      //      row (so counts + timeline are intact) but drop the blob URL, so they
+      //      render a light placeholder until their day is opened, at which point
+      //      loadDate rebuilds the URL + thumbnail on demand.
+      const recentDates=recentDataDates(localSessions);
       const enriched=await Promise.all(vids.map(async v=>{
         const d=v.sessionDate||today;
-        if(!isRecent(d)) return v; // skip the log read for old clips
+        if(!recentDates.has(d)){
+          if(v.objectUrl){ try{ URL.revokeObjectURL(v.objectUrl); }catch{ /* */ } }
+          return { ...v, objectUrl:null }; // metadata only — loads when the day is opened
+        }
         const log=await getLogData(d);
         const xml=await getXmlData(d);
         return enrichVideo(v,log,xml);
