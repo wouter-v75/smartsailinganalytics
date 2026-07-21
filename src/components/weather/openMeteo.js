@@ -8,12 +8,25 @@
 // backend proxy. The verification feature (Phase 4) will introduce its own
 // backend routes for storing scoring results.
 
+// Coarse coverage box for the North-American models (USA / Canada / Caribbean).
+// Region-gates them (see `coverage` below): fetched + shown only for clicked
+// points inside it, hidden in Europe. Deliberately generous — a point inside the
+// box but outside a model's true native domain (e.g. HRRR/NAM are CONUS-only, so
+// a Caribbean or far-northern point) simply greys out there like any model with
+// no data at the click, so the box needn't trace each domain edge exactly.
+const NORTH_AMERICA = { latMin: 5, latMax: 75, lonMin: -172, lonMax: -50 }
+
 export const MODELS = {
   // mosModel = the Open-Meteo id the MOS correction was trained on
   // (wind-verification). Exact match for AROME/ARPEGE/ITALIA; mosApprox marks
   // models where the tool's variant differs slightly from the trained one
-  // (tool ICON = icon_seamless vs trained icon_eu; tool ECMWF default vs
-  // ecmwf_ifs025) — the correction is applied but flagged approximate.
+  // (tool ICON = icon_seamless vs trained icon_eu; tool ECMWF = ecmwf_ifs 9 km
+  // HRES vs trained ecmwf_ifs025) — the correction is applied but flagged approximate.
+  //
+  // `coverage` (optional) region-gates a model: it is fetched + shown ONLY for
+  // clicked points inside the box, and hidden elsewhere (used for the
+  // North-American models so they never appear in Europe). Models without a box
+  // are global — fetched everywhere and auto-greyed where they have no data.
   AROME: {
     key: 'AROME', label: 'AROME', subtitle: 'Météo-France 1.5 km',
     color: '#2e7d32',
@@ -27,16 +40,21 @@ export const MODELS = {
     upperHeight: 50,
   },
   ECMWF: {
-    key: 'ECMWF', label: 'ECMWF', subtitle: 'IFS 9 km',
+    key: 'ECMWF', label: 'ECMWF', subtitle: 'IFS HRES 9 km',
     color: '#1565c0',
     endpoint: 'https://api.open-meteo.com/v1/ecmwf',
-    modelParam: null,
-    metaModel: 'ecmwf_ifs025',
+    // ecmwf_ifs = the native 9 km HRES on the O1280 reduced-Gaussian grid (was the
+    // 0.25° default before). Global, so no coverage box. Live probe (2026-07-21):
+    // winds at 10/80/100/120/180/200 m all present, but ALL pressure levels null —
+    // the 9 km HRES on Open-Meteo carries no pressure data. So SURFACE winds use
+    // this 9 km model, while the Skew-T ECMWF sounding pulls pressure levels from
+    // the 0.25° ecmwf_ifs025 separately (fetchECMWFPressureLevels -> ecmwfSounding).
+    modelParam: 'ecmwf_ifs',
+    metaModel: 'ecmwf_ifs',
     mosModel: 'ecmwf_ifs025', mosApprox: true,
-    heights: [10, 100, 200],
+    heights: [10, 80, 100, 120, 180, 200],
     tableCols: [10, 100, 200],
     upperHeight: 100,
-    soundingLevels: [1000, 925, 850, 700, 600, 500],
   },
   ICON: {
     key: 'ICON', label: 'ICON', subtitle: 'DWD seamless',
@@ -83,6 +101,35 @@ export const MODELS = {
     tableCols: [10, 50, 100],
     upperHeight: 100,
   },
+  // ── North-American models (region-gated to NORTH_AMERICA) ──────────────────
+  // Fetched + shown ONLY when a clicked point is in the Americas box; hidden
+  // entirely in Europe (unlike the European regionals, which are global + auto-
+  // greyed). ECMWF stays global. Endpoint is the generic /v1/forecast (same as
+  // DMI/ITALIA) so the models= id is accepted regardless of family.
+  HRRR: {
+    key: 'HRRR', label: 'HRRR', subtitle: 'NOAA HRRR 3 km', color: '#d32f2f',
+    endpoint: 'https://api.open-meteo.com/v1/forecast',
+    modelParam: 'ncep_hrrr_conus',
+    metaModel: 'ncep_hrrr_conus',
+    coverage: NORTH_AMERICA,
+    fieldGrid: 16,                 // high-res wind-field sampling (3 km rapid-refresh)
+    heights: [10, 80],
+    tableCols: [10, 80],
+    upperHeight: 80,
+  },
+  NAM: {
+    key: 'NAM', label: 'NAM', subtitle: 'NOAA NAM 12 km', color: '#f9a825',
+    endpoint: 'https://api.open-meteo.com/v1/forecast',
+    modelParam: 'ncep_nam_conus',
+    metaModel: 'ncep_nam_conus',
+    coverage: NORTH_AMERICA,
+    heights: [10, 80],
+    tableCols: [10, 80],
+    upperHeight: 80,
+  },
+  // (GEM HRDPS Continental 2.5 km was evaluated but dropped: a live probe showed
+  // its domain does not reach San Pedro — HTTP 400 "No data is available for this
+  // location" — so it added no value for this venue.)
   // Self-hosted ICON-LAM 2 km (Regatta project). NOT Open-Meteo — each venue
   // publishes a ~2 km GRID over its racing box to Bunny; fetchBunnyModel snaps
   // a clicked point to the nearest grid cell (so 3 clicks -> 3 resolved points),
@@ -166,9 +213,21 @@ export const MODELS = {
 
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
 // venue MOS corrections (e.g. ARPEGE sector at Porto Cervo) surface here too.
-export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA']
+// HRRR/NAM trail the European set and region-gate themselves off in Europe.
+export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA', 'HRRR', 'NAM']
 // All models fetched (Phase 2 Compare consumes the extras).
-export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE']
+export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRRR', 'NAM']
+
+// Region gate. A model with a `coverage` box is only fetched + shown for points
+// inside it (hides the North-American models in Europe); models without a box
+// — the global OM models and the self-gated SSA-Race venues — always pass.
+export function modelCoversPoint(modelKey, latitude, longitude) {
+  const box = MODELS[modelKey]?.coverage
+  if (!box) return true
+  if (latitude == null || longitude == null) return false
+  return latitude >= box.latMin && latitude <= box.latMax &&
+    longitude >= box.lonMin && longitude <= box.lonMax
+}
 
 // Quick sanity check: does this model's hourly payload have any wind_speed
 // data at all? Open-Meteo returns the structure even when a model has no
@@ -510,13 +569,44 @@ export async function fetchGFSPressureLevels({ latitude, longitude, timezone }) 
   }
 }
 
-// Fetch every enabled surface model + GFS for one point. Returns a
-// { surfaceByModel, gfs, elevation, coords } container matching the shape
-// the upstream tool's `windData[locKey]` object expects.
+// ECMWF pressure levels for the Skew-T / vertical profile. The 9 km ecmwf_ifs
+// surface model carries NO pressure data, so the sounding pulls them from the
+// 0.25° ecmwf_ifs025 instead (live probe 2026-07-21: full ladder populated at San
+// Pedro). Coarser than GFS (6 levels) but it keeps the ECMWF sounding at every
+// venue. Shaped like the GFS payload so SOUNDING_SOURCES.ECMWF reads it directly.
+export const ECMWF_SOUNDING_LEVELS = [1000, 925, 850, 700, 600, 500]
+export async function fetchECMWFPressureLevels({ latitude, longitude, timezone }) {
+  const params = []
+  for (const p of ECMWF_SOUNDING_LEVELS) {
+    params.push(
+      `temperature_${p}hPa`, `relative_humidity_${p}hPa`,
+      `geopotential_height_${p}hPa`,
+      `wind_speed_${p}hPa`, `wind_direction_${p}hPa`,
+    )
+  }
+  const url = `https://api.open-meteo.com/v1/ecmwf?` +
+    `latitude=${latitude}&longitude=${longitude}` +
+    `&hourly=${params.join(',')}` +
+    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=2&models=ecmwf_ifs025`
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return { hourly: { time: [] } }
+    return await res.json()
+  } catch {
+    return { hourly: { time: [] } }
+  }
+}
+
+// Fetch every enabled surface model + GFS + ECMWF upper air for one point. Returns
+// a { surfaceByModel, gfs, ecmwfSounding, elevation, coords } container matching
+// the shape the upstream tool's `windData[locKey]` object expects.
 export async function fetchAllForPoint({ latitude, longitude, timezone, enabledModels, onProgress }) {
   const surfaceByModel = {}
-  for (const k of COMPARE_ORDER) if (!enabledModels[k]) surfaceByModel[k] = null
-  const enabled = COMPARE_ORDER.filter((k) => enabledModels[k])
+  // Region gate: a model whose coverage box excludes this point is skipped
+  // entirely — not fetched, rendered as absent (null) — exactly like a disabled
+  // model. This keeps the North-American models off in Europe (and vice-versa).
+  const enabled = COMPARE_ORDER.filter((k) => enabledModels[k] && modelCoversPoint(k, latitude, longitude))
+  for (const k of COMPARE_ORDER) if (!enabled.includes(k)) surfaceByModel[k] = null
   // SSA-Race / self-hosted (Bunny) models are NOT Open-Meteo — load them FIRST and
   // in parallel so the ICON data is always there even when Open-Meteo is throttled.
   const ssaKeys = enabled.filter((k) => MODELS[k]?.bunnyBase)
@@ -538,6 +628,11 @@ export async function fetchAllForPoint({ latitude, longitude, timezone, enabledM
   onProgress?.({ modelKey: 'GFS', phase: 'start' })
   const gfs = await fetchGFSPressureLevels({ latitude, longitude, timezone })
   onProgress?.({ modelKey: 'GFS', phase: 'done' })
+  // ECMWF pressure levels (0.25°) — the 9 km ecmwf_ifs surface model has none, so
+  // the Skew-T ECMWF source reads these. Global, so fetched at every point.
+  onProgress?.({ modelKey: 'ECMWF-UA', phase: 'start' })
+  const ecmwfSounding = await fetchECMWFPressureLevels({ latitude, longitude, timezone })
+  onProgress?.({ modelKey: 'ECMWF-UA', phase: 'done' })
 
   // Elevation: first model that returned it, else GFS's.
   let elevation = 0
@@ -553,6 +648,7 @@ export async function fetchAllForPoint({ latitude, longitude, timezone, enabledM
     coords: { latitude, longitude },
     surfaceByModel,
     gfs,
+    ecmwfSounding,
     elevation,
   }
 }
@@ -662,9 +758,10 @@ export function interpolateSpeedAtHeight(hourly, heights, targetH, idx) {
 
 // ── Skew-T sounding sources (Phase 3) ────────────────────────────────────────
 // Pressure levels each source publishes. GFS uses the dense 25 hPa ladder above;
-// ICON / ECMWF expose the coarser sets Open-Meteo carries for those models.
+// ICON exposes the coarser set Open-Meteo carries for it. ECMWF's levels
+// (ECMWF_SOUNDING_LEVELS) come from the dedicated 0.25° ecmwf_ifs025 fetch
+// (ecmwfSounding) — the 9 km ecmwf_ifs surface model carries no pressure data.
 export const ICON_SOUNDING_LEVELS  = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500]
-export const ECMWF_SOUNDING_LEVELS = [1000, 925, 850, 700, 600, 500]
 
 // Sounding source registry — mirrors SOUNDING_SOURCES in index.html. Each
 // `hourly(point)` resolves the Open-Meteo payload that carries that source's
@@ -681,7 +778,7 @@ export const SOUNDING_SOURCES = {
   SSARACE: { label: 'SSA-Race 2 km', levels: SSARACE_SOUNDING_LEVELS, lowLevel: true, hourly: (d) => d && d.ssaSounding },
   GFS:   { label: 'GFS · 25 hPa', levels: GFS_SOUNDING_LEVELS,   hourly: (d) => d && d.gfs && d.gfs.hourly },
   ICON:  { label: 'ICON',         levels: ICON_SOUNDING_LEVELS,  hourly: (d) => d && d.surfaceByModel && d.surfaceByModel.ICON  && d.surfaceByModel.ICON.hourly },
-  ECMWF: { label: 'ECMWF',        levels: ECMWF_SOUNDING_LEVELS, hourly: (d) => d && d.surfaceByModel && d.surfaceByModel.ECMWF && d.surfaceByModel.ECMWF.hourly },
+  ECMWF: { label: 'ECMWF',        levels: ECMWF_SOUNDING_LEVELS, hourly: (d) => d && d.ecmwfSounding && d.ecmwfSounding.hourly },
 }
 export const SOUNDING_ORDER = ['SSARACE', 'ECMWF', 'GFS', 'ICON']
 
@@ -720,23 +817,22 @@ export async function fetchIconRaceSounding({ latitude, longitude, modelKey = 'I
 }
 
 // Fetch a single user-picked sounding point. Lighter than fetchAllForPoint —
-// only the sources the Skew-T can use (ICON + ECMWF surface upper-air, GFS
-// pressure levels). Returns the same { coords, surfaceByModel, gfs, elevation }
-// container shape so it slots straight into windData under the 'S' key.
-// Mirrors fetchSoundingPoint() in index.html.
+// only the sources the Skew-T can use (ICON surface upper-air, ECMWF 0.25°
+// pressure levels, GFS pressure levels). Returns the same
+// { coords, surfaceByModel, gfs, ecmwfSounding, elevation } container shape so it
+// slots straight into windData under the 'S' key.
 export async function fetchSoundingPoint({ latitude, longitude, timezone }) {
   const surfaceByModel = {}
   surfaceByModel.ICON  = await fetchSurfaceModel({ modelKey: 'ICON',  latitude, longitude, timezone })
   await new Promise((r) => setTimeout(r, 250))
-  surfaceByModel.ECMWF = await fetchSurfaceModel({ modelKey: 'ECMWF', latitude, longitude, timezone })
+  // ECMWF sounding from the 0.25° model (the 9 km ecmwf_ifs has no pressure data).
+  const ecmwfSounding = await fetchECMWFPressureLevels({ latitude, longitude, timezone })
   await new Promise((r) => setTimeout(r, 250))
   const gfs = await fetchGFSPressureLevels({ latitude, longitude, timezone })
 
   let elevation = 0
-  for (const k of ['ICON', 'ECMWF']) {
-    if (surfaceByModel[k] && surfaceByModel[k].elevation != null) { elevation = surfaceByModel[k].elevation; break }
-  }
+  if (surfaceByModel.ICON && surfaceByModel.ICON.elevation != null) elevation = surfaceByModel.ICON.elevation
   if (!elevation && gfs && gfs.elevation != null) elevation = gfs.elevation
 
-  return { coords: { latitude, longitude }, surfaceByModel, gfs, elevation }
+  return { coords: { latitude, longitude }, surfaceByModel, gfs, ecmwfSounding, elevation }
 }

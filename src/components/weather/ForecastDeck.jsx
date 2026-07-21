@@ -356,10 +356,12 @@ async function captureSounding(p1lat, p1lon, windData1, tz) {
   let h = null; let levels = null; let label = null; let ptop = 650
   try { const ss = await fetchIconRaceSounding({ latitude: lat, longitude: lon }); if (ss?.time) { h = ss; levels = SSARACE_SOUNDING_LEVELS; label = 'SSA-Race 2 km'; ptop = 650 } } catch { /* */ }
   // Fallback chain (point-1 only, since these come from point 1's fetched data):
-  // SSA-Race 2 km → ECMWF → GFS (→ ICON last).
+  // SSA-Race 2 km → ECMWF → GFS (→ ICON last). ECMWF pressure levels come from the
+  // 0.25° ecmwf_ifs025 fetch (ecmwfSounding) — the 9 km ecmwf_ifs surface model
+  // has none.
   if (!h && isP1) {
     const hasT = (x) => x && (x.temperature_1000hPa || x.temperature_850hPa)
-    const ecmwf = windData1?.surfaceByModel?.ECMWF?.hourly
+    const ecmwf = windData1?.ecmwfSounding?.hourly
     const gfs = windData1?.gfs?.hourly
     const icon = windData1?.surfaceByModel?.ICON?.hourly
     if (hasT(ecmwf)) { h = ecmwf; levels = ECMWF_SOUNDING_LEVELS; label = 'ECMWF'; ptop = 500 }
