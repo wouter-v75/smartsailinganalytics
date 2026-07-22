@@ -5445,6 +5445,10 @@ function SSAApp(){
     const { data } = getBrowserSupabase().auth.onAuthStateChange((_e, session) => { authUserRef.current = session?.user || null; });
     return () => { try { data?.subscription?.unsubscribe(); } catch { /* */ } };
   }, []);
+  // Monotonic token so a superseded loadDate (rapid date switch, or the two
+  // overlapping boot-time calls) can't apply its late background cloud data on
+  // top of a newer date. Latest loadDate wins.
+  const loadDateSeqRef = useRef(0);
   const[syncErrors,setSyncErrors]=useState([]);
   const noteSyncError=useCallback((label,message)=>{
     setSyncErrors(p=>[...p.filter(e=>e.label!==label),{label,message:String(message||'upload failed')}]);
@@ -6456,6 +6460,7 @@ function SSAApp(){
 
   async function loadDate(date){
     const _lt0=performance.now(); const _lm=(l)=>{ try{ console.info(`[loadDate] ${l}: +${Math.round(performance.now()-_lt0)}ms`); }catch{ /* */ } };
+    const loadSeq = ++loadDateSeqRef.current;   // this call's turn; latest wins
     setActiveDate(date);
     // Reset video thumbnail load tracking for the new date
     setVideoThumbsLoading(true);
@@ -6463,62 +6468,25 @@ function SSAApp(){
     setVideoTotalThumbs(0);
     setStreamPollTick(0); // fresh encoding-poll budget for the new session
 
-    // ── Load log + xml (local first, then Supabase, then Bunny R2) ──────────
+    // ── Load log + xml — LOCAL ONLY here. The cloud download (getSessionCloud,
+    // ~2.4s cold) is deferred to a background pass AFTER the video grid paints
+    // (see end of function). The grid's thumbnails come from the inline Bunny
+    // poster, not the day-log, so there's no reason to block clips-visible on it.
     let log = await getLogData(date);
     let xml = await getXmlData(date);
     _lm('local log+xml');
 
-    // If neither local has it, try Supabase (active membership scope).
-    if(!log || !xml){
-      try {
-        const user=await getUserCached();
-        _lm('getUser #1 (cached)');
-        if(user){
-          const cs=await getSessionCloud({userId:user.id,date});
-          _lm('getSessionCloud (log_data+xml_data download)');
-          if(cs){
-            if(!log && cs.log_data) log={...cs.log_data, source:'supabase'};
-            if(!xml && cs.xml_data) xml={...cs.xml_data, source:'supabase'};
-          }
-        }
-      } catch { /* non-fatal */ }
-    }
+    // Reflect local state immediately — and clear the previous date's overlay.
+    // Null when this is a cloud-only day; the background pass fills it in when
+    // the download lands.
+    setLogData(log?{...log,source:log.source||"local"}:null);
+    if(log)setSessionTzOffset(log.tzOffset??DEFAULT_TZ);
+    setXmlData(xml?{...xml,source:xml.source||"local"}:null);
 
     // Self-heal sync state against the cloud manifest, then refresh the unsynced
     // badge — so a log/xml already in the cloud (from another device or a lost
     // local flag) is recognised as synced and never re-uploaded (Phase 2).
     reconcileSessionSyncState(date).then(()=>setUnsyncedCount(getUnsyncedCount())).catch(()=>{});
-
-    if(log){setLogData({...log,source:log.source||"local"});setSessionTzOffset(log.tzOffset??DEFAULT_TZ);}
-    // Bunny R2 fallback is GLOBAL (not team-scoped). Only admins can use
-    // it; everyone else must stay inside their team's RLS-protected data.
-    else if(cloudStatus?.available && effectiveRole==='admin'){const r2=await fetchCloudSession(date);log=r2?.logData||null;setLogData(log?{...log,source:"cloud"}:null);}
-    else setLogData(null);
-
-    try {
-      const user=await getUserCached();
-      _lm('getUser #2 (cached)');
-      if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date}));
-      else setSessionTagList(getTagList(date));
-    } catch { setSessionTagList(getTagList(date)); }
-    _lm('tag list');
-
-    if(xml){setXmlData({...xml,source:xml.source||"local"});}
-    else if(cloudStatus?.available && effectiveRole==='admin'){const r2=await fetchCloudSession(date);xml=r2?.xmlData||null;setXmlData(xml?{...xml,source:"cloud"}:null);}
-    else setXmlData(null);
-
-    // Auto-build this day's Timeline Tree (backfills days uploaded before the
-    // producer existed) — best-effort, persists to timeline_nodes.
-    try {
-      if(xml && campaignCfg?.teamId && campaignCfg?.boatId){
-        const tlNodes=buildDayTimeline({ xml, boatId: campaignCfg.boatId, date });
-        if(tlNodes.length){
-          fetch(`/api/teams/${campaignCfg.teamId}/timeline`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ boat_id: campaignCfg.boatId, session_date: date, nodes: tlNodes })}).catch(()=>{});
-        }
-      }
-    } catch {}
-
-    _lm('xml + timeline build');
     // ── Load videos ─────────────────────────────────────────────────────────
     let vids=await getVideosForDate(date);
     if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
@@ -6616,6 +6584,68 @@ function SSAApp(){
       setSelectedVideo(match||early[0]||null);
       if(pend) campaignPendingClipRef.current=null;
     }
+
+    // ── Background: cloud day-log/xml + tag list + timeline ──────────────────
+    // The grid is already on screen. The day-log is only needed for the on-clip
+    // instrument overlay and auto-tags, so download it now (this is the ~2.4s
+    // getSessionCloud that used to gate the grid) and re-enrich when it lands.
+    // Guarded by loadSeq so a fast date switch can't clobber the newer date.
+    (async()=>{
+      try {
+        let logChanged=false, xmlChanged=false;
+        if(!log || !xml){
+          const user=await getUserCached();
+          if(user){
+            const cs=await getSessionCloud({userId:user.id,date});
+            _lm('getSessionCloud (log_data+xml_data download)');
+            if(cs){
+              if(!log && cs.log_data){ log={...cs.log_data,source:'supabase'}; logChanged=true; }
+              if(!xml && cs.xml_data){ xml={...cs.xml_data,source:'supabase'}; xmlChanged=true; }
+            }
+          }
+        }
+        // Admin-only GLOBAL Bunny R2 fallback for a day with no team-scoped
+        // log/xml. Everyone else stays inside their team's RLS-protected data.
+        if((!log || !xml) && cloudStatus?.available && effectiveRole==='admin'){
+          const r2=await fetchCloudSession(date);
+          if(!log && r2?.logData){ log={...r2.logData,source:'cloud'}; logChanged=true; }
+          if(!xml && r2?.xmlData){ xml={...r2.xmlData,source:'cloud'}; xmlChanged=true; }
+        }
+        if(loadDateSeqRef.current!==loadSeq) return; // superseded by a newer loadDate
+
+        if(logChanged && log){ setLogData({...log,source:log.source||"cloud"}); setSessionTzOffset(log.tzOffset??DEFAULT_TZ); }
+        if(xmlChanged && xml){ setXmlData({...xml,source:xml.source||"cloud"}); }
+
+        // Auto-build this day's Timeline Tree (needs xml) — best-effort, persists
+        // to timeline_nodes. Backfills days uploaded before the producer existed.
+        try {
+          if(xml && campaignCfg?.teamId && campaignCfg?.boatId){
+            const tlNodes=buildDayTimeline({ xml, boatId: campaignCfg.boatId, date });
+            if(tlNodes.length){
+              fetch(`/api/teams/${campaignCfg.teamId}/timeline`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ boat_id: campaignCfg.boatId, session_date: date, nodes: tlNodes })}).catch(()=>{});
+            }
+          }
+        } catch {}
+        _lm('xml + timeline build');
+
+        // Re-enrich the grid now that the day-log/xml is in — overlay averages
+        // and auto-tags populate. Keep the current selection, refreshed.
+        if(logChanged || xmlChanged){
+          const re=vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
+          setAllVideos(re);
+          setSelectedVideo(prev=> prev ? (re.find(v=>v.id===prev.id)||prev) : prev);
+        }
+      } catch { /* non-fatal */ }
+
+      // Tag list (cloud-backed when signed in) — also off the paint path.
+      try {
+        const user=await getUserCached();
+        if(loadDateSeqRef.current!==loadSeq) return;
+        if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date}));
+        else setSessionTagList(getTagList(date));
+      } catch { setSessionTagList(getTagList(date)); }
+      _lm('tag list');
+    })();
 
     // Playback URLs are NOT resolved here any more. Fetching a signed URL for every
     // clip on the day was ~one request per clip and the dominant cold-start cost
