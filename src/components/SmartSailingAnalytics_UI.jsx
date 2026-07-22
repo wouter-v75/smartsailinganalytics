@@ -3019,7 +3019,9 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
 
   // Filter to visible + 5% buffer (keeps lines continuous at edges)
   const buf=span*0.05;
-  const visPts = points.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf);
+  // Number.isFinite(p.y): drop NaN/undefined samples — one poisons Math.min/max
+  // for the y-domain, making yTicks (gridline <line>s) and the data path all NaN.
+  const visPts = points.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf&&Number.isFinite(p.y));
 
   // y scale from visible data
   const visY=visPts.map(p=>p.y);
@@ -3205,17 +3207,20 @@ function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200
   const hasTwa = points.some(p=>p.twa!=null);
   const pad={t:title?20:10,r:8,b:28,l:36};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
-  const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
-  const x0=Math.min(...xs),x1=Math.max(...xs);
-  const rawY0=Math.min(...ys), rawY1=Math.max(...ys);
+  // Drop non-finite samples first — one NaN y makes Math.min/max NaN, poisoning the
+  // whole y-domain so every gridline, dot and trend line renders at a NaN coordinate.
+  const fin=points.filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+  const xs=fin.map(p=>p.x), ys=fin.map(p=>p.y);
+  const x0=xs.length?Math.min(...xs):0,x1=xs.length?Math.max(...xs):1;
+  const rawY0=ys.length?Math.min(...ys):0, rawY1=ys.length?Math.max(...ys):1;
   const y0=Math.min(rawY0,...yLines), y1=Math.max(rawY1,...yLines);
   const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
   const py=y=>pad.t+H-((y-y0)/(y1-y0||1))*H;
-  const step=Math.max(1,Math.floor(points.length/800));
-  const dots=points.filter((_,i)=>i%step===0);
+  const step=Math.max(1,Math.floor(fin.length/800));
+  const dots=fin.filter((_,i)=>i%step===0);
   const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
   const yTicks=Array.from({length:4},(_,i)=>y0+(y1-y0)*i/3);
-  const reg=showTrend?linReg(points):null;
+  const reg=showTrend?linReg(fin):null;
   const ty=x=>reg?reg.slope*x+reg.intercept:0;
 
   // Port = twa < 0 (wind from port = starboard tack in sailing terms... 
@@ -3423,8 +3428,8 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
   const [vx0,vx1]=viewRange??[allX0,allX1];
   const span=vx1-vx0||1;
   const buf=span*0.05;
-  const visPol=polPts.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf);
-  const visTgt=tgtPts.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf);
+  const visPol=polPts.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf&&Number.isFinite(p.y));
+  const visTgt=tgtPts.filter(p=>p.x>=vx0-buf&&p.x<=vx1+buf&&Number.isFinite(p.y));
   const y0=50,y1=150;
   const px=x=>pad.l+((x-vx0)/span)*W;
   const py=y=>pad.t+H-((y-y0)/(y1-y0))*H;
