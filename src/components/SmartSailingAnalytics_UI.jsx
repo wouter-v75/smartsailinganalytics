@@ -5927,7 +5927,50 @@ function SSAApp(){
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[activeTab]);
-  useEffect(()=>{ setPlayUtc(selectedVideo?.startUtc||null); },[selectedVideo?.id]);
+
+  // Resolve ONE clip's signed playback URL, on demand. loadDate no longer resolves
+  // every clip on the day (that was ~one /url request per clip and the startup
+  // bottleneck — see the boot profiling). The grid cards render from the inline
+  // Bunny poster; a clip only needs a playback URL when it's actually selected to
+  // play, which is what the effect below drives. Idempotent: a clip that already
+  // has a resolved https URL is skipped.
+  const ensureClipUrl = useCallback(async (videoId) => {
+    if (!videoId) return;
+    const v = allVideosRef.current.find(x => x.id === videoId);
+    if (!v) return;
+    if (v.objectUrl && String(v.objectUrl).startsWith('http')) return;   // already resolved
+    if (!(v.hasProxy || v.hasOriginal || v.streamId)) return;            // nothing in the cloud to resolve
+    let upd = null;
+    try {
+      if (v.hasProxy || v.hasOriginal) {
+        const res = await fetch(`/api/videos/${encodeURIComponent(v.cloudId || v.id)}/url?prefer=${isMobile ? 'proxy' : 'auto'}`);
+        if (res.ok) {
+          const j = await res.json();
+          if (j?.url) upd = { objectUrl: j.url, servedRendition: j.served || null, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
+          else if (j?.kind === 'processing') upd = { streamProcessing: true, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
+        }
+      }
+      if (!upd && v.streamId) {
+        const res = await fetch(`/api/stream/status/${v.streamId}`);
+        if (res.ok) { const s = await res.json(); if (s.playbackUrl) upd = { objectUrl: s.playbackUrl, thumbnailUrl: v.thumbnailUrl || s.thumbnailUrl || null }; }
+      }
+    } catch { /* offline / transient — the poster stays, retried on next select */ }
+    if (!upd) return;
+    // Defer revoking the old blob: URL — a live <video> may still be reading it
+    // (see the note in loadDate); revoking synchronously spams ERR_FILE_NOT_FOUND.
+    const old = v.objectUrl;
+    if (old && String(old).startsWith('blob:')) setTimeout(() => { try { URL.revokeObjectURL(old); } catch { /* */ } }, 15_000);
+    setAllVideos(prev => prev.map(x => x.id === videoId ? { ...x, ...upd } : x));
+    setSelectedVideo(prev => (prev && prev.id === videoId) ? { ...prev, ...upd } : prev);
+  }, [isMobile]);
+
+  // When a clip becomes selected, make sure its playback URL is resolved (it plays
+  // the instant the fetch returns; a clip with a local blob already plays from that).
+  useEffect(()=>{
+    setPlayUtc(selectedVideo?.startUtc||null);
+    if(selectedVideo?.id) ensureClipUrl(selectedVideo.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[selectedVideo?.id]);
 
   // Poll Bunny Stream for clips still encoding their adaptive HLS ladder.
   // Once a clip is ready, swap its playback URL in with no manual reload.
@@ -6292,10 +6335,10 @@ function SSAApp(){
       if(latestXml)setXmlData({...latestXml,source:"local"});
       setActiveDate(latestDate);
       // Load tag list — cloud-backed when there's an active membership,
-      // localStorage fallback otherwise.
+      // localStorage fallback otherwise. Reuse bootUser (already fetched above) —
+      // auth.getUser is a ~0.3-0.8s round-trip and boot was calling it 3x.
       try {
-        const supabase=getBrowserSupabase();
-        const {data:{user}}=await supabase.auth.getUser();
+        const user=bootUser;
         if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date:latestDate}));
         else setSessionTagList(getTagList(latestDate));
       } catch { setSessionTagList(getTagList(latestDate)); }
@@ -6321,8 +6364,7 @@ function SSAApp(){
         }
         // Supabase sessions list (active membership scope) — merge into UI.
         try {
-          const supabase=getBrowserSupabase();
-          const {data:{user}}=await supabase.auth.getUser();
+          const user=bootUser;   // reuse — no third auth.getUser round-trip
           if(user){
             // <UserPill> resolves the active membership and writes it to
             // localStorage asynchronously. On a first login — especially
@@ -6550,92 +6592,14 @@ function SSAApp(){
       if(pend) campaignPendingClipRef.current=null;
     }
 
-    // Resolve playback URLs for any clip that's been uploaded to Bunny.
-    //   • No objectUrl yet — fetch the cloud URL so playback works at all.
-    //   • objectUrl is a local blob: URL — STILL fetch the cloud URL and
-    //     prefer it over the blob. Native blob playback of HD originals
-    //     stutters in browsers without hardware-accelerated decode for the
-    //     source codec; the cloud adaptive HLS ladder downshifts cleanly.
-    //     The blob stays in IndexedDB and is used for crop/export.
-    //   • objectUrl is already an https URL (previously-resolved cloud) —
-    //     skip; no need to re-fetch.
-    const needsResolve=vids.filter(v=>
-      (v.streamId || v.hasProxy || v.hasOriginal) &&
-      (!v.objectUrl || String(v.objectUrl).startsWith('blob:'))
-    );
-    // Free any local blob URL we're about to replace with a cloud URL so the
-    // browser can GC the underlying Blob handle.
-    //
-    // DEFERRED on purpose. The clips are rendered EARLY (see setAllVideos(early)
-    // above) with their local blob: URLs, so by the time we swap in a cloud URL the
-    // old one is still the `src` of a live <video> element and the browser has already
-    // issued the request for it. Revoking synchronously killed that request mid-flight
-    // and spewed `net::ERR_FILE_NOT_FOUND` for every proxied clip — harmless, but it
-    // buried the real errors in the console. Let the re-render detach the element
-    // first, then release the handle.
-    const revokeIfBlob=u=>{
-      if(!u || !String(u).startsWith('blob:')) return;
-      setTimeout(()=>{ try{ URL.revokeObjectURL(u); }catch{} }, 15_000);
-    };
-    if(needsResolve.length){
-      await Promise.all(needsResolve.map(async v=>{
-        // Phase B path — preferred when available. The signed-URL endpoint
-        // is keyed by the Supabase row id, so use cloudId when this is a
-        // merged local entry (its own id is the local IDB key).
-        if(v.hasProxy || v.hasOriginal){
-          try{
-            // On mobile, prefer the small 720p proxy over the full-res
-            // original — far lighter on weak field wifi.
-            const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=${isMobile?'proxy':'auto'}`);
-            if(res.ok){
-              const j=await res.json();
-              if(j?.url){
-                revokeIfBlob(v.objectUrl);
-                v.objectUrl=j.url;
-                v.servedRendition=j.served||null; // 'proxy' | 'original' | 'legacy'
-                // Bunny Stream auto-thumbnail — gives cloud clips a card
-                // image + a player poster (no black frame before play).
-                if(j.thumbnail && !v.thumbnailUrl) v.thumbnailUrl=j.thumbnail;
-                return;
-              }
-              // Rendition is on Bunny Stream but still encoding — flag it so
-              // the player shows the "processing" state; the poll effect
-              // re-checks every 20s until the adaptive stream is ready.
-              if(j?.kind==='processing'){
-                v.streamProcessing=true;
-                if(j.thumbnail && !v.thumbnailUrl) v.thumbnailUrl=j.thumbnail;
-                return;
-              }
-            }
-          } catch { /* fall through to Stream */ }
-        }
-        // Legacy Stream path.
-        if(v.streamId){
-          try{
-            const res=await fetch(`/api/stream/status/${v.streamId}`);
-            if(!res.ok) return;
-            const s=await res.json();
-            if(s.playbackUrl){
-              revokeIfBlob(v.objectUrl);
-              v.objectUrl=s.playbackUrl;
-            }
-            if(!v.thumbnailUrl) v.thumbnailUrl=s.thumbnailUrl||null;
-          } catch { /* ignore */ }
-        }
-      }));
-      // Re-paint with resolved playback URLs (and any thumbnails the
-      // signed-URL endpoint backfilled for clips that had none).
-      const resolved=enrichAll();
-      setAllVideos(resolved);
-      setVideoTotalThumbs(resolved.filter(v => v.thumbnailUrl || (v.objectUrl && v.source!=="cloud")).length);
-      setSelectedVideo(prev=>{
-        if(!prev) return resolved[0]||null;
-        // Re-point the current selection to its freshly-enriched object so
-        // the player picks up the resolved objectUrl — but honour a
-        // selection the user changed while resolution was in flight.
-        return resolved.find(v=>v.id===prev.id)||prev;
-      });
-    }
+    // Playback URLs are NOT resolved here any more. Fetching a signed URL for every
+    // clip on the day was ~one request per clip and the dominant cold-start cost
+    // (boot profiling showed loadDate at ~4.7s for a 30-clip day). The grid cards
+    // render from the inline Bunny poster attached by the videos GET route; a clip's
+    // signed playback URL is resolved lazily by ensureClipUrl the moment it becomes
+    // the selected clip (see the resolve-on-select effect above). A clip with a local
+    // blob still plays from that immediately. The encoding poller keeps refreshing
+    // any clip still transcoding.
   }
 
   // Run the proxy auto-sync queue until it's empty. Returns the in-flight
