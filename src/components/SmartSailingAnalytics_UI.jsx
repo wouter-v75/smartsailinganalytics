@@ -6232,13 +6232,21 @@ function SSAApp(){
   useEffect(()=>{
     async function boot(){
       const today=TODAY();
+      // ── STARTUP PROFILING ────────────────────────────────────────────────
+      // Cheap phase timing so a single cold load reveals the bottleneck. Open the
+      // browser console and filter for "[boot]". Each line is ms since boot start;
+      // the big jumps are your slow steps. Remove once the culprit is found.
+      const _pt0=performance.now();
+      const _pm=(label)=>{ try{ console.info(`[boot] ${label}: +${Math.round(performance.now()-_pt0)}ms`); }catch{ /* */ } };
       // Read the active membership BEFORE pulling local data so we only show
       // sessions/videos belonging to the current workspace. Untagged legacy
       // entries are visible only when there is no active membership.
       const supaForBoot = getBrowserSupabase();
       const { data: { user: bootUser } } = await supaForBoot.auth.getUser();
       const bootMembership = bootUser ? getActiveMembership(bootUser.id) : null;
+      _pm('auth.getUser + membership');
       const localSessions=getSessionsForMembership(bootMembership).sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
+      _pm(`local sessions (${localSessions.length})`);
 
       // Drop clips that have neither a local blob nor a cloud copy — they can't be
       // played, thumbnailed or uploaded, so they're pure noise in the library. These
@@ -6252,11 +6260,13 @@ function SSAApp(){
         const nDupe = await dedupeVideos();
         if (nDupe) addLog(`🧹 Merged ${nDupe} duplicate clip entr${nDupe === 1 ? 'y' : 'ies'} from repeated imports.`);
       } catch { /* non-fatal */ }
+      _pm('prune + dedupe');
 
       // ── Mobile progressive load ───────────────────────────────────────────
       // On mobile we only fetch full video blobs + log data for the latest session.
       // Older sessions show thumbnail/metadata only — full data loads on-demand.
       const vids=await getAllVideosForMembership(bootMembership);
+      _pm(`getAllVideos (${vids.length} clips, blob URLs minted)`);
       // Open the most recent day that actually has VIDEO footage — skip log-only
       // or empty days (and today, if nothing was shot today). Falls back to the
       // latest session day, then today, when there's no video anywhere.
@@ -6273,6 +6283,7 @@ function SSAApp(){
         return enrichVideo(v,log,xml);
       }));
       setAllVideos(enriched);
+      _pm('enrich videos (log+xml reads)');
       if(enriched.length>0)setSelectedVideo(enriched[0]);
 
       const latestLog=await getLogData(latestDate);
@@ -6291,10 +6302,13 @@ function SSAApp(){
       const latestSession=localSessions.find(s=>s.date===latestDate);
       if(latestSession?.tzOffset!=null)setSessionTzOffset(latestSession.tzOffset);
       setUnsyncedCount(getUnsyncedCount());setLoaded(true);
+      _pm('★ FIRST PAINT (loaded=true)');
 
       // Cloud check — on mobile defer until after paint
       const doCloud=async()=>{
+        _pm('cloud: start');
         const cs=await checkCloudStatus();setCloudStatus(cs);
+        _pm('cloud: checkCloudStatus');
         // Bunny R2 session listing is GLOBAL — every date in the zone, every
         // team. Historically only admins saw it; now we skip it entirely when
         // a workspace is active (per-team isolation wins). The Supabase
@@ -6316,13 +6330,16 @@ function SSAApp(){
             // which would make the cloud session list come back empty and
             // leave the app blank until a manual Sync. Wait for it (up to
             // ~20s; the loop exits the instant the membership appears).
-            for(let i=0;i<80 && !getActiveMembership(user.id);i++){
+            const _wl=performance.now(); let _wi=0;
+            for(;_wi<80 && !getActiveMembership(user.id);_wi++){
               await new Promise(r=>setTimeout(r,250));
             }
+            _pm(`cloud: membership-wait (${Math.round(performance.now()-_wl)}ms, ${_wi} polls)`);
             // Eagerly warm the Boat Config tab (sails/scans/polar/rig) so it's
             // ready before the user opens it. Fire-and-forget.
             { const am=getActiveMembership(user.id); if(am?.team_id&&am?.boat_id) prefetchBoatConfig(am.team_id,am.boat_id); }
             const cloudSessions=await listSessionsCloud({userId:user.id});
+            _pm(`cloud: listSessionsCloud (${cloudSessions.length} sessions)`);
             if(cloudSessions.length>0){
               setSessions(p=>{
                 const merged=[...p];
@@ -6365,10 +6382,12 @@ function SSAApp(){
                 : [latestDate, newestCloudDate].filter(Boolean).sort().reverse()[0];
               if (bestDate && bestDate !== latestDate) {
                 await loadDate(bestDate);
+                _pm(`cloud: loadDate(${bestDate})`);
               }
             }
           }
         } catch { /* non-fatal */ }
+        _pm('cloud: done');
       };
       if(isMobile) setTimeout(doCloud,1500); else doCloud();
     }
