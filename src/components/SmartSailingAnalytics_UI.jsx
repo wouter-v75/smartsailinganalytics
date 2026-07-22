@@ -5429,6 +5429,22 @@ function SSAApp(){
   // every source Blob in memory.
   const allVideosRef = useRef([]);
   useEffect(()=>{ allVideosRef.current = allVideos; },[allVideos]);
+
+  // Cache the authenticated user for the lifetime of the page. auth.getUser() is a
+  // ~0.3-0.7s round-trip and the boot path was calling it ~6x (3 of them inside
+  // loadDate alone). The auth user can't change without a full reload, so caching
+  // is safe; an onAuthStateChange clears it if a session ever swaps in place.
+  const authUserRef = useRef(undefined); // undefined = not yet fetched; null = signed out
+  const getUserCached = useCallback(async () => {
+    if (authUserRef.current !== undefined) return authUserRef.current;
+    try { const { data:{ user } } = await getBrowserSupabase().auth.getUser(); authUserRef.current = user || null; }
+    catch { authUserRef.current = null; }
+    return authUserRef.current;
+  }, []);
+  useEffect(() => {
+    const { data } = getBrowserSupabase().auth.onAuthStateChange((_e, session) => { authUserRef.current = session?.user || null; });
+    return () => { try { data?.subscription?.unsubscribe(); } catch { /* */ } };
+  }, []);
   const[syncErrors,setSyncErrors]=useState([]);
   const noteSyncError=useCallback((label,message)=>{
     setSyncErrors(p=>[...p.filter(e=>e.label!==label),{label,message:String(message||'upload failed')}]);
@@ -6286,6 +6302,7 @@ function SSAApp(){
       // entries are visible only when there is no active membership.
       const supaForBoot = getBrowserSupabase();
       const { data: { user: bootUser } } = await supaForBoot.auth.getUser();
+      authUserRef.current = bootUser || null;   // seed the cache so loadDate never re-fetches the user
       const bootMembership = bootUser ? getActiveMembership(bootUser.id) : null;
       _pm('auth.getUser + membership');
       const localSessions=getSessionsForMembership(bootMembership).sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
@@ -6454,9 +6471,8 @@ function SSAApp(){
     // If neither local has it, try Supabase (active membership scope).
     if(!log || !xml){
       try {
-        const supabase=getBrowserSupabase();
-        const {data:{user}}=await supabase.auth.getUser();
-        _lm('getUser #1');
+        const user=await getUserCached();
+        _lm('getUser #1 (cached)');
         if(user){
           const cs=await getSessionCloud({userId:user.id,date});
           _lm('getSessionCloud (log_data+xml_data download)');
@@ -6480,9 +6496,8 @@ function SSAApp(){
     else setLogData(null);
 
     try {
-      const supabase=getBrowserSupabase();
-      const {data:{user}}=await supabase.auth.getUser();
-      _lm('getUser #2');
+      const user=await getUserCached();
+      _lm('getUser #2 (cached)');
       if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date}));
       else setSessionTagList(getTagList(date));
     } catch { setSessionTagList(getTagList(date)); }
@@ -6518,9 +6533,8 @@ function SSAApp(){
     // rendition state onto it; the cloud UUID is stashed as `cloudId` for
     // rendition PATCH + playback-URL resolution.
     try {
-      const supabase=getBrowserSupabase();
-      const {data:{user}}=await supabase.auth.getUser();
-      _lm('getUser #3');
+      const user=await getUserCached();
+      _lm('getUser #3 (cached)');
       if(user){
         const cloudVids=await listVideosCloud({userId:user.id,date});
         _lm(`listVideosCloud (${cloudVids.length} clips)`);
