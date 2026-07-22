@@ -27,8 +27,12 @@ export async function GET(req: NextRequest) {
     const res = await fetch(`${base()}/${ZONE}/${safeKey(key)}`, {
       headers: { AccessKey: API_KEY },
     });
+    // Absent object → 200 with a null body, not a 404. Every caller already
+    // treats null as "not present", and a missing object (sync manifest, legacy
+    // R2 session file) is an expected miss on many day-loads — passing Bunny's
+    // 404 through just logs a red error in the browser console for a non-error.
     if (res.status === 404)
-      return NextResponse.json({ error: "not found" }, { status: 404 });
+      return NextResponse.json(null);
     if (!res.ok)
       return NextResponse.json({ error: `Bunny HTTP ${res.status}` }, { status: 500 });
     const text = await res.text();

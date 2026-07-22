@@ -175,7 +175,11 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     let a = day.t0, b = day.t1 > day.t0 ? day.t1 : day.t0 + 3600000
     for (const e of markers) { a = Math.min(a, e.t0); b = Math.max(b, e.t1 || e.t0) }
     for (const m of (media || [])) { a = Math.min(a, m.t); b = Math.max(b, m.t) }
-    if (b <= a) b = a + 3600000
+    // Guard NaN bounds: on a day whose t0/t1 haven't parsed yet (log/xml still
+    // loading at boot), a/b are NaN and `b <= a` is false — so (hi - lo) stays
+    // NaN and every axis <line> renders y1="NaN". Force a finite >=1h window.
+    if (!Number.isFinite(a)) a = Number.isFinite(b) ? b - 3600000 : 0
+    if (!Number.isFinite(b) || b <= a) b = a + 3600000
     return [a, b]
   }, [day.t0, day.t1, markers, media])
 

@@ -39,6 +39,39 @@ export function getServerSupabase() {
   )
 }
 
+// Authenticated user id for a route handler. Prefers getClaims(): with the
+// project's asymmetric JWT signing key it verifies the token locally against
+// the cached JWKS, skipping the ~0.3-0.9s /auth/v1/user round-trip that
+// getUser() makes on every API call. Falls back to getUser() when claims can't
+// be verified. Returns null for anonymous callers. RLS still gates every row
+// read/write, so this is the early-401 + created_by stamp, not the security
+// boundary.
+export async function authedUserId(
+  supabase: ReturnType<typeof getServerSupabase>
+): Promise<string | null> {
+  const auth = supabase.auth as unknown as {
+    getClaims?: () => Promise<{ data: { claims?: { sub?: string } } | null }>
+    getUser: () => Promise<{ data: { user: { id: string } | null } }>
+  }
+  try {
+    if (typeof auth.getClaims === 'function') {
+      const { data } = await auth.getClaims()
+      const sub = data?.claims?.sub
+      if (sub) return sub
+    }
+  } catch {
+    /* fall through to getUser */
+  }
+  try {
+    const {
+      data: { user },
+    } = await auth.getUser()
+    return user?.id ?? null
+  } catch {
+    return null
+  }
+}
+
 // Service-role client. NEVER use from anywhere that runs in the browser.
 // Bypasses RLS — used for admin RPCs (approve user, set role-quota, etc.).
 import { createClient } from '@supabase/supabase-js'

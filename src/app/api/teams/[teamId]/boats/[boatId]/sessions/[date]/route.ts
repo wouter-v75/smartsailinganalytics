@@ -9,17 +9,15 @@
 // RLS gates everything; we use the user's session, not service-role.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSupabase } from '../../../../../../../../lib/supabase/server'
+import { getServerSupabase, authedUserId } from '../../../../../../../../lib/supabase/server'
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: { teamId: string; boatId: string; date: string } }
 ) {
   const supabase = getServerSupabase()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+  const uid = await authedUserId(supabase)
+  if (!uid) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const { data, error } = await supabase
     .from('sessions')
@@ -49,10 +47,8 @@ export async function PUT(
   { params }: { params: { teamId: string; boatId: string; date: string } }
 ) {
   const supabase = getServerSupabase()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+  const uid = await authedUserId(supabase)
+  if (!uid) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const body = (await req.json().catch(() => null)) as PutBody | null
   if (!body) {
@@ -64,7 +60,7 @@ export async function PUT(
     team_id: params.teamId,
     boat_id: params.boatId,
     date: params.date,
-    created_by_user_id: user.id,
+    created_by_user_id: uid,
   }
   if ('title' in body) row.title = body.title
   if ('log_data' in body) row.log_data = body.log_data
@@ -93,10 +89,8 @@ export async function DELETE(
   { params }: { params: { teamId: string; boatId: string; date: string } }
 ) {
   const supabase = getServerSupabase()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+  const uid = await authedUserId(supabase)
+  if (!uid) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const { error } = await supabase
     .from('sessions')

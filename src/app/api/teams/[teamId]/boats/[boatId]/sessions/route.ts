@@ -5,17 +5,16 @@
 // the user has boat access — anonymous / non-member calls fail with 403.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSupabase } from '../../../../../../../lib/supabase/server'
+import { getServerSupabase, authedUserId } from '../../../../../../../lib/supabase/server'
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: { teamId: string; boatId: string } }
 ) {
   const supabase = getServerSupabase()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
+  // Local JWKS verification instead of a getUser() round-trip (see authedUserId).
+  const uid = await authedUserId(supabase)
+  if (!uid) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   // PostgREST aggregate embeds — counts of related videos AND photos per
   // session so the sidebar can hide empty folders without a second round-trip.
