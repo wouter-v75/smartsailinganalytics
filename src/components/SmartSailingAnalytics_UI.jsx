@@ -6034,12 +6034,23 @@ function SSAApp(){
     async function resolve(){
       try{
         const supabase=getBrowserSupabase();
-        const {data:{user}}=await supabase.auth.getUser();
-        if(!user||cancelled) return;
-        const {data:profile}=await supabase.from('users').select('global_role').eq('id',user.id).maybeSingle();
+        // Verified user id — getClaims() checks the JWT signature locally against
+        // the cached JWKS (asymmetric key), skipping the ~0.9s getUser() round-trip.
+        // Fall back to getUser() if claims can't be verified. The admin decision
+        // stays server-authoritative: the global_role read below is RLS-gated.
+        let uid=null;
+        try {
+          if(typeof supabase.auth.getClaims==='function'){
+            const {data:cl}=await supabase.auth.getClaims();
+            uid=cl?.claims?.sub||null;
+          }
+        } catch { /* fall through to getUser */ }
+        if(!uid){ const {data:{user}}=await supabase.auth.getUser(); uid=user?.id||null; }
+        if(!uid||cancelled) return;
+        const {data:profile}=await supabase.from('users').select('global_role').eq('id',uid).maybeSingle();
         if(cancelled) return;
         if(profile?.global_role==='admin'){ setEffectiveRole('admin'); return; }
-        const m=getActiveMembership(user.id);
+        const m=getActiveMembership(uid);
         setEffectiveRole(m?.role||null);
       } catch { /* non-fatal */ }
     }
@@ -6317,10 +6328,26 @@ function SSAApp(){
       authUserRef.current = bootUser;   // seed cache; onAuthStateChange keeps it fresh
       const bootMembership = bootUser ? getActiveMembership(bootUser.id) : null;
       _pm('auth.getSession + membership (local, no round-trip)');
-      // Revalidate against the Auth server in the background — if the session was
-      // revoked/expired-unrefreshable, correct the cached user so later reads use
-      // the truth. Does not block paint.
-      supaForBoot.auth.getUser().then(({data:{user:verified}})=>{ authUserRef.current = verified || null; }).catch(()=>{});
+      // Revalidate the session in the background — does not block paint. Prefer
+      // getClaims(): with the project's asymmetric signing key it verifies the JWT
+      // locally against the cached JWKS (no /auth/v1/user round-trip). Only when
+      // the signature/subject can't be confirmed do we fall back to the
+      // authoritative getUser(), so a transient JWKS fetch failure can't wrongly
+      // drop the cached user. Corrects the cache if the server disagrees.
+      (async()=>{
+        try {
+          if(typeof supaForBoot.auth.getClaims==='function'){
+            const { data:cl } = await supaForBoot.auth.getClaims();
+            const sub = cl?.claims?.sub || null;
+            if(!sub){ authUserRef.current=null; return; }
+            if(authUserRef.current && authUserRef.current.id===sub) return; // seeded user confirmed
+            const { data:{ user:v } } = await supaForBoot.auth.getUser();
+            authUserRef.current = v || null;
+            return;
+          }
+        } catch { /* fall through to getUser */ }
+        try { const { data:{ user:v } } = await supaForBoot.auth.getUser(); authUserRef.current = v || null; } catch { /* */ }
+      })();
       const localSessions=getSessionsForMembership(bootMembership).sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
       _pm(`local sessions (${localSessions.length})`);
 
