@@ -4398,9 +4398,11 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 const pad={t:10,r:8,b:28,l:42};
                 const W=VB_W-pad.l-pad.r, H=height-pad.t-pad.b;
                 const xMin=xMinProp??-PRE, xMax=xMaxProp??POST;
-                const allPts=series.flat();
-                const rawYMin=Math.min(...allPts.map(p=>p.y));
-                const rawYMax=Math.max(...allPts.map(p=>p.y))||1;
+                // Finite-only domain — one NaN sample makes Math.min/max NaN, which
+                // turns every yTick <line> and series <path> into NaN coordinates.
+                const allPts=series.flat().filter(p=>Number.isFinite(p.y));
+                const rawYMin=allPts.length?Math.min(...allPts.map(p=>p.y)):0;
+                const rawYMax=(allPts.length?Math.max(...allPts.map(p=>p.y)):1)||1;
                 const yMin=forcedYMin!==undefined?forcedYMin:Math.min(0,rawYMin);
                 const yMax=forcedYMax!==undefined?forcedYMax:Math.max(0,rawYMax)||1;
                 const ySpan=yMax-yMin||1;
@@ -4431,8 +4433,8 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
 
                     {/* Lines rendered in order (selected last = on top) */}
                     {renderOrder.map(ti=>{
-                      const pts=series[ti];
-                      if(!pts||pts.length<2) return null;
+                      const pts=(series[ti]||[]).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+                      if(pts.length<2) return null;
                       const isSel=ti===selectedTack;
                       const c=TACK_COLORS[ti%TACK_COLORS.length];
                       const opacity=hasSelection?(isSel?1:0.15):0.75;
