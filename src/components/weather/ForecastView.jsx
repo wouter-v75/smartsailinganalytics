@@ -16,7 +16,7 @@ import PlotlyChart from './PlotlyChart'
 import ForecastDeck from './ForecastDeck'
 import Field3D from './Field3D'
 import {
-  MODELS, COMPARE_ORDER,
+  MODELS, COMPARE_ORDER, modelCoversPoint,
   fetchAllForPoint, pickDefaultActiveModel, hasValidSpeed,
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
@@ -559,11 +559,17 @@ export default function ForecastView({
   async function fetchAll(locs = locations) {
     setLoading(true); setErr(null)
     const tz = tzResolved
-    const labelFor = (k) => (k === 'GFS' ? 'GFS (upper air)' : (MODELS[k]?.label || k))
+    const labelFor = (k) => (k === 'GFS' ? 'GFS (upper air)' : k === 'ECMWF-UA' ? 'ECMWF (upper air)' : (MODELS[k]?.label || k))
     const locEntries = Object.entries(locs)
     if (!locEntries.length) { setLoading(false); return }
-    const perPoint = COMPARE_ORDER.length + 1 // +GFS
-    const total = locEntries.length * perPoint
+    // +2 per point for the always-fetched GFS and ECMWF upper-air soundings;
+    // region-gated models that don't cover a point aren't fetched, so count only
+    // the surface models actually queried for each location (otherwise the
+    // progress bar would stop short at a US or European point).
+    let total = 0
+    for (const [, coords] of locEntries) {
+      total += COMPARE_ORDER.filter((k) => ALL_MODELS[k] && modelCoversPoint(k, coords.lat, coords.lon)).length + 2
+    }
     let done = 0
     setProgress({ done: 0, total, label: 'Starting…' })
     try {
@@ -612,16 +618,31 @@ export default function ForecastView({
     return out
   }, [windData, p1lat, p1lon, canIconRace])
 
+  // Region-gated models (the North-American set) are HIDDEN from the picker —
+  // not just greyed — unless a clicked point falls in their coverage box, so
+  // they never clutter European venues. Once data has come back for one, it
+  // stays visible. Global models (no coverage box) always pass.
+  const modelInRegion = (k) => {
+    if (!MODELS[k]?.coverage) return true
+    if (modelAvailable[k]) return true
+    return Object.values(locations).some((p) => modelCoversPoint(k, p.lat, p.lon))
+  }
+
   // Once per point-set, default the selected model to the best available in order
-  // SSA-Race 1 km -> SSA-Race 2 km -> AROME (SSA loads first, so it's picked as
-  // soon as it arrives; AROME only once loading is done and no SSA is available).
+  // SSA-Race 1 km -> SSA-Race 2 km -> AROME, then (e.g. at a US venue where none
+  // of those have data) the first available model in the picker — so the wind
+  // field + tables land on ECMWF/HRRR instead of an empty AROME.
   const autoModelRef = useRef(false)
   useEffect(() => {
     const has = Object.keys(windData).length > 0
     if (!has) { autoModelRef.current = false; return }
     if (autoModelRef.current) return
     let pref = ['ICONRACE_1KM', 'ICONRACE'].find((k) => modelAvailable[k])
-    if (!pref && !loading) pref = modelAvailable.AROME ? 'AROME' : null
+    if (!pref && !loading) {
+      pref = modelAvailable.AROME
+        ? 'AROME'
+        : MODEL_PICK_ORDER.find((k) => !['CURRENTS', 'HPBL'].includes(k) && modelAvailable[k]) || null
+    }
     if (pref) { autoModelRef.current = true; setFieldModel(pref); onActiveModelChange?.(pref) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, windData, modelAvailable])
@@ -847,7 +868,7 @@ export default function ForecastView({
             <div>
               <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Model (field + tables)</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => !k.startsWith('ICONRACE'))).map((k) => {
+                {(canIconRace ? MODEL_PICK_ORDER : MODEL_PICK_ORDER.filter((k) => !k.startsWith('ICONRACE'))).filter(modelInRegion).map((k) => {
                   const m = MODELS[k]; const avail = modelAvailable[k]
                   const fieldOnly = k === 'CURRENTS' || k === 'HPBL'
                   const selected = fieldOnly ? fieldModel === k : activeModel === k
