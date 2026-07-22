@@ -6438,6 +6438,7 @@ function SSAApp(){
   },[]);
 
   async function loadDate(date){
+    const _lt0=performance.now(); const _lm=(l)=>{ try{ console.info(`[loadDate] ${l}: +${Math.round(performance.now()-_lt0)}ms`); }catch{ /* */ } };
     setActiveDate(date);
     // Reset video thumbnail load tracking for the new date
     setVideoThumbsLoading(true);
@@ -6448,14 +6449,17 @@ function SSAApp(){
     // ── Load log + xml (local first, then Supabase, then Bunny R2) ──────────
     let log = await getLogData(date);
     let xml = await getXmlData(date);
+    _lm('local log+xml');
 
     // If neither local has it, try Supabase (active membership scope).
     if(!log || !xml){
       try {
         const supabase=getBrowserSupabase();
         const {data:{user}}=await supabase.auth.getUser();
+        _lm('getUser #1');
         if(user){
           const cs=await getSessionCloud({userId:user.id,date});
+          _lm('getSessionCloud (log_data+xml_data download)');
           if(cs){
             if(!log && cs.log_data) log={...cs.log_data, source:'supabase'};
             if(!xml && cs.xml_data) xml={...cs.xml_data, source:'supabase'};
@@ -6478,9 +6482,11 @@ function SSAApp(){
     try {
       const supabase=getBrowserSupabase();
       const {data:{user}}=await supabase.auth.getUser();
+      _lm('getUser #2');
       if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date}));
       else setSessionTagList(getTagList(date));
     } catch { setSessionTagList(getTagList(date)); }
+    _lm('tag list');
 
     if(xml){setXmlData({...xml,source:xml.source||"local"});}
     else if(cloudStatus?.available && effectiveRole==='admin'){const r2=await fetchCloudSession(date);xml=r2?.xmlData||null;setXmlData(xml?{...xml,source:"cloud"}:null);}
@@ -6497,9 +6503,11 @@ function SSAApp(){
       }
     } catch {}
 
+    _lm('xml + timeline build');
     // ── Load videos ─────────────────────────────────────────────────────────
     let vids=await getVideosForDate(date);
     if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
+    _lm('local video rows');
     // Merge Supabase rows in. A clip can exist BOTH on this device (local
     // IDB, has the blob) and in Supabase (a cloud row). They must collapse
     // to ONE entry, or the library shows duplicates and batch-sync tries to
@@ -6512,8 +6520,10 @@ function SSAApp(){
     try {
       const supabase=getBrowserSupabase();
       const {data:{user}}=await supabase.auth.getUser();
+      _lm('getUser #3');
       if(user){
         const cloudVids=await listVideosCloud({userId:user.id,date});
+        _lm(`listVideosCloud (${cloudVids.length} clips)`);
         if(cloudVids.length){
           const localById=new Map(vids.map(v=>[v.id,v]));
           const localByStream=new Map(vids.filter(v=>v.streamId).map(v=>[v.streamId,v]));
@@ -6581,6 +6591,7 @@ function SSAApp(){
     // immediately instead of waiting on a per-clip signed-URL round-trip.
     // Playback URLs are resolved below in the background; that triggers a
     // second, cheap re-render once they land.
+    _lm('video cloud-merge done → early paint');
     {
       const early=enrichAll();
       setAllVideos(early);
