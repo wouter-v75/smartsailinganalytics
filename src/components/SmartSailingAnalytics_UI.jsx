@@ -3780,7 +3780,11 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         }catch(e){console.warn("photo marker err",e);}
       }
 
-      if(allLatLngs.length>0){try{map.fitBounds(L.latLngBounds(allLatLngs),{padding:[24,24]});}catch{}}
+      // animate:false — an animated fitBounds schedules a zoom via requestAnimationFrame;
+      // if the map is torn down before that fires (re-render churn on data load) the
+      // callback throws `Cannot read properties of undefined (reading '_leaflet_pos')`,
+      // which the sync try/catch can't catch. Jumping avoids the deferred animation.
+      if(allLatLngs.length>0){try{map.fitBounds(L.latLngBounds(allLatLngs),{padding:[24,24],animate:false});}catch{}}
     };
 
     if(!window.L){
@@ -6377,31 +6381,37 @@ function SSAApp(){
       const latestVideoDate=videoDates.length?videoDates[videoDates.length-1]:null;
       const latestDate=latestVideoDate||localSessions[0]?.date||today;
       const isRecent=(date)=>date===today||date===latestDate;
-      // On mobile: skip expensive enrichVideo (requires full log read) for old sessions
+      // On mobile: skip expensive enrichVideo (requires full log read) for old sessions.
+      // Clips share dates (e.g. 10 sessions ⇒ ~10 unique days but ~100 clips), so read
+      // each day's log+xml ONCE and reuse. Reading them per-clip re-deserialised the same
+      // big day-logs from IndexedDB ~N times and was the dominant first-paint cost
+      // (~6s for 97 clips). Cache the PROMISE so concurrent map() calls dedupe too.
+      const _lxCache=new Map();
+      const _getLX=(d)=>{ let p=_lxCache.get(d); if(!p){ p=(async()=>({log:await getLogData(d),xml:await getXmlData(d)}))(); _lxCache.set(d,p); } return p; };
       const enriched=await Promise.all(vids.map(async v=>{
         const d=v.sessionDate||today;
         if(isMobile && !isRecent(d)) return v; // mobile: skip log read for old clips
-        const log=await getLogData(d);
-        const xml=await getXmlData(d);
+        const {log,xml}=await _getLX(d);
         return enrichVideo(v,log,xml);
       }));
       setAllVideos(enriched);
       _pm('enrich videos (log+xml reads)');
       if(enriched.length>0)setSelectedVideo(enriched[0]);
 
-      const latestLog=await getLogData(latestDate);
-      const latestXml=await getXmlData(latestDate);
+      // Reuse the per-date cache — latestDate was almost always already read above.
+      const {log:latestLog,xml:latestXml}=await _getLX(latestDate);
       if(latestLog){setLogData({...latestLog,source:"local"});setSessionTzOffset(latestLog.tzOffset??DEFAULT_TZ);}
       if(latestXml)setXmlData({...latestXml,source:"local"});
       setActiveDate(latestDate);
-      // Load tag list — cloud-backed when there's an active membership,
-      // localStorage fallback otherwise. Reuse bootUser (already fetched above) —
-      // auth.getUser is a ~0.3-0.8s round-trip and boot was calling it 3x.
-      try {
-        const user=bootUser;
-        if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date:latestDate}));
-        else setSessionTagList(getTagList(latestDate));
-      } catch { setSessionTagList(getTagList(latestDate)); }
+      // Tag list — paint from the LOCAL list immediately, then refresh from the
+      // cloud in the background. cloudFetchTagList is a network round-trip that was
+      // sitting in the pre-paint path (~1.3s of first paint on a real load).
+      setSessionTagList(getTagList(latestDate));
+      if(bootUser){
+        cloudFetchTagList({userId:bootUser.id,date:latestDate})
+          .then(tl=>{ if(tl) setSessionTagList(tl); })
+          .catch(()=>{});
+      }
       const latestSession=localSessions.find(s=>s.date===latestDate);
       if(latestSession?.tzOffset!=null)setSessionTzOffset(latestSession.tzOffset);
       setUnsyncedCount(getUnsyncedCount());setLoaded(true);
