@@ -6305,10 +6305,22 @@ function SSAApp(){
       // sessions/videos belonging to the current workspace. Untagged legacy
       // entries are visible only when there is no active membership.
       const supaForBoot = getBrowserSupabase();
-      const { data: { user: bootUser } } = await supaForBoot.auth.getUser();
-      authUserRef.current = bootUser || null;   // seed the cache so loadDate never re-fetches the user
+      // Fast path: read the user from the STORED session (cookie), not the
+      // /auth/v1/user endpoint. getUser() is a ~0.9s round-trip that was gating
+      // FIRST PAINT; getSession() is local. Safe here because (a) every cloud
+      // read is RLS-gated — the JWT sent with each request is what the server
+      // validates, so a stale/tampered session yields empty results, never
+      // another tenant's data — and (b) the admin gate is resolved separately by
+      // a verified getUser + users.global_role lookup (see effectiveRole effect).
+      const { data: { session: bootSession } } = await supaForBoot.auth.getSession();
+      const bootUser = bootSession?.user || null;
+      authUserRef.current = bootUser;   // seed cache; onAuthStateChange keeps it fresh
       const bootMembership = bootUser ? getActiveMembership(bootUser.id) : null;
-      _pm('auth.getUser + membership');
+      _pm('auth.getSession + membership (local, no round-trip)');
+      // Revalidate against the Auth server in the background — if the session was
+      // revoked/expired-unrefreshable, correct the cached user so later reads use
+      // the truth. Does not block paint.
+      supaForBoot.auth.getUser().then(({data:{user:verified}})=>{ authUserRef.current = verified || null; }).catch(()=>{});
       const localSessions=getSessionsForMembership(bootMembership).sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
       _pm(`local sessions (${localSessions.length})`);
 
