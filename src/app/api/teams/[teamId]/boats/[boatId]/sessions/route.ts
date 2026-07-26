@@ -21,7 +21,7 @@ export async function GET(
   const { data, error } = await supabase
     .from('sessions')
     .select(
-      'id, date, title, event, tz_offset_minutes, created_at, updated_at, created_by_user_id, videos(count), photos(count)'
+      'id, date, title, event, tz_offset_minutes, created_at, updated_at, created_by_user_id, videos(count), photos(count), sail_scans(count)'
     )
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)
@@ -34,11 +34,12 @@ export async function GET(
 
   // Flatten the embedded aggregates into plain integers.
   const sessions = ((data || []) as unknown as Array<Record<string, unknown>>).map((row) => {
-    const { videos, photos, ...rest } = row
+    const { videos, photos, sail_scans, ...rest } = row
     return {
       ...rest,
       video_count: (videos as { count: number }[] | undefined)?.[0]?.count ?? 0,
       photo_count: (photos as { count: number }[] | undefined)?.[0]?.count ?? 0,
+      scan_count: (sail_scans as { count: number }[] | undefined)?.[0]?.count ?? 0,
     }
   })
 

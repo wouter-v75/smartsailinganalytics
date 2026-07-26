@@ -89,7 +89,7 @@ export default function DayPhases({ day, events, tz, teamId, boatId, onPlayVideo
 
   // Does a phase have content? (drives the filled dot + muted styling)
   const nMarkers = events.filter((e) => e.kind !== 'day').length
-  const nMedia = (day.metrics?.videos || 0) + (day.metrics?.photos || 0)
+  const nMedia = (day.metrics?.videos || 0) + (day.metrics?.photos || 0) + (day.metrics?.scans || 0)
   const has = (k: string): boolean => {
     switch (k) {
       case 'timings': return !!(cond?.timings && String(cond.timings).trim())
@@ -143,6 +143,7 @@ function PhaseRow({ ph, isOpen, filled, onToggle, day, events, tz, teamId, boatI
           <span className="ml-1 flex gap-1">
             {(day.metrics?.videos || 0) > 0 && <Badge tone="accent">{day.metrics!.videos} vid</Badge>}
             {(day.metrics?.photos || 0) > 0 && <Badge tone="warning">{day.metrics!.photos} ph</Badge>}
+            {(day.metrics?.scans || 0) > 0 && <Badge style={{ background: 'rgba(167,139,250,0.15)', color: '#A78BFA' }}>{day.metrics!.scans} sc</Badge>}
           </span>
         )}
         {ph.key !== 'sailing' && filled && <span className="h-1.5 w-1.5 rounded-full" style={{ background: ph.color }} aria-hidden />}

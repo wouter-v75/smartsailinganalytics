@@ -16,6 +16,7 @@ export interface SessionRec {
   event?: string | null
   video_count?: number
   photo_count?: number
+  scan_count?: number
 }
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'x'
@@ -38,7 +39,7 @@ export function buildCampaignTree({ sessions, detail, boatId }: { sessions: Sess
   const dateList = Array.from(dates).sort()
   if (!dateList.length) return detail
 
-  interface DayInfo { date: string; event: string; title: string; t0: number; t1: number; videos: number; photos: number }
+  interface DayInfo { date: string; event: string; title: string; t0: number; t1: number; videos: number; photos: number; scans: number }
   const days: DayInfo[] = dateList.map((date) => {
     const s = bySession.get(date)
     const pd = detailDay.get(date)
@@ -50,6 +51,7 @@ export function buildCampaignTree({ sessions, detail, boatId }: { sessions: Sess
       t1: pd?.t1 ?? dayMs(date, 17),
       videos: s?.video_count ?? 0,
       photos: s?.photo_count ?? 0,
+      scans: s?.scan_count ?? 0,
     }
   })
 
@@ -95,7 +97,7 @@ export function buildCampaignTree({ sessions, detail, boatId }: { sessions: Sess
       id: `${boatId}:${d.date}:day`, parentId: dayParent.get(d.date) ?? seasonId, kind: 'day',
       t0: d.t0, t1: d.t1, title: d.title, subtitle: d.event !== 'Training' ? d.event : undefined,
       source: 'auto', producer: 'campaign',
-      metrics: { videos: d.videos, photos: d.photos },
+      metrics: { videos: d.videos, photos: d.photos, scans: d.scans },
       meta: { date: d.date, regatta: d.event },
     })
   }
