@@ -663,6 +663,71 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
           </div>
         </div>
 
+        {/* 2-minute window: averages + graphs */}
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, margin: '18px 0 6px' }}>
+          Boat state · 2-min window {win ? `(${win.count} pts · ${winSource} log)` : ''}
+        </div>
+        {!winLoaded ? (
+          <div style={{ color: C.dim, fontSize: 12 }}>matching the day’s log…</div>
+        ) : !win ? (
+          <div style={{ color: C.dim, fontSize: 12 }}>No log found for this boat/day, or the scan time isn’t covered by the log.</div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 8 }}>
+              {kv('TWS', `${fmt(win.averages.tws)} kt`)}
+              {kv('TWA', `${fmt(win.averages.twa, 0)}°`)}
+              {kv('AWS', `${fmt(win.averages.aws)} kt`)}
+              {kv('AWA', `${fmt(win.averages.awa, 0)}°`)}
+              {win.averages.bsp != null && kv('BSP', `${fmt(win.averages.bsp)} kt`)}
+              {kv('Polar BSP', `${fmt(win.averages.vsPerfPct, 0)}%`)}
+              {win.averages.heel != null && kv('Heel', `${fmt(win.averages.heel, 1)}°`)}
+              {win.averages.leeway != null && kv('Leeway', `${fmt(win.averages.leeway, 1)}°`)}
+              {kv('Forestay', `${fmt(win.averages.forestay)}`)}
+              {win.averages.shims != null && kv('Shim', `${fmt(win.averages.shims, 0)}`)}
+              {win.averages.trim != null && kv('Trim', `${fmt(win.averages.trim, 2)}`)}
+              {win.averages.keelAng != null && kv('Keel angle', `${fmt(win.averages.keelAng, 2)}°`)}
+              {win.averages.ruddP != null && kv('Rudder P', `${fmt(win.averages.ruddP, 1)}°`)}
+              {win.averages.ruddS != null && kv('Rudder S', `${fmt(win.averages.ruddS, 1)}°`)}
+
+              {/* MAINSAIL trim — only on main scans, only when the log carries it */}
+              {isMain && win.averages.cunninghamLoad != null && kv('Cunningham', `${fmt(win.averages.cunninghamLoad)}`)}
+              {isMain && win.averages.outhaul != null && kv('Outhaul', `${fmt(win.averages.outhaul)}`)}
+              {isMain && win.averages.vang != null && kv('Vang', `${fmt(win.averages.vang)}`)}
+              {isMain && win.averages.mainsheetLoad != null && kv('Mainsheet', `${fmt(win.averages.mainsheetLoad)}`)}
+              {isMain && win.averages.upDflctPct != null && kv('Up deflector', `${fmt(win.averages.upDflctPct, 0)}%`)}
+              {isMain && win.averages.lwDflctPct != null && kv('Low deflector', `${fmt(win.averages.lwDflctPct, 0)}%`)}
+              {isMain && win.averages.travPct != null && kv('Traveller', `${fmt(win.averages.travPct, 0)}%`)}
+              {isMain && kv('V0 P', `${fmt(win.averages.v0p, 0)}`)}
+              {isMain && kv('V0 S', `${fmt(win.averages.v0s, 0)}`)}
+              {isMain && kv('V1 P', `${fmt(win.averages.v1p, 0)}`)}
+              {isMain && kv('V1 S', `${fmt(win.averages.v1s, 0)}`)}
+
+              {/* HEADSAIL trim — only on jib (headsail) scans */}
+              {isHeadsail && win.averages.jibTackLoad != null && kv('Jib tack', `${fmt(win.averages.jibTackLoad)}`)}
+              {isHeadsail && win.averages.jibUpDnStbd != null && kv('Jib U/D stbd', `${fmt(win.averages.jibUpDnStbd, 0)}`)}
+              {isHeadsail && win.averages.jibUpDnPort != null && kv('Jib U/D port', `${fmt(win.averages.jibUpDnPort, 0)}`)}
+              {isHeadsail && win.averages.jibInOut != null && kv('Jib in/out', `${fmt(win.averages.jibInOut, 0)}`)}
+
+              {win.averages.twaTarg != null && kv('Targ TWA', `${fmt(win.averages.twaTarg, 0)}°`)}
+              {win.averages.vsTarget != null && kv('Targ BSP', `${fmt(win.averages.vsTarget)} kt`)}
+              {win.averages.targHeel != null && kv('Targ heel', `${fmt(win.averages.targHeel, 1)}°`)}
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {WIND.map((wf) => {
+                const ys: (number | null)[] = win.series[wf.key] || []
+                const t0 = win.series.utc?.[0] || 0
+                const xs = (win.series.utc || []).map((u: number) => (u - t0) / 1000)
+                return (
+                  <div key={wf.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
+                    <div style={{ fontSize: 13, color: C.head, fontWeight: 700, marginBottom: 4 }}>{wf.label}</div>
+                    <LineChart xs={xs} ys={ys} color={wf.color} xLabel="seconds" w={720} h={280} />
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+
         {/* notes */}
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, marginBottom: 4 }}>Notes</div>
@@ -731,71 +796,6 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
           <div style={{ fontSize: 10, color: C.dim, marginTop: 2 }}>
             <span style={{ color: NS_GREEN }}>— — green dashed</span> = Northstar target @ {fmt(designTws, 0)} kn
           </div>
-        )}
-
-        {/* 2-minute window: averages + graphs */}
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.dim, margin: '18px 0 6px' }}>
-          Boat state · 2-min window {win ? `(${win.count} pts · ${winSource} log)` : ''}
-        </div>
-        {!winLoaded ? (
-          <div style={{ color: C.dim, fontSize: 12 }}>matching the day’s log…</div>
-        ) : !win ? (
-          <div style={{ color: C.dim, fontSize: 12 }}>No log found for this boat/day, or the scan time isn’t covered by the log.</div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 8 }}>
-              {kv('TWS', `${fmt(win.averages.tws)} kt`)}
-              {kv('TWA', `${fmt(win.averages.twa, 0)}°`)}
-              {kv('AWS', `${fmt(win.averages.aws)} kt`)}
-              {kv('AWA', `${fmt(win.averages.awa, 0)}°`)}
-              {win.averages.bsp != null && kv('BSP', `${fmt(win.averages.bsp)} kt`)}
-              {kv('Polar BSP', `${fmt(win.averages.vsPerfPct, 0)}%`)}
-              {win.averages.heel != null && kv('Heel', `${fmt(win.averages.heel, 1)}°`)}
-              {win.averages.leeway != null && kv('Leeway', `${fmt(win.averages.leeway, 1)}°`)}
-              {kv('Forestay', `${fmt(win.averages.forestay)}`)}
-              {win.averages.shims != null && kv('Shim', `${fmt(win.averages.shims, 0)}`)}
-              {win.averages.trim != null && kv('Trim', `${fmt(win.averages.trim, 2)}`)}
-              {win.averages.keelAng != null && kv('Keel angle', `${fmt(win.averages.keelAng, 2)}°`)}
-              {win.averages.ruddP != null && kv('Rudder P', `${fmt(win.averages.ruddP, 1)}°`)}
-              {win.averages.ruddS != null && kv('Rudder S', `${fmt(win.averages.ruddS, 1)}°`)}
-
-              {/* MAINSAIL trim — only on main scans, only when the log carries it */}
-              {isMain && win.averages.cunninghamLoad != null && kv('Cunningham', `${fmt(win.averages.cunninghamLoad)}`)}
-              {isMain && win.averages.outhaul != null && kv('Outhaul', `${fmt(win.averages.outhaul)}`)}
-              {isMain && win.averages.vang != null && kv('Vang', `${fmt(win.averages.vang)}`)}
-              {isMain && win.averages.mainsheetLoad != null && kv('Mainsheet', `${fmt(win.averages.mainsheetLoad)}`)}
-              {isMain && win.averages.upDflctPct != null && kv('Up deflector', `${fmt(win.averages.upDflctPct, 0)}%`)}
-              {isMain && win.averages.lwDflctPct != null && kv('Low deflector', `${fmt(win.averages.lwDflctPct, 0)}%`)}
-              {isMain && win.averages.travPct != null && kv('Traveller', `${fmt(win.averages.travPct, 0)}%`)}
-              {isMain && kv('V0 P', `${fmt(win.averages.v0p, 0)}`)}
-              {isMain && kv('V0 S', `${fmt(win.averages.v0s, 0)}`)}
-              {isMain && kv('V1 P', `${fmt(win.averages.v1p, 0)}`)}
-              {isMain && kv('V1 S', `${fmt(win.averages.v1s, 0)}`)}
-
-              {/* HEADSAIL trim — only on jib (headsail) scans */}
-              {isHeadsail && win.averages.jibTackLoad != null && kv('Jib tack', `${fmt(win.averages.jibTackLoad)}`)}
-              {isHeadsail && win.averages.jibUpDnStbd != null && kv('Jib U/D stbd', `${fmt(win.averages.jibUpDnStbd, 0)}`)}
-              {isHeadsail && win.averages.jibUpDnPort != null && kv('Jib U/D port', `${fmt(win.averages.jibUpDnPort, 0)}`)}
-              {isHeadsail && win.averages.jibInOut != null && kv('Jib in/out', `${fmt(win.averages.jibInOut, 0)}`)}
-
-              {win.averages.twaTarg != null && kv('Targ TWA', `${fmt(win.averages.twaTarg, 0)}°`)}
-              {win.averages.vsTarget != null && kv('Targ BSP', `${fmt(win.averages.vsTarget)} kt`)}
-              {win.averages.targHeel != null && kv('Targ heel', `${fmt(win.averages.targHeel, 1)}°`)}
-            </div>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-              {WIND.map((wf) => {
-                const ys: (number | null)[] = win.series[wf.key] || []
-                const t0 = win.series.utc?.[0] || 0
-                const xs = (win.series.utc || []).map((u: number) => (u - t0) / 1000)
-                return (
-                  <div key={wf.key} style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px' }}>
-                    <div style={{ fontSize: 13, color: C.head, fontWeight: 700, marginBottom: 4 }}>{wf.label}</div>
-                    <LineChart xs={xs} ys={ys} color={wf.color} xLabel="seconds" w={720} h={280} />
-                  </div>
-                )
-              })}
-            </div>
-          </>
         )}
       </div>
     </div>
