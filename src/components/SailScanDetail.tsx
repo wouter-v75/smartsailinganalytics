@@ -748,15 +748,22 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               {kv('TWA', `${fmt(win.averages.twa, 0)}°`)}
               {kv('AWS', `${fmt(win.averages.aws)} kt`)}
               {kv('AWA', `${fmt(win.averages.awa, 0)}°`)}
+              {win.averages.bsp != null && kv('BSP', `${fmt(win.averages.bsp)} kt`)}
               {kv('Polar BSP', `${fmt(win.averages.vsPerfPct, 0)}%`)}
+              {win.averages.heel != null && kv('Heel', `${fmt(win.averages.heel, 1)}°`)}
+              {win.averages.leeway != null && kv('Leeway', `${fmt(win.averages.leeway, 1)}°`)}
               {kv('Forestay', `${fmt(win.averages.forestay)}`)}
+              {win.averages.shims != null && kv('Shim', `${fmt(win.averages.shims, 0)}`)}
               {win.averages.trim != null && kv('Trim', `${fmt(win.averages.trim, 2)}`)}
               {win.averages.keelAng != null && kv('Keel angle', `${fmt(win.averages.keelAng, 2)}°`)}
+              {win.averages.ruddP != null && kv('Rudder P', `${fmt(win.averages.ruddP, 1)}°`)}
+              {win.averages.ruddS != null && kv('Rudder S', `${fmt(win.averages.ruddS, 1)}°`)}
 
               {/* MAINSAIL trim — only on main scans, only when the log carries it */}
               {isMain && win.averages.cunninghamLoad != null && kv('Cunningham', `${fmt(win.averages.cunninghamLoad)}`)}
               {isMain && win.averages.outhaul != null && kv('Outhaul', `${fmt(win.averages.outhaul)}`)}
               {isMain && win.averages.vang != null && kv('Vang', `${fmt(win.averages.vang)}`)}
+              {isMain && win.averages.mainsheetLoad != null && kv('Mainsheet', `${fmt(win.averages.mainsheetLoad)}`)}
               {isMain && win.averages.upDflctPct != null && kv('Up deflector', `${fmt(win.averages.upDflctPct, 0)}%`)}
               {isMain && win.averages.lwDflctPct != null && kv('Low deflector', `${fmt(win.averages.lwDflctPct, 0)}%`)}
               {isMain && win.averages.travPct != null && kv('Traveller', `${fmt(win.averages.travPct, 0)}%`)}

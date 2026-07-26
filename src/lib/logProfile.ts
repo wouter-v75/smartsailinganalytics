@@ -27,7 +27,7 @@ export type LogField =
   | 'v0p' | 'v0s' | 'v1p' | 'v1s'
   // headsail-only trim positions — shown on JIB (headsail) scans
   | 'jibUpDnStbd' | 'jibUpDnPort' | 'jibInOut'
-  | 'jibTackLoad' | 'gsTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt'
+  | 'jibTackLoad' | 'gsTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt' | 'shims'
   // rig loads + control positions added by the 2026-07 N76 export
   | 'fstyPin' | 'fstyJibTk' | 'mainsheetLoad' | 'ruddP' | 'ruddS'
   | 'toeIn' | 'futek' | 'eBarPort' | 'eBarStbd'
@@ -87,6 +87,8 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   cunninghamLoad: ['cunningham', 'cunno'],
   mastAng: ['mastang'],
   mastButt: ['mastbutt'],
+  // mast-base shim stack — 2026-07 N76 export header 'SHIMS'
+  shims: ['shims', 'shim'],
   // Rig loads + control positions carried by the 2026-07 N76 export.
   // `fstyPin` is the forestay PIN LOAD — distinct from `forestay` (the length/rake
   // reading). `fstyJibTk` is the boat's own summed forestay + jib-tack load (the

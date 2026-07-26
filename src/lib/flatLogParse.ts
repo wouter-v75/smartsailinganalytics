@@ -48,7 +48,7 @@ export interface FlatLogRow {
   timer1: number | null; yawR: number | null; magvar: number | null; rudder: number | null
   // rig loads/settings + targets (2026-06 N76 flat-CSV): so the 2-min SailScan
   // window can average them instead of only showing them at the scan instant.
-  rake: number | null; mastAng: number | null
+  rake: number | null; mastAng: number | null; shims: number | null
   jibTackLoad: number | null; gsTackLoad: number | null; cunninghamLoad: number | null
   vang: number | null; outhaul: number | null; travPct: number | null; cunnoPct: number | null
   // rig loads + control positions (2026-07 N76 export). fstyPin = forestay PIN LOAD
@@ -187,7 +187,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       dstLine: num(c, M.dstLine), tmLine: tmLineOf(c),
       ttbPort: num(c, M.ttbPort), ttbStbd: num(c, M.ttbStbd), ttbOnStb: num(c, M.ttbOnStb), ttbPin: num(c, M.ttbPin), ttbCB: num(c, M.ttbCB),
       timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
-      rake: num(c, M.rake), mastAng: num(c, M.mastAng),
+      rake: num(c, M.rake), mastAng: num(c, M.mastAng), shims: num(c, M.shims),
       jibTackLoad: num(c, M.jibTackLoad), gsTackLoad: num(c, M.gsTackLoad), cunninghamLoad: num(c, M.cunninghamLoad),
       vang: num(c, M.vang), outhaul: num(c, M.outhaul), travPct: num(c, M.travPct), cunnoPct: num(c, M.cunnoPct),
       v0p: num(c, M.v0p), v0s: num(c, M.v0s), v1p: num(c, M.v1p), v1s: num(c, M.v1s),

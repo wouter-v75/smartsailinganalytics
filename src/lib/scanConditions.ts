@@ -35,6 +35,14 @@ export interface LogRowLike {
   jibUpDnStbd?: number | null
   jibUpDnPort?: number | null
   jibInOut?: number | null
+  // boat state + steering + mast base (surfaced to the SailScan window)
+  bsp?: number | null
+  heel?: number | null
+  leeway?: number | null
+  ruddP?: number | null
+  ruddS?: number | null
+  mainsheetLoad?: number | null
+  shims?: number | null
   // performance / targets — canonical app-wide keys
   vsPerfPct?: number | null
   vsTarget?: number | null
@@ -46,6 +54,7 @@ const AVG_FIELDS = [
   'tws', 'twa', 'aws', 'awa', 'vsPerfPct', 'forestay', 'rake', 'jibTackLoad', 'cunninghamLoad',
   'trim', 'keelAng', 'upDflctPct', 'lwDflctPct', 'travPct', 'vang', 'outhaul',
   'v0p', 'v0s', 'v1p', 'v1s', 'jibUpDnStbd', 'jibUpDnPort', 'jibInOut',
+  'bsp', 'heel', 'leeway', 'ruddP', 'ruddS', 'mainsheetLoad', 'shims',
   'twaTarg', 'vsTarget', 'targHeel',
 ] as const
 const SERIES_FIELDS = ['tws', 'twa', 'aws', 'awa', 'vsPerfPct'] as const
