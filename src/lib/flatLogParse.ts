@@ -44,7 +44,7 @@ export interface FlatLogRow {
   vsPerfPct: number | null; twaTarg: number | null
   // start-line instruments (canonical)
   dstLine: number | null; tmLine: number | null
-  ttbPort: number | null; ttbStbd: number | null; ttbPin: number | null; ttbCB: number | null
+  ttbPort: number | null; ttbStbd: number | null; ttbOnStb: number | null; ttbPin: number | null; ttbCB: number | null
   timer1: number | null; yawR: number | null; magvar: number | null; rudder: number | null
   // rig loads/settings + targets (2026-06 N76 flat-CSV): so the 2-min SailScan
   // window can average them instead of only showing them at the scan instant.
@@ -106,6 +106,19 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
     if (i == null || i < 0 || i >= c.length) return null
     const v = parseFloat(c[i])
     return Number.isNaN(v) ? null : v
+  }
+
+  // TTB·LINE — the 2026-07 Expedition export has no direct 'TmLine' column; derive
+  // the burn at the line as (time-to-line − time-to-gun). Older exports keep a
+  // direct 'TmLine' column, which wins when present.
+  const tmToLnIdx = headerCols.findIndex((h) => norm(h) === 'tmtoln')
+  const tmToGunIdx = headerCols.findIndex((h) => norm(h) === 'tmtogun')
+  const tmLineOf = (c: string[]): number | null => {
+    const direct = num(c, M.tmLine)
+    if (direct != null) return direct
+    const toLn = num(c, tmToLnIdx >= 0 ? tmToLnIdx : undefined)
+    const toGun = num(c, tmToGunIdx >= 0 ? tmToGunIdx : undefined)
+    return toLn != null && toGun != null ? toLn - toGun : null
   }
 
   // `Utc` is the SINGLE SOURCE OF TRUTH for the timestamp, in one of three
@@ -171,8 +184,8 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
       vsTarget: num(c, M.vsTarget), vsTargPct: num(c, M.vsTargPct), vsPerf: num(c, M.vsPerf),
       vsPerfPct: num(c, M.vsPerfPct), twaTarg: num(c, M.twaTarg),
-      dstLine: num(c, M.dstLine), tmLine: num(c, M.tmLine),
-      ttbPort: num(c, M.ttbPort), ttbStbd: num(c, M.ttbStbd), ttbPin: num(c, M.ttbPin), ttbCB: num(c, M.ttbCB),
+      dstLine: num(c, M.dstLine), tmLine: tmLineOf(c),
+      ttbPort: num(c, M.ttbPort), ttbStbd: num(c, M.ttbStbd), ttbOnStb: num(c, M.ttbOnStb), ttbPin: num(c, M.ttbPin), ttbCB: num(c, M.ttbCB),
       timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
       rake: num(c, M.rake), mastAng: num(c, M.mastAng),
       jibTackLoad: num(c, M.jibTackLoad), gsTackLoad: num(c, M.gsTackLoad), cunninghamLoad: num(c, M.cunninghamLoad),

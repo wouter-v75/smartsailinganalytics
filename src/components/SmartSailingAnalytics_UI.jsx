@@ -1205,15 +1205,16 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   //   positive = early, you need to burn some time before crossing
   //   negative = late, you'll cross after the gun
   //
-  // TTB·LINE — the TM_LINE log column is misleadingly named ("TM_"
-  //   suggests time-to-reach), but the value is already the burn at the
-  //   line on the current heading. Display directly, no subtraction.
-  // TTB·P / TTB·S — TTB_Port / TTB_Stbd are the seconds it takes to
-  //   reach the port / starboard end of the line (not a pre-computed
-  //   burn), so we subtract from the gun timer.
+  // All shown DIRECTLY as burns — the Expedition start channels already encode the
+  // burn on the current heading (+early / -late), so no gun-timer subtraction:
+  //   TTB·LINE   ← tmLine    (TmToLn − TmToGun, computed in flatLogParse)
+  //   TTB·P      ← ttbPort   (StBsToP)
+  //   TTB·S      ← ttbStbd   (StBsToS)
+  //   TTB·on·STB ← ttbOnStb  (StBsOnS) — burn if committing to the starboard tack
   const ttbLine = (row?.tmLine!=null && isFinite(row.tmLine)) ? row.tmLine : null;
-  const ttbPort = (row?.ttbPort!=null && secToGun!=null) ? secToGun-row.ttbPort : null;
-  const ttbStbd = (row?.ttbStbd!=null && secToGun!=null) ? secToGun-row.ttbStbd : null;
+  const ttbPort = (row?.ttbPort!=null && isFinite(row.ttbPort)) ? row.ttbPort : null;
+  const ttbStbd = (row?.ttbStbd!=null && isFinite(row.ttbStbd)) ? row.ttbStbd : null;
+  const ttbOnStb = (row?.ttbOnStb!=null && isFinite(row.ttbOnStb)) ? row.ttbOnStb : null;
 
   // LINE SQUARE — the wind direction at which the start line is perpendicular
   // to the wind, in MAGNETIC degrees. There are two perpendiculars to any
@@ -1294,6 +1295,12 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                unit={ttbPort==null?"":ttbPort>0?"early":"late"}
                color={ttbPort!=null&&ttbPort<0?"#EF4444":"#10B981"} size="lg"
                highlight={ttbPort!=null&&ttbPort<-10}/>
+        {/* TTB if committing to the STARBOARD tack */}
+        <Gauge label="TTB·on·STB"
+               value={ttbOnStb!=null?fmtBurn(ttbOnStb):"--:--"}
+               unit={ttbOnStb==null?"":ttbOnStb>0?"early":"late"}
+               color={ttbOnStb!=null&&ttbOnStb<0?"#EF4444":"#10B981"} size="lg"
+               highlight={ttbOnStb!=null&&ttbOnStb<-10}/>
         {/* TTB at STBD end of line */}
         <Gauge label="TTB·S"
                value={ttbStbd!=null?fmtBurn(ttbStbd):"--:--"}

@@ -37,7 +37,7 @@ export type LogField =
   // labels onto THESE keys via the alias table; the keys never change.
   | 'vsTarget' | 'vsTargPct' | 'vsPerf' | 'twaTarg'
   // start-line instruments (canonical names from the legacy parser)
-  | 'dstLine' | 'tmLine' | 'ttbPort' | 'ttbStbd' | 'ttbPin' | 'ttbCB' | 'timer1' | 'yawR' | 'magvar'
+  | 'dstLine' | 'tmLine' | 'ttbPort' | 'ttbStbd' | 'ttbOnStb' | 'ttbPin' | 'ttbCB' | 'timer1' | 'yawR' | 'magvar'
   | 'targHeel' | 'targFsty' | 'targBsty' | 'targKeel'
   | 'targToe' | 'targTrim' | 'targVmg' | 'targAwa'
   // On-board environment sensors — feed the OBSERVED windweight (air-sea ΔT,
@@ -111,9 +111,16 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   twaTarg: ['twatarg', 'twatarget', 'targtwa', 'targettwa'],  // target TWA
   // start-line instruments
   dstLine: ['dstline', 'distancetostartlineboatlengths'],
+  // tmLine is TTB·LINE. Older exports carry a direct 'TmLine' column; the 2026-07
+  // Expedition export instead has 'TmToLn' + 'TmToGun', and flatLogParse computes
+  // tmLine = TmToLn - TmToGun when no direct column is present.
   tmLine: ['tmline'],
-  ttbPort: ['ttbport'],
-  ttbStbd: ['ttbstbd'],
+  // TTB·P / TTB·S — 'StBsToP' / 'StBsToS' are the Expedition start-burn channels
+  // for the port / starboard line ends (shown directly as a burn: +early / -late).
+  ttbPort: ['ttbport', 'stbstop'],
+  ttbStbd: ['ttbstbd', 'stbstos'],
+  // TTB·on·STB — start burn if committing to the starboard tack ('StBsOnS').
+  ttbOnStb: ['stbsons'],
   ttbPin: ['ttbpin'],
   ttbCB: ['ttbcb'],
   timer1: ['timer1', 'racetimerminsec'],
