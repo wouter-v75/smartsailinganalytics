@@ -397,7 +397,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
       {/* Row 1 — Plan | Boat config (sail list for the day) */}
       <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch' }}>
         <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>Plan for {fmtDay(date)}</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>Goals &amp; planning for {fmtDay(date)}</div>
           {loading ? (
             <div style={{ color: '#64748B', fontSize: 13 }}>Loading…</div>
           ) : !session ? (
@@ -445,28 +445,24 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
         />
       </div>
 
-      {/* Row 2 — Debrief notes | Speed team meeting notes */}
+      {/* Row 2 — Speed team meeting notes | Debrief notes */}
       <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch', marginTop: 14 }}>
         <NotesCard
-          title="Debrief notes"
-          aiMode="debrief"
-          fields={[{ key: 'learnings', label: 'Learnings' }, { key: 'next_focus', label: 'Next focus points' }]}
+          title="Speed team meeting notes"
+          aiMode="speedteam"
+          fields={[{ key: 'speed_learnings', label: 'Notes' }]}
           showDocuments
-          documentsScope="debrief"
+          documentsScope="speed"
           wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
           base={base} date={date} teamId={teamId} boatId={boatId} role={role}
           canEdit={canEditDebrief} isMobile={isMobile} onOpenVideo={onOpenVideo} onOpenItem={onOpenItem}
         />
         <NotesCard
-          title="Speed team meeting notes"
-          aiMode="speedteam"
-          fields={[
-            { key: 'speed_learnings', label: 'Learnings' },
-            { key: 'speed_focus_today', label: 'Focus for today' },
-            { key: 'speed_long_term', label: 'Long term development points' },
-          ]}
+          title="Debrief notes"
+          aiMode="debrief"
+          fields={[{ key: 'learnings', label: 'Notes' }]}
           showDocuments
-          documentsScope="speed"
+          documentsScope="debrief"
           wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
           base={base} date={date} teamId={teamId} boatId={boatId} role={role}
           canEdit={canEditDebrief} isMobile={isMobile} onOpenVideo={onOpenVideo} onOpenItem={onOpenItem}

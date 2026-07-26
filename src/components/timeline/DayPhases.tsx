@@ -22,10 +22,10 @@ const PHASES: Phase[] = [
   { key: 'timings', label: 'Timings', icon: Clock, color: '#EF4444' },
   { key: 'weather', label: 'Weather', icon: Cloud, color: '#06B6D4' },
   { key: 'speedteam', label: 'Speed-team meeting', icon: Users, color: '#7F77DD' },
+  // Goals & planning sits above the sail call: what we set out to do, read before
+  // the sail is chosen. Same conditions record as Timings/Weather.
+  { key: 'plan', label: 'Goals & planning', icon: Map, color: '#2DD4BF' },
   { key: 'sailcall', label: 'Sail call', icon: Sailboat, color: '#F59E0B' },
-  // Plan sits between the sail call and the sailing itself: what we set out to do,
-  // read just before the day's events. Same conditions record as Timings/Weather.
-  { key: 'plan', label: 'Plan', icon: Map, color: '#2DD4BF' },
   { key: 'sailing', label: 'Sailing', icon: Activity, color: '#1D9E75' },
   { key: 'debrief', label: 'Debrief notes', icon: ClipboardList, color: '#7F77DD' },
   { key: 'performance', label: 'Performance analysis', icon: LineChart, color: '#D85A30' },
@@ -259,9 +259,7 @@ function PhaseContent({ phaseKey, cond, deb, wxDocs = [] }: { phaseKey: string; 
         <div className={box}>
           {hasText && (
             <>
-              <Field label="Learnings" value={deb?.speed_learnings} />
-              <Field label="Focus for today" value={deb?.speed_focus_today} />
-              <Field label="Long-term development" value={deb?.speed_long_term} />
+              <Field label="Notes" value={deb?.speed_learnings || deb?.speed_focus_today || deb?.speed_long_term} />
             </>
           )}
           {empty && <Empty what="speed-team notes" />}
@@ -297,8 +295,7 @@ function PhaseContent({ phaseKey, cond, deb, wxDocs = [] }: { phaseKey: string; 
         <div className={box}>
           {(deb?.learnings || deb?.next_focus) ? (
             <>
-              <Field label="Learnings" value={deb?.learnings} />
-              <Field label="Next focus points" value={deb?.next_focus} />
+              <Field label="Notes" value={deb?.learnings || deb?.next_focus} />
             </>
           ) : <Empty what="debrief notes" />}
         </div>

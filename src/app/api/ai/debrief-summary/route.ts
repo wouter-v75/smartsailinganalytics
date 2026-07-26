@@ -36,27 +36,24 @@ const CONTEXT = `The transcript is from a live, in-person sailing-team meeting o
 type Mode = { keys: string[]; prompt: string }
 const MODES: Record<string, Mode> = {
   speedteam: {
-    keys: ['speed_learnings', 'speed_focus_today', 'speed_long_term'],
+    keys: ['speed_learnings'],
     prompt: `You are summarising a sailing team's SPEED TEAM meeting for a performance-analysis app.
 
 ${CONTEXT}
 
-Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY these keys, each a markdown bullet string:
-  "speed_learnings"    — What the team established about boat speed and setup: what was fast, what was slow, and why. Concrete and specific: sail combinations, rig settings, modes, conditions, numbers.
-  "speed_focus_today"  — What they decided to test, try or watch on the water next. Actionable items only.
-  "speed_long_term"    — Bigger themes: gear to change, data to gather, questions to resolve over the campaign.
+Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key, a markdown bullet string:
+  "speed_learnings"  — The full working note from the meeting. Capture, in this order where present: what the team established about boat speed and setup (what was fast, what was slow, and why — sail combinations, rig settings, modes, conditions, numbers); what they decided to test, try or watch on the water next; and the bigger long-term themes (gear to change, data to gather, questions to resolve over the campaign). Group naturally with short sub-headers or plain bullets — one cohesive note, not separate sections.
 
 ${RULES}`,
   },
   debrief: {
-    keys: ['learnings', 'next_focus'],
+    keys: ['learnings'],
     prompt: `You are summarising a sailing team's post-session DEBRIEF for a performance-analysis app.
 
 ${CONTEXT}
 
-Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY these keys, each a markdown bullet string:
-  "learnings"    — What happened and what was learned this session: what worked, what didn't, manoeuvres, starts, tactics, conditions, mistakes and their causes.
-  "next_focus"   — The concrete focus points to carry into the next session. Actionable items only.
+Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key, a markdown bullet string:
+  "learnings"  — The full working note from the debrief. Capture what happened and what was learned this session (what worked, what didn't, manoeuvres, starts, tactics, conditions, mistakes and their causes) and the concrete focus points to carry into the next session. One cohesive note.
 
 ${RULES}`,
   },
