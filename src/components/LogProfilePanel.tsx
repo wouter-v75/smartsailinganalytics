@@ -10,7 +10,7 @@
 import React, { useMemo, useState } from 'react'
 import { DEFAULT_ALIASES, type LogField } from '../lib/logProfile'
 
-const C = { bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4', head: '#E2E8F0', text: '#CBD5E1', dim: '#64748B', good: '#10B981', warn: '#F59E0B' }
+const C = { bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4', head: '#E2E8F0', text: '#CBD5E1', dim: '#8A97A9', good: '#10B981', warn: '#F59E0B' }
 const LS_KEY = 'ssa:log-profile:active'
 
 const FIELD_LABEL: Partial<Record<LogField, string>> = {
@@ -24,7 +24,7 @@ const FIELD_LABEL: Partial<Record<LogField, string>> = {
   jibTackLoad: 'Jib-tack load', cunninghamLoad: 'Cunningham load', mastAng: 'Mast angle', mastButt: 'Mast butt',
   leeway: 'Leeway', set: 'Set', drift: 'Drift', hdg: 'Heading',
   vsTarget: 'Target BSP', vsTargPct: 'Target BSP %', vsPerf: 'Polar BSP', twaTarg: 'Target TWA',
-  dstLine: 'Distance to line', tmLine: 'Time to burn (line)', ttbPort: 'TTB port', ttbStbd: 'TTB stbd',
+  dstLine: 'Distance to line', tmLine: 'Time to burn (line)', ttbPort: 'TTB port', ttbStbd: 'TTB stbd', ttbOnStb: 'TTB on stbd',
   timer1: 'Race timer', yawR: 'Rate of turn', magvar: 'Mag variation',
   targHeel: 'Target heel', targFsty: 'Target forestay', targBsty: 'Target backstay', targKeel: 'Target keel',
   lat: 'Latitude', lon: 'Longitude',
