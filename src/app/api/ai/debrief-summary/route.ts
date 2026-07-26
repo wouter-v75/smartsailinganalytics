@@ -86,6 +86,26 @@ function extractJson(text: string): Record<string, unknown> | null {
   return null
 }
 
+// Render whatever the model chose (string / array of bullets / nested object)
+// down to a markdown bullet string. Mistral sometimes returns arrays even when
+// asked for a string — this makes the route indifferent to that.
+function coerce(v: unknown): string {
+  if (v == null) return ''
+  if (typeof v === 'string') return v
+  if (Array.isArray(v)) {
+    return v.map((x) => {
+      const s = coerce(x).trim()
+      return s.startsWith('-') || s.startsWith('•') ? s : `- ${s}`
+    }).filter(Boolean).join('\n')
+  }
+  if (typeof v === 'object') {
+    return Object.entries(v as Record<string, unknown>).map(([k, x]) => `- ${k}: ${coerce(x)}`).join('\n')
+  }
+  return String(v)
+}
+
+const normKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+
 export async function POST(req: NextRequest) {
   const t0 = Date.now()
   if (!KEY || !BASE) {
@@ -122,15 +142,23 @@ export async function POST(req: NextRequest) {
     }
     let content = ''
     try { content = (JSON.parse(raw) as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content || '' } catch { /* */ }
+    const debug = !!req.nextUrl.searchParams.get('debug')
     const parsed = extractJson(content)
     if (!parsed) {
       log('parse failed, head:', content.slice(0, 120))
-      return NextResponse.json({ error: 'could not parse model JSON', ms: Date.now() - t0 }, { status: 502 })
+      return NextResponse.json({ error: 'could not parse model JSON', ...(debug ? { _raw: content } : {}), ms: Date.now() - t0 }, { status: 502 })
     }
+    // Case/space-insensitive key lookup so "Speed Learnings" or "speed-learnings"
+    // still map onto the canonical DB keys.
+    const byNorm: Record<string, unknown> = {}
+    for (const k of Object.keys(parsed)) byNorm[normKey(k)] = parsed[k]
     const result: Record<string, string> = {}
-    for (const k of mode.keys) result[k] = typeof parsed[k] === 'string' ? (parsed[k] as string) : ''
-    log('ok', Date.now() - t0, 'ms')
-    return NextResponse.json({ ...result, _ms: Date.now() - t0 })
+    for (const k of mode.keys) {
+      const raw = k in parsed ? parsed[k] : byNorm[normKey(k)]
+      result[k] = coerce(raw)
+    }
+    log('ok', Date.now() - t0, 'ms', 'filled:', mode.keys.filter((k) => result[k]).length)
+    return NextResponse.json({ ...result, ...(debug ? { _raw: content } : {}), _ms: Date.now() - t0 })
   } catch (e: unknown) {
     const aborted = e instanceof Error && e.name === 'AbortError'
     log('exception', aborted ? 'aborted (>55s)' : String(e))
