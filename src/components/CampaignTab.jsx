@@ -18,6 +18,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 import { generateThumbnail } from '../lib/photoStore'
 import { RichText, FormatHint } from './RichText'
+import AudioBrief from './AudioBrief'
 
 const BLOCK_META = {
   'technical-testing': { label: 'Technical testing', c: '#F59E0B', testing: true },
@@ -431,7 +432,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
           )}
 
           {/* PLAN + TIMINGS — TL3+ edit, all view (one fetch via PlanConditions) */}
-          <PlanConditions base={base} date={date} canEdit={canEditPlan} />
+          <PlanConditions base={base} date={date} canEdit={canEditPlan} isMobile={isMobile} />
         </div>
 
         <BoatConfigDayCard
@@ -448,6 +449,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
       <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch', marginTop: 14 }}>
         <NotesCard
           title="Debrief notes"
+          aiMode="debrief"
           fields={[{ key: 'learnings', label: 'Learnings' }, { key: 'next_focus', label: 'Next focus points' }]}
           showDocuments
           documentsScope="debrief"
@@ -457,6 +459,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
         />
         <NotesCard
           title="Speed team meeting notes"
+          aiMode="speedteam"
           fields={[
             { key: 'speed_learnings', label: 'Learnings' },
             { key: 'speed_focus_today', label: 'Focus for today' },
@@ -528,7 +531,7 @@ function EditableTextBlock({ label, value, canEdit, placeholder, onSave }) {
 
 // PLAN + TIMINGS — single fetch, two view/edit blocks. TL3+ edit; everyone
 // (TL1+ / consultant-in-window) views via the same RLS-gated GET.
-function PlanConditions({ base, date, canEdit }) {
+function PlanConditions({ base, date, canEdit, isMobile }) {
   const [plan, setPlan] = useState('')
   const [timings, setTimings] = useState('')
   const [loaded, setLoaded] = useState(false)
@@ -554,6 +557,16 @@ function PlanConditions({ base, date, canEdit }) {
   if (!loaded) return null
   return (
     <>
+      <AudioBrief
+        mode="planning"
+        fields={[{ key: 'timings', label: 'Timings' }, { key: 'plan', label: 'Plan' }]}
+        canEdit={canEdit}
+        isMobile={isMobile}
+        onSaved={async (vals) => {
+          if (vals.timings != null) await patch('timings', vals.timings)
+          if (vals.plan != null) await patch('plan', vals.plan)
+        }}
+      />
       <EditableTextBlock
         label="Timings"
         value={timings}
@@ -1044,7 +1057,7 @@ function isPictureDoc(d) {
   return /\.(png|jpe?g|gif|webp|heic|heif|avif)$/i.test(String(d?.name || ''))
 }
 
-function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', wrapperStyle, base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
+function NotesCard({ title, aiMode, fields, showDocuments, documentsScope = 'debrief', wrapperStyle, base, date, teamId, boatId, role, canEdit, isMobile, onOpenVideo, onOpenItem }) {
   const [values, setValues] = useState({})
   const [docs, setDocs] = useState([])
   // Per-field view/edit state — editing one field at a time doesn't block
@@ -1242,6 +1255,25 @@ function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', w
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 10 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', flex: 1 }}>{title}</div>
       </div>
+
+      {aiMode && (
+        <AudioBrief
+          mode={aiMode}
+          fields={fields}
+          canEdit={canEdit}
+          isMobile={isMobile}
+          onSaved={async (vals) => {
+            for (const k of Object.keys(vals)) {
+              await fetch(`${base}/debrief`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ date, [k]: vals[k] }),
+              })
+            }
+            load()
+          }}
+        />
+      )}
 
       {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>{err}</div>}
 
