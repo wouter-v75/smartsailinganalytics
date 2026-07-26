@@ -167,6 +167,7 @@ function Badges({ m }: { m?: Record<string, number> }) {
   if (m.races) b.push(<Badge key="r">{m.races} races</Badge>)
   if (m.videos) b.push(<Badge key="v" tone="accent">{m.videos} vid</Badge>)
   if (m.photos) b.push(<Badge key="p" tone="warning">{m.photos} ph</Badge>)
+  if (m.scans) b.push(<Badge key="s" style={{ background: 'rgba(167,139,250,0.15)', color: '#A78BFA' }}>{m.scans} sc</Badge>)
   if (!b.length) return null
   return <span className="hidden shrink-0 items-center gap-1 sm:flex">{b}</span>
 }

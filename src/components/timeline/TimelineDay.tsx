@@ -47,6 +47,7 @@ export default function TimelineDay({ nodes, tzOffset = 0 }: { nodes: TimelineNo
               {day.subtitle && <span className="text-xs text-muted">{day.subtitle}</span>}
               {day.metrics?.videos ? <Badge tone="accent">{day.metrics.videos} vid</Badge> : null}
               {day.metrics?.photos ? <Badge tone="accent">{day.metrics.photos} ph</Badge> : null}
+              {day.metrics?.scans ? <Badge style={{ background: 'rgba(167,139,250,0.15)', color: '#A78BFA' }}>{day.metrics.scans} sc</Badge> : null}
               <span className="ml-auto font-mono text-[11px] text-muted">{hms(day.t0, tzOffset)}–{hms(day.t1, tzOffset)}</span>
             </div>
 

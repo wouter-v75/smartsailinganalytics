@@ -131,7 +131,7 @@ export default function TimelineZoom({ nodes: raw, tzOffset = 0, initialFocusId 
                   <div className="whitespace-nowrap font-mono text-[11px] text-muted">
                     {hms(c.t0, tzOffset)}{c.t1 > c.t0 ? `–${hms(c.t1, tzOffset)}` : ''}
                   </div>
-                  {c.metrics && (c.metrics.races || c.metrics.tacks != null || c.metrics.marks != null || c.metrics.videos || c.metrics.photos) && (
+                  {c.metrics && (c.metrics.races || c.metrics.tacks != null || c.metrics.marks != null || c.metrics.videos || c.metrics.photos || c.metrics.scans) && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
                       {c.metrics.races ? <Badge>{c.metrics.races} races</Badge> : null}
                       {c.metrics.tacks != null && <Badge tone="success">{c.metrics.tacks}T</Badge>}
@@ -139,6 +139,7 @@ export default function TimelineZoom({ nodes: raw, tzOffset = 0, initialFocusId 
                       {c.metrics.marks != null && <Badge tone="warning">{c.metrics.marks}M</Badge>}
                       {c.metrics.videos ? <Badge tone="accent">{c.metrics.videos} vid</Badge> : null}
                       {c.metrics.photos ? <Badge tone="accent">{c.metrics.photos} ph</Badge> : null}
+                      {c.metrics.scans ? <Badge style={{ background: 'rgba(167,139,250,0.15)', color: '#A78BFA' }}>{c.metrics.scans} sc</Badge> : null}
                     </div>
                   )}
                 </button>
