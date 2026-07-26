@@ -7,7 +7,7 @@
 import React, { useState, useRef, useCallback } from "react";
 import { importFiles, syncPhoto, connectionIsGood } from "../lib/photoStore";
 
-const C = { bg:"#071624", panel:"#0d2236", border:"#1E3A5A", accent:"#06B6D4", head:"#E2E8F0", text:"#94A3B8", dim:"#475569", good:"#10B981", warn:"#F59E0B" };
+const C = { bg:"#071624", panel:"#0d2236", border:"#1E3A5A", accent:"#06B6D4", head:"#E2E8F0", text:"#94A3B8", dim:"#64748B", good:"#10B981", warn:"#F59E0B" };
 
 export default function PhotoUploadZone({ cloudStatus }) {
   const fileRef = useRef(null);

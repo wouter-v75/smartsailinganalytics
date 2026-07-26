@@ -108,7 +108,7 @@ export default function RegattaDocs({
 
   return (
     <div style={{ padding: '6px 0 10px' }}>
-      <div style={{ fontSize: 9, letterSpacing: 1, textTransform: 'uppercase', color: '#475569', marginBottom: 6 }}>
+      <div style={{ fontSize: 9, letterSpacing: 1, textTransform: 'uppercase', color: '#64748B', marginBottom: 6 }}>
         Documents
       </div>
       <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 2 }}>

@@ -193,7 +193,7 @@ export default function ChannelCurrents({ point1 = null }) {
     <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 14, fontWeight: 800, color: '#E2E8F0' }}>🌊 Tidal currents — English Channel</span>
-        <span style={{ fontSize: 11, color: '#64748B' }}>
+        <span style={{ fontSize: 11, color: '#8A97A9' }}>
           CMEMS AMM15 {field?.res_km ? `· ~${field.res_km} km` : ''} · total current (tide + weather) · times CET/CEST
         </span>
       </div>
@@ -234,7 +234,7 @@ export default function ChannelCurrents({ point1 = null }) {
         </div>
       )}
 
-      <div style={{ fontSize: 10, color: '#475569', lineHeight: 1.5 }}>
+      <div style={{ fontSize: 10, color: '#64748B', lineHeight: 1.5 }}>
         Particles show flow direction; colour = speed (knots). Zoom in for the native ~1.5 km detail around point 1.
         Named tidal races (Raz Blanchard, Cap de la Hague) are <strong>model-smoothed</strong> — treat peak speeds there as
         conservative. Source: CMEMS NWS FOAM-AMM15, hourly, tide-coupled.

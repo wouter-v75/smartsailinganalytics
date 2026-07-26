@@ -195,7 +195,7 @@ export default function Venue3D({ p1lat, p1lon, resolvedTz = 'UTC', mastHeight =
       </div>
       {err && <div style={{ color: '#FCA5A5', fontSize: 12, marginBottom: 8 }}>{err}</div>}
       <div ref={divRef} style={{ width: '100%', height: 460, borderRadius: 8, overflow: 'hidden', background: '#071624' }} />
-      <div style={{ fontSize: 11, color: '#64748B', marginTop: 6 }}>View is oriented UPWIND (looking toward the TWD). Vert. exaggeration ×{exag}. Drag/right-drag to adjust, then Capture PNG. Arrows = {modelKey} wind @ {hour}:00, Beaufort-coloured; red dashed = 5 nm race area.</div>
+      <div style={{ fontSize: 11, color: '#8A97A9', marginTop: 6 }}>View is oriented UPWIND (looking toward the TWD). Vert. exaggeration ×{exag}. Drag/right-drag to adjust, then Capture PNG. Arrows = {modelKey} wind @ {hour}:00, Beaufort-coloured; red dashed = 5 nm race area.</div>
       {img && (
         <div style={{ marginTop: 10 }}>
           <div style={{ fontSize: 12, color: '#94A3B8', marginBottom: 4 }}>Captured still (right-click → Save, or drag into the deck):</div>

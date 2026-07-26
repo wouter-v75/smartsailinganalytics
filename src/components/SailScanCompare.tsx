@@ -17,7 +17,7 @@ import { scanLocalDateTime } from '../lib/scanTime'
 
 const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
-  head: '#E2E8F0', text: '#CBD5E1', dim: '#64748B', warn: '#F59E0B',
+  head: '#E2E8F0', text: '#CBD5E1', dim: '#8A97A9', warn: '#F59E0B',
 }
 // distinct per-sail colours (up to 6 sails compared at once)
 const SAIL_COLORS = ['#06B6D4', '#FBBF24', '#34D399', '#F472B6', '#A78BFA', '#F87171']

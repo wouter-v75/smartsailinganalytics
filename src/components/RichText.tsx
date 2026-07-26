@@ -215,7 +215,7 @@ export function RichText({
 export function FormatHint({ style }: { style?: React.CSSProperties }) {
   const code: React.CSSProperties = { fontFamily: 'ui-monospace, monospace', color: '#94A3B8' }
   return (
-    <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 4, ...style }}>
+    <div style={{ fontSize: 10.5, color: '#8A97A9', marginTop: 4, ...style }}>
       <span style={code}>## Heading</span> · <span style={code}>- bullet</span> ·{' '}
       <span style={code}>**bold**</span> · <span style={code}>*italic*</span> ·{' '}
       <span style={code}>#tag</span>

@@ -42,7 +42,7 @@ interface FileResult {
 
 const C = {
   panel: '#071624', border: '#1E3A5A', accent: '#06B6D4',
-  head: '#E2E8F0', text: '#CBD5E1', dim: '#64748B', ok: '#10B981', warn: '#F59E0B',
+  head: '#E2E8F0', text: '#CBD5E1', dim: '#8A97A9', ok: '#10B981', warn: '#F59E0B',
 }
 
 function fmtDate(iso: string | null): string {

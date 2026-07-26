@@ -26,7 +26,7 @@ type Hovered = 'm' | 'd' | 'n' | null
 
 const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
-  head: '#E2E8F0', text: '#CBD5E1', dim: '#64748B', good: '#10B981', warn: '#F59E0B',
+  head: '#E2E8F0', text: '#CBD5E1', dim: '#8A97A9', good: '#10B981', warn: '#F59E0B',
 }
 
 const fmt = (v: any, d = 1) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(d))

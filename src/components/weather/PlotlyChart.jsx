@@ -69,14 +69,14 @@ export default function PlotlyChart({ data, layout, config, height = 320, placeh
 
   if (!ready) {
     return (
-      <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 11 }}>
+      <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', fontSize: 11 }}>
         Loading chart…
       </div>
     )
   }
   if (!data || !data.length) {
     return (
-      <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 11, textAlign: 'center', padding: 20 }}>
+      <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', fontSize: 11, textAlign: 'center', padding: 20 }}>
         {placeholder || 'No data'}
       </div>
     )

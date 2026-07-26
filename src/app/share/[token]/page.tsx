@@ -19,7 +19,7 @@ interface Share {
   rows: Row[]
 }
 
-const C = { bg: '#030F1A', panel: 'rgba(3,15,26,0.72)', border: '#1E3A5A', head: '#E2E8F0', dim: '#64748B', accent: '#06B6D4' }
+const C = { bg: '#030F1A', panel: 'rgba(3,15,26,0.72)', border: '#1E3A5A', head: '#E2E8F0', dim: '#8A97A9', accent: '#06B6D4' }
 const fmt = (v: number | null | undefined, d = 1) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(d))
 
 // The cloud log is DOWNSAMPLED (~1-3 s between samples — see reduceLogForCloud). Snapping

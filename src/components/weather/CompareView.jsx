@@ -53,7 +53,7 @@ export default function CompareView({ windData, mastHeight = 20, resolvedTz = 'U
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>🔬 Model Comparison</span>
-          <span style={{ fontSize: 11, color: '#64748B' }}>click a model to show/hide it · hover a line for its value</span>
+          <span style={{ fontSize: 11, color: '#8A97A9' }}>click a model to show/hide it · hover a line for its value</span>
           <div style={{ flex: 1 }} />
           <label style={{ fontSize: 11, color: '#94A3B8', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             <span>Location</span>

@@ -11,7 +11,7 @@ import type { InvSail } from '../lib/sailResolve'
 
 const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
-  head: '#E2E8F0', text: '#CBD5E1', dim: '#64748B', warn: '#F59E0B', good: '#10B981',
+  head: '#E2E8F0', text: '#CBD5E1', dim: '#8A97A9', warn: '#F59E0B', good: '#10B981',
 }
 
 type RowState = { status: 'pending' | 'busy' | 'done' | 'error'; msg?: string; how?: string }

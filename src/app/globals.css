@@ -20,9 +20,9 @@
   --border-strong: #2a4a6a;
 
   --text: #e2e8f0;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --text-faint: #334155;
+  --text-secondary: #a6b2c4;   /* was #94a3b8 — nudged up for small-print legibility on dark panels */
+  --text-muted: #8a97a9;       /* was #64748b — muted small print was failing AA on #0A1929 */
+  --text-faint: #64748b;       /* was #334155 — faint labels were nearly invisible; lifted a full tier */
 
   --accent: #06b6d4;
   --accent-fg: #001018;

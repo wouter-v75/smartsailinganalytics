@@ -350,7 +350,7 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
         {/* GPS pin */}
         {photo.lat&&photo.lon&&<div style={{position:"absolute",bottom:3,left:4,fontSize:9,color:"#22C55E"}}>📍</div>}
         {/* Time badge bottom-right */}
-        <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{photo.utc?fmtLocalHM(photo.utc,tzOffset)+" "+TZ_SHORT(tzOffset):"--:--"}</div>
+        <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#8A97A9",fontFamily:"monospace"}}>{photo.utc?fmtLocalHM(photo.utc,tzOffset)+" "+TZ_SHORT(tzOffset):"--:--"}</div>
       </div>
       <div style={{padding:"6px 9px"}}>
         {/* 1) Race tags */}
@@ -368,7 +368,7 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
         {/* 3) TWS & TWA */}
         <div style={{fontSize:9,color:"#7DD3FC",marginBottom:2,fontFamily:"monospace"}}>
           {photo.tws!=null?`TWS ${R(photo.tws)}kn`:""}{photo.tws!=null&&photo.twa!=null?" · ":""}{photo.twa!=null?`TWA ${R(photo.twa,0)}°`:""}
-          {photo.tws==null&&photo.twa==null&&<span style={{color:"#334155"}}>—</span>}
+          {photo.tws==null&&photo.twa==null&&<span style={{color:"#4E5D71"}}>—</span>}
         </div>
         {/* 4) Filename at bottom */}
         <div style={{fontSize:10,fontWeight:600,color:"#E2E8F0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{photo.name||"Photo"}</div>
@@ -421,7 +421,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
       </div>
       {/* Overlay variables — add extra gauges to the photo overlay, this session only. */}
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
-        <span style={{fontSize:9,color:"#475569",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
+        <span style={{fontSize:9,color:"#64748B",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
         {extraGauges.map(k=>{const o=PHOTO_OVERLAY_VARS.find(x=>x.key===k);return(
           <span key={k} style={{display:"inline-flex",alignItems:"center",gap:4,background:"#8B5CF615",border:"1px solid #8B5CF640",borderRadius:4,padding:"1px 4px 1px 7px",fontSize:9,color:"#A78BFA"}}>
             {o?.label||k}
@@ -434,13 +434,13 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
         </select>
       </div>
       <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
-        <div style={{fontSize:9,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Instrument data</div>
+        <div style={{fontSize:9,color:"#64748B",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Instrument data</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
           {[["TWS",photo.tws,"kn","#7DD3FC"],["TWA",photo.twa,"°","#7DD3FC"],["AWA",photo.awa,"°","#7DD3FC"],
             ["BSP",photo.bsp,"kn","#10B981"],["Heel",photo.heel,"°","#F97316"],["VMG",photo.vmg,"kn","#22C55E"]]
             .map(([l,v,u,c])=>(
               <div key={l} style={{background:"#071624",borderRadius:6,padding:"7px 8px",border:`1px solid ${c}15`,textAlign:"center"}}>
-                <div style={{fontSize:8,color:"#334155",marginBottom:2}}>{l}</div>
+                <div style={{fontSize:8,color:"#4E5D71",marginBottom:2}}>{l}</div>
                 <div style={{fontSize:14,fontWeight:700,color:v!=null?c:"#334155",fontFamily:"monospace"}}>
                   {v!=null?R(v,l==="TWA"||l==="AWA"||l==="Heel"?0:1):"--"}<span style={{fontSize:8,marginLeft:1}}>{u}</span>
                 </div>
@@ -452,7 +452,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
         </div>}
         {photo.lat&&photo.lon&&<div style={{marginTop:5,fontSize:9,color:"#22C55E"}}>📍 {photo.lat.toFixed(5)}°, {photo.lon.toFixed(5)}°</div>}
         {photo.utc&&!editTime&&(
-          <div style={{marginTop:4,fontSize:9,color:"#475569",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <div style={{marginTop:4,fontSize:9,color:"#64748B",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
             <span>🕐 {fmtLocalDT(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</span>
             {onEditTime&&<button onClick={()=>{setTimeVal(new Date(photo.utc+tzOffset*60000).toISOString().slice(0,16));setEditTime(true);}}
               style={{background:"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"1px 6px",color:"#7DD3FC",cursor:"pointer",fontSize:9}}>✎ edit time</button>}
@@ -462,14 +462,14 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
           <div style={{marginTop:6,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
             <input type="datetime-local" value={timeVal} onChange={e=>setTimeVal(e.target.value)}
               style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:4,padding:"3px 6px",color:"#E2E8F0",fontSize:10}}/>
-            <span style={{fontSize:9,color:"#64748B"}}>{TZ_SHORT(tzOffset)} (venue local)</span>
+            <span style={{fontSize:9,color:"#8A97A9"}}>{TZ_SHORT(tzOffset)} (venue local)</span>
             <button onClick={()=>{
               if(!timeVal){setEditTime(false);return;}
               const utc=new Date(timeVal+":00Z").getTime()-tzOffset*60000; // venue-local → true UTC
               if(Number.isFinite(utc)) onEditTime(photo,utc);
               setEditTime(false);
             }} style={{background:"#06B6D4",border:"none",borderRadius:4,padding:"3px 10px",color:"#001018",fontWeight:700,cursor:"pointer",fontSize:10}}>Save</button>
-            <button onClick={()=>setEditTime(false)} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"3px 8px",color:"#64748B",cursor:"pointer",fontSize:10}}>Cancel</button>
+            <button onClick={()=>setEditTime(false)} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:4,padding:"3px 8px",color:"#8A97A9",cursor:"pointer",fontSize:10}}>Cancel</button>
           </div>
         )}
       </div>
@@ -490,7 +490,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
           <div style={{background:"#0A1929",border:"1px solid #8B5CF640",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
               <div style={{fontSize:9,color:"#8B5CF6",letterSpacing:2,textTransform:"uppercase"}}>⛵ SailScan analysis</div>
-              {parsed.algorithmVersion && <div style={{fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{parsed.algorithmVersion}</div>}
+              {parsed.algorithmVersion && <div style={{fontSize:8,color:"#8A97A9",fontFamily:"monospace"}}>{parsed.algorithmVersion}</div>}
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               {stripes.map((s,i)=>{
@@ -519,7 +519,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
               </div>
             )}
             {parsed.stripes.some(s=>s.userTaps?.length>0) && (
-              <div style={{marginTop:4,fontSize:9,color:"#64748B"}}>
+              <div style={{marginTop:4,fontSize:9,color:"#8A97A9"}}>
                 User-anchored stripes: {parsed.stripes.filter(s=>s.userTaps?.length>0).map(s=>s.userTaps.length).join("+")} mid hint{parsed.stripes.reduce((n,s)=>n+(s.userTaps?.length||0),0)===1?"":"s"}
               </div>
             )}
@@ -544,7 +544,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
         <div style={{marginTop:8,textAlign:"center",fontSize:10,color:"#1D9E75"}}>✓ Full-res available offline</div>
       )}
       {photo.cloudSynced && !photo.hasLocalOriginal && !canSync && (
-        <div style={{marginTop:8,textAlign:"center",fontSize:10,color:"#475569"}}>Streaming thumbnail · admin/coach can cache full-res</div>
+        <div style={{marginTop:8,textAlign:"center",fontSize:10,color:"#64748B"}}>Streaming thumbnail · admin/coach can cache full-res</div>
       )}
     </div>
   );
@@ -1177,9 +1177,9 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             <div style={{maxHeight:220,overflowY:"auto",padding:"2px 10px 8px",borderTop:"1px solid #0F2030"}}>
               {sessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
               {renderSessionRows()}
-              <label style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#64748B",margin:"8px 2px 4px",cursor:"pointer"}}>
+              <label style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#8A97A9",margin:"8px 2px 4px",cursor:"pointer"}}>
                 <input type="checkbox" checked={wifiOnly} onChange={toggleWifiOnly}/>
-                Wi-Fi only for full-res <span style={{color:"#334155",marginLeft:"auto"}}>{connectionLabel()}</span>
+                Wi-Fi only for full-res <span style={{color:"#4E5D71",marginLeft:"auto"}}>{connectionLabel()}</span>
               </label>
               {canClearDay && activeDate && (
                 <button disabled={clearingDay}
@@ -1206,8 +1206,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
         <div style={{padding:"0 11px 8px"}}>
           {/* Photo import lives in the Upload tab now; this gallery is view-only. */}
-          <div style={{fontSize:8,color:"#334155",textAlign:"center",marginBottom:8,lineHeight:1.5}}>
-            Add photos in the <span style={{color:"#64748B"}}>Upload</span> tab
+          <div style={{fontSize:8,color:"#4E5D71",textAlign:"center",marginBottom:8,lineHeight:1.5}}>
+            Add photos in the <span style={{color:"#8A97A9"}}>Upload</span> tab
           </div>
 
           {/* Manual Sync/Pull button removed — photos auto-push to the cloud on
@@ -1216,9 +1216,9 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           {/* Network-aware originals: thumbnails always sync; full-res originals
               upload automatically in the background on a good link (auto-flush on
               reconnect / resume). Toggle restricts that to Wi-Fi. */}
-          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:9,color:"#64748B",marginBottom:8,cursor:"pointer"}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:9,color:"#8A97A9",marginBottom:8,cursor:"pointer"}}>
             <input type="checkbox" checked={wifiOnly} onChange={toggleWifiOnly}/>
-            Wi-Fi only for full-res <span style={{color:"#334155",marginLeft:"auto"}}>{connectionLabel()}</span>
+            Wi-Fi only for full-res <span style={{color:"#4E5D71",marginLeft:"auto"}}>{connectionLabel()}</span>
           </label>
 
           {/* ── Coach and above (real membership role): clear this day
@@ -1341,10 +1341,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             {batchMode&&(
               <>
                 <button onClick={()=>{const allIds=new Set(displayed.map(p=>p.id));setBatchSelected(allIds);}}
-                  style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"4px 8px",color:"#64748B",cursor:"pointer",fontSize:9}}>All</button>
+                  style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"4px 8px",color:"#8A97A9",cursor:"pointer",fontSize:9}}>All</button>
                 <button onClick={()=>setBatchSelected(new Set())}
-                  style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"4px 8px",color:"#64748B",cursor:"pointer",fontSize:9}}>None</button>
-                <span style={{fontSize:10,color:"#475569",fontFamily:"monospace"}}>{batchSelected.size}</span>
+                  style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:5,padding:"4px 8px",color:"#8A97A9",cursor:"pointer",fontSize:9}}>None</button>
+                <span style={{fontSize:10,color:"#64748B",fontFamily:"monospace"}}>{batchSelected.size}</span>
                 {batchSelected.size>0&&(
                   <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} photo${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDeletePhotos();}}
                     style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:5,padding:"4px 10px",color:"#EF4444",cursor:"pointer",fontSize:10,fontWeight:700}}>
@@ -1355,11 +1355,11 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             )}
           </div>
         )}
-        <div style={{fontSize:9,color:"#334155",marginBottom:8}}>{displayed.length} of {photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
+        <div style={{fontSize:9,color:"#4E5D71",marginBottom:8}}>{displayed.length} of {photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
         {photos.length===0?(
-          <div style={{textAlign:"center",padding:"40px 20px",color:"#334155"}}>
+          <div style={{textAlign:"center",padding:"40px 20px",color:"#4E5D71"}}>
             <div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📷</div>
-            <div style={{fontSize:11,color:"#475569"}}>No photos yet</div>
+            <div style={{fontSize:11,color:"#64748B"}}>No photos yet</div>
             <div style={{fontSize:10,marginTop:4}}>Upload from the sidebar</div>
           </div>
         ):(
@@ -1368,7 +1368,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             return(
               <div key={date} style={{marginBottom:18}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,paddingBottom:5,borderBottom:"1px solid #0F2030"}}>
-                  <div style={{fontSize:11,fontWeight:700,color:"#64748B",fontFamily:"monospace"}}>{date==="unknown"?"No date":date===TODAY()?"Today":fmtDate(date)}</div>
+                  <div style={{fontSize:11,fontWeight:700,color:"#8A97A9",fontFamily:"monospace"}}>{date==="unknown"?"No date":date===TODAY()?"Today":fmtDate(date)}</div>
                   <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{plist.length} photo{plist.length!==1?"s":""}</span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
@@ -1384,8 +1384,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {!isNarrow && (selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
            canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}/>
-        :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155"}}>
-          <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#475569"}}>Select a photo to view</div></div>
+        :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#4E5D71"}}>
+          <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#64748B"}}>Select a photo to view</div></div>
         </div>)}
 
       {/* ── Mobile fullscreen overlay ── */}

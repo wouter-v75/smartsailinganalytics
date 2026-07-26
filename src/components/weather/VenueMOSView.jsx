@@ -33,7 +33,7 @@ export default function VenueMOSView() {
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>📐 Venue MOS</span>
-          <span style={{ fontSize: 11, color: '#64748B' }}>
+          <span style={{ fontSize: 11, color: '#8A97A9' }}>
             How each model is corrected to mast-height (30 m) TWS at this venue
           </span>
           <div style={{ flex: 1 }} />
@@ -101,7 +101,7 @@ export default function VenueMOSView() {
             </tbody>
           </table>
         </div>
-        <div style={{ fontSize: 10, color: '#64748B', marginTop: 8 }}>
+        <div style={{ fontSize: 10, color: '#8A97A9', marginTop: 8 }}>
           RMSE in knots, leave-one-regatta-out cross-validated. “raw” = no correction beats the raw model (shipped uncorrected).
           {bands.length > 0 && (
             <> Sector bands: {bands.map((b) => `${b[0]} (${b[1]}–${b[2]}°)`).join(', ')}.</>

@@ -49,7 +49,7 @@ interface Scan {
 
 const C = {
   bg: '#04101c', card: '#071624', border: '#1E3A5A', accent: '#06B6D4',
-  text: '#cbd5e1', dim: '#64748B', head: '#e2e8f0', warn: '#F59E0B', ok: '#10B981',
+  text: '#cbd5e1', dim: '#8A97A9', head: '#e2e8f0', warn: '#F59E0B', ok: '#10B981',
 }
 const EDIT_ROLES = ['admin', 'team_manager', 'coach', 'tl3']
 const fmt = (v: any, d = 1) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(d))
@@ -1480,8 +1480,8 @@ function ImportSailListForm({ onImport, btn, input }: any) {
   }
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
-      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 700 }}>Import sail list</span>
-      <span style={{ fontSize: 10, color: '#475569' }}>Expedition event file (.ev.xml) — its &lt;saillist&gt;</span>
+      <span style={{ fontSize: 11, color: '#8A97A9', fontWeight: 700 }}>Import sail list</span>
+      <span style={{ fontSize: 10, color: '#64748B' }}>Expedition event file (.ev.xml) — its &lt;saillist&gt;</span>
       <input ref={fileRef} type="file" accept=".xml,.ev.xml,text/xml,application/xml" disabled={busy} style={{ ...input, padding: 4 }}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) submit(f) }} />
       <button onClick={() => fileRef.current?.click()} disabled={busy} style={{ ...btn('#06B6D4'), opacity: busy ? 0.5 : 1 }}>{busy ? 'Importing…' : 'Choose file'}</button>
@@ -1508,8 +1508,8 @@ function ImportDesignShapesForm({ onImport, btn, input }: any) {
   }
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
-      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 700 }}>Import design shapes</span>
-      <span style={{ fontSize: 10, color: '#475569' }}>North target-shapes (.csv) — matched to sails by code (MN/J1/J1.5/J2/J3)</span>
+      <span style={{ fontSize: 11, color: '#8A97A9', fontWeight: 700 }}>Import design shapes</span>
+      <span style={{ fontSize: 10, color: '#64748B' }}>North target-shapes (.csv) — matched to sails by code (MN/J1/J1.5/J2/J3)</span>
       <input ref={fileRef} type="file" accept=".csv,text/csv" disabled={busy} style={{ ...input, padding: 4 }}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) submit(f) }} />
       <button onClick={() => fileRef.current?.click()} disabled={busy} style={{ ...btn('#06B6D4'), opacity: busy ? 0.5 : 1 }}>{busy ? 'Importing…' : 'Choose file'}</button>
@@ -1562,19 +1562,19 @@ function AddSailForm({ onAdd, busy, input, btn }: any) {
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
       <input style={{ ...input, width: 150 }} placeholder="Sail name *" value={name} onChange={(e) => setName(e.target.value)} />
-      <label style={{ fontSize: 11, color: '#64748B' }}>Type
+      <label style={{ fontSize: 11, color: '#8A97A9' }}>Type
         <select style={{ ...input, marginLeft: 4 }} value={sailType} onChange={(e) => setSailType(e.target.value)}>
           {SAIL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </label>
-      <label style={{ fontSize: 11, color: '#64748B' }}>Grp
+      <label style={{ fontSize: 11, color: '#8A97A9' }}>Grp
         <select style={{ ...input, marginLeft: 4 }} value={group} onChange={(e) => setGroup(e.target.value)}>
           <option value="">auto</option>
           {SAIL_GROUPS.map((g) => <option key={g.v} value={g.v}>{g.label}</option>)}
         </select>
       </label>
       <input style={{ ...input, width: 80 }} type="number" step="0.1" placeholder="Wt (kg)" value={weight} onChange={(e) => setWeight(e.target.value)} />
-      <label style={{ fontSize: 11, color: '#64748B' }}>Build <input type="date" style={input} value={build} onChange={(e) => setBuild(e.target.value)} /></label>
+      <label style={{ fontSize: 11, color: '#8A97A9' }}>Build <input type="date" style={input} value={build} onChange={(e) => setBuild(e.target.value)} /></label>
       <button onClick={submit} disabled={busy || !name.trim()} style={{ ...btn('#06B6D4'), opacity: busy || !name.trim() ? 0.5 : 1 }}>{busy ? '…' : '+ Add sail'}</button>
     </div>
   )
@@ -1618,7 +1618,7 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
 
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', padding: '10px 12px', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8 }}>
-      <span style={{ fontSize: 11, color: '#64748B', fontWeight: 700 }}>Import SailScan report</span>
+      <span style={{ fontSize: 11, color: '#8A97A9', fontWeight: 700 }}>Import SailScan report</span>
       <input ref={fileRef} type="file" accept="application/pdf,.pdf" style={{ ...input, padding: 4 }}
         onChange={(e) => { setFile(e.target.files?.[0] || null); setErr(''); setMsg('') }} />
       <select style={input} value={sailId} onChange={(e) => setSailId(e.target.value)}>
@@ -1690,7 +1690,7 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelet
         ) : (sail.retired ? 'Retired' : 'Active')}
       </td>
       <td style={td}>
-        {sail.certificate_name ? <span title={sail.certificate_name}>📄 {sail.certificate_name.length > 16 ? sail.certificate_name.slice(0, 14) + '…' : sail.certificate_name}</span> : <span style={{ color: '#64748B' }}>—</span>}
+        {sail.certificate_name ? <span title={sail.certificate_name}>📄 {sail.certificate_name.length > 16 ? sail.certificate_name.slice(0, 14) + '…' : sail.certificate_name}</span> : <span style={{ color: '#8A97A9' }}>—</span>}
         {canEdit && (
           <>
             {' '}
@@ -1702,7 +1702,7 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelet
       <td style={td}>
         {nDesign > 0 ? (
           <button onClick={onShowDesign} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>Details ({nDesign})</button>
-        ) : <span style={{ color: '#64748B' }}>—</span>}
+        ) : <span style={{ color: '#8A97A9' }}>—</span>}
       </td>
       {canEdit && (
         <td style={td}>

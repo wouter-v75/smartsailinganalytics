@@ -591,7 +591,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC', logDat
       <Card>
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>🎈 Atmospheric Sounding — Skew-T Log-P</span>
-          <span style={{ fontSize: 11, color: '#64748B' }}>
+          <span style={{ fontSize: 11, color: '#8A97A9' }}>
             Hover for a parcel + readout · wheel to zoom · drag to pan · double-click resets
           </span>
         </div>
@@ -678,7 +678,7 @@ export default function SoundingView({ windData = {}, resolvedTz = 'UTC', logDat
                       <div key={tk.i} style={{ position: 'absolute', left: `${tk.pct}%`, transform: 'translateX(-50%)', textAlign: 'center', whiteSpace: 'nowrap' }}>
                         <div style={{ width: 1, height: 4, background: '#334C66', margin: '0 auto 1px' }} />
                         <div style={{ fontSize: 9, color: '#94A3B8', lineHeight: 1.1 }}>{tk.time}</div>
-                        {tk.date && <div style={{ fontSize: 8, color: '#64748B', lineHeight: 1.1 }}>{tk.date}</div>}
+                        {tk.date && <div style={{ fontSize: 8, color: '#8A97A9', lineHeight: 1.1 }}>{tk.date}</div>}
                       </div>
                     ))}
                   </div>

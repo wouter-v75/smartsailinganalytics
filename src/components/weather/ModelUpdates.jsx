@@ -101,11 +101,11 @@ export default function ModelUpdates() {
     <div style={card}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>🛰 Model updates</span>
-        <span style={{ fontSize: 11, color: '#64748B' }}>
+        <span style={{ fontSize: 11, color: '#8A97A9' }}>
           Latest run per model — refreshes every minute
         </span>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: '#475569' }}>
+        <span style={{ fontSize: 10, color: '#64748B' }}>
           {loading ? 'loading…' : updatedAt ? `updated ${pad(updatedAt.getHours())}:${pad(updatedAt.getMinutes())}` : ''}
         </span>
       </div>
@@ -129,7 +129,7 @@ export default function ModelUpdates() {
         </table>
       </div>
 
-      <div style={{ fontSize: 10, color: '#475569', marginTop: 8, lineHeight: 1.5 }}>
+      <div style={{ fontSize: 10, color: '#64748B', marginTop: 8, lineHeight: 1.5 }}>
         Times in UTC. Open-Meteo rows from each model’s <code style={codeStyle}>meta.json</code>;
         Icon-Race from the box’s live <code style={codeStyle}>status.json</code>.
       </div>
@@ -144,7 +144,7 @@ function ModelCell({ label, subtitle, color }) {
         <span style={{ width: 8, height: 8, borderRadius: 2, background: color || '#475569', flexShrink: 0 }} />
         <span>
           <span style={{ fontWeight: 700, color: '#E2E8F0' }}>{label}</span>
-          {subtitle && <span style={{ color: '#64748B', fontSize: 10, marginLeft: 6 }}>{subtitle}</span>}
+          {subtitle && <span style={{ color: '#8A97A9', fontSize: 10, marginLeft: 6 }}>{subtitle}</span>}
         </span>
       </div>
     </td>
@@ -232,7 +232,7 @@ function IconRaceRow({ status }) {
                 <span style={{ color: stateColor(d.state), fontWeight: 700 }}>
                   {d.state}{d.pct != null ? ` ${d.pct}%` : ''}
                 </span>
-                {d.detail && <span style={{ color: '#64748B' }}>{d.detail}</span>}
+                {d.detail && <span style={{ color: '#8A97A9' }}>{d.detail}</span>}
               </div>
             ))}
           </div>
@@ -252,6 +252,6 @@ const th = { padding: '6px 8px', textAlign: 'right', color: '#94A3B8', fontWeigh
 const thL = { ...th, textAlign: 'left' }
 const td = { padding: '7px 8px', textAlign: 'left', color: '#E2E8F0', verticalAlign: 'top', borderBottom: '1px solid #0F2030', whiteSpace: 'nowrap' }
 const tdL = { ...td }
-const tdMuted = { ...td, color: '#64748B' }
-const muted = { color: '#64748B', fontSize: 10.5 }
+const tdMuted = { ...td, color: '#8A97A9' }
+const muted = { color: '#8A97A9', fontSize: 10.5 }
 const codeStyle = { background: '#071624', border: '1px solid #1E3A5A', borderRadius: 3, padding: '0 4px', fontSize: 10 }

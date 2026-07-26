@@ -213,7 +213,7 @@ export default function Field3D({ field, frameIdx = 0, p1lat, p1lon, points = []
         <button onClick={() => setPitch(0)} title="Top-down view" style={c3dBtn}>Top</button>
         <button onClick={() => setPitch(72)} title="Low oblique (horizon) view" style={c3dBtn}>Horizon</button>
       </div>
-      {!ready && <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', fontSize: 12 }}>Loading 3D map…</div>}
+      {!ready && <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8A97A9', fontSize: 12 }}>Loading 3D map…</div>}
       {err && <div style={{ position: 'absolute', right: 8, top: 8, color: '#FCA5A5', fontSize: 11, background: 'rgba(3,15,26,0.8)', padding: '3px 8px', borderRadius: 6 }}>{err}</div>}
     </div>
   )

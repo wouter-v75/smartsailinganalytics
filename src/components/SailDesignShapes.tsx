@@ -15,7 +15,7 @@ import React from 'react'
 
 const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
-  head: '#E2E8F0', text: '#CBD5E1', dim: '#64748B',
+  head: '#E2E8F0', text: '#CBD5E1', dim: '#8A97A9',
 }
 
 const pct = (v: number | null | undefined) => (v == null || Number.isNaN(v) ? '—' : (v * 100).toFixed(1))

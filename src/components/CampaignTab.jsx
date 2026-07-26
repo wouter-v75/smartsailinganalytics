@@ -398,9 +398,9 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
         <div style={{ flex: isMobile ? 'none' : '1 1 0', background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0', marginBottom: 10 }}>Plan for {fmtDay(date)}</div>
           {loading ? (
-            <div style={{ color: '#475569', fontSize: 13 }}>Loading…</div>
+            <div style={{ color: '#64748B', fontSize: 13 }}>Loading…</div>
           ) : !session ? (
-            <div style={{ color: '#475569', fontSize: 12 }}>
+            <div style={{ color: '#64748B', fontSize: 12 }}>
               No plan for this day yet.{canEditPlan ? ' Add the day + blocks in the Plan tab.' : ''}
             </div>
           ) : (
@@ -409,7 +409,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
                 <div style={{ fontSize: 12, color: '#94A3B8', borderLeft: '2px solid #06B6D4', paddingLeft: 8 }}>{session.objective}</div>
               )}
               {blocks.length === 0 ? (
-                <div style={{ fontSize: 12, color: '#475569' }}>No blocks{canSeeTesting ? '' : ' visible'} for this day.</div>
+                <div style={{ fontSize: 12, color: '#64748B' }}>No blocks{canSeeTesting ? '' : ' visible'} for this day.</div>
               ) : (
                 blocks.map((b) => {
                   const meta = BLOCK_META[b.block_type] || BLOCK_META.other
@@ -419,10 +419,10 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 11, fontWeight: 700, color: meta.c }}>{meta.label}</span>
                         {b.label && <span style={{ fontSize: 12, color: '#E2E8F0' }}>· {b.label}</span>}
-                        {time && <span style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{time}</span>}
+                        {time && <span style={{ fontSize: 11, color: '#64748B', fontFamily: 'monospace' }}>{time}</span>}
                         {b.venue && <span style={{ fontSize: 10, color: '#94A3B8', border: '1px solid #334155', borderRadius: 4, padding: '0 5px' }}>{VENUE_LABEL[b.venue]}</span>}
                       </div>
-                      {b.objective && <div style={{ fontSize: 11, color: '#64748B', marginTop: 3 }}>{b.objective}</div>}
+                      {b.objective && <div style={{ fontSize: 11, color: '#8A97A9', marginTop: 3 }}>{b.objective}</div>}
                     </div>
                   )
                 })
@@ -642,7 +642,7 @@ function BoatConfigDayCard({ teamId, boatId, base, date, canEdit, isMobile }) {
     <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#E2E8F0',
       background: '#071624', border: '1px solid #1E3A5A', borderRadius: 6, padding: '4px 8px' }}>
       {text}
-      {onRemove && <button onClick={onRemove} style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>}
+      {onRemove && <button onClick={onRemove} style={{ background: 'none', border: 'none', color: '#8A97A9', cursor: 'pointer', fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>}
     </span>
   )
 
@@ -664,12 +664,12 @@ function BoatConfigDayCard({ teamId, boatId, base, date, canEdit, isMobile }) {
       </div>
 
       {loading ? (
-        <div style={{ color: '#475569', fontSize: 13 }}>Loading…</div>
+        <div style={{ color: '#64748B', fontSize: 13 }}>Loading…</div>
       ) : editing ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {inventory.length > 0 && (
             <div>
-              <div style={{ fontSize: 11, color: '#64748B', marginBottom: 6 }}>From inventory — tap to add/remove</div>
+              <div style={{ fontSize: 11, color: '#8A97A9', marginBottom: 6 }}>From inventory — tap to add/remove</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {inventory.map((s) => {
                   const on = inDraft(s)
@@ -685,10 +685,10 @@ function BoatConfigDayCard({ teamId, boatId, base, date, canEdit, isMobile }) {
             </div>
           )}
           <div>
-            <div style={{ fontSize: 11, color: '#64748B', marginBottom: 6 }}>Selected for {fmtDay(date)}</div>
+            <div style={{ fontSize: 11, color: '#8A97A9', marginBottom: 6 }}>Selected for {fmtDay(date)}</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minHeight: 24 }}>
               {draft.length === 0
-                ? <span style={{ fontSize: 12, color: '#475569' }}>None yet.</span>
+                ? <span style={{ fontSize: 12, color: '#64748B' }}>None yet.</span>
                 : draft.map((d, i) => chip(d.name, d.id || `c${i}`, () => removeDraft(i)))}
             </div>
           </div>
@@ -704,7 +704,7 @@ function BoatConfigDayCard({ teamId, boatId, base, date, canEdit, isMobile }) {
           </div>
         </div>
       ) : sails.length === 0 ? (
-        <div style={{ fontSize: 12, color: '#475569' }}>
+        <div style={{ fontSize: 12, color: '#64748B' }}>
           No sail list for this day yet.{canEdit ? ' Add it manually, or it will fill in when the day’s boat config is uploaded.' : ''}
         </div>
       ) : (
@@ -713,7 +713,7 @@ function BoatConfigDayCard({ teamId, boatId, base, date, canEdit, isMobile }) {
             {sails.map((s, i) => chip(s.name, s.id || `s${i}`))}
           </div>
           {updatedAt && (
-            <div style={{ fontSize: 10, color: '#475569', marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: '#64748B', marginTop: 8 }}>
               {source === 'uploaded' ? 'From uploaded boat config' : 'Entered manually'} · {new Date(updatedAt).toLocaleString()}
             </div>
           )}
@@ -810,7 +810,7 @@ function WeatherCard({ base, date, canEdit }) {
       {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>{err}</div>}
 
       {docs.length === 0 ? (
-        <div style={{ fontSize: 12, color: '#475569' }}>
+        <div style={{ fontSize: 12, color: '#64748B' }}>
           No forecast for this day.{canEdit ? ' Upload the weather/strategy deck as a PDF.' : ''}
         </div>
       ) : (
@@ -1024,7 +1024,7 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
           )}
         </div>
       )}
-      <div style={{ fontSize: 10, color: '#475569', marginTop: 4 }}>
+      <div style={{ fontSize: 10, color: '#64748B', marginTop: 4 }}>
         {allowLinks
           ? 'Type # to add tags, type @ to link to videos, photos or backlog items.'
           : 'Type # to add tags.'}
@@ -1323,7 +1323,7 @@ function NotesCard({ title, fields, showDocuments, documentsScope = 'debrief', w
             )}
 
             <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Documents</div>
-            {files.length === 0 && <div style={{ fontSize: 12, color: '#475569', marginBottom: 6 }}>None yet.</div>}
+            {files.length === 0 && <div style={{ fontSize: 12, color: '#64748B', marginBottom: 6 }}>None yet.</div>}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
               {files.map((d) => (
                 <div key={d.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderRadius: 6, padding: '6px 9px' }}>
@@ -1378,10 +1378,10 @@ function Placeholder({ title, note }) {
         borderRadius: 12,
         padding: 40,
         textAlign: 'center',
-        color: '#475569',
+        color: '#64748B',
       }}
     >
-      <div style={{ fontSize: 15, fontWeight: 700, color: '#64748B', marginBottom: 6 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: '#8A97A9', marginBottom: 6 }}>
         {title}
       </div>
       <div style={{ fontSize: 12 }}>{note}</div>
@@ -1578,7 +1578,7 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
           enter the regatta name there. */}
 
       {/* Legend */}
-      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 14, fontSize: 11, color: '#64748B' }}>
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 14, fontSize: 11, color: '#8A97A9' }}>
         {BLOCK_ORDER.filter((t) => canSeeTesting || !BLOCK_META[t].testing).map((t) => (
           <span key={t} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: BLOCK_META[t].c, display: 'inline-block' }} />
@@ -1593,7 +1593,7 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
       {canEditPlan && (
         <form onSubmit={addDays} style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
           <input type="date" value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} style={inputStyle} title="From" />
-          <span style={{ color: '#475569', fontSize: 12 }}>to</span>
+          <span style={{ color: '#64748B', fontSize: 12 }}>to</span>
           <input type="date" value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} style={inputStyle} title="To (optional — leave blank for a single day)" />
           <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }} title="Pick one or more block types to add to each day">
             {BLOCK_ORDER.filter((t) => canSeeTesting || !BLOCK_META[t].testing).map((t) => {
@@ -1628,9 +1628,9 @@ function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, is
       {err && <div style={{ color: '#EF4444', fontSize: 13, marginBottom: 12 }}>{err}</div>}
 
       {loading ? (
-        <div style={{ color: '#475569', fontSize: 13 }}>Loading calendar…</div>
+        <div style={{ color: '#64748B', fontSize: 13 }}>Loading calendar…</div>
       ) : filteredSessions.filter((s) => s.date >= today).length === 0 ? (
-        <div style={{ color: '#475569', fontSize: 13, textAlign: 'center', padding: 30, border: '1px dashed #1E3A5A', borderRadius: 12 }}>
+        <div style={{ color: '#64748B', fontSize: 13, textAlign: 'center', padding: 30, border: '1px dashed #1E3A5A', borderRadius: 12 }}>
           No upcoming days planned.{canEditPlan ? ' Add the first one above.' : ''}
         </div>
       ) : (
@@ -1909,16 +1909,16 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, crossBoatE
       {err && <div style={{ color: '#EF4444', fontSize: 13, marginBottom: 10 }}>{err}</div>}
 
       {loading ? (
-        <div style={{ color: '#475569', fontSize: 13 }}>Loading regattas…</div>
+        <div style={{ color: '#64748B', fontSize: 13 }}>Loading regattas…</div>
       ) : regattas.length === 0 ? (
-        <div style={{ color: '#475569', fontSize: 13, textAlign: 'center', padding: 30, border: '1px dashed #1E3A5A', borderRadius: 12 }}>
+        <div style={{ color: '#64748B', fontSize: 13, textAlign: 'center', padding: 30, border: '1px dashed #1E3A5A', borderRadius: 12 }}>
           {canEditPlan ? 'Add a regatta to populate the calendar with racing days.' : 'No regattas to show.'}
         </div>
       ) : (
         <>
           {/* Upcoming + currently-running regattas, soonest first. */}
           {upcomingRegattas.length === 0 ? (
-            <div style={{ color: '#475569', fontSize: 13, textAlign: 'center', padding: 16, border: '1px dashed #1E3A5A', borderRadius: 12, marginBottom: pastRegattas.length ? 18 : 0 }}>
+            <div style={{ color: '#64748B', fontSize: 13, textAlign: 'center', padding: 16, border: '1px dashed #1E3A5A', borderRadius: 12, marginBottom: pastRegattas.length ? 18 : 0 }}>
               No upcoming regattas.{canEditPlan ? ' Add one above.' : ''}
             </div>
           ) : (
@@ -1997,7 +1997,7 @@ function RegattasView({ teamId, boatId, canEditPlan, isMobile, boats, crossBoatE
                     <div style={{ fontSize: 14, fontWeight: 700, color: '#E2E8F0' }}>
                       {tb.dateFrom === tb.dateTo ? fmtDay(tb.dateFrom) : `${fmtDay(tb.dateFrom)} – ${fmtDay(tb.dateTo)}`}
                     </div>
-                    <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                    <div style={{ fontSize: 11, color: '#8A97A9', marginTop: 2 }}>
                       {nDays} day{nDays === 1 ? '' : 's'}{showBoatChips && tb.boat_name ? ` · ${tb.boat_name}` : ''}
                     </div>
                   </div>
@@ -2049,7 +2049,7 @@ function TrainingForm({ onSubmit, onCancel }) {
     <form onSubmit={submit} style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} title="From" required />
-        <span style={{ color: '#475569', fontSize: 12 }}>to</span>
+        <span style={{ color: '#64748B', fontSize: 12 }}>to</span>
         <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} title="To (leave blank for a single day)" />
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -2105,7 +2105,7 @@ function RegattaForm({ initial, onSubmit, onCancel }) {
     <form onSubmit={submit} style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={inputStyle} title="From" required />
-        <span style={{ color: '#475569', fontSize: 12 }}>to</span>
+        <span style={{ color: '#64748B', fontSize: 12 }}>to</span>
         <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={inputStyle} title="To (leave blank for a single day)" />
       </div>
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Regatta name (e.g. Maxi Worlds)" maxLength={80} style={{ ...inputStyle, fontSize: 14 }} required />
@@ -2253,7 +2253,7 @@ function RegattaCard({ regatta, base, canEdit, isMobile, showBoatChip, onChanged
             {regatta.boat_name}
           </span>
         )}
-        {past && <span style={{ fontSize: 10, color: '#475569' }}>past</span>}
+        {past && <span style={{ fontSize: 10, color: '#64748B' }}>past</span>}
         <div style={{ flex: 1 }} />
         {canEdit && (
           <>
@@ -2293,9 +2293,9 @@ function RegattaCard({ regatta, base, canEdit, isMobile, showBoatChip, onChanged
         </div>
         {err && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 6 }}>{err}</div>}
         {!docsLoaded ? (
-          <div style={{ fontSize: 11, color: '#475569' }}>Loading…</div>
+          <div style={{ fontSize: 11, color: '#64748B' }}>Loading…</div>
         ) : docs.length === 0 ? (
-          <div style={{ fontSize: 12, color: '#475569' }}>No documents yet.{canEdit ? ' Upload the NOR / SI / course notice as PDFs.' : ''}</div>
+          <div style={{ fontSize: 12, color: '#64748B' }}>No documents yet.{canEdit ? ' Upload the NOR / SI / course notice as PDFs.' : ''}</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
             {docs.map((d) => (
@@ -2332,7 +2332,7 @@ function Counter({ value, label, sub }) {
     >
       <div style={{ fontSize: 34, fontWeight: 800, color: '#06B6D4', lineHeight: 1 }}>{value}</div>
       <div style={{ fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 6 }}>{label}</div>
-      <div style={{ fontSize: 10, color: '#475569', marginTop: 2 }}>{sub}</div>
+      <div style={{ fontSize: 10, color: '#64748B', marginTop: 2 }}>{sub}</div>
     </div>
   )
 }
@@ -2394,7 +2394,7 @@ function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, 
             🏁 {session.event}
           </span>
         )}
-        {isPast && <span style={{ fontSize: 10, color: '#475569' }}>past</span>}
+        {isPast && <span style={{ fontSize: 10, color: '#64748B' }}>past</span>}
         <div style={{ flex: 1 }} />
         {onOpenDay && (
           <button
@@ -2440,7 +2440,7 @@ function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, 
       {/* Blocks */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {visibleBlocks.length === 0 ? (
-          <div style={{ fontSize: 11, color: '#475569' }}>No blocks{canSeeTesting ? '' : ' visible'}.</div>
+          <div style={{ fontSize: 11, color: '#64748B' }}>No blocks{canSeeTesting ? '' : ' visible'}.</div>
         ) : (
           visibleBlocks.map((b) => (
             <BlockRow key={b.id} base={base} block={b} canEditPlan={canEditPlan} onChanged={onChanged} />
@@ -2492,9 +2492,9 @@ function BlockRow({ base, block, canEditPlan, onChanged }) {
     >
       <span style={{ fontSize: 11, fontWeight: 700, color: meta.c }}>{meta.label}</span>
       {block.label && <span style={{ fontSize: 12, color: '#E2E8F0' }}>· {block.label}</span>}
-      {time && <span style={{ fontSize: 11, color: '#475569', fontFamily: 'monospace' }}>{time}</span>}
+      {time && <span style={{ fontSize: 11, color: '#64748B', fontFamily: 'monospace' }}>{time}</span>}
       {block.venue && <span style={{ fontSize: 10, color: '#94A3B8', border: '1px solid #334155', borderRadius: 4, padding: '0 5px' }}>{VENUE_LABEL[block.venue]}</span>}
-      {block.objective && <span style={{ fontSize: 11, color: '#64748B' }}>— {block.objective}</span>}
+      {block.objective && <span style={{ fontSize: 11, color: '#8A97A9' }}>— {block.objective}</span>}
       <div style={{ flex: 1 }} />
       {canEditPlan && (
         <button onClick={remove} title="Delete block" style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: 13 }}>✕</button>

@@ -101,7 +101,7 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
     <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, gridColumn: '1 / -1' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>🪶 Wind weight — racing window</span>
-        <span style={{ fontSize: 11, color: '#64748B' }}>
+        <span style={{ fontSize: 11, color: '#8A97A9' }}>
           rig load vs a standard day · 100 = standard · {ven ? `${ven.venue} (${ven.domain})` : hasVenue ? '…' : 'no SSA-Race venue near this point'}
         </span>
         <div style={{ flex: 1 }} />
@@ -113,9 +113,9 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
         </label>
       </div>
 
-      {fc === undefined && <div style={{ fontSize: 11, color: '#64748B' }}>loading forecast…</div>}
-      {fc === null && hasVenue && !hasObs && <div style={{ fontSize: 11, color: '#64748B' }}>No windweight product published yet for this venue (appears after the box run).</div>}
-      {!hasVenue && <div style={{ fontSize: 11, color: '#64748B' }}>Pick a location inside a SSA-Race venue box (La Ciotat / St Tropez / …).</div>}
+      {fc === undefined && <div style={{ fontSize: 11, color: '#8A97A9' }}>loading forecast…</div>}
+      {fc === null && hasVenue && !hasObs && <div style={{ fontSize: 11, color: '#8A97A9' }}>No windweight product published yet for this venue (appears after the box run).</div>}
+      {!hasVenue && <div style={{ fontSize: 11, color: '#8A97A9' }}>Pick a location inside a SSA-Race venue box (La Ciotat / St Tropez / …).</div>}
 
       {(fc || hasObs) && (
         <>
@@ -124,7 +124,7 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
-                <tr style={{ color: '#64748B', textAlign: 'right' }}>
+                <tr style={{ color: '#8A97A9', textAlign: 'right' }}>
                   <th style={thL}>Hour</th>
                   <th style={th}>Fcst WW</th>
                   <th style={th}>V_eff</th>
@@ -153,7 +153,7 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
                 })}
               </tbody>
             </table>
-            {!hasObs && <div style={{ fontSize: 10, color: '#475569', marginTop: 6 }}>Observed column appears once a logfile with on-board air-temp / sea-temp / RH is uploaded for today.</div>}
+            {!hasObs && <div style={{ fontSize: 10, color: '#64748B', marginTop: 6 }}>Observed column appears once a logfile with on-board air-temp / sea-temp / RH is uploaded for today.</div>}
           </div>
 
           {/* vertical profile to masthead for the selected hour */}
@@ -162,7 +162,7 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
               V(z) · {String(selHour).padStart(2, '0')}:00 · 0–{mastHeight} m
             </div>
             <ProfilePlot fc={selFc?.profile} obs={selObs?.profile} H={mastHeight} />
-            <div style={{ fontSize: 10, color: '#64748B', marginTop: 4 }}>
+            <div style={{ fontSize: 10, color: '#8A97A9', marginTop: 4 }}>
               {selFc && (selFc.cls === 'Calm'
                 ? <div>Fcst <b style={{ color: clsColor('Calm') }}>calm</b> · V_H {selFc.V_H}kt · WW n/a below ~4 kt</div>
                 : <div>Fcst <b style={{ color: clsColor(selFc.cls) }}>{selFc.WW}%</b> {selFc.cls} · V_H {selFc.V_H}kt</div>)}
@@ -197,7 +197,7 @@ function ProfilePlot({ fc, obs, H = 34 }) {
   if (ref) series.push({ pts: ref, c: '#64748B', lbl: 'std', dash: '3 2', noDots: true })
   if (Array.isArray(fc) && fc.length > 1) series.push({ pts: fc, c: '#06B6D4', lbl: 'fcst' })
   if (Array.isArray(obs) && obs.length > 1) series.push({ pts: obs, c: '#F59E0B', lbl: 'obs' })
-  if (!series.length) return <div style={{ height: HT, fontSize: 10, color: '#334155', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #1E3A5A', borderRadius: 6 }}>no profile</div>
+  if (!series.length) return <div style={{ height: HT, fontSize: 10, color: '#4E5D71', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #1E3A5A', borderRadius: 6 }}>no profile</div>
   const vMax = Math.max(...series.flatMap((s) => s.pts.map((p) => p.V))) * 1.08 || 1
   const X = (v) => pad + (v / vMax) * (W - pad - 6)
   const Y = (z) => HT - pad - (Math.min(z, H) / H) * (HT - pad - 6)
@@ -218,7 +218,7 @@ function ProfilePlot({ fc, obs, H = 34 }) {
         ))}
         <text x={W - 4} y={HT - 4} fill="#334155" fontSize="7" textAnchor="end">V (m/s)</text>
       </svg>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 3, fontSize: 8, color: '#64748B' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 3, fontSize: 8, color: '#8A97A9' }}>
         {ref && <Legend c="#64748B" t="standard" dash />}
         {Array.isArray(fc) && fc.length > 1 && <Legend c="#06B6D4" t="forecast" />}
         {Array.isArray(obs) && obs.length > 1 && <Legend c="#F59E0B" t="observed" />}

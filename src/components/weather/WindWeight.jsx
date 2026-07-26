@@ -43,7 +43,7 @@ export default function WindWeight({ domain, venue, tzOffsetMin = 0, windowHours
     })
   }, [data, windowHours, tzOffsetMin])
 
-  if (data === undefined) return <Shell><span style={{ fontSize: 11, color: '#64748B' }}>loading…</span></Shell>
+  if (data === undefined) return <Shell><span style={{ fontSize: 11, color: '#8A97A9' }}>loading…</span></Shell>
   if (!data || hours.length === 0) return null
 
   const cur = sel != null ? hours[sel] : null
@@ -53,7 +53,7 @@ export default function WindWeight({ domain, venue, tzOffsetMin = 0, windowHours
     <Shell>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>🪶 Wind weight</span>
-        <span style={{ fontSize: 10, color: '#64748B' }}>rig load vs a standard day · 100 = standard</span>
+        <span style={{ fontSize: 10, color: '#8A97A9' }}>rig load vs a standard day · 100 = standard</span>
       </div>
 
       {/* hourly bars */}
@@ -77,7 +77,7 @@ export default function WindWeight({ domain, venue, tzOffsetMin = 0, windowHours
       {/* 100% reference line marker + hour labels */}
       <div style={{ display: 'flex', gap: 3, marginBottom: 6 }}>
         {hours.map((h) => (
-          <span key={h.t} style={{ flex: 1, minWidth: 6, textAlign: 'center', fontSize: 7, color: '#334155', fontFamily: 'monospace' }}>
+          <span key={h.t} style={{ flex: 1, minWidth: 6, textAlign: 'center', fontSize: 7, color: '#4E5D71', fontFamily: 'monospace' }}>
             {hm(h.t, tzOffsetMin).slice(0, 2)}
           </span>
         ))}
@@ -91,10 +91,10 @@ export default function WindWeight({ domain, venue, tzOffsetMin = 0, windowHours
             <div style={{ fontSize: 20, fontWeight: 800, color: clsColor(cur.cls) }}>{cur.WW}% <span style={{ fontSize: 12 }}>{cur.cls}</span></div>
             <div style={{ fontSize: 11, color: '#CBD5E1' }}>V_H {cur.V_H} kt → weighs like <b>{cur.V_eff} kt</b></div>
           </div>
-          <div style={{ fontSize: 10, color: '#64748B', display: 'grid', gridTemplateColumns: 'auto auto', gap: '2px 10px', alignContent: 'start' }}>
+          <div style={{ fontSize: 10, color: '#8A97A9', display: 'grid', gridTemplateColumns: 'auto auto', gap: '2px 10px', alignContent: 'start' }}>
             {cur.factors && Object.entries(cur.factors).map(([k, v]) => (
               <React.Fragment key={k}>
-                <span style={{ color: '#475569' }}>{k}</span>
+                <span style={{ color: '#64748B' }}>{k}</span>
                 <span style={{ color: v > 1.02 ? '#F97316' : v < 0.98 ? '#7DD3FC' : '#CBD5E1', fontFamily: 'monospace' }}>{Number(v).toFixed(2)}</span>
               </React.Fragment>
             ))}

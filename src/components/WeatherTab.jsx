@@ -140,7 +140,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
         ))}
         <div style={{ flex: 1 }} />
         {hasData && sub !== 'forecast' && (
-          <span style={{ fontSize: 10, color: '#64748B' }}>
+          <span style={{ fontSize: 10, color: '#8A97A9' }}>
             data from {Object.keys(windData).length} location{Object.keys(windData).length === 1 ? '' : 's'}
           </span>
         )}
@@ -187,7 +187,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
 
 function TabLoading({ label }) {
   return (
-    <div style={{ padding: 30, textAlign: 'center', color: '#475569', fontSize: 12 }}>
+    <div style={{ padding: 30, textAlign: 'center', color: '#64748B', fontSize: 12 }}>
       {label || 'Loading…'}
     </div>
   )
