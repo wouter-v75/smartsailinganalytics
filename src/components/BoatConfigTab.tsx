@@ -907,8 +907,8 @@ const MANUAL_KEYS = ['mainCun', 'vang', 'bobstay']
 
 // Saved overlay: per section, per display-column index, the hand-entered rows.
 type ManualCell = Record<string, string>
-type RigSettings = { upwind: Record<string, ManualCell>; reaching: Record<string, ManualCell> }
-const emptySettings = (): RigSettings => ({ upwind: {}, reaching: {} })
+type RigSettings = { upwind: Record<string, ManualCell>; reaching: Record<string, ManualCell>; downwind: Record<string, ManualCell> }
+const emptySettings = (): RigSettings => ({ upwind: {}, reaching: {}, downwind: {} })
 function normSettings(raw: any): RigSettings {
   const out = emptySettings()
   for (const sec of ['upwind', 'reaching'] as const) {
@@ -921,6 +921,10 @@ function normSettings(raw: any): RigSettings {
       if (Object.keys(cell).length) out[sec][k] = cell
     }
   }
+  const dw = raw?.downwind
+  if (dw && typeof dw === 'object') {
+    for (const [k, v] of Object.entries(dw)) if (v && typeof v === 'object') out.downwind[k] = { ...(v as any) }
+  }
   return out
 }
 
@@ -928,6 +932,21 @@ const COL_BLUE = '#BDD7EE'
 const COL_BLUE_RGB: [number, number, number] = [189, 215, 238]
 const DWD_BG = '#DDF0E4'
 const DWD_RGB: [number, number, number] = [221, 240, 228]
+// Downwind is its OWN small crib — TWS rows x (Up/Low deflector + HS), seeded
+// from the boat's whiteboard, editable + saved like the rest.
+const DWD_TWS = ['8', '10', '12', '15', '20']
+const DWD_ROWS: { key: string; label: string }[] = [
+  { key: 'upDefl', label: 'Up Defl' },
+  { key: 'lowDefl', label: 'Low Defl' },
+  { key: 'hs', label: 'HS' },
+]
+const DWD_DEFAULTS: Record<string, Record<string, string>> = {
+  '8': { upDefl: '70', lowDefl: '90', hs: '3' },
+  '10': { upDefl: '50', lowDefl: '70', hs: '3.5' },
+  '12': { upDefl: '40', lowDefl: '65', hs: '4' },
+  '15': { upDefl: '30', lowDefl: '60', hs: '5' },
+  '20': { upDefl: '5', lowDefl: '15', hs: '6.5' },
+}
 const colBg = (c: any, i: number) => (c?.section === 'downwind' ? DWD_BG : (i % 2 === 0 ? COL_BLUE : '#FFFFFF'))
 const colRgb = (c: any, i: number): [number, number, number] => (c?.section === 'downwind' ? DWD_RGB : (i % 2 === 0 ? COL_BLUE_RGB : [255, 255, 255]))
 
@@ -959,7 +978,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
 }) {
   const cols: any[] = Array.isArray(rigTune?.data?.columns) ? rigTune.data.columns : []
   const upCols = sectionCols(cols, 'upwind')
-  const reachCols = [...sectionCols(cols, 'reaching'), ...sectionCols(cols, 'downwind')]
+  const reachCols = sectionCols(cols, 'reaching')
   const colsFor = (sec: 'upwind' | 'reaching') => (sec === 'upwind' ? upCols : reachCols)
 
   const mainConds: any[] = React.useMemo(() => {
@@ -1035,6 +1054,12 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
     return row.get ? row.get(col) : ''
   }
 
+  const dwdVal = (tws: string, key: string): string => (tbl.downwind?.[tws]?.[key] ?? (DWD_DEFAULTS[tws]?.[key] ?? ''))
+  const setDwd = (tws: string, key: string, val: string) => {
+    setTbl((p) => ({ ...p, downwind: { ...p.downwind, [tws]: { ...(p.downwind?.[tws] || {}), [key]: val } } }))
+    setDirty(true); setMsg('')
+  }
+
   const save = async () => {
     if (!rigTune?.id) return
     setBusy(true); setMsg('')
@@ -1060,7 +1085,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
     setPdfBusy(true)
     try {
       const JsPDF = await loadJsPdf()
-      const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
+      const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
       const M = 12; let y = 16
       doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
       doc.text([boatName, 'Rig settings'].filter(Boolean).join(' — '), M, y); y += 6
@@ -1070,18 +1095,18 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
       doc.text(`Settings as saved ${fmtWhen(viewing ? viewing.saved_at : savedAt)}${viewing ? '  (historical version)' : ''}`, M, y); y += 4.5
       if (stampNotes) {
         doc.setFontSize(8)
-        for (const ln of doc.splitTextToSize(`Notes: ${stampNotes}`, 250).slice(0, 3)) { doc.text(ln, M, y); y += 3.6 }
+        for (const ln of doc.splitTextToSize(`Notes: ${stampNotes}`, 180).slice(0, 3)) { doc.text(ln, M, y); y += 3.6 }
         doc.setFontSize(9)
       }
       y += 3
-      const PAGE_W = 297, LABEL_W = 34
-      const TABLE_W = PAGE_W - 2 * M
+      const LABEL_W = 22
+      const TABLE_W = 130 // 13 cm — the laminated-card print width
       const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[]) => {
         const dcols = colsFor(sec)
         const nCols = Math.max(dcols.length, 1)
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
         doc.text(title, M, y); y += 4
-        const rowH = 5.2
+        const rowH = 50 / (rows.length + 1) // table ~5 cm tall
         const colW = (TABLE_W - LABEL_W) / nCols
         const baseline = rowH * 0.68
         const FS = 6.5
@@ -1115,7 +1140,36 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         y += 6
       }
       block('Upwind', 'upwind', UPWIND_ROWS)
-      block('Reaching (+ downwind)', 'reaching', REACHING_ROWS)
+      const yReachTop = y
+      block('Reaching', 'reaching', REACHING_ROWS)
+      // Downwind — printed to the RIGHT of Reaching, on the same top axis (uses its
+      // own local dy so it doesn't push the page cursor down).
+      {
+        const dwX = M + TABLE_W + 6
+        let dy = yReachTop
+        const dwColW = 14, dwRowH = 50 / (DWD_TWS.length + 1), dwBase = dwRowH * 0.68
+        const dwLabels = ['TWS', 'Up', 'Low', 'HS']
+        const dwKeys = ['upDefl', 'lowDefl', 'hs']
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
+        doc.text('Downwind', dwX, dy); dy += 4
+        doc.setFontSize(6.5); doc.setDrawColor(90); doc.setLineWidth(0.15)
+        let hx = dwX
+        for (const lab of dwLabels) {
+          doc.setFillColor(DWD_RGB[0], DWD_RGB[1], DWD_RGB[2]); doc.rect(hx, dy, dwColW, dwRowH, 'FD')
+          doc.setFont('helvetica', 'bold'); doc.setTextColor(20); doc.text(lab, hx + dwColW / 2, dy + dwBase, { align: 'center' }); hx += dwColW
+        }
+        dy += dwRowH
+        for (const tws of DWD_TWS) {
+          let cx = dwX
+          const vals = [tws, ...dwKeys.map((k) => dwdVal(tws, k))]
+          vals.forEach((v, ci) => {
+            doc.setFillColor(DWD_RGB[0], DWD_RGB[1], DWD_RGB[2]); doc.rect(cx, dy, dwColW, dwRowH, 'FD')
+            doc.setFont('helvetica', ci === 0 ? 'bold' : 'normal'); doc.setTextColor(20)
+            doc.text(String(v || '-'), cx + dwColW / 2, dy + dwBase, { align: 'center' }); cx += dwColW
+          })
+          dy += dwRowH
+        }
+      }
       const name = `Rig_settings_${[boatName, rigTune?.revision].filter(Boolean).join('_').replace(/[^\w.-]+/g, '_') || 'sheet'}.pdf`
       doc.save(name)
     } catch (e: any) { setMsg('Could not build the PDF: ' + (e?.message || e)) }
@@ -1180,6 +1234,36 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
     )
   }
 
+  const DownwindTable = () => (
+    <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', padding: '2px 4px 8px' }}>Downwind</div>
+      <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: LABEL_PX + COL_PX * DWD_ROWS.length }}>
+        <colgroup>
+          <col style={{ width: LABEL_PX }} />
+          {DWD_ROWS.map((r) => <col key={r.key} style={{ width: COL_PX }} />)}
+        </colgroup>
+        <thead>
+          <tr>
+            <th style={{ ...rh, background: DWD_BG }}>TWS</th>
+            {DWD_ROWS.map((r) => <th key={r.key} style={{ ...th, background: DWD_BG }}>{r.label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {DWD_TWS.map((tws) => (
+            <tr key={tws}>
+              <td style={{ ...rh, background: DWD_BG }}>{tws}</td>
+              {DWD_ROWS.map((r) => (
+                <td key={r.key} style={{ ...cellStyle, background: DWD_BG }}>
+                  <input style={inputStyle} value={dwdVal(tws, r.key)} readOnly={!edit} onChange={(e) => setDwd(tws, r.key, e.target.value)} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
@@ -1238,7 +1322,8 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
       ) : null}
 
       <Table title="Upwind" sec="upwind" rows={UPWIND_ROWS} />
-      <Table title="Reaching (+ downwind)" sec="reaching" rows={REACHING_ROWS} />
+      <Table title="Reaching" sec="reaching" rows={REACHING_ROWS} />
+      <DownwindTable />
     </div>
   )
 }
