@@ -671,7 +671,7 @@ export default function BoatConfigTab({
             </div>
           ) : (
             <>
-              <RigSettingsTables rigTune={rigTune} teamId={teamId} canEdit={canEdit} boatName={config?.boatName} />
+              <RigSettingsTables rigTune={rigTune} teamId={teamId} canEdit={canEdit} boatName={config?.boatName} sails={sails} />
               <RigTuneTable data={rigTune.data} />
             </>
           )}
@@ -831,47 +831,23 @@ const RIG_FIELDS: RigField[] = [
   { key: 'lowerDeflectorCylStroke', label: 'Lower Defl. Stroke', render: (c) => (c.lowerDeflectorCylStroke ?? '—') },
 ]
 
-// ── Rig SETTINGS grid — Upwind + Reaching by TWS band ────────────────────────
-// A compact, editable crib sheet: TWS bands across the top (each with the sail
-// carried in that band), the rig settings down the side. Seeded from the parsed
-// sheet (a column lands in the band its "Approx TWS @ MH" falls into), then
-// editable and saved onto the baseline (rig_tunes.data.settingsTable).
-// `rep` = the band's representative TWS, used to pick the closest sheet column.
-const TWS_BANDS = [
-  { key: '6-7', label: '6-7 kn', rep: 7 },
-  { key: '8-9', label: '8-9 kn', rep: 9 },
-  { key: '10', label: '10 kn', rep: 10 },
-  { key: '12', label: '12 kn', rep: 12 },
-  { key: '14', label: '14 kn', rep: 14 },
-  { key: '18', label: '18 kn', rep: 18 },
-  { key: '20+', label: '20+ kn', rep: 22 },
-]
-// `red` → the headline load row, shown red + bold like the boat's rig card.
-type RigRow = { key: string; label: string; red?: boolean }
-const UPWIND_ROWS: RigRow[] = [
-  { key: 'shims', label: 'Shims' },
-  { key: 'buttPos', label: 'Butt Pos' },
-  { key: 'combHS', label: 'Comb HS (t)', red: true },
-  { key: 'upDefl', label: 'Up Defl' },
-  { key: 'lowDefl', label: 'Low Defl' },
-]
-const REACHING_ROWS: RigRow[] = [
-  { key: 'shims', label: 'Shims' },
-  { key: 'tack', label: 'Tack (t)', red: true },
-  { key: 'hsLimit', label: 'HS Limit (t)' },
-  { key: 'upDefl', label: 'Up Defl' },
-  { key: 'lowDefl', label: 'Low Defl' },
-]
+// ── Rig SETTINGS grid — Upwind + Reaching, one column per sheet column ───────
+// Columns ARE the parsed rig-sheet columns: every upwind column for Upwind; every
+// reaching column PLUS the downwind columns appended for Reaching. Each column is
+// headed by its TWS @ MH. Sheet-derived rows render read-only from the column; the
+// rows the sheet doesn't carry (Main Cun, Vang, Bobstay, GS Tack) are hand-entered
+// and saved as a per-column overlay; Main 50% camber auto-fills from the mainsail's
+// SailScan design.
 const RED = '#C00000'
 const RED_RGB: [number, number, number] = [192, 0, 0]
-type RigCell = Record<string, string>
-type RigSettings = { upwind: Record<string, RigCell>; reaching: Record<string, RigCell> }
 
-// The parser resolves this for us: `twsMhKn` is the TWS @ MH in knots, and for
-// reaching/downwind it's inherited from the upwind column on the same grid column
-// (the reaching block is a continuation of the upwind table). Older baselines
-// stored before that change fall back to reading the raw cell — never treating an
-// "…AWA" apparent-wind angle as a wind speed.
+const combHSof = (c: any): string => {
+  if (!c) return ''
+  const a = c.headstayT; const b = c.jibTackT
+  if (a == null && b == null) return ''
+  return fmt((a || 0) + (b || 0), 1)
+}
+const sectionCols = (cols: any[], section: string) => (cols || []).filter((c) => c && c.section === section)
 const twsNum = (c: any): number | null => {
   if (c == null) return null
   if (typeof c.twsMhKn === 'number') return c.twsMhKn
@@ -880,65 +856,83 @@ const twsNum = (c: any): number | null => {
   const m = str.match(/^(\d+(?:\.\d+)?)/)
   return m ? Number(m[1]) : null
 }
-// "Comb HS" = the combined headstay load = Headstay + Jib Tack.
-const combHSof = (c: any): string => {
-  if (!c) return ''
-  const a = c.headstayT; const b = c.jibTackT
-  if (a == null && b == null) return ''
-  return fmt((a || 0) + (b || 0), 1)
+const twsLabel = (c: any): string => {
+  const n = twsNum(c)
+  if (n != null) return String(n)
+  const s = String(c?.twsAtMh ?? '').trim()
+  return s || '—'
 }
-// Columns of one section, in sheet order (index = the cell's `src` handle).
-const sectionCols = (cols: any[], section: 'upwind' | 'reaching') =>
-  (cols || []).filter((c) => c.section === section)
+// Mainsail 50%-height design camber (%) nearest a column's TWS, from the mainsail's
+// SailScan design_shapes (conditions by TWS, sections by height %).
+function main50Camber(conds: any[], twsKn: number | null): string {
+  if (!Array.isArray(conds) || !conds.length || twsKn == null) return ''
+  let best: any = null; let bd = Infinity
+  for (const cnd of conds) {
+    const tv = Number(cnd?.tws)
+    if (!Number.isFinite(tv)) continue
+    const d = Math.abs(tv - twsKn)
+    if (d < bd) { bd = d; best = cnd }
+  }
+  const secs = best?.sections || best?.stripes || []
+  const st = secs.find((s: any) => Math.abs(Number(s?.posPct) - 50) < 1)
+  const cam = st?.camber
+  return cam != null && Number.isFinite(Number(cam)) ? fmt(Number(cam) * 100, 1) : ''
+}
 
-const cellFromCol = (c: any, idx: number): RigCell => ({
-  src: c ? String(idx) : '',
-  sail: c?.headsail ?? '',
-  shims: c?.shimStack ?? '',
-  buttPos: c?.mastbasePosition ?? '',
-  combHS: combHSof(c),
-  tack: c?.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '',
-  hsLimit: c?.headstayT != null ? fmt(c.headstayT, 1) : '',
-  upDefl: c?.upperDeflectorCylStroke ?? '',
-  lowDefl: c?.lowerDeflectorCylStroke ?? '',
-})
+// Rows. source: 'sheet' → read-only via get(); 'manual' → typed + saved; 'camber'
+// → auto from the mainsail design. Order matches the boat's whiteboard.
+type RigRow = { key: string; label: string; red?: boolean; source: 'sheet' | 'manual' | 'camber'; get?: (c: any) => string }
+const UPWIND_ROWS: RigRow[] = [
+  { key: 'hs', label: 'HS', source: 'sheet', get: (c) => (c?.headstayT != null ? fmt(c.headstayT, 1) : '') },
+  { key: 'combHS', label: 'HS + Tack', red: true, source: 'sheet', get: (c) => combHSof(c) },
+  { key: 'shims', label: 'Shim', source: 'sheet', get: (c) => (c?.shimStack ?? '') },
+  { key: 'buttPos', label: 'Butt position', source: 'sheet', get: (c) => (c?.mastbasePosition ?? '') },
+  { key: 'mainCun', label: 'Main Cun', source: 'manual' },
+  { key: 'main50', label: 'Main 50% camber', source: 'camber' },
+  { key: 'upDefl', label: 'Up Def %', source: 'sheet', get: (c) => (c?.upperDeflectorCylStroke ?? '') },
+  { key: 'lowDefl', label: 'Low Def %', source: 'sheet', get: (c) => (c?.lowerDeflectorCylStroke ?? '') },
+  { key: 'vang', label: 'Vang', source: 'manual' },
+]
+const REACHING_ROWS: RigRow[] = [
+  { key: 'hs', label: 'HS', red: true, source: 'sheet', get: (c) => (c?.headstayT != null ? fmt(c.headstayT, 1) : '') },
+  { key: 'bobstay', label: 'Bobstay', source: 'manual' },
+  { key: 'spritTack', label: 'Sprit tack', source: 'sheet', get: (c) => (c?.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '') },
+  { key: 'gsTack', label: 'GS tack', source: 'sheet', get: (c) => (c?.gsTackT != null ? fmt(c.gsTackT, 1) : '') },
+  { key: 'shims', label: 'Shim', source: 'sheet', get: (c) => (c?.shimStack ?? '') },
+  { key: 'buttPos', label: 'Butt position', source: 'sheet', get: (c) => (c?.mastbasePosition ?? '') },
+  { key: 'upDefl', label: 'Up Def %', source: 'sheet', get: (c) => (c?.upperDeflectorCylStroke ?? '') },
+  { key: 'lowDefl', label: 'Low Def %', source: 'sheet', get: (c) => (c?.lowerDeflectorCylStroke ?? '') },
+]
+const MANUAL_KEYS = ['mainCun', 'vang', 'bobstay']
 
-// Seed each band with the column whose TWS@MH is CLOSEST to the band (the sheet
-// publishes 7/9/11/14/16/18/21… — not our exact bands — so strict ranges would
-// leave 12 kn blank). Column choice advances monotonically so the sail progresses
-// with the breeze (J1 → J1.5 → J2 → J3). Reaching has no TWS on the sheet at all,
-// so it seeds empty — pick the sail per band and the settings auto-fill.
-function seedSection(cols: any[], section: 'upwind' | 'reaching'): Record<string, RigCell> {
-  const sec = sectionCols(cols, section)
-  const out: Record<string, RigCell> = {}
-  let prev = -1
-  for (const b of TWS_BANDS) {
-    let best = -1; let bd = Infinity
-    for (let i = 0; i < sec.length; i++) {
-      if (i <= prev) continue                       // keep sails advancing with TWS
-      const t = twsNum(sec[i])
-      if (t == null) continue
-      const d = Math.abs(t - b.rep)
-      if (d < bd) { bd = d; best = i }
+// Saved overlay: per section, per display-column index, the hand-entered rows.
+type ManualCell = Record<string, string>
+type RigSettings = { upwind: Record<string, ManualCell>; reaching: Record<string, ManualCell> }
+const emptySettings = (): RigSettings => ({ upwind: {}, reaching: {} })
+function normSettings(raw: any): RigSettings {
+  const out = emptySettings()
+  for (const sec of ['upwind', 'reaching'] as const) {
+    const s = raw?.[sec]
+    if (!s || typeof s !== 'object') continue
+    for (const [k, v] of Object.entries(s)) {
+      if (!v || typeof v !== 'object') continue
+      const cell: ManualCell = {}
+      for (const mk of MANUAL_KEYS) { const val = (v as any)[mk]; if (typeof val === 'string' && val) cell[mk] = val }
+      if (Object.keys(cell).length) out[sec][k] = cell
     }
-    if (best >= 0) prev = best
-    out[b.key] = cellFromCol(best >= 0 ? sec[best] : null, best)
   }
   return out
 }
-const seedSettings = (cols: any[]): RigSettings => ({ upwind: seedSection(cols, 'upwind'), reaching: seedSection(cols, 'reaching') })
 
-// Column shading matches the boat's laminated rig card: alternating light-blue /
-// white columns across the TWS bands.
 const COL_BLUE = '#BDD7EE'
-const COL_BG = (i: number) => (i % 2 === 0 ? COL_BLUE : '#FFFFFF')
 const COL_BLUE_RGB: [number, number, number] = [189, 215, 238]
+const DWD_BG = '#DDF0E4'
+const DWD_RGB: [number, number, number] = [221, 240, 228]
+const colBg = (c: any, i: number) => (c?.section === 'downwind' ? DWD_BG : (i % 2 === 0 ? COL_BLUE : '#FFFFFF'))
+const colRgb = (c: any, i: number): [number, number, number] => (c?.section === 'downwind' ? DWD_RGB : (i % 2 === 0 ? COL_BLUE_RGB : [255, 255, 255]))
 
-// module-scope twin of the component's `btn` helper (which is defined inside the
-// main component, so it isn't visible to these sibling components).
 const rbtn = (bg: string): React.CSSProperties => ({ background: bg, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' })
 
-// jsPDF (UMD) from CDN — same pattern as the SailScan share.
 let rigJsPdf: Promise<any> | null = null
 function loadJsPdf(): Promise<any> {
   const w = window as any
@@ -955,31 +949,33 @@ function loadJsPdf(): Promise<any> {
   return rigJsPdf
 }
 
-// One saved rig settings table, as returned by …/rig-tunes/:id/versions.
 type RigVersion = { id: string; settings: RigSettings; notes: string | null; saved_at: string; saved_by: string | null }
-// European date, venue-agnostic: "24 Jun 2026, 14:32".
 const fmtWhen = (iso?: string | null) => (iso
   ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   : '—')
 
-function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
-  rigTune: any; teamId: string; canEdit: boolean; boatName?: string | null
+function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
+  rigTune: any; teamId: string; canEdit: boolean; boatName?: string | null; sails?: any[]
 }) {
   const cols: any[] = Array.isArray(rigTune?.data?.columns) ? rigTune.data.columns : []
-  const [tbl, setTbl] = useState<RigSettings>(() => (rigTune?.data?.settingsTable as RigSettings) || seedSettings(cols))
+  const upCols = sectionCols(cols, 'upwind')
+  const reachCols = [...sectionCols(cols, 'reaching'), ...sectionCols(cols, 'downwind')]
+  const colsFor = (sec: 'upwind' | 'reaching') => (sec === 'upwind' ? upCols : reachCols)
+
+  const mainConds: any[] = React.useMemo(() => {
+    const main = (sails || []).find((s: any) => s?.kind === 'mainsail' || /^(MAIN|MN)\b/i.test(s?.category || s?.name || ''))
+    return Array.isArray(main?.specs?.design_shapes?.conditions) ? main.specs.design_shapes.conditions : []
+  }, [sails])
+
+  const [tbl, setTbl] = useState<RigSettings>(() => normSettings(rigTune?.data?.settingsTable))
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [pdfBusy, setPdfBusy] = useState(false)
-  const [editing, setEditing] = useState(false)      // read-only until you hit Edit
+  const [editing, setEditing] = useState(false)
   const snapshot = React.useRef<RigSettings | null>(null)
   const edit = canEdit && editing
 
-  // ── history ────────────────────────────────────────────────────────────────
-  // Saving APPENDS: the old table is kept, stamped, with the notes that went with
-  // it. `savedAt`/`savedNotes` describe the table currently on screen; `viewing`
-  // is set when you're looking at an OLD version (so nothing can be edited or
-  // saved by accident while a historical table is on the table).
   const [savedAt, setSavedAt] = useState<string | null>(rigTune?.data?.settingsSavedAt || null)
   const [savedNotes, setSavedNotes] = useState<string>(rigTune?.data?.settingsNotes || '')
   const [noteDraft, setNoteDraft] = useState('')
@@ -996,7 +992,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
   }, [teamId, rigTune?.id])
 
   useEffect(() => {
-    setTbl((rigTune?.data?.settingsTable as RigSettings) || seedSettings(Array.isArray(rigTune?.data?.columns) ? rigTune.data.columns : []))
+    setTbl(normSettings(rigTune?.data?.settingsTable))
     setSavedAt(rigTune?.data?.settingsSavedAt || null)
     setSavedNotes(rigTune?.data?.settingsNotes || '')
     setDirty(false); setMsg(''); setEditing(false); setViewing(null); setNoteDraft(''); setVersions(null)
@@ -1007,17 +1003,15 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
   const current = React.useRef<{ tbl: RigSettings; at: string | null; notes: string } | null>(null)
   const viewVersion = (v: RigVersion) => {
     if (!viewing) current.current = { tbl, at: savedAt, notes: savedNotes }
-    setViewing(v); setTbl(v.settings); setEditing(false); setDirty(false); setMsg('')
+    setViewing(v); setTbl(normSettings(v.settings)); setEditing(false); setDirty(false); setMsg('')
   }
   const backToCurrent = () => {
     const c = current.current
     if (c) { setTbl(c.tbl); setSavedAt(c.at); setSavedNotes(c.notes) }
     setViewing(null); setDirty(false); setMsg('')
   }
-  // Restoring does NOT rewrite history — it loads the old numbers into the editor
-  // and the next Save appends them as a new version. The record stays a record.
   const restoreVersion = (v: RigVersion) => {
-    setViewing(null); setTbl(v.settings); setEditing(true); setDirty(true)
+    setViewing(null); setTbl(normSettings(v.settings)); setEditing(true); setDirty(true)
     setNoteDraft(`Restored the table saved ${fmtWhen(v.saved_at)}${v.notes ? ` — ${v.notes}` : ''}`)
     setMsg('Restored into the editor — Save to keep it.')
   }
@@ -1028,22 +1022,19 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
     setEditing(false); setDirty(false); setMsg(''); setNoteDraft('')
   }
 
-  const setCell = (sec: 'upwind' | 'reaching', band: string, key: string, val: string) => {
-    setTbl((p) => ({ ...p, [sec]: { ...p[sec], [band]: { ...(p[sec]?.[band] || {}), [key]: val } } }))
+  const setCell = (sec: 'upwind' | 'reaching', colIdx: number, key: string, val: string) => {
+    setTbl((p) => {
+      const k = String(colIdx)
+      return { ...p, [sec]: { ...p[sec], [k]: { ...(p[sec]?.[k] || {}), [key]: val } } }
+    })
     setDirty(true); setMsg('')
   }
-  // Picking a sail for a band pulls that column's settings straight off the sheet.
-  const pickSail = (sec: 'upwind' | 'reaching', band: string, idxStr: string) => {
-    const list = sectionCols(cols, sec)
-    const i = idxStr === '' ? -1 : Number(idxStr)
-    setTbl((p) => ({ ...p, [sec]: { ...p[sec], [band]: cellFromCol(i >= 0 ? list[i] : null, i) } }))
-    setDirty(true); setMsg('')
+  const cellValue = (sec: 'upwind' | 'reaching', row: RigRow, col: any, colIdx: number): string => {
+    if (row.source === 'manual') return tbl[sec]?.[String(colIdx)]?.[row.key] ?? ''
+    if (row.source === 'camber') return main50Camber(mainConds, twsNum(col))
+    return row.get ? row.get(col) : ''
   }
-  const sailOptions = (sec: 'upwind' | 'reaching') =>
-    sectionCols(cols, sec).map((c, i) => ({
-      i, label: [c.headsail || '—', c.twsAtMh ? `(${c.twsAtMh})` : ''].filter(Boolean).join(' '),
-    }))
-  const reseed = () => { setTbl(seedSettings(cols)); setDirty(true); setMsg('Re-filled from the sheet — Save to keep.') }
+
   const save = async () => {
     if (!rigTune?.id) return
     setBusy(true); setMsg('')
@@ -1058,7 +1049,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
         setSavedAt(r?.savedAt || new Date().toISOString())
         setSavedNotes(noteDraft.trim())
         setNoteDraft('')
-        setVersions(null)                  // history list is now stale — refetch on open
+        setVersions(null)
         if (showHist) loadVersions()
       }
     } catch (e: any) { setMsg(String(e?.message || e)) }
@@ -1069,55 +1060,49 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
     setPdfBusy(true)
     try {
       const JsPDF = await loadJsPdf()
-      const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
-      const M = 15; let y = 16
+      const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' })
+      const M = 12; let y = 16
       doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
       doc.text([boatName, 'Rig settings'].filter(Boolean).join(' — '), M, y); y += 6
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90)
       doc.text([rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   '), M, y); y += 4.5
-      // The printed card goes on the boat — it must say WHICH version it is, or
-      // there's no telling the sheet on the nav station from the one in the bag.
       const stampNotes = viewing ? viewing.notes : savedNotes
       doc.text(`Settings as saved ${fmtWhen(viewing ? viewing.saved_at : savedAt)}${viewing ? '  (historical version)' : ''}`, M, y); y += 4.5
       if (stampNotes) {
         doc.setFontSize(8)
-        for (const ln of doc.splitTextToSize(`Notes: ${stampNotes}`, 170).slice(0, 3)) { doc.text(ln, M, y); y += 3.6 }
+        for (const ln of doc.splitTextToSize(`Notes: ${stampNotes}`, 250).slice(0, 3)) { doc.text(ln, M, y); y += 3.6 }
         doc.setFontSize(9)
       }
       y += 3
-
-      // Each table prints at EXACTLY 115 mm × 30 mm (11.5 cm × 3 cm).
-      const TABLE_W = 115, TABLE_H = 30, LABEL_W = 24
+      const PAGE_W = 297, LABEL_W = 34
+      const TABLE_W = PAGE_W - 2 * M
       const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[]) => {
+        const dcols = colsFor(sec)
+        const nCols = Math.max(dcols.length, 1)
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
         doc.text(title, M, y); y += 4
-        const nRows = rows.length + 2                  // TWS header + Sail + setting rows
-        const rowH = TABLE_H / nRows
-        const colW = (TABLE_W - LABEL_W) / TWS_BANDS.length
+        const rowH = 5.2
+        const colW = (TABLE_W - LABEL_W) / nCols
         const baseline = rowH * 0.68
         const FS = 6.5
-        doc.setFontSize(FS); doc.setDrawColor(90); doc.setLineWidth(0.15)
-        // Shrink-to-fit so a long sail combo ("BRO & J3 & GS") can't spill out of
-        // the cell — the table must stay exactly TABLE_W × TABLE_H.
+        doc.setDrawColor(90); doc.setLineWidth(0.15)
         const fitText = (v: string, cx: number, cy: number, maxW: number) => {
           doc.setFontSize(FS)
           const w = doc.getTextWidth(v)
-          if (w > maxW) doc.setFontSize(Math.max(3.4, (FS * maxW) / w))
+          if (w > maxW) doc.setFontSize(Math.max(3.2, (FS * maxW) / w))
           doc.text(v, cx, cy, { align: 'center' })
           doc.setFontSize(FS)
         }
         const line = (label: string, vals: string[], bold: boolean, red = false) => {
-          // row label
           doc.setFont('helvetica', 'bold')
           doc.setFillColor(238, 243, 248); doc.rect(M, y, LABEL_W, rowH, 'FD')
           doc.setTextColor(...(red ? RED_RGB : ([20, 20, 20] as [number, number, number])))
-          doc.text(label, M + 1, y + baseline)
-          // value cells — alternating light-blue / white columns (the rig card)
+          doc.setFontSize(FS); doc.text(label, M + 1, y + baseline)
           doc.setFont('helvetica', bold || red ? 'bold' : 'normal')
           let x = M + LABEL_W
           vals.forEach((v, i) => {
-            if (i % 2 === 0) doc.setFillColor(...COL_BLUE_RGB)
-            else doc.setFillColor(255, 255, 255)
+            const rgb = colRgb(dcols[i], i)
+            doc.setFillColor(rgb[0], rgb[1], rgb[2])
             doc.rect(x, y, colW, rowH, 'FD')
             fitText(v || '—', x + colW / 2, y + baseline, colW - 1.2)
             x += colW
@@ -1125,87 +1110,82 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
           doc.setTextColor(20)
           y += rowH
         }
-        line('TWS', TWS_BANDS.map((b) => b.label), true)
-        line('Sail', TWS_BANDS.map((b) => String(tbl[sec]?.[b.key]?.sail || '')), true)
-        for (const r of rows) line(r.label, TWS_BANDS.map((b) => String(tbl[sec]?.[b.key]?.[r.key] || '')), false, !!r.red)
-        y += 8
+        line('TWS', dcols.map((c) => twsLabel(c)), true)
+        for (const r of rows) line(r.label, dcols.map((c, i) => cellValue(sec, r, c, i)), false, !!r.red)
+        y += 6
       }
       block('Upwind', 'upwind', UPWIND_ROWS)
-      block('Reaching', 'reaching', REACHING_ROWS)
-
+      block('Reaching (+ downwind)', 'reaching', REACHING_ROWS)
       const name = `Rig_settings_${[boatName, rigTune?.revision].filter(Boolean).join('_').replace(/[^\w.-]+/g, '_') || 'sheet'}.pdf`
       doc.save(name)
     } catch (e: any) { setMsg('Could not build the PDF: ' + (e?.message || e)) }
     finally { setPdfBusy(false) }
   }
 
-  const th: React.CSSProperties = { padding: '5px 8px', fontSize: 11, fontWeight: 700, color: '#0b1f33', border: '1px solid #d7e2ee', textAlign: 'center', whiteSpace: 'nowrap' }
-  const rh: React.CSSProperties = { padding: '5px 10px', fontSize: 11, fontWeight: 700, color: '#0b1f33', textAlign: 'left', border: '1px solid #d7e2ee', background: '#eef3f8', whiteSpace: 'nowrap' }
+  const th: React.CSSProperties = { padding: '5px 6px', fontSize: 11, fontWeight: 700, color: '#0b1f33', border: '1px solid #d7e2ee', textAlign: 'center', whiteSpace: 'nowrap' }
+  const rh: React.CSSProperties = { padding: '5px 10px', fontSize: 11, fontWeight: 700, color: '#0b1f33', textAlign: 'left', border: '1px solid #d7e2ee', background: '#eef3f8', whiteSpace: 'nowrap', position: 'sticky', left: 0 }
   const cellStyle: React.CSSProperties = { border: '1px solid #d7e2ee', padding: 0 }
   const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', textAlign: 'center', fontSize: 12, color: '#0b1f33', padding: '5px 3px', fontFamily: 'inherit', textOverflow: 'ellipsis' }
-  // Both tables use the SAME fixed geometry so they line up exactly (and mirror
-  // the 130 × 30 mm printed proportions).
-  const LABEL_PX = 100, COL_PX = 90, TABLE_PX = LABEL_PX + COL_PX * TWS_BANDS.length
+  const LABEL_PX = 120, COL_PX = 78
 
-  const Table = ({ title, sec, rows }: { title: string; sec: 'upwind' | 'reaching'; rows: RigRow[] }) => (
-    <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
-      <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', padding: '2px 4px 8px' }}>{title}</div>
-      <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: TABLE_PX }}>
-        <colgroup>
-          <col style={{ width: LABEL_PX }} />
-          {TWS_BANDS.map((b) => <col key={b.key} style={{ width: COL_PX }} />)}
-        </colgroup>
-        <thead>
-          <tr>
-            <th style={{ ...rh, background: '#dde6ef' }}>TWS</th>
-            {TWS_BANDS.map((b, i) => <th key={b.key} style={{ ...th, background: COL_BG(i) }}>{b.label}</th>)}
-          </tr>
-          <tr>
-            <th style={rh}>Sail</th>
-            {TWS_BANDS.map((b, i) => (
-              <td key={b.key} style={{ ...cellStyle, background: COL_BG(i) }}>
-                {edit ? (
-                  <select
-                    style={{ ...inputStyle, fontWeight: 700, cursor: 'pointer' }}
-                    value={tbl[sec]?.[b.key]?.src ?? ''}
-                    onChange={(e) => pickSail(sec, b.key, e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {sailOptions(sec).map((o) => <option key={o.i} value={o.i}>{o.label}</option>)}
-                  </select>
-                ) : (
-                  <input style={{ ...inputStyle, fontWeight: 700 }} value={tbl[sec]?.[b.key]?.sail ?? ''} readOnly />
-                )}
-              </td>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.key}>
-              <td style={{ ...rh, ...(r.red ? { color: RED } : null) }}>{r.label}</td>
-              {TWS_BANDS.map((b, i) => (
-                <td key={b.key} style={{ ...cellStyle, background: COL_BG(i) }}>
-                  <input
-                    style={{ ...inputStyle, ...(r.red ? { color: RED, fontWeight: 700 } : null) }}
-                    value={tbl[sec]?.[b.key]?.[r.key] ?? ''} readOnly={!edit}
-                    onChange={(e) => setCell(sec, b.key, r.key, e.target.value)}
-                  />
-                </td>
+  const Table = ({ title, sec, rows }: { title: string; sec: 'upwind' | 'reaching'; rows: RigRow[] }) => {
+    const dcols = colsFor(sec)
+    if (!dcols.length) return (
+      <div style={{ background: '#fff', borderRadius: 8, padding: 8, color: '#64748b', fontSize: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', paddingBottom: 6 }}>{title}</div>
+        No {sec} columns on the parsed sheet.
+      </div>
+    )
+    return (
+      <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', padding: '2px 4px 8px' }}>{title}</div>
+        <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: LABEL_PX + COL_PX * dcols.length }}>
+          <colgroup>
+            <col style={{ width: LABEL_PX }} />
+            {dcols.map((c, i) => <col key={i} style={{ width: COL_PX }} />)}
+          </colgroup>
+          <thead>
+            <tr>
+              <th style={{ ...rh, background: '#dde6ef' }}>TWS</th>
+              {dcols.map((c, i) => (
+                <th key={i} style={{ ...th, background: colBg(c, i) }}>
+                  <div>{twsLabel(c)}</div>
+                  {c?.headsail ? <div style={{ fontSize: 9, fontWeight: 400, color: '#4b5c6b' }}>{c.headsail}</div> : null}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key}>
+                <td style={{ ...rh, ...(r.red ? { color: RED } : null) }}>{r.label}</td>
+                {dcols.map((c, i) => {
+                  const editable = edit && r.source === 'manual'
+                  return (
+                    <td key={i} style={{ ...cellStyle, background: colBg(c, i) }}>
+                      <input
+                        style={{ ...inputStyle, ...(r.red ? { color: RED, fontWeight: 700 } : null) }}
+                        value={cellValue(sec, r, c, i)} readOnly={!editable}
+                        placeholder={r.source === 'manual' ? '—' : ''}
+                        onChange={(e) => setCell(sec, i, r.key, e.target.value)}
+                      />
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, fontWeight: 800, color: C.head }}>Rig settings by TWS</span>
         <span style={{ fontSize: 10, color: C.dim }}>
-          {viewing ? `history · saved ${fmtWhen(viewing.saved_at)}` : savedAt ? `as of ${fmtWhen(savedAt)}` : 'seeded from the sheet · not yet saved'}
+          {viewing ? `history · saved ${fmtWhen(viewing.saved_at)}` : savedAt ? `manual rows saved ${fmtWhen(savedAt)}` : 'sheet rows live · manual rows not saved'}
         </span>
         <div style={{ flex: 1 }} />
         <button onClick={() => setShowHist((v) => !v)} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>
@@ -1214,19 +1194,18 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
         <button onClick={downloadPdf} disabled={pdfBusy} style={{ ...rbtn('#8B5CF6'), color: '#fff', opacity: pdfBusy ? 0.6 : 1 }}>{pdfBusy ? 'Building…' : '⬇ PDF'}</button>
         {viewing && <button onClick={backToCurrent} style={{ ...rbtn('#06B6D4') }}>← Back to current</button>}
         {canEdit && !editing && !viewing && <button onClick={startEdit} style={{ ...rbtn('#06B6D4') }}>✎ Edit</button>}
-        {edit && <button onClick={reseed} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>↺ Re-fill from sheet</button>}
         {edit && <button onClick={save} disabled={busy || !dirty} style={{ ...rbtn('#10B981'), opacity: busy || !dirty ? 0.5 : 1 }}>{busy ? 'Saving…' : 'Save'}</button>}
         {edit && <button onClick={cancelEdit} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>Cancel</button>}
         {msg && <span style={{ fontSize: 11, color: msg === 'Saved' ? '#10B981' : '#F59E0B' }}>{msg}</span>}
       </div>
+      {edit ? <div style={{ fontSize: 11, color: C.dim }}>Sheet rows (HS, Shim, Butt, deflectors, Sprit tack) are read-only from the rig sheet. Editable: Main Cun, Vang, Bobstay, GS tack. Main 50% camber auto-fills from the mainsail design.</div> : null}
 
-      {/* Notes for THIS table — stored with it, so the history says why, not just what. */}
       {edit ? (
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Notes for this version</div>
           <textarea
             value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} rows={2}
-            placeholder="What changed and why — e.g. 'Softened lowers 2 turns above 14 kn, boat felt over-bent in the chop'"
+            placeholder="What changed and why"
             style={{ width: '100%', boxSizing: 'border-box', background: '#071624', border: '1px solid #1E3A5A', borderRadius: 6, color: '#E2E8F0', padding: '7px 9px', fontSize: 12, fontFamily: 'inherit', resize: 'vertical' }}
           />
         </div>
@@ -1237,11 +1216,11 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
         </div>
       ) : null)}
 
-      {showHist && (
+      {showHist ? (
         <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, padding: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', marginBottom: 6 }}>Saved versions — newest first</div>
-          {versions == null && <div style={{ fontSize: 11, color: C.dim }}>loading…</div>}
-          {versions?.length === 0 && <div style={{ fontSize: 11, color: C.dim }}>No saved versions yet. The next Save starts the record.</div>}
+          {versions == null ? <div style={{ fontSize: 11, color: C.dim }}>loading…</div> : null}
+          {versions?.length === 0 ? <div style={{ fontSize: 11, color: C.dim }}>No saved versions yet. The next Save starts the record.</div> : null}
           {versions?.map((v, i) => (
             <div key={v.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '7px 0', borderTop: i ? '1px solid #12283E' : 'none' }}>
               <div style={{ minWidth: 155 }}>
@@ -1250,16 +1229,16 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
               </div>
               <div style={{ flex: 1, fontSize: 12, color: v.notes ? '#94A3B8' : '#475569', minWidth: 0 }}>{v.notes || 'no notes'}</div>
               <button onClick={() => viewVersion(v)} style={{ ...rbtn('#334155'), color: '#E2E8F0', fontSize: 11, padding: '4px 9px' }}>View</button>
-              {canEdit && i > 0 && (
+              {canEdit && i > 0 ? (
                 <button onClick={() => restoreVersion(v)} style={{ ...rbtn('#F59E0B'), fontSize: 11, padding: '4px 9px' }}>Restore</button>
-              )}
+              ) : null}
             </div>
           ))}
         </div>
-      )}
+      ) : null}
 
       <Table title="Upwind" sec="upwind" rows={UPWIND_ROWS} />
-      <Table title="Reaching" sec="reaching" rows={REACHING_ROWS} />
+      <Table title="Reaching (+ downwind)" sec="reaching" rows={REACHING_ROWS} />
     </div>
   )
 }

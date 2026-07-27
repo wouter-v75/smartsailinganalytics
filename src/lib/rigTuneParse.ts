@@ -39,6 +39,7 @@ export interface RigColumn {
   jibTackT: number | null // TACK LOADS Jib Tack, 000 kg
   mainCunninghamT: number | null // RIG LOADS Main Cunningham, 000 kg
   bowspritTackT: number | null // TACK LOADS Bowsprit Tack, 000 kg (reaching/downwind)
+  gsTackT: number | null // TACK LOADS GS (gennaker-staysail) Tack, 000 kg (reaching/downwind)
   upperDeflectorCylStroke: string | null // "% retracted", e.g. "95%"
   lowerDeflectorCylStroke: string | null
 }
@@ -175,6 +176,7 @@ function parseBlock(rows: Row[]): RigColumn[] {
   const jibTackRow = find(rows, /^Jib Tack\b/i)
   const mainCunnRow = find(rows, /^Main Cunningham\b/i)
   const bowspritRow = find(rows, /^Bowsprit Tack\b/i)
+  const gsTackRow = find(rows, /^G\s*\/?\s*S\s+Tack\b/i) || find(rows, /Gennaker\s+Staysail\s+Tack/i)
   const upperStrokeRow = strokeRowUnder(rows, /UPPER\s+DEFLECTOR/i)
   const lowerStrokeRow = strokeRowUnder(rows, /LOWER\s+DEFLECTOR/i)
 
@@ -197,6 +199,7 @@ function parseBlock(rows: Row[]): RigColumn[] {
   const jibTack = rowByCol(jibTackRow, centres)
   const mainCunn = rowByCol(mainCunnRow, centres)
   const bowsprit = rowByCol(bowspritRow, centres)
+  const gsTack = rowByCol(gsTackRow, centres)
   const upper = rowByCol(upperStrokeRow, centres)
   const lower = rowByCol(lowerStrokeRow, centres)
 
@@ -228,6 +231,7 @@ function parseBlock(rows: Row[]): RigColumn[] {
       jibTackT: jibTack[c] != null ? num(jibTack[c]!) : null,
       mainCunninghamT: mainCunn[c] != null ? num(mainCunn[c]!) : null,
       bowspritTackT: bowsprit[c] != null ? num(bowsprit[c]!) : null,
+      gsTackT: gsTack[c] != null ? num(gsTack[c]!) : null,
       upperDeflectorCylStroke: upper[c],
       lowerDeflectorCylStroke: lower[c],
     })
