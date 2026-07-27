@@ -761,11 +761,16 @@ export default function ForecastView({
           const curLabel = st
             ? `${st.wd} ${st.dd} ${st.mon} · ${String(st.hh).padStart(2, '0')}:${st.mm}`
             : (field.labels?.[cur] || '')
+          // Adaptive tick spacing so long horizons stay readable: 6 h for short
+          // ranges (≤ ~2 d), ~daily for a few days (ARPEGE 4 d), every 2 days
+          // beyond a week (ECMWF 14 d). Index i ≈ hours from today 00:00.
+          const stepH = n <= 54 ? 6 : n <= 132 ? 24 : 48
+          const daily = stepH >= 24
           const ticks = []
-          for (let i = 0; i < n; i++) {
+          for (let i = 0; i < n; i += stepH) {
             const s = stamps[i]
-            if (!s || s.hh % 6 !== 0) continue
-            ticks.push({ i, pct: n > 1 ? (i / (n - 1)) * 100 : 0, time: `${String(s.hh).padStart(2, '0')}:00`, date: (s.hh === 0 || ticks.length === 0) ? `${s.wd} ${s.dd} ${s.mon}` : '' })
+            if (!s) continue
+            ticks.push({ i, pct: n > 1 ? (i / (n - 1)) * 100 : 0, time: daily ? '' : `${String(s.hh).padStart(2, '0')}:00`, date: (daily || s.hh === 0 || ticks.length === 0) ? `${s.wd} ${s.dd} ${s.mon}` : '' })
           }
           const curPct = n > 1 ? (cur / (n - 1)) * 100 : 0
           return (
@@ -789,7 +794,7 @@ export default function ForecastView({
                   {ticks.map((tk) => (
                     <div key={tk.i} style={{ position: 'absolute', left: `${tk.pct}%`, transform: 'translateX(-50%)', textAlign: 'center', whiteSpace: 'nowrap' }}>
                       <div style={{ width: 1, height: 4, background: '#334C66', margin: '0 auto 1px' }} />
-                      <div style={{ fontSize: 9, color: '#94A3B8', lineHeight: 1.1 }}>{tk.time}</div>
+                      {tk.time && <div style={{ fontSize: 9, color: '#94A3B8', lineHeight: 1.1 }}>{tk.time}</div>}
                       {tk.date && <div style={{ fontSize: 8, color: '#64748B', lineHeight: 1.1 }}>{tk.date}</div>}
                     </div>
                   ))}
