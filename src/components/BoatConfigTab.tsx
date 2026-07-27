@@ -1090,7 +1090,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
       doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
       doc.text([boatName, 'Rig settings'].filter(Boolean).join(' — '), M, y); y += 6
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90)
-      doc.text([rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   '), M, y); y += 4.5
+      const metaLine = [rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   ')
       const stampNotes = viewing ? viewing.notes : savedNotes
       doc.text(`Settings as saved ${fmtWhen(viewing ? viewing.saved_at : savedAt)}${viewing ? '  (historical version)' : ''}`, M, y); y += 4.5
       if (stampNotes) {
@@ -1101,12 +1101,14 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
       y += 3
       const LABEL_W = 22
       const TABLE_W = 130 // 13 cm — the laminated-card print width
-      const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[], tableW = TABLE_W) => {
+      const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[], tableW = TABLE_W, titleNote = '') => {
         const dcols = colsFor(sec)
         const nCols = Math.max(dcols.length, 1)
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
-        doc.text(title, M, y); y += 4
-        const rowH = 50 / (rows.length + 1) // table ~5 cm tall
+        doc.text(title, M, y)
+        if (titleNote) { doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90); doc.text(titleNote, M + 24, y); doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20) }
+        y += 4
+        const rowH = 40 / (rows.length + 1) // table ~4 cm tall
         const colW = (tableW - LABEL_W) / nCols
         const baseline = rowH * 0.68
         const FS = 6.5
@@ -1139,7 +1141,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         for (const r of rows) line(r.label, dcols.map((c, i) => cellValue(sec, r, c, i)), false, !!r.red)
         y += 6
       }
-      block('Upwind', 'upwind', UPWIND_ROWS)
+      block('Upwind', 'upwind', UPWIND_ROWS, TABLE_W, metaLine)
       y += 12 // triple the vertical gap before the reaching + downwind row
       // Reaching + Downwind share ONE 13 cm row: reaching left, downwind right,
       // together (incl. the gap) exactly TABLE_W wide.
@@ -1151,7 +1153,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
       {
         const dwX = M + REACH_W + DW_GAP
         let dy = yReachTop
-        const dwColW = DW_COLW, dwRowH = 50 / (DWD_TWS.length + 1), dwBase = dwRowH * 0.68
+        const dwColW = DW_COLW, dwRowH = 40 / (DWD_TWS.length + 1), dwBase = dwRowH * 0.68
         const dwLabels = ['TWS', 'Up', 'Low', 'HS']
         const dwKeys = ['upDefl', 'lowDefl', 'hs']
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
