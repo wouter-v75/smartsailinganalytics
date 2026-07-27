@@ -55,6 +55,11 @@ export const MODELS = {
     heights: [10, 80, 100, 120, 180, 200],
     tableCols: [10, 100, 200],
     upperHeight: 100,
+    // Horizon: 9 km HRES (ecmwf_ifs) for the first 4 days, then stitch the 0.25°
+    // open-data IFS (ecmwf_ifs025) out to +10 days — 14 total. fetchSurfaceModel
+    // and fetchWindField fetch both and splice by hour at the 4-day seam.
+    forecastDays: 4,
+    extend: { modelParam: 'ecmwf_ifs025', forecastDays: 14 },
   },
   ICON: {
     key: 'ICON', label: 'ICON', subtitle: 'DWD seamless',
@@ -100,6 +105,7 @@ export const MODELS = {
     heights: [10, 20, 50, 80, 100],
     tableCols: [10, 50, 100],
     upperHeight: 100,
+    forecastDays: 4,   // ARPEGE Europe on Open-Meteo runs to 4 days
   },
   // ── North-American models (region-gated to NORTH_AMERICA) ──────────────────
   // Fetched + shown ONLY when a clicked point is in the Americas box; hidden
@@ -244,9 +250,41 @@ export function hasValidSpeed(hourly) {
   return false
 }
 
+// Per-model forecast horizon in days (default 2 = 48 h). ECMWF/ARPEGE override.
+export function forecastDaysFor(m) {
+  return (m && m.forecastDays) || 2
+}
+
+// Splice a near-term hourly payload (high-res model) onto a longer-range one:
+// the first `cutoverHours` samples come from `base`, the rest from `ext`. Both
+// share the same local-midnight t0 and hourly step, so indices align. The output
+// timeline is the extended (longer) one; columns are the UNION of both, so the
+// base model's extra heights survive in the near-term even if `ext` lacks them.
+export function stitchHourly(base, ext, cutoverHours) {
+  if (!ext || !ext.time) return base
+  if (!base || !base.time) return ext
+  const time = ext.time.slice()
+  const nT = time.length
+  const cut = Math.min(cutoverHours, nT)
+  const cols = new Set([...Object.keys(base), ...Object.keys(ext)])
+  cols.delete('time')
+  const out = { time }
+  for (const k of cols) {
+    const b = base[k], e = ext[k]
+    const arr = new Array(nT).fill(null)
+    for (let i = 0; i < nT; i++) {
+      const src = i < cut ? b : e
+      arr[i] = Array.isArray(src) ? (src[i] ?? null) : null
+    }
+    out[k] = arr
+  }
+  return out
+}
+
 // Build an Open-Meteo URL for one surface model at one point.
-// Mirrors fetchSurfaceModel() in index.html line 820.
-function surfaceUrl(modelKey, latitude, longitude, timezone) {
+// Mirrors fetchSurfaceModel() in index.html line 820. `opts` overrides the model
+// id and horizon (used to fetch the near-term + extended halves of a blend).
+function surfaceUrl(modelKey, latitude, longitude, timezone, opts = {}) {
   const m = MODELS[modelKey]
   const params = []
   for (const h of m.heights) {
@@ -261,10 +299,12 @@ function surfaceUrl(modelKey, latitude, longitude, timezone) {
       )
     }
   }
+  const modelParam = opts.modelParam || m.modelParam
+  const days = opts.days || forecastDaysFor(m)
   let url = `${m.endpoint}?latitude=${latitude}&longitude=${longitude}` +
     `&hourly=${params.join(',')}` +
-    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=2`
-  if (m.modelParam) url += `&models=${m.modelParam}`
+    `&wind_speed_unit=kmh&timezone=${encodeURIComponent(timezone)}&forecast_days=${days}`
+  if (modelParam) url += `&models=${modelParam}`
   return url
 }
 
@@ -519,25 +559,48 @@ export function withCycleLabel(model, tag) {
 export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezone }) {
   const cfg = MODELS[modelKey]
   if (cfg && cfg.bunnyBase) return fetchBunnyModel(cfg, latitude, longitude)
-  try {
-    const res = await fetch(surfaceUrl(modelKey, latitude, longitude, timezone))
-    if (!res.ok) {
+
+  const getJson = async (url) => {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) {
+        // eslint-disable-next-line no-console
+        console.warn(`[weather] ${modelKey} HTTP ${res.status}`)
+        return null
+      }
+      return await res.json()
+    } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn(`[weather] ${modelKey} HTTP ${res.status}`)
+      console.warn(`[weather] ${modelKey} fetch failed:`, err?.message || err)
       return null
     }
-    const data = await res.json()
-    if (!hasValidSpeed(data.hourly)) {
+  }
+
+  // Blended horizon (ECMWF): near-term high-res model spliced onto the longer
+  // 0.25° model at the forecastDays seam. Two requests, stitched by hour.
+  if (cfg && cfg.extend) {
+    const base = await getJson(surfaceUrl(modelKey, latitude, longitude, timezone,
+      { modelParam: cfg.modelParam, days: forecastDaysFor(cfg) }))
+    await new Promise((r) => setTimeout(r, 200))
+    const ext = await getJson(surfaceUrl(modelKey, latitude, longitude, timezone,
+      { modelParam: cfg.extend.modelParam, days: cfg.extend.forecastDays }))
+    const hourly = stitchHourly(base?.hourly, ext?.hourly, forecastDaysFor(cfg) * 24)
+    if (!hasValidSpeed(hourly)) {
       // eslint-disable-next-line no-console
       console.warn(`[weather] ${modelKey} no valid wind data at (${latitude}, ${longitude})`)
       return null
     }
-    return data
-  } catch (err) {
+    return { ...(base || ext || {}), hourly }
+  }
+
+  const data = await getJson(surfaceUrl(modelKey, latitude, longitude, timezone))
+  if (!data) return null
+  if (!hasValidSpeed(data.hourly)) {
     // eslint-disable-next-line no-console
-    console.warn(`[weather] ${modelKey} fetch failed:`, err?.message || err)
+    console.warn(`[weather] ${modelKey} no valid wind data at (${latitude}, ${longitude})`)
     return null
   }
+  return data
 }
 
 // GFS pressure-level fetch — drives the Skew-T (Phase 3) and the PBL chart

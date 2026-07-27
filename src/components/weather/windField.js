@@ -16,7 +16,7 @@
 // nx*ny === data.length. Components are in m/s; met wind direction is FROM.
 // ----------------------------------------------------------------------------
 
-import { MODELS, iconRaceGridForPoint } from './openMeteo'
+import { MODELS, iconRaceGridForPoint, forecastDaysFor, stitchHourly } from './openMeteo'
 import { applyMOS } from './mos'
 
 const NM_DEG = 1 / 60 // 1 nautical mile in degrees latitude
@@ -171,17 +171,30 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
   const vars = []
   heights.forEach((h) => { vars.push(`wind_speed_${h}m`, `wind_direction_${h}m`) })
 
-  const url = `${m.endpoint}?latitude=${lats.join(',')}&longitude=${lons.join(',')}`
+  const base = `${m.endpoint}?latitude=${lats.join(',')}&longitude=${lons.join(',')}`
     + `&hourly=${vars.join(',')}&wind_speed_unit=ms&timezone=${encodeURIComponent(timezone)}`
-    + `&forecast_days=2&models=${m.modelParam}`
+  const fetchPoints = async (modelParam, days) => {
+    const res = await fetch(`${base}&forecast_days=${days}&models=${modelParam}`)
+    if (!res.ok) throw new Error(res.status === 429 ? 'too many open meteo requests, try later' : `Open-Meteo ${res.status}`)
+    const json = await res.json()
+    const pts = Array.isArray(json) ? json : [json]   // multi-coord => array
+    if (pts.length !== lats.length) {
+      // Open-Meteo may collapse duplicate/too-close points; bail with a clear error
+      throw new Error(`grid mismatch: asked ${lats.length} points, got ${pts.length}`)
+    }
+    return pts
+  }
 
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(res.status === 429 ? 'too many open meteo requests, try later' : `Open-Meteo ${res.status}`)
-  const json = await res.json()
-  const points = Array.isArray(json) ? json : [json]   // multi-coord => array
-  if (points.length !== lats.length) {
-    // Open-Meteo may collapse duplicate/too-close points; bail with a clear error
-    throw new Error(`grid mismatch: asked ${lats.length} points, got ${points.length}`)
+  const days = forecastDaysFor(m)
+  let points
+  if (m.extend) {
+    // ECMWF: 9 km HRES near-term grid spliced onto the 0.25° grid at the seam
+    // (per-point stitch by hour). Two multi-coord requests instead of one.
+    const nearPts = await fetchPoints(m.modelParam, days)
+    const extPts = await fetchPoints(m.extend.modelParam, m.extend.forecastDays)
+    points = extPts.map((p, i) => ({ ...p, hourly: stitchHourly(nearPts[i]?.hourly, p.hourly, days * 24) }))
+  } else {
+    points = await fetchPoints(m.modelParam, days)
   }
 
   const times = points[0]?.hourly?.time || []
