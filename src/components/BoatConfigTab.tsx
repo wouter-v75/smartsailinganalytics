@@ -1140,6 +1140,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         y += 6
       }
       block('Upwind', 'upwind', UPWIND_ROWS)
+      y += 12 // triple the vertical gap before the reaching + downwind row
       // Reaching + Downwind share ONE 13 cm row: reaching left, downwind right,
       // together (incl. the gap) exactly TABLE_W wide.
       const DW_GAP = 5, DW_COLW = 10, DW_W = DW_COLW * 4, REACH_W = TABLE_W - DW_GAP - DW_W
