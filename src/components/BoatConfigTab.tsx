@@ -1101,13 +1101,13 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
       y += 3
       const LABEL_W = 22
       const TABLE_W = 130 // 13 cm — the laminated-card print width
-      const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[]) => {
+      const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[], tableW = TABLE_W) => {
         const dcols = colsFor(sec)
         const nCols = Math.max(dcols.length, 1)
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
         doc.text(title, M, y); y += 4
         const rowH = 50 / (rows.length + 1) // table ~5 cm tall
-        const colW = (TABLE_W - LABEL_W) / nCols
+        const colW = (tableW - LABEL_W) / nCols
         const baseline = rowH * 0.68
         const FS = 6.5
         doc.setDrawColor(90); doc.setLineWidth(0.15)
@@ -1140,14 +1140,17 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         y += 6
       }
       block('Upwind', 'upwind', UPWIND_ROWS)
+      // Reaching + Downwind share ONE 13 cm row: reaching left, downwind right,
+      // together (incl. the gap) exactly TABLE_W wide.
+      const DW_GAP = 5, DW_COLW = 10, DW_W = DW_COLW * 4, REACH_W = TABLE_W - DW_GAP - DW_W
       const yReachTop = y
-      block('Reaching', 'reaching', REACHING_ROWS)
+      block('Reaching', 'reaching', REACHING_ROWS, REACH_W)
       // Downwind — printed to the RIGHT of Reaching, on the same top axis (uses its
       // own local dy so it doesn't push the page cursor down).
       {
-        const dwX = M + TABLE_W + 6
+        const dwX = M + REACH_W + DW_GAP
         let dy = yReachTop
-        const dwColW = 14, dwRowH = 50 / (DWD_TWS.length + 1), dwBase = dwRowH * 0.68
+        const dwColW = DW_COLW, dwRowH = 50 / (DWD_TWS.length + 1), dwBase = dwRowH * 0.68
         const dwLabels = ['TWS', 'Up', 'Low', 'HS']
         const dwKeys = ['upDefl', 'lowDefl', 'hs']
         doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
@@ -1156,7 +1159,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         let hx = dwX
         for (const lab of dwLabels) {
           doc.setFillColor(DWD_RGB[0], DWD_RGB[1], DWD_RGB[2]); doc.rect(hx, dy, dwColW, dwRowH, 'FD')
-          doc.setFont('helvetica', 'bold'); doc.setTextColor(20); doc.text(lab, hx + dwColW / 2, dy + dwBase, { align: 'center' }); hx += dwColW
+          doc.setFont('helvetica', 'bold'); doc.setTextColor(...(lab === 'HS' ? RED_RGB : ([20, 20, 20] as [number, number, number]))); doc.text(lab, hx + dwColW / 2, dy + dwBase, { align: 'center' }); hx += dwColW
         }
         dy += dwRowH
         for (const tws of DWD_TWS) {
@@ -1164,7 +1167,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
           const vals = [tws, ...dwKeys.map((k) => dwdVal(tws, k))]
           vals.forEach((v, ci) => {
             doc.setFillColor(DWD_RGB[0], DWD_RGB[1], DWD_RGB[2]); doc.rect(cx, dy, dwColW, dwRowH, 'FD')
-            doc.setFont('helvetica', ci === 0 ? 'bold' : 'normal'); doc.setTextColor(20)
+            doc.setFont('helvetica', (ci === 0 || ci === 3) ? 'bold' : 'normal'); doc.setTextColor(...(ci === 3 ? RED_RGB : ([20, 20, 20] as [number, number, number])))
             doc.text(String(v || '-'), cx + dwColW / 2, dy + dwBase, { align: 'center' }); cx += dwColW
           })
           dy += dwRowH
@@ -1245,7 +1248,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         <thead>
           <tr>
             <th style={{ ...rh, background: DWD_BG }}>TWS</th>
-            {DWD_ROWS.map((r) => <th key={r.key} style={{ ...th, background: DWD_BG }}>{r.label}</th>)}
+            {DWD_ROWS.map((r) => <th key={r.key} style={{ ...th, background: DWD_BG, ...(r.key === 'hs' ? { color: RED } : null) }}>{r.label}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -1254,7 +1257,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
               <td style={{ ...rh, background: DWD_BG }}>{tws}</td>
               {DWD_ROWS.map((r) => (
                 <td key={r.key} style={{ ...cellStyle, background: DWD_BG }}>
-                  <input style={inputStyle} value={dwdVal(tws, r.key)} readOnly={!edit} onChange={(e) => setDwd(tws, r.key, e.target.value)} />
+                  <input style={{ ...inputStyle, ...(r.key === 'hs' ? { color: RED, fontWeight: 700 } : null) }} value={dwdVal(tws, r.key)} readOnly={!edit} onChange={(e) => setDwd(tws, r.key, e.target.value)} />
                 </td>
               ))}
             </tr>
