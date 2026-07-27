@@ -6404,7 +6404,7 @@ function SSAApp(){
       const _getLX=(d)=>{ let p=_lxCache.get(d); if(!p){ p=(async()=>({log:await getLogData(d),xml:await getXmlData(d)}))(); _lxCache.set(d,p); } return p; };
       const enriched=await Promise.all(vids.map(async v=>{
         const d=v.sessionDate||today;
-        if(isMobile && !isRecent(d)) return v; // mobile: skip log read for old clips
+        if(!isRecent(d)) return v; // fast first paint: only enrich recent clips (old clips enrich after paint on desktop / on demand on mobile)
         const {log,xml}=await _getLX(d);
         return enrichVideo(v,log,xml);
       }));
@@ -6430,6 +6430,19 @@ function SSAApp(){
       if(latestSession?.tzOffset!=null)setSessionTzOffset(latestSession.tzOffset);
       setUnsyncedCount(getUnsyncedCount());setLoaded(true);
       _pm('★ FIRST PAINT (loaded=true)');
+
+      // Desktop: finish enriching the OLDER clips in the background now that
+      // first paint is done (mobile keeps them fully on-demand). This is what
+      // used to make desktop boot slow — it enriched every clip's log BEFORE paint.
+      if(!isMobile){
+        (async()=>{
+          const oldClips=vids.filter(v=>!isRecent(v.sessionDate||today));
+          if(!oldClips.length) return;
+          const more=await Promise.all(oldClips.map(async v=>{ const d=v.sessionDate||today; const {log,xml}=await _getLX(d); return enrichVideo(v,log,xml); }));
+          const byId=new Map(more.map(v=>[v.id,v]));
+          setAllVideos(p=>p.map(v=>byId.get(v.id)||v));
+        })().catch(()=>{});
+      }
 
       // Cloud check — on mobile defer until after paint
       const doCloud=async()=>{
