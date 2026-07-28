@@ -79,7 +79,9 @@ export function weightedBand(items) {
   const mu = xs.reduce((a, x) => a + x.w * x.v, 0) / sw
   const varW = xs.reduce((a, x) => a + x.w * (x.v - mu) ** 2, 0) / sw
   const sd = Math.max(1, Math.sqrt(varW))
-  return [Math.max(0, Math.round(mu - sd)), Math.round(mu + sd)]
+  // 3rd element = the weighted mean itself, so callers can label the band's
+  // CENTRE consistently (the point value must lie inside [lo, hi]).
+  return [Math.max(0, Math.round(mu - sd)), Math.round(mu + sd), mu]
 }
 
 // UTC 'Z' time -> 'YYYY-MM-DDTHH:MM' venue-local; Open-Meteo strings are already local.
@@ -113,11 +115,15 @@ function buildDaily(short, mastH, bandModels) {
     if (lt[i].slice(0, 10) !== today) break
     const hh = parseInt(lt[i].slice(11, 13), 10); if (hh < 8 || hh > 18) continue
     const s = mastKn(short.hourly, short.heights, mastH, i, short.mos); if (s == null) continue
-    const kn = Math.round(s)
     const tws = [{ v: s, w: WEIGHTS[short.key] || 1 }]; const dirs = []
     const d0 = dirAt(short, i); if (d0 != null) dirs.push(d0)
     for (const bm of bandModels) { const j = idxByKey(bm, lt[i].slice(0, 13)); if (j < 0) continue; const v = mastKn(bm.hourly, bm.heights, mastH, j, bm.mos); if (v != null) tws.push({ v, w: bm.weight }); const dd = dirAt(bm, j); if (dd != null) dirs.push(dd) }
-    const band = weightedBand(tws) || [Math.max(0, kn - 2), kn + 2]
+    const band = weightedBand(tws) || [Math.max(0, Math.round(s) - 2), Math.round(s) + 2, s]
+    // Headline TWS = the band CENTRE (weighted-model mean), clamped into [lo,hi],
+    // so the printed value can never sit outside its own ±1σ range. (Previously
+    // this printed the single primary model's value, which drifted above the band
+    // whenever that model ran hotter than the ensemble.)
+    const kn = Math.min(band[1], Math.max(band[0], Math.round(band[2] != null ? band[2] : s)))
     const dr = circRange(dirs); const twdMean = circMean(dirs)
     const twd = dr ? `${round5(dr[0])}-${round5(dr[1])}` : (twdMean != null ? `${round5(twdMean)}` : '')
     rows.push({ time: `${pad2(hh)}:00`, twdMean, twd, tws: `${kn}kn`, kn, lo: band[0], hi: band[1] })
