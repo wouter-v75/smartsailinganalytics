@@ -9,6 +9,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { fetchWindweightNearest, windweightVenues } from './openMeteo'
 import { windweightObserved } from '../../lib/windweight'
+import { storeWindweightForecast } from '../../lib/windweightForecast'
 
 const CLS_COLOR = { Light: '#7DD3FC', Standard: '#1D9E75', Heavy: '#F97316', Calm: '#64748B' }
 const clsColor = (c) => CLS_COLOR[c] || '#94A3B8'
@@ -46,6 +47,9 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
       if (off) return
       setFc(r?.data ?? null)
       setVen(r ? { domain: r.domain, venue: r.venue } : null)
+      // Archive the 1 km forecast on its own for future analysis (best-effort,
+      // idempotent per venue+valid-hour). Independent of any uploaded log.
+      if (r?.data) void storeWindweightForecast({ domain: r.domain, venue: r.venue, fc: r.data })
     })
     return () => { off = true }
   }, [coords?.latitude, coords?.longitude])
