@@ -88,7 +88,23 @@ export function weightedBand(items) {
 function toLocal(t, tz) { const d = new Date(t.endsWith('Z') ? t : `${t}Z`); const p = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d); const g = (ty) => p.find((x) => x.type === ty).value; return `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}` }
 const localTimes = (h, tz) => { const u = (h.time?.[0] || '').endsWith('Z'); return (h.time || []).map((t) => (u ? toLocal(t, tz) : t.slice(0, 16))) }
 const heightsFromHourly = (h) => { const hs = []; for (const k of Object.keys(h || {})) { const m = k.match(/^wind_speed_(\d+)m$/); if (m) hs.push(+m[1]) } return hs.sort((a, b) => a - b) }
-function mastKn(hourly, heights, mastH, i, mosArr) { if (mosArr && mosArr[i] != null) return mosArr[i]; const kmh = interpolateSpeedAtHeight(hourly, heights, mastH, i); return kmh != null ? kmh * KN : null }
+function mastKn(hourly, heights, mastH, i, mosArr, mosZ = 30) {
+  // MOS is bias-fitted at its venue reference height (mosZ, 30 m). Re-anchor it
+  // to the mast height using THIS model's own shear — the ratio of the raw
+  // interpolated speed at mastH vs at mosZ — so the MOS and raw-interpolated
+  // paths both report at the same height. Ratio is unit-free (km/h ÷ km/h), so
+  // the MOS knots are preserved. Single-level models return ratio 1 (no shear
+  // to scale by), leaving MOS at its fit height.
+  if (mosArr && mosArr[i] != null) {
+    const mos = mosArr[i]
+    if (mastH == null || mastH === mosZ) return mos
+    const vMast = interpolateSpeedAtHeight(hourly, heights, mastH, i)
+    const vFit = interpolateSpeedAtHeight(hourly, heights, mosZ, i)
+    return (vMast != null && vFit != null && vFit > 0) ? mos * (vMast / vFit) : mos
+  }
+  const kmh = interpolateSpeedAtHeight(hourly, heights, mastH, i)
+  return kmh != null ? kmh * KN : null
+}
 const dirAt = (m, i) => m.hourly.wind_direction_10m?.[i] ?? m.hourly[`wind_direction_${m.heights[0]}m`]?.[i]
 const idxAtL = (m, dateStr, hh) => m.lt.findIndex((t) => t.startsWith(`${dateStr}T${pad2(hh)}:`))
 const idxByKey = (m, key) => m.lt.findIndex((t) => t.slice(0, 13) === key)
@@ -114,10 +130,10 @@ function buildDaily(short, mastH, bandModels) {
   for (let i = 0; i < lt.length; i++) {
     if (lt[i].slice(0, 10) !== today) break
     const hh = parseInt(lt[i].slice(11, 13), 10); if (hh < 8 || hh > 18) continue
-    const s = mastKn(short.hourly, short.heights, mastH, i, short.mos); if (s == null) continue
+    const s = mastKn(short.hourly, short.heights, mastH, i, short.mos, short.mosZ); if (s == null) continue
     const tws = [{ v: s, w: WEIGHTS[short.key] || 1 }]; const dirs = []
     const d0 = dirAt(short, i); if (d0 != null) dirs.push(d0)
-    for (const bm of bandModels) { const j = idxByKey(bm, lt[i].slice(0, 13)); if (j < 0) continue; const v = mastKn(bm.hourly, bm.heights, mastH, j, bm.mos); if (v != null) tws.push({ v, w: bm.weight }); const dd = dirAt(bm, j); if (dd != null) dirs.push(dd) }
+    for (const bm of bandModels) { const j = idxByKey(bm, lt[i].slice(0, 13)); if (j < 0) continue; const v = mastKn(bm.hourly, bm.heights, mastH, j, bm.mos, bm.mosZ); if (v != null) tws.push({ v, w: bm.weight }); const dd = dirAt(bm, j); if (dd != null) dirs.push(dd) }
     const band = weightedBand(tws) || [Math.max(0, Math.round(s) - 2), Math.round(s) + 2, s]
     // Headline TWS = the band CENTRE (weighted-model mean), clamped into [lo,hi],
     // so the printed value can never sit outside its own ±1σ range. (Previously
@@ -145,7 +161,7 @@ function buildOutlook(dates, modelsFor, mastH) {
     const models = modelsFor(di)
     const bucket = (hh) => {
       const tws = []; const dirs = []
-      for (const m of models) { const i = idxAtL(m, d, hh); if (i < 0) continue; const s = mastKn(m.hourly, m.heights, mastH, i, m.mos); if (s != null) tws.push({ v: s, w: m.weight }); const dd = dirAt(m, i); if (dd != null) dirs.push(dd) }
+      for (const m of models) { const i = idxAtL(m, d, hh); if (i < 0) continue; const s = mastKn(m.hourly, m.heights, mastH, i, m.mos, m.mosZ); if (s != null) tws.push({ v: s, w: m.weight }); const dd = dirAt(m, i); if (dd != null) dirs.push(dd) }
       const tb = weightedBand(tws); if (!tb) return null
       return { twd: circRange(dirs), twdMean: circMean(dirs), tws: tb, twsMid: (tb[0] + tb[1]) / 2 }
     }
@@ -219,7 +235,7 @@ async function captureComparison(models, mastH) {
   const div = offDiv(); const keys = keyGrid(models); const xs = keys.map((k) => new Date(`${k}:00`)); const out = []
   const today = keys[0]?.slice(0, 10)
   const xax = { title: 'Time', gridcolor: '#e5e7eb', ...(today ? { range: [new Date(`${today}T08:00`), new Date(`${today}T20:00`)], autorange: false } : {}) }
-  const ser = (m, kind) => keys.map((key) => { const i = idxByKey(m, key); if (i < 0) return null; return kind === 'spd' ? mastKn(m.hourly, m.heights, mastH, i, m.mos) : (dirAt(m, i) ?? null) })
+  const ser = (m, kind) => keys.map((key) => { const i = idxByKey(m, key); if (i < 0) return null; return kind === 'spd' ? mastKn(m.hourly, m.heights, mastH, i, m.mos, m.mosZ) : (dirAt(m, i) ?? null) })
   const spd = models.map((m) => ser(m, 'spd')); const dir = models.map((m) => ser(m, 'dir'))
   // Emphasise the primary models — SSA-Race 1 km + AROME — with bold lines, and
   // connect their TWD points (other models stay thin / markers-only).
@@ -569,7 +585,7 @@ async function buildDiagnostics(o) {
     for (const hh of [13, 14, 15]) {
       const j = idxAtL(m, day0, hh); if (j < 0) continue
       const d = dirAt(m, j); if (d != null) md.push(d)
-      const s = mastKn(m.hourly, m.heights, mastH, j, m.mos); if (s != null) ms.push(s)
+      const s = mastKn(m.hourly, m.heights, mastH, j, m.mos, m.mosZ); if (s != null) ms.push(s)
     }
     if (md.length) dirs.push(circMean(md))
     if (ms.length) spds.push(dMean(ms))
@@ -1041,7 +1057,8 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       const venueName = (matchVenue(p1lat, p1lon) || 'venue').replace(/_/g, ' '); const tz = resolvedTz || 'UTC'
       const venueKey = matchVenue(p1lat, p1lon); const spec = venueKey ? specFor(venueKey) : null
       const mosFor = (key, hourly) => { const id = MODELS[key]?.mosModel; return spec && id ? mosSeries(hourly, MODELS[key]?.heights || [10], spec, id, tz) : null }
-      const mk = (k, hourly, heights) => ({ key: k, hourly, lt: localTimes(hourly, tz), heights: heights || MODELS[k]?.heights || [10], mos: mosFor(k, hourly), weight: WEIGHTS[k] || 0.5 })
+      const mosZ = spec?.target_height_m || 30
+      const mk = (k, hourly, heights) => ({ key: k, hourly, lt: localTimes(hourly, tz), heights: heights || MODELS[k]?.heights || [10], mos: mosFor(k, hourly), mosZ, weight: WEIGHTS[k] || 0.5 })
       const sb = point1.surfaceByModel
       const todayModels = ALL_TODAY.filter((k) => sb[k] && hasValidSpeed(sb[k].hourly)).map((k) => mk(k, sb[k].hourly))
       const short = mk(shortSel, sb[shortSel].hourly)
