@@ -48,7 +48,7 @@ const SUB_TABS = [
   { id: 'venuemos',   label: 'Admin',            short: 'Admin',    enabled: true, adminOnly: true },
 ]
 
-export default function WeatherTab({ isMobile = false, effectiveRole = null, boatName = null, eventName = null, logData = null }) {
+export default function WeatherTab({ isMobile = false, effectiveRole = null, boatName = null, eventName = null, logData = null, teamId = null, boatId = null, targetDate = null }) {
   const isAdmin = effectiveRole === 'admin'
   const atLeastTL2 = (ROLE_RANK[effectiveRole] ?? -1) >= ROLE_RANK.tl2
   const canMos = atLeastTL2        // MOS adjustments (field button, table column, comparisons)
@@ -164,6 +164,9 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
             isAdmin={isAdmin}
             boatName={boatName}
             eventName={eventName}
+            teamId={teamId}
+            boatId={boatId}
+            targetDate={targetDate}
             isMobile={isMobile}
           />
         )}

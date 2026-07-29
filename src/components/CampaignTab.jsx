@@ -476,7 +476,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
 // button for editors. When empty + canEdit, shows a "+ Add {label}" affordance.
 // When empty + !canEdit, renders nothing. Each save is field-scoped so the
 // surrounding fetch state isn't disturbed.
-function EditableTextBlock({ label, value, canEdit, placeholder, onSave }) {
+function EditableTextBlock({ label, value, canEdit, placeholder, onSave, accent = false }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value || '')
   const [saving, setSaving] = useState(false)
@@ -515,7 +515,13 @@ function EditableTextBlock({ label, value, canEdit, placeholder, onSave }) {
           <FormatHint />
         </>
       ) : hasContent ? (
-        <RichText text={value} style={{ fontSize: 13, color: '#E2E8F0' }} />
+        accent ? (
+          <div style={{ borderLeft: '2px solid #06B6D4', paddingLeft: 8 }}>
+            <RichText text={value} style={{ fontSize: 13, color: '#E2E8F0' }} />
+          </div>
+        ) : (
+          <RichText text={value} style={{ fontSize: 13, color: '#E2E8F0' }} />
+        )
       ) : (
         <button onClick={() => setEditing(true)} style={{ ...btnGhost, alignSelf: 'flex-start' }}>
           + Add {label.toLowerCase()}
@@ -840,6 +846,7 @@ function WeatherCard({ base, date, canEdit }) {
           canEdit={canEdit}
           placeholder="Expected shifts, sea-breeze timing, cloud, tide…"
           onSave={saveComments}
+          accent
         />
       </div>
     </div>

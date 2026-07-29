@@ -111,6 +111,9 @@ export default function ForecastView({
   isAdmin = false,
   boatName = null,
   eventName = null,
+  teamId = null,
+  boatId = null,
+  targetDate = null,
   isMobile = false,
 }) {
   const mapH = isMobile ? 420 : 640   // shorter wind-field viewer on phones
@@ -678,6 +681,7 @@ export default function ForecastView({
           p1lat={p1lat} p1lon={p1lon} windData={windData}
           modelAvailable={modelAvailable} mastHeight={mastHeight} resolvedTz={tzResolved}
           boatName={boatName} eventName={eventName}
+          teamId={teamId} boatId={boatId} targetDate={targetDate}
         />
       )}
       {/* Map (half width in landscape) + wind-field controls beside it */}

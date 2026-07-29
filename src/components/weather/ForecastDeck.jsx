@@ -1038,7 +1038,21 @@ function buildDeck(P, d) {
 }
 
 // ── component ───────────────────────────────────────────────────────────────
-export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, resolvedTz = 'UTC', raceDay = null, boatName = null, eventName = null }) {
+// Compose the Summary-slide text as plain, editable notes for the campaign day's
+// Weather -> Notes. Mirrors the Summary slide's fields; returns null if empty.
+function summaryNotesBlock(typeOfDay, ai, dayLabel) {
+  const lines = []
+  if (typeOfDay) lines.push(`Type of day: ${typeOfDay}`)
+  const items = [
+    ['Situation', ai?.situation], ["Today's wind", ai?.todaysWind], ['Strategy', ai?.strategyNote],
+    ['Stability', ai?.stability], ['Outlook', ai?.outlook], ['Confidence', ai?.confidenceNote],
+  ]
+  for (const [k, v] of items) if (v) lines.push(`${k}: ${v}`)
+  if (!lines.length) return null
+  return `Forecast summary${dayLabel ? ` \u2014 ${dayLabel}` : ''}\n${lines.join('\n')}`
+}
+
+export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, resolvedTz = 'UTC', raceDay = null, boatName = null, eventName = null, teamId = null, boatId = null, targetDate = null }) {
   const campaignRaceDay = raceDay
   const pptxReady = useScriptsOnce([PPTX_JS]); useScriptsOnce([PLOTLY_JS]); useScriptsOnce([MAPLIBRE_JS, DECK_JS], [MAPLIBRE_CSS])
   const point1 = windData?.['1']; const haveP1 = p1lat != null && p1lon != null && !!point1
@@ -1189,12 +1203,13 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         else { ai = r; setAiErr(r?._ms ? `AI brief ok (${(r._ms / 1000).toFixed(1)}s)` : '') }
       } catch (e) { setAiErr(e?.message || 'failed') }
 
+      const typeOfDay = diag?.typeOfDay || ai?.typeOfDay || typeHeur
       const deck = buildDeck(P, {
         venue: venueName, location: venueName,
         boatName: boatName || null, eventName: eventName || null,
         day: aiPayload.date,                                  // "Wednesday, 24 June"
         year: String(new Date().getFullYear()),
-        typeOfDay: diag?.typeOfDay || ai?.typeOfDay || typeHeur, raceDay: campaignRaceDay, ai, diag, course, courseSeries,
+        typeOfDay, raceDay: campaignRaceDay, ai, diag, course, courseSeries,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
@@ -1203,6 +1218,22 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze through the racing window — edit', 'Racing window 10:00–16:00 — edit', 'Local effects — edit'],
       })
       await deck.writeFile({ fileName: `forecast_${venueName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.pptx` })
+
+      // Prepend the Summary text into the campaign day's Weather -> Notes (top,
+      // editable). Best-effort: never block the deck. De-dupes a prior auto block.
+      try {
+        const block = summaryNotesBlock(typeOfDay, ai, aiPayload.date)
+        if (block && teamId && boatId && targetDate) {
+          const cbase = `/api/teams/${teamId}/boats/${boatId}/campaign`
+          const cur = await fetch(`${cbase}/conditions?date=${targetDate}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+          const details = cur?.details || {}
+          const SEP = '\n\n\u2014\u2014\u2014\n\n'
+          let rest = String(details.comments || '')
+          if (rest.startsWith('Forecast summary')) { const i = rest.indexOf(SEP); rest = i >= 0 ? rest.slice(i + SEP.length) : '' }
+          const comments = rest.trim() ? `${block}${SEP}${rest}` : block
+          await fetch(`${cbase}/conditions`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: targetDate, details: { ...details, comments } }) }).catch(() => {})
+        }
+      } catch { /* best-effort — the deck is the primary output */ }
     } catch (e) { setErr(e?.message || 'generation failed') } finally { setBusy(false) }
   }
 
