@@ -767,6 +767,29 @@ function gradientText(course) {
   return parts.length ? parts.join(' · ') : 'even across course'
 }
 
+// Favoured side from the two INDEPENDENT signals, using the team's rule:
+//   - a bend favours the side it bends TO (right bend -> R, left bend -> L)
+//   - pressure favours the side with MORE wind (twsLeftRight > 0 -> R, < 0 -> L)
+// Agree -> that side. Conflict -> 'Neutral' (right for bend, left for pressure —
+// never collapse to one). One signal only -> that side. Returns R|L|Neutral|null.
+function favouredSide(c) {
+  if (!c) return null
+  const bendSide = c.bend === 'right' ? 'R' : c.bend === 'left' ? 'L' : null
+  const presSide = (c.twsLeftRight != null && Math.abs(c.twsLeftRight) >= 0.5)
+    ? (c.twsLeftRight > 0 ? 'R' : 'L') : null
+  if (bendSide && presSide) return bendSide === presSide ? bendSide : 'Neutral'
+  return bendSide || presSide || null
+}
+
+// Enrich a course snapshot for the AI: explicit pressure side/kt + favoured side,
+// so the model never has to interpret the SIGNED gradient itself (it kept reading
+// + as 'left'). pressureSide/pressureKt/fav are authoritative.
+function enrichCourse(c) {
+  if (!c) return null
+  const has = c.twsLeftRight != null && Math.abs(c.twsLeftRight) >= 0.5
+  return { ...c, pressureSide: has ? (c.twsLeftRight > 0 ? 'right' : 'left') : 'even', pressureKt: c.twsLeftRight != null ? Math.abs(c.twsLeftRight) : null, fav: favouredSide(c) }
+}
+
 // Split prose into sentence-ish paragraphs (rough: break after . ! ? before a capital/digit).
 function toSentences(text) {
   if (!text) return []
@@ -964,19 +987,25 @@ function buildDeck(P, d) {
     : [{ text: 'Tactical considerations — edit. (AI strategy unavailable.)', options: { color: GREY, fontFace: FONT, fontSize: 16 } }],
     { x: M, y: 2.3, w: CW, h: hasCourseTbl ? 5.0 : 10.4, fontFace: FONT, valign: 'top' })
   if (hasCourseTbl) {
-    const fmtg = (v, pos, neg) => (v == null ? '—' : Math.abs(v) < 0.3 ? '~0' : `${v > 0 ? '+' : '−'}${Math.abs(v)} ${v > 0 ? pos : neg}`)
-    const cHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('Bend'), hdrCell('TWS L/R'), hdrCell('TWS ↑/↓')]
-    const cRows = d.courseSeries.map((c) => [
-      txtCell(`${c.hh}:00`, { bold: true, fill: { color: LIGHTF } }),
-      txtCell(`${c.twd}°`),
-      txtCell(c.bend == null || c.bend === 'straight' ? '—' : `${c.bend === 'right' ? 'R' : 'L'} ${Math.abs(c.bendDeg)}°`),
-      txtCell(fmtg(c.twsLeftRight, 'R', 'L')),
-      txtCell(fmtg(c.twsTopBottom, 'top', 'bot')),
-    ])
+    // TWS gradient is shown as the side with MORE wind: always a positive magnitude
+    // + the side letter (so left-more reads '+3.5 L', not '−3.5 L').
+    const fmtg = (v, pos, neg) => (v == null ? '—' : Math.abs(v) < 0.3 ? '~0' : `+${Math.abs(v)} ${v > 0 ? pos : neg}`)
+    const cHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('Bend'), hdrCell('TWS L/R'), hdrCell('TWS ↑/↓'), hdrCell('Favoured')]
+    const cRows = d.courseSeries.map((c) => {
+      const f = favouredSide(c)
+      return [
+        txtCell(`${c.hh}:00`, { bold: true, fill: { color: LIGHTF } }),
+        txtCell(`${c.twd}°`),
+        txtCell(c.bend == null || c.bend === 'straight' ? '—' : `${c.bend === 'right' ? 'R' : 'L'} ${Math.abs(c.bendDeg)}°`),
+        txtCell(fmtg(c.twsLeftRight, 'R', 'L')),
+        txtCell(fmtg(c.twsTopBottom, 'top', 'bot')),
+        txtCell(f == null ? '—' : f, f && f !== 'Neutral' ? { bold: true } : {}),
+      ]
+    })
     const cY = 7.85
     s.addText('Course gradient — hourly (4 nm box, point 1)', { x: M, y: cY - 0.35, w: CW, h: 0.3, fontFace: FONT, fontSize: 14, bold: true, color: NAVY })
-    s.addTable([cHead, ...cRows], { x: M, y: cY, w: CW, colW: [1.1, 1.1, 1.4, 1.55, 1.55], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle', fontFace: FONT, fontSize: 13, color: INK })
-    s.addText('Bend looking upwind (R/L); TWS grad: + = right / windward', { x: M, y: FOOT, w: CW, h: 0.3, fontFace: FONT, fontSize: 11, color: GREY })
+    s.addTable([cHead, ...cRows], { x: M, y: cY, w: CW, colW: [0.9, 0.9, 1.15, 1.25, 1.25, 1.25], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle', fontFace: FONT, fontSize: 13, color: INK })
+    s.addText('Bend upwind (R/L); TWS grad = side with MORE wind; Favoured = bend + pressure combined (Neutral if they split)', { x: M, y: FOOT, w: CW, h: 0.3, fontFace: FONT, fontSize: 11, color: GREY })
   }
 
   // ── 9) Stability + WIND WEIGHT ───────────────────────────────────────────────
@@ -1191,7 +1220,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         // (the AI cannot see the spatial field): twd, bend (left/right looking
         // upwind, degrees), and TWS gradient left-right / top-bottom (kn). The
         // hourly series shows how the bend / gradient EVOLVE through the racing window.
-        course, courseSeries,
+        course: enrichCourse(course), courseSeries: courseSeries.map(enrichCourse),
       }
       let ai = null
       setAiErr('writing AI brief…')
