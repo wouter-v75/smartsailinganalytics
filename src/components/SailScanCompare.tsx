@@ -187,7 +187,10 @@ function scanModel(scan: any, sails: any[], tag: any) {
   const sailRec = (sails || []).find((s) => s.id === scan?.sail_id) || null
   const activeJib = (tag?.activeSails || []).map(designCodeOf).find((c: any) => c && c !== 'MN') || null
   const tws = tag?.avgTws ?? scan?.tws_kn ?? null
-  const design = pickDesign(sails || [], sailRec, activeJib, tws)
+  const designRaw = pickDesign(sails || [], sailRec, activeJib, tws)
+  // Drop the 100% (head) design row from the comparison — it clutters the
+  // design-target table and the dashed design curves without adding signal.
+  const design = designRaw ? { ...designRaw, sections: (designRaw.sections || []).filter((s: any) => s.posPct !== 100) } : designRaw
   const cond = scan?.conditions || {}
   const name = sailRec?.category || sailRec?.name || cond.sail_code || cond.sail_name_in_report || 'sail'
   const posXs = stripes.map((s) => s.pos)
