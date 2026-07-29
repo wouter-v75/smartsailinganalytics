@@ -1090,7 +1090,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
   // extended data isn't available). Default short-term model preference:
   // SSA-Race 1 km → SSA-Race 2 km → AROME → ECMWF.
   const SHORT_PREF = ['ICONRACE_1KM', 'ICONRACE', 'AROME', 'ECMWF']
-  const [outlookModel, setOutlookModel] = useState('ARPEGE'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState(''); const [aiErr, setAiErr] = useState('')
+  const [outlookModel, setOutlookModel] = useState('ARPEGE'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState(''); const [aiErr, setAiErr] = useState(''); const [noteMsg, setNoteMsg] = useState('')
   const shortSel = shortModel && shortModels.includes(shortModel) ? shortModel : (SHORT_PREF.find((k) => shortModels.includes(k)) || shortModels[0] || '')
 
   async function generate() {
@@ -1251,16 +1251,21 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       // Prepend the Summary text into the campaign day's Weather -> Notes (top,
       // editable). Best-effort: never block the deck. De-dupes a prior auto block.
       try {
+        // Write to the day this forecast is FOR: the venue-local calendar day
+        // (today). Falls back to the campaign target date if tz is unavailable.
+        let noteDate = targetDate
+        try { noteDate = new Date().toLocaleDateString('en-CA', { timeZone: tz }) } catch { /* keep targetDate */ }
         const block = summaryNotesBlock(typeOfDay, ai, aiPayload.date)
-        if (block && teamId && boatId && targetDate) {
+        if (block && teamId && boatId && noteDate) {
           const cbase = `/api/teams/${teamId}/boats/${boatId}/campaign`
-          const cur = await fetch(`${cbase}/conditions?date=${targetDate}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+          const cur = await fetch(`${cbase}/conditions?date=${noteDate}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
           const details = cur?.details || {}
           const SEP = '\n\n\u2014\u2014\u2014\n\n'
           let rest = String(details.comments || '')
           if (rest.startsWith('Forecast summary')) { const i = rest.indexOf(SEP); rest = i >= 0 ? rest.slice(i + SEP.length) : '' }
           const comments = rest.trim() ? `${block}${SEP}${rest}` : block
-          await fetch(`${cbase}/conditions`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: targetDate, details: { ...details, comments } }) }).catch(() => {})
+          const wrote = await fetch(`${cbase}/conditions`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: noteDate, details: { ...details, comments } }) }).then((r) => r.ok).catch(() => false)
+          setNoteMsg(wrote ? `summary added to ${noteDate} Weather notes` : 'summary note save failed (campaign access?)')
         }
       } catch { /* best-effort — the deck is the primary output */ }
     } catch (e) { setErr(e?.message || 'generation failed') } finally { setBusy(false) }
@@ -1295,6 +1300,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
           const label = (ok || working) ? aiErr : `AI brief skipped — ${aiErr}`
           return <span style={{ fontSize: 11, color, alignSelf: 'center' }}>{label}</span>
         })()}
+        {noteMsg && <span style={{ fontSize: 11, color: '#34D399', alignSelf: 'center' }}>{noteMsg}</span>}
       </div>
     </div>
   )

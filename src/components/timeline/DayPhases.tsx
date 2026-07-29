@@ -165,12 +165,18 @@ function PhaseRow({ ph, isOpen, filled, onToggle, day, events, tz, teamId, boatI
   )
 }
 
-function Field({ label, value }: { label: string; value?: string | null }) {
+function Field({ label, value, accent }: { label: string; value?: string | null; accent?: boolean }) {
   if (!value || !String(value).trim()) return null
   return (
     <div className="mb-2">
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted">{label}</div>
-      <RichText text={value} className="text-sm text-fg" />
+      {accent ? (
+        <div style={{ borderLeft: '2px solid #06B6D4', paddingLeft: 8 }}>
+          <RichText text={value} className="text-sm text-fg" />
+        </div>
+      ) : (
+        <RichText text={value} className="text-sm text-fg" />
+      )}
     </div>
   )
 }
@@ -236,7 +242,7 @@ function PhaseContent({ phaseKey, cond, deb, wxDocs = [] }: { phaseKey: string; 
       const hasNotes = !!(notes && String(notes).trim())
       return (
         <div className={box}>
-          {hasNotes && <Field label="Notes" value={String(notes)} />}
+          {hasNotes && <Field label="Notes" value={String(notes)} accent />}
           {!hasNotes && wxDocs.length === 0 && <Empty what="weather notes" />}
           {wxDocs.length > 0 && (
             <>
