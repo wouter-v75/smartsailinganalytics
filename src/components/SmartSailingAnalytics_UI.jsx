@@ -913,7 +913,7 @@ const OVERLAY_VARS = [
   {key:'cunninghamLoad',label:'Cunno',unit:'',dec:1},{key:'jibTackLoad',label:'Jib tack',unit:'',dec:1},
   {key:'gsTackLoad',label:'GS tack',unit:'',dec:1},{key:'upDflctPct',label:'Up defl',unit:'%',dec:0},
   {key:'lwDflctPct',label:'Low defl',unit:'%',dec:0},{key:'travPct',label:'Traveller',unit:'%',dec:0},
-  {key:'yawR',label:'Rot',unit:'°/s',dec:1},{key:'acc',label:'Acc',unit:'kn/s',dec:2},
+  {key:'yawR',label:'Rot',unit:'°/s',dec:1},{key:'acc',label:'Acc',unit:'kn/min',dec:1},
   {key:'pBurn',label:'P burn',unit:'',dec:0,fmt:'burn'},{key:'sBurn',label:'S burn',unit:'',dec:0,fmt:'burn'},
 ];
 

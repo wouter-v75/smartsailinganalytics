@@ -212,10 +212,10 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       airTemp: num(c, M.airTemp), seaTemp: num(c, M.seaTemp), rh: num(c, M.rh), baro: num(c, M.baro),
     })
   }
-  // ACCELERATION (kt/s): a 2 s moving average of the 1 s SOG delta, computed here
-  // so the video overlay reads row.acc like any native channel. d[i] = SOG(t) −
-  // SOG(t−1s) (nearest sample within 1.5 s) = kt over ~1 s = kt/s; then trailing
-  // 2 s mean. Rows are chronological (pushed in file order).
+  // ACCELERATION (kn/MIN — Expedition's convention for start acceleration): a 2 s
+  // moving average of the 1 s SOG delta, then ×60. d[i] = SOG(t) − SOG(t−1s)
+  // (nearest sample within 1.5 s) = kn per ~1 s; trailing 2 s mean × 60 → kn/min.
+  // Rows are chronological (pushed in file order).
   {
     const n = rows.length
     const t = rows.map((r) => r.utc)
@@ -240,7 +240,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       while (lo < i && t[lo] < t[i] - 2000) lo++
       let sum = 0, cnt = 0
       for (let j = lo; j <= i; j++) { if (d[j] != null) { sum += d[j]; cnt++ } }
-      rows[i].acc = cnt ? Math.round((sum / cnt) * 100) / 100 : null
+      rows[i].acc = cnt ? Math.round((sum / cnt) * 60 * 10) / 10 : null  // kn/s → kn/min
     }
   }
   return { rows, startUtc: rows[0]?.utc || 0, endUtc: rows[rows.length - 1]?.utc || 0 }
