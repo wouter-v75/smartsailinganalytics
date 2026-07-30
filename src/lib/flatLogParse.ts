@@ -112,6 +112,13 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
     return Number.isNaN(v) ? null : v
   }
 
+  // Time-to-burn channels: the 2026-07 Expedition export writes these in FILETIME
+  // 100-ns ticks (1e7 per second), not seconds — a 20 s burn arrives as ~2e8. When
+  // the magnitude says ticks (> 1e5, far above any real burn in seconds), convert
+  // to seconds; older seconds-based exports (small values) pass through unchanged.
+  const toBurnSec = (v: number | null): number | null =>
+    v == null ? null : Math.abs(v) > 100000 ? v / 1e7 : v
+
   // TTB·LINE — the 2026-07 Expedition export has no direct 'TmLine' column; derive
   // the burn at the line as (time-to-line − time-to-gun). Older exports keep a
   // direct 'TmLine' column, which wins when present.
@@ -188,8 +195,8 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
       vsTarget: num(c, M.vsTarget), vsTargPct: num(c, M.vsTargPct), vsPerf: num(c, M.vsPerf),
       vsPerfPct: num(c, M.vsPerfPct), twaTarg: num(c, M.twaTarg),
-      dstLine: num(c, M.dstLine), tmLine: tmLineOf(c), pBurn: num(c, pBurnIdx), sBurn: num(c, sBurnIdx),
-      ttbPort: num(c, M.ttbPort), ttbStbd: num(c, M.ttbStbd), ttbOnStb: num(c, M.ttbOnStb), ttbPin: num(c, M.ttbPin), ttbCB: num(c, M.ttbCB),
+      dstLine: num(c, M.dstLine), tmLine: toBurnSec(tmLineOf(c)), pBurn: toBurnSec(num(c, pBurnIdx)), sBurn: toBurnSec(num(c, sBurnIdx)),
+      ttbPort: toBurnSec(num(c, M.ttbPort)), ttbStbd: toBurnSec(num(c, M.ttbStbd)), ttbOnStb: toBurnSec(num(c, M.ttbOnStb)), ttbPin: toBurnSec(num(c, M.ttbPin)), ttbCB: toBurnSec(num(c, M.ttbCB)),
       timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
       rake: num(c, M.rake), mastAng: num(c, M.mastAng), shims: num(c, M.shims),
       jibTackLoad: num(c, M.jibTackLoad), gsTackLoad: num(c, M.gsTackLoad), cunninghamLoad: num(c, M.cunninghamLoad),
