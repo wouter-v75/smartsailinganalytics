@@ -112,11 +112,11 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   vsPerf: ['vsperf', 'polbsp'],                               // polar boat speed (kn)
   twaTarg: ['twatarg', 'twatarget', 'targtwa', 'targettwa'],  // target TWA
   // start-line instruments
-  dstLine: ['dstline', 'distancetostartlineboatlengths'],
+  dstLine: ['dstline', 'distancetostartlineboatlengths', 'belowln'],
   // tmLine is TTB·LINE. Older exports carry a direct 'TmLine' column; the 2026-07
   // Expedition export instead has 'TmToLn' + 'TmToGun', and flatLogParse computes
   // tmLine = TmToLn - TmToGun when no direct column is present.
-  tmLine: ['tmline'],
+  tmLine: ['tmline', 'burn'],
   // TTB·P / TTB·S — 'StBsToP' / 'StBsToS' are the Expedition start-burn channels
   // for the port / starboard line ends (shown directly as a burn: +early / -late).
   ttbPort: ['ttbport', 'stbstop'],

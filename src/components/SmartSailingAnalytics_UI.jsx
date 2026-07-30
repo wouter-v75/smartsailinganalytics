@@ -913,6 +913,7 @@ const OVERLAY_VARS = [
   {key:'cunninghamLoad',label:'Cunno',unit:'',dec:1},{key:'jibTackLoad',label:'Jib tack',unit:'',dec:1},
   {key:'gsTackLoad',label:'GS tack',unit:'',dec:1},{key:'upDflctPct',label:'Up defl',unit:'%',dec:0},
   {key:'lwDflctPct',label:'Low defl',unit:'%',dec:0},{key:'travPct',label:'Traveller',unit:'%',dec:0},
+  {key:'yawR',label:'Rot',unit:'°/s',dec:1},{key:'acc',label:'Acc',unit:'kn/s',dec:2},
 ];
 
 function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,autoPlay=false,onRotate=null,
@@ -1207,7 +1208,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   //
   // All shown DIRECTLY as burns — the Expedition start channels already encode the
   // burn on the current heading (+early / -late), so no gun-timer subtraction:
-  //   TTB·LINE   ← tmLine    (TmToLn − TmToGun, computed in flatLogParse)
+  //   TTB·LINE   ← tmLine    (Burn column; falls back to TmToLn − TmToGun on older exports)
   //   TTB·P      ← ttbPort   (StBsToP)
   //   TTB·S      ← ttbStbd   (StBsToS)
   //   TTB·on·STB ← ttbOnStb  (StBsOnS) — burn if committing to the starboard tack

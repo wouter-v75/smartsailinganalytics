@@ -34,7 +34,7 @@ export interface FlatLogRow {
   bsp: number | null; awa: number | null; aws: number | null
   twa: number | null; tws: number | null; twd: number | null
   heel: number | null; trim: number | null; forestay: number | null; vmg: number | null
-  cog: number | null; sog: number | null
+  cog: number | null; sog: number | null; acc: number | null
   leeway: number | null; set: number | null; drift: number | null; hdg: number | null
   keelAng: number | null
   upDflctPct: number | null; lwDflctPct: number | null
@@ -178,7 +178,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       bsp: num(c, M.bsp), awa: num(c, M.awa), aws: num(c, M.aws),
       twa: num(c, M.twa), tws: num(c, M.tws), twd: num(c, M.twd),
       heel: num(c, M.heel), trim: num(c, M.trim), forestay: num(c, M.forestay), vmg: num(c, M.vmg),
-      cog: num(c, M.cog), sog: num(c, M.sog),
+      cog: num(c, M.cog), sog: num(c, M.sog), acc: null,
       leeway: num(c, M.leeway), set: num(c, M.set), drift: num(c, M.drift), hdg: num(c, M.hdg),
       keelAng: num(c, M.keelAng),
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
@@ -200,6 +200,37 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       targVmg: num(c, M.targVmg), targAwa: num(c, M.targAwa),
       airTemp: num(c, M.airTemp), seaTemp: num(c, M.seaTemp), rh: num(c, M.rh), baro: num(c, M.baro),
     })
+  }
+  // ACCELERATION (kt/s): a 2 s moving average of the 1 s SOG delta, computed here
+  // so the video overlay reads row.acc like any native channel. d[i] = SOG(t) −
+  // SOG(t−1s) (nearest sample within 1.5 s) = kt over ~1 s = kt/s; then trailing
+  // 2 s mean. Rows are chronological (pushed in file order).
+  {
+    const n = rows.length
+    const t = rows.map((r) => r.utc)
+    const sg = rows.map((r) => r.sog)
+    const sogAt = (tt: number): number | null => {
+      if (!n) return null
+      let lo = 0, hi = n - 1
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (t[mid] < tt) lo = mid + 1; else hi = mid }
+      let best = lo
+      if (lo > 0 && Math.abs(t[lo - 1] - tt) <= Math.abs(t[lo] - tt)) best = lo - 1
+      return Math.abs(t[best] - tt) <= 1500 ? sg[best] : null
+    }
+    const d = new Array(n).fill(null)
+    for (let i = 0; i < n; i++) {
+      const cur = sg[i]
+      if (cur == null) continue
+      const prev = sogAt(t[i] - 1000)
+      if (prev != null) d[i] = cur - prev
+    }
+    let lo = 0
+    for (let i = 0; i < n; i++) {
+      while (lo < i && t[lo] < t[i] - 2000) lo++
+      let sum = 0, cnt = 0
+      for (let j = lo; j <= i; j++) { if (d[j] != null) { sum += d[j]; cnt++ } }
+      rows[i].acc = cnt ? Math.round((sum / cnt) * 100) / 100 : null
+    }
   }
   return { rows, startUtc: rows[0]?.utc || 0, endUtc: rows[rows.length - 1]?.utc || 0 }
 }
