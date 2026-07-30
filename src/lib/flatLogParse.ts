@@ -43,7 +43,7 @@ export interface FlatLogRow {
   vsTarget: number | null; vsTargPct: number | null; vsPerf: number | null
   vsPerfPct: number | null; twaTarg: number | null
   // start-line instruments (canonical)
-  dstLine: number | null; tmLine: number | null
+  dstLine: number | null; tmLine: number | null; pBurn: number | null; sBurn: number | null
   ttbPort: number | null; ttbStbd: number | null; ttbOnStb: number | null; ttbPin: number | null; ttbCB: number | null
   timer1: number | null; yawR: number | null; magvar: number | null; rudder: number | null
   // rig loads/settings + targets (2026-06 N76 flat-CSV): so the 2-min SailScan
@@ -91,6 +91,10 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   // Need the Utc column explicitly (it isn't a LogField); resolve everything else
   // through the shared profile so per-boat aliases extend the defaults.
   const headerCols = lines[0].split(',')
+  // P burn / S burn come from the LAST TWO columns positionally (this export has
+  // no stable header for them): second-to-last = port, last = starboard.
+  const pBurnIdx = headerCols.length - 2
+  const sBurnIdx = headerCols.length - 1
   const utcIdx = headerCols.findIndex((h) => norm(h) === 'utc')
   // High-resolution clock: some exports write `Utc` only to the MINUTE (no
   // seconds), which collapses every row in a minute onto one instant and makes
@@ -184,7 +188,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
       vsTarget: num(c, M.vsTarget), vsTargPct: num(c, M.vsTargPct), vsPerf: num(c, M.vsPerf),
       vsPerfPct: num(c, M.vsPerfPct), twaTarg: num(c, M.twaTarg),
-      dstLine: num(c, M.dstLine), tmLine: tmLineOf(c),
+      dstLine: num(c, M.dstLine), tmLine: tmLineOf(c), pBurn: num(c, pBurnIdx), sBurn: num(c, sBurnIdx),
       ttbPort: num(c, M.ttbPort), ttbStbd: num(c, M.ttbStbd), ttbOnStb: num(c, M.ttbOnStb), ttbPin: num(c, M.ttbPin), ttbCB: num(c, M.ttbCB),
       timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
       rake: num(c, M.rake), mastAng: num(c, M.mastAng), shims: num(c, M.shims),
