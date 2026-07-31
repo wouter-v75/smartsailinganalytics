@@ -115,7 +115,8 @@ async function transcribeChunks(chunks, onProgress) {
   for (let i = 0; i < chunks.length; i++) {
     const fd = new FormData()
     fd.append('file', chunks[i], `chunk-${i}.mp3`)
-    fd.append('language', 'en')
+    // No language hint — let Whisper auto-detect (debriefs may be Dutch, English, …).
+    // Forcing 'en' on a non-English recording makes it mis-hear the whole thing.
     const res = await fetch('/api/ai/transcribe', { method: 'POST', body: fd })
     const j = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(j.error || `transcription failed (chunk ${i + 1})`)

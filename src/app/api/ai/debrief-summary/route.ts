@@ -24,12 +24,13 @@ const log = (...a: unknown[]) => { try { console.info('[ai/debrief-summary]', ..
 // section-specific keys + guidance. The model returns JSON keyed to the DB columns
 // so the summary writes straight into the campaign section.
 const RULES = `RULES — these matter:
+- OUTPUT LANGUAGE: write the entire summary in ENGLISH. If the transcript is in another language (e.g. Dutch), translate it faithfully — but keep sail names, boat-part and manoeuvre terms, abbreviations (A2, A3, S2, genoa, kite, gybe) and people's names exactly as spoken.
 - Use ONLY what is in the transcript. Do not invent numbers, sail names or conclusions.
 - If a section has nothing in the transcript, set it to "Nothing recorded." Do not pad it out. An empty section is information; a fabricated one is a liability.
 - Where the transcript is garbled but the meaning is clear, use the meaning. Where the meaning is NOT clear, say so briefly, e.g. "(unclear — check the recording)".
-- Keep sailing terminology as the team used it. Do not translate jargon into plain English.
+- Keep sailing jargon as the team used it — do not water it down into generic plain English.
 - Bullet points ("- " each). Terse. This is a working note, not prose.
-- Do not attribute statements to individuals — the transcript has no reliable speaker labels.`
+- Don't guess who *said* what (the transcript has no reliable speaker labels). But DO keep a crew member's name when the content is clearly about them — a job, strength or action point (e.g. "Marc to focus on tactics and mainsail", "Jan to turn faster in the inside gybe").`
 
 const CONTEXT = `The transcript is from a live, in-person sailing-team meeting of several people. It is a raw machine transcript: no speaker labels, it will contain mishearings (especially of sail names, boat parts and numbers), and people talk over each other. Work with what is actually there.`
 
@@ -53,7 +54,8 @@ ${RULES}`,
 ${CONTEXT}
 
 Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key, a markdown bullet string:
-  "learnings"  — The full working note from the debrief. Capture what happened and what was learned this session (what worked, what didn't, manoeuvres, starts, tactics, conditions, mistakes and their causes) and the concrete focus points to carry into the next session. One cohesive note.
+  "learnings"  — The full working note from the debrief. Capture what happened and what was learned this session — what worked, what did not, and WHY — across manoeuvres (sets/hoists, gybes, drops, peels), starts, tactics and communication, boat handling and conditions, plus the concrete focus points to carry into the next session.
+  Organise the note under short thematic sub-headers in bold (e.g. "**Upwind**", "**Sets & hoists**", "**Gybes**", "**Drops**", "**Peels**", "**Starts**", "**Tactics & communication**", "**Conditions**", "**Finish & admin**", "**Logistics**", "**Focus next session**") — but ONLY include a sub-header when the transcript actually has content for it, and under each write terse "- " bullets. Do not force material into a header it does not fit.
 
 ${RULES}`,
   },
