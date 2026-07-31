@@ -10,7 +10,7 @@
 // POST { transcript: string, mode?: "speedteam"|"debrief"|"planning" }
 //   → the mode's field keys, each a markdown string. Defaults to "speedteam".
 import { NextRequest, NextResponse } from 'next/server'
-import { glossaryBlock } from '../../../../lib/debriefGlossary'
+import { glossaryBlock, withOverride, type Glossary } from '../../../../lib/debriefGlossary'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -127,7 +127,7 @@ export async function POST(req: NextRequest) {
   if (!KEY || !BASE) {
     return NextResponse.json({ error: 'SCALEWAY_AI_API_KEY / SCALEWAY_AI_BASE_URL not configured' }, { status: 503 })
   }
-  const data = (await req.json().catch(() => null)) as { transcript?: string; mode?: string } | null
+  const data = (await req.json().catch(() => null)) as { transcript?: string; mode?: string; glossary?: Partial<Glossary> } | null
   const transcript = data?.transcript?.trim()
   if (!transcript) return NextResponse.json({ error: '"transcript" is required' }, { status: 400 })
   const mode = MODES[data?.mode || 'speedteam'] || MODES.speedteam
@@ -145,7 +145,7 @@ export async function POST(req: NextRequest) {
         temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: `${glossaryBlock()}\n\n${mode.prompt}` },
+          { role: 'system', content: `${glossaryBlock(withOverride(data?.glossary))}\n\n${mode.prompt}` },
           { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` },
         ],
       }),

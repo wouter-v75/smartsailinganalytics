@@ -432,7 +432,7 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
           )}
 
           {/* PLAN + TIMINGS — TL3+ edit, all view (one fetch via PlanConditions) */}
-          <PlanConditions base={base} date={date} canEdit={canEditPlan} isMobile={isMobile} />
+          <PlanConditions base={base} date={date} canEdit={canEditPlan} isMobile={isMobile} teamId={teamId} boatId={boatId} />
         </div>
 
         <BoatConfigDayCard
@@ -533,7 +533,7 @@ function EditableTextBlock({ label, value, canEdit, placeholder, onSave, accent 
 
 // PLAN + TIMINGS — single fetch, two view/edit blocks. TL3+ edit; everyone
 // (TL1+ / consultant-in-window) views via the same RLS-gated GET.
-function PlanConditions({ base, date, canEdit, isMobile }) {
+function PlanConditions({ base, date, canEdit, isMobile, teamId, boatId }) {
   const [plan, setPlan] = useState('')
   const [timings, setTimings] = useState('')
   const [loaded, setLoaded] = useState(false)
@@ -561,6 +561,7 @@ function PlanConditions({ base, date, canEdit, isMobile }) {
     <>
       <AudioBrief
         mode="planning"
+        teamId={teamId} boatId={boatId}
         fields={[{ key: 'timings', label: 'Timings' }, { key: 'plan', label: 'Plan' }]}
         canEdit={canEdit}
         isMobile={isMobile}
@@ -1262,6 +1263,7 @@ function NotesCard({ title, aiMode, fields, showDocuments, documentsScope = 'deb
       {aiMode && (
         <AudioBrief
           mode={aiMode}
+          teamId={teamId} boatId={boatId}
           fields={fields}
           canEdit={canEdit}
           isMobile={isMobile}

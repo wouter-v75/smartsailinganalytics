@@ -7,7 +7,7 @@
 // runAudioBrief(file, mode, { onStage }) → { fields, transcript }
 //   onStage(stage, pct)  stage ∈ 'compress' | 'transcribe' | 'summarise' | 'done'
 
-import { whisperPrompt } from './debriefGlossary'
+import { whisperPrompt, withOverride } from './debriefGlossary'
 
 const OUT_RATE = 16000
 const FRAME = 1152
@@ -112,9 +112,9 @@ async function compressToMp3Chunks(file, { kbps = 48, chunkSeconds = 300, onProg
   return { chunks, durationSec }
 }
 
-async function transcribeChunks(chunks, onProgress) {
+async function transcribeChunks(chunks, onProgress, glossaryExtra) {
   const texts = []
-  const bias = whisperPrompt() // team glossary → Whisper spells the jargon right
+  const bias = whisperPrompt(withOverride(glossaryExtra)) // team glossary (+ live sail inventory) → Whisper spells the jargon right
   let prevTail = ''
   for (let i = 0; i < chunks.length; i++) {
     const fd = new FormData()
@@ -135,11 +135,11 @@ async function transcribeChunks(chunks, onProgress) {
   return texts.join('\n')
 }
 
-async function summarise(transcript, mode) {
+async function summarise(transcript, mode, glossaryExtra) {
   const res = await fetch('/api/ai/debrief-summary', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ transcript, mode }),
+    body: JSON.stringify({ transcript, mode, glossary: glossaryExtra || undefined }),
   })
   const j = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(j.error || 'summary failed')
@@ -147,16 +147,16 @@ async function summarise(transcript, mode) {
   return j
 }
 
-export async function runAudioBrief(file, mode, { onStage } = {}) {
+export async function runAudioBrief(file, mode, { onStage, glossaryExtra } = {}) {
   const stage = (s, p) => { if (onStage) onStage(s, p) }
   stage('compress', 0)
   const { chunks } = await compressToMp3Chunks(file, { onProgress: (p) => stage('compress', p) })
   if (!chunks.length) throw new Error('no audio decoded from that file')
   stage('transcribe', 0)
-  const transcript = await transcribeChunks(chunks, (p) => stage('transcribe', p))
+  const transcript = await transcribeChunks(chunks, (p) => stage('transcribe', p), glossaryExtra)
   if (!transcript.trim()) throw new Error('transcript came back empty — was anything recorded?')
   stage('summarise', 0)
-  const fields = await summarise(transcript, mode)
+  const fields = await summarise(transcript, mode, glossaryExtra)
   stage('done', 1)
   return { fields, transcript }
 }

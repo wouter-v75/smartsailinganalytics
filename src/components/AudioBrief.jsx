@@ -4,7 +4,7 @@
 // so the heavy compression runs on a real CPU; and editors-only (canEdit).
 //
 // Props: { mode, fields:[{key,label}], onSaved:(values)=>Promise, canEdit, isMobile }
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { runAudioBrief } from '../lib/debriefAudio'
 
 const STAGE = { compress: 'Compressing audio', transcribe: 'Transcribing', summarise: 'Summarising', done: 'Done' }
@@ -12,7 +12,7 @@ const STAGE = { compress: 'Compressing audio', transcribe: 'Transcribing', summa
 const btn = { background: '#0F2030', border: '1px solid #1E3A5A', color: '#CBD5E1', borderRadius: 8, padding: '7px 12px', fontSize: 12, cursor: 'pointer' }
 const ta = { width: '100%', background: '#0A1929', border: '1px solid #1E3A5A', color: '#E2E8F0', borderRadius: 8, padding: 8, fontSize: 13, fontFamily: 'inherit', resize: 'vertical', boxSizing: 'border-box' }
 
-export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile }) {
+export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, teamId, boatId }) {
   const inputRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [stage, setStage] = useState(null)
@@ -22,6 +22,26 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile })
   const [showTx, setShowTx] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
+  const [glossaryExtra, setGlossaryExtra] = useState(null)
+
+  // Pull the boat's live sail inventory → feeds the actual wardrobe into the
+  // Whisper bias + summary glossary, so sail names self-maintain from the Boat tab.
+  useEffect(() => {
+    if (!teamId || !boatId) return
+    let live = true
+    fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`)
+      .then((r) => (r.ok ? r.json() : { sails: [] }))
+      .then((j) => {
+        if (!live) return
+        const names = Array.from(new Set((j.sails || [])
+          .filter((s) => !s.retired)
+          .map((s) => String(s.name || '').replace(/[_-]\d{2,4}$/, '').replace(/_/g, ' ').trim())
+          .filter(Boolean)))
+        setGlossaryExtra(names.length ? { sails: names } : null)
+      })
+      .catch(() => {})
+    return () => { live = false }
+  }, [teamId, boatId])
 
   // Desktop + editors only. On mobile the button simply isn't shown.
   if (isMobile || !canEdit) return null
@@ -34,6 +54,7 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile })
     try {
       const { fields: out, transcript: tx } = await runAudioBrief(file, mode, {
         onStage: (s, p) => { setStage(s); setPct(p || 0) },
+        glossaryExtra,
       })
       setResult(out); setTranscript(tx)
     } catch (ex) {
