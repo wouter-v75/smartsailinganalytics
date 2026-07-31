@@ -1119,6 +1119,9 @@ function buildDeck(P, d) {
     ? bulletRuns(noteItems, { color: INK, size: 15, spaceAfter: 7 })
     : [{ text: 'Local effects / hazards — edit. (AI notes unavailable.)', options: { color: GREY, fontFace: FONT, fontSize: 15 } }],
     { x: M, y: 7.4, w: CW, h: 5.0, fontFace: FONT, valign: 'top' })
+
+  // ── 11) Crew kit — apparel guide (fun page at the end) ────────────────────
+  buildApparelSlide(pptx, d)
   return pptx
 }
 
@@ -1135,6 +1138,399 @@ function summaryNotesBlock(typeOfDay, ai, dayLabel) {
   for (const [k, v] of items) if (v) lines.push(`${k}: ${v}`)
   if (!lines.length) return null
   return `Forecast summary${dayLabel ? ` \u2014 ${dayLabel}` : ''}\n${lines.join('\n')}`
+}
+
+// ── Crew kit / apparel guide ─────────────────────────────────────────────────
+// Wind-first tiers (you dress for the GUSTS); air temp + cloud only modify it.
+// NOTE: North Sails MODEL PHOTOGRAPHY is intentionally NOT embedded (their IP).
+// We link to their gear and leave a hook (d.apparel.images) for licensed assets.
+const KIT_TIERS = [
+  { key: 'beach',  name: 'Beach mode', wind: '< 5 kn & hot', chip: 'FBBF24', items: ['Swimwear / boardies', 'Rash vest or bikini top', 'Cap, sunnies, reef-safe SPF'] },
+  { key: 'light',  name: 'Light',      wind: '< 9 kn',       chip: '38BDF8', items: ['Shorts', 'Technical tee', 'Cap', 'Sunnies + SPF if sunny'] },
+  { key: 'medium', name: 'Medium',     wind: '9–15 kn', chip: '22C55E', items: ['Shorts / lightweight trousers', 'Tee or long-sleeve', '+ Gilet', 'Cap'] },
+  { key: 'fresh',  name: 'Fresh',      wind: '15–20 kn',chip: 'F59E0B', items: ['+ Spray top', '+ Foul-weather trousers (salopettes)', 'Mid-layer', 'Gloves'] },
+  { key: 'heavy',  name: 'Heavy',      wind: '> 20 kn',      chip: 'EF4444', items: ['Full foul-weather smock / jacket', 'Salopettes', 'Warm mid-layer', 'Gloves, beanie, boots'] },
+]
+
+function apparelKit(a) {
+  const w = a?.windMean ?? a?.windPeak ?? null      // tier keys on the representative TWS
+  const tMax = a?.tMaxC, tMorn = a?.tMornC
+  const hot = tMax != null && tMax >= 25
+  const cool = tMax != null && tMax < 15
+  const coldMorn = tMorn != null && tMorn < 14
+  const sunny = a?.cloudPct != null ? a.cloudPct < 40 : null
+  let key
+  if (w == null) key = 'medium'
+  else if (w < 6 && hot) key = 'beach'
+  else if (w < 9) key = 'light'
+  else if (w < 15) key = 'medium'
+  else if (w < 20) key = 'fresh'
+  else key = 'heavy'
+  const tier = KIT_TIERS.find((t) => t.key === key) || KIT_TIERS[2]
+  const extras = []
+  if (coldMorn && key !== 'beach') extras.push('Wooly hat for the morning')
+  if (cool && (key === 'light' || key === 'medium')) extras.push('Extra mid-layer — cooler than the wind suggests')
+  return { tier, key, extras, w, sunny, coolMorn: coldMorn }
+}
+
+function venueRegion(lat, lon) {
+  if (lat == null || lon == null) return 'other'
+  if (lat >= 49 && lat <= 61 && lon >= -11 && lon <= 2) return 'uk'
+  if (lat >= 35 && lat <= 45 && lon >= -6 && lon <= 20) return 'med'
+  return 'other'
+}
+
+// Best-effort daytime weather at point 1: air temp (morning min / day max), cloud,
+// a sky class (sunny/cloud/overcast/showers/rain from precip + WMO code) and SST.
+async function fetchApparelWx(lat, lon, tz) {
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m,cloud_cover,precipitation,weather_code&timezone=${encodeURIComponent(tz)}&forecast_days=1`
+    const res = await fetch(url, { signal: AbortSignal.timeout?.(6000) }); if (!res.ok) return null
+    const j = await res.json(); const h = j.hourly; if (!h?.time) return null
+    let tMorn = null, tMax = null, cSum = 0, cN = 0, pSum = 0, wcMax = 0
+    for (let i = 0; i < h.time.length; i++) {
+      const hr = Number(h.time[i].slice(11, 13)); const t = h.temperature_2m?.[i]; const c = h.cloud_cover?.[i]
+      if (t != null) { if (hr >= 6 && hr <= 10) tMorn = tMorn == null ? t : Math.min(tMorn, t); if (hr >= 11 && hr <= 18) tMax = tMax == null ? t : Math.max(tMax, t) }
+      if (hr >= 10 && hr <= 16) {
+        if (c != null) { cSum += c; cN++ }
+        const pr = h.precipitation?.[i]; const wc = h.weather_code?.[i]
+        if (pr != null) pSum += pr; if (wc != null && wc > wcMax) wcMax = wc
+      }
+    }
+    const cloudMean = cN ? cSum / cN : null
+    let sky = null
+    if (pSum >= 1.5 || (wcMax >= 61 && wcMax <= 67) || wcMax >= 95) sky = 'rain'
+    else if (pSum >= 0.2 || (wcMax >= 51 && wcMax <= 57) || (wcMax >= 80 && wcMax <= 82)) sky = 'showers'
+    else if (cloudMean != null && cloudMean >= 80) sky = 'overcast'
+    else if (cloudMean != null && cloudMean >= 40) sky = 'cloud'
+    else if (cloudMean != null) sky = 'sunny'
+    let seaC = null
+    try {
+      const mu = `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lon}&hourly=sea_surface_temperature&timezone=${encodeURIComponent(tz)}&forecast_days=1`
+      const mr = await fetch(mu, { signal: AbortSignal.timeout?.(6000) })
+      if (mr.ok) { const mj = await mr.json(); const arr = (mj.hourly?.sea_surface_temperature || []).filter((x) => x != null); if (arr.length) seaC = arr.reduce((x, y) => x + y, 0) / arr.length }
+    } catch { /* */ }
+    return { tMornC: tMorn, tMaxC: tMax, cloudPct: cloudMean, sky, seaC }
+  } catch { return null }
+}
+
+// Real North Sails product imagery (owner owns the brand). Mix of men's/women's.
+const NS = {
+  tshirt:   'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/692972_0101_msfront1.jpg?v=1709630311',
+  vestM:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M039_0790_msfront1.jpg?v=1747391032',
+  vestW:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27W039_0790_msfront1.jpg?v=1747391032',
+  wJacket:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27W013_0790_msfront1_ad429d43-08d0-43a5-bc4c-5fb517d7dea2.jpg?v=1726758863',
+  wSalo:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27W411_0790_msfront1_29af1daf-0fee-4608-bf8b-81b5780cebcd.jpg?v=1726758890',
+  wTee:     'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27SW57_0101_det1.jpg?v=1750845530',
+  wPolo:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27SW58_0101_det1.jpg?v=1750845861',
+  wBikini:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/078119_C001_msfront1.jpg?v=1769533017',
+  wBikini2: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/078131_0231_msfront1.jpg?v=1769533074',
+  wSwim:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/078114_0805_msfront1.jpg?v=1769533083',
+  wSwim2:   'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/078076_0231_msfront1.jpg?v=1769533074',
+  wBlouse:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/065412_C001_msfront1.jpg?v=1769533082',
+  mSwim:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/675048_C001_msfront1.jpg?v=1769533295',
+  quilt:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M084_0802_msfront1.jpg?v=1726757340',
+  highloft: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M017_0790_psfront1.jpg?v=1726757852',
+  offSalo:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M440_0470_msfront1.jpg?v=1726758514',
+  insSalo:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M450_0235_psfront1.jpg?v=1757495843',
+  soJacket: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M028_0470_msfront1_9bcfa2c9-8d23-4286-9ffa-d31535c0ea76.jpg?v=1726758296',
+  soSmock:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M020_0235_msfront1_383bbcb7-1790-4f12-b592-ff9e0e8c6222.jpg?v=1726758253',
+  oceanSalo:'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M420_0470_msfront1_3e18d378-e46c-4ba6-a313-ac73e02f02e3.jpg?v=1726758473',
+  atlSmock: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M024_0235_msfront1_383bbcb7-1790-4f12-b592-ff9e0e8c6222.jpg?v=1726758253',
+  // accessories (headwear / footwear) — matched to the weather feel
+  cap:      'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/623351_0802_psfront1.jpg?v=1756214266',
+  capSun:   'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/420025_0101_psfront1.jpg?v=1775573072',
+  capLinen: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/623416_0124_msfront1.jpg?v=1769533006',
+  beanie:   'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/623367_0935_psfront1.jpg?v=1752143107',
+  beanie2:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/623369_0747_psfront1.jpg?v=1752143170',
+  beanieCk: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/021650_0105_psfront1.jpg?v=1752143125',
+  shoe:     'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/051127_Q047_psfront1.jpg?v=1752650449',
+  shoe2:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/651175_N001_psfront1.jpg?v=1752650475',
+  // extra technical tops / mid-layers for variety
+  quiltJkt: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M080_0802_msfront1.jpg?v=1726757341',
+  gpLS:     'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/27M295_0101_msfront1.jpg?v=1726758441',
+  lsUV:     'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/693119_0101_msfront1.jpg?v=1769533293',
+  teeTech:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/693156_0101_msfront1.jpg?v=1769533433',
+  teeLogo:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/692990_0101_msfront1.jpg?v=1769533410',
+  teeJersey:'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/693061_0101_psfront1_8b2c81be-f65b-4f18-9f98-eb0792a2f969.jpg?v=1773672640',
+  // shore / lifestyle wear — for the weather 'feel'
+  polo:     'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/692451_0101_msfront1.jpg?v=1773248539',
+  poloCool: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/692482_0101_msfront1_35ab2518-2e81-452a-81b6-cebdc5ebb591.jpg?v=1773248500',
+  poloUV:   'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/692717_0101_msfront1.jpg?v=1769533299',
+  poloNeon: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/692668_0101_msfront1.jpg?v=1769533360',
+  linen:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/664437_0124_msfront1.jpg?v=1769533328',
+  shorts:   'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/673409_0101_msfront1.jpg?v=1769533378',
+  shorts2:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/673420_0124_msfront1.jpg?v=1769533232',
+  shorts3:  'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/673146_0101_msfront1_e2b423d5-aef0-4374-bc11-93a7fb31fe80.jpg?v=1773248546',
+  sweat:    'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/691148_0205_msfront1.jpg?v=1769533346',
+  sweatArc: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/691287_0105_msfront1.jpg?v=1769533219',
+  sweatTerry:'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/091240_0105_msfront1.jpg?v=1769533149',
+  sweatZip: 'https://cdn.shopify.com/s/files/1/0688/6549/1220/files/792097_0790_msfront1.jpg?v=1769533213',
+}
+// Ordered head -> top -> bottom -> feet so the collage reads top-down, with the
+// headwear matched to the weather feel (sun cap on a champagne day, beanie when
+// it's a cold morning). Each item carries a body `zone` used for the layout.
+// Weather-matched kit list ordered head -> top -> bottom -> feet, drawn from
+// gender-tagged pools and rotated by a seed (wind+air+sea) for variety. Built as
+// head + three women's pieces + one men's piece so WOMEN ARE >=60% of the images,
+// with enforceWomen() as a hard backstop. Warm days lean on women's tee/polo and a
+// shore short; cold days on the women's foul-weather kit.
+function enforceWomen(items, minFrac, wpool) {
+  const total = items.length; if (!total) return items
+  const need = Math.ceil(total * minFrac)
+  const wcount = () => items.filter((i) => i.g === 'w').length
+  const used = new Set(items.map((i) => i.url))
+  const spare = wpool.filter((u) => !used.has(u))
+  const order = items.map((it, idx) => ({ it, idx })).filter((o) => o.it.g !== 'w')
+    .sort((a, b) => (({ m: 0, u: 1 }[a.it.g] ?? 2) - ({ m: 0, u: 1 }[b.it.g] ?? 2)) || ((a.it.zone === 'feet' ? 0 : 1) - (b.it.zone === 'feet' ? 0 : 1)))
+  let si = 0
+  while (wcount() < need && si < order.length && spare.length) {
+    const idx = order[si].idx; const url = spare.shift()
+    items[idx] = { url, zone: items[idx].zone, g: 'w' }; used.add(url); si++
+  }
+  return items
+}
+function apparelImageList(k, a) {
+  const seed = Math.abs(Math.round((a?.windMean ?? 0) + (a?.tMaxC ?? 0) + (a?.seaC ?? 0)))
+  const pick = (arr, salt) => arr[(seed + salt) % arr.length]
+  const distinct = (arr, count, salt) => { const out = [], seen = new Set(); let i = 0; while (out.length < count && i < arr.length * 3) { const u = arr[(seed + salt + i) % arr.length]; if (!seen.has(u)) { seen.add(u); out.push(u) } i++ } return out }
+  const sunny = a?.sky === 'sunny' || a?.sky === 'cloud' || k.sunny === true
+  const warm = (a?.tMaxC ?? 0) >= 18
+  const W = (url, zone) => ({ url, zone, g: 'w' })
+  const Mn = (url, zone) => ({ url, zone, g: 'm' })
+  const U = (url, zone) => ({ url, zone, g: 'u' })
+  // unisex accessories (no visible model)
+  const headPool = (k.key === 'heavy' || (k.coolMorn && !sunny)) ? [NS.beanie, NS.beanie2, NS.beanieCk]
+    : sunny ? [NS.capSun, NS.capLinen, NS.cap] : [NS.cap, NS.capLinen, NS.capSun]
+  const head = U(pick(headPool, 0), 'head')
+  // women's pools (three on-model: gilet, jacket, salopette; tee + polo packshots)
+  const wBeach = [NS.wBikini, NS.wSwim, NS.wBikini2, NS.wSwim2]
+  const wWarm = [NS.wBlouse, NS.wTee, NS.wPolo, NS.vestW]
+  const wCool = [NS.vestW, NS.wJacket, NS.wBlouse, NS.wPolo, NS.wTee]
+  const wAll = [NS.wBlouse, NS.wTee, NS.wPolo, NS.vestW, NS.wJacket, NS.wSalo, NS.wBikini, NS.wSwim]
+  let women, man
+  switch (k.key) {
+    case 'beach':
+      women = distinct(wBeach, 3, 2).map((u) => W(u, 'top'))
+      man = Mn(pick([NS.mSwim, NS.shorts, NS.shorts2], 3), 'bottom')
+      break
+    case 'light':
+      women = distinct(wWarm, 3, 2).map((u) => W(u, 'top'))
+      man = warm ? Mn(pick([NS.shorts, NS.shorts2, NS.shorts3], 3), 'bottom') : Mn(pick([NS.gpLS, NS.lsUV, NS.highloft], 4), 'top')
+      break
+    case 'medium':
+      women = distinct(wCool, 3, 5).map((u) => W(u, 'top'))
+      man = Mn(pick([NS.vestM, NS.quilt, NS.highloft, NS.quiltJkt], 6), 'top')
+      break
+    case 'fresh':
+      women = [W(NS.wJacket, 'top'), W(NS.vestW, 'top'), W(NS.wSalo, 'bottom')]
+      man = Mn(pick([NS.soSmock, NS.atlSmock], 7), 'top')
+      break
+    case 'heavy':
+      women = [W(NS.wJacket, 'top'), W(NS.vestW, 'top'), W(NS.wSalo, 'bottom')]
+      man = Mn(pick([NS.soJacket, NS.atlSmock], 7), 'top')
+      break
+    default:
+      women = distinct(wCool, 3, 5).map((u) => W(u, 'top'))
+      man = Mn(pick([NS.vestM, NS.quilt], 6), 'top')
+  }
+  let items = [head, ...women, man]
+  const seen = new Set(); items = items.filter((it) => it && !seen.has(it.url) && seen.add(it.url))
+  items = enforceWomen(items, 0.6, wAll)
+  const rank = { head: 0, top: 1, bottom: 2, feet: 3 }
+  items.sort((x, y) => (rank[x.zone] ?? 1) - (rank[y.zone] ?? 1))
+  return items.slice(0, 6)
+}
+
+// Inline remote apparel imagery as data URLs at generate time, in the user's
+// browser (which can reach the CDN with permissive CORS). addImage({path:url})
+// fetches lazily during pptx.write() and drops silently on any CORS/latency
+// error, so bake the bytes in up front instead — reliable, and offline-safe.
+async function imgToDataUrl(url, ms = 7000) {
+  try {
+    const res = await fetch(url, { mode: 'cors', credentials: 'omit', signal: AbortSignal.timeout?.(ms) })
+    if (!res.ok) return null
+    const blob = await res.blob()
+    if (!blob || !/^image\//.test(blob.type)) return null
+    return await new Promise((resolve) => {
+      const fr = new FileReader()
+      fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : null)
+      fr.onerror = () => resolve(null)
+      fr.readAsDataURL(blob)
+    })
+  } catch { return null }
+}
+function dataUrlAspect(dataUrl, ms = 4000) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image()
+      const to = setTimeout(() => resolve(null), ms)
+      img.onload = () => { clearTimeout(to); resolve(img.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null) }
+      img.onerror = () => { clearTimeout(to); resolve(null) }
+      img.src = dataUrl
+    } catch { resolve(null) }
+  })
+}
+async function resolveApparelImages(list) {
+  const out = await Promise.all((list || []).map(async (im) => {
+    const data = await imgToDataUrl(im.url)
+    if (!data) return null
+    const ar = await dataUrlAspect(data)
+    return { url: data, label: im.label, zone: im.zone || 'top', ar: ar || 0.8 }
+  }))
+  return out.filter(Boolean)
+}
+
+const SKY_PHRASE = { sunny: 'plenty of sunshine', cloud: 'sun and cloud', overcast: 'grey, overcast skies', showers: 'showers around', rain: 'rain likely' }
+
+function apparelIntro(a, k) {
+  const rC = (c) => Math.round(c)
+  const lines = []
+  if (a.tMornC != null && a.tMaxC != null) {
+    const feel = k.coolMorn ? 'a touch cooler' : 'relatively mild'
+    const sky = a.sky && SKY_PHRASE[a.sky] ? `, with ${SKY_PHRASE[a.sky]}` : ''
+    lines.push(`Temperatures are ${feel} this morning (${rC(a.tMornC)} °C), climbing to ${rC(a.tMaxC)} °C this afternoon${sky}.`)
+  } else if (a.tMaxC != null || a.tMornC != null) {
+    lines.push(`Air temperature around ${rC(a.tMaxC ?? a.tMornC)} °C.`)
+  }
+  if (a.seaC != null) lines.push(`Sea-water temperature ${rC(a.seaC)} °C.`)
+  return lines
+}
+
+const KIT_QUIPS = {
+  nowind: [
+    'Might as well take the morning off for golf — there’s no wind coming.',
+    'Glass-out. Bring a book, a brolly for the sun, and the patience of a saint.',
+    'A drifter’s special — weight to leeward, whisper, and pray for pressure.',
+  ],
+  beach: [
+    'This looks like a beach day to me.',
+    'Sun’s out — the only spray today is factor 30. Bikinis over boots.',
+    'More lilo than layline. Pack the snorkel, not the smock.',
+  ],
+  light: [
+    'Light and lovely — shorts, shades and a bit of patience.',
+    'One for the light-air ninjas: sit still, stay smooth.',
+    'Barely enough to fill a kite. Keep it quiet, keep it moving.',
+  ],
+  medium: [
+    'Champagne sailing — gilet on, grin on.',
+    'Goldilocks breeze: not too much, not too little, just right.',
+    'Proper sailing weather — the gilet is your best friend today.',
+  ],
+  fresh: [
+    'Sporty and fun day ahead — bow team, bring your snorkels, it’s going to be wet.',
+    'Spray tops on: the front of the boat is about to get a rinse.',
+    'Fresh and physical — hike hard, hold on, have fun.',
+  ],
+  heavy: [
+    'Full send, full foulies, full commitment.',
+    'It’s honking — beanie, boots and bravado. Send it.',
+    'Big breeze, bigger grins. Smocks on, game faces on.',
+  ],
+}
+const VENUE_QUIPS = {
+  uk_rain: [
+    'Typical British summer — brollies up, chins up.',
+    'Rain in England in July? Groundbreaking. Smocks on.',
+  ],
+  uk_grey: [
+    'Classic grey Solent special — layers, not sunglasses.',
+    'Fifty shades of Solent grey. Bring the flask.',
+  ],
+  away_rain: [
+    'We didn’t come all this way to sit in the rain — smocks on, send it.',
+    'Paid for sunshine, got a rinse. Suit up and grin anyway.',
+  ],
+}
+function pickFrom(arr, a) {
+  const seed = Math.abs(Math.round((a.windMean ?? 0) + (a.tMaxC ?? 0) + (a.seaC ?? 0)))
+  return arr[seed % arr.length]
+}
+function pickQuip(k, a) {
+  const wm = a.windMean ?? a.windPeak ?? null
+  const wet = a.sky === 'rain' || a.sky === 'showers'
+  if (wet) return pickFrom(a.region === 'uk' ? VENUE_QUIPS.uk_rain : VENUE_QUIPS.away_rain, a)
+  if (a.sky === 'overcast' && a.region === 'uk') return pickFrom(VENUE_QUIPS.uk_grey, a)
+  let bucket = k.key
+  if (k.key === 'light' && wm != null && wm < 5) bucket = 'nowind'
+  return pickFrom(KIT_QUIPS[bucket] || KIT_QUIPS.medium, a)
+}
+
+function buildApparelSlide(pptx, d) {
+  const a = d.apparel || {}
+  const k = apparelKit(a)
+  const s = pptx.addSlide()
+  s.addText('Apparel guidance', { x: M, y: 0.5, w: CW, h: 0.8, align: 'center', bold: true, fontFace: FONT, fontSize: 30, color: NAVY })
+  const intro = apparelIntro(a, k)
+  let y = 1.5
+  intro.forEach((ln, i) => { s.addText(ln, { x: M + 0.2, y, w: CW - 0.4, h: 0.6, fontFace: FONT, fontSize: 14, color: INK, valign: 'top' }); y += (i === 0 ? 0.72 : 0.5) })
+  // the fun bit — a weather/venue-matched one-liner
+  const quip = pickQuip(k, a)
+  s.addShape('roundRect', { x: M + 0.2, y: y + 0.02, w: CW - 0.4, h: 0.62, fill: { color: 'F2F4F7' }, line: { color: k.tier.chip, width: 1 }, rectRadius: 0.06 })
+  s.addText(`“${quip}”`, { x: M + 0.4, y: y + 0.04, w: CW - 0.8, h: 0.58, italic: true, bold: true, color: NAVY, fontFace: FONT, fontSize: 14, valign: 'middle' })
+  y += 0.82
+  // coloured "type of day" line
+  s.addText([
+    { text: 'Today: ', options: { color: GREY, fontFace: FONT, fontSize: 13 } },
+    { text: `${k.tier.name}`, options: { bold: true, color: k.tier.chip, fontFace: FONT, fontSize: 15 } },
+    { text: `   ${[...k.tier.items, ...k.extras].join(' · ')}`, options: { color: INK, fontFace: FONT, fontSize: 11 } },
+  ], { x: M + 0.2, y, w: CW - 0.4, h: 0.55, fontFace: FONT, valign: 'top' })
+  const topY = y + 0.85            // clear gap so imagery never overlaps the text
+
+  const imgs = Array.isArray(a.images) ? a.images : []
+  if (imgs.length) {
+    // Top-down collage: one row per body zone (head -> top -> bottom -> feet).
+    // Each image is drawn at its own aspect ratio inside a snug white frame, so
+    // there is no letterbox padding (that was the source of the dark side bars).
+    const ZONES = ['head', 'top', 'bottom', 'feet']
+    const groups = ZONES.map((z) => imgs.filter((im) => im.zone === z)).filter((g) => g.length)
+    const areaTop = topY, areaBot = FOOT - 0.16, rowGap = 0.18, labelH = 0.04
+    const nRows = Math.max(groups.length, 1)
+    const rowH = (areaBot - areaTop - rowGap * (nRows - 1)) / nRows
+    let ry = areaTop
+    groups.forEach((group) => {
+      const imgMax = Math.min(rowH - labelH, 2.55)
+      const gap = 0.24
+      let items = group.map((im) => { const h = imgMax; return { im, w: h * (im.ar || 0.8), h } })
+      let totalW = items.reduce((sum, it) => sum + it.w, 0) + gap * (items.length - 1)
+      const maxRowW = PW - 0.7
+      if (totalW > maxRowW) { const f = maxRowW / totalW; items = items.map((it) => ({ ...it, w: it.w * f, h: it.h * f })); totalW = items.reduce((sum, it) => sum + it.w, 0) + gap * (items.length - 1) }
+      let cx = (PW - totalW) / 2
+      items.forEach(({ im, w, h }) => {
+        const fy = ry + (imgMax - h) / 2
+        s.addShape('roundRect', { x: cx - 0.05, y: fy - 0.05, w: w + 0.10, h: h + 0.10, fill: { color: 'FFFFFF' }, line: { color: 'E6EAF0', width: 1 }, rectRadius: 0.05 })
+        const _isData = typeof im.url === 'string' && im.url.startsWith('data:')
+        try { s.addImage({ [_isData ? 'data' : 'path']: im.url, x: cx, y: fy, w, h }) } catch { /* */ }
+        cx += w + gap
+      })
+      ry += rowH + rowGap
+    })
+  } else {
+    s.addText('Wear today', { x: M, y: topY, w: CW, h: 0.3, bold: true, color: NAVY, fontFace: FONT, fontSize: 15 })
+    const kitItems = [...k.tier.items, ...k.extras.map((e) => `+ ${e}`)]
+    s.addText(kitItems.map((t) => ({ text: t, options: { bullet: true, color: INK, fontFace: FONT, fontSize: 15, breakLine: true, paraSpaceAfter: 5 } })),
+      { x: M + 0.1, y: topY + 0.4, w: CW * 0.55, h: 3.6, valign: 'top' })
+    const lx = M + CW * 0.58, lw = CW * 0.42
+    s.addText('The ladder', { x: lx, y: topY, w: lw, h: 0.3, bold: true, color: NAVY, fontFace: FONT, fontSize: 15 })
+    const head = [hdrCell('Tier'), hdrCell('Wind'), hdrCell('Key items')]
+    const rows = KIT_TIERS.map((t) => {
+      const on = t.key === k.key
+      return [
+        { text: t.name, options: { fill: { color: on ? t.chip : LIGHTF }, color: on ? 'FFFFFF' : INK, bold: on, fontFace: FONT, fontSize: 11, valign: 'middle' } },
+        txtCell(t.wind, { fontSize: 11, bold: on }),
+        txtCell(t.items.slice(0, 2).join(', '), { fontSize: 10 }),
+      ]
+    })
+    s.addTable([head, ...rows], { x: lx, y: topY + 0.4, w: lw, colW: [lw * 0.30, lw * 0.24, lw * 0.46], rowH: 0.66, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+  }
+
+  s.addText([
+    { text: 'North Sails performance — ', options: { color: GREY, fontFace: FONT, fontSize: 9 } },
+    { text: 'clothing', options: { color: '1F4E79', fontFace: FONT, fontSize: 9, hyperlink: { url: 'https://www.northsails.com/en-uk/collections/performance-clothing' } } },
+    { text: ' · gilets', options: { color: '1F4E79', fontFace: FONT, fontSize: 9, hyperlink: { url: 'https://www.northsails.com/en-uk/collections/sailing-gilets' } } },
+    { text: ' · foul-weather', options: { color: '1F4E79', fontFace: FONT, fontSize: 9, hyperlink: { url: 'https://www.northsails.com/collections/performance-foul-weather-gear' } } },
+  ], { x: M, y: FOOT, w: CW, h: 0.3, fontFace: FONT })
 }
 
 export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, resolvedTz = 'UTC', raceDay = null, boatName = null, eventName = null, teamId = null, boatId = null, targetDate = null }) {
@@ -1265,6 +1661,26 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       // ── executive summary: AI brief grounded in the diagnostics (heuristic fallback) ──
       const morn = dailyRows.find((r) => r.time === '09:00') || dailyRows[0]
       const aftn = dailyRows.find((r) => r.time === '15:00') || dailyRows[dailyRows.length - 1]
+      // Apparel-guide inputs: air temp (morning min / day max) + cloud at point 1,
+      // best-effort; the kit tier keys mainly on wind, temp/cloud only modify it.
+      const apparelWx = await withTimeout(fetchApparelWx(p1lat, p1lon, tz), 6000, null)
+      const _kn = dailyRows.map((r) => r.kn).filter((x) => x != null)
+      const _hi = dailyRows.map((r) => r.hi).filter((x) => x != null)
+      const apparel = {
+        venue: venueName,
+        windMean: _kn.length ? Math.round(_kn.reduce((x, y) => x + y, 0) / _kn.length) : null,
+        windPeak: _hi.length ? Math.round(Math.max(..._hi)) : (peak?.hi ?? null),
+        tMornC: apparelWx?.tMornC ?? null, tMaxC: apparelWx?.tMaxC ?? null, cloudPct: apparelWx?.cloudPct ?? null,
+        seaC: apparelWx?.seaC ?? (readVenueSST(point1) ?? null),
+        region: venueRegion(p1lat, p1lon), sky: apparelWx?.sky ?? null,
+      }
+      // Pre-fetch this tier's North Sails imagery and inline it as data URLs so
+      // the photos reliably bake into the pptx (empty -> the styled kit ladder shows).
+      try {
+        const _ak = apparelKit(apparel)
+        const _imgs = await withTimeout(resolveApparelImages(apparelImageList(_ak, apparel)), 12000, [])
+        apparel.images = _imgs || []
+      } catch { /* ladder fallback */ }
       const typeHeur = (morn && aftn && aftn.kn - morn.kn >= 3) ? 'Sea-breeze day' : 'Gradient day'
       const aiPayload = {
         venue: venueName,
@@ -1298,7 +1714,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
-        wwRows, wwProfileImg,
+        wwRows, wwProfileImg, apparel,
         generalBullets: ['Synoptic setup — edit', 'Sea-breeze timing & strength — edit', 'Local effects / hazards — edit'],
         dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze through the racing window — edit', 'Racing window 10:00–16:00 — edit', 'Local effects — edit'],
       })
