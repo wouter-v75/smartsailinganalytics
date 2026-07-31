@@ -5398,7 +5398,7 @@ function SSAApp(){
   const[activeMem,setActiveMem]=useState(null);
   useEffect(()=>{
     let alive=true;
-    const read=async()=>{ try{ const {data:{user}}=await getBrowserSupabase().auth.getUser(); if(user&&alive) setActiveMem(getActiveMembership(user.id)); }catch{} };
+    const read=async()=>{ try{ const {data:{session}}=await getBrowserSupabase().auth.getSession(); const user=session?.user; if(user&&alive) setActiveMem(getActiveMembership(user.id)); }catch{} };
     read();
     const on=()=>read();
     window.addEventListener('ssa:active-membership-changed',on);
@@ -5457,7 +5457,7 @@ function SSAApp(){
   const authUserRef = useRef(undefined); // undefined = not yet fetched; null = signed out
   const getUserCached = useCallback(async () => {
     if (authUserRef.current !== undefined) return authUserRef.current;
-    try { const { data:{ user } } = await getBrowserSupabase().auth.getUser(); authUserRef.current = user || null; }
+    try { const { data:{ session } } = await getBrowserSupabase().auth.getSession(); authUserRef.current = session?.user || null; }
     catch { authUserRef.current = null; }
     return authUserRef.current;
   }, []);
@@ -6089,7 +6089,8 @@ function SSAApp(){
     async function run(){
       try{
         const supabase=getBrowserSupabase();
-        const {data:{user}}=await supabase.auth.getUser();
+        const {data:{session}}=await supabase.auth.getSession();
+        const user=session?.user;
         if(!user||cancelled) return;
         const m=getActiveMembership(user.id);
         if(!m||!m.team_id||!m.boat_id){ setCampaignCfg(null); return; }

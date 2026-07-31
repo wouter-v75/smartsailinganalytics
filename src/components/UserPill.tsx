@@ -161,24 +161,33 @@ export default function UserPill() {
     let cancelled = false
     ;(async () => {
       const supabase = getBrowserSupabase()
+      // getSession() reads the auth cookie with NO network round-trip; the
+      // middleware already validated/refreshed it server-side on this page load.
+      // getUser() here was an extra ~0.3-0.7s call on the critical path.
       const {
-        data: { user },
-      } = await supabase.auth.getUser()
+        data: { session },
+      } = await supabase.auth.getSession()
+      const user = session?.user
       if (!user) return
 
-      const [{ data: profile }, ms, quotaRes] = await Promise.all([
-        supabase
-          .from('users')
-          .select('id, email, name, global_role')
-          .eq('id', user.id)
-          .maybeSingle(),
+      // Render the name/email as soon as the profile returns — do NOT gate it on
+      // memberships (which chains memberships->teams+boats) or the quota fetch.
+      supabase
+        .from('users')
+        .select('id, email, name, global_role')
+        .eq('id', user.id)
+        .maybeSingle()
+        .then(({ data: profile }) => {
+          if (!cancelled && profile) setMe(profile as MeProfile)
+        })
+
+      const [ms, quotaRes] = await Promise.all([
         loadMemberships(user.id),
         fetch('/api/quota/me')
           .then((r) => (r.ok ? r.json() : null))
           .catch(() => null),
       ])
       if (cancelled) return
-      if (profile) setMe(profile as MeProfile)
       if (quotaRes && typeof quotaRes.bytes_used === 'number') {
         setQuota(quotaRes as QuotaState)
       }
