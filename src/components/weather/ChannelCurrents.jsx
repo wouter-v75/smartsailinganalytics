@@ -21,7 +21,7 @@ const VELOCITY_CSS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity
 
 const KN = 1.94384
 const ZOOM_HIRES = 10            // at/above this zoom, load the 20 km native clip
-const TZ = 'Europe/Paris'        // Cherbourg local time
+const TZ = 'UTC'                 // coverage spans UK + FR coasts — UTC is unambiguous
 
 // Channel current coverage (matches the box bbox) + ~50 km buffer for the gate.
 const COV = { west: -2.5, east: -1.0, south: 49.3, north: 50.8 }
@@ -70,7 +70,7 @@ async function getJSON(url) {
 function localLabel(iso) {
   if (!iso) return ''
   const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`)
-  return d.toLocaleString('en-GB', { weekday: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TZ })
+  return d.toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TZ })
 }
 
 // bilinear sample -> { kt, toward } (compass heading the flow goes TOWARD)
@@ -150,7 +150,36 @@ export default function ChannelCurrents({ point1 = null }) {
     return () => { try { map.remove() } catch { /* */ } mapRef.current = null }
   }, [leafletReady, covered, field])
 
-  useEffect(() => { if (field && idx > field.times.length - 1) setIdx(0) }, [field])
+  // Open on the frame nearest NOW (clamps to the newest frame when the whole
+  // published window is in the past — i.e. stale data). Beats always starting at
+  // frame 0, which showed the OLDEST time in the file.
+  useEffect(() => {
+    const t = field?.times || []
+    if (!t.length) return
+    const ms = (x) => Date.parse(x.endsWith('Z') ? x : `${x}Z`)
+    const now = Date.now()
+    let best = 0, bd = Infinity
+    for (let i = 0; i < t.length; i++) { const d = Math.abs(ms(t[i]) - now); if (d < bd) { bd = d; best = i } }
+    setIdx(best)
+  }, [field])
+
+  // Freshness of the PUBLISHED current product. It's a box product (CMEMS AMM15),
+  // so if that pipeline stalls the app must say so rather than pass off old tide.
+  const freshness = useMemo(() => {
+    const t = field?.times || []
+    if (!t.length) return null
+    const ms = (x) => Date.parse(x.endsWith('Z') ? x : `${x}Z`)
+    const first = ms(t[0]), last = ms(t[t.length - 1])
+    const updated = field?.updated ? Date.parse(field.updated) : null
+    const now = Date.now()
+    const stale = (Number.isFinite(last) && last < now - 3 * 3600e3) || (updated != null && now - updated > 36 * 3600e3)
+    const dfmt = (m) => new Date(m).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', timeZone: TZ })
+    const range = Number.isFinite(first)
+      ? (new Date(first).toDateString() === new Date(last).toDateString() ? dfmt(first) : `${dfmt(first)} \u2192 ${dfmt(last)}`)
+      : ''
+    const upd = updated ? new Date(updated).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: TZ }) : null
+    return { stale, range, upd }
+  }, [field])
 
   // draw/update velocity layer
   useEffect(() => {
@@ -194,9 +223,19 @@ export default function ChannelCurrents({ point1 = null }) {
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 14, fontWeight: 800, color: '#E2E8F0' }}>🌊 Tidal currents — English Channel</span>
         <span style={{ fontSize: 11, color: '#8A97A9' }}>
-          CMEMS AMM15 {field?.res_km ? `· ~${field.res_km} km` : ''} · total current (tide + weather) · times CET/CEST
+          CMEMS AMM15 {field?.res_km ? `· ~${field.res_km} km` : ''} · total current (tide + weather) · times UTC
         </span>
       </div>
+      {freshness && (
+        <div style={{ fontSize: 11, borderRadius: 8,
+          color: freshness.stale ? '#FCA5A5' : '#94A3B8',
+          background: freshness.stale ? '#3B0D0D' : 'transparent',
+          border: freshness.stale ? '1px solid #7F1D1D' : 'none',
+          padding: freshness.stale ? '6px 9px' : 0 }}>
+          {freshness.stale ? '\u26A0 Tidal-current data is STALE' : 'Data'} \u00b7 covers {freshness.range}{freshness.upd ? ` \u00b7 generated ${freshness.upd}` : ''}
+          {freshness.stale ? ' \u2014 the currents product has not refreshed (box pipeline; the live wind is separate). Treat with caution.' : ''}
+        </div>
+      )}
       {err && <div style={{ color: '#F87171', fontSize: 12 }}>{err}</div>}
 
       <div style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', border: '1px solid #1E3A5A' }}>
