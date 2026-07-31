@@ -79,9 +79,24 @@ export async function GET() {
 
 function extractJson(text: string): Record<string, unknown> | null {
   const cleaned = text.replace(/```json|```/g, '').trim()
-  try { return JSON.parse(cleaned) as Record<string, unknown> } catch { /* */ }
+  const tryParse = (s: string): Record<string, unknown> | null => {
+    try { return JSON.parse(s) as Record<string, unknown> } catch { return null }
+  }
+  let r = tryParse(cleaned)
+  if (r) return r
   const a = cleaned.indexOf('{'), b = cleaned.lastIndexOf('}')
-  if (a >= 0 && b > a) { try { return JSON.parse(cleaned.slice(a, b + 1)) as Record<string, unknown> } catch { /* */ } }
+  if (a >= 0 && b > a) { r = tryParse(cleaned.slice(a, b + 1)); if (r) return r }
+  // Repair a truncated object: the model ran out of output tokens mid-string, so the
+  // JSON never closed. From the first '{', close an open string + any unbalanced
+  // braces and parse — salvages the (cut-off) note instead of failing outright.
+  if (a >= 0) {
+    let s = cleaned.slice(a).replace(/\\+$/, '')
+    const quotes = (s.match(/(?<!\\)"/g) || []).length
+    if (quotes % 2 === 1) s += '"'
+    const opens = (s.match(/{/g) || []).length, closes = (s.match(/}/g) || []).length
+    if (opens > closes) s += '}'.repeat(opens - closes)
+    r = tryParse(s); if (r) return r
+  }
   return null
 }
 
@@ -124,7 +139,7 @@ export async function POST(req: NextRequest) {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY}` },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 2000,
+        max_tokens: 4000,
         temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: [
