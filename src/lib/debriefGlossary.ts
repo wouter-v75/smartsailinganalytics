@@ -1,7 +1,8 @@
 // Team sailing glossary — the backbone for debrief transcription + summarisation.
 // ONE editable source, TWO renderings:
 //   whisperPrompt()  → compact term string to bias Whisper (~224-token budget)
-//   glossaryBlock()  → full glossary (incl. Dutch→English) for the Mistral prompt
+//   glossaryBlock()  → full glossary (incl. Dutch→English + known mishearings) for
+//                      the Mistral system prompt.
 //
 // Debriefs are spoken in Dutch but pepper in English sail names, boat parts and
 // manoeuvre names. Whisper mis-hears that low-probability jargon and Mistral then
@@ -9,20 +10,27 @@
 // accuracy fix. Checked-in defaults for now; every function takes an optional
 // Glossary, so a per-team override (extra sails / real crew names) can be merged in
 // later without touching this file.
+//
+// `fixups` are ASR mishearings observed in real debriefs (tagline→tackline,
+// clewline→halyard). Add to this list as new ones surface — it's the cheap, growing
+// eval-driven part of the loop.
 
 export type Glossary = {
   sails: string[]
   manoeuvres: string[]
   parts: string[]
   crew: string[]
-  dutch: [string, string][] // [dutch, english]
+  dutch: [string, string][]  // [dutch, english]
+  fixups: [string, string][] // [wrong (heard), right]
 }
 
 // Starter set — refine `sails` and `crew` with the team's actual inventory + names.
 export const DEFAULT_GLOSSARY: Glossary = {
-  sails: ['mainsail', 'main', 'jib', 'genoa', 'No.1', 'No.3', 'staysail', 'spinnaker', 'kite', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'jib top', 'masthead zero', 'MH0'],
-  manoeuvres: ['tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
-  parts: ['halyard', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'tackline', 'guy', 'afterguy', 'lazy guy', 'sheet', 'spinnaker sheet', 'lazy sheet', 'lead', 'genoa lead', 'jib car', 'pole', 'bowsprit', 'prod', 'dodger', 'pit', 'foredeck', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker'],
+  sails: ['mainsail', 'main', 'jib', 'genoa', 'No.1', 'No.3', 'staysail', 'spinnaker', 'kite', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'jib top', 'masthead zero', 'MH0'],
+  manoeuvres: ['tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
+  // High-value / most-mangled terms first — whisperPrompt() only takes the leading
+  // slice, so keep the ones Whisper fumbles (halyard, tackline, constrictor, luff…) up top.
+  parts: ['halyard', 'tackline', 'constrictor', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew'],
   crew: ['Marc', 'Jan'],
   dutch: [
     ['grootzeil', 'mainsail'], ['fok', 'jib'], ['genua', 'genoa'], ['val', 'halyard'],
@@ -30,7 +38,10 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['overstag', 'tack'], ['gijpen', 'gybe'], ['afvallen', 'bear away'], ['oploeven', 'head up'],
     ['hijsen', 'hoist'], ['strijken', 'drop'], ['loef', 'windward'], ['lij', 'leeward'],
     ['boei', 'mark'], ['stuurboord', 'starboard'], ['bakboord', 'port'], ['rif', 'reef'],
-    ['kluiver', 'jib'], ['bakstag', 'runner'],
+    ['kluiver', 'jib'], ['bakstag', 'runner'], ['bolling', 'draft'], ['bol', 'draft'],
+  ],
+  fixups: [
+    ['tagline', 'tackline'], ['clewline', 'halyard'], ['clew line', 'halyard'],
   ],
 }
 
@@ -44,6 +55,7 @@ export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT
     parts: uniq(base.parts, extra.parts),
     crew: uniq(base.crew, extra.crew),
     dutch: [...base.dutch, ...(extra.dutch || [])],
+    fixups: [...base.fixups, ...(extra.fixups || [])],
   }
 }
 
@@ -52,14 +64,16 @@ export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT
 // it. Callers place it LAST in the prompt (after any prev-chunk tail) so that if the
 // budget is hit, the terms survive over the free-text context.
 export function whisperPrompt(g: Glossary = DEFAULT_GLOSSARY): string {
-  const terms = [...g.crew, ...g.sails, ...g.manoeuvres, ...g.parts.slice(0, 16)]
+  const terms = [...g.crew, ...g.sails, ...g.manoeuvres, ...g.parts.slice(0, 14)]
   return `Sailing-team debrief. Terms used: ${terms.join(', ')}.`
 }
 
-// Full glossary for the Mistral system prompt — authoritative term list + the
-// Dutch→English bridge so the model corrects mishearings and translates in place.
+// Full glossary for the Mistral system prompt — authoritative term list, the
+// Dutch→English bridge, and the known-mishearing fixups so the model corrects and
+// translates in place.
 export function glossaryBlock(g: Glossary = DEFAULT_GLOSSARY): string {
   const dutch = g.dutch.map(([d, e]) => `${d}→${e}`).join(', ')
+  const fixups = g.fixups.map(([w, r]) => `${w}→${r}`).join(', ')
   return [
     "GLOSSARY (authoritative for this team — the recording mixes Dutch speech with these English terms):",
     `- Sails: ${g.sails.join(', ')}`,
@@ -67,5 +81,6 @@ export function glossaryBlock(g: Glossary = DEFAULT_GLOSSARY): string {
     `- Parts & systems: ${g.parts.join(', ')}`,
     `- Crew: ${g.crew.join(', ')}`,
     `- Dutch→English: ${dutch}`,
+    `- Common mishearings → correct to: ${fixups}`,
   ].join('\n')
 }
