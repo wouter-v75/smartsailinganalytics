@@ -7,6 +7,8 @@
 // runAudioBrief(file, mode, { onStage }) → { fields, transcript }
 //   onStage(stage, pct)  stage ∈ 'compress' | 'transcribe' | 'summarise' | 'done'
 
+import { whisperPrompt } from './debriefGlossary'
+
 const OUT_RATE = 16000
 const FRAME = 1152
 
@@ -112,15 +114,22 @@ async function compressToMp3Chunks(file, { kbps = 48, chunkSeconds = 300, onProg
 
 async function transcribeChunks(chunks, onProgress) {
   const texts = []
+  const bias = whisperPrompt() // team glossary → Whisper spells the jargon right
+  let prevTail = ''
   for (let i = 0; i < chunks.length; i++) {
     const fd = new FormData()
     fd.append('file', chunks[i], `chunk-${i}.mp3`)
     // No language hint — let Whisper auto-detect (debriefs may be Dutch, English, …).
     // Forcing 'en' on a non-English recording makes it mis-hear the whole thing.
+    // Prompt = a little context from the previous chunk + the glossary LAST, so if
+    // Whisper truncates to its ~224-token budget the terms survive over the tail.
+    fd.append('prompt', prevTail ? `${prevTail}\n${bias}` : bias)
     const res = await fetch('/api/ai/transcribe', { method: 'POST', body: fd })
     const j = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(j.error || `transcription failed (chunk ${i + 1})`)
-    texts.push((j.text || '').trim())
+    const text = (j.text || '').trim()
+    texts.push(text)
+    prevTail = text.slice(-200) // carry a little context across the chunk boundary
     if (onProgress) onProgress((i + 1) / chunks.length)
   }
   return texts.join('\n')

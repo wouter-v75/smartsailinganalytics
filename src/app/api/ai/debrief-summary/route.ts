@@ -10,6 +10,7 @@
 // POST { transcript: string, mode?: "speedteam"|"debrief"|"planning" }
 //   → the mode's field keys, each a markdown string. Defaults to "speedteam".
 import { NextRequest, NextResponse } from 'next/server'
+import { glossaryBlock } from '../../../../lib/debriefGlossary'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -25,6 +26,7 @@ const log = (...a: unknown[]) => { try { console.info('[ai/debrief-summary]', ..
 // so the summary writes straight into the campaign section.
 const RULES = `RULES — these matter:
 - OUTPUT LANGUAGE: write the entire summary in ENGLISH. If the transcript is in another language (e.g. Dutch), translate it faithfully — but keep sail names, boat-part and manoeuvre terms, abbreviations (A2, A3, S2, genoa, kite, gybe) and people's names exactly as spoken.
+- GLOSSARY: the glossary above is authoritative for this team's sails, manoeuvres, boat parts and crew. Where a transcript word is clearly a mishearing, use the nearest glossary term; translate Dutch words via the Dutch→English mappings and keep the English term.
 - Use ONLY what is in the transcript. Do not invent numbers, sail names or conclusions.
 - If a section has nothing in the transcript, set it to "Nothing recorded." Do not pad it out. An empty section is information; a fabricated one is a liability.
 - Where the transcript is garbled but the meaning is clear, use the meaning. Where the meaning is NOT clear, say so briefly, e.g. "(unclear — check the recording)".
@@ -143,7 +145,7 @@ export async function POST(req: NextRequest) {
         temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: mode.prompt },
+          { role: 'system', content: `${glossaryBlock()}\n\n${mode.prompt}` },
           { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` },
         ],
       }),

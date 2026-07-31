@@ -7,7 +7,8 @@
 //   SCALEWAY_AI_BASE_URL  — project-scoped, e.g. https://api.scaleway.ai/<project>/v1
 //   SCALEWAY_TRANSCRIBE_MODEL (optional) — defaults to whisper-large-v3
 //
-// POST multipart/form-data { file: <audio>, language?: <ISO code> } → { text }
+// POST multipart/form-data { file: <audio>, language?: <ISO code>, prompt?: string } → { text }
+// prompt biases Whisper toward domain vocabulary (sail names, manoeuvres, crew).
 // language is OPTIONAL: omit it (or send "auto"/"") to let Whisper auto-detect the
 // spoken language. Only forward an explicit code — forcing a wrong one (e.g. "en"
 // on a Dutch recording) makes Whisper mis-transcribe the whole thing.
@@ -46,12 +47,16 @@ export async function POST(req: NextRequest) {
   }
   const language = (form.get('language') as string | null)?.trim() || ''
   const name = (file instanceof File && file.name) ? file.name : 'audio.mp3'
+  // Optional vocabulary bias (glossary term string) — makes Whisper spell the
+  // team's sail names / jargon / crew names correctly instead of guessing.
+  const prompt = (form.get('prompt') as string | null)?.trim() || ''
 
   const out = new FormData()
   out.append('file', file, name)
   out.append('model', MODEL)
   // Only pin the language when the caller gave a real code (not empty / "auto").
   if (language && language.toLowerCase() !== 'auto') out.append('language', language)
+  if (prompt) out.append('prompt', prompt)
 
   const ctrl = new AbortController()
   const killer = setTimeout(() => ctrl.abort(), 55_000)
