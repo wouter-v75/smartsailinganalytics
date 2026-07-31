@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   buildSpline, evalSpline, goldenMax, preparePolar,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
-import { getBrowserSupabase } from '../lib/supabase/browser';
+import { getBrowserSupabase, getUidFast } from '../lib/supabase/browser';
 import { parseLog } from '../lib/logParse';
 import { offsetFromCoords } from '../lib/tzFromCoords';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
@@ -5398,7 +5398,7 @@ function SSAApp(){
   const[activeMem,setActiveMem]=useState(null);
   useEffect(()=>{
     let alive=true;
-    const read=async()=>{ try{ const {data:{session}}=await getBrowserSupabase().auth.getSession(); const user=session?.user; if(user&&alive) setActiveMem(getActiveMembership(user.id)); }catch{} };
+    const read=async()=>{ try{ const uid=await getUidFast(); if(uid&&alive) setActiveMem(getActiveMembership(uid)); }catch{} };
     read();
     const on=()=>read();
     window.addEventListener('ssa:active-membership-changed',on);
@@ -6089,10 +6089,9 @@ function SSAApp(){
     async function run(){
       try{
         const supabase=getBrowserSupabase();
-        const {data:{session}}=await supabase.auth.getSession();
-        const user=session?.user;
-        if(!user||cancelled) return;
-        const m=getActiveMembership(user.id);
+        const uid=await getUidFast();
+        if(!uid||cancelled) return;
+        const m=getActiveMembership(uid);
         if(!m||!m.team_id||!m.boat_id){ setCampaignCfg(null); return; }
         const res=await fetch(`/api/teams/${m.team_id}/campaign/config?boat_id=${m.boat_id}`);
         if(!res.ok||cancelled) return;
@@ -6118,9 +6117,9 @@ function SSAApp(){
     async function rescope(){
       try{
         const supabase=getBrowserSupabase();
-        const {data:{user}}=await supabase.auth.getUser();
-        if(!user) return;
-        const m=getActiveMembership(user.id);
+        const uid=await getUidFast();
+        if(!uid) return;
+        const m=getActiveMembership(uid);
         // Clear what we may still have from the previous workspace.
         setSessions([]);
         setAllVideos([]);
@@ -6136,7 +6135,7 @@ function SSAApp(){
         // Cloud list will be refreshed by the boot effect's
         // listSessionsCloud call when it re-runs; but to make the
         // switch feel instant, also trigger one here.
-        const cloudSessions=await listSessionsCloud({userId:user.id});
+        const cloudSessions=await listSessionsCloud({userId:uid});
         if(cloudSessions.length>0){
           setSessions(p=>{
             const merged=[...p];

@@ -95,6 +95,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
+  // Fast path: the status gate below is a second serial DB round-trip on EVERY
+  // page request. Status changes only on admin approve/disable, so cache the
+  // "active" verdict in a short-lived (60 s) cookie keyed to this user id and
+  // skip the query on repeat navigations/refreshes. Non-active users fall
+  // through to the full check (and never get the cookie), so a disable takes
+  // effect within ~60 s.
+  const STATUS_COOKIE = 'ssa-status'
+  if (request.cookies.get(STATUS_COOKIE)?.value === `active:${user.id}`) {
+    if (pathname === '/login' || pathname === '/signup') {
+      return NextResponse.redirect(new URL('/', request.url))
+    }
+    return response
+  }
+
   // Authenticated — fetch app status to decide what to do.
   const { data: appUser } = await supabase
     .from('users')
@@ -134,7 +148,16 @@ export async function middleware(request: NextRequest) {
     )
   }
 
-  // status === 'active'. Bounce them off /login or /signup → /.
+  // status === 'active'. Cache the verdict (see fast path above), then bounce
+  // them off /login or /signup → /.
+  response.cookies.set({
+    name: STATUS_COOKIE,
+    value: `active:${user.id}`,
+    maxAge: 60,
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+  })
   if (pathname === '/login' || pathname === '/signup') {
     return NextResponse.redirect(new URL('/', request.url))
   }

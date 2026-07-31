@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { getBrowserSupabase } from '../lib/supabase/browser'
+import { getBrowserSupabase, getUidFast } from '../lib/supabase/browser'
 import {
   type ActiveMembership,
   type MembershipRole,
@@ -161,28 +161,25 @@ export default function UserPill() {
     let cancelled = false
     ;(async () => {
       const supabase = getBrowserSupabase()
-      // getSession() reads the auth cookie with NO network round-trip; the
-      // middleware already validated/refreshed it server-side on this page load.
-      // getUser() here was an extra ~0.3-0.7s call on the critical path.
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      const user = session?.user
-      if (!user) return
+      // getUidFast() = getClaims() (local JWT verification, no network) with a
+      // getUser() fallback — same fast+verified pattern as the admin gate. Avoids
+      // the ~0.3-0.9s getUser() round-trip that used to block the pill.
+      const uid = await getUidFast()
+      if (!uid) return
 
       // Render the name/email as soon as the profile returns — do NOT gate it on
       // memberships (which chains memberships->teams+boats) or the quota fetch.
       supabase
         .from('users')
         .select('id, email, name, global_role')
-        .eq('id', user.id)
+        .eq('id', uid)
         .maybeSingle()
         .then(({ data: profile }) => {
           if (!cancelled && profile) setMe(profile as MeProfile)
         })
 
       const [ms, quotaRes] = await Promise.all([
-        loadMemberships(user.id),
+        loadMemberships(uid),
         fetch('/api/quota/me')
           .then((r) => (r.ok ? r.json() : null))
           .catch(() => null),
@@ -201,7 +198,7 @@ export default function UserPill() {
       // silently drop members back onto the old boat.
       const isOldNorthstar = (m: MembershipRow) => /northstar\s*72\b/i.test(m.boat_name || '')
       const isCurrentNorthstar = (m: MembershipRow) => /northstar\s*76\b/i.test(m.boat_name || '')
-      const stored = getActiveMembership(user.id)
+      const stored = getActiveMembership(uid)
       const storedRow = ms.find((m) => m.id === stored?.id)
       const preferredDefault =
         ms.find(isCurrentNorthstar) ||        // the current Northstar boat (76)
@@ -217,10 +214,10 @@ export default function UserPill() {
       if (valid) {
         setActiveId(valid.id)
         // Re-persist with up-to-date team/boat names in case they changed.
-        setActiveMembership(user.id, toActiveMembership(valid))
+        setActiveMembership(uid, toActiveMembership(valid))
       } else if (ms.length > 0) {
         setActiveId(preferredDefault.id)
-        setActiveMembership(user.id, toActiveMembership(preferredDefault))
+        setActiveMembership(uid, toActiveMembership(preferredDefault))
       } else {
         setActiveId(null)
       }
