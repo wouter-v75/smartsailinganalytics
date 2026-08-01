@@ -903,7 +903,6 @@ const REACHING_ROWS: RigRow[] = [
   { key: 'upDefl', label: 'Up Def %', source: 'sheet', get: (c) => (c?.upperDeflectorCylStroke ?? '') },
   { key: 'lowDefl', label: 'Low Def %', source: 'sheet', get: (c) => (c?.lowerDeflectorCylStroke ?? '') },
 ]
-const MANUAL_KEYS = ['mainCun', 'vang', 'bobstay']
 
 // Saved overlay: per section, per display-column index, the hand-entered rows.
 type ManualCell = Record<string, string>
@@ -917,7 +916,9 @@ function normSettings(raw: any): RigSettings {
     for (const [k, v] of Object.entries(s)) {
       if (!v || typeof v !== 'object') continue
       const cell: ManualCell = {}
-      for (const mk of MANUAL_KEYS) { const val = (v as any)[mk]; if (typeof val === 'string' && val) cell[mk] = val }
+      // Preserve EVERY hand-entered override (any row can be overridden now), not
+      // just the original manual rows.
+      for (const [mk, val] of Object.entries(v as any)) { if (typeof val === 'string' && val) cell[mk] = val }
       if (Object.keys(cell).length) out[sec][k] = cell
     }
   }
@@ -1048,8 +1049,13 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
     })
     setDirty(true); setMsg('')
   }
+  // Every data cell is an editable OVERRIDE: show the user's saved value if present,
+  // otherwise the derived default (parsed rig sheet, or mainsail 50% camber). A stored
+  // empty string shows empty (so backspacing mid-edit doesn't snap back to the sheet);
+  // clearing + saving drops it, reverting to the sheet value on the next load.
   const cellValue = (sec: 'upwind' | 'reaching', row: RigRow, col: any, colIdx: number): string => {
-    if (row.source === 'manual') return tbl[sec]?.[String(colIdx)]?.[row.key] ?? ''
+    const ov = tbl[sec]?.[String(colIdx)]?.[row.key]
+    if (ov !== undefined) return ov
     if (row.source === 'camber') return main50Camber(mainConds, twsNum(col))
     return row.get ? row.get(col) : ''
   }
@@ -1220,13 +1226,13 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
               <tr key={r.key}>
                 <td style={{ ...rh, ...(r.red ? { color: RED } : null) }}>{r.label}</td>
                 {dcols.map((c, i) => {
-                  const editable = edit && r.source === 'manual'
+                  const editable = edit // every data cell editable; the left label column is a static <td>
                   return (
                     <td key={i} style={{ ...cellStyle, background: colBg(c, i) }}>
                       <input
                         style={{ ...inputStyle, ...(r.red ? { color: RED, fontWeight: 700 } : null) }}
                         value={cellValue(sec, r, c, i)} readOnly={!editable}
-                        placeholder={r.source === 'manual' ? '—' : ''}
+                        placeholder="—"
                         onChange={(e) => setCell(sec, i, r.key, e.target.value)}
                       />
                     </td>
@@ -1288,7 +1294,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         {edit && <button onClick={cancelEdit} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>Cancel</button>}
         {msg && <span style={{ fontSize: 11, color: msg === 'Saved' ? '#10B981' : '#F59E0B' }}>{msg}</span>}
       </div>
-      {edit ? <div style={{ fontSize: 11, color: C.dim }}>Sheet rows (HS, Shim, Butt, deflectors, Sprit tack) are read-only from the rig sheet. Editable: Main Cun, Vang, Bobstay, GS tack. Main 50% camber auto-fills from the mainsail design.</div> : null}
+      {edit ? <div style={{ fontSize: 11, color: C.dim }}>Every cell is editable — each starts from the rig sheet (or the mainsail design for 50% camber) and keeps your value until you clear it. The row labels (left column) stay fixed.</div> : null}
 
       {edit ? (
         <div>
