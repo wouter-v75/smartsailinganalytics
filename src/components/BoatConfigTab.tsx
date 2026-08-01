@@ -1327,9 +1327,13 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         </div>
       ) : null}
 
-      <Table title="Upwind" sec="upwind" rows={UPWIND_ROWS} />
-      <Table title="Reaching" sec="reaching" rows={REACHING_ROWS} />
-      <DownwindTable />
+      {/* Render Table/DownwindTable as function CALLS, not <Table/> elements: they
+          are defined inside this component, so as JSX elements React remounts the
+          whole subtree (and the focused <input>) on every keystroke — which drops
+          focus and scrolls the page to the top. Calling them inlines their output. */}
+      {Table({ title: 'Upwind', sec: 'upwind', rows: UPWIND_ROWS })}
+      {Table({ title: 'Reaching', sec: 'reaching', rows: REACHING_ROWS })}
+      {DownwindTable()}
     </div>
   )
 }
