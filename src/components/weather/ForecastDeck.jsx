@@ -122,7 +122,9 @@ async function aiSummary(payload) {
   } catch (e) { return { __error: e?.message || 'network error' } }
 }
 
-async function fetchModelDays(modelKey, lat, lon, tz, days) { const m = MODELS[modelKey]; if (!m || !m.endpoint) throw new Error(`${modelKey} no endpoint`); const params = []; for (const h of (m.heights || [10])) params.push(`wind_speed_${h}m`, `wind_direction_${h}m`); let url = `${m.endpoint}?latitude=${lat}&longitude=${lon}&hourly=${params.join(',')}&wind_speed_unit=kmh&timezone=${encodeURIComponent(tz)}&forecast_days=${days}`; if (m.modelParam) url += `&models=${m.modelParam}`; const res = await fetch(url); if (!res.ok) throw new Error(`${modelKey} ${res.status}`); return res.json() }
+async function fetchModelDays(modelKey, lat, lon, tz, days) { const m = MODELS[modelKey]; if (!m || !m.endpoint) throw new Error(`${modelKey} no endpoint`); const params = []; for (const h of (m.heights || [10])) params.push(`wind_speed_${h}m`, `wind_direction_${h}m`); let url = `${m.endpoint}?latitude=${lat}&longitude=${lon}&hourly=${params.join(',')}&wind_speed_unit=kmh&timezone=${encodeURIComponent(tz)}&forecast_days=${days}`; if (m.modelParam) url += `&models=${m.modelParam}`; 
+  // Retry Open-Meteo throttling (429) / 5xx with backoff so the outlook doesn't drop a model on a transient rate-limit.
+  for (let attempt = 0; attempt < 4; attempt++) { const res = await fetch(url); if (res.ok) return res.json(); if ((res.status === 429 || res.status >= 500) && attempt < 3) { await new Promise((r) => setTimeout(r, 600 * 2 ** attempt)); continue } throw new Error(`${modelKey} ${res.status}`) } throw new Error(`${modelKey} retry exhausted`) }
 
 // ── today's detail rows (mast +MOS): numeric TWD range + weighted TWS band ───
 function buildDaily(short, mastH, bandModels) {

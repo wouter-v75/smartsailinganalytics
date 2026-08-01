@@ -560,20 +560,38 @@ export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezon
   const cfg = MODELS[modelKey]
   if (cfg && cfg.bunnyBase) return fetchBunnyModel(cfg, latitude, longitude)
 
-  const getJson = async (url) => {
-    try {
-      const res = await fetch(url)
-      if (!res.ok) {
+  // Retry transient failures with exponential backoff. Open-Meteo's free tier
+  // rate-limits (HTTP 429) when we sweep several models across points, and a
+  // single-shot fetch would drop that model to null — which is exactly how a
+  // whole venue's comparison collapsed to just the SSA-Race (Bunny) model. Retry
+  // 429 + 5xx + network errors; give up immediately on other 4xx (a real "no
+  // data here" is a 400 and won't recover).
+  const getJson = async (url, tries = 4) => {
+    for (let attempt = 0; attempt < tries; attempt++) {
+      try {
+        const res = await fetch(url)
+        if (res.ok) return await res.json()
+        const retriable = res.status === 429 || res.status >= 500
+        if (retriable && attempt < tries - 1) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((r) => setTimeout(r, 600 * 2 ** attempt))
+          continue
+        }
         // eslint-disable-next-line no-console
-        console.warn(`[weather] ${modelKey} HTTP ${res.status}`)
+        console.warn(`[weather] ${modelKey} HTTP ${res.status}${retriable ? ' (gave up after retries)' : ''}`)
+        return null
+      } catch (err) {
+        if (attempt < tries - 1) {
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((r) => setTimeout(r, 600 * 2 ** attempt))
+          continue
+        }
+        // eslint-disable-next-line no-console
+        console.warn(`[weather] ${modelKey} fetch failed:`, err?.message || err)
         return null
       }
-      return await res.json()
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(`[weather] ${modelKey} fetch failed:`, err?.message || err)
-      return null
     }
+    return null
   }
 
   // Blended horizon (ECMWF): near-term high-res model spliced onto the longer
