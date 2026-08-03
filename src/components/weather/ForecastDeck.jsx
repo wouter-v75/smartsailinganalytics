@@ -41,7 +41,7 @@ const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotl
 const KN = 0.539957
 const OUTLOOK_MODELS = ['ARPEGE', 'ECMWF']; const OUTLOOK_DAYS = 4
 const ALL_TODAY = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'ECMWF', 'ICON', 'ARPEGE', 'ITALIA', 'DMI']
-const WEIGHTS = { ICONRACE: 1.0, ICONRACE_1KM: 1.0, AROME: 1.0, ECMWF: 0.8, ICON: 0.8, ARPEGE: 0.5, ITALIA: 0.7, DMI: 0.6 }
+const WEIGHTS = { ICONRACE: 7.0, ICONRACE_1KM: 8.5, AROME: 8.5, ECMWF: 1.3, ICON: 1.3, ARPEGE: 0.9, ITALIA: 1.5, DMI: 1.0 }
 const RACE_HOURS = [10, 11, 12, 13, 14, 15, 16, 17]; const RACE0 = 10; const RACE1 = 17
 const RACE_FILL = 'rgba(56,189,248,0.13)'
 const CARD = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
@@ -64,6 +64,29 @@ function circRange(d) {
   if (!d.length) return null
   const m = circMean(d)
   const sd = Math.max(3, circStd(d))
+  const wrap = (x) => Math.round(((x % 360) + 360) % 360)
+  return [wrap(m - sd), wrap(m + sd)]
+}
+// Weighted variants of the circular stats above -- used for the TWD (direction)
+// mean/range so the model WEIGHTS bias the DIRECTION the same way weightedBand
+// biases the speed (heavy bias to SSA-1km + AROME). Items: [{ v: deg, w }].
+function circMeanW(items) {
+  const xs = items.filter((x) => x && x.v != null && Number.isFinite(x.v) && (x.w ?? 1) > 0)
+  if (!xs.length) return null
+  let s = 0; let c = 0
+  for (const x of xs) { const w = x.w ?? 1; const r = (x.v * Math.PI) / 180; s += w * Math.sin(r); c += w * Math.cos(r) }
+  return (((Math.atan2(s, c) * 180) / Math.PI) % 360 + 360) % 360
+}
+function circStdW(items) {
+  const xs = items.filter((x) => x && x.v != null && Number.isFinite(x.v) && (x.w ?? 1) > 0)
+  if (xs.length < 2) return 0
+  let s = 0; let c = 0; let sw = 0
+  for (const x of xs) { const w = x.w ?? 1; const r = (x.v * Math.PI) / 180; s += w * Math.sin(r); c += w * Math.cos(r); sw += w }
+  const R = Math.hypot(s, c) / sw; return R <= 0 ? 180 : (Math.sqrt(-2 * Math.log(Math.min(1, R))) * 180) / Math.PI
+}
+function circRangeW(items) {
+  const m = circMeanW(items); if (m == null) return null
+  const sd = Math.max(3, circStdW(items))
   const wrap = (x) => Math.round(((x % 360) + 360) % 360)
   return [wrap(m - sd), wrap(m + sd)]
 }
@@ -135,15 +158,15 @@ function buildDaily(short, mastH, bandModels) {
     const hh = parseInt(lt[i].slice(11, 13), 10); if (hh < 8 || hh > 18) continue
     const s = mastKn(short.hourly, short.heights, mastH, i, short.mos, short.mosZ); if (s == null) continue
     const tws = [{ v: s, w: WEIGHTS[short.key] || 1 }]; const dirs = []
-    const d0 = dirAt(short, i); if (d0 != null) dirs.push(d0)
-    for (const bm of bandModels) { const j = idxByKey(bm, lt[i].slice(0, 13)); if (j < 0) continue; const v = mastKn(bm.hourly, bm.heights, mastH, j, bm.mos, bm.mosZ); if (v != null) tws.push({ v, w: bm.weight }); const dd = dirAt(bm, j); if (dd != null) dirs.push(dd) }
+    const d0 = dirAt(short, i); if (d0 != null) dirs.push({ v: d0, w: WEIGHTS[short.key] || 1 })
+    for (const bm of bandModels) { const j = idxByKey(bm, lt[i].slice(0, 13)); if (j < 0) continue; const v = mastKn(bm.hourly, bm.heights, mastH, j, bm.mos, bm.mosZ); if (v != null) tws.push({ v, w: bm.weight }); const dd = dirAt(bm, j); if (dd != null) dirs.push({ v: dd, w: bm.weight }) }
     const band = weightedBand(tws) || [Math.max(0, Math.round(s) - 2), Math.round(s) + 2, s]
     // Headline TWS = the band CENTRE (weighted-model mean), clamped into [lo,hi],
     // so the printed value can never sit outside its own ±1σ range. (Previously
     // this printed the single primary model's value, which drifted above the band
     // whenever that model ran hotter than the ensemble.)
     const kn = Math.min(band[1], Math.max(band[0], Math.round(band[2] != null ? band[2] : s)))
-    const dr = circRange(dirs); const twdMean = circMean(dirs)
+    const dr = circRangeW(dirs); const twdMean = circMeanW(dirs)
     const twd = dr ? `${round5(dr[0])}-${round5(dr[1])}` : (twdMean != null ? `${round5(twdMean)}` : '')
     rows.push({ time: `${pad2(hh)}:00`, twdMean, twd, tws: `${kn}kn`, kn, lo: band[0], hi: band[1] })
   }
@@ -164,9 +187,9 @@ function buildOutlook(dates, modelsFor, mastH) {
     const models = modelsFor(di)
     const bucket = (hh) => {
       const tws = []; const dirs = []
-      for (const m of models) { const i = idxAtL(m, d, hh); if (i < 0) continue; const s = mastKn(m.hourly, m.heights, mastH, i, m.mos, m.mosZ); if (s != null) tws.push({ v: s, w: m.weight }); const dd = dirAt(m, i); if (dd != null) dirs.push(dd) }
+      for (const m of models) { const i = idxAtL(m, d, hh); if (i < 0) continue; const s = mastKn(m.hourly, m.heights, mastH, i, m.mos, m.mosZ); if (s != null) tws.push({ v: s, w: m.weight }); const dd = dirAt(m, i); if (dd != null) dirs.push({ v: dd, w: m.weight }) }
       const tb = weightedBand(tws); if (!tb) return null
-      return { twd: circRange(dirs), twdMean: circMean(dirs), tws: tb, twsMid: (tb[0] + tb[1]) / 2 }
+      return { twd: circRangeW(dirs), twdMean: circMeanW(dirs), tws: tb, twsMid: (tb[0] + tb[1]) / 2 }
     }
     return { day: new Date(`${d}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long' }), mor: bucket(10), mid: bucket(12), aft: bucket(15) }
   })

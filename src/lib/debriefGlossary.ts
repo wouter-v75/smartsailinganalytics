@@ -78,6 +78,7 @@ export function glossaryBlock(g: Glossary = DEFAULT_GLOSSARY): string {
     "GLOSSARY (authoritative for this team — the recording mixes Dutch speech with these English terms):",
     `- Sails: ${g.sails.join(', ')}`,
     `- Manoeuvres: ${g.manoeuvres.join(', ')}`,
+    "- Wind-shift terms: VEERING = wind shifting CLOCKWISE / to the RIGHT (e.g. SW->W->NW); BACKING = shifting ANTI-CLOCKWISE / to the LEFT (e.g. SW->S->SE). Never swap these.",
     `- Parts & systems: ${g.parts.join(', ')}`,
     `- Crew: ${g.crew.join(', ')}`,
     `- Dutch→English: ${dutch}`,
