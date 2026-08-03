@@ -1357,7 +1357,7 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
 
         {/* ── MARK ───────────────────────────────────────────────────────── */}
         {step === 'mark' && (
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 flex flex-col overflow-hidden relative">
             {/* Stripe selector — chips for each stripe + a clearly labelled +Add chip.
                 Each chip shows status (○ chord-only / ✓ has curve) so you can see
                 at a glance which stripes still need a midpoint. */}
@@ -1439,7 +1439,7 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
             </div>
 
             {/* Bottom controls */}
-            <div className="flex-shrink-0 bg-gradient-to-t from-slate-950 via-slate-950/95 to-slate-950/70 px-3 py-2.5 space-y-2">
+            <div className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-slate-950 via-slate-950/95 to-slate-950/70 px-3 py-2.5 space-y-2">
 
               {/* L+E flow: long-press luff, long-press leech, then click to
                   auto-fill midpoints in between. Button enabled only when
