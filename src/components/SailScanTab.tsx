@@ -65,7 +65,6 @@ const ALGORITHM_VERSION = 'v2.4-ridgeprior';
 
 export default function SailScanTab({ teamId = null, boatId = null }: { teamId?: string | null; boatId?: string | null } = {}) {
   const [step, setStep] = useState<Step>('select');
-  const [scanTab, setScanTab] = useState<'squash' | 'scan'>('squash');
   const [previewSrc, setPreviewSrc] = useState<string>('');
   const [imageSrc, setImageSrc] = useState<string>('');
   const [stripes, setStripes] = useState<Stripe[]>([newStripe()]);
@@ -632,7 +631,7 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
       im.src = imageSrc;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageSrc, stripes, activeIdx, zoom, pan, step, debugView, debugVersion, scanTab]);
+  }, [imageSrc, stripes, activeIdx, zoom, pan, step, debugView, debugVersion]);
 
   useEffect(() => {
     if (!canvasRef.current || !imageSrc || step !== 'results') return;
@@ -1359,17 +1358,6 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
         {/* ── MARK ───────────────────────────────────────────────────────── */}
         {step === 'mark' && (
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Sub-tabs: Squash shot (large zoom/pan photo) | Sail scan (marking) */}
-            <div className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-slate-950/70 border-b border-slate-800">
-              <button onClick={() => setScanTab('squash')}
-                className={`px-4 py-1.5 rounded-full text-xs font-bold active:scale-95 transition-all ${scanTab === 'squash' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>🔍 Squash shot</button>
-              <button onClick={() => setScanTab('scan')}
-                className={`px-4 py-1.5 rounded-full text-xs font-bold active:scale-95 transition-all ${scanTab === 'scan' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>📐 Sail scan</button>
-            </div>
-            {scanTab === 'squash' ? (
-              <SquashShot imageSrc={imageSrc} />
-            ) : (
-            <div className="flex-1 flex flex-col overflow-hidden min-h-0">
             {/* Stripe selector — chips for each stripe + a clearly labelled +Add chip.
                 Each chip shows status (○ chord-only / ✓ has curve) so you can see
                 at a glance which stripes still need a midpoint. */}
@@ -1553,8 +1541,6 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
                 )}
               </div>
             </div>
-            </div>
-            )}
           </div>
         )}
 
@@ -1752,49 +1738,6 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
           </div>
         )}
 
-      </div>
-    </div>
-  );
-}
-
-// Squash-shot viewer: the sail photo shown large, with pinch/scroll zoom and
-// drag-to-pan. Pure viewer (no stripe overlay) — separate sub-tab from the scan.
-function SquashShot({ imageSrc }: { imageSrc: string }) {
-  const [z, setZ] = useState(1);
-  const [tr, setTr] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
-  const pinch = useRef<{ d: number; z: number } | null>(null);
-  const clamp = (v: number) => Math.min(8, Math.max(1, v));
-  const dist = (t: React.TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-  const reset = () => { setZ(1); setTr({ x: 0, y: 0 }); };
-  return (
-    <div
-      className="flex-1 min-h-0 relative bg-black overflow-hidden flex items-center justify-center"
-      style={{ touchAction: 'none', cursor: z > 1 ? 'grab' : 'default' }}
-      onWheel={(e) => { const fct = Math.exp(-e.deltaY * 0.0015); setZ((v) => clamp(v * fct)); }}
-      onMouseDown={(e) => { drag.current = { x: e.clientX, y: e.clientY, tx: tr.x, ty: tr.y }; }}
-      onMouseMove={(e) => { if (drag.current) setTr({ x: drag.current.tx + (e.clientX - drag.current.x), y: drag.current.ty + (e.clientY - drag.current.y) }); }}
-      onMouseUp={() => { drag.current = null; }}
-      onMouseLeave={() => { drag.current = null; }}
-      onTouchStart={(e) => {
-        if (e.touches.length === 2) pinch.current = { d: dist(e.touches), z };
-        else if (e.touches.length === 1) drag.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, tx: tr.x, ty: tr.y };
-      }}
-      onTouchMove={(e) => {
-        if (e.touches.length === 2 && pinch.current) setZ(clamp(pinch.current.z * (dist(e.touches) / pinch.current.d)));
-        else if (e.touches.length === 1 && drag.current) setTr({ x: drag.current.tx + (e.touches[0].clientX - drag.current.x), y: drag.current.ty + (e.touches[0].clientY - drag.current.y) });
-      }}
-      onTouchEnd={(e) => { if (e.touches.length === 0) { drag.current = null; pinch.current = null; } }}
-      onDoubleClick={reset}
-    >
-      {imageSrc
-        ? <img src={imageSrc} alt="sail" draggable={false}
-            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', transform: `translate(${tr.x}px, ${tr.y}px) scale(${z})`, transformOrigin: 'center center', userSelect: 'none', willChange: 'transform' }} />
-        : <div className="text-slate-500 text-sm">No image loaded</div>}
-      <div className="absolute bottom-3 right-3 flex gap-2">
-        <button onClick={() => setZ((v) => clamp(v * 1.3))} className="w-10 h-10 rounded-full bg-slate-800/80 text-white text-xl font-bold active:scale-90 shadow-lg">+</button>
-        <button onClick={() => setZ((v) => clamp(v / 1.3))} className="w-10 h-10 rounded-full bg-slate-800/80 text-white text-xl font-bold active:scale-90 shadow-lg">-</button>
-        <button onClick={reset} className="px-3 h-10 rounded-full bg-slate-800/80 text-white text-xs font-bold active:scale-90 shadow-lg">Fit</button>
       </div>
     </div>
   );

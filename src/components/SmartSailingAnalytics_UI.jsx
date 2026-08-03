@@ -39,6 +39,38 @@ const TabLoading = () => (
 const PhotosTab      = dynamic(() => import("./PhotosTab"),      { ssr:false, loading:TabLoading });
 const SquashShotsApp = dynamic(() => import("./SquashShotsApp"), { ssr:false, loading:TabLoading });
 const SailScanTab    = dynamic(() => import("./SailScanTab"),    { ssr:false, loading:TabLoading });
+
+// Tools tab = two SEPARATE sub-tabs (Squash | SailScan), one visible at a time,
+// each filling the whole area. Both stay mounted (display toggle) so in-progress
+// state (a loaded scan / marks) survives switching. Replaces the old stacked
+// 85dvh-each layout that made everything small.
+function ToolsTabs({ teamId, boatId }) {
+  const [sub, setSub] = useState('sailscan');
+  const tabBtn = (id, label) => (
+    <button key={id} onClick={() => setSub(id)} style={{
+      padding: "11px 22px", fontWeight: 800, fontSize: 14, cursor: "pointer",
+      color: sub === id ? "#fff" : "#94A3B8",
+      background: sub === id ? "#123253" : "transparent",
+      border: "none", borderBottom: sub === id ? "3px solid #38BDF8" : "3px solid transparent",
+    }}>{label}</button>
+  );
+  return (
+    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", zIndex: 2, background: "#030F1A" }}>
+      <div style={{ flexShrink: 0, display: "flex", gap: 2, background: "#0F2A45", borderBottom: "1px solid #1E3A5A" }}>
+        {tabBtn('squash', '🎯 Squash')}
+        {tabBtn('sailscan', '⛵ SailScan')}
+      </div>
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <div style={{ position: "absolute", inset: 0, display: sub === 'squash' ? 'block' : 'none' }}>
+          <ErrorBoundary label="Squash"><SquashShotsApp/></ErrorBoundary>
+        </div>
+        <div style={{ position: "absolute", inset: 0, display: sub === 'sailscan' ? 'block' : 'none' }}>
+          <ErrorBoundary label="SailScan"><SailScanTab teamId={teamId} boatId={boatId}/></ErrorBoundary>
+        </div>
+      </div>
+    </div>
+  );
+}
 const AdminTab       = dynamic(() => import("./AdminTab"),       { ssr:false, loading:TabLoading });
 const CampaignTab    = dynamic(() => import("./CampaignTab"),    { ssr:false, loading:TabLoading });
 const BoatConfigTab  = dynamic(() => import("./BoatConfigTab"),  { ssr:false, loading:TabLoading });
@@ -5228,12 +5260,7 @@ function MobileShell(props){
           </div>
         )}
         {activeTab==="tools"&&(
-          <div style={{position:"absolute",inset:0,overflowY:"auto",zIndex:2,background:"#030F1A"}}>
-            <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
-            <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="Squash"><SquashShotsApp/></ErrorBoundary></div>
-            <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
-            <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="SailScan"><SailScanTab teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId}/></ErrorBoundary></div>
-          </div>
+          <ToolsTabs teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId}/>
         )}
 
         {/* Campaign */}
@@ -8209,12 +8236,7 @@ function SSAApp(){
           </div>
         )}
         {activeTab==="tools"&&(
-          <div style={{position:"absolute",inset:0,overflowY:"auto",zIndex:2,background:"#030F1A"}}>
-            <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>🎯 Squash</div>
-            <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="Squash"><SquashShotsApp/></ErrorBoundary></div>
-            <div style={{padding:"8px 16px",fontWeight:800,fontSize:14,color:"#E2E8F0",background:"#0F2A45",borderTop:"2px solid #1E3A5A",borderBottom:"1px solid #1E3A5A"}}>⛵ SailScan</div>
-            <div style={{position:"relative",height:"85dvh"}}><ErrorBoundary label="SailScan"><SailScanTab teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId}/></ErrorBoundary></div>
-          </div>
+          <ToolsTabs teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId}/>
         )}
         {activeTab==="admin"&&(
           <div style={{position:"absolute",inset:0,overflowY:"auto",padding:20,zIndex:2}}>
