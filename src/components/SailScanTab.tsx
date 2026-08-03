@@ -1415,7 +1415,6 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
                 onWheel={handleWheel}
-                className="w-full h-full"
                 style={{ maxWidth: '100%', maxHeight: '100%', touchAction: 'none', cursor: dragging ? 'grabbing' : 'crosshair' }}
               />
               {/* Debug result is rendered into the marking canvas itself
