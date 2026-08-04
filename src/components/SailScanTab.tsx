@@ -20,7 +20,8 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { computeStripeMetrics, splinePolyline, computeTwist, stripesFromAIResult, buildLabelExport } from '../lib/sailscan';
-import SailScanReportTable from './SailScanReportTable';
+import SailScanReportTable, { buildRows } from './SailScanReportTable';
+import { uploadBlobToStorage } from '../lib/bunny-storage-upload';
 import SailScanImport from './SailScanImport';
 import {
   ensureOpenCV, getCV, applyClahe, structureTensor,
@@ -141,6 +142,20 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
   const [exifTimestamp,  setExifTimestamp]  = useState<number | null>(null);
   const [timezone,       setTimezone]       = useState<string>('UTC');
   const [showTimestampInput, setShowTimestampInput] = useState(false);
+  const [sailInventory, setSailInventory] = useState<any[]>([]);
+  const [selectedSailId, setSelectedSailId] = useState<string>('');
+  const [boatSaveStatus, setBoatSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [boatSaveMsg, setBoatSaveMsg] = useState<string>('');
+  // Load the boat's sail inventory for the Save-to-boat sail dropdown.
+  useEffect(() => {
+    if (!teamId || !boatId) { setSailInventory([]); return; }
+    let cancelled = false;
+    fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => { if (!cancelled && Array.isArray(j?.sails)) setSailInventory(j.sails); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [teamId, boatId]);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveMsg,    setSaveMsg]    = useState<string>('');
 
@@ -1056,6 +1071,79 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
 
   // ── Save to Photos store (matches SquashShotsApp's flow exactly so the
   //    PhotosTab picks it up without any further wiring) ────────────────────
+  // Save the scan to the BOAT's sail_scans (cloud): reuse the editable time, tag a
+  // sail from inventory, upload the annotated JPEG to Bunny, insert a structured row.
+  const saveToBoat = async () => {
+    if (!teamId || !boatId) { setBoatSaveStatus('error'); setBoatSaveMsg('No boat selected — open SailScan from a boat.'); return; }
+    setBoatSaveStatus('saving'); setBoatSaveMsg('');
+    try {
+      if (!canvasRef.current || !cachedImage.current) throw new Error('No image loaded');
+      // Stripe rows in the sail_scans shape (reuse the report builder so saved numbers
+      // match the on-screen table: ordered head->foot, 75/50/25 pos, twist vs foot).
+      const rows = buildRows(stripes as any);
+      if (!rows.length) throw new Error('No completed stripes — add luff, leech and a midpoint first.');
+      const dbStripes = rows.map(r => ({
+        pos: parseFloat(r.label),
+        draft: r.draft, camber: r.camber, twist: r.twist,
+        entry: r.entry, exit: r.exit, fore: r.front, back: r.back,
+      }));
+
+      const tzOffsetMap: Record<string, number> = {
+        'UTC': 0, 'UTC+1': -60, 'UTC+2': -120, 'UTC+3': -180, 'UTC+4': -240,
+        'UTC+5': -300, 'UTC+6': -360, 'UTC+7': -420, 'UTC+8': -480, 'UTC+9': -540,
+        'UTC+10': -600, 'UTC+11': -660, 'UTC+12': -720,
+        'UTC-1': 60, 'UTC-2': 120, 'UTC-3': 180, 'UTC-4': 240, 'UTC-5': 300,
+        'UTC-6': 360, 'UTC-7': 420, 'UTC-8': 480, 'UTC-9': 540, 'UTC-10': 600,
+        'UTC-11': 660, 'UTC-12': 720,
+      };
+      const ts = photoTimestamp ? new Date(photoTimestamp).getTime() + (tzOffsetMap[timezone] ?? 0) * 60000 : Date.now();
+      const capturedAt = new Date(ts).toISOString();
+
+      drawScene(cachedImage.current, /*forResults*/true);
+      const blob: Blob = await new Promise((resolve, reject) =>
+        canvasRef.current!.toBlob(b => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', 0.92)
+      );
+      let photoKey: string | null = null;
+      try {
+        const key = `teams/${teamId}/boats/${boatId}/sail-scans/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-photo.jpg`;
+        await uploadBlobToStorage({ key, blob, contentType: 'image/jpeg' });
+        photoKey = key;
+      } catch { /* keep the numbers even if the image upload fails */ }
+
+      const sail = sailInventory.find((s: any) => s.id === selectedSailId) || null;
+      const sailName = sail ? (sail.category ? `${sail.category} · ${sail.name}` : sail.name) : null;
+      const sailType = sail
+        ? ((`${sail.kind || ''} ${sail.category || ''}`).toLowerCase().includes('main') ? 'main' : 'headsail')
+        : null;
+      const conditions: Record<string, any> = { captured_local: photoTimestamp || null };
+      if (photoKey) conditions.photo_key = photoKey;
+      if (sailType) conditions.sail_type = sailType;
+      if (sailName) conditions.sail_name_in_report = sailName;
+
+      const camberVals = dbStripes.map(x => x.camber).filter((v): v is number => v != null);
+      const summary = {
+        avg_camber_pct: camberVals.length ? Number((camberVals.reduce((a, b) => a + b, 0) / camberVals.length).toFixed(2)) : null,
+        max_abs_twist_deg: Number(dbStripes.reduce((mx, x) => Math.max(mx, Math.abs(x.twist ?? 0)), 0).toFixed(1)),
+        n_stripes: dbStripes.length,
+      };
+
+      const res = await fetch(`/api/teams/${teamId}/sail-scans/manual`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          boat_id: boatId, sail_id: selectedSailId || null,
+          captured_at: capturedAt, stripes: dbStripes, summary, conditions,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`);
+      setBoatSaveStatus('saved');
+      setBoatSaveMsg(`Saved to boat${sailName ? ` · ${sailName}` : ' (no sail tagged)'} — ${dbStripes.length} stripes${photoKey ? '' : ' · photo upload skipped'}.`);
+    } catch (e: any) {
+      setBoatSaveStatus('error');
+      setBoatSaveMsg(e?.message || 'Save failed');
+    }
+  };
+
   const saveToPhotoDatabase = async () => {
     setSaveStatus('saving'); setSaveMsg('');
     try {
@@ -1659,7 +1747,7 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
               {/* ── Save to Photos: timestamp + tag + stripe data ──────────── */}
               <div className="rounded-lg p-3 border border-slate-700 bg-slate-800/40 space-y-2 mt-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-300 text-xs font-bold">💾 Save to Photos</span>
+                  <span className="text-slate-300 text-xs font-bold">💾 Save scan</span>
                   <button onClick={() => setShowTimestampInput(!showTimestampInput)}
                     className="text-xs text-blue-400 underline">
                     {showTimestampInput ? 'Hide' : 'Edit time'}
@@ -1669,6 +1757,19 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
                   {exifTimestamp ? '📅 EXIF timestamp found' : '⚠️ No EXIF — check or edit'}
                   {photoTimestamp && <> · {new Date(photoTimestamp).toLocaleString()} ({timezone})</>}
                 </p>
+                {/* Sail (boat inventory) to tag this scan to when saving to the boat */}
+                <div>
+                  <label className="text-slate-400 text-[11px] block mb-1">Sail (boat inventory)</label>
+                  <select value={selectedSailId} onChange={e => setSelectedSailId(e.target.value)}
+                    className="w-full bg-slate-700 text-white text-sm rounded px-3 py-2 border border-slate-600">
+                    <option value="">— select sail —</option>
+                    {sailInventory.filter((s: any) => !s.retired).map((s: any) =>
+                      <option key={s.id} value={s.id}>{s.category ? `${s.category} · ${s.name}` : s.name}</option>)}
+                  </select>
+                  {teamId && boatId && sailInventory.length === 0 && (
+                    <p className="text-slate-500 text-[10px] mt-1">No sails in this boat's inventory.</p>
+                  )}
+                </div>
                 {showTimestampInput && (
                   <div className="space-y-2">
                     <input type="datetime-local"
@@ -1687,6 +1788,19 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
                   Tag <span className="font-mono text-slate-400">sailscan</span> · {stripesWithCurve.length} analysed stripe{stripesWithCurve.length === 1 ? '' : 's'} · per-stripe metrics + raw points stored in metadata.
                   Logfile/event data is linked automatically by timestamp when viewed in Photos.
                 </p>
+                <button onClick={saveToBoat}
+                  disabled={boatSaveStatus === 'saving' || stripesWithCurve.length === 0 || !teamId || !boatId}
+                  className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-bold rounded-lg active:scale-95 shadow">
+                  {boatSaveStatus === 'saving' ? '⏳ Saving to boat…'
+                    : boatSaveStatus === 'saved' ? '✓ Saved to boat — save again?'
+                    : boatSaveStatus === 'error' ? '⚠ Retry boat save'
+                    : '⛵ Save to boat'}
+                </button>
+                {boatSaveMsg && (
+                  <p className={`text-[11px] ${boatSaveStatus === 'error' ? 'text-red-400' : 'text-emerald-300'}`}>
+                    {boatSaveMsg}
+                  </p>
+                )}
                 <button onClick={saveToPhotoDatabase}
                   disabled={saveStatus === 'saving' || stripesWithCurve.length === 0}
                   className="w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-bold rounded-lg active:scale-95 shadow">
