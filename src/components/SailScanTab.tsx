@@ -1357,7 +1357,7 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
 
         {/* ── MARK ───────────────────────────────────────────────────────── */}
         {step === 'mark' && (
-          <div className="flex-1 flex flex-col overflow-hidden relative">
+          <div className="flex-1 flex flex-col overflow-y-auto">
             {/* Stripe selector — chips for each stripe + a clearly labelled +Add chip.
                 Each chip shows status (○ chord-only / ✓ has curve) so you can see
                 at a glance which stripes still need a midpoint. */}
@@ -1404,7 +1404,7 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
             )}
 
             {/* Canvas + (optional) CV debug overlay */}
-            <div className="flex-1 min-h-0 flex items-center justify-center bg-black relative overflow-hidden">
+            <div className="flex-shrink-0 flex items-center justify-center bg-black relative overflow-hidden" style={{ height: '82vh', paddingLeft: 30, paddingRight: 30 }}>
               <canvas
                 ref={canvasRef}
                 onTouchStart={handleTouchStart}
@@ -1439,7 +1439,7 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
             </div>
 
             {/* Bottom controls */}
-            <div className="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-slate-950 via-slate-950/95 to-slate-950/70 px-3 py-2.5 space-y-2">
+            <div className="flex-shrink-0 bg-gradient-to-t from-slate-950 via-slate-950/95 to-slate-950/70 px-3 py-2.5 space-y-2">
 
               {/* L+E flow: long-press luff, long-press leech, then click to
                   auto-fill midpoints in between. Button enabled only when
