@@ -26,12 +26,12 @@ interface Row {
   twist: number | null;
 }
 
-// Stripe height label: North uses 25% (head) … 75% (foot), top→bottom.
+// Stripe height label: % of height up the sail: head/top 75% … foot/bottom 25%, top→bottom.
 function heightLabels(n: number): string[] {
-  if (n === 3) return ['25%', '50%', '75%'];
+  if (n === 3) return ['75%', '50%', '25%'];
   if (n === 1) return ['50%'];
   return Array.from({ length: n }, (_, i) =>
-    `${Math.round((25 + (50 * i) / Math.max(1, n - 1)))}%`);
+    `${Math.round((75 - (50 * i) / Math.max(1, n - 1)))}%`);
 }
 
 export function buildRows(stripes: Stripe[]): Row[] {

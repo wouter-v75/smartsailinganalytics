@@ -701,14 +701,14 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
           // White halo
           ctx.globalAlpha = alpha;
           ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-          ctx.lineWidth = px(5);
+          ctx.lineWidth = px(2.5);
           ctx.beginPath();
           ctx.moveTo(poly[0].x, poly[0].y);
           for (let k = 1; k < poly.length; k++) ctx.lineTo(poly[k].x, poly[k].y);
           ctx.stroke();
           // Coloured line
           ctx.strokeStyle = stripeColor;
-          ctx.lineWidth = px(2.5);
+          ctx.lineWidth = px(1.25);
           ctx.beginPath();
           ctx.moveTo(poly[0].x, poly[0].y);
           for (let k = 1; k < poly.length; k++) ctx.lineTo(poly[k].x, poly[k].y);
