@@ -58,6 +58,32 @@ const ENDPOINT_LUFF_COLOR = '#3b82f6';
 const ENDPOINT_LEECH_COLOR = '#ef4444';
 const MID_COLOR = '#fbbf24';
 
+// ── HEIC support ───────────────────────────────────────
+// iPhone photos are HEIC/HEIF, which non-Safari browsers cannot render. Load
+// heic2any from CDN and convert to a JPEG File for display + canvas. EXIF is
+// still read from the ORIGINAL file (exifr handles HEIC) so timestamps survive.
+function loadHeic2any(): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if ((window as any).heic2any) { resolve((window as any).heic2any); return; }
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js';
+    s.onload = () => resolve((window as any).heic2any);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+// Convert HEIC/HEIF -> JPEG File for display; pass everything else through.
+async function toDisplayFile(file: File): Promise<File> {
+  const isHeic = file.type === 'image/heic' || file.type === 'image/heif'
+    || /\.(heic|heif)$/i.test(file.name);
+  if (!isHeic) return file;
+  const heic2any = await loadHeic2any();
+  const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+  const blob = (Array.isArray(out) ? out[0] : out) as Blob;
+  return new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+}
+
 const newStripe = (): Stripe => ({ luff: null, leech: null, mid: [], userTaps: [] });
 
 // Identifier we save with each scan so future trainers can filter examples
@@ -225,11 +251,20 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
     openCamera();
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) { setActiveButton(null); return; }
-    originalFile.current = file;          // keep for EXIF later
-    const url = URL.createObjectURL(file);
+    e.target.value = '';
+    originalFile.current = file;          // keep ORIGINAL for EXIF (exifr reads HEIC)
+    let displayFile = file;
+    try {
+      displayFile = await toDisplayFile(file);   // HEIC/HEIF -> JPEG for the browser
+    } catch (err) {
+      alert('Could not read that HEIC image: ' + (err as Error).message);
+      setActiveButton(null);
+      return;
+    }
+    const url = URL.createObjectURL(displayFile);
     setImageSrc(url);
     stopCamera();
     setStripes([newStripe()]);
@@ -238,7 +273,6 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
     setPan({ x: 0, y: 0 });
     setActiveButton(null);
     setStep('mark');
-    e.target.value = '';
   };
 
   // Load an AI-pipeline result JSON (from the box analyze_sail export) and seed
@@ -305,7 +339,9 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
       if (!jf) continue;
       let result: any = null;
       try { result = JSON.parse(await jf.text()); } catch { continue; }
-      items.push({ name: stem, url: URL.createObjectURL(imgs[stem]), result, stripes: null });
+      let disp: File = imgs[stem];
+      try { disp = await toDisplayFile(imgs[stem]); } catch { continue; }  // HEIC -> JPEG
+      items.push({ name: stem, url: URL.createObjectURL(disp), result, stripes: null });
     }
     items.sort((a, b) => a.name.localeCompare(b.name));
     if (!items.length) {
