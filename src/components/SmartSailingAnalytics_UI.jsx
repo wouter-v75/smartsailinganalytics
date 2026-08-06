@@ -6089,7 +6089,10 @@ function SSAApp(){
         try {
           if(typeof supabase.auth.getClaims==='function'){
             const {data:cl}=await supabase.auth.getClaims();
-            uid=cl?.claims?.sub||null;
+            const c=cl?.claims;
+            // trust the local token only while still valid; expired JWT still
+            // has a good signature but every query with it 401s -> getUser() below
+            if(c?.sub && typeof c.exp==='number' && c.exp > Math.floor(Date.now()/1000)+30){ uid=c.sub; }
           }
         } catch { /* fall through to getUser */ }
         if(!uid){ const {data:{user}}=await supabase.auth.getUser(); uid=user?.id||null; }
@@ -6385,10 +6388,13 @@ function SSAApp(){
         try {
           if(typeof supaForBoot.auth.getClaims==='function'){
             const { data:cl } = await supaForBoot.auth.getClaims();
-            const sub = cl?.claims?.sub || null;
-            if(!sub){ authUserRef.current=null; return; }
-            if(authUserRef.current && authUserRef.current.id===sub) return; // seeded user confirmed
-            const { data:{ user:v } } = await supaForBoot.auth.getUser();
+            const c = cl?.claims;
+            const fresh = !!c?.sub && typeof c.exp==='number' && c.exp > Math.floor(Date.now()/1000)+30;
+            // only "confirm" the seeded user when the token is still valid; an
+            // expired-but-signed token must NOT short-circuit the refresh, or an
+            // infrequent user is left holding a dead session (looks like lost access)
+            if(fresh && authUserRef.current && authUserRef.current.id===c.sub) return;
+            const { data:{ user:v } } = await supaForBoot.auth.getUser(); // revalidates + refreshes
             authUserRef.current = v || null;
             return;
           }

@@ -50,14 +50,24 @@ export async function authedUserId(
   supabase: ReturnType<typeof getServerSupabase>
 ): Promise<string | null> {
   const auth = supabase.auth as unknown as {
-    getClaims?: () => Promise<{ data: { claims?: { sub?: string } } | null }>
+    getClaims?: () => Promise<{ data: { claims?: { sub?: string; exp?: number } } | null }>
     getUser: () => Promise<{ data: { user: { id: string } | null } }>
   }
   try {
     if (typeof auth.getClaims === 'function') {
       const { data } = await auth.getClaims()
-      const sub = data?.claims?.sub
-      if (sub) return sub
+      const claims = data?.claims
+      // Only trust a locally-verified token while it is still valid — an expired
+      // JWT keeps a good signature (so getClaims returns its sub) but every RLS
+      // query with it 401s. Fall through to getUser(), which revalidates and
+      // refreshes the session cookie. Mirrors getUidFast() on the client.
+      if (
+        claims?.sub &&
+        typeof claims.exp === 'number' &&
+        claims.exp > Math.floor(Date.now() / 1000) + 30
+      ) {
+        return claims.sub
+      }
     }
   } catch {
     /* fall through to getUser */
