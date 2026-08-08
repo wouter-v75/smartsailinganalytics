@@ -186,6 +186,8 @@ export const MODELS = {
       { name: 'st_tropez', domain: 'st_tropez_1km', clon: 6.678, clat: 43.275, half: 0.23 },
       // Solent / Cowes 1 km nest off solent_2km (full-Solent race box, half 0.30):
       { name: 'solent', domain: 'solent_1km', clon: -1.30, clat: 50.76, half: 0.30 },
+      // Porto Cervo 1 km nest off porto_cervo_2km (Costa Smeralda / Bonifacio gap jet):
+      { name: 'porto_cervo', domain: 'porto_cervo_1km', clon: 9.48, clat: 41.22, half: 0.18 },
     ],
     // Served wind levels in grid.json: the lean hl stream (10→300 m) PLUS the upper
     // levels 500/750/1000 m that publish (grid_tab_to_json UPPER_FROM_PBL) folds in
