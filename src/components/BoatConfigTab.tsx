@@ -819,10 +819,8 @@ const RIG_SEC_TINT: Record<string, string> = {
 type RigField = { key: string; label: string; render: (c: any) => string; reachingOnly?: boolean }
 const RIG_FIELDS: RigField[] = [
   { key: 'twsAtMh', label: 'TWS @ MH (kt)', render: (c) => (c.twsAtMh ?? '—') },
-  { key: 'rakeDeg', label: 'Rake (°)', render: (c) => (c.rakeDeg != null ? fmt(c.rakeDeg, 2) : '—') },
   { key: 'mastbasePosition', label: 'Mastbase Position', render: (c) => (c.mastbasePosition ?? '—') },
   { key: 'shimStack', label: 'Shim Stack (mm)', render: (c) => (c.shimStack ?? '—') },
-  { key: 'mastbaseLoadT', label: 'Mastbase (t)', render: (c) => (c.mastbaseLoadT != null ? fmt(c.mastbaseLoadT, 1) : '—') },
   { key: 'headstayT', label: 'Headstay (t)', render: (c) => (c.headstayT != null ? fmt(c.headstayT, 1) : '—') },
   { key: 'jibTackT', label: 'Jib Tack (t)', render: (c) => (c.jibTackT != null ? fmt(c.jibTackT, 1) : '—') },
   { key: 'mainCunninghamT', label: 'Main Cunningham (t)', render: (c) => (c.mainCunninghamT != null ? fmt(c.mainCunninghamT, 1) : '—') },
@@ -847,6 +845,16 @@ const combHSof = (c: any): string => {
   if (a == null && b == null) return ''
   return fmt((a || 0) + (b || 0), 1)
 }
+// #5: show the butt / mastbase position in mm rather than the sheet's 'N FWD/AFT'
+// wording (AFT -> negative). The number is taken as-is from the sheet.
+function mmPos(v: any): string {
+  const str = String(v ?? '').trim()
+  if (!str) return ''
+  const m = str.match(/-?\d+(?:\.\d+)?/)
+  if (!m) return str
+  const n = Number(m[0])
+  return `${/aft/i.test(str) ? -Math.abs(n) : n} mm`
+}
 const sectionCols = (cols: any[], section: string) => (cols || []).filter((c) => c && c.section === section)
 const twsNum = (c: any): number | null => {
   if (c == null) return null
@@ -858,6 +866,8 @@ const twsNum = (c: any): number | null => {
 }
 const twsLabel = (c: any): string => {
   const n = twsNum(c)
+  // Hardcoded RevB correction: the J1.5 upwind column reads 11 from the sheet but is 12.
+  if (c?.headsail === 'J1.5' && n === 11) return '12'
   if (n != null) return String(n)
   const s = String(c?.twsAtMh ?? '').trim()
   return s || '—'
@@ -886,7 +896,7 @@ const UPWIND_ROWS: RigRow[] = [
   { key: 'hs', label: 'HS', source: 'sheet', get: (c) => (c?.headstayT != null ? fmt(c.headstayT, 1) : '') },
   { key: 'combHS', label: 'HS + Tack', red: true, source: 'sheet', get: (c) => combHSof(c) },
   { key: 'shims', label: 'Shim', source: 'sheet', get: (c) => (c?.shimStack ?? '') },
-  { key: 'buttPos', label: 'Butt position', source: 'sheet', get: (c) => (c?.mastbasePosition ?? '') },
+  { key: 'buttPos', label: 'Butt position (mm)', source: 'sheet', get: (c) => mmPos(c?.mastbasePosition) },
   { key: 'mainCun', label: 'Main Cun', source: 'manual' },
   { key: 'main50', label: 'Main 50% camber', source: 'camber' },
   { key: 'upDefl', label: 'Up Def %', source: 'sheet', get: (c) => (c?.upperDeflectorCylStroke ?? '') },
@@ -899,7 +909,7 @@ const REACHING_ROWS: RigRow[] = [
   { key: 'spritTack', label: 'Sprit tack', source: 'sheet', get: (c) => (c?.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '') },
   { key: 'gsTack', label: 'GS tack', source: 'sheet', get: (c) => (c?.gsTackT != null ? fmt(c.gsTackT, 1) : '') },
   { key: 'shims', label: 'Shim', source: 'sheet', get: (c) => (c?.shimStack ?? '') },
-  { key: 'buttPos', label: 'Butt position', source: 'sheet', get: (c) => (c?.mastbasePosition ?? '') },
+  { key: 'buttPos', label: 'Butt position (mm)', source: 'sheet', get: (c) => mmPos(c?.mastbasePosition) },
   { key: 'upDefl', label: 'Up Def %', source: 'sheet', get: (c) => (c?.upperDeflectorCylStroke ?? '') },
   { key: 'lowDefl', label: 'Low Def %', source: 'sheet', get: (c) => (c?.lowerDeflectorCylStroke ?? '') },
 ]
@@ -1337,6 +1347,16 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
           are defined inside this component, so as JSX elements React remounts the
           whole subtree (and the focused <input>) on every keystroke — which drops
           focus and scrolls the page to the top. Calling them inlines their output. */}
+      {/* #3/#4 rig baseline reference + revision (static, RevB) */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', background: '#fff', borderRadius: 8, padding: 8 }}>
+        {([['Rake', '4.25°'], ['Shims', '35 mm'], ['Butt', '54 mm'], ['Float', '500 bar']] as [string, string][]).map(([k, v]) => (
+          <span key={k} style={{ fontSize: 12, color: '#0b1f33', border: '1px solid #d7e2ee', borderRadius: 6, padding: '3px 9px' }}>
+            <b>{k}</b> {v}
+          </span>
+        ))}
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#0b1f33', border: '1px solid #1E3A5A', borderRadius: 6, padding: '3px 9px', background: '#eef3f8' }}>Rev B · 3-8-26</span>
+      </div>
       {Table({ title: 'Upwind', sec: 'upwind', rows: UPWIND_ROWS })}
       {Table({ title: 'Reaching', sec: 'reaching', rows: REACHING_ROWS })}
       {DownwindTable()}
