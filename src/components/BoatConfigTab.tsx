@@ -1151,7 +1151,15 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
       doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
       doc.text([boatName, 'Rig settings'].filter(Boolean).join(' — '), M, y); y += 6
       doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90)
-      const metaLine = [rigTune?.name, rigTune?.revision ? `Rev ${rigTune.revision}` : '', rigTune?.effective_date ? `effective ${rigTune.effective_date}` : ''].filter(Boolean).join('   ·   ')
+      // Line printed after the "Upwind" title (above the table): the baseline
+      // reference block — Rake / Shims / Butt / Float / Rev — mirroring the screen.
+      const metaLine = [
+        refVal('rake') && `Rake ${refVal('rake')}`,
+        refVal('shims') && `Shims ${refVal('shims')}`,
+        refVal('butt') && `Butt ${refVal('butt')}`,
+        refVal('float') && `Float ${refVal('float')}`,
+        refRevision && `Rev ${refRevision}${refDate ? ` ${refDate}` : ''}`,
+      ].filter(Boolean).join('   ·   ')
       const stampNotes = viewing ? viewing.notes : savedNotes
       doc.text(`Settings as saved ${fmtWhen(viewing ? viewing.saved_at : savedAt)}${viewing ? '  (historical version)' : ''}`, M, y); y += 4.5
       if (stampNotes) {
