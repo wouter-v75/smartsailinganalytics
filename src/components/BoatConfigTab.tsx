@@ -817,14 +817,27 @@ const RIG_SEC_TINT: Record<string, string> = {
   downwind: 'rgba(168,213,186,0.5)',  // green
 }
 type RigField = { key: string; label: string; render: (c: any) => string; reachingOnly?: boolean }
-const RIG_FIELDS: RigField[] = [
+// Upwind sub-table fields (unchanged: Jib Tack, Main Cunningham, Mastbase Position FWD).
+const UPWIND_FIELDS: RigField[] = [
   { key: 'twsAtMh', label: 'TWS @ MH (kt)', render: (c) => (c.twsAtMh ?? '—') },
   { key: 'mastbasePosition', label: 'Mastbase Position', render: (c) => (c.mastbasePosition ?? '—') },
   { key: 'shimStack', label: 'Shim Stack (mm)', render: (c) => (c.shimStack ?? '—') },
   { key: 'headstayT', label: 'Headstay (t)', render: (c) => (c.headstayT != null ? fmt(c.headstayT, 1) : '—') },
   { key: 'jibTackT', label: 'Jib Tack (t)', render: (c) => (c.jibTackT != null ? fmt(c.jibTackT, 1) : '—') },
   { key: 'mainCunninghamT', label: 'Main Cunningham (t)', render: (c) => (c.mainCunninghamT != null ? fmt(c.mainCunninghamT, 1) : '—') },
-  { key: 'bowspritTackT', label: 'Bowsprit Tack (t)', render: (c) => (c.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '—'), reachingOnly: true },
+  { key: 'upperDeflectorCylStroke', label: 'Upper Defl. Stroke', render: (c) => (c.upperDeflectorCylStroke ?? '—') },
+  { key: 'lowerDeflectorCylStroke', label: 'Lower Defl. Stroke', render: (c) => (c.lowerDeflectorCylStroke ?? '—') },
+]
+// Reaching sub-table fields (Reaching-only edits): Mastbase Position in mm (#4);
+// Bowsprit Tack moved above Headstay (#6); GS Tack replaces Jib Tack (#7);
+// Main Cunningham removed (#8). mmPos() is hoisted (function decl below).
+const REACHING_FIELDS: RigField[] = [
+  { key: 'twsAtMh', label: 'TWS @ MH (kt)', render: (c) => (c.twsAtMh ?? '—') },
+  { key: 'mastbasePosition', label: 'Mastbase Position (mm)', render: (c) => mmPos(c.mastbasePosition) },
+  { key: 'shimStack', label: 'Shim Stack (mm)', render: (c) => (c.shimStack ?? '—') },
+  { key: 'bowspritTackT', label: 'Bowsprit Tack (t)', render: (c) => (c.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '—') },
+  { key: 'headstayT', label: 'Headstay (t)', render: (c) => (c.headstayT != null ? fmt(c.headstayT, 1) : '—') },
+  { key: 'gsTackT', label: 'GS Tack (t)', render: (c) => (c.gsTackT != null ? fmt(c.gsTackT, 1) : '—') },
   { key: 'upperDeflectorCylStroke', label: 'Upper Defl. Stroke', render: (c) => (c.upperDeflectorCylStroke ?? '—') },
   { key: 'lowerDeflectorCylStroke', label: 'Lower Defl. Stroke', render: (c) => (c.lowerDeflectorCylStroke ?? '—') },
 ]
@@ -864,6 +877,16 @@ const twsNum = (c: any): number | null => {
   const m = str.match(/^(\d+(?:\.\d+)?)/)
   return m ? Number(m[1]) : null
 }
+// Reaching columns hidden from BOTH the grid and the RigSubTable (downwind untouched).
+// Keyed by headsail + TWS so the two BRO & J3 & GS columns (16/18) are distinguishable.
+const HIDDEN_REACHING_COLS: { headsail: string; tws: number }[] = [
+  { headsail: 'Jib', tws: 7 },
+  { headsail: 'MOFO & GS', tws: 11 },
+  { headsail: 'BRO & J3 & GS', tws: 18 }, // the 35AWA one (VERIFY 16 vs 18)
+]
+const isHiddenReachingCol = (c: any): boolean =>
+  c?.section === 'reaching' && HIDDEN_REACHING_COLS.some((h) => h.headsail === (c?.headsail || '') && twsNum(c) === h.tws)
+
 const twsLabel = (c: any): string => {
   const n = twsNum(c)
   // Hardcoded RevB correction: the J1.5 upwind column reads 11 from the sheet but is 12.
@@ -916,8 +939,9 @@ const REACHING_ROWS: RigRow[] = [
 
 // Saved overlay: per section, per display-column index, the hand-entered rows.
 type ManualCell = Record<string, string>
-type RigSettings = { upwind: Record<string, ManualCell>; reaching: Record<string, ManualCell>; downwind: Record<string, ManualCell> }
-const emptySettings = (): RigSettings => ({ upwind: {}, reaching: {}, downwind: {} })
+type RigReference = { rake?: string; shims?: string; butt?: string; float?: string; revision?: string; date?: string }
+type RigSettings = { upwind: Record<string, ManualCell>; reaching: Record<string, ManualCell>; downwind: Record<string, ManualCell>; reference?: RigReference }
+const emptySettings = (): RigSettings => ({ upwind: {}, reaching: {}, downwind: {}, reference: {} })
 function normSettings(raw: any): RigSettings {
   const out = emptySettings()
   for (const sec of ['upwind', 'reaching'] as const) {
@@ -936,8 +960,21 @@ function normSettings(raw: any): RigSettings {
   if (dw && typeof dw === 'object') {
     for (const [k, v] of Object.entries(dw)) if (v && typeof v === 'object') out.downwind[k] = { ...(v as any) }
   }
+  const ref = raw?.reference
+  if (ref && typeof ref === 'object') {
+    const r: RigReference = {}
+    for (const [k, v] of Object.entries(ref)) if (typeof v === 'string' && v) (r as any)[k] = v
+    if (Object.keys(r).length) out.reference = r
+  }
   return out
 }
+// Upwind baseline reference block (manual, editable).
+const REF_ITEMS: { key: 'rake' | 'shims' | 'butt' | 'float'; label: string; ph: string }[] = [
+  { key: 'rake', label: 'Rake', ph: '4.25°' },
+  { key: 'shims', label: 'Shims', ph: '35 mm' },
+  { key: 'butt', label: 'Butt', ph: '54 mm' },
+  { key: 'float', label: 'Float', ph: '500 bar' },
+]
 
 const COL_BLUE = '#BDD7EE'
 const COL_BLUE_RGB: [number, number, number] = [189, 215, 238]
@@ -989,7 +1026,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
 }) {
   const cols: any[] = Array.isArray(rigTune?.data?.columns) ? rigTune.data.columns : []
   const upCols = sectionCols(cols, 'upwind')
-  const reachCols = sectionCols(cols, 'reaching')
+  const reachCols = sectionCols(cols, 'reaching').filter((c) => !isHiddenReachingCol(c))
   const colsFor = (sec: 'upwind' | 'reaching') => (sec === 'upwind' ? upCols : reachCols)
 
   const mainConds: any[] = React.useMemo(() => {
@@ -1059,6 +1096,14 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
     })
     setDirty(true); setMsg('')
   }
+  const setRef = (key: string, val: string) => {
+    setTbl((p) => ({ ...p, reference: { ...(p.reference || {}), [key]: val } }))
+    setDirty(true); setMsg('')
+  }
+  const refVal = (k: string): string => ((tbl.reference as any)?.[k] ?? '') as string
+  const refRevision = (tbl.reference?.revision ?? rigTune?.revision ?? '') as string
+  const refDate = (tbl.reference?.date ?? rigTune?.data?.sheetDate ?? rigTune?.effective_date ?? '') as string
+  const refInput: React.CSSProperties = { width: 56, background: '#f5f8fb', border: '1px solid #cdd9e6', borderRadius: 4, padding: '1px 5px', fontSize: 12, color: '#0b1f33' }
   // Every data cell is an editable OVERRIDE: show the user's saved value if present,
   // otherwise the derived default (parsed rig sheet, or mainsail 50% camber). A stored
   // empty string shows empty (so backspacing mid-edit doesn't snap back to the sheet);
@@ -1347,15 +1392,23 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
           are defined inside this component, so as JSX elements React remounts the
           whole subtree (and the focused <input>) on every keystroke — which drops
           focus and scrolls the page to the top. Calling them inlines their output. */}
-      {/* #3/#4 rig baseline reference + revision (static, RevB) */}
+      {/* #3/#4 rig baseline reference (manual, editable) + revision (auto from sheet, editable) */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', background: '#fff', borderRadius: 8, padding: 8 }}>
-        {([['Rake', '4.25°'], ['Shims', '35 mm'], ['Butt', '54 mm'], ['Float', '500 bar']] as [string, string][]).map(([k, v]) => (
-          <span key={k} style={{ fontSize: 12, color: '#0b1f33', border: '1px solid #d7e2ee', borderRadius: 6, padding: '3px 9px' }}>
-            <b>{k}</b> {v}
+        {REF_ITEMS.map(({ key, label, ph }) => (
+          <span key={key} style={{ fontSize: 12, color: '#0b1f33', border: '1px solid #d7e2ee', borderRadius: 6, padding: '3px 9px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <b>{label}</b>
+            {edit
+              ? <input value={refVal(key)} onChange={(e) => setRef(key, e.target.value)} placeholder={ph} style={refInput} />
+              : <span>{refVal(key) || '—'}</span>}
           </span>
         ))}
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, fontWeight: 700, color: '#0b1f33', border: '1px solid #1E3A5A', borderRadius: 6, padding: '3px 9px', background: '#eef3f8' }}>Rev B · 3-8-26</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#0b1f33', border: '1px solid #1E3A5A', borderRadius: 6, padding: '3px 9px', background: '#eef3f8', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <b>Rev</b>
+          {edit ? <input value={refRevision} onChange={(e) => setRef('revision', e.target.value)} placeholder="RevB" style={{ ...refInput, width: 48 }} /> : <span>{refRevision || '—'}</span>}
+          <span>·</span>
+          {edit ? <input value={refDate} onChange={(e) => setRef('date', e.target.value)} placeholder="3-8-26" style={{ ...refInput, width: 70 }} /> : <span>{refDate || '—'}</span>}
+        </span>
       </div>
       {Table({ title: 'Upwind', sec: 'upwind', rows: UPWIND_ROWS })}
       {Table({ title: 'Reaching', sec: 'reaching', rows: REACHING_ROWS })}
@@ -1364,11 +1417,8 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
   )
 }
 
-function RigSubTable({ cols, heading }: { cols: any[]; heading: string }) {
+function RigSubTable({ cols, heading, fields }: { cols: any[]; heading: string; fields: RigField[] }) {
   if (!cols.length) return null
-  // Drop reaching-only fields when the block is upwind.
-  const isUpwindOnly = cols.every((c) => c.section === 'upwind')
-  const fields = RIG_FIELDS.filter((f) => !(f.reachingOnly && isUpwindOnly))
   const bands: { section: string; span: number }[] = []
   for (const c of cols) {
     const last = bands[bands.length - 1]
@@ -1415,11 +1465,11 @@ function RigTuneTable({ data }: { data: any }) {
   const cols: any[] = Array.isArray(data?.columns) ? data.columns : []
   if (!cols.length) return <div style={{ color: C.dim, fontSize: 12 }}>No rig columns parsed.</div>
   const upwind = cols.filter((c) => c.section === 'upwind')
-  const reachDown = cols.filter((c) => c.section !== 'upwind')
+  const reachDown = cols.filter((c) => c.section !== 'upwind' && !isHiddenReachingCol(c))
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <RigSubTable cols={upwind} heading="Upwind" />
-      <RigSubTable cols={reachDown} heading="Reaching / Downwind" />
+      <RigSubTable cols={upwind} heading="Upwind" fields={UPWIND_FIELDS} />
+      <RigSubTable cols={reachDown} heading="Reaching / Downwind" fields={REACHING_FIELDS} />
     </div>
   )
 }
