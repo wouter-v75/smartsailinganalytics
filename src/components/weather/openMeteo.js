@@ -161,7 +161,7 @@ export const MODELS = {
       { name: 'solent', domain: 'solent_2km', clon: -1.30, clat: 50.76, half: 0.30 },
       // La Spezia STOPPED 2026-06-27 (domain box removed; training window closed).
       // Porto Cervo (Maxi Worlds, 1-12 Sept) — points grey out until its grid publishes:
-      { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.25 },
+      { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.31 },
     ],
     heights: [10, 30, 50, 100, 180],
     tableCols: [10, 30, 50, 100, 180],
@@ -187,7 +187,7 @@ export const MODELS = {
       // Solent / Cowes 1 km nest off solent_2km (full-Solent race box, half 0.30):
       { name: 'solent', domain: 'solent_1km', clon: -1.30, clat: 50.76, half: 0.30 },
       // Porto Cervo 1 km nest off porto_cervo_2km (Costa Smeralda / Bonifacio gap jet):
-      { name: 'porto_cervo', domain: 'porto_cervo_1km', clon: 9.48, clat: 41.22, half: 0.18 },
+      { name: 'porto_cervo', domain: 'porto_cervo_1km', clon: 9.45, clat: 41.22, half: 0.24 },
     ],
     // Served wind levels in grid.json: the lean hl stream (10→300 m) PLUS the upper
     // levels 500/750/1000 m that publish (grid_tab_to_json UPPER_FROM_PBL) folds in
