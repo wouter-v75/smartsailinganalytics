@@ -677,6 +677,11 @@ const PW = 7.5; const PH = 13.333
 const M = 0.4                        // page margin
 const CW = PW - 2 * M                // 6.7 in of content
 const FOOT = PH - 0.42               // footnote baseline
+// Strategic considerations carries TWO footer lines: the table legend and, below
+// it, the left/right side convention in 9 pt small print. That note wraps to ~3
+// lines at content width, so it starts higher than the usual FOOT baseline and
+// still ends inside the page (SIDE_NOTE_Y + 0.58 < PH).
+const SIDE_NOTE_Y = PH - 0.68
 function addTitle(s, title, sub) { s.addText(title, { x: M, y: 0.32, w: CW, h: 0.62, fontFace: FONT, fontSize: 26, bold: true, color: NAVY }); if (sub) s.addText(sub, { x: M + 0.02, y: 0.92, w: CW, h: 0.32, fontFace: FONT, fontSize: 11, color: GREY }) }
 function ph(s, x, y, w, h, label) { s.addShape('roundRect', { x, y, w, h, fill: { color: LIGHTF }, line: { color: 'C2C9D4', width: 1 }, rectRadius: 0.1 }); s.addText(label, { x, y, w, h, align: 'center', valign: 'middle', fontFace: FONT, fontSize: 15, color: GREY }) }
 const fit = (iw, ih, x, y, w, h) => { const r = Math.min(w / (iw || 1), h / (ih || 1)); const dw = (iw || 1) * r; const dh = (ih || 1) * r; return { x: x + (w - dw) / 2, y: y + (h - dh) / 2, w: dw, h: dh } }
@@ -989,7 +994,7 @@ function buildDeck(P, d) {
   s.addText(stratItems.length
     ? bulletRuns(stratItems, { color: INK, size: 16, spaceAfter: 6, spacer: 10 })
     : [{ text: 'Tactical considerations — edit. (AI strategy unavailable.)', options: { color: GREY, fontFace: FONT, fontSize: 16 } }],
-    { x: M, y: 2.3, w: CW, h: hasCourseTbl ? 5.0 : 10.4, fontFace: FONT, valign: 'top' })
+    { x: M, y: 2.3, w: CW, h: hasCourseTbl ? 5.0 : 10.0, fontFace: FONT, valign: 'top' })
   if (hasCourseTbl) {
     // TWS gradient is shown as the side with MORE wind: always a positive magnitude
     // + the side letter (so left-more reads '+3.5 L', not '−3.5 L').
@@ -1024,8 +1029,16 @@ function buildDeck(P, d) {
     const cY = 7.85
     s.addText('Course gradient — hourly (4 nm box, point 1)', { x: M, y: cY - 0.35, w: CW, h: 0.3, fontFace: FONT, fontSize: 14, bold: true, color: NAVY })
     s.addTable([cHead, ...cRows], { x: M, y: cY, w: CW, colW: [0.7, 0.7, 0.95, 1.05, 1.0, 1.15, 1.15], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle', fontFace: FONT, fontSize: 13, color: INK })
-    s.addText('Sides are as you FACE them: Bend and TWS L/R are looking UPWIND; Fav ↑ looking upwind, Fav ↓ looking DOWNWIND (so the same water reads R upwind / L downwind). Fav = VMG-to-mark favoured side + gain (kn) per leg from the polar (pressure + bend); downwind weights TWS more. ≈ even · needs a loaded polar.', { x: M, y: FOOT, w: CW, h: 0.3, fontFace: FONT, fontSize: 10, color: GREY })
+    s.addText('Bend and TWS L/R are stated looking upwind. Fav ↑/↓ = VMG-to-mark favoured side + gain (kn) per leg from the polar (pressure + bend); downwind weights TWS more. ≈ even · needs a loaded polar.', { x: M, y: SIDE_NOTE_Y - 0.32, w: CW, h: 0.28, fontFace: FONT, fontSize: 10, color: GREY })
   }
+  // Side convention, in small print at the very bottom. It is the one thing on this
+  // page that is ambiguous unless said out loud, and it INVERTS between the legs.
+  // Deliberately outside the course-table block: the strategy bullets name sides
+  // whether or not the hourly table made it onto the page.
+  s.addText([
+    { text: 'Left / right ', options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 9 } },
+    { text: '= as the crew sees them looking ALONG the leg. Upwind sides looking upwind (at the windward mark); downwind sides looking downwind (at the leeward mark) — so the same water is the right side upwind and the left side downwind.', options: { color: GREY, fontFace: FONT, fontSize: 9 } },
+  ], { x: M, y: SIDE_NOTE_Y, w: CW, h: 0.58, fontFace: FONT, fontSize: 9, color: GREY, valign: 'top' })
 
   // ── 9) Stability + WIND WEIGHT ───────────────────────────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Stability & wind weight')
