@@ -7,9 +7,9 @@
 // observed is computed client-side with src/lib/windweight.ts.
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { fetchWindweightNearest, windweightVenues, rigDirectionShearDeg, interpolateDirectionAtHeight, MODELS } from './openMeteo'
-import { matchVenue, specFor, applyMOS } from './mos'
-import { windweightObserved, windweightFromProfile } from '../../lib/windweight'
+import { fetchWindweightNearest, windweightVenues } from './openMeteo'
+import { pointWindweightByHour } from './windweightPoint'
+import { windweightObserved } from '../../lib/windweight'
 import { storeWindweightForecast } from '../../lib/windweightForecast'
 
 const CLS_COLOR = { Light: '#7DD3FC', Standard: '#1D9E75', Heavy: '#F97316', Calm: '#64748B' }
@@ -98,81 +98,22 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
     return out
   }, [logData, resolvedTz, todayLocal, mastHeight])
 
-  // Directional shear through the rig band, hour -> signed degrees. Read from the
-  // SAME SSA-Race resolution the windweight came from, sampled AT POINT 1 (the
-  // published windweight.json carries only {z, V} — the box averages the direction
-  // away — but the venue grid the app already holds keeps `dir` at every height).
-  // Kept separate from V_eff on purpose: it is a tack asymmetry, not a load term.
+  // Point-1 windweight + rig-band directional shear. The computation lives in
+  // windweightPoint.js so the Stability tab and the forecast deck cannot drift
+  // apart — see the note at the top of that file for why the box product alone
+  // is not good enough.
+  const pointByHour = useMemo(() => pointWindweightByHour({
+    windData, locKey, coords, domain: ven?.domain, mastHeight,
+    boxByHour: fcByHour, todayLocal,
+    localHour: (ms) => localHour(ms, resolvedTz),
+    localDate: (ms) => localDate(ms, resolvedTz),
+  }), [windData, locKey, coords, ven, mastHeight, fcByHour, todayLocal, resolvedTz])
+
   const shearByHour = useMemo(() => {
     const out = {}
-    const modelKey = ven?.domain?.endsWith('_1km') ? 'ICONRACE_1KM' : 'ICONRACE'
-    const hourly = (locKey && windData[locKey]?.surfaceByModel?.[modelKey]?.hourly)
-      || Object.values(windData).find((p) => p?.surfaceByModel?.[modelKey]?.hourly)?.surfaceByModel?.[modelKey]?.hourly
-    const heights = MODELS[modelKey]?.heights
-    const times = hourly?.time
-    if (!hourly || !heights || !times) return out
-    for (let i = 0; i < times.length; i++) {
-      const ms = Date.parse(times[i])
-      if (isNaN(ms) || localDate(ms, resolvedTz) !== todayLocal) continue
-      const sh = rigDirectionShearDeg(hourly, heights, mastHeight, i)
-      if (sh != null) out[localHour(ms, resolvedTz)] = Math.round(sh)
-    }
+    for (const [hr, p] of Object.entries(pointByHour)) if (p.shearDeg != null) out[hr] = p.shearDeg
     return out
-  }, [windData, locKey, ven, resolvedTz, todayLocal, mastHeight])
-
-  // ── point-1 recompute ───────────────────────────────────────────────────────
-  // The published product is a BOX average whose u/v are averaged as vectors, so
-  // V_H reads several knots low whenever direction varies across the box. Redo the
-  // shape term at POINT 1 from the venue grid (which carries wind SPEED per height
-  // at every cell) and anchor it to the MOS masthead speed, so the panel agrees
-  // with the tables and the map. Density / gust / funnel are near-uniform across a
-  // race box and need inputs the app has no point value for, so they come through
-  // from the published hour unchanged. Falls back to the box row when point-1 data
-  // is missing, so the panel degrades rather than blanking.
-  const pointByHour = useMemo(() => {
-    const out = {}
-    const modelKey = ven?.domain?.endsWith('_1km') ? 'ICONRACE_1KM' : 'ICONRACE'
-    const hourly = (locKey && windData[locKey]?.surfaceByModel?.[modelKey]?.hourly)
-      || Object.values(windData).find((p) => p?.surfaceByModel?.[modelKey]?.hourly)?.surfaceByModel?.[modelKey]?.hourly
-    const heights = MODELS[modelKey]?.heights
-    const times = hourly?.time
-    if (!hourly || !heights || !times || !coords) return out
-
-    // MOS for this venue + the model the grid came from. mosApprox venues (the
-    // SSA-Race pair inherit icon_eu) are fine — flagged approximate elsewhere.
-    const venueKey = matchVenue(coords.latitude, coords.longitude)
-    const spec = venueKey ? specFor(venueKey) : null
-    const mosId = MODELS[modelKey]?.mosModel
-
-    for (let i = 0; i < times.length; i++) {
-      const ms = Date.parse(times[i])
-      if (isNaN(ms) || localDate(ms, resolvedTz) !== todayLocal) continue
-      const hr = localHour(ms, resolvedTz)
-      const box = fcByHour[hr]
-      // km/h in the payload -> m/s for the integral
-      const speeds = heights.map((h) => { const v = hourly[`wind_speed_${h}m`]?.[i]; return v == null ? null : v / 3.6 })
-      const hs = heights.filter((_, k) => speeds[k] != null)
-      const ss = speeds.filter((v) => v != null)
-      if (hs.length < 2) continue
-
-      // raw masthead speed at point 1, then MOS on the anchor only
-      const rawVH = windweightFromProfile({ heightsM: hs, speedsMs: ss, H: mastHeight })
-      if (!rawVH) continue
-      let vHKt = rawVH.vHKt
-      let mosOn = false
-      if (spec && mosId) {
-        const twd = interpolateDirectionAtHeight(hourly, heights, mastHeight, i)
-        const r = applyMOS(spec, mosId, vHKt, twd, hr)
-        if (r && r.ws > 0 && r.type !== 'raw') { vHKt = r.ws; mosOn = true }
-      }
-      const r = windweightFromProfile({
-        heightsM: hs, speedsMs: ss, H: mastHeight, vHKtOverride: vHKt,
-        fRho: box?.factors?.rho, fGust: box?.factors?.gust, fFunnel: box?.factors?.funnel,
-      })
-      if (r) out[hr] = { ...r, mosOn, hasBoxFactors: !!box?.factors }
-    }
-    return out
-  }, [windData, locKey, ven, coords, resolvedTz, todayLocal, mastHeight, fcByHour])
+  }, [pointByHour])
 
   const hasObs = Object.keys(obsByHour).length > 0
   const selPt = pointByHour[selHour]

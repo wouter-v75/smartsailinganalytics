@@ -34,6 +34,7 @@ import {
 } from './forecastDiagnostics'
 import { coastNormalForPoint } from './coastline'
 import { LIGHT_BASE_TILES, LIGHT_LABEL_TILES, tileUrl } from './basemaps'
+import { pointWindweightByHour, asBoxHour } from './windweightPoint'
 import { MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, captureField3DSeries } from './field3dUtils'
 import { loadPolarFromLS } from '../../lib/polarCalc'
 import { gradientText, flipSide, favouredSide, vmgSides, enrichCourse } from './courseSides'
@@ -664,7 +665,7 @@ const NAVY = '1F4E79'; const INK = '202020'; const GREY = '6B7280'; const HEADER
 // Body/table font sizes are bumped up from the original desk-projected deck: this
 // is read as a PDF on a phone on the dock, where 11-12 pt was a squint. Only the
 // slide TITLES (26/30/36) and their grey SUBTITLES stay put.
-function spdCell(text) { const nums = (text.match(/\d+/g) || []).map(Number).filter((x) => x <= 60); if (!nums.length) return { text, options: { color: INK, fontFace: FONT, fontSize: 14, valign: 'middle', align: 'left' } }; const bf = beaufort(nums.reduce((a, b) => a + b, 0) / nums.length); return { text, options: { fill: { color: bf.hex }, color: bf.dark ? 'FFFFFF' : '0F1723', fontFace: FONT, fontSize: 14, valign: 'middle', align: 'left' } } }
+function spdCell(text, fs = 14) { const nums = (text.match(/\d+/g) || []).map(Number).filter((x) => x <= 60); if (!nums.length) return { text, options: { color: INK, fontFace: FONT, fontSize: fs, valign: 'middle', align: 'left' } }; const bf = beaufort(nums.reduce((a, b) => a + b, 0) / nums.length); return { text, options: { fill: { color: bf.hex }, color: bf.dark ? 'FFFFFF' : '0F1723', fontFace: FONT, fontSize: fs, valign: 'middle', align: 'left' } } }
 const txtCell = (text, o = {}) => ({ text, options: { color: INK, fontFace: FONT, fontSize: 14, valign: 'middle', align: 'left', ...o } })
 const hdrCell = (text) => ({ text, options: { fill: { color: HEADER }, color: INK, bold: true, fontFace: FONT, fontSize: 14, valign: 'middle' } })
 // ── PAGE: 9:16 PORTRAIT, sized for a phone ───────────────────────────────────
@@ -1064,23 +1065,31 @@ function buildDeck(P, d) {
   const wwRows = d.wwRows || []
   const wwTblY = wwY + 0.38
   if (wwRows.length) {
-    const wHead = [hdrCell('Time'), hdrCell('WW'), hdrCell('V_eff'), hdrCell('Class')]
+    // 5 columns in 3.3 in, so 11 pt rather than the deck's usual 14. The Class
+    // column is gone and its information carried as the COLOUR of WW% instead —
+    // Light / Standard / Heavy, thresholds spelled out in the footnote.
+    const WW_CLS_COLOR = { Light: '0E7490', Standard: '15803D', Heavy: 'C2410C', Calm: GREY }
+    const wTxt = (t, o = {}) => txtCell(t, { fontSize: 11, ...o })
+    const wHdr = (t) => ({ text: t, options: { fill: { color: HEADER }, color: INK, bold: true, fontFace: FONT, fontSize: 11, valign: 'middle' } })
+    const wHead = [wHdr('Time'), wHdr('Mast'), wHdr('WW'), wHdr('Feels'), wHdr('Shear')]
     const wRows = wwRows.map((r) => {
       const calm = r.h.cls === 'Calm'
+      const sh = r.h.shearDeg
       return [
-        txtCell(`${pad2(r.hr)}:00`, { bold: true, fill: { color: LIGHTF } }),
-        txtCell(calm ? '—' : `${r.h.WW}%`, { bold: true }),
-        spdCell(`${Math.round(r.h.V_eff)}kn`),
-        txtCell(r.h.cls || '—'),
+        wTxt(`${pad2(r.hr)}:00`, { bold: true, fill: { color: LIGHTF } }),
+        spdCell(r.h.V_H != null ? `${Math.round(r.h.V_H)}kn` : '—', 11),
+        wTxt(calm ? '—' : `${r.h.WW}%`, { bold: true, color: WW_CLS_COLOR[r.h.cls] || INK }),
+        spdCell(`${Math.round(r.h.V_eff)}kn`, 11),
+        wTxt(sh == null ? '—' : (sh === 0 ? '0°' : `${sh > 0 ? '+' : '\u2212'}${Math.abs(sh)}°`)),
       ]
     })
-    s.addTable([wHead, ...wRows], { x: M, y: wwTblY, w: 3.3, colW: [0.85, 0.8, 0.85, 0.8], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+    s.addTable([wHead, ...wRows], { x: M, y: wwTblY, w: 3.3, colW: [0.66, 0.66, 0.66, 0.66, 0.66], rowH: 0.4, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
   } else {
     ph(s, M, wwTblY, 3.3, 3.24, 'Wind weight\n(no windweight.json\nfor this venue yet)')
   }
   if (d.wwProfileImg) s.addImage({ data: d.wwProfileImg, ...fit(620, 620, M + 3.45, wwTblY, CW - 3.45, 3.24) })
   else ph(s, M + 3.45, wwTblY, CW - 3.45, 3.24, 'Rig profile V(z)\n(no profile)')
-  s.addText(`hpbl: point 1, racing window shaded · sounding 13:00 local · wind weight: masthead ${d.mastH} m, dashed line = standard log profile`, { x: M, y: FOOT, w: CW, h: 0.3, fontFace: FONT, fontSize: 11, color: GREY })
+  s.addText(`hpbl: point 1, racing window shaded · sounding 13:00 local · wind weight at point 1 (MOS where fitted): masthead ${d.mastH} m, dashed line = standard log profile. Mast = masthead TWS; Feels = the standard-day wind giving the same rig load (Mast x sqrt(WW/100)); WW colour = Light <92% / Standard / Heavy >108%. Shear = wind turn from the lowest level to the masthead, + right / \u2212 left — a tack effect, not part of the weight.`, { x: M, y: FOOT - 0.14, w: CW, h: 0.44, fontFace: FONT, fontSize: 9, color: GREY })
 
   // ── 10) Confidence & side notes ──────────────────────────────────────────────
   s = pptx.addSlide(); addTitle(s, 'Confidence & side notes')
@@ -1566,6 +1575,20 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         const r = await withTimeout(fetchWindweightNearest(p1lat, p1lon), 8000, null)
         if (r?.data && todayLocal) {
           wwRows = wwRowsFor(r.data, tz, todayLocal)
+          // Same point-1 + MOS recompute the Stability tab uses (windweightPoint.js).
+          // The published product is a box average whose u/v are averaged as vectors,
+          // so its V_H reads knots low by midday and its column carries shear that is
+          // really horizontal directional spread. Swap each hour in place, keeping the
+          // published shape so the table + V(z) capture below need no changes; the box
+          // row survives untouched wherever point-1 data is missing.
+          const wwBoxByHour = Object.fromEntries(wwRows.map((x) => [x.hr, x.h]))
+          const wwPoint = pointWindweightByHour({
+            windData, locKey: '1', coords: { latitude: p1lat, longitude: p1lon },
+            domain: r.domain, mastHeight, boxByHour: wwBoxByHour, todayLocal,
+            localHour: (ms) => parseInt(toLocal(new Date(ms).toISOString(), tz).slice(11, 13), 10),
+            localDate: (ms) => toLocal(new Date(ms).toISOString(), tz).slice(0, 10),
+          })
+          wwRows = wwRows.map((x) => (wwPoint[x.hr] ? { ...x, h: asBoxHour(wwPoint[x.hr], x.h) } : x))
           const mid = wwRows.find((x) => x.hr === 13) || wwRows[Math.floor(wwRows.length / 2)] || null
           if (mid) wwProfileImg = await captureWindweightProfile(mid, mastHeight)
         }
