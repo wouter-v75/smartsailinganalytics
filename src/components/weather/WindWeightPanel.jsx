@@ -7,8 +7,9 @@
 // observed is computed client-side with src/lib/windweight.ts.
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { fetchWindweightNearest, windweightVenues } from './openMeteo'
-import { windweightObserved } from '../../lib/windweight'
+import { fetchWindweightNearest, windweightVenues, rigDirectionShearDeg, interpolateDirectionAtHeight, MODELS } from './openMeteo'
+import { matchVenue, specFor, applyMOS } from './mos'
+import { windweightObserved, windweightFromProfile } from '../../lib/windweight'
 import { storeWindweightForecast } from '../../lib/windweightForecast'
 
 const CLS_COLOR = { Light: '#7DD3FC', Standard: '#1D9E75', Heavy: '#F97316', Calm: '#64748B' }
@@ -97,8 +98,88 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
     return out
   }, [logData, resolvedTz, todayLocal, mastHeight])
 
+  // Directional shear through the rig band, hour -> signed degrees. Read from the
+  // SAME SSA-Race resolution the windweight came from, sampled AT POINT 1 (the
+  // published windweight.json carries only {z, V} — the box averages the direction
+  // away — but the venue grid the app already holds keeps `dir` at every height).
+  // Kept separate from V_eff on purpose: it is a tack asymmetry, not a load term.
+  const shearByHour = useMemo(() => {
+    const out = {}
+    const modelKey = ven?.domain?.endsWith('_1km') ? 'ICONRACE_1KM' : 'ICONRACE'
+    const hourly = (locKey && windData[locKey]?.surfaceByModel?.[modelKey]?.hourly)
+      || Object.values(windData).find((p) => p?.surfaceByModel?.[modelKey]?.hourly)?.surfaceByModel?.[modelKey]?.hourly
+    const heights = MODELS[modelKey]?.heights
+    const times = hourly?.time
+    if (!hourly || !heights || !times) return out
+    for (let i = 0; i < times.length; i++) {
+      const ms = Date.parse(times[i])
+      if (isNaN(ms) || localDate(ms, resolvedTz) !== todayLocal) continue
+      const sh = rigDirectionShearDeg(hourly, heights, mastHeight, i)
+      if (sh != null) out[localHour(ms, resolvedTz)] = Math.round(sh)
+    }
+    return out
+  }, [windData, locKey, ven, resolvedTz, todayLocal, mastHeight])
+
+  // ── point-1 recompute ───────────────────────────────────────────────────────
+  // The published product is a BOX average whose u/v are averaged as vectors, so
+  // V_H reads several knots low whenever direction varies across the box. Redo the
+  // shape term at POINT 1 from the venue grid (which carries wind SPEED per height
+  // at every cell) and anchor it to the MOS masthead speed, so the panel agrees
+  // with the tables and the map. Density / gust / funnel are near-uniform across a
+  // race box and need inputs the app has no point value for, so they come through
+  // from the published hour unchanged. Falls back to the box row when point-1 data
+  // is missing, so the panel degrades rather than blanking.
+  const pointByHour = useMemo(() => {
+    const out = {}
+    const modelKey = ven?.domain?.endsWith('_1km') ? 'ICONRACE_1KM' : 'ICONRACE'
+    const hourly = (locKey && windData[locKey]?.surfaceByModel?.[modelKey]?.hourly)
+      || Object.values(windData).find((p) => p?.surfaceByModel?.[modelKey]?.hourly)?.surfaceByModel?.[modelKey]?.hourly
+    const heights = MODELS[modelKey]?.heights
+    const times = hourly?.time
+    if (!hourly || !heights || !times || !coords) return out
+
+    // MOS for this venue + the model the grid came from. mosApprox venues (the
+    // SSA-Race pair inherit icon_eu) are fine — flagged approximate elsewhere.
+    const venueKey = matchVenue(coords.latitude, coords.longitude)
+    const spec = venueKey ? specFor(venueKey) : null
+    const mosId = MODELS[modelKey]?.mosModel
+
+    for (let i = 0; i < times.length; i++) {
+      const ms = Date.parse(times[i])
+      if (isNaN(ms) || localDate(ms, resolvedTz) !== todayLocal) continue
+      const hr = localHour(ms, resolvedTz)
+      const box = fcByHour[hr]
+      // km/h in the payload -> m/s for the integral
+      const speeds = heights.map((h) => { const v = hourly[`wind_speed_${h}m`]?.[i]; return v == null ? null : v / 3.6 })
+      const hs = heights.filter((_, k) => speeds[k] != null)
+      const ss = speeds.filter((v) => v != null)
+      if (hs.length < 2) continue
+
+      // raw masthead speed at point 1, then MOS on the anchor only
+      const rawVH = windweightFromProfile({ heightsM: hs, speedsMs: ss, H: mastHeight })
+      if (!rawVH) continue
+      let vHKt = rawVH.vHKt
+      let mosOn = false
+      if (spec && mosId) {
+        const twd = interpolateDirectionAtHeight(hourly, heights, mastHeight, i)
+        const r = applyMOS(spec, mosId, vHKt, twd, hr)
+        if (r && r.ws > 0 && r.type !== 'raw') { vHKt = r.ws; mosOn = true }
+      }
+      const r = windweightFromProfile({
+        heightsM: hs, speedsMs: ss, H: mastHeight, vHKtOverride: vHKt,
+        fRho: box?.factors?.rho, fGust: box?.factors?.gust, fFunnel: box?.factors?.funnel,
+      })
+      if (r) out[hr] = { ...r, mosOn, hasBoxFactors: !!box?.factors }
+    }
+    return out
+  }, [windData, locKey, ven, coords, resolvedTz, todayLocal, mastHeight, fcByHour])
+
   const hasObs = Object.keys(obsByHour).length > 0
-  const selFc = fcByHour[selHour]
+  const selPt = pointByHour[selHour]
+  // The V(z) plot must show the SAME column the row was computed from.
+  const selFc = selPt
+    ? { ...fcByHour[selHour], V_H: selPt.vHKt, WW: Math.round(selPt.ww * 10) / 10, V_eff: Math.round(selPt.vEffKt * 10) / 10, cls: selPt.cls, profile: selPt.profile }
+    : fcByHour[selHour]
   const selObs = obsByHour[selHour]
 
   return (
@@ -107,6 +188,9 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
         <span style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>🪶 Wind weight — racing window</span>
         <span style={{ fontSize: 11, color: '#8A97A9' }}>
           rig load vs a standard day · 100 = standard · {ven ? `${ven.venue} (${ven.domain})` : hasVenue ? '…' : 'no SSA-Race venue near this point'}
+          {Object.keys(pointByHour).length > 0 && (
+            <span style={{ color: '#1D9E75' }}>{' · '}point 1{Object.values(pointByHour).some((p) => p.mosOn) ? ' + MOS' : ''}</span>
+          )}
         </span>
         <div style={{ flex: 1 }} />
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, color: '#7DD3FC' }}>
@@ -130,8 +214,16 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
               <thead>
                 <tr style={{ color: '#8A97A9', textAlign: 'right' }}>
                   <th style={thL}>Hour</th>
+                  {/* Mast is the V_H the windweight was computed FROM. Without it on
+                      the row, V_eff floats free and gets read against the TWS on the
+                      Forecast tab — a different model at a different height — which
+                      makes a correct number look broken. */}
+                  <th style={th}>Mast</th>
                   <th style={th}>Fcst WW</th>
-                  <th style={th}>V_eff</th>
+                  <th style={th}>Feels like</th>
+                  {/* Directional shear sits OUTSIDE the weight columns by design —
+                      it is a tack asymmetry, not a load term. */}
+                  <th style={th}>Shear</th>
                   <th style={th}>Class</th>
                   {hasObs && <th style={th}>Obs WW</th>}
                   {hasObs && <th style={th}>Δ</th>}
@@ -139,7 +231,13 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
               </thead>
               <tbody>
                 {HOURS.map((hr) => {
-                  const f = fcByHour[hr]; const o = obsByHour[hr]
+                  const box = fcByHour[hr]; const o = obsByHour[hr]
+                  const sh = shearByHour[hr]
+                  // Prefer the point-1 + MOS recompute; fall back to the published box row.
+                  const pt = pointByHour[hr]
+                  const f = pt
+                    ? { V_H: pt.vHKt, WW: Math.round(pt.ww * 10) / 10, V_eff: Math.round(pt.vEffKt * 10) / 10, cls: pt.cls }
+                    : box
                   const fCalm = f?.cls === 'Calm'; const oCalm = o?.cls === 'Calm'
                   const d = (f && o && !fCalm && !oCalm) ? Math.round((o.ww - f.WW) * 10) / 10 : null
                   const active = hr === selHour
@@ -147,8 +245,12 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
                     <tr key={hr} onClick={() => setSelHour(hr)}
                       style={{ cursor: 'pointer', background: active ? '#0F2A45' : 'transparent', borderTop: '1px solid #0F2030' }}>
                       <td style={{ ...tdL, color: active ? '#06B6D4' : '#CBD5E1', fontWeight: active ? 700 : 400 }}>{String(hr).padStart(2, '0')}:00</td>
+                      <td style={{ ...td, color: '#CBD5E1' }}>{f?.V_H != null ? `${Math.round(f.V_H * 10) / 10}kt` : '—'}</td>
                       <td style={{ ...td, color: f ? clsColor(f.cls) : '#334155', fontWeight: 700 }}>{f ? (fCalm ? '—' : `${f.WW}%`) : '—'}</td>
                       <td style={{ ...td, color: '#94A3B8' }}>{f ? `${f.V_eff}kt` : '—'}</td>
+                      <td style={{ ...td, color: sh == null ? '#334155' : Math.abs(sh) < 3 ? '#64748B' : '#C4B5FD' }}>
+                        {sh == null ? '—' : sh === 0 ? '0°' : `${sh > 0 ? '+' : '−'}${Math.abs(sh)}°`}
+                      </td>
                       <td style={{ ...td, color: f ? clsColor(f.cls) : '#334155' }}>{f ? f.cls : '—'}</td>
                       {hasObs && <td style={{ ...td, color: o ? clsColor(o.cls) : '#334155', fontWeight: 700 }}>{o ? (oCalm ? '—' : `${o.ww}%`) : '—'}</td>}
                       {hasObs && <td style={{ ...td, color: d == null ? '#334155' : Math.abs(d) < 5 ? '#1D9E75' : '#F59E0B' }}>{d == null ? '—' : (d > 0 ? `+${d}` : d)}</td>}
@@ -157,6 +259,29 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
                 })}
               </tbody>
             </table>
+            {/* What V_eff actually means. Worked through the SELECTED hour's own
+                numbers so it is never abstract, and it names the anchor explicitly —
+                the confusion is always "why is 'feels like' below the wind speed I
+                read elsewhere", and the answer is that it is √(WW) of the MAST
+                column, which is this product's own wind, not the Forecast tab's. */}
+            <div style={{ fontSize: 10, color: '#64748B', marginTop: 6, lineHeight: 1.45 }}>
+              <b style={{ color: '#94A3B8' }}>Feels like</b> (V_eff) = the masthead wind on a <i>standard</i> day
+              that would load the rig as hard as this hour — a measure of <b>load</b>, not a speed you would read on the dial.
+              Rig force follows ½ρV², so it is <b>Mast × √(WW ÷ 100)</b>
+              {selFc && selFc.cls !== 'Calm' && selFc.V_H != null
+                ? <> — at {String(selHour).padStart(2, '0')}:00, {Math.round(selFc.V_H * 10) / 10} kt at the masthead
+                  carrying {selFc.WW}% of a standard day&rsquo;s weight loads the rig like <b>{selFc.V_eff} kt</b>.</>
+                : <>.</>}
+              {' '}Below 100% the column is more sheared than a standard log profile, so the rig is starved below the masthead and it feels soft; above 100% it is fuller and punchier.
+              <b>Mast</b> is the wind the weight is anchored to: the SSA-Race column at <b>point 1</b>, MOS-corrected where a venue
+              correction exists — the same wind the Forecast tab and the map show, so the two should now agree.
+              (MOS rescales the whole column, so it moves Mast and Feels-like together and leaves WW% alone — WW is a shape-and-density
+              index, not a speed.)
+              {' '}<b style={{ color: '#C4B5FD' }}>Shear</b> = how far the wind turns from the lowest model level up to the masthead:
+              <b> + right</b> (veers/clockwise), <b>− left</b> (backs). It is deliberately <i>not</i> in the weight —
+              force at each height comes from the local wind <i>speed</i>, and the sail is twisted to the local direction.
+              It is a <b>tack</b> effect: veer frees the top on starboard and heads it on port; backing does the reverse.
+            </div>
             {!hasObs && <div style={{ fontSize: 10, color: '#64748B', marginTop: 6 }}>Observed column appears once a logfile with on-board air-temp / sea-temp / RH is uploaded for today.</div>}
           </div>
 

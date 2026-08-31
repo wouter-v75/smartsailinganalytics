@@ -883,6 +883,56 @@ export function interpolateSpeedAtHeight(hourly, heights, targetH, idx) {
   return result > 0 ? result : 0
 }
 
+// Wind DIRECTION at an arbitrary height. Directions must be interpolated as unit
+// VECTORS, never as plain numbers: the arithmetic mean of 350° and 010° is 180°,
+// which is the exact opposite of the answer. Linear in log-height between the two
+// bracketing levels (2 points, not the 3-point Lagrange used for speed — an
+// overshoot in an angle wraps rather than just being a bit wrong).
+export function interpolateDirectionAtHeight(hourly, heights, targetH, idx) {
+  if (!hourly || !heights?.length || targetH == null) return null
+  const pts = []
+  for (const hgt of heights) {
+    const d = hourly[`wind_direction_${hgt}m`]?.[idx]
+    if (d != null && isFinite(d)) pts.push({ h: hgt, d })
+  }
+  if (!pts.length) return null
+  pts.sort((a, b) => a.h - b.h)
+  if (pts.length === 1) return ((pts[0].d % 360) + 360) % 360
+  const t = Math.max(targetH, 1)
+  let lo = pts[0]; let hi = pts[pts.length - 1]
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (pts[i].h <= t && pts[i + 1].h >= t) { lo = pts[i]; hi = pts[i + 1]; break }
+  }
+  const span = Math.log(hi.h) - Math.log(lo.h)
+  const f = span === 0 ? 0 : Math.max(0, Math.min(1, (Math.log(t) - Math.log(lo.h)) / span))
+  const r = Math.PI / 180
+  const su = (1 - f) * Math.sin(lo.d * r) + f * Math.sin(hi.d * r)
+  const cu = (1 - f) * Math.cos(lo.d * r) + f * Math.cos(hi.d * r)
+  if (su === 0 && cu === 0) return null
+  return ((Math.atan2(su, cu) / r) % 360 + 360) % 360
+}
+
+// Signed directional shear through the rig band: TWD at masthead minus TWD at the
+// lowest published level, wrapped to (−180, 180].
+//   POSITIVE = veering  (rotates RIGHT / clockwise with height)
+//   NEGATIVE = backing  (rotates LEFT with height)
+//
+// Deliberately kept OUT of the windweight/V_eff integral. Directional shear is not
+// a load term — the local force at each height is set by the local wind SPEED, and
+// the sail is twisted to the local direction. What it is instead is a TACK
+// asymmetry: veer frees the top on starboard and heads it on port, backing does the
+// reverse. A single scalar cannot carry that, so it is reported on its own and left
+// for the crew to read against the tack they are on.
+export function rigDirectionShearDeg(hourly, heights, mastH, idx) {
+  if (!hourly || !heights?.length) return null
+  const lows = heights.filter((h) => hourly[`wind_direction_${h}m`]?.[idx] != null)
+  if (!lows.length) return null
+  const base = Math.min(...lows)
+  const dBase = interpolateDirectionAtHeight(hourly, heights, base, idx)
+  const dMast = interpolateDirectionAtHeight(hourly, heights, mastH, idx)
+  if (dBase == null || dMast == null) return null
+  return ((dMast - dBase + 540) % 360) - 180
+}
 
 // ── Skew-T sounding sources (Phase 3) ────────────────────────────────────────
 // Pressure levels each source publishes. GFS uses the dense 25 hPa ladder above;

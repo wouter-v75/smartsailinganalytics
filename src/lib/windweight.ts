@@ -179,3 +179,115 @@ export function windweightObserved(args: {
 
 const round4 = (x: number) => Math.round(x * 1e4) / 1e4
 const round6 = (x: number) => Math.round(x * 1e6) / 1e6
+
+// ── windweight from a MODELLED profile (the TS counterpart of the box's
+//    windweight.py::windweight_from_profile) ──────────────────────────────────
+//
+// Why this exists: the box publishes windweight.json from a BOX-AVERAGED profile,
+// which (a) is not where the crew is racing and (b) averages u/v as vectors, so
+// horizontal directional spread cancels and V_H reads several knots low by midday.
+// The venue grid the app already holds carries wind SPEED per height at every
+// cell, so we can redo the profile term at POINT 1 and anchor it to the MOS
+// masthead speed — the same wind the tables and the map show.
+//
+// Only the shape term is recomputed here. Density and gust are near-uniform across
+// a 30 km race box and need T/RH/p and turbulence the app does not carry at point
+// 1, so those factors are passed straight through from the published product.
+//
+// Speeds are m/s at `heightsM` (ascending). Directional shear is deliberately NOT
+// an input: load at each height is set by the local wind SPEED, and the sail is
+// twisted to the local direction — veer is a tack asymmetry, reported separately.
+export interface ProfileWW {
+  ww: number                       // WW% (100 = standard day)
+  vHKt: number                     // masthead speed the index is anchored to
+  vEffKt: number                   // vH * sqrt(ww/100)
+  fProfile: number
+  cls: WWResult['cls']
+  profile: Array<{ z: number; V: number }>
+}
+
+// V(z) through the rig from published levels. Between levels: linear in
+// log-height (the surface layer is logarithmic, so this beats linear-in-z).
+// BELOW the lowest level: a neutral log law with an EFFECTIVE roughness fitted to
+// the two lowest levels, so the near-surface fill reproduces the shear the model
+// actually has instead of assuming open-sea z0. A power law extrapolated to the
+// deck starves the bottom of the rig and biases f_profile low.
+export function profileReader(heightsM: number[], speedsMs: number[]): ((z: number) => number) | null {
+  const pts = heightsM
+    .map((h, i) => ({ h, v: speedsMs[i] }))
+    .filter((p) => p.h > 0 && p.v != null && isFinite(p.v) && p.v >= 0)
+    .sort((a, b) => a.h - b.h)
+  if (!pts.length) return null
+  if (pts.length === 1) return () => pts[0].v
+
+  const lo = pts[0]
+  const nx = pts[1]
+  // u*/kappa and z0 from the two lowest levels; clamped to a sane band so a
+  // near-uniform or inverted pair cannot produce a nonsense roughness.
+  let slope = (nx.v - lo.v) / (Math.log(nx.h) - Math.log(lo.h))
+  let z0eff = Number.NaN
+  if (slope > 1e-6) z0eff = Math.exp(Math.log(lo.h) - lo.v / slope)
+  if (!isFinite(z0eff) || z0eff <= 0) { z0eff = Z0_REF; slope = lo.v / Math.log(lo.h / Z0_REF) }
+  z0eff = Math.min(Math.max(z0eff, 1e-5), 5)
+
+  return (z: number) => {
+    const zz = Math.max(z, 1e-3)
+    if (zz <= lo.h) {
+      if (zz <= z0eff) return 0
+      return Math.max(0, slope * Math.log(zz / z0eff))
+    }
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (zz <= pts[i + 1].h) {
+        const a = pts[i]; const b = pts[i + 1]
+        const f = (Math.log(zz) - Math.log(a.h)) / (Math.log(b.h) - Math.log(a.h))
+        return a.v + f * (b.v - a.v)
+      }
+    }
+    return pts[pts.length - 1].v          // above the top level: clamp, never extrapolate
+  }
+}
+
+export function windweightFromProfile(args: {
+  heightsM: number[]
+  speedsMs: number[]
+  H?: number
+  centroidFrac?: number
+  fRho?: number
+  fGust?: number
+  fFunnel?: number
+  // MOS-corrected masthead speed in KNOTS. MOS is a single-height scalar fit, so it
+  // must anchor the column, never be applied level by level (its additive term would
+  // distort the shape). A uniform rescale leaves V(z)/V_H untouched, so f_profile —
+  // and therefore WW% — is unchanged by MOS; only V_eff moves with it.
+  vHKtOverride?: number
+}): ProfileWW | null {
+  const H = args.H ?? 34
+  const cf = args.centroidFrac ?? 0.38
+  const vOfZ = profileReader(args.heightsM, args.speedsMs)
+  if (!vOfZ) return null
+  const vHms = vOfZ(H)
+  if (!(vHms > 0)) return null
+
+  const sAct = shearIntegral(vOfZ, H, vHms, cf)
+  const vLog = (z: number) => {
+    const zz = Math.max(z, Z0_REF * 1.01)
+    return vHms * (Math.log(zz / Z0_REF) / Math.log(H / Z0_REF))
+  }
+  const sRef = shearIntegral(vLog, H, vHms, cf)
+  if (!(sRef > 0)) return null
+  const fProfile = sAct / sRef
+
+  const ww = 100 * (args.fRho ?? 1) * fProfile * (args.fGust ?? 1) * (args.fFunnel ?? 1)
+  const vHKt = args.vHKtOverride != null && args.vHKtOverride > 0 ? args.vHKtOverride : vHms * 1.94384
+  const vEffKt = vHKt * Math.sqrt(Math.max(ww, 1) / 100)
+
+  const zs = [1, 5, 10, 15, 20, 25, H].filter((z, i, a) => z <= H && a.indexOf(z) === i)
+  return {
+    ww: round4(ww),
+    vHKt: round4(vHKt),
+    vEffKt: round4(vEffKt),
+    fProfile: round4(fProfile),
+    cls: classify(ww, vHms),
+    profile: zs.map((z) => ({ z, V: round6(vOfZ(z)) })),
+  }
+}
