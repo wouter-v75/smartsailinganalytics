@@ -614,11 +614,13 @@ export default function ForecastView({
     // Currents is a FIELD-ONLY layer (not a wind model): available when point 1 is
     // inside the Channel current coverage.
     out.CURRENTS = !!(p1lat != null && p1lon != null && currentsCovered(p1lat, p1lon))
-    // Boundary-layer height is a FIELD-ONLY scalar layer from SSA-Race: available
-    // when point 1 sits inside an SSA-Race venue box (same gate as the model).
-    out.HPBL = !!canIconRace
+    // Boundary-layer height is a FIELD-ONLY scalar layer read from the SSA-Race
+    // 2 km grid. Gate it on that grid actually having returned data, not merely on
+    // point 1 sitting inside a venue box: a venue whose last cycle has elapsed is
+    // skipped by fetchBunnyModel, and offering HPBL there just yields an error.
+    out.HPBL = !!out.ICONRACE
     return out
-  }, [windData, p1lat, p1lon, canIconRace])
+  }, [windData, p1lat, p1lon])
 
   // Region-gated models (the North-American set) are HIDDEN from the picker —
   // not just greyed — unless a clicked point falls in their coverage box, so

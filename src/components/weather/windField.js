@@ -223,7 +223,9 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
 // `height`, and emit the same {times,labels,frames,header,maxSpeed,box} shape.
 export async function fetchIconRaceField({ lat, lon, height, timezone, modelKey = 'ICONRACE' }) {
   const got = await iconRaceGridForPoint(lat, lon, modelKey)
-  if (!got) throw new Error('no Icon-Race coverage at point 1')
+  // null = point 1 is outside every venue box, OR the venue's last published
+  // cycle has already elapsed (see productCoversNow in openMeteo.js).
+  if (!got) throw new Error('no current SSA-Race data at point 1 — outside the venue box, or its last run has elapsed')
   const { grid } = got
   const heights = (grid.heights || []).map(Number).sort((a, b) => a - b)
   const round = (x) => Math.round(x * 1000) / 1000
@@ -588,7 +590,7 @@ export function scalarImageURL(frame, header, scale = 8, ramp = hpblRamp) {
 // carry `scalar:[m...]` and the field is flagged isHpbl.
 export async function fetchIconRaceHpblField({ lat, lon, timezone, modelKey = 'ICONRACE' }) {
   const got = await iconRaceGridForPoint(lat, lon, modelKey)
-  if (!got) throw new Error('no SSA-Race coverage at point 1')
+  if (!got) throw new Error('no current SSA-Race data at point 1 — outside the venue box, or its last run has elapsed')
   const { grid } = got
   if (!grid.hasHpbl || !grid.cells.some((c) => Array.isArray(c.hpbl))) {
     throw new Error('this SSA-Race cycle has no boundary-layer data yet')

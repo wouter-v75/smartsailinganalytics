@@ -310,6 +310,38 @@ function surfaceUrl(modelKey, latitude, longitude, timezone, opts = {}) {
   return url
 }
 
+// ── SSA-Race product freshness ──────────────────────────────────────────────
+// The box publishes each venue's grid.json / windweight.json to a FIXED path and
+// overwrites it on the next cycle. When a venue's run is skipped — out of season,
+// its grid deliberately held back, or the pipeline failed — the previous cycle's
+// file simply stays there. Nothing in the payload said "this is old", so the app
+// rendered a forecast window that had already elapsed: clicking the three points
+// at Porto Cervo pulled up 12 August, the last day its 1 km nest ran.
+//
+// A published product is only useful while its OWN forecast window still reaches
+// the present. Once its last frame is in the past it has nothing to say about
+// today, so we treat it as absent rather than as data: the model drops out of
+// `modelAvailable`, greys out in the picker, is skipped by the auto-pick, and the
+// tables + wind field fall through to a model that does cover today (AROME /
+// ECMWF / ICON). Better an honest gap in one model than a confident wrong date.
+const SSA_STALE_GRACE_MS = 60 * 60 * 1000   // the just-elapsed hour stays usable
+
+// Parse a published stamp. The box writes '2026-08-12T04:00:00Z'; older products
+// and the windweight rows may omit the Z, which Date.parse would read as LOCAL.
+function productMs(iso) {
+  if (typeof iso !== 'string' || !iso) return NaN
+  const hasZone = iso.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(iso)
+  return Date.parse(hasZone ? iso : `${iso}Z`)
+}
+
+// True when a published time axis still extends to (about) now. `times` is the
+// product's own frame list — grid.time, or the windweight rows' `t`.
+export function productCoversNow(times) {
+  if (!Array.isArray(times) || !times.length) return false
+  const last = productMs(times[times.length - 1])
+  return Number.isFinite(last) && last >= Date.now() - SSA_STALE_GRACE_MS
+}
+
 // Module-level cache of fetched venue grids (keyed by URL) so the three
 // clicked points don't each re-download the same venue grid.
 const _iconRaceGrids = new Map()
@@ -348,6 +380,11 @@ async function fetchBunnyModel(m, latitude, longitude) {
     : `/api/bunny/storage?key=${encodeURIComponent(path)}` // same-origin proxy (default)
   const grid = await getIconRaceGrid(url)
   if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return null
+  // Elapsed cycle → report "no data" so today's tables come from a live model.
+  if (!productCoversNow(grid.time)) {
+    console.warn(`[weather] ${m.key} ${v.domain}/${v.name}: cycle ${grid.cycle || '?'} has elapsed — treating as unavailable`)
+    return null
+  }
   // nearest cell (equirectangular distance is plenty over a ~30 km box)
   const cosLat = Math.cos((latitude * Math.PI) / 180)
   let best = null
@@ -385,6 +422,9 @@ export async function iconRaceGridForPoint(latitude, longitude, modelKey = 'ICON
     : `/api/bunny/storage?key=${encodeURIComponent(path)}`
   const grid = await getIconRaceGrid(url)
   if (!grid || !Array.isArray(grid.cells) || !grid.cells.length) return null
+  // Same freshness gate as fetchBunnyModel — an elapsed cycle must not drive the
+  // wind field / 3D view either, or the map would animate a past day's weather.
+  if (!productCoversNow(grid.time)) return null
   return { grid, venue: v }
 }
 
@@ -472,7 +512,12 @@ export async function fetchWindweightNearest(lat, lon) {
   for (const c of windweightVenues(lat, lon)) {
     // eslint-disable-next-line no-await-in-loop
     const data = await fetchWindweight(c.domain, c.venue)
-    if (data && Array.isArray(data.hours) && data.hours.length) return { data, domain: c.domain, venue: c.venue }
+    // Skip an elapsed cycle (see productCoversNow) and try the next resolution —
+    // so a stale 1 km doesn't mask a 2 km that DID run today.
+    if (data && Array.isArray(data.hours) && data.hours.length
+        && productCoversNow(data.hours.map((h) => h && h.t))) {
+      return { data, domain: c.domain, venue: c.venue }
+    }
   }
   return null
 }
@@ -889,6 +934,9 @@ export async function fetchIconRaceSounding({ latitude, longitude, modelKey = 'I
     : `/api/bunny/storage?key=${encodeURIComponent(path)}`
   const snd = await getIconRaceSounding(url)
   if (!snd || !Array.isArray(snd.cells) || !snd.cells.length) return null
+  // sounding.json is overwritten in place like grid.json, so an elapsed cycle
+  // would put a past day's Skew-T under today's date. Same gate as the grid.
+  if (!productCoversNow(snd.cells[0]?.hourly?.time)) return null
   const cosLat = Math.cos((latitude * Math.PI) / 180)
   let best = null
   for (const c of snd.cells) {
