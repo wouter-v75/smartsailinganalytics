@@ -24,7 +24,7 @@ import React, { useMemo, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, fetchWindweightNearest, SSARACE_SOUNDING_LEVELS, ICON_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS, GFS_SOUNDING_LEVELS } from './openMeteo'
 import { matchVenue, specFor, mosSeries } from './mos'
-import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField, sampleField } from './windField'
+import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField, sampleField, applyMosToField } from './windField'
 import { getWeatherSession } from './weatherSession'
 import {
   mean as dMean, ensureHeights, stabilityFromSounding, stabilityGate,
@@ -1585,6 +1585,15 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       const venueKey = matchVenue(p1lat, p1lon); const spec = venueKey ? specFor(venueKey) : null
       const mosFor = (key, hourly) => { const id = MODELS[key]?.mosModel; return spec && id ? mosSeries(hourly, MODELS[key]?.heights || [10], spec, id, tz) : null }
       const mosZ = spec?.target_height_m || 30
+      // The SAME venue correction the tables use, applied to the SPATIAL field.
+      // Every table/chart on the deck goes through mastKn(), which is MOS-corrected,
+      // but the map image, the racecourse bend/gradient (which is also fed to the AI
+      // brief) and the 3D stills were built from the raw field — so at a MOS venue
+      // one deck disagreed with itself. At Porto Cervo the icon_eu correction the
+      // SSA-Race models inherit is +2.3-3.1 kn, which is a different day's racing.
+      // No-op where nothing is fitted: applyMOS returns the raw speed for type
+      // 'raw', and applyMosToField passes the field straight through with no spec.
+      const mosField = (key, f) => applyMosToField(f, spec, MODELS[key]?.mosModel)
       const mk = (k, hourly, heights) => ({ key: k, hourly, lt: localTimes(hourly, tz), heights: heights || MODELS[k]?.heights || [10], mos: mosFor(k, hourly), mosZ, weight: WEIGHTS[k] || 0.5 })
       const sb = point1.surfaceByModel
       const todayModels = ALL_TODAY.filter((k) => sb[k] && hasValidSpeed(sb[k].hourly)).map((k) => mk(k, sb[k].hourly))
@@ -1622,6 +1631,9 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         field = shortSel.startsWith('ICONRACE')
           ? await fetchIconRaceField({ lat: p1lat, lon: p1lon, height: mastHeight, timezone: tz, modelKey: shortSel })
           : (MODELS[shortSel]?.endpoint ? await fetchWindField({ modelKey: shortSel, lat: p1lat, lon: p1lon, height: mastHeight, timezone: tz }) : null)
+        // Correct BEFORE anything reads it — the map image, analyseCourse below and
+        // buildDiagnostics' funnelling all consume this same `field`.
+        field = mosField(shortSel, field)
         if (field) windfieldImg = await windfieldCoast(field, p1lat, p1lon)
       } catch { /* */ }
 
@@ -1648,9 +1660,11 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       let heroView = null     // General weather: 1× zoomed-out 20 nm overview (10 nm ring)
       try {
         const m3dKey = (sb.ICONRACE_1KM && hasValidSpeed(sb.ICONRACE_1KM.hourly)) ? 'ICONRACE_1KM' : 'AROME'
-        const f3d = m3dKey.startsWith('ICONRACE')
+        // Captured at 30 m, which IS the MOS fit height (spec.target_height_m), so
+        // the correction lands here without any shear re-anchoring.
+        const f3d = mosField(m3dKey, m3dKey.startsWith('ICONRACE')
           ? await fetchIconRaceField({ lat: p1lat, lon: p1lon, height: VIEW3D_HEIGHT_M, timezone: tz, modelKey: m3dKey })
-          : await fetchWindField({ modelKey: m3dKey, lat: p1lat, lon: p1lon, height: VIEW3D_HEIGHT_M, timezone: tz })
+          : await fetchWindField({ modelKey: m3dKey, lat: p1lat, lon: p1lon, height: VIEW3D_HEIGHT_M, timezone: tz }))
         const stamps = f3d?.stamps || []
         const frameIndices = [10, 12, 14, 16].map((H) => stamps.findIndex((s) => s && s.hh === H)).filter((i) => i >= 0)
         const ML = window.maplibregl
