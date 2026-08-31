@@ -35,7 +35,8 @@ import {
 import { coastNormalForPoint } from './coastline'
 import { LIGHT_BASE_TILES, LIGHT_LABEL_TILES, tileUrl } from './basemaps'
 import { MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, captureField3DSeries } from './field3dUtils'
-import { loadPolarFromLS, polarVMGTarget, polarInterp } from '../../lib/polarCalc'
+import { loadPolarFromLS } from '../../lib/polarCalc'
+import { gradientText, flipSide, favouredSide, vmgSides, enrichCourse } from './courseSides'
 
 const PPTX_JS = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'
 const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotly.min.js'
@@ -793,80 +794,6 @@ function analyseCourse(field, lat, lon, frameIdx, sideNm = 4) {
   }
   return out
 }
-// Human text for the TWS gradient across the course.
-function gradientText(course) {
-  if (!course) return null
-  const parts = []
-  if (course.twsLeftRight != null && Math.abs(course.twsLeftRight) >= 0.5) parts.push(`+${Math.abs(course.twsLeftRight)} kt ${course.twsLeftRight > 0 ? 'right' : 'left'}`)
-  if (course.twsTopBottom != null && Math.abs(course.twsTopBottom) >= 0.5) parts.push(`+${Math.abs(course.twsTopBottom)} kt ${course.twsTopBottom > 0 ? 'top' : 'bottom'}`)
-  return parts.length ? parts.join(' · ') : 'even across course'
-}
-
-// Favoured side from the two INDEPENDENT signals, using the team's rule:
-//   - a bend favours the side it bends TO (right bend -> R, left bend -> L)
-//   - pressure favours the side with MORE wind (twsLeftRight > 0 -> R, < 0 -> L)
-// Agree -> that side. Conflict -> 'Neutral' (right for bend, left for pressure —
-// never collapse to one). One signal only -> that side. Returns R|L|Neutral|null.
-function favouredSide(c) {
-  if (!c) return null
-  const bendSide = c.bend === 'right' ? 'R' : c.bend === 'left' ? 'L' : null
-  const presSide = (c.twsLeftRight != null && Math.abs(c.twsLeftRight) >= 0.5)
-    ? (c.twsLeftRight > 0 ? 'R' : 'L') : null
-  if (bendSide && presSide) return bendSide === presSide ? bendSide : 'Neutral'
-  return bendSide || presSide || null
-}
-
-const VMG_D2R = Math.PI / 180
-// Quantitative favoured side per LEG, from the boat's polar targets. Per side (L/R):
-// pressure enters as the target VMG at that side's TWS (downwind this rises steeply
-// with wind, so pressure dominates downwind); the bend enters as the VMG change for a
-// half-bend angle shift, weighted by each leg's angle sensitivity (upwind TWA ~42 deg
-// vs 180-downwind TWA ~30 deg) so the bend moves the downwind number far less. Upwind
-// and downwind use their OWN targets and are computed independently. Bendfavoured side
-// is a one-sided bonus to the side that plays it (right bend -> right) on both legs;
-// downwind the steep VMG-vs-TWS polar means pressure usually wins anyway. Returns { up:{side,gain}, dn:{side,gain} } in kn, or null (no polar).
-function vmgSides(c, polar) {
-  if (!c || !polar?.entries?.length) return null
-  const grad = c.twsLeftRight ?? 0
-  const base = c.centreKt ?? ((c.twsRight != null && c.twsLeft != null) ? (c.twsRight + c.twsLeft) / 2 : null)
-  let twsR = c.twsRight, twsL = c.twsLeft
-  if (twsR == null || twsL == null) {
-    if (base == null) return null
-    twsR = base + grad / 2; twsL = base - grad / 2
-  }
-  const baseT = base ?? (twsR + twsL) / 2
-  const bend = c.bendDeg ?? 0
-  const half = Math.abs(bend) / 2
-  const bendR = bend > 4 ? 1 : bend < -4 ? -1 : 0   // +1 -> right favoured by the bend
-  const tR = polarVMGTarget(polar, twsR)
-  const tL = polarVMGTarget(polar, twsL)
-  const tB = polarVMGTarget(polar, baseT)
-  const leg = (vmgR, vmgL, theta, bspBase) => {
-    const bendMag = half > 0 ? bspBase * (Math.cos((theta - half) * VMG_D2R) - Math.cos(theta * VMG_D2R)) : 0
-    const r = vmgR + (bendR > 0 ? bendMag : 0)   // one-sided: the side that PLAYS the
-    const l = vmgL + (bendR < 0 ? bendMag : 0)   // bend gains; the other just misses out
-    const diff = r - l
-    return { side: Math.abs(diff) < 0.05 ? 'Neutral' : diff > 0 ? 'R' : 'L', gain: Math.round(Math.abs(diff) * 100) / 100 }
-  }
-  const bspUp = polarInterp(polar, baseT, tB.up) || (tB.upVMG / (Math.cos(tB.up * VMG_D2R) || 1))
-  const bspDn = polarInterp(polar, baseT, tB.down) || (tB.downVMG / (Math.cos((180 - tB.down) * VMG_D2R) || 1))
-  return {
-    up: leg(tR.upVMG, tL.upVMG, tB.up, bspUp),
-    dn: leg(tR.downVMG, tL.downVMG, 180 - tB.down, bspDn),
-  }
-}
-
-// Enrich a course snapshot for the AI: explicit pressure side/kt + favoured side(s),
-// so the model never has to interpret the SIGNED gradient itself. fav = qualitative;
-// favUp/favDn = VMG-favoured side per leg from the polar (null when no polar loaded).
-function enrichCourse(c, polar) {
-  if (!c) return null
-  const has = c.twsLeftRight != null && Math.abs(c.twsLeftRight) >= 0.5
-  const v = vmgSides(c, polar)
-  return { ...c, pressureSide: has ? (c.twsLeftRight > 0 ? 'right' : 'left') : 'even', pressureKt: c.twsLeftRight != null ? Math.abs(c.twsLeftRight) : null, fav: favouredSide(c),
-    favUp: v?.up?.side ?? null, favUpGain: v?.up?.gain ?? null, favDn: v?.dn?.side ?? null, favDnGain: v?.dn?.gain ?? null }
-}
-
 // Split prose into sentence-ish paragraphs (rough: break after . ! ? before a capital/digit).
 function toSentences(text) {
   if (!text) return []
@@ -1079,7 +1006,11 @@ function buildDeck(P, d) {
       const heur = favouredSide(c)
       const pres = (c.twsLeftRight != null && Math.abs(c.twsLeftRight) >= 0.5) ? (c.twsLeftRight > 0 ? 'R' : 'L') : null
       const up = v ? v.up : (heur ? { side: heur, gain: null } : null)
-      const dn = v ? v.dn : (pres ? { side: pres, gain: null } : (heur ? { side: heur, gain: null } : null))
+      // No polar loaded -> heuristic fallback. `pres` and `heur` are upwind-framed
+      // like everything from analyseCourse, so the downwind column flips too —
+      // otherwise the fallback would contradict the polar path right beside it.
+      const dnRaw = v ? null : (pres || heur)
+      const dn = v ? v.dn : (dnRaw ? { side: flipSide(dnRaw), gain: null } : null)
       return [
         txtCell(`${c.hh}:00`, { bold: true, fill: { color: LIGHTF } }),
         txtCell(`${c.twd}°`),
@@ -1093,7 +1024,7 @@ function buildDeck(P, d) {
     const cY = 7.85
     s.addText('Course gradient — hourly (4 nm box, point 1)', { x: M, y: cY - 0.35, w: CW, h: 0.3, fontFace: FONT, fontSize: 14, bold: true, color: NAVY })
     s.addTable([cHead, ...cRows], { x: M, y: cY, w: CW, colW: [0.7, 0.7, 0.95, 1.05, 1.0, 1.15, 1.15], rowH: 0.42, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle', fontFace: FONT, fontSize: 13, color: INK })
-    s.addText('Bend upwind (R/L); TWS grad = windier side. Fav ↑/↓ = VMG-to-mark favoured side + gain (kn) per leg from the polar (pressure + bend); downwind weights TWS more. ≈ even · needs a loaded polar.', { x: M, y: FOOT, w: CW, h: 0.3, fontFace: FONT, fontSize: 10, color: GREY })
+    s.addText('Sides are as you FACE them: Bend and TWS L/R are looking UPWIND; Fav ↑ looking upwind, Fav ↓ looking DOWNWIND (so the same water reads R upwind / L downwind). Fav = VMG-to-mark favoured side + gain (kn) per leg from the polar (pressure + bend); downwind weights TWS more. ≈ even · needs a loaded polar.', { x: M, y: FOOT, w: CW, h: 0.3, fontFace: FONT, fontSize: 10, color: GREY })
   }
 
   // ── 9) Stability + WIND WEIGHT ───────────────────────────────────────────────
