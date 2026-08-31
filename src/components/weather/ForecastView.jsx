@@ -12,6 +12,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
+import { addDarkBasemap } from './basemaps'
 import PlotlyChart from './PlotlyChart'
 import ForecastDeck from './ForecastDeck'
 import Field3D from './Field3D'
@@ -438,10 +439,8 @@ export default function ForecastView({
     // Pane for the speed colour wash: above tiles (200), below the particle
     // canvas (overlayPane 400) and the location markers (markerPane 600).
     map.createPane('speedField'); map.getPane('speedField').style.zIndex = 250
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '© OpenStreetMap © CARTO', subdomains: 'abcd', maxZoom: 20,
-    }).addTo(map)
-    // Lift the very dark CARTO tiles so coastline + labels stay readable under
+    addDarkBasemap(L, map, { maxZoom: 20 })
+    // Lift the very dark Canvas tiles so coastline + labels stay readable under
     // the wind field. (Tweak the brightness factor to taste.)
     try { map.getPane('tilePane').style.filter = 'brightness(1.7) contrast(0.92)' } catch { /* */ }
 

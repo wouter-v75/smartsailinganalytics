@@ -33,6 +33,7 @@ import {
   modelSpread, funnelDiagnostics, funnelFlag, clamp01,
 } from './forecastDiagnostics'
 import { coastNormalForPoint } from './coastline'
+import { LIGHT_BASE_TILES, LIGHT_LABEL_TILES, tileUrl } from './basemaps'
 import { MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, captureField3DSeries } from './field3dUtils'
 import { loadPolarFromLS, polarVMGTarget, polarInterp } from '../../lib/polarCalc'
 
@@ -207,7 +208,13 @@ async function windfieldCoast(field, p1lat, p1lon) {
   const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch; const ctx = cv.getContext('2d')
   ctx.fillStyle = '#eef3f8'; ctx.fillRect(0, 0, cw, ch)
   const jobs = []
-  for (let tx = xMin; tx <= xMax; tx++) for (let ty = yMin; ty <= yMax; ty++) jobs.push(loadImg(`https://a.basemaps.cartocdn.com/light_all/${z}/${tx}/${ty}.png`).then((im) => ctx.drawImage(im, (tx - xMin) * 256, (ty - yMin) * 256)).catch(() => {}))
+  // Esri splits land/water from labels, so fetch both and draw base-then-labels
+  // per tile — the two loads race, but the draws stay ordered.
+  for (let tx = xMin; tx <= xMax; tx++) for (let ty = yMin; ty <= yMax; ty++) {
+    const dx0 = (tx - xMin) * 256; const dy0 = (ty - yMin) * 256
+    const layers = [LIGHT_BASE_TILES, LIGHT_LABEL_TILES].map((tpl) => loadImg(tileUrl(tpl, z, tx, ty)).catch(() => null))
+    jobs.push(Promise.all(layers).then((ims) => { for (const im of ims) if (im) ctx.drawImage(im, dx0, dy0, 256, 256) }))
+  }
   await Promise.all(jobs)
   const px = (lon) => (xT(lon) - xMin) * 256; const py = (lat) => (yT(lat) - yMin) * 256
   let idx = (field.stamps || []).findIndex((s) => s && s.hh === 12); if (idx < 0) idx = Math.floor(field.frames.length / 2)

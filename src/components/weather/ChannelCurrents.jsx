@@ -11,6 +11,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
+import { addDarkBasemap } from './basemaps'
 import { toVelocityData } from './windField'
 import { MODELS } from './openMeteo'
 
@@ -128,7 +129,7 @@ export default function ChannelCurrents({ point1 = null }) {
     if (!leafletReady || !covered || !field || mapRef.current || !mapDivRef.current) return
     const L = window.L
     const map = L.map(mapDivRef.current, { zoomControl: true, attributionControl: false })
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 13 }).addTo(map)
+    addDarkBasemap(L, map, { maxZoom: 13 })
     map.setView([p1.lat, p1.lon], 9)
     L.circleMarker([p1.lat, p1.lon], { radius: 6, color: '#EF4444', weight: 2, fillOpacity: 0.6 }).addTo(map)
     mapRef.current = map
