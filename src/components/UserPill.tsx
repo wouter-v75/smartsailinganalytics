@@ -178,16 +178,22 @@ export default function UserPill() {
           if (!cancelled && profile) setMe(profile as MeProfile)
         })
 
-      const [ms, quotaRes] = await Promise.all([
-        loadMemberships(uid),
-        fetch('/api/quota/me')
-          .then((r) => (r.ok ? r.json() : null))
-          .catch(() => null),
-      ])
+      // Quota is a cosmetic indicator, but it used to sit in a Promise.all with
+      // loadMemberships — so a serverless round-trip for a storage number gated
+      // the membership resolution AND the ssa:active-membership-changed event
+      // below, which is what the whole app scopes its content off. Let it land
+      // whenever it lands; memberships go straight through.
+      fetch('/api/quota/me')
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null)
+        .then((q) => {
+          if (!cancelled && q && typeof q.bytes_used === 'number') {
+            setQuota(q as QuotaState)
+          }
+        })
+
+      const ms = await loadMemberships(uid)
       if (cancelled) return
-      if (quotaRes && typeof quotaRes.bytes_used === 'number') {
-        setQuota(quotaRes as QuotaState)
-      }
       setMemberships(ms)
 
       // Pick active membership: persisted choice if still valid, else a default.
