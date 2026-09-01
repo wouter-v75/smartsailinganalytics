@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase, getServiceSupabase } from '@/lib/supabase/server'
 import { requireTeamManager } from '@/lib/supabase/admin-guard'
+import { pickCampaignEvent } from '@/lib/campaignEvent'
 
 export async function GET(
   req: NextRequest,
@@ -51,21 +52,25 @@ export async function GET(
     if (u && !memberMap.has(u.id)) memberMap.set(u.id, { id: u.id, name: u.name })
   }
 
-  // Boat name + current event (for the forecast deck's title slide). The
-  // "current" event is the one attached to today's session for this boat, else
-  // the most recent dated session's event. Both optional.
+  // Boat name + current event (for the forecast deck's title slide). "Current"
+  // means the regatta we are AT or heading to — see pickCampaignEvent. Both
+  // optional.
   let boatName: string | null = null
   let event: string | null = null
   if (boatId) {
     const today = new Date().toISOString().slice(0, 10)
+    // Window from ~4 months back forwards, ASCENDING, so the row set always holds
+    // both the recent past and everything upcoming. The previous query sorted
+    // DESCENDING and took row 0, which is the furthest-FUTURE event on the
+    // calendar — so a regatta months away outranked the one being sailed.
+    const since = new Date(Date.now() - 120 * 86400e3).toISOString().slice(0, 10)
     const [{ data: boatRow }, { data: evRows }] = await Promise.all([
       service.from('boats').select('name').eq('id', boatId).maybeSingle(),
       service.from('sessions').select('date, event').eq('team_id', params.teamId).eq('boat_id', boatId)
-        .not('event', 'is', null).order('date', { ascending: false }).limit(60),
+        .not('event', 'is', null).gte('date', since).order('date', { ascending: true }).limit(400),
     ])
     boatName = (boatRow?.name as string) || null
-    const rows = (evRows || []) as Array<{ date: string; event: string | null }>
-    event = (rows.find((r) => r.date === today)?.event) || (rows[0]?.event) || null
+    event = pickCampaignEvent(evRows as Array<{ date: string; event: string | null }>, today)
   }
 
   return NextResponse.json({

@@ -6116,18 +6116,26 @@ function SSAApp(){
   // the Campaign tab becomes available.
   useEffect(()=>{
     let cancelled=false;
+    // Bumped on every run so a SLOW earlier fetch cannot land after a newer one
+    // and repaint the previous workspace's boat/event over the current one.
+    // `cancelled` alone only covers unmount, not switch-during-flight.
+    let runSeq=0;
     async function run(){
+      const seq=++runSeq;
       try{
         const supabase=getBrowserSupabase();
         const uid=await getUidFast();
-        if(!uid||cancelled) return;
+        if(!uid||cancelled||seq!==runSeq) return;
         const m=getActiveMembership(uid);
         if(!m||!m.team_id||!m.boat_id){ setCampaignCfg(null); return; }
         const res=await fetch(`/api/teams/${m.team_id}/campaign/config?boat_id=${m.boat_id}`);
-        if(!res.ok||cancelled) return;
+        if(!res.ok||cancelled||seq!==runSeq) return;
         const j=await res.json();
-        if(cancelled) return;
-        setCampaignCfg(j?.campaignOn ? {...j, teamId:m.team_id, boatId:m.boat_id, boatName:m.boat_name} : null);
+        if(cancelled||seq!==runSeq) return;
+        // Prefer the API's boat name: it is read from `boats` for the ACTIVE
+        // boat_id, so it survives a rename and cannot go stale. The membership
+        // copy in localStorage is only a fallback.
+        setCampaignCfg(j?.campaignOn ? {...j, teamId:m.team_id, boatId:m.boat_id, boatName:(j.boatName||m.boat_name||null)} : null);
       } catch { /* non-fatal — campaign tab just stays hidden */ }
     }
     run();
