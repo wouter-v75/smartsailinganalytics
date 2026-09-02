@@ -269,6 +269,33 @@ export async function PATCH(req: NextRequest, { params }: { params: { teamId: st
   const patch: Record<string, any> = {}
   if ('sail_id' in body) patch.sail_id = body.sail_id || null
   if ('notes' in body) patch.notes = body.notes
+
+  // Capture time. A scan stores it TWICE — the venue-local wall clock in
+  // conditions.captured_local (what the North report wrote) and the true UTC
+  // instant in captured_at — and the readers prefer captured_local. So an edit
+  // must set both, from the same wall clock, or they drift apart and the UI
+  // keeps showing the old time. The client derives the pair with
+  // lib/scanTime.ts::localToScanStamps, which owns the venue-offset arithmetic.
+  if ('captured_at' in body) {
+    const ms = Date.parse(body.captured_at)
+    if (!Number.isFinite(ms)) {
+      return NextResponse.json({ error: 'captured_at must be an ISO timestamp' }, { status: 400 })
+    }
+    patch.captured_at = new Date(ms).toISOString()
+  }
+  if ('captured_local' in body) {
+    if (typeof body.captured_local !== 'string' || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(body.captured_local)) {
+      return NextResponse.json({ error: 'captured_local must be "YYYY-MM-DD HH:MM"' }, { status: 400 })
+    }
+    // MERGE, never replace: conditions also carries sail_code, sail_type, wind…
+    const { data: cur, error: readErr } = await supabase
+      .from('sail_scans').select('conditions')
+      .eq('id', body.id).eq('team_id', params.teamId).maybeSingle()
+    if (readErr) return NextResponse.json({ error: readErr.message }, { status: 500 })
+    if (!cur) return NextResponse.json({ error: 'scan not found' }, { status: 404 })
+    patch.conditions = { ...((cur.conditions as Record<string, any>) || {}), captured_local: body.captured_local }
+  }
+
   if (!Object.keys(patch).length) return NextResponse.json({ error: 'no writable fields' }, { status: 400 })
 
   const { data, error } = await supabase

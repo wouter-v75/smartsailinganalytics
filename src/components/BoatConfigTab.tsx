@@ -401,6 +401,16 @@ export default function BoatConfigTab({
     if (r.error) throw new Error(r.error)
     await refreshScans()
   }
+  // Capture time. Sends the PAIR (venue-local wall clock + true UTC) so the two
+  // representations a scan carries cannot drift; see lib/scanTime.ts.
+  const patchScanTime = async (id: string, captured_at: string, captured_local: string) => {
+    const r = await fetch(`/api/teams/${teamId}/sail-scans`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, captured_at, captured_local }),
+    }).then((x) => x.json())
+    if (r.error) throw new Error(r.error)
+    await refreshScans()
+  }
   const patchScanNotes = async (id: string, notes: string) => {
     const r = await fetch(`/api/teams/${teamId}/sail-scans`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -765,6 +775,11 @@ export default function BoatConfigTab({
           sailName={(selectedScan.sail_id ? sailById[selectedScan.sail_id]?.name : null) || selectedScan.conditions?.sail_name_in_report}
           onReassign={async (sailId: string | null) => { await patchScanSail(selectedScan.id, sailId); setSelectedScan((p: any) => p ? { ...p, sail_id: sailId } : p) }}
           onSaveNotes={async (notes: string) => { await patchScanNotes(selectedScan.id, notes); setSelectedScan((p: any) => p ? { ...p, notes } : p) }}
+          onSaveTime={async (captured_at: string, captured_local: string) => {
+            await patchScanTime(selectedScan.id, captured_at, captured_local)
+            // keep the open modal in step with what was just written
+            setSelectedScan((p: any) => p ? { ...p, captured_at, conditions: { ...(p.conditions || {}), captured_local } } : p)
+          }}
           onDelete={async () => { await deleteScan(selectedScan.id); setSelectedScan(null) }}
           onClose={() => setSelectedScan(null)}
           sessionTzOffset={sessionTzOffset}
@@ -882,7 +897,7 @@ const twsNum = (c: any): number | null => {
 const HIDDEN_REACHING_COLS: { headsail: string; tws: number }[] = [
   { headsail: 'Jib', tws: 7 },
   { headsail: 'MOFO & GS', tws: 11 },
-  { headsail: 'BRO & J3 & GS', tws: 18 }, // the 35AWA one (VERIFY 16 vs 18)
+  { headsail: 'BRO & J3 & GS', tws: 18 }, // the 35AWA one (confirmed TWS 18)
 ]
 const isHiddenReachingCol = (c: any): boolean =>
   c?.section === 'reaching' && HIDDEN_REACHING_COLS.some((h) => h.headsail === (c?.headsail || '') && twsNum(c) === h.tws)

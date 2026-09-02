@@ -14,7 +14,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { getLogData } from '../lib/localStore'
 import { computeScanWindow } from '../lib/scanConditions'
-import { scanLocalDateTime } from '../lib/scanTime'
+import { scanLocalDateTime, scanLocalParts, localToScanStamps, tzShortOf } from '../lib/scanTime'
 import { pickDesign, designCodeOf, interpDesignAtTws } from '../lib/designInterp'
 import { northstarConditions, nsCell, nsSetCell, NS_STRIPES, NS_TWS, type NsCondition, type NsMetric } from '../lib/northstarTarget'
 import { RichText } from './RichText'
@@ -191,8 +191,8 @@ const WIND: { key: string; label: string; color: string }[] = [
   { key: 'vsPerfPct', label: 'Polar BSP %', color: '#F472B6' },
 ]
 
-export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onSaveNotes, onDelete, onClose, sessionTzOffset = 0 }:
-  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; boatName?: string | null; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onSaveNotes?: (notes: string) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void; sessionTzOffset?: number }) {
+export default function SailScanDetail({ scan, teamId, sails = [], canEdit = false, tags, boatName, sailName, onReassign, onSaveNotes, onSaveTime, onDelete, onClose, sessionTzOffset = 0 }:
+  { scan: any; teamId: string; sails?: any[]; canEdit?: boolean; tags?: any; boatName?: string | null; sailName?: string | null; onReassign?: (sailId: string | null) => Promise<void>; onSaveNotes?: (notes: string) => Promise<void>; onSaveTime?: (capturedAt: string, capturedLocal: string) => Promise<void>; onDelete?: () => Promise<void>; onClose: () => void; sessionTzOffset?: number }) {
   const cond = scan?.conditions || {}
   // Head at the top (87% / 75% for jibs) down to 25% at the foot — matches the
   // North report layout.
@@ -207,6 +207,11 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const [winSource, setWinSource] = useState<string>('') // 'local' | 'cloud' | ''
   const [editing, setEditing] = useState(false)
   const [sailIdSel, setSailIdSel] = useState<string>(scan?.sail_id || '')
+  // Capture time, as the crew read it at the venue. Seeded from the scan when the
+  // edit panel opens (see the Edit button) so it always starts at the current value.
+  const [dateSel, setDateSel] = useState<string>('')
+  const [timeSel, setTimeSel] = useState<string>('')
+  const [timeErr, setTimeErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [notes, setNotes] = useState<string>(scan?.notes || '')
   const [notesBusy, setNotesBusy] = useState(false)
@@ -256,10 +261,44 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   }, [scan?.id, teamId, cond.photo_key]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeSails = (sails || []).filter((s) => !s.retired)
-  const doReassign = async () => {
-    if (!onReassign) return
+  // Seed the edit panel from the scan as it stands.
+  const openEdit = () => {
+    setSailIdSel(scan?.sail_id || '')
+    const p = scanLocalParts(scan, sessionTzOffset)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    setDateSel(p ? `${p.y}-${pad(p.mo)}-${pad(p.d)}` : '')
+    setTimeSel(p ? `${pad(p.h)}:${pad(p.mi)}` : '')
+    setTimeErr('')
+    setEditing(true)
+  }
+
+  // One Save commits both the sail tag and the capture time. The time is only
+  // written when it actually changed, so re-saving a tag cannot rewrite the
+  // timestamp (and a scan with no capture time at all stays that way unless the
+  // user types one).
+  const doSaveEdit = async () => {
+    setTimeErr('')
+    const p = scanLocalParts(scan, sessionTzOffset)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const wasDate = p ? `${p.y}-${pad(p.mo)}-${pad(p.d)}` : ''
+    const wasTime = p ? `${pad(p.h)}:${pad(p.mi)}` : ''
+    const timeChanged = !!onSaveTime && (dateSel !== wasDate || timeSel !== wasTime)
+
+    let stamps: { captured_local: string; captured_at: string } | null = null
+    if (timeChanged) {
+      if (!dateSel || !timeSel) { setTimeErr('Enter both a date and a time'); return }
+      stamps = localToScanStamps(dateSel, timeSel, sessionTzOffset)
+      if (!stamps) { setTimeErr('Not a valid date/time'); return }
+    }
+
     setBusy(true)
-    try { await onReassign(sailIdSel || null); setEditing(false) } finally { setBusy(false) }
+    try {
+      if (onReassign && (sailIdSel || '') !== (scan?.sail_id || '')) await onReassign(sailIdSel || null)
+      if (stamps && onSaveTime) await onSaveTime(stamps.captured_at, stamps.captured_local)
+      setEditing(false)
+    } catch (e: any) {
+      setTimeErr(e?.message || 'Save failed')
+    } finally { setBusy(false) }
   }
   const doDelete = async () => {
     if (!onDelete) return
@@ -460,7 +499,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
           {cond.sail_type && <span style={{ fontSize: 11, color: cond.sail_type === 'main' ? '#34D399' : '#FBBF24' }}>{cond.sail_type}</span>}
           <span style={{ fontSize: 12, color: C.dim }}>{scanLocalDateTime(scan, sessionTzOffset)}</span>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto', marginRight: 64, marginTop: 10 }}>
-            {canEdit && <button onClick={() => { setSailIdSel(scan?.sail_id || ''); setEditing((v) => !v) }} disabled={busy} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 9, color: C.head, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>✎ Edit</button>}
+            {canEdit && <button onClick={() => { if (editing) setEditing(false); else openEdit() }} disabled={busy} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 9, color: C.head, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>✎ Edit</button>}
             {canEdit && <button onClick={doDelete} disabled={busy} style={{ background: '#3a1320', border: '1px solid #7f1d1d', borderRadius: 9, color: '#fca5a5', fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer' }}>🗑 Delete</button>}
             <button onClick={() => share(false)} disabled={sharing} style={{ background: C.accent, border: 'none', borderRadius: 9, color: '#001018', fontWeight: 700, fontSize: 15, padding: '10px 20px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>{sharing ? 'Building PDF…' : '↗ Share PDF'}</button>
             <button onClick={() => share(true)} disabled={sharing} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 9, color: C.head, fontWeight: 700, fontSize: 15, padding: '10px 18px', cursor: 'pointer', opacity: sharing ? 0.6 : 1 }}>⬇ Download</button>
@@ -475,8 +514,21 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
               <option value="">— unassigned —</option>
               {activeSails.map((s) => <option key={s.id} value={s.id}>{s.category ? `${s.category} · ${s.name}` : s.name}</option>)}
             </select>
-            <button onClick={doReassign} disabled={busy} style={{ background: C.good, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>{busy ? '…' : 'Save'}</button>
-            <button onClick={() => setEditing(false)} style={{ background: '#334155', border: 'none', borderRadius: 6, color: '#cbd5e1', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>Cancel</button>
+            {onSaveTime && (
+              <>
+                <span style={{ width: 1, height: 20, background: C.border }} />
+                <span style={{ fontSize: 12, color: C.dim }}>Captured</span>
+                <input type="date" value={dateSel} onChange={(e) => { setDateSel(e.target.value); setTimeErr('') }}
+                  style={{ background: '#0a1c2e', border: `1px solid ${C.border}`, borderRadius: 6, color: C.head, padding: '5px 7px', fontSize: 12 }} />
+                <input type="time" value={timeSel} onChange={(e) => { setTimeSel(e.target.value); setTimeErr('') }}
+                  style={{ background: '#0a1c2e', border: `1px solid ${C.border}`, borderRadius: 6, color: C.head, padding: '5px 7px', fontSize: 12 }} />
+                {/* the scan's time is venue-local, never the viewer's machine zone */}
+                <span style={{ fontSize: 11, color: C.dim }}>{tzShortOf(sessionTzOffset)}</span>
+              </>
+            )}
+            <button onClick={doSaveEdit} disabled={busy} style={{ background: C.good, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>{busy ? '…' : 'Save'}</button>
+            <button onClick={() => { setEditing(false); setTimeErr('') }} style={{ background: '#334155', border: 'none', borderRadius: 6, color: '#cbd5e1', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' }}>Cancel</button>
+            {timeErr && <span style={{ fontSize: 12, color: '#fca5a5' }}>{timeErr}</span>}
           </div>
         )}
 

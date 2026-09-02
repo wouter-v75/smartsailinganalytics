@@ -44,3 +44,36 @@ export const scanLocalHM = (scan: any, off = 0) => {
   const p = scanLocalParts(scan, off)
   return p ? `${p2(p.h)}:${p2(p.mi)} ${p.zone}` : ''
 }
+
+// ── editing a scan's capture time ────────────────────────────────────────────
+// The inverse of scanLocalParts. A scan carries the capture time TWICE: the
+// literal venue-local wall clock in `conditions.captured_local` (what the North
+// report wrote, and what scanLocalParts reads FIRST) and the true UTC instant in
+// `captured_at`. Writing only one of them silently does nothing visible, because
+// captured_local wins the read — so an edit must always produce BOTH, derived
+// from the same wall clock, or the two drift apart.
+//
+// `dateISO` is YYYY-MM-DD and `timeHM` is HH:MM, both as the crew read them at
+// the venue; sessionTzOffset is the venue's offset in minutes east of UTC.
+export function localToScanStamps(
+  dateISO: string,
+  timeHM: string,
+  sessionTzOffset = 0
+): { captured_local: string; captured_at: string } | null {
+  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec((dateISO || '').trim())
+  const t = /^(\d{1,2}):(\d{2})$/.exec((timeHM || '').trim())
+  if (!d || !t) return null
+  const y = +d[1]; const mo = +d[2]; const day = +d[3]
+  const h = +t[1]; const mi = +t[2]
+  if (mo < 1 || mo > 12 || day < 1 || day > 31 || h > 23 || mi > 59) return null
+  const ms = Date.UTC(y, mo - 1, day, h, mi) - sessionTzOffset * 60000
+  if (!Number.isFinite(ms)) return null
+  // Guard against a rolled-over date (e.g. 31 Feb becoming 3 Mar): reject rather
+  // than silently storing a different day than the one typed.
+  const back = new Date(ms + sessionTzOffset * 60000)
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() + 1 !== mo || back.getUTCDate() !== day) return null
+  return {
+    captured_local: `${d[1]}-${d[2]}-${d[3]} ${p2(h)}:${p2(mi)}`,
+    captured_at: new Date(ms).toISOString(),
+  }
+}
