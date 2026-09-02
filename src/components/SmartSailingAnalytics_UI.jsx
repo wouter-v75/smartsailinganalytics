@@ -760,6 +760,15 @@ const useTz = () => React.useContext(TzCtx);
 const hmLocal  = (u,tz=0)=>u?new Date(u+tz*60000).toISOString().slice(11,16):"--:--";
 const hmsLocal = (u,tz=0)=>u?new Date(u+tz*60000).toISOString().slice(11,19):"--:--:--";
 const TODAY=()=>new Date().toISOString().slice(0,10);
+// A session is worth OFFERING when it holds anything openable — video, log,
+// events or photos. Analytics and the sessions sidebar previously required
+// (videoCount||0) > 0, so a day with only a logfile was filtered out of both
+// even though the very next line rendered a "· log" badge for it: upload a log
+// with no video and the day was invisible, with nothing to say why.
+// The Videos grid deliberately keeps its own video-only test — a log-only day
+// there would open an empty gallery.
+const hasOpenableData = (s) =>
+  (s?.videoCount || 0) > 0 || !!s?.hasLog || !!s?.hasXml || (s?.photoCount || 0) > 0;
 const fmtDate=d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
 const fmtDateTime=u=>{if(!u)return"";const dt=new Date(u);const dd=String(dt.getUTCDate()).padStart(2,"0");const mm=String(dt.getUTCMonth()+1).padStart(2,"0");const yyyy=dt.getUTCFullYear();const hh=String(dt.getUTCHours()).padStart(2,"0");const mi=String(dt.getUTCMinutes()).padStart(2,"0");return`${dd}/${mm}/${yyyy} ${hh}:${mi}`;};
 const fmtSize=b=>b>1e9?`${(b/1e9).toFixed(1)} GB`:`${(b/1e6).toFixed(0)} MB`;
@@ -4026,7 +4035,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"4px 8px",color:"#E2E8F0",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}
               title="Switch session date"
             >
-              {sessions.filter(s => (s.videoCount||0) > 0 && s.date <= TODAY()).map(s => (
+              {sessions.filter(s => hasOpenableData(s) && s.date <= TODAY()).map(s => (
                 <option key={s.date} value={s.date}>
                   {s.date === TODAY() ? `Today (${s.date})` : s.date}
                   {s.videoCount ? ` · ${s.videoCount}v` : ''}
@@ -5280,7 +5289,7 @@ function MobileShell(props){
         {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
         {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Weather"><WeatherTab isMobile={true} effectiveRole={props.effectiveRole} boatName={props.campaignCfg?.boatName} eventName={props.campaignCfg?.event} logData={props.logData} teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId} targetDate={props.campaignCfg?.targetDate}/></ErrorBoundary>
+            <ErrorBoundary label="Weather"><WeatherTab isMobile={true} effectiveRole={props.effectiveRole} boatName={props.campaignCfg?.boatName || props.activeMem?.boat_name} eventName={props.campaignCfg?.event} logData={props.logData} teamId={props.campaignCfg?.teamId} boatId={props.campaignCfg?.boatId} targetDate={props.campaignCfg?.targetDate}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="timeline"&&(
@@ -6129,17 +6138,24 @@ function SSAApp(){
         const m=getActiveMembership(uid);
         if(!m||!m.team_id||!m.boat_id){ setCampaignCfg(null); return; }
         const res=await fetch(`/api/teams/${m.team_id}/campaign/config?boat_id=${m.boat_id}`);
-        if(!res.ok||cancelled||seq!==runSeq) return;
+        if(cancelled||seq!==runSeq) return;
+        // A failed fetch must not leave the PREVIOUS workspace's boat/event on
+        // screen — that is how a deck generated as Warp came out titled Northstar.
+        // Better an obviously-missing placeholder than a confidently wrong name.
+        if(!res.ok){ setCampaignCfg(null); return; }
         const j=await res.json();
         if(cancelled||seq!==runSeq) return;
         // Prefer the API's boat name: it is read from `boats` for the ACTIVE
         // boat_id, so it survives a rename and cannot go stale. The membership
         // copy in localStorage is only a fallback.
         setCampaignCfg(j?.campaignOn ? {...j, teamId:m.team_id, boatId:m.boat_id, boatName:(j.boatName||m.boat_name||null)} : null);
-      } catch { /* non-fatal — campaign tab just stays hidden */ }
+      } catch { setCampaignCfg(null); /* non-fatal — campaign tab just stays hidden */ }
     }
     run();
-    const onChange=()=>run();
+    // Drop the old workspace's config the INSTANT the pill switches, then refetch.
+    // Without this the deck kept the previous boat/event for the whole round-trip,
+    // and forever if the refetch failed.
+    const onChange=()=>{ setCampaignCfg(null); run(); };
     window.addEventListener('ssa:active-membership-changed',onChange);
     return ()=>{ cancelled=true; window.removeEventListener('ssa:active-membership-changed',onChange); };
   },[]);
@@ -7582,7 +7598,7 @@ function SSAApp(){
                 const g=new Map();
                 for(const s of visibleSessions){ if(s.event){ if(!g.has(s.event)) g.set(s.event,[]); g.get(s.event).push(s.date); } }
                 for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
-                return visibleSessions.filter(s=>(s.videoCount||0)>0 && s.date<=TODAY()).map(s=>{
+                return visibleSessions.filter(s=>hasOpenableData(s) && s.date<=TODAY()).map(s=>{
                   const isLocal=!(s.cloudSynced||s.source==="cloud"||s.source==="supabase");const isActive=activeDate===s.date;
                   const ev=evMap.get(s.date);
                   return(<div key={s.date} onClick={()=>loadDate(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
@@ -8277,7 +8293,7 @@ function SSAApp(){
         {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
         {activeTab==="weather"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Weather"><WeatherTab isMobile={false} effectiveRole={effectiveRole} boatName={campaignCfg?.boatName} eventName={campaignCfg?.event} logData={logData} teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} targetDate={campaignCfg?.targetDate}/></ErrorBoundary>
+            <ErrorBoundary label="Weather"><WeatherTab isMobile={false} effectiveRole={effectiveRole} boatName={campaignCfg?.boatName || activeMem?.boat_name} eventName={campaignCfg?.event} logData={logData} teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} targetDate={campaignCfg?.targetDate}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="timeline"&&(
