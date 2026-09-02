@@ -6209,9 +6209,11 @@ function SSAApp(){
         // Open the most recent day that has VIDEO data for the NEW boat, and load
         // it — so the switch lands on a populated folder with thumbnails already
         // loading, instead of a blank date the user has to click into.
-        const localVideoDates=vids.map(v=>v.sessionDate).filter(Boolean);
-        const cloudVideoDates=cloudSessions.filter(s=>s.video_count>0).map(s=>s.date);
-        const bestDate=[...localVideoDates,...cloudVideoDates].sort().reverse()[0]
+        const today2=TODAY();
+        const bestDate=[
+          ...localSessions.filter(s=>hasOpenableData(s) && s.date<=today2).map(s=>s.date),
+          ...cloudSessions.map(s=>s.date),
+        ].sort().reverse()[0]
           || [...localSessions.map(s=>s.date),...cloudSessions.map(s=>s.date)].sort().reverse()[0]
           || null;
         if(bestDate) await loadDate(bestDate);
@@ -6447,12 +6449,18 @@ function SSAApp(){
       // Older sessions show thumbnail/metadata only — full data loads on-demand.
       const vids=await getAllVideosForMembership(bootMembership);
       _pm(`getAllVideos (${vids.length} clips, blob URLs minted)`);
-      // Open the most recent day that actually has VIDEO footage — skip log-only
-      // or empty days (and today, if nothing was shot today). Falls back to the
-      // latest session day, then today, when there's no video anywhere.
+      // Open the most recent day that has ANY data — video, log, events or photos.
+      // This used to prefer VIDEO footage and only fall back when there was no
+      // video anywhere, which meant a day with just a logfile was never opened:
+      // upload a log to a boat that already has clips and the app still landed on
+      // the last day someone filmed. Empty sessions are still skipped.
       const videoDates=vids.map(v=>v.sessionDate).filter(Boolean).sort();
       const latestVideoDate=videoDates.length?videoDates[videoDates.length-1]:null;
-      const latestDate=latestVideoDate||localSessions[0]?.date||today;
+      const latestDataDate=localSessions
+        .filter(s=>hasOpenableData(s) && s.date<=today)
+        .map(s=>s.date).sort().reverse()[0] || null;
+      const latestDate=[latestDataDate,latestVideoDate].filter(Boolean).sort().reverse()[0]
+        ||localSessions[0]?.date||today;
       const isRecent=(date)=>date===today||date===latestDate;
       // On mobile: skip expensive enrichVideo (requires full log read) for old sessions.
       // Clips share dates (e.g. 10 sessions ⇒ ~10 unique days but ~100 clips), so read
@@ -6568,16 +6576,13 @@ function SSAApp(){
               // Uses `latestDate` (the date boot() actually set active)
               // rather than the `activeDate` state var — that one's a
               // stale closure, frozen at TODAY() from the initial render.
-              // Prefer the newest day that actually has VIDEO data (video_count>0)
-              // across local + cloud; only fall back to the newest session day
-              // when there's no video anywhere.
-              const newestCloudVideoDate = cloudSessions
-                .filter(s => s.video_count > 0).map(s => s.date).sort().reverse()[0];
+              // Newest day with ANY data across local + cloud — same rule as boot
+              // above, so the cloud step cannot drag the view back to the last
+              // day someone filmed after boot correctly opened a log-only day.
+              // A cloud row carries no hasLog flag, so treat any cloud session as
+              // having data (it would not exist otherwise).
               const newestCloudDate = cloudSessions.map(s => s.date).sort().reverse()[0];
-              const haveVideo = latestVideoDate || newestCloudVideoDate;
-              const bestDate = haveVideo
-                ? [latestVideoDate, newestCloudVideoDate].filter(Boolean).sort().reverse()[0]
-                : [latestDate, newestCloudDate].filter(Boolean).sort().reverse()[0];
+              const bestDate = [latestDate, newestCloudDate].filter(Boolean).sort().reverse()[0];
               if (bestDate && bestDate !== latestDate) {
                 await loadDate(bestDate);
                 _pm(`cloud: loadDate(${bestDate})`);
