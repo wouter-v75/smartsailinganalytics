@@ -6,11 +6,33 @@
 
 import { createBrowserClient } from '@supabase/ssr'
 
+// ONE client per browser context. This used to construct a fresh
+// createBrowserClient on every call — 49 call sites — and each one builds its own
+// GoTrueClient, which supabase-js explicitly warns against ("Multiple GoTrueClient
+// instances detected in the same browser context").
+//
+// The cost shows up on a RELOAD after the tab has idled past the access-token
+// expiry. Every instance then wants to refresh, they all contend for the same
+// `navigator.locks` name and the same cookie storage key, and they serialise —
+// while the middleware is independently refreshing the same rotating refresh
+// token server-side. UserPill sits behind getUidFast() at the back of that queue,
+// which is why the pill stays blank for minutes. Open a NEW tab straight after and
+// it is instant, because by then the token has been refreshed and every call
+// short-circuits.
+//
+// Cached only in the browser: a module-level singleton on the server would leak
+// one user's auth state across requests.
+let _browserClient: ReturnType<typeof createBrowserClient> | null = null
+
 export function getBrowserSupabase() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  const make = () =>
+    createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+  if (typeof window === 'undefined') return make()
+  if (!_browserClient) _browserClient = make()
+  return _browserClient
 }
 
 // Verified user id with NO network round-trip. getClaims() checks the JWT
