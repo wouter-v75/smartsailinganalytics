@@ -50,10 +50,24 @@ describe('whisper prompt budget', () => {
     expect(p.length).toBeLessThanOrEqual(WHISPER_PROMPT_MAX_CHARS)
   })
 
-  it('spends the budget on what Whisper cannot guess — crew and wardrobe first', () => {
+  it('spends the budget on what Whisper cannot guess — names first', () => {
     const p = whisperPrompt(withOverride({ sails: WARDROBE }))
-    for (const s of WARDROBE) expect(p).toContain(s)   // unguessable, must all survive
+    // Every proper noun must survive: Whisper cannot guess a name, and a wrong one
+    // reaches the summary as fact.
     for (const c of DEFAULT_GLOSSARY.crew) expect(p).toContain(c)
+    for (const b of DEFAULT_GLOSSARY.boats) expect(p).toContain(b)
+  })
+
+  it('carries most of the wardrobe, and drops generic words rather than codes', () => {
+    // A full crew + rival boats + a season's wardrobe genuinely exceed the token
+    // budget, so this asserts the PRIORITY, not that everything fits: unguessable
+    // codes stay, and the words Whisper already knows are what get dropped.
+    const p = whisperPrompt(withOverride({ sails: WARDROBE }))
+    const kept = WARDROBE.filter((s) => p.includes(s))
+    expect(kept.length).toBeGreaterThanOrEqual(8)
+    expect(p).toContain('BRO')          // a real sail read as slang before it was listed
+    expect(p).toContain('MH0')          // heard as "the mo"
+    expect(p).not.toContain('spinnaker') // generic: correctly sacrificed first
   })
 
   it('still reaches the most-mangled hardware, which is the whole point', () => {

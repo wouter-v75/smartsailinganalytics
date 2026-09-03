@@ -20,18 +20,23 @@ export type Glossary = {
   manoeuvres: string[]
   parts: string[]
   crew: string[]
+  boats: string[]      // this boat + the ones the team races against, by name
   dutch: [string, string][]  // [dutch, english]
   fixups: [string, string][] // [wrong (heard), right]
 }
 
 // Starter set — refine `sails` and `crew` with the team's actual inventory + names.
 export const DEFAULT_GLOSSARY: Glossary = {
-  sails: ['mainsail', 'main', 'jib', 'genoa', 'No.1', 'No.3', 'staysail', 'spinnaker', 'kite', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'jib top', 'masthead zero', 'MH0'],
-  manoeuvres: ['tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
+  sails: ['BRO', 'MH0', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'No.1', 'No.3', 'jib top', 'masthead zero', 'staysail', 'mainsail', 'main', 'jib', 'genoa', 'spinnaker', 'kite'],
+  manoeuvres: ['inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
   // High-value / most-mangled terms first — whisperPrompt() only takes the leading
   // slice, so keep the ones Whisper fumbles (halyard, tackline, constrictor, luff…) up top.
-  parts: ['halyard', 'tackline', 'constrictor', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew'],
-  crew: ['Marc', 'Jan'],
+  parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew'],
+  // Proper nouns are the single highest-value entries here: Whisper cannot guess a
+  // name, and a wrong one propagates into the summary as fact. Kept current from
+  // debrief corrections — see `fixups` for the mishearings each one produced.
+  crew: ['Shane', 'Frank', 'Nick', 'Jarrod', 'Dougie', 'Pete', 'Peter', 'Marc', 'Jan'],
+  boats: ['Django', 'Bella Mente', 'Vasco'],
   dutch: [
     ['grootzeil', 'mainsail'], ['fok', 'jib'], ['genua', 'genoa'], ['val', 'halyard'],
     ['schoot', 'sheet'], ['hals', 'tack'], ['halshoek', 'tack'], ['giek', 'boom'],
@@ -40,8 +45,23 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['boei', 'mark'], ['stuurboord', 'starboard'], ['bakboord', 'port'], ['rif', 'reef'],
     ['kluiver', 'jib'], ['bakstag', 'runner'], ['bolling', 'draft'], ['bol', 'draft'],
   ],
+  // Mishearings actually observed in this team's debriefs. These go to the SUMMARISER
+  // as context, never as a blind find-and-replace, which is why entries like
+  // "weight"→AWA and "load"→leeward are safe to list: the model applies them only
+  // where the sailing sense demands it, and "weight" keeps its ordinary meaning
+  // everywhere else.
   fixups: [
     ['tagline', 'tackline'], ['clewline', 'halyard'], ['clew line', 'halyard'],
+    // 3 Sept debrief
+    ['mo', 'MH0'], ['the mode', 'MH0'], ['emmage zero', 'MH0'],
+    ['bro', 'BRO (the reacher — a sail name, never the slang)'],
+    ['van der ba', 'Vanderbilt start'], ['vanderbilt', 'Vanderbilt start'],
+    ['double tap', 'double tack'],
+    ['self-tailor', 'self-tailer'], ['self tailor', 'self-tailer'],
+    ['windward load', 'windward-leeward'], ['load focus', 'leeward focus'],
+    ['the weight', 'the AWA (when the sense is sail trim, not crew weight)'],
+    ['coaster timing', 'coastal peel curve timing'],
+    ['splice', 'Bella Mente (boat name)'],
   ],
 }
 
@@ -49,14 +69,28 @@ export const DEFAULT_GLOSSARY: Glossary = {
 export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT_GLOSSARY): Glossary {
   if (!extra) return base
   const uniq = (a: string[] = [], b: string[] = []) => Array.from(new Set([...a, ...b]))
+  // Sails are INTERLEAVED rather than concatenated, because both lists are
+  // high-value and the prompt budget cuts off the tail. Concatenating starves
+  // whichever list comes second: wardrobe-first dropped BRO and MH0 — the two terms
+  // this team's transcripts actually get wrong — while base-first dropped the boat's
+  // own sail codes. Alternating means the budget runs out on both at once.
+  const weave = (a: string[] = [], b: string[] = []) => {
+    const out: string[] = []
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      if (i < a.length) out.push(a[i])
+      if (i < b.length) out.push(b[i])
+    }
+    return Array.from(new Set(out))
+  }
   return {
     // The team's OWN items lead: a wardrobe code (A1.5-2022) is unguessable, while
     // "mainsail" and "jib" are words Whisper already knows. Under a tight prompt
     // budget the order decides what survives.
-    sails: uniq(extra.sails, base.sails),
+    sails: weave(extra.sails, base.sails),
     manoeuvres: uniq(base.manoeuvres, extra.manoeuvres),
     parts: uniq(extra.parts, base.parts),
     crew: uniq(extra.crew, base.crew),
+    boats: uniq(extra.boats, base.boats),
     dutch: [...base.dutch, ...(extra.dutch || [])],
     fixups: [...base.fixups, ...(extra.fixups || [])],
   }
@@ -71,8 +105,19 @@ export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT
 //
 // Budgets are in CHARACTERS because the Whisper tokeniser is not available here;
 // 2 chars/token is the pessimistic ratio measured on this vocabulary.
-export const WHISPER_PROMPT_MAX_CHARS = 320   // ~160 tokens of terms
+export const WHISPER_PROMPT_MAX_CHARS = 360   // ~180 tokens of terms
 export const WHISPER_TOTAL_MAX_CHARS = 440    // ~220 tokens incl. any prev-chunk tail
+
+// 440 chars is the ceiling because Whisper's convention is a prompt of at most half
+// the 448-token context, leaving the rest to decode each 30-second window into.
+//
+// A full crew, the rival boats and a whole season's wardrobe do NOT all fit inside
+// that, and no budget arithmetic changes it — so the ordering below is a real
+// editorial choice about what Whisper most needs help with. Names first (it cannot
+// guess a proper noun and a wrong one lands in the summary as fact), then the boat's
+// own wardrobe codes, then the hardware it habitually mangles. The generic
+// vocabulary — "mainsail", "jib", "spinnaker" — is deliberately last, because those
+// are words Whisper already knows and they are the right thing to lose.
 
 // Compact, high-value vocabulary for Whisper's `prompt`, filled greedily in priority
 // order until the budget runs out: crew and the team's actual sail wardrobe first
@@ -98,8 +143,10 @@ export function whisperPrompt(g: Glossary = DEFAULT_GLOSSARY, maxChars: number =
     }
   }
   const body = maxChars - head.length - 1
-  take(g.crew, head.length + 1 + Math.round(body * 0.20))
-  take(g.sails, head.length + 1 + Math.round(body * 0.60))
+  // Names first and together: a person or a rival boat is a proper noun Whisper has
+  // no chance at, and a wrong one lands in the summary as fact.
+  take([...g.crew, ...g.boats], head.length + 1 + Math.round(body * 0.30))
+  take(g.sails, head.length + 1 + Math.round(body * 0.62))
   take(g.parts, head.length + 1 + Math.round(body * 0.85))
   take(g.manoeuvres, maxChars)
   return `${head}${out.join(', ')}.`
@@ -126,6 +173,7 @@ export function glossaryBlock(g: Glossary = DEFAULT_GLOSSARY): string {
     "- Wind-shift terms: VEERING = wind shifting CLOCKWISE / to the RIGHT (e.g. SW->W->NW); BACKING = shifting ANTI-CLOCKWISE / to the LEFT (e.g. SW->S->SE). Never swap these.",
     `- Parts & systems: ${g.parts.join(', ')}`,
     `- Crew: ${g.crew.join(', ')}`,
+    `- Boats (this team's and rivals'): ${g.boats.join(', ')}`,
     `- Dutch→English: ${dutch}`,
     `- Common mishearings → correct to: ${fixups}`,
   ].join('\n')
