@@ -227,19 +227,33 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
     try { await onSaveNotes(notes); setNotesMsg('Saved') } catch (e: any) { setNotesMsg(e?.message || 'Save failed') } finally { setNotesBusy(false) }
   }
 
+  // Photo — keyed on the scan and its photo only, so re-timing a scan does not
+  // burn a fresh signed-URL request.
   useEffect(() => {
     let alive = true
-    // Photo
     if (cond.photo_key) {
       fetch(`/api/teams/${teamId}/sail-scans/${scan.id}/photo-url`)
         .then((r) => r.json())
         .then((j) => { if (!alive) return; if (j?.url) setPhotoUrl(j.url); else setPhotoErr(j?.error || 'could not load photo') })
         .catch((e) => { if (alive) setPhotoErr(String(e?.message || e)) })
     }
-    // 2-min window: prefer the local log (where a just-uploaded log lives), fall
-    // back to the cloud session log.
+    return () => { alive = false }
+  }, [scan?.id, teamId, cond.photo_key]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 2-min window: prefer the local log (where a just-uploaded log lives), fall
+  // back to the cloud session log.
+  //
+  // This MUST depend on the capture timestamp, not just the scan id. Editing the
+  // time keeps the same id, so keying on the id alone left the boat-state panel
+  // showing the window around the OLD time — the numbers silently disagreed with
+  // the clock displayed right above them.
+  useEffect(() => {
+    let alive = true
     const ms = scan?.captured_at ? new Date(scan.captured_at).getTime() : NaN
     const localDate = (cond.captured_local || scan?.captured_at || '').slice(0, 10)
+    // Drop the previous window straight away: a re-time should show the loading
+    // state, never the old averages sitting under a new time.
+    setWin(null); setWinSource(''); setWinLoaded(false)
     ;(async () => {
       let w: any = null; let src = ''
       try {
@@ -251,14 +265,16 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
       } catch { /* ignore local errors */ }
       if (!w) {
         try {
-          const j = await fetch(`/api/teams/${teamId}/sail-scans/${scan.id}/conditions`).then((r) => r.json())
+          // no-store: the URL is unchanged across a re-time, so a cached response
+          // would hand back the window around the previous timestamp.
+          const j = await fetch(`/api/teams/${teamId}/sail-scans/${scan.id}/conditions`, { cache: 'no-store' }).then((r) => r.json())
           if (j?.window) { w = j.window; src = 'cloud' }
         } catch { /* ignore */ }
       }
       if (alive) { setWin(w); setWinSource(src); setWinLoaded(true) }
     })()
     return () => { alive = false }
-  }, [scan?.id, teamId, cond.photo_key]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scan?.id, teamId, scan?.captured_at, cond.captured_local]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const activeSails = (sails || []).filter((s) => !s.retired)
   // Seed the edit panel from the scan as it stands.
