@@ -7,7 +7,7 @@
 // runAudioBrief(file, mode, { onStage }) → { fields, transcript }
 //   onStage(stage, pct)  stage ∈ 'compress' | 'transcribe' | 'summarise' | 'done'
 
-import { whisperPrompt, withOverride } from './debriefGlossary'
+import { whisperPrompt, withOverride, clampWhisperPrompt } from './debriefGlossary'
 
 const OUT_RATE = 16000
 const FRAME = 1152
@@ -121,15 +121,17 @@ async function transcribeChunks(chunks, onProgress, glossaryExtra) {
     fd.append('file', chunks[i], `chunk-${i}.mp3`)
     // No language hint — let Whisper auto-detect (debriefs may be Dutch, English, …).
     // Forcing 'en' on a non-English recording makes it mis-hear the whole thing.
-    // Prompt = a little context from the previous chunk + the glossary LAST, so if
-    // Whisper truncates to its ~224-token budget the terms survive over the tail.
-    fd.append('prompt', prevTail ? `${prevTail}\n${bias}` : bias)
+    // Prompt = a little context from the previous chunk + the glossary LAST. The
+    // provider REJECTS an over-long prompt rather than truncating it, so clamp
+    // rather than assume: clampWhisperPrompt keeps the end, sacrificing the tail
+    // and keeping the terms.
+    fd.append('prompt', clampWhisperPrompt(prevTail ? `${prevTail}\n${bias}` : bias))
     const res = await fetch('/api/ai/transcribe', { method: 'POST', body: fd })
     const j = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(j.error || `transcription failed (chunk ${i + 1})`)
     const text = (j.text || '').trim()
     texts.push(text)
-    prevTail = text.slice(-200) // carry a little context across the chunk boundary
+    prevTail = text.slice(-100) // carry a little context across the chunk boundary
     if (onProgress) onProgress((i + 1) / chunks.length)
   }
   return texts.join('\n')
