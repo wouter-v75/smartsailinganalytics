@@ -2404,7 +2404,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     r.onload=e=>{
       try{
         const text=e.target.result;
-        // Format is auto-detected from the file (raw / flat-OLE / flat-NMEA);
+        // Format is auto-detected from the file (raw / flat-OLE / log-v3 / flat-NMEA);
         // the active boat's stored log profile (channel-label aliases) is applied
         // on top. raw + flat-OLE are already UTC → the tz offset only affects the
         // legacy flat-NMEA CSV.
@@ -2446,9 +2446,16 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           }
         }
         setCsvParsed(p);
-        const fmtLabel=p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':'flat CSV';
+        const fmtLabel=p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':'flat CSV';
         const tzNote=p.format==='flat-nmea'?(TZ_OPTIONS.find(o=>o.offsetMin===effTz)?.label||`UTC+${effTz/60}`):'UTC';
-        addLog(`✓ Log (${fmtLabel.trim()}): ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzNote}`);
+        // A zero-row parse used to report as a green tick, so an unreadable file
+        // looked like a successful upload and only surfaced later as an empty
+        // chart in Analytics. Say so at the point the file is read.
+        if(!p.rows.length){
+          addLog(`⚠ Log (${fmtLabel.trim()}): 0 rows read from ${file.name} — the format wasn't recognised. Nothing will show in Analytics.`);
+        } else {
+          addLog(`✓ Log (${fmtLabel.trim()}): ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzNote}`);
+        }
       }
       catch(err){addLog(`✕ CSV: ${err instanceof Error?err.message:String(err)}`);}
     };
