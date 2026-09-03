@@ -68,7 +68,10 @@ for f in "${FILES[@]}"; do
 
   # A start timestamp in the filename? (same patterns SSA recognises)
   fname_ts=""
-  if [[ "$base" =~ ([0-9]{4})([0-9]{2})([0-9]{2})[_-]?([0-9]{2})([0-9]{2})([0-9]{2}) ]]; then
+  # Separator class matches the app (extractTimestampFromFilename): a SPACE is a
+  # real convention ("20260903 125443.mp4" off the drone/RIB cards), and omitting it
+  # made this report those clips RISKY when SSA imports them fine.
+  if [[ "$base" =~ ([0-9]{4})([0-9]{2})([0-9]{2})[_\ T-]?([0-9]{2})([0-9]{2})([0-9]{2}) ]]; then
     fname_ts="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]} ${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
   fi
 
