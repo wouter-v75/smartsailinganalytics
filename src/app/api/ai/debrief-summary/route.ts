@@ -11,6 +11,7 @@
 //   → the mode's field keys, each a markdown string. Defaults to "speedteam".
 import { NextRequest, NextResponse } from 'next/server'
 import { glossaryBlock, withOverride, type Glossary } from '../../../../lib/debriefGlossary'
+import { collapseRepeats } from '../../../../lib/transcriptClean'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -31,7 +32,12 @@ const RULES = `RULES — these matter:
 - If a section has nothing in the transcript, set it to "Nothing recorded." Do not pad it out. An empty section is information; a fabricated one is a liability.
 - Where the transcript is garbled but the meaning is clear, use the meaning. Where the meaning is NOT clear, say so briefly, e.g. "(unclear — check the recording)".
 - Keep sailing jargon as the team used it — do not water it down into generic plain English.
-- Bullet points ("- " each). Terse. This is a working note, not prose.
+- Bullet points ("- " each). Write plainly, not in prose paragraphs — but COMPLETENESS BEATS BREVITY. This note replaces the meeting for anyone who missed it, and a topic left out is a topic lost. Never compress several distinct points into one vague bullet.
+- Cover EVERY topic the meeting actually discussed. Before finishing, check the transcript again for whole subjects you have skipped — procedures agreed, manoeuvres reviewed, the plan for next time, kit and logistics, people and workload.
+- KEEP THE SPECIFICS. Numbers, times, distances, wind strengths, angles, sail names, boat names, people's names, and comparisons to other boats are the substance — carry them through verbatim rather than generalising ("14 seconds to kill, two boatlengths above the pin layline", not "was late").
+- For anything the group DECIDED, give the decision AND the procedure or reasoning behind it — who does what, on which winch, in what order. A decision without its mechanics cannot be acted on.
+- Where a point was argued and NOT settled, record it as an open question with both sides, and any action agreed to resolve it. Do not present an unresolved debate as a conclusion.
+- A transcript may contain "[repeated Nx — transcription loop]" markers. These are machine artefacts of the speech recogniser stuck in a loop, NOT emphasis and NOT content. Ignore them entirely and summarise the surrounding material.
 - Don't guess who *said* what (the transcript has no reliable speaker labels). But DO keep a crew member's name when the content is clearly about them — a job, strength or action point (e.g. "Marc to focus on tactics and mainsail", "Jan to turn faster in the inside gybe").`
 
 const CONTEXT = `The transcript is from a live, in-person sailing-team meeting of several people. It is a raw machine transcript: no speaker labels, it will contain mishearings (especially of sail names, boat parts and numbers), and people talk over each other. Work with what is actually there.`
@@ -57,7 +63,9 @@ ${CONTEXT}
 
 Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key, a markdown bullet string:
   "learnings"  — The full working note from the debrief. Capture what happened and what was learned this session — what worked, what did not, and WHY — across manoeuvres (sets/hoists, gybes, drops, peels), starts, tactics and communication, boat handling and conditions, plus the concrete focus points to carry into the next session.
-  Organise the note under short thematic sub-headers in bold (e.g. "**Upwind**", "**Sets & hoists**", "**Gybes**", "**Drops**", "**Peels**", "**Starts**", "**Tactics & communication**", "**Conditions**", "**Finish & admin**", "**Logistics**", "**Focus next session**") — but ONLY include a sub-header when the transcript actually has content for it, and under each write terse "- " bullets. Do not force material into a header it does not fit.
+  Organise the note under short thematic sub-headers in bold (e.g. "**Upwind**", "**Sets & hoists**", "**Gybes**", "**Drops**", "**Peels**", "**Starts**", "**Tactics & communication**", "**Conditions**", "**Kit & rig**", "**Logistics**", "**Team**", "**Focus next session**") — but ONLY include a sub-header when the transcript actually has content for it, and under each write "- " bullets. Do not force material into a header it does not fit; add your own sub-header where the discussion does not match any above.
+  A debrief usually spends a long stretch on ONE procedure or manoeuvre that went wrong and how it will be done next time. That discussion is the most valuable part of the session — give it its own sub-header and enough bullets to carry the agreed procedure step by step (who, which winch, which side, in what order, what the trigger is), plus whatever was left unresolved. A single bullet naming the manoeuvre is a failure.
+  Also carry, when present: the plan for the next session (timings, format, what will be practised), kit and rig jobs with their blockers and who is chasing them, and anything about people's workload or readiness.
 
 ${RULES}`,
   },
@@ -128,14 +136,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'SCALEWAY_AI_API_KEY / SCALEWAY_AI_BASE_URL not configured' }, { status: 503 })
   }
   const data = (await req.json().catch(() => null)) as { transcript?: string; mode?: string; glossary?: Partial<Glossary> } | null
-  const transcript = data?.transcript?.trim()
-  if (!transcript) return NextResponse.json({ error: '"transcript" is required' }, { status: 400 })
+  const rawTranscript = data?.transcript?.trim()
+  if (!rawTranscript) return NextResponse.json({ error: '"transcript" is required' }, { status: 400 })
+  // Strip speech-recogniser repetition loops first. One real debrief repeated a
+  // single phrase ~250 times; left in, it dominates the model's attention and the
+  // summary comes back thin, missing whole topics discussed elsewhere.
+  const cleaned = collapseRepeats(rawTranscript)
+  const transcript = cleaned.text || rawTranscript
   const mode = MODES[data?.mode || 'speedteam'] || MODES.speedteam
 
   const ctrl = new AbortController()
   const killer = setTimeout(() => ctrl.abort(), 55_000)
   try {
-    log('summarising', `${transcript.length} chars`, data?.mode || 'speedteam', MODEL)
+    log('summarising', `${transcript.length} chars`, data?.mode || 'speedteam', MODEL,
+        cleaned.removed ? `(de-looped ${cleaned.removed} chars; worst ${cleaned.loops[0]?.count}x "${cleaned.loops[0]?.phrase?.slice(0, 40)}")` : '')
     const res = await fetch(`${BASE}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY}` },
