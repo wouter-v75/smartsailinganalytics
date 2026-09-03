@@ -72,6 +72,15 @@ describe('whisper prompt budget', () => {
     expect(warp).toContain('Marc')
   })
 
+  it('fits the WHOLE squad — a dropped name is a name transcribed wrong', () => {
+    // 15 crew plus rivals is what a real squad costs. If the budget cannot hold
+    // them all, the ceiling or the shares are wrong, not the crew list.
+    const p = whisperPrompt(withOverride({ sails: WARDROBE, ...vocabForBoat('Northstar 76') }))
+    for (const c of TEAM_VOCAB.northstar.crew!) expect(p).toContain(c)
+    for (const b of TEAM_VOCAB.northstar.boats!) expect(p).toContain(b)
+    expect(p.length).toBeLessThanOrEqual(WHISPER_PROMPT_MAX_CHARS)
+  })
+
   it('matches a boat by name prefix, so 72 and 76 share the squad', () => {
     expect(vocabForBoat('Northstar 76')?.crew).toContain('Shane')
     expect(vocabForBoat('Northstar72')?.crew).toContain('Shane')

@@ -28,10 +28,10 @@ export type Glossary = {
 // Starter set — refine `sails` and `crew` with the team's actual inventory + names.
 export const DEFAULT_GLOSSARY: Glossary = {
   sails: ['BRO', 'MH0', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'No.1', 'No.3', 'jib top', 'masthead zero', 'staysail', 'mainsail', 'main', 'jib', 'genoa', 'spinnaker', 'kite'],
-  manoeuvres: ['inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
+  manoeuvres: ['inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'layline', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
   // High-value / most-mangled terms first — whisperPrompt() only takes the leading
   // slice, so keep the ones Whisper fumbles (halyard, tackline, constrictor, luff…) up top.
-  parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew'],
+  parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'winch', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew'],
   // NO NAMES HERE. Crew and rival boats are TEAM data, and this object is shared by
   // every team in the app: names listed here are fed into every other team's
   // transcription prompt, where Whisper will happily put them into a session those
@@ -57,7 +57,11 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['mo', 'MH0'], ['the mode', 'MH0'], ['emmage zero', 'MH0'],
     ['bro', 'BRO (the reacher — a sail name, never the slang)'],
     ['van der ba', 'Vanderbilt start'], ['vanderbilt', 'Vanderbilt start'],
-    ['double tap', 'double tack'],
+    ['double tap', 'double tack'], ['double tag', 'double tack'],
+    ['lay line', 'layline'], ['lay lines', 'laylines'],
+    // "winch" is heard as "window" every time it is said — 3 for 3 in the 3 Sept
+    // transcript, with "winch" never once appearing.
+    ['window', 'winch (when the sense is a deck fitting, not a computer window)'],
     ['self-tailor', 'self-tailer'], ['self tailor', 'self-tailer'],
     ['windward load', 'windward-leeward'], ['load focus', 'leeward focus'],
     ['the weight', 'the AWA (when the sense is sail trim, not crew weight)'],
@@ -75,8 +79,13 @@ export const DEFAULT_GLOSSARY: Glossary = {
 // primed with into a session that person was never at. A wrong name asserted
 // confidently is worse than a garbled one.
 export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
+  // Northstar 72 and 76 are one squad, so the prefix match covers both.
   northstar: {
-    crew: ['Shane', 'Frank', 'Nick', 'Jarrod', 'Dougie', 'Pete', 'Peter', 'Vasco'],
+    crew: [
+      'Pedro', 'Mika', 'Max', 'Charlie', 'Shane', 'Frank', 'Gabri', 'Christian',
+      'Pom', 'Nick', 'Jarrad', 'Miles', 'Wouter', 'Pete', 'Peter',
+      'Vasco',            // sails a rival TP, but referred to by name like crew
+    ],
     boats: ['Django', 'Bella Mente'],
     fixups: [['splice', 'Bella Mente (boat name)']],
   },
@@ -135,7 +144,7 @@ export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT
 //
 // Budgets are in CHARACTERS because the Whisper tokeniser is not available here;
 // 2 chars/token is the pessimistic ratio measured on this vocabulary.
-export const WHISPER_PROMPT_MAX_CHARS = 360   // ~180 tokens of terms
+export const WHISPER_PROMPT_MAX_CHARS = 400   // ~200 tokens of terms
 export const WHISPER_TOTAL_MAX_CHARS = 440    // ~220 tokens incl. any prev-chunk tail
 
 // 440 chars is the ceiling because Whisper's convention is a prompt of at most half
@@ -175,9 +184,9 @@ export function whisperPrompt(g: Glossary = DEFAULT_GLOSSARY, maxChars: number =
   const body = maxChars - head.length - 1
   // Names first and together: a person or a rival boat is a proper noun Whisper has
   // no chance at, and a wrong one lands in the summary as fact.
-  take([...g.crew, ...g.boats], head.length + 1 + Math.round(body * 0.30))
-  take(g.sails, head.length + 1 + Math.round(body * 0.62))
-  take(g.parts, head.length + 1 + Math.round(body * 0.85))
+  take([...g.crew, ...g.boats], head.length + 1 + Math.round(body * 0.42))
+  take(g.sails, head.length + 1 + Math.round(body * 0.72))
+  take(g.parts, head.length + 1 + Math.round(body * 0.90))
   take(g.manoeuvres, maxChars)
   return `${head}${out.join(', ')}.`
 }
