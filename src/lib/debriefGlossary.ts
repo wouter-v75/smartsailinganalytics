@@ -32,11 +32,12 @@ export const DEFAULT_GLOSSARY: Glossary = {
   // High-value / most-mangled terms first — whisperPrompt() only takes the leading
   // slice, so keep the ones Whisper fumbles (halyard, tackline, constrictor, luff…) up top.
   parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew'],
-  // Proper nouns are the single highest-value entries here: Whisper cannot guess a
-  // name, and a wrong one propagates into the summary as fact. Kept current from
-  // debrief corrections — see `fixups` for the mishearings each one produced.
-  crew: ['Shane', 'Frank', 'Nick', 'Jarrod', 'Dougie', 'Pete', 'Peter', 'Marc', 'Jan'],
-  boats: ['Django', 'Bella Mente', 'Vasco'],
+  // NO NAMES HERE. Crew and rival boats are TEAM data, and this object is shared by
+  // every team in the app: names listed here are fed into every other team's
+  // transcription prompt, where Whisper will happily put them into a session those
+  // people were never at. See TEAM_VOCAB below.
+  crew: [],
+  boats: [],
   dutch: [
     ['grootzeil', 'mainsail'], ['fok', 'jib'], ['genua', 'genoa'], ['val', 'halyard'],
     ['schoot', 'sheet'], ['hals', 'tack'], ['halshoek', 'tack'], ['giek', 'boom'],
@@ -61,8 +62,37 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['windward load', 'windward-leeward'], ['load focus', 'leeward focus'],
     ['the weight', 'the AWA (when the sense is sail trim, not crew weight)'],
     ['coaster timing', 'coastal peel curve timing'],
-    ['splice', 'Bella Mente (boat name)'],
   ],
+}
+
+// ── Team vocabulary ──────────────────────────────────────────────────────────
+// Crew names, rival boats and team-specific mishearings, keyed by a prefix of the
+// boat's name. This is per-TEAM data living in code, which is the wrong home for it
+// — the right one is a column on the boat, edited from the Boat tab the way the sail
+// inventory already is, so a debrief correction does not need a deploy. It is here
+// as a stopgap because the alternative was worse: a single shared list put one
+// team's crew into another team's prompt, and Whisper will place a name it has been
+// primed with into a session that person was never at. A wrong name asserted
+// confidently is worse than a garbled one.
+export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
+  northstar: {
+    crew: ['Shane', 'Frank', 'Nick', 'Jarrod', 'Dougie', 'Pete', 'Peter', 'Vasco'],
+    boats: ['Django', 'Bella Mente'],
+    fixups: [['splice', 'Bella Mente (boat name)']],
+  },
+  warp: {
+    crew: ['Marc', 'Jan'],
+    boats: [],
+    fixups: [],
+  },
+}
+
+// Look up a boat's vocabulary by name ("Northstar 76", "Northstar72", "Warp" …).
+export function vocabForBoat(boatName?: string | null): Partial<Glossary> | undefined {
+  const n = (boatName || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (!n) return undefined
+  const key = Object.keys(TEAM_VOCAB).find((k) => n.startsWith(k))
+  return key ? TEAM_VOCAB[key] : undefined
 }
 
 // Merge a partial team override onto the defaults (dedup, order preserved).

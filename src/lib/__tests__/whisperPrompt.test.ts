@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  whisperPrompt, clampWhisperPrompt, withOverride,
+  whisperPrompt, clampWhisperPrompt, withOverride, vocabForBoat, TEAM_VOCAB,
   WHISPER_PROMPT_MAX_CHARS, WHISPER_TOTAL_MAX_CHARS, DEFAULT_GLOSSARY,
 } from '../debriefGlossary'
 
@@ -51,11 +51,46 @@ describe('whisper prompt budget', () => {
   })
 
   it('spends the budget on what Whisper cannot guess — names first', () => {
-    const p = whisperPrompt(withOverride({ sails: WARDROBE }))
+    const g = withOverride({ sails: WARDROBE, ...vocabForBoat('Northstar 76') })
+    const p = whisperPrompt(g)
     // Every proper noun must survive: Whisper cannot guess a name, and a wrong one
     // reaches the summary as fact.
-    for (const c of DEFAULT_GLOSSARY.crew) expect(p).toContain(c)
-    for (const b of DEFAULT_GLOSSARY.boats) expect(p).toContain(b)
+    for (const c of TEAM_VOCAB.northstar.crew!) expect(p).toContain(c)
+    for (const b of TEAM_VOCAB.northstar.boats!) expect(p).toContain(b)
+  })
+
+  it('never leaks one team\'s crew into another team\'s prompt', () => {
+    // Marc and Jan are real crew — of Warp, not Northstar. While they sat in the
+    // single shared glossary they were primed into every Northstar debrief, and a
+    // recogniser told to expect a name will place it in a session that person was
+    // never at. A confidently wrong name is worse than a garbled one.
+    const northstar = whisperPrompt(withOverride({ sails: WARDROBE, ...vocabForBoat('Northstar 76') }))
+    const warp = whisperPrompt(withOverride({ ...vocabForBoat('Warp') }))
+    for (const n of ['Marc', 'Jan']) expect(northstar).not.toContain(n)
+    for (const n of ['Shane', 'Jarrod', 'Dougie']) expect(warp).not.toContain(n)
+    expect(northstar).toContain('Shane')
+    expect(warp).toContain('Marc')
+  })
+
+  it('matches a boat by name prefix, so 72 and 76 share the squad', () => {
+    expect(vocabForBoat('Northstar 76')?.crew).toContain('Shane')
+    expect(vocabForBoat('Northstar72')?.crew).toContain('Shane')
+    expect(vocabForBoat('NORTHSTAR-76')?.crew).toContain('Shane')
+    expect(vocabForBoat('Warp')?.crew).toContain('Marc')
+  })
+
+  it('carries NO names for a boat it does not know, rather than someone else\'s', () => {
+    expect(vocabForBoat('Some Other Boat')).toBeUndefined()
+    expect(vocabForBoat('')).toBeUndefined()
+    expect(vocabForBoat(null)).toBeUndefined()
+    const p = whisperPrompt(withOverride({ sails: WARDROBE }))
+    for (const n of ['Marc', 'Jan', 'Shane', 'Django']) expect(p).not.toContain(n)
+  })
+
+  it('keeps the shared glossary free of team data', () => {
+    // The regression this guards: names checked in here reach every team.
+    expect(DEFAULT_GLOSSARY.crew).toHaveLength(0)
+    expect(DEFAULT_GLOSSARY.boats).toHaveLength(0)
   })
 
   it('carries most of the wardrobe, and drops generic words rather than codes', () => {

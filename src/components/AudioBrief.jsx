@@ -6,6 +6,7 @@
 // Props: { mode, fields:[{key,label}], onSaved:(values)=>Promise, canEdit, isMobile }
 import React, { useEffect, useRef, useState } from 'react'
 import { runAudioBrief } from '../lib/debriefAudio'
+import { vocabForBoat } from '../lib/debriefGlossary'
 
 const STAGE = { compress: 'Compressing audio', transcribe: 'Transcribing', summarise: 'Summarising', done: 'Done' }
 
@@ -26,20 +27,29 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
 
   // Pull the boat's live sail inventory → feeds the actual wardrobe into the
   // Whisper bias + summary glossary, so sail names self-maintain from the Boat tab.
+  // The boat's NAME is fetched alongside it, because crew and rival-boat names are
+  // per-team: priming Whisper with another team's crew makes it place those people
+  // in a session they were never at.
   useEffect(() => {
     if (!teamId || !boatId) return
     let live = true
-    fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`)
-      .then((r) => (r.ok ? r.json() : { sails: [] }))
-      .then((j) => {
-        if (!live) return
-        const names = Array.from(new Set((j.sails || [])
-          .filter((s) => !s.retired)
-          .map((s) => String(s.name || '').replace(/[_-]\d{2,4}$/, '').replace(/_/g, ' ').trim())
-          .filter(Boolean)))
-        setGlossaryExtra(names.length ? { sails: names } : null)
-      })
-      .catch(() => {})
+    Promise.all([
+      fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`).then((r) => (r.ok ? r.json() : { sails: [] })).catch(() => ({ sails: [] })),
+      fetch(`/api/teams/${teamId}/boats`).then((r) => (r.ok ? r.json() : { boats: [] })).catch(() => ({ boats: [] })),
+    ]).then(([sj, bj]) => {
+      if (!live) return
+      const names = Array.from(new Set((sj.sails || [])
+        .filter((s) => !s.retired)
+        .map((s) => String(s.name || '').replace(/[_-]\d{2,4}$/, '').replace(/_/g, ' ').trim())
+        .filter(Boolean)))
+      const boat = (bj.boats || []).find((b) => b.id === boatId)
+      const vocab = vocabForBoat(boat?.name) || {}
+      const extra = {
+        ...vocab,
+        ...(names.length ? { sails: [...(vocab.sails || []), ...names] } : {}),
+      }
+      setGlossaryExtra(Object.keys(extra).length ? extra : null)
+    })
     return () => { live = false }
   }, [teamId, boatId])
 
