@@ -22,12 +22,13 @@ export type Glossary = {
   crew: string[]
   boats: string[]      // this boat + the ones the team races against, by name
   dutch: [string, string][]  // [dutch, english]
-  fixups: [string, string][] // [wrong (heard), right]
+  aliases: [string, string][] // [what the crew SAY, canonical term] — real speech
+  fixups: [string, string][] // [wrong (heard), right] — recogniser errors
 }
 
 // Starter set — refine `sails` and `crew` with the team's actual inventory + names.
 export const DEFAULT_GLOSSARY: Glossary = {
-  sails: ['BRO', 'MH0', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'No.1', 'No.3', 'jib top', 'masthead zero', 'staysail', 'mainsail', 'main', 'jib', 'genoa', 'spinnaker', 'kite'],
+  sails: ['BRO', 'MH0', 'mo', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'No.1', 'No.3', 'jib top', 'masthead zero', 'staysail', 'mainsail', 'main', 'jib', 'genoa', 'spinnaker', 'kite'],
   manoeuvres: ['inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'layline', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
   // High-value / most-mangled terms first — whisperPrompt() only takes the leading
   // slice, so keep the ones Whisper fumbles (halyard, tackline, constrictor, luff…) up top.
@@ -46,18 +47,25 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['boei', 'mark'], ['stuurboord', 'starboard'], ['bakboord', 'port'], ['rif', 'reef'],
     ['kluiver', 'jib'], ['bakstag', 'runner'], ['bolling', 'draft'], ['bol', 'draft'],
   ],
-  // Mishearings actually observed in this team's debriefs. These go to the SUMMARISER
-  // as context, never as a blind find-and-replace, which is why entries like
-  // "weight"→AWA and "load"→leeward are safe to list: the model applies them only
-  // where the sailing sense demands it, and "weight" keeps its ordinary meaning
-  // everywhere else.
+  // SLANG the crew actually use. Not errors — the recogniser hears these correctly
+  // and they will keep appearing, so the summariser needs to know what they mean
+  // and normalise them in the output. Filing slang under `fixups` told the model
+  // the speaker had been misheard, which is a different and wrong instruction.
+  aliases: [
+    ['mo', 'MH0'], ['the mo', 'MH0'], ['MHO', 'MH0'],
+    ['bro', 'BRO'],
+    ['kite', 'spinnaker'],
+  ],
+  // Recogniser MISHEARINGS observed in this team's debriefs. These go to the
+  // SUMMARISER as context, never as a blind find-and-replace, which is why
+  // context-dependent entries are safe to list: the model applies them only where
+  // the sailing sense demands it, and "weight" keeps its ordinary meaning elsewhere.
   fixups: [
     ['tagline', 'tackline'], ['clewline', 'halyard'], ['clew line', 'halyard'],
     // 3 Sept debrief
-    ['mo', 'MH0'], ['the mode', 'MH0'], ['emmage zero', 'MH0'],
-    ['bro', 'BRO (the reacher — a sail name, never the slang)'],
+    ['the mode', 'MH0'], ['emmage zero', 'MH0'],
     ['van der ba', 'Vanderbilt start'], ['vanderbilt', 'Vanderbilt start'],
-    ['double tap', 'double tack'], ['double tag', 'double tack'],
+    ['double tag', 'double tack'],
     ['lay line', 'layline'], ['lay lines', 'laylines'],
     // "winch" is heard as "window" every time it is said — 3 for 3 in the 3 Sept
     // transcript, with "winch" never once appearing.
@@ -85,6 +93,7 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
       'Pedro', 'Mika', 'Max', 'Charlie', 'Shane', 'Frank', 'Gabri', 'Christian',
       'Pom', 'Nick', 'Jarrad', 'Miles', 'Wouter', 'Pete', 'Peter',
       'Vasco',            // sails a rival TP, but referred to by name like crew
+      'Dougie',           // supplier — not crew, but the name is spoken and must land
     ],
     boats: ['Django', 'Bella Mente'],
     fixups: [['splice', 'Bella Mente (boat name)']],
@@ -131,6 +140,7 @@ export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT
     crew: uniq(extra.crew, base.crew),
     boats: uniq(extra.boats, base.boats),
     dutch: [...base.dutch, ...(extra.dutch || [])],
+    aliases: [...base.aliases, ...(extra.aliases || [])],
     fixups: [...base.fixups, ...(extra.fixups || [])],
   }
 }
@@ -211,8 +221,9 @@ export function glossaryBlock(g: Glossary = DEFAULT_GLOSSARY): string {
     `- Manoeuvres: ${g.manoeuvres.join(', ')}`,
     "- Wind-shift terms: VEERING = wind shifting CLOCKWISE / to the RIGHT (e.g. SW->W->NW); BACKING = shifting ANTI-CLOCKWISE / to the LEFT (e.g. SW->S->SE). Never swap these.",
     `- Parts & systems: ${g.parts.join(', ')}`,
-    `- Crew: ${g.crew.join(', ')}`,
+    `- People (crew, coaches, shore team and suppliers — do not assume everyone listed sails): ${g.crew.join(', ')}`,
     `- Boats (this team's and rivals'): ${g.boats.join(', ')}`,
+    `- Team slang → canonical term (the crew really say these; normalise them in the summary): ${g.aliases.map(([a, b]) => `${a}→${b}`).join(', ')}`,
     `- Dutch→English: ${dutch}`,
     `- Common mishearings → correct to: ${fixups}`,
   ].join('\n')

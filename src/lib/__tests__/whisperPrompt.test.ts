@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  whisperPrompt, clampWhisperPrompt, withOverride, vocabForBoat, TEAM_VOCAB,
+  whisperPrompt, clampWhisperPrompt, withOverride, vocabForBoat, TEAM_VOCAB, glossaryBlock,
   WHISPER_PROMPT_MAX_CHARS, WHISPER_TOTAL_MAX_CHARS, DEFAULT_GLOSSARY,
 } from '../debriefGlossary'
 
@@ -94,6 +94,31 @@ describe('whisper prompt budget', () => {
     expect(vocabForBoat(null)).toBeUndefined()
     const p = whisperPrompt(withOverride({ sails: WARDROBE }))
     for (const n of ['Marc', 'Jan', 'Shane', 'Django']) expect(p).not.toContain(n)
+  })
+
+  it('treats crew slang as speech to normalise, not as a misheard word', () => {
+    // "mo" is what the crew CALL the MH0, and "bro" is a sail. The recogniser hears
+    // both correctly. Listing them as mishearings told the model the speaker had
+    // been misheard — a different, wrong instruction — so they live in `aliases`.
+    const g = DEFAULT_GLOSSARY
+    const aliasKeys = g.aliases.map(([a]) => a.toLowerCase())
+    const fixupKeys = g.fixups.map(([a]) => a.toLowerCase())
+    expect(aliasKeys).toContain('mo')
+    expect(aliasKeys).toContain('bro')
+    expect(fixupKeys).not.toContain('mo')
+    expect(fixupKeys).not.toContain('bro')
+    // both resolve to the same canonical term
+    expect(g.aliases.find(([a]) => a === 'mo')?.[1]).toBe('MH0')
+  })
+
+  it('tells the summariser the two lists mean different things', () => {
+    const block = glossaryBlock(withOverride(vocabForBoat('Northstar 76')))
+    expect(block).toContain('Team slang')
+    expect(block).toContain('mo→MH0')
+    expect(block).toContain('Common mishearings')
+    // Dougie is a supplier, not crew — the label must not assert he sails.
+    expect(block).toContain('Dougie')
+    expect(block).toContain('do not assume everyone listed sails')
   })
 
   it('keeps the shared glossary free of team data', () => {
