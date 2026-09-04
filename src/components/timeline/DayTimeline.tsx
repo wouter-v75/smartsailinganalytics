@@ -27,7 +27,7 @@ const EVENT_STYLE: Record<string, { c: string; label: string; notable: boolean }
   tack: { c: '#1D9E75', label: 'Tack', notable: false },
   gybe: { c: '#7F77DD', label: 'Gybe', notable: false },
 }
-const VIDEO_C = '#06B6D4', PHOTO_C = '#F59E0B', SCAN_C = '#8B5CF6'
+const VIDEO_C = '#06B6D4', DRONE_C = '#22C55E', PHOTO_C = '#F59E0B', SCAN_C = '#8B5CF6'
 // Leg-mode colours for the time bar (derived from manoeuvres: tacks → upwind,
 // gybes → downwind, balanced/none → reach).
 const LEG_C: Record<string, string> = { upwind: '#EF4444', reach: '#F59E0B', downwind: '#22C55E' }
@@ -89,8 +89,23 @@ function useNoHover() {
 // text labels), so BOTH decks fit within the viewport.
 function geometry(compact: boolean) {
   return compact
-    ? { AXIS_X: 8, EVENT_LABEL_X: 16, showEventLabels: false, VIDEO_X: 46, VIDEO_W: 74, VIDEO_H: 64, PHOTO_X: 126, PHOTO_W: 72, PHOTO_H: 64, SCAN_X: 204, SCAN_W: 72, SCAN_H: 64, CONTENT_W: 204 + 72 + 6 }
-    : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, PHOTO_X: 372, PHOTO_W: 120, PHOTO_H: 88, SCAN_X: 508, SCAN_W: 120, SCAN_H: 88, CONTENT_W: 508 + 120 + 16 }
+    ? { AXIS_X: 8, EVENT_LABEL_X: 16, showEventLabels: false, VIDEO_X: 46, VIDEO_W: 74, VIDEO_H: 64, DRONE_X: 126, DRONE_W: 74, DRONE_H: 64, PHOTO_X: 206, PHOTO_W: 72, PHOTO_H: 64, SCAN_X: 284, SCAN_W: 72, SCAN_H: 64, CONTENT_W: 284 + 72 + 6 }
+    : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, DRONE_X: 352, DRONE_W: 150, DRONE_H: 88, PHOTO_X: 508, PHOTO_W: 120, PHOTO_H: 88, SCAN_X: 644, SCAN_W: 120, SCAN_H: 88, CONTENT_W: 644 + 120 + 16 }
+}
+
+// Drone footage gets its own deck: it is shot from somewhere else entirely, and
+// reading it in the same column as the onboard cameras made a busy day unreadable.
+// There is no vendor field on the video row — the capture metadata that would carry
+// it is stripped by any re-encode — so this reads the NAME, which survives. It
+// matches the raw card naming (DJI_20260903115026_0036_D) and the source tag the
+// clip pipeline appends (…_day2_DJI-001), plus an explicit "drone" tag for anything
+// labelled by hand.
+export function isDroneClip(m: { title?: string | null; tags?: string[] }): boolean {
+  if ((m.tags || []).some((t) => String(t).toLowerCase() === 'drone')) return true
+  // NOT \b: underscore is a word character, so \bDJI\b matches neither
+  // "DJI_20260903115026_0036_D" nor "…_day2_DJI-001" — i.e. neither of the two
+  // shapes drone clips actually arrive in. Separators are anything non-alphanumeric.
+  return /(?:^|[^a-z0-9])(dji|drone|mavic|osmo)(?:[^a-z0-9]|$)/i.test(String(m.title || ''))
 }
 
 export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVideo }: {
@@ -168,6 +183,8 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }, [markers])
 
   const videos = React.useMemo(() => (media || []).filter((m) => m.type === 'video'), [media])
+  const droneVideos = React.useMemo(() => videos.filter(isDroneClip), [videos])
+  const onboardVideos = React.useMemo(() => videos.filter((m) => !isDroneClip(m)), [videos])
   const photos = React.useMemo(() => (media || []).filter((m) => m.type === 'photo'), [media])
   const scanItems = React.useMemo(() => (media || []).filter((m) => m.type === 'sailscan'), [media])
 
@@ -199,17 +216,19 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       return { m, y, yt }
     })
   }, [yOf, segmentOf])
-  const vPlaced = React.useMemo(() => placeCol(videos), [videos, placeCol])
+  const vPlaced = React.useMemo(() => placeCol(onboardVideos), [onboardVideos, placeCol])
+  const dPlaced = React.useMemo(() => placeCol(droneVideos), [droneVideos, placeCol])
   const pPlaced = React.useMemo(() => placeCol(photos), [photos, placeCol])
   const sPlaced = React.useMemo(() => placeCol(scanItems), [scanItems, placeCol])
 
   const contentH = React.useMemo(() => {
     let bottom = axisH
     vPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.VIDEO_H) })
+    dPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.DRONE_H) })
     pPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.PHOTO_H) })
     sPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.SCAN_H) })
     return bottom + PAD
-  }, [axisH, vPlaced, pPlaced, sPlaced, G.VIDEO_H, G.PHOTO_H, G.SCAN_H])
+  }, [axisH, vPlaced, dPlaced, pPlaced, sPlaced, G.VIDEO_H, G.DRONE_H, G.PHOTO_H, G.SCAN_H])
 
   const ticks = React.useMemo(() => {
     const out: number[] = []
@@ -262,6 +281,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const timeAt = (x: number, rawY: number): number => {
     const cols: { X: number; W: number; h: number; placed: Placed[] }[] = [
       { X: G.VIDEO_X, W: G.VIDEO_W, h: G.VIDEO_H, placed: vPlaced },
+      { X: G.DRONE_X, W: G.DRONE_W, h: G.DRONE_H, placed: dPlaced },
       { X: G.PHOTO_X, W: G.PHOTO_W, h: G.PHOTO_H, placed: pPlaced },
       { X: G.SCAN_X, W: G.SCAN_W, h: G.SCAN_H, placed: sPlaced },
     ]
@@ -383,13 +403,15 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             <line x1={G.AXIS_X} y1={PAD} x2={G.AXIS_X} y2={axisH - PAD} stroke="var(--border-strong)" strokeWidth={1} />
             {ticks.map((t) => <line key={t} x1={G.AXIS_X - 4} y1={yOf(t)} x2={G.AXIS_X + 4} y2={yOf(t)} stroke="var(--text-muted)" strokeWidth={1} />)}
             {vPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.VIDEO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.VIDEO_X} ${y + 12}`} fill="none" stroke={VIDEO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
-            {pPlaced.map(({ m, y, yt }) => { const mid = (G.VIDEO_X + G.PHOTO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.PHOTO_X} ${y + 12}`} fill="none" stroke={PHOTO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
+            {dPlaced.map(({ m, y, yt }) => { const mid = (G.VIDEO_X + G.DRONE_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.DRONE_X} ${y + 12}`} fill="none" stroke={DRONE_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
+            {pPlaced.map(({ m, y, yt }) => { const mid = (G.DRONE_X + G.PHOTO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.PHOTO_X} ${y + 12}`} fill="none" stroke={PHOTO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {sPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.SCAN_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.SCAN_X} ${y + 12}`} fill="none" stroke={SCAN_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {markers.map((e) => { const st = EVENT_STYLE[e.kind]; const my = magForY(yOf(e.t0)); return <circle key={e.id} cx={G.AXIS_X} cy={yOf(e.t0)} r={(st.notable ? 4 : 3) * my} fill={st.c} stroke="var(--bg)" strokeWidth={1} style={{ transition: 'r 110ms ease-out' }} /> })}
             {cursor && <line x1={0} y1={cursor.y} x2={G.CONTENT_W} y2={cursor.y} stroke="var(--accent)" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.7} />}
           </svg>
 
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.VIDEO_X, top: 6, color: VIDEO_C }}>Videos</div>
+          <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.DRONE_X, top: 6, color: DRONE_C }}>Drone</div>
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.PHOTO_X, top: 6, color: PHOTO_C }}>Photos</div>
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.SCAN_X, top: 6, color: SCAN_C }}>Sail scans</div>
 
@@ -410,6 +432,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           )}
 
           {vPlaced.map(({ m, y }, i) => { const cy = y + G.VIDEO_H / 2, mag = magFor(G.VIDEO_X, G.VIDEO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.VIDEO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
+          {dPlaced.map(({ m, y }, i) => { const cy = y + G.DRONE_H / 2, mag = magFor(G.DRONE_X, G.DRONE_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.DRONE_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.DRONE_X} y={y} w={G.DRONE_W} h={G.DRONE_H} color={DRONE_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
           {pPlaced.map(({ m, y }, i) => { const cy = y + G.PHOTO_H / 2, mag = magFor(G.PHOTO_X, G.PHOTO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.PHOTO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
           {sPlaced.map(({ m, y }, i) => { const cy = y + G.SCAN_H / 2, mag = magFor(G.SCAN_X, G.SCAN_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.SCAN_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.SCAN_X} y={y} w={G.SCAN_W} h={G.SCAN_H} color={SCAN_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
 

@@ -53,8 +53,14 @@ const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v'])
 // ── args ─────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
 const opt = {
-  events: '', out: 'selected', startLead: 180, startLag: 120, markLead: 45, markLag: 45,
-  shift: 0, rest: false, archive: false, dry: false, validMarksOnly: false, trim: false, gap: 20, minSeg: 15,
+  // Each kind of moment needs a different amount of run-in and run-out: a start
+  // needs the approach, a rounding needs the exit, a tack needs neither for long.
+  events: '', out: 'selected',
+  startLead: 150, startLag: 90,     // 2:30 before the gun → 1:30 after
+  topLead: 60, topLag: 90,          // 1:00 before the top mark → 1:30 after
+  gateLead: 60, gateLag: 60,        // 1:00 either side of the gate / spin drop
+  turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
+  shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
   tag: '', keepNames: false, fullRes: '', from: '', sources: [],
 }
 for (let i = 0; i < argv.length; i++) {
@@ -64,11 +70,16 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--out' || a === '-o') opt.out = next()
   else if (a === '--start-lead') opt.startLead = Number(next())
   else if (a === '--start-lag') opt.startLag = Number(next())
-  else if (a === '--mark-lead') opt.markLead = Number(next())
-  else if (a === '--mark-lag') opt.markLag = Number(next())
+  else if (a === '--top-lead') opt.topLead = Number(next())
+  else if (a === '--top-lag') opt.topLag = Number(next())
+  else if (a === '--gate-lead') opt.gateLead = Number(next())
+  else if (a === '--gate-lag') opt.gateLag = Number(next())
+  else if (a === '--turn-lead') opt.turnLead = Number(next())
+  else if (a === '--turn-lag') opt.turnLag = Number(next())
+  else if (a === '--no-turns') opt.noTurns = true
   else if (a === '--shift') opt.shift = Number(next())
   else if (a === '--rest') opt.rest = true
-  else if (a === '--valid-marks-only') opt.validMarksOnly = true
+  else if (a === '--valid-only') opt.validOnly = true
   else if (a === '--trim') opt.trim = true
   else if (a === '--gap') opt.gap = Number(next())
   else if (a === '--tag') opt.tag = next()
@@ -87,13 +98,18 @@ function usage() {
 
   -e, --events <f>    Expedition event file (.ev.xml)              [required]
   -o, --out <dir>     where compressed clips go        (default: ./selected)
-      --start-lead N  seconds before a start gun                (default: 180)
-      --start-lag N   seconds after a start gun                 (default: 120)
-      --mark-lead N   seconds before a mark rounding             (default: 45)
-      --mark-lag N    seconds after a mark rounding              (default: 45)
+      --start-lead N  seconds before a start gun                (default: 150)
+      --start-lag N   seconds after a start gun                  (default: 90)
+      --top-lead N    seconds before a top-mark rounding         (default: 60)
+      --top-lag N     seconds after a top-mark rounding          (default: 90)
+      --gate-lead N   seconds before a gate / spin drop          (default: 60)
+      --gate-lag N    seconds after a gate / spin drop           (default: 60)
+      --turn-lead N   seconds before a tack or gybe              (default: 30)
+      --turn-lag N    seconds after a tack or gybe               (default: 60)
+      --no-turns      leave tacks and gybes out (there are many)
       --shift N       shift every clip by N minutes (wrong camera clock)
       --rest          select the clips that match NOTHING (the later pass)
-      --valid-marks-only  skip roundings Expedition flagged invalid (kept by default)
+      --valid-only    skip events Expedition flagged invalid (kept by default)
       --trim          cut each clip down to just its event windows (see below)
       --gap N         merge segments closer than N seconds        (default: 20)
       --tag TEXT      extra tag put in every output filename (e.g. day2)
@@ -250,31 +266,46 @@ for (const f of files) {
   else if (nm != null) { start = nm; src = 'filename' }
   else if (mvhd != null) { start = mvhd; src = 'mvhd?' }
   if (start != null) start += opt.shift * 60000
-  clips.push({ file: f, name: basename(f), start, dur, src, covers: [], hits: [], srcDir: basename(dirname(f)) })
+  clips.push({ file: f, name: basename(f), start, dur, src, covers: [], kinds: [], hits: [], srcDir: basename(dirname(f)) })
 }
 
 // ── event windows ────────────────────────────────────────────────────────────
 // offset 0 keeps parseXmlEvents in the file's own wall clock, matching the clips.
 const ev = parseXmlEvents(readFileSync(opt.events, 'utf8'), 0)
+// kind -> [lead, lag] seconds, and the tag SSA itself computes for that moment
+// (computeAutoTags in localStore.js). Keeping the same vocabulary means the
+// filename and the tag the app derives from the same event file agree.
+const KINDS = {
+  start:   { lead: () => opt.startLead, lag: () => opt.startLag, tag: 'race-start', name: 'start' },
+  topmark: { lead: () => opt.topLead,   lag: () => opt.topLag,   tag: 'topmark',    name: 'top mark' },
+  gate:    { lead: () => opt.gateLead,  lag: () => opt.gateLag,  tag: 'gate',       name: 'gate / drop' },
+  tack:    { lead: () => opt.turnLead,  lag: () => opt.turnLag,  tag: 'tack',       name: 'tack' },
+  gybe:    { lead: () => opt.turnLead,  lag: () => opt.turnLag,  tag: 'gybe',       name: 'gybe' },
+}
 const windows = []
-for (const g of ev.raceGuns) {
-  windows.push({ from: g.utc - opt.startLead * 1000, to: g.utc + opt.startLag * 1000, label: `R${g.raceNum || '?'} start`, kind: 'start' })
+const addWindow = (utc, kind, label, valid = true) => {
+  if (!Number.isFinite(utc)) return
+  // isvalid="false" means Expedition rejected the moment for PERFORMANCE stats
+  // ("No sails up before", "BSP_trg below 60%"). It still happened, and it is still
+  // footage worth having — so keep it by default and just mark it with a "?".
+  if (!valid && opt.validOnly) return
+  const k = KINDS[kind]
+  windows.push({ from: utc - k.lead() * 1000, to: utc + k.lag() * 1000, kind, label: valid ? label : `${label}?` })
 }
-for (const r of ev.markRoundings) {
-  // isvalid="false" means Expedition rejected the rounding for PERFORMANCE stats
-  // ("No sails up before", "BSP_trg below 60%"). The boat still rounded a mark, and
-  // that is still footage worth having — so keep it by default and just mark it.
-  // --valid-marks-only drops them.
-  if (r.isValid === false && opt.validMarksOnly) continue
-  const tag = r.isTop ? 'Top mark' : 'Leeward gate'
-  windows.push({ from: r.utc - opt.markLead * 1000, to: r.utc + opt.markLag * 1000, label: r.isValid === false ? `${tag}?` : tag, kind: 'mark' })
+for (const g of ev.raceGuns) addWindow(g.utc, 'start', `R${g.raceNum || '?'} start`)
+for (const r of ev.markRoundings) addWindow(r.utc, r.isTop ? 'topmark' : 'gate', r.isTop ? 'Top mark' : 'Leeward gate', r.isValid !== false)
+if (!opt.noTurns) {
+  for (const t of ev.tackJibes) addWindow(t.utc, t.isTack ? 'tack' : 'gybe', t.isTack ? 'Tack' : 'Gybe', t.isValid !== false)
 }
-if (!windows.length) die('the event file has no race starts or mark roundings')
+if (!windows.length) die('the event file has no starts, roundings, tacks or gybes')
 
 for (const c of clips) {
   if (c.start == null) continue
   const end = c.start + c.dur * 1000
-  for (const w of windows) if (c.start <= w.to && end >= w.from) { c.covers.push(w.label); c.hits.push(w) }
+  for (const w of windows) if (c.start <= w.to && end >= w.from) {
+    c.covers.push(w.label); c.hits.push(w)
+    if (!c.kinds.includes(w.kind)) c.kinds.push(w.kind)
+  }
 }
 
 // The parts of a clip actually worth keeping: each matching window clipped to the
@@ -283,7 +314,7 @@ for (const c of clips) {
 function segmentsFor(c) {
   const end = c.start + c.dur * 1000
   const spans = c.hits
-    .map((w) => ({ from: Math.max(c.start, w.from), to: Math.min(end, w.to), label: w.label }))
+    .map((w) => ({ from: Math.max(c.start, w.from), to: Math.min(end, w.to), label: w.label, kind: w.kind }))
     // >= not >: a clip whose span only TOUCHES a window (it starts exactly as the
     // window closes) still counts as a match above, so dropping the zero-length
     // span here would select the clip and then trim it to nothing. The minimum-
@@ -296,7 +327,8 @@ function segmentsFor(c) {
     if (last && sp.from - last.to <= opt.gap * 1000) {
       last.to = Math.max(last.to, sp.to)
       if (!last.labels.includes(sp.label)) last.labels.push(sp.label)
-    } else merged.push({ from: sp.from, to: sp.to, labels: [sp.label] })
+      if (!last.kinds.includes(sp.kind)) last.kinds.push(sp.kind)
+    } else merged.push({ from: sp.from, to: sp.to, labels: [sp.label], kinds: [sp.kind] })
   }
   // A two-second sliver is not worth a file; give it a floor, inside the clip.
   for (const m of merged) {
@@ -323,8 +355,11 @@ const picked = opt.rest
   : clips.filter((c) => c.covers.length > 0)
 
 console.log(`\n● ${basename(opt.events)} — ${ev.meta.boat || '?'} · ${ev.meta.location || '?'} · ${ev.meta.date || '?'}`)
-console.log(`  ${ev.raceGuns.length} start${ev.raceGuns.length === 1 ? '' : 's'} · ${ev.markRoundings.length} mark roundings` +
-  `   ·   windows: start −${opt.startLead}s/+${opt.startLag}s · mark ±${opt.markLead}s`)
+const nOf = (k) => windows.filter((w) => w.kind === k).length
+console.log('  ' + Object.keys(KINDS).map((k) => `${nOf(k)} ${KINDS[k].name}${nOf(k) === 1 ? '' : 's'}`).join(' · ') +
+  (opt.noTurns ? '   (turns excluded)' : ''))
+console.log(`  windows: start −${opt.startLead}/+${opt.startLag}s · top −${opt.topLead}/+${opt.topLag}s` +
+  ` · gate ±${opt.gateLead}/${opt.gateLag}s · turn −${opt.turnLead}/+${opt.turnLag}s`)
 if (ev.dayStartUtc) console.log(`  sailing ${hhmm(ev.dayStartUtc)} → ${hhmm(ev.dayStopUtc)} (local)`)
 console.log()
 
@@ -372,21 +407,18 @@ if (opt.dry) { console.log(`\n(dry run — nothing compressed. Drop -n to compre
 // topmark, gate. The app derives those tags itself from the event file once the log
 // and events are uploaded, so matching them here means the filename and the tag SSA
 // computes say the same thing instead of inventing a second naming scheme.
-const SSA_TAG = (label) => {
-  const l = label.replace(/\?$/, '')
-  if (/start/i.test(l)) return 'race-start'
-  if (/top mark/i.test(l)) return 'topmark'
-  if (/leeward|gate/i.test(l)) return 'gate'
-  return slugify(l)
-}
+const SSA_TAG = (kind) => KINDS[kind]?.tag || slugify(kind)
 const slugify = (s) => String(s).replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '')
 const stamp = (ms) => {
   const d = new Date(ms), q = (n) => String(n).padStart(2, '0')
   return `${d.getUTCFullYear()}${q(d.getUTCMonth() + 1)}${q(d.getUTCDate())}${q(d.getUTCHours())}${q(d.getUTCMinutes())}${q(d.getUTCSeconds())}`
 }
-const nameFor = (c, startMs, labels) => {
+// <stamp>_<tags>_<yourtag>_<source>. The stamp is that FILE's own start — it is
+// what SSA reads to place the clip — and the tags are SSA's own vocabulary, so a
+// segment says what it is both on disk and once uploaded.
+const nameFor = (c, startMs, kinds) => {
   if (opt.keepNames) return basename(c.name, extname(c.name))
-  const tags = [...new Set(labels.map(SSA_TAG))]
+  const tags = [...new Set(kinds.map(SSA_TAG))]
   return [stamp(startMs), tags.join('-') || 'other', opt.tag ? slugify(opt.tag) : '', slugify(c.srcDir)]
     .filter(Boolean).join('_')
 }
@@ -398,18 +430,18 @@ for (const c of picked) {
   if (opt.trim && c.segs.length) {
     for (const m of c.segs) {
       jobs.push({
-        name: nameFor(c, m.from, m.labels), src: c.file, srcDir: c.srcDir,
+        name: nameFor(c, m.from, m.kinds), src: c.file, srcDir: c.srcDir,
         ssSec: Number(((m.from - c.start) / 1000).toFixed(2)),
         durSec: Number(((m.to - m.from) / 1000).toFixed(2)),
-        tags: [...new Set(m.labels.map(SSA_TAG))], labels: m.labels,
+        tags: [...new Set(m.kinds.map(SSA_TAG))], labels: m.labels, kinds: m.kinds,
         startWall: new Date(m.from).toISOString().replace('Z', ''),
       })
     }
   } else {
     jobs.push({
-      name: nameFor(c, c.start, c.covers), src: c.file, srcDir: c.srcDir,
+      name: nameFor(c, c.start, c.kinds), src: c.file, srcDir: c.srcDir,
       ssSec: 0, durSec: 0,
-      tags: [...new Set(c.covers.map(SSA_TAG))], labels: c.covers,
+      tags: [...new Set(c.kinds.map(SSA_TAG))], labels: c.covers, kinds: c.kinds,
       startWall: c.start == null ? null : new Date(c.start).toISOString().replace('Z', ''),
     })
   }
