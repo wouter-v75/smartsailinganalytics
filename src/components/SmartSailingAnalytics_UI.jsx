@@ -2916,12 +2916,20 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                 <div key={v.id} style={{display:"flex",alignItems:"center",gap:9,padding:"5px 0",borderBottom:"1px solid #0F2030"}}>
                   <video src={v.url} style={{width:52,height:33,borderRadius:3,objectFit:"cover",background:"#071624",flexShrink:0}} muted preload="metadata" onLoadedMetadata={e=>{
                     const dur=Math.round(e.target.duration);
-                    setPendingVids(p=>p.map(x=>{
-                      if(x.id!==v.id)return x;
-                      if(x.tsSource==="mp4-meta")return{...x,duration:dur};
-                      const ts=x.file?.lastModified?x.file.lastModified-dur*1000:null;
-                      return{...x,duration:dur,startUtc:x.startUtc||ts,tsSource:x.tsSource||(ts?"lastmodified":null)};
-                    }));
+                    // DURATION ONLY. This handler used to also set startUtc/tsSource
+                    // from the file's mtime, which raced the async timestamp
+                    // extraction in handleVids: whenever the preview's metadata
+                    // arrived first, the clip was stamped "lastmodified" — silently,
+                    // because unlike the fallback in handleVids this path logs
+                    // nothing — and a clip whose filename carried a perfectly good
+                    // capture time was filed under the day it was COPIED instead.
+                    // That is how 25 segments named 20260903… landed on 2026-09-04,
+                    // and why 123 clips in the local store sit on file-mtime.
+                    //
+                    // The fallback is not lost: handleVids already applies mtime when
+                    // extraction finds nothing, using the probe's duration, and says
+                    // so in the log. One owner for the timestamp, one for the duration.
+                    setPendingVids(p=>p.map(x=>x.id===v.id?{...x,duration:dur}:x));
                   }}/>
                   <div style={{flex:1,minWidth:0}}><div style={{fontSize:11,fontWeight:500,color:"#CBD5E1",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div><div style={{fontSize:10,color:"#475569"}}>{fmtSize(v.size)}{v.duration?` · ${fmtT(v.duration)}`:""}</div></div>
                   <button onClick={()=>setPendingVids(p=>p.filter(x=>x.id!==v.id))} style={{background:"none",border:"none",color:"#EF4444",cursor:"pointer",fontSize:15}}>×</button>
