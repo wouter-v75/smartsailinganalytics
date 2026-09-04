@@ -3011,11 +3011,23 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                 </div>
               </div>
             )}
-            {(pendingVids.length>0||csvParsed||xmlParsed)&&(
-              <button onClick={saveLocal} disabled={phase==="saving"} style={{background:phase==="saving"?"#1E3A5A":"#06B6D4",border:"none",borderRadius:10,padding:"13px",color:phase==="saving"?"#64748B":"#000",fontWeight:700,fontSize:14,cursor:phase==="saving"?"default":"pointer",width:"100%"}}>
-                {phase==="saving"?"Saving to local storage…":`① Save locally — ${pendingVids.length>0?`${pendingVids.length} video${pendingVids.length>1?"s":""}`:""} ${csvParsed?"+ log":""} ${xmlParsed?"+ events":""}`}
+            {(pendingVids.length>0||csvParsed||xmlParsed)&&(()=>{
+              // Reading a clip's capture time is ASYNCHRONOUS — probeVideo (up to 15 s
+              // per file) then the metadata scan. Saving before that finishes stores
+              // startUtc=null, and the clip is then filed under TODAY with no time and
+              // no tags, because computeAutoTags has no window to work with. Nothing
+              // said so: the log still read "reading timestamps…" while Save sat
+              // enabled. That is how 25 clips named 20260903… landed on 2026-09-04.
+              // A clip that failed to probe is NOT pending — it has had its answer.
+              const tsPending = pendingVids.filter(v=>!v.tsSource&&!v.error&&!v.undecodable).length;
+              const busy = phase==="saving"||tsPending>0;
+              return (
+              <button onClick={saveLocal} disabled={busy} style={{background:busy?"#1E3A5A":"#06B6D4",border:"none",borderRadius:10,padding:"13px",color:busy?"#64748B":"#000",fontWeight:700,fontSize:14,cursor:busy?"default":"pointer",width:"100%"}}>
+                {phase==="saving"?"Saving to local storage…"
+                  :tsPending>0?`Reading timestamps — ${tsPending} clip${tsPending>1?"s":""} to go…`
+                  :`① Save locally — ${pendingVids.length>0?`${pendingVids.length} video${pendingVids.length>1?"s":""}`:""} ${csvParsed?"+ log":""} ${xmlParsed?"+ events":""}`}
               </button>
-            )}
+              )})()}
           </>
         ):(
           <div style={{background:"#0A1929",border:"1px solid #1D9E7540",borderRadius:12,padding:18}}>

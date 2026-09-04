@@ -49,3 +49,36 @@ describe('preview duration must not decide the timestamp', () => {
     expect(a.duration).toBe(b.duration)
   })
 })
+
+// Mirror of the Save gate in the Upload tab. Reading a clip's capture time is
+// asynchronous (probeVideo, then the metadata scan), and saving before it lands
+// stores startUtc=null — which files the clip under TODAY with no time and no
+// tags, because computeAutoTags has no window to work with.
+const pendingCount = (vids: any[]) => vids.filter(v => !v.tsSource && !v.error && !v.undecodable).length
+
+describe('Save must wait for the timestamps', () => {
+  const resolved = { tsSource: 'filename', startUtc: 1 }
+  const unread = { tsSource: null, startUtc: null }
+
+  it('reproduces the bug: a clip still being read has no timestamp to save', () => {
+    expect(pendingCount([unread])).toBe(1)
+  })
+
+  it('is ready once every clip has been read', () => {
+    expect(pendingCount([resolved, resolved])).toBe(0)
+  })
+
+  it('counts only what is still outstanding', () => {
+    expect(pendingCount([resolved, unread, resolved, unread])).toBe(2)
+  })
+
+  it('does not wait forever on a clip that CANNOT be read', () => {
+    // A failed probe has had its answer — blocking on it would strand the upload.
+    expect(pendingCount([{ ...unread, error: 'timed out reading the video (10 s)' }])).toBe(0)
+    expect(pendingCount([{ ...unread, undecodable: true }])).toBe(0)
+  })
+
+  it('treats an empty queue as ready, so a log-only upload still saves', () => {
+    expect(pendingCount([])).toBe(0)
+  })
+})
