@@ -1099,15 +1099,15 @@ function NotesCard({ title, aiMode, fields, showDocuments, documentsScope = 'deb
     }).catch(() => {})
   }
 
-  // @-link candidates: this day's clips + photos + the boat's backlog items.
+  // @-link candidates: this day's clips + photos. (The backlog was pruned in
+  // migration 0044 — its route is gone, so don't ask for it and 404 every load.)
   useEffect(() => {
     let cancelled = false
     Promise.all([
       fetch(`/api/teams/${teamId}/boats/${boatId}/videos?date=${date}`).then((r) => (r.ok ? r.json() : { videos: [] })).catch(() => ({ videos: [] })),
       fetch(`/api/teams/${teamId}/boats/${boatId}/photos`).then((r) => (r.ok ? r.json() : { photos: [] })).catch(() => ({ photos: [] })),
-      fetch(`${base}/backlog`).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })),
       fetch(`${base}/calendar`).then((r) => (r.ok ? r.json() : { sessions: [] })).catch(() => ({ sessions: [] })),
-    ]).then(([v, p, b, cal]) => {
+    ]).then(([v, p, cal]) => {
       if (cancelled) return
       const sess = (cal.sessions || []).find((s) => s.date === date)
       const tzMin = sess?.tz_offset_minutes ?? 0
@@ -1126,8 +1126,7 @@ function NotesCard({ title, aiMode, fields, showDocuments, documentsScope = 'deb
         return { kind: 'photo', id: ph.id, label: `photo ${hm || i + 1}` }
       })
       photoUrlRef.current = urlMap
-      const items = (b.items || []).map((it) => ({ kind: 'item', id: it.id, label: it.title }))
-      setLinks([...clips, ...photos, ...items])
+      setLinks([...clips, ...photos])
     })
     return () => { cancelled = true }
   }, [teamId, boatId, date, base])
