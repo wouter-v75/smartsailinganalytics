@@ -16,6 +16,16 @@ describe('isDroneClip — which deck a video belongs in', () => {
     expect(wrong.test('20260903130935_topmark_day2_DJI-001')).toBe(false)
   })
 
+  it('matches the title SSA actually STORES, not just the filename', () => {
+    // Import rewrites the name: `pv.name.replace(/\.[^.]+$/,'').replace(/[_-]/g,' ')`,
+    // so underscores and hyphens become spaces before this ever runs. Testing only
+    // the on-disk filename would have missed whether the stored form still matches.
+    const stored = (n: string) => n.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ')
+    expect(isDroneClip({ title: stored('20260903123130_topmark_day2_DJI-001.mp4') })).toBe(true)
+    expect(isDroneClip({ title: stored('DJI_20260903131023_0067_D.MP4') })).toBe(true)
+    expect(isDroneClip({ title: stored('20260904 133735.mp4') })).toBe(false)
+  })
+
   it('leaves RIB and onboard clips in the Videos deck', () => {
     // Today's footage is all RIB — short clips named by wall clock, no vendor.
     expect(isDroneClip({ title: '20260904 133735' })).toBe(false)
