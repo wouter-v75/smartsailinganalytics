@@ -1906,7 +1906,7 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
 // un-proxied clip in the session; a second button uploads full-resolution
 // originals. Progress rides the shared `syncState` channel (mobileSyncState)
 // that the auto-sync queue also drives.
-function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, syncErrors=[]}){
+export function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, syncErrors=[]}){
   // Only clips whose source file is on this device can be synced from here,
   // so the panel counts (and the buttons) consider just those.
   const syncable  = videos.filter(v=>v.hasLocalBlob);
@@ -1949,7 +1949,12 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, sy
       ) : (
         <>
           {showProxy && row("Proxies · 720p", haveProxy, "#06B6D4")}
-          {row("Originals · HD", haveOrig, "#8B5CF6")}
+          {/* On desktop there is no client-side proxy, so "the original" is simply
+              the file you imported — which, with a pre-compressed workflow, IS the
+              720p proxy. Labelling that row "Originals · HD" made one sequential
+              upload of small files look like a second full-resolution pass running
+              alongside the first. On mobile the distinction is real, so it stays. */}
+          {row(showProxy ? "Originals · HD" : "Uploaded · the file you imported", haveOrig, "#8B5CF6")}
           {busy && syncState?.message && (
             <div style={{margin:"7px 0"}}>
               <div style={{fontSize:9,color:"#7DD3FC",fontFamily:"monospace",lineHeight:1.4,wordBreak:"break-word",marginBottom:3}}>{syncState.message}</div>
@@ -2022,10 +2027,16 @@ function BatchSyncPanel({videos, syncState, onSyncProxies, onUploadOriginals, sy
                 : (needOrig===0?"#475569":"#fff"),
               fontWeight:700,fontSize:11,
               cursor:(busy||needOrig===0)?"not-allowed":"pointer",opacity:busy?0.6:1}}>
-            {needOrig===0?"✓ All originals uploaded":`⇪ Upload ${needOrig} original${needOrig===1?"":"s"}`}
+            {needOrig===0
+              ? (showProxy ? "✓ All originals uploaded" : "✓ All clips uploaded")
+              : (showProxy
+                  ? `⇪ Upload ${needOrig} original${needOrig===1?"":"s"}`
+                  : `⇪ Upload ${needOrig} clip${needOrig===1?"":"s"}`)}
           </button>
           <div style={{fontSize:8,color:"#334155",marginTop:6,lineHeight:1.4}}>
-            Proxies stream instantly on phones. Originals are full quality — upload them with the button when on fast wifi.
+            {showProxy
+              ? "Proxies stream instantly on phones. Originals are full quality — upload them with the button when on fast wifi."
+              : "The bar counts clips finished; the line above it is the one uploading now. Clips go up one at a time, and the streaming versions are built in the cloud from whatever you upload — so a file you already compressed is not compressed or uploaded twice."}
           </div>
         </>
       )}
