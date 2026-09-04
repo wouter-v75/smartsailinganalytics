@@ -5,12 +5,14 @@
 // Env (see .env.example):
 //   SCALEWAY_AI_API_KEY   — Secret Key
 //   SCALEWAY_AI_BASE_URL  — https://api.scaleway.ai/<project>/v1
-//   SCALEWAY_AI_MODEL     — e.g. mistral-small-3.2-24b-instruct-2506
+//   SCALEWAY_AI_MODEL     — defaults to mistral-medium-3.5-128b (measured best of
+//                           the six Scaleway models; see __tests__/summaryBench)
 //
 // POST { transcript: string, mode?: "speedteam"|"debrief"|"planning" }
 //   → the mode's field keys, each a markdown string. Defaults to "speedteam".
 import { NextRequest, NextResponse } from 'next/server'
-import { glossaryBlock, withOverride, type Glossary } from '../../../../lib/debriefGlossary'
+import { type Glossary } from '../../../../lib/debriefGlossary'
+import { MODES, buildMessages } from '../../../../lib/debriefPrompt'
 import { collapseRepeats } from '../../../../lib/transcriptClean'
 
 export const maxDuration = 60
@@ -18,70 +20,9 @@ export const dynamic = 'force-dynamic'
 
 const KEY = process.env.SCALEWAY_AI_API_KEY
 const BASE = process.env.SCALEWAY_AI_BASE_URL
-const MODEL = process.env.SCALEWAY_AI_MODEL || 'mistral-small-3.2-24b-instruct-2506'
+const MODEL = process.env.SCALEWAY_AI_MODEL || 'mistral-medium-3.5-128b'
 
 const log = (...a: unknown[]) => { try { console.info('[ai/debrief-summary]', ...a) } catch { /* */ } }
-
-// Shared discipline — ported from scripts/speedteam-notes.sh. Each mode adds the
-// section-specific keys + guidance. The model returns JSON keyed to the DB columns
-// so the summary writes straight into the campaign section.
-const RULES = `RULES — these matter:
-- OUTPUT LANGUAGE: write the entire summary in ENGLISH. If the transcript is in another language (e.g. Dutch), translate it faithfully — but keep sail names, boat-part and manoeuvre terms, abbreviations (A2, A3, S2, genoa, kite, gybe) and people's names exactly as spoken.
-- GLOSSARY: the glossary above is authoritative for this team's sails, manoeuvres, boat parts and crew. Where a transcript word is clearly a mishearing, use the nearest glossary term; translate Dutch words via the Dutch→English mappings and keep the English term.
-- Use ONLY what is in the transcript. Do not invent numbers, sail names or conclusions.
-- If a section has nothing in the transcript, set it to "Nothing recorded." Do not pad it out. An empty section is information; a fabricated one is a liability.
-- Where the transcript is garbled but the meaning is clear, use the meaning. Where the meaning is NOT clear, say so briefly, e.g. "(unclear — check the recording)".
-- Keep sailing jargon as the team used it — do not water it down into generic plain English.
-- Bullet points ("- " each). Write plainly, not in prose paragraphs — but COMPLETENESS BEATS BREVITY. This note replaces the meeting for anyone who missed it, and a topic left out is a topic lost. Never compress several distinct points into one vague bullet.
-- Cover EVERY topic the meeting actually discussed. Before finishing, check the transcript again for whole subjects you have skipped — procedures agreed, manoeuvres reviewed, the plan for next time, kit and logistics, people and workload.
-- KEEP THE SPECIFICS. Numbers, times, distances, wind strengths, angles, sail names, boat names, people's names, and comparisons to other boats are the substance — carry them through verbatim rather than generalising ("14 seconds to kill, two boatlengths above the pin layline", not "was late").
-- For anything the group DECIDED, give the decision AND the procedure or reasoning behind it — who does what, on which winch, in what order. A decision without its mechanics cannot be acted on.
-- Where a point was argued and NOT settled, record it as an open question with both sides, and any action agreed to resolve it. Do not present an unresolved debate as a conclusion.
-- A transcript may contain "[repeated Nx — transcription loop]" markers. These are machine artefacts of the speech recogniser stuck in a loop, NOT emphasis and NOT content. Ignore them entirely and summarise the surrounding material.
-- Don't guess who *said* what (the transcript has no reliable speaker labels). But DO keep a crew member's name when the content is clearly about them — a job, strength or action point (e.g. "Marc to focus on tactics and mainsail", "Jan to turn faster in the inside gybe").`
-
-const CONTEXT = `The transcript is from a live, in-person sailing-team meeting of several people. It is a raw machine transcript: no speaker labels, it will contain mishearings (especially of sail names, boat parts and numbers), and people talk over each other. Work with what is actually there.`
-
-type Mode = { keys: string[]; prompt: string }
-const MODES: Record<string, Mode> = {
-  speedteam: {
-    keys: ['speed_learnings'],
-    prompt: `You are summarising a sailing team's SPEED TEAM meeting for a performance-analysis app.
-
-${CONTEXT}
-
-Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key, a markdown bullet string:
-  "speed_learnings"  — The full working note from the meeting. Capture, in this order where present: what the team established about boat speed and setup (what was fast, what was slow, and why — sail combinations, rig settings, modes, conditions, numbers); what they decided to test, try or watch on the water next; and the bigger long-term themes (gear to change, data to gather, questions to resolve over the campaign). Group naturally with short sub-headers or plain bullets — one cohesive note, not separate sections.
-
-${RULES}`,
-  },
-  debrief: {
-    keys: ['learnings'],
-    prompt: `You are summarising a sailing team's post-session DEBRIEF for a performance-analysis app.
-
-${CONTEXT}
-
-Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key, a markdown bullet string:
-  "learnings"  — The full working note from the debrief. Capture what happened and what was learned this session — what worked, what did not, and WHY — across manoeuvres (sets/hoists, gybes, drops, peels), starts, tactics and communication, boat handling and conditions, plus the concrete focus points to carry into the next session.
-  Organise the note under short thematic sub-headers in bold (e.g. "**Upwind**", "**Sets & hoists**", "**Gybes**", "**Drops**", "**Peels**", "**Starts**", "**Tactics & communication**", "**Conditions**", "**Kit & rig**", "**Logistics**", "**Team**", "**Focus next session**") — but ONLY include a sub-header when the transcript actually has content for it, and under each write "- " bullets. Do not force material into a header it does not fit; add your own sub-header where the discussion does not match any above.
-  A debrief usually spends a long stretch on ONE procedure or manoeuvre that went wrong and how it will be done next time. That discussion is the most valuable part of the session — give it its own sub-header and enough bullets to carry the agreed procedure step by step (who, which winch, which side, in what order, what the trigger is), plus whatever was left unresolved. A single bullet naming the manoeuvre is a failure.
-  Also carry, when present: the plan for the next session (timings, format, what will be practised), kit and rig jobs with their blockers and who is chasing them, and anything about people's workload or readiness.
-
-${RULES}`,
-  },
-  planning: {
-    keys: ['plan', 'timings'],
-    prompt: `You are summarising a sailing team's pre-race PLANNING / briefing meeting for a performance-analysis app.
-
-${CONTEXT}
-
-Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY these keys, each a markdown bullet string:
-  "plan"      — Today's plan and intent: the areas to focus on, the tests or drills to run, the strategic and tactical calls agreed, conditions expected.
-  "timings"   — The schedule as discussed: dock-out, warning signal, first start, and any other time-critical items. If no times were mentioned, set it to "Nothing recorded."
-
-${RULES}`,
-  },
-}
 
 export async function GET() {
   return NextResponse.json({ configured: !!(KEY && BASE), model: MODEL, modes: Object.keys(MODES) })
@@ -158,10 +99,7 @@ export async function POST(req: NextRequest) {
         max_tokens: 4000,
         temperature: 0.2,
         response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: `${glossaryBlock(withOverride(data?.glossary))}\n\n${mode.prompt}` },
-          { role: 'user', content: `Here is the meeting transcript:\n\n${transcript}` },
-        ],
+        messages: buildMessages(data?.mode, transcript, data?.glossary),
       }),
       signal: ctrl.signal,
     })
