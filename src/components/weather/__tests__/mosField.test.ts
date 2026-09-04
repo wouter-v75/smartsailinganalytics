@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyMosToField, preferredFieldHeight } from '../windField'
+import { applyMosToField, preferredFieldHeight, scaleFieldSpeeds } from '../windField'
 import { applyMOS, specFor } from '../mos'
 import { MODELS } from '../openMeteo'
 
@@ -137,5 +137,50 @@ describe('preferredFieldHeight — what the map shows before you touch anything'
 
   it('is idempotent — once on mastMOS it stays there, so the effect cannot loop', () => {
     expect(preferredFieldHeight({ ...base, current: 'mastMOS' })).toBe('mastMOS')
+  })
+})
+
+describe('scaleFieldSpeeds — re-anchoring a fitted correction to mast height', () => {
+  it('scales speed and leaves direction alone', () => {
+    const f: any = fieldAt(15, 200)
+    const out: any = scaleFieldSpeeds(f, () => 1.1)
+    expect(speedOf(out)).toBeCloseTo(16.5, 3)
+    expect(dirOf(out)).toBeCloseTo(dirOf(f), 6)
+  })
+
+  it('applies a DIFFERENT factor per frame — shear is not constant through the day', () => {
+    const f: any = fieldAt(10, 180)
+    f.frames = [f.frames[0], f.frames[0]]
+    const out: any = scaleFieldSpeeds(f, (t) => (t === 0 ? 1.0 : 2.0))
+    expect(Math.hypot(out.frames[0].u[0], out.frames[0].v[0])).toBeCloseTo(10 / 1.94384, 4)
+    expect(Math.hypot(out.frames[1].u[0], out.frames[1].v[0])).toBeCloseTo(20 / 1.94384, 4)
+  })
+
+  it('returns the SAME object when nothing would change, so callers can skip work', () => {
+    const f: any = fieldAt(15, 200)
+    expect(scaleFieldSpeeds(f, () => 1)).toBe(f)
+    expect(scaleFieldSpeeds(f, () => NaN)).toBe(f)
+    expect(scaleFieldSpeeds(f, () => 0)).toBe(f)
+    expect(scaleFieldSpeeds(f, () => -1)).toBe(f)
+  })
+
+  it('recomputes maxSpeed, which drives the colour scale', () => {
+    const f: any = fieldAt(10, 180)
+    const out: any = scaleFieldSpeeds(f, () => 2)
+    expect(out.maxSpeed).toBeGreaterThan(f.maxSpeed)
+    expect(out.maxSpeed).toBeCloseTo(20 / 1.94384, 3)
+  })
+
+  it('composes with the MOS correction in the deck order: correct at the fit height, then re-anchor', () => {
+    // This is what the 3D path now does, and it is mastKn()'s arithmetic:
+    //   corrected_at_mast = MOS(v30) * (v_mast / v30)
+    // rather than MOS(v_mast), which would feed a mast wind into a 30 m fit.
+    const spec = specFor('porto_cervo')!
+    const mosId = MODELS.ICONRACE_1KM.mosModel
+    const at30: any = applyMosToField(fieldAt(14, 200), spec, mosId)
+    const ratio = 1.08
+    const atMast: any = scaleFieldSpeeds(at30, () => ratio)
+    expect(speedOf(atMast)).toBeCloseTo(speedOf(at30) * ratio, 4)
+    expect(atMast.mosApplied).toBe(true)   // the tag survives the re-anchor
   })
 })

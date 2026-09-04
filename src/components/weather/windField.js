@@ -52,6 +52,28 @@ export function applyMosToField(field, spec, mosModelId) {
   return { ...field, frames, maxSpeed, mosApplied: true }
 }
 
+// Scale every cell's speed per frame, leaving direction untouched. Used to move a
+// MOS-corrected field from the height the correction was FITTED at to the height
+// the crew actually sails at: the correction is exact only at its fit height, so it
+// is applied there and the result re-anchored, rather than feeding a mast-height
+// wind into a 30 m fit and hoping the difference is small.
+export function scaleFieldSpeeds(field, factorFor) {
+  if (!field?.frames || typeof factorFor !== 'function') return field
+  let touched = false
+  const frames = field.frames.map((fr, t) => {
+    const f = factorFor(t)
+    if (!Number.isFinite(f) || f <= 0 || f === 1) return fr
+    touched = true
+    const n = fr.u.length; const u = new Array(n); const v = new Array(n)
+    for (let p = 0; p < n; p++) { u[p] = fr.u[p] * f; v[p] = fr.v[p] * f }
+    return { u, v }
+  })
+  if (!touched) return field
+  let maxSpeed = 1
+  for (const fr of frames) for (let i = 0; i < fr.u.length; i++) { const s = Math.hypot(fr.u[i], fr.v[i]); if (s > maxSpeed) maxSpeed = s }
+  return { ...field, frames, maxSpeed }
+}
+
 // Which height the wind field should show when the user has not picked one.
 // Where the venue has a MOS correction, the corrected mast wind is the calibrated
 // number — the same one the hourly tables, the deck and the windweight panel use —

@@ -24,7 +24,7 @@ import React, { useMemo, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, fetchWindweightNearest, SSARACE_SOUNDING_LEVELS, ICON_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS, GFS_SOUNDING_LEVELS } from './openMeteo'
 import { matchVenue, specFor, mosSeries } from './mos'
-import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField, sampleField, applyMosToField } from './windField'
+import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField, sampleField, applyMosToField, scaleFieldSpeeds } from './windField'
 import { getWeatherSession } from './weatherSession'
 import {
   mean as dMean, ensureHeights, stabilityFromSounding, stabilityGate,
@@ -1627,11 +1627,26 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       let heroView = null     // General weather: 1× zoomed-out 20 nm overview (10 nm ring)
       try {
         const m3dKey = (sb.ICONRACE_1KM && hasValidSpeed(sb.ICONRACE_1KM.hourly)) ? 'ICONRACE_1KM' : 'AROME'
-        // Captured at 30 m, which IS the MOS fit height (spec.target_height_m), so
-        // the correction lands here without any shear re-anchoring.
-        const f3d = mosField(m3dKey, m3dKey.startsWith('ICONRACE')
+        // FETCHED at 30 m because that is the MOS fit height (spec.target_height_m),
+        // so the correction lands exactly, with no re-anchoring needed to apply it.
+        // It is then scaled to MAST height by this model's own shear — the same two
+        // steps mastKn() takes for every table on the deck. Without the second step
+        // the 3D stills were the one view reading at 30 m while the comparison
+        // charts, the daily table and the map all read at the mast.
+        const raw3d = m3dKey.startsWith('ICONRACE')
           ? await fetchIconRaceField({ lat: p1lat, lon: p1lon, height: VIEW3D_HEIGHT_M, timezone: tz, modelKey: m3dKey })
-          : await fetchWindField({ modelKey: m3dKey, lat: p1lat, lon: p1lon, height: VIEW3D_HEIGHT_M, timezone: tz }))
+          : await fetchWindField({ modelKey: m3dKey, lat: p1lat, lon: p1lon, height: VIEW3D_HEIGHT_M, timezone: tz })
+        const m3d = sb[m3dKey] ? mk(m3dKey, sb[m3dKey].hourly) : null
+        const shearAt = (t) => {
+          const st = raw3d?.stamps?.[t]
+          if (!st || !m3d || mastHeight === VIEW3D_HEIGHT_M) return 1
+          const i = m3d.lt.findIndex((x) => x.slice(8, 10) === st.dd && Number(x.slice(11, 13)) === st.hh)
+          if (i < 0) return 1
+          const vMast = interpolateSpeedAtHeight(m3d.hourly, m3d.heights, mastHeight, i)
+          const vFit = interpolateSpeedAtHeight(m3d.hourly, m3d.heights, VIEW3D_HEIGHT_M, i)
+          return (vMast != null && vFit != null && vFit > 0) ? vMast / vFit : 1
+        }
+        const f3d = scaleFieldSpeeds(mosField(m3dKey, raw3d), shearAt)
         const stamps = f3d?.stamps || []
         const frameIndices = [10, 12, 14, 16].map((H) => stamps.findIndex((s) => s && s.hh === H)).filter((i) => i >= 0)
         const ML = window.maplibregl
@@ -1644,12 +1659,12 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         if (ML && f3d?.frames?.length && frameIndices.length) {
           // Model guidance: tight ≈ 5 nm racing view, 2 nm ring, full grid density.
           const caps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 760, height: 460, exaggeration: 3, frameIndices, zoom: 11.6, arrowStep: 1, ringNm: 2, points: deckPoints }), 55000, [])
-          views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: modelLabel, height: VIEW3D_HEIGHT_M, png: c.png } }).filter((v) => v.png)
+          views3d = (caps || []).map((c) => { const s = stamps[c.idx]; return { label: s ? `${pad2(s.hh)}:00` : '', model: modelLabel, height: mastHeight, png: c.png } }).filter((v) => v.png)
           // General weather hero: zoomed-OUT ≈ 20 nm overview, 10 nm ring, midday.
           const midIdx = frameIndices[1] ?? frameIndices[0]
           const heroCaps = await withTimeout(captureField3DSeries(ML, f3d, { lat: p1lat, lon: p1lon, width: 900, height: 540, exaggeration: 3, frameIndices: [midIdx], zoom: 9.8, arrowStep: 1, ringNm: 10, points: deckPoints }), 45000, [])
           const hc = (heroCaps || [])[0]
-          if (hc?.png) { const s = stamps[hc.idx]; heroView = { label: s ? `${pad2(s.hh)}:00` : '12:00', model: modelLabel, height: VIEW3D_HEIGHT_M, png: hc.png } }
+          if (hc?.png) { const s = stamps[hc.idx]; heroView = { label: s ? `${pad2(s.hh)}:00` : '12:00', model: modelLabel, height: mastHeight, png: hc.png } }
         }
       } catch { /* */ }
 
