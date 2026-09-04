@@ -309,6 +309,17 @@ function _scanAppleCreationDate(buf) {
 }
 
 
+// Has this queued clip finished being READ? Duration is not the answer: it arrives
+// from the preview <video> within a few hundred ms, while the capture time needs
+// probeVideo (up to 15 s) and then a metadata scan. Auto-save used to gate on
+// duration alone, so it fired while startUtc was still null — filing the clip under
+// TODAY with no time and, because computeAutoTags has no window, no tags either.
+// A clip whose probe FAILED counts as read: it has had its answer, and waiting on it
+// would strand the whole batch.
+function clipTimestampSettled(v) {
+  return v.tsSource != null || !!v.error || !!v.undecodable;
+}
+
 // Parse a timestamp out of common camera filename conventions.
 // Handles:
 //   DJI_20250903122919_0041_A2_drop.mp4          → DJI drones / Osmo (local time)
@@ -2679,7 +2690,8 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   useEffect(() => {
     if (!pendingVids.length) { autoVidDoneRef.current = false; return; }
     if (phase !== 'idle' || autoVidDoneRef.current) return;
-    if (!pendingVids.every(v => v.duration != null)) return; // wait until processed
+    // Both the duration AND the timestamp — see clipTimestampSettled.
+    if (!pendingVids.every(v => v.duration != null && clipTimestampSettled(v))) return;
     autoVidDoneRef.current = true;
     saveLocal();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3019,7 +3031,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               // said so: the log still read "reading timestamps…" while Save sat
               // enabled. That is how 25 clips named 20260903… landed on 2026-09-04.
               // A clip that failed to probe is NOT pending — it has had its answer.
-              const tsPending = pendingVids.filter(v=>!v.tsSource&&!v.error&&!v.undecodable).length;
+              const tsPending = pendingVids.filter(v=>!clipTimestampSettled(v)).length;
               const busy = phase==="saving"||tsPending>0;
               return (
               <button onClick={saveLocal} disabled={busy} style={{background:busy?"#1E3A5A":"#06B6D4",border:"none",borderRadius:10,padding:"13px",color:busy?"#64748B":"#000",fontWeight:700,fontSize:14,cursor:busy?"default":"pointer",width:"100%"}}>

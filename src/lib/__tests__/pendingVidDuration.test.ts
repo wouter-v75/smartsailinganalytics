@@ -82,3 +82,38 @@ describe('Save must wait for the timestamps', () => {
     expect(pendingCount([])).toBe(0)
   })
 })
+
+// Mirror of the AUTO-SAVE gate. This is the one that actually fires: saveLocal is
+// called from an effect as soon as the queue looks "processed", not from the button.
+const clipTimestampSettled = (v: any) => v.tsSource != null || !!v.error || !!v.undecodable
+const autoSaveReady = (vids: any[]) =>
+  vids.length > 0 && vids.every(v => v.duration != null && clipTimestampSettled(v))
+
+describe('auto-save must wait for the timestamp, not the duration', () => {
+  it('reproduces the bug: duration lands first and used to trigger the save', () => {
+    // The preview <video> reports duration within a few hundred ms; probeVideo plus
+    // the metadata scan take seconds. Gating on duration alone saved a clip whose
+    // startUtc was still null — filed under today, no time, no tags.
+    const midFlight = [{ duration: 10, tsSource: null, startUtc: null }]
+    const OLD_GATE = (vids: any[]) => vids.every(v => v.duration != null)
+    expect(OLD_GATE(midFlight)).toBe(true)      // fired too early
+    expect(autoSaveReady(midFlight)).toBe(false) // now waits
+  })
+
+  it('fires once every clip has both duration and a timestamp', () => {
+    expect(autoSaveReady([{ duration: 10, tsSource: 'filename' }, { duration: 4, tsSource: 'mp4-meta' }])).toBe(true)
+  })
+
+  it('waits for the slowest clip, not the first', () => {
+    expect(autoSaveReady([{ duration: 10, tsSource: 'filename' }, { duration: 4, tsSource: null }])).toBe(false)
+  })
+
+  it('is not stranded by a clip that cannot be read', () => {
+    expect(autoSaveReady([{ duration: 10, tsSource: 'filename' }, { duration: 2, tsSource: null, undecodable: true }])).toBe(true)
+    expect(autoSaveReady([{ duration: 10, tsSource: 'filename' }, { duration: 2, tsSource: null, error: 'timed out' }])).toBe(true)
+  })
+
+  it('does not fire on an empty queue', () => {
+    expect(autoSaveReady([])).toBe(false)
+  })
+})
