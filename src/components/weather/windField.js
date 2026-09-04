@@ -46,7 +46,23 @@ export function applyMosToField(field, spec, mosModelId) {
   })
   let maxSpeed = 1
   for (const fr of frames) for (let i = 0; i < fr.u.length; i++) { const s = Math.hypot(fr.u[i], fr.v[i]); if (s > maxSpeed) maxSpeed = s }
-  return { ...field, frames, maxSpeed }
+  // Tagged so the map can SAY the number is corrected. Reading a MOS speed off the
+  // contour and a raw one off the hourly table, with nothing on screen to tell them
+  // apart, is how you end up trusting the wrong one.
+  return { ...field, frames, maxSpeed, mosApplied: true }
+}
+
+// Which height the wind field should show when the user has not picked one.
+// Where the venue has a MOS correction, the corrected mast wind is the calibrated
+// number — the same one the hourly tables, the deck and the windweight panel use —
+// so defaulting to the RAW mast wind left the map quietly disagreeing with every
+// other view of the same hour. A height the user chose themselves is never
+// overridden; the raw pill stays for comparison.
+export function preferredFieldHeight({ userPicked, canHeights, mosAvail, canMos, current }) {
+  if (!canHeights) return 10
+  if (userPicked) return current
+  if (mosAvail && canMos) return 'mastMOS'
+  return current
 }
 
 // Local-time label "Sat 14:00". isUTC=true converts from UTC to `timezone`;

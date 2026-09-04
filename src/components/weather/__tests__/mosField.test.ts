@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { applyMosToField } from '../windField'
+import { applyMosToField, preferredFieldHeight } from '../windField'
 import { applyMOS, specFor } from '../mos'
 import { MODELS } from '../openMeteo'
 
@@ -92,5 +92,50 @@ describe('applyMosToField — the deck/map path uses the same correction as the 
   it('recomputes maxSpeed so the field palette matches the corrected wind', () => {
     const out = applyMosToField(fieldAt(16, 200), spec, iconRaceMosId)
     expect(out.maxSpeed * KN).toBeCloseTo(speedOf(out), 4)
+  })
+})
+
+describe('the map says which number it is showing', () => {
+  const spec = specFor('porto_cervo')!
+  const mosId = MODELS.ICONRACE?.mosModel || 'icon_eu'
+  it('tags a corrected field so the readout can name the correction', () => {
+    const out: any = applyMosToField(fieldAt(16, 200), spec, mosId)
+    expect(out.mosApplied).toBe(true)
+  })
+
+  it('leaves an uncorrected field untagged — no spec, no claim', () => {
+    const f: any = fieldAt(16, 200)
+    expect(applyMosToField(f, null as any, mosId).mosApplied).toBeUndefined()
+    expect(f.mosApplied).toBeUndefined()
+  })
+})
+
+describe('preferredFieldHeight — what the map shows before you touch anything', () => {
+  const base = { userPicked: false, canHeights: true, mosAvail: true, canMos: true, current: 'mast' as any }
+
+  it('shows the CORRECTED mast wind where the venue has a MOS', () => {
+    // The bug this fixes: the map defaulted to raw mast while the tables, the deck
+    // and the windweight panel all showed the corrected number for the same hour.
+    expect(preferredFieldHeight(base)).toBe('mastMOS')
+  })
+
+  it('never overrides a height the user chose', () => {
+    expect(preferredFieldHeight({ ...base, userPicked: true, current: 'mast' })).toBe('mast')
+    expect(preferredFieldHeight({ ...base, userPicked: true, current: 10 })).toBe(10)
+    expect(preferredFieldHeight({ ...base, userPicked: true, current: 100 })).toBe(100)
+  })
+
+  it('leaves the height alone where there is no MOS for the venue', () => {
+    expect(preferredFieldHeight({ ...base, mosAvail: false })).toBe('mast')
+    expect(preferredFieldHeight({ ...base, canMos: false })).toBe('mast')
+  })
+
+  it('still forces 10 m for tiers that get no heights, chosen or not', () => {
+    expect(preferredFieldHeight({ ...base, canHeights: false })).toBe(10)
+    expect(preferredFieldHeight({ ...base, canHeights: false, userPicked: true, current: 'mast' })).toBe(10)
+  })
+
+  it('is idempotent — once on mastMOS it stays there, so the effect cannot loop', () => {
+    expect(preferredFieldHeight({ ...base, current: 'mastMOS' })).toBe('mastMOS')
   })
 })

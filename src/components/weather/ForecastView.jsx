@@ -10,7 +10,7 @@
 // deps. The dark theme is applied at the component level — the underlying
 // Leaflet tiles stay light (street map readability matters more than chrome).
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import { addDarkBasemap } from './basemaps'
 import PlotlyChart from './PlotlyChart'
@@ -30,7 +30,7 @@ import {
 } from './mos'
 import {
   fetchWindField, fetchIconRaceField, fetchCurrentField, fetchCurrentHires, currentsCovered, toVelocityData, speedImageURL, sampleField,
-  applyMosToField, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
+  applyMosToField, preferredFieldHeight, fieldHeightsFor, BEAUFORT_BANDS, PALETTE_MAX_KT, currentRamp,
   fetchIconRaceHpblField, scalarImageURL, sampleScalarField, hpblRamp, HPBL_MAX_M, buildHpblContourSvg,
 } from './windField'
 
@@ -143,7 +143,12 @@ export default function ForecastView({
   const [velocityReady, setVelocityReady] = useState(false)
   const [mapReady, setMapReady] = useState(false)   // true once the Leaflet map exists (re-draws markers/field on remount)
   const [fieldModel, setFieldModel] = useState(() => persist.fieldModel || 'AROME')
-  const [fieldHeight, setFieldHeight] = useState(() => persist.fieldHeight ?? (canHeights ? 'mast' : 10)) // number, or 'mast'
+  const [fieldHeight, setFieldHeight] = useState(() => persist.fieldHeight ?? (canHeights ? 'mast' : 10)) // number, 'mast', or 'mastMOS'
+  // A height the USER chose is never overridden — only a default we picked before
+  // knowing whether this venue has a MOS correction. A restored session counts as
+  // chosen, so returning to the tab does not silently change what you were looking at.
+  const heightPickedRef = useRef(persist.fieldHeight != null)
+  const pickHeight = useCallback((h) => { heightPickedRef.current = true; setFieldHeight(h) }, [])
   const [fieldHourIdx, setFieldHourIdx] = useState(() => persist.fieldHourIdx || 0)
   const [fieldPlaying, setFieldPlaying] = useState(false)
   const [viewMode, setViewMode] = useState('2D')   // '2D' Leaflet field overlay · '3D' MapLibre terrain
@@ -290,6 +295,15 @@ export default function ForecastView({
     if (fieldHeight === 'mastMOS' && (!fieldMosAvail || !canMos)) setFieldHeight('mast')
   }, [fieldHeight, fieldMosAvail, canMos])
 
+  // …and where it IS available, show the corrected mast wind by default, so the map
+  // agrees with the tables and the deck instead of showing the uncorrected model.
+  useEffect(() => {
+    const want = preferredFieldHeight({
+      userPicked: heightPickedRef.current, canHeights, mosAvail: fieldMosAvail, canMos, current: fieldHeight,
+    })
+    if (want !== fieldHeight) setFieldHeight(want)
+  }, [canHeights, fieldMosAvail, canMos, fieldHeight])
+
   // Below TL2: never leave Icon-Race selected (e.g. restored from a prior session).
   useEffect(() => {
     if (canIconRace) return
@@ -421,7 +435,8 @@ export default function ForecastView({
         el.textContent = `${String(toward).padStart(3, '0')}°T   ${s.kt.toFixed(1)} kn`
       } else {
         const mag = ((Math.round(s.dirTrue - MAG_VAR_DEG) % 360) + 360) % 360
-        el.textContent = `${String(mag).padStart(3, '0')}°M   ${s.kt.toFixed(1)} kt`
+        // Name the correction: an uncorrected and a corrected knot look identical.
+        el.textContent = `${String(mag).padStart(3, '0')}°M   ${s.kt.toFixed(1)} kt${field.mosApplied ? '  MOS' : ''}`
       }
       el.style.display = 'block'
     }
@@ -854,13 +869,13 @@ export default function ForecastView({
           <div>
             <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Height</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              <PillBtn active={fieldHeight === 10} onClick={() => setFieldHeight(10)}>10 m</PillBtn>
-              {canHeights && <PillBtn active={fieldHeight === 'mast'} onClick={() => setFieldHeight('mast')}>Mast {mastHeight} m</PillBtn>}
+              <PillBtn active={fieldHeight === 10} onClick={() => pickHeight(10)}>10 m</PillBtn>
+              {canHeights && <PillBtn active={fieldHeight === 'mast'} onClick={() => pickHeight('mast')}>Mast {mastHeight} m</PillBtn>}
               {canHeights && fieldMosAvail && canMos && (
-                <PillBtn active={fieldHeight === 'mastMOS'} color="#22D3EE" onClick={() => setFieldHeight('mastMOS')}>Mast {mastHeight} m MOS</PillBtn>
+                <PillBtn active={fieldHeight === 'mastMOS'} color="#22D3EE" onClick={() => pickHeight('mastMOS')}>Mast {mastHeight} m MOS</PillBtn>
               )}
               {canHeights && fieldHeightsFor(fieldModel).filter((h) => h >= 50).map((h) => (
-                <PillBtn key={h} active={fieldHeight === h} onClick={() => setFieldHeight(h)}>{h} m</PillBtn>
+                <PillBtn key={h} active={fieldHeight === h} onClick={() => pickHeight(h)}>{h} m</PillBtn>
               ))}
             </div>
           </div>
