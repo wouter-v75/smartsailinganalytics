@@ -61,7 +61,7 @@ const opt = {
   gateLead: 60, gateLag: 60,        // 1:00 either side of the gate / spin drop
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
-  tag: '', keepNames: false, fullRes: '', from: '', sources: [],
+  tag: '', keepNames: false, fullRes: '', from: '', force: false, sources: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -77,6 +77,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--turn-lead') opt.turnLead = Number(next())
   else if (a === '--turn-lag') opt.turnLag = Number(next())
   else if (a === '--no-turns') opt.noTurns = true
+  else if (a === '--force') opt.force = true
   else if (a === '--shift') opt.shift = Number(next())
   else if (a === '--rest') opt.rest = true
   else if (a === '--valid-only') opt.validOnly = true
@@ -116,6 +117,7 @@ function usage() {
       --keep-names    keep original stems instead of tagged names
       --full-res M    re-cut the segments in manifest M at source resolution
       --from DIR      where the source clips live now, if the card moved
+      --force         re-encode segments that are already present (default: skip)
       --archive       slower, smaller compression
   -n, --dry-run       report the selection, compress nothing`)
 }
@@ -154,9 +156,13 @@ if (opt.fullRes) {
   mkdirSync(opt.out, { recursive: true })
   console.log(`\n● Full resolution from ${basename(opt.fullRes)} → ${opt.out}/`)
   console.log(`  ${items.length} segment(s) · stream copy, no re-encode\n`)
-  let n = 0, bad = 0, missing = 0
+  let n = 0, bad = 0, missing = 0, skippedExisting = 0
   for (const it of items) {
     n++
+    if (!opt.force && existsSync(join(opt.out, `${it.name}.mp4`))) {
+      console.log(`[${n}/${items.length}]   → ${it.name} … already there, skipping`)
+      skippedExisting++; continue
+    }
     let src = it.src
     if (!existsSync(src) && index) src = index.get(basename(it.src)) || src
     if (!existsSync(src)) {
@@ -170,7 +176,7 @@ if (opt.fullRes) {
     const r = spawnSync(join(HERE, 'compress-videos.sh'), args, { stdio: 'inherit' })
     if (r.status !== 0) bad++
   }
-  console.log(`\n✓ ${n - bad - missing}/${items.length} segments → ${opt.out}`)
+  console.log(`\n✓ ${n - bad - missing - skippedExisting}/${items.length} segments cut${skippedExisting ? `, ${skippedExisting} already there` : ''} → ${opt.out}`)
   if (missing) console.log(`⚠ ${missing} source clip(s) not found — pass --from <folder> if the card is mounted elsewhere.`)
   process.exit(bad || missing ? 1 : 0)
 }
@@ -464,19 +470,26 @@ writeFileSync(manifest, JSON.stringify({
   items: jobs,
 }, null, 2))
 
-console.log(`\n● Compressing ${jobs.length} file(s) from ${picked.length} clip(s) → ${opt.out}/\n`)
+// Resume rather than restart. A run over a card of drone footage is an hour of
+// encoding, and it can be interrupted for entirely ordinary reasons — a lid
+// closing, a drive being unplugged. Segments already written are left alone, so
+// picking up again costs only what is actually missing. --force re-encodes.
+const todo = opt.force ? jobs : jobs.filter((j) => !existsSync(join(opt.out, `${j.name}.mp4`)))
+const already = jobs.length - todo.length
+if (already) console.log(`\n↷ ${already} segment(s) already present — skipping (use --force to redo)`)
+console.log(`\n● Compressing ${todo.length} file(s) from ${picked.length} clip(s) → ${opt.out}/\n`)
 let i = 0, bad = 0
-for (const j of jobs) {
+for (const j of todo) {
   i++
   const args = [...arch, '--out', opt.out, '--name', j.name]
   if (j.ssSec > 0) args.push('--ss', String(j.ssSec))
   if (j.durSec > 0) args.push('--t', String(j.durSec))
   args.push(j.src)
-  process.stdout.write(`[${i}/${jobs.length}] `)
+  process.stdout.write(`[${i}/${todo.length}] `)
   const r = spawnSync(enc, args, { stdio: 'inherit' })
   if (r.status !== 0) bad++
 }
-console.log(`\n✓ ${jobs.length - bad}/${jobs.length} → ${opt.out}`)
+console.log(`\n✓ ${todo.length - bad}/${todo.length} encoded${already ? ` (+${already} already there)` : ''} → ${opt.out}`)
 console.log(`  manifest: ${manifest}`)
 console.log('\nNext:')
 console.log('  • upload these from SSA → Videos (each carries its own start time in the filename)')
