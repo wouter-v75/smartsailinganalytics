@@ -19,7 +19,8 @@ export const QUANTITIES = `QUANTITIES — a bare number in this transcript carri
 - PERCENT: draft and camber position, sail depth ("flat at 25 relative to 50" is draft position in percent of chord, not a wind speed).
 - SECONDS: time to kill, time to the line, how long a section lasted.
 - METRES: distance to the line, and distance gained or lost.
-- DIRECTION IS THE POINT: "under target" and "over target" mean opposite things. Carry the direction exactly as spoken — getting the sign backwards inverts the conclusion. Where a number is paired with a target, give the actual, the target AND the direction.
+- DIRECTION IS THE POINT: "under target" and "over target" mean opposite things, and so do "is" and "is not". Carry direction and negation exactly as spoken — a flipped sign or a dropped "not" inverts the conclusion ("early gybes may NOT be advantageous" is the opposite advice from "may be advantageous"). Where a number is paired with a target, give the actual, the target AND the direction.
+- DECIMAL POINTS GO MISSING. The recogniser writes a spoken decimal without its point: "nine point six" comes out as 96, "ten point six" as 106, "eight point eight one" as 88.1, "seven point five" as 75. Boat speed and VMG in this fleet are single- or low-double-digit knots, so a speed, VMG or target of 96, 106, 100 or 75 is a lost decimal — read them as 9.6, 10.6, 10.0 and 7.5. Restore the point. Never report a boat speed or a VMG in the tens or hundreds of knots.
 - VMG, boat speed and wind angle are THREE different quantities and speakers flip between them mid-sentence. VMG and boat speed are knots; TWA and AWA are degrees. Never report an angle as a VMG or as a speed, and never report a speed as an angle.
 - If you cannot tell what a number measures, quote the speaker's phrase around it verbatim instead of labelling it. A number with the wrong unit is worse than a quote.`
 

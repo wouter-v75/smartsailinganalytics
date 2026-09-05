@@ -95,14 +95,36 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
       'Vasco',            // sails a rival TP, but referred to by name like crew
       'Dougie',           // supplier — not crew, but the name is spoken and must land
     ],
-    boats: ['Django', 'Bella Mente'],
-    fixups: [['splice', 'Bella Mente (boat name)']],
+    // The boats this squad actually races against. Every one of these is a proper
+    // noun Whisper cannot guess, and a rival's name landing wrong turns into a fact
+    // in the summary — "Jolt was called over" became "John was called over", which
+    // reads as a crew member being OCS.
+    boats: ['Django', 'Bella Mente', 'Jolt', 'Jethou', 'Proteus', 'Balthasar'],
+    fixups: [
+      ['splice', 'Bella Mente (boat name)'],
+      ['John', 'Jolt (boat name) — when the context is a boat being called over, protesting or racing'],
+      ['Jango', 'Django (boat name)'],
+      ['jungle', 'Django (boat name)'],
+      ['Beramente', 'Bella Mente (boat name)'],
+      ['Belamente', 'Bella Mente (boat name)'],
+    ],
   },
   warp: {
     crew: ['Marc', 'Jan'],
     boats: [],
     fixups: [],
   },
+}
+
+// Alternate two lists so a shared budget runs out on both at once. Concatenating
+// starves whichever list comes second — see the sail and name uses below.
+function weave(a: string[] = [], b: string[] = []): string[] {
+  const out: string[] = []
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (i < a.length) out.push(a[i])
+    if (i < b.length) out.push(b[i])
+  }
+  return Array.from(new Set(out))
 }
 
 // Look up a boat's vocabulary by name ("Northstar 76", "Northstar72", "Warp" …).
@@ -122,14 +144,6 @@ export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT
   // whichever list comes second: wardrobe-first dropped BRO and MH0 — the two terms
   // this team's transcripts actually get wrong — while base-first dropped the boat's
   // own sail codes. Alternating means the budget runs out on both at once.
-  const weave = (a: string[] = [], b: string[] = []) => {
-    const out: string[] = []
-    for (let i = 0; i < Math.max(a.length, b.length); i++) {
-      if (i < a.length) out.push(a[i])
-      if (i < b.length) out.push(b[i])
-    }
-    return Array.from(new Set(out))
-  }
   return {
     // The team's OWN items lead: a wardrobe code (A1.5-2022) is unguessable, while
     // "mainsail" and "jib" are words Whisper already knows. Under a tight prompt
@@ -192,9 +206,13 @@ export function whisperPrompt(g: Glossary = DEFAULT_GLOSSARY, maxChars: number =
     }
   }
   const body = maxChars - head.length - 1
-  // Names first and together: a person or a rival boat is a proper noun Whisper has
-  // no chance at, and a wrong one lands in the summary as fact.
-  take([...g.crew, ...g.boats], head.length + 1 + Math.round(body * 0.42))
+  // Names first: a person or a rival boat is a proper noun Whisper has no chance at,
+  // and a wrong one lands in the summary as fact. Crew and boats are WOVEN, not
+  // concatenated — appending boats after a 17-name crew meant Jethou, Proteus and
+  // Balthasar never reached Whisper at all. Boats lead the weave because they are
+  // the less guessable half: "Peter" and "Max" it already spells right, "Jethou"
+  // and "Balthasar" it has no chance at.
+  take(weave(g.boats, g.crew), head.length + 1 + Math.round(body * 0.50))
   take(g.sails, head.length + 1 + Math.round(body * 0.72))
   take(g.parts, head.length + 1 + Math.round(body * 0.90))
   take(g.manoeuvres, maxChars)

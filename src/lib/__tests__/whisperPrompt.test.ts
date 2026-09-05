@@ -176,3 +176,29 @@ describe('whisper prompt budget', () => {
     expect(clampWhisperPrompt('')).toBe('')
   })
 })
+
+// The Whisper prompt has a hard 400-char budget and silently SKIPS terms that do
+// not fit — so a name can be added to the glossary and never reach the recogniser.
+// That is exactly what happened when the rival fleet grew: appended after a
+// 17-name crew, Jethou, Proteus and Balthasar were dropped every time.
+describe('rival boats survive the prompt budget', () => {
+  const g = withOverride(vocabForBoat('Northstar 76'))
+
+  it('carries every rival boat the team races against', () => {
+    const p = whisperPrompt(g)
+    expect(p.length).toBeLessThanOrEqual(WHISPER_PROMPT_MAX_CHARS)
+    for (const boat of g.boats) expect(p).toContain(boat)
+  })
+
+  it('does not buy that by dropping the crew', () => {
+    const p = whisperPrompt(g)
+    // Vasco and Dougie are the ones the budget squeezes first — neither is a name
+    // Whisper guesses, and both are spoken in real debriefs.
+    for (const name of ['Vasco', 'Dougie', 'Pedro']) expect(p).toContain(name)
+  })
+
+  it('still reaches the hardware terms the glossary exists to fix', () => {
+    const p = whisperPrompt(g)
+    for (const part of ['halyard', 'tackline', 'constrictor']) expect(p).toContain(part)
+  })
+})
