@@ -50,6 +50,20 @@ import { parseXmlEvents } from '../src/lib/xmlEventParse.js'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v'])
 
+// Is this clip DRONE footage? Read from the ORIGINAL filename (DJI_20260905130011…)
+// and, failing that, the folder it sits in (DJI_001). Never from the folder alone:
+// on one card the drone folder was "DJI_001" and on the next it was "Day 4", and a
+// segment named …_day4_Day-4 carries nothing to say what shot it — so the whole day
+// filed into the wrong timeline column.
+//
+// The answer is stamped into the output NAME because that is the only thing that
+// survives the round trip: SSA has a cameraVendor field, but neither the segments
+// NOR the source DJI files carry the Make/Model metadata that would fill it.
+// Separators are anything non-alphanumeric, since "_" is a word character and \b
+// would match neither DJI_2026… nor …_DJI-001.
+const DRONE_RE = /(?:^|[^a-z0-9])(dji|drone|mavic|osmo|avata|inspire)(?:[^a-z0-9]|$)/i
+export const isDroneSource = (file) => DRONE_RE.test(basename(file)) || DRONE_RE.test(basename(dirname(file)))
+
 // ── args ─────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2)
 const opt = {
@@ -272,7 +286,7 @@ for (const f of files) {
   else if (nm != null) { start = nm; src = 'filename' }
   else if (mvhd != null) { start = mvhd; src = 'mvhd?' }
   if (start != null) start += opt.shift * 60000
-  clips.push({ file: f, name: basename(f), start, dur, src, covers: [], kinds: [], hits: [], srcDir: basename(dirname(f)) })
+  clips.push({ file: f, name: basename(f), start, dur, src, covers: [], kinds: [], hits: [], srcDir: basename(dirname(f)), srcTag: isDroneSource(f) ? 'drone' : basename(dirname(f)) })
 }
 
 // ── event windows ────────────────────────────────────────────────────────────
@@ -425,7 +439,9 @@ const stamp = (ms) => {
 const nameFor = (c, startMs, kinds) => {
   if (opt.keepNames) return basename(c.name, extname(c.name))
   const tags = [...new Set(kinds.map(SSA_TAG))]
-  return [stamp(startMs), tags.join('-') || 'other', opt.tag ? slugify(opt.tag) : '', slugify(c.srcDir)]
+  // …_drone for drone footage, else the folder it came from ("Camera"). The folder
+  // name is noise the timestamp already covers; what shot it is not.
+  return [stamp(startMs), tags.join('-') || 'other', opt.tag ? slugify(opt.tag) : '', slugify(c.srcTag)]
     .filter(Boolean).join('_')
 }
 
