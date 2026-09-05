@@ -30,13 +30,16 @@ export function gradientText(course) {
 //   - pressure favours the side with MORE wind (twsLeftRight > 0 -> R, < 0 -> L)
 // Agree -> that side. Conflict -> 'Neutral' (right for bend, left for pressure —
 // never collapse to one). One signal only -> that side. Returns R|L|Neutral|null.
-// Left/right is a SAILOR's side, so it depends which way you are facing. The whole
-// course analysis is computed in the UPWIND frame (analyseCourse's cross axis is
-// +ve to the right looking upwind), which is right for the beat — but on the run
-// you face the other way, so the same patch of water that is "right" up the beat
-// is "left" down the run. Everything stays upwind-framed internally (the physics
-// doesn't care) and gets relabelled at the moment it becomes a side a sailor is
-// told to sail to. 'Neutral' has no handedness, so it passes through.
+// ONE FRAME FOR THE WHOLE COURSE: left and right always mean looking UPWIND, on
+// both legs. So "the right side" names the same patch of water whether the boat is
+// beating or running, and a brief, a table and a bullet can be read together without
+// anyone asking which leg is being talked about.
+//
+// The alternative — naming each leg as the crew faces it — is arguably truer to what
+// you see over the bow, but it makes the SAME water swap name between the beat and
+// the run, and that ambiguity costs more on the water than the added realism buys.
+// Kept exported (and tested) because it is the one place that inversion is written
+// down, should the convention ever be revisited.
 export const flipSide = (s) => (s === 'R' ? 'L' : s === 'L' ? 'R' : s)
 
 export function favouredSide(c) {
@@ -83,15 +86,10 @@ export function vmgSides(c, polar) {
   const bspUp = polarInterp(polar, baseT, tB.up) || (tB.upVMG / (Math.cos(tB.up * VMG_D2R) || 1))
   const bspDn = polarInterp(polar, baseT, tB.down) || (tB.downVMG / (Math.cos((180 - tB.down) * VMG_D2R) || 1))
   const dn = leg(tR.downVMG, tL.downVMG, 180 - tB.down, bspDn)
-  return {
-    up: leg(tR.upVMG, tL.upVMG, tB.up, bspUp),
-    // `leg` works in the upwind frame for both legs (tR/tL are the right/left
-    // sides LOOKING UPWIND, and the bend bonus goes to whichever of those two the
-    // bend plays). That is the correct physics for the run as well — it is only
-    // the NAME of the side that changes with the direction you face, so flip the
-    // label here and leave the gain alone.
-    dn: { ...dn, side: flipSide(dn.side) },
-  }
+  // Both legs are reported in the UPWIND frame. `leg` already computes in that frame
+  // (tR/tL are the right/left sides looking upwind), so the downwind side needs no
+  // relabelling — it names the same water as the upwind side of the same name.
+  return { up: leg(tR.upVMG, tL.upVMG, tB.up, bspUp), dn }
 }
 
 // Enrich a course snapshot for the AI: explicit pressure side/kt + favoured side(s),
@@ -101,11 +99,10 @@ export function enrichCourse(c, polar) {
   if (!c) return null
   const has = c.twsLeftRight != null && Math.abs(c.twsLeftRight) >= 0.5
   const v = vmgSides(c, polar)
-  // favUp is upwind-framed; favDn has already been flipped to the DOWNWIND frame by
-  // vmgSides. Both frames are named in the payload so the brief can never quietly
-  // mix them — `sideFrame` spells out what the other side fields mean.
+  // EVERY side field is upwind-framed, favDn included. `sideFrame` still ships in the
+  // payload so the model is told the frame outright rather than inferring it.
   return { ...c, pressureSide: has ? (c.twsLeftRight > 0 ? 'right' : 'left') : 'even', pressureKt: c.twsLeftRight != null ? Math.abs(c.twsLeftRight) : null, fav: favouredSide(c),
-    sideFrame: { bend: 'looking upwind', twsLeftRight: 'looking upwind', pressureSide: 'looking upwind', fav: 'looking upwind', favUp: 'looking upwind', favDn: 'looking downwind' },
+    sideFrame: { bend: 'looking upwind', twsLeftRight: 'looking upwind', pressureSide: 'looking upwind', fav: 'looking upwind', favUp: 'looking upwind', favDn: 'looking upwind' },
     favUp: v?.up?.side ?? null, favUpGain: v?.up?.gain ?? null, favDn: v?.dn?.side ?? null, favDnGain: v?.dn?.gain ?? null }
 }
 

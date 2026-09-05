@@ -19,6 +19,8 @@ const pressureRight = { twd: 200, centreKt: 14, twsRight: 15.5, twsLeft: 12.5, t
 // More wind on the LEFT looking upwind, no bend.
 const pressureLeft = { ...pressureRight, twsRight: 12.5, twsLeft: 15.5, twsLeftRight: -3.0 }
 
+// Kept as the one written record of the inversion, should the convention be
+// revisited — it is no longer applied to either leg.
 describe('flipSide', () => {
   it('swaps handedness and leaves Neutral/null alone', () => {
     expect(flipSide('R')).toBe('L')
@@ -28,7 +30,7 @@ describe('flipSide', () => {
   })
 })
 
-describe('favoured side is named in the frame the crew is facing', () => {
+describe('both legs are named in ONE frame — looking upwind', () => {
   const polar = polarFixture()
 
   it('upwind keeps the upwind frame: more wind right looking upwind -> R upwind', () => {
@@ -36,16 +38,25 @@ describe('favoured side is named in the frame the crew is facing', () => {
     expect(v.up.side).toBe('R')
   })
 
-  it('downwind flips: the SAME water is L when you look downwind', () => {
+  it('downwind does NOT flip: the same water keeps the same name on both legs', () => {
+    // The crew asked for one frame across the course. Naming each leg as you face
+    // it is truer to the view over the bow, but it makes the same patch of water
+    // swap sides between beat and run — which costs more in a conversation than the
+    // realism is worth.
     const v = vmgSides(pressureRight, polar)!
     expect(v.up.side).toBe('R')
-    expect(v.dn.side).toBe('L')       // this is the behaviour that was wrong before
+    expect(v.dn.side).toBe('R')
   })
 
   it('and mirrors the other way round', () => {
     const v = vmgSides(pressureLeft, polar)!
     expect(v.up.side).toBe('L')
-    expect(v.dn.side).toBe('R')
+    expect(v.dn.side).toBe('L')
+  })
+
+  it('the downwind GAIN is untouched by the naming — only the label was ever at stake', () => {
+    const v = vmgSides(pressureRight, polar)!
+    expect(v.dn.gain).toBeGreaterThan(0)
   })
 
   it('flips the label only — the magnitude of the gain is untouched', () => {
@@ -57,12 +68,12 @@ describe('favoured side is named in the frame the crew is facing', () => {
     expect(Number.isFinite(v.dn.gain)).toBe(true)
   })
 
-  it('a bend-driven call flips for the run too', () => {
+  it('a bend-driven call keeps its name on the run, like a pressure-driven one', () => {
     // right bend looking upwind, no pressure split
     const bendRight = { twd: 200, centreKt: 14, twsRight: 14, twsLeft: 14, twsLeftRight: 0, bendDeg: 12, bend: 'right' }
     const v = vmgSides(bendRight, polar)!
     expect(v.up.side).toBe('R')
-    expect(v.dn.side).toBe('L')
+    expect(v.dn.side).toBe('R')
   })
 
   it('Neutral stays Neutral on both legs', () => {
@@ -79,14 +90,16 @@ describe('upwind-framed signals are left alone', () => {
     expect(favouredSide(pressureLeft)).toBe('L')
   })
 
-  it('enrichCourse reports pressureSide upwind and favDn downwind, and says which is which', () => {
+  it('enrichCourse reports EVERY side looking upwind, and says so in the payload', () => {
     const e = enrichCourse(pressureRight, polarFixture())!
-    expect(e.pressureSide).toBe('right')      // looking upwind
-    expect(e.fav).toBe('R')                   // looking upwind
-    expect(e.favUp).toBe('R')                 // looking upwind
-    expect(e.favDn).toBe('L')                 // looking downwind — same water
+    expect(e.pressureSide).toBe('right')
+    expect(e.fav).toBe('R')
+    expect(e.favUp).toBe('R')
+    expect(e.favDn).toBe('R')                 // same frame as favUp, same water
     expect(e.sideFrame.favUp).toBe('looking upwind')
-    expect(e.sideFrame.favDn).toBe('looking downwind')
+    expect(e.sideFrame.favDn).toBe('looking upwind')
+    // Nothing in the payload may claim a downwind frame, or the brief will mix them.
+    expect(Object.values(e.sideFrame)).not.toContain('looking downwind')
   })
 
   it('survives with no polar: favUp/favDn are null, upwind signals still reported', () => {

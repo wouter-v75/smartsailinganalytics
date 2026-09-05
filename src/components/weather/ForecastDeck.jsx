@@ -37,7 +37,7 @@ import { LIGHT_BASE_TILES, LIGHT_LABEL_TILES, tileUrl } from './basemaps'
 import { pointWindweightByHour, asBoxHour } from './windweightPoint'
 import { MAPLIBRE_JS, MAPLIBRE_CSS, DECK_JS, captureField3DSeries } from './field3dUtils'
 import { loadPolarFromLS } from '../../lib/polarCalc'
-import { gradientText, flipSide, favouredSide, vmgSides, enrichCourse } from './courseSides'
+import { gradientText, favouredSide, vmgSides, enrichCourse } from './courseSides'
 
 const PPTX_JS = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js'
 const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotly.min.js'
@@ -1013,10 +1013,10 @@ function buildDeck(P, d) {
       const pres = (c.twsLeftRight != null && Math.abs(c.twsLeftRight) >= 0.5) ? (c.twsLeftRight > 0 ? 'R' : 'L') : null
       const up = v ? v.up : (heur ? { side: heur, gain: null } : null)
       // No polar loaded -> heuristic fallback. `pres` and `heur` are upwind-framed
-      // like everything from analyseCourse, so the downwind column flips too —
-      // otherwise the fallback would contradict the polar path right beside it.
+      // like everything from analyseCourse, and so is the polar path beside it, so
+      // the downwind column is reported as-is.
       const dnRaw = v ? null : (pres || heur)
-      const dn = v ? v.dn : (dnRaw ? { side: flipSide(dnRaw), gain: null } : null)
+      const dn = v ? v.dn : (dnRaw ? { side: dnRaw, gain: null } : null)
       return [
         txtCell(`${c.hh}:00`, { bold: true, fill: { color: LIGHTF } }),
         txtCell(`${c.twd}°`),
@@ -1038,7 +1038,7 @@ function buildDeck(P, d) {
   // whether or not the hourly table made it onto the page.
   s.addText([
     { text: 'Left / right ', options: { bold: true, color: NAVY, fontFace: FONT, fontSize: 9 } },
-    { text: '= as the crew sees them looking ALONG the leg. Upwind sides looking upwind (at the windward mark); downwind sides looking downwind (at the leeward mark) — so the same water is the right side upwind and the left side downwind.', options: { color: GREY, fontFace: FONT, fontSize: 9 } },
+    { text: '= always LOOKING UPWIND, on both legs. The right side is the same patch of water whether beating or running, so upwind and downwind calls can be read together without asking which way you are facing.', options: { color: GREY, fontFace: FONT, fontSize: 9 } },
   ], { x: M, y: SIDE_NOTE_Y, w: CW, h: 0.58, fontFace: FONT, fontSize: 9, color: GREY, valign: 'top' })
 
   // ── 9) Stability + WIND WEIGHT ───────────────────────────────────────────────
