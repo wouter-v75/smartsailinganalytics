@@ -70,9 +70,14 @@ const opt = {
   // Each kind of moment needs a different amount of run-in and run-out: a start
   // needs the approach, a rounding needs the exit, a tack needs neither for long.
   events: '', out: 'selected',
-  startLead: 150, startLag: 90,     // 2:30 before the gun → 1:30 after
+  startLead: 90, startLag: 90,      // 1:30 either side of the GUN — the gun is the
+                                    // only reference for a start segment
   topLead: 60, topLag: 90,          // 1:00 before the top mark → 1:30 after
   gateLead: 60, gateLag: 60,        // 1:00 either side of the gate / spin drop
+  // Tacks and gybes are wanted as clips of their own. What they must NOT do is grow
+  // a start: their windows are 90 s and they come every 60-90 s up a beat, so left
+  // to merge they ran straight through the gun and turned a 3-minute start into 272
+  // seconds. See segmentsFor — a start is fixed, and anything inside it is dropped.
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, sources: [],
@@ -91,6 +96,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--turn-lead') opt.turnLead = Number(next())
   else if (a === '--turn-lag') opt.turnLag = Number(next())
   else if (a === '--no-turns') opt.noTurns = true
+  else if (a === '--turns') opt.noTurns = false
   else if (a === '--force') opt.force = true
   else if (a === '--shift') opt.shift = Number(next())
   else if (a === '--rest') opt.rest = true
@@ -113,7 +119,7 @@ function usage() {
 
   -e, --events <f>    Expedition event file (.ev.xml)              [required]
   -o, --out <dir>     where compressed clips go        (default: ./selected)
-      --start-lead N  seconds before a start gun                (default: 150)
+      --start-lead N  seconds before a start gun                 (default: 90)
       --start-lag N   seconds after a start gun                  (default: 90)
       --top-lead N    seconds before a top-mark rounding         (default: 60)
       --top-lag N     seconds after a top-mark rounding          (default: 90)
@@ -121,7 +127,8 @@ function usage() {
       --gate-lag N    seconds after a gate / spin drop           (default: 60)
       --turn-lead N   seconds before a tack or gybe              (default: 30)
       --turn-lag N    seconds after a tack or gybe               (default: 60)
-      --no-turns      leave tacks and gybes out (there are many)
+      --no-turns      leave tacks and gybes out entirely
+      --turns         include them (the default)
       --shift N       shift every clip by N minutes (wrong camera clock)
       --rest          select the clips that match NOTHING (the later pass)
       --valid-only    skip events Expedition flagged invalid (kept by default)
@@ -333,23 +340,49 @@ for (const c of clips) {
 // roundings becomes two short segments instead of eleven minutes of transit.
 function segmentsFor(c) {
   const end = c.start + c.dur * 1000
-  const spans = c.hits
-    .map((w) => ({ from: Math.max(c.start, w.from), to: Math.min(end, w.to), label: w.label, kind: w.kind }))
-    // >= not >: a clip whose span only TOUCHES a window (it starts exactly as the
-    // window closes) still counts as a match above, so dropping the zero-length
-    // span here would select the clip and then trim it to nothing. The minimum-
-    // segment floor below expands it to something watchable.
-    .filter((x) => x.to >= x.from)
-    .sort((a, b) => a.from - b.from)
-  const merged = []
-  for (const sp of spans) {
-    const last = merged[merged.length - 1]
-    if (last && sp.from - last.to <= opt.gap * 1000) {
-      last.to = Math.max(last.to, sp.to)
-      if (!last.labels.includes(sp.label)) last.labels.push(sp.label)
-      if (!last.kinds.includes(sp.kind)) last.kinds.push(sp.kind)
-    } else merged.push({ from: sp.from, to: sp.to, labels: [sp.label], kinds: [sp.kind] })
+  // >= not >: a clip whose span only TOUCHES a window (it starts exactly as the
+  // window closes) still counts as a match above, so dropping the zero-length span
+  // would select the clip and then trim it to nothing.
+  const clip = (w) => ({ from: Math.max(c.start, w.from), to: Math.min(end, w.to), label: w.label, kind: w.kind })
+  const usable = (x) => x.to >= x.from
+  const byTime = (a, b) => a.from - b.from
+
+  // ANCHORS — the start, the top mark, the gate / spin drop — each get the window
+  // their kind defines, and nothing moves that boundary except the end of the clip
+  // they came from. Merging is what made them run long: a tack 40 s after the gun
+  // dragged the segment out, then the next tack, and so on up the beat, so a
+  // 3-minute start became 272 s. Cut them first and fix them.
+  //
+  // Starts stay separate from the roundings: a start is the gun and 1:30 either
+  // side, and a top mark drifting into it would break exactly the guarantee that
+  // was asked for. Roundings and gates do merge with each other, since two of them
+  // close together would otherwise emit overlapping clips of the same water.
+  const starts = c.hits.filter((w) => w.kind === 'start').map(clip).filter(usable).sort(byTime)
+  const marks = c.hits.filter((w) => w.kind === 'topmark' || w.kind === 'gate').map(clip).filter(usable).sort(byTime)
+  const anchors = [...starts, ...marks]
+
+  // A tack or gybe falling inside ANY anchor window is already filmed. Dropping it
+  // beats the alternatives: stretching the anchor (the bug), or emitting a second
+  // clip of footage the anchor already contains. Manoeuvres away from an anchor are
+  // unaffected and still get segments of their own.
+  const others = c.hits.filter((w) => w.kind === 'tack' || w.kind === 'gybe').map(clip).filter(usable)
+    .filter((x) => !anchors.some((a) => x.from <= a.to && x.to >= a.from))
+    .sort(byTime)
+
+  const mergeRun = (spans) => {
+    const out = []
+    for (const sp of spans) {
+      const last = out[out.length - 1]
+      if (last && sp.from - last.to <= opt.gap * 1000) {
+        last.to = Math.max(last.to, sp.to)
+        if (!last.labels.includes(sp.label)) last.labels.push(sp.label)
+        if (!last.kinds.includes(sp.kind)) last.kinds.push(sp.kind)
+      } else out.push({ from: sp.from, to: sp.to, labels: [sp.label], kinds: [sp.kind] })
+    }
+    return out
   }
+  const merged = [...mergeRun(starts), ...mergeRun(marks), ...mergeRun(others)].sort(byTime)
+
   // A two-second sliver is not worth a file; give it a floor, inside the clip.
   for (const m of merged) {
     const want = opt.minSeg * 1000
@@ -379,7 +412,8 @@ const nOf = (k) => windows.filter((w) => w.kind === k).length
 console.log('  ' + Object.keys(KINDS).map((k) => `${nOf(k)} ${KINDS[k].name}${nOf(k) === 1 ? '' : 's'}`).join(' · ') +
   (opt.noTurns ? '   (turns excluded)' : ''))
 console.log(`  windows: start −${opt.startLead}/+${opt.startLag}s · top −${opt.topLead}/+${opt.topLag}s` +
-  ` · gate ±${opt.gateLead}/${opt.gateLag}s · turn −${opt.turnLead}/+${opt.turnLag}s`)
+  ` · gate ±${opt.gateLead}/${opt.gateLag}s · ` +
+  (opt.noTurns ? 'turns off (--turns to include)' : `turn −${opt.turnLead}/+${opt.turnLag}s`))
 if (ev.dayStartUtc) console.log(`  sailing ${hhmm(ev.dayStartUtc)} → ${hhmm(ev.dayStopUtc)} (local)`)
 console.log()
 
@@ -400,6 +434,15 @@ for (const c of clips.slice().sort((a, b) => (a.start ?? 0) - (b.start ?? 0))) {
     `${chosen ? '▶ ' : '  '}${c.name.padEnd(W)}  ${c.srcDir.padEnd(S)}  ${hhmm(c.start).padEnd(8)} ${String(Math.round(c.dur)).padStart(4)}s ` +
     `${(size < 10 ? size.toFixed(1) : size.toFixed(0)).padStart(6)}M  ${covers}${keep}`
   )
+  // Each cut, spelled out. "2 seg 244s" hides whether a start came out at its
+  // intended 3 minutes or was dragged long by a manoeuvre merging into it — which
+  // is exactly the thing worth seeing before committing to an hour of encoding.
+  if (opt.trim && chosen) {
+    for (const m of c.segs) {
+      const kinds = [...new Set(m.kinds)].map((k) => KINDS[k]?.tag || k).join('+')
+      console.log(`      ${hhmm(m.from)} +${String(Math.round((m.to - m.from) / 1000)).padStart(3)}s  ${kinds}`)
+    }
+  }
 }
 console.log()
 if (untimed.length) console.log(`⚠ ${untimed.length} clip(s) have no usable timestamp and cannot be matched — compress them with compress-videos.sh directly.`)
