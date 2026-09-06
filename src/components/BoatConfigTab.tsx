@@ -864,15 +864,7 @@ const REACHING_FIELDS: RigField[] = [
 // rows the sheet doesn't carry (Main Cun, Vang, Bobstay, GS Tack) are hand-entered
 // and saved as a per-column overlay; Main 50% camber auto-fills from the mainsail's
 // SailScan design.
-const RED = '#C00000'
-const RED_RGB: [number, number, number] = [192, 0, 0]
 
-const combHSof = (c: any): string => {
-  if (!c) return ''
-  const a = c.headstayT; const b = c.jibTackT
-  if (a == null && b == null) return ''
-  return fmt((a || 0) + (b || 0), 1)
-}
 // #5: show the butt / mastbase position in mm rather than the sheet's 'N FWD/AFT'
 // wording (AFT -> negative). The number is taken as-is from the sheet.
 function mmPos(v: any): string {
@@ -902,63 +894,118 @@ const HIDDEN_REACHING_COLS: { headsail: string; tws: number }[] = [
 const isHiddenReachingCol = (c: any): boolean =>
   c?.section === 'reaching' && HIDDEN_REACHING_COLS.some((h) => h.headsail === (c?.headsail || '') && twsNum(c) === h.tws)
 
-const twsLabel = (c: any): string => {
-  const n = twsNum(c)
-  // Hardcoded RevB correction: the J1.5 upwind column reads 11 from the sheet but is 12.
-  if (c?.headsail === 'J1.5' && n === 11) return '12'
-  if (n != null) return String(n)
-  const s = String(c?.twsAtMh ?? '').trim()
-  return s || '—'
-}
-// Mainsail 50%-height design camber (%) nearest a column's TWS, from the mainsail's
-// SailScan design_shapes (conditions by TWS, sections by height %).
-function main50Camber(conds: any[], twsKn: number | null): string {
-  if (!Array.isArray(conds) || !conds.length || twsKn == null) return ''
-  let best: any = null; let bd = Infinity
-  for (const cnd of conds) {
-    const tv = Number(cnd?.tws)
-    if (!Number.isFinite(tv)) continue
-    const d = Math.abs(tv - twsKn)
-    if (d < bd) { bd = d; best = cnd }
-  }
-  const secs = best?.sections || best?.stripes || []
-  const st = secs.find((s: any) => Math.abs(Number(s?.posPct) - 50) < 1)
-  const cam = st?.camber
-  return cam != null && Number.isFinite(Number(cam)) ? fmt(Number(cam) * 100, 1) : ''
-}
+// ── The rig team's printed Backstay Guide, rebuilt ───────────────────────────
+// The card is ONE 8-column grid: a label column plus seven data columns. The
+// TWS block fills all seven; the Sails block puts its five sail combinations in
+// columns 1-5 and the downwind crib in the last two — which is exactly how the
+// two blocks line up on the printed sheet, and why both share one column ruler.
+//
+// The values below are the guide as issued (GUIDE_REV / GUIDE_DATE). They are
+// the table's CONTENT, not a fallback for missing data: every cell is editable
+// and a team's edit is saved over the top and versioned, as before.
+const GUIDE_REV = 'v1.2'
+const GUIDE_DATE = 'Sept 2026'
 
-// Rows. source: 'sheet' → read-only via get(); 'manual' → typed + saved; 'camber'
-// → auto from the mainsail design. Order matches the boat's whiteboard.
-type RigRow = { key: string; label: string; red?: boolean; source: 'sheet' | 'manual' | 'camber'; get?: (c: any) => string }
-const UPWIND_ROWS: RigRow[] = [
-  { key: 'hs', label: 'HS', source: 'sheet', get: (c) => (c?.headstayT != null ? fmt(c.headstayT, 1) : '') },
-  { key: 'combHS', label: 'HS + Tack', red: true, source: 'sheet', get: (c) => combHSof(c) },
-  { key: 'shims', label: 'Shim', source: 'sheet', get: (c) => (c?.shimStack ?? '') },
-  { key: 'buttPos', label: 'Butt position (mm)', source: 'sheet', get: (c) => mmPos(c?.mastbasePosition) },
-  { key: 'mainCun', label: 'Main Cun', source: 'manual' },
-  { key: 'main50', label: 'Main 50% camber', source: 'camber' },
-  { key: 'upDefl', label: 'Up Def %', source: 'sheet', get: (c) => (c?.upperDeflectorCylStroke ?? '') },
-  { key: 'lowDefl', label: 'Low Def %', source: 'sheet', get: (c) => (c?.lowerDeflectorCylStroke ?? '') },
-  { key: 'vang', label: 'Vang', source: 'manual' },
+const GUIDE_BLUE = '#94DCF8'
+const GUIDE_BLUE_RGB: [number, number, number] = [148, 220, 248]
+const GUIDE_PEACH = '#FBE2D5'
+const GUIDE_PEACH_RGB: [number, number, number] = [251, 226, 213]
+const GUIDE_RED = '#FF0000'
+const GUIDE_RED_RGB: [number, number, number] = [255, 0, 0]
+const GUIDE_GREEN = '#00B050'
+const GUIDE_GREEN_RGB: [number, number, number] = [0, 176, 80]
+const GUIDE_TITLE = '#0070C0'
+const GUIDE_TITLE_RGB: [number, number, number] = [0, 112, 192]
+const GUIDE_ORANGE = '#C55A11'
+const GUIDE_ORANGE_RGB: [number, number, number] = [197, 90, 17]
+const INK = '#000000'
+const INK_RGB: [number, number, number] = [0, 0, 0]
+
+// Columns 10 / 14 / 18 carry the blue band on the card. The Sails block sees the
+// same ruler, so its MHO and BRO/J1 columns band for free.
+const BANDED_COLS = [1, 3, 5]
+const N_COLS = 7
+
+// red: indices of the columns the guide prints in red (a limit, not a value —
+// so the marking stays put when a cell is edited).
+type GuideRow = { key: string; label: string; boldTail?: boolean; vals: string[]; red?: number[] }
+
+const TWS_COLS = ['<8', '10', '12', '14', '16', '18', '20+']
+const TWS_ROWS: GuideRow[] = [
+  { key: 'shim', label: 'Shim (mm)', vals: ['-25', '-15', '-10', '-5', 'Full', 'Full', 'Full'] },
+  { key: 'butt', label: 'Butt Posn (mm)', vals: ['62', '58', '56', '54', '54', '52', '52'] },
+  { key: 'forestay', label: 'Forestay/Total (T)', boldTail: true, red: [4, 5, 6], vals: ['10 / 12', '12 / 14', '14 / 16', '16 / 19', '17 / 20', '17 / 20', '17 / 20'] },
+  { key: 'upDef', label: 'UpDef', vals: ['95%', '95%', '100%', '100%', '100%', '98%', '97%'] },
+  { key: 'lowDef', label: 'LowDef', vals: ['75%', '65%', '60%', '60%', '50%', '45%', '45%'] },
+  { key: 'vang', label: 'Vang (T)', vals: ['', '', '', '1', '1.5', '2', '2 *'] },
+  { key: 'cunn', label: 'Cunn Posn (mm)', red: [6], vals: ['-15', '-20', '-40', '-70', '-95', '-115', '-130'] },
 ]
-const REACHING_ROWS: RigRow[] = [
-  { key: 'hs', label: 'HS', red: true, source: 'sheet', get: (c) => (c?.headstayT != null ? fmt(c.headstayT, 1) : '') },
-  { key: 'bobstay', label: 'Bobstay', source: 'manual' },
-  { key: 'spritTack', label: 'Sprit tack', source: 'sheet', get: (c) => (c?.bowspritTackT != null ? fmt(c.bowspritTackT, 1) : '') },
-  { key: 'gsTack', label: 'GS tack', source: 'sheet', get: (c) => (c?.gsTackT != null ? fmt(c.gsTackT, 1) : '') },
-  { key: 'shims', label: 'Shim', source: 'sheet', get: (c) => (c?.shimStack ?? '') },
-  { key: 'buttPos', label: 'Butt position (mm)', source: 'sheet', get: (c) => mmPos(c?.mastbasePosition) },
-  { key: 'upDefl', label: 'Up Def %', source: 'sheet', get: (c) => (c?.upperDeflectorCylStroke ?? '') },
-  { key: 'lowDefl', label: 'Low Def %', source: 'sheet', get: (c) => (c?.lowerDeflectorCylStroke ?? '') },
+const TWS_WIDE = [0, 1] // green "WIDE" markers under <8 and 10
+
+const SAIL_COLS = ['Jib / GS', 'MHO', 'MHO/GS', 'BRO / J1', 'BRO/J3/GS']
+const SAIL_ROWS: GuideRow[] = [
+  { key: 'shimsMin', label: 'Shims (Min)', vals: ['', '-25', '-10', '-25', '-10'] },
+  { key: 'bobstay', label: 'Bobstay (T)', red: [3, 4], vals: ['-', '11.1', '11.1', '14.5', '14.5'] },
+  { key: 'tackline', label: 'Tackline 2:1 (T)', red: [3, 4], vals: ['-', '2.5', '2.5', '3.25', '3.25'] },
+  { key: 'fsLimit', label: 'FS Limit (T)', vals: ['13', '4.5', '5', '5', '6'] },
+  { key: 'gsTack', label: 'GS Tack (T)', red: [0, 2, 4], vals: ['2.5', '-', '2.5', '-', '2.5'] },
+  { key: 'backstay', label: 'Backstay (T)-Ref', red: [0, 4], vals: ['10.5', '7', '7', '8.5', '10.5'] },
+  { key: 'upDefT', label: 'UpDef. Target', vals: ['95%', '25%', '25%', '25%', '25%'] },
+  { key: 'lowDefT', label: 'LowDef. Target', vals: ['50%', '40%', '55%', '40%', '55%'] },
 ]
+const SAIL_WIDE = [1, 3] // green "WIDE" markers under MHO and BRO / J1
+
+// Downwind crib — the peach panel filling the last two columns beside the Sails
+// block. Its header sits on the first Sails row; the five bands follow.
+const DWD_HEAD: [string, string] = ['TWS', 'Up/Low/FS'] // the "FS" prints red
+const DWD_BANDS: { tws: string; val: string }[] = [
+  { tws: '8', val: '80/100/3' },
+  { tws: '12', val: '60/90/4' },
+  { tws: '15', val: '50/80/5' },
+  { tws: '18', val: '30/60/6' },
+  { tws: '20+', val: '20/45/7' },
+]
+const GUIDE_NOTE = '* Max Bend 360mm'
+
+// The card's one-line baseline, above the TWS block. Assembled from the same
+// editable reference fields the old chip row used, plus V1s / FS.
+const REF_ITEMS: { key: 'float' | 'shims' | 'butt' | 'rake' | 'v1s' | 'fs'; label: string; ph: string }[] = [
+  { key: 'float', label: 'Float', ph: '500Bar' },
+  { key: 'shims', label: 'Shim', ph: '35mm' },
+  { key: 'butt', label: 'Butt', ph: '54mm' },
+  { key: 'rake', label: 'Rake', ph: '4.25deg' },
+  { key: 'v1s', label: 'V1s', ph: '11.0T' },
+  { key: 'fs', label: 'FS', ph: '3.3T' },
+]
+const GUIDE_REF_VALUES: Record<string, string> = { float: '500Bar', shims: '35mm', butt: '54mm', rake: '4.25deg', v1s: '11.0T', fs: '3.3T' }
+const floatLine = (v: (k: string) => string): string =>
+  `Float (All Up): ${v('float')} @ ${v('shims')} Shim / Butt ${v('butt')} / Rake ${v('rake')} / V1s ${v('v1s')}/FS ${v('fs')}`
+
+// "10 / 12" and "80/100/3" both bold (and colour) only the part after the last
+// slash — the total, and the forestay figure in the downwind crib.
+const splitTail = (v: string): [string, string] => {
+  const i = v.lastIndexOf('/')
+  return i < 0 ? [v, ''] : [v.slice(0, i + 1), v.slice(i + 1)]
+}
+const bandBg = (i: number) => (BANDED_COLS.includes(i) ? GUIDE_BLUE : '#FFFFFF')
+const bandRgb = (i: number): [number, number, number] => (BANDED_COLS.includes(i) ? GUIDE_BLUE_RGB : [255, 255, 255])
 
 // Saved overlay: per section, per display-column index, the hand-entered rows.
 type ManualCell = Record<string, string>
-type RigReference = { rake?: string; shims?: string; butt?: string; float?: string; revision?: string; date?: string }
-type RigSettings = { upwind: Record<string, ManualCell>; reaching: Record<string, ManualCell>; downwind: Record<string, ManualCell>; reference?: RigReference }
-const emptySettings = (): RigSettings => ({ upwind: {}, reaching: {}, downwind: {}, reference: {} })
+type RigReference = { rake?: string; shims?: string; butt?: string; float?: string; v1s?: string; fs?: string; revision?: string; date?: string }
+type RigSettings = { schema?: string; upwind: Record<string, ManualCell>; reaching: Record<string, ManualCell>; downwind: Record<string, ManualCell>; reference?: RigReference }
+// Overrides are keyed by COLUMN INDEX, so they only mean anything against the
+// layout they were typed into. The pre-guide table had different columns and a
+// different row set, and three keys (vang, bobstay, gsTack) happen to collide —
+// an ungated read would drop a stale number into the wrong TWS column. So an
+// overlay is honoured only when it was saved against this layout; anything older
+// falls back to the guide as issued.
+const SETTINGS_SCHEMA = 'backstay-guide-1'
+const isGuideLayout = (raw: any): boolean => raw?.schema === SETTINGS_SCHEMA
+const emptySettings = (): RigSettings => ({ schema: SETTINGS_SCHEMA, upwind: {}, reaching: {}, downwind: {}, reference: {} })
 function normSettings(raw: any): RigSettings {
   const out = emptySettings()
+  if (!isGuideLayout(raw)) return out
   for (const sec of ['upwind', 'reaching'] as const) {
     const s = raw?.[sec]
     if (!s || typeof s !== 'object') continue
@@ -983,36 +1030,6 @@ function normSettings(raw: any): RigSettings {
   }
   return out
 }
-// Upwind baseline reference block (manual, editable).
-const REF_ITEMS: { key: 'rake' | 'shims' | 'butt' | 'float'; label: string; ph: string }[] = [
-  { key: 'rake', label: 'Rake', ph: '4.25°' },
-  { key: 'shims', label: 'Shims', ph: '35 mm' },
-  { key: 'butt', label: 'Butt', ph: '54 mm' },
-  { key: 'float', label: 'Float', ph: '500 bar' },
-]
-
-const COL_BLUE = '#BDD7EE'
-const COL_BLUE_RGB: [number, number, number] = [189, 215, 238]
-const DWD_BG = '#DDF0E4'
-const DWD_RGB: [number, number, number] = [221, 240, 228]
-// Downwind is its OWN small crib — TWS rows x (Up/Low deflector + HS), seeded
-// from the boat's whiteboard, editable + saved like the rest.
-const DWD_TWS = ['8', '10', '12', '15', '20']
-const DWD_ROWS: { key: string; label: string }[] = [
-  { key: 'upDefl', label: 'Up Defl' },
-  { key: 'lowDefl', label: 'Low Defl' },
-  { key: 'hs', label: 'HS' },
-]
-const DWD_DEFAULTS: Record<string, Record<string, string>> = {
-  '8': { upDefl: '70', lowDefl: '90', hs: '3' },
-  '10': { upDefl: '50', lowDefl: '70', hs: '3.5' },
-  '12': { upDefl: '40', lowDefl: '65', hs: '4' },
-  '15': { upDefl: '30', lowDefl: '60', hs: '5' },
-  '20': { upDefl: '5', lowDefl: '15', hs: '6.5' },
-}
-const colBg = (c: any, i: number) => (c?.section === 'downwind' ? DWD_BG : (i % 2 === 0 ? COL_BLUE : '#FFFFFF'))
-const colRgb = (c: any, i: number): [number, number, number] => (c?.section === 'downwind' ? DWD_RGB : (i % 2 === 0 ? COL_BLUE_RGB : [255, 255, 255]))
-
 const rbtn = (bg: string): React.CSSProperties => ({ background: bg, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' })
 
 let rigJsPdf: Promise<any> | null = null
@@ -1036,19 +1053,9 @@ const fmtWhen = (iso?: string | null) => (iso
   ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   : '—')
 
-function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
+function RigSettingsTables({ rigTune, teamId, canEdit, boatName }: {
   rigTune: any; teamId: string; canEdit: boolean; boatName?: string | null; sails?: any[]
 }) {
-  const cols: any[] = Array.isArray(rigTune?.data?.columns) ? rigTune.data.columns : []
-  const upCols = sectionCols(cols, 'upwind')
-  const reachCols = sectionCols(cols, 'reaching').filter((c) => !isHiddenReachingCol(c))
-  const colsFor = (sec: 'upwind' | 'reaching') => (sec === 'upwind' ? upCols : reachCols)
-
-  const mainConds: any[] = React.useMemo(() => {
-    const main = (sails || []).find((s: any) => s?.kind === 'mainsail' || /^(MAIN|MN)\b/i.test(s?.category || s?.name || ''))
-    return Array.isArray(main?.specs?.design_shapes?.conditions) ? main.specs.design_shapes.conditions : []
-  }, [sails])
-
   const [tbl, setTbl] = useState<RigSettings>(() => normSettings(rigTune?.data?.settingsTable))
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -1057,7 +1064,6 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
   const [editing, setEditing] = useState(false)
   const snapshot = React.useRef<RigSettings | null>(null)
   const edit = canEdit && editing
-
   const [savedAt, setSavedAt] = useState<string | null>(rigTune?.data?.settingsSavedAt || null)
   const [savedNotes, setSavedNotes] = useState<string>(rigTune?.data?.settingsNotes || '')
   const [noteDraft, setNoteDraft] = useState('')
@@ -1115,24 +1121,27 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
     setTbl((p) => ({ ...p, reference: { ...(p.reference || {}), [key]: val } }))
     setDirty(true); setMsg('')
   }
-  const refVal = (k: string): string => ((tbl.reference as any)?.[k] ?? '') as string
-  const refRevision = (tbl.reference?.revision ?? rigTune?.revision ?? '') as string
-  const refDate = (tbl.reference?.date ?? rigTune?.data?.sheetDate ?? rigTune?.effective_date ?? '') as string
-  const refInput: React.CSSProperties = { width: 56, background: '#f5f8fb', border: '1px solid #cdd9e6', borderRadius: 4, padding: '1px 5px', fontSize: 12, color: '#0b1f33' }
-  // Every data cell is an editable OVERRIDE: show the user's saved value if present,
-  // otherwise the derived default (parsed rig sheet, or mainsail 50% camber). A stored
-  // empty string shows empty (so backspacing mid-edit doesn't snap back to the sheet);
-  // clearing + saving drops it, reverting to the sheet value on the next load.
-  const cellValue = (sec: 'upwind' | 'reaching', row: RigRow, col: any, colIdx: number): string => {
-    const ov = tbl[sec]?.[String(colIdx)]?.[row.key]
-    if (ov !== undefined) return ov
-    if (row.source === 'camber') return main50Camber(mainConds, twsNum(col))
-    return row.get ? row.get(col) : ''
+  // Reference fields, like the cells, start from the guide and keep a team's edit.
+  const refVal = (k: string): string => {
+    const ov = (tbl.reference as any)?.[k]
+    return ov !== undefined ? ov : (GUIDE_REF_VALUES[k] ?? '')
   }
+  const refRevision = (tbl.reference?.revision ?? rigTune?.revision ?? GUIDE_REV) as string
+  const refDate = (tbl.reference?.date ?? rigTune?.data?.sheetDate ?? GUIDE_DATE) as string
 
-  const dwdVal = (tws: string, key: string): string => (tbl.downwind?.[tws]?.[key] ?? (DWD_DEFAULTS[tws]?.[key] ?? ''))
-  const setDwd = (tws: string, key: string, val: string) => {
-    setTbl((p) => ({ ...p, downwind: { ...p.downwind, [tws]: { ...(p.downwind?.[tws] || {}), [key]: val } } }))
+  // Cell content: the guide as issued, with a team's saved edit layered over it.
+  // A stored empty string shows empty (so backspacing mid-edit doesn't snap back
+  // to the guide); clearing and saving drops the key, restoring the guide value.
+  const cellValue = (sec: 'upwind' | 'reaching', rowKey: string, colIdx: number, guideVal: string): string => {
+    const ov = tbl[sec]?.[String(colIdx)]?.[rowKey]
+    return ov !== undefined ? ov : guideVal
+  }
+  const dwdValue = (rowIdx: number, key: 'tws' | 'val'): string => {
+    const ov = tbl.downwind?.[String(rowIdx)]?.[key]
+    return ov !== undefined ? ov : (DWD_BANDS[rowIdx]?.[key] ?? '')
+  }
+  const setDwd = (rowIdx: number, key: string, val: string) => {
+    setTbl((p) => ({ ...p, downwind: { ...p.downwind, [String(rowIdx)]: { ...(p.downwind?.[String(rowIdx)] || {}), [key]: val } } }))
     setDirty(true); setMsg('')
   }
 
@@ -1142,7 +1151,7 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
     try {
       const r = await fetch(`/api/teams/${teamId}/rig-tunes/${rigTune.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settingsTable: tbl, settingsNotes: noteDraft.trim() || null }),
+        body: JSON.stringify({ settingsTable: { ...tbl, schema: SETTINGS_SCHEMA }, settingsNotes: noteDraft.trim() || null }),
       }).then((x) => x.json())
       if (r?.error) setMsg(r.error)
       else {
@@ -1157,198 +1166,308 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
     finally { setBusy(false) }
   }
 
+  const cardTitle = `${boatName || 'JV76'} - Backstay Guide`
+  // A version saved before the guide layout has no overlay we can map onto these
+  // columns, so the card shows the guide itself — say so rather than let the
+  // timestamp imply those were the numbers on the day.
+  const staleVersion = !!viewing && !isGuideLayout(viewing.settings)
+
+  // ── The card, printed ──────────────────────────────────────────────────────
+  // Same 8-column ruler as the screen, drawn in mm so an A4 print comes out at
+  // the size the rig team laminates.
   const downloadPdf = async () => {
     setPdfBusy(true)
     try {
       const JsPDF = await loadJsPdf()
       const doc = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
-      const M = 12; let y = 16
-      doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.setTextColor(20)
-      doc.text([boatName, 'Rig settings'].filter(Boolean).join(' — '), M, y); y += 6
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90)
-      // Line printed after the "Upwind" title (above the table): the baseline
-      // reference block — Rake / Shims / Butt / Float / Rev — mirroring the screen.
-      const metaLine = [
-        refVal('rake') && `Rake ${refVal('rake')}`,
-        refVal('shims') && `Shims ${refVal('shims')}`,
-        refVal('butt') && `Butt ${refVal('butt')}`,
-        refVal('float') && `Float ${refVal('float')}`,
-        refRevision && `Rev ${refRevision}${refDate ? ` ${refDate}` : ''}`,
-      ].filter(Boolean).join('   ·   ')
+      const M = 12
+      const LABEL_W = 34, COL_W = 21.5
+      const W = LABEL_W + COL_W * N_COLS
+      const RH = 5.4          // grid row height
+      const BASE = RH * 0.68  // text baseline inside a row
+      const FS = 7.5
+      const colX = (i: number) => M + LABEL_W + COL_W * i
+      let y = 16
+      const top = y
+
+      doc.setDrawColor(0); doc.setLineWidth(0.2)
+      const box = (x: number, yy: number, w: number, h: number, rgb?: [number, number, number]) => {
+        if (rgb) { doc.setFillColor(rgb[0], rgb[1], rgb[2]); doc.rect(x, yy, w, h, 'FD') }
+        else doc.rect(x, yy, w, h, 'S')
+      }
+      // Centred text that shrinks rather than spilling out of its cell.
+      const fit = (v: string, cx: number, cy: number, maxW: number, bold: boolean, rgb: [number, number, number]) => {
+        if (!v) return
+        doc.setFont('helvetica', bold ? 'bold' : 'normal')
+        doc.setTextColor(rgb[0], rgb[1], rgb[2])
+        doc.setFontSize(FS)
+        const w = doc.getTextWidth(v)
+        if (w > maxW) doc.setFontSize(Math.max(4, (FS * maxW) / w))
+        doc.text(v, cx, cy, { align: 'center' })
+        doc.setFontSize(FS)
+      }
+      // A value whose tail after the last slash is bold — "10 / 12", "80/100/3".
+      const fitSplit = (v: string, cx: number, cy: number, maxW: number, rgb: [number, number, number], tailRgb = rgb) => {
+        if (!v) return
+        const [head, tail] = splitTail(v)
+        if (!tail) return fit(v, cx, cy, maxW, false, rgb)
+        doc.setFontSize(FS); doc.setTextColor(rgb[0], rgb[1], rgb[2])
+        doc.setFont('helvetica', 'normal'); const wh = doc.getTextWidth(head)
+        doc.setFont('helvetica', 'bold'); const wt = doc.getTextWidth(tail)
+        const total = wh + wt
+        if (total > maxW) doc.setFontSize(Math.max(4, (FS * maxW) / total))
+        const x0 = cx - Math.min(total, maxW) / 2
+        doc.setFont('helvetica', 'normal'); doc.text(head, x0, cy)
+        doc.setTextColor(tailRgb[0], tailRgb[1], tailRgb[2])
+        doc.setFont('helvetica', 'bold'); doc.text(tail, x0 + (total > maxW ? (wh * maxW) / total : wh), cy)
+        doc.setFontSize(FS)
+      }
+      const labelCell = (text: string, bold: boolean) => {
+        box(M, y, LABEL_W, RH)
+        doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(FS); doc.setTextColor(0)
+        const parts = text.split('/')
+        if (text.startsWith('Forestay/')) { // the guide bolds "Total"
+          doc.text('Forestay/', M + 1.2, y + BASE)
+          const w = doc.getTextWidth('Forestay/')
+          doc.setFont('helvetica', 'bold'); doc.text('Total', M + 1.2 + w, y + BASE)
+          const w2 = doc.getTextWidth('Total')
+          doc.setFont('helvetica', 'normal'); doc.text(' (T)', M + 1.2 + w + w2, y + BASE)
+        } else doc.text(parts.join('/'), M + 1.2, y + BASE)
+      }
+
+      // Masthead — boat name, title, tuning-guide reference.
+      doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(15); doc.setTextColor(0)
+      doc.text(boatName || 'JV76', M + 3, y + 7)
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11)
+      doc.setTextColor(GUIDE_TITLE_RGB[0], GUIDE_TITLE_RGB[1], GUIDE_TITLE_RGB[2])
+      doc.text(cardTitle, colX(2), y + 5)
+      doc.setFontSize(9.5); doc.setTextColor(GUIDE_ORANGE_RGB[0], GUIDE_ORANGE_RGB[1], GUIDE_ORANGE_RGB[2])
+      doc.text(`Tuning Guide Ref: ${refRevision} ${refDate}`, colX(2), y + 10)
+      y += 13
+      doc.line(M, y, M + W, y)
+      // Baseline float line, full width, its own ruled row.
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(0)
+      doc.text(floatLine(refVal), M + W / 2, y + 4.2, { align: 'center' })
+      y += 6.2
+      doc.line(M, y, M + W, y)
+
+      // TWS block.
+      labelCell('TWS @ MH', true)
+      TWS_COLS.forEach((c, i) => { box(colX(i), y, COL_W, RH, bandRgb(i)); fit(c, colX(i) + COL_W / 2, y + BASE, COL_W - 1.5, true, INK_RGB) })
+      y += RH
+      for (const r of TWS_ROWS) {
+        labelCell(r.label, false)
+        r.vals.forEach((gv, i) => {
+          box(colX(i), y, COL_W, RH, bandRgb(i))
+          const rgb: [number, number, number] = r.red?.includes(i) ? GUIDE_RED_RGB : INK_RGB
+          const v = cellValue('upwind', r.key, i, gv)
+          if (r.boldTail) fitSplit(v, colX(i) + COL_W / 2, y + BASE, COL_W - 1.5, rgb)
+          else fit(v, colX(i) + COL_W / 2, y + BASE, COL_W - 1.5, false, rgb)
+        })
+        y += RH
+      }
+      // WIDE markers sit in the gap between the blocks — no rules.
+      y += 1
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(FS)
+      doc.setTextColor(GUIDE_GREEN_RGB[0], GUIDE_GREEN_RGB[1], GUIDE_GREEN_RGB[2])
+      for (const i of TWS_WIDE) doc.text('WIDE', colX(i) + COL_W / 2, y + 3, { align: 'center' })
+      y += 5.5
+      doc.setTextColor(0)
+
+      // Sails block, with the downwind crib filling the last two columns.
+      const dwdX = colX(SAIL_COLS.length)
+      const dwdW = COL_W * (N_COLS - SAIL_COLS.length)
+      labelCell('Sails', true)
+      SAIL_COLS.forEach((c, i) => { box(colX(i), y, COL_W, RH, bandRgb(i)); fit(c, colX(i) + COL_W / 2, y + BASE, COL_W - 1.2, true, INK_RGB) })
+      box(dwdX, y, dwdW, RH, GUIDE_PEACH_RGB)
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(FS); doc.setTextColor(0)
+      doc.text('DWD', dwdX + 1.5, y + BASE)
+      y += RH
+      SAIL_ROWS.forEach((r, ri) => {
+        labelCell(r.label, false)
+        r.vals.forEach((gv, i) => {
+          box(colX(i), y, COL_W, RH, bandRgb(i))
+          fit(cellValue('reaching', r.key, i, gv), colX(i) + COL_W / 2, y + BASE, COL_W - 1.5, false, r.red?.includes(i) ? GUIDE_RED_RGB : INK_RGB)
+        })
+        // The crib: header on the first row, then the five bands; the rest is
+        // plain peach so the panel reads as one block.
+        box(dwdX, y, dwdW / 2, RH, GUIDE_PEACH_RGB)
+        box(dwdX + dwdW / 2, y, dwdW / 2, RH, GUIDE_PEACH_RGB)
+        if (ri === 0) {
+          fit(DWD_HEAD[0], dwdX + dwdW / 4, y + BASE, dwdW / 2 - 1.5, false, INK_RGB)
+          fitSplit(DWD_HEAD[1], dwdX + dwdW * 0.75, y + BASE, dwdW / 2 - 1.5, INK_RGB, GUIDE_RED_RGB)
+        } else if (ri <= DWD_BANDS.length) {
+          const bi = ri - 1
+          fit(dwdValue(bi, 'tws'), dwdX + dwdW / 4, y + BASE, dwdW / 2 - 1.5, false, INK_RGB)
+          fitSplit(dwdValue(bi, 'val'), dwdX + dwdW * 0.75, y + BASE, dwdW / 2 - 1.5, INK_RGB, GUIDE_RED_RGB)
+        }
+        y += RH
+      })
+
+      // NOTES strip and the card's footnote.
+      doc.line(M, y, M + W, y)
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(FS); doc.setTextColor(0)
+      doc.text('NOTES', M + 1.2, y + BASE + 0.6)
+      doc.setTextColor(GUIDE_GREEN_RGB[0], GUIDE_GREEN_RGB[1], GUIDE_GREEN_RGB[2])
+      for (const i of SAIL_WIDE) doc.text('WIDE', colX(i) + COL_W / 2, y + BASE + 0.6, { align: 'center' })
+      y += RH + 0.6
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(0)
+      doc.text(GUIDE_NOTE, M + W / 2, y + BASE, { align: 'center' })
+      y += RH
+      box(M, top, W, y - top) // the outer frame, drawn last so it sits on top
+
+      // Provenance, below the card — not part of it.
       const stampNotes = viewing ? viewing.notes : savedNotes
-      doc.text(`Settings as saved ${fmtWhen(viewing ? viewing.saved_at : savedAt)}${viewing ? '  (historical version)' : ''}`, M, y); y += 4.5
-      if (stampNotes) {
-        doc.setFontSize(8)
-        for (const ln of doc.splitTextToSize(`Notes: ${stampNotes}`, 180).slice(0, 3)) { doc.text(ln, M, y); y += 3.6 }
-        doc.setFontSize(9)
-      }
-      y += 3
-      const LABEL_W = 22
-      const TABLE_W = 130 // 13 cm — the laminated-card print width
-      const block = (title: string, sec: 'upwind' | 'reaching', rows: RigRow[], tableW = TABLE_W, titleNote = '') => {
-        const dcols = colsFor(sec)
-        const nCols = Math.max(dcols.length, 1)
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
-        doc.text(title, M, y)
-        if (titleNote) { doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90); doc.text(titleNote, M + 24, y); doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20) }
-        y += 4
-        const rowH = 40 / (rows.length + 1) // table ~4 cm tall
-        const colW = (tableW - LABEL_W) / nCols
-        const baseline = rowH * 0.68
-        const FS = 6.5
-        doc.setDrawColor(90); doc.setLineWidth(0.15)
-        const fitText = (v: string, cx: number, cy: number, maxW: number) => {
-          doc.setFontSize(FS)
-          const w = doc.getTextWidth(v)
-          if (w > maxW) doc.setFontSize(Math.max(3.2, (FS * maxW) / w))
-          doc.text(v, cx, cy, { align: 'center' })
-          doc.setFontSize(FS)
-        }
-        const line = (label: string, vals: string[], bold: boolean, red = false) => {
-          doc.setFont('helvetica', 'bold')
-          doc.setFillColor(238, 243, 248); doc.rect(M, y, LABEL_W, rowH, 'FD')
-          doc.setTextColor(...(red ? RED_RGB : ([20, 20, 20] as [number, number, number])))
-          doc.setFontSize(FS); doc.text(label, M + 1, y + baseline)
-          doc.setFont('helvetica', bold || red ? 'bold' : 'normal')
-          let x = M + LABEL_W
-          vals.forEach((v, i) => {
-            const rgb = colRgb(dcols[i], i)
-            doc.setFillColor(rgb[0], rgb[1], rgb[2])
-            doc.rect(x, y, colW, rowH, 'FD')
-            fitText(v || '—', x + colW / 2, y + baseline, colW - 1.2)
-            x += colW
-          })
-          doc.setTextColor(20)
-          y += rowH
-        }
-        line('TWS', dcols.map((c) => twsLabel(c)), true)
-        for (const r of rows) line(r.label, dcols.map((c, i) => cellValue(sec, r, c, i)), false, !!r.red)
-        y += 6
-      }
-      block('Upwind', 'upwind', UPWIND_ROWS, TABLE_W, metaLine)
-      y += 12 // triple the vertical gap before the reaching + downwind row
-      // Reaching + Downwind share ONE 13 cm row: reaching left, downwind right,
-      // together (incl. the gap) exactly TABLE_W wide.
-      const DW_GAP = 5, DW_COLW = 10, DW_W = DW_COLW * 4, REACH_W = TABLE_W - DW_GAP - DW_W
-      const yReachTop = y
-      block('Reaching', 'reaching', REACHING_ROWS, REACH_W)
-      // Downwind — printed to the RIGHT of Reaching, on the same top axis (uses its
-      // own local dy so it doesn't push the page cursor down).
-      {
-        const dwX = M + REACH_W + DW_GAP
-        let dy = yReachTop
-        const dwColW = DW_COLW, dwRowH = 40 / (DWD_TWS.length + 1), dwBase = dwRowH * 0.68
-        const dwLabels = ['TWS', 'Up', 'Low', 'HS']
-        const dwKeys = ['upDefl', 'lowDefl', 'hs']
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(20)
-        doc.text('Downwind', dwX, dy); dy += 4
-        doc.setFontSize(6.5); doc.setDrawColor(90); doc.setLineWidth(0.15)
-        let hx = dwX
-        for (const lab of dwLabels) {
-          doc.setFillColor(DWD_RGB[0], DWD_RGB[1], DWD_RGB[2]); doc.rect(hx, dy, dwColW, dwRowH, 'FD')
-          doc.setFont('helvetica', 'bold'); doc.setTextColor(...(lab === 'HS' ? RED_RGB : ([20, 20, 20] as [number, number, number]))); doc.text(lab, hx + dwColW / 2, dy + dwBase, { align: 'center' }); hx += dwColW
-        }
-        dy += dwRowH
-        for (const tws of DWD_TWS) {
-          let cx = dwX
-          const vals = [tws, ...dwKeys.map((k) => dwdVal(tws, k))]
-          vals.forEach((v, ci) => {
-            doc.setFillColor(DWD_RGB[0], DWD_RGB[1], DWD_RGB[2]); doc.rect(cx, dy, dwColW, dwRowH, 'FD')
-            doc.setFont('helvetica', (ci === 0 || ci === 3) ? 'bold' : 'normal'); doc.setTextColor(...(ci === 3 ? RED_RGB : ([20, 20, 20] as [number, number, number])))
-            doc.text(String(v || '-'), cx + dwColW / 2, dy + dwBase, { align: 'center' }); cx += dwColW
-          })
-          dy += dwRowH
-        }
-      }
-      const name = `Rig_settings_${[boatName, rigTune?.revision].filter(Boolean).join('_').replace(/[^\w.-]+/g, '_') || 'sheet'}.pdf`
+      y += 6
+      doc.setFontSize(8); doc.setTextColor(110)
+      doc.text(`Settings as saved ${fmtWhen(viewing ? viewing.saved_at : savedAt)}${viewing ? '  (historical version)' : ''}`, M, y); y += 4
+      if (stampNotes) for (const ln of doc.splitTextToSize(`Notes: ${stampNotes}`, W).slice(0, 3)) { doc.text(ln, M, y); y += 3.6 }
+
+      const name = `Backstay_Guide_${[boatName, refRevision].filter(Boolean).join('_').replace(/[^\w.-]+/g, '_') || 'sheet'}.pdf`
       doc.save(name)
     } catch (e: any) { setMsg('Could not build the PDF: ' + (e?.message || e)) }
     finally { setPdfBusy(false) }
   }
 
-  const th: React.CSSProperties = { padding: '5px 6px', fontSize: 11, fontWeight: 700, color: '#0b1f33', border: '1px solid #d7e2ee', textAlign: 'center', whiteSpace: 'nowrap' }
-  const rh: React.CSSProperties = { padding: '5px 10px', fontSize: 11, fontWeight: 700, color: '#0b1f33', textAlign: 'left', border: '1px solid #d7e2ee', background: '#eef3f8', whiteSpace: 'nowrap', position: 'sticky', left: 0 }
-  const cellStyle: React.CSSProperties = { border: '1px solid #d7e2ee', padding: 0 }
-  const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', textAlign: 'center', fontSize: 12, color: '#0b1f33', padding: '5px 3px', fontFamily: 'inherit', textOverflow: 'ellipsis' }
-  const LABEL_PX = 120, COL_PX = 78
+  // ── The card, on screen ────────────────────────────────────────────────────
+  const LABEL_PX = 132, COL_PX = 86
+  const cellBase: React.CSSProperties = { border: `1px solid ${INK}`, padding: 0, textAlign: 'center', fontSize: 12, color: INK, height: 23 }
+  const labelBase: React.CSSProperties = { border: `1px solid ${INK}`, padding: '2px 6px', textAlign: 'left', fontSize: 12, color: INK, whiteSpace: 'nowrap', background: '#fff' }
+  const inputStyle: React.CSSProperties = { width: '100%', boxSizing: 'border-box', border: 'none', outline: 'none', background: 'transparent', textAlign: 'center', fontSize: 12, color: 'inherit', padding: '3px 2px', fontFamily: 'inherit', textOverflow: 'ellipsis' }
+  const refInput: React.CSSProperties = { width: 60, background: '#f5f8fb', border: '1px solid #cdd9e6', borderRadius: 3, padding: '0 4px', fontSize: 11, color: '#0b1f33', fontFamily: 'inherit' }
+  const bare: React.CSSProperties = { border: 'none', padding: '2px 6px', fontSize: 12, color: INK }
 
-  const Table = ({ title, sec, rows }: { title: string; sec: 'upwind' | 'reaching'; rows: RigRow[] }) => {
-    const dcols = colsFor(sec)
-    if (!dcols.length) return (
-      <div style={{ background: '#fff', borderRadius: 8, padding: 8, color: '#64748b', fontSize: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', paddingBottom: 6 }}>{title}</div>
-        No {sec} columns on the parsed sheet.
-      </div>
-    )
+  // One data cell: shows the guide value (bold tail and red kept) until it is
+  // being edited, when it becomes a plain input over the raw text.
+  const DataCell = (sec: 'upwind' | 'reaching', row: GuideRow, i: number, gv: string) => {
+    const red = !!row.red?.includes(i)
+    const v = cellValue(sec, row.key, i, gv)
+    const colour = red ? GUIDE_RED : INK
+    const [head, tail] = row.boldTail ? splitTail(v) : [v, '']
     return (
-      <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', padding: '2px 4px 8px' }}>{title}</div>
-        <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: LABEL_PX + COL_PX * dcols.length }}>
-          <colgroup>
-            <col style={{ width: LABEL_PX }} />
-            {dcols.map((c, i) => <col key={i} style={{ width: COL_PX }} />)}
-          </colgroup>
-          <thead>
-            <tr>
-              <th style={{ ...rh, background: '#dde6ef' }}>TWS</th>
-              {dcols.map((c, i) => (
-                <th key={i} style={{ ...th, background: colBg(c, i) }}>
-                  <div>{twsLabel(c)}</div>
-                  {c?.headsail ? <div style={{ fontSize: 9, fontWeight: 400, color: '#4b5c6b' }}>{c.headsail}</div> : null}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.key}>
-                <td style={{ ...rh, ...(r.red ? { color: RED } : null) }}>{r.label}</td>
-                {dcols.map((c, i) => {
-                  const editable = edit // every data cell editable; the left label column is a static <td>
-                  return (
-                    <td key={i} style={{ ...cellStyle, background: colBg(c, i) }}>
-                      <input
-                        style={{ ...inputStyle, ...(r.red ? { color: RED, fontWeight: 700 } : null) }}
-                        value={cellValue(sec, r, c, i)} readOnly={!editable}
-                        placeholder="—"
-                        onChange={(e) => setCell(sec, i, r.key, e.target.value)}
-                      />
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <td key={i} style={{ ...cellBase, background: bandBg(i), color: colour }}>
+        {edit ? (
+          <input style={inputStyle} value={v} onChange={(e) => setCell(sec, i, row.key, e.target.value)} />
+        ) : (
+          <span>{head}{tail ? <b>{tail}</b> : null}</span>
+        )}
+      </td>
+    )
+  }
+  // A downwind-crib cell — same idea, always on the peach panel.
+  const CribCell = (rowIdx: number, key: 'tws' | 'val', split: boolean, k: string) => {
+    const v = dwdValue(rowIdx, key)
+    const [head, tail] = split ? splitTail(v) : [v, '']
+    return (
+      <td key={k} style={{ ...cellBase, background: GUIDE_PEACH }}>
+        {edit ? (
+          <input style={inputStyle} value={v} onChange={(e) => setDwd(rowIdx, key, e.target.value)} />
+        ) : (
+          <span>{head}{tail ? <b style={{ color: GUIDE_RED }}>{tail}</b> : null}</span>
+        )}
+      </td>
     )
   }
 
-  const DownwindTable = () => (
-    <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 8, padding: 8 }}>
-      <div style={{ fontSize: 12, fontWeight: 800, color: '#0b1f33', padding: '2px 4px 8px' }}>Downwind</div>
-      <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: LABEL_PX + COL_PX * DWD_ROWS.length }}>
+  const Card = () => (
+    <div style={{ overflowX: 'auto', background: '#fff', borderRadius: 4, padding: 12 }}>
+      <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: LABEL_PX + COL_PX * N_COLS, border: `2px solid ${INK}`, background: '#fff' }}>
         <colgroup>
           <col style={{ width: LABEL_PX }} />
-          {DWD_ROWS.map((r) => <col key={r.key} style={{ width: COL_PX }} />)}
+          {TWS_COLS.map((_, i) => <col key={i} style={{ width: COL_PX }} />)}
         </colgroup>
-        <thead>
-          <tr>
-            <th style={{ ...rh, background: DWD_BG }}>TWS</th>
-            {DWD_ROWS.map((r) => <th key={r.key} style={{ ...th, background: DWD_BG, ...(r.key === 'hs' ? { color: RED } : null) }}>{r.label}</th>)}
-          </tr>
-        </thead>
         <tbody>
-          {DWD_TWS.map((tws) => (
-            <tr key={tws}>
-              <td style={{ ...rh, background: DWD_BG }}>{tws}</td>
-              {DWD_ROWS.map((r) => (
-                <td key={r.key} style={{ ...cellStyle, background: DWD_BG }}>
-                  <input style={{ ...inputStyle, ...(r.key === 'hs' ? { color: RED, fontWeight: 700 } : null) }} value={dwdVal(tws, r.key)} readOnly={!edit} onChange={(e) => setDwd(tws, r.key, e.target.value)} />
-                </td>
-              ))}
+          {/* Masthead — boat name where the guide carries the loft wordmark. */}
+          <tr>
+            <td colSpan={2} style={{ ...bare, borderBottom: `1px solid ${INK}`, fontSize: 20, fontWeight: 700, fontStyle: 'italic', paddingTop: 6 }}>{boatName || 'JV76'}</td>
+            <td colSpan={6} style={{ ...bare, borderBottom: `1px solid ${INK}`, paddingTop: 5, paddingBottom: 4 }}>
+              <div style={{ color: GUIDE_TITLE, fontWeight: 700, fontSize: 13 }}>{cardTitle}</div>
+              <div style={{ color: GUIDE_ORANGE, fontWeight: 700, fontSize: 11, marginTop: 2, display: 'flex', gap: 5, alignItems: 'center' }}>
+                <span>Tuning Guide Ref:</span>
+                {edit
+                  ? <>
+                      <input value={refRevision} onChange={(e) => setRef('revision', e.target.value)} placeholder={GUIDE_REV} style={{ ...refInput, width: 46 }} />
+                      <input value={refDate} onChange={(e) => setRef('date', e.target.value)} placeholder={GUIDE_DATE} style={{ ...refInput, width: 76 }} />
+                    </>
+                  : <span>{refRevision} {refDate}</span>}
+              </div>
+            </td>
+          </tr>
+          {/* Baseline float line — one row across the card. */}
+          <tr>
+            <td colSpan={8} style={{ ...bare, borderBottom: `1px solid ${INK}`, textAlign: 'center', padding: '4px 6px' }}>
+              {edit ? (
+                <span style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', fontSize: 11 }}>
+                  {REF_ITEMS.map(({ key, label, ph }) => (
+                    <span key={key} style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                      <b>{label}</b>
+                      <input value={refVal(key)} onChange={(e) => setRef(key, e.target.value)} placeholder={ph} style={refInput} />
+                    </span>
+                  ))}
+                </span>
+              ) : floatLine(refVal)}
+            </td>
+          </tr>
+          {/* TWS block. */}
+          <tr>
+            <td style={{ ...labelBase, fontWeight: 700 }}>TWS @ MH</td>
+            {TWS_COLS.map((c, i) => <td key={i} style={{ ...cellBase, background: bandBg(i), fontWeight: 700 }}>{c}</td>)}
+          </tr>
+          {TWS_ROWS.map((r) => (
+            <tr key={r.key}>
+              <td style={labelBase}>
+                {r.boldTail && r.label.startsWith('Forestay/') ? <>Forestay/<b>Total</b> (T)</> : r.label}
+              </td>
+              {r.vals.map((gv, i) => DataCell('upwind', r, i, gv))}
             </tr>
           ))}
+          {/* WIDE markers in the gap between the blocks. */}
+          <tr>
+            <td style={bare} />
+            {TWS_COLS.map((_, i) => (
+              <td key={i} style={{ ...bare, textAlign: 'center', color: GUIDE_GREEN, fontWeight: 700, fontSize: 11 }}>
+                {TWS_WIDE.includes(i) ? 'WIDE' : ''}
+              </td>
+            ))}
+          </tr>
+          {/* Sails block, downwind crib in the last two columns. */}
+          <tr>
+            <td style={{ ...labelBase, fontWeight: 700 }}>Sails</td>
+            {SAIL_COLS.map((c, i) => <td key={i} style={{ ...cellBase, background: bandBg(i), fontWeight: 700, fontSize: 11 }}>{c}</td>)}
+            <td colSpan={N_COLS - SAIL_COLS.length} style={{ ...cellBase, background: GUIDE_PEACH, fontWeight: 700, textAlign: 'left', paddingLeft: 6 }}>DWD</td>
+          </tr>
+          {SAIL_ROWS.map((r, ri) => (
+            <tr key={r.key}>
+              <td style={labelBase}>{r.label}</td>
+              {r.vals.map((gv, i) => DataCell('reaching', r, i, gv))}
+              {ri === 0 ? (
+                <>
+                  <td style={{ ...cellBase, background: GUIDE_PEACH }}>{DWD_HEAD[0]}</td>
+                  <td style={{ ...cellBase, background: GUIDE_PEACH }}>Up/Low/<b style={{ color: GUIDE_RED }}>FS</b></td>
+                </>
+              ) : ri <= DWD_BANDS.length ? (
+                <>
+                  {CribCell(ri - 1, 'tws', false, 'tws')}
+                  {CribCell(ri - 1, 'val', true, 'val')}
+                </>
+              ) : (
+                <>
+                  <td style={{ ...cellBase, background: GUIDE_PEACH }} />
+                  <td style={{ ...cellBase, background: GUIDE_PEACH }} />
+                </>
+              )}
+            </tr>
+          ))}
+          {/* NOTES strip. */}
+          <tr>
+            <td style={{ ...bare, borderTop: `2px solid ${INK}`, fontWeight: 700 }}>NOTES</td>
+            {TWS_COLS.map((_, i) => (
+              <td key={i} style={{ ...bare, borderTop: `2px solid ${INK}`, textAlign: 'center', color: GUIDE_GREEN, fontWeight: 700, fontSize: 11 }}>
+                {SAIL_WIDE.includes(i) ? 'WIDE' : ''}
+              </td>
+            ))}
+          </tr>
+          <tr><td colSpan={8} style={{ ...bare, textAlign: 'center', paddingBottom: 5 }}>{GUIDE_NOTE}</td></tr>
         </tbody>
       </table>
     </div>
@@ -1357,9 +1476,9 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, fontWeight: 800, color: C.head }}>Rig settings by TWS</span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: C.head }}>Backstay guide</span>
         <span style={{ fontSize: 10, color: C.dim }}>
-          {viewing ? `history · saved ${fmtWhen(viewing.saved_at)}` : savedAt ? `manual rows saved ${fmtWhen(savedAt)}` : 'sheet rows live · manual rows not saved'}
+          {viewing ? `history · saved ${fmtWhen(viewing.saved_at)}` : savedAt ? `saved ${fmtWhen(savedAt)}` : `guide ${GUIDE_REV} ${GUIDE_DATE} · not yet saved`}
         </span>
         <div style={{ flex: 1 }} />
         <button onClick={() => setShowHist((v) => !v)} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>
@@ -1372,7 +1491,12 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         {edit && <button onClick={cancelEdit} style={{ ...rbtn('#334155'), color: '#E2E8F0' }}>Cancel</button>}
         {msg && <span style={{ fontSize: 11, color: msg === 'Saved' ? '#10B981' : '#F59E0B' }}>{msg}</span>}
       </div>
-      {edit ? <div style={{ fontSize: 11, color: C.dim }}>Every cell is editable — each starts from the rig sheet (or the mainsail design for 50% camber) and keeps your value until you clear it. The row labels (left column) stay fixed.</div> : null}
+      {staleVersion ? (
+        <div style={{ fontSize: 12, color: '#FCD34D', background: '#2A1F05', border: '1px solid #78530F', borderRadius: 8, padding: '7px 10px' }}>
+          This version was saved against the old three-table layout, whose columns don’t map onto the guide’s. The card below shows guide {GUIDE_REV} {GUIDE_DATE} as issued, not that version’s numbers.
+        </div>
+      ) : null}
+      {edit ? <div style={{ fontSize: 11, color: C.dim }}>Every cell is editable — each starts from guide {GUIDE_REV} {GUIDE_DATE} and keeps your value until you clear it. The row labels stay fixed.</div> : null}
 
       {edit ? (
         <div>
@@ -1411,31 +1535,10 @@ function RigSettingsTables({ rigTune, teamId, canEdit, boatName, sails }: {
         </div>
       ) : null}
 
-      {/* Render Table/DownwindTable as function CALLS, not <Table/> elements: they
-          are defined inside this component, so as JSX elements React remounts the
-          whole subtree (and the focused <input>) on every keystroke — which drops
-          focus and scrolls the page to the top. Calling them inlines their output. */}
-      {/* #3/#4 rig baseline reference (manual, editable) + revision (auto from sheet, editable) */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', background: '#fff', borderRadius: 8, padding: 8 }}>
-        {REF_ITEMS.map(({ key, label, ph }) => (
-          <span key={key} style={{ fontSize: 12, color: '#0b1f33', border: '1px solid #d7e2ee', borderRadius: 6, padding: '3px 9px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <b>{label}</b>
-            {edit
-              ? <input value={refVal(key)} onChange={(e) => setRef(key, e.target.value)} placeholder={ph} style={refInput} />
-              : <span>{refVal(key) || '—'}</span>}
-          </span>
-        ))}
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, fontWeight: 700, color: '#0b1f33', border: '1px solid #1E3A5A', borderRadius: 6, padding: '3px 9px', background: '#eef3f8', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <b>Rev</b>
-          {edit ? <input value={refRevision} onChange={(e) => setRef('revision', e.target.value)} placeholder="RevB" style={{ ...refInput, width: 48 }} /> : <span>{refRevision || '—'}</span>}
-          <span>·</span>
-          {edit ? <input value={refDate} onChange={(e) => setRef('date', e.target.value)} placeholder="3-8-26" style={{ ...refInput, width: 70 }} /> : <span>{refDate || '—'}</span>}
-        </span>
-      </div>
-      {Table({ title: 'Upwind', sec: 'upwind', rows: UPWIND_ROWS })}
-      {Table({ title: 'Reaching', sec: 'reaching', rows: REACHING_ROWS })}
-      {DownwindTable()}
+      {/* Called, not mounted as <Card/>: it is defined inside this component, so
+          as a JSX element React remounts the subtree (and the focused <input>)
+          on every keystroke — dropping focus and scrolling to the top. */}
+      {Card()}
     </div>
   )
 }
