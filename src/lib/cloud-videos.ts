@@ -18,6 +18,7 @@ export interface CloudVideoRow {
    *  (derived from bunny_original_stream_id) so cards can paint without a
    *  per-clip signed-URL call. */
   thumbnail?: string | null
+  stream_encoding?: boolean | null
   bunny_stream_id: string | null
   bunny_storage_path: string | null
   // Phase B rendition columns. Either present + bool true, or null + false.
@@ -345,6 +346,13 @@ export function toLegacyVideoShape(v: CloudVideoRow): Record<string, unknown> {
     // sync panel can know what's already uploaded.
     hasProxy: Boolean(v.has_proxy),
     hasOriginal: Boolean(v.has_original),
+    // Readiness, from the row rather than from local memory. `streamProcessing`
+    // used to be set only in the browser that uploaded — lost on reload, absent on
+    // every other device — so a clip Bunny was still encoding showed a CLOUD badge
+    // everywhere else and only revealed itself when someone tapped it.
+    // stream_encoding is null when nobody has asked Bunny yet, which is NOT the
+    // same as "still encoding"; treat only an explicit true as processing.
+    streamProcessing: v.stream_encoding === true,
     proxyPath: v.bunny_proxy_path || null,
     originalPath: v.bunny_original_path || null,
     originalStreamId: v.bunny_original_stream_id || null,

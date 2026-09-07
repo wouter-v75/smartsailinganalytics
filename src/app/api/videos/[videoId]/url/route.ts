@@ -26,7 +26,7 @@
 //   served ∈ 'original' | 'proxy' | 'legacy'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSupabase } from '../../../../../lib/supabase/server'
+import { getServerSupabase, getServiceSupabase } from '../../../../../lib/supabase/server'
 import { bunnyConfigured, signBunnyUrl } from '../../../../../lib/bunny-signed-url'
 
 type Prefer = 'original' | 'proxy' | 'auto'
@@ -44,6 +44,12 @@ const CDN_HOST = process.env.BUNNY_CDN_HOSTNAME || ''
 
 // If the Bunny Stream video has finished encoding (status 4), return its
 // adaptive HLS playlist URL; otherwise null (not playable yet).
+// Last status Bunny reported during this request, so the caller can persist it.
+// Asking Bunny is the only way to know, and it happens here anyway — recording it
+// means every OTHER device gets the answer from one list query instead of a
+// per-clip round trip, or worse, guessing from whether a cloud row exists.
+let lastStreamStatus: number | null = null
+
 async function streamHlsUrl(guid: string): Promise<string | null> {
   if (!STREAM_KEY || !LIBRARY_ID || !CDN_HOST) return null
   try {
@@ -53,6 +59,7 @@ async function streamHlsUrl(guid: string): Promise<string | null> {
     )
     if (!res.ok) return null
     const v = (await res.json()) as { status?: number }
+    if (typeof v?.status === 'number') lastStreamStatus = v.status
     // status 4 = finished encoding → adaptive renditions exist.
     if (v?.status === 4) return `https://${CDN_HOST}/${guid}/playlist.m3u8`
     return null
@@ -88,7 +95,7 @@ export async function GET(
   const { data: v, error } = await ssr
     .from('videos')
     .select(
-      'id, has_proxy, has_original, bunny_proxy_path, bunny_proxy_stream_id, proxy_stream_status, bunny_original_path, bunny_original_stream_id, bunny_storage_path, title'
+      'id, has_proxy, has_original, bunny_proxy_path, bunny_proxy_stream_id, proxy_stream_status, bunny_original_path, bunny_original_stream_id, original_stream_status, bunny_storage_path, thumbnail_url, title'
     )
     .eq('id', params.videoId)
     .maybeSingle()
@@ -178,6 +185,27 @@ export async function GET(
     thumbStreamId && CDN_HOST
       ? `https://${CDN_HOST}/${thumbStreamId}/thumbnail.jpg`
       : null
+
+  // ── Record what we just learned ────────────────────────────────────────────
+  // This request already asked Bunny and already built the poster URL. Writing
+  // both back means the next device does not have to: the list query alone can
+  // render an accurate badge and a real thumbnail. Without it, readiness lived
+  // only in the uploading browser's React state — lost on reload, absent
+  // everywhere else — and thumbnail_url stayed null on 15 of 16 rows, so every
+  // other device drew black cards for clips that had finished long ago.
+  //
+  // Read was RLS-gated above, so the caller is entitled to this row; the write
+  // uses the service client because it is derived metadata, not a user edit.
+  // Best-effort: a failure here must never break playback.
+  const patch: Record<string, unknown> = {}
+  if (thumbnail && !v.thumbnail_url) patch.thumbnail_url = thumbnail
+  if (lastStreamStatus != null && v.original_stream_status !== lastStreamStatus && v.bunny_original_stream_id) {
+    patch.original_stream_status = lastStreamStatus
+  }
+  if (Object.keys(patch).length) {
+    try { await getServiceSupabase().from('videos').update(patch).eq('id', params.videoId) }
+    catch { /* derived metadata — never fail the request over it */ }
+  }
 
   if (!result) {
     // A Stream rendition exists but hasn't finished encoding yet — tell the

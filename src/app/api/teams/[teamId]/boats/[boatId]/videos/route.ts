@@ -62,7 +62,7 @@ export async function GET(
       // Phase B added has_proxy/has_original/bunny_*_path so the UI can
       // show per-rendition status and the player can ask the signed-URL
       // endpoint for the right one.
-      'id, external_id, session_id, title, start_utc, duration_ms, tags, sync_offset_secs, thumbnail_url, bunny_stream_id, bunny_storage_path, bunny_proxy_path, bunny_original_path, bunny_original_stream_id, bunny_proxy_stream_id, has_proxy, has_original, proxy_uploaded_at, original_uploaded_at, proxy_bytes, bytes, created_at, created_by_user_id, sessions:sessions(date)'
+      'id, external_id, session_id, title, start_utc, duration_ms, tags, sync_offset_secs, thumbnail_url, bunny_stream_id, bunny_storage_path, bunny_proxy_path, bunny_original_path, bunny_original_stream_id, bunny_proxy_stream_id, original_stream_status, proxy_stream_status, has_proxy, has_original, proxy_uploaded_at, original_uploaded_at, proxy_bytes, bytes, created_at, created_by_user_id, sessions:sessions(date)'
     )
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)
@@ -89,8 +89,17 @@ export async function GET(
     const id = v.bunny_original_stream_id || v.bunny_proxy_stream_id || v.bunny_stream_id
     return id && CDN_HOST ? `https://${CDN_HOST}/${id}/thumbnail.jpg` : null
   }
+  // Is this clip PLAYABLE, as opposed to merely present in the cloud? Bunny's 4
+  // means finished. NULL means nobody has asked yet, which is not the same as "not
+  // ready" — an older clip predating this column would otherwise start claiming it
+  // was still encoding, so only a known non-4 counts as encoding.
+  const encoding = (v: { original_stream_status?: number | null; proxy_stream_status?: number | null; has_original?: boolean; has_proxy?: boolean }) => {
+    const st = v.has_original ? v.original_stream_status : v.has_proxy ? v.proxy_stream_status : null
+    return st == null ? null : st !== 4
+  }
   const videos = (data || []).map((v) => ({
     ...v,
+    stream_encoding: encoding(v),
     thumbnail: posterFor(v),
     // Fill the stored column too when it is empty, so consumers reading
     // thumbnail_url (the timeline) see a poster without each learning this rule.
