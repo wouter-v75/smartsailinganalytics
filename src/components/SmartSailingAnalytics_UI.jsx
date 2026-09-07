@@ -1466,15 +1466,34 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           onLoadedMetadata={e=>{setPlayState("ready");setSlow(false);setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B",textAlign:"center",padding:16}}>
            <div style={{fontSize:28,marginBottom:8}}>{video.streamStalled?"⚠":"⏳"}</div>
-           <div style={{fontSize:12}}>{video.streamStalled?"Still encoding":"Encoding in Stream…"}</div>
-           {/* "1-3 min" was written for phone clips. A 4K drone original takes far
-               longer, and repeating that estimate for half an hour reads as a fault
-               rather than as work in progress. */}
-           <div style={{fontSize:10,color:"#475569",marginTop:4,maxWidth:300,lineHeight:1.45}}>
-             {video.streamStalled
-               ? "This is taking longer than expected. Large 4K clips can take a while; the thumbnail and playback appear as soon as Bunny finishes."
-               : "A few minutes for a phone clip; longer for a 4K original."}
+           {/* Say WHICH phase, and how far in. "Processing" covered both "encoding,
+               40% done" and "queued, nothing has happened for an hour" — states that
+               need opposite responses, and which cost an afternoon to tell apart. */}
+           <div style={{fontSize:12}}>
+             {video.streamFailed?"Encoding failed"
+               :video.streamPct>0?`Encoding — ${Math.round(video.streamPct)}%`
+               :video.streamPhase==="queued"?"Waiting in Bunny's queue"
+               :video.streamStalled?"Still waiting":"Encoding in Stream…"}
            </div>
+           {video.streamPct>0&&(
+             <div style={{width:170,height:4,background:"#0A1929",borderRadius:2,overflow:"hidden",marginTop:7}}>
+               <div style={{height:"100%",width:`${Math.min(100,video.streamPct)}%`,background:"#F59E0B",transition:"width .4s"}}/>
+             </div>
+           )}
+           <div style={{fontSize:10,color:"#475569",marginTop:6,maxWidth:300,lineHeight:1.45}}>
+             {video.streamFailed
+               ? "Bunny rejected this clip. Delete it here and upload it again."
+               : video.streamStalled&&!(video.streamPct>0)
+                 ? "It has been queued a long time without starting. If it stays like this, delete the clip and upload it again — the encode is stuck, not slow."
+                 : video.streamPct>0
+                   ? "Playback and the thumbnail appear as soon as this reaches 100%."
+                   : "A few minutes for a phone clip; longer for a 4K original."}
+           </div>
+           {video.streamBytes===0&&(
+             <div style={{fontSize:10,color:"#FCA5A5",marginTop:5,maxWidth:300,lineHeight:1.45}}>
+               Bunny has received 0 bytes — the upload did not complete. Re-upload this clip.
+             </div>
+           )}
            {video.streamStalled&&(
              <button onClick={e=>{e.stopPropagation();onRecheckStream?.(video.id);}}
                style={{marginTop:10,background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 14px",color:"#7DD3FC",fontSize:11,fontWeight:700,cursor:"pointer"}}>Check again</button>
@@ -6236,6 +6255,16 @@ function SSAApp(){
             const sr=await fetch(`/api/stream/status/${v.streamId}`);
             if(sr.ok){ const st=await sr.json();
               if(st?.playbackUrl) updates[v.id]={objectUrl:st.playbackUrl,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||st.thumbnailUrl||null};
+              // Not ready — but carry BACK what Bunny said, so the UI can show the
+              // difference between "encoding, 40% done" and "queued, nothing has
+              // happened for an hour". Those need opposite responses from the crew
+              // and looked identical all afternoon on 7 Sept.
+              else updates[v.id]={...(updates[v.id]||{}),
+                streamPhase:st?.phase||null,
+                streamPct:typeof st?.encodeProgress==='number'?st.encodeProgress:null,
+                streamBytes:typeof st?.storageSize==='number'?st.storageSize:null,
+                streamFailed:!!st?.failed,
+                streamSeenAt:Date.now()};
             }
           }
         }catch{}
