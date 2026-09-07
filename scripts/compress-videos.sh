@@ -7,6 +7,7 @@
 #   ./scripts/compress-videos.sh ~/Desktop/clips out_dir    # → out_dir/*.mp4
 #   ./scripts/compress-videos.sh --archive ~/Desktop/clips  # smaller/slower (CRF veryslow)
 #   ./scripts/compress-videos.sh --out picked a.mp4 b.mp4   # named files → picked/
+#   ./scripts/compress-videos.sh --crf 28 ~/Desktop/clips    # smaller still
 #
 # The file-list form is what select-race-clips.mjs calls, so the encoder settings
 # live in exactly one place.
@@ -39,12 +40,19 @@ if ffmpeg -hide_banner -hwaccels 2>/dev/null | grep -q videotoolbox; then
   HWDEC=(-hwaccel videotoolbox)
 fi
 
-PRESET=medium; CRF=23
+# CRF 26, not 23. What we upload is a MEZZANINE: Bunny Stream re-encodes it into
+# the adaptive ladder the crew actually watches, so detail beyond "good source
+# material" is discarded at the other end while costing upload minutes and Bunny
+# ingest time on the way. Measured on a 179 s race-start segment: CRF 23 = 209 MB,
+# CRF 26 = 136 MB, visually alike at 720p on a phone. Across a card that is 2.5 GB
+# down to ~1.6 GB, and roughly 15 minutes off the upload.
+PRESET=medium; CRF=26
 OUT=""; SS=""; TT=""; NAME=""; COPY=0
 ARGS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --archive) PRESET=veryslow; CRF=25; shift ;;
+    --crf)     CRF="${2:-}"; shift 2 ;;
     --out)     OUT="${2:-}"; [ -n "$OUT" ] || { echo "--out needs a directory" >&2; exit 1; }; shift 2 ;;
     --ss)      SS="${2:-}"; shift 2 ;;
     --t)       TT="${2:-}"; shift 2 ;;

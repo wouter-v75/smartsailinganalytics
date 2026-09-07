@@ -80,7 +80,7 @@ const opt = {
   // seconds. See segmentsFor — a start is fixed, and anything inside it is dropped.
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
-  tag: '', keepNames: false, fullRes: '', from: '', force: false, sources: [],
+  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', sources: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -98,6 +98,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--no-turns') opt.noTurns = true
   else if (a === '--turns') opt.noTurns = false
   else if (a === '--force') opt.force = true
+  else if (a === '--crf') opt.crf = next()
   else if (a === '--shift') opt.shift = Number(next())
   else if (a === '--rest') opt.rest = true
   else if (a === '--valid-only') opt.validOnly = true
@@ -139,6 +140,7 @@ function usage() {
       --full-res M    re-cut the segments in manifest M at source resolution
       --from DIR      where the source clips live now, if the card moved
       --force         re-encode segments that are already present (default: skip)
+      --crf N         quality/size of the proxy        (default: 26; lower = bigger)
       --archive       slower, smaller compression
   -n, --dry-run       report the selection, compress nothing`)
 }
@@ -458,7 +460,7 @@ if (!opt.rest) {
   else if (secIn > 0) console.log(`With --trim: ${segs} segment(s) · ${Math.round(secKeep / 60)} min (${Math.round(100 - (secKeep / secIn) * 100)}% less to encode).`)
 }
 if (!picked.length) { console.log('Nothing to do.'); process.exit(0) }
-if (opt.dry) { console.log(`\n(dry run — nothing compressed. Drop -n to compress into ${opt.out}/)`); process.exit(0) }
+
 
 // ── name every output ────────────────────────────────────────────────────────
 // Outputs are named <stamp>_<tags>_<source>, where the stamp is that FILE's own
@@ -490,6 +492,13 @@ const nameFor = (c, startMs, kinds) => {
 
 // One job per output file, whether it is a whole clip or a trimmed segment. The
 // manifest of these jobs is what the later full-res pass replays.
+//
+// ORDER MATTERS: encoding and uploading are serial, so whatever finishes first can
+// start uploading first. Starts, then roundings, then manoeuvres — the clips the
+// debrief opens with are ready while the rest are still encoding, instead of the
+// whole card arriving at once an hour later.
+const RANK = { 'race-start': 0, topmark: 1, gate: 2, tack: 3, gybe: 3 }
+const rankOf = (kinds) => Math.min(...(kinds.length ? kinds : ['zz']).map((k) => RANK[SSA_TAG(k)] ?? 9))
 const jobs = []
 for (const c of picked) {
   if (opt.trim && c.segs.length) {
@@ -512,10 +521,19 @@ for (const c of picked) {
   }
 }
 
+jobs.sort((a, b) => rankOf(a.kinds || []) - rankOf(b.kinds || []) || String(a.name).localeCompare(String(b.name)))
+
+if (opt.dry) {
+  console.log(`\nEncode order — starts first, so the debrief's opening clips can go up while the rest are still encoding:`)
+  jobs.forEach((j, i) => console.log(`  ${String(i + 1).padStart(2)}. ${j.name}${j.durSec ? `  ${Math.round(j.durSec)}s` : ''}`))
+  console.log(`\n(dry run — nothing compressed. Drop -n to compress into ${opt.out}/)`)
+  process.exit(0)
+}
+
 // ── compress, via the one script that owns the encoder settings ──────────────
 mkdirSync(opt.out, { recursive: true })
 const enc = join(HERE, 'compress-videos.sh')
-const arch = opt.archive ? ['--archive'] : []
+const arch = [...(opt.archive ? ['--archive'] : []), ...(opt.crf ? ['--crf', String(opt.crf)] : [])]
 
 // Written BEFORE encoding, so an interrupted run still leaves a replayable record.
 const manifest = join(opt.out, 'manifest.json')
