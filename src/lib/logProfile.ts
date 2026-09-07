@@ -64,9 +64,9 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   vsPerfPct: ['vsperfpct', 'polbsppct', 'gunbsppolpct'],
   forestay: ['forestay'],
   rake: ['rake'],
-  keelAng: ['keelang'],
+  keelAng: ['keelang', 'keelangle'],
   // 2026-06 N76 flat-CSV uses the longer 'UpperDflct%' / 'LowerDflct%' / 'Traveller%' headers.
-  upDflctPct: ['updflctpct', 'updfclctpct', 'upperdflctpct'],
+  upDflctPct: ['updflctpct', 'updfcltpct', 'updfclctpct', 'upperdflctpct'],
   lwDflctPct: ['lwdflctpct', 'lwdfcltpct', 'lowerdflctpct'],
   travPct: ['travpct', 'travellerpct'],
   cunnoPct: ['cunnopct'],
@@ -81,7 +81,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   // 'JibInOutPos'. The 2026-07 N76 export shortens them to 'JibUpDnS' / 'JibUpDnP' / 'JibIO'.
   jibUpDnStbd: ['jibupdnstbdpos', 'jibupdns'],
   jibUpDnPort: ['jibupdnportpos', 'jibupdnp'],
-  jibInOut: ['jibinoutpos', 'jibio'],
+  jibInOut: ['jibinoutpos', 'jibio', 'jibiopct'],
   jibTackLoad: ['jibtkpin', 'jibtackt', 'jibtack'],
   gsTackLoad: ['gstacktfrombar', 'gstackload', 'gstackt'],
   cunninghamLoad: ['cunningham', 'cunno'],
@@ -96,8 +96,8 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   fstyPin: ['fstypin', 'forestaypin', 'fstypinload'],
   fstyJibTk: ['fstyjibtk', 'fstyjibtkpin', 'combhs'],
   mainsheetLoad: ['mainsheet', 'mainsheetload', 'mainsht'],
-  ruddP: ['ruddp', 'rudderport', 'rudderp'],
-  ruddS: ['rudds', 'rudderstbd', 'rudders'],
+  ruddP: ['ruddp', 'rudderport', 'rudderp', 'portrudder'],
+  ruddS: ['rudds', 'rudderstbd', 'rudders', 'stbdrudder'],
   toeIn: ['toein'],
   futek: ['futek'],
   eBarPort: ['ebarport', 'ebarp'],
@@ -119,8 +119,8 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   tmLine: ['tmline', 'burn'],
   // TTB·P / TTB·S — 'StBsToP' / 'StBsToS' are the Expedition start-burn channels
   // for the port / starboard line ends (shown directly as a burn: +early / -late).
-  ttbPort: ['ttbport', 'stbstop'],
-  ttbStbd: ['ttbstbd', 'stbstos'],
+  ttbPort: ['ttbport', 'stbstop', 'tmport'],
+  ttbStbd: ['ttbstbd', 'stbstos', 'tmstbd'],
   // TTB·on·STB — start burn if committing to the starboard tack ('StBsOnS').
   ttbOnStb: ['stbsons'],
   ttbPin: ['ttbpin'],

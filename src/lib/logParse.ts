@@ -12,7 +12,7 @@
 // dispatches + threads the aliases.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { isFlatOleLog, parseFlatOleLog } from './flatLogParse'
+import { isFlatOleLog, isFlatLocalLog, parseFlatOleLog } from './flatLogParse'
 import { isLogV3, expandLogV3 } from './logV3Parse'
 // @ts-ignore — JS module, typed as any
 import { parseCsvLog } from './csvLogParse'
@@ -22,7 +22,7 @@ import { effectiveAliases, type BoatLogProfile } from './logProfile'
 // Northstar 76 export moved to the flat-CSV (flat-ole) format. The literal is kept
 // in the union only so old UI labels comparing to it stay valid; it is never
 // produced by detectLogFormat anymore. (expLogParse.ts can be deleted.)
-export type LogFormat = 'raw' | 'flat-ole' | 'flat-nmea' | 'log-v3'
+export type LogFormat = 'raw' | 'flat-ole' | 'flat-nmea' | 'log-v3' | 'flat-local'
 
 export interface ParseLogResult {
   format: LogFormat
@@ -43,6 +43,9 @@ export function detectLogFormat(text: string): LogFormat {
   // first line starts with `!` and would send this to the legacy NMEA parser —
   // yielding zero rows, silently.
   if (isLogV3(text)) return 'log-v3'
+  // Before flat-OLE: same shape, but a `Datetime` column of LOCAL wall-clock rather
+  // than a `Utc` one. The distinction is the whole point — see below.
+  if (isFlatLocalLog(text)) return 'flat-local'
   if (isFlatOleLog(text)) return 'flat-ole'   // N76 flat-CSV (OLE serial OR slash-date Utc)
   return 'flat-nmea'                           // legacy N72 NMEA-position CSV
 }
@@ -58,6 +61,22 @@ export function parseLog(text: string, opts: ParseLogOpts = {}): ParseLogResult 
     // decoding apply, and every downstream consumer sees an identical row shape.
     const p = parseFlatOleLog(expandLogV3(text), aliases as any)
     return { format, rows: p.rows, startUtc: p.startUtc, endUtc: p.endUtc }
+  }
+  if (format === 'flat-local') {
+    // Same columns as flat-OLE, so the same parser reads them — but its `Datetime`
+    // is the VENUE's wall clock, not UTC. Shift it by the session offset here, the
+    // one place that knows it, so every consumer downstream still receives true UTC
+    // and nothing has to ask which flavour of log it came from. Reading these stamps
+    // as UTC would put the whole log an offset late and silently desync the video
+    // and photo overlays against it.
+    const p = parseFlatOleLog(text, aliases as any)
+    const shift = tz * 60000
+    return {
+      format,
+      rows: p.rows.map((r) => ({ ...r, utc: r.utc - shift })),
+      startUtc: p.startUtc ? p.startUtc - shift : p.startUtc,
+      endUtc: p.endUtc ? p.endUtc - shift : p.endUtc,
+    }
   }
   if (format === 'flat-ole') {
     const p = parseFlatOleLog(text, aliases as any)

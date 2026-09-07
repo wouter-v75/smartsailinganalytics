@@ -84,6 +84,21 @@ export function isFlatOleLog(text: string): boolean {
 
 // `aliases` (optional): effective per-field label lists from the boat's log
 // profile. Omitted ⇒ built-in defaults (identical behaviour to before).
+// The navigator's own layout: a plain header row (no `!` lines), fixed columns, and
+// a `Datetime` column carrying LOCAL wall-clock rather than UTC. Its first row on
+// 2026-09-07 reads 10:20:38, one second after the event file's DayStart at 10:20:37
+// — the same clock the clip pipeline already matches camera filenames against. That
+// is why it cannot simply be treated as flat-OLE: reading these stamps as UTC would
+// put every row an offset late and silently desync the video and photo overlays.
+export function isFlatLocalLog(text: string): boolean {
+  if (!text) return false
+  const first = text.replace(/\r/g, '').split('\n').find((l) => l.trim()) || ''
+  if (first.trim().startsWith('!')) return false
+  const cols = first.split(',').map(norm)
+  const has = (k: string) => cols.includes(k)
+  return has('datetime') && !has('utc') && has('lat') && has('lon') && (has('bsp') || has('tws'))
+}
+
 export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[]>): FlatLogResult {
   const lines = text.replace(/\r/g, '').split('\n').filter((l) => l.trim())
   if (!lines.length) return { rows: [], startUtc: 0, endUtc: 0 }
@@ -95,7 +110,10 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   // no stable header for them): second-to-last = port, last = starboard.
   const pBurnIdx = headerCols.length - 2
   const sBurnIdx = headerCols.length - 1
-  const utcIdx = headerCols.findIndex((h) => norm(h) === 'utc')
+  // `Utc` in the Expedition exports; `Datetime` in the navigator's own layout.
+  // Both are the single time column — which CLOCK they carry differs, and that is
+  // decided by the caller (see detectLogFormat), not here.
+  const utcIdx = headerCols.findIndex((h) => norm(h) === 'utc' || norm(h) === 'datetime')
   // High-resolution clock: some exports write `Utc` only to the MINUTE (no
   // seconds), which collapses every row in a minute onto one instant and makes
   // the video overlay freeze. When a seconds-of-day column is present
@@ -159,6 +177,16 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       const [, dd, mm, yyRaw, hh, mi, ss] = m
       const yy = yyRaw.length === 2 ? 2000 + Number(yyRaw) : Number(yyRaw)
       const dayStart = Date.UTC(yy, Number(mm) - 1, Number(dd), 0, 0, 0)
+      const ms = dayStart + ((Number(hh) * 3600 + Number(mi) * 60 + Number(ss || '0')) * 1000)
+      return Number.isFinite(ms) ? { ms, dayStart } : null
+    }
+    // 4. `YYYY-MM-DD HH:MM[:SS]` — the navigator's layout. Parsed by hand rather
+    //    than with Date(), which would apply the VIEWER's timezone to a bare stamp
+    //    and move every row by whatever the laptop happens to be set to.
+    const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}(?:\.\d+)?))?/)
+    if (iso) {
+      const [, yy, mm, dd, hh, mi, ss] = iso
+      const dayStart = Date.UTC(Number(yy), Number(mm) - 1, Number(dd), 0, 0, 0)
       const ms = dayStart + ((Number(hh) * 3600 + Number(mi) * 60 + Number(ss || '0')) * 1000)
       return Number.isFinite(ms) ? { ms, dayStart } : null
     }
