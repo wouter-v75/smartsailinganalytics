@@ -1167,6 +1167,14 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       cancelled=true;
       vEl.removeEventListener('resize',onResize);
       if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
+      // Detaching hls.js does NOT clear the element's own src, and a leftover src
+      // blocks the next MediaSource from attaching — which is why a clip would sit
+      // black until you opened another one and came back, re-running this attach on
+      // an element that had meanwhile been cleared. removeAttribute + load() is the
+      // documented way to release a media element; without the load() the browser
+      // keeps buffering a stream nobody is watching, which on a phone costs both
+      // data and battery.
+      try{ vEl.removeAttribute('src'); vEl.load(); }catch{ /* element already gone */ }
       if(createdBlobUrl){ try{URL.revokeObjectURL(createdBlobUrl);}catch{} }
     };
   },[video.id,video.objectUrl,video.source,video.hasLocalBlob,useLocalHD]);
@@ -1450,7 +1458,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           <button onClick={(e)=>{e.stopPropagation();setMobileFs(false);}}
             style={{position:"absolute",top:10,right:10,zIndex:4,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         )}
-        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate}
+        {video.objectUrl?<video key={`${video.id}:${useLocalHD?'hd':'std'}`} ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate}
           onWaiting={()=>setPlayState(st=>st==="error"?st:"loading")}
           onStalled={()=>setPlayState(st=>st==="error"?st:"loading")}
           onCanPlay={()=>{setPlayState("ready");setSlow(false);}}
