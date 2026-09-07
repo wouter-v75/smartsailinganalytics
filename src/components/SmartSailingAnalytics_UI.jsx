@@ -1002,6 +1002,37 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   // keeps the overlay on top. Desktop uses the real Fullscreen API on the
   // stage container (handled in the button below).
   const[mobileFs,setMobileFs]=useState(false);
+  // ── PLAYBACK STATE ──────────────────────────────────────────────────────────
+  // Having a URL is not the same as having a playable video. The element renders
+  // as soon as objectUrl exists, so an expired signed URL, an HLS stream Bunny has
+  // not finished encoding, or a stalled phone connection all showed the same thing:
+  // a black rectangle that never plays and never says why. Track what the element
+  // is actually doing and say it out loud.
+  //   loading — fetching/buffering, keep waiting
+  //   ready   — metadata in, it will play
+  //   error   — the browser gave up; nothing more will happen
+  const[playState,setPlayState]=useState("loading");
+  const[playErr,setPlayErr]=useState(null);
+  const slowTimerRef=useRef(null);
+  const[slow,setSlow]=useState(false);
+  // A new source starts the cycle again — otherwise switching clips inherits the
+  // previous one's verdict and a good video reads as broken.
+  useEffect(()=>{
+    setPlayState("loading"); setPlayErr(null); setSlow(false);
+    if(slowTimerRef.current) clearTimeout(slowTimerRef.current);
+    if(video.objectUrl) slowTimerRef.current=setTimeout(()=>setSlow(true),12000);
+    return ()=>{ if(slowTimerRef.current) clearTimeout(slowTimerRef.current); };
+  },[video.objectUrl]);
+  // MediaError codes are the only detail the browser gives, and they separate "the
+  // network died" from "this device cannot decode it" — which need different answers.
+  const mediaErrText=(el)=>{
+    const c=el?.error?.code;
+    if(c===1) return "loading was aborted";
+    if(c===2) return "network error — check the connection and try again";
+    if(c===3) return "the video data is damaged and cannot be decoded";
+    if(c===4) return "this device's browser cannot play this file";
+    return "the video could not be loaded";
+  };
   // True when the active source is HLS (cloud adaptive). Flips to false when
   // a coach/admin has toggled HD-local, because the IndexedDB blob is always
   // a progressive MP4/MOV. Consumed by the toolbar indicator below.
@@ -1419,10 +1450,36 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           <button onClick={(e)=>{e.stopPropagation();setMobileFs(false);}}
             style={{position:"absolute",top:10,right:10,zIndex:4,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         )}
-        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate} onLoadedMetadata={e=>{setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
+        {video.objectUrl?<video ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate}
+          onWaiting={()=>setPlayState(st=>st==="error"?st:"loading")}
+          onStalled={()=>setPlayState(st=>st==="error"?st:"loading")}
+          onCanPlay={()=>{setPlayState("ready");setSlow(false);}}
+          onError={e=>{setPlayState("error");setPlayErr(mediaErrText(e.target));}}
+          onLoadedMetadata={e=>{setPlayState("ready");setSlow(false);setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
-        {!playing&&video.objectUrl&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
+        {/* Say what the player is doing. The element stays mounted underneath, so a
+            stream that recovers still plays without the user touching anything. */}
+        {video.objectUrl&&playState!=="ready"&&(
+          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(3,15,26,0.82)",textAlign:"center",padding:16,zIndex:3}}>
+            {playState==="error"?(
+              <>
+                <div style={{fontSize:26,marginBottom:8}}>⚠</div>
+                <div style={{fontSize:12,color:"#FCA5A5",fontWeight:600}}>Video not available</div>
+                <div style={{fontSize:10,color:"#94A3B8",marginTop:5,maxWidth:280,lineHeight:1.45}}>{playErr}</div>
+                <button onClick={e=>{e.stopPropagation();const el=vidRef.current;if(!el)return;setPlayState("loading");setPlayErr(null);try{el.load();}catch{}}}
+                  style={{marginTop:10,background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 14px",color:"#7DD3FC",fontSize:11,fontWeight:700,cursor:"pointer"}}>Try again</button>
+              </>
+            ):(
+              <>
+                <div style={{fontSize:24,marginBottom:8}}>⏳</div>
+                <div style={{fontSize:12,color:"#7DD3FC"}}>Loading — please wait</div>
+                {slow&&<div style={{fontSize:10,color:"#94A3B8",marginTop:5,maxWidth:280,lineHeight:1.45}}>Still loading. On a slow connection this can take a while; if it does not start, the clip may not have finished uploading yet.</div>}
+              </>
+            )}
+          </div>
+        )}
+        {!playing&&video.objectUrl&&playState==="ready"&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
         {/* On mobile, pin to all-but-bottom so tiles wrap within the
             frame width instead of overflowing off the right edge. */}
         {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:mobileFs?52:(isMobile?6:undefined)}}>{overlay}{extraOverlay}</div>}
