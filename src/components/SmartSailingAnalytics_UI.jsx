@@ -969,7 +969,7 @@ const OVERLAY_VARS = [
   {key:'pBurn',label:'P burn',unit:'',dec:0,fmt:'burn'},{key:'sBurn',label:'S burn',unit:'',dec:0,fmt:'burn'},
 ];
 
-function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,autoPlay=false,onRotate=null,
+function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,autoPlay=false,onRotate=null,onRecheckStream=null,
                       // Phase B crop UX — three callbacks + the current
                       // cut points + busy flag. All optional; toolbar
                       // crop UI only renders when the setters are provided.
@@ -1464,7 +1464,22 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           onCanPlay={()=>{setPlayState("ready");setSlow(false);}}
           onError={e=>{setPlayState("error");setPlayErr(mediaErrText(e.target));}}
           onLoadedMetadata={e=>{setPlayState("ready");setSlow(false);setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
-         (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B"}}><div style={{fontSize:28,marginBottom:8}}>⏳</div><div style={{fontSize:12}}>Processing in Stream…</div><div style={{fontSize:10,color:"#475569",marginTop:4}}>1–3 min typically</div></div>:
+         (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B",textAlign:"center",padding:16}}>
+           <div style={{fontSize:28,marginBottom:8}}>{video.streamStalled?"⚠":"⏳"}</div>
+           <div style={{fontSize:12}}>{video.streamStalled?"Still encoding":"Encoding in Stream…"}</div>
+           {/* "1-3 min" was written for phone clips. A 4K drone original takes far
+               longer, and repeating that estimate for half an hour reads as a fault
+               rather than as work in progress. */}
+           <div style={{fontSize:10,color:"#475569",marginTop:4,maxWidth:300,lineHeight:1.45}}>
+             {video.streamStalled
+               ? "This is taking longer than expected. Large 4K clips can take a while; the thumbnail and playback appear as soon as Bunny finishes."
+               : "A few minutes for a phone clip; longer for a 4K original."}
+           </div>
+           {video.streamStalled&&(
+             <button onClick={e=>{e.stopPropagation();onRecheckStream?.(video.id);}}
+               style={{marginTop:10,background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 14px",color:"#7DD3FC",fontSize:11,fontWeight:700,cursor:"pointer"}}>Check again</button>
+           )}
+         </div>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
         {/* Say what the player is doing. The element stays mounted underneath, so a
             stream that recovers still plays without the user touching anything. */}
@@ -2510,7 +2525,8 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             effTz=z.offsetMin;
             setCsvTz(effTz);
             // flat-NMEA timestamps were converted with the old offset → re-parse.
-            if(p.format==='flat-nmea') p=parseLog(text,{boatProfile,tzOffsetMin:effTz});
+            // Both local-clock formats were converted with the OLD offset → re-parse.
+            if(p.format==='flat-nmea'||p.format==='flat-local') p=parseLog(text,{boatProfile,tzOffsetMin:effTz});
             // The venue zone (from the LOG's lat/lon) is authoritative for the
             // whole session — drive the VIDEO offset from it too, and re-base any
             // already-queued clips so their camera wall-clock → true-UTC uses the
@@ -2533,8 +2549,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           }
         }
         setCsvParsed(p);
-        const fmtLabel=p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':'flat CSV';
-        const tzNote=p.format==='flat-nmea'?(TZ_OPTIONS.find(o=>o.offsetMin===effTz)?.label||`UTC+${effTz/60}`):'UTC';
+        const fmtLabel=p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':'flat CSV';
+        // flat-local carries VENUE wall-clock, like the legacy flat-NMEA export, so
+        // the timezone actually decides where its rows land — say which one was used
+        // rather than printing "UTC" over a log that is nothing of the kind.
+        const localClockFmt=p.format==='flat-nmea'||p.format==='flat-local';
+        const tzNote=localClockFmt?(TZ_OPTIONS.find(o=>o.offsetMin===effTz)?.label||`UTC+${effTz/60}`):'UTC';
         // A zero-row parse used to report as a green tick, so an unreadable file
         // looked like a successful upload and only surfaced later as an empty
         // chart in Analytics. Say so at the point the file is read.
@@ -4962,6 +4982,7 @@ function DeleteButton({video, cloudStatus, onDeleted}){
 //     full log/event data loads lazily when Analytics tab is opened.
 
 function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedVideo,
+                        onRecheckStream,
                         logData,xmlData,loadDate,syncOffsets,setSyncOffsets,
                         saveSyncForVideos,saveTagsForVideo,
                         sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
@@ -5023,7 +5044,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
           return `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}`;
         })()}</span>
       </div>
-      <VideoPlayer video={video} logData={logData} xmlData={xmlData}
+      <VideoPlayer onRecheckStream={onRecheckStream} video={video} logData={logData} xmlData={xmlData}
         syncOffset={syncOffsets[video.id]||0} sessionTzOffset={sessionTzOffset}
         onPlayUtc={handlePlayUtc}
         onRotate={onRotateVideo ? (deg)=>onRotateVideo(video, deg) : null}
@@ -6167,17 +6188,56 @@ function SSAApp(){
   // Once a clip is ready, swap its playback URL in with no manual reload.
   // Self-terminating: stops as soon as no clip is left processing, and is
   // capped (~10 min) so a genuinely stuck encode can't poll forever.
+  // The cap is PER BATCH, not per session. streamPollTick only ever incremented, so
+  // once it maxed out the poller was dead for everything uploaded afterwards too —
+  // those clips sat "processing" with no one asking whether they were done. Reset
+  // the budget whenever a clip starts processing that wasn't already being watched.
+  const pollingIdsRef=useRef(new Set());
+  const procKey=allVideos.filter(v=>v.streamProcessing).map(v=>v.id).sort().join(',');
   useEffect(()=>{
-    if(streamPollTick>30 || !allVideos.some(v=>v.streamProcessing)) return;
+    const now=new Set(allVideos.filter(v=>v.streamProcessing).map(v=>v.id));
+    let fresh=false;
+    for(const id of now) if(!pollingIdsRef.current.has(id)) { fresh=true; break; }
+    pollingIdsRef.current=now;
+    if(fresh) setStreamPollTick(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[procKey]);
+
+  useEffect(()=>{
+    if(!allVideos.some(v=>v.streamProcessing&&!v.streamStalled)) return;
+    // 4K originals take Bunny well past the old ten-minute ceiling, so back off
+    // rather than giving up: 20 s while it is plausibly nearly done, then a minute.
+    // ~35 min of patience in total, after which the clip is marked stalled and the
+    // UI says so instead of repeating "1-3 min" indefinitely.
+    const MAX_TICKS=40;
+    const delay=streamPollTick<10?20000:60000;
+    if(streamPollTick>MAX_TICKS){
+      const ids=allVideos.filter(v=>v.streamProcessing&&!v.streamStalled).map(v=>v.id);
+      if(ids.length) setAllVideos(prev=>prev.map(v=>ids.includes(v.id)?{...v,streamStalled:true}:v));
+      return;
+    }
     const t=setTimeout(async()=>{
       const procs=allVideos.filter(v=>v.streamProcessing);
       const updates={};
       await Promise.all(procs.map(async v=>{
         try{
           const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=${isMobile?'proxy':'auto'}`);
-          if(!res.ok) return;
-          const j=await res.json();
-          if(j?.url) updates[v.id]={objectUrl:j.url,servedRendition:j.served||null,streamProcessing:false,thumbnailUrl:v.thumbnailUrl||j.thumbnail||null};
+          if(res.ok){
+            const j=await res.json();
+            if(j?.url){ updates[v.id]={objectUrl:j.url,servedRendition:j.served||null,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||j.thumbnail||null}; return; }
+            // A poster can arrive well before the renditions do — take it, so the
+            // card stops being a black rectangle while the encode finishes.
+            if(j?.thumbnail&&!v.thumbnailUrl) updates[v.id]={thumbnailUrl:j.thumbnail};
+          }
+          // Ask Bunny directly as well. /url answers from OUR row; the encode's real
+          // state lives at Stream, and a row that never got refreshed would otherwise
+          // keep reporting "processing" long after the encode finished.
+          if(!updates[v.id]?.objectUrl&&v.streamId){
+            const sr=await fetch(`/api/stream/status/${v.streamId}`);
+            if(sr.ok){ const st=await sr.json();
+              if(st?.playbackUrl) updates[v.id]={objectUrl:st.playbackUrl,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||st.thumbnailUrl||null};
+            }
+          }
         }catch{}
       }));
       if(Object.keys(updates).length){
@@ -6185,10 +6245,20 @@ function SSAApp(){
         setSelectedVideo(prev=>(prev&&updates[prev.id])?{...prev,...updates[prev.id]}:prev);
       }
       setStreamPollTick(n=>n+1); // re-arm until no clip is processing
-    },20000);
+    },delay);
     return ()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[allVideos,streamPollTick,isMobile]);
+
+  // "Check again" on a stalled encode: clear the flag, re-arm the poll budget and
+  // ask now. A clip Bunny finished after we stopped watching comes good without a
+  // page reload — which was the only way out before.
+  const recheckStream=useCallback((videoId)=>{
+    setAllVideos(prev=>prev.map(v=>v.id===videoId?{...v,streamStalled:false}:v));
+    setSelectedVideo(prev=>(prev&&prev.id===videoId)?{...prev,streamStalled:false}:prev);
+    setStreamPollTick(0);
+    ensureClipUrl(videoId);
+  },[ensureClipUrl]);
 
   // Throttled callback passed to VideoPlayer — ~12 fps max to keep renders light
   const handlePlayUtc=useCallback(utc=>{
@@ -7584,7 +7654,7 @@ function SSAApp(){
         {/* Cap the width so the 16:9 stage + controls fit the viewport height —
             the BOX fills the screen, the video sizes to fit inside it. */}
         <div style={{width:"100%",maxWidth:isMobile?"none":"calc((100vh - 190px) * 16 / 9)",margin:"0 auto"}}>
-          <VideoPlayer
+          <VideoPlayer onRecheckStream={recheckStream}
             video={selectedVideo}
             logData={logData}
             xmlData={xmlData}
@@ -7603,6 +7673,7 @@ function SSAApp(){
   if(isMobile) return(
     <TzCtx.Provider value={sessionTzOffset||0}>
     <>{sailDiffModal}{videoModal}<MobileShell
+      onRecheckStream={recheckStream}
       activeTab={activeTab} setActiveTab={setActiveTab}
       role={role} perms={perms}
       allVideos={allVideos} setAllVideos={setAllVideos}
@@ -8011,7 +8082,7 @@ function SSAApp(){
             {selectedVideo&&(
               <div style={{flex:1,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:16,minWidth:400}}>
                 {/* onPlayUtc wires VideoPlayer → shared playUtc state → Analytics */}
-                <VideoPlayer
+                <VideoPlayer onRecheckStream={recheckStream}
                   video={selectedVideo}
                   logData={logData}
                   xmlData={xmlData}

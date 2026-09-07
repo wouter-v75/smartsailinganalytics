@@ -62,7 +62,7 @@ export async function GET(
       // Phase B added has_proxy/has_original/bunny_*_path so the UI can
       // show per-rendition status and the player can ask the signed-URL
       // endpoint for the right one.
-      'id, external_id, session_id, title, start_utc, duration_ms, tags, sync_offset_secs, thumbnail_url, bunny_stream_id, bunny_storage_path, bunny_proxy_path, bunny_original_path, bunny_original_stream_id, has_proxy, has_original, proxy_uploaded_at, original_uploaded_at, proxy_bytes, bytes, created_at, created_by_user_id, sessions:sessions(date)'
+      'id, external_id, session_id, title, start_utc, duration_ms, tags, sync_offset_secs, thumbnail_url, bunny_stream_id, bunny_storage_path, bunny_proxy_path, bunny_original_path, bunny_original_stream_id, bunny_proxy_stream_id, has_proxy, has_original, proxy_uploaded_at, original_uploaded_at, proxy_bytes, bytes, created_at, created_by_user_id, sessions:sessions(date)'
     )
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)
@@ -78,12 +78,23 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
   // Attach the Bunny Stream poster thumbnail URL inline (no per-clip call).
+  //
+  // ANY Stream rendition has a poster, not just an original. This looked only at
+  // bunny_original_stream_id, so a clip uploaded as a proxy — which is most of them
+  // — came back with thumbnail: null and drew a black card. It went unnoticed on the
+  // machine that did the uploading, because there the card falls back to the local
+  // blob; every OTHER device had nothing to fall back to. Same precedence the player
+  // route uses, so the card and the poster agree: original first, else the proxy.
+  const posterFor = (v: { bunny_original_stream_id?: string | null; bunny_proxy_stream_id?: string | null; bunny_stream_id?: string | null }) => {
+    const id = v.bunny_original_stream_id || v.bunny_proxy_stream_id || v.bunny_stream_id
+    return id && CDN_HOST ? `https://${CDN_HOST}/${id}/thumbnail.jpg` : null
+  }
   const videos = (data || []).map((v) => ({
     ...v,
-    thumbnail:
-      v.bunny_original_stream_id && CDN_HOST
-        ? `https://${CDN_HOST}/${v.bunny_original_stream_id}/thumbnail.jpg`
-        : null,
+    thumbnail: posterFor(v),
+    // Fill the stored column too when it is empty, so consumers reading
+    // thumbnail_url (the timeline) see a poster without each learning this rule.
+    thumbnail_url: v.thumbnail_url || posterFor(v),
   }))
   return NextResponse.json({ videos })
 }
