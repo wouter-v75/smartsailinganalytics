@@ -71,13 +71,16 @@ const opt = {
   // Each kind of moment needs a different amount of run-in and run-out: a start
   // needs the approach, a rounding needs the exit, a tack needs neither for long.
   events: '', out: 'selected',
-  startLead: 90, startLag: 90,      // 1:30 either side of the GUN — the gun is the
-                                    // only reference for a start segment
+  startLead: 90, startLag: 60,      // 1:30 BEFORE the gun → 1:00 after. The gun is
+                                    // the only reference for a start segment. The
+                                    // approach is what gets debriefed; a minute past
+                                    // the gun is enough to see the lane come good,
+                                    // and 1:30 there just made the clip long.
   topLead: 60, topLag: 90,          // 1:00 before the top mark → 1:30 after
   gateLead: 60, gateLag: 60,        // 1:00 either side of the gate / spin drop
   // Tacks and gybes are wanted as clips of their own. What they must NOT do is grow
   // a start: their windows are 90 s and they come every 60-90 s up a beat, so left
-  // to merge they ran straight through the gun and turned a 3-minute start into 272
+  // to merge they ran straight through the gun and turned a 2:30 start into 272
   // seconds. See segmentsFor — a start is fixed, and anything inside it is dropped.
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
