@@ -46,6 +46,7 @@ import { join, basename, extname, resolve, dirname } from 'path'
 import { spawnSync } from 'child_process'
 import { fileURLToPath } from 'url'
 import { parseXmlEvents } from '../src/lib/xmlEventParse.js'
+import { parseDjiSrt, srtCandidates } from '../src/lib/djiSrt.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.m4v'])
@@ -80,7 +81,7 @@ const opt = {
   // seconds. See segmentsFor — a start is fixed, and anything inside it is dropped.
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
-  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', sources: [],
+  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, sources: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -98,6 +99,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--no-turns') opt.noTurns = true
   else if (a === '--turns') opt.noTurns = false
   else if (a === '--force') opt.force = true
+  else if (a === '--no-srt') opt.noSrt = true
   else if (a === '--crf') opt.crf = next()
   else if (a === '--shift') opt.shift = Number(next())
   else if (a === '--rest') opt.rest = true
@@ -141,6 +143,7 @@ function usage() {
       --from DIR      where the source clips live now, if the card moved
       --force         re-encode segments that are already present (default: skip)
       --crf N         quality/size of the proxy        (default: 26; lower = bigger)
+      --no-srt        ignore DJI .SRT sidecars and time clips from the filename
       --archive       slower, smaller compression
   -n, --dry-run       report the selection, compress nothing`)
 }
@@ -284,6 +287,8 @@ function nameMs(name) {
 }
 
 const clips = []
+const srtDrift = []   // clips whose aircraft clock wandered from the video timebase
+const srtOdd = []     // sidecars too far from the file's own time to trust
 for (const f of files) {
   const m = meta.get(resolve(f)) || {}
   const dur = Number(m.Duration) || 0
@@ -294,8 +299,36 @@ for (const f of files) {
   if (keys != null) { start = keys; src = 'metadata' }
   else if (nm != null) { start = nm; src = 'filename' }
   else if (mvhd != null) { start = mvhd; src = 'mvhd?' }
+
+  // The .SRT sidecar wins when it agrees with the file's own idea of the time.
+  // Its first cue is the first FRAME; the filename is stamped when recording is
+  // armed and creation_time when the file is closed, so both run early by up to
+  // a second or so. That is small against a 90 s window, but it is free.
+  //
+  // GUARDRAIL: a sidecar that disagrees by more than two minutes is not a clock
+  // problem — a wrong aircraft clock would move the filename too, and the two
+  // would still agree. A gap that size means the sidecar has been misread (a
+  // zone, a format we don't know), so keep the old source and say so. Silently
+  // trusting it would move every segment.
+  let srtDelta = null
+  if (!opt.noSrt) {
+    const sp = srtCandidates(f).find((c) => existsSync(c))
+    if (sp) {
+      let r = null
+      try { r = parseDjiSrt(readFileSync(sp, 'utf8')) } catch { r = null }
+      if (r?.startMs != null) {
+        if (start == null || Math.abs(r.startMs - start) <= 120000) {
+          srtDelta = start == null ? null : (r.startMs - start) / 1000
+          start = r.startMs; src = 'srt'
+          if (r.driftSec != null && Math.abs(r.driftSec) > 1) srtDrift.push([basename(f), r.driftSec])
+        } else {
+          srtOdd.push([basename(f), (r.startMs - start) / 1000])
+        }
+      }
+    }
+  }
   if (start != null) start += opt.shift * 60000
-  clips.push({ file: f, name: basename(f), start, dur, src, covers: [], kinds: [], hits: [], srcDir: basename(dirname(f)), srcTag: isDroneSource(f) ? 'drone' : basename(dirname(f)) })
+  clips.push({ file: f, name: basename(f), start, dur, src, srtDelta, covers: [], kinds: [], hits: [], srcDir: basename(dirname(f)), srcTag: isDroneSource(f) ? 'drone' : basename(dirname(f)) })
 }
 
 // ── event windows ────────────────────────────────────────────────────────────
@@ -452,6 +485,17 @@ if (clips.some((c) => c.src === 'mvhd?')) console.log('⚠ some clips fall back 
 
 const totalIn = picked.reduce((s, c) => s + mb(c.file), 0)
 const secIn = picked.reduce((s, c) => s + c.dur, 0)
+const withSrt = clips.filter((c) => c.src === 'srt')
+if (withSrt.length) {
+  const ds = withSrt.map((c) => c.srtDelta).filter((d) => d != null)
+  const range = ds.length
+    ? ` · they place the first frame ${Math.min(...ds) >= 0 ? '' : ''}${Math.min(...ds).toFixed(2)}–${Math.max(...ds).toFixed(2)} s from the file's own stamp`
+    : ''
+  console.log(`\nSRT: ${withSrt.length} of ${clips.length} clips timed from their sidecar${range}`)
+}
+for (const [n, d] of srtDrift) console.log(`  ! ${n}: aircraft clock drifted ${d > 0 ? '+' : ''}${d}s across the clip`)
+for (const [n, d] of srtOdd) console.log(`  ! ${n}: SRT is ${Math.round(d)}s from the file's own time — IGNORED, timed from the file instead`)
+
 const secKeep = picked.reduce((s, c) => s + c.segs.reduce((t, m) => t + (m.to - m.from) / 1000, 0), 0)
 console.log(`\n${opt.rest ? 'Leftovers' : 'Selected'}: ${picked.length} of ${clips.length} clips · ${(totalIn / 1024).toFixed(1)} GB · ${Math.round(secIn / 60)} min`)
 if (!opt.rest) {
