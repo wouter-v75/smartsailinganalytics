@@ -61,7 +61,11 @@ export interface FlatLogRow {
   v0p: number | null; v0s: number | null; v1p: number | null; v1s: number | null
   // headsail-only trim positions
   jibUpDnStbd: number | null; jibUpDnPort: number | null; jibInOut: number | null
-  targHeel: number | null
+  // Rig / foil TARGETS. targKeel, targFsty and targBsty were declared as fields
+  // but never emitted here, so a canting-keel target never reached the app from
+  // ANY flat log — the navigator's `TargetKeel` and Expedition's `TargKeel` alike.
+  targHeel: number | null; targKeel: number | null
+  targFsty: number | null; targBsty: number | null
   targToe: number | null; targTrim: number | null; targVmg: number | null; targAwa: number | null
   // on-board environment sensors — feed observed windweight + the MOS join
   airTemp: number | null; seaTemp: number | null; rh: number | null; baro: number | null
@@ -106,10 +110,25 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   // Need the Utc column explicitly (it isn't a LogField); resolve everything else
   // through the shared profile so per-boat aliases extend the defaults.
   const headerCols = lines[0].split(',')
-  // P burn / S burn come from the LAST TWO columns positionally (this export has
-  // no stable header for them): second-to-last = port, last = starboard.
-  const pBurnIdx = headerCols.length - 2
-  const sBurnIdx = headerCols.length - 1
+  // P burn / S burn, BY NAME first. These are not LogFields, so they are resolved
+  // here rather than through the profile.
+  //
+  // This used to take the last two columns positionally, on the grounds that the
+  // export "has no stable header for them". That is true only when those columns
+  // are genuinely unnamed — and on every real export to hand they are not, so the
+  // rule was silently reading whatever happened to sit at the end of the file. On
+  // the navigator's own layout that is `V1_Lwd,Rudder_Lwd`, so a rudder angle was
+  // being served as a start burn. The positional fallback is kept, but only for
+  // trailing columns that really carry no name.
+  const burnIdx = (want: string) => headerCols.findIndex((h) => norm(h) === want)
+  let pBurnIdx = burnIdx('pburn')
+  let sBurnIdx = burnIdx('sburn')
+  if (pBurnIdx < 0 && sBurnIdx < 0 &&
+      !norm(headerCols[headerCols.length - 2] || '') &&
+      !norm(headerCols[headerCols.length - 1] || '')) {
+    pBurnIdx = headerCols.length - 2
+    sBurnIdx = headerCols.length - 1
+  }
   // `Utc` in the Expedition exports; `Datetime` in the navigator's own layout.
   // Both are the single time column — which CLOCK they carry differs, and that is
   // decided by the caller (see detectLogFormat), not here.
@@ -223,7 +242,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
       vsTarget: num(c, M.vsTarget), vsTargPct: num(c, M.vsTargPct), vsPerf: num(c, M.vsPerf),
       vsPerfPct: num(c, M.vsPerfPct), twaTarg: num(c, M.twaTarg),
-      dstLine: num(c, M.dstLine), tmLine: toBurnSec(tmLineOf(c)), pBurn: toBurnSec(num(c, pBurnIdx)), sBurn: toBurnSec(num(c, sBurnIdx)),
+      dstLine: num(c, M.dstLine), tmLine: toBurnSec(tmLineOf(c)), pBurn: pBurnIdx < 0 ? null : toBurnSec(num(c, pBurnIdx)), sBurn: sBurnIdx < 0 ? null : toBurnSec(num(c, sBurnIdx)),
       ttbPort: toBurnSec(num(c, M.ttbPort)), ttbStbd: toBurnSec(num(c, M.ttbStbd)), ttbOnStb: toBurnSec(num(c, M.ttbOnStb)), ttbPin: toBurnSec(num(c, M.ttbPin)), ttbCB: toBurnSec(num(c, M.ttbCB)),
       timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
       rake: num(c, M.rake), mastAng: num(c, M.mastAng), shims: num(c, M.shims),
@@ -234,7 +253,8 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       fstyPin: num(c, M.fstyPin), fstyJibTk: num(c, M.fstyJibTk), mainsheetLoad: num(c, M.mainsheetLoad),
       ruddP: num(c, M.ruddP), ruddS: num(c, M.ruddS),
       toeIn: num(c, M.toeIn), futek: num(c, M.futek), eBarPort: num(c, M.eBarPort), eBarStbd: num(c, M.eBarStbd),
-      targHeel: num(c, M.targHeel),
+      targHeel: num(c, M.targHeel), targKeel: num(c, M.targKeel),
+      targFsty: num(c, M.targFsty), targBsty: num(c, M.targBsty),
       targToe: num(c, M.targToe), targTrim: num(c, M.targTrim),
       targVmg: num(c, M.targVmg), targAwa: num(c, M.targAwa),
       airTemp: num(c, M.airTemp), seaTemp: num(c, M.seaTemp), rh: num(c, M.rh), baro: num(c, M.baro),

@@ -61,7 +61,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   cog: ['cog'],
   vmg: ['vmg'],
   rudder: ['rudder'],
-  vsPerfPct: ['vsperfpct', 'polbsppct', 'gunbsppolpct'],
+  vsPerfPct: ['vsperfpct', 'polbsppct', 'gunbsppolpct', 'boatspeedpercofpolar'],
   forestay: ['forestay'],
   rake: ['rake'],
   keelAng: ['keelang', 'keelangle'],
@@ -105,11 +105,11 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   leeway: ['leeway', 'dx900lwy'],
   set: ['set'],
   drift: ['drift'],
-  hdg: ['hdg'],
+  hdg: ['hdg', 'heading'],
   // performance / targets — alias the per-format column labels onto canonical keys
-  vsTarget: ['vstarget', 'vstarg', 'targbsp', 'targetbsp'],   // target boat speed (kn)
+  vsTarget: ['vstarget', 'vstarg', 'targbsp', 'targetbsp', 'targetboatspeed'],   // target boat speed (kn)
   vsTargPct: ['vstargpct', 'vstargetpct'],                    // BSP as % of target
-  vsPerf: ['vsperf', 'polbsp'],                               // polar boat speed (kn)
+  vsPerf: ['vsperf', 'polbsp', 'polarboatspeed'],             // polar boat speed (kn)
   twaTarg: ['twatarg', 'twatarget', 'targtwa', 'targettwa'],  // target TWA
   // start-line instruments
   dstLine: ['dstline', 'distancetostartlineboatlengths', 'belowln'],
@@ -131,7 +131,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   targHeel: ['targheel', 'targetheel'],
   targFsty: ['targfsty'],
   targBsty: ['targbsty'],
-  targKeel: ['targkeel'],
+  targKeel: ['targkeel', 'targetkeel'],
   targToe: ['targtoe', 'targettoe'],
   targTrim: ['targtrim', 'targettrim'],
   targVmg: ['targvmg', 'targetvmg'],
