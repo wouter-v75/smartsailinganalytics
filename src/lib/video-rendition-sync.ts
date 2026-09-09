@@ -19,7 +19,7 @@
 // original button comes later once the proxy flow is proven in the field.
 
 import { generateProxy, type ProxyProgress } from './video-proxy'
-import { uploadBlobToStorage, type UploadProgress } from './bunny-storage-upload'
+import { uploadBlobToStorage, storageObjectSize, type UploadProgress } from './bunny-storage-upload'
 // @ts-ignore — bunny.js is plain JS without type declarations
 import { createStreamUpload, uploadFileToStream } from './bunny'
 
@@ -192,14 +192,43 @@ export async function syncOriginalForVideo({
   source,
   onProgress,
   signal,
-}: BaseArgs): Promise<{
+  skipIfPresent = false,
+}: BaseArgs & { skipIfPresent?: boolean }): Promise<{
   ok: boolean
   originalPath?: string
+  skipped?: boolean
   error?: string
 }> {
   const emit = (p: RenditionProgress) => onProgress?.(p)
   try {
     const originalPath = originalPathFor(sessionDate, videoId)
+
+    // Bunny Storage cannot resume a PUT, so the next best thing is not to
+    // repeat one that already finished. An interrupted batch re-run then picks
+    // up where it stopped instead of sending the whole card again.
+    //
+    // Only an EXACT size match counts. storageObjectSize returns null on any
+    // doubt, and a truncated object from a dropped upload has the wrong size,
+    // so both fall through to a re-upload. Re-uploading costs minutes; wrongly
+    // skipping loses footage from a day that cannot be sailed again.
+    if (skipIfPresent) {
+      const have = await storageObjectSize(originalPath)
+      if (have != null && have === source.size) {
+        emit({ phase: 'marking', pct: 1, message: 'Already uploaded — skipping' })
+        const res = await fetch(`/api/videos/${encodeURIComponent(videoId)}/renditions`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ original: { path: originalPath, bytes: have } }),
+        })
+        if (res.ok) {
+          emit({ phase: 'done', pct: 1, message: 'Already uploaded' })
+          return { ok: true, originalPath, skipped: true }
+        }
+        // Marking failed — fall through and upload properly rather than
+        // returning ok for a row that does not point at the file.
+      }
+    }
+
     emit({ phase: 'uploading', pct: 0, message: 'Uploading original…' })
     const up = await uploadBlobToStorage({
       key: originalPath,
@@ -275,7 +304,9 @@ export async function uploadOriginalStorageFirst({
   streamError?: string
   error?: string
 }> {
-  const stored = await syncOriginalForVideo({ videoId, sessionDate, source, onProgress, signal })
+  const stored = await syncOriginalForVideo({
+    videoId, sessionDate, source, onProgress, signal, skipIfPresent: true,
+  })
   if (!stored.ok || !stored.originalPath) return stored
 
   // From here the clip is already playable. Everything below is the upgrade.

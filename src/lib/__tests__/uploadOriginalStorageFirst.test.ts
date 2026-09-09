@@ -6,10 +6,11 @@ vi.mock('../bunny-storage-upload', () => ({
     key,
     bytes: blob.size,
   })),
+  storageObjectSize: vi.fn(async () => null),
 }))
 
 import { uploadOriginalStorageFirst } from '../video-rendition-sync'
-import { uploadBlobToStorage } from '../bunny-storage-upload'
+import { uploadBlobToStorage, storageObjectSize } from '../bunny-storage-upload'
 
 const args = () => ({
   videoId: 'vid-1',
@@ -99,5 +100,55 @@ describe('uploadOriginalStorageFirst', () => {
     const r = await uploadOriginalStorageFirst(args())
     expect(r.ok).toBe(false)
     expect(r.error).toContain('storage credentials')
+  })
+})
+
+// Bunny Storage cannot resume a PUT, so the fallback is to not repeat one that
+// already finished. Getting the bias wrong here loses footage, so these pin it.
+describe('skipping work a previous run already did', () => {
+  const size = () => storageObjectSize as unknown as ReturnType<typeof vi.fn>
+  const put = () => uploadBlobToStorage as unknown as ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) =>
+      String(url).includes('/api/stream/fetch') ? json({ streamId: 'g' }) : json({ ok: true })
+    ) as unknown as typeof fetch
+  })
+
+  it('skips the upload when the object is already there at the exact size', async () => {
+    size().mockResolvedValueOnce(1024)
+    const r = await uploadOriginalStorageFirst(args())
+    expect(r.ok).toBe(true)
+    expect(put()).not.toHaveBeenCalled()
+  })
+
+  it('re-uploads when the stored object is TRUNCATED — a dropped upload', async () => {
+    size().mockResolvedValueOnce(512)          // half a 1024-byte clip
+    await uploadOriginalStorageFirst(args())
+    expect(put()).toHaveBeenCalledOnce()
+  })
+
+  it('re-uploads when the size cannot be determined at all', async () => {
+    size().mockResolvedValueOnce(null)
+    await uploadOriginalStorageFirst(args())
+    expect(put()).toHaveBeenCalledOnce()
+  })
+
+  it('re-uploads rather than returning ok if the row cannot be marked', async () => {
+    // Object is there, but the PATCH fails — a row that does not point at the
+    // file is worse than a repeated upload.
+    size().mockResolvedValueOnce(1024)
+    let patches = 0
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url)
+      if (u.includes('/api/stream/fetch')) return json({ streamId: 'g' })
+      patches += 1
+      return patches === 1 ? json({ error: 'no' }, false, 500) : json({ ok: true })
+    }) as unknown as typeof fetch
+
+    const r = await uploadOriginalStorageFirst(args())
+    expect(put()).toHaveBeenCalledOnce()
+    expect(r.ok).toBe(true)
   })
 })
