@@ -8,6 +8,8 @@
 #   ./scripts/compress-videos.sh --archive ~/Desktop/clips  # smaller/slower (CRF veryslow)
 #   ./scripts/compress-videos.sh --out picked a.mp4 b.mp4   # named files → picked/
 #   ./scripts/compress-videos.sh --crf 28 ~/Desktop/clips    # smaller still
+#   ./scripts/compress-videos.sh --maxrate 6M ~/Desktop/clips # tighter ceiling
+#   ./scripts/compress-videos.sh --no-cap ~/Desktop/clips     # CRF only, no ceiling
 #
 # The file-list form is what select-race-clips.mjs calls, so the encoder settings
 # live in exactly one place.
@@ -47,12 +49,30 @@ fi
 # CRF 26 = 136 MB, visually alike at 720p on a phone. Across a card that is 2.5 GB
 # down to ~1.6 GB, and roughly 15 minutes off the upload.
 PRESET=medium; CRF=26
+# A CEILING on top of CRF, because CRF alone lets sunlit water run away. On the
+# 8 Sept card three clips were 68% of the upload: a 15 s top mark hit 25.1 Mbps
+# and the race start 15.4, while the calm clips sat at 3.8-5.6 — all at 720p.
+# Spray and glitter are genuinely hard to encode and CRF faithfully spends
+# whatever they ask for.
+#
+# 8 Mbps at 720p25 is still a generous mezzanine (typical 720p delivery is 2-4),
+# and Bunny re-encodes it into the ladder anyway, so the ceiling costs nothing a
+# viewer will see. It binds ONLY on the pathological clips and leaves the calm
+# ones exactly as CRF chose. Measured on the day-7 race start: 287.8 MB -> 150.7,
+# same encode time to the second.
+#
+# It also halves the worst case, which matters beyond bytes: the largest clip is
+# the start, it is the one the debrief opens with, and the Storage upload cannot
+# resume - so it is the clip a dropped connection hurts most.
+MAXRATE=8M; BUFSIZE=16M
 OUT=""; SS=""; TT=""; NAME=""; COPY=0
 ARGS=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --archive) PRESET=veryslow; CRF=25; shift ;;
     --crf)     CRF="${2:-}"; shift 2 ;;
+    --maxrate) MAXRATE="${2:-}"; BUFSIZE="$(echo "${2:-8M}" | awk '{n=$0+0; sub(/[0-9.]+/,"",$0); print n*2 $0}')"; shift 2 ;;
+    --no-cap)  MAXRATE=100M; BUFSIZE=200M; shift ;;
     --out)     OUT="${2:-}"; [ -n "$OUT" ] || { echo "--out needs a directory" >&2; exit 1; }; shift 2 ;;
     --ss)      SS="${2:-}"; shift 2 ;;
     --t)       TT="${2:-}"; shift 2 ;;
@@ -98,7 +118,7 @@ if [ "$QUIET" -eq 0 ]; then
   if [ "$COPY" -eq 1 ]; then
     echo "● Copying $LABEL → $OUT   (source resolution · no re-encode)"
   else
-    echo "● Compressing $LABEL → $OUT   (720p · H.264 · CRF $CRF · $PRESET)"
+    echo "● Compressing $LABEL → $OUT   (720p · H.264 · CRF $CRF, max $MAXRATE · $PRESET)"
   fi
   echo
 fi
@@ -138,6 +158,7 @@ for f in "${FILES[@]}"; do
   else
     ENC=(-vf 'scale=-2:720'
          -c:v libx264 -profile:v high -level 4.0 -preset "$PRESET" -crf "$CRF"
+         -maxrate "$MAXRATE" -bufsize "$BUFSIZE"
          -c:a aac -b:a 96k -pix_fmt yuv420p)
   fi
   # Encode to a .part and rename only on success. A run interrupted mid-segment —
