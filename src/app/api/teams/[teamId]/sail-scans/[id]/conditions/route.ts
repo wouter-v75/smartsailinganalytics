@@ -52,7 +52,21 @@ export async function GET(req: NextRequest, { params }: { params: { teamId: stri
     if (!chosen) chosen = { date: s.date, rows } // fallback to any same-day log
   }
 
-  if (!chosen) return NextResponse.json({ window: null, session: null })
+  // Report WHY there is no window, not just that there isn't one. "No log for
+  // this boat/day" and "the scan is eight minutes before logging started" look
+  // identical to the user otherwise, and only one of them is worth acting on.
+  if (!chosen) return NextResponse.json({ window: null, session: null, reason: 'no-log' })
+  const first = chosen.rows[0]?.utc
+  const last = chosen.rows[chosen.rows.length - 1]?.utc
+  const coverage =
+    Number.isFinite(first) && Number.isFinite(last)
+      ? { firstUtc: first, lastUtc: last, rows: chosen.rows.length }
+      : null
   const win = computeScanWindow(chosen.rows, t, windowSec)
-  return NextResponse.json({ window: win, session: { date: chosen.date } })
+  return NextResponse.json({
+    window: win,
+    session: { date: chosen.date },
+    coverage,
+    reason: win ? null : 'outside-log',
+  })
 }

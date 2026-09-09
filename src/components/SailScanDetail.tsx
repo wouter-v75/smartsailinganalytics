@@ -29,6 +29,41 @@ const C = {
   head: '#E2E8F0', text: '#CBD5E1', dim: '#8A97A9', good: '#10B981', warn: '#F59E0B',
 }
 
+// Why the boat-state panel is empty, in words the user can act on. "No log for
+// this day" means go and upload the log; "the scan is 8 minutes before the log
+// starts" means the camera ran before the instruments and there is nothing to
+// find. The old text offered both with an "or" and left the user guessing.
+export function missText(
+  miss: { reason: string; firstUtc?: number; lastUtc?: number } | null,
+  capturedAt?: string | null,
+  tzOffsetMin?: number | null
+): string {
+  const off = (tzOffsetMin ?? 0) * 60000
+  const hhmm = (ms?: number | null) =>
+    ms == null || !Number.isFinite(ms) ? '—' : new Date(ms + off).toISOString().slice(11, 16)
+  if (!miss) return 'No log found for this boat/day.'
+  if (miss.reason === 'no-log') return 'No log has been uploaded for this boat on this day.'
+  if (miss.reason === 'outside-log' && miss.firstUtc != null && miss.lastUtc != null) {
+    const t = capturedAt ? new Date(capturedAt).getTime() : NaN
+    let gap = ''
+    if (Number.isFinite(t)) {
+      const mins =
+        t < miss.firstUtc ? Math.round((miss.firstUtc - t) / 60000)
+        : t > miss.lastUtc ? Math.round((t - miss.lastUtc) / 60000)
+        : 0
+      if (mins > 0) {
+        gap = t < miss.firstUtc
+          ? ` — the scan is ${mins} min BEFORE logging started`
+          : ` — the scan is ${mins} min AFTER logging stopped`
+      }
+    }
+    return `The day's log runs ${hhmm(miss.firstUtc)}–${hhmm(miss.lastUtc)} and does not cover ${hhmm(
+      capturedAt ? new Date(capturedAt).getTime() : null
+    )}${gap}. Nothing was recorded at this moment.`
+  }
+  return 'No log found for this boat/day, or the scan time isn’t covered by the log.'
+}
+
 const fmt = (v: any, d = 1) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(d))
 const fmtDateTime = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'
@@ -205,6 +240,9 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   const [win, setWin] = useState<any>(null)
   const [winLoaded, setWinLoaded] = useState(false)
   const [winSource, setWinSource] = useState<string>('') // 'local' | 'cloud' | ''
+  // Why there is no window, when there isn't one. "no log at all" and "the scan
+  // sits outside the log's coverage" need different actions from the user.
+  const [winMiss, setWinMiss] = useState<{ reason: string; firstUtc?: number; lastUtc?: number } | null>(null)
   const [editing, setEditing] = useState(false)
   const [sailIdSel, setSailIdSel] = useState<string>(scan?.sail_id || '')
   // Capture time, as the crew read it at the venue. Seeded from the scan when the
@@ -253,14 +291,18 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
     const localDate = (cond.captured_local || scan?.captured_at || '').slice(0, 10)
     // Drop the previous window straight away: a re-time should show the loading
     // state, never the old averages sitting under a new time.
-    setWin(null); setWinSource(''); setWinLoaded(false)
+    setWin(null); setWinSource(''); setWinLoaded(false); setWinMiss(null)
     ;(async () => {
-      let w: any = null; let src = ''
+      let w: any = null; let src = ''; let miss: any = null
       try {
         if (localDate && Number.isFinite(ms)) {
           const ld: any = await getLogData(localDate)
           const rows: any[] = Array.isArray(ld) ? ld : Array.isArray(ld?.rows) ? ld.rows : []
-          if (rows.length) { w = computeScanWindow(rows, ms, 120); if (w) src = 'local' }
+          if (rows.length) {
+            w = computeScanWindow(rows, ms, 120)
+            if (w) src = 'local'
+            else miss = { reason: 'outside-log', firstUtc: rows[0]?.utc, lastUtc: rows[rows.length - 1]?.utc }
+          }
         }
       } catch { /* ignore local errors */ }
       if (!w) {
@@ -269,9 +311,10 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
           // would hand back the window around the previous timestamp.
           const j = await fetch(`/api/teams/${teamId}/sail-scans/${scan.id}/conditions`, { cache: 'no-store' }).then((r) => r.json())
           if (j?.window) { w = j.window; src = 'cloud' }
+          else if (j?.reason) miss = { reason: j.reason, firstUtc: j?.coverage?.firstUtc, lastUtc: j?.coverage?.lastUtc }
         } catch { /* ignore */ }
       }
-      if (alive) { setWin(w); setWinSource(src); setWinLoaded(true) }
+      if (alive) { setWin(w); setWinSource(src); setWinLoaded(true); setWinMiss(w ? null : miss) }
     })()
     return () => { alive = false }
   }, [scan?.id, teamId, scan?.captured_at, cond.captured_local]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -738,7 +781,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
         {!winLoaded ? (
           <div style={{ color: C.dim, fontSize: 12 }}>matching the day’s log…</div>
         ) : !win ? (
-          <div style={{ color: C.dim, fontSize: 12 }}>No log found for this boat/day, or the scan time isn’t covered by the log.</div>
+          <div style={{ color: C.dim, fontSize: 12, lineHeight: 1.5 }}>{missText(winMiss, scan?.captured_at, sessionTzOffset)}</div>
         ) : (
           <>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 8 }}>
