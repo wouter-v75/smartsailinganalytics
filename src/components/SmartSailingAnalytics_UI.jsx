@@ -19,6 +19,7 @@ import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud 
 import { listVideosCloud, upsertVideoCloud, deleteVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId, isCloudVideoId } from '../lib/cloud-videos';
 import { syncProxyForVideo, uploadOriginalStorageFirst } from '../lib/video-rendition-sync';
 import { sortForUpload } from '../lib/uploadOrder';
+import { collectNewClips, canWatchFolders } from '../lib/watchFolder';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
@@ -2511,6 +2512,72 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   },[cloudStatus]);
 
   // One dropzone for both: route each file to the right handler.
+  // ── Watch the encoder's output folder ──────────────────────────────────────
+  // Trimming and uploading used to be strictly serial: on 8 Sept the encode
+  // finished at 15:17Z and the first upload started at 15:40Z, because a person
+  // was waiting for one job to end before beginning the next. Pointing this at
+  // the output folder overlaps them — the race start uploads while the gybes are
+  // still being cut.
+  //
+  // Safe by construction: compress-videos.sh writes each segment to a hidden
+  // .part file and renames it only on a clean ffmpeg exit, so anything visible
+  // under its final name is complete. See src/lib/watchFolder.ts.
+  const watchDirRef = useRef(null);
+  const watchSeenRef = useRef(new Set());
+  const watchBusyRef = useRef(false);
+  const [watchOn, setWatchOn] = useState(false);
+  const [watchCount, setWatchCount] = useState(0);
+
+  const startWatching = useCallback(async () => {
+    if (!canWatchFolders()) {
+      addLog('✕ This browser cannot watch a folder — needs Chrome, Edge or Vivaldi.');
+      return;
+    }
+    try {
+      const dir = await window.showDirectoryPicker({ id: 'ssa-encode-out', mode: 'read' });
+      watchDirRef.current = dir;
+      watchSeenRef.current = new Set();
+      setWatchCount(0);
+      setWatchOn(true);
+      addLog(`✓ Watching ${dir.name} — clips will import as the encoder finishes them.`);
+    } catch {
+      // The user dismissed the picker. Not an error worth logging.
+    }
+  }, [addLog]);
+
+  const stopWatching = useCallback(() => {
+    setWatchOn(false);
+    watchDirRef.current = null;
+    addLog('Stopped watching the encode folder.');
+  }, [addLog]);
+
+  useEffect(() => {
+    if (!watchOn) return;
+    let cancelled = false;
+    const tick = async () => {
+      // Overlapping polls would hand the same clip over twice while the first
+      // read is still in flight.
+      if (cancelled || watchBusyRef.current || !watchDirRef.current) return;
+      watchBusyRef.current = true;
+      try {
+        const files = await collectNewClips(watchDirRef.current, watchSeenRef.current);
+        if (files.length && !cancelled) {
+          // Import in debrief order so the start is first into the queue.
+          const ordered = sortForUpload(files.map(f => ({ file: f, title: f.name })));
+          handleVids(ordered.map(o => o.file));
+          setWatchCount(c => c + files.length);
+        }
+      } catch (e) {
+        addLog(`⚠ Watch folder: ${e?.message || e}`);
+      } finally {
+        watchBusyRef.current = false;
+      }
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [watchOn, handleVids, addLog]);
+
   const handleMixedDrop=useCallback(fileList=>{
     const files=Array.from(fileList);
     const vids=files.filter(f=>f.type.startsWith("video/")||/\.(mp4|mov|mts|avi|mkv|m4v)$/i.test(f.name));
@@ -2983,6 +3050,20 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             <div style={{background:"#0A1929",border:`1px solid ${(pendingVids.length||pendingPhotos.length)?"#06B6D4":"#1E3A5A"}`,borderRadius:12,padding:16}}>
               <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:11}}>Video &amp; photo files</div>
               <input ref={vidRef} type="file" accept="video/*,image/*,.mov,.mp4,.mts,.avi,.mkv,.m4v,.heic,.heif" multiple style={{display:"none"}} onChange={e=>handleMixedDrop(e.target.files)}/>
+              {/* Watch the encoder's output folder — import clips as they are cut,
+                  so trimming and uploading overlap instead of running back to back. */}
+              {canWatchFolders() && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"7px 9px",background:watchOn?"#062A22":"#071624",border:`1px solid ${watchOn?"#10B981":"#1E3A5A"}`,borderRadius:7}}>
+                  <div style={{flex:1,fontSize:10,color:watchOn?"#6EE7B7":"#64748B",lineHeight:1.4}}>
+                    {watchOn
+                      ? `Watching ${watchDirRef.current?.name || "folder"} · ${watchCount} clip${watchCount===1?"":"s"} picked up`
+                      : "Watch the encode folder — clips import as the script finishes each one"}
+                  </div>
+                  <button onClick={watchOn ? stopWatching : startWatching} style={{background:watchOn?"#7F1D1D":"#0E7490",border:"none",borderRadius:5,color:"#fff",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
+                    {watchOn ? "Stop" : "Watch folder…"}
+                  </button>
+                </div>
+              )}
               <div onClick={()=>vidRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);handleMixedDrop(e.dataTransfer.files);}} style={{border:`2px dashed ${dragOver?"#06B6D4":"#1E3A5A"}`,borderRadius:8,padding:"24px 16px",textAlign:"center",cursor:"pointer",background:dragOver?"#071E30":"transparent",marginBottom:(pendingVids.length||pendingPhotos.length)?11:0,transition:"all 0.12s"}}>
                 <div style={{fontSize:20,marginBottom:7}}>📹 📷</div>
                 <div style={{fontSize:12,color:"#64748B"}}>Drop videos &amp; photos, or click to browse</div>
