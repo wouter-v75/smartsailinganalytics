@@ -2525,8 +2525,23 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   const watchDirRef = useRef(null);
   const watchSeenRef = useRef(new Set());
   const watchBusyRef = useRef(false);
+  // Only clips THIS watcher imported are eligible for auto-upload. Without
+  // this the effect below would happily start pushing the user's whole
+  // library the moment they pointed it at a folder.
+  const watchImportedRef = useRef(new Set());
+  const watchUploadingRef = useRef(false);
+  const watchHandledRef = useRef(new Set());
   const [watchOn, setWatchOn] = useState(false);
   const [watchCount, setWatchCount] = useState(0);
+  const [watchAutoUpload, setWatchAutoUpload] = useState(true);
+  const [watchUploaded, setWatchUploaded] = useState(0);
+  // addLog and handleVids are rebuilt on every render. Depending on them
+  // directly tore down and recreated the poll interval each render, so the 5 s
+  // timer never survived to fire and the folder was read on every render
+  // instead. Read them through a ref that is kept current, and let the effects
+  // depend only on what should genuinely restart them.
+  const watchFnsRef = useRef({ addLog, handleVids });
+  watchFnsRef.current = { addLog, handleVids };
 
   const startWatching = useCallback(async () => {
     if (!canWatchFolders()) {
@@ -2537,7 +2552,10 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       const dir = await window.showDirectoryPicker({ id: 'ssa-encode-out', mode: 'read' });
       watchDirRef.current = dir;
       watchSeenRef.current = new Set();
+      watchImportedRef.current = new Set();
+      watchHandledRef.current = new Set();
       setWatchCount(0);
+      setWatchUploaded(0);
       setWatchOn(true);
       addLog(`✓ Watching ${dir.name} — clips will import as the encoder finishes them.`);
     } catch {
@@ -2564,11 +2582,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         if (files.length && !cancelled) {
           // Import in debrief order so the start is first into the queue.
           const ordered = sortForUpload(files.map(f => ({ file: f, title: f.name })));
-          handleVids(ordered.map(o => o.file));
+          for (const o of ordered) watchImportedRef.current.add(o.file.name);
+          watchFnsRef.current.handleVids(ordered.map(o => o.file));
           setWatchCount(c => c + files.length);
         }
       } catch (e) {
-        addLog(`⚠ Watch folder: ${e?.message || e}`);
+        watchFnsRef.current.addLog(`⚠ Watch folder: ${e?.message || e}`);
       } finally {
         watchBusyRef.current = false;
       }
@@ -2576,7 +2595,74 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     tick();
     const id = setInterval(tick, 5000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [watchOn, handleVids, addLog]);
+  }, [watchOn]);
+
+  // Auto-upload each watched clip as soon as it has been imported and saved.
+  //
+  // This is what actually makes trimming and uploading overlap: the encoder is
+  // still cutting gybes while the race start is already on its way. It runs ONE
+  // clip at a time on purpose — uploads are serial anyway, and since the
+  // storage-first change each clip becomes watchable as its own bytes land, so
+  // finishing one clip beats making progress on five.
+  //
+  // Eligibility is deliberately narrow: only files this watcher imported, only
+  // while watching, only with the source still on this device, and only once.
+  // A clip that fails is marked handled rather than retried forever — a loop
+  // that re-uploads a broken clip every render would burn the boat's uplink for
+  // the rest of the day. The user can still upload it by hand.
+  useEffect(() => {
+    if (!watchOn || !watchAutoUpload) return;
+    if (watchUploadingRef.current) return;
+    if (!cloudStatus?.available) return;
+
+    const candidates = allVideos.filter(v =>
+      watchImportedRef.current.has(v.name) &&
+      v.hasLocalBlob && !v.hasOriginal && !watchHandledRef.current.has(v.id));
+    if (!candidates.length) return;
+
+    const next = sortForUpload(candidates)[0];
+    watchUploadingRef.current = true;
+    (async () => {
+      const label = next.title || next.name || next.id;
+      try {
+        const supabase = getBrowserSupabase();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error('not signed in');
+        const sessionDate = next.sessionDate || activeDate;
+        const cloudId = await ensureCloudVideoId({ userId: user.id, video: next, sessionDate });
+        if (!cloudId) throw new Error('no cloud row');
+        const blob = await getVideoBlob(next.id);
+        if (!blob) throw new Error('no video data on this device');
+
+        setMobileSyncState({ phase: 'pushing', message: `Auto-uploading · ${label}`, progress: 0 });
+        const res = await uploadOriginalStorageFirst({
+          videoId: cloudId, sessionDate, source: blob, title: label,
+          onProgress: (pr) => setMobileSyncState({
+            phase: 'pushing',
+            message: `Auto-uploading · ${label}${pr.message ? ' · ' + pr.message : ''}`,
+            progress: Math.round((pr.pct || 0) * 100),
+          }),
+        });
+        if (!res.ok) throw new Error(res.error || 'upload failed');
+        if (res.streamError) watchFnsRef.current.addLog(`⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`);
+        watchFnsRef.current.addLog(`✓ ${label} uploaded — watchable now`);
+        setWatchUploaded(n => n + 1);
+        setAllVideos(p => p.map(v => v.id === next.id
+          ? { ...v, hasOriginal: true, originalStreamId: res.streamId || null, streamProcessing: Boolean(res.streamId), cloudId }
+          : v));
+      } catch (e) {
+        watchFnsRef.current.addLog(`✕ ${label}: auto-upload failed — ${e?.message || e}. Upload it by hand when convenient.`);
+      } finally {
+        // Marked handled either way, so a failure cannot spin.
+        watchHandledRef.current.add(next.id);
+        watchUploadingRef.current = false;
+        setMobileSyncState({ phase: null, message: '', progress: 0 });
+      }
+    })();
+    // allVideos is the driver: each finished upload updates it, which re-runs
+    // this and picks up the next clip. cloudStatus?.available rather than the
+    // object, so a re-poll of cloud status does not retrigger.
+  }, [watchOn, watchAutoUpload, allVideos, cloudStatus?.available, activeDate]);
 
   const handleMixedDrop=useCallback(fileList=>{
     const files=Array.from(fileList);
@@ -3056,9 +3142,13 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"7px 9px",background:watchOn?"#062A22":"#071624",border:`1px solid ${watchOn?"#10B981":"#1E3A5A"}`,borderRadius:7}}>
                   <div style={{flex:1,fontSize:10,color:watchOn?"#6EE7B7":"#64748B",lineHeight:1.4}}>
                     {watchOn
-                      ? `Watching ${watchDirRef.current?.name || "folder"} · ${watchCount} clip${watchCount===1?"":"s"} picked up`
-                      : "Watch the encode folder — clips import as the script finishes each one"}
+                      ? `Watching ${watchDirRef.current?.name || "folder"} · ${watchCount} picked up · ${watchUploaded} uploaded`
+                      : "Watch the encode folder — clips import and upload as the script finishes each one"}
                   </div>
+                  <label title="Upload each clip as soon as it is imported, rather than waiting for the whole card" style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:"#64748B",cursor:"pointer",whiteSpace:"nowrap"}}>
+                    <input type="checkbox" checked={watchAutoUpload} onChange={e=>setWatchAutoUpload(e.target.checked)} style={{cursor:"pointer"}} />
+                    upload as they arrive
+                  </label>
                   <button onClick={watchOn ? stopWatching : startWatching} style={{background:watchOn?"#7F1D1D":"#0E7490",border:"none",borderRadius:5,color:"#fff",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
                     {watchOn ? "Stop" : "Watch folder…"}
                   </button>
