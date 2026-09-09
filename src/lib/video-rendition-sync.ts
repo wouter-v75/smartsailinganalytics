@@ -239,3 +239,84 @@ export async function syncOriginalForVideo({
     return { ok: false, error: msg }
   }
 }
+
+/**
+ * Upload an original STORAGE-FIRST, then hand it to Bunny Stream to fetch.
+ *
+ * The ordering is the whole point. Uploading straight to Stream leaves a clip
+ * unwatchable until transcoding finishes — 60 to 120 minutes on this library,
+ * which is far longer than the trim (~6 min) and the upload (~20 min) combined,
+ * and was the real reason footage reached the team late. Landing it in Storage
+ * first makes it playable as a progressive 720p MP4 the moment the bytes are
+ * there, per clip: the first clip is watchable minutes in, not after the card.
+ *
+ * Stream still gets built, because the crew watches on poor 3G and needs the
+ * lower rungs of the adaptive ladder. But Bunny FETCHES it from Storage
+ * server-side (see /api/stream/fetch), so the bytes cross our uplink once. The
+ * URL route already prefers the ladder and falls back to the MP4, so playback
+ * upgrades on its own with nothing to do at the call site.
+ *
+ * A failure after the Storage step is NOT a failure of the upload. The clip is
+ * already watchable; all that is lost is the ladder. We report it and return ok,
+ * because telling the user their upload failed when the team can watch it would
+ * be worse than the missing renditions.
+ */
+export async function uploadOriginalStorageFirst({
+  videoId,
+  sessionDate,
+  source,
+  title,
+  onProgress,
+  signal,
+}: BaseArgs & { title: string }): Promise<{
+  ok: boolean
+  originalPath?: string
+  streamId?: string
+  streamError?: string
+  error?: string
+}> {
+  const stored = await syncOriginalForVideo({ videoId, sessionDate, source, onProgress, signal })
+  if (!stored.ok || !stored.originalPath) return stored
+
+  // From here the clip is already playable. Everything below is the upgrade.
+  onProgress?.({ phase: 'marking', pct: 0, message: 'Queuing adaptive encode…' })
+  try {
+    const res = await fetch('/api/stream/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: stored.originalPath, title }),
+      signal,
+    })
+    const j = (await res.json().catch(() => null)) as { streamId?: string; error?: string } | null
+    if (!res.ok || !j?.streamId) {
+      const streamError = j?.error || `HTTP ${res.status}`
+      onProgress?.({ phase: 'done', pct: 1, message: 'Playable — adaptive encode not queued' })
+      return { ok: true, originalPath: stored.originalPath, streamError }
+    }
+
+    // Record the stream id so the URL route starts preferring the ladder as soon
+    // as Bunny finishes with it.
+    const mark = await fetch(`/api/videos/${encodeURIComponent(videoId)}/renditions`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ original: { streamId: j.streamId } }),
+      signal,
+    })
+    if (!mark.ok) {
+      const m = await mark.json().catch(() => null)
+      onProgress?.({ phase: 'done', pct: 1, message: 'Playable — stream id not recorded' })
+      return {
+        ok: true,
+        originalPath: stored.originalPath,
+        streamId: j.streamId,
+        streamError: `PATCH renditions: ${m?.error || mark.status}`,
+      }
+    }
+
+    onProgress?.({ phase: 'done', pct: 1, message: 'Playable now · adaptive encode queued' })
+    return { ok: true, originalPath: stored.originalPath, streamId: j.streamId }
+  } catch (e: unknown) {
+    const streamError = e instanceof Error ? e.message : String(e)
+    return { ok: true, originalPath: stored.originalPath, streamError }
+  }
+}

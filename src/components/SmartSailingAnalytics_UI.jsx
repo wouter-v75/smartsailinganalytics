@@ -17,7 +17,7 @@ import { parseXmlEvents } from '../lib/xmlEventParse';
 import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud } from '../lib/cloud-tag-list';
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { listVideosCloud, upsertVideoCloud, deleteVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId, isCloudVideoId } from '../lib/cloud-videos';
-import { syncProxyForVideo } from '../lib/video-rendition-sync';
+import { syncProxyForVideo, uploadOriginalStorageFirst } from '../lib/video-rendition-sync';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
@@ -5903,34 +5903,37 @@ function SSAApp(){
             });
             if (!cloudId) { console.warn('[batch-upload-compressed] no cloud row for', video.id); continue; }
             setMobileSyncState({ phase: 'pushing', message: `Uploading ${i+1}/${pairs.length} · ${label}`, progress: 0 });
-            let streamId = getPendingOrigStream(video.id);
-            if (!streamId) {
-              const created = await createStreamUpload(label, file.size);
-              streamId = created?.streamId || null;
-              if (streamId) setPendingOrigStream(video.id, streamId);
-            }
-            if (!streamId) { console.warn('[batch-upload-compressed] no Stream video for', video.id); continue; }
-            const uploaded = await uploadFileToStream(
-              { streamId },
-              file,
-              (pct) => setMobileSyncState({
+            // STORAGE FIRST, then Bunny fetches it into Stream itself.
+            //
+            // Uploading straight to Stream left a clip unwatchable for 60-120
+            // minutes while it transcoded — longer than the trim and the upload
+            // put together, and the actual reason footage reached the team late.
+            // Landing it in Storage makes it playable as a progressive 720p MP4
+            // the moment the bytes arrive, per clip, and Bunny pulls it into
+            // Stream server-side so nothing crosses our uplink twice.
+            //
+            // KNOWN TRADE: the Storage PUT is a plain XHR and does NOT resume,
+            // where the old TUS path did. Clips are 7-80 MB apart from the start,
+            // so a retry is cheap, but a dropped connection on a big start clip
+            // restarts it. Revisit if that bites on the water.
+            const res = await uploadOriginalStorageFirst({
+              videoId: cloudId,
+              sessionDate: video.sessionDate || activeDate,
+              source: file,
+              title: label,
+              onProgress: (pr) => setMobileSyncState({
                 phase: 'pushing',
-                message: `Uploading ${i+1}/${pairs.length} · ${label}`,
-                progress: pct,
+                message: `Uploading ${i+1}/${pairs.length} · ${label}${pr.message ? ' · ' + pr.message : ''}`,
+                progress: Math.round((pr.pct || 0) * 100),
               }),
-            );
-            if (!uploaded) { console.warn('[batch-upload-compressed] interrupted for', video.id); continue; }
-            await fetch(
-              `/api/videos/${encodeURIComponent(cloudId)}/renditions`,
-              {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ original: { streamId } }),
-              },
-            ).catch(()=>{});
+            });
+            if (!res.ok) { console.warn('[batch-upload-compressed] failed for', video.id, res.error); continue; }
+            // The ladder is an upgrade, not a precondition — a clip with only the
+            // Storage copy still plays, so this is a warning, not a failure.
+            if (res.streamError) console.warn('[batch-upload-compressed] adaptive encode not queued for', video.id, res.streamError);
             clearPendingOrigStream(video.id);
             setAllVideos(p => p.map(v => v.id === video.id
-              ? { ...v, hasOriginal: true, originalStreamId: streamId, streamProcessing: true, cloudId }
+              ? { ...v, hasOriginal: true, originalStreamId: res.streamId || null, streamProcessing: Boolean(res.streamId), cloudId }
               : v));
           } catch (err) {
             console.error('[batch-upload-compressed] failed for', video.id, err);
