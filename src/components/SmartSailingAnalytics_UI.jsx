@@ -19,6 +19,7 @@ import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud 
 import { listVideosCloud, upsertVideoCloud, deleteVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId, isCloudVideoId } from '../lib/cloud-videos';
 import { syncProxyForVideo, uploadOriginalStorageFirst } from '../lib/video-rendition-sync';
 import { sortForUpload } from '../lib/uploadOrder';
+import { fallbackMagVar } from '../lib/magVar';
 import { collectNewClips, canWatchFolders } from '../lib/watchFolder';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
@@ -1323,6 +1324,12 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   // line; pick the one closer to the current TWD so pin/committee ordering
   // doesn't flip the value. Convert true → magnetic via the log's MagVar
   // column (signed: positive east → magnetic = true − magvar).
+  //
+  // The navigator's export has no MagVar column, and this used to fall back to
+  // 0 — which is not "unknown", it asserts that true and magnetic are the same.
+  // The panel was showing a TRUE bearing under a magnetic label, out by the
+  // local variation. Fall back to the venue's measured value, keyed on the
+  // boat's own position (see src/lib/magVar.ts).
   const activeLine = nearestGun
     ? startLines.find(sl=>sl.raceNum===nearestGun.raceNum)||startLines[0]||null
     : startLines[0]||null;
@@ -1335,7 +1342,9 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       const ref = (row?.twd!=null && isFinite(row.twd) && row.twd!==0) ? row.twd : a;
       const angDist = (x,y)=>{const d=Math.abs(x-y)%360;return d>180?360-d:d;};
       const lineSqrTrue = angDist(a,ref) <= angDist(b,ref) ? a : b;
-      const magvar = (row?.magvar!=null && isFinite(row.magvar)) ? row.magvar : 0;
+      const magvar = (row?.magvar!=null && isFinite(row.magvar))
+        ? row.magvar
+        : (fallbackMagVar(row?.lat, row?.lon)?.varDeg ?? 0);
       lineSqrMag = (lineSqrTrue - magvar + 360) % 360;
     }
   }
