@@ -2550,6 +2550,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // Live progress of the clip currently going up, so the strip shows movement
   // rather than a number that only changes once a whole clip has finished.
   const [watchProgress, setWatchProgress] = useState(null);
+  const watchGateWarnedRef = useRef(false);
   const [watchOn, setWatchOn] = useState(false);
   const [watchCount, setWatchCount] = useState(0);
   const [watchAutoUpload, setWatchAutoUpload] = useState(true);
@@ -2628,17 +2629,27 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // Hand each newly-saved watch clip to the upload queue. Separate from the
   // uploader below so that a batch replacing savedVids cannot lose anything.
   useEffect(() => {
-    if (!watchOn || !savedVids?.length) return;
-    let added = 0;
+    if (!watchOn) return;
+    if (!savedVids?.length) return;
+    let added = 0, alreadyQueued = 0, unmatched = [];
     for (const v of savedVids) {
-      if (!watchImportedRef.current.has(v.name)) continue;
-      if (watchQueuedRef.current.has(v.id)) continue;
+      if (!watchImportedRef.current.has(v.name)) { unmatched.push(v.name || v.title || v.id); continue; }
+      if (watchQueuedRef.current.has(v.id)) { alreadyQueued += 1; continue; }
       watchQueuedRef.current.add(v.id);
       watchQueueRef.current.push({ ...v, sessionDate: v.sessionDate || savedDate });
       added += 1;
     }
-    if (added) setWatchQueueTick((t) => t + 1);
-  }, [watchOn, savedVids, savedDate]);
+    // Say why nothing was queued. Silence here is what made this hard to chase:
+    // a queue that stays empty looks exactly like an uploader that never runs.
+    if (added) { addLog(`↥ ${added} clip(s) queued for upload`); setWatchQueueTick((t) => t + 1); }
+    else if (unmatched.length) {
+      addLog(`⚠ watcher: ${savedVids.length} saved, none queued — ${unmatched.length} did not match the watch list`);
+      addLog(`   saved as: ${unmatched.slice(0, 2).join(', ')}`);
+      addLog(`   watching: ${[...watchImportedRef.current].slice(0, 2).join(', ') || '(empty)'}`);
+    } else if (alreadyQueued) {
+      addLog(`↥ ${alreadyQueued} clip(s) already queued`);
+    }
+  }, [watchOn, savedVids, savedDate, addLog]);
 
   // Auto-upload each watched clip once it has been imported and SAVED.
   //
@@ -2658,7 +2669,13 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   useEffect(() => {
     if (!watchOn || !watchAutoUpload) return;
     if (watchUploadingRef.current) return;
-    if (!cloudStatus?.available || !perms.canSync) return;
+    if (!cloudStatus?.available || !perms.canSync) {
+      if (watchQueueRef.current.length && !watchGateWarnedRef.current) {
+        watchGateWarnedRef.current = true;
+        addLog(`⚠ auto-upload held: cloud ${cloudStatus?.available ? 'ok' : 'unavailable'}, sync permission ${perms.canSync ? 'ok' : 'denied'}`);
+      }
+      return;
+    }
 
     const next = watchQueueRef.current.find(v => !watchHandledRef.current.has(v.id));
     if (!next) return;
