@@ -7609,9 +7609,16 @@ function SSAApp(){
     setSessions(getSessionsForMembership(reloadMembership));setUnsyncedCount(getUnsyncedCount());
     // Load from IDB to ensure state matches storage (catches second import race)
     await loadDate(date);
-    // Stay put while the folder watcher is running: clips arrive in batches and
-    // the user is reading the log here.
-    if (!keepTab) setActiveTab("library");
+    // DON'T jump to Videos. Importing used to switch tabs automatically, which
+    // threw the user off the very log that says what is happening — the upload
+    // messages, the per-clip progress bar, and any failure all live on the
+    // Upload tab. The tab bar is always visible, so getting to Videos is one
+    // click whenever they actually want it.
+    //
+    // keepTab is still accepted so the watcher can be explicit about it, but the
+    // default is now to stay either way: the switch was wrong for a manual
+    // import too, which is what the request was about.
+    void keepTab;
 
     // ── Phase B auto-sync (mobile only) ────────────────────────────────────
     // Mobile users (especially TL1/crew/etc.) need their imports to reach
