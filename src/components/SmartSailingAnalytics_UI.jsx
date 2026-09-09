@@ -2541,6 +2541,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   const watchImportedRef = useRef(new Set());
   const watchUploadingRef = useRef(false);
   const watchHandledRef = useRef(new Set());
+  // Uploads are queued in a REF, not read straight off savedVids: each save
+  // batch REPLACES savedVids, so clips still waiting would simply vanish when
+  // the next batch landed. The tick state exists only to wake the effect.
+  const watchQueueRef = useRef([]);
+  const watchQueuedRef = useRef(new Set());
+  const [watchQueueTick, setWatchQueueTick] = useState(0);
   const [watchOn, setWatchOn] = useState(false);
   const [watchCount, setWatchCount] = useState(0);
   const [watchAutoUpload, setWatchAutoUpload] = useState(true);
@@ -2564,6 +2570,8 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       watchSeenRef.current = new Set();
       watchImportedRef.current = new Set();
       watchHandledRef.current = new Set();
+      watchQueueRef.current = [];
+      watchQueuedRef.current = new Set();
       setWatchCount(0);
       setWatchUploaded(0);
       setWatchOn(true);
@@ -2614,6 +2622,21 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     return () => { cancelled = true; clearInterval(id); };
   }, [watchOn]);
 
+  // Hand each newly-saved watch clip to the upload queue. Separate from the
+  // uploader below so that a batch replacing savedVids cannot lose anything.
+  useEffect(() => {
+    if (!watchOn || !savedVids?.length) return;
+    let added = 0;
+    for (const v of savedVids) {
+      if (!watchImportedRef.current.has(v.name)) continue;
+      if (watchQueuedRef.current.has(v.id)) continue;
+      watchQueuedRef.current.add(v.id);
+      watchQueueRef.current.push({ ...v, sessionDate: v.sessionDate || savedDate });
+      added += 1;
+    }
+    if (added) setWatchQueueTick((t) => t + 1);
+  }, [watchOn, savedVids, savedDate]);
+
   // Auto-upload each watched clip once it has been imported and SAVED.
   //
   // Driven off savedVids — the clips this tab has just written locally — because
@@ -2634,8 +2657,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     if (watchUploadingRef.current) return;
     if (!cloudStatus?.available || !perms.canSync) return;
 
-    const next = (savedVids || []).find(v =>
-      watchImportedRef.current.has(v.name) && !watchHandledRef.current.has(v.id));
+    const next = watchQueueRef.current.find(v => !watchHandledRef.current.has(v.id));
     if (!next) return;
 
     watchUploadingRef.current = true;
@@ -2645,7 +2667,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         const supabase = getBrowserSupabase();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('not signed in');
-        const sessionDate = next.sessionDate || savedDate;
+        const sessionDate = next.sessionDate;
         if (!sessionDate) throw new Error('no session date');
         const cloudId = await ensureCloudVideoId({ userId: user.id, video: next, sessionDate });
         if (!cloudId) throw new Error('no cloud row');
@@ -2669,7 +2691,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     })();
     // savedVids is the driver: each finished upload marks one handled, and the
     // next render picks up the following clip.
-  }, [watchOn, watchAutoUpload, savedVids, cloudStatus?.available, perms.canSync, savedDate, addLog]);
+    // watchQueueTick wakes this when clips are queued; addLog changes every
+    // render, which is what drives it on to the NEXT clip after one finishes.
+  }, [watchOn, watchAutoUpload, watchQueueTick, cloudStatus?.available, perms.canSync, addLog]);
 
   const handleMixedDrop=useCallback(fileList=>{
     const files=Array.from(fileList);
@@ -2954,7 +2978,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   const autoVidDoneRef = useRef(false);
   useEffect(() => {
     if (!pendingVids.length) { autoVidDoneRef.current = false; return; }
-    if (phase !== 'idle' || autoVidDoneRef.current) return;
+    // In watch mode clips keep arriving AFTER the first batch is saved, so the
+    // 'saved' phase must not lock further saves out — otherwise only the first
+    // batch the watcher delivers is ever stored, and the rest sit pending. That
+    // is exactly the shape of the intended use: clips appear one at a time as
+    // the encoder finishes them.
+    if (!(phase === 'idle' || (watchOn && phase === 'saved')) || autoVidDoneRef.current) return;
     // Both the duration AND the timestamp — see clipTimestampSettled.
     if (!pendingVids.every(v => v.duration != null && clipTimestampSettled(v))) return;
     autoVidDoneRef.current = true;
