@@ -1302,14 +1302,21 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   //
   // All shown DIRECTLY as burns — the Expedition start channels already encode the
   // burn on the current heading (+early / -late), so no gun-timer subtraction:
-  //   TTB·LINE   ← tmLine    (Burn column; falls back to TmToLn − TmToGun on older exports)
-  //   TTB·P      ← ttbPort   (StBsToP)
-  //   TTB·S      ← ttbStbd   (StBsToS)
-  //   TTB·on·STB ← ttbOnStb  (StBsOnS) — burn if committing to the starboard tack
-  const ttbLine = (row?.tmLine!=null && isFinite(row.tmLine)) ? row.tmLine : null;
-  const ttbPort = (row?.ttbPort!=null && isFinite(row.ttbPort)) ? row.ttbPort : null;
-  const ttbStbd = (row?.ttbStbd!=null && isFinite(row.ttbStbd)) ? row.ttbStbd : null;
-  const ttbOnStb = (row?.ttbOnStb!=null && isFinite(row.ttbOnStb)) ? row.ttbOnStb : null;
+  //   BurnLine ← tmLine  (Burn;       falls back to TmToLn − TmToGun on older exports)
+  //   BurnPin  ← ttbPin  (BurnToPin;  falls back to StBsToP on Expedition exports)
+  //   BurnBoat ← ttbCB   (BurnToCb;   falls back to StBsToS)
+  //
+  // The pin is the PORT end of the line and the committee boat the STARBOARD end,
+  // so the fallbacks name the same water as the primary channel.
+  //
+  // These read the BURN columns, not TmPort/TmStbd. Those are the TIME to reach
+  // each end, which is a different quantity: five minutes before the gun on
+  // 8 Sept, BurnToPin was 115 s while TmPort was 79.7. Aliasing them into these
+  // fields put a time-to-end under a burn label.
+  const num = (v) => (v != null && isFinite(v)) ? v : null;
+  const burnLine = num(row?.tmLine);
+  const burnPin  = num(row?.ttbPin) ?? num(row?.ttbPort);
+  const burnBoat = num(row?.ttbCB)  ?? num(row?.ttbStbd);
 
   // LINE SQUARE — the wind direction at which the start line is perpendicular
   // to the wind, in MAGNETIC degrees. There are two perpendiculars to any
@@ -1378,30 +1385,24 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                unit="BL"
                color={distBL==null?"#F59E0B":distBL<0?"#EF4444":"#10B981"} size="lg"
                highlight={distBL!=null&&distBL<0}/>
-        {/* TTB·LINE — direct from the TM_LINE column (already a burn) */}
-        <Gauge label="TTB·LINE"
-               value={ttbLine!=null?fmtBurn(ttbLine):"--:--"}
-               unit={ttbLine==null?"":ttbLine>0?"early":"late"}
-               color={ttbLine!=null&&ttbLine<0?"#EF4444":"#10B981"} size="lg"
-               highlight={ttbLine!=null&&ttbLine<-10}/>
-        {/* TTB at PORT end of line */}
-        <Gauge label="TTB·P"
-               value={ttbPort!=null?fmtBurn(ttbPort):"--:--"}
-               unit={ttbPort==null?"":ttbPort>0?"early":"late"}
-               color={ttbPort!=null&&ttbPort<0?"#EF4444":"#10B981"} size="lg"
-               highlight={ttbPort!=null&&ttbPort<-10}/>
-        {/* TTB if committing to the STARBOARD tack */}
-        <Gauge label="TTB·on·STB"
-               value={ttbOnStb!=null?fmtBurn(ttbOnStb):"--:--"}
-               unit={ttbOnStb==null?"":ttbOnStb>0?"early":"late"}
-               color={ttbOnStb!=null&&ttbOnStb<0?"#EF4444":"#10B981"} size="lg"
-               highlight={ttbOnStb!=null&&ttbOnStb<-10}/>
-        {/* TTB at STBD end of line */}
-        <Gauge label="TTB·S"
-               value={ttbStbd!=null?fmtBurn(ttbStbd):"--:--"}
-               unit={ttbStbd==null?"":ttbStbd>0?"early":"late"}
-               color={ttbStbd!=null&&ttbStbd<0?"#EF4444":"#10B981"} size="lg"
-               highlight={ttbStbd!=null&&ttbStbd<-10}/>
+        {/* Burn to the LINE — the Burn column, already a burn */}
+        <Gauge label="BurnLine"
+               value={burnLine!=null?fmtBurn(burnLine):"--:--"}
+               unit={burnLine==null?"":burnLine>0?"early":"late"}
+               color={burnLine!=null&&burnLine<0?"#EF4444":"#10B981"} size="lg"
+               highlight={burnLine!=null&&burnLine<-10}/>
+        {/* Burn to the PIN (port end) */}
+        <Gauge label="BurnPin"
+               value={burnPin!=null?fmtBurn(burnPin):"--:--"}
+               unit={burnPin==null?"":burnPin>0?"early":"late"}
+               color={burnPin!=null&&burnPin<0?"#EF4444":"#10B981"} size="lg"
+               highlight={burnPin!=null&&burnPin<-10}/>
+        {/* Burn to the COMMITTEE BOAT (starboard end) */}
+        <Gauge label="BurnBoat"
+               value={burnBoat!=null?fmtBurn(burnBoat):"--:--"}
+               unit={burnBoat==null?"":burnBoat>0?"early":"late"}
+               color={burnBoat!=null&&burnBoat<0?"#EF4444":"#10B981"} size="lg"
+               highlight={burnBoat!=null&&burnBoat<-10}/>
         <Gauge label="BSP"  value={R(row.bsp)}         unit="kn"   color="#10B981" size="sm"/>
         <Gauge label="Tgt %" value={row?.vsTargPct>0?`${R(row.vsTargPct,0)}%`:"--"} unit="vs target"
                color={!row?.vsTargPct||row.vsTargPct<=0?"#22C55E":row.vsTargPct>=110?"#166534":row.vsTargPct>=90?"#22C55E":"#EF4444"} size="sm"/>

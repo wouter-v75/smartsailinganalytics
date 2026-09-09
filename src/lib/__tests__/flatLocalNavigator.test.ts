@@ -86,3 +86,27 @@ describe("the navigator's layout (flat-local)", () => {
     expect(r.targHeel).toBe(at('TargetHeel'))
   })
 })
+
+describe('start burns come from the BURN columns, not the time-to-end ones', () => {
+  // At 5 min before the gun on 8 Sept the log carried, on the same row:
+  //   Burn=122  BurnToPin=115  BurnToCb=73   <- excess time (a burn)
+  //   TmPort=79.74  TmStbd=15.46             <- TIME to reach that end
+  // Those are different quantities. TmPort/TmStbd were briefly aliased into the
+  // burn fields, which put a time-to-end under a "time to burn" label.
+  it('maps BurnToPin/BurnToCb onto the burn fields', () => {
+    const { rows } = parseLog(text, { tzOffsetMin: 120 })
+    const r = rows[0] as unknown as Record<string, number | null>
+    expect(r.ttbPin).toBe(at('BurnToPin'))
+    expect(r.ttbCB).toBe(at('BurnToCb'))
+    expect(r.tmLine).toBe(at('Burn'))
+  })
+
+  it('does NOT let TmPort/TmStbd reach a burn field', () => {
+    const { rows } = parseLog(text, { tzOffsetMin: 120 })
+    const r = rows[0] as unknown as Record<string, number | null>
+    for (const f of ['ttbPin', 'ttbCB', 'ttbPort', 'ttbStbd', 'tmLine']) {
+      expect(r[f]).not.toBe(at('TmPort'))
+      expect(r[f]).not.toBe(at('TmStbd'))
+    }
+  })
+})

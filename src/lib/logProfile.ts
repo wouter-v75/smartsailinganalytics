@@ -119,12 +119,12 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   tmLine: ['tmline', 'burn'],
   // TTB·P / TTB·S — 'StBsToP' / 'StBsToS' are the Expedition start-burn channels
   // for the port / starboard line ends (shown directly as a burn: +early / -late).
-  ttbPort: ['ttbport', 'stbstop', 'tmport'],
-  ttbStbd: ['ttbstbd', 'stbstos', 'tmstbd'],
+  ttbPort: ['ttbport', 'stbstop'],
+  ttbStbd: ['ttbstbd', 'stbstos'],
   // TTB·on·STB — start burn if committing to the starboard tack ('StBsOnS').
   ttbOnStb: ['stbsons'],
-  ttbPin: ['ttbpin'],
-  ttbCB: ['ttbcb'],
+  ttbPin: ['ttbpin', 'burntopin'],
+  ttbCB: ['ttbcb', 'burntocb'],
   timer1: ['timer1', 'racetimerminsec'],
   yawR: ['yawr', 'rot'],
   magvar: ['magvar'],
