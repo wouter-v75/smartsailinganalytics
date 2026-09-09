@@ -23,6 +23,7 @@ export async function GET(
 
     const v = (await res.json()) as {
       status?: number; encodeProgress?: number; storageSize?: number; length?: number
+      availableResolutions?: string | null
     };
 
     // Bunny's own status enum. Naming it here means the UI never has to carry a
@@ -33,6 +34,14 @@ export async function GET(
       4: 'ready', 5: 'failed', 6: 'upload failed',
     };
     // status 4 = finished encoding
+    // WHICH RUNGS BUNNY ACTUALLY BUILT. videos/create asks for 240p-1080p
+    // explicitly, but a video brought in via videos/fetch takes the LIBRARY
+    // default instead — the fetch endpoint accepts no enabledResolutions. If that
+    // default is narrower, crew on poor 3G silently lose the low rungs and it
+    // looks like "the video won't play", not a settings problem. Reporting it
+    // here makes that checkable from the data rather than from a settings page.
+    const resolutions = (v.availableResolutions || '')
+      .split(',').map((r) => r.trim()).filter(Boolean);
     const ready = v.status === 4;
     const playbackUrl = ready && CDN_HOST
       ? `https://${CDN_HOST}/${id}/playlist.m3u8`
@@ -57,6 +66,9 @@ export async function GET(
       // is another sign the upload did not complete.
       length: typeof v.length === 'number' ? v.length : null,
       failed: v.status === 5 || v.status === 6,
+      // e.g. ["240p","360p","480p","720p"] — empty until encoding finishes.
+      resolutions,
+      hasLowRungs: resolutions.some((r) => r === '240p' || r === '360p'),
       playbackUrl,
       thumbnailUrl,
       streamId: id,
