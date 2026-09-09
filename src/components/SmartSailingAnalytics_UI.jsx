@@ -2547,6 +2547,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   const watchQueueRef = useRef([]);
   const watchQueuedRef = useRef(new Set());
   const [watchQueueTick, setWatchQueueTick] = useState(0);
+  // Live progress of the clip currently going up, so the strip shows movement
+  // rather than a number that only changes once a whole clip has finished.
+  const [watchProgress, setWatchProgress] = useState(null);
   const [watchOn, setWatchOn] = useState(false);
   const [watchCount, setWatchCount] = useState(0);
   const [watchAutoUpload, setWatchAutoUpload] = useState(true);
@@ -2675,8 +2678,14 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         if (!blob) throw new Error('no video data on this device');
 
         addLog(`↑ ${label} — uploading…`);
+        setWatchProgress({ label, pct: 0, message: 'starting…' });
         const res = await uploadOriginalStorageFirst({
           videoId: cloudId, sessionDate, source: blob, title: label,
+          onProgress: (pr) => setWatchProgress({
+            label,
+            pct: Math.max(0, Math.min(1, pr.pct || 0)),
+            message: pr.message || pr.phase || '',
+          }),
         });
         if (!res.ok) throw new Error(res.error || 'upload failed');
         if (res.streamError) addLog(`⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`);
@@ -2687,6 +2696,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       } finally {
         watchHandledRef.current.add(next.id);
         watchUploadingRef.current = false;
+        setWatchProgress(null);
       }
     })();
     // savedVids is the driver: each finished upload marks one handled, and the
@@ -2968,7 +2978,10 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     setSavedDate(primaryDate); setSavedVids(saved);
     addLog(cloudStatus?.available && perms.canSync ? "Saved. Click Push to Cloud to upload." : "Saved to local storage. Ready in Videos.");
     setPhase("saved");
-    onImported({ date: primaryDate, videos: saved, logData: csvParsed, xmlData: xmlParsed });
+    // keepTab: while the watcher is running, clips arrive in batches and the
+    // user is reading the log here. Yanking them to the Videos tab on the first
+    // batch hides everything that follows.
+    onImported({ date: primaryDate, videos: saved, logData: csvParsed, xmlData: xmlParsed, keepTab: watchOn });
   };
 
   // Auto-SAVE videos LOCALLY as soon as the queued clips finish processing
@@ -3175,12 +3188,23 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               {/* Watch the encoder's output folder — import clips as they are cut,
                   so trimming and uploading overlap instead of running back to back. */}
               {canWatchFolders() && (
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"7px 9px",background:watchOn?"#062A22":"#071624",border:`1px solid ${watchOn?"#10B981":"#1E3A5A"}`,borderRadius:7}}>
+                <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:10,padding:"7px 9px",background:watchOn?"#062A22":"#071624",border:`1px solid ${watchOn?"#10B981":"#1E3A5A"}`,borderRadius:7}}>
                   <div style={{flex:1,fontSize:10,color:watchOn?"#6EE7B7":"#64748B",lineHeight:1.4}}>
                     {watchOn
                       ? `Watching ${watchDirRef.current?.name || "folder"} · ${watchCount} picked up · ${watchUploaded} uploaded`
                       : "Watch the encode folder — clips import and upload as the script finishes each one"}
                   </div>
+                  {watchProgress && (
+                    <div style={{flexBasis:"100%",order:9,marginTop:6}}>
+                      <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#6EE7B7",marginBottom:3}}>
+                        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"70%"}}>↑ {watchProgress.label}</span>
+                        <span>{Math.round(watchProgress.pct*100)}% · {watchProgress.message}</span>
+                      </div>
+                      <div style={{height:4,background:"#0B2A20",borderRadius:2,overflow:"hidden"}}>
+                        <div style={{height:"100%",width:`${Math.round(watchProgress.pct*100)}%`,background:"#10B981",transition:"width 0.2s"}}/>
+                      </div>
+                    </div>
+                  )}
                   <label title="Upload each clip as soon as it is imported, rather than waiting for the whole card" style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:"#64748B",cursor:"pointer",whiteSpace:"nowrap"}}>
                     <input type="checkbox" checked={watchAutoUpload} onChange={e=>setWatchAutoUpload(e.target.checked)} style={{cursor:"pointer"}} />
                     upload as they arrive
@@ -7558,7 +7582,7 @@ function SSAApp(){
     processAutoSyncQueue();
   }
 
-  async function handleImported({date,videos,logData:ld,xmlData:xd}){
+  async function handleImported({date,videos,logData:ld,xmlData:xd,keepTab=false}){
     if(ld)setLogData({...ld,source:"local"});if(xd)setXmlData({...xd,source:"local"});
     // Read local sessions filtered to the active workspace so imports into
     // workspace A don't appear when later viewing workspace B.
@@ -7568,7 +7592,9 @@ function SSAApp(){
     setSessions(getSessionsForMembership(reloadMembership));setUnsyncedCount(getUnsyncedCount());
     // Load from IDB to ensure state matches storage (catches second import race)
     await loadDate(date);
-    setActiveTab("library");
+    // Stay put while the folder watcher is running: clips arrive in batches and
+    // the user is reading the log here.
+    if (!keepTab) setActiveTab("library");
 
     // ── Phase B auto-sync (mobile only) ────────────────────────────────────
     // Mobile users (especially TL1/crew/etc.) need their imports to reach
