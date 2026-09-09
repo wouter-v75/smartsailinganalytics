@@ -47,7 +47,7 @@ describe('clipRank', () => {
     expect(clipRank({ tags: ['race-start'], title: 'whatever' })).toBe(0)
     expect(clipRank({ tags: ['topmark'] })).toBe(1)
     expect(clipRank({ tags: ['gate'] })).toBe(2)
-    expect(clipRank({ tags: ['tack'] })).toBe(3)
+    expect(clipRank({ tags: ['tack'] })).toBe(4)   // photos sit at 3, above manoeuvres
   })
 
   it('falls back to the title when tags are missing, rather than sinking the clip', () => {
@@ -92,5 +92,24 @@ describe('clipTimeMs', () => {
       { title: '20260908140911 gybe', tags: ['gybe'] },
     ])
     expect(out[0].title).toContain('20260908140911')
+  })
+})
+
+describe('a training day of sail photos', () => {
+  it('ranks photos above manoeuvres and below roundings', () => {
+    expect(clipRank({ tags: ['photo'] })).toBe(3)
+    expect(clipRank({ tags: ['photo'] })).toBeLessThan(clipRank({ tags: ['gybe'] }))
+    expect(clipRank({ tags: ['photo'] })).toBeGreaterThan(clipRank({ tags: ['gate'] }))
+  })
+
+  it('orders a photo-only card chronologically', () => {
+    const out = sortForUpload([
+      { title: '20260909145222_photo_layday_drone', tags: ['photo'] },
+      { title: '20260909134035_photo_layday_drone', tags: ['photo'] },
+      { title: '20260909140911_photo_layday_drone', tags: ['photo'] },
+    ])
+    expect(out.map((c) => c.title.slice(0, 14))).toEqual([
+      '20260909134035', '20260909140911', '20260909145222',
+    ])
   })
 })

@@ -19,9 +19,12 @@ const RANK: Record<string, number> = {
   start: 0,
   topmark: 1,
   gate: 2,
-  tack: 3,
-  gybe: 3,
-  jibe: 3,
+  // Sail photos: worth seeing before the manoeuvres, since a training day is
+  // often nothing but photos and the trimmer ranks them the same way.
+  photo: 3,
+  tack: 4,
+  gybe: 4,
+  jibe: 4,
 }
 
 const normalise = (s: unknown): string =>

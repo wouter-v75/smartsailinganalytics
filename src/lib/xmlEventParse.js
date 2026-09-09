@@ -33,7 +33,7 @@ export function parseXmlEvents(text, offsetMin = 0) {
     sailsUsed: getMeta('sailsused').split(';').map(s => s.trim()).filter(Boolean),
   };
 
-  const sailsUpEvents = [], raceGuns = [];
+  const sailsUpEvents = [], raceGuns = [], photoEvents = [];
   let dayStartUtc = null, dayStopUtc = null;
   for (const tag of findTags('event')) {
     const utc = isoUtc(`${getAttr(tag, 'date')} ${getAttr(tag, 'time')}`, offsetMin);
@@ -43,6 +43,16 @@ export function parseXmlEvents(text, offsetMin = 0) {
       sailsUpEvents.push({ utc, sails, label: sails.join(' + ') || 'Sails changed' });
     } else if (type === 'RaceStartGun') {
       raceGuns.push({ utc, raceNum: parseInt(attr) || 0, label: `Race ${attr || '?'} start`, color: '#EF4444' });
+    } else if (type === 'PhotoEvent') {
+      // Expedition marks the instant a sail photo was taken; `attribute` carries
+      // the sail. Worth having as a window of its own: the drone footage either
+      // side of it is the shape the photo froze, in motion.
+      photoEvents.push({
+        utc,
+        sail: attr || '',
+        label: attr ? `Photo · ${attr}` : 'Photo',
+        color: '#F59E0B',
+      });
     } else if (type === 'DayStart') { dayStartUtc = utc; }
     else if (type === 'DayStop') { dayStopUtc = utc; }
   }
@@ -90,5 +100,5 @@ export function parseXmlEvents(text, offsetMin = 0) {
     .map(([rn, { pin, boat }]) => ({ raceNum: parseInt(rn), pin, boat }))
     .filter(sl => sl.pin && sl.boat);
 
-  return { meta, sailsUpEvents, raceGuns, markRoundings, tackJibes, dayStartUtc, dayStopUtc, startLines, phases };
+  return { meta, sailsUpEvents, raceGuns, photoEvents, markRoundings, tackJibes, dayStartUtc, dayStopUtc, startLines, phases };
 }

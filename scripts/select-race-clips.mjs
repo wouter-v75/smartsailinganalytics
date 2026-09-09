@@ -83,8 +83,10 @@ const opt = {
   // to merge they ran straight through the gun and turned a 2:30 start into 272
   // seconds. See segmentsFor — a start is fixed, and anything inside it is dropped.
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
+  photoLead: 30, photoLag: 30,      // 0:30 either side of a sail PhotoEvent — the
+                                    // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
-  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, sources: [],
+  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, sources: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -99,6 +101,9 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--gate-lag') opt.gateLag = Number(next())
   else if (a === '--turn-lead') opt.turnLead = Number(next())
   else if (a === '--turn-lag') opt.turnLag = Number(next())
+  else if (a === '--photo-lead') opt.photoLead = Number(next())
+  else if (a === '--photo-lag') opt.photoLag = Number(next())
+  else if (a === '--no-photos') opt.noPhotos = true
   else if (a === '--no-turns') opt.noTurns = true
   else if (a === '--turns') opt.noTurns = false
   else if (a === '--force') opt.force = true
@@ -147,6 +152,9 @@ function usage() {
       --force         re-encode segments that are already present (default: skip)
       --crf N         quality/size of the proxy        (default: 26; lower = bigger)
       --no-srt        ignore DJI .SRT sidecars and time clips from the filename
+      --photo-lead N  seconds before a sail PhotoEvent      (default: 30)
+      --photo-lag N   seconds after                        (default: 30)
+      --no-photos     skip PhotoEvent windows entirely
       --archive       slower, smaller compression
   -n, --dry-run       report the selection, compress nothing`)
 }
@@ -346,6 +354,7 @@ const KINDS = {
   gate:    { lead: () => opt.gateLead,  lag: () => opt.gateLag,  tag: 'gate',       name: 'gate / drop' },
   tack:    { lead: () => opt.turnLead,  lag: () => opt.turnLag,  tag: 'tack',       name: 'tack' },
   gybe:    { lead: () => opt.turnLead,  lag: () => opt.turnLag,  tag: 'gybe',       name: 'gybe' },
+  photo:   { lead: () => opt.photoLead, lag: () => opt.photoLag, tag: 'photo',      name: 'sail photo' },
 }
 const windows = []
 const addWindow = (utc, kind, label, valid = true) => {
@@ -362,7 +371,13 @@ for (const r of ev.markRoundings) addWindow(r.utc, r.isTop ? 'topmark' : 'gate',
 if (!opt.noTurns) {
   for (const t of ev.tackJibes) addWindow(t.utc, t.isTack ? 'tack' : 'gybe', t.isTack ? 'Tack' : 'Gybe', t.isValid !== false)
 }
-if (!windows.length) die('the event file has no starts, roundings, tacks or gybes')
+// Sail photos. On a training day these may be the ONLY windows in the file —
+// there is no gun and often no roundings — so they are what makes such a day
+// selectable at all.
+if (!opt.noPhotos) {
+  for (const ph of ev.photoEvents || []) addWindow(ph.utc, 'photo', ph.label || 'Photo')
+}
+if (!windows.length) die('the event file has no starts, roundings, tacks, gybes or sail photos')
 
 for (const c of clips) {
   if (c.start == null) continue
@@ -397,7 +412,11 @@ function segmentsFor(c) {
   // close together would otherwise emit overlapping clips of the same water.
   const starts = c.hits.filter((w) => w.kind === 'start').map(clip).filter(usable).sort(byTime)
   const marks = c.hits.filter((w) => w.kind === 'topmark' || w.kind === 'gate').map(clip).filter(usable).sort(byTime)
-  const anchors = [...starts, ...marks]
+  // Sail photos are anchors too, in their own group: two photos of the same sail
+  // a few seconds apart should merge into one clip, but a photo must not stretch
+  // a start or a rounding, nor they it.
+  const photos = c.hits.filter((w) => w.kind === 'photo').map(clip).filter(usable).sort(byTime)
+  const anchors = [...starts, ...marks, ...photos]
 
   // A tack or gybe falling inside ANY anchor window is already filmed. Dropping it
   // beats the alternatives: stretching the anchor (the bug), or emitting a second
@@ -419,7 +438,7 @@ function segmentsFor(c) {
     }
     return out
   }
-  const merged = [...mergeRun(starts), ...mergeRun(marks), ...mergeRun(others)].sort(byTime)
+  const merged = [...mergeRun(starts), ...mergeRun(marks), ...mergeRun(photos), ...mergeRun(others)].sort(byTime)
 
   // A two-second sliver is not worth a file; give it a floor, inside the clip.
   for (const m of merged) {
@@ -450,7 +469,7 @@ const nOf = (k) => windows.filter((w) => w.kind === k).length
 console.log('  ' + Object.keys(KINDS).map((k) => `${nOf(k)} ${KINDS[k].name}${nOf(k) === 1 ? '' : 's'}`).join(' · ') +
   (opt.noTurns ? '   (turns excluded)' : ''))
 console.log(`  windows: start −${opt.startLead}/+${opt.startLag}s · top −${opt.topLead}/+${opt.topLag}s` +
-  ` · gate ±${opt.gateLead}/${opt.gateLag}s · ` +
+  ` · gate ±${opt.gateLead}/${opt.gateLag}s · photo ±${opt.photoLead}/${opt.photoLag}s · ` +
   (opt.noTurns ? 'turns off (--turns to include)' : `turn −${opt.turnLead}/+${opt.turnLag}s`))
 if (ev.dayStartUtc) console.log(`  sailing ${hhmm(ev.dayStartUtc)} → ${hhmm(ev.dayStopUtc)} (local)`)
 console.log()
@@ -544,7 +563,7 @@ const nameFor = (c, startMs, kinds) => {
 // start uploading first. Starts, then roundings, then manoeuvres — the clips the
 // debrief opens with are ready while the rest are still encoding, instead of the
 // whole card arriving at once an hour later.
-const RANK = { 'race-start': 0, topmark: 1, gate: 2, tack: 3, gybe: 3 }
+const RANK = { 'race-start': 0, topmark: 1, gate: 2, photo: 3, tack: 4, gybe: 4 }
 const rankOf = (kinds) => Math.min(...(kinds.length ? kinds : ['zz']).map((k) => RANK[SSA_TAG(k)] ?? 9))
 const jobs = []
 for (const c of picked) {
