@@ -56,8 +56,18 @@ describe('the navigator names his columns his own way', () => {
     expect(r.upDflctPct).toBe(100.07)  // UpDfclt% — the alias list had this transposed
     expect(r.jibInOut).toBe(13.2)      // JibIO%
     expect(r.keelAng).toBe(-0.04)      // KeelAngle, not KeelAng
-    expect(r.ttbPort).toBe(0)          // TmPort
-    expect(r.ttbStbd).toBe(4.95)       // TmStbd
+  })
+
+  it('does NOT read TmPort/TmStbd as start burns', () => {
+    // These two used to be aliased into ttbPort/ttbStbd, which fed the start
+    // panel's "time to burn" gauges. They are the TIME TO REACH each end of the
+    // line, not a burn: on 8 Sept, five minutes before the gun, BurnToPin was
+    // 115 s while TmPort was 79.7. The burns come from Burn / BurnToPin /
+    // BurnToCb, and this layout has none of those columns, so null is correct.
+    expect(r.ttbPort).toBeNull()
+    expect(r.ttbStbd).toBeNull()
+    expect(r.ttbPin).toBeNull()
+    expect(r.ttbCB).toBeNull()
   })
 
   it('lands everything the sail-scan window and windweight read', () => {
