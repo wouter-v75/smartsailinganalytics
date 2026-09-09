@@ -42,12 +42,14 @@ export function newClipNames(entries: readonly string[], seen: ReadonlySet<strin
   return entries.filter((n) => isCompleteClip(n) && !seen.has(n)).sort()
 }
 
+export interface FileHandleLike {
+  kind: string
+  name: string
+  getFile?: () => Promise<File>
+}
+
 export interface DirectoryHandleLike {
-  values(): AsyncIterableIterator<{
-    kind: string
-    name: string
-    getFile?: () => Promise<File>
-  }>
+  values(): AsyncIterableIterator<FileHandleLike>
 }
 
 /**
@@ -60,24 +62,33 @@ export interface DirectoryHandleLike {
  */
 export async function collectNewClips(
   dir: DirectoryHandleLike,
-  seen: Set<string>
+  seen: Set<string>,
+  onError?: (name: string, err: unknown) => void
 ): Promise<File[]> {
-  const names: Array<{ name: string; getFile: () => Promise<File> }> = []
+  // Keep the HANDLE, not the method. getFile is a prototype method on
+  // FileSystemFileHandle and needs `this` to be the handle: pulling it off as
+  // `getFile: entry.getFile` and calling it later throws "Illegal invocation".
+  // That is exactly what happened — every file was skipped and the watcher sat
+  // at "0 picked up" with nothing to show for it.
+  const found: Array<{ name: string; handle: FileHandleLike }> = []
   for await (const entry of dir.values()) {
-    if (entry.kind !== 'file' || !entry.getFile) continue
+    if (entry.kind !== 'file' || typeof entry.getFile !== 'function') continue
     if (!isCompleteClip(entry.name) || seen.has(entry.name)) continue
-    names.push({ name: entry.name, getFile: entry.getFile })
+    found.push({ name: entry.name, handle: entry })
   }
-  names.sort((a, b) => a.name.localeCompare(b.name))
+  found.sort((a, b) => a.name.localeCompare(b.name))
 
   const out: File[] = []
-  for (const n of names) {
+  for (const f of found) {
     try {
-      const file = await n.getFile()
-      seen.add(n.name)
+      const file = await f.handle.getFile!()
+      seen.add(f.name)
       out.push(file)
-    } catch {
-      // Leave it unseen: a file being replaced mid-read comes back next poll.
+    } catch (err) {
+      // Left unseen so the next poll retries — a file mid-write comes back. But
+      // REPORTED, because a permanent failure here is invisible otherwise: the
+      // original bug looked exactly like an empty folder.
+      onError?.(f.name, err)
     }
   }
   return out

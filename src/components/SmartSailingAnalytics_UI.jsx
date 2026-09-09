@@ -2588,7 +2588,14 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       if (cancelled || watchBusyRef.current || !watchDirRef.current) return;
       watchBusyRef.current = true;
       try {
-        const files = await collectNewClips(watchDirRef.current, watchSeenRef.current);
+        const files = await collectNewClips(
+          watchDirRef.current,
+          watchSeenRef.current,
+          // Surfaced, not swallowed: a permanent read failure otherwise looks
+          // exactly like an empty folder, which is how the detached-getFile bug
+          // hid as '0 picked up'.
+          (name, err) => watchFnsRef.current.addLog(`⚠ ${name}: could not read — ${err?.message || err}`),
+        );
         if (files.length && !cancelled) {
           // Import in debrief order so the start is first into the queue.
           const ordered = sortForUpload(files.map(f => ({ file: f, title: f.name })));

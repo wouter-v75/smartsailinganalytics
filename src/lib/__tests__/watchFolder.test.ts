@@ -38,20 +38,28 @@ describe('newClipNames', () => {
   })
 })
 
-// A directory handle as the File System Access API presents one.
+// A directory handle as the File System Access API really presents one.
+//
+// getFile MUST be a prototype method that depends on `this`, because that is
+// what the browser gives you. The first version of this fake used an own
+// arrow-function property that ignored `this`, so it happily passed while the
+// real code pulled the method off its handle and threw "Illegal invocation" in
+// the browser — the watcher reported "0 picked up" and the tests said fine.
+class FakeFileHandle {
+  kind = 'file'
+  constructor(public name: string, private failing: boolean) {}
+  async getFile(): Promise<File> {
+    // Throws exactly as the real API does when called unbound.
+    if (!(this instanceof FakeFileHandle)) throw new TypeError('Illegal invocation')
+    if (this.failing) throw new Error('being written')
+    return new File([new Uint8Array(8)], this.name, { type: 'video/mp4' })
+  }
+}
+
 function fakeDir(names: string[], failing: string[] = []) {
   return {
     async *values() {
-      for (const name of names) {
-        yield {
-          kind: 'file',
-          name,
-          getFile: async () => {
-            if (failing.includes(name)) throw new Error('being written')
-            return new File([new Uint8Array(8)], name, { type: 'video/mp4' })
-          },
-        }
-      }
+      for (const name of names) yield new FakeFileHandle(name, failing.includes(name))
     },
   }
 }
@@ -96,5 +104,23 @@ describe('collectNewClips — polling a live encode folder', () => {
     }
     const out = await collectNewClips(dir, new Set())
     expect(out.map((f) => f.name)).toEqual(['e.mp4'])
+  })
+})
+
+describe('the handle must not be detached from its method', () => {
+  it('calls getFile ON the handle, so a prototype method still works', async () => {
+    // Guards the bug directly: pulling getFile off the handle and calling it
+    // later loses `this` and throws, which the old bare catch hid.
+    const out = await collectNewClips(fakeDir(['a.mp4', 'b.mp4']), new Set())
+    expect(out.map((f) => f.name)).toEqual(['a.mp4', 'b.mp4'])
+  })
+
+  it('REPORTS a file it could not read instead of swallowing it', async () => {
+    // The original failure looked identical to an empty folder. It must not.
+    const errs: string[] = []
+    const out = await collectNewClips(fakeDir(['x.mp4'], ['x.mp4']), new Set(),
+      (name) => errs.push(name))
+    expect(out).toEqual([])
+    expect(errs).toEqual(['x.mp4'])
   })
 })
