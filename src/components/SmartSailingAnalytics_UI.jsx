@@ -18,6 +18,7 @@ import { fetchTagList as cloudFetchTagList, saveTagListCloud, mergeTagListCloud 
 import { listSessionsCloud, getSessionCloud, saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { listVideosCloud, upsertVideoCloud, deleteVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape, ensureCloudVideoId, isCloudVideoId } from '../lib/cloud-videos';
 import { syncProxyForVideo, uploadOriginalStorageFirst } from '../lib/video-rendition-sync';
+import { sortForUpload } from '../lib/uploadOrder';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
@@ -5887,6 +5888,17 @@ function SSAApp(){
         if (!confirm(`Matched ${pairs.length} of ${selected.length} clips. Continue with those?`)) return;
       }
 
+      // Upload in DEBRIEF order, not library order. Uploads are serial and each
+      // clip becomes watchable as its own bytes land, so this decides what the
+      // team sees first. `selected` follows allVideos, which is sorted newest
+      // first for display — on 8 Sept that sent the race start LAST, behind ten
+      // gybes, undoing the clip script's care in cutting starts first.
+      const ordered = sortForUpload(
+        pairs.map(p => ({ ...p, tags: p.video.tags, title: p.video.title || p.video.name || p.video.id }))
+      );
+      pairs.length = 0;
+      pairs.push(...ordered);
+
       try {
         const supabase = getBrowserSupabase();
         const { data: { user } } = await supabase.auth.getUser();
@@ -7145,8 +7157,10 @@ function SSAApp(){
   function enqueueOriginals(videos, sessionDate){
     if (!videos?.length) return;
     const queued = new Set(originalsSyncRef.current.queue.map(it => it.videoId));
-    const items = videos
-      .filter(v => !v.hasOriginal && !queued.has(v.id))
+    // Same debrief-first ordering as the compressed batch: starts, then
+    // roundings, then manoeuvres. The queue drains serially, so whatever is
+    // queued first is what the team can watch first.
+    const items = sortForUpload(videos.filter(v => !v.hasOriginal && !queued.has(v.id)))
       // Each clip keeps its OWN session date — not the batch-wide one — so a
       // May-19 clip can't be filed under a May-20 cloud session.
       .map(v => ({ videoId: v.id, sessionDate: v.sessionDate || sessionDate, label: v.title || v.name || v.id }));
