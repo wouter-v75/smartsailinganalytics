@@ -2607,30 +2607,30 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     return () => { cancelled = true; clearInterval(id); };
   }, [watchOn]);
 
-  // Auto-upload each watched clip as soon as it has been imported and saved.
+  // Auto-upload each watched clip once it has been imported and SAVED.
   //
-  // This is what actually makes trimming and uploading overlap: the encoder is
-  // still cutting gybes while the race start is already on its way. It runs ONE
-  // clip at a time on purpose — uploads are serial anyway, and since the
-  // storage-first change each clip becomes watchable as its own bytes land, so
-  // finishing one clip beats making progress on five.
+  // Driven off savedVids — the clips this tab has just written locally — because
+  // that is what exists in THIS component. An earlier version reached for
+  // allVideos/activeDate/setMobileSyncState, which live in SSAApp, and crashed
+  // the whole tab on render. Nothing here refers outside UploadTab.
   //
-  // Eligibility is deliberately narrow: only files this watcher imported, only
-  // while watching, only with the source still on this device, and only once.
-  // A clip that fails is marked handled rather than retried forever — a loop
-  // that re-uploads a broken clip every render would burn the boat's uplink for
-  // the rest of the day. The user can still upload it by hand.
+  // One clip at a time: uploads are serial anyway, and since the storage-first
+  // change each clip becomes watchable as its own bytes land, so finishing one
+  // beats making progress on five.
+  //
+  // Only files THIS watcher imported are eligible — otherwise pointing it at a
+  // folder would start pushing every clip the tab has ever saved. A clip that
+  // fails is marked handled rather than retried, so a broken one cannot spin and
+  // burn the boat's uplink; it says so in the log and the manual button remains.
   useEffect(() => {
     if (!watchOn || !watchAutoUpload) return;
     if (watchUploadingRef.current) return;
-    if (!cloudStatus?.available) return;
+    if (!cloudStatus?.available || !perms.canSync) return;
 
-    const candidates = allVideos.filter(v =>
-      watchImportedRef.current.has(v.name) &&
-      v.hasLocalBlob && !v.hasOriginal && !watchHandledRef.current.has(v.id));
-    if (!candidates.length) return;
+    const next = (savedVids || []).find(v =>
+      watchImportedRef.current.has(v.name) && !watchHandledRef.current.has(v.id));
+    if (!next) return;
 
-    const next = sortForUpload(candidates)[0];
     watchUploadingRef.current = true;
     (async () => {
       const label = next.title || next.name || next.id;
@@ -2638,41 +2638,31 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         const supabase = getBrowserSupabase();
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('not signed in');
-        const sessionDate = next.sessionDate || activeDate;
+        const sessionDate = next.sessionDate || savedDate;
+        if (!sessionDate) throw new Error('no session date');
         const cloudId = await ensureCloudVideoId({ userId: user.id, video: next, sessionDate });
         if (!cloudId) throw new Error('no cloud row');
         const blob = await getVideoBlob(next.id);
         if (!blob) throw new Error('no video data on this device');
 
-        setMobileSyncState({ phase: 'pushing', message: `Auto-uploading · ${label}`, progress: 0 });
+        addLog(`↑ ${label} — uploading…`);
         const res = await uploadOriginalStorageFirst({
           videoId: cloudId, sessionDate, source: blob, title: label,
-          onProgress: (pr) => setMobileSyncState({
-            phase: 'pushing',
-            message: `Auto-uploading · ${label}${pr.message ? ' · ' + pr.message : ''}`,
-            progress: Math.round((pr.pct || 0) * 100),
-          }),
         });
         if (!res.ok) throw new Error(res.error || 'upload failed');
-        if (res.streamError) watchFnsRef.current.addLog(`⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`);
-        watchFnsRef.current.addLog(`✓ ${label} uploaded — watchable now`);
+        if (res.streamError) addLog(`⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`);
+        addLog(`✓ ${label} uploaded — watchable now`);
         setWatchUploaded(n => n + 1);
-        setAllVideos(p => p.map(v => v.id === next.id
-          ? { ...v, hasOriginal: true, originalStreamId: res.streamId || null, streamProcessing: Boolean(res.streamId), cloudId }
-          : v));
       } catch (e) {
-        watchFnsRef.current.addLog(`✕ ${label}: auto-upload failed — ${e?.message || e}. Upload it by hand when convenient.`);
+        addLog(`✕ ${label}: auto-upload failed — ${e?.message || e}. Upload it by hand when convenient.`);
       } finally {
-        // Marked handled either way, so a failure cannot spin.
         watchHandledRef.current.add(next.id);
         watchUploadingRef.current = false;
-        setMobileSyncState({ phase: null, message: '', progress: 0 });
       }
     })();
-    // allVideos is the driver: each finished upload updates it, which re-runs
-    // this and picks up the next clip. cloudStatus?.available rather than the
-    // object, so a re-poll of cloud status does not retrigger.
-  }, [watchOn, watchAutoUpload, allVideos, cloudStatus?.available, activeDate]);
+    // savedVids is the driver: each finished upload marks one handled, and the
+    // next render picks up the following clip.
+  }, [watchOn, watchAutoUpload, savedVids, cloudStatus?.available, perms.canSync, savedDate, addLog]);
 
   const handleMixedDrop=useCallback(fileList=>{
     const files=Array.from(fileList);
