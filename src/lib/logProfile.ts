@@ -112,7 +112,9 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   vsPerf: ['vsperf', 'polbsp', 'polarboatspeed'],             // polar boat speed (kn)
   twaTarg: ['twatarg', 'twatarget', 'targtwa', 'targettwa'],  // target TWA
   // start-line instruments
-  dstLine: ['dstline', 'distancetostartlineboatlengths', 'belowln'],
+  // 'belowln' is Expedition's spelling, 'belowline' the navigator's. Missing the
+  // second cost the start panel its Line gauge entirely — it read '--' all week.
+  dstLine: ['dstline', 'distancetostartlineboatlengths', 'belowln', 'belowline'],
   // tmLine is TTB·LINE. Older exports carry a direct 'TmLine' column; the 2026-07
   // Expedition export instead has 'TmToLn' + 'TmToGun', and flatLogParse computes
   // tmLine = TmToLn - TmToGun when no direct column is present.

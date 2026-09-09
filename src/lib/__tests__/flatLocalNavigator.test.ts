@@ -93,6 +93,14 @@ describe('start burns come from the BURN columns, not the time-to-end ones', () 
   //   TmPort=79.74  TmStbd=15.46             <- TIME to reach that end
   // Those are different quantities. TmPort/TmStbd were briefly aliased into the
   // burn fields, which put a time-to-end under a "time to burn" label.
+  it('reads BelowLine as the distance to the line', () => {
+    // The alias list had only Expedition's 'BelowLn'. The navigator writes
+    // 'BelowLine', so dstLine stayed null and the start panel's Line gauge
+    // showed '--' on every clip.
+    const { rows } = parseLog(text, { tzOffsetMin: 120 })
+    expect((rows[0] as unknown as Record<string, number | null>).dstLine).toBe(at('BelowLine'))
+  })
+
   it('maps BurnToPin/BurnToCb onto the burn fields', () => {
     const { rows } = parseLog(text, { tzOffsetMin: 120 })
     const r = rows[0] as unknown as Record<string, number | null>
