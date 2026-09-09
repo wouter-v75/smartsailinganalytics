@@ -143,6 +143,25 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   })
   const M = resolveHeaderIndices(headerCols, aliases || effectiveAliases())
 
+  // BSP as a percentage of TARGET boat speed — the start panel's "Tgt %" gauge.
+  //
+  // Prefer a logged column, but the navigator's export has no such channel: it
+  // carries BoatSpeed and TargetBoatSpeed separately (and BoatSpeedPercOfPolar,
+  // which is a DIFFERENT quantity — percent of polar, not of target). So the
+  // gauge read '--' on every clip from that layout. Derive it when it is absent.
+  //
+  // Guarded on a POSITIVE target: pre-start rows carry TargetBoatSpeed 0, and
+  // dividing by that yields Infinity, which renders as a plausible-looking number
+  // rather than the "no data" it actually is.
+  const vsTargPctOf = (c: string[]): number | null => {
+    const logged = num(c, M.vsTargPct)
+    if (logged != null) return logged
+    const bsp = num(c, M.bsp)
+    const tgt = num(c, M.vsTarget)
+    if (bsp == null || tgt == null || tgt <= 0) return null
+    return Math.round((bsp / tgt) * 1000) / 10
+  }
+
   const num = (c: string[], i: number | undefined): number | null => {
     if (i == null || i < 0 || i >= c.length) return null
     const v = parseFloat(c[i])
@@ -240,7 +259,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       leeway: num(c, M.leeway), set: num(c, M.set), drift: num(c, M.drift), hdg: num(c, M.hdg),
       keelAng: num(c, M.keelAng),
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
-      vsTarget: num(c, M.vsTarget), vsTargPct: num(c, M.vsTargPct), vsPerf: num(c, M.vsPerf),
+      vsTarget: num(c, M.vsTarget), vsTargPct: vsTargPctOf(c), vsPerf: num(c, M.vsPerf),
       vsPerfPct: num(c, M.vsPerfPct), twaTarg: num(c, M.twaTarg),
       dstLine: num(c, M.dstLine), tmLine: toBurnSec(tmLineOf(c)), pBurn: pBurnIdx < 0 ? null : toBurnSec(num(c, pBurnIdx)), sBurn: sBurnIdx < 0 ? null : toBurnSec(num(c, sBurnIdx)),
       ttbPort: toBurnSec(num(c, M.ttbPort)), ttbStbd: toBurnSec(num(c, M.ttbStbd)), ttbOnStb: toBurnSec(num(c, M.ttbOnStb)), ttbPin: toBurnSec(num(c, M.ttbPin)), ttbCB: toBurnSec(num(c, M.ttbCB)),

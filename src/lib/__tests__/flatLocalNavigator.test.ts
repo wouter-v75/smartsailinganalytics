@@ -93,6 +93,23 @@ describe('start burns come from the BURN columns, not the time-to-end ones', () 
   //   TmPort=79.74  TmStbd=15.46             <- TIME to reach that end
   // Those are different quantities. TmPort/TmStbd were briefly aliased into the
   // burn fields, which put a time-to-end under a "time to burn" label.
+  it('derives Tgt % from BoatSpeed and TargetBoatSpeed', () => {
+    // This layout has no "% of target" column — it carries the two speeds and
+    // BoatSpeedPercOfPolar, which is percent of POLAR, a different quantity. So
+    // the gauge read '--'. With the index row, BoatSpeed and TargetBoatSpeed are
+    // their own column indices, so the ratio is exact.
+    const { rows } = parseLog(text, { tzOffsetMin: 120 })
+    const r = rows[0] as unknown as Record<string, number | null>
+    const expected = Math.round((at('BoatSpeed') / at('TargetBoatSpeed')) * 1000) / 10
+    expect(r.vsTargPct).toBe(expected)
+  })
+
+  it('does not divide by a zero target — pre-start rows carry one', () => {
+    const h = 'Datetime,Lat,Lon,BSP,TWS,TargetBoatSpeed'
+    const { rows } = parseLog([h, '2026-09-08 11:25:36,41.1,9.5,7,12,0'].join('\n'), { tzOffsetMin: 120 })
+    expect((rows[0] as unknown as Record<string, number | null>).vsTargPct).toBeNull()
+  })
+
   it('reads BelowLine as the distance to the line', () => {
     // The alias list had only Expedition's 'BelowLn'. The navigator writes
     // 'BelowLine', so dstLine stayed null and the start panel's Line gauge
