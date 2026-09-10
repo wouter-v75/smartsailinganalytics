@@ -689,13 +689,13 @@ const fit = (iw, ih, x, y, w, h) => { const r = Math.min(w / (iw || 1), h / (ih 
 // TWD cell = trailing text only (Beaufort fill kept). The wind arrow is NOT a
 // glyph here — it's a single PNG overlaid on the cell and ROTATED continuously
 // (constant size, any angle) by overlayWindArrows() after the table is laid out.
-function arrowCell(twdMean, kn, trailing, fill, dark) {
+function arrowCell(twdMean, kn, trailing, fill, dark, fs = 14) {
   const color = fill ? (dark ? 'FFFFFF' : '0F1723') : INK
-  return { text: trailing || '', options: { ...(fill ? { fill: { color: fill } } : {}), valign: 'middle', align: 'center', color, fontFace: FONT, fontSize: 14 } }
+  return { text: trailing || '', options: { ...(fill ? { fill: { color: fill } } : {}), valign: 'middle', align: 'center', color, fontFace: FONT, fontSize: fs } }
 }
 const oCell = (b) => { if (!b) return txtCell('—'); const bf = beaufort(b.twsMid); return arrowCell(b.twdMean, b.twsMid, `${b.tws[0]}-${b.tws[1]}kn`, bf.hex, bf.dark) }
 // daily TWD cell: the mean TWD (rounded to 5 deg), no fill; arrow overlaid.
-const twdCell = (twdMean) => arrowCell(twdMean, null, twdMean != null ? `${round5(twdMean)}` : '')
+const twdCell = (twdMean, fs = 14) => arrowCell(twdMean, null, twdMean != null ? `${round5(twdMean)}` : '', null, false, fs)
 
 // One reusable wind-arrow PNG (points UP / north at 0°). Dark fill + white halo
 // so it reads on both light and Beaufort-coloured cells. Built once.
@@ -943,12 +943,25 @@ function buildDeck(P, d) {
   // ── 5) Details for today (table full width, bullets under) ───────────────────
   s = pptx.addSlide(); addTitle(s, 'Details for today')
   const dHead = [hdrCell('Time'), hdrCell('TWD'), hdrCell('TWS'), hdrCell('TWD ±1σ'), hdrCell('TWS ±1σ'), hdrCell('Trend')]
-  const dRows = d.dailyRows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF } }), twdCell(r.twdMean), spdCell(r.tws), txtCell(r.twd), spdCell(`${r.lo}-${r.hi}kn`), txtCell(r.trend)])
   // Trend column stays wide enough that "Right · increasing" is ONE line — equal
   // row heights are what keeps the overlaid TWD arrows aligned with their rows.
   const dX = M, dY = 1.35, dColW = [0.66, 0.85, 0.72, 0.95, 1.12, 2.4], dRowH = 0.46
-  s.addTable([dHead, ...dRows], { x: dX, y: dY, w: dColW.reduce((a, b) => a + b, 0), colW: dColW, rowH: dRowH, autoPage: false, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
-  overlayWindArrows(s, d.dailyRows, { y: dY, rowH: dRowH, size: 0.2, cols: [{ cx: dX + dColW[0] + 0.21, twdOf: (r) => r.twdMean ?? null }] })
+  // One table renderer for all three points, so points 2 and 3 cannot drift out
+  // of step with point 1's columns, widths, font or arrow overlay.
+  // `compact` shrinks the row height and font just enough that TWO tables fit a
+  // page — 11 hourly rows at 0.46 in is 5.5 in, so a full-size pair overruns the
+  // 13.33 in page. Columns, order, colours and the arrow overlay are untouched,
+  // and the overlay scales off the same rowH so the arrows stay on their rows.
+  const addDailyTable = (sl, rows, y, compact = false) => {
+    const rh = compact ? 0.38 : dRowH
+    const fs = compact ? 12 : 14
+    const head = dHead.map((h) => ({ ...h, options: { ...h.options, fontSize: fs } }))
+    const body = rows.map((r) => [txtCell(r.time, { bold: true, fill: { color: LIGHTF }, fontSize: fs }), twdCell(r.twdMean, fs), spdCell(r.tws, fs), txtCell(r.twd, { fontSize: fs }), spdCell(`${r.lo}-${r.hi}kn`, fs), txtCell(r.trend, { fontSize: fs })])
+    sl.addTable([head, ...body], { x: dX, y, w: dColW.reduce((a, b) => a + b, 0), colW: dColW, rowH: rh, autoPage: false, border: { type: 'solid', color: 'FFFFFF', pt: 1 }, valign: 'middle' })
+    overlayWindArrows(sl, rows, { y, rowH: rh, size: compact ? 0.17 : 0.2, cols: [{ cx: dX + dColW[0] + 0.21, twdOf: (r) => r.twdMean ?? null }] })
+    return y + rh * (rows.length + 1)
+  }
+  addDailyTable(s, d.dailyRows, dY)
   const detY = dY + dRowH * (d.dailyRows.length + 1) + 0.3
   const detItems = asItems(d.ai?.todaysWind)
   s.addText(detItems.length
@@ -956,6 +969,26 @@ function buildDeck(P, d) {
     : d.dailyBullets.map((t) => ({ text: t, options: { bullet: { indent: 16 }, breakLine: true, paraSpaceAfter: 8, color: INK, fontFace: FONT, fontSize: 16 } })),
     { x: M, y: detY, w: CW, h: Math.max(1.2, FOOT - detY - 0.2), fontFace: FONT, valign: 'top' })
   s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · ranges = weighted-model mean ±1σ`, { x: M, y: FOOT, w: CW, h: 0.35, fontFace: FONT, fontSize: 11, color: GREY })
+
+  // 5b) The same table for points 2 and 3, one slide each. A slide apiece rather
+  // than three stacked: the point-1 table plus its bullets already fills the
+  // page, and at 0.46 in a row three tables cannot fit without shrinking them —
+  // which would break the "same layout" this is meant to preserve.
+  // Colours match the numbered markers on the map and the 3D stills.
+  const PT_COLOR = { '1': 'EF4444', '2': '10B981', '3': 'F97316' }
+  if ((d.extraDaily || []).length) {
+    s = pptx.addSlide(); addTitle(s, 'Details for today — points 2 & 3')
+    let py = dY
+    for (const ex of d.extraDaily) {
+      // A colour chip tying each table to its numbered marker on the map pages.
+      s.addShape('ellipse', { x: M, y: py - 0.29, w: 0.15, h: 0.15, fill: { color: PT_COLOR[ex.key] || '38BDF8' }, line: { color: 'FFFFFF', width: 1 } })
+      const cd = ex.coords
+      s.addText(cd?.latitude != null ? `Point ${ex.key} · ${Number(cd.latitude).toFixed(4)}, ${Number(cd.longitude).toFixed(4)}` : `Point ${ex.key}`,
+        { x: M + 0.22, y: py - 0.34, w: CW - 0.22, h: 0.26, fontFace: FONT, fontSize: 12, bold: true, color: NAVY, valign: 'middle' })
+      py = addDailyTable(s, ex.rows, py, true) + 0.55
+    }
+    s.addText(`TWS at mast height (${d.mastH} m), MOS where available · Model: ${d.shortModelLabel} · ranges = weighted-model mean ±1σ`, { x: M, y: FOOT, w: CW, h: 0.35, fontFace: FONT, fontSize: 11, color: GREY })
+  }
 
   // ── 6) Model guidance — 4× 3D snapshots (30 m wind), one column ──────────────
   if (d.views3d && d.views3d.length) {
@@ -1553,6 +1586,24 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       const short = mk(shortSel, sb[shortSel].hourly)
       const dailyRows = buildDaily(short, mastHeight, todayModels.filter((m) => m.key !== shortSel))
 
+      // The same table for points 2 and 3, built from THEIR OWN series — not
+      // point 1's. Each point has its own surfaceByModel, so the mean and the
+      // ±1σ band are that point's, which is the whole reason for having three:
+      // on a day with a gradient across the course they should differ.
+      //
+      // Same short model as point 1 so the three tables are comparable; a point
+      // whose short model has no usable data is skipped rather than shown empty.
+      const extraDaily = []
+      for (const key of ['2', '3']) {
+        const pt = windData?.[key]
+        const psb = pt?.surfaceByModel || {}
+        if (!psb[shortSel] || !hasValidSpeed(psb[shortSel].hourly)) continue
+        const pShort = mk(shortSel, psb[shortSel].hourly)
+        const pBand = ALL_TODAY.filter((k) => psb[k] && hasValidSpeed(psb[k].hourly) && k !== shortSel).map((k) => mk(k, psb[k].hourly))
+        const rows = buildDaily(pShort, mastHeight, pBand)
+        if (rows.length) extraDaily.push({ key, rows, coords: pt?.coords || null })
+      }
+
       const gJsons = await Promise.all(OUTLOOK_MODELS.map((k) => fetchModelDays(k, p1lat, p1lon, tz, OUTLOOK_DAYS).catch(() => null)))
       const globals = OUTLOOK_MODELS.map((k, i) => ({ k, json: gJsons[i] })).filter((x) => x.json?.hourly?.time).map((x) => mk(x.k, x.json.hourly, heightsFromHourly(x.json.hourly)))
       const centralJson = gJsons[OUTLOOK_MODELS.indexOf(outlookModel)] || gJsons.find(Boolean)
@@ -1741,7 +1792,7 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         typeOfDay, raceDay: campaignRaceDay, ai, diag, course, courseSeries, polar,
         subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
-        mastH: mastHeight, outlookRows, dailyRows, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
+        mastH: mastHeight, outlookRows, dailyRows, extraDaily, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
         wwRows, wwProfileImg, apparel,
         generalBullets: ['Synoptic setup — edit', 'Sea-breeze timing & strength — edit', 'Local effects / hazards — edit'],
         dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze through the racing window — edit', 'Racing window 10:00–16:00 — edit', 'Local effects — edit'],
