@@ -2330,7 +2330,7 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
 // throw was swallowed and the feature silently did nothing: the event-file sail
 // reconcile never ran, the day's timeline nodes were never persisted, and the session
 // never pushed to the cloud. Declaring them here is the whole fix.
-function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=null,setSailDiff=()=>{},syncOffsets={}}){
+function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=null,setSailDiff=()=>{},syncOffsets={},onWatchingChange}){
   const perms=ROLES[role];
   // ── Refs ──────────────────────────────────────────────────────────────────
   const vidRef=useRef(null),csvRef=useRef(null),xmlRef=useRef(null),polarRef=useRef(null);
@@ -2551,6 +2551,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // rather than a number that only changes once a whole clip has finished.
   const [watchProgress, setWatchProgress] = useState(null);
   const watchGateWarnedRef = useRef(false);
+  // Tell the shell we are watching, so it keeps this tab MOUNTED while we are.
+  // Tabs render conditionally, so leaving the tab destroys watchOn, the directory
+  // handle and the upload queue — the watcher simply stopped, silently, and both
+  // days it looked like "one clip uploads then nothing".
+  useEffect(() => { onWatchingChange?.(watchOn); }, [watchOn, onWatchingChange]);
+  useEffect(() => () => { onWatchingChange?.(false); }, [onWatchingChange]);
   const [watchOn, setWatchOn] = useState(false);
   const [watchCount, setWatchCount] = useState(0);
   const [watchAutoUpload, setWatchAutoUpload] = useState(true);
@@ -3005,18 +3011,27 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // (duration read) — no "Save locally" click. The cloud upload is NOT automatic:
   // the user pushes originals later from the Videos tab ("Upload originals").
   // Fires once per batch; the "New import" reset re-arms it for the next batch.
-  const autoVidDoneRef = useRef(false);
+  // Which pending clips have already been through saveLocal. This used to be a
+  // single "done" flag re-armed when pendingVids emptied — but saveLocal does NOT
+  // clear pendingVids, so it never emptied, the flag stayed set, and NO BATCH
+  // AFTER THE FIRST WAS EVER SAVED. With the folder watcher that is the whole
+  // job: clips arrive one at a time as the encoder finishes them, so clip 1
+  // saved and uploaded while 2..20 piled up unsaved and invisible.
+  //
+  // Tracking ids instead re-arms on genuinely new clips and cannot re-fire on
+  // ones already handled. Re-saving is harmless anyway — saveVideo dedupes on
+  // (date, name, size) and returns the existing row.
+  const autoVidSavedRef = useRef(new Set());
   useEffect(() => {
-    if (!pendingVids.length) { autoVidDoneRef.current = false; return; }
+    if (!pendingVids.length) { autoVidSavedRef.current = new Set(); return; }
+    const fresh = pendingVids.filter((v) => !autoVidSavedRef.current.has(v.id));
+    if (!fresh.length) return;
     // In watch mode clips keep arriving AFTER the first batch is saved, so the
-    // 'saved' phase must not lock further saves out — otherwise only the first
-    // batch the watcher delivers is ever stored, and the rest sit pending. That
-    // is exactly the shape of the intended use: clips appear one at a time as
-    // the encoder finishes them.
-    if (!(phase === 'idle' || (watchOn && phase === 'saved')) || autoVidDoneRef.current) return;
+    // 'saved' phase must not lock further saves out.
+    if (!(phase === 'idle' || (watchOn && phase === 'saved'))) return;
     // Both the duration AND the timestamp — see clipTimestampSettled.
-    if (!pendingVids.every(v => v.duration != null && clipTimestampSettled(v))) return;
-    autoVidDoneRef.current = true;
+    if (!fresh.every(v => v.duration != null && clipTimestampSettled(v))) return;
+    for (const v of fresh) autoVidSavedRef.current.add(v.id);
     saveLocal();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingVids, phase]);
@@ -3174,6 +3189,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   };
 
   const reset=()=>{
+    autoVidSavedRef.current = new Set();
     setPendingVids([]);setCsvParsed(null);setXmlParsed(null);setCsvFile(null);setXmlFile(null);
     setPolarParsed(null);setPolarFile(null);
     setPhase("idle");setLog([]);setSavedDate(null);setSavedVids([]);setStreamStatus({});
@@ -5539,6 +5555,9 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
 
 function MobileShell(props){
   const {activeTab, setActiveTab, ...rest} = props;
+  // Keep the Upload tab mounted while its folder watcher runs — tabs render
+  // conditionally, so leaving the tab would destroy the watcher mid-card.
+  const [uploadWatching, setUploadWatching] = useState(false);
   React.useEffect(()=>{ injectMobileCSS(); },[]);
   const tabDefs=[
     {id:"timeline", icon:"🧭", label:"Timeline"},
@@ -5667,9 +5686,9 @@ function MobileShell(props){
               canClearDay={['admin','team_manager','coach'].includes(props.effectiveRole)}/></ErrorBoundary>
           </div>
         )}
-        {activeTab==="upload"&&(
-          <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Upload"><UploadTab role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported} sailInventory={props.sailInventory} campaignCfg={props.campaignCfg} setSailDiff={props.setSailDiff} syncOffsets={props.syncOffsets}/></ErrorBoundary>
+        {(activeTab==="upload"||uploadWatching)&&(
+          <div style={{position:"absolute",inset:0,display:activeTab==="upload"?"flex":"none",overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Upload"><UploadTab onWatchingChange={setUploadWatching} role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported} sailInventory={props.sailInventory} campaignCfg={props.campaignCfg} setSailDiff={props.setSailDiff} syncOffsets={props.syncOffsets}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="tools"&&(
@@ -5766,6 +5785,8 @@ function SSAApp(){
   const isMobile = useIsMobile();
   const[role,setRole]=useState("coach");
   const[activeTab,setActiveTab]=useState("timeline");
+  // See above: the watcher lives in UploadTab, so the tab must stay mounted.
+  const [uploadWatching, setUploadWatching] = useState(false);
   const[allVideos,setAllVideos]=useState([]);
   const[logData,setLogData]=useState(null);
   const[sessionTzOffset,setSessionTzOffset]=useState(DEFAULT_TZ);
@@ -8754,9 +8775,9 @@ function SSAApp(){
             <ErrorBoundary label="Photos"><PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos} sessionTzOffset={sessionTzOffset} sailInventory={sailInventory} canClearDay={['admin','team_manager','coach'].includes(effectiveRole)}/></ErrorBoundary>
           </div>
         )}
-        {activeTab==="upload"&&(
-          <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Upload"><UploadTab role={role} cloudStatus={cloudStatus} onImported={handleImported} sailInventory={sailInventory} campaignCfg={campaignCfg} setSailDiff={setSailDiff} syncOffsets={syncOffsets}/></ErrorBoundary>
+        {(activeTab==="upload"||uploadWatching)&&(
+          <div style={{position:"absolute",inset:0,display:activeTab==="upload"?"flex":"none",overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Upload"><UploadTab onWatchingChange={setUploadWatching} role={role} cloudStatus={cloudStatus} onImported={handleImported} sailInventory={sailInventory} campaignCfg={campaignCfg} setSailDiff={setSailDiff} syncOffsets={syncOffsets}/></ErrorBoundary>
           </div>
         )}
         {activeTab==="tools"&&(
