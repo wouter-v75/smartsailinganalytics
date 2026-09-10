@@ -64,6 +64,63 @@ interface BaseArgs {
  * @param proxyBlobIfAvailable — if you've already generated the proxy
  * once and cached it, pass it here to skip the (slow) ffmpeg step.
  */
+
+/** Ceiling the proxy would target anyway. Anything at or under this is already
+ *  a proxy in all but name. */
+export const PROXY_MAX_HEIGHT = 720
+/** A 720p file can still be absurdly fat (a 40 Mbps intra-frame export). Above
+ *  this it is worth re-encoding even at 720p; our own trim script caps at 8. */
+export const PROXY_MAX_MBPS = 12
+
+/**
+ * Is this source already proxy-sized, so transcoding would only cost time and a
+ * generation of quality?
+ *
+ * The clips coming out of scripts/select-race-clips.mjs are ALREADY 720p at
+ * about 6 Mbps — the encoder made them that way. Running them through
+ * ffmpeg.wasm in the browser to produce another 720p file took minutes per clip,
+ * lost a generation, and produced something nearly identical to its input.
+ *
+ * Unknown values return false: if we cannot measure the source we transcode, as
+ * before. Guessing wrong in that direction costs time; guessing wrong the other
+ * way uploads a 4K original to every phone on the boat.
+ */
+export function shouldSkipProxy(
+  { height, durationSec, bytes }: { height?: number | null; durationSec?: number | null; bytes?: number | null }
+): boolean {
+  if (!height || !Number.isFinite(height) || height <= 0) return false
+  if (height > PROXY_MAX_HEIGHT) return false
+  if (!bytes || !durationSec || durationSec <= 0) return false
+  const mbps = (bytes * 8) / durationSec / 1e6
+  return mbps <= PROXY_MAX_MBPS
+}
+
+/** Height and duration of a blob, read from a detached <video>. Returns nulls
+ *  rather than throwing — an unreadable source simply falls back to transcoding. */
+async function probeBlob(blob: Blob): Promise<{ height: number | null; durationSec: number | null }> {
+  if (typeof document === 'undefined') return { height: null, durationSec: null }
+  const url = URL.createObjectURL(blob)
+  try {
+    return await new Promise((resolve) => {
+      const v = document.createElement('video')
+      v.preload = 'metadata'
+      const done = (h: number | null, d: number | null) => {
+        v.removeAttribute('src'); try { v.load() } catch { /* ignore */ }
+        resolve({ height: h, durationSec: d })
+      }
+      const timer = setTimeout(() => done(null, null), 8000)
+      v.onloadedmetadata = () => {
+        clearTimeout(timer)
+        done(v.videoHeight || null, Number.isFinite(v.duration) ? v.duration : null)
+      }
+      v.onerror = () => { clearTimeout(timer); done(null, null) }
+      v.src = url
+    })
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
+  }
+}
+
 export async function syncProxyForVideo({
   videoId,
   sessionDate,
@@ -82,6 +139,19 @@ export async function syncProxyForVideo({
   try {
     // ── 1. Transcode (or reuse cached blob) ──────────────────────────
     let proxyBlob = proxyBlobIfAvailable || null
+
+    // Already proxy-sized? Then the transcode is pure waste — see shouldSkipProxy.
+    if (!proxyBlob) {
+      const { height, durationSec } = await probeBlob(source)
+      if (shouldSkipProxy({ height, durationSec, bytes: source.size })) {
+        // eslint-disable-next-line no-console
+        console.log(`[rendition] ${videoId}: source is already ${height}p at ` +
+          `${((source.size * 8) / (durationSec || 1) / 1e6).toFixed(1)} Mbps — skipping transcode`)
+        emit({ phase: 'transcoding', pct: 1, message: `Already ${height}p — no transcode needed` })
+        proxyBlob = source
+      }
+    }
+
     if (!proxyBlob) {
       emit({ phase: 'transcoding', pct: 0, message: 'Starting transcode…' })
       const t0 = Date.now()
