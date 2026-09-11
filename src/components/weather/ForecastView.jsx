@@ -579,12 +579,28 @@ export default function ForecastView({
     const labelFor = (k) => (k === 'GFS' ? 'GFS (upper air)' : k === 'ECMWF-UA' ? 'ECMWF (upper air)' : (MODELS[k]?.label || k))
     const locEntries = Object.entries(locs)
     if (!locEntries.length) { setLoading(false); return }
+    // REUSE points that have not moved. This used to refetch EVERY location
+    // whenever the set changed, so placing three points more than the 500 ms
+    // debounce apart cost 1 + 2 + 3 = six point-fetches, and dragging one point
+    // re-downloaded all three. Open-Meteo bills per location against 600/min per
+    // IP, so that was paid for twice. A point is reused only when its coordinates,
+    // the timezone and the enabled-model set are all unchanged — the signature
+    // below — so a permissions change (canIconRace) or a new timezone still
+    // refetches properly.
+    const sig = `${tz}|${COMPARE_ORDER.filter((k) => ALL_MODELS[k]).join(',')}`
+    const reusable = (key, coords) => {
+      const d = windData?.[key]
+      return d && d._sig === sig && d.coords &&
+        Math.abs(d.coords.latitude - coords.lat) < 1e-4 &&
+        Math.abs(d.coords.longitude - coords.lon) < 1e-4 ? d : null
+    }
     // +2 per point for the always-fetched GFS and ECMWF upper-air soundings;
     // region-gated models that don't cover a point aren't fetched, so count only
     // the surface models actually queried for each location (otherwise the
     // progress bar would stop short at a US or European point).
     let total = 0
-    for (const [, coords] of locEntries) {
+    for (const [key, coords] of locEntries) {
+      if (reusable(key, coords)) continue          // nothing to fetch for this one
       total += COMPARE_ORDER.filter((k) => ALL_MODELS[k] && modelCoversPoint(k, coords.lat, coords.lon)).length + 2
     }
     let done = 0
@@ -592,21 +608,32 @@ export default function ForecastView({
     try {
       const out = {}
       for (const [key, coords] of locEntries) {
+        const prev = reusable(key, coords)
+        if (prev) { out[key] = prev; continue }
         // eslint-disable-next-line no-await-in-loop
         out[key] = await fetchAllForPoint({
           latitude: coords.lat,
           longitude: coords.lon,
           timezone: tz,
           enabledModels: ALL_MODELS,
-          onProgress: ({ modelKey, phase }) => {
+          onProgress: ({ modelKey, phase, seconds }) => {
             if (phase === 'start') {
               setProgress({ done, total, label: `Loading ${labelFor(modelKey)} — Location ${key}` })
+            } else if (phase === 'throttled') {
+              // Not progress — a pause. Open-Meteo's per-minute limit was hit and the
+              // fetch is waiting it out rather than giving up. Say so, or the bar
+              // simply looks frozen for a minute.
+              setProgress({ done, total, label: `Open-Meteo per-minute limit — waiting ${seconds || 60} s before ${labelFor(modelKey)} (Location ${key})` })
             } else {
               done += 1
               setProgress({ done, total, label: `Loaded ${labelFor(modelKey)} — Location ${key}` })
             }
           },
         })
+        // Stamp it so the next change can reuse it — but ONLY if it came back with
+        // data. A point fetched while Open-Meteo was refusing every request is
+        // all-null, and reusing that would pin it empty until the point was moved.
+        if (out[key] && Object.values(out[key].surfaceByModel || {}).some((v) => v)) out[key]._sig = sig
       }
       const points = Object.values(out)
       onDataChange?.(out, pickDefaultActiveModel(points), tz)

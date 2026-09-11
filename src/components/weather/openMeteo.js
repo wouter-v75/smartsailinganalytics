@@ -139,7 +139,11 @@ export const MODELS = {
     modelParam: 'metno_nordic',
     metaModel: 'metno_nordic_pp',
     coverage: NORDIC,
-    fieldGrid: 16,                 // high-res wind-field sampling (1 km model)
+    // 12x12, not the 16x16 the other regionals use. Open-Meteo bills a field PER
+    // LOCATION (measured 2026-09-11), and in Norway this is the auto-picked model,
+    // so its field is fetched on every point-1 change: 256 locations was ~43% of
+    // the 600/min free budget in one request. 144 keeps a ~4-5 km display field.
+    fieldGrid: 12,
     heights: [10],
     tableCols: [10],
     forecastDays: 3,               // data runs to ~+58 h; the tail is null, which is fine
@@ -640,7 +644,7 @@ export function withCycleLabel(model, tag) {
 // Fetch one surface model at one point -> the Open-Meteo hourly envelope (or
 // null if missing/empty). Icon-Race delegates to fetchBunnyModel above.
 
-export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezone }) {
+export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezone, onThrottle }) {
   const cfg = MODELS[modelKey]
   if (cfg && cfg.bunnyBase) return fetchBunnyModel(cfg, latitude, longitude)
 
@@ -651,6 +655,7 @@ export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezon
   // 429 + 5xx + network errors; give up immediately on other 4xx (a real "no
   // data here" is a 400 and won't recover).
   const getJson = async (url, tries = 4) => {
+    let waitedMinute = false
     for (let attempt = 0; attempt < tries; attempt++) {
       try {
         const res = await fetch(url)
@@ -667,7 +672,27 @@ export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezon
             return null
           }
         }
-        const retriable = res.status === 429 || res.status >= 500
+        // RATE LIMIT. Open-Meteo bills per LOCATION — measured 2026-09-11: three
+        // 256-point wind-field requests were admitted and the next single point got
+        // 429 — and the body names which limit tripped. A per-MINUTE limit clears
+        // within 60 s; the 0.6-2.4 s backoff below could never outlast it, so it just
+        // gave up ("gave up after retries"). Wait the minute out ONCE and try again.
+        // Hourly/daily limits won't clear in time, so those give up at once, loudly.
+        if (res.status === 429) {
+          let reason = ''
+          try { reason = (await res.json())?.reason || '' } catch { /* body optional */ }
+          if (/minutely/i.test(reason) && !waitedMinute && attempt < tries - 1) {
+            waitedMinute = true
+            onThrottle?.({ seconds: 61, reason })
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((r) => setTimeout(r, 61000))
+            continue
+          }
+          // eslint-disable-next-line no-console
+          console.warn(`[weather] ${modelKey} rate-limited: ${reason || 'HTTP 429'}`)
+          return null
+        }
+        const retriable = res.status >= 500
         if (retriable && attempt < tries - 1) {
           // eslint-disable-next-line no-await-in-loop
           await new Promise((r) => setTimeout(r, 600 * 2 ** attempt))
@@ -797,7 +822,10 @@ export async function fetchAllForPoint({ latitude, longitude, timezone, enabledM
   for (const modelKey of omKeys) {
     onProgress?.({ modelKey, phase: 'start' })
     // eslint-disable-next-line no-await-in-loop
-    surfaceByModel[modelKey] = await fetchSurfaceModel({ modelKey, latitude, longitude, timezone })
+    surfaceByModel[modelKey] = await fetchSurfaceModel({
+      modelKey, latitude, longitude, timezone,
+      onThrottle: (t) => onProgress?.({ modelKey, phase: 'throttled', ...t }),
+    })
     onProgress?.({ modelKey, phase: 'done' })
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, 300))

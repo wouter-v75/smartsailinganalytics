@@ -190,6 +190,56 @@ function interpAtHeight(hourly, idx, h, heights) {
   return { s, d }
 }
 
+// ── Open-Meteo field cache ────────────────────────────────────────────────
+// Open-Meteo bills a multi-coordinate request PER LOCATION. Measured 2026-09-11:
+// three 256-point field requests were admitted, and the next single-point request
+// got HTTP 429 "Minutely API request limit exceeded" — against a free limit of
+// 600/min per IP. A field is therefore a third to a half of a whole minute's
+// budget, and it was being fetched independently by the Forecast view, the deck
+// (twice) and the 3D view, with nothing shared.
+//
+// Same pattern as the SSA-Race grid cache in openMeteo.js: keyed by the exact
+// request URL, storing the PROMISE so simultaneous callers share one request,
+// bucketed to 10 min so an updated model run is picked up. A failure is never
+// cached — the next caller tries again.
+const _omFieldCache = new Map()
+const OM_FIELD_TTL_MS = 10 * 60 * 1000
+function cachedOmField(url, expected) {
+  const bucket = Math.floor(Date.now() / OM_FIELD_TTL_MS)
+  const key = `${bucket}|${url}`
+  if (_omFieldCache.has(key)) return _omFieldCache.get(key)
+  for (const k of _omFieldCache.keys()) if (!k.startsWith(`${bucket}|`)) _omFieldCache.delete(k)
+  const p = (async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(url)
+      if (res.ok) {
+        const json = await res.json()
+        const pts = Array.isArray(json) ? json : [json]   // multi-coord => array
+        if (pts.length !== expected) {
+          // Open-Meteo may collapse duplicate/too-close points; bail with a clear error
+          throw new Error(`grid mismatch: asked ${expected} points, got ${pts.length}`)
+        }
+        return pts
+      }
+      if (res.status === 429) {
+        let reason = ''
+        try { reason = (await res.json())?.reason || '' } catch { /* body optional */ }
+        // A per-minute limit clears within 60 s: wait it out once rather than fail.
+        if (/minutely/i.test(reason) && attempt === 0) {
+          await new Promise((r) => setTimeout(r, 61000))
+          continue
+        }
+        throw new Error(`Open-Meteo rate limit — ${reason || 'too many requests'}`)
+      }
+      throw new Error(`Open-Meteo ${res.status}`)
+    }
+    throw new Error('Open-Meteo rate limit — still limited after waiting a minute')
+  })()
+  _omFieldCache.set(key, p)
+  p.catch(() => _omFieldCache.delete(key))
+  return p
+}
+
 // Fetch + build the field. Returns { times:[ISO...], frames:[{u:[],v:[]}...],
 // header, maxSpeed }. Speeds in m/s. `height` may be any value (mast height is
 // interpolated from the model's native levels).
@@ -211,17 +261,8 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
 
   const base = `${m.endpoint}?latitude=${lats.join(',')}&longitude=${lons.join(',')}`
     + `&hourly=${vars.join(',')}&wind_speed_unit=ms&timezone=${encodeURIComponent(timezone)}`
-  const fetchPoints = async (modelParam, days) => {
-    const res = await fetch(`${base}&forecast_days=${days}&models=${modelParam}`)
-    if (!res.ok) throw new Error(res.status === 429 ? 'too many open meteo requests, try later' : `Open-Meteo ${res.status}`)
-    const json = await res.json()
-    const pts = Array.isArray(json) ? json : [json]   // multi-coord => array
-    if (pts.length !== lats.length) {
-      // Open-Meteo may collapse duplicate/too-close points; bail with a clear error
-      throw new Error(`grid mismatch: asked ${lats.length} points, got ${pts.length}`)
-    }
-    return pts
-  }
+  const fetchPoints = (modelParam, days) =>
+    cachedOmField(`${base}&forecast_days=${days}&models=${modelParam}`, lats.length)
 
   const days = forecastDaysFor(m)
   let points

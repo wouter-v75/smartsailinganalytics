@@ -48,6 +48,13 @@ describe('METNO configuration', () => {
     expect(m.heights).toEqual([10])
   })
 
+  it('samples its wind field on a 12 x 12 grid, not 16 x 16', () => {
+    // Open-Meteo bills a field per LOCATION against 600/min per IP. In Norway this
+    // is the auto-picked model, so its field is fetched on every point-1 change:
+    // 256 locations was ~43% of a minute's budget in one request; 144 is ~24%.
+    expect(m.fieldGrid).toBe(12)
+  })
+
   it('covers its ~58 h of data', () => {
     expect(forecastDaysFor(m)).toBe(3)
   })
