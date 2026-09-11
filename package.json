@@ -14,7 +14,7 @@
     "db:new": "supabase migration new",
     "db:diff": "supabase db diff",
     "db:link": "supabase link --project-ref gwwtnlfzbvkjuirlsmtk",
-    "lint:undef": "eslint --no-eslintrc --parser-options=ecmaVersion:2022,sourceType:module,ecmaFeatures:{jsx:true} --rule '{\"no-undef\":\"error\"}' --env browser,node,es2022 --report-unused-disable-directives-severity off --no-inline-config 'src/**/*.{js,jsx}'"
+    "lint:undef": "eslint --no-eslintrc --parser-options=ecmaVersion:2022,sourceType:module,ecmaFeatures:{jsx:true} --rule '{\"no-undef\":\"error\",\"no-use-before-define\":[\"error\",{\"functions\":false,\"classes\":false,\"variables\":false}]}' --env browser,node,es2022 --report-unused-disable-directives-severity off --no-inline-config 'src/**/*.{js,jsx}'"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.10",

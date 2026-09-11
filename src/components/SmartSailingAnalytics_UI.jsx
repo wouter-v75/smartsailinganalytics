@@ -2555,9 +2555,11 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // Tabs render conditionally, so leaving the tab destroys watchOn, the directory
   // handle and the upload queue — the watcher simply stopped, silently, and both
   // days it looked like "one clip uploads then nothing".
+  // Declared BEFORE the effects: their deps array reads watchOn during render,
+  // and a const read above its line throws — the whole Upload tab failed to mount.
+  const [watchOn, setWatchOn] = useState(false);
   useEffect(() => { onWatchingChange?.(watchOn); }, [watchOn, onWatchingChange]);
   useEffect(() => () => { onWatchingChange?.(false); }, [onWatchingChange]);
-  const [watchOn, setWatchOn] = useState(false);
   const [watchCount, setWatchCount] = useState(0);
   const [watchAutoUpload, setWatchAutoUpload] = useState(true);
   const [watchUploaded, setWatchUploaded] = useState(0);
