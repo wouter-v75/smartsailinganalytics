@@ -135,25 +135,23 @@ export default function SharePage({ params }: { params: { token: string } }) {
       return
     }
     let hls: any = null
-    const attach = () => {
-      const H = (window as any).Hls
-      if (H?.isSupported()) {
-        hls = new H({ capLevelToPlayerSize: true })
-        hls.loadSource(url)
-        hls.attachMedia(v)
-      } else {
-        v.src = url // last resort — some browsers will manage
-      }
-    }
-    if ((window as any).Hls) attach()
-    else {
-      const s = document.createElement('script')
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.14/hls.min.js'
-      s.onload = attach
-      s.onerror = () => { v.src = url }
-      document.head.appendChild(s)
-    }
-    return () => { try { hls?.destroy() } catch { /* */ } }
+    let alive = true
+    // The app's bundled hls.js (lib/hlsLoader) with the main player's tuned
+    // settings, fetched as its own chunk only when this browser needs it — the
+    // page stays light, and there is no third-party script on the play path.
+    import('../../../lib/hlsLoader')
+      .then(({ loadHls, HLS_CONFIG }) => loadHls().then((H: any) => {
+        if (!alive) return
+        if (H?.isSupported()) {
+          hls = new H(HLS_CONFIG)
+          hls.loadSource(url)
+          hls.attachMedia(v)
+        } else {
+          v.src = url // last resort — some browsers will manage
+        }
+      }))
+      .catch(() => { if (alive) v.src = url })
+    return () => { alive = false; try { hls?.destroy() } catch { /* */ } }
   }, [data])
 
   // `timeupdate` only fires ~4x a second, which adds its own coarseness on top of the
