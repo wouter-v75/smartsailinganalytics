@@ -86,7 +86,7 @@ const opt = {
   photoLead: 30, photoLag: 30,      // 0:30 either side of a sail PhotoEvent — the
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
-  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, sources: [],
+  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -103,6 +103,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--turn-lag') opt.turnLag = Number(next())
   else if (a === '--photo-lead') opt.photoLead = Number(next())
   else if (a === '--photo-lag') opt.photoLag = Number(next())
+  else if (a === '--only-at') opt.onlyAt = true
+  else if (a === '--at') opt.at.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--no-photos') opt.noPhotos = true
   else if (a === '--no-turns') opt.noTurns = true
   else if (a === '--turns') opt.noTurns = false
@@ -155,6 +157,12 @@ function usage() {
       --photo-lead N  seconds before a sail PhotoEvent      (default: 30)
       --photo-lag N   seconds after                        (default: 30)
       --no-photos     skip PhotoEvent windows entirely
+      --at HH:MM:SS   cut a clip around this LOCAL time too, as if it were a sail
+                      photo. Repeatable, or comma-separated. Uses the photo
+                      window (--photo-lead/--photo-lag), so 30/30 = a 60 s clip.
+                      For moments the navigator did not mark in the event file.
+      --only-at       cut ONLY the --at moments — ignore the guns, roundings,
+                      manoeuvres and sail photos in the event file.
       --archive       slower, smaller compression
   -n, --dry-run       report the selection, compress nothing`)
 }
@@ -366,16 +374,36 @@ const addWindow = (utc, kind, label, valid = true) => {
   const k = KINDS[kind]
   windows.push({ from: utc - k.lead() * 1000, to: utc + k.lag() * 1000, kind, label: valid ? label : `${label}?` })
 }
+// --only-at: the caller has named the moments they want, so nothing from the
+// event file competes with them.
+if (!opt.onlyAt) {
 for (const g of ev.raceGuns) addWindow(g.utc, 'start', `R${g.raceNum || '?'} start`)
 for (const r of ev.markRoundings) addWindow(r.utc, r.isTop ? 'topmark' : 'gate', r.isTop ? 'Top mark' : 'Leeward gate', r.isValid !== false)
-if (!opt.noTurns) {
+}
+if (!opt.onlyAt && !opt.noTurns) {
   for (const t of ev.tackJibes) addWindow(t.utc, t.isTack ? 'tack' : 'gybe', t.isTack ? 'Tack' : 'Gybe', t.isValid !== false)
 }
 // Sail photos. On a training day these may be the ONLY windows in the file —
 // there is no gun and often no roundings — so they are what makes such a day
 // selectable at all.
-if (!opt.noPhotos) {
+if (!opt.onlyAt && !opt.noPhotos) {
   for (const ph of ev.photoEvents || []) addWindow(ph.utc, 'photo', ph.label || 'Photo')
+}
+// --at: moments called out by hand, for anything the navigator did not mark.
+// Same window as a sail photo, so they behave identically downstream.
+if (opt.at.length) {
+  // The DAY comes from the event file (or, failing that, the first timed clip):
+  // a bare HH:MM:SS has no date, and guessing "today" would silently misplace a
+  // card processed the morning after.
+  const dayRef = ev.dayStartUtc ?? clips.find((c) => c.start != null)?.start
+  if (dayRef == null) die('--at needs a dated event file or at least one clip with a timestamp')
+  const d0 = new Date(dayRef)
+  for (const t of opt.at) {
+    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t)
+    if (!m) die(`--at: "${t}" is not HH:MM or HH:MM:SS`)
+    const utc = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate(), +m[1], +m[2], +(m[3] || 0))
+    addWindow(utc, 'photo', `Photo ${t}`)
+  }
 }
 if (!windows.length) die('the event file has no starts, roundings, tacks, gybes or sail photos')
 
