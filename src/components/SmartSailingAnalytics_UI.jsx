@@ -22,6 +22,7 @@ import { sortForUpload } from '../lib/uploadOrder';
 import { fallbackMagVar } from '../lib/magVar';
 import { collectNewClips, canWatchFolders } from '../lib/watchFolder';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
+import { playerStage, STAGE_TEXT, clipUrlIsFresh, isMp4Url } from '../lib/playerStage';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending as syncPendingPhotos, connectionIsGood as photoConnGood } from '../lib/photoStore';
@@ -1014,8 +1015,15 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   //   loading — fetching/buffering, keep waiting
   //   ready   — metadata in, it will play
   //   error   — the browser gave up; nothing more will happen
+  //   retrying — failed once; fetching a fresh link before saying anything
   const[playState,setPlayState]=useState("loading");
   const[playErr,setPlayErr]=useState(null);
+  const playStateRef=useRef("loading"); playStateRef.current=playState;
+  // One automatic retry per CLIP (a fresh link, or a reload in place) before the
+  // viewer is told it is unavailable. Not per URL: a refreshed signed URL is a new
+  // URL, and resetting on that would retry forever.
+  const retryRef=useRef(0);
+  useEffect(()=>{ retryRef.current=0; },[video.id]);
   const slowTimerRef=useRef(null);
   const[slow,setSlow]=useState(false);
   // A new source starts the cycle again — otherwise switching clips inherits the
@@ -1036,10 +1044,35 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     if(c===4) return "this device's browser cannot play this file";
     return "the video could not be loaded";
   };
+  // Reload the current source without changing it — for an HLS playlist (not
+  // signed, so a "fresh" link is the same link) or a connection that came back.
+  const reloadInPlace=()=>{
+    if(hlsRef.current){ try{hlsRef.current.startLoad();}catch{} return; }
+    const el=vidRef.current; if(el){ try{el.load();}catch{} }
+  };
+  // The browser (or hls.js) gave up. Most of these are a link that expired —
+  // signed Storage URLs live an hour — or a phone that dropped off the network
+  // for a moment, and both recover with a fresh link. So try once, quietly,
+  // before telling anyone the video is unavailable.
+  const onMediaFail=(detail)=>{
+    if(retryRef.current<1 && String(video.objectUrl||"").startsWith("http")){
+      retryRef.current+=1;
+      setPlayState("retrying"); setPlayErr(null);
+      onRecheckStream?.(video.id,{force:true});
+      // A link that comes back unchanged re-attaches nothing by itself.
+      setTimeout(()=>{ if(playStateRef.current==="retrying"){ setPlayState("loading"); reloadInPlace(); } },2500);
+      return;
+    }
+    setPlayState("error"); setPlayErr(detail);
+  };
+  const onMediaFailRef=useRef(onMediaFail); onMediaFailRef.current=onMediaFail;
   // True when the active source is HLS (cloud adaptive). Flips to false when
   // a coach/admin has toggled HD-local, because the IndexedDB blob is always
-  // a progressive MP4/MOV. Consumed by the toolbar indicator below.
-  const isHls=!useLocalHD && (video.source==="cloud" || video.objectUrl?.includes(".m3u8"));
+  // a progressive MP4/MOV. Consumed by the toolbar indicator below. A signed
+  // Storage MP4 is never HLS, even on a cloud clip — hls.js cannot play one.
+  const isHls=!useLocalHD && !isMp4Url(video.objectUrl) && (video.source==="cloud" || video.objectUrl?.includes(".m3u8"));
+  // Which of the three messages (or none) the viewer should see right now.
+  const stage=playerStage(video,playState);
 
   // Always start a fresh clip on the default (cloud) source.
   useEffect(()=>{ setUseLocalHD(false); },[video.id]);
@@ -1137,9 +1170,18 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       if(cancelled||!vidRef.current) return;
       // HLS only when we're NOT on the local blob: local is always a
       // progressive MP4/MOV that the <video> element decodes natively.
-      const useHls = !useLocalHD && (video.source==="cloud" || srcUrl?.includes(".m3u8"));
-      if(useHls){
+      const useHls = !useLocalHD && !isMp4Url(srcUrl) && (video.source==="cloud" || srcUrl?.includes(".m3u8"));
+      // iPhone Safari plays HLS itself and has no MediaSource for hls.js anyway —
+      // it used to download the ~400 KB library from cdnjs first and only then
+      // fall back to native. Go native straight away: that fetch was pure delay on
+      // the first load of every clip.
+      const nativeHlsOnly = useHls && !window.MediaSource && !!vidRef.current.canPlayType("application/vnd.apple.mpegurl");
+      if(nativeHlsOnly){
+        if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
+        vidRef.current.src=srcUrl;
+      }else if(useHls){
         const init=()=>{
+          if(cancelled||!vidRef.current) return;
           if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
           if(window.Hls?.isSupported()){
             // Tuned for weak field wifi: start on the lowest rendition so
@@ -1154,11 +1196,33 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
               const lvl=hls.levels?.[d.level];
               if(lvl) setVidQuality(`${lvl.height}p · ${(lvl.bitrate/1e6).toFixed(2)} Mbps`);
             });
+            // Fatal hls.js errors never reach the <video> element, so they left the
+            // player on "loading" for good. Recover the two kinds hls.js can recover
+            // (a dropped request, a decode hiccup) twice, then hand over.
+            let recovered=0;
+            hls.on(window.Hls.Events.ERROR,(_e,d)=>{
+              if(!d?.fatal) return;
+              if(recovered<2 && d.type===window.Hls.ErrorTypes.NETWORK_ERROR){ recovered++; hls.startLoad(); return; }
+              if(recovered<2 && d.type===window.Hls.ErrorTypes.MEDIA_ERROR){ recovered++; hls.recoverMediaError(); return; }
+              onMediaFailRef.current?.(d.type===window.Hls.ErrorTypes.NETWORK_ERROR?"network error — check the connection and try again":"the video could not be loaded");
+            });
             hls.loadSource(srcUrl);hls.attachMedia(vidRef.current);hlsRef.current=hls;
           }
           else if(vidRef.current.canPlayType("application/vnd.apple.mpegurl"))vidRef.current.src=srcUrl;
+          else onMediaFailRef.current?.("this device's browser cannot play this stream");
         };
-        if(!window.Hls){const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.14/hls.min.js";s.onload=init;document.head.appendChild(s);}
+        if(!window.Hls){
+          const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.14/hls.min.js";s.onload=init;
+          // cdnjs unreachable (captive wifi, a patchy phone signal) used to leave
+          // the player on "loading" forever. Use the browser's own HLS if it has
+          // one; otherwise say so.
+          s.onerror=()=>{
+            if(cancelled||!vidRef.current) return;
+            if(vidRef.current.canPlayType("application/vnd.apple.mpegurl")) vidRef.current.src=srcUrl;
+            else onMediaFailRef.current?.("the video player could not be loaded — check the connection and try again");
+          };
+          document.head.appendChild(s);
+        }
         else init();
       }else{
         if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
@@ -1474,61 +1538,70 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           onWaiting={()=>setPlayState(st=>st==="error"?st:"loading")}
           onStalled={()=>setPlayState(st=>st==="error"?st:"loading")}
           onCanPlay={()=>{setPlayState("ready");setSlow(false);}}
-          onError={e=>{setPlayState("error");setPlayErr(mediaErrText(e.target));}}
+          onError={e=>{
+            // Released on purpose (clip change, source swap) — not a failure.
+            if(!e.target.currentSrc&&!hlsRef.current) return;
+            onMediaFail(mediaErrText(e.target));
+          }}
           onLoadedMetadata={e=>{setPlayState("ready");setSlow(false);setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
-         (video.source==="processing"||video.streamProcessing)?<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#F59E0B",textAlign:"center",padding:16}}>
-           <div style={{fontSize:28,marginBottom:8}}>{video.streamStalled?"⚠":"⏳"}</div>
-           {/* Say WHICH phase, and how far in. "Processing" covered both "encoding,
-               40% done" and "queued, nothing has happened for an hour" — states that
-               need opposite responses, and which cost an afternoon to tell apart. */}
-           <div style={{fontSize:12}}>
-             {video.streamFailed?"Encoding failed"
-               :video.streamPct>0?`Encoding — ${Math.round(video.streamPct)}%`
-               :video.streamPhase==="queued"?"Waiting in Bunny's queue"
-               :video.streamStalled?"Still waiting":"Encoding in Stream…"}
-           </div>
-           {video.streamPct>0&&(
-             <div style={{width:170,height:4,background:"#0A1929",borderRadius:2,overflow:"hidden",marginTop:7}}>
-               <div style={{height:"100%",width:`${Math.min(100,video.streamPct)}%`,background:"#F59E0B",transition:"width .4s"}}/>
-             </div>
+         <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:16}}>
+           {stage==="unavailable"?(
+             <>
+               <div style={{fontSize:26,marginBottom:8}}>⚠</div>
+               <div style={{fontSize:13,color:"#FCA5A5",fontWeight:600,maxWidth:300,lineHeight:1.4}}>{STAGE_TEXT.unavailable}</div>
+               <div style={{fontSize:10,color:"#94A3B8",marginTop:6,maxWidth:300,lineHeight:1.45}}>
+                 {video.streamFailed?"Bunny could not encode this clip — it needs uploading again."
+                   :video.streamBytes===0?"The upload did not complete — it needs uploading again."
+                   :video.streamStalled?"The encode has been queued a long time without starting."
+                   :video.urlFailed?"We could not reach it just now — the connection may have dropped."
+                   :"There is no copy of this clip in the cloud yet."}
+               </div>
+               {(video.urlFailed||video.streamStalled)&&onRecheckStream&&(
+                 <button onClick={e=>{e.stopPropagation();onRecheckStream(video.id,{force:true});}}
+                   style={{marginTop:10,background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 14px",color:"#7DD3FC",fontSize:11,fontWeight:700,cursor:"pointer"}}>Try again</button>
+               )}
+             </>
+           ):(
+             <>
+               <div style={{fontSize:26,marginBottom:8}}>⏳</div>
+               <div style={{fontSize:13,color:"#7DD3FC",fontWeight:600,maxWidth:300,lineHeight:1.4}}>{STAGE_TEXT.finding}</div>
+               {/* Which phase, when Bunny has told us — "encoding, 40%" and "queued"
+                   need different patience — but as the small print, not the headline. */}
+               {(video.streamPct>0||video.streamPhase==="queued")&&(
+                 <div style={{fontSize:10,color:"#94A3B8",marginTop:6}}>
+                   {video.streamPct>0?`Encoding — ${Math.round(video.streamPct)}%`:"Waiting in the encoding queue"}
+                 </div>
+               )}
+               {video.streamPct>0&&(
+                 <div style={{width:170,height:4,background:"#0A1929",borderRadius:2,overflow:"hidden",marginTop:7}}>
+                   <div style={{height:"100%",width:`${Math.min(100,video.streamPct)}%`,background:"#7DD3FC",transition:"width .4s"}}/>
+                 </div>
+               )}
+             </>
            )}
-           <div style={{fontSize:10,color:"#475569",marginTop:6,maxWidth:300,lineHeight:1.45}}>
-             {video.streamFailed
-               ? "Bunny rejected this clip. Delete it here and upload it again."
-               : video.streamStalled&&!(video.streamPct>0)
-                 ? "It has been queued a long time without starting. If it stays like this, delete the clip and upload it again — the encode is stuck, not slow."
-                 : video.streamPct>0
-                   ? "Playback and the thumbnail appear as soon as this reaches 100%."
-                   : "A few minutes for a phone clip; longer for a 4K original."}
-           </div>
-           {video.streamBytes===0&&(
-             <div style={{fontSize:10,color:"#FCA5A5",marginTop:5,maxWidth:300,lineHeight:1.45}}>
-               Bunny has received 0 bytes — the upload did not complete. Re-upload this clip.
-             </div>
-           )}
-           {video.streamStalled&&(
-             <button onClick={e=>{e.stopPropagation();onRecheckStream?.(video.id);}}
-               style={{marginTop:10,background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 14px",color:"#7DD3FC",fontSize:11,fontWeight:700,cursor:"pointer"}}>Check again</button>
-           )}
-         </div>:
-         <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:"#334155"}}><div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📹</div><div style={{fontSize:11}}>No playback available</div></div>}
+         </div>}
         {/* Say what the player is doing. The element stays mounted underneath, so a
             stream that recovers still plays without the user touching anything. */}
-        {video.objectUrl&&playState!=="ready"&&(
+        {video.objectUrl&&stage!=="ready"&&(
           <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(3,15,26,0.82)",textAlign:"center",padding:16,zIndex:3}}>
-            {playState==="error"?(
+            {stage==="unavailable"?(
               <>
                 <div style={{fontSize:26,marginBottom:8}}>⚠</div>
-                <div style={{fontSize:12,color:"#FCA5A5",fontWeight:600}}>Video not available</div>
-                <div style={{fontSize:10,color:"#94A3B8",marginTop:5,maxWidth:280,lineHeight:1.45}}>{playErr}</div>
-                <button onClick={e=>{e.stopPropagation();const el=vidRef.current;if(!el)return;setPlayState("loading");setPlayErr(null);try{el.load();}catch{}}}
+                <div style={{fontSize:13,color:"#FCA5A5",fontWeight:600,maxWidth:300,lineHeight:1.4}}>{STAGE_TEXT.unavailable}</div>
+                {playErr&&<div style={{fontSize:10,color:"#94A3B8",marginTop:6,maxWidth:280,lineHeight:1.45}}>Detail: {playErr}</div>}
+                <button onClick={e=>{e.stopPropagation();setPlayState("loading");setPlayErr(null);onRecheckStream?.(video.id,{force:true});reloadInPlace();}}
                   style={{marginTop:10,background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 14px",color:"#7DD3FC",fontSize:11,fontWeight:700,cursor:"pointer"}}>Try again</button>
+              </>
+            ):stage==="finding"?(
+              <>
+                <div style={{fontSize:24,marginBottom:8}}>⏳</div>
+                <div style={{fontSize:13,color:"#7DD3FC",fontWeight:600,maxWidth:300,lineHeight:1.4}}>{STAGE_TEXT.finding}</div>
               </>
             ):(
               <>
                 <div style={{fontSize:24,marginBottom:8}}>⏳</div>
-                <div style={{fontSize:12,color:"#7DD3FC"}}>Loading — please wait</div>
-                {slow&&<div style={{fontSize:10,color:"#94A3B8",marginTop:5,maxWidth:280,lineHeight:1.45}}>Still loading. On a slow connection this can take a while; if it does not start, the clip may not have finished uploading yet.</div>}
+                <div style={{fontSize:13,color:"#7DD3FC",fontWeight:600}}>{STAGE_TEXT.loading}</div>
+                {slow&&<div style={{fontSize:10,color:"#94A3B8",marginTop:6,maxWidth:280,lineHeight:1.45}}>Still loading — on a slow connection this can take a while.</div>}
               </>
             )}
           </div>
@@ -6480,34 +6553,60 @@ function SSAApp(){
   // Bunny poster; a clip only needs a playback URL when it's actually selected to
   // play, which is what the effect below drives. Idempotent: a clip that already
   // has a resolved https URL is skipped.
-  const ensureClipUrl = useCallback(async (videoId) => {
+  // Clips whose URL is being resolved right now — so the selection effect, the
+  // player's quiet retry and "Try again" cannot start three fetches for one clip.
+  const clipUrlInflightRef = useRef(new Set());
+  const ensureClipUrl = useCallback(async (videoId, { force = false } = {}) => {
     if (!videoId) return;
     const v = allVideosRef.current.find(x => x.id === videoId);
     if (!v) return;
-    if (v.objectUrl && String(v.objectUrl).startsWith('http')) return;   // already resolved
+    // Resolved AND not about to expire. A signed Storage URL lives one hour, and
+    // any https URL used to count as resolved forever — so a clip first opened an
+    // hour earlier replayed a dead link and the phone said "not available".
+    if (!force && clipUrlIsFresh(v)) return;
     if (!(v.hasProxy || v.hasOriginal || v.streamId)) return;            // nothing in the cloud to resolve
-    let upd = null;
+    if (clipUrlInflightRef.current.has(videoId)) return;
+    clipUrlInflightRef.current.add(videoId);
+    const patch = (p) => {
+      setAllVideos(prev => prev.map(x => x.id === videoId ? { ...x, ...p } : x));
+      setSelectedVideo(prev => (prev && prev.id === videoId) ? { ...prev, ...p } : prev);
+    };
+    patch({ urlResolving: true, urlFailed: false });
+    let upd = null, gone = false, encodeFailed = false;
     try {
-      if (v.hasProxy || v.hasOriginal) {
-        const res = await fetch(`/api/videos/${encodeURIComponent(v.cloudId || v.id)}/url?prefer=${isMobile ? 'proxy' : 'auto'}`);
-        if (res.ok) {
-          const j = await res.json();
-          if (j?.url) upd = { objectUrl: j.url, servedRendition: j.served || null, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
-          else if (j?.kind === 'processing') upd = { streamProcessing: true, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
-        }
+      // A phone waking up, a cold server, one dropped request — none of those mean
+      // the clip is gone. Three tries, a little apart, before saying so.
+      for (let attempt = 0; attempt < 3 && !upd && !gone; attempt++) {
+        if (attempt) await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 2500));
+        try {
+          if (v.hasProxy || v.hasOriginal) {
+            const res = await fetch(`/api/videos/${encodeURIComponent(v.cloudId || v.id)}/url?prefer=${isMobile ? 'proxy' : 'auto'}`, { cache: 'no-store' });
+            if (res.ok) {
+              const j = await res.json();
+              if (j?.url) upd = { objectUrl: j.url, servedRendition: j.served || null, urlExpiresAt: j.expires_at ? j.expires_at * 1000 : null, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
+              else if (j?.kind === 'processing') upd = { streamProcessing: true, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
+            } else if (res.status === 404 && !v.streamId) gone = true;   // no rendition anywhere — retrying will not change that
+          }
+          if (!upd && !gone && v.streamId) {
+            const res = await fetch(`/api/stream/status/${v.streamId}`, { cache: 'no-store' });
+            if (res.ok) {
+              const s = await res.json();
+              if (s.playbackUrl) upd = { objectUrl: s.playbackUrl, urlExpiresAt: null, thumbnailUrl: v.thumbnailUrl || s.thumbnailUrl || null };
+              else if (s.failed) { gone = true; encodeFailed = true; }
+              else upd = { streamProcessing: true, thumbnailUrl: v.thumbnailUrl || s.thumbnailUrl || null };   // the poller takes it from here
+            }
+          }
+        } catch { /* offline / transient — the next attempt */ }
       }
-      if (!upd && v.streamId) {
-        const res = await fetch(`/api/stream/status/${v.streamId}`);
-        if (res.ok) { const s = await res.json(); if (s.playbackUrl) upd = { objectUrl: s.playbackUrl, thumbnailUrl: v.thumbnailUrl || s.thumbnailUrl || null }; }
-      }
-    } catch { /* offline / transient — the poster stays, retried on next select */ }
-    if (!upd) return;
+    } finally {
+      clipUrlInflightRef.current.delete(videoId);
+    }
+    if (!upd) { patch({ urlResolving: false, urlFailed: true, ...(encodeFailed ? { streamFailed: true } : {}) }); return; }
     // Defer revoking the old blob: URL — a live <video> may still be reading it
     // (see the note in loadDate); revoking synchronously spams ERR_FILE_NOT_FOUND.
     const old = v.objectUrl;
     if (old && String(old).startsWith('blob:')) setTimeout(() => { try { URL.revokeObjectURL(old); } catch { /* */ } }, 15_000);
-    setAllVideos(prev => prev.map(x => x.id === videoId ? { ...x, ...upd } : x));
-    setSelectedVideo(prev => (prev && prev.id === videoId) ? { ...prev, ...upd } : prev);
+    patch({ ...upd, urlResolving: false, urlFailed: false });
   }, [isMobile]);
 
   // When a clip becomes selected, make sure its playback URL is resolved (it plays
@@ -6558,7 +6657,7 @@ function SSAApp(){
           const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=${isMobile?'proxy':'auto'}`);
           if(res.ok){
             const j=await res.json();
-            if(j?.url){ updates[v.id]={objectUrl:j.url,servedRendition:j.served||null,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||j.thumbnail||null}; return; }
+            if(j?.url){ updates[v.id]={objectUrl:j.url,servedRendition:j.served||null,urlExpiresAt:j.expires_at?j.expires_at*1000:null,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||j.thumbnail||null}; return; }
             // A poster can arrive well before the renditions do — take it, so the
             // card stops being a black rectangle while the encode finishes.
             if(j?.thumbnail&&!v.thumbnailUrl) updates[v.id]={thumbnailUrl:j.thumbnail};
@@ -6597,11 +6696,13 @@ function SSAApp(){
   // "Check again" on a stalled encode: clear the flag, re-arm the poll budget and
   // ask now. A clip Bunny finished after we stopped watching comes good without a
   // page reload — which was the only way out before.
-  const recheckStream=useCallback((videoId)=>{
+  // opts.force re-resolves even a link that looks fresh — the player's quiet
+  // retry and "Try again" use it after a failed load.
+  const recheckStream=useCallback((videoId, opts)=>{
     setAllVideos(prev=>prev.map(v=>v.id===videoId?{...v,streamStalled:false}:v));
     setSelectedVideo(prev=>(prev&&prev.id===videoId)?{...prev,streamStalled:false}:prev);
     setStreamPollTick(0);
-    ensureClipUrl(videoId);
+    ensureClipUrl(videoId, opts);
   },[ensureClipUrl]);
 
   // Throttled callback passed to VideoPlayer — ~12 fps max to keep renders light

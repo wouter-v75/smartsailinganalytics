@@ -42,29 +42,31 @@ const STREAM_KEY = process.env.BUNNY_STREAM_API_KEY
 const LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID
 const CDN_HOST = process.env.BUNNY_CDN_HOSTNAME || ''
 
-// If the Bunny Stream video has finished encoding (status 4), return its
-// adaptive HLS playlist URL; otherwise null (not playable yet).
-// Last status Bunny reported during this request, so the caller can persist it.
-// Asking Bunny is the only way to know, and it happens here anyway — recording it
-// means every OTHER device gets the answer from one list query instead of a
-// per-clip round trip, or worse, guessing from whether a cloud row exists.
-let lastStreamStatus: number | null = null
-
-async function streamHlsUrl(guid: string): Promise<string | null> {
-  if (!STREAM_KEY || !LIBRARY_ID || !CDN_HOST) return null
+// Ask Bunny whether a Stream video has finished encoding (status 4). Returns its
+// adaptive HLS playlist URL when it has, and the status Bunny reported, so the
+// caller can persist it — every OTHER device then gets the answer from one list
+// query instead of a per-clip round trip.
+//
+// The status is returned, not stashed: it used to live in a module-level
+// variable shared by every request the server instance was handling, so one
+// clip's status could be written onto another clip's row.
+//
+// Bounded at 2.5 s. This call is most of a phone's first load; when Bunny is
+// slow the caller falls back to the signed Storage MP4, which plays at once.
+async function streamHls(guid: string): Promise<{ url: string | null; status: number | null }> {
+  if (!STREAM_KEY || !LIBRARY_ID || !CDN_HOST) return { url: null, status: null }
   try {
     const res = await fetch(
       `https://video.bunnycdn.com/library/${LIBRARY_ID}/videos/${guid}`,
-      { headers: { AccessKey: STREAM_KEY }, cache: 'no-store' }
+      { headers: { AccessKey: STREAM_KEY }, cache: 'no-store', signal: AbortSignal.timeout(2500) }
     )
-    if (!res.ok) return null
+    if (!res.ok) return { url: null, status: null }
     const v = (await res.json()) as { status?: number }
-    if (typeof v?.status === 'number') lastStreamStatus = v.status
+    const status = typeof v?.status === 'number' ? v.status : null
     // status 4 = finished encoding → adaptive renditions exist.
-    if (v?.status === 4) return `https://${CDN_HOST}/${guid}/playlist.m3u8`
-    return null
+    return { url: status === 4 ? `https://${CDN_HOST}/${guid}/playlist.m3u8` : null, status }
   } catch {
-    return null
+    return { url: null, status: null }
   }
 }
 
@@ -104,11 +106,25 @@ export async function GET(
   if (!v) return NextResponse.json({ error: 'not found' }, { status: 404 })
 
   // ── Rendition resolvers ────────────────────────────────────────────────────
+  // What Bunny said about the original during THIS request (see streamHls).
+  let originalStatus: number | null = null
+
   const resolveOriginal = async (): Promise<Resolved | null> => {
     // Phase 2/3 — original lives in Bunny Stream as adaptive HLS.
     if (v.bunny_original_stream_id) {
-      const hls = await streamHlsUrl(v.bunny_original_stream_id)
-      if (hls) return { url: hls, kind: 'hls', served: 'original', expires: null }
+      // Fast path, as the proxy already had: the row says this encode finished,
+      // so skip the Bunny round trip.
+      if (v.original_stream_status === 4 && CDN_HOST) {
+        return {
+          url: `https://${CDN_HOST}/${v.bunny_original_stream_id}/playlist.m3u8`,
+          kind: 'hls',
+          served: 'original',
+          expires: null,
+        }
+      }
+      const s = await streamHls(v.bunny_original_stream_id)
+      originalStatus = s.status
+      if (s.url) return { url: s.url, kind: 'hls', served: 'original', expires: null }
       // Stream video exists but hasn't finished encoding — not playable yet.
     }
     // Legacy — original as a signed Bunny Storage MP4.
@@ -135,7 +151,7 @@ export async function GET(
           expires: null,
         }
       }
-      const hls = await streamHlsUrl(v.bunny_proxy_stream_id)
+      const { url: hls } = await streamHls(v.bunny_proxy_stream_id)
       if (hls) {
         // Cache the finished status so future loads skip the round-trip.
         // RLS-gated; a no-op for callers who can't UPDATE — harmless.
@@ -199,8 +215,8 @@ export async function GET(
   // Best-effort: a failure here must never break playback.
   const patch: Record<string, unknown> = {}
   if (thumbnail && !v.thumbnail_url) patch.thumbnail_url = thumbnail
-  if (lastStreamStatus != null && v.original_stream_status !== lastStreamStatus && v.bunny_original_stream_id) {
-    patch.original_stream_status = lastStreamStatus
+  if (originalStatus != null && v.original_stream_status !== originalStatus && v.bunny_original_stream_id) {
+    patch.original_stream_status = originalStatus
   }
   if (Object.keys(patch).length) {
     try { await getServiceSupabase().from('videos').update(patch).eq('id', params.videoId) }
