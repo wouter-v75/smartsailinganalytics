@@ -147,10 +147,23 @@ export async function waitForStreamReady(streamId, maxWaitMs = 120000) {
 // individual video finishes uploading to Bunny Stream (before the next one
 // starts). Used by the UI to mirror that video into Supabase straight away so
 // teammates see clips appear one-by-one instead of waiting for the whole batch.
+// Is this clip's original already in the cloud? Three ways it can be: the legacy
+// direct-to-Stream upload below (cloudSynced + streamId); the storage-first path
+// used by the watch folder and the Videos tab (originalUploadedAt, set even when
+// the Stream fetch failed — the bytes are up); or the library's own flag from
+// the cloud row (hasOriginal). Push to Cloud must skip all three, or it sends a
+// clip that is already up a second time.
+export function alreadyInCloud(video) {
+  if (!video) return false;
+  return Boolean((video.cloudSynced && video.streamId) || video.originalUploadedAt || video.hasOriginal);
+}
+
 export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus, opts = {}) {
   const status = msg => onStatus?.(msg);
   const onVideoSynced = opts.onVideoSynced;
-  const result = { success: false, streamIds: {} };
+  // skipped: ids whose original was already up without a legacy streamId, so
+  // the caller can close their progress rows.
+  const result = { success: false, streamIds: {}, skipped: [] };
   try {
     // Read the session manifest once (a few hundred bytes) so we can skip
     // re-uploading log/xml that is already in the cloud unchanged. This replaces
@@ -205,10 +218,11 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
 
     // 3. Videos → Bunny Stream (direct via tus)
     for (const video of videos) {
-      // Skip if already cloud-synced
-      if (video.cloudSynced && video.streamId) {
-        status(`↩ ${video.name} already in Stream — skipping`);
-        result.streamIds[video.id] = video.streamId;
+      // Skip anything whose original is already up, by either upload path.
+      if (alreadyInCloud(video)) {
+        status(`↩ ${video.name} already in cloud — skipping`);
+        if (video.cloudSynced && video.streamId) result.streamIds[video.id] = video.streamId;
+        else result.skipped.push(video.id);
         continue;
       }
 
@@ -256,7 +270,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       videos: videos.map(v => ({
         id: v.id, name: v.name, size: v.size, duration: v.duration,
         camera: v.camera, title: v.title, tags: v.tags,
-        streamId: result.streamIds[v.id] || v.streamId || null,
+        streamId: result.streamIds[v.id] || v.streamId || v.originalStreamId || null,
         startUtc: v.startUtc || null, tsSource: v.tsSource || null,
         // Enriched instrument averages
         twsAvg: v.twsAvg ?? null, twaAvg: v.twaAvg ?? null,

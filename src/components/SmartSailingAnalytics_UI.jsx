@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { saveVideo, pruneInertVideos, dedupeVideos, updateVideoRotation, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList } from "../lib/localStore";
+import { saveVideo, pruneInertVideos, dedupeVideos, updateVideoRotation, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList, markVideoOriginalUploaded, getVideoCloudFlags } from "../lib/localStore";
 import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady, createStreamUpload, uploadFileToStream } from "../lib/bunny";
 import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
@@ -2718,6 +2718,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         });
         if (!res.ok) throw new Error(res.error || 'upload failed');
         if (res.streamError) addLog(`⚠ ${label}: playable, but the adaptive encode was not queued (${res.streamError})`);
+        // Record the upload on this device AND in the saved list: Push to Cloud
+        // re-sends anything not marked, so without this it uploaded every
+        // watched clip a second time.
+        const mark = { originalUploadedAt: Date.now(), originalPath: res.originalPath || null, originalStreamId: res.streamId || null };
+        await markVideoOriginalUploaded(next.id, mark);
+        setSavedVids(p => p.map(v => v.id === next.id ? { ...v, ...mark } : v));
         addLog(`✓ ${label} uploaded — watchable now`);
         setWatchUploaded(n => n + 1);
       } catch (e) {
@@ -3081,7 +3087,11 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       // Enrich videos with latest log/xml before uploading so cloud gets full metadata
       const _syncLog = await getLogData(savedDate);
       const _syncXml = await getXmlData(savedDate);
-      const _syncVids = savedVids.map(v => enrichVideo(v, _syncLog, _syncXml, syncOffsets));
+      // Fresh upload marks from this device: the watch folder or the Videos tab
+      // may have uploaded some of these since they were saved, and the list in
+      // memory can lag. Anything already up is then skipped, not sent again.
+      const _flags = await getVideoCloudFlags(savedVids.map(v => v.id));
+      const _syncVids = savedVids.map(v => enrichVideo({ ...v, ...(_flags.get(v.id) || {}) }, _syncLog, _syncXml, syncOffsets));
 
       // Resolve the authed user up-front so the per-video Supabase mirror
       // callback (below) doesn't have to re-auth on every clip.
@@ -3169,6 +3179,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         setItem(vidId,{state:"done",pct:100,streamId});
         setStreamStatus(p=>({...p,[vidId]:{state:"processing",streamId}}));
       });
+      // Clips skipped because their original was already up (watch folder or
+      // Videos tab) have no new streamId — close their rows too.
+      (result.skipped||[]).forEach(vidId=>setItem(vidId,{state:"done",pct:100}));
       // Mark log done if not already (handles the case with no XML)
       setItem("log",{state:"done",pct:100});
 
@@ -6229,6 +6242,8 @@ function SSAApp(){
             // Storage copy still plays, so this is a warning, not a failure.
             if (res.streamError) console.warn('[batch-upload-compressed] adaptive encode not queued for', video.id, res.streamError);
             clearPendingOrigStream(video.id);
+            // Persist it too, so a later Push to Cloud of this session skips it.
+            await markVideoOriginalUploaded(video.id, { originalPath: res.originalPath || null, originalStreamId: res.streamId || null });
             setAllVideos(p => p.map(v => v.id === video.id
               ? { ...v, hasOriginal: true, originalStreamId: res.streamId || null, streamProcessing: Boolean(res.streamId), cloudId }
               : v));

@@ -358,9 +358,53 @@ export async function updateVideoBlobAndDuration(id, blob, durationSec, newStart
     entry.localBlobModifiedAt = Date.now();
     // Drop any prior streamId — the cloud copy is now stale.
     if (entry.streamId) entry.streamId = null;
+    // Same for a storage-first original: those bytes are not these bytes.
+    entry.originalUploadedAt = null;
+    entry.originalPath       = null;
+    entry.originalStreamId   = null;
     await idbPut(db, "videos", entry);
     return true;
   } catch { return false; }
+}
+
+// ── Mark a video's ORIGINAL as uploaded (storage-first path) ─────────────────
+// Kept apart from cloudSynced/streamId on purpose: those mean "play the Stream
+// copy", while a storage-first clip plays from Storage at once and its Stream
+// ladder may still be encoding (or never queued). Push to Cloud skips anything
+// marked here, so a clip the watch folder or the Videos tab already sent can
+// never be sent a second time.
+export async function markVideoOriginalUploaded(id, { originalPath = null, originalStreamId = null } = {}) {
+  try {
+    const db    = await openDb();
+    const entry = await idbGet(db, "videos", id);
+    if (!entry) return false;
+    entry.originalUploadedAt = Date.now();
+    entry.originalPath       = originalPath;
+    entry.originalStreamId   = originalStreamId;
+    await idbPut(db, "videos", entry);
+    return true;
+  } catch { return false; }
+}
+
+// Upload marks for these clips as stored on this device — only the fields that
+// are set, so merging them over an in-memory copy never erases anything.
+export async function getVideoCloudFlags(ids) {
+  const out = new Map();
+  try {
+    const db = await openDb();
+    for (const id of ids || []) {
+      const e = await idbGet(db, "videos", id);
+      if (!e) continue;
+      const f = {};
+      if (e.cloudSynced) f.cloudSynced = true;
+      if (e.streamId) f.streamId = e.streamId;
+      if (e.originalUploadedAt) f.originalUploadedAt = e.originalUploadedAt;
+      if (e.originalPath) f.originalPath = e.originalPath;
+      if (e.originalStreamId) f.originalStreamId = e.originalStreamId;
+      out.set(id, f);
+    }
+  } catch {}
+  return out;
 }
 
 // ── Mark a video as cloud-synced (has a streamId) ─────────────────────────────
