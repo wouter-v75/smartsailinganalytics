@@ -2639,6 +2639,10 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   useEffect(() => {
     if (!watchOn) return;
     if (!savedVids?.length) return;
+    // addLog through the ref, NOT as a dep: addLog is rebuilt every render, so
+    // with it in the deps this effect ran after every render — and its own
+    // "already queued" line re-rendered, which ran it again, forever.
+    const addLog = watchFnsRef.current.addLog;
     let added = 0, alreadyQueued = 0, unmatched = [];
     for (const v of savedVids) {
       if (!watchImportedRef.current.has(v.name)) { unmatched.push(v.name || v.title || v.id); continue; }
@@ -2657,7 +2661,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     } else if (alreadyQueued) {
       addLog(`↥ ${alreadyQueued} clip(s) already queued`);
     }
-  }, [watchOn, savedVids, savedDate, addLog]);
+  }, [watchOn, savedVids, savedDate]);
 
   // Auto-upload each watched clip once it has been imported and SAVED.
   //
@@ -3198,6 +3202,37 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     setCsvTz(DEFAULT_TZ);setXmlTz(DEFAULT_TZ);setVidTz(DEFAULT_TZ);
   };
 
+  // The watch strip, drawn in BOTH views. It used to live inside the import view
+  // only, so the first save (phase → "saved") hid it — progress, the uploaded
+  // count and the Stop button all vanished while the watcher kept running.
+  const watchPanel = canWatchFolders() && (
+    <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:10,padding:"7px 9px",background:watchOn?"#062A22":"#071624",border:`1px solid ${watchOn?"#10B981":"#1E3A5A"}`,borderRadius:7}}>
+      <div style={{flex:1,fontSize:10,color:watchOn?"#6EE7B7":"#64748B",lineHeight:1.4}}>
+        {watchOn
+          ? `Watching ${watchDirRef.current?.name || "folder"} · ${watchCount} picked up · ${watchUploaded} uploaded`
+          : "Watch the encode folder — clips import and upload as the script finishes each one"}
+      </div>
+      {watchProgress && (
+        <div style={{flexBasis:"100%",order:9,marginTop:6}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#6EE7B7",marginBottom:3}}>
+            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"70%"}}>↑ {watchProgress.label}</span>
+            <span>{Math.round(watchProgress.pct*100)}% · {watchProgress.message}</span>
+          </div>
+          <div style={{height:4,background:"#0B2A20",borderRadius:2,overflow:"hidden"}}>
+            <div style={{height:"100%",width:`${Math.round(watchProgress.pct*100)}%`,background:"#10B981",transition:"width 0.2s"}}/>
+          </div>
+        </div>
+      )}
+      <label title="Upload each clip as soon as it is imported, rather than waiting for the whole card" style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:"#64748B",cursor:"pointer",whiteSpace:"nowrap"}}>
+        <input type="checkbox" checked={watchAutoUpload} onChange={e=>setWatchAutoUpload(e.target.checked)} style={{cursor:"pointer"}} />
+        upload as they arrive
+      </label>
+      <button onClick={watchOn ? stopWatching : startWatching} style={{background:watchOn?"#7F1D1D":"#0E7490",border:"none",borderRadius:5,color:"#fff",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
+        {watchOn ? "Stop" : "Watch folder…"}
+      </button>
+    </div>
+  );
+
   if(!perms.canImport)return(
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
       <div style={{textAlign:"center",color:"#334155"}}><div style={{fontSize:32,marginBottom:12,opacity:0.3}}>🔒</div><div style={{fontSize:13,color:"#475569",marginBottom:4}}>Import requires Coach or Admin role</div><div style={{fontSize:11}}>Switch role in the header to test</div></div>
@@ -3222,33 +3257,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               <input ref={vidRef} type="file" accept="video/*,image/*,.mov,.mp4,.mts,.avi,.mkv,.m4v,.heic,.heif" multiple style={{display:"none"}} onChange={e=>handleMixedDrop(e.target.files)}/>
               {/* Watch the encoder's output folder — import clips as they are cut,
                   so trimming and uploading overlap instead of running back to back. */}
-              {canWatchFolders() && (
-                <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:10,padding:"7px 9px",background:watchOn?"#062A22":"#071624",border:`1px solid ${watchOn?"#10B981":"#1E3A5A"}`,borderRadius:7}}>
-                  <div style={{flex:1,fontSize:10,color:watchOn?"#6EE7B7":"#64748B",lineHeight:1.4}}>
-                    {watchOn
-                      ? `Watching ${watchDirRef.current?.name || "folder"} · ${watchCount} picked up · ${watchUploaded} uploaded`
-                      : "Watch the encode folder — clips import and upload as the script finishes each one"}
-                  </div>
-                  {watchProgress && (
-                    <div style={{flexBasis:"100%",order:9,marginTop:6}}>
-                      <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:"#6EE7B7",marginBottom:3}}>
-                        <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"70%"}}>↑ {watchProgress.label}</span>
-                        <span>{Math.round(watchProgress.pct*100)}% · {watchProgress.message}</span>
-                      </div>
-                      <div style={{height:4,background:"#0B2A20",borderRadius:2,overflow:"hidden"}}>
-                        <div style={{height:"100%",width:`${Math.round(watchProgress.pct*100)}%`,background:"#10B981",transition:"width 0.2s"}}/>
-                      </div>
-                    </div>
-                  )}
-                  <label title="Upload each clip as soon as it is imported, rather than waiting for the whole card" style={{display:"flex",alignItems:"center",gap:4,fontSize:9,color:"#64748B",cursor:"pointer",whiteSpace:"nowrap"}}>
-                    <input type="checkbox" checked={watchAutoUpload} onChange={e=>setWatchAutoUpload(e.target.checked)} style={{cursor:"pointer"}} />
-                    upload as they arrive
-                  </label>
-                  <button onClick={watchOn ? stopWatching : startWatching} style={{background:watchOn?"#7F1D1D":"#0E7490",border:"none",borderRadius:5,color:"#fff",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
-                    {watchOn ? "Stop" : "Watch folder…"}
-                  </button>
-                </div>
-              )}
+              {watchPanel}
               <div onClick={()=>vidRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);handleMixedDrop(e.dataTransfer.files);}} style={{border:`2px dashed ${dragOver?"#06B6D4":"#1E3A5A"}`,borderRadius:8,padding:"24px 16px",textAlign:"center",cursor:"pointer",background:dragOver?"#071E30":"transparent",marginBottom:(pendingVids.length||pendingPhotos.length)?11:0,transition:"all 0.12s"}}>
                 <div style={{fontSize:20,marginBottom:7}}>📹 📷</div>
                 <div style={{fontSize:12,color:"#64748B"}}>Drop videos &amp; photos, or click to browse</div>
@@ -3418,6 +3427,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               <SrcBadge source="local"/><span style={{fontSize:12,fontWeight:600,color:"#1D9E75"}}>Session {fmtDate(savedDate)} saved locally</span>
               <span style={{flex:1}}/><button onClick={reset} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:5,padding:"2px 8px",color:"#475569",cursor:"pointer",fontSize:10}}>New import</button>
             </div>
+            {watchOn && watchPanel}
             <div style={{borderTop:"1px solid #1E3A5A",paddingTop:14}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
                 <SrcBadge source={phase==="done"?"cloud":"processing"}/>
@@ -3425,7 +3435,11 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                 {!cloudStatus?.available&&<span style={{fontSize:9,color:"#EF4444",background:"#EF444415",border:"1px solid #EF444430",borderRadius:3,padding:"1px 5px"}}>Not configured</span>}
                 {!perms.canSync&&<span style={{fontSize:9,color:"#F59E0B",background:"#F59E0B15",border:"1px solid #F59E0B30",borderRadius:3,padding:"1px 5px"}}>Coach required</span>}
               </div>
-              {phase==="saved"&&cloudStatus?.available&&perms.canSync&&(
+              {/* While watching, the watcher is already uploading these clips — and
+                  Push to Cloud does not know that (it skips only clips marked
+                  cloudSynced locally), so it would send every one a second time. */}
+              {phase==="saved"&&watchOn&&<div style={{fontSize:10,color:"#6EE7B7",marginBottom:12}}>Clips from the watched folder upload by themselves — nothing to press. Push to Cloud is hidden while watching because it would send them a second time.</div>}
+              {phase==="saved"&&!watchOn&&cloudStatus?.available&&perms.canSync&&(
                 <div style={{marginBottom:12}}>
                   <div style={{fontSize:10,color:"#475569",marginBottom:10}}>Uploads log + events to R2 and transcodes videos in Stream. All team roles can view once processing completes (~1–3 min per video).</div>
                   <button onClick={pushCloud} style={{background:"#8B5CF6",border:"none",borderRadius:8,padding:"11px 0",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer",width:"100%"}}>② Push to Cloud — {savedVids.length} video{savedVids.length!==1?"s":""} + log + events</button>
