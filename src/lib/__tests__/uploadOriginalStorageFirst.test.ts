@@ -17,6 +17,7 @@ const args = () => ({
   sessionDate: '2026-09-08',
   source: new Blob([new Uint8Array(1024)], { type: 'video/mp4' }),
   title: '20260908121330_race-start_day7_drone',
+  retryBaseMs: 1,   // no real backoff in the suite
 })
 
 const json = (body: unknown, ok = true, status = 200) =>
@@ -135,9 +136,12 @@ describe('skipping work a previous run already did', () => {
     expect(put()).toHaveBeenCalledOnce()
   })
 
-  it('re-uploads rather than returning ok if the row cannot be marked', async () => {
-    // Object is there, but the PATCH fails — a row that does not point at the
-    // file is worse than a repeated upload.
+  it('retries the row PATCH — not the upload — when marking fails once', async () => {
+    // Object already there; the first PATCH blips. Re-sending bytes that are
+    // already in Storage fixes nothing about a failed PATCH, so only the PATCH is
+    // retried. Before the upload paths were consolidated this re-uploaded
+    // instead; the consolidation dropped that without replacing it and a single
+    // blip failed the whole clip.
     size().mockResolvedValueOnce(1024)
     let patches = 0
     globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
@@ -148,7 +152,35 @@ describe('skipping work a previous run already did', () => {
     }) as unknown as typeof fetch
 
     const r = await uploadOriginalStorageFirst(args())
-    expect(put()).toHaveBeenCalledOnce()
+    expect(put()).not.toHaveBeenCalled()
     expect(r.ok).toBe(true)
+    expect(r.streamId).toBe('g')
+  })
+
+  it('never reports ok for a row that could not be marked', async () => {
+    // The property the old re-upload was really protecting: a row that does not
+    // point at the file must never be reported as a success.
+    size().mockResolvedValueOnce(1024)
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) =>
+      String(url).includes('/api/stream/fetch') ? json({ streamId: 'g' }) : json({ error: 'down' }, false, 503)
+    ) as unknown as typeof fetch
+
+    const r = await uploadOriginalStorageFirst(args())
+    expect(r.ok).toBe(false)
+    expect(put()).not.toHaveBeenCalled()
+  })
+
+  it('does not retry a 4xx — a permissions problem will not fix itself', async () => {
+    size().mockResolvedValueOnce(1024)
+    let patches = 0
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes('/api/stream/fetch')) return json({ streamId: 'g' })
+      patches += 1
+      return json({ error: 'forbidden' }, false, 403)
+    }) as unknown as typeof fetch
+
+    const r = await uploadOriginalStorageFirst(args())
+    expect(r.ok).toBe(false)
+    expect(patches).toBe(1)
   })
 })

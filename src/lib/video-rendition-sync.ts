@@ -53,6 +53,8 @@ interface BaseArgs {
   source: Blob
   onProgress?: (p: RenditionProgress) => void
   signal?: AbortSignal
+  /** Base backoff for retrying the row PATCH (ms). Tests lower it. */
+  retryBaseMs?: number
 }
 
 /**
@@ -138,20 +140,41 @@ async function probeBlob(blob: Blob): Promise<{ height: number | null; durationS
  * the upload failed would send them re-uploading footage the team can watch.
  */
 async function putAndFetch({
-  videoId, sessionDate, blob, title, kind, onProgress, signal,
+  videoId, sessionDate, blob, title, kind, onProgress, signal, retryBaseMs = 400,
 }: {
   videoId: string; sessionDate: string; blob: Blob; title: string
   kind: 'original' | 'proxy'
   onProgress?: (p: RenditionProgress) => void
   signal?: AbortSignal
+  retryBaseMs?: number
 }): Promise<{ ok: boolean; path?: string; streamId?: string; streamError?: string; error?: string }> {
   const emit = (p: RenditionProgress) => onProgress?.(p)
   const path = kind === 'proxy' ? proxyPathFor(sessionDate, videoId) : originalPathFor(sessionDate, videoId)
-  const mark = (body: unknown) =>
-    fetch(`/api/videos/${encodeURIComponent(videoId)}/renditions`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body), signal,
-    })
+  // The row PATCH is a small metadata write to our own API, and a blip there must
+  // not cost a clip. Retry the PATCH — NOT the upload: re-sending bytes that are
+  // already in Storage fixes nothing about a failed PATCH. (Before the upload
+  // paths were consolidated, a failed mark fell through to a re-upload, which was
+  // really a roundabout second attempt at the PATCH. putAndFetch dropped that
+  // without replacing it, so a single transient failure failed the whole clip.)
+  //
+  // Only transient failures are retried — network errors, 429 and 5xx. A 4xx is a
+  // bug or a permissions problem and will not improve by asking again.
+  const mark = async (body: unknown): Promise<Response> => {
+    let last: Response | null = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise((r) => setTimeout(r, retryBaseMs * 3 ** (attempt - 1)))
+      try {
+        last = await fetch(`/api/videos/${encodeURIComponent(videoId)}/renditions`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body), signal,
+        })
+        if (last.ok || !(last.status === 429 || last.status >= 500)) return last
+      } catch (e) {
+        if (signal?.aborted || attempt === 2) throw e
+      }
+    }
+    return last as Response
+  }
 
   try {
     // Bunny Storage cannot resume a PUT, so the next best thing is not to repeat
@@ -216,6 +239,7 @@ export async function syncProxyForVideo({
   proxyBlobIfAvailable,
   onProgress,
   signal,
+  retryBaseMs,
 }: BaseArgs & { proxyBlobIfAvailable?: Blob | null }): Promise<{
   ok: boolean
   proxyStreamId?: string
@@ -279,7 +303,7 @@ export async function syncProxyForVideo({
     const asIs = proxyBlob === source
     const r = await putAndFetch({
       videoId, sessionDate, blob: proxyBlob, title: `v_${videoId}`,
-      kind: asIs ? 'original' : 'proxy', onProgress, signal,
+      kind: asIs ? 'original' : 'proxy', onProgress, signal, retryBaseMs,
     })
     if (!r.ok) throw new Error(r.error || 'upload failed')
     return {
@@ -302,6 +326,7 @@ export async function uploadOriginalStorageFirst({
   title,
   onProgress,
   signal,
+  retryBaseMs,
 }: BaseArgs & { title: string }): Promise<{
   ok: boolean
   originalPath?: string
@@ -309,7 +334,7 @@ export async function uploadOriginalStorageFirst({
   streamError?: string
   error?: string
 }> {
-  const r = await putAndFetch({ videoId, sessionDate, blob: source, title, kind: 'original', onProgress, signal })
+  const r = await putAndFetch({ videoId, sessionDate, blob: source, title, kind: 'original', onProgress, signal, retryBaseMs })
   return r.ok
     ? { ok: true, originalPath: r.path, streamId: r.streamId, streamError: r.streamError }
     : { ok: false, error: r.error }
