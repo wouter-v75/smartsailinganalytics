@@ -1034,6 +1034,18 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     if(video.objectUrl) slowTimerRef.current=setTimeout(()=>setSlow(true),12000);
     return ()=>{ if(slowTimerRef.current) clearTimeout(slowTimerRef.current); };
   },[video.objectUrl]);
+  // Has the viewer (or autoplay) asked this clip to play? Until then the stage
+  // shows the poster and a play button — NOT "loading". An iPhone fetches nothing
+  // before a tap, so a loading message there never went away, and it sat on top
+  // of the video catching the very tap that would have started it.
+  const[started,setStarted]=useState(!!autoPlay);
+  useEffect(()=>{ setStarted(!!autoPlay); },[video.id,autoPlay]);
+  const startPlay=()=>{
+    setStarted(true); setSlow(false);
+    if(slowTimerRef.current) clearTimeout(slowTimerRef.current);
+    slowTimerRef.current=setTimeout(()=>setSlow(true),12000);
+    const el=vidRef.current; if(el) el.play().catch(()=>{});
+  };
   // MediaError codes are the only detail the browser gives, and they separate "the
   // network died" from "this device cannot decode it" — which need different answers.
   const mediaErrText=(el)=>{
@@ -1178,7 +1190,9 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       const nativeHlsOnly = useHls && !window.MediaSource && !!vidRef.current.canPlayType("application/vnd.apple.mpegurl");
       if(nativeHlsOnly){
         if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
-        vidRef.current.src=srcUrl;
+        // The start-light copy of the playlist when we have one: AVPlayer starts on
+        // the first rung listed, and Bunny lists 720p first (lib/hlsMaster).
+        vidRef.current.src=video.hlsStartUrl||srcUrl;
       }else if(useHls){
         const init=()=>{
           if(cancelled||!vidRef.current) return;
@@ -1244,7 +1258,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       try{ vEl.removeAttribute('src'); vEl.load(); }catch{ /* element already gone */ }
       if(createdBlobUrl){ try{URL.revokeObjectURL(createdBlobUrl);}catch{} }
     };
-  },[video.id,video.objectUrl,video.source,video.hasLocalBlob,useLocalHD]);
+  },[video.id,video.objectUrl,video.hlsStartUrl,video.source,video.hasLocalBlob,useLocalHD]);
 
   // Reset playback state only on clip change; toggling source within a
   // clip should NOT zero the scrub position (the seek ref handles that).
@@ -1534,7 +1548,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           <button onClick={(e)=>{e.stopPropagation();setMobileFs(false);}}
             style={{position:"absolute",top:10,right:10,zIndex:4,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         )}
-        {video.objectUrl?<video key={`${video.id}:${useLocalHD?'hd':'std'}`} ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={onUpdate} onPause={onUpdate}
+        {video.objectUrl?<video key={`${video.id}:${useLocalHD?'hd':'std'}`} ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={e=>{setStarted(true);onUpdate(e);}} onPause={onUpdate}
           onWaiting={()=>setPlayState(st=>st==="error"?st:"loading")}
           onStalled={()=>setPlayState(st=>st==="error"?st:"loading")}
           onCanPlay={()=>{setPlayState("ready");setSlow(false);}}
@@ -1543,7 +1557,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             if(!e.target.currentSrc&&!hlsRef.current) return;
             onMediaFail(mediaErrText(e.target));
           }}
-          onLoadedMetadata={e=>{setPlayState("ready");setSlow(false);setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>{});}}}/>:
+          onLoadedMetadata={e=>{setPlayState("ready");setSlow(false);setDur(e.target.duration); if(seekOnLoadRef.current!=null){try{e.target.currentTime=seekOnLoadRef.current;}catch{} seekOnLoadRef.current=null;} if(autoPlay){e.target.play().catch(()=>setStarted(false));}}}/>:
          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",textAlign:"center",padding:16}}>
            {stage==="unavailable"?(
              <>
@@ -1553,6 +1567,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
                  {video.streamFailed?"Bunny could not encode this clip — it needs uploading again."
                    :video.streamBytes===0?"The upload did not complete — it needs uploading again."
                    :video.streamStalled?"The encode has been queued a long time without starting."
+                   :video.urlFailReason==="auth"?"Your sign-in has expired — reload the page and sign in again."
                    :video.urlFailed?"We could not reach it just now — the connection may have dropped."
                    :"There is no copy of this clip in the cloud yet."}
                </div>
@@ -1582,8 +1597,13 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
          </div>}
         {/* Say what the player is doing. The element stays mounted underneath, so a
             stream that recovers still plays without the user touching anything. */}
-        {video.objectUrl&&stage!=="ready"&&(
-          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(3,15,26,0.82)",textAlign:"center",padding:16,zIndex:3}}>
+        {/* Before the first play, "loading" means nothing yet — the ▶ below is the
+            state. After it, a tap on "Video loading" still nudges play (a user
+            gesture is what an iPhone waits for). */}
+        {video.objectUrl&&stage!=="ready"&&(stage!=="loading"||started)&&(
+          <div role={stage==="unavailable"?"alert":"status"} aria-live={stage==="unavailable"?"assertive":"polite"}
+            onClick={stage==="loading"?startPlay:undefined}
+            style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"rgba(3,15,26,0.82)",textAlign:"center",padding:16,zIndex:3,cursor:stage==="loading"?"pointer":"default"}}>
             {stage==="unavailable"?(
               <>
                 <div style={{fontSize:26,marginBottom:8}}>⚠</div>
@@ -1601,12 +1621,18 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
               <>
                 <div style={{fontSize:24,marginBottom:8}}>⏳</div>
                 <div style={{fontSize:13,color:"#7DD3FC",fontWeight:600}}>{STAGE_TEXT.loading}</div>
-                {slow&&<div style={{fontSize:10,color:"#94A3B8",marginTop:6,maxWidth:280,lineHeight:1.45}}>Still loading — on a slow connection this can take a while.</div>}
+                {slow&&(
+                  <>
+                    <div style={{fontSize:10,color:"#94A3B8",marginTop:6,maxWidth:280,lineHeight:1.45}}>Still loading — on a slow connection this can take a while.</div>
+                    <button onClick={e=>{e.stopPropagation();setPlayErr(null);onRecheckStream?.(video.id,{force:true});reloadInPlace();startPlay();}}
+                      style={{marginTop:10,background:"#1E3A5A",border:"none",borderRadius:6,padding:"6px 14px",color:"#7DD3FC",fontSize:11,fontWeight:700,cursor:"pointer"}}>Try again</button>
+                  </>
+                )}
               </>
             )}
           </div>
         )}
-        {!playing&&video.objectUrl&&playState==="ready"&&<div onClick={()=>vidRef.current?.play()} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22}}>▶</div>}
+        {!playing&&video.objectUrl&&(playState==="ready"||(!started&&stage==="loading"))&&<div role="button" aria-label="Play video" onClick={startPlay} style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",width:64,height:64,background:"rgba(6,182,212,0.9)",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:22,zIndex:2}}>▶</div>}
         {/* On mobile, pin to all-but-bottom so tiles wrap within the
             frame width instead of overflowing off the right edge. */}
         {overlay&&<div style={{position:"absolute",top:isMobile?6:10,left:isMobile?6:10,right:mobileFs?52:(isMobile?6:undefined)}}>{overlay}{extraOverlay}</div>}
@@ -6572,7 +6598,10 @@ function SSAApp(){
       setSelectedVideo(prev => (prev && prev.id === videoId) ? { ...prev, ...p } : prev);
     };
     patch({ urlResolving: true, urlFailed: false });
-    let upd = null, gone = false, encodeFailed = false;
+    let upd = null, gone = false, encodeFailed = false, signedOut = false;
+    // A hung request on marina wifi used to hold "bear with us" up indefinitely
+    // (and, via the in-flight guard, block every retry). Bound each attempt.
+    const bounded = () => (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') ? AbortSignal.timeout(10_000) : undefined;
     try {
       // A phone waking up, a cold server, one dropped request — none of those mean
       // the clip is gone. Three tries, a little apart, before saying so.
@@ -6580,15 +6609,19 @@ function SSAApp(){
         if (attempt) await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 2500));
         try {
           if (v.hasProxy || v.hasOriginal) {
-            const res = await fetch(`/api/videos/${encodeURIComponent(v.cloudId || v.id)}/url?prefer=${isMobile ? 'proxy' : 'auto'}`, { cache: 'no-store' });
+            const res = await fetch(`/api/videos/${encodeURIComponent(v.cloudId || v.id)}/url?prefer=${isMobile ? 'proxy' : 'auto'}`, { cache: 'no-store', signal: bounded() });
             if (res.ok) {
               const j = await res.json();
-              if (j?.url) upd = { objectUrl: j.url, servedRendition: j.served || null, urlExpiresAt: j.expires_at ? j.expires_at * 1000 : null, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
+              // start_url: the iPhone's start-light playlist (see lib/hlsMaster); its
+              // link expires too, so it counts toward re-resolving.
+              const exp = j?.expires_at || j?.start_expires_at || null;
+              if (j?.url) upd = { objectUrl: j.url, servedRendition: j.served || null, urlExpiresAt: exp ? exp * 1000 : null, hlsStartUrl: j.start_url || null, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
               else if (j?.kind === 'processing') upd = { streamProcessing: true, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
             } else if (res.status === 404 && !v.streamId) gone = true;   // no rendition anywhere — retrying will not change that
+            else if (res.status === 401) { gone = true; signedOut = true; }  // not a network problem — say so
           }
           if (!upd && !gone && v.streamId) {
-            const res = await fetch(`/api/stream/status/${v.streamId}`, { cache: 'no-store' });
+            const res = await fetch(`/api/stream/status/${v.streamId}`, { cache: 'no-store', signal: bounded() });
             if (res.ok) {
               const s = await res.json();
               if (s.playbackUrl) upd = { objectUrl: s.playbackUrl, urlExpiresAt: null, thumbnailUrl: v.thumbnailUrl || s.thumbnailUrl || null };
@@ -6601,12 +6634,12 @@ function SSAApp(){
     } finally {
       clipUrlInflightRef.current.delete(videoId);
     }
-    if (!upd) { patch({ urlResolving: false, urlFailed: true, ...(encodeFailed ? { streamFailed: true } : {}) }); return; }
+    if (!upd) { patch({ urlResolving: false, urlFailed: true, urlFailReason: signedOut ? 'auth' : null, ...(encodeFailed ? { streamFailed: true } : {}) }); return; }
     // Defer revoking the old blob: URL — a live <video> may still be reading it
     // (see the note in loadDate); revoking synchronously spams ERR_FILE_NOT_FOUND.
     const old = v.objectUrl;
     if (old && String(old).startsWith('blob:')) setTimeout(() => { try { URL.revokeObjectURL(old); } catch { /* */ } }, 15_000);
-    patch({ ...upd, urlResolving: false, urlFailed: false });
+    patch({ ...upd, urlResolving: false, urlFailed: false, urlFailReason: null });
   }, [isMobile]);
 
   // When a clip becomes selected, make sure its playback URL is resolved (it plays
@@ -6616,6 +6649,16 @@ function SSAApp(){
     if(selectedVideo?.id) ensureClipUrl(selectedVideo.id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[selectedVideo?.id]);
+
+  // Self-heal. loadDate, the log re-enrich and mobile sync all rebuild the clip
+  // list, and any of them can drop the selected clip's link after it was
+  // resolved; the effect above only runs when the selection CHANGES, so nothing
+  // fetched it again. Whenever the selected clip has no link (and has not already
+  // failed), get one — ensureClipUrl skips fresh links and dedupes in-flight ones.
+  useEffect(()=>{
+    if(selectedVideo?.id && !selectedVideo.objectUrl && !selectedVideo.urlFailed) ensureClipUrl(selectedVideo.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[selectedVideo?.id, selectedVideo?.objectUrl]);
 
   // Poll Bunny Stream for clips still encoding their adaptive HLS ladder.
   // Once a clip is ready, swap its playback URL in with no manual reload.
@@ -6657,7 +6700,8 @@ function SSAApp(){
           const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=${isMobile?'proxy':'auto'}`);
           if(res.ok){
             const j=await res.json();
-            if(j?.url){ updates[v.id]={objectUrl:j.url,servedRendition:j.served||null,urlExpiresAt:j.expires_at?j.expires_at*1000:null,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||j.thumbnail||null}; return; }
+            const exp=j?.expires_at||j?.start_expires_at||null;
+            if(j?.url){ updates[v.id]={objectUrl:j.url,servedRendition:j.served||null,urlExpiresAt:exp?exp*1000:null,hlsStartUrl:j.start_url||null,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||j.thumbnail||null}; return; }
             // A poster can arrive well before the renditions do — take it, so the
             // card stops being a black rectangle while the encode finishes.
             if(j?.thumbnail&&!v.thumbnailUrl) updates[v.id]={thumbnailUrl:j.thumbnail};
@@ -7401,9 +7445,14 @@ function SSAApp(){
         // Re-enrich the grid now that the day-log/xml is in — overlay averages
         // and auto-tags populate. Keep the current selection, refreshed.
         if(logChanged || xmlChanged){
-          const re=vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
-          setAllVideos(re);
-          setSelectedVideo(prev=> prev ? (re.find(v=>v.id===prev.id)||prev) : prev);
+          // Re-enrich what is on screen NOW, not the `vids` snapshot taken before
+          // the clip links were resolved. Replacing the list with that snapshot
+          // wiped the selected clip's playback link a couple of seconds after it
+          // arrived — on a phone without the day's log (i.e. most crew), the
+          // player then waited on "bear with us" for good.
+          const ids=new Set(vids.map(v=>v.id));
+          setAllVideos(prev=>prev.map(v=>ids.has(v.id)?enrichVideo(v,log,xml,syncOffsets):v));
+          setSelectedVideo(prev=> prev&&ids.has(prev.id) ? enrichVideo(prev,log,xml,syncOffsets) : prev);
         }
       } catch { /* non-fatal */ }
 

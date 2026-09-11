@@ -28,6 +28,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase, getServiceSupabase } from '../../../../../lib/supabase/server'
 import { bunnyConfigured, signBunnyUrl } from '../../../../../lib/bunny-signed-url'
+import { masterPath, masterSecret } from '../../../../../lib/hlsMaster'
 
 type Prefer = 'original' | 'proxy' | 'auto'
 type Served = 'original' | 'proxy' | 'legacy'
@@ -240,12 +241,23 @@ export async function GET(
     return NextResponse.json({ error: 'no rendition available' }, { status: 404 })
   }
 
+  // iPhones get a start-light copy of the HLS playlist (lib/hlsMaster): their
+  // native player starts on the first rung listed, which on Bunny is 720p. Every
+  // other client ignores start_url and plays Bunny's playlist directly.
+  const hlsGuid = result.kind === 'hls'
+    ? result.url.match(/\/([0-9a-f-]{36})\/playlist\.m3u8$/i)?.[1] ?? null
+    : null
+  const hlsSecret = hlsGuid ? masterSecret() : null
+  const start = hlsGuid && hlsSecret ? masterPath(hlsGuid, hlsSecret) : null
+
   return NextResponse.json({
     url: result.url,
     kind: result.kind,
     served: result.served,
     thumbnail,
     expires_at: result.expires,
+    start_url: start?.path ?? null,
+    start_expires_at: start?.expires ?? null,
     has_proxy: Boolean(v.has_proxy),
     has_original: Boolean(v.has_original),
   })

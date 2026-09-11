@@ -16,7 +16,9 @@ export async function GET(
   try {
     const res = await fetch(
       `https://video.bunnycdn.com/library/${LIBRARY_ID}/videos/${id}`,
-      { headers: { AccessKey: STREAM_KEY } }
+      // no-store: Next 14 caches GET fetches by default, so the first "queued"
+      // answer could stick and a finished clip kept reading as processing.
+      { headers: { AccessKey: STREAM_KEY }, cache: "no-store" }
     );
     if (!res.ok)
       return NextResponse.json({ error: `HTTP ${res.status}` }, { status: 500 });
