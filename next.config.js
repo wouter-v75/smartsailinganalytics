@@ -13,6 +13,11 @@ const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ['pdf-parse'],
   },
+  // Clip thumbnails come from Bunny's CDN as full 1280×720 JPEGs; the image
+  // optimiser serves them at card size (src/lib/thumbSrc.ts).
+  images: {
+    remotePatterns: [{ protocol: 'https', hostname: '**.b-cdn.net' }],
+  },
 }
 
 module.exports = nextConfig

@@ -177,16 +177,18 @@ export function FallbackVideoPlayer({ videoId }: { videoId: string }) {
         const url: string | undefined = j?.url
         if (!url || !el) { setErr('Not playable yet — the clip may still be processing.'); return }
         if (j?.kind === 'hls' && !el.canPlayType('application/vnd.apple.mpegurl')) {
-          const w = window as any
-          const attach = () => { hls = new w.Hls(); hls.loadSource(url); hls.attachMedia(el) }
-          if (w.Hls?.isSupported()) attach()
-          else {
-            const s = document.createElement('script')
-            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.14/hls.min.js'
-            s.onload = () => { if (w.Hls?.isSupported()) attach(); else el.src = url }
-            document.head.appendChild(s)
-          }
-        } else { el.src = url }
+          // The bundled hls.js with the main player's tuned settings (lib/hlsLoader)
+          // — no third-party script on the play path.
+          const { loadHls, HLS_CONFIG } = await import('../../lib/hlsLoader')
+          const Hls = await loadHls()
+          if (!alive) return
+          if (Hls.isSupported()) { hls = new Hls(HLS_CONFIG); hls.loadSource(url); hls.attachMedia(el) }
+          else el.src = url
+        } else {
+          // iPhone: the start-light playlist when there is one (lib/hlsMaster) —
+          // AVPlayer starts on the first rung listed, and Bunny lists 720p first.
+          el.src = j?.kind === 'hls' && j?.start_url && !('MediaSource' in window) ? j.start_url : url
+        }
       } catch { if (alive) setErr('Could not load the video.') }
     })()
     return () => { alive = false; if (hls) { try { hls.destroy() } catch { /* noop */ } } }

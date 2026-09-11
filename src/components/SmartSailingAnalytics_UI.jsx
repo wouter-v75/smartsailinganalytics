@@ -23,6 +23,9 @@ import { fallbackMagVar } from '../lib/magVar';
 import { collectNewClips, canWatchFolders } from '../lib/watchFolder';
 import { getVideoBlob, updateVideoBlobAndDuration } from '../lib/localStore';
 import { playerStage, STAGE_TEXT, clipUrlIsFresh, isMp4Url } from '../lib/playerStage';
+import { loadHls, prefetchHls, HLS_CONFIG } from '../lib/hlsLoader';
+import { createQoe, sendQoe, platformOf } from '../lib/qoe';
+import { thumbSrc } from '../lib/thumbSrc';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending as syncPendingPhotos, connectionIsGood as photoConnGood } from '../lib/photoStore';
@@ -1040,7 +1043,31 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   // of the video catching the very tap that would have started it.
   const[started,setStarted]=useState(!!autoPlay);
   useEffect(()=>{ setStarted(!!autoPlay); },[video.id,autoPlay]);
+  // Playback quality, measured the way Mux defines it — time to first frame,
+  // rebuffering, failures, exits before the first frame — one beacon per clip
+  // viewed (lib/qoe → /api/qoe). Numbers per platform instead of anecdotes.
+  const qoeRef=useRef(null);
+  const videoNowRef=useRef(video); videoNowRef.current=video;
+  useEffect(()=>{
+    const q=createQoe({
+      clip:String(video.cloudId||video.id), autoplay:!!autoPlay,
+      platform:platformOf(navigator.userAgent||"",navigator.maxTouchPoints||0),
+      net:navigator.connection?.effectiveType||null,
+    });
+    qoeRef.current=q;
+    const flush=()=>{
+      const v=videoNowRef.current;
+      const p=q.take({ served:v?.servedRendition||null, guid:(String(v?.objectUrl||"").match(/\/([0-9a-f-]{36})\//i)||[])[1]||null });
+      if(p) sendQoe(p);
+    };
+    const onHide=()=>{ if(document.visibilityState==="hidden") flush(); };
+    window.addEventListener("pagehide",flush);
+    document.addEventListener("visibilitychange",onHide);
+    return ()=>{ window.removeEventListener("pagehide",flush); document.removeEventListener("visibilitychange",onHide); flush(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[video.id]);
   const startPlay=()=>{
+    qoeRef.current?.tap();
     setStarted(true); setSlow(false);
     if(slowTimerRef.current) clearTimeout(slowTimerRef.current);
     slowTimerRef.current=setTimeout(()=>setSlow(true),12000);
@@ -1076,6 +1103,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
       return;
     }
     setPlayState("error"); setPlayErr(detail);
+    qoeRef.current?.fail(detail);
   };
   const onMediaFailRef=useRef(onMediaFail); onMediaFailRef.current=onMediaFail;
   // True when the active source is HLS (cloud adaptive). Flips to false when
@@ -1085,6 +1113,14 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   const isHls=!useLocalHD && !isMp4Url(video.objectUrl) && (video.source==="cloud" || video.objectUrl?.includes(".m3u8"));
   // Which of the three messages (or none) the viewer should see right now.
   const stage=playerStage(video,playState);
+  // A clip that cannot be played without ever producing a media error (no link,
+  // encode failed, signed out) is a failure too — record why.
+  useEffect(()=>{
+    if(stage==="unavailable"&&!video.objectUrl) qoeRef.current?.fail(
+      video.urlFailReason==="auth"?"signed-out":video.streamFailed?"encode-failed"
+      :video.streamStalled?"encode-stalled":video.urlFailed?"no-link":"no-copy");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[stage,video.objectUrl]);
 
   // Always start a fresh clip on the default (cloud) source.
   useEffect(()=>{ setUseLocalHD(false); },[video.id]);
@@ -1161,7 +1197,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
     // on every rendition switch. Falls through to the hls.js LEVEL_SWITCHED
     // handler below which adds the bitrate.
     const vEl=vidRef.current;
-    const onResize=()=>{ if(vEl.videoHeight) setVidQuality(q=>(q&&q.includes('Mbps'))?q:`${vEl.videoHeight}p`); };
+    const onResize=()=>{ if(vEl.videoHeight){ qoeRef.current?.height(vEl.videoHeight); setVidQuality(q=>(q&&q.includes('Mbps'))?q:`${vEl.videoHeight}p`); } };
     vEl.addEventListener('resize',onResize);
 
     let cancelled=false;
@@ -1193,53 +1229,53 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
         // The start-light copy of the playlist when we have one: AVPlayer starts on
         // the first rung listed, and Bunny lists 720p first (lib/hlsMaster).
         vidRef.current.src=video.hlsStartUrl||srcUrl;
+        qoeRef.current?.setEngine("native",!!video.hlsStartUrl);
       }else if(useHls){
-        const init=()=>{
+        const init=(Hls)=>{
           if(cancelled||!vidRef.current) return;
           if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
-          if(window.Hls?.isSupported()){
+          if(Hls?.isSupported()){
+            qoeRef.current?.setEngine("hlsjs");
             // Tuned for weak field wifi: start on the lowest rendition so
             // playback begins immediately (then adapt up only if bandwidth
             // allows), cap quality to the on-screen video size, and buffer
             // far ahead (up to ~10 min / the whole clip) so wifi dropouts —
             // even long ones — don't stall the video.
-            const hls=new window.Hls({startLevel:0,capLevelToPlayerSize:true,maxBufferLength:180,maxMaxBufferLength:600,maxBufferSize:200*1000*1000});
+            // Settings and the reasons for each: lib/hlsLoader.js.
+            const hls=new Hls(HLS_CONFIG);
             // Surface the actually-playing rendition (resolution + bitrate)
             // so the bottom-left badge can prove what ABR settled on.
-            hls.on(window.Hls.Events.LEVEL_SWITCHED,(_e,d)=>{
+            hls.on(Hls.Events.LEVEL_SWITCHED,(_e,d)=>{
               const lvl=hls.levels?.[d.level];
+              if(lvl?.height) qoeRef.current?.height(lvl.height);
               if(lvl) setVidQuality(`${lvl.height}p · ${(lvl.bitrate/1e6).toFixed(2)} Mbps`);
             });
             // Fatal hls.js errors never reach the <video> element, so they left the
             // player on "loading" for good. Recover the two kinds hls.js can recover
             // (a dropped request, a decode hiccup) twice, then hand over.
             let recovered=0;
-            hls.on(window.Hls.Events.ERROR,(_e,d)=>{
+            hls.on(Hls.Events.ERROR,(_e,d)=>{
               if(!d?.fatal) return;
-              if(recovered<2 && d.type===window.Hls.ErrorTypes.NETWORK_ERROR){ recovered++; hls.startLoad(); return; }
-              if(recovered<2 && d.type===window.Hls.ErrorTypes.MEDIA_ERROR){ recovered++; hls.recoverMediaError(); return; }
-              onMediaFailRef.current?.(d.type===window.Hls.ErrorTypes.NETWORK_ERROR?"network error — check the connection and try again":"the video could not be loaded");
+              if(recovered<2 && d.type===Hls.ErrorTypes.NETWORK_ERROR){ recovered++; hls.startLoad(); return; }
+              if(recovered<2 && d.type===Hls.ErrorTypes.MEDIA_ERROR){ recovered++; hls.recoverMediaError(); return; }
+              onMediaFailRef.current?.(d.type===Hls.ErrorTypes.NETWORK_ERROR?"network error — check the connection and try again":"the video could not be loaded");
             });
             hls.loadSource(srcUrl);hls.attachMedia(vidRef.current);hlsRef.current=hls;
           }
-          else if(vidRef.current.canPlayType("application/vnd.apple.mpegurl"))vidRef.current.src=srcUrl;
+          else if(vidRef.current.canPlayType("application/vnd.apple.mpegurl")){ qoeRef.current?.setEngine("native"); vidRef.current.src=srcUrl; }
           else onMediaFailRef.current?.("this device's browser cannot play this stream");
         };
-        if(!window.Hls){
-          const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.14/hls.min.js";s.onload=init;
-          // cdnjs unreachable (captive wifi, a patchy phone signal) used to leave
-          // the player on "loading" forever. Use the browser's own HLS if it has
-          // one; otherwise say so.
-          s.onerror=()=>{
-            if(cancelled||!vidRef.current) return;
-            if(vidRef.current.canPlayType("application/vnd.apple.mpegurl")) vidRef.current.src=srcUrl;
-            else onMediaFailRef.current?.("the video player could not be loaded — check the connection and try again");
-          };
-          document.head.appendChild(s);
-        }
-        else init();
+        // hls.js is bundled with the app (lib/hlsLoader) — no third-party script on
+        // the play path any more. If the chunk cannot load (offline at just the
+        // wrong moment), use the browser's own HLS where it has one; else say so.
+        loadHls().then(Hls=>init(Hls)).catch(()=>{
+          if(cancelled||!vidRef.current) return;
+          if(vidRef.current.canPlayType("application/vnd.apple.mpegurl")){ qoeRef.current?.setEngine("native"); vidRef.current.src=srcUrl; }
+          else onMediaFailRef.current?.("the video player could not be loaded — check the connection and try again");
+        });
       }else{
         if(hlsRef.current){hlsRef.current.destroy();hlsRef.current=null;}
+        qoeRef.current?.setEngine(useLocalHD?"local":String(srcUrl||"").startsWith("blob:")?"local":"mp4");
         vidRef.current.src=srcUrl;
       }
     })();
@@ -1548,8 +1584,9 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
           <button onClick={(e)=>{e.stopPropagation();setMobileFs(false);}}
             style={{position:"absolute",top:10,right:10,zIndex:4,background:"rgba(0,0,0,0.6)",border:"1px solid #ffffff30",borderRadius:8,width:36,height:36,color:"#fff",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         )}
-        {video.objectUrl?<video key={`${video.id}:${useLocalHD?'hd':'std'}`} ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={e=>{setStarted(true);onUpdate(e);}} onPause={onUpdate}
-          onWaiting={()=>setPlayState(st=>st==="error"?st:"loading")}
+        {video.objectUrl?<video key={`${video.id}:${useLocalHD?'hd':'std'}`} ref={vidRef} poster={video.thumbnailUrl||undefined} playsInline autoPlay={autoPlay} {...{'webkit-playsinline':'true','x5-playsinline':'true'}} style={{width:"100%",height:"100%",objectFit:"contain",cursor:"pointer",transition:"transform .18s ease",...rotStyle(video.rotation,16,9)}} onClick={()=>{const v=vidRef.current; if(!v)return; if(v.paused) v.play().catch(()=>{}); else v.pause();}} onTimeUpdate={onUpdate} onPlay={e=>{setStarted(true);onUpdate(e);}} onPause={e=>{qoeRef.current?.pause();onUpdate(e);}}
+          onPlaying={()=>qoeRef.current?.playing()} onSeeking={()=>qoeRef.current?.seeking(true)} onSeeked={()=>qoeRef.current?.seeking(false)} onEnded={()=>qoeRef.current?.pause()}
+          onWaiting={()=>{qoeRef.current?.waiting();setPlayState(st=>st==="error"?st:"loading");}}
           onStalled={()=>setPlayState(st=>st==="error"?st:"loading")}
           onCanPlay={()=>{setPlayState("ready");setSlow(false);}}
           onError={e=>{
@@ -1836,7 +1873,14 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   return(
     <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
-        {video.thumbnailUrl?<img src={video.thumbnailUrl} alt="" loading="eager" fetchpriority="high" decoding="async" onLoad={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}}/>:
+        {video.thumbnailUrl?<img src={thumbSrc(video.thumbnailUrl,640)} alt="" loading="eager" fetchpriority="high" decoding="async" onLoad={handleLoaded}
+          onError={e=>{
+            // Optimiser unavailable (plan quota, a hiccup): fall back to the original once.
+            const el=e.currentTarget;
+            if(el.dataset.raw!=="1"&&el.src.includes("/_next/image")){ el.dataset.raw="1"; el.src=video.thumbnailUrl; return; }
+            handleLoaded(e);
+          }}
+          style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}}/>:
          video.objectUrl&&video.source!=="cloud"&&!String(video.objectUrl).includes(".m3u8")?<video src={video.objectUrl} onLoadedData={handleLoaded} onError={handleLoaded} style={{width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none",...rotStyle(video.rotation,16,9)}} muted preload="metadata"/>:
          (video.source==="processing"||video.streamProcessing)?<div style={{color:"#F59E0B",fontSize:9}}>⏳</div>:
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
@@ -5590,7 +5634,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         Explicit width+height removes every such dependency. */}
                     <div style={{width:96,height:64,flexShrink:0,alignSelf:"center",background:"#071624",position:"relative",overflow:"hidden"}}>
                       {v.thumbnailUrl
-                        ? <img src={v.thumbnailUrl} alt=""
+                        ? <img src={thumbSrc(v.thumbnailUrl,256)} alt=""
                             /* loading=eager + fetchpriority=high stop the
                                browser parking below-the-fold thumbnails at
                                Low priority — on weak wifi those requests
@@ -5598,7 +5642,12 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                                (e.g. 6/10) until a rotation re-prioritises. */
                             loading="eager" fetchpriority="high" decoding="async"
                             onLoad={()=>onThumbLoad?.(v.id)}
-                            onError={()=>onThumbLoad?.(v.id)}
+                            onError={e=>{
+                              // Optimiser unavailable (plan quota, a hiccup): fall back to the original once.
+                              const el=e.currentTarget;
+                              if(el.dataset.raw!=="1"&&v.thumbnailUrl&&el.src.includes("/_next/image")){ el.dataset.raw="1"; el.src=v.thumbnailUrl; return; }
+                              onThumbLoad?.(v.id);
+                            }}
                             style={{display:"block",width:"100%",height:"100%",objectFit:"cover",pointerEvents:"none"}}/>
                         : v.objectUrl&&v.source!=="cloud"&&!String(v.objectUrl).includes(".m3u8")
                           ? <video src={v.objectUrl}
@@ -6659,6 +6708,14 @@ function SSAApp(){
     if(selectedVideo?.id && !selectedVideo.objectUrl && !selectedVideo.urlFailed) ensureClipUrl(selectedVideo.id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[selectedVideo?.id, selectedVideo?.objectUrl]);
+
+  // Warm the bundled hls.js a few seconds after start-up (off the boot path), so
+  // the first play on Android does not wait for the chunk. iPhones play HLS
+  // natively and have no MediaSource — they skip it.
+  useEffect(()=>{
+    const t=setTimeout(()=>{ if(typeof window!=="undefined"&&window.MediaSource) prefetchHls(); },3000);
+    return ()=>clearTimeout(t);
+  },[]);
 
   // Poll Bunny Stream for clips still encoding their adaptive HLS ladder.
   // Once a clip is ready, swap its playback URL in with no manual reload.
