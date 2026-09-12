@@ -233,8 +233,9 @@ export default function InvitationsPanel({
           Invite by email
         </h3>
         <p className="text-xs text-slate-500 mb-3">
-          The recipient&apos;s access is granted automatically once they
-          confirm their email.
+          The account is created and added to the team straight away. They get
+          an email saying their membership is set up, with a link to choose a
+          password &mdash; nothing to approve and no address to confirm.
         </p>
         <form onSubmit={createEmail} className="flex flex-wrap gap-2">
           <input

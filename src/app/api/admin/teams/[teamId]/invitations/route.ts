@@ -8,7 +8,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../lib/supabase/admin-guard'
 import { generateInviteToken } from '../../../../../../lib/invitation-token'
-import { sendInviteEmail } from '../../../../../../lib/email'
+import { sendInviteEmail, sendMembershipReadyEmail } from '../../../../../../lib/email'
+import { provisionTeamMember, firstLoginLink } from '../../../../../../lib/provision-member'
 
 const ROLES = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
@@ -144,9 +145,12 @@ export async function POST(
     },
   })
 
-  // Send the invite email if it's email-targeted. Open links don't get
-  // emails (they're posted in WhatsApp etc).
+  // Email-targeted invite: set the person up NOW rather than asking them to
+  // sign up, confirm an address the invite was already sent to, and wait for an
+  // approval that the invite said was automatic. Open links keep the old flow —
+  // they are posted in WhatsApp and have no address to provision.
   let emailSent: { ok: boolean; error?: string } = { ok: true }
+  let provisioned: { user_id?: string; created?: boolean } | null = null
   if (!isOpen && row.email) {
     const [{ data: team }, { data: boat }, { data: inviter }] = await Promise.all([
       service.from('teams').select('name').eq('id', params.teamId).maybeSingle(),
@@ -156,27 +160,81 @@ export async function POST(
       service.from('users').select('name').eq('id', guard.userId).maybeSingle(),
     ])
     const origin = req.nextUrl.origin
-    const result = await sendInviteEmail({
-      to: row.email as string,
-      team_name: team?.name || 'the team',
+    const siteUrl = process.env.SSA_SITE_URL || 'https://ssa.wvsailing.co.uk'
+    const email = row.email as string
+
+    const prov = await provisionTeamMember(service, {
+      email,
+      teamId: params.teamId,
       role: row.role as string,
-      boat_name: boat?.name || null,
-      invite_url: `${origin}/join/${row.token}`,
-      inviter_name: inviter?.name || null,
+      boatId: (row.boat_id as string) || null,
+      validFrom: (row.valid_from as string) || null,
+      validTo: (row.valid_to as string) || null,
+      dataFrom: (row.data_from as string) || null,
+      dataTo: (row.data_to as string) || null,
+      approvedBy: guard.userId,
     })
-    emailSent = result.ok
-      ? { ok: true }
-      : { ok: false, error: result.error }
-    await service.from('events').insert({
-      user_id: guard.userId,
-      action: result.ok ? 'invitation.email_sent' : 'invitation.email_failed',
-      details: {
-        invitation_id: data.id,
-        to: row.email,
-        error: result.ok ? null : result.error,
-      },
-    })
+
+    if (prov.ok) {
+      // The membership exists, so the /join link has nothing left to do: consume
+      // the invite row (kept for the audit trail).
+      await service
+        .from('invitations')
+        .update({ used_count: row.max_uses as number })
+        .eq('id', data.id)
+      // Only a brand-new account needs a way in; an existing user has a password.
+      const setPasswordUrl = prov.created ? await firstLoginLink(service, email, origin) : null
+      const result = await sendMembershipReadyEmail({
+        to: email,
+        team_name: team?.name || 'the team',
+        role: row.role as string,
+        boat_name: boat?.name || null,
+        site_url: siteUrl,
+        set_password_url: setPasswordUrl,
+        inviter_name: inviter?.name || null,
+      })
+      emailSent = result.ok ? { ok: true } : { ok: false, error: result.error }
+      provisioned = { user_id: prov.userId, created: prov.created }
+      await service.from('events').insert({
+        user_id: guard.userId,
+        action: 'invitation.provisioned',
+        details: {
+          invitation_id: data.id,
+          to: email,
+          member_user_id: prov.userId,
+          account_created: prov.created,
+          email_sent: result.ok,
+          email_error: result.ok ? null : result.error,
+        },
+      })
+    } else if (prov.disabled) {
+      // Deliberate refusal, not a failure: never paper over it with an invite link.
+      await service.from('events').insert({
+        user_id: guard.userId,
+        action: 'invitation.provision_refused',
+        details: { invitation_id: data.id, to: email, reason: prov.error },
+      })
+      await service.from('invitations').update({ revoked_at: new Date().toISOString() }).eq('id', data.id)
+      return NextResponse.json({ error: prov.error }, { status: 409 })
+    } else {
+      // Could not set them up (e.g. the address exists in auth only). Fall back to
+      // the old invite-link email so the invitation is never silently lost.
+      const result = await sendInviteEmail({
+        to: email,
+        team_name: team?.name || 'the team',
+        role: row.role as string,
+        boat_name: boat?.name || null,
+        invite_url: `${origin}/join/${row.token}`,
+        inviter_name: inviter?.name || null,
+      })
+      emailSent = result.ok ? { ok: true } : { ok: false, error: result.error }
+      await service.from('events').insert({
+        user_id: guard.userId,
+        action: 'invitation.provision_failed',
+        details: { invitation_id: data.id, to: email, error: prov.error, fell_back_to_link: true },
+      })
+    }
   }
 
-  return NextResponse.json({ invitation: data, email_sent: emailSent })
+  return NextResponse.json({ invitation: data, email_sent: emailSent, provisioned })
 }
