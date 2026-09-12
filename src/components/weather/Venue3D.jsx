@@ -20,7 +20,7 @@ const SAT_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Im
 const DEM_TILES = 'https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png'
 const KN = 1.94384
 
-const PREFERRED = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'AROME_HD', 'ECMWF', 'ICON', 'ITALIA', 'DMI', 'ARPEGE']
+const PREFERRED = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'AROME_HD', 'METNO', 'ECMWF', 'ICON', 'ITALIA', 'DMI', 'ARPEGE']
 
 // One arrow icon (pointing NORTH / up) per Beaufort band, drawn on a canvas so we
 // can tint it; MapLibre rotates it per-feature via icon-rotate.
