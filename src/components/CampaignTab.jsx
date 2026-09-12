@@ -268,7 +268,8 @@ const ANSWER_META = {
   partial: { label: 'Partial', c: '#F59E0B' },
   answered: { label: 'Answered', c: '#1D9E75' },
 }
-const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl1', 'tl2']
+// 'owner' is TL1 in every respect but sharing (migration 0058), so it sits with tl1.
+const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl1', 'tl2', 'owner']
 const TAG_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl2', 'consultant'] // TL2 and up
 // TL3 and above may EDIT plan / backlog / day / debrief / speed notes / weather.
 const EDIT_ROLES = ['admin', 'team_manager', 'coach', 'tl3']

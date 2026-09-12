@@ -13,6 +13,7 @@ export type MembershipRole =
   | 'tl3'
   | 'tl1'
   | 'tl2'
+  | 'owner'
   | 'consultant'
   | 'guest'
 

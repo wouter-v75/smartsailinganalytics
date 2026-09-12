@@ -23,7 +23,7 @@ interface MembershipRow {
   id: string
   user_id: string
   boat_id: string | null
-  role: 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'tl2' | 'consultant' | 'guest'
+  role: 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'tl2' | 'owner' | 'consultant' | 'guest'
   valid_from: string | null
   valid_to: string | null
   data_from: string | null
@@ -45,7 +45,7 @@ function firstUser(u: MembershipRow['users']): JoinedUser | null {
 // Full membership-role spectrum the admin can grant. Order top-down by
 // privilege so the dropdown reads naturally. `consultant` keeps the
 // extra valid_from / valid_to date pickers.
-const ROLES = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'consultant', 'guest'] as const
+const ROLES = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'owner', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
 
 export default function MembershipsPanel({

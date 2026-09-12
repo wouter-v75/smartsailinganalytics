@@ -1,7 +1,7 @@
 // Share links for one clip.
 //
 //   GET    → list this clip's links (team members)
-//   POST   { days?, includeOverlay? } → mint a link. TL3+ (RLS enforces).
+//   POST   { days?, includeOverlay? } → mint a link. TL2+ / owner (RLS enforces).
 //   DELETE ?id=<share-id>            → revoke a link.
 //
 // The token is a capability: whoever holds it can watch this ONE clip (and, if
@@ -79,7 +79,7 @@ export async function POST(
     // RLS refusal is the common case here — say so plainly rather than "500".
     const denied = /row-level security/i.test(error.message)
     return NextResponse.json(
-      { error: denied ? 'you do not have permission to share clips (TL3 and above)' : error.message },
+      { error: denied ? 'you do not have permission to share clips (TL2 and above, or the boat owner)' : error.message },
       { status: denied ? 403 : 500 }
     )
   }

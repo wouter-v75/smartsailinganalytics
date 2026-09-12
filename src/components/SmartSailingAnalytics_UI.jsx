@@ -27,6 +27,8 @@ import { loadHls, prefetchHls, HLS_CONFIG } from '../lib/hlsLoader';
 import { createQoe, sendQoe, platformOf } from '../lib/qoe';
 import { thumbSrc } from '../lib/thumbSrc';
 import { videoBadgeSrc } from '../lib/videoBadge';
+import { canShareVideos } from '../lib/shareRoles';
+import { whatsappUrl, smsUrl, mailtoUrl, instagramUrl, canNativeShare, nativeShare } from '../lib/shareTargets';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending as syncPendingPhotos, connectionIsGood as photoConnGood } from '../lib/photoStore';
@@ -967,7 +969,94 @@ const OVERLAY_VARS = [
   {key:'pBurn',label:'P burn',unit:'',dec:0,fmt:'burn'},{key:'sBurn',label:'S burn',unit:'',dec:0,fmt:'burn'},
 ];
 
-function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,autoPlay=false,onRotate=null,onRecheckStream=null,
+// ─── SHARE SHEET (inside the player) ──────────────────────────────────────────
+// One tap from the player: mint a link to THIS clip and hand it to WhatsApp,
+// Messages, email, or whatever else the phone offers.
+//
+// FOOTAGE ONLY — include_overlay:false — so no instrument data leaves the team
+// this way. (The Videos-tab panel still offers a with-data link for a sailmaker
+// who needs the numbers.) TL2 and up, plus the boat owner; the database policies
+// enforce the same rule, so a refusal here is shown rather than guessed at.
+function ShareSheet({ video, onClose }){
+  const [url,setUrl]       = useState(null);
+  const [busy,setBusy]     = useState(true);
+  const [err,setErr]       = useState(null);
+  const [copied,setCopied] = useState(false);
+  const cloudId  = video.cloudId || (isCloudVideoId(video.id) ? video.id : null);
+  const shareable = !!cloudId && !!(video.hasProxy || video.hasOriginal || video.originalUploadedAt);
+
+  useEffect(()=>{
+    let alive = true;
+    (async()=>{
+      if(!shareable){ setBusy(false); return; }
+      try{
+        const res = await fetch(`/api/videos/${encodeURIComponent(cloudId)}/share`,{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ days: 14, includeOverlay: false }),
+        });
+        const j = await res.json().catch(()=>({}));
+        if(!alive) return;
+        if(!res.ok) setErr(j.error || `could not create the link (HTTP ${res.status})`);
+        else setUrl(`${window.location.origin}/share/${j.share.token}`);
+      }catch(e){ if(alive) setErr(e?.message || 'could not create the link'); }
+      finally{ if(alive) setBusy(false); }
+    })();
+    return ()=>{ alive = false; };
+  },[cloudId,shareable]);
+
+  const subject = { title: video.title || video.name || null, url: url || '' };
+  // sms: and mailto: must go through the current tab — a popup is blocked or
+  // leaves an empty window behind. Only the WhatsApp https link opens a tab.
+  const go = (href,newTab)=>{ try{ if(newTab) window.open(href,'_blank','noopener'); else window.location.href = href; }catch{} };
+  const btn = {flex:"1 1 40%",border:"none",borderRadius:8,padding:"10px 8px",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"};
+
+  return (
+    <div onClick={(e)=>e.stopPropagation()} role="dialog" aria-label="Share this clip"
+      style={{position:"absolute",inset:0,zIndex:6,background:"rgba(3,15,26,0.94)",display:"flex",flexDirection:"column",
+        alignItems:"center",justifyContent:"center",padding:16,textAlign:"center"}}>
+      <div style={{fontSize:13,fontWeight:700,color:"#E2E8F0",marginBottom:4}}>Share this clip</div>
+      <div style={{fontSize:10,color:"#94A3B8",marginBottom:12,maxWidth:330,lineHeight:1.45}}>
+        Footage only — no instrument data. Works without an account, expires in 14 days,
+        and can be revoked any time from the clip&apos;s Share panel. Instagram takes no
+        link directly: we copy it and open the app for you to paste.
+      </div>
+      {busy&&<div style={{fontSize:11,color:"#7DD3FC"}}>Creating the link…</div>}
+      {!busy&&!shareable&&(
+        <div style={{fontSize:11,color:"#FCA5A5",maxWidth:330,lineHeight:1.45}}>
+          Upload this clip to the cloud first — whoever you send it to streams it from there.
+        </div>
+      )}
+      {!busy&&err&&<div style={{fontSize:11,color:"#FCA5A5",maxWidth:330,lineHeight:1.45}}>{err}</div>}
+      {url&&(
+        <>
+          <div style={{display:"flex",flexWrap:"wrap",gap:8,width:"100%",maxWidth:340,marginBottom:10}}>
+            <button style={{...btn,background:"#25D366",color:"#062A22"}} onClick={()=>go(whatsappUrl(subject),true)}>WhatsApp</button>
+            <button style={{...btn,background:"#0EA5E9"}} onClick={()=>go(smsUrl(subject),false)}>Messages</button>
+            <button style={{...btn,background:"#6366F1"}} onClick={()=>go(mailtoUrl(subject),false)}>Email</button>
+            {/* Instagram takes no link from a web page (no web intent, and the app
+                cannot be handed a URL). Copy it and open Instagram to paste into a
+                story or DM — on a phone the share sheet below lists Instagram too. */}
+            <button style={{...btn,background:"#C13584"}} onClick={async()=>{
+              try{ await navigator.clipboard?.writeText(url); }catch{}
+              setCopied(true);
+              go(instagramUrl(typeof navigator!=="undefined"?navigator.userAgent:null), false);
+            }}>Instagram</button>
+            {canNativeShare(typeof navigator!=="undefined"?navigator:null)&&(
+              <button style={{...btn,background:"#1E3A5A"}} onClick={()=>nativeShare(subject)}>Other app…</button>
+            )}
+          </div>
+          <button onClick={async()=>{ try{ await navigator.clipboard?.writeText(url); setCopied(true); setTimeout(()=>setCopied(false),1500); }catch{} }}
+            style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"6px 12px",color:"#7DD3FC",fontSize:11,cursor:"pointer"}}>
+            {copied?"Link copied":"Copy link"}
+          </button>
+        </>
+      )}
+      <button onClick={onClose} style={{marginTop:14,background:"none",border:"none",color:"#64748B",fontSize:11,cursor:"pointer"}}>Close</button>
+    </div>
+  );
+}
+
+function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayUtc,autoPlay=false,onRotate=null,onRecheckStream=null,canShare=false,
                       // Phase B crop UX — three callbacks + the current
                       // cut points + busy flag. All optional; toolbar
                       // crop UI only renders when the setters are provided.
@@ -1000,6 +1089,7 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
   // keeps the overlay on top. Desktop uses the real Fullscreen API on the
   // stage container (handled in the button below).
   const[mobileFs,setMobileFs]=useState(false);
+  const[shareOpen,setShareOpen]=useState(false);
   // ── PLAYBACK STATE ──────────────────────────────────────────────────────────
   // Having a URL is not the same as having a playable video. The element renders
   // as soon as objectUrl exists, so an expired signed URL, an HLS stream Bunny has
@@ -1679,6 +1769,19 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             ⟳
           </button>
         )}
+        {/* Share — TL2+ and the boat owner. Mints a footage-only link (no numbers). */}
+        {canShare&&(
+          <button
+            onClick={(e)=>{e.stopPropagation(); setShareOpen(true);}}
+            title="Share this clip — footage only, no instrument data"
+            aria-label="Share this clip"
+            style={{position:"absolute",top:8,right:onRotate?44:8,zIndex:4,width:32,height:32,borderRadius:8,
+              border:"1px solid #1E3A5A",background:"rgba(3,15,26,0.72)",color:"#7DD3FC",
+              cursor:"pointer",fontSize:15,lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            ↗
+          </button>
+        )}
+        {shareOpen&&<ShareSheet video={video} onClose={()=>setShareOpen(false)}/>}
         <div style={{position:"absolute",bottom:8,left:8,display:"flex",alignItems:"center",gap:6}}>
           {vidQuality&&<div style={{background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 6px",fontSize:9,color:"#7DD3FC",fontFamily:"monospace",letterSpacing:0.3}}>▾ {vidQuality}</div>}
           {/* Coach/admin only: opt into local HD playback from the IndexedDB
@@ -5261,9 +5364,9 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
 
 // ─── SHARE BUTTON ─────────────────────────────────────────────────────────────
 // Mints a PUBLIC link to this one clip + its overlay. No login for the viewer, so the
-// token is the whole authorisation: it expires, and it can be revoked. TL3+ only —
-// sharing puts footage and instrument data on the open internet, so it sits with the
-// same senior roles that can rotate clips and edit Boat Config.
+// token is the whole authorisation: it expires, and it can be revoked. TL2 and up,
+// plus the boat owner (see lib/shareRoles + migration 0058) — sharing puts footage on
+// the open internet, and with the data box ticked the instrument numbers too.
 function ShareButton({ video, canShare }){
   const [open,setOpen]     = useState(false);
   const [busy,setBusy]     = useState(false);
@@ -5495,6 +5598,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         syncOffset={syncOffsets[video.id]||0} sessionTzOffset={sessionTzOffset}
         onPlayUtc={handlePlayUtc}
         onRotate={onRotateVideo ? (deg)=>onRotateVideo(video, deg) : null}
+        canShare={canShareVideos(effectiveRole)}
         canPlayLocalHD={['admin','coach'].includes(effectiveRole)}/>
       <div style={{padding:"12px 16px"}}>
         {/* Sync offset — coach + admin only. Gate on effectiveRole (the real
@@ -8215,6 +8319,7 @@ function SSAApp(){
             sessionTzOffset={sessionTzOffset}
             onPlayUtc={handlePlayUtc}
             onRotate={canRotate ? (deg)=>rotateVideo(selectedVideo, deg) : null}
+            canShare={canShareVideos(effectiveRole)}
             autoPlay
           />
         </div>
@@ -8643,6 +8748,7 @@ function SSAApp(){
                   sessionTzOffset={sessionTzOffset}
                   onPlayUtc={handlePlayUtc}
                   onRotate={canRotate ? (deg)=>rotateVideo(selectedVideo, deg) : null}
+                  canShare={canShareVideos(effectiveRole)}
                   canPlayLocalHD={['admin','coach'].includes(effectiveRole)}
                   // Phase B crop UX: three toolbar buttons + timeline
                   // markers. Gated on perms.canSync + local original
@@ -8969,7 +9075,7 @@ function SSAApp(){
                       else saveTagList(activeDate,updated);
                     } catch { saveTagList(activeDate,updated); }
                   }} onSave={async (id,tags)=>{ const vid=allVideos.find(v=>v.id===id)||selectedVideo; await saveTagsForVideo(vid, tags); }}/>}
-                  <ShareButton video={selectedVideo} canShare={canRotate}/>
+                  <ShareButton video={selectedVideo} canShare={canShareVideos(effectiveRole)}/>
                   {perms.canDelete&&(<DeleteButton video={selectedVideo} cloudStatus={cloudStatus} onDeleted={id=>{setAllVideos(p=>p.filter(v=>v.id!==id));setSelectedVideo(null);saveSyncOffset(id,0);}}/>)}
                 </div>
               </div>

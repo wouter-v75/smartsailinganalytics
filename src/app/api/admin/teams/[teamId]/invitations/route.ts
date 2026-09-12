@@ -11,7 +11,7 @@ import { generateInviteToken } from '../../../../../../lib/invitation-token'
 import { sendInviteEmail, sendMembershipReadyEmail } from '../../../../../../lib/email'
 import { provisionTeamMember, firstLoginLink } from '../../../../../../lib/provision-member'
 
-const ROLES = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'consultant', 'guest'] as const
+const ROLES = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'owner', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
 
 const DEFAULT_OPEN_MAX_USES = 25
