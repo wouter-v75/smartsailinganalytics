@@ -16,15 +16,6 @@
 // no data at the click, so the box needn't trace each domain edge exactly.
 const NORTH_AMERICA = { latMin: 5, latMax: 75, lonMin: -172, lonMax: -50 }
 
-// Coarse coverage box for MET Norway's Nordic model (the forecast behind yr.no).
-// Probed 2026-09-11 by bisection: data from ~52.7°N to ~73.8°N, and from ~-1°E
-// (at 60°N) / ~-7°E (at 68°N) to ~31°E (at 60°N) / ~39°E (at 70°N). The domain
-// is a Lambert conformal grid centred on 63°N 15°E, so its true edge is ragged;
-// this box traces the outer envelope. Every Norwegian venue is inside, Nordkapp
-// included. The Mediterranean and the Solent are outside, so the model is never
-// fetched at Porto Cervo / La Ciotat / Cowes.
-const NORDIC = { latMin: 52.5, latMax: 74.0, lonMin: -7.0, lonMax: 39.0 }
-
 export const MODELS = {
   // mosModel = the Open-Meteo id the MOS correction was trained on
   // (wind-verification). Exact match for AROME/ARPEGE/ITALIA; mosApprox marks
@@ -115,38 +106,6 @@ export const MODELS = {
     tableCols: [10, 50, 100],
     upperHeight: 100,
     forecastDays: 4,   // ARPEGE Europe on Open-Meteo runs to 4 days
-  },
-  // MET Norway "MET Nordic" — the operational forecast behind yr.no. 1 km,
-  // post-processed against observations (hence Open-Meteo's `_pp` data store),
-  // updated HOURLY, out to about +58 h. For a team racing in Norway this is the
-  // local high-res model, the way AROME is in France.
-  //
-  // REGION-GATED, not "fetched everywhere and greyed out" like DMI: outside its
-  // domain Open-Meteo answers HTTP 200 with `"latitude":nan`, which is not JSON,
-  // so a stray fetch cannot even be parsed. The NORDIC box keeps it off the
-  // Mediterranean venues entirely.
-  //
-  // 10 m ONLY. Probed: wind_speed_10m / direction / gusts, 2 m temperature,
-  // pressure and cloud are served; 80/100/120 m wind, boundary-layer height and
-  // every pressure level come back all-null. Asking for them would make the
-  // payload look populated while the columns are empty.
-  //
-  // metaModel differs from modelParam on purpose: `metno_nordic/static/meta.json`
-  // is HTTP 500; the run times live under `metno_nordic_pp`.
-  METNO: {
-    key: 'METNO', label: 'MET Norway', subtitle: 'MET Nordic 1 km · yr.no', color: '#283593',
-    endpoint: 'https://api.open-meteo.com/v1/forecast',
-    modelParam: 'metno_nordic',
-    metaModel: 'metno_nordic_pp',
-    coverage: NORDIC,
-    // 12x12, not the 16x16 the other regionals use. Open-Meteo bills a field PER
-    // LOCATION (measured 2026-09-11), and in Norway this is the auto-picked model,
-    // so its field is fetched on every point-1 change: 256 locations was ~43% of
-    // the 600/min free budget in one request. 144 keeps a ~4-5 km display field.
-    fieldGrid: 12,
-    heights: [10],
-    tableCols: [10],
-    forecastDays: 3,               // data runs to ~+58 h; the tail is null, which is fine
   },
   // ── North-American models (region-gated to NORTH_AMERICA) ──────────────────
   // Fetched + shown ONLY when a clicked point is in the Americas box; hidden
@@ -263,9 +222,9 @@ export const MODELS = {
 // Models shown in the Forecast surface toggle. ARPEGE/ITALIA included so their
 // venue MOS corrections (e.g. ARPEGE sector at Porto Cervo) surface here too.
 // HRRR/NAM trail the European set and region-gate themselves off in Europe.
-export const MODEL_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA', 'HRRR', 'NAM']
+export const MODEL_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'ARPEGE', 'ITALIA', 'HRRR', 'NAM']
 // All models fetched (Phase 2 Compare consumes the extras).
-export const COMPARE_ORDER = ['AROME', 'METNO', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRRR', 'NAM']
+export const COMPARE_ORDER = ['AROME', 'ECMWF', 'ICON', 'ICONRACE', 'ICONRACE_1KM', 'DMI', 'ITALIA', 'ARPEGE', 'HRRR', 'NAM']
 
 // Region gate. A model with a `coverage` box is only fetched + shown for points
 // inside it (hides the North-American models in Europe); models without a box
@@ -644,7 +603,7 @@ export function withCycleLabel(model, tag) {
 // Fetch one surface model at one point -> the Open-Meteo hourly envelope (or
 // null if missing/empty). Icon-Race delegates to fetchBunnyModel above.
 
-export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezone, onThrottle }) {
+export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezone }) {
   const cfg = MODELS[modelKey]
   if (cfg && cfg.bunnyBase) return fetchBunnyModel(cfg, latitude, longitude)
 
@@ -655,44 +614,11 @@ export async function fetchSurfaceModel({ modelKey, latitude, longitude, timezon
   // 429 + 5xx + network errors; give up immediately on other 4xx (a real "no
   // data here" is a 400 and won't recover).
   const getJson = async (url, tries = 4) => {
-    let waitedMinute = false
     for (let attempt = 0; attempt < tries; attempt++) {
       try {
         const res = await fetch(url)
-        if (res.ok) {
-          const text = await res.text()
-          try { return JSON.parse(text) } catch {
-            // A 200 that will not parse is never transient. Outside a regional
-            // model's domain Open-Meteo answers 200 with `"latitude":nan`, which is
-            // invalid JSON; treating that as a network error retried it four times
-            // with backoff — ~4 s and four requests per click past a domain edge —
-            // before returning null anyway.
-            // eslint-disable-next-line no-console
-            console.warn(`[weather] ${modelKey} returned unparseable JSON — outside its domain?`)
-            return null
-          }
-        }
-        // RATE LIMIT. Open-Meteo bills per LOCATION — measured 2026-09-11: three
-        // 256-point wind-field requests were admitted and the next single point got
-        // 429 — and the body names which limit tripped. A per-MINUTE limit clears
-        // within 60 s; the 0.6-2.4 s backoff below could never outlast it, so it just
-        // gave up ("gave up after retries"). Wait the minute out ONCE and try again.
-        // Hourly/daily limits won't clear in time, so those give up at once, loudly.
-        if (res.status === 429) {
-          let reason = ''
-          try { reason = (await res.json())?.reason || '' } catch { /* body optional */ }
-          if (/minutely/i.test(reason) && !waitedMinute && attempt < tries - 1) {
-            waitedMinute = true
-            onThrottle?.({ seconds: 61, reason })
-            // eslint-disable-next-line no-await-in-loop
-            await new Promise((r) => setTimeout(r, 61000))
-            continue
-          }
-          // eslint-disable-next-line no-console
-          console.warn(`[weather] ${modelKey} rate-limited: ${reason || 'HTTP 429'}`)
-          return null
-        }
-        const retriable = res.status >= 500
+        if (res.ok) return await res.json()
+        const retriable = res.status === 429 || res.status >= 500
         if (retriable && attempt < tries - 1) {
           // eslint-disable-next-line no-await-in-loop
           await new Promise((r) => setTimeout(r, 600 * 2 ** attempt))
@@ -822,10 +748,7 @@ export async function fetchAllForPoint({ latitude, longitude, timezone, enabledM
   for (const modelKey of omKeys) {
     onProgress?.({ modelKey, phase: 'start' })
     // eslint-disable-next-line no-await-in-loop
-    surfaceByModel[modelKey] = await fetchSurfaceModel({
-      modelKey, latitude, longitude, timezone,
-      onThrottle: (t) => onProgress?.({ modelKey, phase: 'throttled', ...t }),
-    })
+    surfaceByModel[modelKey] = await fetchSurfaceModel({ modelKey, latitude, longitude, timezone })
     onProgress?.({ modelKey, phase: 'done' })
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, 300))

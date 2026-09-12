@@ -13,7 +13,7 @@ import { MODELS, fetchModelMeta, fetchIconRaceStatus } from './openMeteo'
 
 // Order: the self-hosted model first (the headline), then the global/regional
 // models we pull from Open-Meteo.
-const ROWS = ['ICONRACE', 'AROME', 'ARPEGE', 'ICON', 'ECMWF', 'ITALIA', 'DMI', 'METNO']
+const ROWS = ['ICONRACE', 'AROME', 'ARPEGE', 'ICON', 'ECMWF', 'ITALIA', 'DMI']
 
 const REFRESH_MS = 60_000
 

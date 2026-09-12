@@ -43,11 +43,8 @@ const PPTX_JS = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bund
 const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotly.min.js'
 const KN = 0.539957
 const OUTLOOK_MODELS = ['ARPEGE', 'ECMWF']; const OUTLOOK_DAYS = 4
-const ALL_TODAY = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'METNO', 'ECMWF', 'ICON', 'ARPEGE', 'ITALIA', 'DMI']
-// METNO sits with the other ~1 km local models. In Norway it is the local,
-// observation-corrected forecast (yr.no), and the only other models present are
-// the coarse globals plus DMI Harmonie — so it carries the consensus there.
-const WEIGHTS = { ICONRACE: 7.0, ICONRACE_1KM: 8.5, AROME: 8.5, METNO: 8.5, ECMWF: 1.3, ICON: 1.3, ARPEGE: 0.9, ITALIA: 1.5, DMI: 1.0 }
+const ALL_TODAY = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'ECMWF', 'ICON', 'ARPEGE', 'ITALIA', 'DMI']
+const WEIGHTS = { ICONRACE: 7.0, ICONRACE_1KM: 8.5, AROME: 8.5, ECMWF: 1.3, ICON: 1.3, ARPEGE: 0.9, ITALIA: 1.5, DMI: 1.0 }
 const RACE_HOURS = [10, 11, 12, 13, 14, 15, 16, 17]; const RACE0 = 10; const RACE1 = 17
 const RACE_FILL = 'rgba(56,189,248,0.13)'
 const CARD = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
