@@ -26,6 +26,7 @@ import { playerStage, STAGE_TEXT, clipUrlIsFresh, isMp4Url } from '../lib/player
 import { loadHls, prefetchHls, HLS_CONFIG } from '../lib/hlsLoader';
 import { createQoe, sendQoe, platformOf } from '../lib/qoe';
 import { thumbSrc } from '../lib/thumbSrc';
+import { videoBadgeSrc } from '../lib/videoBadge';
 import { cropVideo } from '../lib/video-crop';
 import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
 import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending as syncPendingPhotos, connectionIsGood as photoConnGood } from '../lib/photoStore';
@@ -885,16 +886,6 @@ function enrichVideo(v,log,xml,syncOffsets){
 }
 
 function SrcBadge({source}){const m={local:{l:"LOCAL",bg:"#06B6D415",bd:"#06B6D430",c:"#06B6D4"},cloud:{l:"CLOUD",bg:"#8B5CF615",bd:"#8B5CF630",c:"#8B5CF6"},processing:{l:"PROC",bg:"#F59E0B15",bd:"#F59E0B30",c:"#F59E0B"}};const s=m[source==="supabase"?"cloud":source]||m.local;return<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,letterSpacing:1,fontWeight:600,background:s.bg,border:`1px solid ${s.bd}`,color:s.c}}>{s.l}</span>;}
-// A video is "in the cloud" once it has a Stream ID or a cloud rendition —
-// even if its local `source` field still reads "local" (the sync sets
-// cloudSynced/streamId/hasProxy, not source). Returns a SrcBadge source string.
-function videoBadgeSrc(v){
-  if(!v) return "local";
-  if(v.source==="processing"||v.streamProcessing) return "processing";
-  if(v.streamId||v.hasProxy||v.hasOriginal||v.cloudSynced||v.source==="cloud"||v.source==="supabase") return "cloud";
-  return "local";
-}
-const videoInCloud = v => videoBadgeSrc(v)==="cloud";
 function Gauge({label,value,/* unit kept for call-site back-compat — not rendered */ unit:_unit,color="#06B6D4",size="md",highlight=false}){
   // Gauge is only used for the on-video instrument overlay. On phones the
   // desktop sizing covers half the frame, so shrink everything ~40 %. Units
@@ -8882,7 +8873,7 @@ function SSAApp(){
                       const d=new Date(selectedVideo.startUtc + (sessionTzOffset||0)*60000);
                       return `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}`;
                     })()}</div>
-                    <SrcBadge source={selectedVideo.source||"local"}/>
+                    <SrcBadge source={videoBadgeSrc(selectedVideo)}/>
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
                     <div style={{fontSize:10,color:"#334155"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
