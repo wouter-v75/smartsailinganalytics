@@ -969,6 +969,33 @@ const OVERLAY_VARS = [
   {key:'pBurn',label:'P burn',unit:'',dec:0,fmt:'burn'},{key:'sBurn',label:'S burn',unit:'',dec:0,fmt:'burn'},
 ];
 
+// Can this clip be shared, and under which cloud row?
+//
+// The local flags were a GUESS, and it was wrong in both directions: a clip
+// uploaded before the local "original uploaded" mark existed carries none of
+// them, and cloudId is only attached once the day's cloud list has merged in —
+// so the sheet said "upload this clip first" for clips that were already in the
+// cloud. Ask the server instead: resolve the row (idempotent — dedupes by
+// external_id) and let the playback endpoint say whether a rendition exists.
+async function resolveShareTarget(video){
+  let cloudId = video.cloudId || (isCloudVideoId(video.id) ? video.id : null);
+  if(!cloudId){
+    try{
+      const supabase = getBrowserSupabase();
+      const { data: { user } } = await supabase.auth.getUser();
+      if(!user) return { error: "You are signed out. Sign in and try again." };
+      cloudId = await ensureCloudVideoId({ userId: user.id, video, sessionDate: video.sessionDate });
+    }catch(e){ return { error: e?.message || 'could not find this clip in the cloud' }; }
+  }
+  if(!cloudId) return { error: 'this clip has no cloud row yet — check your team membership in Admin' };
+  try{
+    const res = await fetch(`/api/videos/${encodeURIComponent(cloudId)}/url?prefer=proxy`, { cache: 'no-store' });
+    if(res.status === 404) return { cloudId, playable: false };          // genuinely nothing uploaded
+    if(!res.ok) return { cloudId, playable: false, error: `could not check this clip (HTTP ${res.status})` };
+    return { cloudId, playable: true };                                   // a rendition exists (or is encoding)
+  }catch{ return { cloudId, playable: false, error: 'could not reach the server' }; }
+}
+
 // ─── SHARE SHEET (inside the player) ──────────────────────────────────────────
 // One tap from the player: mint a link to THIS clip and hand it to WhatsApp,
 // Messages, email, or whatever else the phone offers.
@@ -981,16 +1008,18 @@ function ShareSheet({ video, onClose }){
   const [url,setUrl]       = useState(null);
   const [busy,setBusy]     = useState(true);
   const [err,setErr]       = useState(null);
+  const [notUploaded,setNotUploaded] = useState(false);
   const [copied,setCopied] = useState(false);
-  const cloudId  = video.cloudId || (isCloudVideoId(video.id) ? video.id : null);
-  const shareable = !!cloudId && !!(video.hasProxy || video.hasOriginal || video.originalUploadedAt);
 
   useEffect(()=>{
     let alive = true;
     (async()=>{
-      if(!shareable){ setBusy(false); return; }
       try{
-        const res = await fetch(`/api/videos/${encodeURIComponent(cloudId)}/share`,{
+        const target = await resolveShareTarget(video);
+        if(!alive) return;
+        if(!target.cloudId){ setErr(target.error || 'could not find this clip in the cloud'); return; }
+        if(!target.playable){ setNotUploaded(true); if(target.error) setErr(target.error); return; }
+        const res = await fetch(`/api/videos/${encodeURIComponent(target.cloudId)}/share`,{
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({ days: 14, includeOverlay: false }),
         });
@@ -1002,7 +1031,7 @@ function ShareSheet({ video, onClose }){
       finally{ if(alive) setBusy(false); }
     })();
     return ()=>{ alive = false; };
-  },[cloudId,shareable]);
+  },[video]);
 
   const subject = { title: video.title || video.name || null, url: url || '' };
   // sms: and mailto: must go through the current tab — a popup is blocked or
@@ -1021,7 +1050,7 @@ function ShareSheet({ video, onClose }){
         link directly: we copy it and open the app for you to paste.
       </div>
       {busy&&<div style={{fontSize:11,color:"#7DD3FC"}}>Creating the link…</div>}
-      {!busy&&!shareable&&(
+      {!busy&&notUploaded&&(
         <div style={{fontSize:11,color:"#FCA5A5",maxWidth:330,lineHeight:1.45}}>
           Upload this clip to the cloud first — whoever you send it to streams it from there.
         </div>
@@ -5377,8 +5406,13 @@ function ShareButton({ video, canShare }){
 
   // The share is against the CLOUD row — a clip that hasn't synced can't be shared,
   // because the viewer streams it from Bunny.
-  const cloudId = video.cloudId || (isCloudVideoId(video.id) ? video.id : null);
-  const shareable = !!cloudId && (video.hasProxy || video.hasOriginal);
+  // Resolved from the SERVER when the panel opens (see resolveShareTarget): the
+  // local flags said "upload this first" for clips that were already in the cloud.
+  // Only on open — resolving for every clip viewed would create a cloud row for
+  // clips nobody has uploaded.
+  const [target,setTarget] = useState(null);
+  const cloudId = target?.cloudId || video.cloudId || (isCloudVideoId(video.id) ? video.id : null);
+  const notUploaded = target ? !target.playable : false;
 
   const load = useCallback(async ()=>{
     if(!cloudId) return;
@@ -5388,6 +5422,12 @@ function ShareButton({ video, canShare }){
     }catch{ setShares([]); }
   },[cloudId]);
   useEffect(()=>{ if(open) load(); },[open,load]);
+  useEffect(()=>{
+    if(!open) return undefined;
+    let alive = true;
+    (async()=>{ const t = await resolveShareTarget(video); if(alive) setTarget(t); })();
+    return ()=>{ alive = false; };
+  },[open,video]);
 
   const mint = async ()=>{
     setBusy(true); setErr(null);
@@ -5412,12 +5452,6 @@ function ShareButton({ video, canShare }){
 
   if(!canShare) return null;
 
-  if(!shareable) return (
-    <div style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"8px 10px",marginTop:14,fontSize:10,color:"#475569"}}>
-      Upload this clip to the cloud before sharing — the viewer streams it from there.
-    </div>
-  );
-
   const live = (shares||[]).filter(sh=>!sh.revoked_at && new Date(sh.expires_at) > new Date());
 
   return (
@@ -5430,6 +5464,11 @@ function ShareButton({ video, canShare }){
       ) : (
         <div style={{background:"#0A1929",border:"1px solid #06B6D440",borderRadius:7,padding:"11px 12px"}}>
           <div style={{fontSize:11,fontWeight:700,color:"#06B6D4",marginBottom:7}}>Share this clip</div>
+          {notUploaded&&(
+            <div style={{fontSize:10,color:"#FCA5A5",lineHeight:1.5,marginBottom:9}}>
+              Upload this clip to the cloud before sharing — whoever you send it to streams it from there.
+            </div>
+          )}
           <div style={{fontSize:10,color:"#64748B",lineHeight:1.5,marginBottom:9}}>
             Anyone with the link can watch this one clip — no login. Nothing else about the
             session, boat or team is reachable from it.
@@ -5449,8 +5488,8 @@ function ShareButton({ video, canShare }){
           </div>
           {err && <div style={{fontSize:10,color:"#EF4444",marginBottom:7}}>{err}</div>}
           <div style={{display:"flex",gap:6}}>
-            <button onClick={mint} disabled={busy}
-              style={{flex:1,background:"#06B6D4",border:"none",borderRadius:6,padding:"7px 0",color:"#000",fontWeight:700,fontSize:11,cursor:busy?"default":"pointer"}}>
+            <button onClick={mint} disabled={busy||notUploaded}
+              style={{flex:1,background:(busy||notUploaded)?"#0E7490":"#06B6D4",border:"none",borderRadius:6,padding:"7px 0",color:"#000",fontWeight:700,fontSize:11,cursor:(busy||notUploaded)?"default":"pointer"}}>
               {busy?"Creating…":"Create link + copy"}
             </button>
             <button onClick={()=>setOpen(false)}
