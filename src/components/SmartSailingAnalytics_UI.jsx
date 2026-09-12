@@ -7097,7 +7097,7 @@ function SSAApp(){
   // guest: no SailScan, no SquashShots, no analytics data, no SailScan
   //   photos, only the latest session day shown.
   // consultant: full access — already gated by valid_from/valid_to via RLS.
-  const canSeeSailScanTab     = !['tl1','guest'].includes(effectiveRole);
+  const canSeeSailScanTab     = !['tl1','owner','guest'].includes(effectiveRole);
   const canSeeSquashShotsTab  = effectiveRole !== 'guest';
   // Tools tab (Squash + SailScan combined): TL2 and above, plus consultant (in-period).
   const canSeeToolsTab        = ['admin','team_manager','coach','tl3','tl2','consultant'].includes(effectiveRole);
@@ -7107,7 +7107,7 @@ function SSAApp(){
   // the tab but only see the Sail inventory + Sail data sub-tabs (Rig / Targets
   // / Log profile are hidden for them inside BoatConfigTab via canSeeTuning).
   const canSeeBoatConfig      = ['admin','team_manager','coach','tl3','consultant'].includes(effectiveRole);
-  const canSeeAnalyticsData   = !['tl1','guest'].includes(effectiveRole);
+  const canSeeAnalyticsData   = !['tl1','owner','guest'].includes(effectiveRole);
 
   // Durability + background sync (Phase 4): ask for persistent storage so
   // unsynced captures survive eviction, and register an app-level pending-photo
@@ -7139,8 +7139,8 @@ function SSAApp(){
     })();
     return ()=>{ cancelled=true; };
   },[logData, activeDate]); // eslint-disable-line react-hooks/exhaustive-deps
-  const canSeeSailScanPhotos  = !['tl1','guest'].includes(effectiveRole);
-  const canUseAI              = effectiveRole === null || !['tl1','consultant','guest'].includes(effectiveRole);
+  const canSeeSailScanPhotos  = !['tl1','owner','guest'].includes(effectiveRole);
+  const canUseAI              = effectiveRole === null || !['tl1','owner','consultant','guest'].includes(effectiveRole);
   const showOnlyLatestDay     = effectiveRole === 'guest';
   // Kept for backwards-compat with mobile shell prop; analytics tab is now
   // visible to every role (the content inside is what's gated).

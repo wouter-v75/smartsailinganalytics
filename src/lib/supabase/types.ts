@@ -8,6 +8,7 @@ export type MembershipRole =
   | 'team_manager'
   | 'coach'
   | 'tl1'
+  | 'owner'
   | 'tl2'
   | 'consultant'
   | 'guest'

@@ -53,7 +53,7 @@ export default function WeatherTab({ isMobile = false, effectiveRole = null, boa
   const atLeastTL2 = (ROLE_RANK[effectiveRole] ?? -1) >= ROLE_RANK.tl2
   const canMos = atLeastTL2        // MOS adjustments (field button, table column, comparisons)
   const canIconRace = atLeastTL2   // Icon-Race model + data
-  const canHeights = !['tl1', 'guest'].includes(effectiveRole) // above-10 m winds (tl1/guest see 10 m only)
+  const canHeights = !['tl1', 'owner', 'guest'].includes(effectiveRole) // above-10 m winds (tl1/owner/guest see 10 m only)
   const subTabs = SUB_TABS.filter((t) => !t.adminOnly || isAdmin)
 
   const [sub, setSub] = useState('forecast')
