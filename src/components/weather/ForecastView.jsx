@@ -244,6 +244,18 @@ export default function ForecastView({
   }, [p1lat, p1lon])
   // No point 1 yet → nothing to wait for; otherwise wait until its zone is known.
   const tzReady = p1Key == null || tzFor === p1Key
+  // Does the chosen field model actually have data at point 1 — HERE, now? The
+  // field used to be fetched the moment three points were placed, with whatever
+  // model was left over (the default AROME, or the last venue's pick restored from
+  // the session). At Newport that asked AROME for a US grid, and Open-Meteo's
+  // out-of-domain reply ("latitude":nan) is not JSON — hence the error while
+  // placing points. Checked against point 1's CURRENT position, so the previous
+  // venue's data cannot vouch for it while the new fetch is still running.
+  const p1Data = windData?.['1']
+  const p1DataHere = !!(p1Data?.coords && p1lat != null && p1lon != null
+    && Math.abs(p1Data.coords.latitude - p1lat) < 1e-4 && Math.abs(p1Data.coords.longitude - p1lon) < 1e-4)
+  const fieldModelHasData = ['CURRENTS', 'HPBL'].includes(fieldModel)
+    || (p1DataHere && !!p1Data.surfaceByModel?.[fieldModel] && hasValidSpeed(p1Data.surfaceByModel[fieldModel].hourly))
   // Field MOS availability: point 1 within 20 nm of a calibrated venue AND the
   // selected model has a fitted correction there.
   const fieldVenue = p1lat != null ? matchVenue(p1lat, p1lon) : null
@@ -252,6 +264,7 @@ export default function ForecastView({
   useEffect(() => {
     if (!allThree || p1lat == null) { setField(null); return }
     if (!tzReady) return   // fetch once, in venue time
+    if (!fieldModelHasData) return   // wait for point 1's data; the auto-pick chooses a model that covers it
     // On the first run after a remount (returning to the Weather tab), keep the
     // field restored from the session store instead of re-fetching it.
     if (firstFieldRunRef.current) {
@@ -287,7 +300,7 @@ export default function ForecastView({
     // `field` is read only for the first-run restore guard; it must NOT be a dep
     // (this effect SETS field, so depending on it would loop).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, tzReady, fieldMosAvail, canMos])
+  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, tzReady, fieldModelHasData, fieldMosAvail, canMos])
 
   // Currents LOD: when the current field is showing, zoom IN (≥10) loads the native
   // ~1.5 km clip (20 km around point 1) and zoom OUT swaps back to the ~3 km overview.
@@ -684,7 +697,9 @@ export default function ForecastView({
   useEffect(() => {
     const has = Object.keys(windData).length > 0
     if (!has) { autoModelRef.current = false; return }
-    if (autoModelRef.current) return
+    // Picked already — but re-pick if that model has no data at point 1 (points
+    // moved to another venue, or a model left over from the last session).
+    if (autoModelRef.current && fieldModelHasData) return
     let pref = ['ICONRACE_1KM', 'ICONRACE'].find((k) => modelAvailable[k])
     if (!pref && !loading) {
       // The venue's local model before any global: AROME (France), MET Norway
@@ -694,7 +709,7 @@ export default function ForecastView({
     }
     if (pref) { autoModelRef.current = true; setFieldModel(pref); onActiveModelChange?.(pref) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, windData, modelAvailable])
+  }, [loading, windData, modelAvailable, fieldModelHasData])
 
   // Auto-fetch all models whenever the points change (debounced for drags).
   const fetchAllRef = useRef(null)

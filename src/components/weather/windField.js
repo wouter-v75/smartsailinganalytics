@@ -193,6 +193,13 @@ function interpAtHeight(hourly, idx, h, heights) {
 // Fetch + build the field. Returns { times:[ISO...], frames:[{u:[],v:[]}...],
 // header, maxSpeed }. Speeds in m/s. `height` may be any value (mast height is
 // interpolated from the model's native levels).
+/** Open-Meteo JSON, tolerating the bare `nan` it emits for points outside a regional
+ *  model's domain ("latitude":nan) — which JSON.parse rejects outright. */
+export function parseOmJson(text) {
+  try { return JSON.parse(text) } catch { /* fall through to the nan-tolerant parse */ }
+  return JSON.parse(String(text).replace(/:\s*-?nan\b/gi, ':null'))
+}
+
 export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm = 30, nx, ny }) {
   const m = MODELS[modelKey]
   if (!m || !m.endpoint) throw new Error(`model ${modelKey} has no Open-Meteo endpoint`)
@@ -214,8 +221,14 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
   const fetchPoints = async (modelParam, days) => {
     const res = await fetch(`${base}&forecast_days=${days}&models=${modelParam}`)
     if (!res.ok) throw new Error(res.status === 429 ? 'too many open meteo requests, try later' : `Open-Meteo ${res.status}`)
-    const json = await res.json()
+    // Outside a regional model's domain Open-Meteo answers 200 with "latitude":nan,
+    // which is not JSON: res.json() threw "Unexpected token 'a'" straight into the UI
+    // while points were being placed. Read as text; nan becomes null.
+    const json = parseOmJson(await res.text())
     const pts = Array.isArray(json) ? json : [json]   // multi-coord => array
+    if (!pts.some((p) => p?.hourly?.time?.length)) {
+      throw new Error(`${m.label || modelKey} has no data for this area — it is outside that model's coverage`)
+    }
     if (pts.length !== lats.length) {
       // Open-Meteo may collapse duplicate/too-close points; bail with a clear error
       throw new Error(`grid mismatch: asked ${lats.length} points, got ${pts.length}`)
@@ -235,7 +248,9 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
     points = await fetchPoints(m.modelParam, days)
   }
 
-  const times = points[0]?.hourly?.time || []
+  // A grid can straddle a ragged domain edge (MET Norway's coast): take the time
+  // axis from any cell that has one, not blindly from the first.
+  const times = points.find((p) => p?.hourly?.time?.length)?.hourly?.time || []
   const nT = times.length
   const N = nx * ny
   const frames = []
@@ -243,8 +258,10 @@ export async function fetchWindField({ modelKey, lat, lon, height, timezone, nm 
   for (let t = 0; t < nT; t++) {
     const u = new Array(N); const v = new Array(N)
     for (let p = 0; p < N; p++) {
-      const hourly = points[p].hourly
-      const { s, d } = interpAtHeight(hourly, t, height, heights)
+      const hourly = points[p]?.hourly
+      // A cell outside the model's domain has no hourly block: leave it empty rather
+      // than crash the whole field on it.
+      const { s, d } = hourly ? interpAtHeight(hourly, t, height, heights) : { s: null, d: null }
       const [uu, vv] = toUV(s, d)
       u[p] = uu; v[p] = vv
       if (s != null && s > maxSpeed) maxSpeed = s
