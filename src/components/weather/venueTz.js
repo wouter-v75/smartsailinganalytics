@@ -64,3 +64,48 @@ export function tzAbbrev(tz, date = new Date()) {
 
 /** For tests only. */
 export function _clearVenueTzCache() { cache.clear() }
+
+// ── Wall-clock model times ──────────────────────────────────────────────────
+// Open-Meteo is asked for times IN the venue zone, and answers with zone-less
+// wall-clock strings: "2026-09-13T09:00" already means 09:00 in Newport. The bug
+// this fixes: `new Date("2026-09-13T09:00")` reads such a string in the BROWSER's
+// zone, and formatting that Date in the venue's zone moved it again — Newport seen
+// from Amsterdam labelled the 09:00 forecast "03:00", and the table's 08–18 window
+// actually showed 14:00–24:00. Harmless only while viewer and venue shared a zone.
+// Read the digits instead; only a string that carries a zone is converted.
+
+const HAS_ZONE = /(Z|[+-]\d{2}:?\d{2})$/
+
+/** Hour (0–23) of a model time, in the venue's zone. */
+export function wallHour(t, tz) {
+  if (typeof t !== 'string' || t.length < 13) return NaN
+  if (!HAS_ZONE.test(t)) return Number(t.slice(11, 13))
+  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz || 'UTC', hour: '2-digit', hourCycle: 'h23' }).format(new Date(t)))
+}
+
+/** YYYY-MM-DD of a model time, in the venue's zone. */
+export function wallDay(t, tz) {
+  if (typeof t !== 'string' || t.length < 10) return ''
+  if (!HAS_ZONE.test(t)) return t.slice(0, 10)
+  return new Date(t).toLocaleDateString('en-CA', { timeZone: tz || 'UTC' })
+}
+
+/** Format a model time for display without shifting it. `opts` as for toLocaleString. */
+export function formatWall(t, tz, opts = {}) {
+  if (typeof t !== 'string' || !t) return ''
+  if (!HAS_ZONE.test(t)) {
+    // A Date whose UTC fields ARE the wall-clock digits, printed in UTC: no shift.
+    const d = new Date(`${t.length <= 16 ? `${t}:00` : t.slice(0, 19)}Z`)
+    return d.toLocaleString('en-GB', { ...opts, timeZone: 'UTC' })
+  }
+  return new Date(t).toLocaleString('en-GB', { ...opts, timeZone: tz || 'UTC' })
+}
+
+/** The venue's current wall-clock date and hour — "now" for picking a row or frame. */
+export function nowInTz(tz, now = new Date()) {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now)
+  const g = (k) => p.find((x) => x.type === k)?.value || ''
+  return { day: `${g('year')}-${g('month')}-${g('day')}`, hour: Number(g('hour')) }
+}

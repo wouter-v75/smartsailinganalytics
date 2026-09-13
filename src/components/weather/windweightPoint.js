@@ -59,9 +59,15 @@ export function pointWindweightByHour({
   const mosId = MODELS[modelKey]?.mosModel
 
   for (let i = 0; i < times.length; i++) {
-    const ms = Date.parse(times[i])
-    if (isNaN(ms) || localDate(ms) !== todayLocal) continue
-    const hr = localHour(ms)
+    // A zone-less time is already venue wall-clock: read its digits. Date.parse would
+    // read it in the BROWSER's zone and the injected helpers would shift it again.
+    // Times that carry a zone (the SSA-Race grids are UTC) still go through them.
+    const t = String(times[i] || '')
+    const zoned = /(Z|[+-]\d{2}:?\d{2})$/.test(t)
+    const ms = zoned ? Date.parse(t) : NaN
+    const day = zoned ? (isNaN(ms) ? '' : localDate(ms)) : t.slice(0, 10)
+    if (!day || day !== todayLocal) continue
+    const hr = zoned ? localHour(ms) : Number(t.slice(11, 13))
     const box = boxByHour[hr]
 
     // payload speeds are km/h; the integral wants m/s

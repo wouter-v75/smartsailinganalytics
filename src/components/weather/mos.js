@@ -12,6 +12,7 @@
 import sorrento from './mos/mos_sorrento.json'
 import porto_cervo from './mos/mos_porto_cervo.json'
 import st_tropez from './mos/mos_st_tropez.json'
+import { wallHour } from './venueTz'
 
 const SPECS = { sorrento, porto_cervo, st_tropez }
 
@@ -133,14 +134,13 @@ export function applyMOS(spec, mosModelId, ws30, twd, localHour) {
   return { ws: ws30, type: 'raw' }
 }
 
-// Local clock hour in a timezone (mirrors the table's hour calc).
+// Local clock hour in a timezone (mirrors the table's hour calc). A zone-less
+// Open-Meteo time is already venue wall-clock, so its digits ARE the hour — the old
+// new Date() round-trip applied MOS at the wrong hour whenever the viewer's zone
+// differed from the venue's.
 export function hourInTz(timeStr, tz) {
-  try {
-    return parseInt(new Date(timeStr).toLocaleString('en-GB',
-      { timeZone: tz, hour: '2-digit', hour12: false }), 10)
-  } catch {
-    return new Date(timeStr).getHours()
-  }
+  const h = wallHour(timeStr, tz)
+  return Number.isFinite(h) ? h : new Date(timeStr).getHours()
 }
 
 // Whole MOS-corrected 30 m series (kn) for a model's hourly payload, or null.

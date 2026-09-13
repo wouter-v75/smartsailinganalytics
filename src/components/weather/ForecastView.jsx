@@ -25,7 +25,7 @@ import {
   labelWithCycle, withCycleLabel, localForecastWindow, localRacingWindow,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
-import { resolveVenueTz, deviceTz } from './venueTz'
+import { resolveVenueTz, deviceTz, wallHour, formatWall } from './venueTz'
 import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
@@ -1078,11 +1078,10 @@ function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed
   const hourly = surf.hourly
   const rows = []
   hourly.time.forEach((timeStr, index) => {
-    const date = new Date(timeStr)
-    const hour = parseInt(
-      date.toLocaleString('en-GB', { timeZone: timezone, hour: '2-digit', hour12: false }),
-      10
-    )
+    // timeStr is already venue wall-clock ("2026-09-13T09:00"). Going through
+    // new Date() read it in the BROWSER's zone and shifted it again: Newport from
+    // Amsterdam put 14:00–24:00 data under an "08:00–18:00" table.
+    const hour = wallHour(timeStr, timezone)
     if (hour >= 8 && hour <= 18) {
       let mos = null
       if (canMos) {
@@ -1093,7 +1092,7 @@ function WindTable({ locationKey, point, model, timezone, mastHeight, mosAllowed
         }
       }
       rows.push({
-        time: date.toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit', timeZone: timezone }),
+        time: formatWall(timeStr, timezone, { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
         windDir: hourly.wind_direction_10m?.[index],
         speeds: speedHeights.map((h) => (
           h === mastHeight
@@ -1363,9 +1362,9 @@ function WindProfileSection({ windData, model, timezone }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [windData, model.key, timeIdx])
 
-  const selTime = times[timeIdx] ? new Date(times[timeIdx]) : null
-  const timeLabel = selTime
-    ? selTime.toLocaleString('en-GB', { timeZone: timezone, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  // Venue wall-clock, printed without the browser-zone round trip (see venueTz).
+  const timeLabel = times[timeIdx]
+    ? formatWall(times[timeIdx], timezone, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : ''
 
   const layout = {
@@ -1386,7 +1385,7 @@ function WindProfileSection({ windData, model, timezone }) {
           <select value={timeIdx} onChange={(e) => setTimeIdx(Number(e.target.value))} style={inputStyle}>
             {times.map((t, i) => (
               <option key={i} value={i}>
-                {new Date(t).toLocaleString('en-GB', { timeZone: timezone, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                {formatWall(t, timezone, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </option>
             ))}
           </select>
