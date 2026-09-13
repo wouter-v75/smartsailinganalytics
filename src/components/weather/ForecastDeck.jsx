@@ -24,6 +24,7 @@ import React, { useMemo, useState } from 'react'
 import { useScriptsOnce } from './useScriptOnce'
 import { MODELS, interpolateSpeedAtHeight, hasValidSpeed, fetchIconRaceSounding, fetchWindweightNearest, SSARACE_SOUNDING_LEVELS, ICON_SOUNDING_LEVELS, ECMWF_SOUNDING_LEVELS, GFS_SOUNDING_LEVELS } from './openMeteo'
 import { matchVenue, specFor, mosSeries } from './mos'
+import { tzAbbrev } from './venueTz'
 import { BEAUFORT_BANDS, PALETTE_MAX_KT, fetchWindField, fetchIconRaceField, sampleField, applyMosToField, scaleFieldSpeeds } from './windField'
 import { getWeatherSession } from './weatherSession'
 import {
@@ -1793,14 +1794,14 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
         day: aiPayload.date,                                  // "Wednesday, 24 June"
         year: String(new Date().getFullYear()),
         typeOfDay, raceDay: campaignRaceDay, ai, diag, course, courseSeries, polar,
-        subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })}`,
+        subtitle: `${venueName} — issued ${new Date().toLocaleString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: tz })} ${tzAbbrev(tz)} · all times venue local (${tz})`,
         outlookModelLabel: MODELS[outlookModel]?.label || outlookModel, shortModelLabel: MODELS[shortSel]?.label || shortSel,
         mastH: mastHeight, outlookRows, dailyRows, extraDaily, cmpSpeed: cmp[0], cmpDir: cmp[1], longRange, windfieldImg, hpblImg, soundingImg, views3d, heroView,
         wwRows, wwProfileImg, apparel,
         generalBullets: ['Synoptic setup — edit', 'Sea-breeze timing & strength — edit', 'Local effects / hazards — edit'],
         dailyBullets: [peak ? `Peak breeze ~${peak.hi}kn around ${peak.time}` : 'Breeze through the racing window — edit', 'Racing window 10:00–16:00 — edit', 'Local effects — edit'],
       })
-      await deck.writeFile({ fileName: `forecast_${venueName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.pptx` })
+      await deck.writeFile({ fileName: `forecast_${venueName.replace(/\s+/g, '_')}_${new Date().toLocaleDateString('en-CA', { timeZone: tz })}.pptx` })
 
       // Prepend the Summary text into the campaign day's Weather -> Notes (top,
       // editable). Best-effort: never block the deck. De-dupes a prior auto block.

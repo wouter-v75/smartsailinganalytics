@@ -25,6 +25,7 @@ import {
   labelWithCycle, withCycleLabel, localForecastWindow, localRacingWindow,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
+import { resolveVenueTz, deviceTz } from './venueTz'
 import {
   matchVenue, specFor, wind30, applyMOS, mosSeries, correctionInfo,
 } from './mos'
@@ -180,7 +181,12 @@ export default function ForecastView({
   useEffect(() => {
     onPersistChange?.({ locations, fieldModel, fieldHeight, fieldHourIdx, field })
   }, [locations, fieldModel, fieldHeight, fieldHourIdx, field])
-  const tzResolved = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  // VENUE time, not the viewer's (lib venueTz). Everyone sees the clock the racing
+  // runs on: a Newport forecast made in Amsterdam labelled 10:00 means 10:00 in
+  // Newport. Resolved from point 1; the device zone stands in only until then, and
+  // the fetches below wait for it so nothing is fetched twice in two zones.
+  const [tzResolved, setTzResolved] = useState(() => deviceTz())
+  const [tzFor, setTzFor] = useState(null)
   const allThree = !!(locations['1'] && locations['2'] && locations['3'])
 
   // The placed points, with their marker colour — passed to the 3D viewer so the
@@ -224,6 +230,20 @@ export default function ForecastView({
 
   // Fetch the field grid for point 1's 20 nm box on point/model/height change.
   const p1lat = locations['1']?.lat; const p1lon = locations['1']?.lon
+  const p1Key = p1lat == null || p1lon == null ? null : `${p1lat},${p1lon}`
+  useEffect(() => {
+    if (p1lat == null || p1lon == null) return undefined
+    let alive = true
+    resolveVenueTz(p1lat, p1lon).then((tz) => {
+      if (!alive) return
+      if (!tz) console.warn('[weather] venue timezone lookup failed — showing device time until it succeeds')
+      setTzResolved(tz || deviceTz())
+      setTzFor(`${p1lat},${p1lon}`)
+    })
+    return () => { alive = false }
+  }, [p1lat, p1lon])
+  // No point 1 yet → nothing to wait for; otherwise wait until its zone is known.
+  const tzReady = p1Key == null || tzFor === p1Key
   // Field MOS availability: point 1 within 20 nm of a calibrated venue AND the
   // selected model has a fitted correction there.
   const fieldVenue = p1lat != null ? matchVenue(p1lat, p1lon) : null
@@ -231,6 +251,7 @@ export default function ForecastView({
   const fieldMosAvail = !!(fieldVenue && fieldMosId && correctionInfo(fieldVenue, fieldMosId))
   useEffect(() => {
     if (!allThree || p1lat == null) { setField(null); return }
+    if (!tzReady) return   // fetch once, in venue time
     // On the first run after a remount (returning to the Weather tab), keep the
     // field restored from the session store instead of re-fetching it.
     if (firstFieldRunRef.current) {
@@ -266,7 +287,7 @@ export default function ForecastView({
     // `field` is read only for the first-run restore guard; it must NOT be a dep
     // (this effect SETS field, so depending on it would loop).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, fieldMosAvail, canMos])
+  }, [allThree, p1lat, p1lon, fieldModel, fieldHeight, mastHeight, tzResolved, tzReady, fieldMosAvail, canMos])
 
   // Currents LOD: when the current field is showing, zoom IN (≥10) loads the native
   // ~1.5 km clip (20 km around point 1) and zoom OUT swaps back to the ~3 km overview.
@@ -672,6 +693,7 @@ export default function ForecastView({
   useEffect(() => {
     const keys = Object.keys(locations)
     if (!keys.length) return
+    if (!tzReady) return   // wait for the venue timezone: one fetch, in venue time
     // Skip the fetch when the data already in hand (restored from the session
     // store on a tab return) exactly covers these points — no need to re-query
     // Open-Meteo, so no "loading models" flash. An added or moved point won't be
@@ -684,7 +706,7 @@ export default function ForecastView({
     const id = setTimeout(() => { fetchAllRef.current(locations) }, 500)
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locations, canIconRace])
+  }, [locations, canIconRace, tzReady])
 
   const hasResults = Object.keys(windData).length > 0
   const tzLabel = resolvedTz === 'UTC' ? 'UTC' : resolvedTz
