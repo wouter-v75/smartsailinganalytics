@@ -594,7 +594,14 @@ export default function ForecastView({
   }
 
   // ── Fetch all models for every selected location (auto-triggered) ─────
+  // Newest fetch wins. Every point change starts a full fetchAll, and nothing
+  // stopped an OLDER, slower run (points 1+2, stuck behind Open-Meteo's rate
+  // limit) from finishing LAST and overwriting the newer one's data — which is how
+  // point 3 vanished from the table and the deck after it had been placed.
+  const fetchSeqRef = useRef(0)
   async function fetchAll(locs = locations) {
+    const seq = ++fetchSeqRef.current
+    const current = () => seq === fetchSeqRef.current
     setLoading(true); setErr(null)
     const tz = tzResolved
     const labelFor = (k) => (k === 'GFS' ? 'GFS (upper air)' : k === 'ECMWF-UA' ? 'ECMWF (upper air)' : (MODELS[k]?.label || k))
@@ -620,6 +627,7 @@ export default function ForecastView({
           timezone: tz,
           enabledModels: ALL_MODELS,
           onProgress: ({ modelKey, phase }) => {
+            if (!current()) return   // a superseded run must not move the newer run's bar
             if (phase === 'start') {
               setProgress({ done, total, label: `Loading ${labelFor(modelKey)} — Location ${key}` })
             } else {
@@ -629,13 +637,13 @@ export default function ForecastView({
           },
         })
       }
+      if (!current()) return     // superseded — the newer run owns the data
       const points = Object.values(out)
       onDataChange?.(out, pickDefaultActiveModel(points), tz)
     } catch (e) {
-      setErr(e?.message || 'fetch failed')
+      if (current()) setErr(e?.message || 'fetch failed')
     } finally {
-      setLoading(false)
-      setProgress(null)
+      if (current()) { setLoading(false); setProgress(null) }
     }
   }
 
@@ -679,9 +687,10 @@ export default function ForecastView({
     if (autoModelRef.current) return
     let pref = ['ICONRACE_1KM', 'ICONRACE'].find((k) => modelAvailable[k])
     if (!pref && !loading) {
-      pref = modelAvailable.AROME
-        ? 'AROME'
-        : MODEL_PICK_ORDER.find((k) => !['CURRENTS', 'HPBL'].includes(k) && modelAvailable[k]) || null
+      // The venue's local model before any global: AROME (France), MET Norway
+      // (Nordics), HRRR (North America). Region-gated, so at most one has data.
+      pref = ['AROME', 'METNO', 'HRRR'].find((k) => modelAvailable[k])
+        || MODEL_PICK_ORDER.find((k) => !['CURRENTS', 'HPBL'].includes(k) && modelAvailable[k]) || null
     }
     if (pref) { autoModelRef.current = true; setFieldModel(pref); onActiveModelChange?.(pref) }
     // eslint-disable-next-line react-hooks/exhaustive-deps

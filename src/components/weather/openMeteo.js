@@ -837,7 +837,10 @@ export async function fetchAllForPoint({ latitude, longitude, timezone, enabledM
 // auto-selection — otherwise the table/active model flips to AROME on a late
 // fetch completion while the field stays on SSA-Race. Falls through to the
 // standard MODEL_ORDER (AROME first) when no SSA-Race data is present.
-const DEFAULT_ACTIVE_ORDER = ['ICONRACE_1KM', 'ICONRACE', ...MODEL_ORDER.filter((k) => !k.startsWith('ICONRACE'))]
+// Then the local regional models (region-gated, so only one ever has data) ahead
+// of the globals: HRRR at a North-American venue, not ECMWF.
+const LOCAL_FIRST = ['AROME', 'METNO', 'HRRR', 'NAM']
+const DEFAULT_ACTIVE_ORDER = ['ICONRACE_1KM', 'ICONRACE', ...LOCAL_FIRST, ...MODEL_ORDER.filter((k) => !k.startsWith('ICONRACE') && !LOCAL_FIRST.includes(k))]
 export function pickDefaultActiveModel(allPoints) {
   for (const k of DEFAULT_ACTIVE_ORDER) {
     if (allPoints.some((p) => p.surfaceByModel[k] && hasValidSpeed(p.surfaceByModel[k].hourly))) return k

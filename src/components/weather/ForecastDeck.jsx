@@ -44,11 +44,15 @@ const PPTX_JS = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bund
 const PLOTLY_JS = 'https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.24.1/plotly.min.js'
 const KN = 0.539957
 const OUTLOOK_MODELS = ['ARPEGE', 'ECMWF']; const OUTLOOK_DAYS = 4
-const ALL_TODAY = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'METNO', 'ECMWF', 'ICON', 'ARPEGE', 'ITALIA', 'DMI']
+// HRRR / NAM: the local models at a North-American venue — region-gated, so they
+// only ever have data there, and were fetched but DROPPED from the deck before.
+const ALL_TODAY = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'METNO', 'HRRR', 'NAM', 'ECMWF', 'ICON', 'ARPEGE', 'ITALIA', 'DMI']
 // METNO sits with the other ~1 km local models. In Norway it is the local,
 // observation-corrected forecast (yr.no), and the only other models present are
 // the coarse globals plus DMI Harmonie — so it carries the consensus there.
-const WEIGHTS = { ICONRACE: 7.0, ICONRACE_1KM: 8.5, AROME: 8.5, METNO: 8.5, ECMWF: 1.3, ICON: 1.3, ARPEGE: 0.9, ITALIA: 1.5, DMI: 1.0 }
+// HRRR is 3 km with hourly rapid refresh — the local model, like AROME. NAM is 12 km:
+// regional, better than the globals, well short of a 1-3 km model.
+const WEIGHTS = { ICONRACE: 7.0, ICONRACE_1KM: 8.5, AROME: 8.5, METNO: 8.5, HRRR: 8.5, NAM: 3.0, ECMWF: 1.3, ICON: 1.3, ARPEGE: 0.9, ITALIA: 1.5, DMI: 1.0 }
 const RACE_HOURS = [10, 11, 12, 13, 14, 15, 16, 17]; const RACE0 = 10; const RACE1 = 17
 const RACE_FILL = 'rgba(56,189,248,0.13)'
 const CARD = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
@@ -278,7 +282,7 @@ async function captureComparison(models, mastH) {
   const spd = models.map((m) => ser(m, 'spd')); const dir = models.map((m) => ser(m, 'dir'))
   // Emphasise the primary models — SSA-Race 1 km + AROME — with bold lines, and
   // connect their TWD points (other models stay thin / markers-only).
-  const EMPH = ['ICONRACE_1KM', 'AROME']
+  const EMPH = ['ICONRACE_1KM', 'AROME', 'HRRR']
   const isEmph = (k) => EMPH.includes(k)
   const lines = (series, modeFn, widthFn) => models.map((m, k) => ({
     x: xs, y: series[k], name: MODELS[m.key]?.label || m.key, type: 'scatter',
@@ -987,7 +991,8 @@ function buildDeck(P, d) {
       // A colour chip tying each table to its numbered marker on the map pages.
       s.addShape('ellipse', { x: M, y: py - 0.29, w: 0.15, h: 0.15, fill: { color: PT_COLOR[ex.key] || '38BDF8' }, line: { color: 'FFFFFF', width: 1 } })
       const cd = ex.coords
-      s.addText(cd?.latitude != null ? `Point ${ex.key} · ${Number(cd.latitude).toFixed(4)}, ${Number(cd.longitude).toFixed(4)}` : `Point ${ex.key}`,
+      s.addText((cd?.latitude != null ? `Point ${ex.key} · ${Number(cd.latitude).toFixed(4)}, ${Number(cd.longitude).toFixed(4)}` : `Point ${ex.key}`)
+        + (ex.fallbackModel ? ` · ${ex.fallbackModel} (${d.shortModelLabel} has no data here)` : ''),
         { x: M + 0.22, y: py - 0.34, w: CW - 0.22, h: 0.26, fontFace: FONT, fontSize: 12, bold: true, color: NAVY, valign: 'middle' })
       py = addDailyTable(s, ex.rows, py, true) + 0.55
     }
@@ -1561,9 +1566,12 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
   const point1 = windData?.['1']; const haveP1 = p1lat != null && p1lon != null && !!point1
   const shortModels = useMemo(() => { const sb = point1?.surfaceByModel || {}; return Object.keys(MODELS).filter((k) => sb[k] && hasValidSpeed(sb[k].hourly)) }, [point1])
   // Default outlook model: ARPEGE (falls back to ECMWF at generate time if its
-  // extended data isn't available). Default short-term model preference:
-  // SSA-Race 1 km → SSA-Race 2 km → AROME → ECMWF.
-  const SHORT_PREF = ['ICONRACE_1KM', 'ICONRACE', 'AROME', 'ECMWF']
+  // extended data isn't available). Default short-term model preference: the
+  // LOCAL model first — SSA-Race 1 km → 2 km → AROME (France) → MET Norway
+  // (Nordics) → HRRR → NAM (North America) — then ECMWF. The regional models are
+  // region-gated, so each only has data at its own venues; at Newport this picks
+  // HRRR (3 km) where it used to fall through to ECMWF (9 km).
+  const SHORT_PREF = ['ICONRACE_1KM', 'ICONRACE', 'AROME', 'METNO', 'HRRR', 'NAM', 'ECMWF']
   const [outlookModel, setOutlookModel] = useState('ARPEGE'); const [shortModel, setShortModel] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState(''); const [aiErr, setAiErr] = useState(''); const [noteMsg, setNoteMsg] = useState('')
   const shortSel = shortModel && shortModels.includes(shortModel) ? shortModel : (SHORT_PREF.find((k) => shortModels.includes(k)) || shortModels[0] || '')
 
@@ -1601,11 +1609,18 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
       for (const key of ['2', '3']) {
         const pt = windData?.[key]
         const psb = pt?.surfaceByModel || {}
-        if (!psb[shortSel] || !hasValidSpeed(psb[shortSel].hourly)) continue
-        const pShort = mk(shortSel, psb[shortSel].hourly)
-        const pBand = ALL_TODAY.filter((k) => psb[k] && hasValidSpeed(psb[k].hourly) && k !== shortSel).map((k) => mk(k, psb[k].hourly))
+        // A point where the short model has no data (outside its domain, or refused
+        // under Open-Meteo's rate limit) used to be DROPPED without a word. Fall back
+        // to the heaviest-weighted model that does have data there, and say so.
+        const usable = (k) => psb[k] && hasValidSpeed(psb[k].hourly)
+        const pKey = usable(shortSel)
+          ? shortSel
+          : ALL_TODAY.filter(usable).sort((a, b) => (WEIGHTS[b] || 0) - (WEIGHTS[a] || 0))[0]
+        if (!pKey) { console.warn(`[deck] point ${key}: no model returned data there — table omitted`); continue }
+        const pShort = mk(pKey, psb[pKey].hourly)
+        const pBand = ALL_TODAY.filter((k) => usable(k) && k !== pKey).map((k) => mk(k, psb[k].hourly))
         const rows = buildDaily(pShort, mastHeight, pBand)
-        if (rows.length) extraDaily.push({ key, rows, coords: pt?.coords || null })
+        if (rows.length) extraDaily.push({ key, rows, coords: pt?.coords || null, fallbackModel: pKey !== shortSel ? (MODELS[pKey]?.label || pKey) : null })
       }
 
       const gJsons = await Promise.all(OUTLOOK_MODELS.map((k) => fetchModelDays(k, p1lat, p1lon, tz, OUTLOOK_DAYS).catch(() => null)))
