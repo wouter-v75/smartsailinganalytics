@@ -1,4 +1,3 @@
-'use client'
 // src/lib/polarCalc.js
 // ─────────────────────────────────────────────────────────────────────────────
 // Polar file parsing, spline interpolation, VMG target calculation and
@@ -86,12 +85,23 @@ export function goldenMax(f, lo, hi, tol=0.1) {
   return (a+b)/2;
 }
 
-// Pre-compute splines and VMG targets for every TWS entry
-export function preparePolar(raw) {
+// Straight lines between points, in the same segment shape evalSpline reads.
+export function buildLinear(pts) {
+  if(pts.length<2) return null;
+  return pts.slice(0,-1).map((p,i)=>({x0:p.x, a:p.y, b:(pts[i+1].y-p.y)/((pts[i+1].x-p.x)||1), c:0, d:0}));
+}
+
+// Pre-compute splines and VMG targets for every TWS entry.
+// opts.interp 'linear' reads straight between the points instead of a natural
+// spline: a dense VPP grid (5° steps from 0°, with the steep no-go rise before
+// ~40°) makes the spline overshoot right at the upwind angles — measured on the
+// NS76 v1.6 grid it put upwind BSPpol% 0.6 pt off the KND SailingPerf report,
+// where linear reproduces it.
+export function preparePolar(raw, opts={}) {
   if(!raw?.entries?.length) return raw;
   const enriched = raw.entries.map(entry=>{
     const pts = entry.points.map(p=>({x:p.twa, y:p.bsp}));
-    const segs = buildSpline(pts);
+    const segs = opts.interp==='linear' ? buildLinear(pts) : buildSpline(pts);
     const xMin = pts[0].x, xMax = pts[pts.length-1].x;
     const bspAt = twa => segs ? evalSpline(segs, xMin, xMax, Math.abs(twa)) : 0;
     const twUp0 = pts.find(p=>p.x>0)?.x ?? 20;

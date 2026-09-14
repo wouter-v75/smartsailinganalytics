@@ -30,7 +30,11 @@ export async function GET(
   let q = supabase.from('polars').select(SELECT).eq('team_id', params.teamId)
   if (boatId) q = q.eq('boat_id', boatId)
   if (onlyActive) q = q.eq('is_active', true)
-  q = q.order('is_active', { ascending: false }).order('valid_from', { ascending: false, nullsFirst: false })
+  q = q
+    .order('is_active', { ascending: false })
+    .order('valid_from', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })  // undated versions: newest upload first
+    .order('name', { ascending: false })
 
   const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

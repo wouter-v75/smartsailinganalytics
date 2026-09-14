@@ -83,3 +83,6 @@ media-in/*
 *.MTS
 *.avi
 *.mkv
+
+# Real boat data for opt-in acceptance tests (client data, never committed)
+/fixtures/local/

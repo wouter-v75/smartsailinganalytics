@@ -36,6 +36,8 @@ import { getActiveMembership } from '../lib/active-membership';
 import { unmatchedSails } from '../lib/sailResolve';
 import SailListDiffModal from './SailListDiffModal';
 import { ErrorBoundary } from './ui';
+import PerfChartsSection from './analytics/PerfChartsSection';
+import { uploadSessionStats } from '../lib/phaseStatsUpload';
 import { buildDayTimeline } from '../lib/timeline/buildNodes';
 
 // ── Lazy-loaded tab components ──────────────────────────────────────────────
@@ -3231,6 +3233,27 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       } catch {}
     }
 
+    // ── Performance stats from the FULL-resolution log ───────────────────────
+    // The cloud copy keeps a row every ~6 s; this device has every row. Stored after
+    // the log + event file are in the cloud, so the stats are newer than the session
+    // and are not recomputed later from the coarse copy. Non-fatal: Analytics also
+    // stores them when the day is opened on this device.
+    if (csvParsed || xmlParsed) {
+      try {
+        const d = csvDate || xmlDate || fallbackDate;
+        const statsRows = csvParsed ? csvParsed.rows : (await getLogData(d))?.rows;
+        const statsXml = xmlParsed || await getXmlData(d);
+        const supaForStats = getBrowserSupabase();
+        const { data: { user: statsUser } } = await supaForStats.auth.getUser();
+        const statsMem = statsUser ? getActiveMembership(statsUser.id) : null;
+        if (statsMem?.team_id && statsMem?.boat_id && statsRows?.length && statsXml?.phases?.length) {
+          const r = await uploadSessionStats({ teamId: statsMem.team_id, boatId: statsMem.boat_id, date: d, rows: statsRows, xml: statsXml });
+          if (r.stored) addLog(`✓ Performance stats stored · ${r.phases} phases · ${r.manoeuvres} tacks/gybes · from the ${r.resolution} s log → ${d}`);
+          else if (r.reason) addLog(`· Performance stats not stored: ${r.reason}`);
+        }
+      } catch { /* non-fatal */ }
+    }
+
     // ── Save each video to the date from its own timestamp ──────────────────
     const saved = [];
     const touchedDates = new Set();
@@ -4649,6 +4672,16 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const [viewRange, setViewRange] = useState(null);
   // Tacking analysis — highlighted tack index (null = none selected)
   const [selectedTackIdx, setSelectedTackIdx] = useState(null);
+  // Performance charts → jump to a phase: open the clip that covers it (as the GPS
+  // track does), otherwise zoom the time series onto the phase and scroll to it.
+  const timeseriesRef = useRef(null);
+  const jumpToUtc = utc => {
+    const clip=(allVideos||[]).find(v=>v.startUtc&&v.duration&&utc>=v.startUtc&&utc<=v.startUtc+v.duration*1000);
+    if(clip){ onSelectVideo(clip); setActiveTab("library"); return; }
+    if(!rows.length) return;
+    setViewRange([Math.max(rows[0].utc,utc-120000),Math.min(rows[rows.length-1].utc,utc+150000)]);
+    timeseriesRef.current?.scrollIntoView({behavior:"smooth",block:"start"});
+  };
   // Reset view when the session changes
   useEffect(()=>{ setViewRange(null); }, [activeDate]);
   // Auto-zoom to video clip range when video is selected and has a start time.
@@ -4824,6 +4857,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — select a date in the Library first.</div>
               )
             ))}
+            {canSeeAnalyticsData && <div ref={timeseriesRef} style={{scrollMarginTop:12}}/>}
             {canSeeAnalyticsData && section("Wind & boat speed · heel · performance",(
               <>
                 {/* ── Zoom / pan control bar ─────────────────────────────── */}
@@ -4897,113 +4931,9 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 </div>
               </>
             ))}
-            {canSeeAnalyticsData && rows.length>50&&section("Upwind analysis — data filtered to upwind phases",(()=>{
-              // SailingPerformance sailingmode encoding observed from real data:
-              //   1 = Upwind starboard tack   2 = Upwind port tack
-              //   4 = Downwind/reach stbd     8 = Downwind/reach port
-              const allPhases = xmlData?.phases||[];
-              const upPhases  = allPhases.filter(p=>p.mode===1||p.mode===2);
-              const dnPhases  = allPhases.filter(p=>p.mode===4||p.mode===8);
-              const rcPhases  = allPhases.filter(p=>p.mode===16||p.mode===32);
-              const hasPhases = allPhases.length > 0;
-
-              // Binary-search membership: much faster than .some() for large row sets
-              const makeInFn = phases => {
-                if(!phases.length) return ()=>false;
-                const sorted = [...phases].sort((a,b)=>a.utc-b.utc);
-                return utc => {
-                  let lo=0, hi=sorted.length-1;
-                  while(lo<=hi){
-                    const mid=(lo+hi)>>1;
-                    if(utc>=sorted[mid].utc&&utc<sorted[mid].endUtc) return true;
-                    if(utc<sorted[mid].utc) hi=mid-1; else lo=mid+1;
-                  }
-                  return false;
-                };
-              };
-              const inUpwind  = hasPhases ? makeInFn(upPhases)  : ()=>true;
-
-              const upMin  = Math.round(upPhases.reduce((s,p)=>s+(p.endUtc-p.utc),0)/60000);
-              const dnMin  = Math.round(dnPhases.reduce((s,p)=>s+(p.endUtc-p.utc),0)/60000);
-              const rcMin  = Math.round(rcPhases.reduce((s,p)=>s+(p.endUtc-p.utc),0)/60000);
-
-              // Polar file — fallback only; the log's own Vs_target / TWA_targ
-              // columns are preferred for the VMG% curve below.
-              const upPolar = loadPolarFromLS();
-              const logHasTarget = rows.some(r=>r.vsTarget!=null&&r.twaTarg!=null);
-
-              // Sample rows inside upwind phases (max ~1200 pts for perf)
-              const step=Math.max(1,Math.floor(rows.length/1200));
-              const upRows=rows.filter((_,i)=>i%step===0)
-                .filter(r=>r.tws>0&&r.tws<50&&inUpwind(r.utc));
-
-              // a) VMG % of optimal upwind VMG. Target VMG comes from the log
-              //    (Vs_target × cos(TWA_targ)); the polar curve is the fallback.
-              const vmgPts=upRows.filter(r=>r.vmg>0).map(r=>{
-                let optVMG=null;
-                if(r.vsTarget!=null&&r.twaTarg!=null)
-                  optVMG=r.vsTarget*Math.abs(Math.cos(r.twaTarg*Math.PI/180));
-                else if(upPolar)
-                  optVMG=polarVMGTarget(upPolar,r.tws)?.upVMG;
-                const pct=(optVMG&&optVMG>0.01)?(Math.abs(r.vmg)/optVMG)*100:null;
-                return (pct!=null&&pct>20&&pct<150)?{x:r.tws,y:pct,twa:r.twa}:null;
-              }).filter(Boolean);
-
-              // b) Target BSP % (Vs_targ% from log col 23)
-              const tgtPts=upRows.filter(r=>r.vsTargPct>20&&r.vsTargPct<150)
-                .map(r=>({x:r.tws,y:r.vsTargPct,twa:r.twa}));
-
-              // c) Rudder angle (absolute) vs TWS
-              const rudPts=upRows.filter(r=>r.rudder!=null&&Math.abs(r.rudder)<30&&Math.abs(r.rudder)>0.1)
-                .map(r=>({x:r.tws,y:Math.abs(r.rudder),twa:r.twa}));
-
-              // d) Heel angle (absolute) vs TWS
-              const heelPts2=upRows.filter(r=>Math.abs(r.heel)>0.5&&Math.abs(r.heel)<60)
-                .map(r=>({x:r.tws,y:Math.abs(r.heel),twa:r.twa}));
-
-              const noData=<div style={{height:170,display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:10}}>No upwind data{!hasPhases?" — re-import event file":""}</div>;
-              return(
-                <>
-                  <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
-                    {hasPhases ? <>
-                      <span style={{fontSize:9,color:"#8B5CF6",background:"#8B5CF610",border:"1px solid #8B5CF630",borderRadius:3,padding:"2px 7px"}}>
-                        ▲ {upPhases.length} upwind phases · {upMin} min
-                      </span>
-                      <span style={{fontSize:9,color:"#7F77DD",background:"#7F77DD10",border:"1px solid #7F77DD30",borderRadius:3,padding:"2px 7px"}}>
-                        ▽ {dnPhases.length} downwind · {dnMin} min
-                      </span>
-                      {rcPhases.length>0&&<span style={{fontSize:9,color:"#06B6D4",background:"#06B6D410",border:"1px solid #06B6D430",borderRadius:3,padding:"2px 7px"}}>
-                        ↗ {rcPhases.length} reaching · {rcMin} min
-                      </span>}
-                      <span style={{fontSize:9,color:"#475569"}}>{upRows.length.toLocaleString()} upwind pts</span>
-                    </> : (
-                      <span style={{fontSize:9,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px"}}>
-                        ⚠ No event file — showing all rows unfiltered
-                      </span>
-                    )}
-                    {!upPolar&&!logHasTarget&&<span style={{fontSize:9,color:"#F59E0B",marginLeft:4}}>⚠ Upload polar for VMG% — this log lacks target columns</span>}
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>a) VMG % OF POLAR OPTIMAL — vs TWS</div>
-                      {vmgPts.length>5?<XYPlot points={vmgPts} xLabel="TWS (kn)" yLabel="VMG %" color="#22C55E" height={170} showTrend yLines={[100]}/>:noData}
-                    </div>
-                    <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>b) TARGET BSP % (Vs_targ%) — vs TWS</div>
-                      {tgtPts.length>5?<XYPlot points={tgtPts} xLabel="TWS (kn)" yLabel="Target BSP %" color="#10B981" height={170} showTrend yLines={[100]}/>:noData}
-                    </div>
-                    <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>c) RUDDER ANGLE (|°|) — vs TWS</div>
-                      {rudPts.length>5?<XYPlot points={rudPts} xLabel="TWS (kn)" yLabel="Rudder |°|" color="#FBBF24" height={170} showTrend/>:noData}
-                    </div>
-                    <div>
-                      <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>d) HEEL ANGLE (|°|) — vs TWS</div>
-                      {heelPts2.length>5?<XYPlot points={heelPts2} xLabel="TWS (kn)" yLabel="Heel |°|" color="#F97316" height={170} showTrend/>:noData}
-                    </div>
-                  </div>
-                </>
-              );
-            })())}
+            {canSeeAnalyticsData && rows.length>50&&section("Performance charts — 30 s phases",(
+              <PerfChartsSection rows={rows} xmlData={xmlData} tzOffsetMin={tz} playUtc={playUtc} onJump={jumpToUtc} activeDate={activeDate} canUseAI={canUseAI}/>
+            ))}
             {canSeeAnalyticsData && section("Speed polar — TWA vs BSP by wind range",(
               <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
                 <SpeedPolar rows={rows} width={280} height={280}/>

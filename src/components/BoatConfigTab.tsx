@@ -23,6 +23,8 @@ import SailScanCompare from './SailScanCompare'
 import LogProfilePanel from './LogProfilePanel'
 import SailDesignShapes from './SailDesignShapes'
 import targetsV14 from '../data/targets-v1.4.json'
+import { parsePolarText, parsePolarWorkbook, buildPolarData, type PolarVersion } from '../lib/polarFile'
+import { readXlsx } from '../lib/xlsxRead'
 import { useUiNext } from '../lib/ui-flags'
 import BoatConfigNext from './boat/BoatConfigNext'
 
@@ -79,6 +81,9 @@ export default function BoatConfigTab({
   const [polar, setPolar] = useState<any>(() => pf?.polar ?? null)          // active polar row (DB)
   const [matrixKey, setMatrixKey] = useState<'bsp' | 'heel' | 'rudder' | 'awa'>('bsp')
   const [importing, setImporting] = useState(false)
+  const [polarVersions, setPolarVersions] = useState<any[]>([])              // every polar row for this boat
+  const [polarUpload, setPolarUpload] = useState<PolarUpload | null>(null)   // parsed file awaiting save
+  const [polarMsg, setPolarMsg] = useState('')
   const [rigTune, setRigTune] = useState<any>(() => pf?.rigTune ?? null)      // active rig baseline row (DB)
   const [rigBusy, setRigBusy] = useState(false)
   const [rigErr, setRigErr] = useState('')
@@ -115,9 +120,14 @@ export default function BoatConfigTab({
 
   const loadPolar = useCallback(() => {
     if (!teamId || !boatId) return
-    fetch(`/api/teams/${teamId}/polars?boat_id=${boatId}&active=1`)
+    // All versions for this boat (active first); the active one drives the tab.
+    fetch(`/api/teams/${teamId}/polars?boat_id=${boatId}`)
       .then((r) => (r.ok ? r.json() : { polars: [] }))
-      .then((j) => setPolar((j.polars || [])[0] || null))
+      .then((j) => {
+        const list = j.polars || []
+        setPolarVersions(list)
+        setPolar(list.find((p: any) => p.is_active) || null)
+      })
       .catch(() => {})
   }, [teamId, boatId])
   useEffect(() => { loadPolar() }, [loadPolar])
@@ -234,6 +244,84 @@ export default function BoatConfigTab({
       }).then((x) => x.json())
       if (r.error) setErr(r.error); else loadPolar()
     } catch (e: any) { setErr(String(e?.message || e)) }
+    finally { setImporting(false) }
+  }
+
+  // Upload polars: a text polar (Expedition or TWS×TWA grid), or a polar workbook
+  // with one sheet per version. Every chosen version is saved as its OWN polars row
+  // for this boat, so the development history stays on file; one becomes active.
+  const pickPolarFile = async (file: File) => {
+    setPolarMsg('')
+    try {
+      const versions: PolarVersion[] = /\.xlsx$/i.test(file.name)
+        ? parsePolarWorkbook(await readXlsx(await file.arrayBuffer()))
+        : [{ name: file.name.replace(/\.[^.]+$/, ''), entries: parsePolarText(await file.text()), notes: null, headline: null }]
+      if (!versions.length) throw new Error('no sheet with a TWS/TWA polar grid')
+      const onFile = new Set(polarVersions.map((v: any) => String(v.name).trim().toLowerCase()))
+      const today = new Date().toISOString().slice(0, 10)
+      const latest = versions.length - 1
+      setPolarUpload({
+        fileName: file.name, source: 'design_vpp', activeIdx: latest,
+        versions: versions.map((v, i) => {
+          const stored = onFile.has(v.name.trim().toLowerCase())
+          return { ...v, stored, include: !stored, validFrom: i === latest ? today : '' }
+        }),
+      })
+    } catch (e: any) {
+      setPolarUpload(null)
+      setPolarMsg(`Could not read ${file.name}: ${e?.message || e}`)
+    }
+  }
+
+  const savePolarUpload = async () => {
+    if (!polarUpload) return
+    const { fileName, versions, source, activeIdx } = polarUpload
+    const chosen = versions.map((v, i) => ({ v, i })).filter(({ v }) => v.include)
+    if (chosen.some(({ v }) => !v.name.trim())) { setPolarMsg('Every version needs a name'); return }
+    setImporting(true); setPolarMsg('')
+    try {
+      // The version to activate goes last, so it ends up as the boat's active polar.
+      chosen.sort((a, b) => Number(a.i === activeIdx) - Number(b.i === activeIdx))
+      for (const { v, i } of chosen) {
+        const name = v.name.trim()
+        const data = buildPolarData(v.entries, {
+          name, version: name, source, valid_from: v.validFrom || null, file_name: fileName,
+          source_note: v.notes, headline: v.headline,
+        })
+        const r = await fetch(`/api/teams/${teamId}/polars`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            boat_id: boatId, name, source, valid_from: v.validFrom || null, data, notes: v.notes, activate: i === activeIdx,
+          }),
+        }).then((x) => x.json())
+        if (r.error) { setPolarMsg(`${name}: ${r.error}`); return }
+      }
+      // Activating a version that is already on file (not uploaded again).
+      const act = activeIdx != null ? versions[activeIdx] : null
+      if (act && !act.include) {
+        const row = polarVersions.find((p: any) => String(p.name).trim().toLowerCase() === act.name.trim().toLowerCase())
+        if (row && !row.is_active) {
+          const r = await fetch(`/api/teams/${teamId}/polars/${row.id}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ activate: true }),
+          }).then((x) => x.json())
+          if (r.error) { setPolarMsg(r.error); return }
+        }
+      }
+      setPolarUpload(null)
+    } catch (e: any) { setPolarMsg(String(e?.message || e)) }
+    finally { setImporting(false); loadPolar() }
+  }
+
+  const activatePolar = async (id: string) => {
+    setImporting(true); setPolarMsg('')
+    try {
+      const r = await fetch(`/api/teams/${teamId}/polars/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activate: true }),
+      }).then((x) => x.json())
+      if (r.error) setPolarMsg(r.error); else loadPolar()
+    } catch (e: any) { setPolarMsg(String(e?.message || e)) }
     finally { setImporting(false) }
   }
 
@@ -720,6 +808,12 @@ export default function BoatConfigTab({
       )}
 
       {/* ── TARGETS (active polar) ─────────────────────────────────── */}
+      {view === 'polar' && canEdit && (
+        <PolarUploadForm
+          upload={polarUpload} setUpload={setPolarUpload} onPick={pickPolarFile}
+          onSave={savePolarUpload} busy={importing} msg={polarMsg} btn={btn} input={input}
+        />
+      )}
       {view === 'polar' && (
         !targets ? (
           <div style={{ border: `1px dashed ${C.border}`, borderRadius: 10, padding: '20px 16px', textAlign: 'center', color: C.dim }}>
@@ -752,16 +846,19 @@ export default function BoatConfigTab({
 
             <div style={{ display: 'flex', gap: 6, margin: '18px 0 10px', flexWrap: 'wrap', alignItems: 'center' }}>
               <span style={{ fontSize: 11, color: C.dim, marginRight: 4 }}>Matrix:</span>
-              {(['bsp', 'heel', 'rudder', 'awa'] as const).map((k) => (
+              {(['bsp', 'heel', 'rudder', 'awa'] as const).filter((k) => targets.matrices?.[k]?.length).map((k) => (
                 <button key={k} onClick={() => setMatrixKey(k)} style={{
                   fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', border: 'none',
                   background: matrixKey === k ? C.accent : '#0F2A45', color: matrixKey === k ? '#001018' : '#94A3B8',
                 }}>{targets.matrix_meta?.[k]?.label || k}</button>
               ))}
             </div>
-            <MatrixTable targets={targets} mkey={matrixKey} uploadedAt={polar?.created_at} />
+            <MatrixTable targets={targets} mkey={targets.matrices?.[matrixKey] ? matrixKey : 'bsp'} uploadedAt={polar?.created_at} />
           </div>
         )
+      )}
+      {view === 'polar' && polarVersions.length > 0 && (
+        <PolarVersions versions={polarVersions} canEdit={canEdit} busy={importing} onActivate={activatePolar} th={th} td={td} btn={btn} />
       )}
 
       {selectedScan && (
@@ -1596,6 +1693,174 @@ function RigTuneTable({ data }: { data: any }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <RigSubTable cols={upwind} heading="Upwind" fields={UPWIND_FIELDS} />
       <RigSubTable cols={reachDown} heading="Reaching / Downwind" fields={REACHING_FIELDS} />
+    </div>
+  )
+}
+
+// ── Polar upload + version history ───────────────────────────────────────────
+interface PolarUploadVersion extends PolarVersion {
+  include: boolean     // save this version
+  stored: boolean      // a version with this name is already on file for the boat
+  validFrom: string
+}
+interface PolarUpload {
+  fileName: string
+  versions: PolarUploadVersion[]
+  source: string
+  activeIdx: number | null   // null = keep the current active polar
+}
+
+const POLAR_SOURCES: [string, string][] = [
+  ['design_vpp', 'Design VPP'], ['measured', 'Measured'], ['sailmaker', 'Sailmaker'], ['blend', 'Blend'], ['other', 'Other'],
+]
+
+function PolarUploadForm({ upload, setUpload, onPick, onSave, busy, msg, btn, input }: {
+  upload: PolarUpload | null
+  setUpload: (u: PolarUpload | null) => void
+  onPick: (f: File) => void
+  onSave: () => void
+  busy: boolean
+  msg: string
+  btn: (bg: string) => React.CSSProperties
+  input: React.CSSProperties
+}) {
+  const fileRef = React.useRef<HTMLInputElement>(null)
+  const setVersion = (i: number, patch: Partial<PolarUploadVersion>) =>
+    upload && setUpload({ ...upload, versions: upload.versions.map((v, j) => (j === i ? { ...v, ...patch } : v)) })
+  const range = (xs: number[]) => (xs.length ? `${Math.min(...xs)}–${Math.max(...xs)}` : '—')
+  const nNew = upload?.versions.filter((v) => v.include).length || 0
+  const canSave = !!upload && (nNew > 0 || upload.activeIdx != null)
+  const label: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 3, fontSize: 10, color: C.dim }
+  const cell: React.CSSProperties = { padding: '5px 6px', fontSize: 12, color: C.text, borderBottom: '1px solid #0d2236', verticalAlign: 'middle' }
+  const head: React.CSSProperties = { ...cell, color: C.dim, fontSize: 10, fontWeight: 600, textAlign: 'left', borderBottom: `1px solid ${C.border}` }
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, marginBottom: 14, background: C.card }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.head }}>Upload polar</span>
+        <span style={{ fontSize: 11, color: C.dim, flex: '1 1 240px' }}>
+          A polar workbook (.xlsx, one TWS/TWA sheet per version) or a single polar (.txt, .csv, .pol).
+          Every version is kept for this boat.
+        </span>
+        <input ref={fileRef} type="file" style={{ display: 'none' }}
+          accept=".xlsx,.txt,.csv,.pol,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = '' }} />
+        <button onClick={() => fileRef.current?.click()} disabled={busy} style={{ ...btn(C.accent), opacity: busy ? 0.6 : 1 }}>
+          Choose file…
+        </button>
+      </div>
+
+      {upload && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, color: C.text, marginBottom: 6 }}>
+            <b style={{ color: C.head }}>{upload.fileName}</b> — {upload.versions.length} polar version{upload.versions.length === 1 ? '' : 's'}
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 680 }}>
+              <thead>
+                <tr>
+                  <th style={head}>Save</th><th style={head}>Version name</th><th style={head}>TWS (kn)</th>
+                  <th style={head}>TWA (°)</th><th style={head}>Valid from</th><th style={head}>Notes</th>
+                  <th style={{ ...head, textAlign: 'center' }}>Active</th>
+                </tr>
+              </thead>
+              <tbody>
+                {upload.versions.map((v, i) => (
+                  <tr key={i}>
+                    <td style={{ ...cell, whiteSpace: 'nowrap' }}>
+                      <input type="checkbox" checked={v.include} onChange={(e) => setVersion(i, { include: e.target.checked })} />
+                      {v.stored && <span style={{ fontSize: 10, color: C.dim, marginLeft: 6 }}>on file</span>}
+                    </td>
+                    <td style={cell}>
+                      <input value={v.name} disabled={!v.include} onChange={(e) => setVersion(i, { name: e.target.value })}
+                        style={{ ...input, width: '100%', minWidth: 170, opacity: v.include ? 1 : 0.6 }} />
+                    </td>
+                    <td style={cell}>{range(v.entries.map((e) => e.tws))}</td>
+                    <td style={cell}>{range(v.entries.flatMap((e) => e.points.map((p) => p.twa)))}</td>
+                    <td style={cell}>
+                      <input type="date" value={v.validFrom} disabled={!v.include} onChange={(e) => setVersion(i, { validFrom: e.target.value })}
+                        style={{ ...input, opacity: v.include ? 1 : 0.6 }} />
+                    </td>
+                    <td style={{ ...cell, color: C.dim, maxWidth: 280 }}>
+                      {v.notes || '—'}
+                      {v.headline && <span style={{ color: C.accent }}> · targets sheet</span>}
+                    </td>
+                    <td style={{ ...cell, textAlign: 'center' }}>
+                      <input type="radio" name="polar-active" checked={upload.activeIdx === i} disabled={!v.include && !v.stored}
+                        onChange={() => setUpload({ ...upload, activeIdx: i })} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 10 }}>
+            <label style={label}>Source
+              <select value={upload.source} onChange={(e) => setUpload({ ...upload, source: e.target.value })} style={input}>
+                {POLAR_SOURCES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: C.text }}>
+              <input type="radio" name="polar-active" checked={upload.activeIdx == null} onChange={() => setUpload({ ...upload, activeIdx: null })} />
+              Keep the current active polar
+            </label>
+            <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
+              <button onClick={() => setUpload(null)} disabled={busy} style={{ ...btn('#0F2A45'), color: C.head }}>Cancel</button>
+              <button onClick={onSave} disabled={busy || !canSave} style={{ ...btn(C.ok), opacity: busy || !canSave ? 0.6 : 1 }}>
+                {busy ? 'Saving…' : nNew ? `Save ${nNew} version${nNew === 1 ? '' : 's'}` : 'Set active'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {msg && <div style={{ color: C.warn, fontSize: 12, marginTop: 8 }}>{msg}</div>}
+    </div>
+  )
+}
+
+function PolarVersions({ versions, canEdit, busy, onActivate, th, td, btn }: {
+  versions: any[]
+  canEdit: boolean
+  busy: boolean
+  onActivate: (id: string) => void
+  th: React.CSSProperties
+  td: React.CSSProperties
+  btn: (bg: string) => React.CSSProperties
+}) {
+  const sourceLabel = Object.fromEntries(POLAR_SOURCES)
+  return (
+    <div style={{ marginTop: 22 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: C.head, marginBottom: 6 }}>Polar versions</div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}>
+          <thead>
+            <tr>
+              <th style={th}>Version</th><th style={th}>Source</th><th style={th}>Valid from</th>
+              <th style={th}>Uploaded</th><th style={th}>File</th><th style={th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {versions.map((v) => (
+              <tr key={v.id}>
+                <td style={{ ...td, fontWeight: 700, color: C.head }}>{v.name}</td>
+                <td style={td}>{sourceLabel[v.source] || v.source || '—'}</td>
+                <td style={td}>{fmtDate(v.valid_from)}</td>
+                <td style={td}>{fmtDate(v.created_at)}</td>
+                <td style={{ ...td, color: C.dim }}>{v.data?.file_name || '—'}</td>
+                <td style={{ ...td, textAlign: 'right' }}>
+                  {v.is_active ? (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: C.ok }}>● Active</span>
+                  ) : canEdit ? (
+                    <button onClick={() => onActivate(v.id)} disabled={busy}
+                      style={{ ...btn('#0F2A45'), color: C.head, padding: '3px 10px', opacity: busy ? 0.6 : 1 }}>
+                      Set active
+                    </button>
+                  ) : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
