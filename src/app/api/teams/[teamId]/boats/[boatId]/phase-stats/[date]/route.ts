@@ -23,8 +23,9 @@ import { computePhaseStats } from '../../../../../../../../lib/phaseStats'
 import { analyseManoeuvres } from '../../../../../../../../lib/manoeuvres'
 import { polarFromData } from '../../../../../../../../lib/polarFile'
 import {
-  STATS_VERSION, compactPhases, compactManoeuvres, medianInterval, shouldReplace, statsAreCurrent,
+  STATS_VERSION, compactPhases, compactManoeuvres, medianInterval, shouldReplace, statsAreCurrent, type StoredPhase,
 } from '../../../../../../../../lib/seasonCurves'
+import { carryLidar } from '../../../../../../../../lib/lidarMerge'
 
 type Params = { params: { teamId: string; boatId: string; date: string } }
 
@@ -161,6 +162,19 @@ export async function POST(req: NextRequest, { params }: Params) {
       log_rows: rows.length,
       resolution_s: resolution,
     }
+  }
+
+  // Lidar means may have come from another log than these stats (a start-window lidar log,
+  // scripts/lidar-import.ts): keep them on the phases they belong to.
+  if (existing) {
+    const { data: prev } = await supabase
+      .from('session_phase_stats')
+      .select('phases')
+      .eq('team_id', params.teamId)
+      .eq('boat_id', params.boatId)
+      .eq('date', params.date)
+      .maybeSingle()
+    row.phases = carryLidar(row.phases as StoredPhase[], (prev?.phases as StoredPhase[] | null) ?? null)
   }
 
   const { data, error } = await supabase

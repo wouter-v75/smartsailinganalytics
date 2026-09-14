@@ -24,6 +24,7 @@ import { CHANNEL_BY_KEY, computePhaseStats } from '../../lib/phaseStats'
 import { polarTargetLine, twsBands, polarCurve } from '../../lib/phasePlot'
 import { polarFromData } from '../../lib/polarFile'
 import { inRange, phaseInRange } from '../../lib/trackSelection'
+import { mergeStoredLidar } from '../../lib/lidarMerge'
 import { getActiveMembership } from '../../lib/active-membership'
 import { getUidFast } from '../../lib/supabase/browser'
 
@@ -274,7 +275,8 @@ export default function PerfChartsSection({
   // Stats stored from a finer log win over computing from the coarser log on this device.
   const useStored = storedStats.useStored
   const dayStats = React.useMemo(
-    () => (useStored ? expandPhases(storedStats.stored.phases) : computePhaseStats(rows, xmlData, { polar })),
+    // Computed here from a log without lidar → still show the lidar stored for the day.
+    () => (useStored ? expandPhases(storedStats.stored.phases) : mergeStoredLidar(computePhaseStats(rows, xmlData, { polar }), storedStats.stored?.phases)),
     [useStored, storedStats.stored, rows, xmlData, polar])
   const dayManoeuvres = React.useMemo(
     () => (useStored && storedStats.stored.manoeuvres?.length ? storedStats.stored.manoeuvres : analyseManoeuvres(rows, xmlData)),
