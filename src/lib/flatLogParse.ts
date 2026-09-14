@@ -50,6 +50,7 @@ export interface FlatLogRow {
   // window can average them instead of only showing them at the scan instant.
   rake: number | null; mastAng: number | null; shims: number | null
   jibTackLoad: number | null; gsTackLoad: number | null; cunninghamLoad: number | null
+  bobstay: number | null
   vang: number | null; outhaul: number | null; travPct: number | null; cunnoPct: number | null
   // rig loads + control positions (2026-07 N76 export). fstyPin = forestay PIN LOAD
   // (not `forestay`, which is the length/rake reading); fstyJibTk = the boat's own
@@ -72,6 +73,30 @@ export interface FlatLogRow {
 }
 
 export interface FlatLogResult { rows: FlatLogRow[]; startUtc: number; endUtc: number }
+
+// ── Lidar sail-shape channels (2026-09 N76 4 Hz export) ─────────────────────
+// `MN_CA_25`, `JIB_TW_50`, `SPI_DR_75` … are measured camber / twist / draft at 25 / 50 /
+// 75 % height; `T_MN_CA_25` … the sailmaker's targets (the main also has `T_MN_TR_*`).
+// Only what KND's lidar report uses is read — the export also carries entry / exit /
+// sag / leech columns per stripe. Stored as sparse keys (`mnCa25`, `tJibDr50`, `tMnTr75`)
+// set only when the cell has a value: most columns are empty most of the time (no
+// spinnaker upwind), and at 4 Hz a day is ~57,600 rows.
+const LIDAR_HEADER = /^(T_)?(MN|JIB|SPI)_(CA|TW|DR|TR)_(25|50|75)$/i
+const cap1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
+
+export function lidarKeyOf(header: string): string | null {
+  const m = String(header || '').trim().match(LIDAR_HEADER)
+  if (!m) return null
+  const [, target, sail, v, h] = m
+  if (!target && v.toUpperCase() === 'TR') return null
+  const sailKey = target ? cap1(sail) : sail.toLowerCase()
+  return `${target ? 't' : ''}${sailKey}${cap1(v)}${h}`
+}
+
+// Lidar keys stay on the importing device: the cloud copy (reduceLogForCloud) leaves them
+// out so the row spacing everyone else gets doesn't coarsen. Other devices read lidar
+// through the stored full-log phase stats instead.
+export const isLidarKey = (k: string) => /^t?(mn|jib|spi|Mn|Jib|Spi)(Ca|Tw|Dr|Tr)(25|50|75)$/.test(k)
 
 // Detect the header-flat / OLE-serial / separate-lat-lon variant. Distinct from
 // the raw log (! prefix) and the old NMEA flat CSV (single `Pos`, dd/mm/yy date).
@@ -239,6 +264,10 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
     return { ms, dayStart }
   }
 
+  const lidarCols = headerCols
+    .map((h, i) => ({ key: lidarKeyOf(h), i }))
+    .filter((x): x is { key: string; i: number } => x.key != null)
+
   const rows: FlatLogRow[] = []
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(',')
@@ -250,7 +279,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       const sod = parseFloat(c[secIdx])
       if (Number.isFinite(sod) && sod >= 0 && sod < 86400) utc = up.dayStart + Math.round(sod * 1000)
     }
-    rows.push({
+    const row: FlatLogRow = {
       utc, lat: num(c, M.lat), lon: num(c, M.lon),
       bsp: num(c, M.bsp), awa: num(c, M.awa), aws: num(c, M.aws),
       twa: num(c, M.twa), tws: num(c, M.tws), twd: num(c, M.twd),
@@ -266,6 +295,7 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
       rake: num(c, M.rake), mastAng: num(c, M.mastAng), shims: num(c, M.shims),
       jibTackLoad: num(c, M.jibTackLoad), gsTackLoad: num(c, M.gsTackLoad), cunninghamLoad: num(c, M.cunninghamLoad),
+      bobstay: num(c, M.bobstay),
       vang: num(c, M.vang), outhaul: num(c, M.outhaul), travPct: num(c, M.travPct), cunnoPct: num(c, M.cunnoPct),
       v0p: num(c, M.v0p), v0s: num(c, M.v0s), v1p: num(c, M.v1p), v1s: num(c, M.v1s),
       jibUpDnStbd: num(c, M.jibUpDnStbd), jibUpDnPort: num(c, M.jibUpDnPort), jibInOut: num(c, M.jibInOut),
@@ -277,7 +307,12 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       targToe: num(c, M.targToe), targTrim: num(c, M.targTrim),
       targVmg: num(c, M.targVmg), targAwa: num(c, M.targAwa),
       airTemp: num(c, M.airTemp), seaTemp: num(c, M.seaTemp), rh: num(c, M.rh), baro: num(c, M.baro),
-    })
+    }
+    for (const { key, i: col } of lidarCols) {
+      const v = num(c, col)
+      if (v != null) (row as unknown as Record<string, number>)[key] = v
+    }
+    rows.push(row)
   }
   // ACCELERATION (kn/MIN — Expedition's convention for start acceleration): a 2 s
   // moving average of the 1 s SOG delta, then ×60. d[i] = SOG(t) − SOG(t−1s)

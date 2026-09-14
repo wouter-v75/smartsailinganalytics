@@ -8,6 +8,8 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 import { getBrowserSupabase, getUidFast } from '../lib/supabase/browser';
 import { parseLog } from '../lib/logParse';
+import { isLidarKey } from '../lib/flatLogParse';
+import { logRateHz, isSubSecondLog, thinToOneHz, lidarSailsIn } from '../lib/logResolution';
 import { offsetFromCoords } from '../lib/tzFromCoords';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
 import { reconcileSessionSyncState } from '../lib/syncReconcile';
@@ -731,9 +733,12 @@ function reduceLogForCloud(logData,xmlData){
   //    3a. Drop columns that are null in EVERY row. A given boat only populates a
   //        subset of the union schema (no MastAng/Rake/Vang in the N76 export, etc.),
   //        so this is free — it removes keys that carry no information at all.
+  //        Lidar sail-shape keys (up to 57 per row on the 2026-09 4 Hz export) are left out
+  //        too: they would halve the rows everyone else gets. The importing device stores
+  //        full-log phase stats with the lidar means, which is how other devices see them.
   const keep=new Set(['utc']);
   for(const r of out){
-    for(const k in r){ if(r[k]!=null && !keep.has(k)) keep.add(k); }
+    for(const k in r){ if(r[k]!=null && !keep.has(k) && !isLidarKey(k)) keep.add(k); }
   }
   //    3b. Round floats. Instrument data is meaningless past 2 dp, and a raw
   //        parseFloat can serialise as 9.100000000000001 — 18 chars for one number.
@@ -3065,8 +3070,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             addLog(`🌍 Timezone from log position (${z.zone}) → ${lbl} · applied to log, video & photos`);
           }
         }
+        // Sample rate + lidar sails, for the card and for saveLocal (a 4 Hz lidar export
+        // is stored as a 1 Hz copy after its stats are computed from every row).
+        p.hz=logRateHz(p.rows); p.lidarSails=lidarSailsIn(p.rows);
         setCsvParsed(p);
-        const fmtLabel=p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':'flat CSV';
+        const fmtLabel=[p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':'flat CSV',
+          p.hz>=1.5?`${p.hz} Hz`:null, p.lidarSails.length?`lidar ${p.lidarSails.map(s=>s.label.toLowerCase()).join('/')}`:null].filter(Boolean).join(' · ');
         // flat-local carries VENUE wall-clock, like the legacy flat-NMEA export, so
         // the timezone actually decides where its rows land — say which one was used
         // rather than printing "UTC" over a log that is nothing of the kind.
@@ -3079,6 +3088,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           addLog(`⚠ Log (${fmtLabel.trim()}): 0 rows read from ${file.name} — the format wasn't recognised. Nothing will show in Analytics.`);
         } else {
           addLog(`✓ Log (${fmtLabel.trim()}): ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzNote}`);
+          if(p.hz>=1.5) addLog(`· ${p.hz} Hz log: performance${p.lidarSails.length?', lidar':''} and tack/gybe stats use every row; this device keeps a 1 Hz copy for charts and video`);
         }
       }
       catch(err){addLog(`✕ CSV: ${err instanceof Error?err.message:String(err)}`);}
@@ -3153,7 +3163,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       const supaForLog = getBrowserSupabase();
       const { data: { user: logUser } } = await supaForLog.auth.getUser();
       const logMembership = logUser ? getActiveMembership(logUser.id) : null;
-      await saveLogData(d, csvParsed.rows, csvFile.name, csvParsed.startUtc, csvParsed.endUtc, csvTz, logMembership);
+      // A 4 Hz lidar export is 4× the rows of any other log (~350 MB in memory for 4 h),
+      // and desktop boot, video enrichment and the Bunny archive all read the whole day
+      // log. Keep a 1 Hz copy; the stats below still come from csvParsed.rows (every row).
+      const thinned = isSubSecondLog(csvParsed.rows);
+      const logRows = thinned ? thinToOneHz(csvParsed.rows) : csvParsed.rows;
+      await saveLogData(d, logRows, csvFile.name, csvParsed.startUtc, csvParsed.endUtc, csvTz, logMembership);
       // Mirror to Supabase if there's an active membership.
       try {
         const supabase = getBrowserSupabase();
@@ -3163,7 +3178,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           // a full session log is tens of MB, over the upload route's size
           // limit. The full-resolution log stays on this device.
           const cloudLog = reduceLogForCloud(
-            { rows: csvParsed.rows, fileName: csvFile.name, startUtc: csvParsed.startUtc, endUtc: csvParsed.endUtc, tzOffset: csvTz },
+            { rows: logRows, fileName: csvFile.name, startUtc: csvParsed.startUtc, endUtc: csvParsed.endUtc, tzOffset: csvTz },
             xmlParsed
           );
           const ok = await saveLogDataCloud({
@@ -3177,7 +3192,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           else addLog(`⚠ Log NOT synced (${mb} MB payload) — saved on this device only. Check the console for the HTTP status; an active boat workspace must be selected.`);
         }
       } catch (e) { addLog(`⚠ Log cloud sync failed — saved on this device only`); }
-      addLog(`✓ Log saved (${csvParsed.rows.length.toLocaleString()} rows) → ${d}`);
+      addLog(`✓ Log saved (${logRows.length.toLocaleString()} rows${thinned?` · 1 Hz copy of ${csvParsed.rows.length.toLocaleString()}`:''}) → ${d}`);
     }
     if (xmlParsed) {
       const d = xmlDate || csvDate || fallbackDate;
@@ -3640,11 +3655,14 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                 <button onClick={()=>csvRef.current?.click()} style={{width:"100%",background:csvParsed?"#1D9E7512":"#071624",border:`1px solid ${csvParsed?"#1D9E75":"#1E3A5A"}`,borderRadius:6,padding:"9px 0",color:csvParsed?"#1D9E75":"#7DD3FC",cursor:"pointer",fontSize:11}}>
                   {csvParsed?`✓ ${csvFile.name}`:"Choose file"}
                 </button>
-                {csvParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{csvParsed.rows.length.toLocaleString()} rows</div>}
+                {csvParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{csvParsed.rows.length.toLocaleString()} rows{csvParsed.hz>=1.5?` · ${csvParsed.hz} Hz`:""}{csvParsed.lidarSails?.length?` · lidar: ${csvParsed.lidarSails.map(s=>s.label).join(", ")}`:""}</div>}
                 <TzSelect value={csvTz} onChange={onCsvTzChange} label="Local / venue timezone (display)"/>
                 <div style={{fontSize:9,color:"#334155",marginTop:5}}>
                   <strong style={{color:"#475569"}}>Auto-detected from the log's GPS position</strong> (DST-aware) when you choose a file — change it only to override.
                   It sets the timezone everything is <strong style={{color:"#475569"}}>displayed</strong> in; for local-clock logs it also converts to UTC, while true-UTC logs (e.g. N76 <code>Utc</code>) keep their timestamps either way.
+                </div>
+                <div style={{fontSize:9,color:"#334155",marginTop:5}}>
+                  1 Hz and 4 Hz exports both work. A <strong style={{color:"#475569"}}>4 Hz lidar log</strong>: performance, lidar and tack/gybe stats use every row (import it with or after the event file); a 1 Hz copy is kept for charts and video.
                 </div>
               </div>
               {/* Event file */}

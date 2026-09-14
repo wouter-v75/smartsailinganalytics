@@ -28,6 +28,8 @@ export type LogField =
   // headsail-only trim positions — shown on JIB (headsail) scans
   | 'jibUpDnStbd' | 'jibUpDnPort' | 'jibInOut'
   | 'jibTackLoad' | 'gsTackLoad' | 'cunninghamLoad' | 'mastAng' | 'mastButt' | 'shims'
+  // bobstay load (t) — 2026-09 N76 4 Hz export header 'Bobstay'
+  | 'bobstay'
   // rig loads + control positions added by the 2026-07 N76 export
   | 'fstyPin' | 'fstyJibTk' | 'mainsheetLoad' | 'ruddP' | 'ruddS'
   | 'toeIn' | 'futek' | 'eBarPort' | 'eBarStbd'
@@ -85,6 +87,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   jibTackLoad: ['jibtkpin', 'jibtackt', 'jibtack'],
   gsTackLoad: ['gstacktfrombar', 'gstackload', 'gstackt'],
   cunninghamLoad: ['cunningham', 'cunno'],
+  bobstay: ['bobstay', 'bobstayload', 'bobstayt'],
   mastAng: ['mastang'],
   mastButt: ['mastbutt'],
   // mast-base shim stack — 2026-07 N76 export header 'SHIMS'

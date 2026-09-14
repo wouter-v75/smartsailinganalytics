@@ -39,6 +39,9 @@ export interface Channel {
   decimals: number
   modes: Mode[]        // points of sail where the channel is charted
   needsPolar?: boolean
+  lo?: number          // plausibility caps: samples outside [lo, hi] are ignored
+  hi?: number
+  minSamples?: number  // fewer valid samples in a phase → no value for it
   get: (r: LogRow, ctx: ChannelCtx) => number | null
 }
 
@@ -66,6 +69,27 @@ const rad = (deg: number) => (deg * Math.PI) / 180
 const UP_DOWN: Mode[] = ['up', 'down']
 const ALL: Mode[] = ['up', 'down', 'reach']
 
+// Lidar sail shape (flatLogParse.lidarKeyOf keys): measured camber / draft / twist per
+// stripe and the targets. KND's filters: samples outside CA 0–20 %, DR 20–80 %, TW 0–60°
+// are ignored and a phase needs 5 valid samples — targets are taken as logged (the
+// lidar tables drop phases whose target sits below its floor).
+const LIDAR_VARS = [
+  { v: 'Ca', label: 'CA', unit: '%', lo: 0, hi: 20 },
+  { v: 'Dr', label: 'DR', unit: '%', lo: 20, hi: 80 },
+  { v: 'Tw', label: 'TW', unit: '°', lo: 0, hi: 60 },
+]
+const LIDAR_CHANNELS: Channel[] = (['mn', 'jib', 'spi'] as const).flatMap(sail =>
+  LIDAR_VARS.flatMap(({ v, label, unit, lo, hi }) =>
+    [25, 50, 75].flatMap(h => {
+      const key = `${sail}${v}${h}`
+      const tKey = `t${sail.charAt(0).toUpperCase()}${sail.slice(1)}${v}${h}`
+      const name = `${sail.toUpperCase()} ${label}${h}`
+      return [
+        { key, label: name, unit, decimals: 1, modes: ALL, lo, hi, minSamples: 5, get: (r: LogRow) => num(r[key]) },
+        { key: tKey, label: `${name} target`, unit, decimals: 1, modes: ALL, minSamples: 5, get: (r: LogRow) => num(r[tKey]) },
+      ]
+    })))
+
 // Order = chart order in the X-Y grids (matches the KND report).
 export const CHANNELS: Channel[] = [
   { key: 'tws', label: 'TWS', unit: 'kn', decimals: 1, modes: ALL, get: r => num(r.tws) },
@@ -91,6 +115,7 @@ export const CHANNELS: Channel[] = [
   { key: 'vang', label: 'Vang', unit: 't', decimals: 2, modes: ALL, get: r => num(r.vang) },
   { key: 'cunningham', label: 'Cunningham', unit: 't', decimals: 2, modes: ALL, get: r => num(r.cunninghamLoad) },
   { key: 'mainsheet', label: 'Mainsheet', unit: 't', decimals: 2, modes: ALL, get: r => num(r.mainsheetLoad) },
+  { key: 'bobstay', label: 'Bobstay', unit: 't', decimals: 2, modes: ['down', 'reach'], get: r => num(r.bobstay) },
   { key: 'upDflct', label: 'UpDfclt%', unit: '%', decimals: 1, modes: ['down'], get: r => num(r.upDflctPct) },
   { key: 'lwDflct', label: 'LwDfclt%', unit: '%', decimals: 1, modes: ['down'], get: r => num(r.lwDflctPct) },
   { key: 'v1wwd', label: 'V1_WWD', unit: 't', decimals: 2, modes: ALL, get: (r, { tack }) => num(tack === 'stbd' ? r.v1s : r.v1p) },
@@ -127,6 +152,7 @@ export const CHANNELS: Channel[] = [
   // The log's own performance columns — the fallback when no polar is loaded.
   { key: 'logPolPct', label: 'PolBsp% (log)', unit: '%', decimals: 1, modes: ALL, get: r => num(r.vsPerfPct) },
   { key: 'logTrgPct', label: 'BSP_trg% (log)', unit: '%', decimals: 1, modes: ALL, get: r => num(r.vsTargPct) },
+  ...LIDAR_CHANNELS,
 ]
 
 export const CHANNEL_BY_KEY: Record<string, Channel> =
@@ -206,12 +232,13 @@ export function computePhaseStats(
       let s = 0, k = 0, mx = -Infinity
       for (const r of inside) {
         const v = ch.get(r, ctx)
-        if (v == null) continue
+        if (v == null || (ch.lo != null && v < ch.lo) || (ch.hi != null && v > ch.hi)) continue
         s += v; k++
         if (v > mx) mx = v
       }
-      mean[ch.key] = k ? s / k : null
-      max[ch.key] = k ? mx : null
+      const enough = k > 0 && k >= (ch.minSamples ?? 1)
+      mean[ch.key] = enough ? s / k : null
+      max[ch.key] = enough ? mx : null
     }
 
     const sails = activeSailsAt(xml, (p.utc + p.endUtc) / 2)

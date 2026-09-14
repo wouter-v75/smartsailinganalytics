@@ -69,7 +69,7 @@ export const REPORTS: Record<'up' | 'down' | 'loads', ReportSpec[]> = {
       id: 'down-sails', title: 'Downwind by sail combination and tack', modes: ['down'], by: ['sailCombo', 'tack'],
       columns: [TWS, BSP, TWA, AWA, POL, VMG, HEEL, TRIM, RUD, FSTY,
         col('v1wwd', 'V1_WWD (t)', 2), max('v1wwd', 'V1_WWD max (t)'), col('v1lwd', 'V1_LWD (t)', 2),
-        UPD, LWD, BSPSOG],
+        col('bobstay', 'Bobstay (t)', 2), UPD, LWD, BSPSOG],
     },
     {
       id: 'down-twa', title: 'VMG by TWA band', modes: ['down'], by: ['twaBand'],
@@ -84,7 +84,7 @@ export const REPORTS: Record<'up' | 'down' | 'loads', ReportSpec[]> = {
     {
       id: 'loads', title: 'Loads by point of sail, sails and tack', modes: ['up', 'reach', 'down'], by: ['mode', 'sailCombo', 'tack'],
       columns: [TWS, BSP, TWA, AWA, VMG, POL, TRIM, HEEL, RUD, FSTY, max('fsty', 'Max Fsty'),
-        max('v1wwd', 'Max V1_WWD'), max('v1lwd', 'Max V1_LWD'), max('jibTack', 'Max JibTack'),
+        max('v1wwd', 'Max V1_WWD'), max('v1lwd', 'Max V1_LWD'), max('bobstay', 'Max Bobstay'), max('jibTack', 'Max JibTack'),
         max('cunningham', 'Max Cunningham'), max('mainsheet', 'Max Mainsheet'), max('vang', 'Max Vang'),
         col('upDflct', 'Max UpDfclt%', 0, 'max'), col('lwDflct', 'Max LwDfclt%', 0, 'max')],
     },

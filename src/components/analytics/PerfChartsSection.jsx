@@ -14,6 +14,8 @@ import React from 'react'
 import PhaseXYPlot from './PhaseXYPlot'
 import ReportTable from './ReportTable'
 import ManoeuvreTable from './ManoeuvreTable'
+import LidarTables from './LidarTables'
+import { LIDAR_SAILS, hasLidar } from '../../lib/lidarTables'
 import { REPORTS, buildTable } from '../../lib/reportTables'
 import { analyseManoeuvres, isJudged } from '../../lib/manoeuvres'
 import { STATS_VERSION, expandPhases, medianInterval, preferStored } from '../../lib/seasonCurves'
@@ -286,7 +288,8 @@ export default function PerfChartsSection({
   const raceLabel = i => (guns[i - 1]?.raceNum ? `Race ${guns[i - 1].raceNum}` : `Race ${i}`)
   const races = Array.from(new Set(stats.map(s => s.race).filter(r => r != null))).sort((a, b) => a - b)
   // "Speed vs TWA" (mode 'polar'), the report tables and the manoeuvres cover the whole day.
-  const modeStats = mode === 'polar' || mode === 'tables' || mode === 'manoeuvres' ? stats : stats.filter(s => s.mode === mode)
+  const modeStats = ['polar', 'tables', 'manoeuvres', 'lidar'].includes(mode) ? stats : stats.filter(s => s.mode === mode)
+  const lidarSails = LIDAR_SAILS.filter(s => hasLidar(stats, s.sail))
   const combos = Array.from(new Set(modeStats.map(s => s.sailCombo))).sort()
   const sailsSel = combos.includes(sails) ? sails : ''
   const shown = modeStats.filter(s =>
@@ -318,6 +321,9 @@ export default function PerfChartsSection({
         <button onClick={() => setMode('polar')} aria-pressed={mode === 'polar'} style={modeBtn(mode === 'polar')}>◎ Speed vs TWA</button>
         <button onClick={() => setMode('tables')} aria-pressed={mode === 'tables'} style={modeBtn(mode === 'tables')}>▦ Tables</button>
         <button onClick={() => setMode('manoeuvres')} aria-pressed={mode === 'manoeuvres'} style={modeBtn(mode === 'manoeuvres')}>⟲ Tacks &amp; gybes</button>
+        {lidarSails.length > 0 && (
+          <button onClick={() => setMode('lidar')} aria-pressed={mode === 'lidar'} style={modeBtn(mode === 'lidar')}>◐ Lidar</button>
+        )}
         <select aria-label="Race" value={race} onChange={e => setRace(e.target.value)} style={select}>
           <option value="">All day</option>
           {races.map(r => <option key={r} value={String(r)}>{raceLabel(r)}</option>)}
@@ -379,7 +385,9 @@ export default function PerfChartsSection({
         </div>
       )}
 
-      {mode === 'manoeuvres' ? (
+      {mode === 'lidar' && lidarSails.length ? (
+        <LidarTables stats={shown} sails={lidarSails} />
+      ) : mode === 'manoeuvres' ? (
         (() => {
           const listed = manoeuvres.filter(m =>
             (showAllManoeuvres || isJudged(m)) && (!race || String(m.race) === race) && (!sailsSel || m.sails === sailsSel))

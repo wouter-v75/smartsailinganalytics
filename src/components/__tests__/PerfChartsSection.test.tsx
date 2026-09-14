@@ -190,6 +190,23 @@ describe('PerfChartsSection', () => {
     expect(container.querySelectorAll('[data-manoeuvres="tacks"] tbody tr[data-utc]')).toHaveLength(2)
   })
 
+  it('offers the lidar report only when the log has lidar channels', () => {
+    render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
+    expect(screen.queryByRole('button', { name: /Lidar/ })).toBeNull()
+  })
+
+  it('shows the main and jib lidar tables', () => {
+    const lidarRows = rows.map(r => ({ ...r, mnCa25: 8, tMnCa25: 5, mnDr50: 45, tMnDr50: 50, jibCa25: 11, tJibCa25: 6 }))
+    const { container } = render(<PerfChartsSection rows={lidarRows} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
+    fireEvent.click(screen.getByRole('button', { name: /Lidar/ }))
+    const byModeTack = container.querySelector('[data-lidar="lidar-mn-mode-tack"]')!
+    expect(byModeTack.textContent).toContain('Upwind')
+    expect(container.querySelector('[data-lidar="lidar-mn-overall"]')!.textContent).toContain('+60.0%')   // (8 − 5) / 5
+    fireEvent.click(screen.getByRole('button', { name: 'Jib' }))
+    expect(container.querySelector('[data-lidar="lidar-jib-overall"]')!.textContent).toContain('+83.3%')  // (11 − 6) / 6
+    expect(screen.queryByRole('button', { name: 'Spinnaker' })).toBeNull()
+  })
+
   it('jumps to a phase when a dot is clicked', () => {
     const onJump = vi.fn()
     const { container } = render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} onJump={onJump} />)

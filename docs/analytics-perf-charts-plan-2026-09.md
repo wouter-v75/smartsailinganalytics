@@ -306,3 +306,36 @@ twaBand · heelBand; KND band labels ("under 21", "21-23", "25 plus"); automatic
   - Not verifiable here: the full-resolution upload path on real data — the original 11 Sep log is not on this
     machine; it runs on the device that imported the logs (unit-tested: `shouldReplace`, `preferStored`,
     `medianInterval`, section tests for stored-vs-local).
+
+**Step 10 — done; validated against KND's 11 Sep lidar tabs (close, not exact — see below).**
+- Log. The 2026-09 4 Hz Expedition export (`Utc` ISO with offset, 271 columns) is flat-OLE; the parser reads
+  `MN_/JIB_/SPI_` `CA/TW/DR` × 25/50/75 as `mnCa25`, `jibTw50` … and the `T_*` targets as `tMnCa25`, `tMnTr50` …
+  (`lidarKeyOf`; measured `*_TR_*` and the ENT/EXT/FRT/BCK/LED/TAL stripes are not used). Empty cells leave the key
+  out. `Bobstay` (t) is a new channel: downwind/reaching report column + max in the loads report.
+- Phase means (`phaseStats.ts` `LIDAR_CHANNELS`): per-sample caps CA 0–20 %, DR 20–80 %, TW 0–60°, and at least 5
+  valid samples per 30 s phase (else no value).
+- Tables (`src/lib/lidarTables.ts`, "◐ Lidar" in Performance charts, per sail Main / Jib / Spinnaker when present):
+  1. measured + gap to target by mode and tack; 2. overall avg measured, avg target, % diff (mean of per-phase %),
+  median %, n, dropped; 3. % diff by point of sail. Per-phase gaps drop targets under their floor (CA 3, DR 20,
+  TW 2) and 1.5 × IQR outliers; under 2 valid phases prints blank / n/a. "Copy for Excel" on each.
+- Upload tab. A 4 Hz log imports in the same "Expedition log" slot; the card and log line show the rate and lidar
+  sails. Tested on a synthetic 4 h file (57,600 rows, 187 MB): parse 1.3 s, ~350 MB of rows. Because desktop boot
+  loads every day's log, and video enrichment + the Bunny archive read it whole, the device keeps a **1 Hz copy**
+  (first row of each second, lidar kept) (`src/lib/logResolution.ts`). Phases, lidar means and tacks/gybes are
+  computed from every 4 Hz row at import and stored (resolution 0.25 s), and Analytics prefers those. Needs the
+  event file in the same import or already on the device; otherwise the stats later come from the 1 Hz copy.
+- Lidar keys stay out of the ~6 s cloud copy (they would halve its rows); other devices read lidar from the stored
+  stats.
+- Tests: `flatLog4hz.test.ts` (verbatim header, index rows), `lidarLog.fixture.test.ts` (5 real rows, opt-in),
+  `lidarTables.test.ts`, `logResolution.test.ts`, lidar caps in `phaseStats.test.ts`, lidar mode in
+  `PerfChartsSection.test.tsx`.
+- Validated on 11 Sep (`fixtures/local/log-lidar-20260911.csv`, the same 271-column export at ~1 Hz, Main + Jib
+  lidar) against KND's Main / Jib Lidar tabs (`lidarTables.fixture.test.ts`, opt-in):
+  - Mode × tack rows and counts match (Upwind Stbd n 39, CA25 7.5, dCA25 3.1); cell values within a few tenths.
+  - KND's note says IQR "on the per-phase gaps"; scoring 168 filter variants (window edges, target caps, paired
+    samples, quartile method, IQR per mode, floor before/after IQR, open caps, min samples) against the 18 overall
+    rows, the % gaps with QUARTILE.EXC quartiles fit best: n off by 21 phases in total (raw gaps + QUARTILE.INC:
+    39). 10 of 18 rows keep exactly KND's phase count (main 6 of 9, jib 4 of 9).
+  - Still off: main CA25 139 vs 137, CA50 75 vs 74, CA75 2 vs 3; jib CA50 123 vs 122, CA75 98 vs 92 (% diff +104.6
+    vs +114.6), DR75 117 vs 118, TW50 132 vs 126, TW75 137 vs 134 (−4.2 vs −8.7 %). Nothing tried closes these;
+    KND's per-phase data would.

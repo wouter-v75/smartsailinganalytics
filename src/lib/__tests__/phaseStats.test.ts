@@ -68,6 +68,20 @@ describe('computePhaseStats', () => {
     expect(stats[2].sailCombo).toBe('A2+B 2026/J4_A 2026')
   })
 
+  it('applies the lidar plausibility caps and needs 5 valid samples per phase', () => {
+    const r = computePhaseStats([
+      ...rowsFor(0, 20, { ...common, twa: 40, mnCa25: 8, tMnCa25: 5 }),
+      ...rowsFor(20, 30, { ...common, twa: 40, mnCa25: 25, tMnCa25: 5 }),   // camber above 20 % → ignored
+      ...rowsFor(30, 34, { ...common, twa: 40, mnCa25: 7 }),
+      ...rowsFor(34, 60, { ...common, twa: 40, mnCa25: 30 }),                // only 4 valid samples in phase 2
+    ], { phases: [phase(0, 30, 1), phase(30, 60, 1)] })
+    expect(r[0].mean.mnCa25).toBe(8)
+    expect(r[0].max.mnCa25).toBe(8)
+    expect(r[0].mean.tMnCa25).toBe(5)
+    expect(r[1].mean.mnCa25).toBeNull()
+    expect(r[1].mean.jibCa25).toBeNull()
+  })
+
   it('computes BSP/SOG% per sample, skipping near-zero SOG', () => {
     const r = computePhaseStats([
       ...rowsFor(0, 15, { ...common, twa: 40, sog: 10 }),
