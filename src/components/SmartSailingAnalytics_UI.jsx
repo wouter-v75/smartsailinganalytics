@@ -4811,10 +4811,12 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const sr=selection?rows.filter(r=>inRange(r.utc,selection)):rows;
   const selTJ=(xmlData?.tackJibes||[]).filter(t=>inRange(t.utc,selection));
   const selMarks=(xmlData?.markRoundings||[]).filter(m=>inRange(m.utc,selection));
-  const twsAvg=sr.length?sr.reduce((s,r)=>s+r.tws,0)/sr.length:0;
-  const sogAvg=sr.length?sr.reduce((s,r)=>s+r.sog,0)/sr.length:0;
-  const sogMax=sr.length?Math.max(...sr.map(r=>r.sog)):0;
-  const twsMax=sr.length?Math.max(...sr.map(r=>r.tws)):0;
+  // Only rows that carry the channel: one row without TWS/SOG (a logger dropout, or a
+  // column the cloud copy left out) used to turn the sum and the max into NaN → "--".
+  // Loops, not Math.max(...arr): a 4 h log at 1 Hz is past the spread-argument limit.
+  const statOf=k=>{let s=0,n=0,mx=-Infinity;for(const r of sr){const v=r[k];if(typeof v==="number"&&Number.isFinite(v)){s+=v;n++;if(v>mx)mx=v;}}return n?{avg:s/n,max:mx}:{avg:null,max:null};};
+  const twsStat=statOf("tws"), sogStat=statOf("sog");
+  const twsAvg=twsStat.avg, twsMax=twsStat.max, sogAvg=sogStat.avg, sogMax=sogStat.max;
   const vsTargRows=sr.filter(r=>r.vsTargPct>5&&r.vsTargPct<200);
   const vsTargAvg=vsTargRows.length?vsTargRows.reduce((s,r)=>s+r.vsTargPct,0)/vsTargRows.length:null;
   const vsPerfRows=sr.filter(r=>r.vsPerfPct>5&&r.vsPerfPct<200);
