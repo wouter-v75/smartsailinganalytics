@@ -15,6 +15,7 @@ import PhaseXYPlot from './PhaseXYPlot'
 import ReportTable from './ReportTable'
 import ManoeuvreTable from './ManoeuvreTable'
 import LidarTables from './LidarTables'
+import StartSection from './StartSection'
 import { LIDAR_SAILS, hasLidar } from '../../lib/lidarTables'
 import { REPORTS, buildTable } from '../../lib/reportTables'
 import { analyseManoeuvres, isJudged } from '../../lib/manoeuvres'
@@ -25,6 +26,7 @@ import { polarTargetLine, twsBands, polarCurve } from '../../lib/phasePlot'
 import { polarFromData } from '../../lib/polarFile'
 import { inRange, phaseInRange } from '../../lib/trackSelection'
 import { mergeStoredLidar } from '../../lib/lidarMerge'
+import { SECTION_ORDER, SECTION_TITLES } from '../../lib/headlineFacts'
 import { getActiveMembership } from '../../lib/active-membership'
 import { getUidFast } from '../../lib/supabase/browser'
 
@@ -211,6 +213,9 @@ function HeadlinesCard({ boat, activeDate, stored, canUseAI, onDone, override })
     </ul>
   )
   const dropped = data?.headlines?.dropped?.length || 0
+  // Sectioned (Upwind / Downwind / Reaching / Sail shape) — or the single list of older days.
+  const sections = data?.headlines?.sections ? SECTION_ORDER.filter(k => data.headlines.sections[k]).map(k => [k, data.headlines.sections[k]]) : null
+  const bottomTitle = { fontSize: 9, fontWeight: 700, color: '#94A3B8', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 2 }
   return (
     <div data-headlines style={{ background: '#071624', border: '1px solid #1E3A5A', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: data ? 6 : 0 }}>
@@ -228,11 +233,26 @@ function HeadlinesCard({ boat, activeDate, stored, canUseAI, onDone, override })
       </div>
       {data ? (
         <>
-          {list(data.headlines.headlines || [])}
-          {data.headlines.bottomLine?.length > 0 && (
+          {sections ? sections.map(([key, s]) => (
+            <div key={key} data-headline-section={key} style={{ marginBottom: 8, paddingTop: 6, borderTop: '1px solid #0F2A45' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', marginBottom: 3 }}>{SECTION_TITLES[key]}</div>
+              {list(s.headlines || [])}
+              {s.bottomLine?.length > 0 && (
+                <>
+                  <div style={bottomTitle}>Bottom line</div>
+                  {list(s.bottomLine)}
+                </>
+              )}
+            </div>
+          )) : (
             <>
-              <div style={{ fontSize: 9, fontWeight: 700, color: '#94A3B8', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 2 }}>Bottom line</div>
-              {list(data.headlines.bottomLine)}
+              {list(data.headlines.headlines || [])}
+              {data.headlines.bottomLine?.length > 0 && (
+                <>
+                  <div style={bottomTitle}>Bottom line</div>
+                  {list(data.headlines.bottomLine)}
+                </>
+              )}
             </>
           )}
           <div style={{ fontSize: 9, color: '#475569' }}>
@@ -299,7 +319,7 @@ export default function PerfChartsSection({
   const raceLabel = i => (guns[i - 1]?.raceNum ? `Race ${guns[i - 1].raceNum}` : `Race ${i}`)
   const races = Array.from(new Set(stats.map(s => s.race).filter(r => r != null))).sort((a, b) => a - b)
   // "Speed vs TWA" (mode 'polar'), the report tables and the manoeuvres cover the whole day.
-  const modeStats = ['polar', 'tables', 'manoeuvres', 'lidar'].includes(mode) ? stats : stats.filter(s => s.mode === mode)
+  const modeStats = ['polar', 'tables', 'manoeuvres', 'lidar', 'start'].includes(mode) ? stats : stats.filter(s => s.mode === mode)
   const lidarSails = LIDAR_SAILS.filter(s => hasLidar(stats, s.sail))
   const combos = Array.from(new Set(modeStats.map(s => s.sailCombo))).sort()
   const sailsSel = combos.includes(sails) ? sails : ''
@@ -345,6 +365,9 @@ export default function PerfChartsSection({
         <button onClick={() => setMode('tables')} aria-pressed={mode === 'tables'} style={modeBtn(mode === 'tables')}>▦ Tables</button>
         <button onClick={() => setMode('manoeuvres')} aria-pressed={mode === 'manoeuvres'} style={modeBtn(mode === 'manoeuvres')}>⟲ Tacks &amp; gybes</button>
         <button onClick={() => setMode('lidar')} aria-pressed={mode === 'lidar'} style={modeBtn(mode === 'lidar')}>◐ Lidar</button>
+        {guns.length > 0 && (
+          <button onClick={() => setMode('start')} aria-pressed={mode === 'start'} style={modeBtn(mode === 'start')}>⚑ Start · {guns.length}</button>
+        )}
         <select aria-label="Race" value={race} onChange={e => setRace(e.target.value)} style={select}>
           <option value="">All day</option>
           {races.map(r => <option key={r} value={String(r)}>{raceLabel(r)}</option>)}
@@ -406,7 +429,9 @@ export default function PerfChartsSection({
         </div>
       )}
 
-      {mode === 'lidar' && lidarSails.length ? (
+      {mode === 'start' ? (
+        <StartSection rows={rows} xmlData={xmlData} polar={polar} tzOffsetMin={tzOffsetMin} onJump={onJump} range={range} />
+      ) : mode === 'lidar' && lidarSails.length ? (
         <LidarTables stats={shown} sails={lidarSails} xmlData={xmlData} tzOffsetMin={tzOffsetMin} onJump={onJump} />
       ) : mode === 'lidar' ? (
         <div data-lidar-empty style={{ ...note, lineHeight: 1.6 }}>
@@ -439,7 +464,7 @@ export default function PerfChartsSection({
         })()
       ) : mode === 'tables' ? (
         <div>
-          {[['up', 'Upwind report'], ['down', 'Downwind report'], ['loads', 'Loads']].map(([k, title]) => {
+          {[['up', 'Upwind report'], ['down', 'Downwind report'], ['reach', 'Reaching report'], ['loads', 'Loads']].map(([k, title]) => {
             const tables = REPORTS[k].map(spec => buildTable(shown, spec, { hasPolar: !!polar })).filter(t => t.rows.length)
             if (!tables.length) return null
             return (

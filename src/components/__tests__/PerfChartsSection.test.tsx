@@ -133,6 +133,29 @@ describe('PerfChartsSection', () => {
     expect(container.querySelector('[data-resolution]')!.textContent).toBe('Full log · a row every 1 s')
   })
 
+  it('shows sectioned headlines under Upwind / Downwind / Reaching / Sail shape headings', () => {
+    const headlinesOverride = {
+      headlines: {
+        version: 2,
+        sections: {
+          sailShape: { headlines: ['MAIN_B 2026 camber 25% at 7-8 gave VMG% 97.1, 9-10 gave 94.2.'], bottomLine: [] },
+          upwind: { headlines: ['Port 98.2 %Pol against Stbd 98.0 on MAIN_B 2026 with J4_A 2026.'], bottomLine: ['Work on the tack exit.'] },
+        },
+        dropped: [],
+      },
+      model: 'mistral-medium-3.5-128b', at: '2026-09-14T15:40:00Z',
+    }
+    const { container } = render(
+      <PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} headlinesOverride={headlinesOverride} />
+    )
+    const sections = Array.from(container.querySelectorAll('[data-headline-section]'))
+    expect(sections.map(e => e.getAttribute('data-headline-section'))).toEqual(['upwind', 'sailShape'])   // report order
+    expect(sections[0].textContent).toContain('Upwind')
+    expect(sections[0].textContent).toContain('Bottom line')
+    expect(sections[1].textContent).toContain('Sail shape')
+    expect(sections[1].textContent).not.toContain('Bottom line')
+  })
+
   it('shows written headlines to everyone, and offers to write them only with AI access', () => {
     const headlinesOverride = {
       headlines: { headlines: ['Upwind the tacks were level: Port 98.2 %Pol against Stbd 98.0.'], bottomLine: ['Work on the gybe exit.'], dropped: ['x'] },
@@ -188,6 +211,20 @@ describe('PerfChartsSection', () => {
     expect(onJump).toHaveBeenCalledWith(T0 + 2 * 30_000)
     fireEvent.click(screen.getByLabelText(/Also show pre-start/))
     expect(container.querySelectorAll('[data-manoeuvres="tacks"] tbody tr[data-utc]')).toHaveLength(2)
+  })
+
+  it('has a Start subtab per start gun, with the run-in table and the at-the-gun summary', () => {
+    const { container } = render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
+    fireEvent.click(screen.getByRole('button', { name: /Start · 2/ }))
+    expect(screen.getByRole('button', { name: /Race 5/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Race 6/ })).toBeTruthy()
+    const table = container.querySelector('[data-start-table]')!
+    expect(table.textContent).toContain('BSP_trg%')
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(49)        // −3:00 → +1:00 every 5 s
+    expect(container.querySelector('[data-start-summary]')!.textContent).toContain('At the gun')
+    expect(container.querySelector('[data-start-section]')!.textContent).toContain('No start line')   // no line in this event file
+    fireEvent.click(screen.getByRole('button', { name: /−5:00 → \+1:00/ }))
+    expect(container.querySelector('[data-start-table]')!.querySelectorAll('tbody tr')).toHaveLength(73)
   })
 
   it('narrows everything to a stretch picked on the GPS track', () => {

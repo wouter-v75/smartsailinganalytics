@@ -43,7 +43,19 @@ const LWD = col('lwDflct', 'LwDfclt %', 0)
 const BSPSOG = col('bspSog', 'BSP/SOG %', 1)
 const max = (key: string, label: string) => col(key, label, 2, 'max')
 
-export const REPORTS: Record<'up' | 'down' | 'loads', ReportSpec[]> = {
+export const REPORTS: Record<'up' | 'down' | 'reach' | 'loads', ReportSpec[]> = {
+  // Reaching: no VMG% (the target is the polar speed, not a VMG angle) — %Pol is the measure.
+  reach: [
+    {
+      id: 'reach-sails', title: 'Reaching by sail combination and tack', modes: ['reach'], by: ['sailCombo', 'tack'],
+      columns: [TWS, BSP, TWA, AWA, POL, HEEL, TRIM, RUD, FSTY, max('fsty', 'Fsty max (t)'),
+        col('bobstay', 'Bobstay (t)', 2), UPD, LWD, BSPSOG],
+    },
+    {
+      id: 'reach-twa', title: '%Pol by TWA band (reaching)', modes: ['reach'], by: ['twaBand'],
+      columns: [TWS, BSP, POL, HEEL],
+    },
+  ],
   up: [
     {
       id: 'up-sails', title: 'Upwind by sail combination and tack', modes: ['up'], by: ['sailCombo', 'tack'],
