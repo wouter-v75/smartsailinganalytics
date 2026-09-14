@@ -212,10 +212,20 @@ describe('PerfChartsSection', () => {
   it('shows the main and jib lidar tables', () => {
     const lidarRows = rows.map(r => ({ ...r, mnCa25: 8, tMnCa25: 5, mnDr50: 45, tMnDr50: 50, jibCa25: 11, tJibCa25: 6 }))
     const { container } = render(<PerfChartsSection rows={lidarRows} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
+    // A banner says the day has lidar, and opens the tables.
+    expect(container.querySelector('[data-lidar-available]')!.textContent).toContain('Main, Jib · 12 phases')
+    fireEvent.click(screen.getByRole('button', { name: 'Show lidar tables' }))
+    expect(container.querySelector('[data-lidar-available]')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Lidar/ }))
     const byModeTack = container.querySelector('[data-lidar="lidar-mn-mode-tack"]')!
     expect(byModeTack.textContent).toContain('Upwind')
     expect(container.querySelector('[data-lidar="lidar-mn-overall"]')!.textContent).toContain('+60.0%')   // (8 − 5) / 5
+    // Filters list the sails up during the captures; every phase is tagged with its sails.
+    expect(Array.from((screen.getByLabelText('Main sail filter') as HTMLSelectElement).options).map(o => o.text)).toEqual(['All mains', 'MAIN_B 2026 · 12 phases'])
+    expect(Array.from((screen.getByLabelText('Jib sail filter') as HTMLSelectElement).options).map(o => o.text)).toEqual(['All jibs', 'J4_A 2026 · 12 phases'])
+    expect(container.querySelector('[data-lidar="lidar-mn-mode-tack"]')!.textContent).toContain('MAIN_B 2026')
+    fireEvent.click(screen.getByRole('button', { name: /Every lidar phase with its sails · 12/ }))
+    expect(container.querySelector('[data-lidar="lidar-mn-phases"]')!.textContent).toContain('J4_A 2026')
     fireEvent.click(screen.getByRole('button', { name: 'Jib' }))
     expect(container.querySelector('[data-lidar="lidar-jib-overall"]')!.textContent).toContain('+83.3%')  // (11 − 6) / 6
     expect(screen.queryByRole('button', { name: 'Spinnaker' })).toBeNull()

@@ -326,6 +326,18 @@ export default function PerfChartsSection({
     <div>
       <HeadlinesCard boat={boat} activeDate={activeDate} stored={storedStats.stored} canUseAI={canUseAI}
         onDone={storedStats.refresh} override={headlinesOverride} />
+      {lidarSails.length > 0 && mode !== 'lidar' && (
+        <div data-lidar-available style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 10px',
+          padding: '8px 12px', borderRadius: 8, background: '#A78BFA14', border: '1px solid #A78BFA55' }}>
+          <span style={{ fontSize: 11, color: '#C4B5FD' }}>
+            ◐ Lidar sail shape for this day · {lidarSails.map(s => s.label).join(', ')} · {stats.filter(p => lidarSails.some(s => hasLidar([p], s.sail))).length} phases
+          </span>
+          <button onClick={() => setMode('lidar')}
+            style={{ fontSize: 11, fontWeight: 600, borderRadius: 6, padding: '4px 10px', cursor: 'pointer', color: '#030F1A', background: '#C4B5FD', border: 'none' }}>
+            Show lidar tables
+          </button>
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
         <button onClick={() => setMode('up')} aria-pressed={mode === 'up'} style={modeBtn(mode === 'up')}>▲ Upwind · {count('up')}</button>
         <button onClick={() => setMode('down')} aria-pressed={mode === 'down'} style={modeBtn(mode === 'down')}>▽ Downwind · {count('down')}</button>
@@ -395,7 +407,7 @@ export default function PerfChartsSection({
       )}
 
       {mode === 'lidar' && lidarSails.length ? (
-        <LidarTables stats={shown} sails={lidarSails} />
+        <LidarTables stats={shown} sails={lidarSails} xmlData={xmlData} tzOffsetMin={tzOffsetMin} onJump={onJump} />
       ) : mode === 'lidar' ? (
         <div data-lidar-empty style={{ ...note, lineHeight: 1.6 }}>
           No lidar sail shape for this day. Lidar (the MN_ / JIB_ / SPI_ camber, draft and twist columns and their T_

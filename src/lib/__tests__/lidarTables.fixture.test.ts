@@ -28,9 +28,10 @@ run('lidar tables vs KND, 11 Sep 2026', () => {
 
   it('main: mode × tack reads like KND (Upwind Stbd n 39, CA25 7.5, dCA25 3.1)', () => {
     const [byModeTack] = lidarTables(load(), 'mn')
-    expect(byModeTack.rows[0].slice(0, 5)).toEqual(['Upwind', 'Stbd', 39, 7.5, 3.1])
-    expect(byModeTack.rows.map(r => [r[0], r[1], r[2]])).toEqual([
-      ['Upwind', 'Stbd', 39], ['Upwind', 'Port', 50], ['Downwind', 'Stbd', 22], ['Downwind', 'Port', 27],
+    expect(byModeTack.rows[0].slice(0, 6)).toEqual(['Upwind', 'Stbd', 'MAIN_B 2026', 39, 7.5, 3.1])
+    expect(byModeTack.rows.map(r => [r[0], r[1], r[2], r[3]])).toEqual([
+      ['Upwind', 'Stbd', 'MAIN_B 2026', 39], ['Upwind', 'Port', 'MAIN_B 2026', 50],
+      ['Downwind', 'Stbd', 'MAIN_B 2026', 22], ['Downwind', 'Port', 'MAIN_B 2026', 27],
     ])
   })
 

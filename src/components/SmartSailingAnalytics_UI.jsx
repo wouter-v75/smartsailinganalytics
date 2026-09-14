@@ -4618,6 +4618,26 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
     selLayerRef.current=g;
   },[selection,draft,filteredRows,mapGen]);
 
+  // ── Section selection: a button on the map itself ───────────────────────────────
+  React.useEffect(()=>{
+    const map=mapRef.current, L=window.L;
+    if(!map||!L||!onSelectionRef.current) return;
+    const ctl=L.control({position:'topright'});
+    ctl.onAdd=()=>{
+      const b=L.DomUtil.create('button','');
+      b.type='button';
+      b.textContent=selecting?'✕ Cancel':'✂ Select section';
+      b.title='Drag along the track to show only that stretch in the charts below';
+      b.style.cssText=`font:600 12px system-ui,sans-serif;padding:7px 11px;border-radius:7px;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.4);`+
+        (selecting?'background:#FDE047;color:#030F1A;border:1px solid #030F1A;':'background:rgba(3,15,26,.92);color:#FDE047;border:1px solid #FDE04780;');
+      L.DomEvent.disableClickPropagation(b);
+      L.DomEvent.on(b,'click',ev=>{ L.DomEvent.stop(ev); setSelecting(s=>!s); });
+      return b;
+    };
+    ctl.addTo(map);
+    return()=>{ try{ ctl.remove(); }catch{} };
+  },[selecting,mapGen]);
+
   // ── Section selection: drag along the track ────────────────────────────────────
   // Pointer events on the container (mouse, pen and touch alike); the map stops panning
   // while selecting. The pick follows the leg the drag is on where legs cross (see
@@ -4630,6 +4650,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
     let screen=null, anchor=null, last=null;
     const at=e=>map.mouseEventToContainerPoint(e);
     const down=e=>{
+      if(e.target?.closest?.('.leaflet-control')) return;   // the map's own buttons stay clickable
       screen=track.map(r=>map.latLngToContainerPoint([r.lat,r.lon]));
       const i=nearestTrackIndex(screen,at(e),24);
       if(i==null) return;
@@ -4720,10 +4741,12 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       {onSelection&&(
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,flexWrap:"wrap",fontSize:10}}>
           <button onClick={()=>setSelecting(s=>!s)} aria-pressed={selecting}
-            style={{...selBtn,color:selecting?"#FDE047":"#94A3B8",borderColor:selecting?"#FDE04760":"#1E3A5A"}}>
-            {selecting?"✕ Cancel":"✂ Select section"}
+            style={{...selBtn,fontSize:12,fontWeight:600,padding:"6px 12px",color:selecting?"#030F1A":"#FDE047",
+              background:selecting?"#FDE047":"#FDE04712",borderColor:"#FDE04780"}}>
+            {selecting?"✕ Cancel selecting":"✂ Select a section of the track"}
           </button>
-          {selecting&&<span style={{color:"#FDE047"}}>Drag along the track from the start of the stretch to its end</span>}
+          {selecting&&<span style={{color:"#FDE047"}}>Now drag along the track on the map, from the start of the stretch to its end</span>}
+          {!selecting&&!selection&&<span style={{color:"#64748B"}}>Pick a stretch (a leg, a start, a race) to see only that part in the cards and charts below</span>}
           {selection&&!selecting&&(
             <>
               <span data-track-selection style={{color:"#FDE047",fontFamily:"monospace"}}>
