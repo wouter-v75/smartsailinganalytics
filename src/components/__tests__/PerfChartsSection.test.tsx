@@ -190,6 +190,18 @@ describe('PerfChartsSection', () => {
     expect(container.querySelectorAll('[data-manoeuvres="tacks"] tbody tr[data-utc]')).toHaveLength(2)
   })
 
+  it('narrows everything to a stretch picked on the GPS track', () => {
+    // Phases 0–3 have their midpoints inside the first 2 minutes.
+    const { rerender } = render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} range={[T0, T0 + 120_000]} />)
+    expect(screen.getByRole('button', { name: /Upwind · 4/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Downwind · 0/ })).toBeTruthy()
+    expect(screen.getByText(/4 phases of 30 s in the track selection/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Tack'), { target: { value: 'port' } })
+    expect(screen.getByText(/2 phases of 30 s in the track selection/)).toBeTruthy()
+    rerender(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} range={[T0 + 1000, T0 + 10_000]} />)
+    expect(screen.getByText(/No 30 s phase has its midpoint inside the track selection/)).toBeTruthy()
+  })
+
   it('offers the lidar report only when the log has lidar channels', () => {
     render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
     expect(screen.queryByRole('button', { name: /Lidar/ })).toBeNull()

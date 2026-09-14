@@ -23,6 +23,7 @@ import { uploadSessionStats } from '../../lib/phaseStatsUpload'
 import { CHANNEL_BY_KEY, computePhaseStats } from '../../lib/phaseStats'
 import { polarTargetLine, twsBands, polarCurve } from '../../lib/phasePlot'
 import { polarFromData } from '../../lib/polarFile'
+import { inRange, phaseInRange } from '../../lib/trackSelection'
 import { getActiveMembership } from '../../lib/active-membership'
 import { getUidFast } from '../../lib/supabase/browser'
 
@@ -256,6 +257,7 @@ const modeBtn = on => ({
 
 export default function PerfChartsSection({
   rows, xmlData, tzOffsetMin = 0, playUtc = null, onJump = null, activeDate = null, canUseAI = false,
+  range = null,   // [utc0, utc1] — a stretch picked on the GPS track; null = the whole day
   polarOverride, curvesOverride, storedOverride, headlinesOverride,
 }) {
   const boat = useActiveBoat()
@@ -271,16 +273,23 @@ export default function PerfChartsSection({
   const [tack, setTack] = React.useState('')   // '' | 'port' | 'stbd'
   // Stats stored from a finer log win over computing from the coarser log on this device.
   const useStored = storedStats.useStored
-  const stats = React.useMemo(
+  const dayStats = React.useMemo(
     () => (useStored ? expandPhases(storedStats.stored.phases) : computePhaseStats(rows, xmlData, { polar })),
     [useStored, storedStats.stored, rows, xmlData, polar])
-  const manoeuvres = React.useMemo(
+  const dayManoeuvres = React.useMemo(
     () => (useStored && storedStats.stored.manoeuvres?.length ? storedStats.stored.manoeuvres : analyseManoeuvres(rows, xmlData)),
     [useStored, storedStats.stored, rows, xmlData])
+  // A track selection narrows everything below (charts, tables, lidar, tacks & gybes) to its phases.
+  const [r0, r1] = range || []
+  const stats = React.useMemo(() => (range ? dayStats.filter(p => phaseInRange(p, [r0, r1])) : dayStats), [dayStats, r0, r1])
+  const manoeuvres = React.useMemo(() => (range ? dayManoeuvres.filter(m => inRange(m.utc, [r0, r1])) : dayManoeuvres), [dayManoeuvres, r0, r1])
   const [showAllManoeuvres, setShowAllManoeuvres] = React.useState(false)
 
   if (!xmlData?.phases?.length) {
     return <div style={note}>No phases in this session’s event file — re-import the event (.ev.xml) file to see performance charts.</div>
+  }
+  if (range && dayStats.length && !stats.length) {
+    return <div style={note}>No 30 s phase has its midpoint inside the track selection — select a longer stretch.</div>
   }
   if (!stats.length) return <div style={note}>No log rows fall inside the event file’s phases.</div>
 
@@ -354,7 +363,7 @@ export default function PerfChartsSection({
         )}
       </div>
       <div style={{ fontSize: 9, color: '#475569', marginBottom: 10 }}>
-        {shown.length} phases of 30 s{combos.length === 1 ? ` · ${combos[0]}` : ''} · each dot is one phase average
+        {shown.length} phases of 30 s{range ? ' in the track selection' : ''}{combos.length === 1 ? ` · ${combos[0]}` : ''} · each dot is one phase average
         {onJump ? ' · click a dot to jump to it' : ''}
       </div>
       {(mode === 'up' || mode === 'down') && (
