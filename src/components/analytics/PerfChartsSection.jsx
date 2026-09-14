@@ -330,9 +330,7 @@ export default function PerfChartsSection({
         <button onClick={() => setMode('polar')} aria-pressed={mode === 'polar'} style={modeBtn(mode === 'polar')}>◎ Speed vs TWA</button>
         <button onClick={() => setMode('tables')} aria-pressed={mode === 'tables'} style={modeBtn(mode === 'tables')}>▦ Tables</button>
         <button onClick={() => setMode('manoeuvres')} aria-pressed={mode === 'manoeuvres'} style={modeBtn(mode === 'manoeuvres')}>⟲ Tacks &amp; gybes</button>
-        {lidarSails.length > 0 && (
-          <button onClick={() => setMode('lidar')} aria-pressed={mode === 'lidar'} style={modeBtn(mode === 'lidar')}>◐ Lidar</button>
-        )}
+        <button onClick={() => setMode('lidar')} aria-pressed={mode === 'lidar'} style={modeBtn(mode === 'lidar')}>◐ Lidar</button>
         <select aria-label="Race" value={race} onChange={e => setRace(e.target.value)} style={select}>
           <option value="">All day</option>
           {races.map(r => <option key={r} value={String(r)}>{raceLabel(r)}</option>)}
@@ -396,6 +394,14 @@ export default function PerfChartsSection({
 
       {mode === 'lidar' && lidarSails.length ? (
         <LidarTables stats={shown} sails={lidarSails} />
+      ) : mode === 'lidar' ? (
+        <div data-lidar-empty style={{ ...note, lineHeight: 1.6 }}>
+          No lidar sail shape for this day. Lidar (the MN_ / JIB_ / SPI_ camber, draft and twist columns and their T_
+          targets) is read when the Expedition log is imported — logs imported before 14 Sep 2026 were read without it,
+          and the cloud copy of a log never carries it. To see it: in Upload, import this day’s log again on a device
+          where the event file is loaded (or import both together). The lidar phase averages are then stored with the
+          day’s performance stats, so every device shows the tables.
+        </div>
       ) : mode === 'manoeuvres' ? (
         (() => {
           const listed = manoeuvres.filter(m =>

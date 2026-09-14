@@ -4850,6 +4850,15 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
     return rel?`${rel} · ${long}`:long;
   })();
   const sessionMeta=xmlData?.meta||{};
+  // Days that can be opened from the banner, oldest first (◀ = earlier day).
+  const openable=(sessions||[]).filter(s=>hasOpenableData(s)&&s.date<=TODAY()).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  const dateIdx=openable.findIndex(s=>s.date===activeDate);
+  // Nearest day with data either side — also when the open day isn't in the list (a future
+  // plan day, or one with nothing loaded yet).
+  const prevDate=activeDate?[...openable].reverse().find(s=>s.date<activeDate)?.date:openable[openable.length-1]?.date;
+  const nextDate=activeDate?openable.find(s=>s.date>activeDate)?.date:null;
+  const dateNavBtn=on=>({background:"#071624",border:"1px solid #1E3A5A",borderRadius:6,padding:"6px 9px",minHeight:32,fontSize:11,
+    color:on?"#06B6D4":"#334155",cursor:on?"pointer":"default"});
 
   return(
     <div style={{flex:1,overflowY:"auto",padding:16}}>
@@ -4872,32 +4881,33 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               </div>
             )}
           </div>
-          <button onClick={()=>setActiveTab("library")}
-            style={{background:"#06B6D420",border:"1px solid #06B6D460",borderRadius:6,
-              padding:"6px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:600,
-              flexShrink:0,minHeight:32}}>
-            Change
-          </button>
+          {onSelectDate&&openable.length>0?(
+            // Open another day right here — previous / next session, or pick from the list.
+            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0,maxWidth:"100%"}}>
+              <button aria-label="Previous session" title={prevDate||""} disabled={!prevDate} onClick={()=>prevDate&&onSelectDate(prevDate)} style={dateNavBtn(!!prevDate)}>◀</button>
+              <select aria-label="Open session date" value={dateIdx<0?"":activeDate} onChange={e=>e.target.value&&onSelectDate(e.target.value)}
+                style={{background:"#06B6D420",border:"1px solid #06B6D460",borderRadius:6,padding:"6px 8px",color:"#E2E8F0",
+                  fontSize:12,fontWeight:600,cursor:"pointer",minHeight:32,minWidth:0,maxWidth:"60vw"}}>
+                {dateIdx<0&&<option value="">Open a date…</option>}
+                {[...openable].reverse().map(s=>(
+                  <option key={s.date} value={s.date}>
+                    {s.date===TODAY()?"Today · ":""}{s.date}{s.hasLog?" · log":""}{s.hasXml?" · events":""}{s.videoCount?` · ${s.videoCount} clips`:""}
+                  </option>
+                ))}
+              </select>
+              <button aria-label="Next session" title={nextDate||""} disabled={!nextDate} onClick={()=>nextDate&&onSelectDate(nextDate)} style={dateNavBtn(!!nextDate)}>▶</button>
+            </div>
+          ):(
+            <button onClick={()=>setActiveTab("library")}
+              style={{background:"#06B6D420",border:"1px solid #06B6D460",borderRadius:6,
+                padding:"6px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:600,
+                flexShrink:0,minHeight:32}}>
+              Change
+            </button>
+          )}
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14,flexWrap:"wrap"}}>
           <div style={{fontSize:15,fontWeight:600,color:"#E2E8F0"}}>Analytics</div>
-          {sessions && sessions.length > 0 && onSelectDate && (
-            <select
-              value={activeDate || ''}
-              onChange={(e)=>onSelectDate(e.target.value)}
-              style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"4px 8px",color:"#E2E8F0",fontSize:11,cursor:"pointer",fontFamily:"monospace"}}
-              title="Switch session date"
-            >
-              {sessions.filter(s => hasOpenableData(s) && s.date <= TODAY()).map(s => (
-                <option key={s.date} value={s.date}>
-                  {s.date === TODAY() ? `Today (${s.date})` : s.date}
-                  {s.videoCount ? ` · ${s.videoCount}v` : ''}
-                  {s.hasLog ? ' · log' : ''}
-                  {s.hasXml ? ' · ev' : ''}
-                </option>
-              ))}
-            </select>
-          )}
           {logData&&<span style={{fontSize:10,color:logData.source==="local"?"#1D9E75":"#8B5CF6",background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,borderRadius:3,padding:"2px 7px"}}>{logData.source==="local"?"● Local":"● Cloud"} · {rows.length.toLocaleString()} rows · {durationH.toFixed(1)}h</span>}
           {xmlData ? (
             <span style={{fontSize:10,color:"#8B5CF6",background:"#8B5CF610",border:"1px solid #8B5CF630",borderRadius:3,padding:"2px 7px"}}>
@@ -4908,7 +4918,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               ⚠ No event file — select session in Videos or re-import XML
             </span>
           )}
-          {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — select a session in Videos</span>}
+          {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — pick a date above</span>}
         </div>
 
         {/* ── Now Playing bar — live instrument data from video ── */}
@@ -4932,7 +4942,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
           <div style={{textAlign:"center",padding:"50px 20px",color:"#334155"}}>
             <div style={{fontSize:32,marginBottom:12,opacity:0.3}}>📊</div>
             <div style={{fontSize:13,color:"#475569",marginBottom:6}}>No log data loaded</div>
-            <div style={{fontSize:11,color:"#334155",marginBottom:16}}>Select a session in the Library sidebar — click any date to load its log and event data.</div>
+            <div style={{fontSize:11,color:"#334155",marginBottom:16}}>{openable.length?"Pick a date in the session bar above (◀ ▶ or the list) to load its log and event data.":"Select a session in the Library sidebar — click any date to load its log and event data."}</div>
             <div style={{display:"flex",gap:8,justifyContent:"center"}}>
               <button onClick={()=>setActiveTab("library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Videos</button>
               <button onClick={()=>setActiveTab("upload")} style={{background:"#1E3A5A",border:"none",borderRadius:8,padding:"8px 20px",color:"#94A3B8",fontWeight:700,cursor:"pointer",fontSize:12}}>Re-import CSV</button>

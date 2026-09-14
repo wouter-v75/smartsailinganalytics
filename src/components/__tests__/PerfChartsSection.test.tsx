@@ -202,9 +202,11 @@ describe('PerfChartsSection', () => {
     expect(screen.getByText(/No 30 s phase has its midpoint inside the track selection/)).toBeTruthy()
   })
 
-  it('offers the lidar report only when the log has lidar channels', () => {
-    render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
-    expect(screen.queryByRole('button', { name: /Lidar/ })).toBeNull()
+  it('explains how to get lidar when the log has no lidar channels', () => {
+    const { container } = render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
+    fireEvent.click(screen.getByRole('button', { name: /Lidar/ }))
+    expect(container.querySelector('[data-lidar-empty]')!.textContent).toContain('import this day’s log again')
+    expect(container.querySelector('[data-lidar]')).toBeNull()
   })
 
   it('shows the main and jib lidar tables', () => {
