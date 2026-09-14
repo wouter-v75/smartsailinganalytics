@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { valueAt, startAnalyses, START_FROM_S, START_TO_S, START_STEP_S } from '../startAnalysis'
+import { valueAt, startAnalyses, distLnBand, START_FROM_S, START_TO_S, START_STEP_S } from '../startAnalysis'
+
+describe('distLnBand', () => {
+  it('colours distance to line: under 0.5 BL green, 0.5–1 yellow, 1–2 orange, 2+ red, over the line dark red', () => {
+    expect([-0.1, 0, 0.49, 0.5, 0.99, 1, 1.99, 2, 12].map(distLnBand)).toEqual(['over', 'green', 'green', 'yellow', 'yellow', 'orange', 'orange', 'red', 'red'])
+    expect(distLnBand(null)).toBeNull()
+  })
+})
 
 const GUN = Date.UTC(2026, 8, 11, 10, 18, 0)
 
@@ -89,6 +96,31 @@ describe('startAnalyses', () => {
     expect(atGun.over).toBeCloseTo(0, 0)
     const early = s.track!.find(p => p.t === -300)!
     expect(early.over).toBeLessThan(-150)             // east of the line: the pre-start side
+  })
+
+  it('leaves out a distance to line that is not in boat lengths (never past 1.5 before the gun)', () => {
+    const nm = rows.map(r => ({ ...r, dstLine: r.utc < GUN ? 0.02 : -0.01 }))
+    const [a] = startAnalyses(nm, xml, polar)
+    expect(a.samples.every(x => x.distLn == null)).toBe(true)
+    expect(a.distLnNote).toMatch(/not in boat lengths/)
+    expect(s.distLnNote).toBeNull()                    // 15 BL five minutes out: boat lengths
+  })
+
+  it('decides the unit for the whole log, so one odd run-in (7 Sep: 1.94 among 0.15s) cannot flip it', () => {
+    const guns = [0, 1, 2].map(k => ({ utc: GUN + k * 1_200_000, raceNum: k }))
+    const three = guns.flatMap((g, k) => Array.from({ length: 421 }, (_, i) => {
+      const t = i - 330
+      return {
+        utc: g.utc + t * 1000, bsp: 10, vsTargPct: 95, tws: 20, twd: 280, twa: 40, twaTarg: 35, vmg: 8,
+        dstLine: t < 0 ? (k === 0 ? Math.min(1.94, -t / 100) : 0.15) : -0.01,
+      }
+    }))
+    const all = startAnalyses(three, { raceGuns: guns }, polar)
+    expect(all).toHaveLength(3)
+    for (const a of all) {
+      expect(a.samples.every(x => x.distLn == null)).toBe(true)
+      expect(a.distLnNote).toMatch(/not in boat lengths/)
+    }
   })
 
   it('explains when there is no track: rounded cloud positions, or no start line', () => {

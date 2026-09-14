@@ -111,7 +111,26 @@ export interface StartAnalysis {
   line: { lengthM: number; gunAlongPct: number | null } | null
   track: TrackPoint[] | null
   trackNote: string | null
+  distLnNote: string | null   // why the distance to line is left out, when it is
   rowSpacingS: number | null
+}
+
+// DST_LINE should be boat lengths: 11 Sep reads 15.8 BL five minutes out and 1.4 BL just before the
+// gun. Some exports write another unit — early-September logs read 0.01–0.03 at the gun and go
+// negative past the line, like nautical miles. Rather than guess a conversion, a log whose typical
+// run-in never gets past this before the gun is taken to be in the wrong unit and its distance left out.
+export const MIN_RUN_IN_DIST_BL = 1.5
+
+// Distance-to-line colour bands in boat lengths: under 0.5 BL green, 0.5–1 yellow, 1–2 orange,
+// 2 and more red, and negative — over the line — dark red.
+export type DistBand = 'over' | 'green' | 'yellow' | 'orange' | 'red'
+export function distLnBand(bl: number | null | undefined): DistBand | null {
+  if (bl == null || !Number.isFinite(bl)) return null
+  if (bl < 0) return 'over'
+  if (bl < 0.5) return 'green'
+  if (bl < 1) return 'yellow'
+  if (bl < 2) return 'orange'
+  return 'red'
 }
 
 function circularMean(deg: number[]): number | null {
@@ -132,7 +151,7 @@ export function startAnalyses(rows: Row[] | null | undefined, xml: any, polar: a
   if (!rows?.length || !guns.length) return []
   const manoeuvres = ((xml?.tackJibes || []) as { utc: number; isTack?: boolean; isValid?: boolean }[]).filter(m => m.isValid !== false && Number.isFinite(m.utc))
 
-  return guns.map(gun => {
+  const analyses: StartAnalysis[] = guns.map(gun => {
     const samples: StartSample[] = []
     for (let t = START_FROM_S; t <= START_TO_S; t += START_STEP_S) {
       const utc = gun.utc + t * 1000
@@ -217,7 +236,24 @@ export function startAnalyses(rows: Row[] | null | undefined, xml: any, polar: a
       sails: sailComboLabel(activeSailsAt(xml, gun.utc)),
       twsAtGun, twdAtGun,
       samples, atGun, plus30,
-      line, track, trackNote, rowSpacingS,
+      line, track, trackNote, distLnNote: null, rowSpacingS,
     }
   })
+
+  // The unit is a property of the export, not of one start: decide it on the day's typical run-in
+  // (the median of each start's furthest distance before the gun), so one odd start can't flip it —
+  // 7 Sep's first run-in peaks at 1.94 while the other two, in the same log, stay under 0.15.
+  const furthest = analyses
+    .map(a => a.samples.filter(x => x.t <= 0 && x.distLn != null).map(x => Math.abs(x.distLn as number)))
+    .filter(d => d.length)
+    .map(d => Math.max(...d))
+  const typical = median(furthest)
+  if (typical != null && typical < MIN_RUN_IN_DIST_BL) {
+    const note = `Distance to line in this log is not in boat lengths: its typical run-in never gets past ${MIN_RUN_IN_DIST_BL} before the gun (it looks like nautical miles) — left out rather than converted.`
+    for (const a of analyses) {
+      for (const x of a.samples) x.distLn = null
+      a.distLnNote = note
+    }
+  }
+  return analyses
 }

@@ -1,6 +1,6 @@
 // Written headlines for one day, drafted by Mistral on Scaleway (EU) from the stored
-// phase stats + tacks/gybes (lib/headlineFacts), in sections: Upwind, Downwind, Reaching
-// (when sailed) and Sail shape (lidar). The key stays on the server and all inference
+// phase stats + tacks/gybes (lib/headlineFacts), in sections: Start (from the cloud log around
+// each gun), Upwind, Downwind, Reaching (when sailed) and Sail shape (lidar). The key stays on the server and all inference
 // stays inside the Scaleway account, like /api/ai/debrief-summary.
 //
 //   POST → { headlines: { version: 2, sections, dropped }, model, at, ms }
@@ -15,10 +15,11 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase, authedUserId } from '../../../../../../../../../lib/supabase/server'
-import { expandPhases, type StoredPhase } from '../../../../../../../../../lib/seasonCurves'
+import { STATS_VERSION, expandPhases, type SeasonRow, type StoredPhase } from '../../../../../../../../../lib/seasonCurves'
 import { buildHeadlineFacts } from '../../../../../../../../../lib/headlineFacts'
 import { generateHeadlines, DEFAULT_HEADLINES_MODEL } from '../../../../../../../../../lib/headlineGenerate'
 import type { Manoeuvre } from '../../../../../../../../../lib/manoeuvres'
+import { polarFromData } from '../../../../../../../../../lib/polarFile'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -38,7 +39,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
   const uid = await authedUserId(supabase)
   if (!uid) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
-  const [{ data: row, error: rowErr }, { data: session }] = await Promise.all([
+  const [{ data: row, error: rowErr }, { data: session }, { data: polarRow }, { data: seasonData }] = await Promise.all([
     supabase
       .from('session_phase_stats')
       .select('id, phases, manoeuvres, polar_name, resolution_s')
@@ -48,18 +49,37 @@ export async function POST(_req: NextRequest, { params }: Params) {
       .maybeSingle(),
     supabase
       .from('sessions')
-      .select('tz_offset_minutes, meta:xml_data->meta, sailsUpEvents:xml_data->sailsUpEvents')
+      .select('tz_offset_minutes, meta:xml_data->meta, sailsUpEvents:xml_data->sailsUpEvents, raceGuns:xml_data->raceGuns, tackJibes:xml_data->tackJibes, startLines:xml_data->startLines, logRows:log_data->rows')
       .eq('team_id', params.teamId)
       .eq('boat_id', params.boatId)
       .eq('date', params.date)
       .maybeSingle(),
+    // The active polar: VMG% in the start section.
+    supabase
+      .from('polars')
+      .select('data')
+      .eq('team_id', params.teamId)
+      .eq('boat_id', params.boatId)
+      .eq('is_active', true)
+      .maybeSingle(),
+    // The boat's stored days: "against this season at the same wind".
+    supabase
+      .from('session_phase_stats')
+      .select('date, phases')
+      .eq('team_id', params.teamId)
+      .eq('boat_id', params.boatId)
+      .eq('stats_version', STATS_VERSION),
   ])
   if (rowErr) return NextResponse.json({ error: rowErr.message }, { status: 500 })
   if (!row?.phases || !(row.phases as unknown[]).length) {
     return NextResponse.json({ error: 'no stored stats for this day yet — open it in Analytics first' }, { status: 409 })
   }
 
-  const s = (session || {}) as { tz_offset_minutes?: number | null; meta?: { boat?: string; location?: string } | null; sailsUpEvents?: unknown[] | null }
+  const s = (session || {}) as {
+    tz_offset_minutes?: number | null; meta?: { boat?: string; location?: string } | null
+    sailsUpEvents?: unknown[] | null; raceGuns?: unknown[] | null; tackJibes?: unknown[] | null; startLines?: unknown[] | null
+    logRows?: { utc: number }[] | null
+  }
   const facts = buildHeadlineFacts({
     date: params.date,
     stats: expandPhases(row.phases as StoredPhase[]),
@@ -69,7 +89,10 @@ export async function POST(_req: NextRequest, { params }: Params) {
     resolutionSeconds: row.resolution_s ?? null,
     boat: s.meta?.boat ?? null,
     venue: s.meta?.location ?? null,
-    xml: { sailsUpEvents: s.sailsUpEvents || [] },
+    xml: { sailsUpEvents: s.sailsUpEvents || [], raceGuns: s.raceGuns || [], tackJibes: s.tackJibes || [], startLines: s.startLines || [] },
+    rows: s.logRows || [],
+    polar: polarFromData((polarRow as { data?: unknown } | null)?.data),
+    seasonRows: (seasonData || []) as SeasonRow[],
   })
 
   const result = await generateHeadlines(facts, { key: KEY, base: BASE, model: MODEL })

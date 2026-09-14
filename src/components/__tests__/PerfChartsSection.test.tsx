@@ -227,6 +227,25 @@ describe('PerfChartsSection', () => {
     expect(container.querySelector('[data-start-table]')!.querySelectorAll('tbody tr')).toHaveLength(73)
   })
 
+  it('colours the at-the-gun distance box: under 0.5 BL green, 0.5–1 yellow, 1–2 orange, 2+ red, over the line dark red', () => {
+    // Closing the line at 1 BL a minute; Race 6's gun is at T0 + 179 s, so the box reads offset + 0.02 BL.
+    const atGun = (offsetBl: number) => {
+      const withLine = rows.map(r => ({ ...r, dstLine: 3 + offsetBl - (r.utc - T0) / 60000 }))
+      const { container, unmount } = render(<PerfChartsSection rows={withLine} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
+      fireEvent.click(screen.getByRole('button', { name: /Start · 2/ }))
+      fireEvent.click(screen.getByRole('button', { name: /Race 6/ }))
+      const box = container.querySelector('[data-start-summary] [data-dist-band]')
+      const out = [box?.getAttribute('data-dist-band'), box?.textContent, !!container.querySelector('[data-start-table] [data-dist-band]')]
+      unmount()
+      return out
+    }
+    expect(atGun(0)).toEqual(['green', '0.0 BL to line', false])       // the run-in table itself stays uncoloured
+    expect(atGun(0.7)).toEqual(['yellow', '0.7 BL to line', false])
+    expect(atGun(1.5)).toEqual(['orange', '1.5 BL to line', false])
+    expect(atGun(4)).toEqual(['red', '4.0 BL to line', false])
+    expect(atGun(-0.3)).toEqual(['over', '0.3 BL over the line', false])
+  })
+
   it('narrows everything to a stretch picked on the GPS track', () => {
     // Phases 0–3 have their midpoints inside the first 2 minutes.
     const { rerender } = render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} range={[T0, T0 + 120_000]} />)

@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react'
-import { startAnalyses } from '../../lib/startAnalysis'
+import { startAnalyses, distLnBand } from '../../lib/startAnalysis'
 import { inRange } from '../../lib/trackSelection'
 
 const COLS = [
@@ -28,6 +28,12 @@ const fmtT = t => `${t < 0 ? '−' : '+'}${String(Math.floor(Math.abs(t) / 60)).
 const hms = (utc, tz) => new Date(utc + (tz || 0) * 60000).toISOString().slice(11, 19)
 const fmt = (v, d) => (v == null ? '' : v.toFixed(d).replace(/^-(0(\.0+)?)$/, '$1'))
 const pctBg = v => (v == null ? 'transparent' : v >= 95 ? '#15803D40' : v >= 85 ? '#CA8A0440' : '#B91C1C40')
+// Distance to line: green under 0.5 BL, yellow 0.5–1, orange 1–2, red 2+, dark red over the line.
+const DIST_BG = { green: '#16A34A55', yellow: '#EAB30855', orange: '#EA580C66', red: '#DC262666', over: '#7F1D1DE6' }
+const distStyle = v => {
+  const band = distLnBand(v)
+  return band ? { background: DIST_BG[band], ...(band === 'over' ? { color: '#FECACA' } : {}) } : {}
+}
 
 const th = { padding: '5px 7px', color: '#64748B', fontSize: 9, fontWeight: 600, whiteSpace: 'nowrap', borderBottom: '1px solid #1E3A5A', textAlign: 'right', background: '#071624', position: 'sticky', top: 0 }
 const td = { padding: '3px 7px', fontFamily: 'monospace', fontSize: 11, color: '#CBD5E1', textAlign: 'right', whiteSpace: 'nowrap' }
@@ -146,9 +152,14 @@ export default function StartSection({ rows, xmlData, polar = null, tzOffsetMin 
         )}
       </div>
 
+      {start.distLnNote && (
+        <div data-start-distln-note style={{ fontSize: 10, color: '#F59E0B', marginBottom: 8 }}>{start.distLnNote}</div>
+      )}
       <div data-start-summary style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
         <span style={{ ...caption, alignSelf: 'center', marginBottom: 0 }}>At the gun</span>
-        <span style={chip}>{g?.distLn != null ? `${g.distLn.toFixed(1)} BL to line` : 'line: n/a'}</span>
+        <span data-dist-band={distLnBand(g?.distLn) || undefined} style={{ ...chip, ...distStyle(g?.distLn) }}>
+          {g?.distLn == null ? 'line: n/a' : g.distLn < 0 ? `${Math.abs(g.distLn).toFixed(1)} BL over the line` : `${g.distLn.toFixed(1)} BL to line`}
+        </span>
         <span style={chip}>{g?.bsp != null ? `${g.bsp.toFixed(1)} kn` : 'BSP n/a'}</span>
         <span style={{ ...chip, background: pctBg(g?.bspTrgPct) }}>{g?.bspTrgPct != null ? `${g.bspTrgPct.toFixed(0)}% target` : 'target n/a'}</span>
         <span style={chip}>{g?.burn != null ? `burn ${g.burn > 0 ? '+' : ''}${g.burn.toFixed(1)} s ${g.burn > 0 ? '(early)' : '(late)'}` : 'burn n/a'}</span>
@@ -205,7 +216,8 @@ export default function StartSection({ rows, xmlData, polar = null, tzOffsetMin 
       <div style={{ fontSize: 9, color: '#475569', lineHeight: 1.5, marginTop: 6 }}>
         DistLn = distance to the line in boat lengths (blank when the log has no line) · BSP_trg% = BSP against target · ΔTwaTrg = |TWA| −
         target TWA · VMG% against the polar’s best upwind / downwind VMG · Rudder relative to the tack · Burn = time to burn before the gun
-        (+ early, − late). Green ≥ 95 %, amber ≥ 85 %, red below.
+        (+ early, − late). Percentages: green ≥ 95 %, amber ≥ 85 %, red below. The at-the-gun distance box: green under 0.5 BL,
+        yellow 0.5–1, orange 1–2, red 2 and more, dark red over the line.
       </div>
     </div>
   )

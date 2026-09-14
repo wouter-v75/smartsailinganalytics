@@ -12,10 +12,11 @@
 
 import { readFileSync, writeFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
-import { expandPhases, type StoredPhase } from '../src/lib/seasonCurves'
+import { STATS_VERSION, expandPhases, type SeasonRow, type StoredPhase } from '../src/lib/seasonCurves'
 import { buildHeadlineFacts, SECTION_ORDER, SECTION_TITLES } from '../src/lib/headlineFacts'
 import { generateHeadlines, DEFAULT_HEADLINES_MODEL } from '../src/lib/headlineGenerate'
 import type { Manoeuvre } from '../src/lib/manoeuvres'
+import { polarFromData } from '../src/lib/polarFile'
 
 const USAGE = `Write AI headlines (Upwind / Downwind / Reaching / Sail shape) for a range of days.
 
@@ -55,13 +56,18 @@ async function main() {
   const matches = boatArg ? boats!.filter(b => b.id === boatArg) : boats!.filter(b => /northstar\s*76|\bns\s*76\b|\b76\b/i.test(b.name || ''))
   if (matches.length !== 1) fail(`${matches.length ? 'More than one' : 'No'} boat matches — pass --boat <id>:\n  ${boats!.map(b => `${b.id}  ${b.name}`).join('\n  ')}`)
   const boat = matches[0]
+  const { data: polarRow } = await sb.from('polars').select('data').eq('boat_id', boat.id).eq('is_active', true).maybeSingle()
+  const polar = polarFromData(polarRow?.data)   // VMG% in the start section
+  // The boat's stored days, for "against this season at the same wind" (each day leaves itself out).
+  const { data: seasonData } = await sb.from('session_phase_stats').select('date, phases').eq('boat_id', boat.id).eq('stats_version', STATS_VERSION)
+  const seasonRows = (seasonData || []) as SeasonRow[]
 
   const { data: rows, error } = await sb.from('session_phase_stats')
     .select('id, date, phases, manoeuvres, polar_name, resolution_s')
     .eq('boat_id', boat.id).gte('date', from).lte('date', to).order('date')
   if (error) fail(`stats: ${error.message}`)
   const { data: sessions } = await sb.from('sessions')
-    .select('date, tz_offset_minutes, meta:xml_data->meta, sailsUpEvents:xml_data->sailsUpEvents')
+    .select('date, tz_offset_minutes, meta:xml_data->meta, sailsUpEvents:xml_data->sailsUpEvents, raceGuns:xml_data->raceGuns, tackJibes:xml_data->tackJibes, startLines:xml_data->startLines, logRows:log_data->rows')
     .eq('boat_id', boat.id).gte('date', from).lte('date', to)
 
   console.log(`Boat ${boat.name} · ${from} → ${to} · ${write ? `WRITING with ${model}` : 'dry run — no AI calls, nothing written'}\n`)
@@ -78,11 +84,16 @@ async function main() {
       resolutionSeconds: row.resolution_s ?? null,
       boat: s.meta?.boat ?? null,
       venue: s.meta?.location ?? null,
-      xml: { sailsUpEvents: s.sailsUpEvents || [] },
+      xml: { sailsUpEvents: s.sailsUpEvents || [], raceGuns: s.raceGuns || [], tackJibes: s.tackJibes || [], startLines: s.startLines || [] },
+      rows: s.logRows || [],
+      polar,
+      seasonRows,
     })
     const present = SECTION_ORDER.filter(k => facts.sections[k])
     const dayType = s.meta?.dayType ? ` (${s.meta.dayType})` : ''
-    const summary = present.map(k => `${SECTION_TITLES[k]} ${k === 'sailShape' ? `${facts.sections.sailShape!.lidarPhases} lidar phases` : `${(facts.sections as any)[k].phases} phases`}`).join(' · ')
+    const size = (k: string) => k === 'start' ? `${facts.sections.start!.starts} start${facts.sections.start!.starts === 1 ? '' : 's'}`
+      : k === 'sailShape' ? `${facts.sections.sailShape!.lidarPhases} lidar phases` : `${(facts.sections as any)[k].phases} phases`
+    const summary = present.map(k => `${SECTION_TITLES[k]} ${size(k)}`).join(' · ')
     console.log(`${row.date}${dayType}: ${(row.phases || []).length} phases → ${summary || 'nothing to write about — skipped'}`)
     if (!present.length || !write) continue
 
