@@ -40,6 +40,10 @@ export const RULES = `RULES — these matter:
 - Where a point was argued and NOT settled, record it as an open question with both sides, and any action agreed to resolve it. Do not present an unresolved debate as a conclusion.
 - A transcript may contain "[repeated Nx — transcription loop]" markers. These are machine artefacts of the speech recogniser stuck in a loop, NOT emphasis and NOT content. Ignore them entirely and summarise the surrounding material.
 - NAMES: the transcript has no speaker labels, so never guess who said something. Keep a person's name ONLY where the transcript itself attaches them to the content — work they were given, an action they agreed to, a boat they were driving. Where nobody was named, write the point without a name.
+- ROLES: state a person's role only from the glossary's "Roles" list, and keep rival boats' people with their own boat. Do not infer a role from what someone talked about — a name next to a steering or tactics discussion does not make that person the driver or the tactician. Refer to an unlisted role generically ("the driver", "the tactician") without attaching a name.
+- POSITIVES COUNT: record what went WELL as specifically as what went wrong — the manoeuvre, setting or call that worked, and why. A confirmed good procedure is a result the team wants to keep, not filler.
+- NO BORROWED NAMES: a person, mark, place, leg, race number, sail code or boat name may appear in the note ONLY if the transcript itself says it (allowing for the glossary's mishearing corrections). The sub-header patterns in these instructions use <placeholders> — never fill one from the glossary or from memory. The glossary's people and boats are there to CORRECT names the transcript mishears, not to be added to a note in which they were never mentioned. A sail that is merely possible, not discussed, gets no sub-header.
+- Never write "<role> (e.g. <name>)": either the Roles list gives that person the role, or the note names no one for it.
 - NEVER invent an owner for a task, and never write an "action items" or assignment list unless the meeting actually handed work out loud. A fabricated owner is worse than none: someone will act on it, or resent it. If the meeting agreed a job but not who does it, say so — "agreed, owner not decided".
 
 ${QUANTITIES}`
@@ -55,7 +59,14 @@ export const MODES: Record<string, Mode> = {
 ${CONTEXT}
 
 Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key, a markdown bullet string:
-  "speed_learnings"  — The full working note from the meeting. Capture, in this order where present: what the team established about boat speed and setup (what was fast, what was slow, and why — sail combinations, rig settings, modes, conditions, numbers); what they decided to test, try or watch on the water next; and the bigger long-term themes (gear to change, data to gather, questions to resolve over the campaign). Group naturally with short sub-headers or plain bullets — one cohesive note, not separate sections.
+  "speed_learnings"  — The full working note from the meeting, laid out the way this team writes its own speed notes: short bold sub-headers with "- " bullets under each, in this order, and ONLY the sub-headers the meeting actually has content for:
+    "**Goals for today**"  — the intent and the coach's instructions for the day.
+    "**Upwind**" and "**Downwind**"  — what was fast and slow and why: modes, target angles (TWA / AWA) and speeds, conditions. Put LINE-UPS against a named rival as their own bullets or a "**Line-ups**" sub-header, one rival per bullet ("vs <rival>: how our main and jib shape differed from theirs").
+    One sub-header PER SAIL actually discussed, titled by its code as spoken ("**<sail code>**") — shape observations from photos and lidar (draft position, depth at 25 / 50 / 75 %, twist, battens) and the change wanted.
+    "**Rig**"  — forestay, backstay, cap shroud, shim settings with their numbers.
+    "**Tests / focus today**"  — what to try or watch on the water next.
+    "**Long-term**"  — gear to change, data to gather, questions to resolve over the campaign.
+  If the meeting covered a specific race or leg, keep that label ("**Race <n> — <leg>**") rather than dissolving it into the general sections.
 
 ${RULES}`,
   },
@@ -67,7 +78,9 @@ ${CONTEXT}
 
 Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key, a markdown bullet string:
   "learnings"  — The full working note from the debrief. Capture what happened and what was learned this session — what worked, what did not, and WHY — across manoeuvres (sets/hoists, gybes, drops, peels), starts, tactics and communication, boat handling and conditions, plus the concrete focus points to carry into the next session.
-  Organise the note under short thematic sub-headers in bold (e.g. "**Upwind**", "**Sets & hoists**", "**Gybes**", "**Drops**", "**Peels**", "**Starts**", "**Tactics & communication**", "**Conditions**", "**Kit & rig**", "**Logistics**", "**Team**", "**Focus next session**") — but ONLY include a sub-header when the transcript actually has content for it, and under each write "- " bullets. Do not force material into a header it does not fit; add your own sub-header where the discussion does not match any above.
+  Start with "**Overall**": one to three bullets with the meeting's own verdict on the day and its weakest and strongest parts, as said in the room.
+  Then organise the note under short thematic sub-headers in bold (e.g. "**Logistics**", "**Starts**", "**Upwind**", "**Decision-making**", "**Sets & hoists**", "**Gybes**", "**Tacks**", "**Drops**", "**Peels**", "**Tactics & communication**", "**Conditions**", "**Kit & rig**", "**Team**", "**Focus next session**") — but ONLY include a sub-header when the transcript actually has content for it, and under each write "- " bullets. Do not force material into a header it does not fit; add your own sub-header where the discussion does not match any above.
+  When the discussion walks through the course leg by leg, give each leg its own sub-header named by the marks or places the transcript uses ("**<point of sail> to <mark>**", "**<mark> to <mark>**"), and keep a race label where one is given ("**Race <n> — <moment>**"). No leg sub-header for a mark the transcript does not name.
   A debrief usually spends a long stretch on ONE procedure or manoeuvre that went wrong and how it will be done next time. That discussion is the most valuable part of the session — give it its own sub-header and enough bullets to carry the agreed procedure step by step (who, which winch, which side, in what order, what the trigger is), plus whatever was left unresolved. A single bullet naming the manoeuvre is a failure.
   Also carry, when present: the plan for the next session (timings, format, what will be practised), kit and rig jobs with their blockers and who is chasing them, and anything about people's workload or readiness.
 

@@ -21,6 +21,10 @@ export type Glossary = {
   parts: string[]
   crew: string[]
   boats: string[]      // this boat + the ones the team races against, by name
+  // [name, role] — the ONLY roles the summariser may state. A transcript has no
+  // speaker labels, and without this the model promoted whoever was mentioned near a
+  // steering discussion to "helmsman" (Frank, 8 Sept 2026 debrief).
+  roles: [string, string][]
   dutch: [string, string][]  // [dutch, english]
   aliases: [string, string][] // [what the crew SAY, canonical term] — real speech
   fixups: [string, string][] // [wrong (heard), right] — recogniser errors
@@ -39,6 +43,7 @@ export const DEFAULT_GLOSSARY: Glossary = {
   // people were never at. See TEAM_VOCAB below.
   crew: [],
   boats: [],
+  roles: [],
   dutch: [
     ['grootzeil', 'mainsail'], ['fok', 'jib'], ['genua', 'genoa'], ['val', 'halyard'],
     ['schoot', 'sheet'], ['hals', 'tack'], ['halshoek', 'tack'], ['giek', 'boom'],
@@ -99,7 +104,8 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
     crew: [
       'Pedro', 'Mika', 'Max', 'Charlie', 'Shane', 'Frank', 'Gabri', 'Christian',
       'Pom', 'Nick', 'Jarrad', 'Miles', 'Wouter', 'Pete', 'Peter',
-      'Vasco',            // sails a rival TP, but referred to by name like crew
+      // Harry and Christian's nickname Campo reach the summariser through `roles`.
+      'Vasco',            // Django's tactician, but referred to by name like crew
       'Dougie',           // supplier — not crew, but the name is spoken and must land
     ],
     // The boats this squad actually races against. Every one of these is a proper
@@ -110,7 +116,19 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
     // Sail codes the crew say out loud, marks and places of the Sardinia racing area,
     // and the sailmaker — all proper nouns the recogniser cannot spell.
     sails: ['MN_B', 'MH0', 'BRO', 'SSS', 'SS', 'J1', 'J1.5', 'J2', 'A1', 'A1.5', 'A2'],
-    aliases: [['triple S', 'SSS']],
+    // Confirmed by the team, 14 Sept 2026. An unlisted person gets no role.
+    roles: [
+      ['Peter', 'owner & driver'], ['Nick', 'tactician'], ['Miles', 'navigator'], ['Wouter', 'strategist'],
+      ['Pedro', 'bow'], ['Max', 'mid-bow'], ['Mika', 'mid-bow'], ['Charlie', 'mid-bow'],
+      ['Frank', 'pitman'], ['Shane', 'pit assist'],
+      ['Gabri', 'upwind trim'], ['Christian (Campo)', 'downwind trim'], ['Pom', 'mainsail trim'],
+      ['Harry', 'keel & toe-in trim, project manager'],
+      ['Pete', 'runner'], ['Jarrad', 'runner & mast engineer'],
+      // Rival afterguard — named in debriefs, never on this boat.
+      ['Vasco', 'tactician of Django (rival boat)'], ['Pepsi', 'tactician of Proteus (rival boat)'],
+      ['Brad', 'tactician of Jethou (rival boat)'], ['Cameron', 'tactician of Balthasar (rival boat)'],
+    ],
+    aliases: [['triple S', 'SSS'], ['Campo', 'Christian (Campo)']],
     fixups: [
       ['tiller', 'wheel (Northstar steers with a wheel)'],
       ['Dole', 'Doyle (sailmaker)'],
@@ -169,6 +187,7 @@ export function withOverride(extra?: Partial<Glossary>, base: Glossary = DEFAULT
     parts: uniq(extra.parts, base.parts),
     crew: uniq(extra.crew, base.crew),
     boats: uniq(extra.boats, base.boats),
+    roles: [...base.roles, ...(extra.roles || [])],
     dutch: [...base.dutch, ...(extra.dutch || [])],
     aliases: [...base.aliases, ...(extra.aliases || [])],
     fixups: [...base.fixups, ...(extra.fixups || [])],
@@ -257,6 +276,7 @@ export function glossaryBlock(g: Glossary = DEFAULT_GLOSSARY): string {
     `- Parts & systems: ${g.parts.join(', ')}`,
     `- People (crew, coaches, shore team and suppliers — do not assume everyone listed sails): ${g.crew.join(', ')}`,
     `- Boats (this team's and rivals'): ${g.boats.join(', ')}`,
+    `- Roles — this boat's crew, and rivals' afterguard where marked "rival boat" (the ONLY roles you may state — anyone not listed here gets no role, never "helmsman", "tactician", "navigator", "coach" or "guest" by guesswork; a rival's tactician is never one of this team's crew): ${g.roles.length ? g.roles.map(([n, r]) => `${n} = ${r}`).join(', ') : 'none known'}`,
     `- Team slang → canonical term (the crew really say these; normalise them in the summary): ${g.aliases.map(([a, b]) => `${a}→${b}`).join(', ')}`,
     `- Dutch→English: ${dutch}`,
     `- Common mishearings → correct to: ${fixups}`,
