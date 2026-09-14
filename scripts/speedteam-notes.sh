@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
 # speedteam-notes.sh — record an in-person speed-team meeting, transcribe it locally,
-# and have Claude turn it into the three SSA speed-team fields.
+# and have Mistral (Scaleway, same account as the app) turn it into the three SSA speed-team fields.
 #
 #   ./scripts/speedteam-notes.sh                    # record → transcribe → summarise
-#   ./scripts/speedteam-notes.sh --audio foo.wav    # skip recording
+#   ./scripts/speedteam-notes.sh --audio foo.wav    # skip recording (e.g. the phone backup)
+#   ./scripts/speedteam-notes.sh --audio phone.m4a  # any format — it is converted for you
 #   ./scripts/speedteam-notes.sh --transcript t.txt # skip straight to the summary
 #   ./scripts/speedteam-notes.sh --list-devices     # which mic is which
 #
 # Everything is written to  ~/SSA/meetings/<date>/  — outside the repo, never committed.
-# The AUDIO NEVER LEAVES THE MACHINE: transcription is whisper.cpp running locally. Only
-# the finished TEXT transcript is sent to Claude for the summary.
+# The AUDIO NEVER LEAVES THE MACHINE: transcription is whisper.cpp running locally (no
+# prompt — a vocabulary prompt makes whisper loop). Only the finished TEXT transcript is
+# sent to Mistral on Scaleway (EU) for the summary.
 #
 # ── One-time setup ───────────────────────────────────────────────────────────
 #   brew install ffmpeg whisper-cpp jq
 #   mkdir -p ~/.whisper && curl -L -o ~/.whisper/ggml-large-v3-turbo.bin \
 #     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
-#   export ANTHROPIC_API_KEY=sk-ant-...        (add to ~/.zshrc)
+#   SCALEWAY_AI_API_KEY / SCALEWAY_AI_BASE_URL are read from the repo's .env.local
+#   (or exported). whisper.cpp runs on the GPU, so it needs a normal terminal.
 #
 # ── The one thing that actually decides quality ──────────────────────────────
 # Eight people round a table is a HARD recording. The laptop's built-in mic will give you
@@ -27,7 +30,6 @@
 set -uo pipefail
 
 MODEL="${WHISPER_MODEL:-$HOME/.whisper/ggml-large-v3-turbo.bin}"
-CLAUDE_MODEL="${CLAUDE_MODEL:-claude-sonnet-4-6}"
 OUTDIR_BASE="${SSA_MEETINGS_DIR:-$HOME/SSA/meetings}"
 DEVICE="${AUDIO_DEVICE:-:0}"          # ffmpeg avfoundation ":<audio-index>"
 LANG="${MEETING_LANG:-en}"
@@ -78,6 +80,33 @@ if [ -z "$AUDIO" ] && [ -z "$TRANSCRIPT" ]; then
   echo "✓ Recorded $(du -h "$AUDIO" | cut -f1)"
 fi
 
+# ── 1b. NORMALISE any audio we didn't record ourselves ───────────────────────
+# whisper.cpp needs 16 kHz MONO 16-bit WAV. A phone backup recording (the Fairphone,
+# a dictaphone, a m4a from anywhere) will be 44.1/48 kHz, often stereo, often AAC — and
+# whisper would simply refuse it. Convert first, so the backup recording is usable at
+# the moment you actually need it, which is when the primary one failed.
+if [ -n "$AUDIO" ] && [ -z "$TRANSCRIPT" ]; then
+  have ffmpeg || die "ffmpeg not found — brew install ffmpeg"
+  NEEDS_CONV=1
+  if [[ "$AUDIO" == *.wav || "$AUDIO" == *.WAV ]]; then
+    # Already a WAV — is it the right shape? (16 kHz, 1 channel, s16)
+    PROBE=$(ffprobe -v error -select_streams a:0 \
+              -show_entries stream=sample_rate,channels,sample_fmt \
+              -of csv=p=0 "$AUDIO" 2>/dev/null)
+    [ "$PROBE" = "16000,1,s16" ] && NEEDS_CONV=0
+  fi
+  if [ "$NEEDS_CONV" = "1" ]; then
+    CONV="${AUDIO%.*}-16k.wav"
+    echo "◐ Converting $(basename "$AUDIO") → 16 kHz mono WAV (whisper needs this)…"
+    ffmpeg -hide_banner -loglevel error -y -i "$AUDIO" \
+           -ac 1 -ar 16000 -c:a pcm_s16le "$CONV" \
+      || die "could not convert the audio — is it a real audio file?"
+    [ -s "$CONV" ] || die "conversion produced an empty file"
+    AUDIO="$CONV"
+    echo "✓ $(basename "$CONV")"
+  fi
+fi
+
 # ── 2. TRANSCRIBE (locally) ──────────────────────────────────────────────────
 if [ -z "$TRANSCRIPT" ]; then
   have whisper-cli || have whisper-cpp || die "whisper.cpp not found — brew install whisper-cpp"
@@ -99,7 +128,15 @@ fi
 
 # ── 3. SUMMARISE ─────────────────────────────────────────────────────────────
 have jq || die "jq not found — brew install jq"
-[ -n "${ANTHROPIC_API_KEY:-}" ] || die "ANTHROPIC_API_KEY is not set (add it to ~/.zshrc)"
+# Same Scaleway account as the app: read the key from the repo's .env.local unless it is exported.
+ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/.env.local"
+envval() { [ -f "$ENV_FILE" ] && grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- | sed -e 's/^["'\'']//' -e 's/["'\'']$//'; }
+SCALEWAY_AI_API_KEY="${SCALEWAY_AI_API_KEY:-$(envval SCALEWAY_AI_API_KEY)}"
+SCALEWAY_AI_BASE_URL="${SCALEWAY_AI_BASE_URL:-$(envval SCALEWAY_AI_BASE_URL)}"
+MISTRAL_MODEL="${SCALEWAY_AI_MODEL:-$(envval SCALEWAY_AI_MODEL)}"
+MISTRAL_MODEL="${MISTRAL_MODEL:-mistral-medium-3.5-128b}"
+[ -n "$SCALEWAY_AI_API_KEY" ] && [ -n "$SCALEWAY_AI_BASE_URL" ] \
+  || die "SCALEWAY_AI_API_KEY / SCALEWAY_AI_BASE_URL not set (export them or put them in .env.local)"
 
 SUMMARY="$OUTDIR/speedteam-notes-$STAMP.md"
 
@@ -136,29 +173,31 @@ RULES — these matter:
 - Do not attribute statements to individuals — the transcript has no reliable speaker labels.
 EOF
 
-echo "◐ Summarising with $CLAUDE_MODEL…"
+echo "◐ Summarising with $MISTRAL_MODEL on Scaleway…"
 
 REQ=$(jq -n \
-  --arg model "$CLAUDE_MODEL" \
+  --arg model "$MISTRAL_MODEL" \
   --arg system "$PROMPT" \
   --arg text "$(cat "$TRANSCRIPT")" \
   '{
      model: $model,
-     max_tokens: 2000,
-     system: $system,
-     messages: [ { role: "user", content: ("Here is the meeting transcript:\n\n" + $text) } ]
+     max_tokens: 4000,
+     temperature: 0.2,
+     messages: [
+       { role: "system", content: $system },
+       { role: "user", content: ("Here is the meeting transcript:\n\n" + $text) }
+     ]
    }')
 
-RESP=$(curl -sS https://api.anthropic.com/v1/messages \
-  -H "x-api-key: $ANTHROPIC_API_KEY" \
-  -H "anthropic-version: 2023-06-01" \
+RESP=$(curl -sS "$SCALEWAY_AI_BASE_URL/chat/completions" \
+  -H "authorization: Bearer $SCALEWAY_AI_API_KEY" \
   -H "content-type: application/json" \
   -d "$REQ")
 
-ERR=$(printf '%s' "$RESP" | jq -r '.error.message // empty')
-[ -z "$ERR" ] || die "Claude: $ERR"
+ERR=$(printf '%s' "$RESP" | jq -r '(.error.message // .message // .error) // empty' 2>/dev/null)
+[ -z "$ERR" ] || die "Mistral: $ERR"
 
-printf '%s' "$RESP" | jq -r '.content[0].text // empty' > "$SUMMARY"
+printf '%s' "$RESP" | jq -r '.choices[0].message.content // empty' > "$SUMMARY"
 [ -s "$SUMMARY" ] || die "no summary came back"
 
 # Clipboard, ready to paste into Campaign → Day → Speed-team meeting.

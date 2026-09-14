@@ -15,8 +15,11 @@ import { type Glossary } from '../../../../lib/debriefGlossary'
 import { MODES, buildMessages } from '../../../../lib/debriefPrompt'
 import { collapseRepeats } from '../../../../lib/transcriptClean'
 
-export const maxDuration = 60
+// A 75-minute debrief took 45 s on mistral-medium (Maxi Worlds 2026, 10 Sept) — too close
+// to the old 55 s abort. 300 s is the Fluid-compute ceiling on every Vercel plan.
+export const maxDuration = 300
 export const dynamic = 'force-dynamic'
+const ABORT_MS = 280_000
 
 const KEY = process.env.SCALEWAY_AI_API_KEY
 const BASE = process.env.SCALEWAY_AI_BASE_URL
@@ -87,7 +90,7 @@ export async function POST(req: NextRequest) {
   const mode = MODES[data?.mode || 'speedteam'] || MODES.speedteam
 
   const ctrl = new AbortController()
-  const killer = setTimeout(() => ctrl.abort(), 55_000)
+  const killer = setTimeout(() => ctrl.abort(), ABORT_MS)
   try {
     log('summarising', `${transcript.length} chars`, data?.mode || 'speedteam', MODEL,
         cleaned.removed ? `(de-looped ${cleaned.removed} chars; worst ${cleaned.loops[0]?.count}x "${cleaned.loops[0]?.phrase?.slice(0, 40)}")` : '')
@@ -129,9 +132,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ...result, ...(debug ? { _raw: content } : {}), _ms: Date.now() - t0 })
   } catch (e: unknown) {
     const aborted = e instanceof Error && e.name === 'AbortError'
-    log('exception', aborted ? 'aborted (>55s)' : String(e))
+    log('exception', aborted ? `aborted (>${ABORT_MS / 1000}s)` : String(e))
     return NextResponse.json(
-      { error: aborted ? 'summary >55s (aborted)' : (e instanceof Error ? e.message : 'failed'), ms: Date.now() - t0 },
+      { error: aborted ? `summary >${ABORT_MS / 1000}s (aborted)` : (e instanceof Error ? e.message : 'failed'), ms: Date.now() - t0 },
       { status: aborted ? 504 : 500 },
     )
   } finally { clearTimeout(killer) }

@@ -7,8 +7,6 @@
 // runAudioBrief(file, mode, { onStage }) → { fields, transcript }
 //   onStage(stage, pct)  stage ∈ 'compress' | 'transcribe' | 'summarise' | 'done'
 
-import { whisperPrompt, withOverride, clampWhisperPrompt } from './debriefGlossary'
-
 const OUT_RATE = 16000
 const FRAME = 1152
 
@@ -145,7 +143,7 @@ export async function postChunk(chunk, index, prompt) { // exported for tests
     if (attempt) { await waitOnline(); await sleep(RETRY_DELAYS[attempt - 1]) }
     const fd = new FormData()
     fd.append('file', chunk, `chunk-${index}.mp3`)
-    fd.append('prompt', prompt)
+    if (prompt) fd.append('prompt', prompt)
     let res
     try {
       res = await fetch('/api/ai/transcribe', { method: 'POST', body: fd })
@@ -162,21 +160,19 @@ export async function postChunk(chunk, index, prompt) { // exported for tests
   throw lastErr
 }
 
-async function transcribeChunks(chunks, onProgress, glossaryExtra) {
+async function transcribeChunks(chunks, onProgress) {
   const texts = []
-  const bias = whisperPrompt(withOverride(glossaryExtra)) // team glossary (+ live sail inventory) → Whisper spells the jargon right
-  let prevTail = ''
   for (let i = 0; i < chunks.length; i++) {
     // No language hint — let Whisper auto-detect (debriefs may be Dutch, English, …).
     // Forcing 'en' on a non-English recording makes it mis-hear the whole thing.
-    // Prompt = a little context from the previous chunk + the glossary LAST. The
-    // provider REJECTS an over-long prompt rather than truncating it, so clamp
-    // rather than assume: clampWhisperPrompt keeps the end, sacrificing the tail
-    // and keeping the terms.
-    const prompt = clampWhisperPrompt(prevTail ? `${prevTail}\n${bias}` : bias)
-    const text = await postChunk(chunks[i], i, prompt)
+    // No PROMPT either. On the seven Maxi Worlds 2026 recordings (4.8 h) a glossary
+    // prompt — with or without the previous chunk's tail — sent Scaleway's whisper
+    // into repetition loops in EVERY 5-minute chunk ("A, A, A…", "yeah yeah…",
+    // 19–31k characters per debrief), and the topics under the loops were lost.
+    // Without it, 0–27% of chunks loop and the content comes back. The team's
+    // vocabulary is applied by the summariser instead (glossaryBlock).
+    const text = await postChunk(chunks[i], i, '')
     texts.push(text)
-    prevTail = text.slice(-100) // carry a little context across the chunk boundary
     if (onProgress) onProgress((i + 1) / chunks.length)
   }
   return texts.join('\n')
@@ -231,7 +227,7 @@ export async function runAudioBrief(file, mode, { onStage, glossaryExtra } = {})
     const { chunks } = await compressToMp3Chunks(file, { onProgress: (p) => stage('compress', p) })
     if (!chunks.length) throw new Error('no audio decoded from that file')
     stage('transcribe', 0)
-    const transcript = await transcribeChunks(chunks, (p) => stage('transcribe', p), glossaryExtra)
+    const transcript = await transcribeChunks(chunks, (p) => stage('transcribe', p))
     if (!transcript.trim()) throw new Error('transcript came back empty — was anything recorded?')
     stage('summarise', 0)
     const fields = await summarise(transcript, mode, glossaryExtra)

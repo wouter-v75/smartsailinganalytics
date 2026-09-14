@@ -32,7 +32,7 @@ export const DEFAULT_GLOSSARY: Glossary = {
   manoeuvres: ['inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'layline', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
   // High-value / most-mangled terms first — whisperPrompt() only takes the leading
   // slice, so keep the ones Whisper fumbles (halyard, tackline, constrictor, luff…) up top.
-  parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'winch', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew'],
+  parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'winch', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew', 'batten', 'forestay', 'cap shrouds', 'shim', 'wheel'],
   // NO NAMES HERE. Crew and rival boats are TEAM data, and this object is shared by
   // every team in the app: names listed here are fed into every other team's
   // transcription prompt, where Whisper will happily put them into a session those
@@ -74,6 +74,13 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['windward load', 'windward-leeward'], ['load focus', 'leeward focus'],
     ['the weight', 'the AWA (when the sense is sail trim, not crew weight)'],
     ['coaster timing', 'coastal peel curve timing'],
+    // Maxi Worlds 2026 meetings, checked against the notes typed up in the room
+    ['softer tube', 'softer batten'], ['tube', 'batten (when the sense is sail shape)'],
+    ['station', 'staysail (when the sense is a sail being set or trimmed)'],
+    ['sack', 'sag (forestay / rig sag)'],
+    ['tuck', 'tack (the manoeuvre)'], ['tucks', 'tacks'],
+    ['mode zero', 'MH0'], ['mower', 'MH0'],
+    ['Brault', 'BRO'], ['raw', 'BRO (when the sense is a sail being peeled to)'],
   ],
 }
 
@@ -100,7 +107,16 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
     // in the summary — "Jolt was called over" became "John was called over", which
     // reads as a crew member being OCS.
     boats: ['Django', 'Bella Mente', 'Jolt', 'Jethou', 'Proteus', 'Balthasar'],
+    // Sail codes the crew say out loud, marks and places of the Sardinia racing area,
+    // and the sailmaker — all proper nouns the recogniser cannot spell.
+    sails: ['MN_B', 'MH0', 'BRO', 'SSS', 'SS', 'J1', 'J1.5', 'J2', 'A1', 'A1.5', 'A2'],
+    aliases: [['triple S', 'SSS']],
     fixups: [
+      ['tiller', 'wheel (Northstar steers with a wheel)'],
+      ['Dole', 'Doyle (sailmaker)'],
+      ['Magdalena', 'Maddalena'], ['Carpi', 'Caprera'], ['Capri', 'Caprera (when the sense is a mark or island on the course)'],
+      ['Oscar', 'Oscar (course mark)'], ['Hotel', 'Hotel (course mark)'],
+      ['George', 'Jolt or Balthasar (boat name) — unclear, keep it vague rather than guess'],
       ['splice', 'Bella Mente (boat name)'],
       ['John', 'Jolt (boat name) — when the context is a boat being called over, protesting or racing'],
       ['Jango', 'Django (boat name)'],
