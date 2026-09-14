@@ -16,7 +16,7 @@
 //
 // Uses the service key from .env.local. Writes nothing without --write.
 
-import { readFileSync, readdirSync, statSync } from 'fs'
+import { readFileSync, readdirSync, statSync, existsSync } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
 import { createClient } from '@supabase/supabase-js'
@@ -27,14 +27,35 @@ import { polarFromData } from '../src/lib/polarFile'
 import { STATS_VERSION, compactPhases, compactManoeuvres, medianInterval, type StoredPhase } from '../src/lib/seasonCurves'
 import { addLidar } from '../src/lib/lidarMerge'
 import { logRateHz, lidarSailsIn } from '../src/lib/logResolution'
+import { offsetFromCoords } from '../src/lib/tzFromCoords'
+
+const USAGE = `Add lidar from Expedition lidar logs to a boat's stored phase stats in the cloud.
+
+Usage:
+  npm run lidar:import -- PATH [PATH …] [--write] [--boat BOAT_ID]
+
+  PATH       a folder (every .csv in it) or a single .csv file; quote paths with spaces
+  --write    store the result (without it: dry run, nothing is written)
+  --boat     boat id, when more than one boat's name matches "Northstar 76"
+  --help     this text
+
+Examples:
+  npm run lidar:import -- ~/Downloads/Logs
+  npm run lidar:import -- ~/Downloads/Logs --write
+  npm run lidar:import -- "~/Downloads/oppositetack-log-20260906-132918.1s_clean (1).csv" ~/Downloads/Logs --write
+
+Needs .env.local (Supabase URL + service key). In Claude Code's sandbox, run it outside the sandbox.`
 
 const args = process.argv.slice(2)
+if (args.includes('--help') || args.includes('-h')) { console.log(USAGE); process.exit(0) }
 const write = args.includes('--write')
 const boatArg = args.includes('--boat') ? args[args.indexOf('--boat') + 1] : null
 const pathArgs = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--boat')
-if (!pathArgs.length) { console.error('usage: vite-node scripts/lidar-import.ts <folder|file.csv>… [--write] [--boat <id>]'); process.exit(1) }
+if (!pathArgs.length) { console.error(USAGE); process.exit(1) }
 const inputFiles = pathArgs.flatMap(a => {
+  // A quoted "~/…" reaches us unexpanded — expand it here.
   const p = resolve(a.replace(/^~(?=\/|$)/, homedir()))
+  if (!existsSync(p)) { console.error(`Not found: ${a}\n\n${USAGE}`); process.exit(1) }
   if (!statSync(p).isDirectory()) return [p]
   return readdirSync(p).filter(f => /\.csv$/i.test(f) && statSync(join(p, f)).isFile()).sort().map(f => join(p, f))
 })
@@ -78,14 +99,24 @@ async function main() {
 
   let written = 0
   for (const file of inputFiles) {
-    const p = parseLog(readFileSync(file, 'utf8'))
+    const text = readFileSync(file, 'utf8')
+    let p = parseLog(text)
+    // Local-clock layouts (`Datetime`) carry venue time, not UTC: take the zone from the log's
+    // GPS position and read them again with it, as the app's Upload tab does.
+    let tzNote = ''
+    if (p.format === 'flat-local' || p.format === 'flat-nmea') {
+      const gp = p.rows.find((r: any) => Number.isFinite(r.lat) && Number.isFinite(r.lon))
+      const z = gp ? offsetFromCoords(gp.lat, gp.lon, p.startUtc || gp.utc) : null
+      if (z) { p = parseLog(text, { tzOffsetMin: z.offsetMin }); tzNote = ` · local clock (${z.zone})` }
+      else tzNote = ' · local clock, zone unknown — read as UTC'
+    }
     const rows = p.rows
     const tag = file.replace(homedir(), '~')
     if (!rows.length) { console.log(`✕ ${tag}: no rows read (format ${p.format})`); continue }
     const sails = lidarSailsIn(rows).map(s => s.label)
     const t0 = rows[0].utc, t1 = rows[rows.length - 1].utc
     const date = new Date(t0).toISOString().slice(0, 10)
-    const head = `${tag}\n  ${date} ${hm(t0)}–${hm(t1)}Z · ${rows.length.toLocaleString()} rows · ${logRateHz(rows)} Hz · lidar ${sails.join('/') || 'none'}`
+    const head = `${tag}\n  ${date} ${hm(t0)}–${hm(t1)}Z · ${rows.length.toLocaleString()} rows · ${logRateHz(rows)} Hz${tzNote} · lidar ${sails.join('/') || 'none'}`
     if (!sails.length) { console.log(`${head}\n  ✕ no lidar columns — skipped\n`); continue }
 
     const { data: session, error: sErr } = await sb.from('sessions').select('id, team_id, xml_data').eq('boat_id', boat.id).eq('date', date).maybeSingle()
