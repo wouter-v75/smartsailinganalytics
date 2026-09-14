@@ -280,6 +280,14 @@ describe('PerfChartsSection', () => {
     expect(Array.from((screen.getByLabelText('Main sail filter') as HTMLSelectElement).options).map(o => o.text)).toEqual(['All mains', 'MAIN_B 2026 · 12 phases'])
     expect(Array.from((screen.getByLabelText('Jib sail filter') as HTMLSelectElement).options).map(o => o.text)).toEqual(['All jibs', 'J4_A 2026 · 12 phases'])
     expect(container.querySelector('[data-lidar="lidar-mn-mode-tack"]')!.textContent).toContain('MAIN_B 2026')
+    // Port / starboard filter: 6 of the 12 phases are on port.
+    const overallN = () => container.querySelector('[data-lidar="lidar-mn-overall"] tbody tr')!.children[5].textContent
+    expect(overallN()).toBe('12')
+    fireEvent.click(screen.getByRole('button', { name: 'Port tack lidar' }))
+    expect(overallN()).toBe('6')
+    expect(container.querySelector('[data-lidar="lidar-mn-mode-tack"]')!.textContent).not.toContain('Stbd')
+    fireEvent.click(screen.getByRole('button', { name: 'Both tacks lidar' }))
+    expect(overallN()).toBe('12')
     fireEvent.click(screen.getByRole('button', { name: /Every lidar phase with its sails · 12/ }))
     expect(container.querySelector('[data-lidar="lidar-mn-phases"]')!.textContent).toContain('J4_A 2026')
     fireEvent.click(screen.getByRole('button', { name: 'Jib' }))

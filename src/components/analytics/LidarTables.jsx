@@ -66,12 +66,14 @@ function LidarTable({ table, tzOffsetMin = 0, onRowClick = null }) {
   )
 }
 
-export default function LidarTables({ stats, sails, xmlData = null, tzOffsetMin = 0, onJump = null }) {
+export default function LidarTables({ stats: allStats, sails, xmlData = null, tzOffsetMin = 0, onJump = null }) {
   const [sail, setSail] = React.useState(sails[0]?.sail)
   const [picked, setPicked] = React.useState({})          // sail kind → sail name ('' = all)
+  const [tack, setTack] = React.useState('')              // '' = both, 'port', 'stbd'
   const [showPhases, setShowPhases] = React.useState(false)
   const current = sails.find(s => s.sail === sail) || sails[0]
   if (!current) return null
+  const stats = tack ? allStats.filter(p => p.tack === tack) : allStats
 
   // The mains / jibs / spinnakers in use during this sail's lidar captures. A pick that is not
   // among them (another day, another sail tab) counts as "all".
@@ -87,6 +89,13 @@ export default function LidarTables({ stats, sails, xmlData = null, tzOffsetMin 
         {sails.map(s => (
           <button key={s.sail} onClick={() => setSail(s.sail)} aria-pressed={s.sail === current.sail} style={btn(s.sail === current.sail)}>
             {s.label}
+          </button>
+        ))}
+        <span style={{ width: 1, height: 18, background: '#1E3A5A', margin: '0 4px' }} />
+        {[['', 'Both tacks'], ['port', 'Port'], ['stbd', 'Stbd']].map(([t, label]) => (
+          <button key={label} onClick={() => setTack(t)} aria-pressed={tack === t} aria-label={`${label === 'Both tacks' ? label : `${label} tack`} lidar`}
+            style={{ ...btn(tack === t), fontWeight: 600 }}>
+            {label}
           </button>
         ))}
         {filters.length > 0 && <span style={{ width: 1, height: 18, background: '#1E3A5A', margin: '0 4px' }} />}
