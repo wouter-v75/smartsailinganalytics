@@ -36,6 +36,12 @@ function isAlwaysPublic(pathname: string): boolean {
   // not be revoked and not have expired, and it grants exactly one clip. Letting the
   // path through here does NOT weaken anything — the page renders nothing until that
   // API call succeeds.
+  // /dev/* — the component playground (/dev/ui, /dev/tagger). Fixture data only,
+  // no session, no database. Public IN DEVELOPMENT ONLY so the gallery can be
+  // opened and screenshotted without signing in; in production these paths stay
+  // behind the auth gate exactly as before.
+  if (process.env.NODE_ENV !== 'production' && pathname.startsWith('/dev/')) return true
+
   return pathname.startsWith('/join/') || pathname.startsWith('/share/')
 }
 

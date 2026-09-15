@@ -521,6 +521,20 @@ none of which a user-agent test gets right.
 **Done:** a tag can be added, described, verified, discarded, nominated and put
 on the reel without leaving the day — one-handed.
 
+**Verified in a browser, not just in a build.** `/dev/tagger` renders the three
+views from fixture data with no session and no database, and a Playwright script
+drives it at 390 × 844 checking touch-target size, horizontal overflow, the
+composer's font size (16 px, or iOS zooms the viewport), and the console. Four
+bugs came out of that pass which `tsc`, `next build` and 800 unit tests had all
+been happy with:
+
+| Bug | Why nothing else caught it |
+| --- | --- |
+| The track sorted detections ahead of crew tags, so the clock read 11:59, 12:06, 12:20, 12:50, **12:04** | Sorting "correctly" by the rule I had written down. Only looking at it showed the rule was wrong: a track is a clock. |
+| "Snap to the data" offered on a detection — which *is* the data | The guard was in the caller; `TagSheet` trusted it. Now the component owns the rule. |
+| Note text clipped mid-word with no ellipsis | `truncate` on a flex *parent* clips; the text needs its own `min-w-0` box. |
+| The dot floated mid-row on a three-line note | Pure layout. Invisible in any test. |
+
 ### M5 · Review, reel and filter — `ReviewQueue`, `DebriefReel`, `TagFilterBar`
 - Queue sorted by confidence, keyboard-driven, bulk verify.
 - **Debrief reel**: send-to-reel from track, inspector and buttons; reorder;

@@ -88,12 +88,11 @@ export default function TagTrack({
     <div className="flex flex-col">
       {grouped.map(({ segment, items: segItems }) => {
         const isShut = collapsed.has(segment.key)
-        // Detections first, crew tags under them — data before the account.
-        const ordered = [...segItems].sort((a, b) => {
-          const aAuto = a.tag.source === 'auto' ? 0 : 1
-          const bAuto = b.tag.source === 'auto' ? 0 : 1
-          return aAuto - bAuto || a.tag.t0 - b.tag.t0
-        })
+        // STRICTLY by time. "Data before the subjective account" is about the
+        // running order of a debrief, not about a timeline — sorting detections
+        // ahead of crew tags made the clock read 11:59, 12:06, 12:20, 12:50,
+        // then 12:04, which is unreadable. A track is a clock.
+        const ordered = [...segItems].sort((a, b) => a.tag.t0 - b.tag.t0)
         return (
           <section key={segment.key}>
             <button
@@ -158,11 +157,13 @@ function TagRow({
     <li>
       <button
         onClick={() => onOpen(t.id)}
-        className="flex min-h-[56px] w-full items-center gap-3 px-3 py-2 text-left active:bg-surface-2"
+        className="flex min-h-[56px] w-full items-start gap-3 px-3 py-3 text-left active:bg-surface-2"
       >
-        {/* Hollow = the detector's guess. Solid = somebody vouched for it. */}
+        {/* Hollow = the detector's guess. Solid = somebody vouched for it.
+            Pinned to the first line so a three-line note does not leave it
+            floating in the middle of the row. */}
         <span
-          className={cn('h-3 w-3 shrink-0 rounded-full border-2')}
+          className={cn('mt-1 h-3 w-3 shrink-0 rounded-full border-2')}
           style={{
             borderColor: t.color,
             background: !isAuto || verified ? t.color : 'transparent',
@@ -193,7 +194,7 @@ function TagRow({
           )}
         </span>
 
-        <span className="flex shrink-0 items-center gap-1.5">
+        <span className="mt-0.5 flex shrink-0 items-center gap-1.5">
           {item.debriefVotes > 0 && (
             <span
               className="grid h-6 min-w-[24px] place-items-center rounded-full bg-surface-2 px-1 text-[11px] font-bold"

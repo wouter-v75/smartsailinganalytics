@@ -207,7 +207,12 @@ export default function TagSheet(props: TagSheetProps) {
 
           {/* 5. The rare things, last */}
           <div className="flex flex-wrap gap-2 border-t border-[color:var(--border)] pt-3">
-            {props.onSnap && (
+            {/* Snapping moves a HAND-PLACED tag onto the data. A detection IS the
+                data, so snapping it would move it onto itself. The rule lives
+                here rather than in the caller: a component that depends on every
+                caller remembering a rule is a component that will one day meet a
+                caller who did not. */}
+            {props.onSnap && t.source !== 'auto' && (
               <SmallButton onClick={props.onSnap} disabled={props.snap?.ok === false}>
                 <Magnet size={14} aria-hidden />
                 {props.snap?.ok === false ? props.snap.reason : 'Snap to the data'}

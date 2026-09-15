@@ -201,10 +201,16 @@ export default function TaggerTab({
           onVerify={() => t.patch(open.tag.id, { op: 'verify' })}
           onReject={() => { t.patch(open.tag.id, { op: 'reject' }); setOpenId(null) }}
           onUnreject={() => t.patch(open.tag.id, { op: 'unreject' })}
-          onSnap={() => {
-            const r = snapTag(open.tag, detections)
-            if (r.ok) t.patch(open.tag.id, { op: 'move', delta_ms: r.result.deltaMs })
-          }}
+          // Only a HAND-PLACED tag can be snapped. Snapping a detection would
+          // move it onto itself, which is why the sheet must not offer it.
+          onSnap={
+            open.tag.source === 'human'
+              ? () => {
+                  const r = snapTag(open.tag, detections)
+                  if (r.ok) t.patch(open.tag.id, { op: 'move', delta_ms: r.result.deltaMs })
+                }
+              : undefined
+          }
           onReset={() => t.patch(open.tag.id, { op: 'reset' })}
           onDelete={() => { t.remove(open.tag.id); setOpenId(null) }}
           onNote={(note) => t.patch(open.tag.id, { op: 'note', note })}

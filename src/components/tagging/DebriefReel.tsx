@@ -149,11 +149,15 @@ export default function DebriefReel({
                   )}
                   <button onClick={() => onOpen?.(item.tag.id)} className="min-w-0 flex-1 text-left">
                     <span className="block truncate text-sm font-medium">{item.tag.label}</span>
-                    <span className="flex items-center gap-1 truncate text-xs text-muted">
-                      <Clock size={11} aria-hidden />
-                      {clock(item.tag.t0, tzOffsetMin)}
-                      {item.tag.note ? ` · ${item.tag.note}` : ''}
-                      {video && <Video size={11} className="text-accent" aria-hidden />}
+                    {/* `truncate` on a flex PARENT clips mid-word with no
+                        ellipsis — the text needs its own min-w-0 box. */}
+                    <span className="flex items-center gap-1 text-xs text-muted">
+                      <Clock size={11} className="shrink-0" aria-hidden />
+                      <span className="shrink-0">{clock(item.tag.t0, tzOffsetMin)}</span>
+                      {item.tag.note && (
+                        <span className="min-w-0 flex-1 truncate">· {item.tag.note}</span>
+                      )}
+                      {video && <Video size={11} className="shrink-0 text-accent" aria-hidden />}
                     </span>
                   </button>
 
