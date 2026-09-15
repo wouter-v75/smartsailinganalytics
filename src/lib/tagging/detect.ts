@@ -28,6 +28,7 @@
 
 import { analyseManoeuvres, type Manoeuvre } from '../manoeuvres'
 import type { LogRow } from '../phaseStats'
+import { detectLegsAndRoundings, type Leg } from './detectLegs'
 import { segmentDay, segmentAt, type DaySegment, type SegmentInput } from './segments'
 import type { TagProducer } from './types'
 
@@ -70,6 +71,15 @@ export interface DetectInput {
   segmentOptions?: Pick<SegmentInput, 'warningLeadSec' | 'finishGraceSec' | 'finishes'>
   /** Ignore log-detected manoeuvres below this boat speed (kn). */
   minBsp?: number
+  /** Skip the log-based mark-rounding fallback (it costs a pass over the log). */
+  skipLegDetection?: boolean
+}
+
+/** What detectDay worked out along the way, for callers that want it. */
+export interface DetectResult {
+  detections: Detection[]
+  segments: DaySegment[]
+  legs: Leg[]
 }
 
 // Recorded by the onboard system rather than inferred — as close to fact as this
@@ -191,8 +201,8 @@ export function detectDay(input: DetectInput): Detection[] {
   // `gate` and `topmark` are separate vocabulary because the crew talk about
   // them separately; `isValid: false` on the event file is the onboard system
   // doubting its own measurement, so it lands lower in the review queue.
-  for (const m of xml?.markRoundings || []) {
-    if (!isNum(m?.utc)) continue
+  const eventRoundings = (xml?.markRoundings || []).filter((m: any) => isNum(m?.utc))
+  for (const m of eventRoundings) {
     const s = seg(m.utc)
     const top = !!m.isTop
     found.push({
@@ -206,6 +216,36 @@ export function detectDay(input: DetectInput): Detection[] {
       producer: 'eventfile',
       meta: { top, valid: m.isValid !== false, roundingUtc: m.utc },
     })
+  }
+
+  // ── Mark roundings from the log, when the event file has none ─────────────
+  // A training day, or a regatta where the onboard assistant was not running,
+  // otherwise has no roundings at all — and roundings are one of the two things
+  // always worth pulling footage of. Only a FALLBACK: where the event file has
+  // them, it is the better source and mixing the two would double-count.
+  let legs: Leg[] = []
+  if (!eventRoundings.length && rows.length && !input.skipLegDetection) {
+    const found2 = detectLegsAndRoundings(rows)
+    legs = found2.legs
+    for (const r of found2.roundings) {
+      const s = seg(r.utc)
+      found.push({
+        slug: r.isTop ? 'topmark' : 'gate',
+        label: r.isTop ? 'Top mark' : 'Leeward gate',
+        t0: r.utc - 30_000,
+        t1: r.utc + 30_000,
+        segmentKey: s?.key || 'day',
+        raceNum: s?.raceNum ?? null,
+        confidence: r.confidence,
+        producer: 'log',
+        meta: {
+          top: r.isTop, roundingUtc: r.utc,
+          transitionSec: r.transitionSec,
+          beforeMode: r.beforeMode, afterMode: r.afterMode,
+          inferred: true,
+        },
+      })
+    }
   }
 
   // ── Sail changes ──────────────────────────────────────────────────────────
@@ -256,6 +296,25 @@ export function detectDay(input: DetectInput): Detection[] {
   }
 
   return withOrdinalKeys(found, boatId, date)
+}
+
+/** detectDay, plus the segments and legs it worked out on the way. */
+export function detectDayFull(input: DetectInput): DetectResult {
+  const rows = input.rows || []
+  const segments = input.segments ?? segmentDay({
+    guns: input.xml?.raceGuns,
+    markRoundings: input.xml?.markRoundings,
+    dayStartUtc: input.xml?.dayStartUtc ?? null,
+    dayStopUtc: input.xml?.dayStopUtc ?? null,
+    dataT0: rows.length ? rows[0].utc : null,
+    dataT1: rows.length ? rows[rows.length - 1].utc : null,
+    ...(input.segmentOptions || {}),
+  })
+  const detections = detectDay({ ...input, segments })
+  const legs = (input.xml?.markRoundings || []).length || !rows.length || input.skipLegDetection
+    ? []
+    : detectLegsAndRoundings(rows).legs
+  return { detections, segments, legs }
 }
 
 /** The review queue: unverified detections, least trustworthy first. */

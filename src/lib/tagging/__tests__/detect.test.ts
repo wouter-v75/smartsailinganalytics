@@ -230,3 +230,53 @@ describe('autoExtractable', () => {
     expect(ALWAYS_EXTRACT).not.toContain('gybe')
   })
 })
+
+describe('mark roundings from the log', () => {
+  const MIN = 60_000
+  const legRows = (start: number, minutes: number, twa: number): any[] => {
+    const out: any[] = []
+    for (let t = start; t < start + minutes * MIN; t += 1000) out.push({ utc: t, twa, bsp: 9, sog: 9, tws: 14 })
+    return out
+  }
+  // A training day: two laps of windward-leeward, no event file at all.
+  const trainingRows = [
+    ...legRows(T('12:00'), 8, 42),
+    ...legRows(T('12:08'), 8, 150),
+    ...legRows(T('12:16'), 8, 44),
+    ...legRows(T('12:24'), 8, 152),
+  ]
+
+  it('gives a day with no event file its roundings', () => {
+    const d = detectDay({ boatId: BOAT, date: DATE, rows: trainingRows })
+    const marks = d.filter((x) => x.slug === 'topmark' || x.slug === 'gate')
+    expect(marks.length).toBeGreaterThanOrEqual(3)
+    expect(marks.every((m) => m.producer === 'log')).toBe(true)
+    expect(marks.every((m) => m.meta?.inferred === true)).toBe(true)
+  })
+
+  it('scores an inferred rounding below a recorded one', () => {
+    const inferred = detectDay({ boatId: BOAT, date: DATE, rows: trainingRows })
+      .find((x) => x.slug === 'topmark')!
+    const recorded = detectDay({ boatId: BOAT, date: DATE, xml: xmlTwoRaces })
+      .find((x) => x.slug === 'topmark')!
+    expect(inferred.confidence).toBeLessThan(recorded.confidence)
+  })
+
+  it('defers to the event file and never double-counts', () => {
+    // Event file HAS roundings, so the log fallback must not also fire.
+    const d = detectDay({ boatId: BOAT, date: DATE, rows: trainingRows, xml: xmlTwoRaces })
+    const marks = d.filter((x) => x.slug === 'topmark' || x.slug === 'gate')
+    expect(marks.every((m) => m.producer === 'eventfile')).toBe(true)
+    expect(marks).toHaveLength(4)
+  })
+
+  it('can be switched off', () => {
+    const d = detectDay({ boatId: BOAT, date: DATE, rows: trainingRows, skipLegDetection: true })
+    expect(d.filter((x) => x.slug === 'topmark' || x.slug === 'gate')).toHaveLength(0)
+  })
+
+  it('makes training-day roundings extractable, like any other', () => {
+    const d = detectDay({ boatId: BOAT, date: DATE, rows: trainingRows })
+    expect(autoExtractable(d).length).toBeGreaterThan(0)
+  })
+})

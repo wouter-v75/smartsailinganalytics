@@ -175,9 +175,9 @@ The detector wraps what SSA already has rather than replacing it:
 | Mark roundings | `xmlEventParse.js` `<markrounding>` | exists, **event file only** |
 | Race starts | `xmlEventParse.js` `RaceStartGun` | exists, **event file only** |
 | Start quality | `startAnalysis.ts` — distance to line, run-in, OCS bands | exists |
-| Mark roundings from log | sustained heading change + proximity | **to build** |
-| Start from log | distance-to-line zero crossing against `startLines` | **to build** |
-| Legs | TWD + principal-axis projection with reversal detection | **to build** |
+| Mark roundings from log | `detectLegs.ts` — a rounding IS a leg boundary: where the committed point of sail crosses between upwind and downwind | ✅ built |
+| Legs | `detectLegs.ts` — point-of-sail run-length encoding with short runs merged away | ✅ built |
+| Start from log | distance-to-line zero crossing against `startLines` | deferred — see below |
 | On-water comments | Expedition event-file comments, logged one-handed while sailing | **to ingest** |
 
 `detect.ts` exposes one entry point:
@@ -403,8 +403,13 @@ plus `supabase/tests/0062_tagger_merge.sql` asserting the merge guarantees hold.
   inferred and flagged where not). Supplies the ordinal keys. ✅
 - Wrap `manoeuvres.ts`, `xmlEventParse.js`, `startAnalysis.ts` behind one
   `detectDay()` returning ordinally-keyed detections with confidence. ✅
-- Build the three missing detectors: mark roundings from the log, start from the
-  line crossing, legs from TWD.
+- **`detectLegs.ts`** — legs and mark roundings from the log alone, so a training
+  day (or a regatta where the onboard assistant was not running) still gets the
+  roundings a debrief is always built from. ✅
+- Start from the line crossing: **deferred**. `startAnalyses()` is gun-driven and
+  the start line itself only exists in the event file, so a log-only start
+  detector would serve just the narrow case of a file with `startLines` but no
+  `RaceStartGun`. Not worth it before the UI exists.
 - Ingest Expedition on-water comments as detections in their own lane — they are
   late and approximate by construction, so they are the prime snap target.
 - Fixture tests against the 2026-09-11 Northstar 76 day already used by
