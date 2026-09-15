@@ -419,7 +419,7 @@ plus `supabase/tests/0062_tagger_merge.sql` asserting the merge guarantees hold.
 start; and re-running the detector after a timing shift yields the *same keys*,
 so a sync updates rather than duplicates.
 
-### M2 · Merge and snap — `merge.ts`, `snap.ts`
+### M2 · Merge and snap — `merge.ts`, `snap.ts` ✅
 The correctness core. Pure functions, exhaustive tests:
 - re-derivation preserves a moved tag, a relabelled tag, descriptors and notes;
 - a rejected detection stays rejected across three consecutive syncs;
@@ -428,7 +428,14 @@ The correctness core. Pure functions, exhaustive tests:
 - snapping is asymmetric, respects the radius, and reports why it declined;
 - `snapAll` is monotonic — no crossings, no double-booking.
 
-**Done:** the merge table in §2.3 is covered case by case.
+**Done:** the merge table in §2.3 is covered case by case (59 tests).
+
+Two things the tests changed. `setTagWindow` normalises a window dragged inside
+out rather than trusting the caller's order. And snap ELIGIBILITY is judged on
+the detection's own start, not on the anchor — scoring the anchor made
+`anchor: 'end'` reject every long detection, which is backwards, since a long
+manoeuvre is exactly when you want to aim at its exit. A tag falling *inside* a
+detection's window now belongs to it outright.
 
 ### M3 · API
 - `tags/defs` — GET/POST/PATCH/DELETE plus `POST /seed`.
