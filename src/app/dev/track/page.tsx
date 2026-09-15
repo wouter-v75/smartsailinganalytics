@@ -50,7 +50,18 @@ const XML = {
     { utc: T(11, 40), endUtc: T(11, 46), mode: 3 },
     { utc: T(12, 0), endUtc: T(12, 6), mode: 1 },
   ],
-  markRoundings: [], raceGuns: [], tackJibes: [], sailsUpEvents: [],
+  raceGuns: [
+    { utc: T(11, 30), raceNum: 1, label: 'Race 1 start' },
+    { utc: T(12, 0), raceNum: 2, label: 'Race 2 start' },
+  ],
+  markRoundings: [{ utc: T(11, 45) }, { utc: T(11, 55) }, { utc: T(12, 12) }],
+  // Enough manoeuvres to see whether they read as background or as findings.
+  tackJibes: [11.6, 11.8, 12.05, 12.15].map((h, i) => ({
+    utc: T(Math.floor(h), Math.round((h % 1) * 60)),
+    isTack: i % 2 === 0, isValid: true,
+    label: i % 2 === 0 ? 'Tack' : 'Gybe',
+  })),
+  sailsUpEvents: [],
 }
 
 // Clips: they used to be drawn as white bands over the track. They must not be

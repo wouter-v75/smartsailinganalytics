@@ -123,12 +123,46 @@ export function normaliseSailState(raw: unknown): SailState {
   return { up, onBoard, battens }
 }
 
-/** The sail state a tag carries, or null when it carries none. */
+/**
+ * The sail state a tag carries, or null when it carries none.
+ *
+ * TWO SHAPES, because a sail change can arrive two ways and both are real.
+ *
+ *   meta.sail   the crew entered it in the tagger: what was up, what was
+ *               aboard, and the battens. The full picture.
+ *   meta.sails  the EVENT FILE said so — Expedition logs the sails up at each
+ *               change as a plain list of names, and detect.ts carries it
+ *               through. No battens, nothing about the RIB.
+ *
+ * The crew's own entry wins where there is one; otherwise the event file
+ * answers, because "Main + J2, from the file" is enormously more useful than
+ * "not recorded" on a day nobody had a phone out. Read here rather than at
+ * detection time so it also covers the tags already sitting in the database,
+ * which were synced before any of this existed.
+ */
 export function stateOf(tag: TagEvent): SailState | null {
   if (tag.slug !== SAIL_CHANGE_SLUG || tag.rejected) return null
-  const raw = (tag.meta as Record<string, unknown> | null)?.sail
-  if (!raw) return null
-  return normaliseSailState(raw)
+  const meta = (tag.meta as Record<string, unknown> | null) || null
+  if (meta?.sail) return normaliseSailState(meta.sail)
+  const names = namesFromEventFile(meta?.sails)
+  if (!names.length) return null
+  // Up, and therefore aboard — normaliseSailState makes that inference for us,
+  // and it is the only thing the file lets us say for certain.
+  return normaliseSailState({ up: names.map((name) => ({ id: null, name })) })
+}
+
+/** The event file's sails-up list: plain names, forgiving about the junk a
+ *  parsed XML attribute can turn out to be. */
+function namesFromEventFile(raw: unknown): string[] {
+  const out: string[] = []
+  for (const v of Array.isArray(raw) ? raw : []) {
+    // A sail row can come through as an object with a name on it as easily as
+    // a string, depending on which part of the file it was read from.
+    const name = typeof v === 'string' ? v : String((v as { name?: unknown } | null)?.name ?? '')
+    const t = name.trim()
+    if (t) out.push(t)
+  }
+  return out
 }
 
 /** Sail-change tags that carry a state, oldest first. */

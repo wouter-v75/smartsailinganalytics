@@ -8,6 +8,7 @@ import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
 import { trackPct, toMode, TRACK_COLOUR_MODES } from '../lib/trackColour';
 import { MEDIA_COLOURS, isDroneClip } from '../lib/mediaDecks';
+import { segmentDay, racesOf } from '../lib/tagging/segments';
 import { getBrowserSupabase, getUidFast } from '../lib/supabase/browser';
 import { parseLog } from '../lib/logParse';
 import { isLidarKey } from '../lib/flatLogParse';
@@ -4330,6 +4331,14 @@ function AIChatPanel({rows, allVideos}){
 // Where the track's colour mode is remembered. Per browser, like the polar
 // itself: it is a way of looking, not a property of the day.
 const TRACK_COLOUR_KEY = 'ssa:trackColour';
+// 16px on the control itself would be right for a phone (smaller text makes iOS
+// zoom the page on focus), but this sits in a dense analytics header; the map
+// below is the thing being read, so the control stays quiet.
+const selectStyle = {
+  background:'#071624', color:'#E2E8F0', border:'1px solid #1E3A5A',
+  borderRadius:5, padding:'4px 8px', fontSize:11, fontWeight:600,
+  minHeight:30, cursor:'pointer',
+};
 // What the polar legend says it is measuring, so the scale is never ambiguous.
 const MODE_LEGEND = {
   auto:   'VMG \u00b120\u00b0 target \u00b7 BSP reaching',
@@ -4354,6 +4363,11 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     try{ return toMode(localStorage.getItem(TRACK_COLOUR_KEY)); }catch{ return 'auto'; }
   });
   React.useEffect(()=>{ try{ localStorage.setItem(TRACK_COLOUR_KEY, colourMode); }catch{} },[colourMode]);
+  // Which race, or the whole day. A day zoomed to fit is a scribble and the two
+  // beats worth comparing are on top of each other; one race is a course. Same
+  // helper the tagger's track filter uses, so the two screens cut the day at the
+  // same places.
+  const [raceKey,setRaceKey] = React.useState('all');
   const [selecting,setSelecting] = React.useState(false);
   const [draft,setDraft]         = React.useState(null);   // [utcA, utcB] while dragging
   const [mapGen,setMapGen]       = React.useState(0);
@@ -4362,7 +4376,9 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   const dayStart = xmlData?.dayStartUtc || null;
   const dayStop  = xmlData?.dayStopUtc  || null;
 
-  const filteredRows = React.useMemo(()=>{
+  // Every valid GPS row in the day's window, before the race filter. The races
+  // are derived from THIS, so picking a race cannot change what races exist.
+  const dayRows = React.useMemo(()=>{
     if(!rows?.length) return [];
     let r = rows.filter(row=>
       row.lat && row.lon &&
@@ -4373,6 +4389,28 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     if(dayStop)  r = r.filter(row=>row.utc<=dayStop);
     return r;
   },[rows, dayStart, dayStop]);
+
+  const races = React.useMemo(()=>racesOf(segmentDay({
+    guns: xmlData?.raceGuns,
+    markRoundings: xmlData?.markRoundings,
+    dayStartUtc: dayStart,
+    dayStopUtc: dayStop,
+    dataT0: dayRows.length ? dayRows[0].utc : null,
+    dataT1: dayRows.length ? dayRows[dayRows.length-1].utc : null,
+  })),[xmlData, dayStart, dayStop, dayRows]);
+
+  // A race that disappears — another day opened, the event file reloaded — must
+  // not leave the map filtered to a window that no longer exists, showing an
+  // empty box and no way to understand why.
+  React.useEffect(()=>{
+    if(raceKey!=='all' && !races.some(r=>r.key===raceKey)) setRaceKey('all');
+  },[races, raceKey]);
+
+  const race = raceKey==='all' ? null : races.find(r=>r.key===raceKey) || null;
+
+  const filteredRows = React.useMemo(()=>
+    race ? dayRows.filter(r=>r.utc>=race.t0 && r.utc<=race.t1) : dayRows
+  ,[dayRows, race]);
 
   const winStart = videoStartUtc ? videoStartUtc+(syncOffset||0)*1000 : null;
   const winEnd   = winStart ? winStart+(videoDurationSec||0)*1000 : null;
@@ -4540,7 +4578,12 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
         }
         for(const tj of (xmlData.tackJibes||[])){
           try{const nr=nearest(tj.utc);if(Math.abs(nr.utc-tj.utc)>60000)continue;
-            L.circleMarker([nr.lat,nr.lon],{radius:tj.isValid===false?3:5,fillColor:tj.isTack?'#1D9E75':'#7F77DD',color:'transparent',fillOpacity:tj.isValid===false?0.25:0.85}).bindTooltip(`${tj.label||'T/G'} · ${fmtU(tj.utc)}`).addTo(map);
+            // Small, as on the tagger's track and for the same reason: a day
+            // has two sail changes and a hundred and forty tacks, and drawn the
+            // same size as a mark rounding they are the same news — the map
+            // becomes a bead necklace and the moments worth navigating to are
+            // hidden among the routine.
+            L.circleMarker([nr.lat,nr.lon],{radius:tj.isValid===false?2:3,fillColor:tj.isTack?'#1D9E75':'#7F77DD',color:'transparent',fillOpacity:tj.isValid===false?0.25:0.85}).bindTooltip(`${tj.label||'T/G'} · ${fmtU(tj.utc)}`).addTo(map);
           }catch(e){}
         }
         for(const se of (xmlData.sailsUpEvents||[])){
@@ -4806,41 +4849,66 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
           )}
         </div>
       )}
-      {polar ? (
-        <div style={{marginBottom:6,display:"flex",alignItems:"center",gap:8,fontSize:9,color:"#F59E0B",flexWrap:"wrap"}}>
-          <span style={{background:"#F59E0B12",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px",fontWeight:600}}>⬡ {polar.filename} · TWS {polar.tws?.[0]}–{polar.tws?.[polar.tws.length-1]} kn</span>
-          {/* Which question the colour is answering. The three disagree with
-              each other routinely — a boat two degrees low and quick is over
-              100% on boat speed and under on VMG — and that disagreement is the
-              information, so the measure has to be a choice rather than
-              something the map decides halfway up the beat. */}
-          <span style={{color:"#475569"}}>colour by</span>
-          <span style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-            {TRACK_COLOUR_MODES.map(m=>(
-              <button
-                key={m.key}
-                onClick={()=>setColourMode(m.key)}
-                aria-pressed={colourMode===m.key}
-                title={m.hint}
-                style={{
-                  minHeight:28,padding:"3px 9px",borderRadius:5,fontSize:10,fontWeight:700,cursor:"pointer",
-                  border:`1px solid ${colourMode===m.key?"transparent":"#1E3A5A"}`,
-                  background:colourMode===m.key?"#06B6D4":"#071624",
-                  color:colourMode===m.key?"#001018":"#94A3B8",
-                }}
-              >
-                {m.label}
-              </button>
-            ))}
+      {/* ── Which part of the day, and what the colour means ─────────────────
+          Under the selection row, because both scope what the map shows and a
+          control you have to hunt for is a control nobody uses. The colour
+          dropdown renders whether or not a polar is loaded: hiding it when
+          there is no polar is why it could not be found at all — the absence
+          explained nothing, where a disabled control says exactly what is
+          missing. */}
+      <div style={{marginBottom:6,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",fontSize:10}}>
+        {races.length>0&&(
+          <label style={{display:"flex",alignItems:"center",gap:6,color:"#94A3B8"}}>
+            Show
+            <select
+              value={raceKey}
+              onChange={e=>setRaceKey(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="all">Whole track</option>
+              {races.map(r=><option key={r.key} value={r.key}>{r.label}</option>)}
+            </select>
+          </label>
+        )}
+
+        <label style={{display:"flex",alignItems:"center",gap:6,color:"#94A3B8"}}>
+          Colour by
+          <select
+            value={colourMode}
+            onChange={e=>setColourMode(e.target.value)}
+            disabled={!polar}
+            title={polar?TRACK_COLOUR_MODES.find(m=>m.key===colourMode)?.hint:"Upload a polar to colour the track"}
+            style={{...selectStyle,opacity:polar?1:0.5}}
+          >
+            {TRACK_COLOUR_MODES.map(m=><option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        </label>
+
+        {/* Which question the colour is answering. The three disagree with each
+            other routinely — a boat two degrees low and quick is over 100% on
+            boat speed and under on VMG — and that disagreement is the
+            information, so the measure has to be a choice rather than something
+            the map decides halfway up the beat. */}
+        {polar
+          ? <span style={{color:"#475569"}}>{TRACK_COLOUR_MODES.find(m=>m.key===colourMode)?.hint}</span>
+          : <span style={{color:"#475569"}}>No polar loaded — track in uniform blue. Upload one in the Uploads tab.</span>}
+
+        {race&&(
+          <span style={{color:"#7DD3FC",fontFamily:"monospace"}}>
+            {hmLocal(race.t0,tz)}–{hmLocal(race.t1,tz)}
           </span>
-          <span style={{color:"#475569"}}>{TRACK_COLOUR_MODES.find(m=>m.key===colourMode)?.hint}</span>
-        </div>
-      ) : (
-        <div style={{marginBottom:6,fontSize:9,color:"#475569"}}>No polar loaded — track in uniform blue. Upload a polar in Uploads tab.</div>
-      )}
+        )}
+        {polar&&(
+          <span style={{marginLeft:"auto",background:"#F59E0B12",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px",fontWeight:600,fontSize:9,color:"#F59E0B"}}>
+            ⬡ {polar.filename} · TWS {polar.tws?.[0]}–{polar.tws?.[polar.tws.length-1]} kn
+          </span>
+        )}
+      </div>
       <div ref={containerRef} style={{width:"100%",height:460,borderRadius:10,overflow:"hidden",border:"1px solid #1E3A5A",background:"#071624"}}/>
       <div style={{display:"flex",gap:16,marginTop:6,flexWrap:"wrap",fontSize:10,color:"#475569",alignItems:"center"}}>
-        <span>{filteredRows.length.toLocaleString()} GPS pts{dayStart?" · DayStart–DayStop window":""}</span>
+        {/* Say which window every figure on this row is for. A distance that
+            silently means "race 2 only" is a distance somebody quotes wrongly. */}
+        <span>{filteredRows.length.toLocaleString()} GPS pts · {race?race.label:(dayStart?"DayStart–DayStop window":"whole track")}</span>
         <span>Distance: <strong style={{color:"#06B6D4"}}>{distNm} nm</strong></span>
         {dayStart&&<span>Start: <strong style={{color:"#22C55E"}}>{hmLocal(dayStart,tz)}</strong></span>}
         {dayStop&&<span>End: <strong style={{color:"#F59E0B"}}>{hmLocal(dayStop,tz)}</strong></span>}

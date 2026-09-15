@@ -373,3 +373,55 @@ describe('weightAboard', () => {
     expect(weightAboard(state('a', 'b', 'c'), () => 1.11)?.kg).toBe(3.3)
   })
 })
+
+describe('the event file answers when the crew did not', () => {
+  const fromFile = (sails: unknown, over: Partial<TagEvent> = {}) =>
+    tag({ meta: { sails }, source: 'auto', producer: 'eventfile', ...over })
+
+  it('reads the sails up out of a detected sail change', () => {
+    // "Main + J2, from the file" is enormously more useful than "not recorded"
+    // on a day nobody had a phone out.
+    expect(describeState(stateOf(fromFile(['Main', 'J2']))!)).toBe('Main + J2')
+  })
+
+  it('counts them aboard too — they cannot be up from the RIB', () => {
+    const s = stateOf(fromFile(['Main', 'A2']))!
+    expect(s.onBoard.map((x) => x.name)).toEqual(['Main', 'A2'])
+  })
+
+  it('lets the crew’s own entry win where there is one', () => {
+    const both = tag({
+      meta: {
+        sails: ['Main', 'J2'],                                   // the file
+        sail: { up: [{ id: 'i5', name: 'A2' }], onBoard: [], battens: [] },  // the crew
+      },
+    })
+    expect(describeState(stateOf(both)!)).toBe('A2')
+  })
+
+  it('reads a sail that arrived as an object rather than a string', () => {
+    expect(describeState(stateOf(fromFile([{ name: 'Main' }, { name: 'J4' }]))!)).toBe('Main + J4')
+  })
+
+  it('is still nothing when the file said nothing', () => {
+    expect(stateOf(fromFile([]))).toBeNull()
+    expect(stateOf(fromFile(null))).toBeNull()
+    expect(stateOf(fromFile(['   ', '']))).toBeNull()
+    expect(stateOf(tag({ meta: {} }))).toBeNull()
+  })
+
+  it('does not speak for a rejected change', () => {
+    expect(stateOf(fromFile(['Main'], { rejected: true }))).toBeNull()
+  })
+
+  it('does not read a tack’s sails as a sail change', () => {
+    // detect.ts puts the sails up on every manoeuvre too; a tack is not a
+    // change, and reading one as one would invent a change that never happened.
+    expect(stateOf(fromFile(['Main', 'J2'], { slug: 'tack', label: 'Tack' }))).toBeNull()
+  })
+
+  it('carries through to what was up at a later moment', () => {
+    const day = [fromFile(['Main', 'J2'], { t0: T(11, 40), t1: T(11, 40) })]
+    expect(describeState(sailStateAt(day, T(12, 30)))).toBe('Main + J2')
+  })
+})

@@ -118,6 +118,12 @@ const events: TagEvent[] = [
   tag({ slug: 'gybe', label: 'Gybe', color: '#7F77DD', t0: T(12, 31), t1: T(12, 31, 26), confidence: 0.58,
         editedFields: ['t0', 't1'], autoT0: T(12, 30, 56),
         meta: { raceNum: 1, atMark: true, metrics: { bspBefore: 12.4, bspAfter: 11.1, timeTo95: 31, turnAngle: 64, target: 60, distLost: 61, tws: 15.0 } } }),
+  // A sail change the EVENT FILE recorded and nobody opened in the tagger: it
+  // carries meta.sails (a plain list of names) and no meta.sail. It must still
+  // say what was up.
+  tag({ slug: 'sail-change', label: 'Sails changed', color: '#F59E0B', producer: 'eventfile',
+        confidence: 0.98, t0: T(12, 15), t1: T(12, 15, 20),
+        meta: { raceNum: 1, sails: ['Main', 'J4'] } }),
   tag({ slug: 'gate', label: 'Leeward gate', color: '#8B5CF6', producer: 'eventfile', confidence: 0.6,
         t0: T(12, 50), t1: T(12, 50, 30), meta: { raceNum: 1, valid: false } }),
   tag({ slug: 'incident', label: 'Incident', color: '#EF4444', source: 'human', producer: 'user',
