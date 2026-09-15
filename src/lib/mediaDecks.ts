@@ -61,6 +61,15 @@ export function isDroneClip(m: { title?: string | null; tags?: string[] }): bool
   return /(?:^|[^a-z0-9])(dji|drone|mavic|osmo)(?:[^a-z0-9]|$)/i.test(String(m.title || ''))
 }
 
+/** How long a clip runs, in ms. 0 when nothing says. */
+function clipLengthMs(v: { duration_ms?: unknown; duration?: unknown }): number {
+  const ms = Number(v.duration_ms)
+  if (Number.isFinite(ms) && ms > 0) return ms
+  const secs = Number(v.duration)
+  if (Number.isFinite(secs) && secs > 0) return secs * 1000
+  return 0
+}
+
 const num = (v: unknown): number | null => {
   const n = typeof v === 'number' ? v : Date.parse(String(v ?? ''))
   return Number.isFinite(n) ? n : null
@@ -74,7 +83,15 @@ const num = (v: unknown): number | null => {
  * drawn at the epoch — which on a track means the first point of the day.
  */
 export function mediaMarks(input: {
-  videos?: { id: string; start_utc?: unknown; startUtc?: unknown; duration?: unknown; title?: string | null; tags?: string[] }[]
+  videos?: {
+    id: string
+    start_utc?: unknown; startUtc?: unknown
+    /** The API's field, in MILLISECONDS. */
+    duration_ms?: unknown
+    /** The analytics client's shape, in SECONDS. */
+    duration?: unknown
+    title?: string | null; tags?: string[]
+  }[]
   photos?: { id: string; taken_utc?: unknown; t?: unknown }[]
   scans?: { id: string; captured_at?: unknown; conditions?: { sail_name_in_report?: string | null; sail_code?: string | null } | null }[]
 }): MediaMark[] {
@@ -83,8 +100,11 @@ export function mediaMarks(input: {
   for (const v of input.videos || []) {
     const t0 = num(v.start_utc ?? v.startUtc)
     if (t0 == null) continue
-    const secs = Number(v.duration)
-    const t1 = Number.isFinite(secs) && secs > 0 ? t0 + secs * 1000 : t0
+    // TWO FIELD NAMES, and getting this wrong is invisible: the videos API
+    // returns `duration_ms`, while the analytics client carries `duration` in
+    // SECONDS. Reading only the latter gave every real clip a length of zero,
+    // so the track drew it as a dot — the one thing a clip is not.
+    const t1 = t0 + clipLengthMs(v)
     out.push({
       id: `v:${v.id}`,
       kind: isDroneClip(v) ? 'drone' : 'video',

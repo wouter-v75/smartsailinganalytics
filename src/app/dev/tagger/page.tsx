@@ -149,6 +149,14 @@ const events: TagEvent[] = [
         detectionKey: null, autoT0: null, confidence: null, createdByUserId: 'u-sam',
         note: 'Late on the sheet.',
         t0: T(12, 40, 13), t1: T(12, 40, 30), meta: { raceNum: 1 } }),
+  // One person, twice: a glove on a wet screen, or a press that did not look
+  // like it registered.
+  tag({ slug: 'rig-change', label: 'Rig', color: '#2DD4BF', source: 'human', producer: 'user',
+        detectionKey: null, autoT0: null, confidence: null, createdByUserId: 'me',
+        t0: T(13, 10), t1: T(13, 10, 15), meta: {} }),
+  tag({ slug: 'rig-change', label: 'Rig', color: '#2DD4BF', source: 'human', producer: 'user',
+        detectionKey: null, autoT0: null, confidence: null, createdByUserId: 'me',
+        t0: T(13, 10, 6), t1: T(13, 10, 21), meta: {} }),
   tag({ slug: 'incident', label: 'Incident', color: '#EF4444', source: 'human', producer: 'user',
         detectionKey: null, autoT0: null, confidence: null,
         note: 'Nearly over early — committee boat end, 8 seconds.',
@@ -203,10 +211,15 @@ const BATTEN_CARD = normaliseBattenCard({
 // onboard clips and a drone one as stretches of water, photos and a sail scan
 // as points.
 const DAY_MEDIA = mediaMarks({
+  // duration_ms, as the videos API actually returns it — the fixture used to
+  // say `duration` and so hid the bug that drew every real clip as a dot.
   videos: [
-    { id: 'v1', start_utc: new Date(T(11, 58)).toISOString(), duration: 240, title: 'Onboard start' },
-    { id: 'v2', start_utc: new Date(T(12, 18)).toISOString(), duration: 180, title: 'Onboard topmark' },
-    { id: 'v3', start_utc: new Date(T(12, 4)).toISOString(), duration: 150, title: 'DJI_20260911120400_0036_D' },
+    { id: 'v1', start_utc: new Date(T(11, 58)).toISOString(), duration_ms: 240_000, title: 'Onboard start' },
+    { id: 'v2', start_utc: new Date(T(12, 18)).toISOString(), duration_ms: 180_000, title: 'Onboard topmark' },
+    { id: 'v3', start_utc: new Date(T(12, 4)).toISOString(), duration_ms: 150_000, title: 'DJI_20260911120400_0036_D' },
+    // Shorter than the thinned track's own sampling: it has to bracket out to
+    // the samples either side rather than collapsing to a point.
+    { id: 'v4', start_utc: new Date(T(12, 10)).toISOString(), duration_ms: 25_000, title: 'Onboard short' },
   ],
   photos: [T(11, 52), T(12, 12), T(12, 23)].map((t, i) => ({ id: `p${i}`, taken_utc: new Date(t).toISOString() })),
   scans: [{ id: 's1', captured_at: new Date(T(11, 35)).toISOString(), conditions: { sail_code: 'M-2026' } }],

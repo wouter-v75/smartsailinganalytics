@@ -12,8 +12,15 @@
 // so does the trimmer, because neither can see what the other pressed. Same
 // double count, but a different question at the end of it — nobody's tag is
 // authoritative, so the answer is whose to keep rather than machine-or-human.
-// Both kinds go in one list because they are one problem to whoever is
-// clearing it; the rows ask differently.
+//
+// And it happens to ONE person: a glove on a wet screen, a press that did not
+// look like it registered, so they press again. That one is the easiest of the
+// three to answer and the easiest to miss, because both rows say the same
+// thing in the same handwriting — which is exactly why it has to be pointed
+// out rather than left to be noticed.
+//
+// All three go in one list because they are one problem to whoever is clearing
+// it; the rows ask differently.
 //
 // This CANNOT be prevented at sync time, and it is worth being clear why: the
 // sync's job is to reconcile detections against the rows it has already
@@ -44,8 +51,9 @@ export const DUPLICATE_WINDOW_MS = 30_000
 /**
  * 'crossed' — a person's tag against the machine's.
  * 'crew'    — two people, neither of whom could see what the other pressed.
+ * 'self'    — one person, twice, seconds apart.
  */
-export type DuplicateKind = 'crossed' | 'crew'
+export type DuplicateKind = 'crossed' | 'crew' | 'self'
 
 export interface DuplicatePair {
   /** Stable across reloads: the two ids, in a fixed order. */
@@ -53,9 +61,9 @@ export interface DuplicatePair {
   slug: string
   label: string
   kind: DuplicateKind
-  /** 'crossed': always the HUMAN one. 'crew': the earlier of the two. */
+  /** 'crossed': always the HUMAN one. Otherwise the EARLIER of the two. */
   a: TagEvent
-  /** 'crossed': always the DETECTION. 'crew': the later of the two. */
+  /** 'crossed': always the DETECTION. Otherwise the LATER of the two. */
   b: TagEvent
   /** How far apart they are, in ms. Always >= 0. */
   gapMs: number
@@ -94,9 +102,8 @@ const authorOf = (t: TagEvent): string | null =>
  * Greedy over BOTH kinds together, so the closest pairing wins whichever kind
  * it is rather than one kind being matched first and taking the good partners.
  *
- * Two tags from the SAME person are not a pair. A double press is not a
- * disagreement about what happened, and asking somebody which of their own two
- * identical tags to keep is not a question, it is a chore.
+ * Three kinds, one list: a person against the machine, two people, and one
+ * person twice. They are one problem to whoever is clearing them.
  */
 export function findDuplicates(
   tags: readonly TagEvent[],
@@ -119,12 +126,14 @@ export function findDuplicates(
       const yHuman = y.source === 'human'
 
       if (xHuman && yHuman) {
-        // Two people. Same person twice is a double press, not a disagreement.
         const ax = authorOf(x)
         const ay = authorOf(y)
-        if (!ax || !ay || ax === ay) continue
+        // Two hand-placed tags nobody signed could be one person twice or two
+        // people once, and the row has to say which. Guessing wrong means
+        // offering to delete somebody's only record of a moment.
+        if (!ax || !ay) continue
         const [a, b] = x.t0 <= y.t0 ? [x, y] : [y, x]
-        candidates.push({ gap, a, b, kind: 'crew' })
+        candidates.push({ gap, a, b, kind: ax === ay ? 'self' : 'crew' })
       } else if (xHuman !== yHuman) {
         // A person against the machine. The human side is always `a`, so the
         // row can ask "keep mine / keep the file's" without re-deriving it.

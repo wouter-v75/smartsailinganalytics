@@ -185,10 +185,9 @@ describe('two crew members tagging the same moment', () => {
     expect(d.gapMs).toBe(11_000)
   })
 
-  it('is NOT a pair when it is one person pressing twice', () => {
-    // A double press is not a disagreement about what happened. Asking somebody
-    // which of their own two identical tags to keep is a chore, not a question.
-    expect(findDuplicates([mine({ t0: T(12, 20) }), mine({ t0: T(12, 20, 4) })])).toEqual([])
+  it('is a different KIND from one person pressing twice', () => {
+    const [d] = findDuplicates([mine({ t0: T(12, 20) }), mine({ t0: T(12, 20, 4) })])
+    expect(d.kind).toBe('self')
   })
 
   it('reads a personal tag’s owner as its author', () => {
@@ -197,9 +196,9 @@ describe('two crew members tagging the same moment', () => {
     expect(findDuplicates([a, b])).toHaveLength(1)
   })
 
-  it('is not a pair when nobody knows who placed one of them', () => {
-    // Two anonymous hand-placed tags could be the same person twice, and
-    // guessing wrong means offering to delete somebody's only record of it.
+  it('is not a pair when nobody signed one of them', () => {
+    // An unsigned hand-placed tag could be this person again or somebody else,
+    // and the row has to say which — so it says nothing rather than guessing.
     const a = tag({ createdByUserId: null, ownerUserId: null, t0: T(12, 20) })
     const b = crewmate({ t0: T(12, 20, 5) })
     expect(findDuplicates([a, b])).toEqual([])
@@ -266,5 +265,58 @@ describe('a cluster clears one pair at a time', () => {
     expect(after).toHaveLength(1)
     expect(after[0].kind).toBe('crew')
     expect(after[0].a.id).toBe('me1')
+  })
+})
+
+describe('one person pressing twice', () => {
+  it('is a pair, earlier press first', () => {
+    // A glove on a wet screen, or a press that did not look like it registered.
+    const first = mine({ t0: T(12, 20) })
+    const second = mine({ t0: T(12, 20, 6) })
+    const [d] = findDuplicates([second, first])
+    expect(d.kind).toBe('self')
+    expect(d.a.id).toBe(first.id)
+    expect(d.b.id).toBe(second.id)
+    expect(d.gapMs).toBe(6000)
+  })
+
+  it('reads a personal tag’s owner as the same hand', () => {
+    const a = tag({ scope: 'personal', ownerUserId: 'me', createdByUserId: null, t0: T(12, 20) })
+    const b = tag({ scope: 'personal', ownerUserId: 'me', createdByUserId: null, t0: T(12, 20, 5) })
+    expect(findDuplicates([a, b])[0].kind).toBe('self')
+  })
+
+  it('is still bounded by the window', () => {
+    expect(findDuplicates([mine({ t0: T(12, 20) }), mine({ t0: T(12, 21) })])).toEqual([])
+  })
+
+  it('does not steal a partner from a closer pairing', () => {
+    // Matched on gap across all three kinds, so a two-second double press wins
+    // over a twenty-second crossed one.
+    const a = mine({ t0: T(12, 20) })
+    const a2 = mine({ t0: T(12, 20, 2) })
+    const auto = theirs({ t0: T(12, 20, 20) })
+    const out = findDuplicates([a, a2, auto])
+    expect(out).toHaveLength(1)
+    expect(out[0].kind).toBe('self')
+  })
+
+  it('can be accepted as two real moments like any other pair', () => {
+    // Two tacks twenty seconds apart by the same person is a real thing.
+    const b = mine({ id: 'bbb', t0: T(12, 20, 20) })
+    const a = mine({ id: 'aaa', t0: T(12, 20), meta: { dupOkWith: ['bbb'] } })
+    expect(findDuplicates([a, b])).toEqual([])
+  })
+
+  it('all three kinds can appear on one day', () => {
+    const out = findDuplicates([
+      // self, at noon
+      mine({ t0: T(12, 0) }), mine({ t0: T(12, 0, 3) }),
+      // crew, at half past
+      mine({ t0: T(12, 30) }), crewmate({ t0: T(12, 30, 5) }),
+      // crossed, at one
+      mine({ t0: T(13, 0) }), theirs({ t0: T(13, 0, 7) }),
+    ])
+    expect(out.map((d) => d.kind)).toEqual(['self', 'crew', 'crossed'])
   })
 })

@@ -100,3 +100,31 @@ describe('isDroneClip still reads the name', () => {
     expect(isDroneClip({ title: '20260904 133735' })).toBe(false)
   })
 })
+
+describe('a clip’s length, whichever field carries it', () => {
+  const start = iso(T(12, 0))
+
+  it('reads the videos API’s duration_ms', () => {
+    // The field the route actually returns. Reading only `duration` gave every
+    // real clip a length of zero and drew it on the track as a dot.
+    const [m] = mediaMarks({ videos: [{ id: 'v1', start_utc: start, duration_ms: 120_000 }] })
+    expect(m.t1 - m.t0).toBe(120_000)
+  })
+
+  it('reads the analytics client’s duration, in seconds', () => {
+    const [m] = mediaMarks({ videos: [{ id: 'v1', start_utc: start, duration: 120 }] })
+    expect(m.t1 - m.t0).toBe(120_000)
+  })
+
+  it('prefers the millisecond field when a row carries both', () => {
+    const [m] = mediaMarks({ videos: [{ id: 'v1', start_utc: start, duration_ms: 90_000, duration: 120 }] })
+    expect(m.t1 - m.t0).toBe(90_000)
+  })
+
+  it('is an instant when nothing says how long', () => {
+    for (const bad of [null, undefined, 0, -5, 'two minutes']) {
+      const [m] = mediaMarks({ videos: [{ id: 'v1', start_utc: start, duration_ms: bad }] })
+      expect(m.t1).toBe(m.t0)
+    }
+  })
+})

@@ -13,13 +13,17 @@ import type { TagEvent } from '@/lib/tagging/types'
 // detection is real, and this asks which of two real ones to keep. Left alone
 // it quietly doubles a count that a debrief will be argued over.
 //
-// TWO SHAPES of the same problem, and the row asks each differently:
+// THREE SHAPES of the same problem, and the row asks each differently:
 //
 //   crossed  you tagged it, and then the event file brought its own. One side
 //            is a person and one is a machine, so "keep mine" means something.
 //   crew     two people tagged it, neither able to see what the other pressed.
 //            Nobody's is authoritative, so the row asks by NAME — and names are
 //            the whole reason it can ask at all.
+//   self     one person pressed twice: a glove on a wet screen, or a press that
+//            did not look like it registered. Both rows say the same thing in
+//            the same handwriting, so only the CLOCK tells them apart — which
+//            is why the row numbers them rather than naming them.
 //
 // THREE answers in both cases. "Keep both" exists because thirty seconds of
 // evidence cannot tell a duplicate from two roundings taken tightly, and a list
@@ -58,7 +62,18 @@ export default function DuplicateList({
     try { await fn() } finally { setBusy(null) }
   }
 
-  const crew = pairs.filter((p) => p.kind === 'crew').length
+  // One sentence per kind while the list is all of one kind; a general one
+  // otherwise. Enumerating the combinations would produce a sentence nobody
+  // reads twice.
+  const kinds = new Set(pairs.map((p) => p.kind))
+  const blurb =
+    kinds.size > 1
+      ? 'The same moment tagged twice. Keeping both would count it twice.'
+      : kinds.has('crew')
+        ? 'Two of you tagged the same moment. Keeping both would count it twice.'
+        : kinds.has('self')
+          ? 'Tagged twice, seconds apart — most likely one press that did not look like it registered.'
+          : 'You tagged these on the water and the event file brought its own. Keeping both would count the moment twice.'
 
   return (
     <section className="border-b border-[color:var(--border)] bg-warning-bg/30 p-3">
@@ -66,13 +81,7 @@ export default function DuplicateList({
         <Copy size={15} className="shrink-0 text-warning" aria-hidden />
         <h2 className="text-sm font-semibold">{pairs.length} tagged twice</h2>
       </header>
-      <p className="mb-3 text-xs text-secondary">
-        {crew === pairs.length
-          ? 'Two of you tagged the same moment. Keeping both would count it twice.'
-          : crew > 0
-            ? 'The same moment tagged twice — by two of you, or by you and the event file. Keeping both would count it twice.'
-            : 'You tagged these on the water and the event file brought its own. Keeping both would count the moment twice.'}
-      </p>
+      <p className="mb-3 text-xs text-secondary">{blurb}</p>
 
       <ul className="flex flex-col gap-2">
         {pairs.map((p) => {
@@ -95,20 +104,26 @@ export default function DuplicateList({
               </div>
 
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <Side tag={p.a} who={who(p.a)} tzOffsetMin={tzOffsetMin} onOpen={onOpen} />
-                <Side tag={p.b} who={who(p.b)} tzOffsetMin={tzOffsetMin} onOpen={onOpen} />
+                <Side
+                  tag={p.a} who={who(p.a)} tzOffsetMin={tzOffsetMin} onOpen={onOpen}
+                  ordinal={p.kind === 'self' ? 'First press' : null}
+                />
+                <Side
+                  tag={p.b} who={who(p.b)} tzOffsetMin={tzOffsetMin} onOpen={onOpen}
+                  ordinal={p.kind === 'self' ? 'Second press' : null}
+                />
               </div>
 
               <div className="mt-2 flex flex-wrap gap-2">
                 <Keep
-                  label={p.kind === 'crossed' ? 'Keep mine' : `Keep ${shortOf(who(p.a))}`}
+                  label={keepLabel(p, 'a', who)}
                   primary
                   allowed={may(p.b)}
                   busy={working}
                   onClick={() => act(p, () => onDrop(p, p.b))}
                 />
                 <Keep
-                  label={p.kind === 'crossed' ? 'Keep the file’s' : `Keep ${shortOf(who(p.b))}`}
+                  label={keepLabel(p, 'b', who)}
                   allowed={may(p.a)}
                   busy={working}
                   onClick={() => act(p, () => onDrop(p, p.a))}
@@ -144,6 +159,18 @@ export default function DuplicateList({
       </ul>
     </section>
   )
+}
+
+/** What the button keeping one side should say. A self pair has no name and no
+ *  machine to point at — only a clock — so it counts instead. */
+function keepLabel(
+  p: DuplicatePair,
+  side: 'a' | 'b',
+  who: (t: TagEvent) => string
+): string {
+  if (p.kind === 'self') return side === 'a' ? 'Keep the first' : 'Keep the second'
+  if (p.kind === 'crossed') return side === 'a' ? 'Keep mine' : 'Keep the file’s'
+  return `Keep ${shortOf(who(side === 'a' ? p.a : p.b))}`
 }
 
 /** "Sam tagged it" → "Sam’s". The button has room for a name, not a sentence. */
@@ -185,12 +212,14 @@ function Keep({
  *  The requests and the reel place matter — they are what is lost by choosing
  *  the other one, and nobody should have to find that out afterwards. */
 function Side({
-  tag, who, tzOffsetMin, onOpen,
+  tag, who, tzOffsetMin, onOpen, ordinal,
 }: {
   tag: TagEvent
   who: string
   tzOffsetMin: number
   onOpen?: (tagId: string) => void
+  /** "First press" / "Second press", when both sides are the same hand. */
+  ordinal?: string | null
 }) {
   const extras: string[] = []
   if (tag.note) extras.push('has a note')
@@ -209,7 +238,7 @@ function Side({
     >
       <span className="flex items-center gap-1.5 text-[11px] font-semibold text-secondary">
         {tag.source === 'human' ? <User size={13} aria-hidden /> : <Cpu size={13} aria-hidden />}
-        {who}
+        {ordinal || who}
       </span>
       <span className="mt-0.5 block font-mono text-xs">{sessionClock(tag.t0, tzOffsetMin)}</span>
       {extras.length > 0 && (

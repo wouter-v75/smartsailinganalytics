@@ -150,10 +150,29 @@ describe('segmentPath — what a clip covers', () => {
     expect(segmentPath(pts, -1e12, 1e12)).toBe('M0.0 0.0L10.0 1.0L20.0 2.0L30.0 3.0L40.0 4.0')
   })
 
-  it('is empty for a clip shorter than the track’s own resolution', () => {
-    // One point is not a line; the caller draws a dot instead.
+  it('is empty for an INSTANT, which is honestly a point', () => {
     expect(segmentPath(pts, 2000, 2000)).toBe('')
+  })
+
+  it('is empty past the end of the track', () => {
     expect(segmentPath(pts, 5500, 6000)).toBe('')
+  })
+
+  it('brackets a clip shorter than the track’s own resolution', () => {
+    // A day thinned to 1200 points is sampled every fifteen or twenty seconds,
+    // so a forty-second clip can contain ONE drawn point. Drawing it as a dot
+    // would say the camera recorded an instant — the one thing it did not.
+    const out = segmentPath(pts, 1900, 2100)
+    expect(out).toBe('M0.0 0.0L10.0 1.0L20.0 2.0')
+  })
+
+  it('brackets a clip that falls entirely between two samples', () => {
+    // The boat really did cover that water while the camera was running.
+    expect(segmentPath(pts, 2100, 2900)).toBe('M10.0 1.0L20.0 2.0')
+  })
+
+  it('does not bracket outwards when the window already lines up', () => {
+    expect(segmentPath(pts, 2000, 4000)).toBe('M10.0 1.0L20.0 2.0L30.0 3.0')
   })
 
   it('is empty rather than NaN for a window that is not a window', () => {

@@ -194,9 +194,15 @@ export function rowsBetween<T extends GeoRow>(
  * filmed" is a question about a window — so it is drawn as a length of water
  * rather than as a dot on the spot the camera happened to start.
  *
- * Returns '' when the window contains fewer than two drawn points: that is a
- * clip shorter than the track's own resolution, and a one-point path renders as
- * nothing anyway. Callers fall back to a dot.
+ * BRACKETED when the window is shorter than the track's own resolution. A day
+ * thinned to 1200 points is sampled every fifteen or twenty seconds, so a
+ * forty-second clip can easily contain one drawn point or none — and drawing
+ * such a clip as a dot says the camera recorded an instant, which is the one
+ * thing it did not. The nearest sample either side is included instead: the
+ * boat really did cover that water while the camera was running.
+ *
+ * Still '' for a window of ZERO length. That is an instant, and an instant is
+ * honestly a point; the caller draws one.
  */
 export function segmentPath(
   points: readonly TrackPoint[],
@@ -206,15 +212,37 @@ export function segmentPath(
   if (!isNum(t0) || !isNum(t1)) return ''
   const from = Math.min(t0, t1)
   const to = Math.max(t0, t1)
-  let path = ''
-  let n = 0
-  for (const p of points) {
-    if (p.utc < from) continue
-    if (p.utc > to) break
-    path += `${n ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`
-    n++
+  if (to <= from) return ''
+
+  let lo = -1
+  let hi = -1
+  for (let i = 0; i < points.length; i++) {
+    const u = points[i].utc
+    if (u >= from && u <= to) {
+      if (lo < 0) lo = i
+      hi = i
+    }
   }
-  return n > 1 ? path : ''
+
+  if (lo < 0) {
+    // Nothing inside at all: the whole clip fell between two samples.
+    for (let i = 0; i < points.length; i++) {
+      if (points[i].utc <= from) lo = i
+      if (points[i].utc >= to) { hi = i; break }
+    }
+    if (lo < 0 || hi < 0 || hi <= lo) return ''
+  } else {
+    // One or more inside; reach out to the samples that bracket it, so a short
+    // clip is still a length of water rather than a single vertex.
+    if (lo > 0 && points[lo].utc > from) lo -= 1
+    if (hi < points.length - 1 && points[hi].utc < to) hi += 1
+  }
+
+  let path = ''
+  for (let i = lo; i <= hi; i++) {
+    path += `${i === lo ? 'M' : 'L'}${points[i].x.toFixed(1)} ${points[i].y.toFixed(1)}`
+  }
+  return hi > lo ? path : ''
 }
 
 /**
