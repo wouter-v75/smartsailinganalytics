@@ -164,3 +164,195 @@ grouped and compared.
 - Two-boat testing — https://sailzing.com/two-boat-testing/ and https://www.sailingworld.com/how-to/speed-test-your-way-to-the-top/
 - Teamworks AMS — https://intuitionlabs.ai/software/sports-medicine-athletic-training/team-and-athlete-management/teamworks-ams
 - Kitman Labs — https://www.kitmanlabs.com/platform/sports-data-integration-api/
+
+---
+
+# Part 2 — merging auto detections with manual tags
+
+The goal is to automate as much as possible: tacks, gybes, starts, top and bottom
+mark roundings detected from the data, with the crew's manual tags reconciled
+against them. This part is about the reconciliation, which is the hard half.
+
+## 10. What SSA already detects
+
+Worth stating plainly, because the tagger should consume this rather than
+re-implement it:
+
+| Detection | Where | How |
+| --- | --- | --- |
+| Tacks / gybes | `src/lib/manoeuvres.ts` | event file's `<tackjibe>` first; **TWA sign flips above 6 kn BSP** as the fallback (`detectFromLog`), 20 s debounce, upwind-both-sides → tack, downwind-both-sides → gybe |
+| Manoeuvre KPIs | `src/lib/manoeuvres.ts` | BSP before/after, time to 95 %, turn angle, distance lost, max rotation — fitted against KND's own tables |
+| Mark roundings | `src/lib/xmlEventParse.js` | event file's `<markrounding>`, `istopmark` → top vs leeward gate |
+| Race starts | `src/lib/xmlEventParse.js` | `RaceStartGun` events |
+| Start quality | `src/lib/startAnalysis.ts` | distance-to-line, run-in, OCS bands |
+| Phases | `src/lib/xmlEventParse.js` + `phaseStats.ts` | event file's 30 s `<phase>` blocks |
+
+**The gaps**: mark roundings and race starts exist ONLY if the event file has
+them. There is no log-based mark-rounding detector (sustained heading change +
+proximity), no log-based start detection (the line is known from
+`startLines` — a distance-to-line zero crossing at the gun is derivable), and no
+leg detection from true wind direction. Njord names TWD as "the key that unlocks
+leg detection, manoeuvre analysis and VMG", and a published technique for leg
+boundaries is principal-axis projection of the track plus reversal detection.
+
+## 11. The human's job is VERIFICATION, not creation
+
+The consistent finding across every mature annotation platform (CVAT, Label
+Studio) is that AI-assisted pre-annotation "shifts the human task from creation
+to verification" — predictions are rendered as *editable regions*, and the
+operator's work is accepting, correcting and rejecting them.
+
+This is the frame for the whole tagger: the detections are a **proposal layer**.
+The crew's job is to confirm, nudge, reject and add what the detector missed.
+
+## 12. Snap-to-event: snap BACKWARDS, not to the nearest
+
+The single most useful primary source found. US 8,805,929 ("Event-driven
+annotation techniques") describes a *snap-to-event manager* that
+
+> selects an event from detected events that is of the user-specified type and
+> occurs **prior to and closest to** the time associated with the signal received
+> from the annotating interface
+
+Two details matter enormously and are easy to get wrong:
+
+1. **Direction.** Snap to the detection *before* the click, not the nearest in
+   either direction. A human always presses late — they have to see the thing,
+   recognise it, and find the button. Reaction-time literature makes the same
+   point: using "nearest" can pair a stimulus with a key press that happened
+   *before* it, which is causally impossible.
+2. **Anchor.** A detection is a window, not an instant. The snap can target its
+   start, middle or end, and which one is right depends on the tag ("tack" wants
+   the entry; "recovered" wants the exit).
+
+So the snap window is **asymmetric**: generous backwards (the crew press late),
+tight forwards (they only click early when scrubbing a recording).
+
+## 13. Snapping conventions to inherit from editors
+
+Final Cut Pro, DaVinci Resolve, Vegas and the DAWs have converged on a set of
+behaviours people already know:
+
+- **A snap radius.** Outside it, nothing snaps — the human meant something else.
+- **Visual feedback.** A line showing exactly what is being snapped to, drawn as
+  you drag.
+- **Hold a key to suspend snapping** (Shift in Vegas, N in Resolve) so precise
+  placement is always available without a trip to a settings menu.
+- **Tab to transient** (Pro Tools, Cakewalk): a keyboard shortcut that jumps the
+  cursor to the next/previous *detected* feature. For SSA: jump to the next
+  manoeuvre, mark or phase edge.
+- **Quantize strength / iterative quantize.** Partial snap — 50 % strength moves a
+  note 40 ms late to 20 ms late — repeatable until it sits right. This matters for
+  a *bulk* "tidy every tag in this race": full-strength bulk snapping yanks
+  outliers across the timeline, whereas partial strength converges safely.
+
+## 14. Refining vs substituting overrides
+
+From the Collaborative Human-Agent Protocol work, a distinction that turns out to
+be exactly the right taxonomy for tag edits:
+
+- a **refining override** reaches the right decision the wrong way — the detector
+  found a real tack, the human moves it 4 s. Keep the detection, adjust it.
+- a **substituting override** reaches a different decision — the detector's "tack"
+  was a luff. Suppress it.
+
+And the recommendation for what an override should persist: *the base snapshot,
+the structured diff, the resulting artefact, the reviewer, the rationale, and the
+timestamp.* For SSA that is: `auto_t0` (where the detector put it), `t0` (where it
+sits now), who moved it, when, and why.
+
+## 15. A rejected detection must stay rejected — tombstones
+
+The corollary nobody writes down but everyone needs: if a human deletes an auto
+tag and the detector runs again, the tag must not come back. Deleting an auto row
+has to leave a **tombstone** keyed to the detection's identity, which the next
+derivation consults before inserting.
+
+Without it the crew fight the tool, and stop trusting it — the exact failure mode
+`src/lib/localStore.js` already documents for video tags, where an over-eager
+auto-tag detector "quietly wiped" manual tags on every enrich pass "so tag edits
+never persisted across refreshes".
+
+## 16. Identity must be stable under re-derivation
+
+This is the mechanical prerequisite for everything above, and SSA currently has a
+hazard here. `src/lib/timeline/buildNodes.ts` builds node ids as
+
+```
+nid(boatId, date, 'race', raceNum, kind, x.utc)   // ← the millisecond is IN the id
+```
+
+and `/api/teams/[teamId]/timeline` upserts on that id. So a re-parse that shifts
+timings at all — a corrected timezone offset, a re-exported event file, the log
+fallback standing in for the event file — mints a NEW id for the same physical
+manoeuvre. The old row is not updated and not removed; it is orphaned, and the
+day quietly accumulates duplicate tacks.
+
+Identity for a detection therefore has to be **ordinal, not temporal**:
+`boat:date:race2:tack:3` — "the third tack of race 2" — which survives the
+detector moving it by a second. Time becomes an attribute, not the key.
+
+## 17. Triage by confidence
+
+Semi-automated scoring in polysomnography is reported to reduce scoring time
+while maintaining or improving agreement with expert consensus specifically by
+"allowing clinicians to focus on difficult or ambiguous segments".
+
+So detections should carry a confidence, and the review UI should sort by it: a
+clean 95°-turn tack with a textbook speed trace needs no human; a 40° wobble at
+5 kn in a gap in the log is what the crew should be looking at.
+
+## 18. Forced alignment is the general form of the nudge
+
+Speech forced alignment (Montreal Forced Aligner and successors) solves: *given a
+known sequence of labels and a signal, find the optimal time boundaries*, via
+Viterbi/dynamic programming over frame-level probabilities, optionally with
+boundary probabilities folded in to sharpen the edges.
+
+The single-tag nudge is the greedy, one-label case of this. The bulk case — "align
+every tag in this race to the data" — is the real thing: a human tag sequence
+(start, tack, tack, topmark, gybe, gate) against a detection sequence, aligned
+globally rather than each tag grabbing its own nearest candidate independently.
+Global alignment cannot produce the crossings and double-bookings that greedy
+per-tag snapping can.
+
+## 19. The nudge, concretely
+
+```
+snapTag(tag, detections, opts)
+  candidates = detections
+      .filter(kind compatible with tag)             // tack tag ↔ tack detection
+      .filter(t0 - backMs <= d.t <= t0 + fwdMs)     // ASYMMETRIC: back 30 s, fwd 5 s
+  if empty  -> do nothing, and SAY why ("no tack found within 30 s")
+  score     = kindMatch·w1 + recencyBefore·w2 + detectorConfidence·w3
+  best      = argmax score
+  Δ         = anchor(best, tag.anchorPref) - tag.t0
+  move t0 by Δ; for a range tag move t1 by Δ too (preserve duration),
+      unless both edges have their own candidates, in which case snap each edge
+  record    { auto_t0: best.t, snapped_by, snapped_at, detection_id, method }
+```
+
+Range tags snap each edge to a *boundary* (manoeuvre entry/exit, phase edge, leg
+edge), not to a point; a "line-up" range wants its edges on the straight-line
+segment, not on the tack that started it.
+
+## 20. Where this lands against Njord and KND
+
+Read only from public material, so treat as the shape of the gap rather than a
+feature-by-feature audit:
+
+- **Njord Analytics** automates the timeline well — legs colour-coded, tacks and
+  gybes marked, races and legs labelled and detected with no configuration. Its
+  *human* layer is comments: "your own on-water comments appear as markers", with
+  a comment view in the Player as a "debrief storyline". Rich detection, thin and
+  ungoverned annotation.
+- **KND SailingPerf** automates phases through LogCleaner → RaceReplay, and is the
+  reference for phase-based reporting (SSA already reproduces its tables). It is a
+  desktop analyst pipeline, not a crew-facing tagging surface.
+
+Neither appears to offer what this tagger is for: a **governed, multi-user
+annotation layer** — role- and section-scoped, with personal notes that stay
+private — that is *merged* with the detections rather than sitting beside them.
+The step up is not better detection. It is that a bowman's tag, a coach's tag and
+the detector's tack end up on one reconciled timeline, with provenance, and the
+whole thing exports.
