@@ -9,11 +9,19 @@
 //       list is marked retired (manual sails are left untouched). Nothing is
 //       ever deleted.
 //
+// Matching is by nameKey — trimmed and lower-cased — and by the ALIASES a crew
+// has linked to a sail in the tagger. Both matter for the same reason: an event
+// file's spelling of a sail is not under anybody's control. Matching on the raw
+// string made "J2 " a second J2, and made the next upload of a file saying
+// "J4_A 2026" insert a sail the crew had already said was J4_A_2026 — undoing
+// the link, silently, every time the file was re-read.
+//
 // sailType / sailGroup / weightKg are kept under `specs` (no schema change).
 // RLS gates writes to the TL3+ leadership set via the user's server session.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../../lib/supabase/server'
+import { planSailImport } from '../../../../../../lib/sailImport'
 
 const SELECT =
   'id,boat_id,name,kind,category,sailmaker,build_date,retired,certificate_key,certificate_name,specs,updated_at'
@@ -41,44 +49,46 @@ export async function POST(req: NextRequest, { params }: { params: { teamId: str
     .eq('team_id', params.teamId)
     .eq('boat_id', boatId)
   if (exErr) return NextResponse.json({ error: exErr.message }, { status: 500 })
-  const byName = new Map<string, any>((existing || []).map((s) => [s.name, s]))
-  const incomingNames = new Set<string>()
+  // Who matches what, and what the file no longer mentions — in lib/sailImport,
+  // where it is under test, because getting it wrong retires a sail locker.
+  const plan = planSailImport(existing || [], incoming, { reconcile: body?.reconcile !== false })
 
-  const toInsert: any[] = []
+  const specsOf = (s: any) => ({
+    sail_type: s?.sailType ?? null,
+    sail_group: s?.sailGroup ?? null,
+    weight_kg: typeof s?.weightKg === 'number' ? s.weightKg : null,
+    source: 'event-file',
+  })
+  const kindOf = (s: any) => (KINDS.has(s?.kind) ? s.kind : 'other')
+
   let updated = 0
-  for (const s of incoming) {
-    const name = String(s?.name || '').trim()
-    if (!name) continue
-    incomingNames.add(name)
-    const kind = KINDS.has(s?.kind) ? s.kind : 'other'
-    const specsPatch = {
-      sail_type: s?.sailType ?? null,
-      sail_group: s?.sailGroup ?? null,
-      weight_kg: typeof s?.weightKg === 'number' ? s.weightKg : null,
-      source: 'event-file',
-    }
-    const found = byName.get(name)
-    if (found) {
-      // In the list ⇒ current inventory ⇒ active again (un-retire if needed).
-      const { error } = await supabase
-        .from('sails')
-        .update({ kind, category: found.category || categoryFromName(name), retired: false, specs: { ...(found.specs || {}), ...specsPatch } })
-        .eq('id', found.id)
-        .eq('team_id', params.teamId)
-      if (!error) updated++
-    } else {
-      toInsert.push({
-        team_id: params.teamId,
-        boat_id: boatId,
-        name,
-        kind,
-        category: categoryFromName(name),
+  for (const { sail, incoming: row } of plan.update) {
+    // In the list ⇒ current inventory ⇒ active again (un-retire if needed).
+    // The spread keeps everything else in the bag — the design shapes, and the
+    // aliases that are how this sail was matched in the first place.
+    const { error } = await supabase
+      .from('sails')
+      .update({
+        kind: kindOf(row),
+        category: (sail as any).category || categoryFromName(sail.name),
         retired: false,
-        specs: specsPatch,
-        created_by_user_id: user.id,
+        specs: { ...(sail.specs || {}), ...specsOf(row) },
       })
-    }
+      .eq('id', sail.id)
+      .eq('team_id', params.teamId)
+    if (!error) updated++
   }
+
+  const toInsert = plan.insert.map(({ name, incoming: row }) => ({
+    team_id: params.teamId,
+    boat_id: boatId,
+    name,
+    kind: kindOf(row),
+    category: categoryFromName(name),
+    retired: false,
+    specs: specsOf(row),
+    created_by_user_id: user.id,
+  }))
 
   let inserted = 0
   if (toInsert.length) {
@@ -91,18 +101,13 @@ export async function POST(req: NextRequest, { params }: { params: { teamId: str
   // list is retired (not deleted). Manually-added sails (no event-file source)
   // are left alone so the inventory file doesn't wipe hand-entered tags.
   let retired = 0
-  if (body?.reconcile !== false) {
-    const toRetire = (existing || []).filter(
-      (s) => !incomingNames.has(s.name) && !s.retired && s?.specs?.source === 'event-file'
-    )
-    for (const s of toRetire) {
-      const { error } = await supabase
-        .from('sails')
-        .update({ retired: true })
-        .eq('id', s.id)
-        .eq('team_id', params.teamId)
-      if (!error) retired++
-    }
+  for (const s of plan.retire) {
+    const { error } = await supabase
+      .from('sails')
+      .update({ retired: true })
+      .eq('id', s.id)
+      .eq('team_id', params.teamId)
+    if (!error) retired++
   }
 
   const { data: sails } = await supabase

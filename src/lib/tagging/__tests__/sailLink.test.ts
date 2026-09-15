@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   nameKey, sailLinks, sailNamesIn, missingFromInventory, linkRef, linkDay, sailsToCreate,
+  looseKey, suggestLink, withAlias, type LinkableSail,
 } from '../sailLink'
 import { SAIL_CHANGE_SLUG, sailStateAt, type SailRef } from '../sailState'
 import type { TagEvent } from '../types'
@@ -169,5 +170,86 @@ describe('sailsToCreate', () => {
 
   it('drops anything that is not a name', () => {
     expect(sailsToCreate(['', '   '])).toEqual([])
+  })
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Linking a file's spelling to a sail that already exists.
+//
+// Reported from the boat: the event file said "J4_A 2026" and the inventory
+// held "J4_A_2026". Adding it would have given the boat two J4_As, the one the
+// file points at having no weight, no batten card and no scans.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const REAL: LinkableSail[] = [
+  { id: 'i1', name: 'MAIN_B 2026' },
+  { id: 'i2', name: 'J4_A_2026' },
+  { id: 'i3', name: 'J1.5_B 2026' },
+]
+
+describe('looseKey', () => {
+  it('sees through the punctuation an event file gets wrong', () => {
+    expect(looseKey('J4_A 2026')).toBe(looseKey('J4_A_2026'))
+    expect(looseKey('J-1')).toBe('j1')
+  })
+
+  it('still tells two different sails apart', () => {
+    expect(looseKey('J1')).not.toBe(looseKey('J2'))
+    expect(looseKey('J4_A_2026')).not.toBe(looseKey('J4_B_2026'))
+  })
+})
+
+describe('suggestLink', () => {
+  it('offers the sail a mis-punctuated name means', () => {
+    expect(suggestLink('J4_A 2026', REAL)).toEqual({ id: 'i2', name: 'J4_A_2026' })
+  })
+
+  it('offers nothing for a name that is genuinely new', () => {
+    expect(suggestLink('A4', REAL)).toBeNull()
+  })
+
+  it('offers nothing when two sails would both fit', () => {
+    // A wrong link is invisible afterwards — the tag reads correctly and points
+    // at another sail's weight and battens. No answer beats a coin toss.
+    const twins: LinkableSail[] = [{ id: 'a', name: 'J4 A 2026' }, { id: 'b', name: 'J4-A-2026' }]
+    expect(suggestLink('J4_A_2026', twins)).toBeNull()
+  })
+})
+
+describe('withAlias', () => {
+  it('adds the file’s spelling, keeping the ones already there', () => {
+    expect(withAlias({ id: 'i2', name: 'J4_A_2026', aliases: ['J4A'] }, 'J4_A 2026'))
+      .toEqual(['J4A', 'J4_A 2026'])
+  })
+
+  it('says there is nothing to save when the name already resolves', () => {
+    expect(withAlias({ id: 'i2', name: 'J4_A_2026' }, ' j4_a_2026 ')).toBeNull()
+    expect(withAlias({ id: 'i2', name: 'J4_A_2026', aliases: ['J4_A 2026'] }, 'J4_A 2026')).toBeNull()
+    expect(withAlias({ id: 'i2', name: 'J4_A_2026' }, '   ')).toBeNull()
+  })
+})
+
+describe('an alias, once saved', () => {
+  const linked: LinkableSail[] = [
+    REAL[0], { ...REAL[1], aliases: ['J4_A 2026'] }, REAL[2],
+  ]
+  const day = [fromFile(['MAIN_B 2026', 'J4_A 2026'], { t0: T(12, 51), t1: T(12, 51) })]
+
+  it('takes the name off the missing list', () => {
+    expect(missingFromInventory(day, REAL)).toEqual(['J4_A 2026'])
+    expect(missingFromInventory(day, linked)).toEqual([])
+  })
+
+  it('resolves the file’s spelling to the real sail, id and all', () => {
+    const up = sailStateAt(linkDay(day, linked), T(13, 0)).up
+    expect(up).toEqual([{ id: 'i1', name: 'MAIN_B 2026' }, { id: 'i2', name: 'J4_A_2026' }])
+  })
+
+  it('never beats a sail’s own name', () => {
+    // Somebody aliased "J4" onto the J4_A, and later the boat's real J4 was
+    // added. The real one wins, or a tag silently changes meaning.
+    const both: LinkableSail[] = [{ id: 'i2', name: 'J4_A_2026', aliases: ['J4'] }, { id: 'i9', name: 'J4' }]
+    expect(sailLinks(both).get('j4')).toEqual({ id: 'i9', name: 'J4' })
   })
 })

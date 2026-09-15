@@ -8,6 +8,7 @@ import {
   stateIsEmpty, stateOf, EMPTY_SAIL_STATE, type SailState, type SailRef,
 } from '@/lib/tagging/sailState'
 import { cardForSail, type BattenCard, type SailBattenCard } from '@/lib/battens'
+import type { LinkableSail } from '@/lib/tagging/sailLink'
 import type { TagDef, TagEvent } from '@/lib/tagging/types'
 
 // Everything the sail-change composer needs, fetched once per boat/day and
@@ -18,7 +19,9 @@ import type { TagDef, TagEvent } from '@/lib/tagging/types'
 // givable fixture data and screenshotted without a session.
 
 export interface SailContext {
-  inventory: SailRef[]
+  /** The boat's sails, each carrying whatever other names files have used for
+   *  it — so a link made once keeps resolving. */
+  inventory: LinkableSail[]
   /** Kg per inventory id, from the event file's sail list (sails.specs). */
   weights: Record<string, number>
   /** The day's sail list — everything that went on the water, RIB included. */
@@ -39,7 +42,7 @@ export function useSailContext(
   boatId?: string | null,
   date?: string | null
 ): SailContext {
-  const [inventory, setInventory] = React.useState<SailRef[]>([])
+  const [inventory, setInventory] = React.useState<LinkableSail[]>([])
   const [mainsailIds, setMainsailIds] = React.useState<string[]>([])
   const [dayList, setDayList] = React.useState<SailRef[]>([])
   const [weights, setWeights] = React.useState<Record<string, number>>({})
@@ -63,7 +66,16 @@ export function useSailContext(
     ]).then(([sails, battens]) => {
       if (!live) return
       const active = (sails?.sails || []).filter((s: { retired?: boolean }) => !s.retired)
-      setInventory(active.map((s: { id: string; name: string }) => ({ id: s.id, name: s.name })))
+      setInventory(
+        active.map((s: { id: string; name: string; specs?: { aliases?: unknown } }) => ({
+          id: s.id,
+          name: s.name,
+          // Other spellings this sail answers to, set when somebody linked an
+          // event file's name to it rather than adding a second sail.
+          aliases: (Array.isArray(s.specs?.aliases) ? s.specs!.aliases : [])
+            .filter((a: unknown) => typeof a === 'string' && a.trim()) as string[],
+        }))
+      )
       setMainsailIds(
         active.filter((s: { kind?: string }) => s.kind === 'mainsail').map((s: { id: string }) => s.id)
       )

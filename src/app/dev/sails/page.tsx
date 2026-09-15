@@ -20,6 +20,8 @@ const SAILS = [
     id: 's1', name: 'MAIN_2026', category: 'MAIN', kind: 'mainsail', build_date: '2026-01-15',
     retired: false,
     specs: { sail_type: 'Mainsail', sail_group: 'M', weight_kg: 116.6, source: 'event-file',
+             // A name an event file used for this sail, linked from the tagger.
+             aliases: ['MAIN_B 2026'],
              design_shapes: { conditions: [{ tws: 8 }, { tws: 14 }, { tws: 20 }] } },
   },
   {

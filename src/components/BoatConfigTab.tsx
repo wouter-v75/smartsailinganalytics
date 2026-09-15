@@ -2241,6 +2241,9 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
   const sailGroupText = spec.sail_group || '—'
   const weightText = spec.weight_kg != null ? fmt(spec.weight_kg, 1) : '—'
   const nDesign = Array.isArray(spec.design_shapes?.conditions) ? spec.design_shapes.conditions.length : 0
+  const aliases: string[] = Array.isArray(spec.aliases)
+    ? spec.aliases.filter((a: unknown) => typeof a === 'string' && a.trim())
+    : []
 
   if (editing) {
     return (
@@ -2313,7 +2316,41 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
     // them is how a sail comes back.
     <tr style={{ opacity: sail.retired ? 0.75 : 1 }}>
       <td style={{ ...td, fontWeight: 700, color: '#06B6D4' }}>{sail.category || '—'}</td>
-      <td style={td}>{sail.name}</td>
+      <td style={td}>
+        {sail.name}
+        {/* Other names event files have used for this sail, set from the tagger
+            when somebody linked a file's spelling here rather than adding a
+            second sail. Shown because a link made in one place and undoable in
+            none is a one-way door: "J4_A 2026" pointed at the wrong sail reads
+            perfectly and is wrong everywhere. */}
+        {aliases.length > 0 && (
+          <div style={{ marginTop: 3, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {aliases.map((a: string) => (
+              <span
+                key={a}
+                title={`Event files calling this sail “${a}” mean this one`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  background: '#0F2A45', border: `1px solid ${C.border}`, borderRadius: 5,
+                  fontSize: 10, color: '#8A97A9', padding: '1px 5px', fontFamily: 'ui-monospace, monospace',
+                }}
+              >
+                {a}
+                {canEdit && (
+                  <button
+                    onClick={() => onPatch({ specs: { aliases: aliases.filter((x: string) => x !== a) } })}
+                    disabled={busy}
+                    title={`Stop linking “${a}” to this sail`}
+                    style={{ background: 'none', border: 'none', color: '#8A97A9', cursor: 'pointer', fontSize: 11, lineHeight: 1, padding: 0 }}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+      </td>
       <td style={{ ...td, color: sail.kind === 'mainsail' ? '#2DD4BF' : undefined, fontWeight: sail.kind === 'mainsail' ? 700 : undefined }}>
         {sail.kind || '—'}
       </td>

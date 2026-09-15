@@ -9,7 +9,10 @@ import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder, GRAB_VIDEO_SLUG, grabMediaKind } from '@/lib/tagging/requests'
 import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
 import { hasStatedDeck, sailStateAt, weightAboard, SAIL_CHANGE_SLUG } from '@/lib/tagging/sailState'
-import { linkDay, missingFromInventory, sailsToCreate } from '@/lib/tagging/sailLink'
+import {
+  linkDay, missingFromInventory, sailsToCreate, suggestLink, withAlias,
+  type LinkableSail,
+} from '@/lib/tagging/sailLink'
 import { sailDetail, sailSheetDetail, useSailContext } from './sailChangeDetail.helpers'
 import { useDayMedia } from './useDayMedia'
 import TagButtonBar from './TagButtonBar'
@@ -152,29 +155,65 @@ export default function TaggerTab({
     () => (sailCtx.inventory.length ? missingFromInventory(t.events, sailCtx.inventory) : []),
     [t.events, sailCtx.inventory]
   )
-  const [addingSails, setAddingSails] = React.useState(false)
+  // Which name is being dealt with, so only its own row goes quiet.
+  const [sailBusy, setSailBusy] = React.useState<string | null>(null)
+  const [sailError, setSailError] = React.useState<string | null>(null)
 
-  const addMissingSails = async () => {
-    if (!teamId || !boatId || addingSails || !unknownSails.length) return
-    setAddingSails(true)
+  const runSailFix = async (name: string, go: () => Promise<Response>) => {
+    if (!teamId || !boatId || sailBusy) return
+    setSailBusy(name)
+    setSailError(null)
     try {
-      await fetch(`/api/teams/${teamId}/sails/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          boat_id: boatId,
-          sails: sailsToCreate(unknownSails),
-          // NOT a reconcile: this adds what is missing. The importer's default
-          // is to treat its payload as the WHOLE inventory and retire anything
-          // absent from it, which here would retire the boat's entire sail
-          // locker on the way to adding one storm jib.
-          reconcile: false,
-        }),
-      })
+      const r = await go()
+      if (!r.ok) {
+        // RLS refuses this below TL3, and a button that fails silently is worse
+        // than one that is not there: the name stays in the bar and nobody
+        // knows why.
+        const j = await r.json().catch(() => null)
+        setSailError(j?.error || 'Could not save — the inventory is edited by team leads.')
+        return
+      }
       await sailCtx.reload()
+    } catch {
+      setSailError('Could not reach the server.')
     } finally {
-      setAddingSails(false)
+      setSailBusy(null)
     }
+  }
+
+  /** Add the name as a sail the boat has never had. */
+  const addSail = (name: string) => runSailFix(name, () =>
+    fetch(`/api/teams/${teamId}/sails/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        boat_id: boatId,
+        sails: sailsToCreate([name]),
+        // NOT a reconcile: this adds what is missing. The importer's default
+        // is to treat its payload as the WHOLE inventory and retire anything
+        // absent from it, which here would retire the boat's entire sail
+        // locker on the way to adding one storm jib.
+        reconcile: false,
+      }),
+    })
+  )
+
+  /** Say the name is another spelling of a sail the boat already has. Stored on
+   *  that sail, so every later file spelling it the same way resolves too. */
+  const linkSail = (name: string, sailId: string) => {
+    const sail = sailCtx.inventory.find((s) => s.id === sailId)
+    if (!sail) return
+    const aliases = withAlias(sail, name)
+    if (!aliases) { sailCtx.reload(); return }
+    return runSailFix(name, () =>
+      fetch(`/api/teams/${teamId}/sails`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        // specs MERGES server-side, so this replaces the alias list and leaves
+        // the weight, the design shapes and everything else alone.
+        body: JSON.stringify({ id: sailId, specs: { aliases } }),
+      })
+    )
   }
 
   // Nobody has said what is ON the boat today, so every weight-aboard figure
@@ -286,8 +325,11 @@ export default function TaggerTab({
             )}
             <UnknownSails
               names={unknownSails}
-              busy={addingSails}
-              onAdd={addMissingSails}
+              inventory={sailCtx.inventory}
+              busy={sailBusy}
+              error={sailError}
+              onAdd={addSail}
+              onLink={linkSail}
             />
             <DeckBar
               unknown={deckUnknown}
@@ -495,40 +537,120 @@ export default function TaggerTab({
 }
 
 /**
- * Sails the event file names that the inventory does not have.
+ * Sails an event file names that the inventory has never heard of.
  *
  * An unlinked sail is a sail with no weight, no batten card and no scans — so
  * it silently drops out of the weight aboard and cannot be the main whose
- * battens the composer offers. Adding it costs one tap and the inventory is
- * where it belongs.
+ * battens the composer offers.
+ *
+ * TWO answers, because "add it" is usually the wrong one. "J4_A 2026" is not a
+ * new sail; it is J4_A_2026 with a space where an underscore should be. Adding
+ * it leaves the boat with two J4_As, the one the file now points at having none
+ * of the things that made the first one worth keeping. So the near-match is
+ * offered first and by name, and every other sail is one pick away.
  *
  * Named rather than counted: "3 sails missing" is a number somebody dismisses,
- * and "Storm jib" is a sail they recognise.
+ * and "Storm jib" is a sail they recognise. One row each, because each is its
+ * own decision — a single button for all of them is how the wrong one gets made
+ * three times.
  */
-function UnknownSails({
-  names, busy, onAdd,
+export function UnknownSails({
+  names, inventory, busy, error, onAdd, onLink,
 }: {
   names: string[]
-  busy: boolean
-  onAdd: () => void
+  inventory: LinkableSail[]
+  /** The name currently being saved, if any. */
+  busy: string | null
+  error: string | null
+  onAdd: (name: string) => void
+  onLink: (name: string, sailId: string) => void
 }) {
   if (!names.length) return null
   return (
-    <div className="flex items-center gap-2 border-b border-[color:var(--border)] bg-warning-bg px-3 py-2">
-      <Plus size={15} className="shrink-0 text-warning" aria-hidden />
-      <span className="min-w-0 flex-1 text-xs text-warning">
-        <span className="font-semibold">
-          {names.length === 1 ? 'A sail' : `${names.length} sails`} in the event file
-        </span>{' '}
-        {names.length === 1 ? 'is' : 'are'} not in the boat’s inventory: {names.join(', ')}
-      </span>
+    <div className="border-b border-[color:var(--border)] bg-warning-bg px-3 py-2">
+      <p className="flex items-start gap-2 text-xs text-warning">
+        <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden />
+        <span>
+          <span className="font-semibold">
+            {names.length === 1 ? 'A sail' : `${names.length} sails`} in the event file
+          </span>{' '}
+          {names.length === 1 ? 'is' : 'are'} not in the boat’s inventory. Link each
+          one to the sail it means, or add it as a new sail.
+        </span>
+      </p>
+
+      {names.map((name) => (
+        <UnknownSailRow
+          key={name}
+          name={name}
+          inventory={inventory}
+          busy={busy === name}
+          disabled={busy != null && busy !== name}
+          onAdd={() => onAdd(name)}
+          onLink={(id) => onLink(name, id)}
+        />
+      ))}
+
+      {error && <p className="mt-2 text-[11px] font-medium text-danger">{error}</p>}
+    </div>
+  )
+}
+
+function UnknownSailRow({
+  name, inventory, busy, disabled, onAdd, onLink,
+}: {
+  name: string
+  inventory: LinkableSail[]
+  busy: boolean
+  disabled: boolean
+  onAdd: () => void
+  onLink: (sailId: string) => void
+}) {
+  // Punctuation only — see suggestLink. Anything fuzzier would offer J1 for J2,
+  // and a wrong link is invisible afterwards.
+  const suggested = React.useMemo(() => suggestLink(name, inventory), [name, inventory])
+  const off = busy || disabled
+
+  return (
+    <div className="mt-2 rounded-lg bg-surface-1 px-2 py-1.5">
+      {/* The name on its own line. Sharing one with the buttons truncated it to
+          "J…", and which sail is being decided about is the whole question. */}
+      <p className="truncate font-mono text-xs font-semibold text-fg">{name}</p>
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {suggested?.id && (
+        <button
+          onClick={() => onLink(suggested.id!)}
+          disabled={off}
+          className="min-h-[40px] shrink-0 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-fg disabled:opacity-60"
+        >
+          {busy ? 'Saving…' : <>Link to “{suggested.name}”</>}
+        </button>
+      )}
+
+      {/* Everything else the boat owns. A native select, because on a phone it
+          is the picker the OS already gave the crew. */}
+      <select
+        value=""
+        disabled={off || !inventory.length}
+        onChange={(e) => { if (e.target.value) onLink(e.target.value) }}
+        aria-label={`Link ${name} to a sail in the inventory`}
+        className="min-h-[40px] shrink-0 rounded-lg border border-[color:var(--border-strong)] bg-surface-2 px-2 text-xs font-medium text-fg disabled:opacity-60"
+      >
+        <option value="">{suggested ? 'Link to another sail…' : 'Link to a sail…'}</option>
+        {inventory.map((s) => (
+          <option key={s.id || s.name} value={s.id || ''}>{s.name}</option>
+        ))}
+      </select>
+
       <button
         onClick={onAdd}
-        disabled={busy}
-        className="min-h-[40px] shrink-0 rounded-lg bg-warning px-3 text-xs font-semibold text-black disabled:opacity-60"
+        disabled={off}
+        className="flex min-h-[40px] shrink-0 items-center gap-1 rounded-lg border border-[color:var(--border-strong)] bg-surface-2 px-2.5 text-xs font-semibold text-secondary disabled:opacity-60"
       >
-        {busy ? 'Adding…' : 'Add to inventory'}
+        <Plus size={13} aria-hidden /> Add as new
       </button>
+      </div>
     </div>
   )
 }

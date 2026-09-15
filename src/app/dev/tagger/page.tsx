@@ -14,8 +14,9 @@ import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
 import { canEditTagEvent } from '@/lib/tagging/gating'
 import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
-import { linkDay, missingFromInventory } from '@/lib/tagging/sailLink'
+import { linkDay, missingFromInventory, type LinkableSail } from '@/lib/tagging/sailLink'
 import DuplicateList from '@/components/tagging/DuplicateList'
+import { UnknownSails } from '@/components/tagging/TaggerTab'
 import { sailSheetDetail, type SailContext } from '@/components/tagging/sailChangeDetail.helpers'
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
 import { mediaMarks } from '@/lib/mediaDecks'
@@ -137,6 +138,13 @@ const events: TagEvent[] = [
   tag({ slug: 'sail-change', label: 'A4 up', color: '#F59E0B', producer: 'eventfile',
         confidence: 0.98, t0: T(13, 20), t1: T(13, 20, 20),
         meta: { raceNum: 2, sails: ['Main', 'A4'] } }),
+  // And one that is NOT new: the inventory's J4_A_2026 with a space where the
+  // underscore should be. Adding it would give the boat two J4_As, the one the
+  // file points at having no weight, no battens and no scans — so the bar
+  // offers to link it instead.
+  tag({ slug: 'sail-change', label: 'J4 up', color: '#F59E0B', producer: 'eventfile',
+        confidence: 0.98, t0: T(13, 40), t1: T(13, 40, 20),
+        meta: { raceNum: 2, sails: ['Main', 'J4_A 2026'] } }),
   tag({ slug: 'gate', label: 'Leeward gate', color: '#8B5CF6', producer: 'eventfile', confidence: 0.6,
         t0: T(12, 50), t1: T(12, 50, 30), meta: { raceNum: 1, valid: false } }),
   // Tagged on the water; the event file arrived that evening with its own. The
@@ -200,13 +208,13 @@ const segments = segmentDay({
 const INVENTORY = [
   { id: 'i1', name: 'Main' }, { id: 'i2', name: 'J1' }, { id: 'i3', name: 'J2' },
   { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }, { id: 'i6', name: 'A3' },
-  { id: 'i7', name: 'Storm jib' },
+  { id: 'i7', name: 'Storm jib' }, { id: 'i8', name: 'J4_A_2026' },
 ]
 // What went out on the water today — the storm jib and the J1 stayed ashore.
 const ON_BOARD = INVENTORY.filter((s) => s.id !== 'i7' && s.id !== 'i2')
 // Weights as an event file's sail list reports them.
 const SAIL_KG: Record<string, number> = {
-  i1: 116.6, i2: 62.5, i3: 58.4, i4: 44.1, i5: 49.2, i6: 41.7, i7: 18.9,
+  i1: 116.6, i2: 62.5, i3: 58.4, i4: 44.1, i5: 49.2, i6: 41.7, i7: 18.9, i8: 43.8,
 }
 const BATTEN_CARD = normaliseBattenCard({
   count: 3,
@@ -273,8 +281,11 @@ export default function TaggerPreview() {
   const [role, setRole] = React.useState<'tl3' | 'tl1'>('tl3')
   // The same derived view TaggerTab builds: every sail resolved to its
   // inventory row before anything folds the day.
-  const linked = React.useMemo(() => linkDay(evts, INVENTORY), [evts])
-  const unknownSails = React.useMemo(() => missingFromInventory(evts, INVENTORY), [evts])
+  // Held in state, because linking a name writes an alias onto a sail and the
+  // bar has to empty when it does.
+  const [inventory, setInventory] = React.useState<LinkableSail[]>(INVENTORY)
+  const linked = React.useMemo(() => linkDay(evts, inventory), [evts, inventory])
+  const unknownSails = React.useMemo(() => missingFromInventory(evts, inventory), [evts, inventory])
   const items = React.useMemo(() => withRequests(linked, requests), [linked])
   const open = items.find((i) => i.tag.id === openId) || null
   // Somebody who is not the author: at tl3 they may retime anyone's tag, at tl1
@@ -342,19 +353,20 @@ export default function TaggerPreview() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view === 'tagger' && (
           <>
-            {unknownSails.length > 0 && (
-              <div className="flex items-center gap-2 border-b border-[color:var(--border)] bg-warning-bg px-3 py-2">
-                <span className="min-w-0 flex-1 text-xs text-warning">
-                  <span className="font-semibold">
-                    {unknownSails.length === 1 ? 'A sail' : `${unknownSails.length} sails`} in the event file
-                  </span>{' '}
-                  {unknownSails.length === 1 ? 'is' : 'are'} not in the boat’s inventory: {unknownSails.join(', ')}
-                </span>
-                <button className="min-h-[40px] shrink-0 rounded-lg bg-warning px-3 text-xs font-semibold text-black">
-                  Add to inventory
-                </button>
-              </div>
-            )}
+            {/* The real component, so what is previewed is what ships. Both
+                answers are live: linking writes an alias onto the fixture
+                inventory, which takes the name off the list exactly as the
+                round trip through the sails API does. */}
+            <UnknownSails
+              names={unknownSails}
+              inventory={inventory}
+              busy={null}
+              error={null}
+              onAdd={(name) => setInventory((inv) => [...inv, { id: `new-${name}`, name }])}
+              onLink={(name, id) => setInventory((inv) => inv.map(
+                (s) => (s.id === id ? { ...s, aliases: [...(s.aliases || []), name] } : s)
+              ))}
+            />
             {/* The same two states TaggerTab renders: asked while unknown,
                 stated once it is known. */}
             {hasStatedDeck(linked) ? (
