@@ -13,6 +13,8 @@ import { sailStateAt, type SailState } from '@/lib/tagging/sailState'
 import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
 import { canEditTagEvent } from '@/lib/tagging/gating'
+import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
+import DuplicateList from '@/components/tagging/DuplicateList'
 import { sailSheetDetail, type SailContext } from '@/components/tagging/sailChangeDetail.helpers'
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
 import { mediaMarks } from '@/lib/mediaDecks'
@@ -128,6 +130,16 @@ const events: TagEvent[] = [
         meta: { raceNum: 1, sails: ['Main', 'J4'] } }),
   tag({ slug: 'gate', label: 'Leeward gate', color: '#8B5CF6', producer: 'eventfile', confidence: 0.6,
         t0: T(12, 50), t1: T(12, 50, 30), meta: { raceNum: 1, valid: false } }),
+  // Tagged on the water; the event file arrived that evening with its own. The
+  // crew's carries a note and a place on the reel — which is what makes the
+  // choice a real one rather than a coin toss.
+  tag({ slug: 'gate', label: 'Leeward gate', color: '#8B5CF6', source: 'human', producer: 'user',
+        detectionKey: null, autoT0: null, confidence: null, reelOrder: 3,
+        note: 'Came in too hot, lost two lengths.',
+        t0: T(12, 50, 14), t1: T(12, 50, 30), meta: { raceNum: 1 } }),
+  tag({ slug: 'topmark', label: 'Top mark', color: '#EF4444', source: 'human', producer: 'user',
+        detectionKey: null, autoT0: null, confidence: null,
+        t0: T(12, 20, 9), t1: T(12, 20, 30), meta: { raceNum: 1 } }),
   tag({ slug: 'incident', label: 'Incident', color: '#EF4444', source: 'human', producer: 'user',
         detectionKey: null, autoT0: null, confidence: null,
         note: 'Nearly over early — committee boat end, 8 seconds.',
@@ -304,11 +316,26 @@ export default function TaggerPreview() {
           />
         )}
         {view === 'check' && (
-          <ReviewQueue
-            tags={events} onVerify={noop} onReject={noop}
-            onOpen={(t) => setOpenId(t.id)}
-            keysPaused={!!open}
-          />
+          <>
+            <DuplicateList
+              pairs={findDuplicates(evts)}
+              onOpen={setOpenId}
+              onKeepMine={(p) => setEvts((prev) => prev.map((e) => (
+                e.id === p.theirs.id ? { ...e, rejected: true } : e
+              )))}
+              onKeepTheirs={(p) => setEvts((prev) => prev.filter((e) => e.id !== p.mine.id))}
+              onKeepBoth={(p) => setEvts((prev) => prev.map((e) => (
+                e.id === p.mine.id
+                  ? { ...e, meta: { ...(e.meta || {}), dupOkWith: acceptedWith(p.mine, p.theirs.id) } }
+                  : e
+              )))}
+            />
+            <ReviewQueue
+              tags={evts} onVerify={noop} onReject={noop}
+              onOpen={(t) => setOpenId(t.id)}
+              keysPaused={!!open}
+            />
+          </>
         )}
         {view === 'debrief' && (
           <DebriefReel

@@ -7,6 +7,7 @@ import { detectDay, type Detection } from '@/lib/tagging/detect'
 import { segmentDay, segmentAt, type DaySegment } from '@/lib/tagging/segments'
 import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder, GRAB_VIDEO_SLUG, grabMediaKind } from '@/lib/tagging/requests'
+import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
 import { sailDetail, sailSheetDetail, useSailContext } from './sailChangeDetail.helpers'
 import { useDayMedia } from './useDayMedia'
 import TagButtonBar from './TagButtonBar'
@@ -15,6 +16,7 @@ import TagSheet from './TagSheet'
 import TrackView from './TrackView'
 import DayPicker from './DayPicker'
 import ReviewQueue, { REVIEW_THRESHOLD } from './ReviewQueue'
+import DuplicateList from './DuplicateList'
 import DebriefReel from './DebriefReel'
 
 // The tagging tab. Built for a phone first, because that is where it gets used:
@@ -110,6 +112,11 @@ export default function TaggerTab({
     () => t.events.filter((e) => e.source === 'auto' && e.verifiedAt == null).length,
     [t.events]
   )
+  // The same moment tagged twice — once by the crew, once by the file that
+  // arrived afterwards. Neither is wrong, so nothing is thrown away without
+  // somebody saying so; see lib/tagging/duplicates.ts.
+  const duplicates = React.useMemo(() => findDuplicates(t.events), [t.events])
+
   const uncertain = React.useMemo(
     () => t.events.filter(
       (e) => e.source === 'auto' && e.verifiedAt == null && (e.confidence ?? 1) < REVIEW_THRESHOLD
@@ -187,7 +194,12 @@ export default function TaggerTab({
       >
         <ViewTab active={view === 'tagger'} onClick={() => setView('tagger')} icon={<Tags size={15} />} label="Tagger" count={t.events.length} />
         <ViewTab active={view === 'track'} onClick={() => setView('track')} icon={<Map size={15} />} label="Track" />
-        <ViewTab active={view === 'check'} onClick={() => setView('check')} icon={<ListChecks size={15} />} label="Check" count={unchecked} alert={uncertain > 0} />
+        <ViewTab
+          active={view === 'check'} onClick={() => setView('check')}
+          icon={<ListChecks size={15} />} label="Check"
+          count={unchecked + duplicates.length}
+          alert={uncertain > 0 || duplicates.length > 0}
+        />
         <ViewTab active={view === 'debrief'} onClick={() => setView('debrief')} icon={<Film size={15} />} label="Debrief" count={t.items.filter((i) => i.tag.reelOrder != null).length} />
       </div>
 
@@ -246,7 +258,32 @@ export default function TaggerTab({
             tzOffsetMin={tzOffsetMin}
           />
         ) : view === 'check' ? (
-          <ReviewQueue
+          <>
+            {/* Above the queue: the queue asks whether a detection is real,
+                this asks which of two real ones to keep. The second question is
+                the more urgent — left alone it doubles a count that a debrief
+                will be argued over. */}
+            <DuplicateList
+              pairs={duplicates}
+              tzOffsetMin={tzOffsetMin}
+              onOpen={setOpenId}
+              // Keep the crew's: the detection is TOMBSTONED rather than
+              // deleted, or the next sync would cheerfully recreate it and the
+              // same pair would be back tomorrow.
+              onKeepMine={(p) => t.patch(p.theirs.id, { op: 'reject', reason: 'duplicate of a tag the crew placed' })}
+              // Keep the file's: the crew's tag has no detection behind it, so
+              // it simply goes.
+              onKeepTheirs={(p) => t.remove(p.mine.id)}
+              // Both real. Recorded on the tag, so the pair stops being offered
+              // — a list with no way out grows a residue nobody can clear.
+              onKeepBoth={(p) =>
+                t.patch(p.mine.id, {
+                  op: 'recompose',
+                  meta: { dupOkWith: acceptedWith(p.mine, p.theirs.id) },
+                })
+              }
+            />
+            <ReviewQueue
             tags={t.events}
             tzOffsetMin={tzOffsetMin}
             onVerify={(id) => t.patch(id, { op: 'verify' })}
@@ -259,7 +296,8 @@ export default function TaggerTab({
             // meant that closing it stranded them in the list, halfway through
             // a run of checks, with no way back to where they were.
             onOpen={(tag) => setOpenId(tag.id)}
-          />
+            />
+          </>
         ) : (
           <DebriefReel
             items={t.items}

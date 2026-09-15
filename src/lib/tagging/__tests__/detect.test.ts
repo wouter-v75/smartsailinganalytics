@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   detectDay, manoeuvreConfidence, byReviewPriority, groupBySegment,
-  autoExtractable, ALWAYS_EXTRACT,
+  autoExtractable, ALWAYS_EXTRACT, type DetectionSlug,
 } from '../detect'
+import { BASE_TAGS } from '../baseTags'
 import { segmentDay } from '../segments'
 import type { Manoeuvre } from '../../manoeuvres'
 
@@ -447,5 +448,38 @@ describe('the day’s own two ends', () => {
     const d = detectDay({ boatId: BOAT, date: DATE, rows: [], xml: xmlTwoRaces })
     for (const e of edges(d)) expect(e.key).toContain(e.slug)
     expect(new Set(d.map((x) => x.key)).size).toBe(d.length)
+  })
+})
+
+describe('the detector and the crew speak the same vocabulary', () => {
+  it('emits only slugs the base vocabulary defines', () => {
+    // The premise the duplicate finder rests on: a top mark the crew pressed
+    // and a top mark the file brought have to carry the SAME slug, or nothing
+    // downstream can tell they are the same moment. A detector slug with no
+    // definition behind it would also give the tag nothing to hang off.
+    const known = new Set(BASE_TAGS.map((t) => t.slug))
+    const emitted = detectDay({ boatId: BOAT, date: DATE, rows: [], xml: xmlTwoRaces })
+    expect(emitted.length).toBeGreaterThan(0)
+    for (const d of emitted) expect(known.has(d.slug)).toBe(true)
+  })
+
+  it('every slug the type allows is a real definition too', () => {
+    // The union is the contract; this is the part a fixture cannot reach,
+    // because no single day produces all of them.
+    const known = new Set(BASE_TAGS.map((t) => t.slug))
+    const all: DetectionSlug[] = [
+      'race-start', 'topmark', 'gate', 'mark',
+      'tack', 'gybe', 'sail-change', 'day-start', 'day-end',
+    ]
+    for (const slug of all) expect(known.has(slug)).toBe(true)
+  })
+
+  it('the crew can place every one of them by hand', () => {
+    // Which is what makes a duplicate possible at all — and what makes the
+    // "keep mine / keep the file's" question answerable.
+    const placeable = new Set(BASE_TAGS.filter((t) => t.scope === 'general').map((t) => t.slug))
+    for (const slug of ['race-start', 'topmark', 'gate', 'sail-change', 'day-start', 'day-end']) {
+      expect(placeable.has(slug)).toBe(true)
+    }
   })
 })
