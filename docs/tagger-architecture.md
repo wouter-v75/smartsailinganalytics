@@ -486,14 +486,40 @@ Three decisions worth recording:
 **Done:** a day can be tagged, synced and exported entirely over HTTP;
 `next build` registers all six routes.
 
-### M4 · The track — `TagTrack`, `TagChip`, `TagInspector`, `TagButtonBar`
-- Lanes, drag to move, drag to resize, snap with visual feedback and
-  hold-to-suspend, `[`/`]` navigation.
-- Buttons honour lead/lag; descriptors picked from `label_groups`.
-- Optimistic updates with rollback, matching `cloud-tag-list.ts`'s pattern.
+### M4 · The tagging tab ✅ — **mobile first**
 
-**Done:** a tag can be added, moved, described, snapped, verified and removed
-without leaving the day.
+Built for a phone, because that is where it is used: on the boat, or on the dock
+ten minutes later. Everything that matters sits in the bottom half of the screen
+where a thumb reaches, and nothing needs a second hand.
+
+Mobile-first in CSS rather than behind a `useIsMobile` check — it then also does
+the right thing in landscape, in a narrow desktop panel, and in a split view,
+none of which a user-agent test gets right.
+
+- **`TagButtonBar`** — pinned to the bottom inside the safe-area inset, 56 px
+  targets in a grid that WRAPS rather than a row that scrolls (a button you have
+  to scroll to find is a button you do not press while something is happening).
+  The press flashes the button's own colour: on a boat nobody reads a toast.
+  Notes open a composer sheet, but the TIME is captured at the press, not at the
+  send, or every note would be stamped with however long it took to type.
+- **`TagTrack`** — a vertical list with sticky segment headers, not a horizontal
+  timeline. On a phone a time axis gives each tag about four pixels and needs two
+  hands to pan. Detections first inside each segment, crew tags beneath. A hollow
+  chip is an unconfirmed detection, a solid one has been vouched for.
+- **`ReviewQueue`** — one card, least certain first, two enormous buttons. This
+  is the sixty-second flow, and it says WHY each one is uncertain in the crew's
+  own words ("gap in the log", "turned only 31° of 70°").
+- **`TagSheet`** — a bottom sheet ordered the way a crew member wants it: what it
+  is, the two decisions, what they want doing with it, descriptors and a note,
+  then the rare things last.
+- **`DebriefReel`** — the shortlist everyone nominates into, ranked by votes, and
+  the reel the coach builds from it.
+- **`useTagger`** — optimistic everywhere, because the crew are on marina wifi
+  and a button that waits for a round trip is a button people press twice. The
+  one exception is `sync`, which can move dozens of tags and so waits.
+
+**Done:** a tag can be added, described, verified, discarded, nominated and put
+on the reel without leaving the day — one-handed.
 
 ### M5 · Review, reel and filter — `ReviewQueue`, `DebriefReel`, `TagFilterBar`
 - Queue sorted by confidence, keyboard-driven, bulk verify.

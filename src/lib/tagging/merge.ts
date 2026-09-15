@@ -107,7 +107,16 @@ function rowFor(d: Detection, ctx: SyncContext): NewTagEvent {
     rejectedReason: null,
     reelOrder: null,
     createdByUserId: null,
-    meta: { segmentKey: d.segmentKey, raceNum: d.raceNum, ...(d.meta || {}) },
+    // The detector's measurements ride along in meta so the tag arrives WITH its
+    // evidence — entry and exit speed, time to 95 %, turn angle, distance lost.
+    // The review queue shows them, which is what lets somebody judge a detection
+    // without opening another screen.
+    meta: {
+      segmentKey: d.segmentKey,
+      raceNum: d.raceNum,
+      metrics: d.metrics ?? null,
+      ...(d.meta || {}),
+    },
   }
 }
 
@@ -198,11 +207,19 @@ export function planSync(
       if (row.label !== label) patch.label = label
     }
 
+    // meta carries derived measurements AND the orphaned flag, so both are
+    // settled in one place — writing meta twice would lose whichever went first.
+    const meta = (row.meta || {}) as Record<string, unknown>
+    const metaPatch: Record<string, unknown> = {}
+    if (JSON.stringify(meta.metrics ?? null) !== JSON.stringify(d.metrics ?? null)) {
+      metaPatch.metrics = d.metrics ?? null
+    }
     // A row previously flagged orphaned that the detector has found again.
-    if ((row.meta as Record<string, unknown> | null)?.orphaned) {
-      patch.meta = { ...(row.meta || {}), orphaned: false }
+    if (meta.orphaned) {
+      metaPatch.orphaned = false
       reasons.push('refound')
     }
+    if (Object.keys(metaPatch).length) patch.meta = { ...meta, ...metaPatch }
 
     if (Object.keys(patch).length) {
       plan.update.push({ id: row.id, detectionKey: d.key, patch, reasons })

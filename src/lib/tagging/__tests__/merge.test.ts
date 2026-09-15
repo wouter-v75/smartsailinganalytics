@@ -300,3 +300,39 @@ describe('isHumanTouched', () => {
     expect(isHumanTouched(row({ reelOrder: 0 }))).toBe(true)
   })
 })
+
+describe('the detector’s evidence travels with the tag', () => {
+  it('carries metrics onto a new row, so the review queue can show them', () => {
+    const plan = planSync([], [detection({
+      metrics: { bspBefore: 9.1, bspAfter: 8.4, timeTo95: 22, turnAngle: 71, target: 70 },
+    })], CTX)
+    const m = (plan.insert[0].meta as any).metrics
+    expect(m.turnAngle).toBe(71)
+    expect(m.timeTo95).toBe(22)
+  })
+
+  it('refreshes metrics on re-derivation — they are derived, not authored', () => {
+    const existing = row({ meta: { segmentKey: 'r1', metrics: { turnAngle: 40 } } })
+    const plan = planSync([existing], [detection({ metrics: { turnAngle: 71 } })], CTX)
+    expect((plan.update[0].patch.meta as any).metrics.turnAngle).toBe(71)
+  })
+
+  it('settles metrics and the orphaned flag in ONE meta write', () => {
+    // Two separate writes to `meta` would lose whichever went first.
+    const lost = row({
+      verifiedAt: T(60),
+      meta: { orphaned: true, metrics: { turnAngle: 40 }, segmentKey: 'r1' },
+    })
+    const plan = planSync([lost], [detection({ metrics: { turnAngle: 71 } })], CTX)
+    const meta = plan.update[0].patch.meta as any
+    expect(meta.orphaned).toBe(false)
+    expect(meta.metrics.turnAngle).toBe(71)
+    expect(meta.segmentKey).toBe('r1')      // untouched keys survive
+  })
+
+  it('does not churn when the metrics are unchanged', () => {
+    const existing = row({ meta: { metrics: { turnAngle: 71 } } })
+    const plan = planSync([existing], [detection({ metrics: { turnAngle: 71 } })], CTX)
+    expect(planIsEmpty(plan)).toBe(true)
+  })
+})
