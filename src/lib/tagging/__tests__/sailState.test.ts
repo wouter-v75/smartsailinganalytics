@@ -3,7 +3,8 @@ import {
   SAIL_CHANGE_SLUG, EMPTY_SAIL_STATE, normaliseSailState, stateOf, sailChanges,
   sailStateAt, lastChangeBefore, toggleUp, isUp, setBatten, withBattenCount,
   stateIsEmpty, describeState, describeChange, sailKey,
-  type SailState,
+  toggleOnBoard, isOnBoard, weightAboard,
+  type SailState, type SailRef,
 } from '../sailState'
 import type { TagEvent } from '../types'
 
@@ -24,7 +25,7 @@ const tag = (over: Partial<TagEvent>): TagEvent => ({
 })
 
 const withSail = (t0: number, state: Partial<SailState>, over: Partial<TagEvent> = {}) =>
-  tag({ t0, t1: t0, meta: { sail: { up: [], battens: [], ...state } }, ...over })
+  tag({ t0, t1: t0, meta: { sail: { up: [], onBoard: [], battens: [], ...state } }, ...over })
 
 const names = (s: SailState) => s.up.map((x) => x.name)
 
@@ -65,7 +66,7 @@ describe('normaliseSailState', () => {
 
   it('gives an empty state for junk rather than throwing', () => {
     for (const junk of [null, undefined, {}, 'no', 7, []]) {
-      expect(normaliseSailState(junk)).toEqual({ up: [], battens: [] })
+      expect(normaliseSailState(junk)).toEqual({ up: [], onBoard: [], battens: [] })
     }
   })
 })
@@ -138,7 +139,11 @@ describe('lastChangeBefore', () => {
 })
 
 describe('toggleUp / isUp', () => {
-  const base: SailState = { up: [{ id: 's1', name: 'Main' }], battens: [] }
+  const base: SailState = {
+    up: [{ id: 's1', name: 'Main' }],
+    onBoard: [{ id: 's1', name: 'Main' }, { id: 's2', name: 'J2' }],
+    battens: [],
+  }
 
   it('hoists a sail that was not up', () => {
     const next = toggleUp(base, { id: 's2', name: 'J2' })
@@ -155,7 +160,7 @@ describe('toggleUp / isUp', () => {
   })
 
   it('matches a typed sail by name, case-insensitively', () => {
-    const typed: SailState = { up: [{ name: 'Storm jib' }], battens: [] }
+    const typed: SailState = { up: [{ name: 'Storm jib' }], onBoard: [{ name: 'Storm jib' }], battens: [] }
     expect(names(toggleUp(typed, { name: 'STORM JIB' }))).toEqual([])
   })
 
@@ -167,7 +172,7 @@ describe('toggleUp / isUp', () => {
 
 describe('setBatten / withBattenCount', () => {
   it('sets one batten and leaves the others', () => {
-    let s: SailState = { up: [], battens: [{ no: 1, tension: 'soft', turns: 1 }] }
+    let s: SailState = { up: [], onBoard: [], battens: [{ no: 1, tension: 'soft', turns: 1 }] }
     s = setBatten(s, 2, { tension: 'stiff', turns: -3 })
     expect(s.battens).toEqual([
       { no: 1, tension: 'soft', turns: 1 },
@@ -176,7 +181,7 @@ describe('setBatten / withBattenCount', () => {
   })
 
   it('patches one field without clearing the other', () => {
-    let s: SailState = { up: [], battens: [{ no: 1, tension: 'soft', turns: 4 }] }
+    let s: SailState = { up: [], onBoard: [], battens: [{ no: 1, tension: 'soft', turns: 4 }] }
     s = setBatten(s, 1, { turns: 6 })
     expect(s.battens[0]).toEqual({ no: 1, tension: 'soft', turns: 6 })
     s = setBatten(s, 1, { tension: 'stiff' })
@@ -184,19 +189,19 @@ describe('setBatten / withBattenCount', () => {
   })
 
   it('can clear a stiffness explicitly', () => {
-    let s: SailState = { up: [], battens: [{ no: 1, tension: 'soft', turns: 4 }] }
+    let s: SailState = { up: [], onBoard: [], battens: [{ no: 1, tension: 'soft', turns: 4 }] }
     s = setBatten(s, 1, { tension: null })
     expect(s.battens[0].tension).toBeNull()
   })
 
   it('grows to the main’s batten count, keeping what was set', () => {
-    const s = withBattenCount({ up: [], battens: [{ no: 2, tension: 'soft', turns: 2 }] }, 3)
+    const s = withBattenCount({ up: [], onBoard: [], battens: [{ no: 2, tension: 'soft', turns: 2 }] }, 3)
     expect(s.battens.map((b) => b.no)).toEqual([1, 2, 3])
     expect(s.battens[1].tension).toBe('soft')
   })
 
   it('trims when a main loses a batten', () => {
-    const s = withBattenCount({ up: [], battens: [{ no: 1, tension: 'soft', turns: 1 }, { no: 2, tension: 'stiff', turns: 2 }] }, 1)
+    const s = withBattenCount({ up: [], onBoard: [], battens: [{ no: 1, tension: 'soft', turns: 1 }, { no: 2, tension: 'stiff', turns: 2 }] }, 1)
     expect(s.battens.map((b) => b.no)).toEqual([1])
   })
 })
@@ -207,14 +212,15 @@ describe('stateIsEmpty', () => {
   })
 
   it('is false once anything is set', () => {
-    expect(stateIsEmpty({ up: [{ name: 'J2' }], battens: [] })).toBe(false)
-    expect(stateIsEmpty({ up: [], battens: [{ no: 1, tension: null, turns: -1 }] })).toBe(false)
+    expect(stateIsEmpty({ up: [{ name: 'J2' }], onBoard: [{ name: 'J2' }], battens: [] })).toBe(false)
+    expect(stateIsEmpty({ up: [], onBoard: [{ name: 'J2' }], battens: [] })).toBe(false)
+    expect(stateIsEmpty({ up: [], onBoard: [], battens: [{ no: 1, tension: null, turns: -1 }] })).toBe(false)
   })
 })
 
 describe('describeState', () => {
   it('reads like the tag label already does', () => {
-    expect(describeState({ up: [{ name: 'Main' }, { name: 'J2' }], battens: [] })).toBe('Main + J2')
+    expect(describeState({ up: [{ name: 'Main' }, { name: 'J2' }], onBoard: [], battens: [] })).toBe('Main + J2')
   })
 
   it('says a drop is a drop, rather than rendering as nothing', () => {
@@ -223,15 +229,15 @@ describe('describeState', () => {
 })
 
 describe('describeChange', () => {
-  const before: SailState = { up: [{ name: 'Main' }, { name: 'J2' }], battens: [] }
+  const before: SailState = { up: [{ name: 'Main' }, { name: 'J2' }], onBoard: [], battens: [] }
 
   it('names what went up and what came down', () => {
-    expect(describeChange(before, { up: [{ name: 'Main' }, { name: 'A2' }], battens: [] }))
+    expect(describeChange(before, { up: [{ name: 'Main' }, { name: 'A2' }], onBoard: [], battens: [] }))
       .toBe('+A2 −J2')
   })
 
   it('names a hoist alone', () => {
-    expect(describeChange(before, { up: [{ name: 'Main' }, { name: 'J2' }, { name: 'A2' }], battens: [] }))
+    expect(describeChange(before, { up: [{ name: 'Main' }, { name: 'J2' }, { name: 'A2' }], onBoard: [], battens: [] }))
       .toBe('+A2')
   })
 
@@ -263,5 +269,107 @@ describe('sailChanges', () => {
       withSail(T(11, 40), { up: [{ name: 'J2' }] }),
     ])
     expect(list.map((c) => c.tag.t0)).toEqual([T(11, 40), T(12, 20)])
+  })
+})
+
+describe('on board — the sails actually on the boat', () => {
+  const j2: SailRef = { id: 's2', name: 'J2' }
+  const a2: SailRef = { id: 's3', name: 'A2' }
+  const base: SailState = {
+    up: [{ id: 's1', name: 'Main' }],
+    onBoard: [{ id: 's1', name: 'Main' }, j2],
+    battens: [],
+  }
+
+  it('knows what is aboard and what is in the RIB', () => {
+    expect(isOnBoard(base, j2)).toBe(true)
+    expect(isOnBoard(base, a2)).toBe(false)
+  })
+
+  it('passes a sail across from the RIB', () => {
+    expect(toggleOnBoard(base, a2).onBoard.map((s) => s.name)).toEqual(['Main', 'J2', 'A2'])
+  })
+
+  it('passing a sail BACK to the RIB takes it down first', () => {
+    // A sail in the RIB that the app still believes is hoisted is not a state
+    // the boat can be in, and it would carry forward through every later change.
+    const next = toggleOnBoard(base, { id: 's1', name: 'Main' })
+    expect(next.onBoard.map((s) => s.name)).toEqual(['J2'])
+    expect(next.up).toEqual([])
+  })
+
+  it('hoisting a sail puts it aboard — you cannot hoist from the RIB', () => {
+    const next = toggleUp(base, a2)
+    expect(next.up.map((s) => s.name)).toEqual(['Main', 'A2'])
+    expect(next.onBoard.map((s) => s.name)).toEqual(['Main', 'J2', 'A2'])
+  })
+
+  it('dropping a sail leaves it aboard', () => {
+    const next = toggleUp(base, { id: 's1', name: 'Main' })
+    expect(next.up).toEqual([])
+    expect(next.onBoard.map((s) => s.name)).toEqual(['Main', 'J2'])
+  })
+
+  it('never puts the same sail aboard twice', () => {
+    expect(toggleUp(base, j2).onBoard).toHaveLength(2)
+  })
+
+  it('does not mutate what it was given', () => {
+    toggleOnBoard(base, a2)
+    expect(base.onBoard).toHaveLength(2)
+  })
+
+  it('reads a state written before onBoard existed as "what was up was aboard"', () => {
+    // The alternative — an empty list — would say the boat was sailing with an
+    // empty deck, and would zero the weight for every day already tagged.
+    const s = normaliseSailState({ up: [{ id: 's1', name: 'Main' }], battens: [] })
+    expect(s.onBoard.map((x) => x.name)).toEqual(['Main'])
+  })
+
+  it('keeps a sail that is aboard but not up', () => {
+    const s = normaliseSailState({ up: [{ name: 'Main' }], onBoard: [{ name: 'Main' }, { name: 'J4' }] })
+    expect(s.onBoard.map((x) => x.name)).toEqual(['Main', 'J4'])
+    expect(s.up.map((x) => x.name)).toEqual(['Main'])
+  })
+
+  it('repairs a stored state where something up was not listed aboard', () => {
+    const s = normaliseSailState({ up: [{ name: 'A2' }], onBoard: [{ name: 'Main' }] })
+    expect(s.onBoard.map((x) => x.name)).toEqual(['Main', 'A2'])
+  })
+})
+
+describe('weightAboard', () => {
+  const kgs: Record<string, number> = { Main: 116.6, J2: 62.5, A2: 49.2 }
+  const weightOf = (s: SailRef) => kgs[s.name] ?? null
+  const state = (...names: string[]): SailState => ({
+    up: [], onBoard: names.map((name) => ({ name })), battens: [],
+  })
+
+  it('adds up what is on the boat', () => {
+    expect(weightAboard(state('Main', 'J2'), weightOf)).toEqual({ kg: 179.1, known: 2, unknown: 0 })
+  })
+
+  it('counts only what is aboard — the RIB does not weigh the boat down', () => {
+    const s: SailState = { up: [], onBoard: [{ name: 'Main' }], battens: [] }
+    expect(weightAboard(s, weightOf)?.kg).toBe(116.6)
+  })
+
+  it('says how many it could not weigh, rather than quietly under-reporting', () => {
+    expect(weightAboard(state('Main', 'Mystery jib'), weightOf))
+      .toEqual({ kg: 116.6, known: 1, unknown: 1 })
+  })
+
+  it('is null when nothing aboard has a known weight', () => {
+    // "0.0 kg" beside a deck full of sails reads as a measurement, not a gap.
+    expect(weightAboard(state('Mystery jib'), weightOf)).toBeNull()
+    expect(weightAboard(state(), weightOf)).toBeNull()
+  })
+
+  it('ignores a zero or negative weight as unknown', () => {
+    expect(weightAboard(state('Main', 'Free'), () => 0)).toBeNull()
+  })
+
+  it('rounds to a tenth, the way a weigh-in sheet does', () => {
+    expect(weightAboard(state('a', 'b', 'c'), () => 1.11)?.kg).toBe(3.3)
   })
 })

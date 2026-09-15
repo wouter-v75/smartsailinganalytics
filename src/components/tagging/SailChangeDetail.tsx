@@ -3,7 +3,8 @@ import * as React from 'react'
 import { ExternalLink, Check } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import {
-  toggleUp, isUp, setBatten, withBattenCount, describeState,
+  toggleUp, isUp, toggleOnBoard, isOnBoard, weightAboard,
+  setBatten, withBattenCount, describeState,
   type SailState, type SailRef,
 } from '@/lib/tagging/sailState'
 import {
@@ -14,16 +15,21 @@ import { sessionClockHm } from '@/lib/tagging/clock'
 
 // What a sail change actually is.
 //
-// Three tabs, and the nesting is the point:
+// Three tabs, and the nesting is the point. A crew goes out with more sails than
+// it carries: the rest ride in the RIB and get passed across as the day decides
+// what it needs. So there are three sets, each inside the last:
 //
-//   UP        which of the sails ON BOARD are hoisted right now. This is the
-//             thing being recorded, so it opens first.
-//   ON BOARD  which of the boat's sails came out today. That is decided once, in
-//             Campaign → Day, so this tab SHOWS it and links there rather than
-//             offering a second place to change it — two editors for one list is
-//             how a crew ends up with two different lists.
-//   BATTENS   how the main is set up. The boat's card says what it should be in
-//             this breeze; this records what it was.
+//   the DAY's list   what went out on the water, RIB included. Decided once, in
+//                    Campaign → Day, which is where this links to — two editors
+//                    for one list is how a crew ends up with two lists.
+//   ON BOARD         what is actually on the boat. This is what counts towards
+//                    the weight aboard, so it is worth getting right and worth
+//                    totting up.
+//   UP               what is hoisted. You cannot hoist a sail that is in the
+//                    RIB, so hoisting one puts it aboard.
+//
+// UP opens first: it is what changes most often and what a sail-change tag is
+// mostly about.
 //
 // The state is the WHOLE state after the change, not a diff — see sailState.ts
 // for why that is what makes a day readable backwards.
@@ -33,8 +39,11 @@ export interface SailChangeDetailProps {
   onChange: (next: SailState) => void
   /** The boat's whole inventory. */
   inventory: SailRef[]
-  /** Today's sail list from Campaign → Day — the sails actually aboard. */
-  onBoard: SailRef[]
+  /** Today's sail list from Campaign → Day — everything that went on the water,
+   *  including the sails riding in the RIB. */
+  dayList: SailRef[]
+  /** Weight in kg for a sail, when the inventory knows it. */
+  weightOf?: (s: SailRef) => number | null | undefined
   /** What was up before this change, for the "carried over" line. */
   previous?: { state: SailState; utc: number } | null
   /** The batten card of the mainsail that is up. */
@@ -51,8 +60,8 @@ export interface SailChangeDetailProps {
 type Pane = 'up' | 'onboard' | 'battens'
 
 export default function SailChangeDetail({
-  value, onChange, inventory, onBoard, previous, battenCard, battenCardSail, twsKn,
-  tzOffsetMin = 0, onEditSailList,
+  value, onChange, inventory, dayList, weightOf, previous, battenCard, battenCardSail,
+  twsKn, tzOffsetMin = 0, onEditSailList,
 }: SailChangeDetailProps) {
   const [pane, setPane] = React.useState<Pane>('up')
 
@@ -64,12 +73,18 @@ export default function SailChangeDetail({
     [value, battenCount]
   )
 
-  // The UP tab offers what is aboard. A boat whose day sail list has not been
-  // filled in yet falls back to the whole inventory — an empty tab would make
-  // the tagger useless on exactly the days people forget the paperwork.
-  const choosable = onBoard.length ? onBoard : inventory
-  const usingFallback = !onBoard.length && inventory.length > 0
+  // ON BOARD is chosen from the day's list. A day whose list has not been filled
+  // in yet falls back to the whole inventory — an empty tab would make the
+  // tagger useless on exactly the days somebody forgot the paperwork.
+  const universe = dayList.length ? dayList : inventory
+  const usingFallback = !dayList.length && inventory.length > 0
 
+  // UP is chosen from what is aboard. Until anything has been marked aboard,
+  // offer the same universe: a first sail change of the day should not require
+  // a trip through the On board tab before anything can be hoisted.
+  const hoistable = value.onBoard.length ? value.onBoard : universe
+
+  const weight = weightOf ? weightAboard(value, weightOf) : null
   const band = bandForTws(twsKn)
 
   return (
@@ -79,7 +94,7 @@ export default function SailChangeDetail({
           Up{value.up.length > 0 ? ` · ${value.up.length}` : ''}
         </PaneTab>
         <PaneTab active={pane === 'onboard'} onClick={() => setPane('onboard')}>
-          On board{onBoard.length ? ` · ${onBoard.length}` : ''}
+          On board{value.onBoard.length ? ` · ${value.onBoard.length}` : ''}
         </PaneTab>
         <PaneTab active={pane === 'battens'} onClick={() => setPane('battens')}>
           Battens
@@ -94,7 +109,7 @@ export default function SailChangeDetail({
               Was {describeState(previous.state)} from {sessionClockHm(previous.utc, tzOffsetMin)}
             </p>
           )}
-          {choosable.length === 0 ? (
+          {hoistable.length === 0 ? (
             <p className="px-2 py-4 text-center text-xs text-muted">
               No sails on the boat’s list yet. Add them in Boat → Sail inventory,
               then set the day’s list in Campaign → Day.
@@ -107,7 +122,7 @@ export default function SailChangeDetail({
                 </p>
               )}
               <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))' }}>
-                {choosable.map((s, i) => {
+                {hoistable.map((s, i) => {
                   const on = isUp(value, s)
                   return (
                     <button
@@ -129,6 +144,10 @@ export default function SailChangeDetail({
               </div>
               <p className="mt-2 text-[11px] text-muted">
                 {value.up.length ? describeState(value) : 'Nothing up — this records a drop.'}
+                {/* Hoisting from the On board tab's universe puts the sail
+                    aboard; saying so beats the crew discovering it later. */}
+                {value.onBoard.length === 0 && value.up.length > 0 &&
+                  ' · hoisting also puts a sail on board'}
               </p>
             </>
           )}
@@ -139,43 +158,66 @@ export default function SailChangeDetail({
       {pane === 'onboard' && (
         <div>
           <p className="mb-2 text-[11px] text-muted">
-            Today’s sail list. Highlighted sails came out; the rest stayed ashore.
+            Of the sails that went out, which are on the boat. The rest are in the RIB.
           </p>
-          {inventory.length === 0 ? (
+          {universe.length === 0 ? (
             <p className="px-2 py-4 text-center text-xs text-muted">
-              The boat has no sail inventory yet.
+              No sail list for today. Set it in Campaign → Day and the sails
+              appear here.
             </p>
           ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {inventory.map((s, i) => {
-                const aboard = onBoard.some(
-                  (o) => (o.id && s.id && o.id === s.id) || o.name.toLowerCase() === s.name.toLowerCase()
-                )
-                return (
-                  <span
-                    key={s.id || `${s.name}-${i}`}
-                    className={cn(
-                      'rounded-full border px-3 py-1.5 text-xs font-medium',
-                      aboard
-                        ? 'border-[color:var(--accent)] bg-accent-bg text-accent'
-                        : 'border-[color:var(--border)] bg-surface-2 text-muted'
-                    )}
-                  >
-                    {s.name}
-                  </span>
-                )
-              })}
-            </div>
+            <>
+              <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))' }}>
+                {universe.map((s, i) => {
+                  const aboard = isOnBoard(value, s)
+                  const up = isUp(value, s)
+                  return (
+                    <button
+                      key={s.id || `${s.name}-${i}`}
+                      onClick={() => onChange(toggleOnBoard(value, s))}
+                      aria-pressed={aboard}
+                      className={cn(
+                        'flex min-h-[52px] flex-col items-center justify-center rounded-lg border px-2 text-center text-xs font-semibold leading-tight',
+                        aboard
+                          ? 'border-transparent bg-accent text-accent-fg'
+                          : 'border-[color:var(--border-strong)] bg-surface-2 text-muted'
+                      )}
+                    >
+                      <span className="line-clamp-2">{s.name}</span>
+                      {/* A sail that is UP is obviously aboard; flagging it
+                          warns that tapping this will also take it down. */}
+                      {up && <span className="text-[9px] font-normal opacity-80">up</span>}
+                      {!aboard && <span className="text-[9px] font-normal">in the RIB</span>}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <p className="mt-2 text-[11px] text-muted">
+                {value.onBoard.length} of {universe.length} on board
+                {weight && (
+                  <>
+                    {' · '}
+                    <span className="font-semibold text-secondary">{weight.kg.toFixed(1)} kg</span>
+                    {/* Never a bare total when sails are missing a weight: a
+                        figure that is quietly two sails light is worse than one
+                        that says so. */}
+                    {weight.unknown > 0 && ` (${weight.unknown} unweighed)`}
+                  </>
+                )}
+              </p>
+            </>
           )}
-          {/* Editing happens where the list lives. Offering a second editor here
-              is how a crew ends up with two lists that disagree. */}
+
+          {/* The day's list is edited where it lives. Offering a second editor
+              here is how a crew ends up with two lists that disagree. */}
           {onEditSailList && (
             <button
               onClick={onEditSailList}
               className="mt-3 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-[color:var(--border-strong)] bg-surface-2 text-xs font-semibold"
             >
               <ExternalLink size={14} aria-hidden />
-              Edit sail list in Campaign → Day
+              Edit the day’s sail list
             </button>
           )}
         </div>

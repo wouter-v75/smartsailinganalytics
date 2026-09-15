@@ -41,15 +41,33 @@ export interface BattenRecord {
   turns: number
 }
 
-/** What is flying, and how the main is set up, after a change. */
+/**
+ * What is flying, what is aboard, and how the main is set up, after a change.
+ *
+ * THREE LEVELS, and they nest:
+ *
+ *   the DAY's sail list   what went out on the water. Set once in
+ *                         Campaign → Day; includes the sails riding in the RIB.
+ *   ON BOARD              what is actually on the boat. A subset, because a
+ *                         crew routinely leaves sails in the RIB and passes
+ *                         them across — and what is on the boat is what counts
+ *                         towards the weight aboard.
+ *   UP                    what is hoisted. A subset of what is aboard: you
+ *                         cannot hoist a sail that is in the RIB.
+ *
+ * Only the inner two live here, because only they change during the day. The
+ * day's list is the universe they are drawn from and belongs to the session.
+ */
 export interface SailState {
   /** Sails hoisted. The whole set, not what changed. */
   up: SailRef[]
+  /** Sails physically on the boat. Always a superset of `up`. */
+  onBoard: SailRef[]
   /** Battens as they were at this moment. */
   battens: BattenRecord[]
 }
 
-export const EMPTY_SAIL_STATE: SailState = { up: [], battens: [] }
+export const EMPTY_SAIL_STATE: SailState = { up: [], onBoard: [], battens: [] }
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 const TENSIONS = new Set(['soft', 'medium', 'stiff'])
@@ -60,20 +78,35 @@ export const sailKey = (s: SailRef | null | undefined): string =>
 
 export const sameSail = (a: SailRef, b: SailRef): boolean => sailKey(a) === sailKey(b)
 
-/** Coerce whatever is in a tag's meta into a state. Forgiving by design. */
-export function normaliseSailState(raw: unknown): SailState {
-  const o = (raw || {}) as Partial<SailState>
-  const up: SailRef[] = []
+/** Clean a list of sail references: named, de-duplicated, in order. */
+function refList(raw: unknown): SailRef[] {
+  const out: SailRef[] = []
   const seen = new Set<string>()
-  for (const s of Array.isArray(o.up) ? o.up : []) {
+  for (const s of Array.isArray(raw) ? raw : []) {
     const name = String((s as SailRef)?.name ?? '').trim()
     if (!name) continue
     const ref: SailRef = { id: (s as SailRef)?.id ?? null, name }
     const k = sailKey(ref)
     if (seen.has(k)) continue
     seen.add(k)
-    up.push(ref)
+    out.push(ref)
   }
+  return out
+}
+
+/** Coerce whatever is in a tag's meta into a state. Forgiving by design. */
+export function normaliseSailState(raw: unknown): SailState {
+  const o = (raw || {}) as Partial<SailState>
+  const up = refList(o.up)
+
+  // A sail cannot be hoisted from the RIB, so anything up is aboard by
+  // definition. Rows written before `onBoard` existed have no list at all, and
+  // reading those as "nothing aboard" would say the boat was sailing with an
+  // empty deck — what is up is the only thing we know for certain was there.
+  const stored = refList(o.onBoard)
+  const onBoard = [...stored]
+  const aboard = new Set(stored.map(sailKey))
+  for (const s of up) if (!aboard.has(sailKey(s))) { aboard.add(sailKey(s)); onBoard.push(s) }
 
   const battens: BattenRecord[] = []
   for (const b of Array.isArray(o.battens) ? o.battens : []) {
@@ -87,7 +120,7 @@ export function normaliseSailState(raw: unknown): SailState {
   }
   battens.sort((a, b) => a.no - b.no)
 
-  return { up, battens }
+  return { up, onBoard, battens }
 }
 
 /** The sail state a tag carries, or null when it carries none. */
@@ -137,19 +170,70 @@ export function lastChangeBefore(
   return out
 }
 
-/** Add or remove one sail from a state's hoisted set. */
+const ref = (s: SailRef): SailRef => ({ id: s.id ?? null, name: s.name })
+
+/**
+ * Hoist or drop one sail.
+ *
+ * Hoisting also puts the sail ABOARD, because it just was: a sail cannot go up
+ * from the RIB, and making the crew tick two boxes to record one act is how a
+ * boat ends up with a weight figure that does not include the kite that is
+ * flying. Dropping leaves it aboard — a dropped sail is still on the boat.
+ */
 export function toggleUp(state: SailState, sail: SailRef): SailState {
-  const on = state.up.some((s) => sameSail(s, sail))
+  const on = isUp(state, sail)
+  if (on) return { ...state, up: state.up.filter((s) => !sameSail(s, sail)) }
   return {
     ...state,
-    up: on
-      ? state.up.filter((s) => !sameSail(s, sail))
-      : [...state.up, { id: sail.id ?? null, name: sail.name }],
+    up: [...state.up, ref(sail)],
+    onBoard: isOnBoard(state, sail) ? state.onBoard : [...state.onBoard, ref(sail)],
+  }
+}
+
+/**
+ * Put a sail on the boat, or pass it back to the RIB.
+ *
+ * Passing one across takes it down first. A sail in the RIB that the app still
+ * believes is hoisted is not a state the boat can be in, and it would carry
+ * forward through every later change.
+ */
+export function toggleOnBoard(state: SailState, sail: SailRef): SailState {
+  const aboard = isOnBoard(state, sail)
+  if (!aboard) return { ...state, onBoard: [...state.onBoard, ref(sail)] }
+  return {
+    ...state,
+    onBoard: state.onBoard.filter((s) => !sameSail(s, sail)),
+    up: state.up.filter((s) => !sameSail(s, sail)),
   }
 }
 
 export const isUp = (state: SailState, sail: SailRef): boolean =>
   state.up.some((s) => sameSail(s, sail))
+
+export const isOnBoard = (state: SailState, sail: SailRef): boolean =>
+  state.onBoard.some((s) => sameSail(s, sail))
+
+/**
+ * What is aboard weighs something — the figure that goes on a weigh-in sheet.
+ *
+ * null when no sail aboard has a known weight, because "0.0 kg" next to a deck
+ * full of sails reads as a measurement rather than as a gap. A PARTIAL total is
+ * returned with a count of what is missing, so a crew can see it is short
+ * rather than trusting a number that is quietly two sails light.
+ */
+export function weightAboard(
+  state: SailState,
+  weightOf: (s: SailRef) => number | null | undefined
+): { kg: number; known: number; unknown: number } | null {
+  let kg = 0, known = 0, unknown = 0
+  for (const s of state.onBoard) {
+    const w = weightOf(s)
+    if (typeof w === 'number' && Number.isFinite(w) && w > 0) { kg += w; known++ }
+    else unknown++
+  }
+  if (!known) return null
+  return { kg: Math.round(kg * 10) / 10, known, unknown }
+}
 
 /** Set one batten, keeping the rest and the top-down order. */
 export function setBatten(
@@ -179,7 +263,8 @@ export function withBattenCount(state: SailState, count: number): SailState {
 
 /** True when nothing has been recorded — used to keep empty state out of the row. */
 export const stateIsEmpty = (s: SailState): boolean =>
-  s.up.length === 0 && s.battens.every((b) => b.tension == null && !b.turns)
+  s.up.length === 0 && s.onBoard.length === 0 &&
+  s.battens.every((b) => b.tension == null && !b.turns)
 
 /**
  * A one-line summary for the tag's label — "J2 + Main", the way the tag already

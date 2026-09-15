@@ -140,7 +140,12 @@ const INVENTORY = [
   { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }, { id: 'i6', name: 'A3' },
   { id: 'i7', name: 'Storm jib' },
 ]
+// What went out on the water today — the storm jib and the J1 stayed ashore.
 const ON_BOARD = INVENTORY.filter((s) => s.id !== 'i7' && s.id !== 'i2')
+// Weights as an event file's sail list reports them.
+const SAIL_KG: Record<string, number> = {
+  i1: 116.6, i2: 62.5, i3: 58.4, i4: 44.1, i5: 49.2, i6: 41.7, i7: 18.9,
+}
 const BATTEN_CARD = normaliseBattenCard({
   count: 3,
   rows: [
@@ -207,8 +212,16 @@ export default function TaggerPreview() {
             value={sail}
             onChange={setSail}
             inventory={INVENTORY}
-            onBoard={ON_BOARD}
-            previous={{ state: { up: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }], battens: [] }, utc: T(11, 40) }}
+            dayList={ON_BOARD}
+            weightOf={(s) => SAIL_KG[s.id || ''] ?? null}
+            previous={{
+              state: {
+                up: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }],
+                onBoard: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }],
+                battens: [],
+              },
+              utc: T(11, 40),
+            }}
             battenCard={BATTEN_CARD}
             battenCardSail="Main 2026"
             twsKn={12.4}

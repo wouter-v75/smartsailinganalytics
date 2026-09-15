@@ -18,7 +18,10 @@ import type { TagDef, TagEvent } from '@/lib/tagging/types'
 
 export interface SailContext {
   inventory: SailRef[]
-  onBoard: SailRef[]
+  /** Kg per inventory id, from the event file's sail list (sails.specs). */
+  weights: Record<string, number>
+  /** The day's sail list — everything that went on the water, RIB included. */
+  dayList: SailRef[]
   /** Every batten card the boat has, one per mainsail. */
   battenCards: SailBattenCard[]
   /** Which inventory ids are mainsails, so the batten tab knows whose card to
@@ -34,14 +37,15 @@ export function useSailContext(
 ): SailContext {
   const [inventory, setInventory] = React.useState<SailRef[]>([])
   const [mainsailIds, setMainsailIds] = React.useState<string[]>([])
-  const [onBoard, setOnBoard] = React.useState<SailRef[]>([])
+  const [dayList, setDayList] = React.useState<SailRef[]>([])
+  const [weights, setWeights] = React.useState<Record<string, number>>({})
   const [battenCards, setBattenCards] = React.useState<SailBattenCard[]>([])
   const [loading, setLoading] = React.useState(false)
 
   // The inventory and the batten cards belong to the BOAT, so they survive a
   // change of day; only the sail list is reloaded when the date moves.
   React.useEffect(() => {
-    if (!teamId || !boatId) { setInventory([]); setMainsailIds([]); setBattenCards([]); return }
+    if (!teamId || !boatId) { setInventory([]); setMainsailIds([]); setBattenCards([]); setWeights({}); return }
     let live = true
     Promise.all([
       fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`)
@@ -57,13 +61,22 @@ export function useSailContext(
       setMainsailIds(
         active.filter((s: { kind?: string }) => s.kind === 'mainsail').map((s: { id: string }) => s.id)
       )
+      // Weights come from the event file's sail list, kept under specs by the
+      // sails import. A boat that has never imported one simply has none, and
+      // the On board tab shows a count without a total rather than a zero.
+      const w: Record<string, number> = {}
+      for (const s of active as { id: string; specs?: { weight_kg?: unknown } }[]) {
+        const kg = s.specs?.weight_kg
+        if (typeof kg === 'number' && Number.isFinite(kg) && kg > 0) w[s.id] = kg
+      }
+      setWeights(w)
       setBattenCards((battens?.cards || []) as SailBattenCard[])
     })
     return () => { live = false }
   }, [teamId, boatId])
 
   React.useEffect(() => {
-    if (!teamId || !boatId || !date) { setOnBoard([]); return }
+    if (!teamId || !boatId || !date) { setDayList([]); return }
     let live = true
     setLoading(true)
     fetch(`/api/teams/${teamId}/boats/${boatId}/campaign/conditions?date=${date}`)
@@ -72,18 +85,18 @@ export function useSailContext(
         if (!live) return
         const sl = (j as { sailList?: { sails?: unknown } } | null)?.sailList
         const list = Array.isArray(sl?.sails) ? sl.sails : []
-        setOnBoard(
+        setDayList(
           list
             .filter((s: { name?: string }) => s?.name)
             .map((s: { id?: string; name: string }) => ({ id: s.id ?? null, name: s.name }))
         )
       })
-      .catch(() => { if (live) setOnBoard([]) })
+      .catch(() => { if (live) setDayList([]) })
       .finally(() => { if (live) setLoading(false) })
     return () => { live = false }
   }, [teamId, boatId, date])
 
-  return { inventory, mainsailIds, onBoard, battenCards, loading }
+  return { inventory, mainsailIds, weights, dayList, battenCards, loading }
 }
 
 /**
@@ -162,7 +175,8 @@ export function sailDetail(args: {
           value={value}
           onChange={onChange}
           inventory={ctx.inventory}
-          onBoard={ctx.onBoard}
+          dayList={ctx.dayList}
+          weightOf={(s) => (s.id ? ctx.weights[s.id] ?? null : null)}
           previous={prev ? { state: prev.state, utc: prev.tag.t0 } : null}
           battenCard={battenCardFor(ctx, value).card}
           battenCardSail={battenCardFor(ctx, value).sailName}
