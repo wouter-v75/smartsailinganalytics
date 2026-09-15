@@ -20,6 +20,31 @@ export type TagSource = 'human' | 'auto' | 'ai'
 /** What a tag is attached to. 'track' is the day's own time axis. */
 export type TagTargetKind = 'track' | 'video' | 'photo' | 'scan' | 'phase'
 
+/** Who put a tag here — drives the lane it draws in and the provenance line. */
+export type TagProducer =
+  | 'user'        // a person, by hand
+  | 'eventfile'   // Expedition's own events
+  | 'comment'     // an on-water comment, logged one-handed at speed
+  | 'manoeuvres'  // src/lib/manoeuvres.ts
+  | 'startline'   // src/lib/startAnalysis.ts
+  | 'log'         // derived from the log directly
+
+/** A descriptor: the "how" to a category's "what". Sportscode calls the pair
+ *  code + label; Nacsport calls it category + descriptor. Same idea. */
+export interface TagLabel {
+  group: string
+  text: string
+}
+
+/** The descriptors a definition allows, e.g. { group: 'Quality',
+ *  options: ['good', 'slow', 'late'] }. */
+export interface TagLabelGroup {
+  group: string
+  options: string[]
+  /** More than one option may be picked from this group. */
+  multi?: boolean
+}
+
 export interface TagDef {
   id: string
   teamId: string
@@ -33,6 +58,16 @@ export interface TagDef {
   /** Lowest membership role that may APPLY this tag (see gating.ts). */
   minRole: string
   kind: TagKind
+  /** Seconds BEFORE the press the tag starts. People press late, always. */
+  leadSec: number
+  /** Seconds after the press the tag keeps running. */
+  lagSec: number
+  /** The descriptors this tag may carry. */
+  labelGroups: TagLabelGroup[]
+  /** Timeline lane; null = derive from scope/section. */
+  lane: string | null
+  /** On the curated button bar (~8), as opposed to only in the picker. */
+  onButtonBar: boolean
   builtin: boolean
   archived: boolean
   sort: number
@@ -56,29 +91,36 @@ export interface TagEvent {
   targetKind: TagTargetKind
   targetId: string | null
   note: string | null
+  /** Applied descriptors. */
+  labels: TagLabel[]
   source: TagSource
+  producer: TagProducer
+
+  // ── merge state (see supabase/migrations/0062_ssa_tagger.sql) ─────────────
+  /** Ordinal identity of the detection this row IS, e.g. "b:2026-09-11:r2:tack:3".
+   *  null for a hand-placed tag. Unique per (boat, day). */
+  detectionKey: string | null
+  /** Where the detector put it — kept forever, so the UI can offer to snap back. */
+  autoT0: number | null
+  autoT1: number | null
+  /** 0–1, two decimals. Drives the review queue's ordering. */
+  confidence: number | null
+  /** Fields a human has changed; derivation writes a field only if absent here. */
+  editedFields: string[]
+  verifiedByUserId: string | null
+  verifiedAt: number | null
+  /** The tombstone: hidden from the track, and skipped by every later sync. */
+  rejected: boolean
+  rejectedReason: string | null
+  /** Position in the day's debrief reel; null = not on the reel. */
+  reelOrder: number | null
+
   createdByUserId: string | null
   meta?: Record<string, unknown> | null
 }
 
-export interface SsaPhase {
-  id: string
-  teamId: string
-  boatId: string
-  sessionId: string | null
-  sessionDate: string
-  batchId: string
-  t0: number
-  t1: number
-  mode: 'up' | 'down' | 'reach' | null
-  tack: 'port' | 'stbd' | null
-  nSamples: number
-  rejected: boolean
-  rejectReason: string | null
-  metrics?: Record<string, number | null> | null
-  source: TagSource
-}
-
+// SsaPhase lives with the Phases tab (milestone M7), not here — see
+// docs/tagger-architecture.md. src/lib/tagging/autoPhases.ts is its groundwork.
 /** Who is tagging: the active membership, plus the sections they sail in. */
 export interface TaggerIdentity {
   userId: string

@@ -266,7 +266,26 @@ to the previous/next detection.
 | `labels jsonb` | applied descriptors, `[{group, text}]` |
 | `reel_order int` | position in the day's debrief reel; NULL = not on the reel |
 
-plus `UNIQUE (boat_id, session_date, detection_key) WHERE detection_key IS NOT NULL`.
+plus a unique index on `(boat_id, session_date, detection_key)`.
+
+Two things about the indexes, both found by running the migration against a real
+PostgreSQL rather than reading it (`supabase/tests/0062_tagger_merge.sql`):
+
+- the detection index is **not partial**. `WHERE detection_key IS NOT NULL` reads
+  natural — only auto rows have a key — but a partial index can only arbitrate
+  `ON CONFLICT` if the statement repeats its predicate, which PostgREST cannot
+  express. It is also unnecessary: PostgreSQL treats NULLs as distinct, so manual
+  tags are unconstrained anyway.
+- the vocabulary index is `NULLS NOT DISTINCT` (PG15+; Supabase runs 17) rather
+  than the `COALESCE(...)` expression index it started as — same uniqueness, and
+  nameable as a conflict target, which seeding needs.
+
+`confidence` is `NUMERIC(3,2)`, not `REAL`: the review queue thresholds on it,
+and float4 cannot hold 0.95 exactly.
+
+A tag is **moved by shifting both endpoints** — writing `t0` alone trips the
+`t1 >= t0` window CHECK on a point tag. `merge.ts` will expose `moveTag()` as the
+one sanctioned way.
 
 `ssa_phases` moves **out** of `0062` and ships with the Phases tab.
 
@@ -329,7 +348,9 @@ Each milestone ends green: tests pass, `tsc --noEmit` clean, nothing half-wired.
 - Partial unique index on `detection_key`.
 - Seed endpoint for the base vocabulary (`baseTags.ts`, plus `tag_lists` migration).
 
-**Done:** migration applies clean on a fresh database and is idempotent.
+**Done:** migration applies clean on a fresh database and is idempotent — both
+verified by applying the whole 62-migration chain twice to a throwaway PostgreSQL,
+plus `supabase/tests/0062_tagger_merge.sql` asserting the merge guarantees hold.
 
 ### M1 · Detection — `detect.ts`
 - Wrap `manoeuvres.ts`, `xmlEventParse.js`, `startAnalysis.ts` behind one

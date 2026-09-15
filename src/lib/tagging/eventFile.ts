@@ -21,7 +21,16 @@
 // Pure — no React, no I/O.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { SsaPhase, TagDef, TagEvent, TagScope, TagSource, TagTargetKind } from './types'
+import type { TagDef, TagEvent, TagLabel, TagScope, TagSource, TagTargetKind } from './types'
+
+// Phases ship with the Phases tab (M7). The file format reserves the array now
+// so adding them later needs no version bump; until then it is written empty.
+export interface EventFilePhaseInput {
+  id: string; batchId: string; t0: number; t1: number
+  mode?: string | null; tack?: string | null; nSamples?: number
+  rejected?: boolean; rejectReason?: string | null
+  metrics?: Record<string, number | null> | null
+}
 
 export const SSA_EVENT_FORMAT = 'ssa-event-file'
 export const SSA_EVENT_VERSION = 1
@@ -38,7 +47,13 @@ export interface EventFileTag {
   targetKind: TagTargetKind
   targetId: string | null
   note: string | null
+  labels: TagLabel[]
   source: TagSource
+  producer: string
+  /** Kept so an exported day can be reconciled against a re-run of the detector. */
+  detectionKey: string | null
+  confidence: number | null
+  verified: boolean
   by: string | null
 }
 
@@ -89,9 +104,16 @@ const ms = (v: unknown): number => {
   return Number.isFinite(t) ? t : 0
 }
 
-/** Personal tags never leave the account that made them, so they never reach the
- *  file — an export handed to a coach must not carry someone's private notes. */
-export const isExportable = (t: Pick<TagEvent, 'scope'>): boolean => t.scope !== 'personal'
+/** What reaches an exported file. Two exclusions, both deliberate:
+ *   • PERSONAL tags — an export handed to a coach must not carry someone's
+ *     private notes, and this is the enforcement point, not the UI;
+ *   • REJECTED rows — they are tombstones, kept so a detection does not come
+ *     back, and they are not something that happened on the water. */
+/* `rejected` is optional because it is true of a stored row but meaningless on a
+   tag read back OUT of a file — a rejected row was never written in the first
+   place. One predicate serves both directions. */
+export const isExportable = (t: { scope: TagScope; rejected?: boolean }): boolean =>
+  t.scope !== 'personal' && !t.rejected
 
 export interface BuildEventFileInput {
   team: { id: string; name?: string | null }
@@ -100,7 +122,7 @@ export interface BuildEventFileInput {
   sessionId?: string | null
   tzOffsetMin?: number
   tags: TagEvent[]
-  phases: SsaPhase[]
+  phases?: EventFilePhaseInput[]
   vocabulary?: TagDef[]
   generatedAt?: number
 }
@@ -122,11 +144,16 @@ export function buildEventFile(input: BuildEventFileInput): SsaEventFile {
       targetKind: t.targetKind,
       targetId: t.targetId ?? null,
       note: t.note ?? null,
+      labels: t.labels ?? [],
       source: t.source,
+      producer: t.producer,
+      detectionKey: t.detectionKey ?? null,
+      confidence: t.confidence ?? null,
+      verified: !!t.verifiedAt,
       by: t.createdByUserId ?? null,
     }))
 
-  const phases = input.phases
+  const phases = (input.phases || [])
     .slice()
     .sort((a, b) => a.t0 - b.t0 || a.id.localeCompare(b.id))
     .map<EventFilePhase>((p) => ({
@@ -137,8 +164,8 @@ export function buildEventFile(input: BuildEventFileInput): SsaEventFile {
       lengthSec: Math.round((p.t1 - p.t0) / 1000),
       mode: p.mode ?? null,
       tack: p.tack ?? null,
-      nSamples: p.nSamples,
-      rejected: p.rejected,
+      nSamples: p.nSamples ?? 0,
+      rejected: !!p.rejected,
       rejectReason: p.rejectReason ?? null,
       metrics: p.metrics ?? null,
     }))
@@ -233,8 +260,11 @@ export function parseEventFile(text: string): SsaEventFile {
 }
 
 /** File tags → the shape the tag API upserts, retargeted at the importing boat.
- *  Ids are dropped: an import ADDS the day's tags to this workspace, it does not
- *  claim to be the same rows. */
+ *
+ *  Ids AND detection keys are dropped. An import ADDS another boat's reading of a
+ *  day to this workspace; it does not claim to be the same rows, and it must not
+ *  collide with — or be overwritten by — this boat's own detector. So everything
+ *  arrives as a hand-placed tag whose provenance lives in `meta`. */
 export function eventFileTagsToEvents(
   f: SsaEventFile,
   target: { teamId: string; boatId: string; sessionId?: string | null }
@@ -254,7 +284,23 @@ export function eventFileTagsToEvents(
     targetKind: t.targetKind,
     targetId: t.targetId ?? null,
     note: t.note ?? null,
+    labels: t.labels ?? [],
     source: t.source,
-    meta: { importedFrom: `${f.boat.name || f.boat.id}/${f.date}`, originalId: t.id },
+    producer: 'user' as const,
+    detectionKey: null,
+    autoT0: null,
+    autoT1: null,
+    confidence: null,
+    editedFields: [],
+    verifiedByUserId: null,
+    verifiedAt: null,
+    rejected: false,
+    rejectedReason: null,
+    reelOrder: null,
+    meta: {
+      importedFrom: `${f.boat.name || f.boat.id}/${f.date}`,
+      originalId: t.id,
+      originalDetectionKey: t.detectionKey ?? null,
+    },
   }))
 }

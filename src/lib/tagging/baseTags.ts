@@ -18,7 +18,7 @@
 
 import { RACING_TAGS, RACE_RED } from '../racingTags'
 import { CREW_SECTIONS } from './sections'
-import type { TagKind, TagScope } from './types'
+import type { TagKind, TagLabelGroup, TagScope } from './types'
 
 export interface BaseTag {
   slug: string
@@ -29,32 +29,73 @@ export interface BaseTag {
   kind: TagKind
   minRole: string
   sort: number
+  /** Seconds before the press the tag starts — people press late, always. */
+  leadSec: number
+  /** Seconds after the press it keeps running. */
+  lagSec: number
+  labelGroups: TagLabelGroup[]
+  /** On the curated ~8-button bar, rather than only in the picker. */
+  onButtonBar: boolean
 }
+
+// ── Descriptor vocabularies ─────────────────────────────────────────────────
+// Categories say WHAT happened; descriptors say how. Kept deliberately small —
+// rare codes depress coding consistency even when everyone agrees on the common
+// ones, so each group is a handful of options a crew can hold in their head.
+const QUALITY: TagLabelGroup = {
+  group: 'Quality',
+  options: ['textbook', 'good', 'scrappy', 'slow', 'bad'],
+}
+const CAUSE: TagLabelGroup = {
+  group: 'Cause',
+  options: ['call', 'trim', 'helm', 'crew work', 'kit', 'breeze', 'waves'],
+}
+const MANOEUVRE_LABELS: TagLabelGroup[] = [QUALITY, CAUSE]
 
 const POS_C = '#1D9E75'   // point of sail
 const WIND_C = '#06B6D4'  // breeze bands
 const MANO_C = '#7F77DD'  // manoeuvres
 const DAY_C = '#F59E0B'   // day structure
 
+// Lead/lag defaults. A point tag gets 10 s of lead because that is roughly the
+// gap between a moment happening and a human finding the button; a manoeuvre also
+// wants its recovery in frame, hence the longer lag. A range tag leads by less —
+// the crew drag its edges anyway.
 const mk = (
   slug: string,
   label: string,
   color: string,
   opts: Partial<Omit<BaseTag, 'slug' | 'label' | 'color'>> = {}
-): BaseTag => ({
-  slug,
-  label,
-  color,
-  scope: opts.scope ?? 'general',
-  section: opts.section ?? null,
-  kind: opts.kind ?? 'point',
-  minRole: opts.minRole ?? 'tl1',
-  sort: opts.sort ?? 100,
-})
+): BaseTag => {
+  const kind = opts.kind ?? 'point'
+  return {
+    slug,
+    label,
+    color,
+    scope: opts.scope ?? 'general',
+    section: opts.section ?? null,
+    kind,
+    minRole: opts.minRole ?? 'tl1',
+    sort: opts.sort ?? 100,
+    leadSec: opts.leadSec ?? (kind === 'range' ? 5 : 10),
+    lagSec: opts.lagSec ?? (kind === 'range' ? 5 : 10),
+    labelGroups: opts.labelGroups ?? [],
+    onButtonBar: opts.onButtonBar ?? false,
+  }
+}
 
 // ── General: the racing moments (racingTags.ts, verbatim) ───────────────────
+// The button bar is these plus tack and gybe — eight in total, which is as many
+// as anyone reliably reaches for without looking.
 const RACING: BaseTag[] = Object.entries(RACING_TAGS).map(([slug, label], i) =>
-  mk(slug, label, RACE_RED, { sort: 10 + i })
+  mk(slug, label, RACE_RED, {
+    sort: 10 + i,
+    labelGroups: [QUALITY],
+    onButtonBar: slug === 'race-start' || slug === 'topmark' || slug === 'gate',
+    // A start is worth a minute of run-in; a mark rounding, the approach.
+    leadSec: slug === 'race-start' ? 60 : 20,
+    lagSec: slug === 'race-start' ? 30 : 20,
+  })
 )
 
 // ── General: what computeAutoTags already emits ─────────────────────────────
@@ -62,9 +103,13 @@ const AUTO: BaseTag[] = [
   mk('upwind', 'Upwind', POS_C, { kind: 'range', sort: 30 }),
   mk('reach', 'Reach', POS_C, { kind: 'range', sort: 31 }),
   mk('downwind', 'Downwind', POS_C, { kind: 'range', sort: 32 }),
-  mk('tack', 'Tack', '#1D9E75', { sort: 40 }),
-  mk('gybe', 'Gybe', MANO_C, { sort: 41 }),
-  mk('mark', 'Mark', '#F59E0B', { sort: 42 }),
+  mk('tack', 'Tack', '#1D9E75', {
+    sort: 40, labelGroups: MANOEUVRE_LABELS, onButtonBar: true, leadSec: 20, lagSec: 40,
+  }),
+  mk('gybe', 'Gybe', MANO_C, {
+    sort: 41, labelGroups: MANOEUVRE_LABELS, onButtonBar: true, leadSec: 20, lagSec: 40,
+  }),
+  mk('mark', 'Mark', '#F59E0B', { sort: 42, labelGroups: [QUALITY], leadSec: 20, lagSec: 20 }),
   mk('race', 'Race', '#D85A30', { kind: 'range', sort: 50 }),
   mk('training', 'Training', '#94A3B8', { kind: 'range', sort: 51 }),
   mk('light-air', 'Light air', WIND_C, { kind: 'range', sort: 60 }),
@@ -77,11 +122,28 @@ const DAY: BaseTag[] = [
   mk('dock-in', 'Dock in', DAY_C, { sort: 71 }),
   mk('warning-signal', 'Warning signal', DAY_C, { sort: 72 }),
   mk('sail-change', 'Sail change', DAY_C, { sort: 73 }),
-  mk('lineup', 'Line-up', '#2DD4BF', { kind: 'range', sort: 74 }),
-  mk('test', 'Test / mode change', '#2DD4BF', { kind: 'range', sort: 75 }),
-  mk('incident', 'Incident', '#EF4444', { sort: 80 }),
-  mk('gear-damage', 'Gear damage', '#EF4444', { sort: 81 }),
-  mk('review', 'Review this', '#8B5CF6', { sort: 90 }),
+  // Two-boat testing: a run is only believed after three or four repeats, so the
+  // repeat number rides along as a descriptor and the season's runs group by it.
+  mk('lineup', 'Line-up', '#2DD4BF', {
+    kind: 'range', sort: 74, onButtonBar: true,
+    labelGroups: [
+      { group: 'Side', options: ['windward', 'leeward'] },
+      { group: 'Run', options: ['1', '2', '3', '4', '5+'] },
+      { group: 'Result', options: ['faster', 'level', 'slower'] },
+    ],
+  }),
+  mk('test', 'Test / mode change', '#2DD4BF', {
+    kind: 'range', sort: 75,
+    labelGroups: [{ group: 'Testing', options: ['rig', 'sail', 'trim mode', 'foil', 'crew weight'] }],
+  }),
+  mk('incident', 'Incident', '#EF4444', { sort: 80, onButtonBar: true, leadSec: 20, lagSec: 20 }),
+  mk('gear-damage', 'Gear damage', '#EF4444', { sort: 81, leadSec: 20, lagSec: 20 }),
+  // The catch-all: "something happened here, come back to it". The most-pressed
+  // button on any tagging tool, and the one that feeds the debrief reel.
+  mk('review', 'Review this', '#8B5CF6', {
+    sort: 90, onButtonBar: true, leadSec: 20, lagSec: 20,
+    labelGroups: [{ group: 'For', options: ['debrief', 'coach', 'design', 'me'] }],
+  }),
 ]
 
 // ── Section starters: one short list per crew section ────────────────────────
@@ -101,7 +163,10 @@ const SECTION_STARTERS: Record<string, [string, string][]> = {
 
 const SECTIONS: BaseTag[] = CREW_SECTIONS.flatMap((s, si) =>
   (SECTION_STARTERS[s.key] || []).map(([slug, label], i) =>
-    mk(slug, label, s.color, { scope: 'section', section: s.key, sort: 200 + si * 10 + i })
+    mk(slug, label, s.color, {
+      scope: 'section', section: s.key, sort: 200 + si * 10 + i,
+      labelGroups: [QUALITY], leadSec: 15, lagSec: 15,
+    })
   )
 )
 
@@ -133,7 +198,12 @@ export function migrateLegacyTagList(tags: readonly string[] | null | undefined)
   const taken = new Set(BASE_TAGS.map((t) => t.slug))
   const out: BaseTag[] = []
   for (const raw of tags || []) {
-    const slug = slugify(String(raw))
+    // NOT String(raw) — `tag_lists.tags` is JSONB, so a null or a number can be
+    // sitting in there, and coercing first turns null into the string "null" and
+    // mints a tag called "Null". slugify already handles nullish input; anything
+    // that is not a string has no business becoming vocabulary.
+    if (typeof raw !== 'string') continue
+    const slug = slugify(raw)
     if (!slug || taken.has(slug)) continue
     taken.add(slug)
     out.push(mk(slug, labelFromSlug(slug), '#06B6D4', { sort: 500 + out.length }))

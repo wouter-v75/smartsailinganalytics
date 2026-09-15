@@ -17,8 +17,24 @@
 --   ssa_tag_events       APPLIED tags: one row per tag on the day's timeline,
 --                        each with its own [t0, t1) window and optional media
 --                        target. This is what the .ssa event file serialises.
---   ssa_phases           steady-state phase segments (the 30 s auto-phases the
---                        tagger cuts out of a selected part of the track).
+--
+-- Phases are NOT here. KND-style phase selection earns its own tab and ships
+-- with it; see docs/tagger-architecture.md, milestone M7.
+--
+-- THE MERGE MODEL. Detections (tacks, gybes, starts, mark roundings inferred
+-- from the log and the event file) are MATERIALISED into ssa_tag_events with
+-- source='auto' and a detection_key; a hand-placed tag is the same table with
+-- detection_key NULL. One table, one read path. Re-derivation is an upsert that
+-- respects three columns:
+--
+--   edited_fields[]  the structured diff. A human who moves a tag appends 't0';
+--                    derivation consults the list before writing each field, so
+--                    a human edit is never undone by the next sync.
+--   rejected         the tombstone, kept ON the row so a rejected detection can
+--                    still be listed, explained and un-rejected — and so it does
+--                    not come back on the next run.
+--   auto_t0/auto_t1  where the detector put it, kept forever alongside where it
+--                    now sits, so the UI can always offer to snap back.
 --
 -- Gating is enforced TWICE, as everywhere else in SSA: RLS below is the
 -- authority, src/lib/tagging/gating.ts is the UI's copy so the app never
@@ -76,6 +92,21 @@ CREATE TABLE IF NOT EXISTS public.ssa_tag_defs (
     color         TEXT NOT NULL DEFAULT '#06B6D4',
     min_role      TEXT NOT NULL DEFAULT 'tl1',
     kind          TEXT NOT NULL DEFAULT 'point' CHECK (kind IN ('point', 'range')),
+    -- Lead/lag: a button press lands LATE, always — the operator has to see the
+    -- moment, recognise it and find the button. lead_sec starts the tag that many
+    -- seconds BEFORE the press, lag_sec runs it on after. Sportscode's convention,
+    -- and the reason one-press tagging is usable at all.
+    lead_sec      INTEGER NOT NULL DEFAULT 0 CHECK (lead_sec >= 0 AND lead_sec <= 600),
+    lag_sec       INTEGER NOT NULL DEFAULT 0 CHECK (lag_sec  >= 0 AND lag_sec  <= 600),
+    -- The descriptors this tag may carry: [{ "group": "Quality",
+    -- "options": ["good","slow","late"] }]. Categories say WHAT happened,
+    -- descriptors say how — the two-level model every elite tagging tool uses.
+    label_groups  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    -- Which timeline lane it draws in. NULL = derive from scope/section.
+    lane          TEXT,
+    -- On the curated button bar (~8 buttons), as opposed to only in the picker.
+    -- Rare codes depress coding consistency, so the bar stays deliberately short.
+    on_button_bar BOOLEAN NOT NULL DEFAULT FALSE,
     builtin       BOOLEAN NOT NULL DEFAULT FALSE,   -- seeded from the app's base vocabulary
     archived      BOOLEAN NOT NULL DEFAULT FALSE,
     sort          INTEGER NOT NULL DEFAULT 100,
@@ -89,17 +120,17 @@ CREATE TABLE IF NOT EXISTS public.ssa_tag_defs (
     )
 );
 
--- One definition per (team, boat, scope, section/owner, slug). COALESCE keeps the
--- uniqueness real across the nullable discriminators (a plain UNIQUE would let
--- duplicates through, since NULL <> NULL).
-CREATE UNIQUE INDEX IF NOT EXISTS ssa_tag_defs_unique_idx ON public.ssa_tag_defs (
-    team_id,
-    COALESCE(boat_id, '00000000-0000-0000-0000-000000000000'::uuid),
-    scope,
-    COALESCE(section, ''),
-    COALESCE(owner_user_id, '00000000-0000-0000-0000-000000000000'::uuid),
-    slug
-);
+-- One definition per (team, boat, scope, section/owner, slug).
+--
+-- NULLS NOT DISTINCT (PostgreSQL 15+) rather than COALESCE() over the nullable
+-- discriminators. Both make uniqueness real — a plain UNIQUE would let duplicate
+-- team-wide general tags through, since NULL <> NULL — but only this one can
+-- arbitrate ON CONFLICT from PostgREST, which addresses conflict targets by
+-- column name and cannot name an expression index. Seeding the base vocabulary
+-- is an upsert, so that matters.
+CREATE UNIQUE INDEX IF NOT EXISTS ssa_tag_defs_unique_idx
+    ON public.ssa_tag_defs (team_id, boat_id, scope, section, owner_user_id, slug)
+    NULLS NOT DISTINCT;
 CREATE INDEX IF NOT EXISTS ssa_tag_defs_team_idx ON public.ssa_tag_defs (team_id, boat_id, scope);
 
 -- ── 3. ssa_tag_events — applied tags on the day's timeline ──────────────────
@@ -121,13 +152,46 @@ CREATE TABLE IF NOT EXISTS public.ssa_tag_events (
     scope         TEXT NOT NULL CHECK (scope IN ('general', 'section', 'personal')),
     section       TEXT,
     owner_user_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    -- A point tag has t1 = t0. MOVING a tag must shift BOTH endpoints together —
+    -- writing t0 alone trips ssa_tag_events_window below. src/lib/tagging/merge.ts
+    -- exposes moveTag() as the one sanctioned way to do it.
     t0            TIMESTAMPTZ NOT NULL,
     t1            TIMESTAMPTZ NOT NULL,
     target_kind   TEXT NOT NULL DEFAULT 'track'
                   CHECK (target_kind IN ('track', 'video', 'photo', 'scan', 'phase')),
     target_id     TEXT,
     note          TEXT,
+    -- Applied descriptors: [{ "group": "Quality", "text": "slow" }].
+    labels        JSONB NOT NULL DEFAULT '[]'::jsonb,
     source        TEXT NOT NULL DEFAULT 'human' CHECK (source IN ('human', 'auto', 'ai')),
+    -- Which detector (or person) put this here: user | eventfile | log |
+    -- manoeuvres | startline | comment. Drives the lane and the provenance line.
+    producer      TEXT NOT NULL DEFAULT 'user',
+
+    -- ── the merge columns (see the header) ──────────────────────────────────
+    -- Ordinal, NOT temporal: "<boat>:<date>:r2:tack:3" — the third tack of race
+    -- 2. A detection that the detector re-times by a second keeps its key, so the
+    -- row is UPDATED rather than duplicated. NULL for a hand-placed tag.
+    detection_key TEXT,
+    auto_t0       TIMESTAMPTZ,       -- where the detector put it, kept forever
+    auto_t1       TIMESTAMPTZ,
+    -- NUMERIC, not REAL: the review queue sorts and thresholds on this ("anything
+    -- under 0.6 needs a human"), and float4 cannot hold 0.95 exactly, so equality
+    -- and boundary comparisons quietly misbehave. Two decimals is all it means.
+    confidence    NUMERIC(3,2) CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+    -- Fields a human has changed. Derivation writes a field only if it is absent
+    -- here. Values are column names: 't0', 't1', 'slug', 'label'.
+    edited_fields TEXT[] NOT NULL DEFAULT '{}',
+    verified_by_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    verified_at   TIMESTAMPTZ,
+    -- The tombstone. A rejected detection is hidden from the track and skipped by
+    -- every subsequent sync — it does not come back.
+    rejected      BOOLEAN NOT NULL DEFAULT FALSE,
+    rejected_reason TEXT,
+    -- Position in the day's debrief reel; NULL = not on the reel. The reel is the
+    -- shortlist a debrief actually works through, and the deliverable of tagging.
+    reel_order    INTEGER,
+
     meta          JSONB,
     created_by_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -144,36 +208,27 @@ CREATE INDEX IF NOT EXISTS ssa_tag_events_day_idx    ON public.ssa_tag_events (b
 CREATE INDEX IF NOT EXISTS ssa_tag_events_slug_idx   ON public.ssa_tag_events (boat_id, slug);
 CREATE INDEX IF NOT EXISTS ssa_tag_events_target_idx ON public.ssa_tag_events (target_kind, target_id);
 
--- ── 4. ssa_phases — steady-state segments cut from the track ────────────────
--- The tagger's phase builder writes these: pick a stretch of the day, it slices
--- it into fixed-length (default 30 s) phases and drops the ones whose log data
--- is not steady enough to average. `rejected` keeps the discarded slices so the
--- crew can see WHY a gap is there rather than wondering.
-CREATE TABLE IF NOT EXISTS public.ssa_phases (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    team_id       UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
-    boat_id       UUID NOT NULL REFERENCES public.boats(id) ON DELETE CASCADE,
-    session_id    UUID REFERENCES public.sessions(id) ON DELETE SET NULL,
-    session_date  DATE NOT NULL,
-    batch_id      UUID NOT NULL,                     -- one "build phases" run
-    t0            TIMESTAMPTZ NOT NULL,
-    t1            TIMESTAMPTZ NOT NULL,
-    mode          TEXT CHECK (mode IN ('up', 'down', 'reach')),
-    tack          TEXT CHECK (tack IN ('port', 'stbd')),
-    n_samples     INTEGER NOT NULL DEFAULT 0,
-    rejected      BOOLEAN NOT NULL DEFAULT FALSE,
-    reject_reason TEXT,
-    metrics       JSONB,
-    source        TEXT NOT NULL DEFAULT 'auto' CHECK (source IN ('human', 'auto', 'ai')),
-    created_by_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT ssa_phases_window CHECK (t1 > t0)
-);
+-- One row per detection per day. This is what makes re-derivation an UPSERT
+-- rather than an append, and it is the whole reason the merge model works.
+--
+-- Deliberately NOT a partial index (`WHERE detection_key IS NOT NULL`), even
+-- though only auto rows carry a key. Two reasons, both learned the hard way:
+--   1. a partial index can only arbitrate ON CONFLICT if the statement repeats
+--      its predicate verbatim — and PostgREST (so supabase-js .upsert) cannot
+--      express that, which would have forced the sync through an RPC;
+--   2. it is not needed. PostgreSQL treats NULLs as DISTINCT in a unique index,
+--      so hand-placed tags (detection_key NULL) are unconstrained — any number
+--      of them coexist on the same boat and day — while non-NULL keys stay
+--      unique. Exactly the behaviour we want, with none of the sharp edge.
+CREATE UNIQUE INDEX IF NOT EXISTS ssa_tag_events_detection_idx
+    ON public.ssa_tag_events (boat_id, session_date, detection_key);
 
-CREATE INDEX IF NOT EXISTS ssa_phases_day_idx   ON public.ssa_phases (boat_id, session_date, t0);
-CREATE INDEX IF NOT EXISTS ssa_phases_batch_idx ON public.ssa_phases (batch_id);
+-- The day's debrief reel, in order.
+CREATE INDEX IF NOT EXISTS ssa_tag_events_reel_idx
+    ON public.ssa_tag_events (boat_id, session_date, reel_order)
+    WHERE reel_order IS NOT NULL;
 
--- ── 5. updated_at triggers ──────────────────────────────────────────────────
+-- ── 4. updated_at triggers ──────────────────────────────────────────────────
 DROP TRIGGER IF EXISTS ssa_tag_defs_touch ON public.ssa_tag_defs;
 CREATE TRIGGER ssa_tag_defs_touch BEFORE UPDATE ON public.ssa_tag_defs
     FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
@@ -181,10 +236,9 @@ DROP TRIGGER IF EXISTS ssa_tag_events_touch ON public.ssa_tag_events;
 CREATE TRIGGER ssa_tag_events_touch BEFORE UPDATE ON public.ssa_tag_events
     FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 
--- ── 6. RLS ──────────────────────────────────────────────────────────────────
+-- ── 5. RLS ──────────────────────────────────────────────────────────────────
 ALTER TABLE public.ssa_tag_defs   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ssa_tag_events ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.ssa_phases     ENABLE ROW LEVEL SECURITY;
 
 -- Definitions: a personal tag is visible ONLY to its owner; general and section
 -- definitions to anyone with boat access. (Section tags are readable team-wide
@@ -297,29 +351,3 @@ CREATE POLICY ssa_tag_events_delete ON public.ssa_tag_events
                      AND public.has_team_role(team_id, ARRAY['coach', 'tl1', 'tl2', 'consultant'])
                      AND section = ANY (public.my_sections(team_id, boat_id)))))
     );
-
--- Phases: read with the day, written by the crew (TL1+), tidied by coach+.
-DROP POLICY IF EXISTS ssa_phases_select ON public.ssa_phases;
-CREATE POLICY ssa_phases_select ON public.ssa_phases
-    FOR SELECT TO authenticated
-    USING (public.is_admin()
-           OR public.has_boat_access_dated(team_id, boat_id, session_date));
-
-DROP POLICY IF EXISTS ssa_phases_insert ON public.ssa_phases;
-CREATE POLICY ssa_phases_insert ON public.ssa_phases
-    FOR INSERT TO authenticated
-    WITH CHECK (public.is_admin() OR public.has_team_role(team_id, ARRAY['coach', 'tl1', 'tl2', 'consultant']));
-
-DROP POLICY IF EXISTS ssa_phases_update ON public.ssa_phases;
-CREATE POLICY ssa_phases_update ON public.ssa_phases
-    FOR UPDATE TO authenticated
-    USING (public.is_admin()
-           OR created_by_user_id = auth.uid()
-           OR public.has_team_role(team_id, ARRAY['coach', 'tl3', 'team_manager']));
-
-DROP POLICY IF EXISTS ssa_phases_delete ON public.ssa_phases;
-CREATE POLICY ssa_phases_delete ON public.ssa_phases
-    FOR DELETE TO authenticated
-    USING (public.is_admin()
-           OR created_by_user_id = auth.uid()
-           OR public.has_team_role(team_id, ARRAY['coach', 'tl3', 'team_manager']));
