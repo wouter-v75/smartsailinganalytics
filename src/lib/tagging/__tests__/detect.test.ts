@@ -62,12 +62,17 @@ describe('detectDay', () => {
       raceGuns: xmlTwoRaces.raceGuns.map((g) => ({ ...g, utc: g.utc + 1500 })),
       markRoundings: xmlTwoRaces.markRoundings.map((m) => ({ ...m, utc: m.utc + 1500 })),
       sailsUpEvents: xmlTwoRaces.sailsUpEvents.map((e) => ({ ...e, utc: e.utc + 1500 })),
+      // The day's own ends move with everything else: a re-timed file is
+      // re-timed throughout, and leaving these put would be a different test.
+      dayStartUtc: xmlTwoRaces.dayStartUtc + 1500,
+      dayStopUtc: xmlTwoRaces.dayStopUtc + 1500,
     }
     const before = detectDay({ boatId: BOAT, date: DATE, xml: xmlTwoRaces })
     const after = detectDay({ boatId: BOAT, date: DATE, xml: shifted })
     // Same identities, different times — so a sync UPDATES rather than duplicating.
     expect(after.map((d) => d.key)).toEqual(before.map((d) => d.key))
-    expect(after[0].t0).not.toBe(before[0].t0)
+    // Every one of them moved, not just whichever happens to sort first.
+    expect(after.map((d) => d.t0)).toEqual(before.map((d) => d.t0 + 1500))
   })
 
   it('numbers repeats within a segment, not across the day', () => {
@@ -395,5 +400,52 @@ describe('roundings are only tagged while racing', () => {
     const d = detectDay({ boatId: BOAT, date: DATE, rows: [], xml })
     expect(d.some((x) => x.slug === 'race-start')).toBe(true)
     expect(d.some((x) => x.slug === 'sail-change')).toBe(true)
+  })
+})
+
+describe('the day’s own two ends', () => {
+  const edges = (d: ReturnType<typeof detectDay>) =>
+    d.filter((x) => x.slug === 'day-start' || x.slug === 'day-end')
+
+  it('come from the event file, so nobody has to press a button', () => {
+    const d = detectDay({ boatId: BOAT, date: DATE, rows: [], xml: xmlTwoRaces })
+    expect(edges(d).map((x) => [x.slug, x.meta?.utc])).toEqual([
+      ['day-start', T('10:30')],
+      ['day-end', T('16:00')],
+    ])
+  })
+
+  it('are windows, not instants — a day starts somewhere around there', () => {
+    const start = edges(detectDay({ boatId: BOAT, date: DATE, rows: [], xml: xmlTwoRaces }))[0]
+    expect(start.t1 - start.t0).toBe(60_000)
+  })
+
+  it('are trusted: the file recorded them', () => {
+    for (const e of edges(detectDay({ boatId: BOAT, date: DATE, rows: [], xml: xmlTwoRaces }))) {
+      expect(e.confidence).toBeGreaterThanOrEqual(0.9)
+      expect(e.producer).toBe('eventfile')
+    }
+  })
+
+  it('are simply absent on a day with no event file', () => {
+    // Which is when the Racing button carries them instead.
+    expect(edges(detectDay({ boatId: BOAT, date: DATE, rows: [], xml: null }))).toEqual([])
+  })
+
+  it('takes one end without the other', () => {
+    const xml = { ...xmlTwoRaces, dayStopUtc: null }
+    expect(edges(detectDay({ boatId: BOAT, date: DATE, rows: [], xml })).map((x) => x.slug))
+      .toEqual(['day-start'])
+  })
+
+  it('does not invent one from a junk timestamp', () => {
+    const xml = { ...xmlTwoRaces, dayStartUtc: NaN, dayStopUtc: 'noon' }
+    expect(edges(detectDay({ boatId: BOAT, date: DATE, rows: [], xml }))).toEqual([])
+  })
+
+  it('gets its own ordinal key like everything else', () => {
+    const d = detectDay({ boatId: BOAT, date: DATE, rows: [], xml: xmlTwoRaces })
+    for (const e of edges(d)) expect(e.key).toContain(e.slug)
+    expect(new Set(d.map((x) => x.key)).size).toBe(d.length)
   })
 })

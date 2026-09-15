@@ -37,6 +37,7 @@ import type { TagProducer } from './types'
 export type DetectionSlug =
   | 'race-start' | 'topmark' | 'gate' | 'mark'
   | 'tack' | 'gybe' | 'sail-change'
+  | 'day-start' | 'day-end'
 
 export interface Detection {
   /** Ordinal identity — "<boat>:<date>:<segment>:<slug>:<n>". Stable under
@@ -191,6 +192,30 @@ export function detectDay(input: DetectInput): Detection[] {
   })
 
   const found: Omit<Detection, 'key'>[] = []
+
+  // ── The day's own two ends ────────────────────────────────────────────────
+  // DayStart and DayStop are recorded facts in the event file, and every other
+  // screen already measures from them — so a crew should not have to press a
+  // button to say what the file has said all along. On a day with no event file
+  // there is nothing here and the Racing button carries them instead.
+  for (const [slug, label, utc] of [
+    ['day-start', 'Day start', xml?.dayStartUtc],
+    ['day-end', 'Day end', xml?.dayStopUtc],
+  ] as const) {
+    if (!isNum(utc)) continue
+    const s = seg(utc)
+    found.push({
+      slug,
+      label,
+      t0: utc - 30_000,
+      t1: utc + 30_000,
+      segmentKey: s?.key || 'day',
+      raceNum: s?.raceNum ?? null,
+      confidence: EVENT_CONFIDENCE,
+      producer: 'eventfile',
+      meta: { dayEdge: slug === 'day-start' ? 'start' : 'end', utc },
+    })
+  }
 
   // ── Race starts ───────────────────────────────────────────────────────────
   // The gun is a recorded fact. The window runs from a minute before to half a

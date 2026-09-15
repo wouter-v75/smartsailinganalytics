@@ -144,6 +144,15 @@ const AUTO: BaseTag[] = [
 
 // ── General: the day's own structure (the DayPhases rows) ───────────────────
 const DAY: BaseTag[] = [
+  // The two ends of the day on the water. Distinct from dock out / dock in:
+  // those are the dock, these are when the day's RECORD starts and stops, which
+  // is what the event file knows and what every other screen measures from. On
+  // the Racing button because that is where the crew look for the day's fixed
+  // points, and coloured like the rest of the day's structure because that is
+  // what they are — the Racing group's own colour is on the button, not on its
+  // members.
+  mk('day-start', 'Day start', DAY_C, { sort: 68, leadSec: 30, lagSec: 30 }),
+  mk('day-end', 'Day end', DAY_C, { sort: 69, leadSec: 30, lagSec: 30 }),
   mk('dock-out', 'Dock out', DAY_C, { sort: 70 }),
   mk('dock-in', 'Dock in', DAY_C, { sort: 71 }),
   mk('warning-signal', 'Warning signal', DAY_C, { sort: 72 }),

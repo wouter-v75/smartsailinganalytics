@@ -10,11 +10,18 @@ import { SECTION_KEYS } from '../sections'
 // one convenient tag at a time — which is exactly how a coding scheme stops
 // being usable.
 describe('base vocabulary', () => {
-  it('stays learnable in an evening — 20-30 general tags', () => {
+  it('stays learnable in an evening — 20-32 general tags', () => {
     // Coder training in the literature is ~2 h to learn a scheme plus 1 h of
     // practice. That is the budget a crew will give this. (§26)
+    //
+    // The ceiling moved from 30 to 32 when Day start and Day end were added.
+    // Raising it is a real cost and worth naming: every tag past the budget is
+    // one more thing a crew has to hold, and the guardrail only works while
+    // moving it is a decision rather than a reflex. These two earn it by being
+    // detected from the event file on any day that has one — most crews will
+    // never press them.
     expect(BASE_GENERAL_TAGS.length).toBeGreaterThanOrEqual(20)
-    expect(BASE_GENERAL_TAGS.length).toBeLessThanOrEqual(30)
+    expect(BASE_GENERAL_TAGS.length).toBeLessThanOrEqual(32)
   })
 
   it('keeps the button bar to roughly eight', () => {
@@ -148,5 +155,28 @@ describe('migrateLegacyTagList', () => {
   it('drops empties and survives junk', () => {
     expect(migrateLegacyTagList(['', '  ', '---', null as never])).toEqual([])
     expect(migrateLegacyTagList(null)).toEqual([])
+  })
+})
+
+describe('the day’s own two ends', () => {
+  it('exist as vocabulary', () => {
+    for (const slug of ['day-start', 'day-end']) {
+      expect(BASE_TAGS.some((t) => t.slug === slug)).toBe(true)
+    }
+  })
+
+  it('are not on the bar — they are behind the Racing button', () => {
+    // The bar is for what happens several times a day. These happen once each,
+    // and the file usually knows them anyway.
+    const bar = BASE_TAGS.filter((t) => t.onButtonBar).map((t) => t.slug)
+    expect(bar).not.toContain('day-start')
+    expect(bar).not.toContain('day-end')
+  })
+
+  it('are separate from dock out and dock in', () => {
+    // The dock is the dock; these are when the day's RECORD starts and stops,
+    // which is what every other screen measures from.
+    expect(BASE_TAGS.some((t) => t.slug === 'dock-out')).toBe(true)
+    expect(BASE_TAGS.some((t) => t.slug === 'dock-in')).toBe(true)
   })
 })

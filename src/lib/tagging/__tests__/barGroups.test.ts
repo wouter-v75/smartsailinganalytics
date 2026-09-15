@@ -16,8 +16,16 @@ const def = (slug: string, over: Partial<TagDef> = {}): TagDef => ({
 const RACING: BarGroup = BAR_GROUPS.find((g) => g.key === 'racing')!
 
 describe('the racing group', () => {
-  it('names the five racing moments, in course order', () => {
-    expect(RACING.slugs).toEqual(['race-start', 'topmark', 'gate', 'mark', 'race-finish'])
+  it('names the day’s fixed points, in the order the day happens', () => {
+    // The day opens, the racing happens, the day closes. A picker ordered by
+    // when things occur is one people can use without reading it.
+    expect(RACING.slugs).toEqual([
+      'day-start', 'race-start', 'topmark', 'gate', 'mark', 'race-finish', 'day-end',
+    ])
+  })
+
+  it('has the finish in it', () => {
+    expect(RACING.slugs).toContain('race-finish')
   })
 
   it('every slug it names exists in the base vocabulary', () => {
@@ -88,3 +96,4 @@ describe('barItems', () => {
     expect(items.some((i) => i.kind === 'tag' && i.def.slug === 'team-note')).toBe(false)
   })
 })
+

@@ -11,7 +11,9 @@
 //
 // Racing is grouped because the detector already finds most of these from the
 // event file; the button is for the training day that has no event file, and for
-// the moment the detector missed. A group with one member is not a group — the
+// the moment the detector missed. The day's own two ends sit at either end of
+// the list for the same reason: the file usually knows them, and when it does
+// not somebody has to be able to say so. A group with one member is not a group — the
 // bar renders that member directly (see `resolveGroup`).
 //
 // Pure — no React, no I/O.
@@ -34,7 +36,10 @@ export const BAR_GROUPS: BarGroup[] = [
     key: 'racing',
     label: 'Racing',
     color: RACE_RED,
-    slugs: ['race-start', 'topmark', 'gate', 'mark', 'race-finish'],
+    // Chronological, which is how a day reads: the day opens, the racing
+    // happens, the day closes. A picker ordered by when things occur is one
+    // people can use without reading it.
+    slugs: ['day-start', 'race-start', 'topmark', 'gate', 'mark', 'race-finish', 'day-end'],
   },
 ]
 
