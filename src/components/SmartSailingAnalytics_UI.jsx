@@ -4861,7 +4861,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const liveRow = playUtc && rows.length ? nearestRow(rows, playUtc) : null;
   const liveActive = liveRow && Math.abs(liveRow.utc - (playUtc||0)) < 60000;
 
-  const card=(label,val,unit,color)=>(<div style={{background:"#0A1929",border:`1px solid ${color}25`,borderRadius:8,padding:"12px 14px"}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,textTransform:"uppercase",marginBottom:3}}>{label}</div><div style={{fontSize:22,fontWeight:700,color,fontFamily:"monospace"}}>{val}<span style={{fontSize:11,color:"#475569",marginLeft:3}}>{unit}</span></div></div>);
+  const card=(label,val,unit,color)=>(<div style={{background:"#0A1929",border:`1px solid ${color}25`,borderRadius:8,padding:"10px 12px",minWidth:0,overflow:"hidden"}}><div style={{fontSize:9,color:"#334155",letterSpacing:1,textTransform:"uppercase",marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{label}</div><div style={{fontSize:20,fontWeight:700,color,fontFamily:"monospace",whiteSpace:"nowrap"}}>{val}<span style={{fontSize:11,color:"#475569",marginLeft:3}}>{unit}</span></div></div>);
   const section=(title,children)=>(<div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"14px 16px",marginBottom:14}}><div style={{fontSize:11,fontWeight:600,color:"#64748B",letterSpacing:1,textTransform:"uppercase",marginBottom:12}}>{title}</div>{children}</div>);
   // ── Prominent session date header ────────────────────────────────────────────
   // Analytics previously buried the session date inside a dense status pill,
@@ -4990,13 +4990,21 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                     <button onClick={()=>selectSection(null)} style={{background:"none",border:"1px solid #06B6D440",borderRadius:4,padding:"2px 8px",color:"#06B6D4",cursor:"pointer",fontSize:10}}>↩ Whole session</button>
                   </div>
                 )}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
+                {/* auto-fit, not repeat(4,1fr). A `1fr` track will not shrink
+                    below its content's min-content width, so on a phone the
+                    four cards demanded ~100px each, the row grew past the
+                    screen and the fourth card was cut off mid-number. auto-fit
+                    with a 132px floor drops to two columns when the screen is
+                    narrow and — because each row holds exactly four cards —
+                    still lays out four across wherever there is room, so the
+                    desktop is unchanged. */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(132px,1fr))",gap:10,marginBottom:14}}>
                   {card("Avg TWS",R(twsAvg),"kn","#7DD3FC")}
                   {card("Max TWS",R(twsMax),"kn","#7DD3FC")}
                   {card("Avg SOG",R(sogAvg),"kn","#FBBF24")}
                   {card("Max SOG",R(sogMax),"kn","#FBBF24")}
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10,marginBottom:14}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(132px,1fr))",gap:10,marginBottom:14}}>
                   {card("Tacks",tacks,"","#1D9E75")}
                   {card("Gybes",gybes,"","#7F77DD")}
                   {card("Polar %",vsPerfAvg?R(vsPerfAvg)+"%":"--","","#F59E0B")}
@@ -5444,10 +5452,12 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             {canSeeAnalyticsData && allVideos.filter(v=>v.twsAvg!=null).length>0&&section("Clips with instrument data",(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {allVideos.filter(v=>v.twsAvg!=null).map(v=>(
-                  <div key={v.id} onClick={()=>{ if(onPlayClip){onPlayClip(v);return;} onSelectVideo(v);setActiveTab("library"); }} style={{display:"flex",alignItems:"center",gap:10,background:"#071624",borderRadius:6,padding:"7px 10px",cursor:"pointer",border:"1px solid #1E3A5A"}}>
-                    <div style={{fontSize:10,color:"#E2E8F0",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
+                  <div key={v.id} onClick={()=>{ if(onPlayClip){onPlayClip(v);return;} onSelectVideo(v);setActiveTab("library"); }} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",background:"#071624",borderRadius:6,padding:"7px 10px",cursor:"pointer",border:"1px solid #1E3A5A"}}>
+                    <div style={{fontSize:10,color:"#E2E8F0",flex:"1 1 120px",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",minWidth:0}}>
                     {[["TWS",v.twsAvg,"kt","#7DD3FC"],["TWA",v.twaAvg,"°","#7DD3FC"],["VMG",v.vmgAvg,"kt","#22C55E"],["Pol",v.polpercAvg,"%",v.polpercAvg==null?"#22C55E":v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"],["Tgt",v.vsTargPercAvg,"%",v.vsTargPercAvg==null?"#22C55E":v.vsTargPercAvg>=110?"#166534":v.vsTargPercAvg>=90?"#22C55E":"#EF4444"]].map(([l,val,u,c])=>(<div key={l} style={{textAlign:"center",minWidth:42}}><div style={{fontSize:8,color:"#334155"}}>{l}</div><div style={{fontSize:11,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}{u}</div></div>))}
                     <div style={{fontSize:9,color:"#334155"}}>→</div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -6182,12 +6192,13 @@ export function MobileShell(props){
           const badge=id==="upload"&&props.unsyncedCount>0?props.unsyncedCount:null;
           return(
             <button key={id} onClick={()=>setActiveTab(id)}
-              style={{flex:1,background:"none",border:"none",cursor:"pointer",
-                padding:"8px 4px 6px",display:"flex",flexDirection:"column",
+              style={{flex:1,minWidth:0,background:"none",border:"none",cursor:"pointer",
+                padding:"8px 2px 6px",display:"flex",flexDirection:"column",
                 alignItems:"center",gap:2,color:active?"#06B6D4":"#475569",
-                position:"relative",minHeight:52}}>
+                position:"relative",minHeight:52,overflow:"hidden"}}>
               <span style={{fontSize:20,lineHeight:1}}>{icon}</span>
-              <span style={{fontSize:10,fontWeight:active?700:400}}>{label}</span>
+              <span style={{fontSize:10,fontWeight:active?700:400,maxWidth:"100%",
+                overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
               {badge&&<span style={{position:"absolute",top:4,right:"calc(50% - 16px)",
                 background:"#F59E0B",color:"#000",borderRadius:8,
                 padding:"0 5px",fontSize:9,fontWeight:800}}>{badge}</span>}
