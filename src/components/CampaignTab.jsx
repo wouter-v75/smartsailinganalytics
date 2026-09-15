@@ -19,6 +19,7 @@ import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 import { generateThumbnail } from '../lib/photoStore'
 import { RichText, FormatHint } from './RichText'
 import AudioBrief from './AudioBrief'
+import { myComments } from '../lib/tagging/comments'
 
 const BLOCK_META = {
   'technical-testing': { label: 'Technical testing', c: '#F59E0B', testing: true },
@@ -467,6 +468,21 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
           wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
           base={base} date={date} teamId={teamId} boatId={boatId} role={role}
           canEdit={canEditDebrief} isMobile={isMobile} onOpenVideo={onOpenVideo} onOpenItem={onOpenItem}
+        />
+      </div>
+
+      {/* Row 3 — what I said on the water | what I want to raise tonight.
+          Both are MINE, which is what makes them different from the two cards
+          above: those are the team's record, these are one person's. */}
+      <div style={{ display: 'flex', gap: 14, flexDirection: isMobile ? 'column' : 'row', alignItems: 'stretch', marginTop: 14 }}>
+        <MyCommentsCard
+          teamId={teamId} boatId={boatId} date={date}
+          tzMin={session?.tz_offset_minutes ?? 0}
+          wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
+        />
+        <MyDebriefNotesCard
+          teamId={teamId} boatId={boatId} date={date}
+          wrapperStyle={{ flex: isMobile ? 'none' : '1 1 0' }}
         />
       </div>
     </div>
@@ -1403,6 +1419,189 @@ function NotesCard({ title, aiMode, fields, showDocuments, documentsScope = 'deb
           </div>
         )
       })()}
+    </div>
+  )
+}
+
+// ── My comments ─────────────────────────────────────────────────────────────
+// What I said on the water, read back on shore.
+//
+// The crew tag and type on the boat, one-handed, at speed — and then the day
+// ends and nobody opens the tagger again. This is where what I wrote turns up
+// without my having to go looking for it: my team comments, my personal notes,
+// and any line I typed onto a tack or a hoist, in the order I said them.
+//
+// READ-ONLY, deliberately. A comment belongs to the moment it is pinned to, and
+// editing it here — away from the track, the time and the tag — is how a note
+// ends up describing a different manoeuvre from the one it sits on. The tagger
+// is one tab away and has all of that context.
+export function MyCommentsCard({ teamId, boatId, date, tzMin, wrapperStyle }) {
+  const [rows, setRows] = useState(null)   // null = loading
+  const [err, setErr] = useState(null)
+
+  useEffect(() => {
+    if (!teamId || !boatId || !date) { setRows([]); return }
+    let alive = true
+    setRows(null); setErr(null)
+    fetch(`/api/teams/${teamId}/tags/comments?boat_id=${boatId}&date=${date}`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!alive) return
+        if (j?.error) { setErr(j.error); setRows([]); return }
+        setRows(myComments(j.comments || [], j.me))
+      })
+      .catch(() => { if (alive) { setErr('Could not load your comments.'); setRows([]) } })
+    return () => { alive = false }
+  }, [teamId, boatId, date])
+
+  return (
+    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, ...wrapperStyle }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>My comments</div>
+        <div style={{ fontSize: 11, color: '#64748B' }}>from the tagger</div>
+        {rows && rows.length > 0 && (
+          <div style={{ marginLeft: 'auto', fontSize: 11, color: '#64748B' }}>{rows.length}</div>
+        )}
+      </div>
+
+      {err && <div style={{ fontSize: 12, color: '#EF4444' }}>{err}</div>}
+
+      {rows === null ? (
+        <div style={{ fontSize: 12, color: '#64748B' }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ fontSize: 12, color: '#64748B', lineHeight: 1.5 }}>
+          Nothing from you on this day yet. Anything you type on a tag in the
+          Tagger — a team comment, a personal note, a line on a tack — shows up
+          here.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {rows.map((c) => (
+            <div key={c.id} style={{ background: '#071624', borderLeft: `3px solid ${c.color || '#7F77DD'}`, borderRadius: 6, padding: '8px 10px' }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, fontFamily: 'monospace', color: '#7DD3FC' }}>{localHM(c.t0, tzMin)}</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: c.color || '#94A3B8' }}>{c.label}</span>
+                {/* A personal note is invisible to the rest of the crew, and
+                    that is worth saying on the card: people write differently
+                    when they know who is reading. */}
+                {c.personal && (
+                  <span style={{ fontSize: 9, color: '#64748B', border: '1px solid #334155', borderRadius: 4, padding: '0 5px', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    only you
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: 12, color: '#E2E8F0', marginTop: 4, whiteSpace: 'pre-wrap' }}>{c.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── My debrief notes ────────────────────────────────────────────────────────
+// The notebook, as opposed to the record.
+//
+// The Debrief notes card beside this one is the TEAM's, and tl3 and above write
+// it. That is right for what the team decided — and it leaves everybody else
+// with nowhere to put what they want RAISED. A trimmer who spent the second
+// beat convinced the jib lead was wrong either remembers it until the evening
+// or loses it, and what actually happens is that they lose it.
+//
+// Private: 0066's RLS names auth.uid() and nobody else, not even a coach.
+export function MyDebriefNotesCard({ teamId, boatId, date, wrapperStyle }) {
+  const [text, setText] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [saved, setSaved] = useState('')          // the last body the server has
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+
+  useEffect(() => {
+    if (!teamId || !boatId || !date) return
+    let alive = true
+    setLoaded(false); setErr(null)
+    fetch(`/api/teams/${teamId}/boats/${boatId}/day-notes?date=${date}&kind=debrief`)
+      .then((r) => r.json())
+      .then((j) => {
+        if (!alive) return
+        const body = j?.note?.body || ''
+        setText(body); setSaved(body); setLoaded(true)
+      })
+      .catch(() => { if (alive) { setErr('Could not load your notes.'); setLoaded(true) } })
+    return () => { alive = false }
+  }, [teamId, boatId, date])
+
+  const dirty = loaded && text !== saved
+
+  async function save() {
+    if (busy) return
+    setBusy(true); setErr(null)
+    try {
+      const res = await fetch(`/api/teams/${teamId}/boats/${boatId}/day-notes`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, kind: 'debrief', body: text }),
+      })
+      const j = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(j?.error || 'Save failed')
+      // Track what the SERVER now holds, not what is in the box: they differ the
+      // moment somebody keeps typing while the request is in flight, and marking
+      // that as saved would lose the last sentence.
+      setSaved(j?.note?.body ?? text)
+    } catch (e) {
+      setErr(e.message || 'Save failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 12, padding: 14, ...wrapperStyle }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 10 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: '#E2E8F0' }}>My debrief notes</div>
+        <div style={{ fontSize: 11, color: '#64748B' }}>private to you</div>
+        {dirty && <div style={{ marginLeft: 'auto', fontSize: 11, color: '#F59E0B' }}>unsaved</div>}
+        {!dirty && loaded && saved && <div style={{ marginLeft: 'auto', fontSize: 11, color: '#1D9E75' }}>saved</div>}
+      </div>
+
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        disabled={!loaded}
+        rows={6}
+        placeholder="What you want raised tonight — the jib lead, the second start, the peel that nearly went wrong."
+        style={{
+          width: '100%', boxSizing: 'border-box', background: '#071624',
+          border: '1px solid #1E3A5A', borderRadius: 8, padding: 10,
+          color: '#E2E8F0', fontSize: 13, lineHeight: 1.5, resize: 'vertical',
+          fontFamily: 'inherit',
+        }}
+      />
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+        <button
+          onClick={save}
+          disabled={busy || !dirty}
+          style={{
+            background: dirty ? '#06B6D4' : '#12283F', color: dirty ? '#001018' : '#64748B',
+            border: 'none', borderRadius: 8, padding: '8px 14px',
+            fontSize: 12, fontWeight: 700, cursor: dirty && !busy ? 'pointer' : 'default',
+            minHeight: 36,
+          }}
+        >
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        {dirty && (
+          <button
+            onClick={() => setText(saved)}
+            disabled={busy}
+            style={{ background: 'transparent', color: '#64748B', border: 'none', fontSize: 12, cursor: 'pointer' }}
+          >
+            Discard changes
+          </button>
+        )}
+        {err && <span style={{ fontSize: 12, color: '#EF4444' }}>{err}</span>}
+      </div>
     </div>
   )
 }

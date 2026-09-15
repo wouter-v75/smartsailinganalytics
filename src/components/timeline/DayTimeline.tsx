@@ -1,11 +1,12 @@
 'use client'
 import * as React from 'react'
-import { Play, Camera, ZoomIn, ZoomOut, Sailboat } from 'lucide-react'
+import { Play, Camera, ZoomIn, ZoomOut, Sailboat, MessageSquare } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { PhotoOverlayImage, FallbackVideoPlayer } from './DayMedia'
 import SailScanDetail from '@/components/SailScanDetail'
 import { racingTagsOf, isMainsailTag, RACE_RED } from '@/lib/racingTags'
+import { teamComments, firstName, clip, type Comment } from '@/lib/tagging/comments'
 
 // The day's own VERTICAL time-axis. A zoomable, pinch/scrollable time bar (hover
 // cursor + time box) with the day's nodes and event-file tags coloured like the
@@ -13,7 +14,15 @@ import { racingTagsOf, isMainsailTag, RACE_RED } from '@/lib/racingTags'
 // videos in one deck, photos in another, with clear space between the per-segment
 // stacks. Cards stack like playing cards when clustered; zooming/pinching spreads
 // them apart. Hovering a card doubles it and shows its sail/event/TWS/TWA.
-// Geometry is responsive: on phones both decks fit the screen (no half-off cards).
+// Geometry is responsive; on a phone the decks scroll sideways rather than
+// shrinking to illegibility.
+//
+// COMMENTS are a deck like any other. What the crew said is anchored to a time
+// exactly as a photo is, and reading "Sam: kite up early" against the top mark
+// it sits beside is the whole reason the timeline is a timeline. They come from
+// the tagger — any hand-placed tag carrying text (see lib/tagging/comments.ts)
+// — so a line typed onto a tack turns up here without anybody pressing a
+// different button.
 
 const EVENT_STYLE: Record<string, { c: string; label: string; notable: boolean }> = {
   race: { c: '#D85A30', label: 'Race', notable: true },
@@ -28,6 +37,9 @@ const EVENT_STYLE: Record<string, { c: string; label: string; notable: boolean }
   gybe: { c: '#7F77DD', label: 'Gybe', notable: false },
 }
 const VIDEO_C = '#06B6D4', DRONE_C = '#22C55E', PHOTO_C = '#F59E0B', SCAN_C = '#8B5CF6'
+// The tagger's own Team comment colour, so the same thing is the same colour on
+// both screens.
+const COMMENT_C = '#7F77DD'
 // Leg-mode colours for the time bar (derived from manoeuvres: tacks → upwind,
 // gybes → downwind, balanced/none → reach).
 const LEG_C: Record<string, string> = { upwind: '#EF4444', reach: '#F59E0B', downwind: '#22C55E' }
@@ -43,9 +55,12 @@ function chipStyle(t: string): { bg: string; c: string; bd: string } {
 }
 
 interface MediaItem {
-  id: string; type: 'video' | 'photo' | 'sailscan'; thumb: string | null; t: number
+  id: string; type: 'video' | 'photo' | 'sailscan' | 'comment'; thumb: string | null; t: number
   title?: string | null; tags: string[]; tws?: number | null; twa?: number | null; twaTarg?: number | null; twd?: number | null; sails: string[]; inst?: Record<string, any>
   original?: string | null; sailName?: string | null; raw?: any
+  // Comments only: who said it (their full name, shortened on the card) and
+  // what they said.
+  who?: string | null; text?: string | null; kindLabel?: string | null
 }
 
 // Leg mode from TWA vs target TWA (per Wouter's rule):
@@ -87,10 +102,20 @@ function useNoHover() {
 }
 // Responsive layout. On phones: tighter offsets + widths, event dots only (no
 // text labels), so BOTH decks fit within the viewport.
+// A comment card is WIDER than a thumbnail and shorter: it holds words, and a
+// name plus four or five of them is what makes it worth a glance. It sits last
+// so the existing decks keep the positions people have learned.
+//
+// The compact decks give up a few pixels each to make room for it. Five columns
+// cannot all fit a 390px phone and this one still scrolls sideways — but a
+// column that starts just inside the edge announces itself, and one that starts
+// past it does not, which for the deck people are most likely to WANT on a
+// phone (words, not thumbnails) is the difference between a feature and a
+// feature nobody finds.
 function geometry(compact: boolean) {
   return compact
-    ? { AXIS_X: 8, EVENT_LABEL_X: 16, showEventLabels: false, VIDEO_X: 46, VIDEO_W: 74, VIDEO_H: 64, DRONE_X: 126, DRONE_W: 74, DRONE_H: 64, PHOTO_X: 206, PHOTO_W: 72, PHOTO_H: 64, SCAN_X: 284, SCAN_W: 72, SCAN_H: 64, CONTENT_W: 284 + 72 + 6 }
-    : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, DRONE_X: 352, DRONE_W: 150, DRONE_H: 88, PHOTO_X: 508, PHOTO_W: 120, PHOTO_H: 88, SCAN_X: 644, SCAN_W: 120, SCAN_H: 88, CONTENT_W: 644 + 120 + 16 }
+    ? { AXIS_X: 8, EVENT_LABEL_X: 16, showEventLabels: false, VIDEO_X: 40, VIDEO_W: 66, VIDEO_H: 60, DRONE_X: 112, DRONE_W: 66, DRONE_H: 60, PHOTO_X: 184, PHOTO_W: 62, PHOTO_H: 60, SCAN_X: 252, SCAN_W: 62, SCAN_H: 60, NOTE_X: 320, NOTE_W: 104, NOTE_H: 58, CONTENT_W: 320 + 104 + 6 }
+    : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, DRONE_X: 352, DRONE_W: 150, DRONE_H: 88, PHOTO_X: 508, PHOTO_W: 120, PHOTO_H: 88, SCAN_X: 644, SCAN_W: 120, SCAN_H: 88, NOTE_X: 780, NOTE_W: 190, NOTE_H: 76, CONTENT_W: 780 + 190 + 16 }
 }
 
 // Drone footage gets its own deck: it is shot from somewhere else entirely, and
@@ -120,6 +145,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [openPhoto, setOpenPhoto] = React.useState<MediaItem | null>(null)
   const [openVideo, setOpenVideo] = React.useState<MediaItem | null>(null)
   const [openScan, setOpenScan] = React.useState<MediaItem | null>(null)
+  const [openNote, setOpenNote] = React.useState<MediaItem | null>(null)
   const [cursor, setCursor] = React.useState<{ y: number; t: number } | null>(null)
   const [ptr, setPtr] = React.useState<{ x: number; y: number } | null>(null)
   const noHover = useNoHover()                    // touch device → scroll-driven "rolodex" focus
@@ -145,7 +171,8 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       fetch(`/api/teams/${teamId}/boats/${boatId}/videos?date=${date}`).then((res) => res.json()).catch(() => ({})),
       fetch(`/api/teams/${teamId}/boats/${boatId}/photos?date=${date}`).then((res) => res.json()).catch(() => ({})),
       fetch(`/api/teams/${teamId}/sail-scans?boat_id=${boatId}&limit=200`).then((res) => res.json()).catch(() => ({})),
-    ]).then(([vj, pj, sj]: [any, any, any]) => {
+      fetch(`/api/teams/${teamId}/tags/comments?boat_id=${boatId}&date=${date}`).then((res) => res.json()).catch(() => ({})),
+    ]).then(([vj, pj, sj, cj]: [any, any, any, any]) => {
       if (!alive) return
       const vids: MediaItem[] = (vj?.videos || []).map((v: any) => ({
         id: v.id, type: 'video', thumb: v.thumbnail || v.thumbnail_url,
@@ -168,7 +195,14 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           raw: s, // the full row → passed straight to <SailScanDetail>
         }
       }).filter((m: MediaItem) => ymd(m.t) === date)
-      setMedia([...vids, ...phs, ...scns].sort((a, b) => a.t - b.t))
+      // What the crew said. Team comments only: a personal note reaches its
+      // author and nobody else (0062's RLS), and showing mine in a column of
+      // other people's names would read as though I had said it to the team.
+      const notes: MediaItem[] = teamComments((cj?.comments || []) as Comment[]).map((c) => ({
+        id: `c:${c.id}`, type: 'comment' as const, thumb: null, t: c.t0,
+        tags: [], sails: [], who: c.authorName, text: c.text, kindLabel: c.label,
+      }))
+      setMedia([...vids, ...phs, ...scns, ...notes].sort((a, b) => a.t - b.t))
     })
     return () => { alive = false }
   }, [teamId, boatId, date, day.t0, tz])
@@ -187,6 +221,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const onboardVideos = React.useMemo(() => videos.filter((m) => !isDroneClip(m)), [videos])
   const photos = React.useMemo(() => (media || []).filter((m) => m.type === 'photo'), [media])
   const scanItems = React.useMemo(() => (media || []).filter((m) => m.type === 'sailscan'), [media])
+  const noteItems = React.useMemo(() => (media || []).filter((m) => m.type === 'comment'), [media])
 
   const [lo, hi] = React.useMemo(() => {
     let a = day.t0, b = day.t1 > day.t0 ? day.t1 : day.t0 + 3600000
@@ -220,6 +255,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const dPlaced = React.useMemo(() => placeCol(droneVideos), [droneVideos, placeCol])
   const pPlaced = React.useMemo(() => placeCol(photos), [photos, placeCol])
   const sPlaced = React.useMemo(() => placeCol(scanItems), [scanItems, placeCol])
+  const nPlaced = React.useMemo(() => placeCol(noteItems), [noteItems, placeCol])
 
   const contentH = React.useMemo(() => {
     let bottom = axisH
@@ -227,8 +263,9 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     dPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.DRONE_H) })
     pPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.PHOTO_H) })
     sPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.SCAN_H) })
+    nPlaced.forEach((p) => { bottom = Math.max(bottom, p.y + G.NOTE_H) })
     return bottom + PAD
-  }, [axisH, vPlaced, dPlaced, pPlaced, sPlaced, G.VIDEO_H, G.DRONE_H, G.PHOTO_H, G.SCAN_H])
+  }, [axisH, vPlaced, dPlaced, pPlaced, sPlaced, nPlaced, G.VIDEO_H, G.DRONE_H, G.PHOTO_H, G.SCAN_H, G.NOTE_H])
 
   const ticks = React.useMemo(() => {
     const out: number[] = []
@@ -284,6 +321,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       { X: G.DRONE_X, W: G.DRONE_W, h: G.DRONE_H, placed: dPlaced },
       { X: G.PHOTO_X, W: G.PHOTO_W, h: G.PHOTO_H, placed: pPlaced },
       { X: G.SCAN_X, W: G.SCAN_W, h: G.SCAN_H, placed: sPlaced },
+      { X: G.NOTE_X, W: G.NOTE_W, h: G.NOTE_H, placed: nPlaced },
     ]
     for (const c of cols) {
       if (x >= c.X - 8 && x <= c.X + c.W + 8 && c.placed.length) {
@@ -368,7 +406,11 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }
   const onTouchEnd = (e: React.TouchEvent) => { if (e.touches.length < 2) pinch.current = null }
 
-  const clickMedia = (m: MediaItem) => m.type === 'video' ? (onPlayVideo ? onPlayVideo(m.id) : setOpenVideo(m)) : m.type === 'sailscan' ? setOpenScan(m) : setOpenPhoto(m)
+  const clickMedia = (m: MediaItem) =>
+    m.type === 'video' ? (onPlayVideo ? onPlayVideo(m.id) : setOpenVideo(m))
+      : m.type === 'sailscan' ? setOpenScan(m)
+        : m.type === 'comment' ? setOpenNote(m)
+          : setOpenPhoto(m)
 
   if (media === null) {
     return <div className="grid gap-2 py-2">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}</div>
@@ -406,6 +448,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             {dPlaced.map(({ m, y, yt }) => { const mid = (G.VIDEO_X + G.DRONE_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.DRONE_X} ${y + 12}`} fill="none" stroke={DRONE_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {pPlaced.map(({ m, y, yt }) => { const mid = (G.DRONE_X + G.PHOTO_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.PHOTO_X} ${y + 12}`} fill="none" stroke={PHOTO_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {sPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.SCAN_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.SCAN_X} ${y + 12}`} fill="none" stroke={SCAN_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
+            {nPlaced.map(({ m, y, yt }) => { const mid = (G.AXIS_X + G.NOTE_X) / 2; return <path key={m.id} d={`M ${G.AXIS_X} ${yt} C ${mid} ${yt}, ${mid} ${y + 12}, ${G.NOTE_X} ${y + 12}`} fill="none" stroke={COMMENT_C} strokeWidth={1.5} strokeOpacity={0.55} /> })}
             {markers.map((e) => { const st = EVENT_STYLE[e.kind]; const my = magForY(yOf(e.t0)); return <circle key={e.id} cx={G.AXIS_X} cy={yOf(e.t0)} r={(st.notable ? 4 : 3) * my} fill={st.c} stroke="var(--bg)" strokeWidth={1} style={{ transition: 'r 110ms ease-out' }} /> })}
             {cursor && <line x1={0} y1={cursor.y} x2={G.CONTENT_W} y2={cursor.y} stroke="var(--accent)" strokeWidth={1} strokeDasharray="3 3" strokeOpacity={0.7} />}
           </svg>
@@ -414,6 +457,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.DRONE_X, top: 6, color: DRONE_C }}>Drone</div>
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.PHOTO_X, top: 6, color: PHOTO_C }}>Photos</div>
           <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.SCAN_X, top: 6, color: SCAN_C }}>Sail scans</div>
+          <div className="absolute text-[10px] font-medium uppercase tracking-wide" style={{ left: G.NOTE_X, top: 6, color: COMMENT_C }}>Comments</div>
 
           {ticks.map((t) => <div key={t} className="absolute font-mono text-[10px] text-muted" style={{ left: G.AXIS_X + 8, top: yOf(t) - 7 }}>{hms(t, tz)}</div>)}
 
@@ -436,6 +480,8 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           {pPlaced.map(({ m, y }, i) => { const cy = y + G.PHOTO_H / 2, mag = magFor(G.PHOTO_X, G.PHOTO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.PHOTO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
           {sPlaced.map(({ m, y }, i) => { const cy = y + G.SCAN_H / 2, mag = magFor(G.SCAN_X, G.SCAN_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.SCAN_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.SCAN_X} y={y} w={G.SCAN_W} h={G.SCAN_H} color={SCAN_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
 
+          {nPlaced.map(({ m, y }, i) => { const cy = y + G.NOTE_H / 2, mag = magFor(G.NOTE_X, G.NOTE_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.NOTE_H * 0.55 : 0; return <CommentCard key={m.id} m={m} x={G.NOTE_X} y={y} w={G.NOTE_W} h={G.NOTE_H} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
+
           {markers.length === 0 && (media || []).length === 0 && (
             <div className="absolute text-xs text-muted" style={{ left: G.VIDEO_X, top: PAD }}>No markers, photos or videos for this day.</div>
           )}
@@ -450,6 +496,16 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           <DialogContent title={openVideo.title || 'Video'} className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3">
             <FallbackVideoPlayer videoId={openVideo.id} />
             {openVideo.tags.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{openVideo.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>}
+          </DialogContent>
+        )}
+      </Dialog>
+      <Dialog open={!!openNote} onOpenChange={(o) => { if (!o) setOpenNote(null) }}>
+        {openNote && (
+          <DialogContent title={`${firstName(openNote.who)} · ${hms(openNote.t, tz)}`} className="w-[min(560px,calc(100vw-16px))] max-w-none p-4">
+            <div className="text-[11px] uppercase tracking-wide" style={{ color: COMMENT_C }}>{openNote.kindLabel || 'Comment'}</div>
+            {/* pre-wrap: the crew type line breaks and they mean them. */}
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">{openNote.text}</p>
+            {openNote.who && <p className="mt-3 text-xs text-muted">{openNote.who}</p>}
           </DialogContent>
         )}
       </Dialog>
@@ -510,6 +566,50 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
                 information and just eats the row. Headsails/kites are the signal. */}
             {m.sails.filter((sName) => !isMainsailTag(sName)).slice(0, 2).map((sName) => <Chip key={sName} s={chipStyle(sName)}>{sName}</Chip>)}
             {evStyle && <Chip s={{ bg: evStyle.c + '22', c: evStyle.c, bd: evStyle.c + '55' }}>{ev!.title || evStyle.label}</Chip>}
+          </div>
+        )}
+      </div>
+    </button>
+  )
+}
+
+// A comment on the deck. Same fisheye as the media cards — `mag`, `push` and
+// `focused` mean exactly what they mean there — but the face is words rather
+// than a thumbnail, so what magnification BUYS is different: a photo gets
+// bigger, a comment gets readable. Clipped to a line or two at rest, the whole
+// thing once the lens is over it, and the full note in a dialog on a click.
+function CommentCard({ m, x, y, w, h, tz, index, mag, push, focused, ev, onClick }: {
+  m: MediaItem; x: number; y: number; w: number; h: number; tz: number
+  index: number; mag: number; push: number; focused: boolean; ev: TimelineNode | null; onClick: () => void
+}) {
+  const evStyle = ev ? EVENT_STYLE[ev.kind] : null
+  const who = firstName(m.who)
+  const text = String(m.text || '')
+  return (
+    <button
+      onClick={onClick}
+      title={`${who}: ${text}`}
+      className="tl-card-in absolute overflow-visible rounded-lg text-left shadow-md transition-[transform,box-shadow] duration-[110ms] ease-out will-change-transform motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
+      style={{ left: x, top: y, width: w, height: h, transformOrigin: 'center', ['--i' as any]: index, zIndex: 100 + Math.round((mag - 1) * 200), boxShadow: focused ? '0 8px 26px rgba(0,0,0,0.45)' : undefined, transform: `translateY(${push.toFixed(1)}px) scale(${mag.toFixed(3)})` }}
+    >
+      <div className="relative flex h-full w-full flex-col gap-0.5 overflow-hidden rounded-lg px-1.5 py-1" style={{ border: `2px solid ${COMMENT_C}`, background: 'var(--surface-2)' }}>
+        <div className="flex items-center gap-1">
+          <MessageSquare size={9} style={{ color: COMMENT_C }} aria-hidden />
+          <span className="truncate text-[10px] font-bold" style={{ color: COMMENT_C }}>{who}</span>
+          <span className="ml-auto shrink-0 font-mono text-[8px] text-muted">{hms(m.t, tz)}</span>
+        </div>
+        {/* At rest a comment is a headline; under the lens it is the comment.
+            Clipping on a word rather than a character keeps the short form from
+            reading as a rendering fault. */}
+        <p className={`min-h-0 flex-1 text-[10px] leading-snug ${focused ? 'overflow-y-auto' : 'overflow-hidden'}`}>
+          {/* Clipped to what the card can actually hold: a constant tuned for
+              the desktop card silently overflows the compact one, and an
+              overflowing clip is just a hard cut with extra steps. */}
+          {focused ? text : clip(text, Math.max(24, Math.round(w / 3)))}
+        </p>
+        {!focused && evStyle && (
+          <div className="flex shrink-0 items-center">
+            <Chip s={{ bg: evStyle.c + '22', c: evStyle.c, bd: evStyle.c + '55' }}>{ev!.title || evStyle.label}</Chip>
           </div>
         )}
       </div>
