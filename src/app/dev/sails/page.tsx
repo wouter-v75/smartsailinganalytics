@@ -30,6 +30,11 @@ const SAILS = [
     id: 's3', name: 'A2_2026', category: 'A2', kind: 'spinnaker', build_date: null, retired: false,
     specs: { sail_type: 'Reaching Kite', sail_group: 'S', weight_kg: 49.2, source: 'event-file' },
   },
+  {
+    id: 's4', name: 'MAIN_2024', category: 'MAIN', kind: 'mainsail', build_date: '2024-02-01',
+    retired: true,
+    specs: { sail_type: 'Mainsail', sail_group: 'M', weight_kg: 119.4, source: 'event-file' },
+  },
 ]
 
 export default function SailRowPreview() {

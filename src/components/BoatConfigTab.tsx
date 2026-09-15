@@ -2212,6 +2212,7 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
   const [sailType, setSailType] = useState(spec.sail_type || '')
   const [group, setGroup] = useState(spec.sail_group || '')
   const [weight, setWeight] = useState(spec.weight_kg != null ? String(spec.weight_kg) : '')
+  const [retired, setRetired] = useState(!!sail.retired)
   const fileRef = React.useRef<HTMLInputElement>(null)
 
   // Reset the draft whenever the row is opened, so a Cancel followed by a second
@@ -2221,6 +2222,7 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
     setKind(sail.kind || 'other'); setSailType(spec.sail_type || '')
     setGroup(spec.sail_group || '')
     setWeight(spec.weight_kg != null ? String(spec.weight_kg) : '')
+    setRetired(!!sail.retired)
     setEditing(true)
   }
 
@@ -2229,7 +2231,7 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
   // under test. The route merges what arrives into the rest of specs.
   const save = () => {
     onPatch(sailPatchFrom(
-      { name, category, buildDate: build, kind, sailType, group, weight },
+      { name, category, buildDate: build, kind, sailType, group, weight, retired },
       spec
     ))
     setEditing(false)
@@ -2286,17 +2288,30 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
           />
         </td>
         <td style={td}><input type="date" style={input} value={build || ''} onChange={(e) => setBuild(e.target.value)} /></td>
+        <td style={td}>
+          <select
+            aria-label="Status"
+            style={{ ...input, width: 92 }}
+            value={retired ? 'retired' : 'active'}
+            onChange={(e) => setRetired(e.target.value === 'retired')}
+          >
+            <option value="active">Active</option>
+            <option value="retired">Retired</option>
+          </select>
+        </td>
         <td style={td} colSpan={2}>
           <button onClick={save} disabled={busy} style={btn('#10B981')}>Save</button>{' '}
           <button onClick={() => setEditing(false)} style={{ ...btn('#334155'), color: '#cbd5e1' }}>Cancel</button>
         </td>
         <td style={td}></td>
-        <td style={td}></td>
       </tr>
     )
   }
   return (
-    <tr style={{ opacity: sail.retired ? 0.55 : 1 }}>
+    // A retired sail is dimmed so the active fleet reads first — but not so far
+    // that the row looks disabled, because its controls still work and one of
+    // them is how a sail comes back.
+    <tr style={{ opacity: sail.retired ? 0.75 : 1 }}>
       <td style={{ ...td, fontWeight: 700, color: '#06B6D4' }}>{sail.category || '—'}</td>
       <td style={td}>{sail.name}</td>
       <td style={{ ...td, color: sail.kind === 'mainsail' ? '#2DD4BF' : undefined, fontWeight: sail.kind === 'mainsail' ? 700 : undefined }}>
@@ -2306,11 +2321,26 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
       <td style={td}>{sailGroupText}</td>
       <td style={td}>{weightText}</td>
       <td style={td}>{sail.build_date ? new Date(sail.build_date).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</td>
-      <td style={td}>
+      <td style={{ ...td, opacity: 1 }}>
         {canEdit ? (
-          <button onClick={() => onPatch({ retired: !sail.retired })} disabled={busy}
-            style={{ background: sail.retired ? '#334155' : '#10B98122', color: sail.retired ? '#94A3B8' : '#10B981', border: `1px solid ${sail.retired ? '#334155' : '#10B981'}`, borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>
-            {sail.retired ? 'Retired' : 'Active'}
+          // A status that is ALSO the control for changing it. The old styling
+          // was a flat grey pill on a dimmed row, which reads as a label — so
+          // nobody found the one click that brings a sail back into service.
+          // It now says what pressing it does, and looks pressable.
+          <button
+            onClick={() => onPatch({ retired: !sail.retired })}
+            disabled={busy}
+            title={sail.retired ? `Bring ${sail.name} back into service` : `Retire ${sail.name}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              background: sail.retired ? '#3A2A12' : '#10B98122',
+              color: sail.retired ? '#F59E0B' : '#10B981',
+              border: `1px solid ${sail.retired ? '#F59E0B66' : '#10B981'}`,
+              borderRadius: 6, fontSize: 11, fontWeight: 700,
+              padding: '4px 9px', cursor: busy ? 'progress' : 'pointer', minHeight: 26,
+            }}
+          >
+            {sail.retired ? '↻ Retired' : '✓ Active'}
           </button>
         ) : (sail.retired ? 'Retired' : 'Active')}
       </td>

@@ -11,6 +11,7 @@ const draft = (over: Partial<SailDraft> = {}): SailDraft => ({
   sailType: 'Mainsail',
   group: 'M',
   weight: '116.6',
+  retired: false,
   ...over,
 })
 
@@ -144,5 +145,24 @@ describe('mergeSpecs', () => {
   it('does not mutate what was stored', () => {
     mergeSpecs(stored, { weight_kg: 1 })
     expect(stored.weight_kg).toBe(116.6)
+  })
+})
+
+describe('retiring and un-retiring', () => {
+  it('carries the flag through, so Edit can bring a sail back', () => {
+    expect(sailPatchFrom(draft({ retired: true })).retired).toBe(true)
+    expect(sailPatchFrom(draft({ retired: false })).retired).toBe(false)
+  })
+
+  it('is always a boolean — the column is NOT NULL', () => {
+    expect(sailPatchFrom(draft({ retired: undefined as unknown as boolean })).retired).toBe(false)
+  })
+
+  it('is a flag and nothing more: a retired sail keeps its identity', () => {
+    // Retiring must not quietly drop the weight or the kind, or a main that
+    // comes back next season returns with no batten card and no weight.
+    const p = sailPatchFrom(draft({ retired: true }))
+    expect(p.kind).toBe('mainsail')
+    expect(p.specs.weight_kg).toBe(116.6)
   })
 })

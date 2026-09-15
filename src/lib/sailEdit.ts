@@ -31,6 +31,10 @@ export interface SailDraft {
   group: string
   /** As typed — "24,5" and "24.5" both mean the same thing on a European keyboard. */
   weight: string
+  /** Out of service. A flag, never a delete: a retired sail keeps its scans,
+   *  its certificate and its batten card, and comes back the day it is
+   *  re-measured or a spare is pressed into service. */
+  retired: boolean
 }
 
 export interface SailPatch {
@@ -38,6 +42,7 @@ export interface SailPatch {
   category: string | null
   build_date: string | null
   kind: string
+  retired: boolean
   specs: SailSpecs
 }
 
@@ -71,6 +76,7 @@ export function sailPatchFrom(draft: SailDraft, existing: SailSpecs = {}): SailP
     category: draft.category.trim() || null,
     build_date: draft.buildDate || null,
     kind: draft.kind,
+    retired: !!draft.retired,
     specs: {
       sail_type: draft.sailType.trim() || null,
       sail_group: draft.group.trim().toUpperCase() || null,
