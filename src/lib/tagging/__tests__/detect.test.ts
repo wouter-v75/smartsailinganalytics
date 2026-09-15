@@ -280,3 +280,120 @@ describe('mark roundings from the log', () => {
     expect(autoExtractable(d).length).toBeGreaterThan(0)
   })
 })
+
+describe('roundings are only tagged while racing', () => {
+  const marks = (d: ReturnType<typeof detectDay>) =>
+    d.filter((x) => x.slug === 'topmark' || x.slug === 'gate')
+  const at = (d: ReturnType<typeof detectDay>) => marks(d).map((x) => x.meta?.roundingUtc)
+
+  it('drops the warm-up', () => {
+    // A mark sailed round before the first gun is practice, and it used to
+    // arrive as a "Top mark" for the crew to go and delete.
+    const xml = {
+      ...xmlTwoRaces,
+      markRoundings: [
+        { utc: T('11:00'), isTop: true, isValid: true },    // warm-up
+        { utc: T('12:20'), isTop: true, isValid: true },    // race 1
+      ],
+    }
+    expect(at(detectDay({ boatId: BOAT, date: DATE, rows: [], xml }))).toEqual([T('12:20')])
+  })
+
+  it('drops the sail home once the last race has a recorded finish', () => {
+    const xml = {
+      ...xmlTwoRaces,
+      markRoundings: [
+        { utc: T('12:20'), isTop: true, isValid: true },
+        { utc: T('15:30'), isTop: false, isValid: true },   // sailing home
+      ],
+    }
+    const d = detectDay({
+      boatId: BOAT, date: DATE, rows: [], xml,
+      segmentOptions: { finishes: [{ utc: T('14:45'), raceNum: 2 }] },
+    })
+    expect(at(d)).toEqual([T('12:20')])
+  })
+
+  it('KEEPS a late rounding when the last race has no finish — no gun to measure against', () => {
+    // The limit of the rule as asked for. After the final gun there is no
+    // following start to black out against, so a rounding on the way home is
+    // still "after a gun and before the finish we had to guess". Recording a
+    // finish for the last race is what fixes it.
+    const xml = {
+      ...xmlTwoRaces,
+      markRoundings: [
+        { utc: T('12:20'), isTop: true, isValid: true },
+        { utc: T('15:30'), isTop: false, isValid: true },
+      ],
+    }
+    expect(at(detectDay({ boatId: BOAT, date: DATE, rows: [], xml }))).toEqual([T('12:20'), T('15:30')])
+  })
+
+  it('drops the pre-start of the next race when the finish was only guessed', () => {
+    // The one that matters: the stray rounding is itself what the day's shape
+    // was guessed from, so it sits inside the race it invented for itself and
+    // looks completely legitimate.
+    const xml = {
+      ...xmlTwoRaces,
+      markRoundings: [
+        { utc: T('12:20'), isTop: true, isValid: true },
+        { utc: T('13:40'), isTop: false, isValid: true },   // milling about
+      ],
+    }
+    expect(at(detectDay({ boatId: BOAT, date: DATE, rows: [], xml }))).toEqual([T('12:20')])
+  })
+
+  it('keeps it when a real finish says the boat was still racing', () => {
+    const xml = {
+      ...xmlTwoRaces,
+      markRoundings: [
+        { utc: T('12:20'), isTop: true, isValid: true },
+        { utc: T('13:40'), isTop: false, isValid: true },
+      ],
+    }
+    const d = detectDay({
+      boatId: BOAT, date: DATE, rows: [], xml,
+      segmentOptions: { finishes: [{ utc: T('13:50'), raceNum: 1 }] },
+    })
+    expect(at(d)).toEqual([T('12:20'), T('13:40')])
+  })
+
+  it('leaves a training day alone — there is no race to be outside of', () => {
+    // No guns at all. The log fallback exists for exactly this day, and roundings
+    // are one of the two things always worth pulling footage of.
+    const xml = {
+      raceGuns: [], markRoundings: [{ utc: T('12:20'), isTop: true, isValid: true }],
+      tackJibes: [], sailsUpEvents: [], dayStartUtc: T('10:30'), dayStopUtc: T('16:00'),
+    }
+    expect(at(detectDay({ boatId: BOAT, date: DATE, rows: [], xml }))).toEqual([T('12:20')])
+  })
+
+  it('still knows where race 1 ended, having dropped the tag for it', () => {
+    // The filter decides what gets TAGGED; the day's shape is still inferred
+    // from every rounding the file recorded. Drop it from the segmentation too
+    // and race 1 would suddenly run to the next warning signal.
+    const xml = {
+      ...xmlTwoRaces,
+      markRoundings: [
+        { utc: T('12:20'), isTop: true, isValid: true },
+        { utc: T('13:40'), isTop: false, isValid: true },
+      ],
+    }
+    const r1 = segmentDay({
+      guns: xml.raceGuns, markRoundings: xml.markRoundings,
+      dayStartUtc: xml.dayStartUtc, dayStopUtc: xml.dayStopUtc,
+    }).find((s) => s.key === 'r1')!
+    expect(r1.t1).toBe(T('13:43'))
+    expect(at(detectDay({ boatId: BOAT, date: DATE, rows: [], xml }))).toEqual([T('12:20')])
+  })
+
+  it('does not touch the starts, the sail changes or the manoeuvres', () => {
+    const xml = {
+      ...xmlTwoRaces,
+      markRoundings: [{ utc: T('11:00'), isTop: true, isValid: true }],
+    }
+    const d = detectDay({ boatId: BOAT, date: DATE, rows: [], xml })
+    expect(d.some((x) => x.slug === 'race-start')).toBe(true)
+    expect(d.some((x) => x.slug === 'sail-change')).toBe(true)
+  })
+})

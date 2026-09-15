@@ -228,3 +228,70 @@ export const racesOf = (segments: DaySegment[]): DaySegment[] =>
  *  the UI puts on an inferred finish. */
 export const isInferredEnd = (s: DaySegment): boolean =>
   s.kind === 'race' && s.endSource !== 'finish'
+
+/**
+ * How long before a start gun a mark rounding stops being believable, on a day
+ * whose race ends are guesswork. Half an hour: the last beat of one race and
+ * the milling about before the next look identical to a rounding detector, and
+ * a wrong "top mark" in the pre-start is worse than a missing one.
+ */
+export const DEFAULT_PRE_GUN_BLACKOUT_SEC = 1800
+
+/**
+ * Is a mark rounding at this instant worth tagging?
+ *
+ * Roundings are detected from the shape of the track (and from the onboard
+ * system, which is no better informed about whether anybody is racing). Sailed
+ * round a mark in the warm-up, or tacked twice on the way back to the dock, and
+ * the detector produces a "Top mark" that the crew then has to throw away — and
+ * a review queue full of things to throw away is a review queue nobody works.
+ *
+ * TWO RULES, and the second exists because of the first's weak spot:
+ *
+ *   1. RACING ONLY — after a gun and before that race's finish. Before the
+ *      first gun and after the last finish there is no mark to round.
+ *
+ *   2. When that race's finish was INFERRED rather than recorded, the end of
+ *      the race is a guess, so the half hour before any gun is treated as not
+ *      racing. That window is where a guessed finish is most likely to be
+ *      wrong, and it is the one place a stray rounding does real damage: it
+ *      lands in the next race's count and renumbers everything after it.
+ *
+ * A day with no guns at all is a TRAINING day. Nothing there is "outside a
+ * race", so everything is kept — which is the case the log fallback was written
+ * for in the first place.
+ */
+export function racingRoundingFilter(opts: {
+  segments: DaySegment[]
+  /** Start guns, in any order. */
+  gunUtcs: readonly number[]
+  preGunBlackoutSec?: number
+}): (utc: number) => boolean {
+  const guns = (opts.gunUtcs || []).filter(isNum).slice().sort((a, b) => a - b)
+  if (!guns.length) return () => true
+
+  const blackout = (opts.preGunBlackoutSec ?? DEFAULT_PRE_GUN_BLACKOUT_SEC) * 1000
+  const segments = opts.segments || []
+
+  return (utc: number): boolean => {
+    if (!isNum(utc)) return false
+    // After a gun: the earliest gun is the earliest anything can be racing.
+    if (utc < guns[0]) return false
+
+    const seg = segmentAt(segments, utc)
+    if (!seg || seg.kind !== 'race') return false
+
+    // Inside a race segment but still before its gun — the warning period,
+    // which the segment includes and the racing does not.
+    const gun = guns.filter((g) => g <= utc).pop()
+    if (gun == null || gun < seg.t0) return false
+
+    // Rule 2: a guessed finish earns no benefit of the doubt near a gun.
+    if (seg.endSource !== 'finish') {
+      for (const g of guns) {
+        if (utc >= g - blackout && utc < g) return false
+      }
+    }
+    return true
+  }
+}

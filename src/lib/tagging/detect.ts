@@ -29,7 +29,7 @@
 import { analyseManoeuvres, type Manoeuvre } from '../manoeuvres'
 import type { LogRow } from '../phaseStats'
 import { detectLegsAndRoundings, type Leg } from './detectLegs'
-import { segmentDay, segmentAt, type DaySegment, type SegmentInput } from './segments'
+import { segmentDay, segmentAt, racingRoundingFilter, type DaySegment, type SegmentInput } from './segments'
 import type { TagProducer } from './types'
 
 /** The vocabulary slugs a detector can emit. Each one exists in baseTags.ts, so
@@ -73,6 +73,9 @@ export interface DetectInput {
   minBsp?: number
   /** Skip the log-based mark-rounding fallback (it costs a pass over the log). */
   skipLegDetection?: boolean
+  /** How long before a start gun a rounding stops being believable on a day
+   *  whose race ends are inferred. Default 30 min — see racingRoundingFilter. */
+  preGunBlackoutSec?: number
 }
 
 /** What detectDay worked out along the way, for callers that want it. */
@@ -176,6 +179,17 @@ export function detectDay(input: DetectInput): Detection[] {
   })
 
   const seg = (utc: number) => segmentAt(segments, utc)
+
+  // Roundings only count while the boat is racing — see racingRoundingFilter.
+  // Applied to BOTH sources: the onboard system is no better informed than the
+  // log about whether anybody has started, and a "Top mark" from the warm-up is
+  // something the crew has to go and delete either way.
+  const racing = racingRoundingFilter({
+    segments,
+    gunUtcs: (xml?.raceGuns || []).map((g: { utc?: unknown }) => Number(g?.utc)),
+    preGunBlackoutSec: input.preGunBlackoutSec,
+  })
+
   const found: Omit<Detection, 'key'>[] = []
 
   // ── Race starts ───────────────────────────────────────────────────────────
@@ -201,7 +215,10 @@ export function detectDay(input: DetectInput): Detection[] {
   // `gate` and `topmark` are separate vocabulary because the crew talk about
   // them separately; `isValid: false` on the event file is the onboard system
   // doubting its own measurement, so it lands lower in the review queue.
-  const eventRoundings = (xml?.markRoundings || []).filter((m: any) => isNum(m?.utc))
+  // `racing` is applied to what gets TAGGED, not to what segmentDay was given:
+  // the day's shape is still inferred from every rounding the file recorded,
+  // including the ones too early to be worth a tag.
+  const eventRoundings = (xml?.markRoundings || []).filter((m: any) => isNum(m?.utc) && racing(m.utc))
   for (const m of eventRoundings) {
     const s = seg(m.utc)
     const top = !!m.isTop
@@ -228,6 +245,7 @@ export function detectDay(input: DetectInput): Detection[] {
     const found2 = detectLegsAndRoundings(rows)
     legs = found2.legs
     for (const r of found2.roundings) {
+      if (!racing(r.utc)) continue
       const s = seg(r.utc)
       found.push({
         slug: r.isTop ? 'topmark' : 'gate',

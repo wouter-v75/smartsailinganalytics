@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import {
-  segmentDay, segmentAt, racesOf, isInferredEnd,
+  segmentDay, segmentAt, racesOf, isInferredEnd, racingRoundingFilter,
   DEFAULT_WARNING_LEAD_SEC, type DaySegment,
 } from '../segments'
 
 const T = (hhmm: string) => Date.parse(`2026-09-11T${hhmm}:00Z`)
+/** With seconds, for the one assertion that turns on them. */
+const TS = (hhmmss: string) => Date.parse(`2026-09-11T${hhmmss}Z`)
 const shape = (segs: DaySegment[]) => segs.map((s) => s.key)
 const span = (s: DaySegment) => [new Date(s.t0).toISOString().slice(11, 16), new Date(s.t1).toISOString().slice(11, 16)]
 
@@ -207,5 +209,107 @@ describe('racesOf', () => {
 
   it('is empty on a training day', () => {
     expect(racesOf(segmentDay({ dayStartUtc: T('10:00'), dayStopUtc: T('14:00') }))).toEqual([])
+  })
+})
+
+describe('racingRoundingFilter — a rounding only counts while racing', () => {
+  const M = 60_000
+  const H = 60 * M
+  // Two races off one day: guns at 12:00 and 14:00, roundings in each.
+  const day = (over: Partial<Parameters<typeof segmentDay>[0]> = {}) => segmentDay({
+    guns: [{ utc: T('12:00'), raceNum: 1 }, { utc: T('14:00'), raceNum: 2 }],
+    markRoundings: [{ utc: T('12:20') }, { utc: T('12:50') }, { utc: T('14:20') }],
+    dayStartUtc: T('10:00'), dayStopUtc: T('16:00'),
+    ...over,
+  })
+  const filt = (over = {}, opts = {}) =>
+    racingRoundingFilter({
+      segments: day(over),
+      gunUtcs: [T('12:00'), T('14:00')],
+      ...opts,
+    })
+
+  it('keeps a rounding inside a race', () => {
+    expect(filt()(T('12:20'))).toBe(true)
+  })
+
+  it('throws away the warm-up', () => {
+    // Sailing round a mark an hour before the first gun is practice, and a
+    // "Top mark" from it is something the crew has to go and delete.
+    expect(filt()(T('10:30'))).toBe(false)
+    expect(filt()(T('11:00'))).toBe(false)
+  })
+
+  it('throws away the sail home', () => {
+    expect(filt()(T('15:30'))).toBe(false)
+  })
+
+  it('throws away the warning period, which is inside the race SEGMENT', () => {
+    // The segment starts at the warning signal; the racing starts at the gun.
+    expect(filt()(T('11:57'))).toBe(false)
+    expect(filt()(T('12:00'))).toBe(true)
+  })
+
+  // The failure this rule exists for: a STRAY rounding in the pre-start of race
+  // 2 is itself what segmentDay uses to guess where race 1 finished — so the
+  // stray one lands inside the race it invented for itself and looks entirely
+  // legitimate. Guns at 12:00 and 14:00; a real rounding at 12:20 and a spurious
+  // one at 13:40 while everybody mills about waiting for the next start.
+  const strayDay = segmentDay({
+    guns: [{ utc: T('12:00'), raceNum: 1 }, { utc: T('14:00'), raceNum: 2 }],
+    markRoundings: [{ utc: T('12:20') }, { utc: T('13:40') }],
+    dayStartUtc: T('10:00'), dayStopUtc: T('16:00'),
+  })
+  const strayFilter = (opts = {}) =>
+    racingRoundingFilter({ segments: strayDay, gunUtcs: [T('12:00'), T('14:00')], ...opts })
+
+  it('the stray rounding IS inside the race, which is why rule 1 is not enough', () => {
+    const r1 = strayDay.find((x) => x.key === 'r1')!
+    expect(r1.endSource).toBe('last-mark')
+    expect(T('13:40') >= r1.t0 && T('13:40') < r1.t1).toBe(true)
+  })
+
+  it('blacks out the half hour before a gun when the finish was only guessed', () => {
+    expect(strayFilter()(T('13:40'))).toBe(false)
+    expect(strayFilter()(T('13:59'))).toBe(false)
+    // And leaves the genuine one alone.
+    expect(strayFilter()(T('12:20'))).toBe(true)
+  })
+
+  it('believes a recorded finish, right up to the next gun', () => {
+    const f = racingRoundingFilter({
+      segments: segmentDay({
+        guns: [{ utc: T('12:00'), raceNum: 1 }, { utc: T('14:00'), raceNum: 2 }],
+        markRoundings: [{ utc: T('12:20') }, { utc: T('13:40') }],
+        finishes: [{ utc: T('13:50'), raceNum: 1 }],
+        dayStartUtc: T('10:00'), dayStopUtc: T('16:00'),
+      }),
+      gunUtcs: [T('12:00'), T('14:00')],
+    })
+    // Inside race 1, inside the blackout window — but the finish is a fact, so
+    // the boat really was still racing and the rounding really did happen.
+    expect(f(T('13:40'))).toBe(true)
+    expect(f(T('13:55'))).toBe(false)     // after the recorded finish
+  })
+
+  it('takes the blackout as a setting, for a class that starts differently', () => {
+    expect(strayFilter({ preGunBlackoutSec: 60 })(T('13:40'))).toBe(true)
+    expect(strayFilter({ preGunBlackoutSec: 60 })(TS('13:59:30'))).toBe(false)
+  })
+
+  it('keeps everything on a training day — there is no race to be outside of', () => {
+    // The whole reason the log fallback exists: a day with no event file still
+    // wants its roundings.
+    const f = racingRoundingFilter({
+      segments: segmentDay({ dayStartUtc: T('10:00'), dayStopUtc: T('16:00') }),
+      gunUtcs: [],
+    })
+    expect(f(T('10:30'))).toBe(true)
+    expect(f(T('15:30'))).toBe(true)
+  })
+
+  it('refuses a time that is not a time', () => {
+    expect(filt()(NaN)).toBe(false)
+    expect(filt()(undefined as unknown as number)).toBe(false)
   })
 })
