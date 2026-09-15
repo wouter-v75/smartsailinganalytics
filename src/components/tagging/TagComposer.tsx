@@ -3,7 +3,7 @@ import * as React from 'react'
 import { Loader2, Check } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import { sessionClock, parseSessionClock, nudge, driftLabel, NUDGES } from '@/lib/tagging/clock'
-import type { TagDef } from '@/lib/tagging/types'
+import type { TagDef, TagLabel } from '@/lib/tagging/types'
 
 // What comes up when a tag button is pressed.
 //
@@ -25,7 +25,34 @@ import type { TagDef } from '@/lib/tagging/types'
 
 const NOTE_SLUGS = new Set(['note', 'team-note'])
 
-export interface TagComposerProps {
+/** What a save actually writes, beyond the time. */
+export interface TagPayload {
+  note?: string
+  labels?: TagLabel[]
+  meta?: Record<string, unknown>
+}
+
+/**
+ * Extra fields a particular tag needs.
+ *
+ * The composer owns the value and carries it to onSave; it knows nothing about
+ * what is inside. That is what keeps sails, battens and whatever comes next out
+ * of a component whose job is a time and a Save button — see SailChangeDetail
+ * for the first one.
+ */
+export interface ComposerDetail<D> {
+  /** The starting value, given the press instant — e.g. what was already up. */
+  initial: (at: number) => D
+  render: (value: D, onChange: (next: D) => void, at: number) => React.ReactNode
+  /** `at` is the time as it stands when Save is pressed, not at the press — a
+   *  detail whose meaning depends on what came before it needs the corrected
+   *  one. */
+  toPayload: (value: D, at: number) => TagPayload
+  /** Block Save until the detail is usable. */
+  isIncomplete?: (value: D) => boolean
+}
+
+export interface TagComposerProps<D = unknown> {
   def: TagDef
   /** The instant the button was pressed — the starting point, not the answer. */
   at: number
@@ -34,17 +61,26 @@ export interface TagComposerProps {
   bounds?: { min?: number | null; max?: number | null }
   /** Shown under the time — e.g. which race the current time falls in. */
   context?: string | null
+  detail?: ComposerDetail<D> | null
   onCancel: () => void
-  onSave: (at: number, opts: { note?: string }) => void | Promise<unknown>
+  onSave: (at: number, payload: TagPayload) => void | Promise<unknown>
 }
 
-export default function TagComposer({
-  def, at, tzOffsetMin = 0, bounds, context, onCancel, onSave,
-}: TagComposerProps) {
+export default function TagComposer<D>({
+  def, at, tzOffsetMin = 0, bounds, context, detail, onCancel, onSave,
+}: TagComposerProps<D>) {
   const [t, setT] = React.useState(at)
   const [note, setNote] = React.useState('')
   const [saving, setSaving] = React.useState(false)
   const wantsNote = NOTE_SLUGS.has(def.slug)
+
+  // Seeded ONCE from the press instant. Re-seeding as the time is nudged would
+  // throw away what the crew had already picked every time they pressed −10s.
+  const [detailValue, setDetailValue] = React.useState<D | undefined>(
+    () => detail?.initial(at)
+  )
+  const detailBlocks = !!detail?.isIncomplete && detailValue !== undefined
+    && detail.isIncomplete(detailValue)
 
   // What the field SHOWS. Kept separate from `t` while the crew is typing, so a
   // half-typed "13:0" does not get parsed, rejected, and snapped back under
@@ -63,10 +99,11 @@ export default function TagComposer({
   }
 
   const save = async () => {
-    if (saving) return
+    if (saving || detailBlocks) return
     if (wantsNote && !note.trim()) return
     setSaving(true)
-    await onSave(t, { note: note.trim() || undefined })
+    const extra = detail && detailValue !== undefined ? detail.toPayload(detailValue, t) : {}
+    await onSave(t, { ...extra, note: note.trim() || extra.note })
   }
 
   return (
@@ -142,6 +179,10 @@ export default function TagComposer({
           ))}
         </div>
 
+        {/* ── Whatever this particular tag needs ─────────────────────────────── */}
+        {detail && detailValue !== undefined &&
+          detail.render(detailValue, setDetailValue, t)}
+
         {/* ── What (notes only) ─────────────────────────────────────────────── */}
         {wantsNote && (
           <>
@@ -171,7 +212,7 @@ export default function TagComposer({
           </button>
           <button
             onClick={save}
-            disabled={saving || (wantsNote && !note.trim())}
+            disabled={saving || detailBlocks || (wantsNote && !note.trim())}
             className="flex min-h-[52px] flex-[2] items-center justify-center gap-2 rounded-xl text-sm font-bold text-white disabled:opacity-50"
             style={{ background: def.color }}
           >

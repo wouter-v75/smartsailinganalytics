@@ -7,6 +7,9 @@
 //                       configs link to these sails.
 //   • Sail shapes     — structured trim-stripe scans (ingested from North).
 //   • Polar           — target speed reference (design VPP, via lib/polarCalc).
+//   • Battens         — the laminated batten card: stiffness + turns per batten
+//                       (numbered from the top) per wind band. Boat setup, so
+//                       the same TL3+ gate as the rest of this tab.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
@@ -27,6 +30,7 @@ import { parsePolarText, parsePolarWorkbook, buildPolarData, type PolarVersion }
 import { readXlsx } from '../lib/xlsxRead'
 import { useUiNext } from '../lib/ui-flags'
 import BoatConfigNext from './boat/BoatConfigNext'
+import BattenCardPanel from './boat/BattenCardPanel'
 
 interface Sail {
   id: string
@@ -71,7 +75,7 @@ export default function BoatConfigTab({
   // instantly with the team's sails/scans/polar/rig; the effects below still
   // revalidate in the background.
   const pf = getPrefetchedBoatConfig(teamId, boatId)
-  const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar' | 'log'>('inventory')
+  const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar' | 'log' | 'battens'>('inventory')
   const uiNext = useUiNext() // ?ui=next → redesigned reference screen (Phase 1)
   const [sails, setSails] = useState<Sail[]>(() => (pf?.sails as Sail[]) || [])
   const [scans, setScans] = useState<Scan[]>(() => (pf?.scans as Scan[]) || [])
@@ -589,11 +593,17 @@ export default function BoatConfigTab({
         {subBtn('shapes', 'Sail data')}
         {canSeeTuning && subBtn('rig', 'Rig settings')}
         {canSeeTuning && subBtn('polar', 'Targets')}
+        {canSeeTuning && subBtn('battens', 'Battens')}
         {canSeeTuning && subBtn('log', 'Log profile')}
       </div>
 
       {err && <div style={{ color: C.warn, fontSize: 12, marginBottom: 12 }}>Error: {err}</div>}
       {loading && <div style={{ color: C.dim, fontSize: 12 }}>Loading…</div>}
+
+      {/* ── BATTENS ────────────────────────────────────────────────── */}
+      {view === 'battens' && canSeeTuning && (
+        <BattenCardPanel teamId={teamId} boatId={boatId} canEdit={canEdit} isMobile={isMobile} />
+      )}
 
       {/* ── SAIL INVENTORY ─────────────────────────────────────────── */}
       {view === 'inventory' && (

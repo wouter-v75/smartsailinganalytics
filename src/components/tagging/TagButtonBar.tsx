@@ -3,7 +3,7 @@ import * as React from 'react'
 import { MessageSquare, Users, Flag, ChevronRight, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import { barItems, BAR_GROUPS, type BarGroup, type BarItem } from '@/lib/tagging/barGroups'
-import TagComposer from './TagComposer'
+import TagComposer, { type ComposerDetail, type TagPayload } from './TagComposer'
 import type { TagDef } from '@/lib/tagging/types'
 
 // The crew's tagging path, and the most important twelve square centimetres in
@@ -36,7 +36,7 @@ export interface TagButtonBarProps {
   /** UTC ms a press means — a point picked on the track, the video playhead, or
    *  the wall clock. */
   nowUtc: () => number
-  onApply: (slug: string, at: number, opts?: { note?: string }) => Promise<unknown>
+  onApply: (slug: string, at: number, opts?: TagPayload) => Promise<unknown>
   disabled?: boolean
   className?: string
   /** Minutes east of UTC for the session — the same clock the track shows. */
@@ -45,6 +45,10 @@ export interface TagButtonBarProps {
   bounds?: { min?: number | null; max?: number | null }
   /** Describes where the composer's current time falls, e.g. "Race 2". */
   contextAt?: (utc: number) => string | null
+  /** Extra fields for the tags that need them — a sail change needs three tabs
+   *  of them; most tags need none. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  detailFor?: (def: TagDef) => ComposerDetail<any> | null
 }
 
 const iconFor = (slug: string) =>
@@ -52,7 +56,7 @@ const iconFor = (slug: string) =>
 
 export default function TagButtonBar({
   defs, allDefs, groups = BAR_GROUPS, nowUtc, onApply, disabled, className,
-  tzOffsetMin = 0, bounds, contextAt,
+  tzOffsetMin = 0, bounds, contextAt, detailFor,
 }: TagButtonBarProps) {
   const [composing, setComposing] = React.useState<{ def: TagDef; at: number } | null>(null)
   const [picking, setPicking] = React.useState<{ group: BarGroup; members: TagDef[]; at: number } | null>(null)
@@ -134,11 +138,15 @@ export default function TagButtonBar({
 
       {composing && (
         <TagComposer
+          // Keyed by the press, so opening a second tag re-seeds the detail
+          // rather than reusing the first one's sails.
+          key={`${composing.def.id}:${composing.at}`}
           def={composing.def}
           at={composing.at}
           tzOffsetMin={tzOffsetMin}
           bounds={bounds}
           context={contextAt ? contextAt(composing.at) : null}
+          detail={detailFor ? detailFor(composing.def) : null}
           onCancel={() => setComposing(null)}
           onSave={async (at, opts) => {
             const { def } = composing

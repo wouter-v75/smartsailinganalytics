@@ -6147,6 +6147,9 @@ export function MobileShell(props){
               logRows={props.logData?.rows}
               xml={props.xmlData}
               playheadUtc={props.playUtc}
+              sessions={props.sessions}
+              onSelectDate={props.onSelectDate}
+              onEditSailList={()=>setActiveTab("campaign")}
             /></ErrorBoundary>
           </div>
         )}
@@ -9339,6 +9342,9 @@ function SSAApp(){
               logRows={logData?.rows}
               xml={xmlData}
               playheadUtc={playUtc}
+              sessions={visibleSessions}
+              onSelectDate={loadDate}
+              onEditSailList={()=>setActiveTab("campaign")}
             /></ErrorBoundary>
           </div>
         )}

@@ -6,6 +6,10 @@ import ReviewQueue from '@/components/tagging/ReviewQueue'
 import DebriefReel from '@/components/tagging/DebriefReel'
 import TagSheet from '@/components/tagging/TagSheet'
 import TrackView from '@/components/tagging/TrackView'
+import DayPicker from '@/components/tagging/DayPicker'
+import SailChangeDetail from '@/components/tagging/SailChangeDetail'
+import { normaliseBattenCard } from '@/lib/battens'
+import { sailStateAt, type SailState } from '@/lib/tagging/sailState'
 import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
@@ -130,11 +134,35 @@ const segments = segmentDay({
   dayStartUtc: T(11, 20), dayStopUtc: T(15, 30),
 })
 
+// Enough of a boat to exercise the sail-change composer.
+const INVENTORY = [
+  { id: 'i1', name: 'Main' }, { id: 'i2', name: 'J1' }, { id: 'i3', name: 'J2' },
+  { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }, { id: 'i6', name: 'A3' },
+  { id: 'i7', name: 'Storm jib' },
+]
+const ON_BOARD = INVENTORY.filter((s) => s.id !== 'i7' && s.id !== 'i2')
+const BATTEN_CARD = normaliseBattenCard({
+  count: 3,
+  rows: [
+    { '0-5': { tension: 'soft', turns: 5 }, '10-15': { tension: 'medium', turns: 2 }, '20-25': { tension: 'stiff', turns: -1 } },
+    { '0-5': { tension: 'soft', turns: 3 }, '10-15': { tension: 'medium', turns: 0 } },
+    { '10-15': { tension: 'stiff', turns: -2 } },
+  ],
+})
+const SESSIONS = [
+  { date: '2026-09-09', hasLog: true, event: 'Palma Week' },
+  { date: '2026-09-10', hasLog: true, event: 'Palma Week' },
+  { date: DAY, hasLog: true, event: 'Palma Week' },
+]
+
 type View = 'tagger' | 'track' | 'check' | 'debrief'
 
 export default function TaggerPreview() {
   const [view, setView] = React.useState<View>('tagger')
   const [picked, setPicked] = React.useState<number | null>(null)
+  const [day, setDay] = React.useState(DAY)
+  const [sail, setSail] = React.useState<SailState>(() => sailStateAt(events, T(12, 34)))
+  const [showSail, setShowSail] = React.useState(false)
   const [openId, setOpenId] = React.useState<string | null>(null)
   const [theme, setTheme] = React.useState<'dark' | 'light'>('dark')
   React.useEffect(() => { document.documentElement.setAttribute('data-theme', theme) }, [theme])
@@ -147,10 +175,15 @@ export default function TaggerPreview() {
     <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-bg text-fg">
       <div className="flex shrink-0 items-center gap-2 border-b border-[color:var(--border)] px-3 py-1.5 text-[11px] text-muted">
         <span>Tagger preview · fixture data</span>
+        <button onClick={() => setShowSail((v) => !v)} className="min-h-[44px] px-2 underline">
+          {showSail ? 'Hide sail change' : 'Sail change'}
+        </button>
         <button onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} className="ml-auto min-h-[44px] px-2 underline">
           {theme === 'dark' ? 'Light' : 'Dark'}
         </button>
       </div>
+
+      <DayPicker date={day} sessions={SESSIONS} onSelect={setDay} />
 
       <div role="tablist" className="flex shrink-0 gap-1 border-b border-[color:var(--border)] bg-surface-1 p-2">
         {(['tagger', 'track', 'check', 'debrief'] as View[]).map((v) => (
@@ -167,6 +200,21 @@ export default function TaggerPreview() {
           </button>
         ))}
       </div>
+
+      {showSail && (
+        <div className="shrink-0 overflow-y-auto px-2 pt-2" style={{ maxHeight: '55dvh' }}>
+          <SailChangeDetail
+            value={sail}
+            onChange={setSail}
+            inventory={INVENTORY}
+            onBoard={ON_BOARD}
+            previous={{ state: { up: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }], battens: [] }, utc: T(11, 40) }}
+            battenCard={BATTEN_CARD}
+            twsKn={12.4}
+            onEditSailList={() => {}}
+          />
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view === 'tagger' && (

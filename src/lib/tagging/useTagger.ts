@@ -36,6 +36,12 @@ export interface ApplyOptions {
   t1?: number
   targetKind?: string
   targetId?: string
+  /** Structured payload the tag carries — a sail change's state, say. Stored in
+   *  ssa_tag_events.meta; see src/lib/tagging/sailState.ts. */
+  meta?: Record<string, unknown>
+  /** Overrides the definition's label on this one application, so a sail change
+   *  can read "Main + J2" in the list instead of "Sail change" nine times. */
+  label?: string
 }
 
 /** Every edit the UI can make, named the way the API names them. */
@@ -112,7 +118,7 @@ export function useTagger({ teamId, boatId, date, sessionId }: TaggerArgs) {
     const optimistic: TagEvent = {
       id: tempId, teamId: teamId!, boatId: boatId!, sessionId: sessionId ?? null,
       sessionDate: date!, tagDefId: def?.id ?? null,
-      slug, label: def?.label || slug, color: def?.color || '#06B6D4',
+      slug, label: opts.label || def?.label || slug, color: def?.color || '#06B6D4',
       scope: def?.privateByDefault ? 'personal' : (def?.scope || 'general'),
       section: def?.privateByDefault ? null : (def?.section ?? null),
       ownerUserId: null,
@@ -124,7 +130,7 @@ export function useTagger({ teamId, boatId, date, sessionId }: TaggerArgs) {
       detectionKey: null, autoT0: null, autoT1: null, confidence: null,
       editedFields: [], verifiedByUserId: null, verifiedAt: null,
       rejected: false, rejectedReason: null, reelOrder: null,
-      createdByUserId: null, meta: null,
+      createdByUserId: null, meta: opts.meta ?? null,
     }
     setEvents((prev) => [...(prev || []), optimistic].sort((a, b) => a.t0 - b.t0))
 
@@ -135,7 +141,7 @@ export function useTagger({ teamId, boatId, date, sessionId }: TaggerArgs) {
         body: JSON.stringify({
           boat_id: boatId, session_date: date, session_id: sessionId ?? null,
           slug, at, note: opts.note, labels: opts.labels,
-          t0: opts.t0, t1: opts.t1,
+          t0: opts.t0, t1: opts.t1, meta: opts.meta, label: opts.label,
           target_kind: opts.targetKind, target_id: opts.targetId,
         }),
       }))

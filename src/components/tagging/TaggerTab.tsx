@@ -7,10 +7,12 @@ import { detectDay, type Detection } from '@/lib/tagging/detect'
 import { segmentDay, segmentAt, type DaySegment } from '@/lib/tagging/segments'
 import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder } from '@/lib/tagging/requests'
+import { sailDetail, useSailContext } from './sailChangeDetail.helpers'
 import TagButtonBar from './TagButtonBar'
 import TagTrack from './TagTrack'
 import TagSheet from './TagSheet'
 import TrackView from './TrackView'
+import DayPicker from './DayPicker'
 import ReviewQueue, { REVIEW_THRESHOLD } from './ReviewQueue'
 import DebriefReel from './DebriefReel'
 
@@ -49,13 +51,19 @@ export interface TaggerTabProps {
   xml?: any
   /** Where "now" is — the video playhead when one is open, else the wall clock. */
   playheadUtc?: number | null
+  /** Days the app knows about, so a previous session can be tagged. */
+  sessions?: { date: string; hasLog?: boolean; hasXml?: boolean; event?: string | null }[] | null
+  /** Load another day. The tagger changes the app's active day, as Analytics does. */
+  onSelectDate?: (date: string) => void | Promise<unknown>
+  /** Jump to Campaign → Day, where the day's sail list is edited. */
+  onEditSailList?: () => void
 }
 
 type View = 'tagger' | 'track' | 'check' | 'debrief'
 
 export default function TaggerTab({
   teamId, boatId, date, sessionId, userId, tzOffsetMin = 0,
-  logRows, xml, playheadUtc,
+  logRows, xml, playheadUtc, sessions, onSelectDate, onEditSailList,
 }: TaggerTabProps) {
   const t = useTagger({ teamId, boatId, date, sessionId })
   const [view, setView] = React.useState<View>('tagger')
@@ -108,6 +116,10 @@ export default function TaggerTab({
     [t.events]
   )
 
+  // Sails, today's list and the boat's batten card — everything the sail-change
+  // composer needs. One fetch per boat/day, not one per press.
+  const sailCtx = useSailContext(teamId, boatId, date)
+
   // Where the day's data actually runs. The composer clamps its nudges to it,
   // so −10m pressed twice cannot put a tag before the boat left the dock.
   const bounds = React.useMemo(() => {
@@ -148,6 +160,19 @@ export default function TaggerTab({
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-bg text-fg">
+      {/* ── Which day ─────────────────────────────────────────────────────── */}
+      {/* Above the view tabs, because it scopes all four of them: the day is the
+          first thing to be sure of and the last thing anyone should have to
+          guess at. */}
+      {onSelectDate && (
+        <DayPicker
+          date={date}
+          sessions={sessions}
+          onSelect={onSelectDate}
+          disabled={t.busy}
+        />
+      )}
+
       {/* ── Views ─────────────────────────────────────────────────────────── */}
       <div
         role="tablist"
@@ -233,6 +258,16 @@ export default function TaggerTab({
         tzOffsetMin={tzOffsetMin}
         bounds={bounds}
         contextAt={contextAt}
+        detailFor={(def) =>
+          sailDetail({
+            def,
+            events: t.events,
+            ctx: sailCtx,
+            logRows,
+            tzOffsetMin,
+            onEditSailList,
+          })
+        }
         onApply={async (slug, at, opts) => {
           const made = await t.apply(slug, at, opts)
           // Tagging a held point and leaving it held invites a second tag landing

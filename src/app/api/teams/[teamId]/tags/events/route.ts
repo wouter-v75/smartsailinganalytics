@@ -96,7 +96,9 @@ export async function POST(req: NextRequest, { params }: { params: { teamId: str
     sessionDate,
     tagDefId: def.id,
     slug: def.slug,
-    label: def.label,
+    label: typeof body?.label === 'string' && body.label.trim()
+      ? body.label.trim().slice(0, 120)
+      : def.label,
     color: def.color,
     // A private-by-default definition is SHARED vocabulary — everyone sees
     // "Personal note" in the picker — but each application belongs to whoever
