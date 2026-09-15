@@ -306,23 +306,38 @@ A tag is **moved by shifting both endpoints** — writing `t0` alone trips the
 `t1 >= t0` window CHECK on a point tag. `merge.ts` will expose `moveTag()` as the
 one sanctioned way.
 
-### Media requests — `ssa_media_requests` (M5)
+### Requests — `ssa_tag_requests` (migration 0063) ✅
 
-Tagging decides what gets extracted (§9), so the request flow needs a home:
+Two kinds, and they behave differently enough that conflating them would be a
+mistake:
 
-| Column | Why |
-| --- | --- |
-| `tag_event_id` | the moment being requested |
-| `requested_by_user_id`, `requested_at` | who wants it |
-| `media_kind` | `video` \| `photo` |
-| `audience` | `debrief` (shared, needs approval) \| `personal` (does not) |
-| `status` | `pending` \| `approved` \| `rejected` \| `fulfilled` |
-| `decided_by_user_id`, `decided_at`, `decision_note` | the approval trail |
-| `asset_id` | what was produced, once it exists |
+| | **video** | **debrief** |
+| --- | --- | --- |
+| means | "pull me that clip" | "let's talk about this tonight" |
+| approver | coach / manager / admin **or the media section** — the drone operator is holding the footage | **none** |
+| how it closes | someone approves, then fulfils it with an asset | the coach puts the tag on the reel; selection IS the approval |
+| who may ask | anyone who sails | anyone who sails |
 
-A `personal` request is auto-approved — it is the requester's own eyes on footage
-they can already reach. A `debrief` request waits for coach or admin, because it
-costs upload bandwidth and everyone's attention.
+One request per person per tag per kind, so **the nomination count means
+something**: five people asking about the same gybe is the strongest signal a
+shortlist has, and it only exists because everyone can nominate.
+
+### Notes and comments — no new table
+
+A personal note is a tag event with `scope='personal'` (0062's RLS already keeps
+those private to their owner) and the text in `note`. A team comment is a
+general-scoped one whose definition is gated at `min_role: 'tl2'`.
+
+Modelling them as tags rather than their own table means they inherit the day's
+segments, the track, the snap, filtering and the export rules for nothing — and a
+note can be nominated for the debrief without moving between tables.
+
+One column makes it work: **`ssa_tag_defs.private_by_default`**. "Personal note"
+is *shared vocabulary* whose every application is private; without it, a personal
+definition would need an owner (0062's scope-shape CHECK) and we would be seeding
+one per user per team.
+
+`src/lib/tagging/notes.ts` reads them back for Campaign → Day.
 
 `ssa_phases` moves **out** of `0062` and ships with the Phases tab.
 
@@ -343,10 +358,18 @@ Mine. Auto tags render hollow until verified, solid after.
 Rejected ones are hidden behind a toggle. Drag to move, drag an edge to resize,
 `[`/`]` to walk the detections.
 
-**The button bar.** Around eight curated buttons — deliberately not the whole
-vocabulary, which lives behind the picker — gated by role and section, each
-carrying its lead/lag. Press once while the video plays and the tag lands in the
-right place. Pressing two buttons on one moment is normal and costs nothing.
+**The button bar.** Seven curated buttons, and **not one of them is a racing
+moment** — the detector already finds every start, rounding, tack and gybe, so a
+button for them is a button nobody presses. The bar is for what the detector
+cannot know:
+
+> Personal note · Team comment · Review this · Incident · Gear damage ·
+> Sail change · Line-up
+
+Sail change is the one racing moment that earns a place, because a training day
+has no event file to detect one from — and it is the trimmer's one press, just as
+gear damage is the engineer's. Each carries its own lead/lag. Pressing two
+buttons on one moment is normal and costs nothing.
 
 **The inspector.** One tag: its descriptors, its note, *Snap to nearest tack*,
 *Verify*, *Reject*, and the provenance line ("detected 13:42:07, moved −4 s by

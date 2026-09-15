@@ -68,6 +68,9 @@ export interface TagDef {
   lane: string | null
   /** On the curated button bar (~8), as opposed to only in the picker. */
   onButtonBar: boolean
+  /** Shared vocabulary whose every application is private to whoever applied
+   *  it — how "Personal note" works without a definition per user. */
+  privateByDefault: boolean
   builtin: boolean
   archived: boolean
   sort: number
@@ -134,3 +137,45 @@ export interface TaggerIdentity {
 
 export const isPointTag = (t: Pick<TagEvent, 't0' | 't1'>): boolean => t.t1 <= t.t0
 export const tagDurationMs = (t: Pick<TagEvent, 't0' | 't1'>): number => Math.max(0, t.t1 - t.t0)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Requests — what the crew ask for once a moment is tagged.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 'video' wants footage pulled and needs an approver; 'debrief' wants the
+ *  moment discussed and needs none — nomination is open, and the coach's
+ *  selection onto the reel IS the approval. */
+export type RequestKind = 'video' | 'debrief'
+
+export type RequestMediaKind = 'video' | 'photo' | 'drone'
+
+export type RequestStatus = 'open' | 'approved' | 'declined' | 'fulfilled'
+
+export interface TagRequest {
+  id: string
+  teamId: string
+  boatId: string
+  sessionDate: string
+  tagEventId: string
+  kind: RequestKind
+  mediaKind: RequestMediaKind | null
+  status: RequestStatus
+  note: string | null
+  requestedByUserId: string
+  requestedAt: number
+  decidedByUserId: string | null
+  decidedAt: number | null
+  decisionNote: string | null
+  assetKind: string | null
+  assetId: string | null
+}
+
+/** A tag with the requests hanging off it — what the shortlist renders. */
+export interface TagWithRequests {
+  tag: TagEvent
+  requests: TagRequest[]
+  /** How many people asked to debrief this. Several is the strongest signal a
+   *  shortlist has, so it is counted rather than merely listed. */
+  debriefVotes: number
+  videoPending: number
+}

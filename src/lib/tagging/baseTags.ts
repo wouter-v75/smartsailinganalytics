@@ -36,6 +36,9 @@ export interface BaseTag {
   labelGroups: TagLabelGroup[]
   /** On the curated ~8-button bar, rather than only in the picker. */
   onButtonBar: boolean
+  /** Shared vocabulary, private applications: every use is scope='personal',
+   *  owned by whoever pressed it. See migration 0063. */
+  privateByDefault?: boolean
 }
 
 // ── Descriptor vocabularies ─────────────────────────────────────────────────
@@ -81,17 +84,40 @@ const mk = (
     lagSec: opts.lagSec ?? (kind === 'range' ? 5 : 10),
     labelGroups: opts.labelGroups ?? [],
     onButtonBar: opts.onButtonBar ?? false,
+    privateByDefault: opts.privateByDefault ?? false,
   }
 }
 
+// ── Notes and comments ──────────────────────────────────────────────────────
+// Free text pinned to a moment, rather than vocabulary. Deliberately modelled as
+// tags rather than as their own table: they then inherit the track, the day
+// segments, the snap, filtering and export, and — for personal notes — the
+// privacy that scope='personal' already gets from RLS.
+const NOTE_TAGS: BaseTag[] = [
+  // Yours alone. Shows in Campaign → Day → Personal notes; nobody else can read
+  // it, and it never reaches an export.
+  mk('note', 'Personal note', '#64748B', {
+    sort: 5, onButtonBar: true, privateByDefault: true, leadSec: 15, lagSec: 15,
+  }),
+  // The crew's shared running commentary on a day. TL2 and up, because it is
+  // the team's record rather than a private aide-memoire.
+  mk('team-note', 'Team comment', '#7F77DD', {
+    sort: 6, onButtonBar: true, minRole: 'tl2', leadSec: 15, lagSec: 15,
+  }),
+]
+
 // ── General: the racing moments (racingTags.ts, verbatim) ───────────────────
-// The button bar is these plus tack and gybe — eight in total, which is as many
-// as anyone reliably reaches for without looking.
+// NONE of the racing moments are on the button bar, which looks wrong until you
+// remember the first principle: the detector already finds every start, mark
+// rounding, tack and gybe. A button for them would be a button nobody presses.
+//
+// The bar is for what the detector CANNOT know — how it felt, that something
+// broke, that this is worth coming back to. See BUTTON_BAR_NOTE below.
 const RACING: BaseTag[] = Object.entries(RACING_TAGS).map(([slug, label], i) =>
   mk(slug, label, RACE_RED, {
     sort: 10 + i,
     labelGroups: [QUALITY],
-    onButtonBar: slug === 'race-start' || slug === 'topmark' || slug === 'gate',
+    onButtonBar: false,
     // A start is worth a minute of run-in; a mark rounding, the approach.
     leadSec: slug === 'race-start' ? 60 : 20,
     lagSec: slug === 'race-start' ? 30 : 20,
@@ -104,10 +130,10 @@ const AUTO: BaseTag[] = [
   mk('reach', 'Reach', POS_C, { kind: 'range', sort: 31 }),
   mk('downwind', 'Downwind', POS_C, { kind: 'range', sort: 32 }),
   mk('tack', 'Tack', '#1D9E75', {
-    sort: 40, labelGroups: MANOEUVRE_LABELS, onButtonBar: true, leadSec: 20, lagSec: 40,
+    sort: 40, labelGroups: MANOEUVRE_LABELS, leadSec: 20, lagSec: 40,
   }),
   mk('gybe', 'Gybe', MANO_C, {
-    sort: 41, labelGroups: MANOEUVRE_LABELS, onButtonBar: true, leadSec: 20, lagSec: 40,
+    sort: 41, labelGroups: MANOEUVRE_LABELS, leadSec: 20, lagSec: 40,
   }),
   mk('mark', 'Mark', '#F59E0B', { sort: 42, labelGroups: [QUALITY], leadSec: 20, lagSec: 20 }),
   mk('race', 'Race', '#D85A30', { kind: 'range', sort: 50 }),
@@ -121,7 +147,10 @@ const DAY: BaseTag[] = [
   mk('dock-out', 'Dock out', DAY_C, { sort: 70 }),
   mk('dock-in', 'Dock in', DAY_C, { sort: 71 }),
   mk('warning-signal', 'Warning signal', DAY_C, { sort: 72 }),
-  mk('sail-change', 'Sail change', DAY_C, { sort: 73 }),
+  mk('sail-change', 'Sail change', DAY_C, {
+    sort: 73, onButtonBar: true, leadSec: 20, lagSec: 20,
+    labelGroups: [{ group: 'Change', options: ['hoist', 'drop', 'peel', 'reef', 'unreef'] }],
+  }),
   // Two-boat testing: a run is only believed after three or four repeats, so the
   // repeat number rides along as a descriptor and the season's runs group by it.
   mk('lineup', 'Line-up', '#2DD4BF', {
@@ -137,7 +166,10 @@ const DAY: BaseTag[] = [
     labelGroups: [{ group: 'Testing', options: ['rig', 'sail', 'trim mode', 'foil', 'crew weight'] }],
   }),
   mk('incident', 'Incident', '#EF4444', { sort: 80, onButtonBar: true, leadSec: 20, lagSec: 20 }),
-  mk('gear-damage', 'Gear damage', '#EF4444', { sort: 81, leadSec: 20, lagSec: 20 }),
+  mk('gear-damage', 'Gear damage', '#EF4444', {
+    sort: 81, onButtonBar: true, leadSec: 20, lagSec: 20,
+    labelGroups: [{ group: 'Where', options: ['rig', 'sail', 'deck gear', 'winch', 'foil', 'electronics'] }],
+  }),
   // The catch-all: "something happened here, come back to it". The most-pressed
   // button on any tagging tool, and the one that feeds the debrief reel.
   mk('review', 'Review this', '#8B5CF6', {
@@ -170,8 +202,24 @@ const SECTIONS: BaseTag[] = CREW_SECTIONS.flatMap((s, si) =>
   )
 )
 
+// ── What earns a place on the button bar ────────────────────────────────────
+// Seven buttons, and every one of them marks something no algorithm can infer:
+//
+//   Personal note   how it felt, privately
+//   Team comment    how it felt, to the crew  (TL2+)
+//   Review this     come back to this
+//   Incident        something went wrong
+//   Gear damage     the engineer's one press
+//   Sail change     the trimmer's, and the only racing moment here — because on
+//                   a training day there is no event file to detect it from
+//   Line-up         the start and end of a two-boat test run
+//
+// Kept short on purpose: rare codes depress how consistently a squad tags, even
+// when everyone agrees on the common ones. The full vocabulary lives one tap
+// deeper, in the picker.
+
 /** Every base tag, general first then section starters. */
-export const BASE_TAGS: BaseTag[] = [...RACING, ...AUTO, ...DAY, ...SECTIONS]
+export const BASE_TAGS: BaseTag[] = [...NOTE_TAGS, ...RACING, ...AUTO, ...DAY, ...SECTIONS]
 
 export const BASE_GENERAL_TAGS: BaseTag[] = BASE_TAGS.filter((t) => t.scope === 'general')
 export const BASE_SECTION_TAGS: BaseTag[] = BASE_TAGS.filter((t) => t.scope === 'section')

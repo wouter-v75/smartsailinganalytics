@@ -25,6 +25,32 @@ describe('base vocabulary', () => {
     expect(bar.length).toBeGreaterThanOrEqual(6)
   })
 
+  it('puts nothing on the bar that the detector already finds', () => {
+    // The first principle, as a test: a button for something detectDay() finds
+    // by itself is a button nobody presses. Sail change is the exception, and
+    // earns it — a training day has no event file to detect one from.
+    const bar = BASE_TAGS.filter((t) => t.onButtonBar).map((t) => t.slug)
+    for (const detected of ['race-start', 'topmark', 'gate', 'tack', 'gybe']) {
+      expect(bar).not.toContain(detected)
+    }
+    expect(bar).toContain('sail-change')
+  })
+
+  it('gives the crew their one-press paths', () => {
+    // The trimmer, the engineer, and anyone with something to say.
+    const bar = BASE_TAGS.filter((t) => t.onButtonBar).map((t) => t.slug)
+    for (const slug of ['note', 'team-note', 'review', 'incident', 'gear-damage', 'sail-change']) {
+      expect(bar).toContain(slug)
+    }
+  })
+
+  it('keeps team comments to TL2 and up, and personal notes open to all', () => {
+    expect(BASE_TAGS.find((t) => t.slug === 'team-note')!.minRole).toBe('tl2')
+    const personal = BASE_TAGS.find((t) => t.slug === 'note')!
+    expect(personal.minRole).toBe('tl1')
+    expect(personal.privateByDefault).toBe(true)
+  })
+
   it('gives every tag lead time — people press late, always', () => {
     // §12: the operator has to see the moment, recognise it and find the button.
     for (const t of BASE_TAGS) expect(t.leadSec).toBeGreaterThan(0)

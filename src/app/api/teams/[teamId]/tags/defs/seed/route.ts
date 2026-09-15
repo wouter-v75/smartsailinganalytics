@@ -42,6 +42,7 @@ function rowFor(t: BaseTag, teamId: string, boatId: string | null, userId: strin
     lag_sec: t.lagSec,
     label_groups: t.labelGroups,
     on_button_bar: t.onButtonBar,
+    private_by_default: !!t.privateByDefault,
     sort: t.sort,
     builtin: true,
     created_by_user_id: userId,

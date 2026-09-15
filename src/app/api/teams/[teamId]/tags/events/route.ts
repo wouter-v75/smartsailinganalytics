@@ -98,9 +98,13 @@ export async function POST(req: NextRequest, { params }: { params: { teamId: str
     slug: def.slug,
     label: def.label,
     color: def.color,
-    scope: def.scope,
-    section: def.section,
-    ownerUserId: def.scope === 'personal' ? user.id : null,
+    // A private-by-default definition is SHARED vocabulary — everyone sees
+    // "Personal note" in the picker — but each application belongs to whoever
+    // pressed it, and 0062's RLS then keeps it to them. Without this a personal
+    // definition would need an owner, so we would be seeding one per user.
+    scope: def.privateByDefault ? 'personal' : def.scope,
+    section: def.privateByDefault ? null : def.section,
+    ownerUserId: def.privateByDefault || def.scope === 'personal' ? user.id : null,
     t0: Math.min(win.t0, win.t1),
     t1: Math.max(win.t0, win.t1),
     targetKind: body?.target_kind || 'track',

@@ -9,7 +9,7 @@
 // round-tripping and nobody notices for a month.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { TagDef, TagEvent, TagLabel, TagLabelGroup } from './types'
+import type { TagDef, TagEvent, TagLabel, TagLabelGroup, TagRequest } from './types'
 
 /** Columns every tag-event read asks for. */
 export const TAG_EVENT_COLUMNS = [
@@ -25,7 +25,7 @@ export const TAG_EVENT_COLUMNS = [
 export const TAG_DEF_COLUMNS = [
   'id', 'team_id', 'boat_id', 'scope', 'section', 'owner_user_id',
   'slug', 'label', 'color', 'min_role', 'kind',
-  'lead_sec', 'lag_sec', 'label_groups', 'lane', 'on_button_bar',
+  'lead_sec', 'lag_sec', 'label_groups', 'lane', 'on_button_bar', 'private_by_default',
   'builtin', 'archived', 'sort',
 ].join(',')
 
@@ -170,6 +170,7 @@ export function toTagDef(r: any): TagDef {
     labelGroups: arr<TagLabelGroup>(r.label_groups),
     lane: r.lane ?? null,
     onButtonBar: !!r.on_button_bar,
+    privateByDefault: !!r.private_by_default,
     builtin: !!r.builtin,
     archived: !!r.archived,
     sort: Number(r.sort ?? 100),
@@ -187,6 +188,7 @@ export function toTagDefPatch(p: Partial<TagDef>): Record<string, unknown> {
   if ('labelGroups' in p) out.label_groups = p.labelGroups
   if ('lane' in p) out.lane = p.lane
   if ('onButtonBar' in p) out.on_button_bar = p.onButtonBar
+  if ('privateByDefault' in p) out.private_by_default = p.privateByDefault
   if ('archived' in p) out.archived = p.archived
   if ('sort' in p) out.sort = p.sort
   return out
@@ -206,4 +208,35 @@ export function windowForPress(def: Pick<TagDef, 'leadSec' | 'lagSec' | 'kind'>,
   // A point tag still gets a window — that is what lead/lag are for — but it can
   // never be inverted, whatever a definition is configured with.
   return { t0: Math.min(t0, t1), t1: Math.max(t0, t1) }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const TAG_REQUEST_COLUMNS = [
+  'id', 'team_id', 'boat_id', 'session_date', 'tag_event_id',
+  'kind', 'media_kind', 'status', 'note',
+  'requested_by_user_id', 'requested_at',
+  'decided_by_user_id', 'decided_at', 'decision_note',
+  'asset_kind', 'asset_id',
+].join(',')
+
+export function toTagRequest(r: any): TagRequest {
+  return {
+    id: String(r.id),
+    teamId: String(r.team_id),
+    boatId: String(r.boat_id),
+    sessionDate: String(r.session_date).slice(0, 10),
+    tagEventId: String(r.tag_event_id),
+    kind: r.kind,
+    mediaKind: r.media_kind ?? null,
+    status: r.status || 'open',
+    note: r.note ?? null,
+    requestedByUserId: String(r.requested_by_user_id),
+    requestedAt: ms(r.requested_at),
+    decidedByUserId: r.decided_by_user_id ?? null,
+    decidedAt: msOrNull(r.decided_at),
+    decisionNote: r.decision_note ?? null,
+    assetKind: r.asset_kind ?? null,
+    assetId: r.asset_id ?? null,
+  }
 }
