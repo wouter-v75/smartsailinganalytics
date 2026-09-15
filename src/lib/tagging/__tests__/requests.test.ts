@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   canApproveMedia, canCurateReel, canRequest, withRequests,
   buildShortlist, reelOf, videoQueue, nextReelOrder, renumberReel,
+  grabMediaKind, FLAGGED_SLUGS,
 } from '../requests'
 import { personalNotes, teamNotes, notesBySegment, isPersonalNote, isTeamNote } from '../notes'
 import { segmentDay } from '../segments'
@@ -225,5 +226,43 @@ describe('notes', () => {
     const notes = personalNotes([note()], 'u1')
     expect(notesBySegment(notes, []).map((g) => g.label)).toEqual(['Day'])
     expect(notesBySegment([], [])).toEqual([])
+  })
+})
+
+describe('grab video', () => {
+  it('asks the drone operator when the drone is what was wanted', () => {
+    expect(grabMediaKind([{ group: 'Wanted', text: 'drone' }])).toBe('drone')
+    expect(grabMediaKind([{ group: 'Wanted', text: 'Drone' }])).toBe('drone')
+  })
+
+  it('leaves it open otherwise — a request narrowed on a guess reaches the wrong person', () => {
+    expect(grabMediaKind([{ group: 'Wanted', text: 'either' }])).toBe('video')
+    expect(grabMediaKind([{ group: 'Wanted', text: 'onboard' }])).toBe('video')
+    expect(grabMediaKind([])).toBe('video')
+    expect(grabMediaKind(null)).toBe('video')
+    expect(grabMediaKind(undefined)).toBe('video')
+  })
+
+  it('survives a descriptor with nothing in it', () => {
+    expect(grabMediaKind([{ group: 'Wanted', text: '' } as never])).toBe('video')
+  })
+})
+
+describe('the shortlist takes the tags that nominate themselves', () => {
+  it('includes a technical problem without needing a vote', () => {
+    expect(FLAGGED_SLUGS.has('technical')).toBe(true)
+    expect(FLAGGED_SLUGS.has('review')).toBe(true)
+  })
+
+  it('still includes the names those tags used to have', () => {
+    // A day tagged before the rename must not drop out of its own debrief.
+    expect(FLAGGED_SLUGS.has('gear-damage')).toBe(true)
+    expect(FLAGGED_SLUGS.has('incident')).toBe(true)
+  })
+
+  it('does not sweep in the routine turns', () => {
+    for (const slug of ['tack', 'gybe', 'race-start', 'sail-change', 'grab-video']) {
+      expect(FLAGGED_SLUGS.has(slug)).toBe(false)
+    }
   })
 })

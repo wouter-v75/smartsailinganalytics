@@ -1,13 +1,15 @@
 'use client'
 import * as React from 'react'
 import { ZoomIn, Maximize2 } from 'lucide-react'
-import { projectTrack, thin, geoRows, nearestPoint, pointAtUtc, type GeoRow, type TrackPoint } from '@/lib/tagging/trackGeom'
+import { projectTrack, thin, geoRows, nearestPoint, pointAtUtc, segmentPath, type GeoRow, type TrackPoint } from '@/lib/tagging/trackGeom'
 import {
   FIT, MAX_SCALE, toTrack, toScreen, zoomAt, zoomTo, panBy, isFitted, spread, midpoint,
   type Viewport,
 } from '@/lib/tagging/viewport'
+import { cn } from '@/lib/ui'
 import { sessionClock } from '@/lib/tagging/clock'
 import { markerStyle, markerTip, markerLabel } from '@/lib/tagging/markers'
+import { MEDIA_COLOURS, MEDIA_LABELS, isSpan, type MediaMark } from '@/lib/mediaDecks'
 import type { TagWithRequests } from '@/lib/tagging/types'
 
 // The day's track, with a thumb on it.
@@ -37,6 +39,12 @@ import type { TagWithRequests } from '@/lib/tagging/types'
 //
 // Tags are drawn where they happened: hollow for a detection nobody has vouched
 // for, solid once somebody has, which is the same language the list view uses.
+//
+// MEDIA is drawn underneath them, in the timeline's own deck colours: a clip as
+// the LENGTH of water it covers, a photo or a sail scan as the point it was
+// taken at. "Was that gybe filmed" is a question about a window, and a clip
+// drawn as a dot answers it wrongly. Underneath, because the crew's tags are
+// what the screen is for — the media is context.
 // Their SIZE is a hierarchy — see markers.ts — so a day's hundred and forty
 // tacks stay in the background and the handful of moments worth navigating to
 // stand out. A mouse hovering one gets the readout; a thumb taps it and opens it.
@@ -50,6 +58,9 @@ export interface TrackCanvasProps {
   selectedUtc?: number | null
   onSelect: (utc: number | null) => void
   onOpenTag?: (tagId: string) => void
+  /** The day's videos, drone clips, photos and sail scans, drawn where they
+   *  were taken. Same colours as the timeline's decks — see lib/mediaDecks.ts. */
+  media?: MediaMark[]
   tzOffsetMin?: number
   /** Shortest the track box may get. It grows to fill whatever it is given. */
   minHeightPx?: number
@@ -59,7 +70,7 @@ const HOLD_MS = 400
 const MOVE_CANCEL_PX = 10
 
 export default function TrackCanvas({
-  rows, items, t0, t1, selectedUtc, onSelect, onOpenTag, tzOffsetMin = 0, minHeightPx = 240,
+  rows, items, t0, t1, selectedUtc, onSelect, onOpenTag, media, tzOffsetMin = 0, minHeightPx = 240,
 }: TrackCanvasProps) {
   const boxRef = React.useRef<HTMLDivElement>(null)
   // The box fills the column, so both dimensions are measured rather than
@@ -71,7 +82,9 @@ export default function TrackCanvas({
   const [view, setView] = React.useState<Viewport>(FIT)
   // What the mouse is over, in TRACK coordinates so the readout keeps its place
   // through a zoom. Mouse only: a touch has no hover, and a tap opens the tag.
-  const [hover, setHover] = React.useState<{ id: string; x: number; y: number } | null>(null)
+  const [hover, setHover] = React.useState<
+    { id: string; x: number; y: number; title: string; clock: string; extra: string | null } | null
+  >(null)
 
   React.useEffect(() => {
     const el = boxRef.current
@@ -110,6 +123,23 @@ export default function TrackCanvas({
       .map((i) => ({ item: i, pt: pointAtUtc(points, i.tag.t0) }))
       .filter((m): m is { item: TagWithRequests; pt: TrackPoint } => !!m.pt)
   }, [items, points])
+
+  // Media inside the drawn window, with the geometry each kind needs: a path
+  // for a clip, a point for a photo. A clip too short to draw as a line falls
+  // back to its start point rather than vanishing.
+  const mediaMarks = React.useMemo(() => {
+    if (!points.length || !media?.length) return []
+    const from = points[0].utc
+    const to = points[points.length - 1].utc
+    return media
+      .filter((m) => m.t1 >= from && m.t0 <= to)
+      .map((m) => ({
+        m,
+        path: isSpan(m.kind) ? segmentPath(points, m.t0, m.t1) : '',
+        pt: pointAtUtc(points, m.t0),
+      }))
+      .filter((x): x is { m: MediaMark; path: string; pt: TrackPoint } => !!x.pt)
+  }, [media, points])
 
   // ── Gestures ──────────────────────────────────────────────────────────────
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -276,10 +306,16 @@ export default function TrackCanvas({
   // would be showing a corner of something that is no longer on screen.
   React.useEffect(() => { setView(FIT) }, [t0, t1])
 
-  // The marker under the mouse may have been filtered away or deleted while the
-  // readout was up; pointerleave never comes for a node that no longer exists.
-  const hovered = hover ? marks.find((m) => m.item.tag.id === hover.id) || null : null
-  React.useEffect(() => { if (hover && !hovered) setHover(null) }, [hover, hovered])
+  // A hover whose marker has gone — the race filter changed, the tag was
+  // deleted, the day reloaded — must go with it: pointerleave never comes for a
+  // node that no longer exists.
+  const liveIds = React.useMemo(
+    () => new Set([...marks.map((m) => m.item.tag.id), ...mediaMarks.map((x) => x.m.id)]),
+    [marks, mediaMarks]
+  )
+  React.useEffect(() => {
+    if (hover && !liveIds.has(hover.id)) setHover(null)
+  }, [hover, liveIds])
 
   if (!geoRows(rows).length) {
     return (
@@ -335,6 +371,65 @@ export default function TrackCanvas({
             </>
           )}
 
+          {/* ── Media ────────────────────────────────────────────────────
+              Under the tags, in the timeline's deck colours. A clip is the
+              length of water it covers; a photo and a scan are the instant they
+              were taken. Not pickable: pressing the track picks a MOMENT, and a
+              clip that swallowed that press would make a third of the day
+              untaggable. */}
+          {mediaMarks.map(({ m, path, pt }) => {
+            const colour = MEDIA_COLOURS[m.kind]
+            const label = `${MEDIA_LABELS[m.kind]}${m.title ? ` · ${m.title}` : ''}`
+            const enter = (e: React.PointerEvent) => {
+              if (e.pointerType !== 'mouse') return
+              setHover({
+                id: m.id, x: pt.x, y: pt.y,
+                title: label,
+                clock: isSpan(m.kind) && m.t1 > m.t0
+                  ? `${sessionClock(m.t0, tzOffsetMin)}–${sessionClock(m.t1, tzOffsetMin)}`
+                  : sessionClock(m.t0, tzOffsetMin),
+                extra: null,
+              })
+            }
+            const leave = () => setHover((prev) => (prev?.id === m.id ? null : prev))
+            return path ? (
+              <path
+                key={m.id}
+                d={path}
+                fill="none"
+                stroke={colour}
+                strokeOpacity={0.5}
+                strokeWidth={9 / view.scale}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                role="img"
+                aria-label={label}
+                onPointerEnter={enter}
+                onPointerLeave={leave}
+              />
+            ) : (
+              // A photo, a scan, or a clip too short to draw as a line. Square
+              // rather than round, so it cannot be mistaken for a tag at a
+              // glance — the two mean different things.
+              <rect
+                key={m.id}
+                x={pt.x - 4 / view.scale}
+                y={pt.y - 4 / view.scale}
+                width={8 / view.scale}
+                height={8 / view.scale}
+                rx={1.5 / view.scale}
+                fill={colour}
+                fillOpacity={0.85}
+                stroke="var(--bg)"
+                strokeWidth={1 / view.scale}
+                role="img"
+                aria-label={label}
+                onPointerEnter={enter}
+                onPointerLeave={leave}
+              />
+            )
+          })}
+
           {marks.map(({ item, pt }) => {
             const t = item.tag
             const solid = t.source !== 'auto' || t.verifiedAt != null
@@ -350,7 +445,9 @@ export default function TrackCanvas({
                 className={onOpenTag ? 'cursor-pointer' : undefined}
                 onClick={(e) => { e.stopPropagation(); onOpenTag?.(t.id) }}
                 onPointerEnter={(e) => {
-                  if (e.pointerType === 'mouse') setHover({ id: t.id, x: pt.x, y: pt.y })
+                  if (e.pointerType !== 'mouse') return
+                  const tip = markerTip(t, tzOffsetMin)
+                  setHover({ id: t.id, x: pt.x, y: pt.y, title: tip.title, clock: tip.clock, extra: tip.sails })
                 }}
                 onPointerLeave={() => setHover((prev) => (prev?.id === t.id ? null : prev))}
               >
@@ -385,9 +482,8 @@ export default function TrackCanvas({
             change records the whole state after it rather than a diff. Anything
             else gets its name and its time, which is what the native tooltip
             used to give a second late. */}
-        {hovered && (() => {
-          const at = toScreen(view, { x: hover!.x, y: hover!.y })
-          const tip = markerTip(hovered.item.tag, tzOffsetMin)
+        {hover && (() => {
+          const at = toScreen(view, { x: hover.x, y: hover.y })
           // Flipped to the inside half, so a marker near the right-hand edge
           // does not put its readout where the box clips it away.
           const flip = at.x > w / 2
@@ -400,11 +496,11 @@ export default function TrackCanvas({
                 top: Math.round(Math.min(Math.max(at.y, 26), Math.max(26, h - 26))),
               }}
             >
-              <p className="truncate text-[11px] font-semibold leading-tight">{tip.title}</p>
-              <p className="truncate font-mono text-[10px] leading-tight text-muted">{tip.clock}</p>
-              {tip.sails && (
+              <p className="truncate text-[11px] font-semibold leading-tight">{hover.title}</p>
+              <p className="truncate font-mono text-[10px] leading-tight text-muted">{hover.clock}</p>
+              {hover.extra && (
                 <p className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-accent">
-                  {tip.sails}
+                  {hover.extra}
                 </p>
               )}
             </div>
@@ -435,6 +531,21 @@ export default function TrackCanvas({
           )}
         </div>
 
+        {/* What the colours mean. Only the kinds actually on this track, so a
+            day with no drone footage does not advertise a drone. */}
+        {mediaMarks.length > 0 && (
+          <div className="pointer-events-none absolute bottom-2 left-2 flex flex-wrap gap-x-2 gap-y-1">
+            {(Object.keys(MEDIA_LABELS) as (keyof typeof MEDIA_LABELS)[])
+              .filter((k) => mediaMarks.some((x) => x.m.kind === k))
+              .map((k) => (
+                <span key={k} className="flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-surface-1/90 px-1.5 py-0.5 text-[9px] text-secondary backdrop-blur">
+                  <span className="h-2 w-2 rounded-sm" style={{ background: MEDIA_COLOURS[k] }} aria-hidden />
+                  {MEDIA_LABELS[k]}
+                </span>
+              ))}
+          </div>
+        )}
+
         {/* How far in, so a track that looks unfamiliar is explained. */}
         {!isFitted(view) && (
           <span className="pointer-events-none absolute left-2 top-2 rounded-full border border-[color:var(--border)] bg-surface-1/90 px-2 py-0.5 font-mono text-[10px] text-muted">
@@ -451,7 +562,12 @@ export default function TrackCanvas({
         {/* On its own backing. As bare text it landed across the track and,
             on a short day, directly on the day-end marker. */}
         {!selected && !holding && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+          // Above the legend when there is one: both sit at the bottom, and on a
+          // 320px box a centred hint and a left-aligned legend overlap.
+          <div className={cn(
+            'pointer-events-none absolute inset-x-0 flex justify-center',
+            mediaMarks.length > 0 ? 'bottom-9' : 'bottom-2'
+          )}>
             <span className="rounded-full border border-[color:var(--border-strong)] bg-surface-2 px-3 py-1 text-[11px] text-secondary shadow-sm">
               Press and hold to pick · pinch to zoom
             </span>

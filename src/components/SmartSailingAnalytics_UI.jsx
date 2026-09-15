@@ -6,6 +6,8 @@ import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   buildSpline, evalSpline, goldenMax, preparePolar,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
+import { trackPct, toMode, TRACK_COLOUR_MODES } from '../lib/trackColour';
+import { MEDIA_COLOURS, isDroneClip } from '../lib/mediaDecks';
 import { getBrowserSupabase, getUidFast } from '../lib/supabase/browser';
 import { parseLog } from '../lib/logParse';
 import { isLidarKey } from '../lib/flatLogParse';
@@ -4325,7 +4327,18 @@ function AIChatPanel({rows, allVideos}){
 // playUtc   — current video UTC for boat marker (null = no video playing)
 // visible   — whether the Analytics tab is currently shown (for Leaflet resize)
 
-function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=[], selection=null, onSelection=null}){
+// Where the track's colour mode is remembered. Per browser, like the polar
+// itself: it is a way of looking, not a property of the day.
+const TRACK_COLOUR_KEY = 'ssa:trackColour';
+// What the polar legend says it is measuring, so the scale is never ambiguous.
+const MODE_LEGEND = {
+  auto:   'VMG \u00b120\u00b0 target \u00b7 BSP reaching',
+  vmg:    'VMG vs the polar\u2019s best VMG',
+  polbsp: 'BSP vs the polar at the angle sailed',
+  target: 'BSP vs target boat speed',
+};
+
+export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=[], selection=null, onSelection=null}){
   const tz=useTz();
   const containerRef = React.useRef(null);
   const mapRef       = React.useRef(null);
@@ -4333,6 +4346,14 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
   // Section selection: drag along the track → a time range for the charts below.
   // mapGen bumps each time Leaflet builds the map, so the selection layer and the drag
   // handlers re-attach to the new map instead of the one that was torn down.
+  // What the track's colour MEANS. Auto is what it has always been — VMG near a
+  // VMG angle, boat speed elsewhere — and stays the default; the three explicit
+  // modes let one question be asked the whole way up a beat, which is what makes
+  // two beats comparable. See lib/trackColour.ts.
+  const [colourMode,setColourMode] = React.useState(()=>{
+    try{ return toMode(localStorage.getItem(TRACK_COLOUR_KEY)); }catch{ return 'auto'; }
+  });
+  React.useEffect(()=>{ try{ localStorage.setItem(TRACK_COLOUR_KEY, colourMode); }catch{} },[colourMode]);
   const [selecting,setSelecting] = React.useState(false);
   const [draft,setDraft]         = React.useState(null);   // [utcA, utcB] while dragging
   const [mapGen,setMapGen]       = React.useState(0);
@@ -4418,8 +4439,8 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       let seg = {color:null, pts:[]};
       for(let i=0;i<sampled.length;i++){
         const row = sampled[i];
-        const perf = polarPerf(polar, row.bsp, row.twa, row.tws);
-        const color = perf ? perfColor(perf.pct) : '#1E4080';
+        const pct = trackPct(polar, row, colourMode);
+        const color = pct==null ? '#1E4080' : perfColor(pct);
         const pt = [row.lat, row.lon];
         if(!seg.color){ seg={color,pts:[pt]}; }
         else if(color!==seg.color){ seg.pts.push(pt); if(seg.pts.length>1) segments.push({...seg,pts:[...seg.pts]}); seg={color,pts:[pt]}; }
@@ -4442,28 +4463,24 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
         L.circleMarker([hlRows[hlRows.length-1].lat,hlRows[hlRows.length-1].lon],{...cOpts,fillColor:'#1D9E75'}).bindTooltip('Clip end').addTo(map);
       }
 
-      // ── Video coverage — all clips with a startUtc ──────────────────────────
-      // Draw a bright magenta polyline over the GPS track for every clip's window,
-      // so coaches can see at a glance which manoeuvres were recorded.
-      const covVideos=(allVideosMapRef.current||[]).filter(v=>v.startUtc&&v.duration);
+      // ── Where a clip starts ────────────────────────────────────────────────
+      // The white coverage BANDS are gone (see below), but they carried the one
+      // way to open a clip from this map, and losing that silently would be
+      // worse than the bands were. So each clip keeps a dot at the point it
+      // starts, in the timeline's own video and drone colours — small enough to
+      // read as an annotation rather than as a finding, and still clickable.
+      const covVideos=(allVideosMapRef.current||[]).filter(v=>v.startUtc);
       for(const vid of covVideos){
-        const vStart=vid.startUtc;
-        const vEnd=vStart+vid.duration*1000;
-        // Skip if this is the already-highlighted selected clip (avoid double render)
-        if(winStart&&Math.abs(vStart-winStart)<2000) continue;
-        const covRows=filteredRows.filter(r=>r.utc>=vStart&&r.utc<=vEnd);
-        if(covRows.length<2) continue;
-        const covStep=Math.max(1,Math.floor(covRows.length/300));
-        const covPts=covRows.filter((_,i)=>i%covStep===0).map(r=>[r.lat,r.lon]);
-        const polyline = L.polyline(covPts,{
-          color:'#ffffff',
-          weight:8,
-          opacity:0.28,
-          smoothFactor:1,
-        })
-          .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min<br><span style="font-size:10px;color:#94A3B8">${onPlayClipRef.current?'Click to play':'Click to open in Videos'}</span>`,{allowHTML:true})
+        // The selected clip already has its own bright highlight; a second
+        // marker on top of it is noise.
+        if(winStart&&Math.abs(vid.startUtc-winStart)<2000) continue;
+        const nr=filteredRows.reduce((a,b)=>Math.abs(b.utc-vid.startUtc)<Math.abs(a.utc-vid.startUtc)?b:a,filteredRows[0]);
+        if(!nr||Math.abs(nr.utc-vid.startUtc)>120000) continue;
+        const c=isDroneClip({title:vid.title,tags:vid.tags})?MEDIA_COLOURS.drone:MEDIA_COLOURS.video;
+        const mk=L.circleMarker([nr.lat,nr.lon],{radius:5,fillColor:c,color:'#030F1A',weight:1.5,fillOpacity:0.95})
+          .bindTooltip(`📹 ${vid.title||'Video'}${vid.duration?` · ${Math.round(vid.duration/60)}min`:''}<br><span style="font-size:10px;color:#94A3B8">${onPlayClipRef.current?'Click to play':'Click to open in Videos'}</span>`,{allowHTML:true})
           .addTo(map);
-        polyline.on('click',()=>{
+        mk.on('click',()=>{
           // A player, not a tab. Where onPlayClip is supplied (the phone, which
           // has no Videos tab) the clip opens over the track it was clicked on;
           // elsewhere the old behaviour stands.
@@ -4471,10 +4488,34 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
           if(onSelectVideoRef.current) onSelectVideoRef.current(vid);
           if(onSwitchTabRef.current)   onSwitchTabRef.current('library');
         });
-        polyline.getElement && (polyline.getElement().style.cursor='pointer');
-        // Small dot at coverage start
-        L.circleMarker(covPts[0],{radius:5,fillColor:'#ffffff',color:'rgba(0,0,0,0.3)',weight:1,fillOpacity:0.5})
-          .addTo(map);
+      }
+
+      // ── Phase sections ─────────────────────────────────────────────────────
+      // The event file's steady-state phases — the 30-second windows the
+      // performance charts are built from. Shading them says which water the
+      // numbers below actually came from, which is the question anybody reading
+      // a phase table asks first.
+      //
+      // Grey, and underneath everything: a phase is not a finding, it is the
+      // sample. Colour would compete with the performance track, which is the
+      // one thing on this map that IS a finding.
+      //
+      // This replaces the video-coverage bands that used to be drawn here in
+      // white. They answered "was this filmed", which is a question the tagger's
+      // own track now answers in the video deck's own colour — and in white,
+      // over a coloured performance track, they mostly just washed it out.
+      for(const ph of (xmlData?.phases||[])){
+        const phRows=filteredRows.filter(r=>r.utc>=ph.utc&&r.utc<=ph.endUtc);
+        if(phRows.length<2) continue;
+        const phStep=Math.max(1,Math.floor(phRows.length/200));
+        const phPts=phRows.filter((_,i)=>i%phStep===0||i===phRows.length-1).map(r=>[r.lat,r.lon]);
+        L.polyline(phPts,{
+          color:'#94A3B8',
+          weight:11,
+          opacity:0.22,
+          smoothFactor:1,
+          interactive:false,   // the track underneath stays draggable for a selection
+        }).addTo(map);
       }
 
       // ── Day start / end markers ─────────────────────────────────────────────
@@ -4549,11 +4590,11 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       // ── Legends ─────────────────────────────────────────────────────────────
       if(polar){
         const leg=L.control({position:'bottomright'});
-        leg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div style="font-weight:700;color:#E2E8F0;margin-bottom:4px;font-size:10px">⬡ ${polar.filename||'Polar'} · ${polar.tws?.[0]}–${polar.tws?.[polar.tws.length-1]} kn</div><div><span style="display:inline-block;width:10px;height:5px;background:#EF4444;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≤ 90%</div><div><span style="display:inline-block;width:10px;height:5px;background:#86EFAC;border-radius:1px;margin-right:5px;vertical-align:middle"></span>100%</div><div><span style="display:inline-block;width:10px;height:5px;background:#15803D;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≥ 110%</div><div style="margin-top:3px;color:#475569;font-size:8px">VMG ±20° target · BSP reaching</div>`;return d;};
+        leg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div style="font-weight:700;color:#E2E8F0;margin-bottom:4px;font-size:10px">⬡ ${polar.filename||'Polar'} · ${polar.tws?.[0]}–${polar.tws?.[polar.tws.length-1]} kn</div><div><span style="display:inline-block;width:10px;height:5px;background:#EF4444;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≤ 90%</div><div><span style="display:inline-block;width:10px;height:5px;background:#86EFAC;border-radius:1px;margin-right:5px;vertical-align:middle"></span>100%</div><div><span style="display:inline-block;width:10px;height:5px;background:#15803D;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≥ 110%</div><div style="margin-top:3px;color:#475569;font-size:8px">${MODE_LEGEND[colourMode]||''}</div>`;return d;};
         leg.addTo(map);
       }
       const evLeg=L.control({position:'bottomleft'});
-      evLeg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div><div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div><div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div><div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gate</div><div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack</div><div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe</div><div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div><div><span style="display:inline-block;width:14px;height:4px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Boat position</div><div><span style="display:inline-block;width:14px;height:6px;background:rgba(255,255,255,0.3);border-radius:2px;margin-right:5px;vertical-align:middle;border:1px solid rgba(255,255,255,0.4)"></span>📹 Video coverage</div>`;return d;};
+      evLeg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div><span style="display:inline-block;width:8px;height:8px;background:#22C55E;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day start</div><div><span style="display:inline-block;width:8px;height:8px;background:#94A3B8;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Day end</div><div><span style="display:inline-block;width:8px;height:8px;background:#EF4444;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Top mark / gun</div><div><span style="display:inline-block;width:8px;height:8px;background:#8B5CF6;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gate</div><div><span style="display:inline-block;width:8px;height:8px;background:#1D9E75;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Tack</div><div><span style="display:inline-block;width:8px;height:8px;background:#7F77DD;border-radius:50%;margin-right:5px;vertical-align:middle"></span>Gybe</div><div><span style="display:inline-block;width:8px;height:8px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Sail change</div><div><span style="display:inline-block;width:14px;height:4px;background:#F59E0B;border-radius:2px;margin-right:5px;vertical-align:middle"></span>Boat position</div><div><span style="display:inline-block;width:14px;height:6px;background:rgba(148,163,184,0.35);border-radius:2px;margin-right:5px;vertical-align:middle"></span>Phase</div><div><span style="display:inline-block;width:8px;height:8px;background:#06B6D4;border-radius:50%;margin-right:5px;vertical-align:middle"></span>📹 Clip starts here</div>`;return d;};
       evLeg.addTo(map);
 
       // ── Photo markers ──────────────────────────────────────────────────────
@@ -4596,7 +4637,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       cancelled = true;
       if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
     };
-  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig]);
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, colourMode]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
@@ -4768,7 +4809,31 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
       {polar ? (
         <div style={{marginBottom:6,display:"flex",alignItems:"center",gap:8,fontSize:9,color:"#F59E0B",flexWrap:"wrap"}}>
           <span style={{background:"#F59E0B12",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px",fontWeight:600}}>⬡ {polar.filename} · TWS {polar.tws?.[0]}–{polar.tws?.[polar.tws.length-1]} kn</span>
-          <span style={{color:"#475569"}}>coloured by VMG% (±20° of target TWA) · BSP% (reaching)</span>
+          {/* Which question the colour is answering. The three disagree with
+              each other routinely — a boat two degrees low and quick is over
+              100% on boat speed and under on VMG — and that disagreement is the
+              information, so the measure has to be a choice rather than
+              something the map decides halfway up the beat. */}
+          <span style={{color:"#475569"}}>colour by</span>
+          <span style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+            {TRACK_COLOUR_MODES.map(m=>(
+              <button
+                key={m.key}
+                onClick={()=>setColourMode(m.key)}
+                aria-pressed={colourMode===m.key}
+                title={m.hint}
+                style={{
+                  minHeight:28,padding:"3px 9px",borderRadius:5,fontSize:10,fontWeight:700,cursor:"pointer",
+                  border:`1px solid ${colourMode===m.key?"transparent":"#1E3A5A"}`,
+                  background:colourMode===m.key?"#06B6D4":"#071624",
+                  color:colourMode===m.key?"#001018":"#94A3B8",
+                }}
+              >
+                {m.label}
+              </button>
+            ))}
+          </span>
+          <span style={{color:"#475569"}}>{TRACK_COLOUR_MODES.find(m=>m.key===colourMode)?.hint}</span>
         </div>
       ) : (
         <div style={{marginBottom:6,fontSize:9,color:"#475569"}}>No polar loaded — track in uniform blue. Upload a polar in Uploads tab.</div>

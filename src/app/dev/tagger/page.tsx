@@ -13,6 +13,7 @@ import { sailStateAt, type SailState } from '@/lib/tagging/sailState'
 import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
+import { mediaMarks } from '@/lib/mediaDecks'
 import type { TagDef, TagEvent, TagRequest } from '@/lib/tagging/types'
 
 // Preview harness for the tagging tab — the three views with fixture data and no
@@ -169,6 +170,19 @@ const BATTEN_CARD = normaliseBattenCard({
     { '10-15': { tension: 'stiff', turns: -2 } },
   ],
 })
+// The day's media, drawn on the track in the timeline's deck colours: two
+// onboard clips and a drone one as stretches of water, photos and a sail scan
+// as points.
+const DAY_MEDIA = mediaMarks({
+  videos: [
+    { id: 'v1', start_utc: new Date(T(11, 58)).toISOString(), duration: 240, title: 'Onboard start' },
+    { id: 'v2', start_utc: new Date(T(12, 18)).toISOString(), duration: 180, title: 'Onboard topmark' },
+    { id: 'v3', start_utc: new Date(T(12, 4)).toISOString(), duration: 150, title: 'DJI_20260911120400_0036_D' },
+  ],
+  photos: [T(11, 52), T(12, 12), T(12, 23)].map((t, i) => ({ id: `p${i}`, taken_utc: new Date(t).toISOString() })),
+  scans: [{ id: 's1', captured_at: new Date(T(11, 35)).toISOString(), conditions: { sail_code: 'M-2026' } }],
+})
+
 const SESSIONS = [
   { date: '2026-09-09', hasLog: true, event: 'Palma Week' },
   { date: '2026-09-10', hasLog: true, event: 'Palma Week' },
@@ -252,6 +266,7 @@ export default function TaggerPreview() {
         {view === 'track' && (
           <TrackView
             rows={TRACK_ROWS} items={items} segments={segments}
+            media={DAY_MEDIA}
             selectedUtc={picked} onSelect={setPicked} onOpenTag={setOpenId}
           />
         )}

@@ -7,6 +7,7 @@ import { PhotoOverlayImage, FallbackVideoPlayer } from './DayMedia'
 import SailScanDetail from '@/components/SailScanDetail'
 import { racingTagsOf, isMainsailTag, RACE_RED } from '@/lib/racingTags'
 import { teamComments, firstName, clip, type Comment } from '@/lib/tagging/comments'
+import { MEDIA_COLOURS, isDroneClip } from '@/lib/mediaDecks'
 
 // The day's own VERTICAL time-axis. A zoomable, pinch/scrollable time bar (hover
 // cursor + time box) with the day's nodes and event-file tags coloured like the
@@ -36,7 +37,11 @@ const EVENT_STYLE: Record<string, { c: string; label: string; notable: boolean }
   tack: { c: '#1D9E75', label: 'Tack', notable: false },
   gybe: { c: '#7F77DD', label: 'Gybe', notable: false },
 }
-const VIDEO_C = '#06B6D4', DRONE_C = '#22C55E', PHOTO_C = '#F59E0B', SCAN_C = '#8B5CF6'
+// One source for the deck colours, shared with the tagger's track — see
+// lib/mediaDecks.ts. Two screens drawing the same thing a different colour is
+// the colour ceasing to be information.
+const VIDEO_C = MEDIA_COLOURS.video, DRONE_C = MEDIA_COLOURS.drone
+const PHOTO_C = MEDIA_COLOURS.photo, SCAN_C = MEDIA_COLOURS.sailscan
 // The tagger's own Team comment colour, so the same thing is the same colour on
 // both screens.
 const COMMENT_C = '#7F77DD'
@@ -118,20 +123,9 @@ function geometry(compact: boolean) {
     : { AXIS_X: 12, EVENT_LABEL_X: 42, showEventLabels: true, VIDEO_X: 196, VIDEO_W: 150, VIDEO_H: 88, DRONE_X: 352, DRONE_W: 150, DRONE_H: 88, PHOTO_X: 508, PHOTO_W: 120, PHOTO_H: 88, SCAN_X: 644, SCAN_W: 120, SCAN_H: 88, NOTE_X: 780, NOTE_W: 190, NOTE_H: 76, CONTENT_W: 780 + 190 + 16 }
 }
 
-// Drone footage gets its own deck: it is shot from somewhere else entirely, and
-// reading it in the same column as the onboard cameras made a busy day unreadable.
-// There is no vendor field on the video row — the capture metadata that would carry
-// it is stripped by any re-encode — so this reads the NAME, which survives. It
-// matches the raw card naming (DJI_20260903115026_0036_D) and the source tag the
-// clip pipeline appends (…_day2_DJI-001), plus an explicit "drone" tag for anything
-// labelled by hand.
-export function isDroneClip(m: { title?: string | null; tags?: string[] }): boolean {
-  if ((m.tags || []).some((t) => String(t).toLowerCase() === 'drone')) return true
-  // NOT \b: underscore is a word character, so \bDJI\b matches neither
-  // "DJI_20260903115026_0036_D" nor "…_day2_DJI-001" — i.e. neither of the two
-  // shapes drone clips actually arrive in. Separators are anything non-alphanumeric.
-  return /(?:^|[^a-z0-9])(dji|drone|mavic|osmo)(?:[^a-z0-9]|$)/i.test(String(m.title || ''))
-}
+// Which deck a clip belongs in now lives in lib/mediaDecks.ts, shared with the
+// tagger's track. Re-exported because two test files address it here.
+export { isDroneClip }
 
 export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVideo }: {
   day: TimelineNode; events: TimelineNode[]; tz: number

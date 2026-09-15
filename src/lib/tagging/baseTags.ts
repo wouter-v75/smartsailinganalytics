@@ -171,7 +171,12 @@ const DAY: BaseTag[] = [
     kind: 'range', sort: 75,
     labelGroups: [{ group: 'Testing', options: ['rig', 'sail', 'trim mode', 'foil', 'crew weight'] }],
   }),
-  mk('incident', 'Incident', '#EF4444', { sort: 80, onButtonBar: true, leadSec: 20, lagSec: 20 }),
+  // OFF the bar, still in the picker. "Incident" and "Technical" were two
+  // buttons for the same reflex — something went wrong here — and a crew that
+  // has to choose between them at 20 knots picks whichever is nearer the thumb,
+  // which makes neither of them searchable afterwards. The vocabulary keeps it
+  // so that the tags already placed under it stay meaningful.
+  mk('incident', 'Incident', '#EF4444', { sort: 80, onButtonBar: false, leadSec: 20, lagSec: 20 }),
   // Rig changes are the one setup input nothing in the data can see: the log
   // records what the boat did, never that somebody wound two turns onto the
   // caps at 11:40. Untagged, an afternoon of rig work reads as unexplained
@@ -183,9 +188,29 @@ const DAY: BaseTag[] = [
       { group: 'Change', options: ['on', 'off', 'up', 'down', 'fwd', 'aft'] },
     ],
   }),
-  mk('gear-damage', 'Gear damage', '#EF4444', {
+  // "Gear damage" named the worst case and therefore got pressed only for the
+  // worst case; most of what a crew wants to flag is a system misbehaving, not
+  // a breakage. "Technical" is the word they already use for it, and the
+  // descriptors now say whether something broke or merely misbehaved.
+  //
+  // Renamed in place, slug and all — migration 0067 carries the teams that
+  // seeded the old vocabulary, and the tags they have already placed.
+  mk('technical', 'Technical', '#EF4444', {
     sort: 81, onButtonBar: true, leadSec: 20, lagSec: 20,
-    labelGroups: [{ group: 'Where', options: ['rig', 'sail', 'deck gear', 'winch', 'foil', 'electronics'] }],
+    labelGroups: [
+      { group: 'Where', options: ['rig', 'sail', 'deck gear', 'winch', 'foil', 'electronics', 'instruments'] },
+      { group: 'What', options: ['broken', 'slipping', 'jammed', 'reading wrong', 'worn'] },
+    ],
+  }),
+  // "Get me the footage of this." A tag AND a video request in one press — see
+  // TaggerTab, which raises the request the moment the tag lands. The crew
+  // already had "Ask for video", two taps deep inside a tag they had to open;
+  // the moment you want filmed is one you are watching, not one you are
+  // browsing. Coloured like the timeline's video deck, because it is about the
+  // same thing.
+  mk('grab-video', 'Grab video', '#06B6D4', {
+    sort: 82, onButtonBar: true, leadSec: 30, lagSec: 20,
+    labelGroups: [{ group: 'Wanted', options: ['onboard', 'drone', 'either'] }],
   }),
   // The catch-all: "something happened here, come back to it". The most-pressed
   // button on any tagging tool, and the one that feeds the debrief reel.
@@ -225,8 +250,8 @@ const SECTIONS: BaseTag[] = CREW_SECTIONS.flatMap((s, si) =>
 //   Personal note   how it felt, privately
 //   Team comment    how it felt, to the crew  (TL2+)
 //   Review this     come back to this
-//   Incident        something went wrong
-//   Gear damage     the engineer's one press
+//   Technical       something broke or is misbehaving — the engineer's one press
+//   Grab video      get me the footage of this (raises the request too)
 //   Sail change     the trimmer's, and the only racing moment here — because on
 //                   a training day there is no event file to detect it from
 //   Rig             two turns on the caps at 11:40, which the log cannot see

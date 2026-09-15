@@ -3,6 +3,7 @@ import * as React from 'react'
 import { Loader2, Check } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import { sessionClock, parseSessionClock, nudge, driftLabel, NUDGES } from '@/lib/tagging/clock'
+import DictateButton from './DictateButton'
 import type { TagDef, TagLabel } from '@/lib/tagging/types'
 
 // What comes up when a tag button is pressed.
@@ -198,8 +199,12 @@ export default function TagComposer<D>({
               onChange={(e) => setNote(e.target.value)}
               rows={3}
               placeholder={def.slug === 'team-note' ? 'For the crew…' : 'For you…'}
-              className="mb-3 w-full resize-none rounded-lg border border-[color:var(--border)] bg-surface-2 p-3 text-[16px] text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
+              className="w-full resize-none rounded-lg border border-[color:var(--border)] bg-surface-2 p-3 text-[16px] text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
             />
+            {/* Speaking it is the point of the whole tagger applied to the one
+                field that still wanted a keyboard: this is a crew member in
+                gloves, on a rail, with the boat moving. */}
+            <DictateButton value={note} onChange={setNote} disabled={saving} className="mb-3 mt-2" />
           </>
         )}
 

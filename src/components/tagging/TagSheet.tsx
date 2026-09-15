@@ -4,6 +4,7 @@ import {
   Check, X, Undo2, Magnet, Film, Video, MessageSquare, Trash2, Lock, ChevronDown,
 } from 'lucide-react'
 import { cn } from '@/lib/ui'
+import DictateButton from './DictateButton'
 import type { TagDef, TagWithRequests } from '@/lib/tagging/types'
 import type { SnapOutcome } from '@/lib/tagging/snap'
 
@@ -221,6 +222,15 @@ export default function TagSheet(props: TagSheetProps) {
               rows={2}
               placeholder="Add a note…"
               className="w-full resize-none rounded-lg border border-[color:var(--border)] bg-surface-2 p-3 text-[16px] text-fg placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]"
+            />
+            {/* Dictation saves on its own rather than waiting for a blur: the
+                mic button IS where the thumb already is, so the textarea may
+                never be focused at all and its onBlur may never fire. */}
+            <DictateButton
+              value={note}
+              onChange={setNote}
+              onCommit={(next) => props.onNote(next.trim() || null)}
+              className="mt-2"
             />
           </div>
 

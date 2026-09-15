@@ -186,3 +186,33 @@ export function rowsBetween<T extends GeoRow>(
     (r) => (t0 == null || r.utc >= t0) && (t1 == null || r.utc <= t1)
   )
 }
+
+/**
+ * The stretch of track between two instants, as an SVG path.
+ *
+ * Used to draw what a clip covers. A video is not a moment — "was that gybe
+ * filmed" is a question about a window — so it is drawn as a length of water
+ * rather than as a dot on the spot the camera happened to start.
+ *
+ * Returns '' when the window contains fewer than two drawn points: that is a
+ * clip shorter than the track's own resolution, and a one-point path renders as
+ * nothing anyway. Callers fall back to a dot.
+ */
+export function segmentPath(
+  points: readonly TrackPoint[],
+  t0: number,
+  t1: number
+): string {
+  if (!isNum(t0) || !isNum(t1)) return ''
+  const from = Math.min(t0, t1)
+  const to = Math.max(t0, t1)
+  let path = ''
+  let n = 0
+  for (const p of points) {
+    if (p.utc < from) continue
+    if (p.utc > to) break
+    path += `${n ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`
+    n++
+  }
+  return n > 1 ? path : ''
+}

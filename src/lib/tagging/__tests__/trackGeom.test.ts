@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  geoRows, thin, projectTrack, nearestPoint, pointAtUtc, rowsBetween,
+  geoRows, thin, projectTrack, nearestPoint, pointAtUtc, rowsBetween, segmentPath,
 } from '../trackGeom'
 
 const T = (s: number) => Date.parse('2026-09-11T11:00:00Z') + s * 1000
@@ -132,5 +132,36 @@ describe('rowsBetween', () => {
 
   it('an open window is the whole day', () => {
     expect(rowsBetween(square, null, null)).toHaveLength(4)
+  })
+})
+
+describe('segmentPath — what a clip covers', () => {
+  const pts = [0, 1, 2, 3, 4].map((i) => ({ utc: 1000 + i * 1000, x: i * 10, y: i }))
+
+  it('draws the stretch inside the window', () => {
+    expect(segmentPath(pts, 2000, 4000)).toBe('M10.0 1.0L20.0 2.0L30.0 3.0')
+  })
+
+  it('takes the ends in either order', () => {
+    expect(segmentPath(pts, 4000, 2000)).toBe(segmentPath(pts, 2000, 4000))
+  })
+
+  it('clamps to the track rather than running off it', () => {
+    expect(segmentPath(pts, -1e12, 1e12)).toBe('M0.0 0.0L10.0 1.0L20.0 2.0L30.0 3.0L40.0 4.0')
+  })
+
+  it('is empty for a clip shorter than the track’s own resolution', () => {
+    // One point is not a line; the caller draws a dot instead.
+    expect(segmentPath(pts, 2000, 2000)).toBe('')
+    expect(segmentPath(pts, 5500, 6000)).toBe('')
+  })
+
+  it('is empty rather than NaN for a window that is not a window', () => {
+    expect(segmentPath(pts, NaN, 4000)).toBe('')
+    expect(segmentPath(pts, 2000, undefined as unknown as number)).toBe('')
+  })
+
+  it('survives an empty track', () => {
+    expect(segmentPath([], 0, 1)).toBe('')
   })
 })

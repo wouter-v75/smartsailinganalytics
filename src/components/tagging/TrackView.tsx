@@ -6,6 +6,7 @@ import { sessionClockHm } from '@/lib/tagging/clock'
 import TrackCanvas from './TrackCanvas'
 import type { GeoRow } from '@/lib/tagging/trackGeom'
 import type { TagWithRequests } from '@/lib/tagging/types'
+import type { MediaMark } from '@/lib/mediaDecks'
 
 // The track view: where the day happened, rather than when.
 //
@@ -26,11 +27,13 @@ export interface TrackViewProps {
   selectedUtc: number | null
   onSelect: (utc: number | null) => void
   onOpenTag?: (tagId: string) => void
+  /** The day's media, drawn on the water in the timeline's deck colours. */
+  media?: MediaMark[]
   tzOffsetMin?: number
 }
 
 export default function TrackView({
-  rows, items, segments, selectedUtc, onSelect, onOpenTag, tzOffsetMin = 0,
+  rows, items, segments, selectedUtc, onSelect, onOpenTag, media, tzOffsetMin = 0,
 }: TrackViewProps) {
   const races = React.useMemo(() => racesOf(segments), [segments])
   const [key, setKey] = React.useState<string>('all')
@@ -78,6 +81,7 @@ export default function TrackView({
         selectedUtc={selectedUtc}
         onSelect={onSelect}
         onOpenTag={onOpenTag}
+        media={media}
         tzOffsetMin={tzOffsetMin}
       />
 

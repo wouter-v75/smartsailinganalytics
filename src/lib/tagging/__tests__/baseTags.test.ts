@@ -37,11 +37,37 @@ describe('base vocabulary', () => {
   })
 
   it('gives the crew their one-press paths', () => {
-    // The trimmer, the engineer, and anyone with something to say.
+    // The trimmer, the engineer, the person who wants the footage, and anyone
+    // with something to say.
     const bar = BASE_TAGS.filter((t) => t.onButtonBar).map((t) => t.slug)
-    for (const slug of ['note', 'team-note', 'review', 'incident', 'gear-damage', 'sail-change']) {
+    for (const slug of ['note', 'team-note', 'review', 'technical', 'grab-video', 'sail-change']) {
       expect(bar).toContain(slug)
     }
+  })
+
+  it('does not give one reflex two buttons', () => {
+    // "Incident" and "Gear damage" were both pressed for "something went
+    // wrong", and a crew choosing between them at 20 knots picks whichever is
+    // nearer the thumb — which makes neither of them searchable afterwards.
+    const bar = BASE_TAGS.filter((t) => t.onButtonBar).map((t) => t.slug)
+    expect(bar).not.toContain('incident')
+    expect(bar).not.toContain('gear-damage')
+  })
+
+  it('keeps Incident in the vocabulary it was taken off the bar from', () => {
+    // Off the bar is not deleted: a season of tags placed under it has to keep
+    // meaning something, and the picker is where the rare codes live anyway.
+    const incident = BASE_TAGS.find((t) => t.slug === 'incident')
+    expect(incident).toBeTruthy()
+    expect(incident!.archived ?? false).toBe(false)
+  })
+
+  it('gives Grab video the longest lead on the bar', () => {
+    // You ask for footage of something you are watching, and by then it has
+    // been going on for a while.
+    const grab = BASE_TAGS.find((t) => t.slug === 'grab-video')!
+    const bar = BASE_TAGS.filter((t) => t.onButtonBar)
+    for (const t of bar) expect(grab.leadSec).toBeGreaterThanOrEqual(t.leadSec)
   })
 
   it('keeps team comments to TL2 and up, and personal notes open to all', () => {

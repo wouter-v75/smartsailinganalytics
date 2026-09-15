@@ -24,7 +24,7 @@
 
 import { isCrew } from './gating'
 import type {
-  TagEvent, TagRequest, TaggerIdentity, TagWithRequests,
+  TagEvent, TagLabel, TagRequest, RequestMediaKind, TaggerIdentity, TagWithRequests,
 } from './types'
 
 /** Coach tier, admin, or the media section — the people who can say yes to
@@ -70,6 +70,43 @@ export interface ShortlistOptions {
 }
 
 /**
+ * "Grab video" — the one button that does two things.
+ *
+ * Pressing it tags the moment AND asks for the footage, because those are one
+ * intention and splitting them across two screens is how the second half gets
+ * forgotten. The asking half is a normal video request (0063): it still needs
+ * an approver, and it still shows up in the same queue as one raised by hand.
+ */
+export const GRAB_VIDEO_SLUG = 'grab-video'
+
+/**
+ * Which camera the request is for, read off the tag's own descriptors.
+ *
+ * "either" and an unanswered descriptor both mean 'video': the request's job is
+ * to reach whoever holds footage, and narrowing it to one camera on a guess is
+ * how a request reaches the wrong person and dies there.
+ */
+export function grabMediaKind(labels: readonly TagLabel[] | null | undefined): RequestMediaKind {
+  for (const l of labels || []) {
+    if (String(l?.text ?? '').trim().toLowerCase() === 'drone') return 'drone'
+  }
+  return 'video'
+}
+
+/**
+ * Tags that nominate themselves. Nobody presses these to be neutral about a
+ * moment — each one means "something here was wrong" — so they reach the
+ * shortlist without needing a vote.
+ *
+ * 'gear-damage' is the name 'technical' used to have (migration 0067 renames
+ * the rows), and is kept here because a day tagged before the rename should
+ * not quietly drop out of its own debrief.
+ */
+export const FLAGGED_SLUGS: ReadonlySet<string> = new Set([
+  'review', 'incident', 'technical', 'gear-damage',
+])
+
+/**
  * The debrief shortlist: what the coach chooses from.
  *
  * Ordered so the strongest candidates are at the top —
@@ -93,7 +130,7 @@ export function buildShortlist(
     if (i.tag.scope === 'personal') return false   // never someone else's business
     if (i.tag.reelOrder != null) return o.includeSelected
     if (o.nominatedOnly) return i.debriefVotes > 0
-    return i.debriefVotes > 0 || i.tag.slug === 'review' || i.tag.slug === 'incident'
+    return i.debriefVotes > 0 || FLAGGED_SLUGS.has(i.tag.slug)
   })
 
   return candidates.sort((a, b) => {

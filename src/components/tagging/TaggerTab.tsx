@@ -6,8 +6,9 @@ import { useTagger } from '@/lib/tagging/useTagger'
 import { detectDay, type Detection } from '@/lib/tagging/detect'
 import { segmentDay, segmentAt, type DaySegment } from '@/lib/tagging/segments'
 import { snapTag } from '@/lib/tagging/snap'
-import { nextReelOrder } from '@/lib/tagging/requests'
+import { nextReelOrder, GRAB_VIDEO_SLUG, grabMediaKind } from '@/lib/tagging/requests'
 import { sailDetail, useSailContext } from './sailChangeDetail.helpers'
+import { useDayMedia } from './useDayMedia'
 import TagButtonBar from './TagButtonBar'
 import TagTrack from './TagTrack'
 import TagSheet from './TagSheet'
@@ -120,6 +121,11 @@ export default function TaggerTab({
   // composer needs. One fetch per boat/day, not one per press.
   const sailCtx = useSailContext(teamId, boatId, date)
 
+  // What was filmed and photographed, drawn on the track in the timeline's own
+  // deck colours. Context rather than content: it answers "was that gybe
+  // filmed" without leaving the tagger.
+  const dayMedia = useDayMedia(teamId, boatId, date, tzOffsetMin)
+
   // Where the day's data actually runs. The composer clamps its nudges to it,
   // so −10m pressed twice cannot put a tag before the boat left the dock.
   const bounds = React.useMemo(() => {
@@ -227,6 +233,7 @@ export default function TaggerTab({
             selectedUtc={pickedUtc}
             onSelect={setPickedUtc}
             onOpenTag={setOpenId}
+            media={dayMedia}
             tzOffsetMin={tzOffsetMin}
           />
         ) : view === 'check' ? (
@@ -280,6 +287,13 @@ export default function TaggerTab({
         }
         onApply={async (slug, at, opts) => {
           const made = await t.apply(slug, at, opts)
+          // "Grab video" is one intention — mark this, and get me the footage —
+          // so the request goes up with the tag rather than waiting for somebody
+          // to remember to open it and ask. It is a normal video request from
+          // there on: same queue, same approver.
+          if (made && slug === GRAB_VIDEO_SLUG) {
+            await t.request(made.id, 'video', { mediaKind: grabMediaKind(made.labels) })
+          }
           // Tagging a held point and leaving it held invites a second tag landing
           // on the first by accident. One press, one moment.
           if (made) setPickedUtc(null)
