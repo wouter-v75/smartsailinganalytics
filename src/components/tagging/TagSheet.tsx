@@ -24,6 +24,29 @@ import type { SnapOutcome } from '@/lib/tagging/snap'
 // silently rewrites what it told you five minutes ago is a tool people check up
 // on instead of trusting.
 
+/**
+ * An editable DETAIL for a tag that already exists — the sails up on a sail
+ * change, today; whatever else grows one tomorrow.
+ *
+ * The mirror of TagComposer's ComposerDetail, which only ever appeared on the
+ * way IN. Without this a change entered in a hurry could never be corrected
+ * without deleting it and starting again.
+ */
+export interface SheetDetail<D> {
+  /** The starting value, read off the tag. */
+  initial: () => D
+  render: (value: D, onChange: (next: D) => void, at: number) => React.ReactNode
+  /** What to write back — see merge.recomposeTag. */
+  toPatch: (value: D, at: number) => {
+    label?: string
+    note?: string | null
+    labels?: { group: string; text: string }[]
+    meta?: Record<string, unknown>
+  }
+  /** Block Save until the detail is usable. */
+  isIncomplete?: (value: D) => boolean
+}
+
 export interface TagSheetProps {
   item: TagWithRequests
   def?: TagDef | null
@@ -32,6 +55,21 @@ export interface TagSheetProps {
   canCurateReel: boolean
   tzOffsetMin?: number
   snap?: SnapOutcome | null
+  /** The tag's own editable detail, when it has one. Absent for the tags that
+   *  do not — which is most of them. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  detail?: SheetDetail<any> | null
+  /** May this user change it? A detail they cannot write is shown read-only
+   *  rather than hidden: knowing what was up matters even when correcting it is
+   *  somebody else's job. */
+  canEditDetail?: boolean
+  /** Write a re-entered detail back, in one patch. */
+  onRecompose?: (patch: {
+    label?: string
+    note?: string | null
+    labels?: { group: string; text: string }[]
+    meta?: Record<string, unknown>
+  }) => void | Promise<unknown>
   onClose: () => void
   onVerify: () => void
   onReject: () => void
@@ -60,6 +98,31 @@ export default function TagSheet(props: TagSheetProps) {
     (r) => r.kind === 'debrief' && r.requestedByUserId === currentUserId
   )
   const drift = t.autoT0 == null ? null : Math.round((t.t0 - t.autoT0) / 1000)
+
+  // The tag's own detail, if it has one. Keyed on the tag id so opening a
+  // different tag starts from ITS state rather than from the last one's.
+  const { detail } = props
+  const [dv, setDv] = React.useState<unknown>(() => detail?.initial())
+  const [savingDetail, setSavingDetail] = React.useState(false)
+  const [detailSaved, setDetailSaved] = React.useState(false)
+  React.useEffect(() => {
+    setDv(detail?.initial())
+    setDetailSaved(false)
+  }, [t.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Compared as JSON: the value is a plain data structure the detail rebuilds
+  // on every keystroke, so reference equality would call it dirty for ever.
+  const detailDirty = !!detail && JSON.stringify(dv) !== JSON.stringify(detail.initial())
+
+  const saveDetail = async () => {
+    if (!detail || !props.onRecompose || savingDetail) return
+    setSavingDetail(true)
+    try {
+      await props.onRecompose(detail.toPatch(dv, t.t0))
+      setDetailSaved(true)
+    } finally {
+      setSavingDetail(false)
+    }
+  }
 
   const [note, setNote] = React.useState(t.note || '')
   React.useEffect(() => { setNote(t.note || '') }, [t.id, t.note])
@@ -148,6 +211,54 @@ export default function TagSheet(props: TagSheetProps) {
             >
               <Undo2 size={16} aria-hidden /> Put this back
             </button>
+          )}
+
+          {/* 2b. The tag's own detail — for a sail change, which sails were up.
+              High, because it is what somebody opens a sail change FOR: the
+              deck it was chosen from is the thing they came to correct. */}
+          {detail && (
+            <div className="border-t border-[color:var(--border)] py-3">
+              {props.canEditDetail === false ? (
+                <>
+                  <p className="mb-2 text-[11px] text-muted">
+                    What was up. Correcting it is the afterguard’s to do.
+                  </p>
+                  <div className="pointer-events-none opacity-70">
+                    {detail.render(dv, () => {}, t.t0)}
+                  </div>
+                </>
+              ) : (
+                <>
+                  {detail.render(dv, setDv, t.t0)}
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      onClick={saveDetail}
+                      disabled={savingDetail || !detailDirty || !!detail.isIncomplete?.(dv)}
+                      className={cn(
+                        'min-h-[44px] rounded-xl px-4 text-sm font-semibold',
+                        detailDirty && !detail.isIncomplete?.(dv)
+                          ? 'bg-accent text-accent-fg'
+                          : 'bg-surface-2 text-muted'
+                      )}
+                    >
+                      {savingDetail ? 'Saving…' : 'Save sails'}
+                    </button>
+                    {detailDirty && (
+                      <button
+                        onClick={() => setDv(detail.initial())}
+                        disabled={savingDetail}
+                        className="text-xs font-semibold text-secondary"
+                      >
+                        Undo
+                      </button>
+                    )}
+                    {!detailDirty && detailSaved && (
+                      <span className="text-[11px] text-success">Saved</span>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* 3. What they want doing with it */}

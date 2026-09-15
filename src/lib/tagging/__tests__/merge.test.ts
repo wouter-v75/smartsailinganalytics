@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   planSync, planIsEmpty, isHumanTouched, driftFromDetector,
   moveTag, setTagWindow, relabelTag, verifyTag, unverifyTag,
-  rejectTag, unrejectTag, resetToDetector, setReelOrder, addLabel, removeLabel,
+  rejectTag, unrejectTag, resetToDetector, setReelOrder, addLabel, removeLabel, recomposeTag,
   type SyncContext,
 } from '../merge'
 import type { Detection } from '../detect'
@@ -334,5 +334,64 @@ describe('the detector’s evidence travels with the tag', () => {
     const existing = row({ meta: { metrics: { turnAngle: 71 } } })
     const plan = planSync([existing], [detection({ metrics: { turnAngle: 71 } })], CTX)
     expect(planIsEmpty(plan)).toBe(true)
+  })
+})
+
+describe('recomposeTag — a detail re-entered', () => {
+  const sailTag = () => row({
+    slug: 'sail-change', label: 'Main + J2', note: '+J2',
+    labels: [{ group: 'Change', text: 'hoist' }],
+    meta: { sail: { up: [{ id: 'i3', name: 'J2' }] }, metrics: { tws: 14.2 } },
+  })
+
+  it('writes the whole detail in one patch', () => {
+    const p = recomposeTag(sailTag(), {
+      label: 'Main + A2', note: '+A2 −J2',
+      labels: [{ group: 'Change', text: 'peel' }],
+      meta: { sail: { up: [{ id: 'i5', name: 'A2' }] } },
+    })
+    expect(p.label).toBe('Main + A2')
+    expect(p.note).toBe('+A2 −J2')
+    expect(p.labels).toEqual([{ group: 'Change', text: 'peel' }])
+    expect((p.meta as any).sail.up[0].name).toBe('A2')
+  })
+
+  it('MERGES meta — the detector’s measurements are in the same bag', () => {
+    // Replacing it would throw away the metrics that explain why the tag was
+    // suggested in the first place.
+    const p = recomposeTag(sailTag(), { meta: { sail: { up: [] } } })
+    expect((p.meta as any).metrics).toEqual({ tws: 14.2 })
+  })
+
+  it('claims the label, so the next sync does not reset it to "Sail change"', () => {
+    const p = recomposeTag(sailTag(), { label: 'Main + A2' })
+    expect(p.editedFields).toContain('label')
+  })
+
+  it('does not claim anything when only the state moved', () => {
+    const p = recomposeTag(sailTag(), { meta: { sail: { up: [] } } })
+    expect(p.editedFields).toBeUndefined()
+  })
+
+  it('is a no-op when nothing actually changed', () => {
+    const t = sailTag()
+    expect(recomposeTag(t, {
+      label: t.label, note: t.note, labels: t.labels, meta: t.meta as Record<string, unknown>,
+    })).toEqual({})
+    expect(recomposeTag(t, {})).toEqual({})
+  })
+
+  it('can clear a note', () => {
+    expect(recomposeTag(sailTag(), { note: null }).note).toBeNull()
+  })
+
+  it('ignores a label that is only whitespace rather than blanking the tag', () => {
+    expect(recomposeTag(sailTag(), { label: '   ' }).label).toBeUndefined()
+  })
+
+  it('ignores a meta that is not an object', () => {
+    for (const junk of [null, 'nope', 7, ['a']]) {
+      expect(recomposeTag(sailTag(), { meta: junk as never }).meta).toBeUndefined()
+    }
   })
 })

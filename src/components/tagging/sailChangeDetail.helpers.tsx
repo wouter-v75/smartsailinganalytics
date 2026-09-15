@@ -2,9 +2,10 @@
 import * as React from 'react'
 import SailChangeDetail from './SailChangeDetail'
 import type { ComposerDetail } from './TagComposer'
+import type { SheetDetail } from './TagSheet'
 import {
   SAIL_CHANGE_SLUG, sailStateAt, lastChangeBefore, describeState, describeChange,
-  stateIsEmpty, type SailState, type SailRef,
+  stateIsEmpty, stateOf, EMPTY_SAIL_STATE, type SailState, type SailRef,
 } from '@/lib/tagging/sailState'
 import { cardForSail, type BattenCard, type SailBattenCard } from '@/lib/battens'
 import type { TagDef, TagEvent } from '@/lib/tagging/types'
@@ -238,4 +239,87 @@ export function kindOfChange(
 export function changeNote(events: TagEvent[], at: number, after: SailState): string {
   const prev = lastChangeBefore(events, at)
   return describeChange(prev?.state ?? null, after)
+}
+
+/**
+ * The same sail detail, for a tag that ALREADY EXISTS.
+ *
+ * Opening a sail change from the track and finding no way to say which sails
+ * were up was the gap this fills: the composer only ever appeared on the way
+ * IN, so a change entered in a hurry — or one the event file wrote — could
+ * never be corrected without deleting it and starting again.
+ *
+ * Seeded from the tag's own state, which falls back to the event file's list
+ * (see sailState.stateOf), so reopening an auto-detected change starts from
+ * what Expedition recorded rather than from an empty deck.
+ *
+ * The derived fields are only REWRITTEN while they are still derived. A crew
+ * that has renamed the tag or typed their own note has said something, and a
+ * sail edit is not permission to throw it away.
+ */
+export function sailSheetDetail(args: {
+  tag: TagEvent
+  events: TagEvent[]
+  ctx: SailContext
+  logRows?: { utc: number; tws?: number | null }[] | null
+  tzOffsetMin?: number
+  onEditSailList?: () => void
+}): SheetDetail<SailState> | null {
+  const { tag, events, ctx, logRows, tzOffsetMin, onEditSailList } = args
+  if (tag.slug !== SAIL_CHANGE_SLUG) return null
+
+  const before = lastChangeBefore(events.filter((e) => e.id !== tag.id), tag.t0 - 1)?.state ?? null
+  const was = stateOf(tag)
+
+  return {
+    initial: () => was ?? EMPTY_SAIL_STATE,
+
+    render: (value, onChange, at) => (
+      <SailChangeDetail
+        value={value}
+        onChange={onChange}
+        inventory={ctx.inventory}
+        dayList={ctx.dayList}
+        weightOf={(s) => (s.id ? ctx.weights[s.id] ?? null : null)}
+        previous={before ? { state: before, utc: at } : null}
+        battenCard={battenCardFor(ctx, value).card}
+        battenCardSail={battenCardFor(ctx, value).sailName}
+        twsKn={twsAt(logRows, at)}
+        tzOffsetMin={tzOffsetMin}
+        onEditSailList={onEditSailList}
+      />
+    ),
+
+    toPatch: (value) => {
+      const patch: {
+        label?: string
+        note?: string | null
+        labels?: { group: string; text: string }[]
+        meta?: Record<string, unknown>
+      } = { meta: { sail: value } }
+
+      // Keep deriving the label unless a human has CLAIMED it. `editedFields`
+      // is the app's existing answer to exactly this question — the sync uses
+      // it to decide what it may overwrite — so a rename made through the sheet
+      // survives, and a label that was only ever derived ("Sails changed", from
+      // the event file) is brought up to date instead of contradicting the
+      // sails underneath it.
+      if (!(tag.editedFields || []).includes('label')) patch.label = describeState(value)
+
+      const derivedNote = was ? describeChange(before, was) : null
+      const currentNote = (tag.note ?? '').trim()
+      if (!currentNote || (derivedNote && currentNote === derivedNote)) {
+        patch.note = describeChange(before, value)
+      }
+
+      // Descriptors: replace the derived Change descriptor, leave every other
+      // group alone — a crew's own "Quality: scrappy" is not ours to drop.
+      const kept = (tag.labels || []).filter((l) => l.group !== 'Change')
+      patch.labels = [...kept, ...kindOfChange(before, value)]
+
+      return patch
+    },
+
+    isIncomplete: (value) => stateIsEmpty(value),
+  }
 }

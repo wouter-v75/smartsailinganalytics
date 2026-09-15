@@ -60,6 +60,15 @@ export type TagOp =
   | { op: 'note'; note: string | null }
   | { op: 'label-add'; group: string; text: string }
   | { op: 'label-remove'; group: string; text: string }
+  /** A detail composer's whole answer — label, note, descriptors and meta —
+   *  written together. See merge.recomposeTag. */
+  | {
+      op: 'recompose'
+      label?: string
+      note?: string | null
+      labels?: TagLabel[]
+      meta?: Record<string, unknown>
+    }
 
 const j = async (res: Response) => {
   const body = await res.json().catch(() => ({}))
@@ -175,6 +184,12 @@ export function useTagger({ teamId, boatId, date, sessionId, userId }: TaggerArg
       : op.op === 'move' ? { t0: before.t0 + op.delta_ms, t1: before.t1 + op.delta_ms }
       : op.op === 'window' ? { t0: Math.min(op.t0, op.t1), t1: Math.max(op.t0, op.t1) }
       : op.op === 'relabel' ? { slug: op.slug, label: op.label ?? before.label }
+      : op.op === 'recompose' ? {
+          ...(op.label ? { label: op.label } : {}),
+          ...(op.note !== undefined ? { note: op.note } : {}),
+          ...(op.labels ? { labels: op.labels } : {}),
+          ...(op.meta ? { meta: { ...(before.meta || {}), ...op.meta } } : {}),
+        }
       : op.op === 'label-add' ? { labels: [...(before.labels || []), { group: op.group, text: op.text }] }
       : op.op === 'label-remove'
         ? { labels: (before.labels || []).filter((l) => !(l.group === op.group && l.text === op.text)) }

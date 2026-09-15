@@ -358,6 +358,58 @@ export function removeLabel(tag: TagEvent, label: TagLabel): Partial<TagEvent> {
   return next.length === current.length ? {} : { labels: next }
 }
 
+/**
+ * A tag's DETAIL was re-entered — the sail change reopened and the sails up
+ * changed, say.
+ *
+ * One patch rather than four. The detail composer derives the label, the note
+ * and the descriptors from the same answer that fills `meta`, so writing them
+ * as separate ops would be four round trips, four rows in the history, and a
+ * window in which the label says one thing and the state another.
+ *
+ * `meta` MERGES. It is a bag several unrelated things write into — the
+ * detector's metrics live there too — and replacing it would throw away the
+ * measurements that explain why the tag was suggested in the first place.
+ *
+ * The label is CLAIMED: a human has chosen it, so the next sync must leave it
+ * alone rather than resetting it to "Sail change".
+ */
+export function recomposeTag(
+  tag: TagEvent,
+  next: {
+    label?: string | null
+    note?: string | null
+    labels?: TagLabel[] | null
+    meta?: Record<string, unknown> | null
+  }
+): Partial<TagEvent> {
+  const patch: Partial<TagEvent> = {}
+  const fields: DerivedField[] = []
+
+  const label = typeof next.label === 'string' ? next.label.trim() : ''
+  if (label && label !== tag.label) { patch.label = label; fields.push('label') }
+
+  if (next.note !== undefined) {
+    const note = next.note == null ? null : String(next.note)
+    if (note !== (tag.note ?? null)) patch.note = note
+  }
+
+  if (Array.isArray(next.labels)) {
+    const same = JSON.stringify(next.labels) === JSON.stringify(tag.labels || [])
+    if (!same) patch.labels = next.labels
+  }
+
+  if (next.meta && typeof next.meta === 'object' && !Array.isArray(next.meta)) {
+    const before = (tag.meta || {}) as Record<string, unknown>
+    const merged = { ...before, ...next.meta }
+    if (JSON.stringify(merged) !== JSON.stringify(before)) patch.meta = merged
+  }
+
+  if (!Object.keys(patch).length) return {}
+  if (fields.length) patch.editedFields = claim(tag, ...fields)
+  return patch
+}
+
 /** How far a human has moved this tag from where the detector put it, in ms.
  *  null when the detector never had an opinion (a hand-placed tag). */
 export const driftFromDetector = (tag: TagEvent): number | null =>

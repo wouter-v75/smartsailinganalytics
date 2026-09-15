@@ -13,6 +13,7 @@ import { sailStateAt, type SailState } from '@/lib/tagging/sailState'
 import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
 import { canEditTagEvent } from '@/lib/tagging/gating'
+import { sailSheetDetail, type SailContext } from '@/components/tagging/sailChangeDetail.helpers'
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
 import { mediaMarks } from '@/lib/mediaDecks'
 import type { TagDef, TagEvent, TagRequest } from '@/lib/tagging/types'
@@ -196,6 +197,17 @@ const SESSIONS = [
   { date: DAY, hasLog: true, event: 'Palma Week' },
 ]
 
+// Everything the sail detail needs, from the fixtures above — so the sheet's
+// sail editor can be opened without a session.
+const SAIL_CTX: SailContext = {
+  inventory: INVENTORY,
+  weights: Object.fromEntries(INVENTORY.map((s) => [s.id, SAIL_KG[s.id]])),
+  dayList: ON_BOARD,
+  battenCards: [{ sailId: 'i1', card: BATTEN_CARD, updatedAt: null }],
+  mainsailIds: ['i1'],
+  loading: false,
+}
+
 type View = 'tagger' | 'track' | 'check' | 'debrief'
 
 export default function TaggerPreview() {
@@ -321,6 +333,19 @@ export default function TaggerPreview() {
           currentUserId="me"
           canApproveVideo
           canCurateReel
+          detail={sailSheetDetail({ tag: open.tag, events: evts, ctx: SAIL_CTX })}
+          canEditDetail={canEditTagEvent(open.tag, me)}
+          onRecompose={(patch) => setEvts((prev) => prev.map((e) => (
+            e.id === open.tag.id
+              ? {
+                  ...e,
+                  ...(patch.label ? { label: patch.label } : {}),
+                  ...(patch.note !== undefined ? { note: patch.note } : {}),
+                  ...(patch.labels ? { labels: patch.labels } : {}),
+                  ...(patch.meta ? { meta: { ...(e.meta || {}), ...patch.meta } } : {}),
+                }
+              : e
+          )))}
           onClose={() => setOpenId(null)}
           onVerify={noop} onReject={noop} onDelete={noop}
           onNote={noop} onLabel={noop}

@@ -1,7 +1,8 @@
 // One tag: edit it, or get rid of it.
 //
 //   PATCH { op, … }   move · window · relabel · verify · unverify · reject ·
-//                     unreject · reset · reel · note · label-add · label-remove
+//                     unreject · reset · reel · note · label-add · label-remove ·
+//                     recompose
 //   DELETE            removes a hand-placed tag; TOMBSTONES a detected one
 //
 // Every edit goes through the helpers in merge.ts rather than writing columns
@@ -15,6 +16,7 @@ import { getServerSupabase } from '@/lib/supabase/server'
 import {
   moveTag, setTagWindow, relabelTag, verifyTag, unverifyTag,
   rejectTag, unrejectTag, resetToDetector, setReelOrder, addLabel, removeLabel,
+  recomposeTag,
 } from '@/lib/tagging/merge'
 import { TAG_EVENT_COLUMNS, toTagEvent, toTagEventPatch } from '@/lib/tagging/rowMap'
 import type { TagEvent } from '@/lib/tagging/types'
@@ -76,6 +78,18 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       break
     case 'label-remove':
       patch = removeLabel(tag, { group: String(body?.group || ''), text: String(body?.text || '') })
+      break
+    // A tag's DETAIL was re-entered — the sails up on a sail change, say. One
+    // op because the composer derives the label, the note and the descriptors
+    // from the same answer that fills meta; four ops would leave a window in
+    // which the label says one thing and the state another.
+    case 'recompose':
+      patch = recomposeTag(tag, {
+        label: body?.label,
+        note: body?.note,
+        labels: Array.isArray(body?.labels) ? body.labels : undefined,
+        meta: body?.meta,
+      })
       break
     default:
       return NextResponse.json({ error: `Unknown op '${op}'` }, { status: 400 })

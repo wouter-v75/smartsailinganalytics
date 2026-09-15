@@ -7,7 +7,7 @@ import { detectDay, type Detection } from '@/lib/tagging/detect'
 import { segmentDay, segmentAt, type DaySegment } from '@/lib/tagging/segments'
 import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder, GRAB_VIDEO_SLUG, grabMediaKind } from '@/lib/tagging/requests'
-import { sailDetail, useSailContext } from './sailChangeDetail.helpers'
+import { sailDetail, sailSheetDetail, useSailContext } from './sailChangeDetail.helpers'
 import { useDayMedia } from './useDayMedia'
 import TagButtonBar from './TagButtonBar'
 import TagTrack from './TagTrack'
@@ -324,6 +324,19 @@ export default function TaggerTab({
               ? snapTag(open.tag, detections)
               : null
           }
+          // Opening a sail change from the track has to show the deck it was
+          // chosen from — otherwise the only way to correct one is to delete it
+          // and start again, which loses its requests and its place on the reel.
+          detail={sailSheetDetail({
+            tag: open.tag,
+            events: t.events,
+            ctx: sailCtx,
+            logRows,
+            tzOffsetMin,
+            onEditSailList,
+          })}
+          canEditDetail={t.canEdit(open.tag)}
+          onRecompose={(patch) => t.patch(open.tag.id, { op: 'recompose', ...patch })}
           onClose={() => setOpenId(null)}
           onVerify={() => t.patch(open.tag.id, { op: 'verify' })}
           onReject={() => { t.patch(open.tag.id, { op: 'reject' }); setOpenId(null) }}
