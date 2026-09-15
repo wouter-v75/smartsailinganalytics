@@ -17,8 +17,8 @@
 // that; we check first only so the caller gets a sentence instead of a 403 wall.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSupabase } from '../../../../../../../lib/supabase/server'
-import { BASE_TAGS, migrateLegacyTagList, type BaseTag } from '../../../../../../../lib/tagging/baseTags'
+import { getServerSupabase } from '@/lib/supabase/server'
+import { BASE_TAGS, migrateLegacyTagList, type BaseTag } from '@/lib/tagging/baseTags'
 
 const CURATOR_ROLES = ['coach', 'tl3', 'team_manager']
 

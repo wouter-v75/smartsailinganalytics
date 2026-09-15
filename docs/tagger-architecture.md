@@ -437,14 +437,31 @@ the detection's own start, not on the anchor — scoring the anchor made
 manoeuvre is exactly when you want to aim at its exit. A tag falling *inside* a
 detection's window now belongs to it outright.
 
-### M3 · API
-- `tags/defs` — GET/POST/PATCH/DELETE plus `POST /seed`.
-- `tags/events` — GET (day), POST (apply), PATCH (move/edit/verify/reject), DELETE.
-- `tags/events/sync` — run `detectDay` + `syncDetections` for a day.
-- `tags/event-file` — `.ssa.json`, and `?format=sportscode` for the XML.
-- Every route re-checks `min_role` and section server-side; RLS is the backstop.
+### M3 · API ✅
+- `tags/defs` — GET/POST/PATCH/DELETE plus `POST /seed`. ✅
+- `tags/events` — GET (day), POST (one-press apply). ✅
+- `tags/events/[eventId]` — PATCH by named operation, DELETE. ✅
+- `tags/events/sync` — reconcile posted detections, `dry_run` for a preview. ✅
+- `tags/event-file` — `.ssa.json`, `?format=sportscode`, `?reel=1`. ✅
+- Every route re-checks `min_role` and section server-side; RLS is the backstop. ✅
 
-**Done:** a day can be tagged, synced and exported entirely over HTTP.
+Three decisions worth recording:
+
+- **Detection runs on the client, `planSync` runs on the server.** The client
+  already holds the day's log and event file and `detectDay` is pure, so it posts
+  what it SAW — the same division as `/api/teams/[teamId]/timeline`. But the merge
+  rules are the tagger's central promise, and a promise enforced in the browser is
+  one anyone can skip by posting their own rows, so the server decides what the
+  detections MEAN for the rows that exist.
+- **Edits are named operations, not column patches.** `PATCH { op: 'move', … }`
+  rather than `PATCH { t0: … }`, because the merge helpers are what record
+  `edited_fields` — and a field not claimed there is silently overwritten by the
+  next sync.
+- **DELETE on a detected tag tombstones it** rather than deleting, so the crew are
+  not throwing away the same tack every evening. Hand-placed tags really delete.
+
+**Done:** a day can be tagged, synced and exported entirely over HTTP;
+`next build` registers all six routes.
 
 ### M4 · The track — `TagTrack`, `TagChip`, `TagInspector`, `TagButtonBar`
 - Lanes, drag to move, drag to resize, snap with visual feedback and
