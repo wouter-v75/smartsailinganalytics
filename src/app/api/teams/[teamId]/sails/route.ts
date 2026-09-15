@@ -4,11 +4,14 @@
 //   GET   ?boat_id=…              → the boat's sails (inventory + crossover).
 //   POST  { boat_id, name, … }    → create a sail.
 //   PATCH { id, …fields }         → update a sail (rename / retire / cert / …).
+//                                   `specs` MERGES rather than replacing — see
+//                                   the comment in PATCH for why that matters.
 //
 // RLS gates writes to the TL3+ leadership set via the user's server-side session.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../lib/supabase/server'
+import { mergeSpecs } from '../../../../../lib/sailEdit'
 
 const SELECT =
   'id,boat_id,name,kind,category,sailmaker,design_code,build_date,in_service_date,retired,' +
@@ -84,6 +87,18 @@ export async function PATCH(
   const patch = pick(body)
   if (Object.keys(patch).length === 0)
     return NextResponse.json({ error: 'no writable fields' }, { status: 400 })
+
+  // A spec patch MERGES rather than replacing — see mergeSpecs for why that is
+  // the difference between editing a weight and deleting a sail's design shapes.
+  if (patch.specs && typeof patch.specs === 'object') {
+    const { data: current } = await supabase
+      .from('sails')
+      .select('specs')
+      .eq('id', body.id)
+      .eq('team_id', params.teamId)
+      .maybeSingle()
+    patch.specs = mergeSpecs(current?.specs, patch.specs)
+  }
 
   const { data, error } = await supabase
     .from('sails')

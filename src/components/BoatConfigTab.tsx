@@ -28,6 +28,7 @@ import SailDesignShapes from './SailDesignShapes'
 import targetsV14 from '../data/targets-v1.4.json'
 import { parsePolarText, parsePolarWorkbook, buildPolarData, type PolarVersion } from '../lib/polarFile'
 import { readXlsx } from '../lib/xlsxRead'
+import { sailPatchFrom } from '../lib/sailEdit'
 import { useUiNext } from '../lib/ui-flags'
 import BoatConfigNext from './boat/BoatConfigNext'
 import BattenCardPanel from './boat/BattenCardPanel'
@@ -2075,6 +2076,14 @@ const SAIL_TYPES = [
   'Mainsail', 'Jib', 'Genoa', 'Genoa Staysail', 'Spinnaker Staysail',
   'Masthead Spinnaker', 'Fractional Spinnaker', 'Masthead Gennaker', 'Fractional Gennaker', 'Code', 'Other',
 ]
+// The values sails.kind accepts — kept in step with the CHECK constraint in
+// migration 0035. 'mainsail' is the one that carries weight elsewhere: the
+// batten card hangs off it, so a boat whose inventory never sets it gets a
+// Battens tab that says it has no mainsail.
+const SAIL_KINDS = [
+  'mainsail', 'jib', 'genoa', 'staysail', 'spinnaker', 'gennaker', 'code', 'other',
+] as const
+
 const SAIL_GROUPS = [
   { v: 'M', label: 'M · main' },
   { v: 'H', label: 'H · headsail' },
@@ -2190,18 +2199,45 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
 }
 
 // ── One inventory row (view + inline edit) ───────────────────────────────────
-function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete, onShowDesign }: any) {
+export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete, onShowDesign }: any) {
+  const spec = sail.specs || {}
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(sail.name)
   const [category, setCategory] = useState(sail.category || '')
   const [build, setBuild] = useState(sail.build_date || '')
+  // Kind, sail type, group and weight used to be import-only: a boat whose
+  // inventory was typed in by hand could never say a sail was the mainsail, and
+  // the batten card and the weight-aboard total both depend on knowing.
+  const [kind, setKind] = useState(sail.kind || 'other')
+  const [sailType, setSailType] = useState(spec.sail_type || '')
+  const [group, setGroup] = useState(spec.sail_group || '')
+  const [weight, setWeight] = useState(spec.weight_kg != null ? String(spec.weight_kg) : '')
   const fileRef = React.useRef<HTMLInputElement>(null)
-  const save = () => { onPatch({ name: name.trim(), category: category.trim() || null, build_date: build || null }); setEditing(false) }
 
-  const spec = sail.specs || {}
-  const sailType = spec.sail_type || '—'
-  const sailGroup = spec.sail_group || '—'
-  const weight = spec.weight_kg != null ? fmt(spec.weight_kg, 1) : '—'
+  // Reset the draft whenever the row is opened, so a Cancel followed by a second
+  // Edit does not show what was abandoned the first time.
+  const startEdit = () => {
+    setName(sail.name); setCategory(sail.category || ''); setBuild(sail.build_date || '')
+    setKind(sail.kind || 'other'); setSailType(spec.sail_type || '')
+    setGroup(spec.sail_group || '')
+    setWeight(spec.weight_kg != null ? String(spec.weight_kg) : '')
+    setEditing(true)
+  }
+
+  // The payload's decisions — an unparseable weight, the source marker, and
+  // sending ONLY the keys this form edits — live in lib/sailEdit, where they are
+  // under test. The route merges what arrives into the rest of specs.
+  const save = () => {
+    onPatch(sailPatchFrom(
+      { name, category, buildDate: build, kind, sailType, group, weight },
+      spec
+    ))
+    setEditing(false)
+  }
+
+  const sailTypeText = spec.sail_type || '—'
+  const sailGroupText = spec.sail_group || '—'
+  const weightText = spec.weight_kg != null ? fmt(spec.weight_kg, 1) : '—'
   const nDesign = Array.isArray(spec.design_shapes?.conditions) ? spec.design_shapes.conditions.length : 0
 
   if (editing) {
@@ -2209,10 +2245,46 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelet
       <tr>
         <td style={td}><input style={{ ...input, width: 60 }} value={category} onChange={(e) => setCategory(e.target.value)} /></td>
         <td style={td}><input style={{ ...input, width: 150 }} value={name} onChange={(e) => setName(e.target.value)} /></td>
-        <td style={td}>{sail.kind || '—'}</td>
-        <td style={td}>{sailType}</td>
-        <td style={td}>{sailGroup}</td>
-        <td style={td}>{weight}</td>
+        <td style={td}>
+          <select style={{ ...input, width: 104 }} value={kind} onChange={(e) => setKind(e.target.value)}>
+            {SAIL_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+          </select>
+        </td>
+        <td style={td}>
+          <select
+            style={{ ...input, width: 150 }}
+            value={SAIL_TYPES.includes(sailType) ? sailType : ''}
+            onChange={(e) => {
+              const t = e.target.value
+              setSailType(t)
+              // Type implies kind and group, so changing it moves them — but
+              // both stay editable underneath, because a sail list can call
+              // something a "Jib" that the crew treats as the genoa.
+              if (t) {
+                const k = sailKindFromType(t, group)
+                setKind(k)
+                if (!group) setGroup(groupForKind(k))
+              }
+            }}
+          >
+            {/* An imported type that is not one of ours must not be silently
+                rewritten to "Mainsail" by a select that cannot represent it. */}
+            {!SAIL_TYPES.includes(sailType) && <option value="">{sailType || '—'}</option>}
+            {SAIL_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </td>
+        <td style={td}>
+          <select style={{ ...input, width: 72 }} value={group} onChange={(e) => setGroup(e.target.value)}>
+            <option value="">—</option>
+            {SAIL_GROUPS.map((g) => <option key={g.v} value={g.v}>{g.label}</option>)}
+          </select>
+        </td>
+        <td style={td}>
+          <input
+            style={{ ...input, width: 68 }} inputMode="decimal" placeholder="kg"
+            value={weight} onChange={(e) => setWeight(e.target.value)}
+          />
+        </td>
         <td style={td}><input type="date" style={input} value={build || ''} onChange={(e) => setBuild(e.target.value)} /></td>
         <td style={td} colSpan={2}>
           <button onClick={save} disabled={busy} style={btn('#10B981')}>Save</button>{' '}
@@ -2227,10 +2299,12 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelet
     <tr style={{ opacity: sail.retired ? 0.55 : 1 }}>
       <td style={{ ...td, fontWeight: 700, color: '#06B6D4' }}>{sail.category || '—'}</td>
       <td style={td}>{sail.name}</td>
-      <td style={td}>{sail.kind || '—'}</td>
-      <td style={td}>{sailType}</td>
-      <td style={td}>{sailGroup}</td>
-      <td style={td}>{weight}</td>
+      <td style={{ ...td, color: sail.kind === 'mainsail' ? '#2DD4BF' : undefined, fontWeight: sail.kind === 'mainsail' ? 700 : undefined }}>
+        {sail.kind || '—'}
+      </td>
+      <td style={td}>{sailTypeText}</td>
+      <td style={td}>{sailGroupText}</td>
+      <td style={td}>{weightText}</td>
       <td style={td}>{sail.build_date ? new Date(sail.build_date).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</td>
       <td style={td}>
         {canEdit ? (
@@ -2258,7 +2332,7 @@ function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelet
       {canEdit && (
         <td style={td}>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setEditing(true)} disabled={busy}
+            <button onClick={startEdit} disabled={busy}
               style={{ background: 'none', border: '1px solid #1E3A5A', color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>✎ Edit</button>
             <button onClick={onDelete} disabled={busy}
               style={{ background: '#3a1320', border: '1px solid #7f1d1d', color: '#fca5a5', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>🗑</button>
