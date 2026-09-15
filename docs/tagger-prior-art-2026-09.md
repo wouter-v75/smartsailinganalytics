@@ -356,3 +356,131 @@ private — that is *merged* with the detections rather than sitting beside them
 The step up is not better detection. It is that a bowman's tag, a coach's tag and
 the detector's tack end up on one reconciled timeline, with provenance, and the
 whole thing exports.
+
+---
+
+# Part 3 — How teams run the workflow
+
+Parts 1 and 2 are about tools and mechanics. This part is about practice: who
+tags, when, how much, and what the tagging is *for*. It changed the design more
+than either of the others.
+
+## 21. Capture → Code → Analyse → Feedback, cyclically
+
+The canonical delivery model in institutional performance analysis (UK Sports
+Institute / EIS) is four steps: **capture, code, analyse, feedback**. The analyst's
+role is defined as "translating objective data into learning opportunities to help
+sport coaches understand how and why outcomes occurred", and the peer-reviewed
+exemplar of the process in practice is explicit that "data capture, analysis and
+visualisation must occur **cyclically**".
+
+The word that matters is cyclically. Tagging is not a one-shot pass over a
+finished recording; it is a loop that runs again every time new data lands. Which
+is the practical argument for §15's tombstones and §16's stable identity: a loop
+that destroys the previous turn's work is not a loop.
+
+## 22. Data first, then the human account
+
+F1 debriefs have a fixed running order, and it is the opposite of what you might
+guess. The session debrief "usually starts with the **engineers' insights**: what
+the data revealed, any setup changes made and any reliability concerns, followed
+by **the driver** giving their perspective on what felt good, what didn't and what
+could be improved." It then widens over video conference to engineers at the
+factory.
+
+Two things follow for the tagger:
+
+- the detections are the **objective skeleton** and should be present before any
+  human opens the day; crew tags are the subjective layer laid over them. That is
+  the order the day view should read in.
+- the debrief **widens to people who were not there** — for an America's Cup
+  programme, telemetry goes ashore in real time "with the designers and
+  sailmakers", and the coach's job includes coordinating "the design team, shore
+  team, and sailing team". Export is not a nice-to-have at the edge of the
+  feature; it is how the loop closes.
+
+## 23. A debrief reviews a FEW moments, not everything
+
+This is the finding that most changes the product. Coaching guidance for sailing
+debriefs is to "find **a few interesting things** from the day and focus on them",
+starting from big-picture questions — is the fleet consistent, when was the race
+won — and then zooming to a single leg to discuss the decision-making.
+
+So the output of tagging is not an archive. It is a **shortlist**.
+
+Sportscode makes exactly this concrete: code-window action buttons "send instances
+directly to a playlist", and the playlist — not the timeline — is what gets
+exported and shared with coaches and players.
+
+**Implication:** SSA needs a *debrief reel* as a first-class object — a small,
+ordered selection of tags, assembled during or after tagging, that feeds the
+existing Debrief row in `DayPhases` and exports as a shareable set. A timeline
+with 140 tags and no shortlist has moved the problem, not solved it.
+
+## 24. Volume makes selection the scarce resource
+
+The AC72 generation carried over 1,000 sensors producing 250–500 GB per sailing
+session; SailGP's F50s carry ~1,200 sensors, cameras and microphones. The often-
+quoted constraint on an AC75 is that the data is so voluminous that "no one person
+can process it in one night and produce accurate information and reasonable
+reporting".
+
+Nobody needs more data. They need an **index into it**, and tags are that index.
+This is the same conclusion as §23 arrived at from the coaching side.
+
+## 25. Keep the button set small — rare codes wreck agreement
+
+From the inter-coder reliability literature, three findings that constrain
+vocabulary design directly:
+
+- **rare codes are "doubly disadvantaged"** — they offer few opportunities for
+  agreement and depress overall agreement "even when coders agree on nearly every
+  actual occurrence". A long tail of seldom-used tags actively damages the
+  archive's consistency.
+- **ambiguity is a property of the behaviour, not a training failure.** Some
+  moments genuinely are two things.
+- **coding units that resist a single category lower agreement.** Forcing one tag
+  per moment manufactures disagreement.
+
+**Implications:** the **button bar is curated and short** (~8 buttons) and is a
+different thing from the full vocabulary behind the picker. Multiple tags on one
+moment are normal and carry no penalty. And two crew members tagging the same
+moment differently is *signal, not conflict* — which the section-scoped model
+already accommodates: the bowman's read and the trimmer's read sit in their own
+lanes and both survive.
+
+## 26. The vocabulary has to be learnable in an evening
+
+Coder training in the literature runs roughly two hours to study a coding scheme
+plus one hour of practice, after which agreement below κ 0.4 or 80 % means more
+training is needed. That is the budget a crew will give this.
+
+It puts a hard ceiling on the base vocabulary — of the order of 20–30 general
+tags, not 200 — and it is an argument for shipping a sensible default set rather
+than an empty list, because a vocabulary a team invents from scratch on the dock
+will be inconsistent by construction.
+
+## 27. Tags are born on the water, one-handed
+
+Expedition event files carry comments logged **while sailing**, alongside sail
+changes, and Njord surfaces the same thing: "your own on-water comments appear as
+markers" in the timeline.
+
+Those markers are the single best argument for the snap in §12. They were entered
+one-handed, at speed, by someone whose actual job at that moment was sailing the
+boat. They will be late, and they will be approximate.
+
+**Implication:** ingest Expedition comments as first-class tags with
+`producer = 'eventfile'`, show them in their own lane, and make them the default
+target of the "snap everything" action.
+
+## 28. Summary of what Part 3 changed
+
+| Finding | Change |
+| --- | --- |
+| Debriefs review a few moments (§23, §24) | add a **debrief reel** — an ordered shortlist feeding `DayPhases` → Debrief |
+| Rare codes wreck agreement (§25) | **short curated button bar** (~8), distinct from the full picker |
+| Ambiguity is real (§25) | multiple tags per moment; never force exclusivity; disagreement between sections is kept |
+| Vocabulary must be learnable (§26) | ship the base set; cap general tags around 20–30 |
+| On-water comments are late (§27) | ingest them as tags, own lane, prime snap target |
+| Data first, then the human (§22) | day view reads detections-then-crew; export is core, not peripheral |
