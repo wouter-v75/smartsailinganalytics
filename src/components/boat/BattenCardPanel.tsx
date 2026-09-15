@@ -3,10 +3,16 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   WIND_BANDS, TENSIONS, TENSION_SHORT, MAX_BATTEN_COUNT,
   defaultBattenCard, normaliseBattenCard, setBattenCount, formatSetting,
-  type BattenCard, type BattenSetting, type Tension,
+  cardForSail, unassignedCard, cardIsEmpty,
+  type BattenCard, type BattenSetting, type Tension, type SailBattenCard,
 } from '../../lib/battens'
 
 // Boat → Battens. The laminated card, in the app.
+//
+// ONE CARD PER MAINSAIL. A new main and a three-season delivery main do not want
+// the same turns, and the day the difference bites is a two-boat testing week —
+// exactly the day nobody has time to notice the card is describing the other
+// sail. So the first thing on this panel is which main you are looking at.
 //
 // A grid: one row per batten, one column per wind band. Battens are numbered
 // FROM THE TOP, because that is how a crew counts them standing on deck looking
@@ -32,6 +38,8 @@ const TENSION_COLOR: Record<Tension, string> = {
   stiff: '#F59E0B',
 }
 
+interface Mainsail { id: string; name: string; retired?: boolean }
+
 export default function BattenCardPanel({
   teamId, boatId, canEdit, isMobile,
 }: {
@@ -40,25 +48,59 @@ export default function BattenCardPanel({
   canEdit: boolean
   isMobile?: boolean
 }) {
+  const [mains, setMains] = useState<Mainsail[]>([])
+  const [sailId, setSailId] = useState<string | null>(null)
+  const [cards, setCards] = useState<SailBattenCard[]>([])
   const [saved, setSaved] = useState<BattenCard>(() => defaultBattenCard())
   const [draft, setDraft] = useState<BattenCard>(() => defaultBattenCard())
-  const [updatedAt, setUpdatedAt] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true); setErr(null)
-    fetch(`/api/teams/${teamId}/boats/${boatId}/battens`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((j) => {
-        const card = normaliseBattenCard(j.card)
-        setSaved(card); setDraft(card); setUpdatedAt(j.updatedAt ?? null)
+    Promise.all([
+      fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`)
+        .then((r) => (r.ok ? r.json() : { sails: [] })),
+      fetch(`/api/teams/${teamId}/boats/${boatId}/battens`)
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status))))),
+    ])
+      .then(([sails, battens]) => {
+        // Retired mains are kept and shown last: last season's numbers are often
+        // exactly why somebody has opened this panel.
+        const list: Mainsail[] = (sails?.sails || [])
+          .filter((s: { kind?: string }) => s.kind === 'mainsail')
+          .map((s: Mainsail) => ({ id: s.id, name: s.name, retired: !!s.retired }))
+          .sort((a: Mainsail, b: Mainsail) => Number(a.retired) - Number(b.retired))
+        setMains(list)
+        setCards((battens?.cards || []) as SailBattenCard[])
+        setSailId((cur) => (cur && list.some((m) => m.id === cur) ? cur : list[0]?.id ?? null))
       })
-      .catch(() => setErr('Could not load the batten card.'))
+      .catch(() => setErr('Could not load the batten cards.'))
       .finally(() => setLoading(false))
   }, [teamId, boatId])
   useEffect(() => { load() }, [load])
+
+  // Switching main swaps the whole grid. An unsaved draft is dropped with it,
+  // which is why the Save button is never further than a thumb from the picker.
+  useEffect(() => {
+    const card = cardForSail(cards, sailId) || defaultBattenCard()
+    setSaved(card); setDraft(card)
+  }, [cards, sailId])
+
+  const updatedAt = useMemo(
+    () => cards.find((c) => c.sailId === sailId)?.updatedAt ?? null,
+    [cards, sailId]
+  )
+
+  // A card from before cards were per-sail, offered only to a main that has
+  // nothing of its own — so the work typed in under 0064 is not lost, and is
+  // never silently attached to a sail nobody named.
+  const legacy = useMemo(() => {
+    const u = unassignedCard(cards)
+    if (!u || cardIsEmpty(u)) return null
+    return cardForSail(cards, sailId) ? null : u
+  }, [cards, sailId])
 
   const dirty = useMemo(
     () => JSON.stringify(draft) !== JSON.stringify(saved),
@@ -77,23 +119,40 @@ export default function BattenCardPanel({
     })
 
   const save = async () => {
+    if (!sailId) return
     setSaving(true); setErr(null)
     try {
       const r = await fetch(`/api/teams/${teamId}/boats/${boatId}/battens`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ card: draft }),
+        body: JSON.stringify({ sail_id: sailId, card: draft }),
       })
       const j = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`)
       const card = normaliseBattenCard(j.card)
-      setSaved(card); setDraft(card); setUpdatedAt(j.updatedAt ?? null)
+      setSaved(card); setDraft(card)
+      setCards((prev) => {
+        const rest = prev.filter((c) => c.sailId !== sailId)
+        return [...rest, { sailId, card, updatedAt: j.updatedAt ?? null }]
+      })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not save the batten card.')
     } finally { setSaving(false) }
   }
 
   if (loading) return <div style={{ color: C.dim, fontSize: 12 }}>Loading…</div>
+
+  // No mainsail, no card. Saying so beats an editable grid that cannot be saved.
+  if (!mains.length) {
+    return (
+      <div style={{ color: C.dim, fontSize: 13, lineHeight: 1.6 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.head, marginBottom: 6 }}>Batten card</div>
+        A batten card belongs to a mainsail, and this boat has none in its
+        inventory yet. Add one in <strong style={{ color: C.text }}>Sail inventory</strong> with
+        kind “mainsail”, and its card appears here.
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -108,6 +167,71 @@ export default function BattenCardPanel({
           </span>
         )}
       </div>
+
+      {/* ── Which mainsail ─────────────────────────────────────────────────
+          One main gets a label, not a control: a picker with one option is a
+          question with one answer. Two or more, and it is the first decision on
+          the panel, because everything below it changes. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        <span style={{ fontSize: 11, color: C.dim, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1 }}>
+          Mainsail
+        </span>
+        {mains.length === 1 ? (
+          <span style={{ fontSize: 13, fontWeight: 700, color: C.head }}>
+            {mains[0].name}
+            {mains[0].retired && <span style={{ color: C.dim, fontWeight: 500 }}> · retired</span>}
+          </span>
+        ) : (
+          <select
+            aria-label="Mainsail"
+            value={sailId || ''}
+            onChange={(e) => setSailId(e.target.value || null)}
+            style={{
+              minHeight: 40, background: '#04101c', border: `1px solid ${C.border}`,
+              borderRadius: 7, padding: '0 10px', color: C.head, fontSize: 14, fontWeight: 700,
+              maxWidth: '100%',
+            }}
+          >
+            {mains.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}{m.retired ? ' · retired' : ''}
+                {cardForSail(cards, m.id) ? '' : ' — no card'}
+              </option>
+            ))}
+          </select>
+        )}
+        {mains.length > 1 && (
+          <span style={{ fontSize: 11, color: C.dim }}>
+            {mains.filter((m) => cardForSail(cards, m.id)).length} of {mains.length} have a card
+          </span>
+        )}
+      </div>
+
+      {/* The card entered before cards were per-sail. Offered, never assumed —
+          nobody has said which main it describes, and guessing would attach a
+          three-season delivery main's numbers to a brand-new sail. */}
+      {legacy && canEdit && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12,
+          background: '#0A1929', border: `1px solid ${C.warn}40`, borderRadius: 10, padding: '10px 12px',
+        }}>
+          <span style={{ fontSize: 12, color: C.text, flex: '1 1 260px', minWidth: 0 }}>
+            There is a card from before batten cards were per-sail.
+            Use it as the starting point for <strong style={{ color: C.head }}>
+              {mains.find((m) => m.id === sailId)?.name || 'this main'}
+            </strong>?
+          </span>
+          <button
+            onClick={() => setDraft(legacy)}
+            style={{
+              minHeight: 40, padding: '0 14px', borderRadius: 8, border: 'none',
+              background: C.warn, color: '#001018', fontWeight: 800, fontSize: 12, cursor: 'pointer',
+            }}
+          >
+            Load it
+          </button>
+        </div>
+      )}
 
       {canEdit && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -126,7 +250,7 @@ export default function BattenCardPanel({
           />
           <button
             onClick={save}
-            disabled={!dirty || saving}
+            disabled={!dirty || saving || !sailId}
             style={{
               marginLeft: 'auto', minHeight: 40, padding: '0 16px', borderRadius: 8,
               border: 'none', cursor: dirty && !saving ? 'pointer' : 'default',

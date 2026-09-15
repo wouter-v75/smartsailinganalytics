@@ -3,6 +3,7 @@ import {
   WIND_BANDS, TENSIONS, DEFAULT_BATTEN_COUNT, MAX_BATTEN_COUNT,
   defaultBattenCard, normaliseBattenCard, setBattenCount,
   bandForTws, cardSetting, formatSetting, isBlankSetting, cardIsEmpty,
+  cardForSail, unassignedCard, type SailBattenCard,
 } from '../battens'
 
 describe('the bands', () => {
@@ -192,5 +193,47 @@ describe('isBlankSetting / cardIsEmpty', () => {
 describe('the stiffnesses', () => {
   it('are the three the brief named', () => {
     expect(TENSIONS).toEqual(['soft', 'medium', 'stiff'])
+  })
+})
+
+describe('cards per mainsail', () => {
+  const raceMain = normaliseBattenCard({ count: 3, rows: [{ '0-5': { tension: 'stiff', turns: 2 } }, {}, {}] })
+  const deliveryMain = normaliseBattenCard({ count: 3, rows: [{ '0-5': { tension: 'soft', turns: -1 } }, {}, {}] })
+  const legacy = normaliseBattenCard({ count: 3, rows: [{ '0-5': { tension: 'medium', turns: 9 } }, {}, {}] })
+
+  const cards: SailBattenCard[] = [
+    { sailId: 'm1', card: raceMain, updatedAt: null },
+    { sailId: 'm2', card: deliveryMain, updatedAt: null },
+    { sailId: null, card: legacy, updatedAt: null },
+  ]
+
+  it('gives each main its own card', () => {
+    expect(cardForSail(cards, 'm1')?.rows[0]['0-5'].tension).toBe('stiff')
+    expect(cardForSail(cards, 'm2')?.rows[0]['0-5'].tension).toBe('soft')
+  })
+
+  it('never falls back to the unassigned card for a main that has none', () => {
+    // Falling back would attach a three-season delivery main's numbers to a
+    // brand-new sail, which reads as a real answer and is not one.
+    expect(cardForSail(cards, 'm3')).toBeNull()
+  })
+
+  it('does not treat the unassigned card as belonging to any sail', () => {
+    expect(cardForSail(cards, null)).toBeNull()
+    expect(cardForSail(cards, undefined)).toBeNull()
+  })
+
+  it('finds the unassigned card so it can be offered', () => {
+    expect(unassignedCard(cards)?.rows[0]['0-5'].turns).toBe(9)
+  })
+
+  it('has no unassigned card once every card belongs to a sail', () => {
+    expect(unassignedCard(cards.filter((c) => c.sailId))).toBeNull()
+  })
+
+  it('survives an empty or missing list', () => {
+    expect(cardForSail([], 'm1')).toBeNull()
+    expect(cardForSail(null, 'm1')).toBeNull()
+    expect(unassignedCard(undefined)).toBeNull()
   })
 })

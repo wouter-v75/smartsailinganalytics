@@ -6,6 +6,13 @@
 -- that the CHECK catches a malformed card without catching a legitimate one,
 -- and that a negative turn count survives the round trip — winding a batten OFF
 -- is a real setting and the obvious "turns >= 0" instinct would destroy it.
+--
+-- NOTE: 0065 moved the card from the boat to the MAINSAIL, so the uniqueness
+-- assertions here now name the (team, boat, sail) index rather than 0064's
+-- one-per-boat constraint. The rest — the shape CHECK, negative turns, the
+-- cascade, the trigger — is unchanged by 0065 and is still 0064's to guarantee.
+-- These run against the schema with every migration applied, as they must:
+-- asserting the shape of a superseded constraint would be asserting history.
 
 \set ON_ERROR_STOP on
 BEGIN;
@@ -54,28 +61,30 @@ BEGIN
     RAISE NOTICE 'test 2 ok: a batten wound OFF the mark stays wound off';
 END $$;
 
--- ── 3. One card per boat, and the constraint can arbitrate ON CONFLICT ──────
--- This is the assertion that matters for the API: the route upserts on
--- (team_id, boat_id), and PostgREST can only name a plain unique constraint.
+-- ── 3. One card per slot, and the index can arbitrate ON CONFLICT ──────────
+-- This is the assertion that matters for the API: the route upserts, and
+-- PostgREST can only name a unique index that is not partial. These fixtures
+-- leave sail_id NULL, so this also exercises the NULLS NOT DISTINCT path 0065
+-- relies on for a card nobody has assigned to a main yet.
 INSERT INTO public.boat_battens (team_id, boat_id, card) VALUES (
     '00000000-0000-0000-0000-0000000000b1',
     '00000000-0000-0000-0000-0000000000b2',
     '{"count":4,"rows":[{},{},{},{}]}'::jsonb
 )
-ON CONFLICT (team_id, boat_id) DO UPDATE SET card = EXCLUDED.card;
+ON CONFLICT (team_id, boat_id, sail_id) DO UPDATE SET card = EXCLUDED.card;
 
 DO $$
 DECLARE n bigint; c int;
 BEGIN
     SELECT count(*), max((card ->> 'count')::int) INTO n, c
     FROM public.boat_battens WHERE boat_id = '00000000-0000-0000-0000-0000000000b2';
-    IF n <> 1 THEN RAISE EXCEPTION 'test 3 FAILED: % rows for one boat', n; END IF;
+    IF n <> 1 THEN RAISE EXCEPTION 'test 3 FAILED: % rows for one slot', n; END IF;
     IF c <> 4 THEN RAISE EXCEPTION 'test 3 FAILED: the upsert did not replace the card'; END IF;
-    RAISE NOTICE 'test 3 ok: one card per boat, replaced in place by the upsert';
+    RAISE NOTICE 'test 3 ok: one card per slot, replaced in place by the upsert';
 END $$;
 
 -- ── 4. A second boat in the same team gets its own card ────────────────────
--- Scoping the constraint to the team alone would make two boats share one card,
+-- Scoping uniqueness to the team alone would make two boats share one card,
 -- which is the kind of bug that only shows up in a two-boat testing programme —
 -- exactly when it hurts most.
 INSERT INTO public.boat_battens (team_id, boat_id, card) VALUES (

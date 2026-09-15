@@ -6,7 +6,7 @@ import {
   SAIL_CHANGE_SLUG, sailStateAt, lastChangeBefore, describeState, describeChange,
   stateIsEmpty, type SailState, type SailRef,
 } from '@/lib/tagging/sailState'
-import { normaliseBattenCard, type BattenCard } from '@/lib/battens'
+import { cardForSail, type BattenCard, type SailBattenCard } from '@/lib/battens'
 import type { TagDef, TagEvent } from '@/lib/tagging/types'
 
 // Everything the sail-change composer needs, fetched once per boat/day and
@@ -19,7 +19,11 @@ import type { TagDef, TagEvent } from '@/lib/tagging/types'
 export interface SailContext {
   inventory: SailRef[]
   onBoard: SailRef[]
-  battenCard: BattenCard | null
+  /** Every batten card the boat has, one per mainsail. */
+  battenCards: SailBattenCard[]
+  /** Which inventory ids are mainsails, so the batten tab knows whose card to
+   *  show when the crew changes what is up. */
+  mainsailIds: string[]
   loading: boolean
 }
 
@@ -29,14 +33,15 @@ export function useSailContext(
   date?: string | null
 ): SailContext {
   const [inventory, setInventory] = React.useState<SailRef[]>([])
+  const [mainsailIds, setMainsailIds] = React.useState<string[]>([])
   const [onBoard, setOnBoard] = React.useState<SailRef[]>([])
-  const [battenCard, setBattenCard] = React.useState<BattenCard | null>(null)
+  const [battenCards, setBattenCards] = React.useState<SailBattenCard[]>([])
   const [loading, setLoading] = React.useState(false)
 
-  // Inventory and the batten card belong to the BOAT, so they survive a change
-  // of day; only the sail list is reloaded when the date moves.
+  // The inventory and the batten cards belong to the BOAT, so they survive a
+  // change of day; only the sail list is reloaded when the date moves.
   React.useEffect(() => {
-    if (!teamId || !boatId) { setInventory([]); setBattenCard(null); return }
+    if (!teamId || !boatId) { setInventory([]); setMainsailIds([]); setBattenCards([]); return }
     let live = true
     Promise.all([
       fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`)
@@ -47,12 +52,12 @@ export function useSailContext(
         .catch(() => null),
     ]).then(([sails, battens]) => {
       if (!live) return
-      setInventory(
-        (sails?.sails || [])
-          .filter((s: { retired?: boolean }) => !s.retired)
-          .map((s: { id: string; name: string }) => ({ id: s.id, name: s.name }))
+      const active = (sails?.sails || []).filter((s: { retired?: boolean }) => !s.retired)
+      setInventory(active.map((s: { id: string; name: string }) => ({ id: s.id, name: s.name })))
+      setMainsailIds(
+        active.filter((s: { kind?: string }) => s.kind === 'mainsail').map((s: { id: string }) => s.id)
       )
-      setBattenCard(battens?.card ? normaliseBattenCard(battens.card) : null)
+      setBattenCards((battens?.cards || []) as SailBattenCard[])
     })
     return () => { live = false }
   }, [teamId, boatId])
@@ -78,7 +83,34 @@ export function useSailContext(
     return () => { live = false }
   }, [teamId, boatId, date])
 
-  return { inventory, onBoard, battenCard, loading }
+  return { inventory, mainsailIds, onBoard, battenCards, loading }
+}
+
+/**
+ * The card for whichever main is up.
+ *
+ * Follows the sails, not the boat: on a day that starts with the delivery main
+ * and changes to the race main, the batten tab has to change with it or it is
+ * suggesting the wrong numbers at exactly the moment they are being set. When
+ * two mains are somehow up, or none is, the boat's only card is the best
+ * available answer — and when there is more than one, no answer is better than
+ * a coin toss.
+ */
+export function battenCardFor(
+  ctx: SailContext,
+  state: SailState
+): { card: BattenCard | null; sailName: string | null } {
+  const upMain = state.up.find((s) => s.id && ctx.mainsailIds.includes(s.id))
+  const own = cardForSail(ctx.battenCards, upMain?.id)
+  if (own) return { card: own, sailName: upMain?.name ?? null }
+
+  // No main up, or the one that is has no card of its own. A boat with exactly
+  // one card has only one possible answer; with two, a plausible-looking wrong
+  // number is worse than none at all.
+  const assigned = ctx.battenCards.filter((c) => c.sailId != null)
+  if (assigned.length !== 1) return { card: null, sailName: null }
+  const name = ctx.inventory.find((s) => s.id === assigned[0].sailId)?.name ?? null
+  return { card: assigned[0].card, sailName: name }
 }
 
 /** True wind speed at an instant, from the day's log. */
@@ -132,7 +164,8 @@ export function sailDetail(args: {
           inventory={ctx.inventory}
           onBoard={ctx.onBoard}
           previous={prev ? { state: prev.state, utc: prev.tag.t0 } : null}
-          battenCard={ctx.battenCard}
+          battenCard={battenCardFor(ctx, value).card}
+          battenCardSail={battenCardFor(ctx, value).sailName}
           twsKn={twsAt(logRows, at)}
           tzOffsetMin={tzOffsetMin}
           onEditSailList={onEditSailList}

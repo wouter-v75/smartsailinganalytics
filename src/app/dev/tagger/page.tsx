@@ -210,6 +210,7 @@ export default function TaggerPreview() {
             onBoard={ON_BOARD}
             previous={{ state: { up: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }], battens: [] }, utc: T(11, 40) }}
             battenCard={BATTEN_CARD}
+            battenCardSail="Main 2026"
             twsKn={12.4}
             onEditSailList={() => {}}
           />

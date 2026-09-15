@@ -16,6 +16,11 @@
 //                config: written once, changed rarely, the same for everyone.
 //   the RECORD   what they actually were at a moment. A sail-change tag.
 //
+// A card belongs to a MAINSAIL, not to a boat. A new main and a three-season
+// delivery main do not want the same turns, and the day that matters is a
+// two-boat testing week — exactly the day nobody has time to notice the card is
+// describing the other sail. See migration 0065.
+//
 // Battens are numbered FROM THE TOP, because that is how a crew counts them
 // standing on deck looking up, and because the top batten is the one that gets
 // touched.
@@ -159,6 +164,34 @@ export function formatSetting(s: BattenSetting | null | undefined): string {
   if (!s.tension) return t || '—'
   return t ? `${s.tension} ${t}` : s.tension
 }
+
+/** One mainsail's card, as the API returns it. */
+export interface SailBattenCard {
+  /** null = entered before cards were per-sail, not yet assigned (0065). */
+  sailId: string | null
+  card: BattenCard
+  updatedAt: string | null
+}
+
+/** The card for one mainsail, or null when it has none of its own. */
+export function cardForSail(
+  cards: readonly SailBattenCard[] | null | undefined,
+  sailId: string | null | undefined
+): BattenCard | null {
+  if (!sailId) return null
+  return (cards || []).find((c) => c.sailId === sailId)?.card ?? null
+}
+
+/**
+ * The card left over from before cards were per-sail.
+ *
+ * Offered to a main that has none of its own so hand-entered work is not thrown
+ * away by the schema change — but never silently adopted, because nobody has
+ * said which main it describes.
+ */
+export const unassignedCard = (
+  cards: readonly SailBattenCard[] | null | undefined
+): BattenCard | null => (cards || []).find((c) => c.sailId == null)?.card ?? null
 
 /** True when a cell holds nothing worth storing. */
 export const isBlankSetting = (s: BattenSetting | null | undefined): boolean =>

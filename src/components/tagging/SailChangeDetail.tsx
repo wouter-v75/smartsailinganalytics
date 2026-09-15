@@ -37,8 +37,10 @@ export interface SailChangeDetailProps {
   onBoard: SailRef[]
   /** What was up before this change, for the "carried over" line. */
   previous?: { state: SailState; utc: number } | null
-  /** The boat's batten card, for the recommendation. */
+  /** The batten card of the mainsail that is up. */
   battenCard?: BattenCard | null
+  /** That mainsail's name, so the tab can say whose card it is showing. */
+  battenCardSail?: string | null
   /** True wind speed at the tag's time, for which band to recommend. */
   twsKn?: number | null
   tzOffsetMin?: number
@@ -49,7 +51,7 @@ export interface SailChangeDetailProps {
 type Pane = 'up' | 'onboard' | 'battens'
 
 export default function SailChangeDetail({
-  value, onChange, inventory, onBoard, previous, battenCard, twsKn,
+  value, onChange, inventory, onBoard, previous, battenCard, battenCardSail, twsKn,
   tzOffsetMin = 0, onEditSailList,
 }: SailChangeDetailProps) {
   const [pane, setPane] = React.useState<Pane>('up')
@@ -186,6 +188,9 @@ export default function SailChangeDetail({
             {band
               ? <>Card for <span className="font-semibold text-secondary">{band.label} kn</span>{twsKn != null && ` · ${twsKn.toFixed(1)} kn now`}</>
               : 'No wind reading at this time — the card cannot suggest a band.'}
+            {/* Whose card. A boat with two mains needs to know which one is
+                being suggested, or a right-looking number is worse than none. */}
+            {battenCard && battenCardSail && <> · <span className="font-semibold text-secondary">{battenCardSail}</span></>}
           </p>
           <div className="flex flex-col gap-2">
             {battens.map((b) => {
@@ -258,8 +263,8 @@ export default function SailChangeDetail({
           </div>
           {!battenCard && (
             <p className="mt-2 text-[11px] text-muted">
-              No batten card for this boat yet — set one up in Boat → Battens and
-              it will suggest the setting for the breeze.
+              No batten card for the main that is up — set one up in
+              Boat → Battens and it will suggest the setting for the breeze.
             </p>
           )}
         </div>
