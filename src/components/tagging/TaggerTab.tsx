@@ -1,6 +1,6 @@
 'use client'
 import * as React from 'react'
-import { ListChecks, Film, Tags, Map, RefreshCw, AlertCircle, Sailboat } from 'lucide-react'
+import { ListChecks, Film, Tags, Map, RefreshCw, AlertCircle, Sailboat, Plus } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import { useTagger } from '@/lib/tagging/useTagger'
 import { detectDay, type Detection } from '@/lib/tagging/detect'
@@ -9,6 +9,7 @@ import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder, GRAB_VIDEO_SLUG, grabMediaKind } from '@/lib/tagging/requests'
 import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
 import { hasStatedDeck, sailStateAt, weightAboard, SAIL_CHANGE_SLUG } from '@/lib/tagging/sailState'
+import { linkDay, missingFromInventory, sailsToCreate } from '@/lib/tagging/sailLink'
 import { sailDetail, sailSheetDetail, useSailContext } from './sailChangeDetail.helpers'
 import { useDayMedia } from './useDayMedia'
 import TagButtonBar from './TagButtonBar'
@@ -134,18 +135,57 @@ export default function TaggerTab({
   // filmed" without leaving the tagger.
   const dayMedia = useDayMedia(teamId, boatId, date, tzOffsetMin)
 
+  // The day's tags with every sail resolved to its inventory row. A DERIVED
+  // view — nothing is written back — because the identity problem is felt in
+  // the fold, the composer and the weight, not in the stored rows. Without it
+  // the event file's "Main" and the inventory's "Main" are two different sails
+  // that happen to share a spelling.
+  const events = React.useMemo(
+    () => linkDay(t.events, sailCtx.inventory),
+    [t.events, sailCtx.inventory]
+  )
+
+  // Sails the event file names that the boat's inventory has never heard of.
+  // Not created automatically: a file with a stray space in it would mint a
+  // second "J2 " nobody asked for, and an inventory is a thing crews curate.
+  const unknownSails = React.useMemo(
+    () => (sailCtx.inventory.length ? missingFromInventory(t.events, sailCtx.inventory) : []),
+    [t.events, sailCtx.inventory]
+  )
+  const [addingSails, setAddingSails] = React.useState(false)
+
+  const addMissingSails = async () => {
+    if (!teamId || !boatId || addingSails || !unknownSails.length) return
+    setAddingSails(true)
+    try {
+      await fetch(`/api/teams/${teamId}/sails/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          boat_id: boatId,
+          sails: sailsToCreate(unknownSails),
+          // NOT a reconcile: this adds what is missing. The importer's default
+          // is to treat its payload as the WHOLE inventory and retire anything
+          // absent from it, which here would retire the boat's entire sail
+          // locker on the way to adding one storm jib.
+          reconcile: false,
+        }),
+      })
+      await sailCtx.reload()
+    } finally {
+      setAddingSails(false)
+    }
+  }
+
   // Nobody has said what is ON the boat today, so every weight-aboard figure
   // downstream is a floor rather than a number. Asked once, at the top, rather
   // than left to be discovered at the debrief.
   const deckUnknown = React.useMemo(
-    () => !t.loading && !hasStatedDeck(t.events),
-    [t.loading, t.events]
+    () => !t.loading && !hasStatedDeck(events),
+    [t.loading, events]
   )
   // What is aboard now, for the line that says so.
-  const deck = React.useMemo(
-    () => sailStateAt(t.events, Date.now()),
-    [t.events]
-  )
+  const deck = React.useMemo(() => sailStateAt(events, Date.now()), [events])
   const [composeReq, setComposeReq] = React.useState<{ slug: string; at: number } | null>(null)
 
   // Where the day's data actually runs. The composer clamps its nudges to it,
@@ -244,6 +284,11 @@ export default function TaggerTab({
                 onSync={() => t.sync(detections)}
               />
             )}
+            <UnknownSails
+              names={unknownSails}
+              busy={addingSails}
+              onAdd={addMissingSails}
+            />
             <DeckBar
               unknown={deckUnknown}
               deck={deck}
@@ -445,6 +490,45 @@ export default function TaggerTab({
           }
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * Sails the event file names that the inventory does not have.
+ *
+ * An unlinked sail is a sail with no weight, no batten card and no scans — so
+ * it silently drops out of the weight aboard and cannot be the main whose
+ * battens the composer offers. Adding it costs one tap and the inventory is
+ * where it belongs.
+ *
+ * Named rather than counted: "3 sails missing" is a number somebody dismisses,
+ * and "Storm jib" is a sail they recognise.
+ */
+function UnknownSails({
+  names, busy, onAdd,
+}: {
+  names: string[]
+  busy: boolean
+  onAdd: () => void
+}) {
+  if (!names.length) return null
+  return (
+    <div className="flex items-center gap-2 border-b border-[color:var(--border)] bg-warning-bg px-3 py-2">
+      <Plus size={15} className="shrink-0 text-warning" aria-hidden />
+      <span className="min-w-0 flex-1 text-xs text-warning">
+        <span className="font-semibold">
+          {names.length === 1 ? 'A sail' : `${names.length} sails`} in the event file
+        </span>{' '}
+        {names.length === 1 ? 'is' : 'are'} not in the boat’s inventory: {names.join(', ')}
+      </span>
+      <button
+        onClick={onAdd}
+        disabled={busy}
+        className="min-h-[40px] shrink-0 rounded-lg bg-warning px-3 text-xs font-semibold text-black disabled:opacity-60"
+      >
+        {busy ? 'Adding…' : 'Add to inventory'}
+      </button>
     </div>
   )
 }

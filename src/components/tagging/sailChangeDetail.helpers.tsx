@@ -29,6 +29,9 @@ export interface SailContext {
    *  show when the crew changes what is up. */
   mainsailIds: string[]
   loading: boolean
+  /** Re-read the boat's inventory — after sails have been added to it, so the
+   *  day's tags link to the rows that now exist. */
+  reload: () => void
 }
 
 export function useSailContext(
@@ -42,6 +45,8 @@ export function useSailContext(
   const [weights, setWeights] = React.useState<Record<string, number>>({})
   const [battenCards, setBattenCards] = React.useState<SailBattenCard[]>([])
   const [loading, setLoading] = React.useState(false)
+  // Bumped to re-read the boat's inventory without changing boat or day.
+  const [gen, setGen] = React.useState(0)
 
   // The inventory and the batten cards belong to the BOAT, so they survive a
   // change of day; only the sail list is reloaded when the date moves.
@@ -74,7 +79,7 @@ export function useSailContext(
       setBattenCards((battens?.cards || []) as SailBattenCard[])
     })
     return () => { live = false }
-  }, [teamId, boatId])
+  }, [teamId, boatId, gen])
 
   React.useEffect(() => {
     if (!teamId || !boatId || !date) { setDayList([]); return }
@@ -97,7 +102,10 @@ export function useSailContext(
     return () => { live = false }
   }, [teamId, boatId, date])
 
-  return { inventory, mainsailIds, weights, dayList, battenCards, loading }
+  return {
+    inventory, mainsailIds, weights, dayList, battenCards, loading,
+    reload: React.useCallback(() => setGen((n) => n + 1), []),
+  }
 }
 
 /**

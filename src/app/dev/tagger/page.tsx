@@ -14,6 +14,7 @@ import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
 import { canEditTagEvent } from '@/lib/tagging/gating'
 import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
+import { linkDay, missingFromInventory } from '@/lib/tagging/sailLink'
 import DuplicateList from '@/components/tagging/DuplicateList'
 import { sailSheetDetail, type SailContext } from '@/components/tagging/sailChangeDetail.helpers'
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
@@ -128,6 +129,10 @@ const events: TagEvent[] = [
   tag({ slug: 'sail-change', label: 'Sails changed', color: '#F59E0B', producer: 'eventfile',
         confidence: 0.98, t0: T(12, 15), t1: T(12, 15, 20),
         meta: { raceNum: 1, sails: ['Main', 'J4'] } }),
+  // A sail the event file names that the boat's inventory has never heard of.
+  tag({ slug: 'sail-change', label: 'A4 up', color: '#F59E0B', producer: 'eventfile',
+        confidence: 0.98, t0: T(13, 20), t1: T(13, 20, 20),
+        meta: { raceNum: 2, sails: ['Main', 'A4'] } }),
   tag({ slug: 'gate', label: 'Leeward gate', color: '#8B5CF6', producer: 'eventfile', confidence: 0.6,
         t0: T(12, 50), t1: T(12, 50, 30), meta: { raceNum: 1, valid: false } }),
   // Tagged on the water; the event file arrived that evening with its own. The
@@ -243,6 +248,7 @@ const SAIL_CTX: SailContext = {
   battenCards: [{ sailId: 'i1', card: BATTEN_CARD, updatedAt: null }],
   mainsailIds: ['i1'],
   loading: false,
+  reload: () => {},
 }
 
 type View = 'tagger' | 'track' | 'check' | 'debrief'
@@ -261,7 +267,11 @@ export default function TaggerPreview() {
   // point of the thing being previewed.
   const [evts, setEvts] = React.useState<TagEvent[]>(events)
   const [role, setRole] = React.useState<'tl3' | 'tl1'>('tl3')
-  const items = React.useMemo(() => withRequests(evts, requests), [evts])
+  // The same derived view TaggerTab builds: every sail resolved to its
+  // inventory row before anything folds the day.
+  const linked = React.useMemo(() => linkDay(evts, INVENTORY), [evts])
+  const unknownSails = React.useMemo(() => missingFromInventory(evts, INVENTORY), [evts])
+  const items = React.useMemo(() => withRequests(linked, requests), [linked])
   const open = items.find((i) => i.tag.id === openId) || null
   // Somebody who is not the author: at tl3 they may retime anyone's tag, at tl1
   // only their own — which is what the menu has to reflect.
@@ -328,11 +338,24 @@ export default function TaggerPreview() {
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view === 'tagger' && (
           <>
+            {unknownSails.length > 0 && (
+              <div className="flex items-center gap-2 border-b border-[color:var(--border)] bg-warning-bg px-3 py-2">
+                <span className="min-w-0 flex-1 text-xs text-warning">
+                  <span className="font-semibold">
+                    {unknownSails.length === 1 ? 'A sail' : `${unknownSails.length} sails`} in the event file
+                  </span>{' '}
+                  {unknownSails.length === 1 ? 'is' : 'are'} not in the boat’s inventory: {unknownSails.join(', ')}
+                </span>
+                <button className="min-h-[40px] shrink-0 rounded-lg bg-warning px-3 text-xs font-semibold text-black">
+                  Add to inventory
+                </button>
+              </div>
+            )}
             {/* The same two states TaggerTab renders: asked while unknown,
                 stated once it is known. */}
-            {hasStatedDeck(evts) ? (
+            {hasStatedDeck(linked) ? (
               (() => {
-                const deck = sailStateAt(evts, T(23, 0))
+                const deck = sailStateAt(linked, T(23, 0))
                 const kg = weightAboard(deck, (x) => (x.id ? SAIL_KG[x.id] ?? null : null))
                 return (
                   <div className="flex w-full items-center gap-2 border-b border-[color:var(--border)] bg-surface-1 px-3 py-2">
