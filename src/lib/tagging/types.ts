@@ -74,6 +74,10 @@ export interface TagDef {
   builtin: boolean
   archived: boolean
   sort: number
+  /** Whether THIS user may apply it. Decided server-side by canApplyTagDef and
+   *  sent with every def; absent on the seed shapes used in tests and previews,
+   *  which counts as allowed. */
+  canApply?: boolean
 }
 
 export interface TagEvent {

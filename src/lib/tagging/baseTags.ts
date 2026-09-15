@@ -147,6 +147,12 @@ const DAY: BaseTag[] = [
   mk('dock-out', 'Dock out', DAY_C, { sort: 70 }),
   mk('dock-in', 'Dock in', DAY_C, { sort: 71 }),
   mk('warning-signal', 'Warning signal', DAY_C, { sort: 72 }),
+  // The finish. Deliberately NOT added to racingTags.ts, which is the whitelist
+  // deciding what shows on a media card — widening that would change every
+  // thumbnail in the app. This is a tag definition, nothing more.
+  mk('race-finish', 'Finish', RACE_RED, {
+    sort: 19, labelGroups: [QUALITY], leadSec: 30, lagSec: 20,
+  }),
   mk('sail-change', 'Sail change', DAY_C, {
     sort: 73, onButtonBar: true, leadSec: 20, lagSec: 20,
     labelGroups: [{ group: 'Change', options: ['hoist', 'drop', 'peel', 'reef', 'unreef'] }],
@@ -166,6 +172,17 @@ const DAY: BaseTag[] = [
     labelGroups: [{ group: 'Testing', options: ['rig', 'sail', 'trim mode', 'foil', 'crew weight'] }],
   }),
   mk('incident', 'Incident', '#EF4444', { sort: 80, onButtonBar: true, leadSec: 20, lagSec: 20 }),
+  // Rig changes are the one setup input nothing in the data can see: the log
+  // records what the boat did, never that somebody wound two turns onto the
+  // caps at 11:40. Untagged, an afternoon of rig work reads as unexplained
+  // scatter in the numbers.
+  mk('rig-change', 'Rig', '#2DD4BF', {
+    sort: 76, onButtonBar: true, leadSec: 15, lagSec: 15,
+    labelGroups: [
+      { group: 'What', options: ['forestay', 'rake', 'caps', 'lowers', 'D1', 'D2', 'runners', 'mast butt'] },
+      { group: 'Change', options: ['on', 'off', 'up', 'down', 'fwd', 'aft'] },
+    ],
+  }),
   mk('gear-damage', 'Gear damage', '#EF4444', {
     sort: 81, onButtonBar: true, leadSec: 20, lagSec: 20,
     labelGroups: [{ group: 'Where', options: ['rig', 'sail', 'deck gear', 'winch', 'foil', 'electronics'] }],
@@ -203,7 +220,7 @@ const SECTIONS: BaseTag[] = CREW_SECTIONS.flatMap((s, si) =>
 )
 
 // ── What earns a place on the button bar ────────────────────────────────────
-// Seven buttons, and every one of them marks something no algorithm can infer:
+// Eight buttons, and every one of them marks something no algorithm can infer:
 //
 //   Personal note   how it felt, privately
 //   Team comment    how it felt, to the crew  (TL2+)
@@ -212,7 +229,13 @@ const SECTIONS: BaseTag[] = CREW_SECTIONS.flatMap((s, si) =>
 //   Gear damage     the engineer's one press
 //   Sail change     the trimmer's, and the only racing moment here — because on
 //                   a training day there is no event file to detect it from
+//   Rig             two turns on the caps at 11:40, which the log cannot see
 //   Line-up         the start and end of a two-boat test run
+//
+// Plus ONE group button, "Racing", standing for start / top mark / gate / mark
+// / finish — see barGroups.ts. Those are the detector's job on a race day, so
+// they do not each earn a slot; the group is there for the training day with no
+// event file, and for the one the detector missed.
 //
 // Kept short on purpose: rare codes depress how consistently a squad tags, even
 // when everyone agrees on the common ones. The full vocabulary lives one tap

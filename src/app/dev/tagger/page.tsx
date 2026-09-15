@@ -5,6 +5,7 @@ import TagTrack from '@/components/tagging/TagTrack'
 import ReviewQueue from '@/components/tagging/ReviewQueue'
 import DebriefReel from '@/components/tagging/DebriefReel'
 import TagSheet from '@/components/tagging/TagSheet'
+import TrackView from '@/components/tagging/TrackView'
 import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
@@ -50,6 +51,27 @@ const tag = (over: Partial<TagEvent>): TagEvent => ({
   autoT0: 'autoT0' in over ? over.autoT0! : (over.t0 ?? T(12, 10)),
   autoT1: 'autoT1' in over ? over.autoT1! : (over.t1 ?? T(12, 10, 22)),
 })
+
+// A synthetic windward/leeward: two laps up and down with a tack every couple
+// of minutes, so the track view has a recognisable course rather than a blob.
+const TRACK_ROWS = (() => {
+  const out: { utc: number; lat: number; lon: number }[] = []
+  const t0 = T(11, 20)
+  const legs = 8               // beat, run, beat, run …
+  const legSec = 8 * 60
+  for (let i = 0; i < legs * legSec; i += 5) {
+    const leg = Math.floor(i / legSec)
+    const f = (i % legSec) / legSec
+    const up = leg % 2 === 0
+    const lat = 39.50 + (up ? f : 1 - f) * 0.018
+    // Tack every ~110 s on the beats; the runs are gybed once in the middle.
+    const zig = up
+      ? (Math.floor((i % legSec) / 110) % 2 ? 1 : -1) * 0.004 * Math.sin((f * Math.PI))
+      : (f < 0.5 ? -1 : 1) * 0.003
+    out.push({ utc: t0 + i * 1000, lat, lon: 2.62 + zig + leg * 0.0006 })
+  }
+  return out
+})()
 
 const events: TagEvent[] = [
   tag({ slug: 'sail-change', label: 'J2 + Main', color: '#F59E0B', source: 'human', producer: 'user',
@@ -108,10 +130,11 @@ const segments = segmentDay({
   dayStartUtc: T(11, 20), dayStopUtc: T(15, 30),
 })
 
-type View = 'track' | 'check' | 'debrief'
+type View = 'tagger' | 'track' | 'check' | 'debrief'
 
 export default function TaggerPreview() {
-  const [view, setView] = React.useState<View>('track')
+  const [view, setView] = React.useState<View>('tagger')
+  const [picked, setPicked] = React.useState<number | null>(null)
   const [openId, setOpenId] = React.useState<string | null>(null)
   const [theme, setTheme] = React.useState<'dark' | 'light'>('dark')
   React.useEffect(() => { document.documentElement.setAttribute('data-theme', theme) }, [theme])
@@ -130,7 +153,7 @@ export default function TaggerPreview() {
       </div>
 
       <div role="tablist" className="flex shrink-0 gap-1 border-b border-[color:var(--border)] bg-surface-1 p-2">
-        {(['track', 'check', 'debrief'] as View[]).map((v) => (
+        {(['tagger', 'track', 'check', 'debrief'] as View[]).map((v) => (
           <button
             key={v}
             role="tab"
@@ -146,8 +169,14 @@ export default function TaggerPreview() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {view === 'track' && (
+        {view === 'tagger' && (
           <TagTrack items={items} segments={segments} currentUserId="me" onOpen={setOpenId} />
+        )}
+        {view === 'track' && (
+          <TrackView
+            rows={TRACK_ROWS} items={items} segments={segments}
+            selectedUtc={picked} onSelect={setPicked} onOpenTag={setOpenId}
+          />
         )}
         {view === 'check' && (
           <ReviewQueue tags={events} onVerify={noop} onReject={noop} onOpen={(t) => setOpenId(t.id)} />
@@ -162,7 +191,9 @@ export default function TaggerPreview() {
 
       <TagButtonBar
         defs={defs.filter((d) => d.onButtonBar)}
-        nowUtc={() => T(12, 34)}
+        allDefs={defs}
+        nowUtc={() => picked ?? T(12, 34)}
+        bounds={{ min: T(11, 20), max: T(15, 30) }}
         onApply={async () => {}}
       />
 

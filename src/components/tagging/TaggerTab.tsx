@@ -1,15 +1,16 @@
 'use client'
 import * as React from 'react'
-import { ListChecks, Film, Tags, RefreshCw, AlertCircle } from 'lucide-react'
+import { ListChecks, Film, Tags, Map, RefreshCw, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import { useTagger } from '@/lib/tagging/useTagger'
 import { detectDay, type Detection } from '@/lib/tagging/detect'
-import { segmentDay, type DaySegment } from '@/lib/tagging/segments'
+import { segmentDay, segmentAt, type DaySegment } from '@/lib/tagging/segments'
 import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder } from '@/lib/tagging/requests'
 import TagButtonBar from './TagButtonBar'
 import TagTrack from './TagTrack'
 import TagSheet from './TagSheet'
+import TrackView from './TrackView'
 import ReviewQueue, { REVIEW_THRESHOLD } from './ReviewQueue'
 import DebriefReel from './DebriefReel'
 
@@ -18,14 +19,21 @@ import DebriefReel from './DebriefReel'
 // matters is in the bottom half of the screen where a thumb reaches, and nothing
 // needs a second hand.
 //
-// Three views, one segmented control:
+// Four views, one segmented control:
 //
-//   Track    the day, grouped into pre-race / race 1 / between / race 2 / after
+//   Tagger   the day as a list, grouped into pre-race / race 1 / between / after
+//   Track    the same day as a shape, for pointing at a moment you can see but
+//            could not name a time for
 //   Check    the review queue — least certain detection first, two big buttons
 //   Debrief  the shortlist the crew nominated, and the reel the coach built
 //
-// The button bar is pinned to the bottom of all three, because the crew's own
-// tags are the point and they should never be more than one thumb away.
+// Tagger and Track are two views of one thing, and which one is better depends
+// on the question: a list is a clock and reads top to bottom; a track is a
+// course and answers "the bad tack at the left-hand corner of the second beat".
+//
+// The button bar is pinned to the bottom of all four, because the crew's own
+// tags are the point and they should never be more than one thumb away. What
+// differs is what "now" means to it — see `now` below.
 
 export interface TaggerTabProps {
   teamId?: string | null
@@ -43,15 +51,23 @@ export interface TaggerTabProps {
   playheadUtc?: number | null
 }
 
-type View = 'track' | 'check' | 'debrief'
+type View = 'tagger' | 'track' | 'check' | 'debrief'
 
 export default function TaggerTab({
   teamId, boatId, date, sessionId, userId, tzOffsetMin = 0,
   logRows, xml, playheadUtc,
 }: TaggerTabProps) {
   const t = useTagger({ teamId, boatId, date, sessionId })
-  const [view, setView] = React.useState<View>('track')
+  const [view, setView] = React.useState<View>('tagger')
   const [openId, setOpenId] = React.useState<string | null>(null)
+  // A moment picked by holding the track. While one is held the button bar tags
+  // THERE rather than now — which is the entire point of the track view.
+  const [pickedUtc, setPickedUtc] = React.useState<number | null>(null)
+
+  // The pick belongs to the track. Carrying it into the list view would leave
+  // the bar quietly tagging 12:18 with the only thing that said so two screens
+  // back — the kind of hidden mode that puts a tag somewhere nobody meant.
+  React.useEffect(() => { if (view !== 'track') setPickedUtc(null) }, [view])
 
   // Detection is pure and the day's data is already here, so it runs locally.
   // The server decides what the result MEANS for the rows that exist — see the
@@ -92,9 +108,31 @@ export default function TaggerTab({
     [t.events]
   )
 
+  // Where the day's data actually runs. The composer clamps its nudges to it,
+  // so −10m pressed twice cannot put a tag before the boat left the dock.
+  const bounds = React.useMemo(() => {
+    const rows = logRows || []
+    if (!rows.length) return undefined
+    return { min: rows[0]?.utc ?? null, max: rows[rows.length - 1]?.utc ?? null }
+  }, [logRows])
+
+  // What a press means, most specific first: a moment held on the track, then
+  // the video playhead, then the wall clock. Tagging the track and having the
+  // tag land at "now" would make the whole view decorative.
   const now = React.useCallback(
-    () => (playheadUtc != null && Number.isFinite(playheadUtc) ? playheadUtc : Date.now()),
-    [playheadUtc]
+    () => {
+      if (pickedUtc != null && Number.isFinite(pickedUtc)) return pickedUtc
+      if (playheadUtc != null && Number.isFinite(playheadUtc)) return playheadUtc
+      return Date.now()
+    },
+    [pickedUtc, playheadUtc]
+  )
+
+  // "Race 2" under the composer's clock, so a corrected time can be seen to
+  // have moved out of the race it was meant for.
+  const contextAt = React.useCallback(
+    (utc: number) => (segments.length ? segmentAt(segments, utc)?.label ?? null : null),
+    [segments]
   )
 
   const open = t.items.find((i) => i.tag.id === openId) || null
@@ -116,7 +154,8 @@ export default function TaggerTab({
         aria-label="Tagging views"
         className="flex shrink-0 gap-1 border-b border-[color:var(--border)] bg-surface-1 p-2"
       >
-        <ViewTab active={view === 'track'} onClick={() => setView('track')} icon={<Tags size={15} />} label="Track" count={t.events.length} />
+        <ViewTab active={view === 'tagger'} onClick={() => setView('tagger')} icon={<Tags size={15} />} label="Tagger" count={t.events.length} />
+        <ViewTab active={view === 'track'} onClick={() => setView('track')} icon={<Map size={15} />} label="Track" />
         <ViewTab active={view === 'check'} onClick={() => setView('check')} icon={<ListChecks size={15} />} label="Check" count={unchecked} alert={uncertain > 0} />
         <ViewTab active={view === 'debrief'} onClick={() => setView('debrief')} icon={<Film size={15} />} label="Debrief" count={t.items.filter((i) => i.tag.reelOrder != null).length} />
       </div>
@@ -137,7 +176,7 @@ export default function TaggerTab({
               <div key={i} className="mb-2 h-14 animate-pulse rounded-lg bg-surface-2" />
             ))}
           </div>
-        ) : view === 'track' ? (
+        ) : view === 'tagger' ? (
           <>
             {detections.length > 0 && (
               <SyncBar
@@ -155,13 +194,23 @@ export default function TaggerTab({
               tzOffsetMin={tzOffsetMin}
             />
           </>
+        ) : view === 'track' ? (
+          <TrackView
+            rows={logRows || []}
+            items={t.items}
+            segments={segments}
+            selectedUtc={pickedUtc}
+            onSelect={setPickedUtc}
+            onOpenTag={setOpenId}
+            tzOffsetMin={tzOffsetMin}
+          />
         ) : view === 'check' ? (
           <ReviewQueue
             tags={t.events}
             tzOffsetMin={tzOffsetMin}
             onVerify={(id) => t.patch(id, { op: 'verify' })}
             onReject={(id) => t.patch(id, { op: 'reject' })}
-            onOpen={(tag) => { setView('track'); setOpenId(tag.id) }}
+            onOpen={(tag) => { setView('tagger'); setOpenId(tag.id) }}
           />
         ) : (
           <DebriefReel
@@ -171,7 +220,7 @@ export default function TaggerTab({
             tzOffsetMin={tzOffsetMin}
             onNominate={(id) => t.request(id, 'debrief')}
             onSetReel={(id, order) => t.patch(id, { op: 'reel', order })}
-            onOpen={(id) => { setView('track'); setOpenId(id) }}
+            onOpen={(id) => { setView('tagger'); setOpenId(id) }}
           />
         )}
       </div>
@@ -179,9 +228,18 @@ export default function TaggerTab({
       {/* ── The crew's own tags, always one thumb away ─────────────────────── */}
       <TagButtonBar
         defs={t.buttonBar}
+        allDefs={t.defs}
         nowUtc={now}
         tzOffsetMin={tzOffsetMin}
-        onApply={(slug, at, opts) => t.apply(slug, at, opts)}
+        bounds={bounds}
+        contextAt={contextAt}
+        onApply={async (slug, at, opts) => {
+          const made = await t.apply(slug, at, opts)
+          // Tagging a held point and leaving it held invites a second tag landing
+          // on the first by accident. One press, one moment.
+          if (made) setPickedUtc(null)
+          return made
+        }}
         disabled={t.loading}
       />
 
@@ -247,17 +305,26 @@ function ViewTab({
       role="tab"
       aria-selected={active}
       onClick={onClick}
+      // Four tabs, each carrying a word, a count and an icon, are wider than a
+      // phone: a flex item's min-width defaults to auto, so the row was pushing
+      // "Debrief" off the side of the screen, and capping it merely truncated
+      // every label to "Ta…" and "Ch…".
+      //
+      // So they are dropped in order of what they are worth. The WORD is the
+      // tab and is always there. The COUNT appears from 380px, where there is
+      // room for it beside the longest label. The ICON is decoration and waits
+      // until 480px. Nothing truncates at any width.
       className={cn(
-        'flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-medium',
+        'flex min-h-[44px] min-w-0 flex-1 items-center justify-center gap-1 overflow-hidden rounded-lg px-1.5 text-[13px] font-medium',
         active ? 'bg-accent text-accent-fg' : 'bg-surface-2 text-secondary'
       )}
     >
-      {icon}
-      <span>{label}</span>
+      <span className="hidden shrink-0 min-[480px]:inline">{icon}</span>
+      <span className="truncate">{label}</span>
       {count != null && count > 0 && (
         <span
           className={cn(
-            'rounded-full px-1.5 text-[11px] font-bold',
+            'hidden shrink-0 rounded-full px-1 text-[11px] font-bold min-[380px]:inline',
             active ? 'bg-black/20' : alert ? 'bg-warning-bg text-warning' : 'bg-surface-1'
           )}
         >
