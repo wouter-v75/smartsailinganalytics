@@ -50,10 +50,16 @@ export default function TagTrack({
       .map((segment) => ({ segment, items: bySeg.get(segment.key) || [] }))
       .filter((g) => g.items.length)
     if (loose.length) {
+      // "Outside the day" is only true when a day was worked out and these tags
+      // fell beyond it. With no segments at all — the log has not loaded, so
+      // nothing is known about when racing happened — every tag is "loose", and
+      // calling the whole day "outside the day" is simply wrong.
       out.push({
         segment: {
           key: 'other', kind: 'session', raceNum: null,
-          t0: 0, t1: 0, label: 'Outside the day', endSource: 'data-end',
+          t0: 0, t1: 0,
+          label: segments.length ? 'Outside the day' : 'The day',
+          endSource: 'data-end',
         } as DaySegment,
         items: loose,
       })

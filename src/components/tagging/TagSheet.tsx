@@ -64,7 +64,13 @@ export default function TagSheet(props: TagSheetProps) {
   React.useEffect(() => { setNote(t.note || '') }, [t.id, t.note])
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
+    // ABSOLUTE, not fixed. A fixed sheet is measured against the viewport, and
+    // inside the app shell the bottom ~52px of the viewport is the tab bar — so
+    // the last row of the sheet (Delete, and the safe-area padding under it)
+    // came out underneath it. Absolute pins the sheet to the tagger pane, which
+    // already stops where the tab bar starts. TaggerTab's root is `relative`
+    // for exactly this; so is the /dev/tagger harness.
+    <div className="absolute inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
       <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/50" />
 
       <div

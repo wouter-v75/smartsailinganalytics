@@ -155,8 +155,15 @@ export function snapTag(
   const allowed = options.slugs ?? compatibleSlugs(tag.slug)
   const pool = allowed == null ? detections : detections.filter((d) => allowed.includes(d.slug))
   if (!pool.length) {
-    const what = allowed == null ? 'detections' : allowed.join(' or ')
-    return { ok: false, reason: `No ${what} detected on this day` }
+    // "No detections detected on this day" is what the obvious template gives
+    // you when the tag has no compatible slug list. Say it the way a person
+    // would instead.
+    return {
+      ok: false,
+      reason: allowed == null
+        ? 'Nothing detected on this day'
+        : `No ${allowed.join(' or ')} detected on this day`,
+    }
   }
 
   let best: Detection | null = null
@@ -168,7 +175,7 @@ export function snapTag(
 
   if (!best || bestScore < 0) {
     const secs = Math.round(o.backMs / 1000)
-    const what = allowed == null ? 'nothing detected' : `no ${allowed.join(' or ')}`
+    const what = allowed == null ? 'Nothing detected' : `No ${allowed.join(' or ')}`
     return { ok: false, reason: `${what} within ${secs}s before this tag` }
   }
 

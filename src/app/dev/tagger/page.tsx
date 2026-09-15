@@ -121,7 +121,7 @@ export default function TaggerPreview() {
   const noop = () => {}
 
   return (
-    <div className="flex h-[100dvh] flex-col bg-bg text-fg">
+    <div className="relative flex h-[100dvh] flex-col overflow-hidden bg-bg text-fg">
       <div className="flex shrink-0 items-center gap-2 border-b border-[color:var(--border)] px-3 py-1.5 text-[11px] text-muted">
         <span>Tagger preview · fixture data</span>
         <button onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} className="ml-auto min-h-[44px] px-2 underline">

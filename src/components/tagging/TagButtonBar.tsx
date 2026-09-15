@@ -28,12 +28,14 @@ export interface TagButtonBarProps {
   onApply: (slug: string, at: number, opts?: { note?: string }) => Promise<unknown>
   disabled?: boolean
   className?: string
+  /** Minutes east of UTC for the session — the same clock the track shows. */
+  tzOffsetMin?: number
 }
 
 const NOTE_SLUGS = new Set(['note', 'team-note'])
 
 export default function TagButtonBar({
-  defs, nowUtc, onApply, disabled, className,
+  defs, nowUtc, onApply, disabled, className, tzOffsetMin = 0,
 }: TagButtonBarProps) {
   const [composing, setComposing] = React.useState<{ def: TagDef; at: number } | null>(null)
   const [pending, setPending] = React.useState<string | null>(null)
@@ -115,6 +117,7 @@ export default function TagButtonBar({
           def={composing.def}
           at={composing.at}
           onCancel={() => setComposing(null)}
+          tzOffsetMin={tzOffsetMin}
           onSend={async (text) => {
             const { def, at } = composing
             setComposing(null)
@@ -135,12 +138,13 @@ export default function TagButtonBar({
  * about — a detail that matters when you type it four minutes later.
  */
 function NoteComposer({
-  def, at, onCancel, onSend,
+  def, at, onCancel, onSend, tzOffsetMin = 0,
 }: {
   def: TagDef
   at: number
   onCancel: () => void
   onSend: (text: string) => void | Promise<void>
+  tzOffsetMin?: number
 }) {
   const [text, setText] = React.useState('')
   const [sending, setSending] = React.useState(false)
@@ -155,10 +159,14 @@ function NoteComposer({
     await onSend(t)
   }
 
-  const time = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  // The SESSION's clock, not the phone's. toLocaleTimeString() reads the device
+  // timezone and the device's 12/24-hour preference, so a phone still on UK time
+  // in Palma stamped the note an hour off from the track right beside it.
+  const time = new Date(at + tzOffsetMin * 60_000).toISOString().slice(11, 19)
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
+    // Absolute, for the same reason TagSheet is — see the note there.
+    <div className="absolute inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
       <button
         aria-label="Cancel"
         onClick={onCancel}

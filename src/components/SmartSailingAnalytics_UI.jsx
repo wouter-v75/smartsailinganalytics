@@ -54,6 +54,7 @@ const TabLoading = () => (
 const PhotosTab      = dynamic(() => import("./PhotosTab"),      { ssr:false, loading:TabLoading });
 const SquashShotsApp = dynamic(() => import("./SquashShotsApp"), { ssr:false, loading:TabLoading });
 const SailScanTab    = dynamic(() => import("./SailScanTab"),    { ssr:false, loading:TabLoading });
+const TaggerTab      = dynamic(() => import("./tagging/TaggerTab"), { ssr:false, loading:TabLoading });
 
 // Tools tab = two SEPARATE sub-tabs (Squash | SailScan), one visible at a time,
 // each filling the whole area. Both stay mounted (display toggle) so in-progress
@@ -4324,7 +4325,7 @@ function AIChatPanel({rows, allVideos}){
 // playUtc   — current video UTC for boat marker (null = no video playing)
 // visible   — whether the Analytics tab is currently shown (for Leaflet resize)
 
-function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, photos=[], selection=null, onSelection=null}){
+function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=[], selection=null, onSelection=null}){
   const tz=useTz();
   const containerRef = React.useRef(null);
   const mapRef       = React.useRef(null);
@@ -4363,8 +4364,10 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
   // Keep callbacks in refs so Leaflet click closures always have the latest values
   const onSelectVideoRef = React.useRef(onSelectVideo);
   const onSwitchTabRef   = React.useRef(onSwitchTab);
+  const onPlayClipRef    = React.useRef(onPlayClip);
   React.useEffect(()=>{ onSelectVideoRef.current=onSelectVideo; },[onSelectVideo]);
   React.useEffect(()=>{ onSwitchTabRef.current=onSwitchTab; },  [onSwitchTab]);
+  React.useEffect(()=>{ onPlayClipRef.current=onPlayClip; },    [onPlayClip]);
   const playUtcRef = React.useRef(playUtc);
   React.useEffect(()=>{ playUtcRef.current = playUtc; },[playUtc]);
   const onSelectionRef = React.useRef(onSelection);
@@ -4458,9 +4461,13 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
           opacity:0.28,
           smoothFactor:1,
         })
-          .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min<br><span style="font-size:10px;color:#94A3B8">Click to open in Videos</span>`,{allowHTML:true})
+          .bindTooltip(`📹 ${vid.title||'Video'} · ${Math.round(vid.duration/60)}min<br><span style="font-size:10px;color:#94A3B8">${onPlayClipRef.current?'Click to play':'Click to open in Videos'}</span>`,{allowHTML:true})
           .addTo(map);
         polyline.on('click',()=>{
+          // A player, not a tab. Where onPlayClip is supplied (the phone, which
+          // has no Videos tab) the clip opens over the track it was clicked on;
+          // elsewhere the old behaviour stands.
+          if(onPlayClipRef.current){ onPlayClipRef.current(vid); return; }
           if(onSelectVideoRef.current) onSelectVideoRef.current(vid);
           if(onSwitchTabRef.current)   onSwitchTabRef.current('library');
         });
@@ -4780,7 +4787,7 @@ function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset
 }
 
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
-function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true,canSeeAnalyticsData=true}){
+function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true,canSeeAnalyticsData=true,onPlayClip=null}){
   const tz=useTz();
   const rows=logData?.rows||[];
   const noData=!rows.length;
@@ -4802,7 +4809,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const timeseriesRef = useRef(null);
   const jumpToUtc = utc => {
     const clip=(allVideos||[]).find(v=>v.startUtc&&v.duration&&utc>=v.startUtc&&utc<=v.startUtc+v.duration*1000);
-    if(clip){ onSelectVideo(clip); setActiveTab("library"); return; }
+    if(clip){ if(onPlayClip){ onPlayClip(clip); return; } onSelectVideo(clip); setActiveTab("library"); return; }
     if(!rows.length) return;
     setViewRange([Math.max(rows[0].utc,utc-120000),Math.min(rows[rows.length-1].utc,utc+150000)]);
     timeseriesRef.current?.scrollIntoView({behavior:"smooth",block:"start"});
@@ -4923,7 +4930,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               <button aria-label="Next session" title={nextDate||""} disabled={!nextDate} onClick={()=>nextDate&&onSelectDate(nextDate)} style={dateNavBtn(!!nextDate)}>▶</button>
             </div>
           ):(
-            <button onClick={()=>setActiveTab("library")}
+            <button onClick={()=>setActiveTab(onPlayClip?"upload":"library")}
               style={{background:"#06B6D420",border:"1px solid #06B6D460",borderRadius:6,
                 padding:"6px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:600,
                 flexShrink:0,minHeight:32}}>
@@ -4940,7 +4947,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             </span>
           ) : (
             <span style={{fontSize:10,color:"#F59E0B",background:"#F59E0B10",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px"}}>
-              ⚠ No event file — select session in Videos or re-import XML
+              ⚠ No event file — {onPlayClip?"pick another day above, or re-import the XML in Upload":"select session in Videos or re-import XML"}
             </span>
           )}
           {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — pick a date above</span>}
@@ -4967,9 +4974,9 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
           <div style={{textAlign:"center",padding:"50px 20px",color:"#334155"}}>
             <div style={{fontSize:32,marginBottom:12,opacity:0.3}}>📊</div>
             <div style={{fontSize:13,color:"#475569",marginBottom:6}}>No log data loaded</div>
-            <div style={{fontSize:11,color:"#334155",marginBottom:16}}>{openable.length?"Pick a date in the session bar above (◀ ▶ or the list) to load its log and event data.":"Select a session in the Library sidebar — click any date to load its log and event data."}</div>
+            <div style={{fontSize:11,color:"#334155",marginBottom:16}}>{openable.length?"Pick a date in the session bar above (◀ ▶ or the list) to load its log and event data.":(onPlayClip?"Import a session in the Upload tab — its log and event data load from there.":"Select a session in the Library sidebar — click any date to load its log and event data.")}</div>
             <div style={{display:"flex",gap:8,justifyContent:"center"}}>
-              <button onClick={()=>setActiveTab("library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Videos</button>
+              <button onClick={()=>setActiveTab(onPlayClip?"timeline":"library")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>{onPlayClip?"Go to Timeline":"Go to Videos"}</button>
               <button onClick={()=>setActiveTab("upload")} style={{background:"#1E3A5A",border:"none",borderRadius:8,padding:"8px 20px",color:"#94A3B8",fontWeight:700,cursor:"pointer",fontSize:12}}>Re-import CSV</button>
             </div>
           </div>
@@ -4999,9 +5006,9 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             )}
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} photos={photos} selection={selection} onSelection={selectSection}/>
+                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} selection={selection} onSelection={selectSection}/>
               ) : (
-                <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — select a date in the Library first.</div>
+                <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — {onPlayClip?"pick a date in the session bar above":"select a date in the Library first"}.</div>
               )
             ))}
             {canSeeAnalyticsData && <div ref={timeseriesRef} style={{scrollMarginTop:12}}/>}
@@ -5437,7 +5444,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             {canSeeAnalyticsData && allVideos.filter(v=>v.twsAvg!=null).length>0&&section("Clips with instrument data",(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {allVideos.filter(v=>v.twsAvg!=null).map(v=>(
-                  <div key={v.id} onClick={()=>{onSelectVideo(v);setActiveTab("library");}} style={{display:"flex",alignItems:"center",gap:10,background:"#071624",borderRadius:6,padding:"7px 10px",cursor:"pointer",border:"1px solid #1E3A5A"}}>
+                  <div key={v.id} onClick={()=>{ if(onPlayClip){onPlayClip(v);return;} onSelectVideo(v);setActiveTab("library"); }} style={{display:"flex",alignItems:"center",gap:10,background:"#071624",borderRadius:6,padding:"7px 10px",cursor:"pointer",border:"1px solid #1E3A5A"}}>
                     <div style={{fontSize:10,color:"#E2E8F0",flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.title}</div>
                     {[["TWS",v.twsAvg,"kt","#7DD3FC"],["TWA",v.twaAvg,"°","#7DD3FC"],["VMG",v.vmgAvg,"kt","#22C55E"],["Pol",v.polpercAvg,"%",v.polpercAvg==null?"#22C55E":v.polpercAvg>=110?"#166534":v.polpercAvg>=90?"#22C55E":"#EF4444"],["Tgt",v.vsTargPercAvg,"%",v.vsTargPercAvg==null?"#22C55E":v.vsTargPercAvg>=110?"#166534":v.vsTargPercAvg>=90?"#22C55E":"#EF4444"]].map(([l,val,u,c])=>(<div key={l} style={{textAlign:"center",minWidth:42}}><div style={{fontSize:8,color:"#334155"}}>{l}</div><div style={{fontSize:11,fontWeight:700,color:c,fontFamily:"monospace"}}>{val!=null?R(val):"--"}{u}</div></div>))}
                     <div style={{fontSize:9,color:"#334155"}}>→</div>
@@ -5926,7 +5933,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
   );
 }
 
-function MobileShell(props){
+export function MobileShell(props){
   const {activeTab, setActiveTab, ...rest} = props;
   // Keep the Upload tab mounted while its folder watcher runs — tabs render
   // conditionally, so leaving the tab would destroy the watcher mid-card.
@@ -5937,8 +5944,12 @@ function MobileShell(props){
     {id:"campaign", icon:"🗓", label:"Plan"},
     {id:"boatconfig", icon:"⛵", label:"Boat"},
     {id:"weather",  icon:"🌦", label:"Weather"},
-    {id:"library",  icon:"📹", label:"Videos"},
-    {id:"photos",   icon:"📷", label:"Photos"},
+    // No Videos / Photos tab on a phone. Media is browsed from the Timeline's
+    // day decks, clips play in the modal player wherever they are clicked
+    // (track, charts, timeline), and importing both kinds of file is the
+    // Upload tab's job. See the Upload pane below for the cloud-push panel
+    // that used to live in the Videos tab.
+    {id:"tagger",   icon:"🏷", label:"Tags"},
     {id:"analytics",icon:"📊", label:"Analytics"},
     {id:"upload",   icon:"⬆", label:"Upload"},
     {id:"tools",    icon:"🧰", label:"Tools"},
@@ -5949,6 +5960,8 @@ function MobileShell(props){
     // Weather tab is available to all roles (tl1, consultant, guest included).
     // Tools (Squash + SailScan): TL2+ and consultant-in-period.
     if (t.id === "tools" && props.canSeeToolsTab === false) return false;
+    // Tagging is contributing, and a guest does not contribute.
+    if (t.id === "tagger" && props.effectiveRole === 'guest') return false;
     if (t.id === "admin" && props.effectiveRole !== 'admin') return false;
     return true;
   });
@@ -6044,7 +6057,7 @@ function MobileShell(props){
               allVideos={props.allVideos} sessions={props.sessions}
               selectedVideo={props.selectedVideo} onSelectVideo={props.setSelectedVideo}
               setActiveTab={setActiveTab} activeDate={props.activeDate}
-              onSelectDate={props.onSelectDate}
+              onSelectDate={props.onSelectDate} onPlayClip={props.playClipInModal}
               playUtc={props.playUtc} visible={activeTab==="analytics"} photos={props.photos}
               canUseAI={props.canUseAI} canSeeAnalyticsData={props.canSeeAnalyticsData}/></ErrorBoundary>
           </div>
@@ -6060,8 +6073,26 @@ function MobileShell(props){
           </div>
         )}
         {(activeTab==="upload"||uploadWatching)&&(
-          <div style={{position:"absolute",inset:0,display:activeTab==="upload"?"flex":"none",overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Upload"><UploadTab onWatchingChange={setUploadWatching} role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported} sailInventory={props.sailInventory} campaignCfg={props.campaignCfg} setSailDiff={props.setSailDiff} syncOffsets={props.syncOffsets}/></ErrorBoundary>
+          <div style={{position:"absolute",inset:0,display:activeTab==="upload"?"flex":"none",flexDirection:"column",overflow:"hidden",zIndex:2}}>
+            {/* Getting footage OFF the phone. This panel used to live in the
+                mobile Videos tab, which a crew member reached after importing;
+                with that tab gone it belongs here, one screen after the import
+                that created the clips. Same gate as before: if you are trusted
+                to import footage you are trusted to push what you imported. */}
+            {props.perms?.canImport && props.cloudStatus?.available && (props.allVideos||[]).some(v=>v.hasLocalBlob) && (
+              <div style={{padding:"8px 14px",borderBottom:"1px solid #0F2030",flexShrink:0}}>
+                <BatchSyncPanel
+                  videos={props.allVideos}
+                  syncState={props.mobileSyncState}
+                  onSyncProxies={props.onSyncProxies}
+                  onUploadOriginals={props.onUploadOriginals}
+                  syncErrors={props.syncErrors}
+                />
+              </div>
+            )}
+            <div style={{flex:1,minHeight:0,display:"flex",overflow:"hidden"}}>
+              <ErrorBoundary label="Upload"><UploadTab onWatchingChange={setUploadWatching} role={props.role} cloudStatus={props.cloudStatus} onImported={props.handleImported} sailInventory={props.sailInventory} campaignCfg={props.campaignCfg} setSailDiff={props.setSailDiff} syncOffsets={props.syncOffsets}/></ErrorBoundary>
+            </div>
           </div>
         )}
         {activeTab==="tools"&&(
@@ -6071,7 +6102,7 @@ function MobileShell(props){
         {/* Campaign */}
         {activeTab==="campaign"&&props.campaignOn&&props.campaignCfg&&props.effectiveRole!=='guest'&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Campaign"><CampaignTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} onOpenVideo={props.openCampaignVideo}/></ErrorBoundary>
+            <ErrorBoundary label="Campaign"><CampaignTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} onOpenVideo={props.openVideoModal}/></ErrorBoundary>
           </div>
         )}
 
@@ -6091,6 +6122,22 @@ function MobileShell(props){
         {activeTab==="timeline"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
             <ErrorBoundary label="Timeline"><TimelineTab teamId={props.campaignCfg?.teamId||props.activeMem?.team_id} boatId={props.campaignCfg?.boatId||props.activeMem?.boat_id} tzOffset={props.sessionTzOffset} onOpenVideo={props.openVideoModal}/></ErrorBoundary>
+          </div>
+        )}
+
+        {/* Tagging */}
+        {activeTab==="tagger"&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Tagging"><TaggerTab
+              teamId={props.campaignCfg?.teamId||props.activeMem?.team_id}
+              boatId={props.campaignCfg?.boatId||props.activeMem?.boat_id}
+              date={props.activeDate}
+              userId={props.myUid}
+              tzOffsetMin={props.sessionTzOffset}
+              logRows={props.logData?.rows}
+              xml={props.xmlData}
+              playheadUtc={props.playUtc}
+            /></ErrorBoundary>
           </div>
         )}
 
@@ -6230,9 +6277,11 @@ function SSAApp(){
   // Resolved active workspace (team+boat) — a fallback so the Timeline works even
   // when the campaign feature flag is off (campaignCfg would be null then).
   const[activeMem,setActiveMem]=useState(null);
+  // Who is signed in — the tagger marks personal tags as mine/not-mine with it.
+  const[myUid,setMyUid]=useState(null);
   useEffect(()=>{
     let alive=true;
-    const read=async()=>{ try{ const uid=await getUidFast(); if(uid&&alive) setActiveMem(getActiveMembership(uid)); }catch{} };
+    const read=async()=>{ try{ const uid=await getUidFast(); if(uid&&alive){ setMyUid(uid); setActiveMem(getActiveMembership(uid)); } }catch{} };
     read();
     const on=()=>read();
     window.addEventListener('ssa:active-membership-changed',on);
@@ -6810,9 +6859,12 @@ function SSAApp(){
     if(activeTab==="analytics"||logData) setHasMountedAnalytics(true);
   },[activeTab, logData]);
 
-  // Safety: if user switches to Analytics and logData is missing, reload from IDB
+  // Safety: if user switches to Analytics or Tags and logData is missing, reload
+  // from IDB. The tagger needs the day's rows to detect anything and the event
+  // file to split the day into races — without them every tag lands in one
+  // undifferentiated pile and the "pull them in" bar never appears.
   useEffect(()=>{
-    if(activeTab==="analytics" && !logData && activeDate){
+    if((activeTab==="analytics"||activeTab==="tagger") && !logData && activeDate){
       loadDate(activeDate);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7244,6 +7296,17 @@ function SSAApp(){
     }
     setVideoModalOpen(true);
   };
+
+  // Play a clip we already hold, without leaving the tab we are on. The Videos
+  // tab is gone on a phone, so the Analytics track, the performance charts and
+  // the clip list all open the modal player instead of navigating away. The day
+  // is already loaded — we are looking at its track — so there is nothing to
+  // fetch; openVideoModal's date/clipId round-trip would be wasted work here.
+  const playClipInModal = useCallback((clip) => {
+    if (!clip) return;
+    setSelectedVideo(clip);
+    setVideoModalOpen(true);
+  }, []);
 
   // Sessions visible in the sidebar — guests see only the latest day.
   const visibleSessions = useMemo(
@@ -8460,6 +8523,7 @@ function SSAApp(){
       canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
       showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
       campaignOn={campaignOn} campaignCfg={campaignCfg} activeMem={activeMem} openCampaignVideo={openCampaignVideo} openVideoModal={openVideoModal}
+      playClipInModal={playClipInModal} myUid={myUid}
       sailInventory={sailInventory} setSailDiff={setSailDiff}
       onRotateVideo={canRotate ? rotateVideo : null}
       hasMountedAnalytics={hasMountedAnalytics}
@@ -8489,14 +8553,15 @@ function SSAApp(){
         <nav style={{marginLeft:10}}>
           <select value={activeTab} onChange={e=>setActiveTab(e.target.value)} title="Menu"
             style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"6px 12px",color:"#E2E8F0",fontSize:12,fontWeight:600,cursor:"pointer",outline:"none",minWidth:130}}>
-            {["timeline","campaign","boatconfig","weather","library","photos","analytics","upload","tools","admin"].filter(tab => {
+            {["timeline","campaign","boatconfig","weather","library","photos","tagger","analytics","upload","tools","admin"].filter(tab => {
               if (tab === "campaign" && (!campaignOn || effectiveRole === 'guest')) return false;
               if (tab === "boatconfig" && (!campaignOn || !canSeeBoatConfig)) return false;
               if (tab === "tools" && !canSeeToolsTab) return false;
               if (tab === "admin" && effectiveRole !== 'admin') return false;
+              if (tab === "tagger" && effectiveRole === 'guest') return false;
               return true;
             }).map(tab=>{
-              const label = tab==="timeline"?"Timeline":tab==="library"?"Videos":tab==="weather"?"Weather":tab==="boatconfig"?"Boat":tab==="tools"?"Tools":tab.charAt(0).toUpperCase()+tab.slice(1);
+              const label = tab==="timeline"?"Timeline":tab==="library"?"Videos":tab==="weather"?"Weather":tab==="boatconfig"?"Boat":tab==="tools"?"Tools":tab==="tagger"?"Tags":tab.charAt(0).toUpperCase()+tab.slice(1);
               return <option key={tab} value={tab} style={{background:"#0A1929"}}>{label}{tab==="upload"&&unsyncedCount>0?` (${unsyncedCount})`:""}</option>;
             })}
           </select>
@@ -9250,6 +9315,20 @@ function SSAApp(){
         {activeTab==="timeline"&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
             <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId||activeMem?.team_id} boatId={campaignCfg?.boatId||activeMem?.boat_id} tzOffset={sessionTzOffset} onOpenVideo={openVideoModal}/></ErrorBoundary>
+          </div>
+        )}
+        {activeTab==="tagger"&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Tagging"><TaggerTab
+              teamId={campaignCfg?.teamId||activeMem?.team_id}
+              boatId={campaignCfg?.boatId||activeMem?.boat_id}
+              date={activeDate}
+              userId={myUid}
+              tzOffsetMin={sessionTzOffset}
+              logRows={logData?.rows}
+              xml={xmlData}
+              playheadUtc={playUtc}
+            /></ErrorBoundary>
           </div>
         )}
       </div>

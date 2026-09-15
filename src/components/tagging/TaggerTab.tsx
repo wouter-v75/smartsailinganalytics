@@ -109,7 +109,7 @@ export default function TaggerTab({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-bg text-fg">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden bg-bg text-fg">
       {/* ── Views ─────────────────────────────────────────────────────────── */}
       <div
         role="tablist"
@@ -180,6 +180,7 @@ export default function TaggerTab({
       <TagButtonBar
         defs={t.buttonBar}
         nowUtc={now}
+        tzOffsetMin={tzOffsetMin}
         onApply={(slug, at, opts) => t.apply(slug, at, opts)}
         disabled={t.loading}
       />
