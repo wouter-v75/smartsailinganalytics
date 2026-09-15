@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  geoRows, thin, projectTrack, nearestPoint, pointAtUtc, rowsBetween, segmentPath,
+  geoRows, thin, projectTrack, nearestPoint, pointAtUtc, rowsBetween, segmentPath, nearestPointWithin,
 } from '../trackGeom'
 
 const T = (s: number) => Date.parse('2026-09-11T11:00:00Z') + s * 1000
@@ -163,5 +163,57 @@ describe('segmentPath — what a clip covers', () => {
 
   it('survives an empty track', () => {
     expect(segmentPath([], 0, 1)).toBe('')
+  })
+})
+
+describe('nearestPointWithin — dragging along a track that crosses itself', () => {
+  // Out and back over the SAME water: x runs 0→40 over ten minutes and then
+  // 40→0 over the next ten. Every pixel on it belongs to two different times,
+  // which is exactly the geometry that let a one-pixel nudge move a tag ten
+  // minutes when the search was purely spatial.
+  const pts = Array.from({ length: 21 }, (_, i) => ({
+    utc: i * 60_000,
+    x: i <= 10 ? i * 4 : (20 - i) * 4,
+    y: 0,
+  }))
+  const W = 150_000   // the window a drag carries with it
+
+  it('stays on the leg the tag is already on', () => {
+    // x = 20 is both t = 5 min (going out) and t = 15 min (coming back).
+    const near = nearestPointWithin(pts, 20, 0, 15 * 60_000, W)!
+    expect(near.point.utc).toBe(15 * 60_000)
+    expect(nearestPoint(pts, 20, 0)!.point.utc).toBe(5 * 60_000)   // the spatial answer
+  })
+
+  it('cannot be nudged onto the other leg by a pixel', () => {
+    const start = 15 * 60_000
+    const near = nearestPointWithin(pts, 21, 0, start, W)!
+    expect(Math.abs(near.point.utc - start)).toBeLessThanOrEqual(60_000)
+  })
+
+  it('follows a finger that is actually moving', () => {
+    // The drag walks the return leg: each step recentres the window, so the
+    // preview travels along the track rather than snapping across to the leg
+    // that happens to share the pixel.
+    let at = 12 * 60_000
+    const seen = [at]
+    for (const x of [28, 24, 20, 16, 12, 8]) {
+      const hit = nearestPointWithin(pts, x, 0, at, W)
+      if (hit) { at = hit.point.utc; seen.push(at) }
+    }
+    expect(at).toBe(18 * 60_000)
+    // Monotonic: it never doubles back into the outward leg.
+    expect(seen).toEqual([...seen].sort((a, b) => a - b))
+  })
+
+  it('is null rather than a guess when the window is empty', () => {
+    expect(nearestPointWithin([], 0, 0, 0, 1000)).toBeNull()
+    // Halfway between two samples, with a window narrower than the gap.
+    expect(nearestPointWithin(pts, 0, 0, 10 * 60_000 + 30_000, 1_000)).toBeNull()
+  })
+
+  it('survives a window that is not a window', () => {
+    expect(nearestPointWithin(pts, 0, 0, NaN, 1000)).toBeNull()
+    expect(nearestPointWithin(pts, 0, 0, 0, NaN)).toBeNull()
   })
 })

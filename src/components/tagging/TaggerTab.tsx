@@ -66,7 +66,7 @@ export default function TaggerTab({
   teamId, boatId, date, sessionId, userId, tzOffsetMin = 0,
   logRows, xml, playheadUtc, sessions, onSelectDate, onEditSailList,
 }: TaggerTabProps) {
-  const t = useTagger({ teamId, boatId, date, sessionId })
+  const t = useTagger({ teamId, boatId, date, sessionId, userId })
   const [view, setView] = React.useState<View>('tagger')
   const [openId, setOpenId] = React.useState<string | null>(null)
   // A moment picked by holding the track. While one is held the button bar tags
@@ -233,6 +233,15 @@ export default function TaggerTab({
             selectedUtc={pickedUtc}
             onSelect={setPickedUtc}
             onOpenTag={setOpenId}
+            canEditTag={t.canEdit}
+            // A drop is an absolute instant; the API moves tags by a DELTA, so
+            // the whole window travels with the tag — a range tag dragged by
+            // its head keeps its length instead of being silently truncated.
+            onMoveTag={(id, utc) => {
+              const tag = t.events.find((e) => e.id === id)
+              if (!tag) return
+              t.patch(id, { op: 'move', delta_ms: utc - tag.t0 })
+            }}
             media={dayMedia}
             tzOffsetMin={tzOffsetMin}
           />

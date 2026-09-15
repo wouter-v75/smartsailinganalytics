@@ -216,3 +216,44 @@ export function segmentPath(
   }
   return n > 1 ? path : ''
 }
+
+/**
+ * The nearest point to (x, y) among those within `windowMs` of `aroundUtc`.
+ *
+ * Plain nearest-in-space is wrong for dragging a tag along the track, and
+ * wrong in a way that is silent: a windward-leeward course doubles back over
+ * itself, so the closest pixel to a marker on the second beat is routinely a
+ * point from the first one. A one-pixel nudge could move a tag ten minutes, and
+ * the crew would have no way of knowing until they went looking for it.
+ *
+ * Constraining to a window around where the tag CURRENTLY is makes the drag
+ * follow the track instead of teleporting between legs: the window travels with
+ * the preview, so a long drag still crosses the whole day, one window at a time.
+ *
+ * null when the window holds no points at all — the caller leaves the tag where
+ * it is rather than guessing.
+ */
+export function nearestPointWithin(
+  points: readonly TrackPoint[],
+  x: number,
+  y: number,
+  aroundUtc: number,
+  windowMs: number
+): { point: TrackPoint; index: number; distPx: number } | null {
+  if (!isNum(aroundUtc) || !isNum(windowMs)) return null
+  const lo = aroundUtc - Math.abs(windowMs)
+  const hi = aroundUtc + Math.abs(windowMs)
+  let best = -1
+  let bestD2 = Infinity
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i]
+    if (p.utc < lo) continue
+    if (p.utc > hi) break          // points are in time order
+    const dx = p.x - x
+    const dy = p.y - y
+    const d2 = dx * dx + dy * dy
+    if (d2 < bestD2) { bestD2 = d2; best = i }
+  }
+  if (best < 0) return null
+  return { point: points[best], index: best, distPx: Math.sqrt(bestD2) }
+}

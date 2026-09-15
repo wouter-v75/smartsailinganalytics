@@ -1,16 +1,16 @@
 'use client'
 import * as React from 'react'
-import { ZoomIn, Maximize2 } from 'lucide-react'
-import { projectTrack, thin, geoRows, nearestPoint, pointAtUtc, segmentPath, type GeoRow, type TrackPoint } from '@/lib/tagging/trackGeom'
+import { ZoomIn, Maximize2, Move, Pencil } from 'lucide-react'
+import { projectTrack, thin, geoRows, nearestPoint, nearestPointWithin, pointAtUtc, segmentPath, type GeoRow, type TrackPoint } from '@/lib/tagging/trackGeom'
 import {
   FIT, MAX_SCALE, toTrack, toScreen, zoomAt, zoomTo, panBy, isFitted, spread, midpoint,
   type Viewport,
 } from '@/lib/tagging/viewport'
 import { cn } from '@/lib/ui'
 import { sessionClock } from '@/lib/tagging/clock'
-import { markerStyle, markerTip, markerLabel } from '@/lib/tagging/markers'
+import { markerStyle, markerTip, markerLabel, isRetimable } from '@/lib/tagging/markers'
 import { MEDIA_COLOURS, MEDIA_LABELS, isSpan, type MediaMark } from '@/lib/mediaDecks'
-import type { TagWithRequests } from '@/lib/tagging/types'
+import type { TagEvent, TagWithRequests } from '@/lib/tagging/types'
 
 // The day's track, with a thumb on it.
 //
@@ -40,6 +40,13 @@ import type { TagWithRequests } from '@/lib/tagging/types'
 // Tags are drawn where they happened: hollow for a detection nobody has vouched
 // for, solid once somebody has, which is the same language the list view uses.
 //
+// A tag can be PUT RIGHT from here. Right-click one — or hold it, on a phone —
+// and it offers to open or to move; moving drags it along the track and drops
+// it on the nearest point. A tag in the wrong place is the commonest thing
+// wrong with a tagged day, because people press late, and the track is where
+// you can SEE that it is on the wrong side of the mark. Only offered to
+// somebody the database would actually let do it (canEditTag).
+//
 // MEDIA is drawn underneath them, in the timeline's own deck colours: a clip as
 // the LENGTH of water it covers, a photo or a sail scan as the point it was
 // taken at. "Was that gybe filmed" is a question about a window, and a clip
@@ -58,6 +65,12 @@ export interface TrackCanvasProps {
   selectedUtc?: number | null
   onSelect: (utc: number | null) => void
   onOpenTag?: (tagId: string) => void
+  /** May this user retime this tag? Same rule the database enforces — see
+   *  gating.canEditTagEvent. A tag they may not move gets no drag handle. */
+  canEditTag?: (tag: TagEvent) => boolean
+  /** Commit a retimed tag. The new instant, not a delta: the caller knows where
+   *  the tag started and the canvas knows where it was dropped. */
+  onMoveTag?: (tagId: string, utc: number) => void | Promise<unknown>
   /** The day's videos, drone clips, photos and sail scans, drawn where they
    *  were taken. Same colours as the timeline's decks — see lib/mediaDecks.ts. */
   media?: MediaMark[]
@@ -67,10 +80,15 @@ export interface TrackCanvasProps {
 }
 
 const HOLD_MS = 400
+// How far along the track one drag step may reach. Big enough that a fast drag
+// still crosses a whole day in a second of moving, small enough that it cannot
+// jump to the leg lying underneath this one.
+const DRAG_WINDOW_MS = 150_000
 const MOVE_CANCEL_PX = 10
 
 export default function TrackCanvas({
-  rows, items, t0, t1, selectedUtc, onSelect, onOpenTag, media, tzOffsetMin = 0, minHeightPx = 240,
+  rows, items, t0, t1, selectedUtc, onSelect, onOpenTag, canEditTag, onMoveTag,
+  media, tzOffsetMin = 0, minHeightPx = 240,
 }: TrackCanvasProps) {
   const boxRef = React.useRef<HTMLDivElement>(null)
   // The box fills the column, so both dimensions are measured rather than
@@ -85,6 +103,12 @@ export default function TrackCanvas({
   const [hover, setHover] = React.useState<
     { id: string; x: number; y: number; title: string; clock: string; extra: string | null } | null
   >(null)
+  // The right-click / hold menu on one tag, anchored where it was opened.
+  const [menu, setMenu] = React.useState<{ tag: TagEvent; x: number; y: number } | null>(null)
+  // A tag being dragged along the track. `utc` is where it would land — nothing
+  // is written until the drag ends, so letting go outside the track is a
+  // cancel rather than a tag flung to the far end of the day.
+  const [moving, setMoving] = React.useState<{ tag: TagEvent; utc: number } | null>(null)
 
   React.useEffect(() => {
     const el = boxRef.current
@@ -141,6 +165,19 @@ export default function TrackCanvas({
       .filter((x): x is { m: MediaMark; path: string; pt: TrackPoint } => !!x.pt)
   }, [media, points])
 
+  // Both halves have to say yes: the KIND of tag must be one a person placed
+  // (a tack is where the boat tacked), and the person must be one the database
+  // would let write the change anyway.
+  const mayMove = React.useCallback(
+    (tag: TagEvent) => !!onMoveTag && isRetimable(tag.slug) && (canEditTag?.(tag) ?? false),
+    [onMoveTag, canEditTag]
+  )
+
+  const tagById = React.useCallback(
+    (id: string | null | undefined) => marks.find((m) => m.item.tag.id === id)?.item.tag || null,
+    [marks]
+  )
+
   // ── Gestures ──────────────────────────────────────────────────────────────
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const start = React.useRef<{ x: number; y: number } | null>(null)
@@ -150,6 +187,12 @@ export default function TrackCanvas({
   const pointers = React.useRef(new Map<number, { x: number; y: number }>())
   const pinch = React.useRef<{ dist: number } | null>(null)
   const panning = React.useRef<{ x: number; y: number } | null>(null)
+  // Which tag the current press landed on. Needed because a right-click's
+  // `contextmenu` event is RETARGETED to whatever holds the pointer capture, so
+  // by the time it arrives e.target is the container and the marker underneath
+  // it is unfindable — which is why the menu opened for nobody.
+  const pressedTag = React.useRef<TagEvent | null>(null)
+  const movingCapture = React.useRef<number | null>(null)
   const clearTimer = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null } }
 
   const box = { width: w, height: h }
@@ -176,7 +219,34 @@ export default function TrackCanvas({
     // nothing at all, on a thumb as much as in a test.
     if ((e.target as HTMLElement | null)?.closest?.('button')) return
     const xy = localXY(e)
+    // A tag already in hand: this press is the drag continuing, not a new
+    // gesture. Without this, holding it would open a menu mid-drag.
+    if (moving) { pointers.current.set(e.pointerId, xy); return }
+
+    const onTag = (e.target as HTMLElement | null)?.closest?.('[data-tag-id]')
+    const pressed = onTag ? tagById(onTag.getAttribute('data-tag-id')) : null
+    pressedTag.current = pressed
     pointers.current.set(e.pointerId, xy)
+
+    // A press that LANDS ON A TAG is about that tag, not about the water under
+    // it. Holding it opens the tag's own menu; the point-picking hold below
+    // must not also fire, or one press would both open a menu and drop a pin.
+    //
+    // NOT captured. Capturing the pointer here retargets every later event —
+    // `contextmenu` included — to the container, and then the right-click that
+    // was the whole point of this branch arrives pointing at nothing.
+    if (pressed && pointers.current.size === 1) {
+      start.current = xy
+      setHolding(false)
+      clearTimer()
+      timer.current = setTimeout(() => {
+        timer.current = null
+        try { navigator.vibrate?.(12) } catch { /* not supported */ }
+        setMenu({ tag: pressed, x: xy.x, y: xy.y })
+      }, HOLD_MS)
+      return
+    }
+
     boxRef.current?.setPointerCapture(e.pointerId)
 
     // Second finger down: this is a pinch, and whatever the first one was doing
@@ -250,6 +320,27 @@ export default function TrackCanvas({
       return
     }
 
+    // Dragging a tag along the track. The nearest point wins, which is what
+    // makes this usable with a thumb: the tag lands ON the track rather than
+    // wherever the finger happened to be.
+    if (moving) {
+      // Captured only NOW, once there is a drag to protect: a pointer that
+      // leaves the box mid-drag would otherwise stop reporting and strand the
+      // tag in a half-moved state with no pointerup to finish it.
+      if (movingCapture.current == null) {
+        try { boxRef.current?.setPointerCapture(e.pointerId); movingCapture.current = e.pointerId } catch { /* gone */ }
+      }
+      const p = toTrack(view, xy)
+      // Searched around where the tag CURRENTLY is, not across the whole day.
+      // A windward-leeward course doubles back over itself, so the nearest
+      // pixel to a marker on the second beat is routinely a point from the
+      // first — a one-pixel nudge moved a tag ten minutes, silently. The
+      // window travels with the drag, so a long drag still crosses the day.
+      const hit = nearestPointWithin(points, p.x, p.y, moving.utc, DRAG_WINDOW_MS)
+      if (hit) setMoving((m) => (m ? { ...m, utc: hit.point.utc } : m))
+      return
+    }
+
     const s = start.current
     if (!s) return
     if (dragging) { pick(xy); return }
@@ -274,7 +365,20 @@ export default function TrackCanvas({
   }
 
   const end = (e: React.PointerEvent) => {
+    // Dropping the tag is the only moment anything is written. Landing it back
+    // where it started is a no-op rather than a pointless round trip that
+    // rewrites updated_at and shows up in the provenance line as an edit.
+    if (moving) {
+      const { tag, utc } = moving
+      setMoving(null)
+      movingCapture.current = null
+      if (utc !== tag.t0) onMoveTag?.(tag.id, utc)
+      pointers.current.delete(e.pointerId)
+      try { boxRef.current?.releasePointerCapture(e.pointerId) } catch { /* never captured */ }
+      return
+    }
     pointers.current.delete(e.pointerId)
+    pressedTag.current = null
     if (pointers.current.size < 2) pinch.current = null
     clearTimer()
     setHolding(false)
@@ -337,6 +441,15 @@ export default function TrackCanvas({
         onPointerMove={onPointerMove}
         onPointerUp={end}
         onPointerCancel={end}
+        onContextMenu={(e) => {
+          const el = (e.target as HTMLElement | null)?.closest?.('[data-tag-id]')
+          // `pressedTag` is the fallback for a retargeted event — see the ref.
+          const tag = tagById(el?.getAttribute('data-tag-id')) || pressedTag.current
+          if (!tag) return          // empty water keeps the browser's own menu
+          e.preventDefault()
+          const xy = localXY(e)
+          setMenu({ tag, x: xy.x, y: xy.y })
+        }}
         className="relative w-full flex-1 select-none overflow-hidden rounded-xl border border-[color:var(--border)] bg-surface-1"
         style={{
           minHeight: minHeightPx,
@@ -344,7 +457,7 @@ export default function TrackCanvas({
           // one-finger vertical drag is still the page's — there is nothing to
           // pan, so taking it would break scrolling past the track. Zoomed in,
           // or mid-drag, everything is ours.
-          touchAction: dragging || !isFitted(view) ? 'none' : 'pan-y',
+          touchAction: dragging || moving || !isFitted(view) ? 'none' : 'pan-y',
         }}
       >
         <svg width="100%" height="100%" role="img" aria-label="The day's track">
@@ -430,20 +543,31 @@ export default function TrackCanvas({
             )
           })}
 
-          {marks.map(({ item, pt }) => {
+          {marks.map(({ item, pt: home }) => {
             const t = item.tag
             const solid = t.source !== 'auto' || t.verifiedAt != null
             const { r, strokeWidth } = markerStyle(t.slug)
+            // Mid-drag the marker follows the finger, so the crew can see where
+            // it will land before they commit to it.
+            const dragged = moving?.tag.id === t.id
+            const pt = dragged ? (pointAtUtc(points, moving!.utc) || home) : home
             return (
               <g
                 key={t.id}
+                data-tag-id={t.id}
                 role="button"
                 // Named rather than titled: a <title> is also a native tooltip,
                 // and it would sit under the hover readout saying the same thing
                 // a second later.
                 aria-label={markerLabel(t, tzOffsetMin)}
                 className={onOpenTag ? 'cursor-pointer' : undefined}
-                onClick={(e) => { e.stopPropagation(); onOpenTag?.(t.id) }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // A click that ends a drag, or that dismissed a menu, is not a
+                  // request to open the tag.
+                  if (moving || menu) return
+                  onOpenTag?.(t.id)
+                }}
                 onPointerEnter={(e) => {
                   if (e.pointerType !== 'mouse') return
                   const tip = markerTip(t, tzOffsetMin)
@@ -451,9 +575,27 @@ export default function TrackCanvas({
                 }}
                 onPointerLeave={() => setHover((prev) => (prev?.id === t.id ? null : prev))}
               >
+                {/* Where it started, while it is being dragged — so "how far
+                    have I moved it" is a thing you can see rather than infer
+                    from a clock. */}
+                {dragged && (
+                  <circle
+                    cx={home.x} cy={home.y} r={r / view.scale}
+                    fill="none" stroke={t.color} strokeOpacity={0.45}
+                    strokeWidth={strokeWidth / view.scale}
+                    strokeDasharray={`${3 / view.scale} ${3 / view.scale}`}
+                  />
+                )}
                 {/* The TARGET, unchanged in size. Shrinking what a tack looks
                     like must not shrink what it takes to hit one. */}
                 <circle cx={pt.x} cy={pt.y} r={Math.max(r, 7) / view.scale} fill="transparent" />
+                {/* A ring that says "this one is in your hand". */}
+                {dragged && (
+                  <circle
+                    cx={pt.x} cy={pt.y} r={13 / view.scale}
+                    fill="none" stroke={t.color} strokeWidth={2 / view.scale} strokeOpacity={0.8}
+                  />
+                )}
                 <circle
                   cx={pt.x} cy={pt.y} r={r / view.scale}
                   fill={solid ? t.color : 'var(--surface-1)'}
@@ -506,6 +648,86 @@ export default function TrackCanvas({
             </div>
           )
         })()}
+
+        {/* ── One tag's menu ───────────────────────────────────────────────
+            Right-click on the desktop, hold on a phone. Deliberately two
+            entries and no more: the sheet behind "Open" already has everything
+            else, and a menu that grows is a menu that gets read. */}
+        {menu && (
+          <>
+            {/* Anywhere else dismisses it — including a press meant for the
+                track, which should not also drop a tag. */}
+            <button
+              aria-label="Close the menu"
+              onPointerDown={(e) => { e.stopPropagation(); setMenu(null) }}
+              className="absolute inset-0 z-20 cursor-default"
+            />
+            <div
+              role="menu"
+              className="absolute z-30 min-w-[190px] overflow-hidden rounded-xl border border-[color:var(--border-strong)] bg-surface-1 shadow-xl"
+              style={{
+                // Kept inside the box: a menu opened on the right-hand edge
+                // otherwise renders where it is clipped away.
+                left: menu.x > w / 2 ? undefined : Math.round(menu.x + 8),
+                right: menu.x > w / 2 ? Math.round(w - menu.x + 8) : undefined,
+                top: Math.round(Math.min(menu.y + 8, Math.max(8, h - 132))),
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <div className="border-b border-[color:var(--border)] px-3 py-2">
+                <p className="truncate text-[11px] font-semibold">{menu.tag.label}</p>
+                <p className="font-mono text-[10px] text-muted">{sessionClock(menu.tag.t0, tzOffsetMin)}</p>
+              </div>
+              <button
+                role="menuitem"
+                onClick={() => { const t = menu.tag; setMenu(null); onOpenTag?.(t.id) }}
+                className="flex min-h-[44px] w-full items-center gap-2 px-3 text-left text-[13px] active:bg-surface-2"
+              >
+                <Pencil size={15} className="shrink-0 text-secondary" aria-hidden />
+                Open and edit
+              </button>
+              {mayMove(menu.tag) ? (
+                <button
+                  role="menuitem"
+                  onClick={() => { const t = menu.tag; setMenu(null); setMoving({ tag: t, utc: t.t0 }) }}
+                  className="flex min-h-[44px] w-full items-center gap-2 border-t border-[color:var(--border)] px-3 text-left text-[13px] active:bg-surface-2"
+                >
+                  <Move size={15} className="shrink-0 text-secondary" aria-hidden />
+                  Move along the track
+                </button>
+              ) : (
+                <p className="border-t border-[color:var(--border)] px-3 py-2 text-[11px] text-muted">
+                  {isRetimable(menu.tag.slug)
+                    ? 'Only the afterguard can retime somebody else’s tag.'
+                    : 'Tacks and gybes come from the log — fix the detection, not the tag.'}
+                </p>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── Moving ───────────────────────────────────────────────────────
+            A banner rather than a silent mode: a track that has quietly stopped
+            scrolling, with no explanation, reads as broken. */}
+        {moving && (
+          <div className="absolute inset-x-2 top-2 z-30 flex min-h-[44px] items-center gap-2 rounded-xl border border-[color:var(--accent)] bg-surface-1/95 px-3 shadow-lg backdrop-blur">
+            <Move size={15} className="shrink-0 text-accent" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-[11px]">
+              <span className="font-semibold">{moving.tag.label}</span>
+              <span className="text-muted"> — drag along the track</span>
+            </span>
+            <span className="shrink-0 font-mono text-[11px] font-semibold text-accent">
+              {sessionClock(moving.utc, tzOffsetMin)}
+            </span>
+            <button
+              onClick={() => setMoving(null)}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="shrink-0 rounded-lg px-2 py-2 text-[11px] font-semibold text-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
 
         {/* ── Zoom controls ───────────────────────────────────────────────
             A pinch is the gesture, but not everybody has two free hands on a

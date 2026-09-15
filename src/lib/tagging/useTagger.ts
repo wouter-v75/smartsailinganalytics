@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Detection } from './detect'
 import { withRequests } from './requests'
+import { canEditTagEvent } from './gating'
 import type {
   RequestKind, RequestMediaKind, RequestStatus,
   TagDef, TagEvent, TagLabel, TagRequest, TaggerIdentity, TagWithRequests,
@@ -27,6 +28,9 @@ export interface TaggerArgs {
   /** YYYY-MM-DD */
   date?: string | null
   sessionId?: string | null
+  /** The signed-in user. Needed to decide what they may edit: the rule turns on
+   *  authorship as well as role, and the server's does too. */
+  userId?: string | null
 }
 
 export interface ApplyOptions {
@@ -63,7 +67,7 @@ const j = async (res: Response) => {
   return body
 }
 
-export function useTagger({ teamId, boatId, date, sessionId }: TaggerArgs) {
+export function useTagger({ teamId, boatId, date, sessionId, userId }: TaggerArgs) {
   const [defs, setDefs] = useState<TagDef[] | null>(null)
   const [events, setEvents] = useState<TagEvent[] | null>(null)
   const [requests, setRequests] = useState<TagRequest[]>([])
@@ -317,6 +321,26 @@ export function useTagger({ teamId, boatId, date, sessionId }: TaggerArgs) {
     () => withRequests(visible, requests), [visible, requests]
   )
 
+  /**
+   * May this user move, retime or delete this tag?
+   *
+   * The SAME rule the database enforces (canEditTagEvent mirrors 0062's
+   * ssa_tag_events_update policy), asked on the client so the UI can offer the
+   * handle rather than letting somebody drag a tag for three seconds and then
+   * be told no. A UI that offers less than the server allows is a UI people
+   * work around; one that offers more is one that lies.
+   */
+  const canEdit = useCallback((ev: TagEvent): boolean => {
+    if (!me) return false
+    return canEditTagEvent(ev, {
+      userId: userId || '',
+      teamId: teamId || '',
+      boatId: boatId ?? null,
+      role: me.role,
+      sections: me.sections || [],
+    })
+  }, [me, userId, teamId, boatId])
+
   const buttonBar = useMemo(
     () => (defs || []).filter((d) => d.onButtonBar && (d as any).canApply !== false),
     [defs]
@@ -329,6 +353,7 @@ export function useTagger({ teamId, boatId, date, sessionId }: TaggerArgs) {
     loading: defs === null || events === null,
     busy, error,
     // actions
+    canEdit,
     apply, patch, remove, request, decide, withdraw, sync, seedVocabulary,
     reload: load, clearError: () => setError(null),
   }

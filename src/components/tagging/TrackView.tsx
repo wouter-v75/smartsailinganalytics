@@ -5,7 +5,7 @@ import { racesOf, type DaySegment } from '@/lib/tagging/segments'
 import { sessionClockHm } from '@/lib/tagging/clock'
 import TrackCanvas from './TrackCanvas'
 import type { GeoRow } from '@/lib/tagging/trackGeom'
-import type { TagWithRequests } from '@/lib/tagging/types'
+import type { TagEvent, TagWithRequests } from '@/lib/tagging/types'
 import type { MediaMark } from '@/lib/mediaDecks'
 
 // The track view: where the day happened, rather than when.
@@ -27,13 +27,18 @@ export interface TrackViewProps {
   selectedUtc: number | null
   onSelect: (utc: number | null) => void
   onOpenTag?: (tagId: string) => void
+  /** May this user retime this tag? Same rule the database enforces. */
+  canEditTag?: (tag: TagEvent) => boolean
+  /** Commit a tag dragged to a new instant. */
+  onMoveTag?: (tagId: string, utc: number) => void | Promise<unknown>
   /** The day's media, drawn on the water in the timeline's deck colours. */
   media?: MediaMark[]
   tzOffsetMin?: number
 }
 
 export default function TrackView({
-  rows, items, segments, selectedUtc, onSelect, onOpenTag, media, tzOffsetMin = 0,
+  rows, items, segments, selectedUtc, onSelect, onOpenTag, canEditTag, onMoveTag,
+  media, tzOffsetMin = 0,
 }: TrackViewProps) {
   const races = React.useMemo(() => racesOf(segments), [segments])
   const [key, setKey] = React.useState<string>('all')
@@ -81,6 +86,8 @@ export default function TrackView({
         selectedUtc={selectedUtc}
         onSelect={onSelect}
         onOpenTag={onOpenTag}
+        canEditTag={canEditTag}
+        onMoveTag={onMoveTag}
         media={media}
         tzOffsetMin={tzOffsetMin}
       />

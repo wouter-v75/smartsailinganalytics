@@ -12,6 +12,7 @@ import { normaliseBattenCard } from '@/lib/battens'
 import { sailStateAt, type SailState } from '@/lib/tagging/sailState'
 import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
+import { canEditTagEvent } from '@/lib/tagging/gating'
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
 import { mediaMarks } from '@/lib/mediaDecks'
 import type { TagDef, TagEvent, TagRequest } from '@/lib/tagging/types'
@@ -207,8 +208,15 @@ export default function TaggerPreview() {
   const [theme, setTheme] = React.useState<'dark' | 'light'>('dark')
   React.useEffect(() => { document.documentElement.setAttribute('data-theme', theme) }, [theme])
 
-  const items = React.useMemo(() => withRequests(events, requests), [])
+  // Held in state so a tag dragged on the track actually moves — the whole
+  // point of the thing being previewed.
+  const [evts, setEvts] = React.useState<TagEvent[]>(events)
+  const [role, setRole] = React.useState<'tl3' | 'tl1'>('tl3')
+  const items = React.useMemo(() => withRequests(evts, requests), [evts])
   const open = items.find((i) => i.tag.id === openId) || null
+  // Somebody who is not the author: at tl3 they may retime anyone's tag, at tl1
+  // only their own — which is what the menu has to reflect.
+  const me = { userId: 'someone-else', teamId: 't', boatId: 'b', role, sections: [] }
   const noop = () => {}
 
   return (
@@ -217,6 +225,9 @@ export default function TaggerPreview() {
         <span>Tagger preview · fixture data</span>
         <button onClick={() => setShowSail((v) => !v)} className="min-h-[44px] px-2 underline">
           {showSail ? 'Hide sail change' : 'Sail change'}
+        </button>
+        <button onClick={() => setRole((r) => (r === 'tl3' ? 'tl1' : 'tl3'))} className="min-h-[44px] px-2 underline">
+          role: {role}
         </button>
         <button onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} className="ml-auto min-h-[44px] px-2 underline">
           {theme === 'dark' ? 'Light' : 'Dark'}
@@ -273,6 +284,10 @@ export default function TaggerPreview() {
           <TrackView
             rows={TRACK_ROWS} items={items} segments={segments}
             media={DAY_MEDIA}
+            canEditTag={(tag) => canEditTagEvent(tag, me)}
+            onMoveTag={(id, utc) => setEvts((prev) => prev.map((e) => (
+              e.id === id ? { ...e, t0: utc, t1: utc + (e.t1 - e.t0) } : e
+            )))}
             selectedUtc={picked} onSelect={setPicked} onOpenTag={setOpenId}
           />
         )}

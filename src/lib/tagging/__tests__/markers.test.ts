@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   MANOEUVRE_SLUGS, R_MANOEUVRE, R_MOMENT, markerStyle, sailsFrom, markerTip, markerLabel,
+  FIXED_SLUGS, isRetimable,
 } from '../markers'
 import { SAIL_CHANGE_SLUG } from '../sailState'
 import type { TagEvent } from '../types'
@@ -109,5 +110,37 @@ describe('markerTip / markerLabel', () => {
   it('reads as one line for a screen reader', () => {
     expect(markerLabel(change(['Main', 'J1']))).toBe('Sail change · 11:42:07 · Main + J1')
     expect(markerLabel(tag())).toBe('Tack · 11:42:07')
+  })
+})
+
+describe('what may be dragged along the track', () => {
+  it('leaves the routine turns alone', () => {
+    // A hundred and forty of them, all from the same TWA trace. One nudged by
+    // hand is one sample quietly disagreeing with the detector that produced
+    // every other one; if a tack is wrong, the fix is in the detection.
+    for (const slug of ['tack', 'gybe']) {
+      expect(isRetimable(slug)).toBe(false)
+      expect(FIXED_SLUGS.has(slug)).toBe(true)
+    }
+  })
+
+  it('lets the racing moments be put right', () => {
+    // A start or a rounding on the wrong side of the mark is exactly the error
+    // you can SEE on a track and cannot see on a clock — which is the whole
+    // argument for dragging rather than typing a time.
+    for (const slug of ['race-start', 'topmark', 'gate', 'mark', 'race-finish']) {
+      expect(isRetimable(slug)).toBe(true)
+    }
+  })
+
+  it('lets a person put right what a person placed', () => {
+    for (const slug of ['note', 'team-note', 'sail-change', 'rig-change', 'technical', 'review', 'lineup', 'grab-video']) {
+      expect(isRetimable(slug)).toBe(true)
+    }
+  })
+
+  it('treats a tag nobody has heard of as the crew’s', () => {
+    // A team's own vocabulary is theirs to place and theirs to correct.
+    expect(isRetimable('whatever-the-crew-invented')).toBe(true)
   })
 })

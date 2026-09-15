@@ -27,6 +27,26 @@ import type { TagEvent } from './types'
 /** The routine turns. Everything else is a moment somebody navigates to. */
 export const MANOEUVRE_SLUGS: ReadonlySet<string> = new Set(['tack', 'gybe'])
 
+/**
+ * The tags that do not get dragged: the routine turns.
+ *
+ * Not a permission — a judgement about what is worth doing. A day has a hundred
+ * and forty tacks, they come from the log's own TWA trace rather than from
+ * anybody's thumb, and a tack nudged by hand is one sample of one day quietly
+ * disagreeing with the detector that produced every other one. If a tack is in
+ * the wrong place the fix is in the detection.
+ *
+ * Everything else can be moved, including the racing moments. A start or a mark
+ * rounding that landed on the wrong side of the mark is exactly the kind of
+ * error a person can SEE on a track and cannot see on a clock — which is the
+ * whole argument for dragging things here rather than typing a time.
+ */
+export const FIXED_SLUGS: ReadonlySet<string> = new Set(Array.from(MANOEUVRE_SLUGS))
+
+/** May this KIND of tag be retimed by hand? Says nothing about who may do it —
+ *  that is gating.canEditTagEvent, and both have to say yes. */
+export const isRetimable = (slug: string): boolean => !FIXED_SLUGS.has(slug)
+
 /** Radii in TRACK units at scale 1 — the drawing divides them back out so a dot
  *  stays the same size on screen however far in the view is zoomed. */
 export const R_MANOEUVRE = 3.5
