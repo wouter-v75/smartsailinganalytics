@@ -252,7 +252,10 @@ export default function TaggerTab({
             tzOffsetMin={tzOffsetMin}
             onNominate={(id) => t.request(id, 'debrief')}
             onSetReel={(id, order) => t.patch(id, { op: 'reel', order })}
-            onOpen={(id) => { setView('tagger'); setOpenId(id) }}
+            // Over the reel, not away from it — same reason as the queue. A
+            // coach halfway down a shortlist who opens a tag to look at it
+            // should get back to the same row, not to the top of the list view.
+            onOpen={setOpenId}
           />
         )}
       </div>
