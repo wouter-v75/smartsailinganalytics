@@ -22,6 +22,10 @@ export interface ReviewQueueProps {
   onReject: (id: string, reason?: string) => void | Promise<unknown>
   onOpen?: (tag: TagEvent) => void
   tzOffsetMin?: number
+  /** A sheet is open in front of the queue, so the shortcuts are not ours. The
+   *  queue stays mounted behind it — without this, V or X typed at an open tag
+   *  would confirm or discard the card underneath, unseen. */
+  keysPaused?: boolean
 }
 
 /** Below this, a detection is worth a human's attention. Above it, the detector
@@ -52,7 +56,7 @@ function doubts(tag: TagEvent): string[] {
 }
 
 export default function ReviewQueue({
-  tags, onVerify, onReject, onOpen, tzOffsetMin = 0,
+  tags, onVerify, onReject, onOpen, tzOffsetMin = 0, keysPaused = false,
 }: ReviewQueueProps) {
   const queue = React.useMemo(
     () => tags
@@ -78,7 +82,7 @@ export default function ReviewQueue({
 
   // Keyboard for anyone at a desk. The phone flow needs none of it.
   React.useEffect(() => {
-    if (!tag) return
+    if (!tag || keysPaused) return
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const el = document.activeElement
@@ -90,7 +94,7 @@ export default function ReviewQueue({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [tag, queue.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tag, queue.length, keysPaused]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!queue.length) {
     return (
@@ -163,7 +167,7 @@ export default function ReviewQueue({
             onClick={() => onOpen(tag)}
             className="mt-3 flex min-h-[40px] w-full items-center justify-center gap-1 rounded-lg border border-[color:var(--border)] text-xs font-medium text-secondary"
           >
-            Open on the track <ChevronRight size={14} aria-hidden />
+            Open the tag <ChevronRight size={14} aria-hidden />
           </button>
         )}
       </article>

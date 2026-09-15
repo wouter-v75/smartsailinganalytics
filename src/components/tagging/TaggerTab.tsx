@@ -235,7 +235,14 @@ export default function TaggerTab({
             tzOffsetMin={tzOffsetMin}
             onVerify={(id) => t.patch(id, { op: 'verify' })}
             onReject={(id) => t.patch(id, { op: 'reject' })}
-            onOpen={(tag) => { setView('tagger'); setOpenId(tag.id) }}
+            keysPaused={!!open}
+            // Opens the sheet OVER the queue rather than jumping to the list.
+            // The sheet is pinned to the tagger pane, so it covers whichever
+            // view is behind it, and its close button puts the coach back on
+            // the same card in the same queue. Switching views to open a tag
+            // meant that closing it stranded them in the list, halfway through
+            // a run of checks, with no way back to where they were.
+            onOpen={(tag) => setOpenId(tag.id)}
           />
         ) : (
           <DebriefReel

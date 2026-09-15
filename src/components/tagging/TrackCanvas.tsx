@@ -7,6 +7,7 @@ import {
   type Viewport,
 } from '@/lib/tagging/viewport'
 import { sessionClock } from '@/lib/tagging/clock'
+import { markerStyle, markerTip, markerLabel } from '@/lib/tagging/markers'
 import type { TagWithRequests } from '@/lib/tagging/types'
 
 // The day's track, with a thumb on it.
@@ -36,6 +37,9 @@ import type { TagWithRequests } from '@/lib/tagging/types'
 //
 // Tags are drawn where they happened: hollow for a detection nobody has vouched
 // for, solid once somebody has, which is the same language the list view uses.
+// Their SIZE is a hierarchy — see markers.ts — so a day's hundred and forty
+// tacks stay in the background and the handful of moments worth navigating to
+// stand out. A mouse hovering one gets the readout; a thumb taps it and opens it.
 
 export interface TrackCanvasProps {
   rows: GeoRow[]
@@ -65,6 +69,9 @@ export default function TrackCanvas({
   const [holding, setHolding] = React.useState(false)
   const [dragging, setDragging] = React.useState(false)
   const [view, setView] = React.useState<Viewport>(FIT)
+  // What the mouse is over, in TRACK coordinates so the readout keeps its place
+  // through a zoom. Mouse only: a touch has no hover, and a tap opens the tag.
+  const [hover, setHover] = React.useState<{ id: string; x: number; y: number } | null>(null)
 
   React.useEffect(() => {
     const el = boxRef.current
@@ -269,6 +276,11 @@ export default function TrackCanvas({
   // would be showing a corner of something that is no longer on screen.
   React.useEffect(() => { setView(FIT) }, [t0, t1])
 
+  // The marker under the mouse may have been filtered away or deleted while the
+  // readout was up; pointerleave never comes for a node that no longer exists.
+  const hovered = hover ? marks.find((m) => m.item.tag.id === hover.id) || null : null
+  React.useEffect(() => { if (hover && !hovered) setHover(null) }, [hover, hovered])
+
   if (!geoRows(rows).length) {
     return (
       <div className="px-6 py-10 text-center">
@@ -326,18 +338,33 @@ export default function TrackCanvas({
           {marks.map(({ item, pt }) => {
             const t = item.tag
             const solid = t.source !== 'auto' || t.verifiedAt != null
+            const { r, strokeWidth } = markerStyle(t.slug)
             return (
-              <circle
+              <g
                 key={t.id}
-                cx={pt.x} cy={pt.y} r={6 / view.scale}
-                fill={solid ? t.color : 'var(--surface-1)'}
-                stroke={t.color}
-                strokeWidth={2 / view.scale}
+                role="button"
+                // Named rather than titled: a <title> is also a native tooltip,
+                // and it would sit under the hover readout saying the same thing
+                // a second later.
+                aria-label={markerLabel(t, tzOffsetMin)}
                 className={onOpenTag ? 'cursor-pointer' : undefined}
                 onClick={(e) => { e.stopPropagation(); onOpenTag?.(t.id) }}
+                onPointerEnter={(e) => {
+                  if (e.pointerType === 'mouse') setHover({ id: t.id, x: pt.x, y: pt.y })
+                }}
+                onPointerLeave={() => setHover((prev) => (prev?.id === t.id ? null : prev))}
               >
-                <title>{`${t.label} · ${sessionClock(t.t0, tzOffsetMin)}`}</title>
-              </circle>
+                {/* The TARGET, unchanged in size. Shrinking what a tack looks
+                    like must not shrink what it takes to hit one. */}
+                <circle cx={pt.x} cy={pt.y} r={Math.max(r, 7) / view.scale} fill="transparent" />
+                <circle
+                  cx={pt.x} cy={pt.y} r={r / view.scale}
+                  fill={solid ? t.color : 'var(--surface-1)'}
+                  stroke={t.color}
+                  strokeWidth={strokeWidth / view.scale}
+                  pointerEvents="none"
+                />
+              </g>
             )
           })}
 
@@ -351,6 +378,38 @@ export default function TrackCanvas({
           )}
           </g>
         </svg>
+
+        {/* ── Hover readout ───────────────────────────────────────────────
+            Pointing at a sail change asks one question — what were we carrying
+            from here on — and the tag already holds the answer, because a sail
+            change records the whole state after it rather than a diff. Anything
+            else gets its name and its time, which is what the native tooltip
+            used to give a second late. */}
+        {hovered && (() => {
+          const at = toScreen(view, { x: hover!.x, y: hover!.y })
+          const tip = markerTip(hovered.item.tag, tzOffsetMin)
+          // Flipped to the inside half, so a marker near the right-hand edge
+          // does not put its readout where the box clips it away.
+          const flip = at.x > w / 2
+          return (
+            <div
+              className="pointer-events-none absolute z-10 max-w-[60%] -translate-y-1/2 rounded-lg border border-[color:var(--border-strong)] bg-surface-1/95 px-2 py-1 shadow-md backdrop-blur"
+              style={{
+                left: flip ? undefined : Math.round(at.x + 12),
+                right: flip ? Math.round(w - at.x + 12) : undefined,
+                top: Math.round(Math.min(Math.max(at.y, 26), Math.max(26, h - 26))),
+              }}
+            >
+              <p className="truncate text-[11px] font-semibold leading-tight">{tip.title}</p>
+              <p className="truncate font-mono text-[10px] leading-tight text-muted">{tip.clock}</p>
+              {tip.sails && (
+                <p className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-accent">
+                  {tip.sails}
+                </p>
+              )}
+            </div>
+          )
+        })()}
 
         {/* ── Zoom controls ───────────────────────────────────────────────
             A pinch is the gesture, but not everybody has two free hands on a

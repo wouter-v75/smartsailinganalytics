@@ -78,9 +78,17 @@ const TRACK_ROWS = (() => {
 })()
 
 const events: TagEvent[] = [
+  // Sail changes carry the WHOLE state after them, which is what the track's
+  // hover readout reads back. Two of them, so hovering one and then the other
+  // gives different answers rather than the same line twice.
   tag({ slug: 'sail-change', label: 'J2 + Main', color: '#F59E0B', source: 'human', producer: 'user',
         detectionKey: null, autoT0: null, confidence: null, t0: T(11, 40), t1: T(11, 40, 20),
-        labels: [{ group: 'Change', text: 'hoist' }], meta: {} }),
+        labels: [{ group: 'Change', text: 'hoist' }],
+        meta: { sail: {
+          up: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }],
+          onBoard: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }, { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }],
+          battens: [{ no: 1, tension: 'soft', turns: 5 }, { no: 2, tension: 'medium', turns: 0 }, { no: 3, tension: 'stiff', turns: -2 }],
+        } } }),
   tag({ slug: 'race-start', label: 'Race 1 start', color: '#EF4444', producer: 'eventfile',
         confidence: 0.98, verifiedAt: T(16, 0), verifiedByUserId: 'me',
         t0: T(11, 59), t1: T(12, 0, 30) }),
@@ -95,6 +103,13 @@ const events: TagEvent[] = [
                 metrics: { bspBefore: 4.1, bspAfter: 3.9, timeTo95: 48, turnAngle: 22, target: 70, tws: 6.1 } } }),
   tag({ slug: 'topmark', label: 'Top mark', color: '#EF4444', producer: 'eventfile', confidence: 0.98,
         t0: T(12, 20), t1: T(12, 20, 30), reelOrder: 1 }),
+  tag({ slug: 'sail-change', label: 'A2 up', color: '#F59E0B', source: 'human', producer: 'user',
+        detectionKey: null, autoT0: null, confidence: null, t0: T(12, 21, 30), t1: T(12, 21, 50),
+        meta: { sail: {
+          up: [{ id: 'i1', name: 'Main' }, { id: 'i5', name: 'A2' }],
+          onBoard: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }, { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }],
+          battens: [{ no: 1, tension: 'soft', turns: 5 }, { no: 2, tension: 'medium', turns: 0 }, { no: 3, tension: 'stiff', turns: -2 }],
+        } } }),
   tag({ slug: 'team-note', label: 'Team comment', color: '#7F77DD', source: 'human', producer: 'user',
         detectionKey: null, autoT0: null, confidence: null,
         note: 'Kite hourglassed at the hoist — halyard not clear.',
@@ -241,7 +256,11 @@ export default function TaggerPreview() {
           />
         )}
         {view === 'check' && (
-          <ReviewQueue tags={events} onVerify={noop} onReject={noop} onOpen={(t) => setOpenId(t.id)} />
+          <ReviewQueue
+            tags={events} onVerify={noop} onReject={noop}
+            onOpen={(t) => setOpenId(t.id)}
+            keysPaused={!!open}
+          />
         )}
         {view === 'debrief' && (
           <DebriefReel
