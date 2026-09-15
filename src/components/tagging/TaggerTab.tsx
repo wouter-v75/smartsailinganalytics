@@ -1,6 +1,6 @@
 'use client'
 import * as React from 'react'
-import { ListChecks, Film, Tags, Map, RefreshCw, AlertCircle } from 'lucide-react'
+import { ListChecks, Film, Tags, Map, RefreshCw, AlertCircle, Sailboat } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import { useTagger } from '@/lib/tagging/useTagger'
 import { detectDay, type Detection } from '@/lib/tagging/detect'
@@ -8,6 +8,7 @@ import { segmentDay, segmentAt, type DaySegment } from '@/lib/tagging/segments'
 import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder, GRAB_VIDEO_SLUG, grabMediaKind } from '@/lib/tagging/requests'
 import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
+import { hasStatedDeck, sailStateAt, weightAboard, SAIL_CHANGE_SLUG } from '@/lib/tagging/sailState'
 import { sailDetail, sailSheetDetail, useSailContext } from './sailChangeDetail.helpers'
 import { useDayMedia } from './useDayMedia'
 import TagButtonBar from './TagButtonBar'
@@ -133,6 +134,20 @@ export default function TaggerTab({
   // filmed" without leaving the tagger.
   const dayMedia = useDayMedia(teamId, boatId, date, tzOffsetMin)
 
+  // Nobody has said what is ON the boat today, so every weight-aboard figure
+  // downstream is a floor rather than a number. Asked once, at the top, rather
+  // than left to be discovered at the debrief.
+  const deckUnknown = React.useMemo(
+    () => !t.loading && !hasStatedDeck(t.events),
+    [t.loading, t.events]
+  )
+  // What is aboard now, for the line that says so.
+  const deck = React.useMemo(
+    () => sailStateAt(t.events, Date.now()),
+    [t.events]
+  )
+  const [composeReq, setComposeReq] = React.useState<{ slug: string; at: number } | null>(null)
+
   // Where the day's data actually runs. The composer clamps its nudges to it,
   // so −10m pressed twice cannot put a tag before the boat left the dock.
   const bounds = React.useMemo(() => {
@@ -229,6 +244,17 @@ export default function TaggerTab({
                 onSync={() => t.sync(detections)}
               />
             )}
+            <DeckBar
+              unknown={deckUnknown}
+              deck={deck}
+              weightOf={(s) => (s.id ? sailCtx.weights[s.id] ?? null : null)}
+              onSet={() => setComposeReq({
+                // The day's own start, so the deck is recorded from the moment
+                // the boat left rather than from whenever somebody noticed.
+                slug: SAIL_CHANGE_SLUG,
+                at: xml?.dayStartUtc ?? bounds?.min ?? Date.now(),
+              })}
+            />
             <TagTrack
               items={t.items}
               segments={segments}
@@ -330,6 +356,8 @@ export default function TaggerTab({
         tzOffsetMin={tzOffsetMin}
         bounds={bounds}
         contextAt={contextAt}
+        compose={composeReq}
+        onComposeTaken={() => setComposeReq(null)}
         detailFor={(def) =>
           sailDetail({
             def,
@@ -338,6 +366,10 @@ export default function TaggerTab({
             logRows,
             tzOffsetMin,
             onEditSailList,
+            // Opened from the deck prompt: it is asking what is ABOARD, and
+            // landing on the sails-up tab makes it look like it asked something
+            // else.
+            startPane: composeReq ? 'onboard' : undefined,
           })
         }
         onApply={async (slug, at, opts) => {
@@ -414,6 +446,64 @@ export default function TaggerTab({
         />
       )}
     </div>
+  )
+}
+
+/**
+ * What is on the boat — asked for once, then shown.
+ *
+ * The deck is the input nothing in the data can supply: the log records what
+ * the boat did, the event file records what was hoisted, and neither knows that
+ * the A3 is lying in the bow. Without it the weight aboard is a floor rather
+ * than a figure, and nobody finds that out until a debrief argues about it.
+ *
+ * So: asked at the top of the day's list while it is unknown, and stated there
+ * once it is — because a list held constant all day is only useful if somebody
+ * can see it without opening a tag.
+ */
+function DeckBar({
+  unknown, deck, weightOf, onSet,
+}: {
+  unknown: boolean
+  deck: { up: { id?: string | null; name: string }[]; onBoard: { id?: string | null; name: string }[] }
+  weightOf: (s: { id?: string | null; name: string }) => number | null
+  onSet: () => void
+}) {
+  if (unknown) {
+    return (
+      <div className="flex items-center gap-2 border-b border-[color:var(--border)] bg-accent-bg px-3 py-2">
+        <Sailboat size={15} className="shrink-0 text-accent" aria-hidden />
+        <span className="min-w-0 flex-1 text-xs text-accent">
+          What is on board today? Set it once and it holds for the day.
+        </span>
+        <button
+          onClick={onSet}
+          className="min-h-[40px] shrink-0 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-fg"
+        >
+          Set the deck
+        </button>
+      </div>
+    )
+  }
+
+  if (!deck.onBoard.length) return null
+  const kg = weightAboard(deck as never, weightOf)
+  return (
+    <button
+      onClick={onSet}
+      className="flex w-full items-center gap-2 border-b border-[color:var(--border)] bg-surface-1 px-3 py-2 text-left"
+    >
+      <Sailboat size={14} className="shrink-0 text-secondary" aria-hidden />
+      <span className="min-w-0 flex-1 truncate text-[11px] text-secondary">
+        <span className="font-semibold">On board</span>{' '}
+        {deck.onBoard.map((s) => s.name).join(' + ')}
+      </span>
+      {kg && (
+        <span className="shrink-0 font-mono text-[11px] text-muted">
+          {kg.kg.toFixed(1)} kg{kg.unknown ? ` +${kg.unknown}?` : ''}
+        </span>
+      )}
+    </button>
   )
 }
 

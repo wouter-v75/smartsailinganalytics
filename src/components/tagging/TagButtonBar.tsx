@@ -49,6 +49,12 @@ export interface TagButtonBarProps {
    *  of them; most tags need none. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   detailFor?: (def: TagDef) => ComposerDetail<any> | null
+  /** Open the composer from OUTSIDE the bar — the day-start deck prompt does
+   *  this. A changing object opens it; null closes nothing. */
+  compose?: { slug: string; at: number } | null
+  /** Told once the request has been taken, so the caller can clear it and the
+   *  composer is not reopened on the next render. */
+  onComposeTaken?: () => void
 }
 
 const iconFor = (slug: string) =>
@@ -56,7 +62,7 @@ const iconFor = (slug: string) =>
 
 export default function TagButtonBar({
   defs, allDefs, groups = BAR_GROUPS, nowUtc, onApply, disabled, className,
-  tzOffsetMin = 0, bounds, contextAt, detailFor,
+  tzOffsetMin = 0, bounds, contextAt, detailFor, compose, onComposeTaken,
 }: TagButtonBarProps) {
   const [composing, setComposing] = React.useState<{ def: TagDef; at: number } | null>(null)
   const [picking, setPicking] = React.useState<{ group: BarGroup; members: TagDef[]; at: number } | null>(null)
@@ -65,6 +71,16 @@ export default function TagButtonBar({
     () => barItems(defs, allDefs && allDefs.length ? allDefs : defs, groups),
     [defs, allDefs, groups]
   )
+
+  // A composer opened from elsewhere. The definition is looked up in the FULL
+  // list rather than the bar's: the thing being asked for may not have a button.
+  const pool = allDefs && allDefs.length ? allDefs : defs
+  React.useEffect(() => {
+    if (!compose) return
+    const def = pool.find((d) => d.slug === compose.slug && !d.archived)
+    if (def) setComposing({ def, at: compose.at })
+    onComposeTaken?.()
+  }, [compose]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!items.length) return null
 

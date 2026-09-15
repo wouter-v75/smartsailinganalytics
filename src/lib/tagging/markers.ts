@@ -21,7 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { sessionClock } from './clock'
-import { SAIL_CHANGE_SLUG, stateOf, stateIsEmpty, describeState } from './sailState'
+import { SAIL_CHANGE_SLUG, stateOf, stateIsEmpty, describeState, sailStateAt } from './sailState'
 import type { TagEvent } from './types'
 
 /** The routine turns. Everything else is a moment somebody navigates to. */
@@ -73,6 +73,10 @@ export interface MarkerTip {
   clock: string
   /** What was flying from this point on. Only a sail change has one. */
   sails: string | null
+  /** What was ON THE BOAT from this point on — the sails up plus the ones in
+   *  the bag. Needs the whole day, because the deck is carried forward from
+   *  wherever somebody last said what it was. */
+  aboard: string | null
 }
 
 /**
@@ -92,17 +96,45 @@ export function sailsFrom(tag: TagEvent): string | null {
   return describeState(state)
 }
 
-/** Everything the hover readout shows for one marker. */
-export function markerTip(tag: TagEvent, tzOffsetMin = 0): MarkerTip {
+/**
+ * What is ON THE BOAT from this point on.
+ *
+ * Only shown when it says more than the sails up already do: on a boat with
+ * nothing in the bag the two lists are identical, and printing both would be
+ * printing the same fact twice.
+ */
+export function deckFrom(tag: TagEvent, day?: readonly TagEvent[]): string | null {
+  if (tag.slug !== SAIL_CHANGE_SLUG || !day?.length) return null
+  const state = sailStateAt(day, tag.t0)
+  if (!state.onBoard.length) return null
+  if (state.onBoard.length <= state.up.length) return null
+  return state.onBoard.map((s) => s.name).join(' + ')
+}
+
+/** Everything the hover readout shows for one marker. `day` is the whole day's
+ *  tags, needed for the carried deck; without it the deck is simply not shown. */
+export function markerTip(
+  tag: TagEvent,
+  tzOffsetMin = 0,
+  day?: readonly TagEvent[]
+): MarkerTip {
   return {
     title: tag.label,
     clock: sessionClock(tag.t0, tzOffsetMin),
     sails: sailsFrom(tag),
+    aboard: deckFrom(tag, day),
   }
 }
 
 /** The same thing as one string, for the accessible name of the shape. */
-export function markerLabel(tag: TagEvent, tzOffsetMin = 0): string {
-  const tip = markerTip(tag, tzOffsetMin)
-  return tip.sails ? `${tip.title} · ${tip.clock} · ${tip.sails}` : `${tip.title} · ${tip.clock}`
+export function markerLabel(
+  tag: TagEvent,
+  tzOffsetMin = 0,
+  day?: readonly TagEvent[]
+): string {
+  const tip = markerTip(tag, tzOffsetMin, day)
+  const parts = [tip.title, tip.clock]
+  if (tip.sails) parts.push(tip.sails)
+  if (tip.aboard) parts.push(`aboard ${tip.aboard}`)
+  return parts.join(' · ')
 }

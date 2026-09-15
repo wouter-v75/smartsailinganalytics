@@ -101,7 +101,13 @@ export default function TrackCanvas({
   // What the mouse is over, in TRACK coordinates so the readout keeps its place
   // through a zoom. Mouse only: a touch has no hover, and a tap opens the tag.
   const [hover, setHover] = React.useState<
-    { id: string; x: number; y: number; title: string; clock: string; extra: string | null } | null
+    {
+      id: string; x: number; y: number
+      title: string; clock: string
+      extra: string | null
+      /** What was on the boat from here on — only a sail change has one. */
+      aboard?: string | null
+    } | null
   >(null)
   // The right-click / hold menu on one tag, anchored where it was opened.
   const [menu, setMenu] = React.useState<{ tag: TagEvent; x: number; y: number } | null>(null)
@@ -147,6 +153,11 @@ export default function TrackCanvas({
       .map((i) => ({ item: i, pt: pointAtUtc(points, i.tag.t0) }))
       .filter((m): m is { item: TagWithRequests; pt: TrackPoint } => !!m.pt)
   }, [items, points])
+
+  // The whole day's tags, for the carried on-board list: what is ABOARD at a
+  // sail change is decided by wherever somebody last said so, which may be
+  // hours earlier and outside whatever window is drawn.
+  const dayTags = React.useMemo(() => items.map((i) => i.tag), [items])
 
   // Media inside the drawn window, with the geometry each kind needs: a path
   // for a clip, a point for a photo. A clip too short to draw as a line falls
@@ -559,7 +570,7 @@ export default function TrackCanvas({
                 // Named rather than titled: a <title> is also a native tooltip,
                 // and it would sit under the hover readout saying the same thing
                 // a second later.
-                aria-label={markerLabel(t, tzOffsetMin)}
+                aria-label={markerLabel(t, tzOffsetMin, dayTags)}
                 className={onOpenTag ? 'cursor-pointer' : undefined}
                 onClick={(e) => {
                   e.stopPropagation()
@@ -570,8 +581,12 @@ export default function TrackCanvas({
                 }}
                 onPointerEnter={(e) => {
                   if (e.pointerType !== 'mouse') return
-                  const tip = markerTip(t, tzOffsetMin)
-                  setHover({ id: t.id, x: pt.x, y: pt.y, title: tip.title, clock: tip.clock, extra: tip.sails })
+                  const tip = markerTip(t, tzOffsetMin, dayTags)
+                  setHover({
+                    id: t.id, x: pt.x, y: pt.y,
+                    title: tip.title, clock: tip.clock,
+                    extra: tip.sails, aboard: tip.aboard,
+                  })
                 }}
                 onPointerLeave={() => setHover((prev) => (prev?.id === t.id ? null : prev))}
               >
@@ -643,6 +658,11 @@ export default function TrackCanvas({
               {hover.extra && (
                 <p className="mt-0.5 truncate text-[11px] font-semibold leading-tight text-accent">
                   {hover.extra}
+                </p>
+              )}
+              {hover.aboard && (
+                <p className="truncate text-[10px] leading-tight text-muted">
+                  aboard {hover.aboard}
                 </p>
               )}
             </div>

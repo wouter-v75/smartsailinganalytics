@@ -78,6 +78,26 @@ export const sailKey = (s: SailRef | null | undefined): string =>
 
 export const sameSail = (a: SailRef, b: SailRef): boolean => sailKey(a) === sailKey(b)
 
+/** Just the name, lower-cased — the only thing the event file gives. */
+const nameKey = (s: SailRef | null | undefined): string =>
+  String(s?.name ?? '').trim().toLowerCase()
+
+/**
+ * Same sail, ACROSS SOURCES.
+ *
+ * The crew pick sails out of the inventory, so theirs carry an id. The event
+ * file knows only names. sailKey prefers the id, so inventory "Main" and the
+ * file's "Main" hash differently and never match — which is invisible until the
+ * carried deck comes back as "Main + J2 + J4 + A2 + Main + J4".
+ *
+ * Deliberately NOT what sameSail does. Inside the composer every sail comes
+ * from one place, and two different mainsails that happen to share a name
+ * should stay two sails; it is only when folding a day together that the
+ * name is all there is to go on.
+ */
+export const sameSailAcrossSources = (a: SailRef, b: SailRef): boolean =>
+  sailKey(a) === sailKey(b) || (!!nameKey(a) && nameKey(a) === nameKey(b))
+
 /** Clean a list of sail references: named, de-duplicated, in order. */
 function refList(raw: unknown): SailRef[] {
   const out: SailRef[] = []
@@ -165,12 +185,71 @@ function namesFromEventFile(raw: unknown): string[] {
   return out
 }
 
+const ref = (s: SailRef): SailRef => ({ id: s.id ?? null, name: s.name })
+
+/** Did this tag actually SAY what was on the boat, or is its on-board list just
+ *  an inference from what was up? The event file only ever records sails up, so
+ *  every detected change falls in the second camp. */
+function statesOnBoard(tag: TagEvent): boolean {
+  const raw = (tag.meta as Record<string, unknown> | null)?.sail as { onBoard?: unknown } | undefined
+  return Array.isArray(raw?.onBoard) && raw.onBoard.length > 0
+}
+
+export interface SailChange {
+  tag: TagEvent
+  state: SailState
+  /** The crew said what was aboard here, rather than it being read off `up`. */
+  statedOnBoard: boolean
+}
+
 /** Sail-change tags that carry a state, oldest first. */
-export function sailChanges(tags: readonly TagEvent[]): { tag: TagEvent; state: SailState }[] {
+export function sailChanges(tags: readonly TagEvent[]): SailChange[] {
   return tags
-    .map((tag) => ({ tag, state: stateOf(tag) }))
-    .filter((x): x is { tag: TagEvent; state: SailState } => !!x.state)
+    .map((tag) => ({ tag, state: stateOf(tag), statedOnBoard: statesOnBoard(tag) }))
+    .filter((x): x is SailChange => !!x.state)
     .sort((a, b) => a.tag.t0 - b.tag.t0)
+}
+
+/**
+ * Fold the day up to an instant, CARRYING THE DECK FORWARD.
+ *
+ * What is aboard changes when somebody passes a sail across to the RIB, and
+ * that is rare — twice a day at most. What is UP changes constantly. So the
+ * on-board list is sticky: once the crew have said what is on the boat, it
+ * stays said until they say otherwise.
+ *
+ * Without this, one detected sail change wipes it. The event file records only
+ * the sails UP, so a detected change's on-board list is an inference from that
+ * — and folding it in as fact would say the crew threw four sails overboard at
+ * 12:15 because Expedition logged a headsail swap. Everything downstream reads
+ * that as the weight aboard.
+ *
+ * Hoisting still puts a sail aboard: you cannot hoist one from the RIB.
+ */
+function foldTo(
+  tags: readonly TagEvent[],
+  utc: number
+): { state: SailState; change: SailChange | null } {
+  let aboard: SailRef[] = []
+  let state = EMPTY_SAIL_STATE
+  let change: SailChange | null = null
+
+  for (const c of sailChanges(tags)) {
+    if (c.tag.t0 > utc) break
+    if (c.statedOnBoard) {
+      aboard = c.state.onBoard.map(ref)
+    } else {
+      // Carry the deck; anything newly hoisted is on it by definition. Matched
+      // across sources — the file's "Main" is the inventory's "Main", and
+      // matching on the id alone puts it aboard a second time.
+      for (const s of c.state.up) {
+        if (!aboard.some((x) => sameSailAcrossSources(x, s))) aboard = [...aboard, ref(s)]
+      }
+    }
+    state = { ...c.state, onBoard: aboard }
+    change = { ...c, state }
+  }
+  return { state, change }
 }
 
 /**
@@ -181,30 +260,29 @@ export function sailChanges(tags: readonly TagEvent[]): { tag: TagEvent; state: 
  * had not hoisted yet.
  */
 export function sailStateAt(tags: readonly TagEvent[], utc: number): SailState {
-  const changes = sailChanges(tags)
-  let out = EMPTY_SAIL_STATE
-  for (const c of changes) {
-    if (c.tag.t0 > utc) break
-    out = c.state
-  }
-  return out
+  return foldTo(tags, utc).state
 }
+
+/**
+ * Has anybody said what is on the boat today?
+ *
+ * False means every on-board list in the day is an inference from the sails up
+ * — which is what the event file gives and what the weight aboard would then be
+ * computed from. It is the difference between a real figure and a floor.
+ */
+export const hasStatedDeck = (tags: readonly TagEvent[]): boolean =>
+  sailChanges(tags).some((c) => c.statedOnBoard)
 
 /** The change immediately before `utc`, for "carried over from 11:40". */
 export function lastChangeBefore(
   tags: readonly TagEvent[],
   utc: number
-): { tag: TagEvent; state: SailState } | null {
-  const changes = sailChanges(tags)
-  let out: { tag: TagEvent; state: SailState } | null = null
-  for (const c of changes) {
-    if (c.tag.t0 > utc) break
-    out = c
-  }
-  return out
+): SailChange | null {
+  // The FOLDED state, not the tag's own: the composer seeds its "previous" from
+  // this, and seeding from a detected change's raw state would hand the crew a
+  // deck with four sails missing from it.
+  return foldTo(tags, utc).change
 }
-
-const ref = (s: SailRef): SailRef => ({ id: s.id ?? null, name: s.name })
 
 /**
  * Hoist or drop one sail.

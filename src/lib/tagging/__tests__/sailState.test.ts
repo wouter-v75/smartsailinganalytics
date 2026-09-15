@@ -3,7 +3,7 @@ import {
   SAIL_CHANGE_SLUG, EMPTY_SAIL_STATE, normaliseSailState, stateOf, sailChanges,
   sailStateAt, lastChangeBefore, toggleUp, isUp, setBatten, withBattenCount,
   stateIsEmpty, describeState, describeChange, sailKey,
-  toggleOnBoard, isOnBoard, weightAboard,
+  toggleOnBoard, isOnBoard, weightAboard, hasStatedDeck, sameSail, sameSailAcrossSources,
   type SailState, type SailRef,
 } from '../sailState'
 import type { TagEvent } from '../types'
@@ -423,5 +423,187 @@ describe('the event file answers when the crew did not', () => {
   it('carries through to what was up at a later moment', () => {
     const day = [fromFile(['Main', 'J2'], { t0: T(11, 40), t1: T(11, 40) })]
     expect(describeState(sailStateAt(day, T(12, 30)))).toBe('Main + J2')
+  })
+})
+
+describe('the deck is sticky — what is aboard stays aboard', () => {
+  const aboard = (s: SailState) => s.onBoard.map((x) => x.name).sort()
+
+  const dayList = ['Main', 'J2', 'J4', 'A2']
+  const setDeck = withSail(T(11, 40), {
+    up: [{ id: null, name: 'Main' }, { id: null, name: 'J2' }],
+    onBoard: dayList.map((name) => ({ id: null, name })),
+  })
+
+  it('survives a detected change, which only ever knows what was UP', () => {
+    // The failure this exists for: the event file records sails up, so folding
+    // a detected change in as fact says the crew threw two sails overboard at
+    // 12:15 because Expedition logged a headsail swap. The weight aboard,
+    // which every later screen reads, would drop with it.
+    const fromFile = tag({
+      t0: T(12, 15), t1: T(12, 15),
+      source: 'auto', producer: 'eventfile',
+      meta: { sails: ['Main', 'J4'] },
+    })
+    const s = sailStateAt([setDeck, fromFile], T(12, 30))
+    expect(names(s)).toEqual(['Main', 'J4'])
+    expect(aboard(s)).toEqual(['A2', 'J2', 'J4', 'Main'])
+  })
+
+  it('lasts the rest of the day across any number of them', () => {
+    const later = [T(12, 15), T(13, 0), T(14, 30)].map((t) =>
+      tag({ t0: t, t1: t, source: 'auto', producer: 'eventfile', meta: { sails: ['Main', 'A2'] } })
+    )
+    expect(aboard(sailStateAt([setDeck, ...later], T(15, 0)))).toEqual(['A2', 'J2', 'J4', 'Main'])
+  })
+
+  it('changes when somebody says it changed', () => {
+    // A sail passed back to the RIB: the crew state the new deck, and that is
+    // what sticks from then on.
+    const passedBack = withSail(T(13, 0), {
+      up: [{ id: null, name: 'Main' }],
+      onBoard: [{ id: null, name: 'Main' }, { id: null, name: 'J2' }],
+    })
+    expect(aboard(sailStateAt([setDeck, passedBack], T(14, 0)))).toEqual(['J2', 'Main'])
+  })
+
+  it('takes a sail aboard when it is hoisted — it cannot come up from the RIB', () => {
+    const hoistUnknown = tag({
+      t0: T(12, 15), t1: T(12, 15),
+      source: 'auto', producer: 'eventfile',
+      meta: { sails: ['Main', 'Storm jib'] },
+    })
+    expect(aboard(sailStateAt([setDeck, hoistUnknown], T(12, 30))))
+      .toEqual(['A2', 'J2', 'J4', 'Main', 'Storm jib'])
+  })
+
+  it('does not add the same sail to the deck twice', () => {
+    const reHoist = tag({
+      t0: T(12, 15), t1: T(12, 15),
+      source: 'auto', producer: 'eventfile',
+      meta: { sails: ['Main', 'J2'] },
+    })
+    expect(aboard(sailStateAt([setDeck, reHoist], T(12, 30)))).toEqual(['A2', 'J2', 'J4', 'Main'])
+  })
+
+  it('starts empty on a day where nobody ever said', () => {
+    const onlyFile = tag({
+      t0: T(11, 40), t1: T(11, 40),
+      source: 'auto', producer: 'eventfile', meta: { sails: ['Main', 'J2'] },
+    })
+    // What was up is the only thing known to be aboard, which is honest.
+    expect(aboard(sailStateAt([onlyFile], T(12, 0)))).toEqual(['J2', 'Main'])
+  })
+
+  it('hands the composer the carried deck as “previous”', () => {
+    // Seeding a new change from a detected one's RAW state would give the crew
+    // a deck with half their sails missing from it.
+    const fromFile = tag({
+      t0: T(12, 15), t1: T(12, 15),
+      source: 'auto', producer: 'eventfile', meta: { sails: ['Main', 'J4'] },
+    })
+    const prev = lastChangeBefore([setDeck, fromFile], T(13, 0))!
+    expect(aboard(prev.state)).toEqual(['A2', 'J2', 'J4', 'Main'])
+  })
+
+  it('weighs the whole deck, not just what is flying', () => {
+    const fromFile = tag({
+      t0: T(12, 15), t1: T(12, 15),
+      source: 'auto', producer: 'eventfile', meta: { sails: ['Main'] },
+    })
+    const s = sailStateAt([setDeck, fromFile], T(12, 30))
+    const kg: Record<string, number> = { Main: 116.6, J2: 58.4, J4: 44.1, A2: 49.2 }
+    expect(weightAboard(s, (x) => kg[x.name] ?? null)!.kg).toBeCloseTo(268.3, 1)
+  })
+})
+
+describe('hasStatedDeck', () => {
+  it('is false on a day nobody has filled in', () => {
+    expect(hasStatedDeck([])).toBe(false)
+  })
+
+  it('is false when every change came from the event file', () => {
+    // Those only ever record sails UP, so the deck is a floor rather than a
+    // figure — and the weight aboard computed from it is too.
+    const fromFile = tag({
+      t0: T(11, 40), t1: T(11, 40),
+      source: 'auto', producer: 'eventfile', meta: { sails: ['Main', 'J2'] },
+    })
+    expect(hasStatedDeck([fromFile])).toBe(false)
+  })
+
+  it('is true once somebody says', () => {
+    const said = withSail(T(11, 40), {
+      up: [{ id: null, name: 'Main' }],
+      onBoard: [{ id: null, name: 'Main' }, { id: null, name: 'J2' }],
+    })
+    expect(hasStatedDeck([said])).toBe(true)
+  })
+
+  it('stays true for the rest of the day', () => {
+    const said = withSail(T(11, 40), {
+      up: [{ id: null, name: 'Main' }],
+      onBoard: [{ id: null, name: 'Main' }, { id: null, name: 'J2' }],
+    })
+    const later = tag({
+      t0: T(14, 0), t1: T(14, 0),
+      source: 'auto', producer: 'eventfile', meta: { sails: ['Main'] },
+    })
+    expect(hasStatedDeck([said, later])).toBe(true)
+  })
+})
+
+describe('the deck folds across sources', () => {
+  it('does not put the same sail aboard twice under two identities', () => {
+    // The crew pick out of the inventory, so their sails carry an id; the event
+    // file knows only names. Matching on the id alone gave a carried deck of
+    // "Main + J2 + J4 + A2 + Main + J4".
+    const withIds = withSail(T(11, 40), {
+      up: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }],
+      onBoard: [
+        { id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' },
+        { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' },
+      ],
+    })
+    const byName = tag({
+      t0: T(12, 15), t1: T(12, 15),
+      source: 'auto', producer: 'eventfile', meta: { sails: ['Main', 'J4'] },
+    })
+    const deck = sailStateAt([withIds, byName], T(12, 30)).onBoard.map((x) => x.name)
+    expect(deck).toEqual(['Main', 'J2', 'J4', 'A2'])
+  })
+
+  it('matches names case- and space-insensitively', () => {
+    const withIds = withSail(T(11, 40), {
+      up: [{ id: 'i1', name: 'Main' }],
+      onBoard: [{ id: 'i1', name: 'Main' }],
+    })
+    const byName = tag({
+      t0: T(12, 15), t1: T(12, 15),
+      source: 'auto', producer: 'eventfile', meta: { sails: ['  MAIN  '] },
+    })
+    expect(sailStateAt([withIds, byName], T(12, 30)).onBoard).toHaveLength(1)
+  })
+
+  it('still adds a sail the deck has never seen', () => {
+    const withIds = withSail(T(11, 40), {
+      up: [{ id: 'i1', name: 'Main' }],
+      onBoard: [{ id: 'i1', name: 'Main' }],
+    })
+    const byName = tag({
+      t0: T(12, 15), t1: T(12, 15),
+      source: 'auto', producer: 'eventfile', meta: { sails: ['Main', 'Storm jib'] },
+    })
+    expect(sailStateAt([withIds, byName], T(12, 30)).onBoard.map((x) => x.name))
+      .toEqual(['Main', 'Storm jib'])
+  })
+
+  it('leaves sameSail strict — two sails sharing a name stay two sails', () => {
+    // Inside the composer every sail comes from one place, and conflating them
+    // there would make one of them impossible to select.
+    const a = { id: 'i1', name: 'Main' }
+    const b = { id: 'i2', name: 'Main' }
+    expect(sameSail(a, b)).toBe(false)
+    expect(sameSailAcrossSources(a, b)).toBe(true)
   })
 })

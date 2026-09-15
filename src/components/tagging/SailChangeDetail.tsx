@@ -55,15 +55,20 @@ export interface SailChangeDetailProps {
   tzOffsetMin?: number
   /** Jump to Campaign → Day, where the sail list is edited. */
   onEditSailList?: () => void
+  /** Which tab to open on. Defaults to UP. */
+  startPane?: Pane
 }
 
 type Pane = 'up' | 'onboard' | 'battens'
 
 export default function SailChangeDetail({
   value, onChange, inventory, dayList, weightOf, previous, battenCard, battenCardSail,
-  twsKn, tzOffsetMin = 0, onEditSailList,
+  twsKn, tzOffsetMin = 0, onEditSailList, startPane,
 }: SailChangeDetailProps) {
-  const [pane, setPane] = React.useState<Pane>('up')
+  // Opens on UP, because that is what changes most. The day-start prompt opens
+  // it on ON BOARD instead: it is asking a different question, and landing on
+  // the wrong tab makes it look like it asked the wrong one.
+  const [pane, setPane] = React.useState<Pane>(startPane ?? 'up')
 
   const battenCount = battenCard?.count ?? 3
   // Make sure there is a row per batten to edit, without writing anything into

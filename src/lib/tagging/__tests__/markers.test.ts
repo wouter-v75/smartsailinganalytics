@@ -23,7 +23,7 @@ const tag = (over: Partial<TagEvent> = {}): TagEvent => ({
   ...over,
 })
 
-const change = (up: string[], over: Partial<TagEvent> = {}) =>
+const change = (up: string[], over: Partial<TagEvent> = {}): TagEvent =>
   tag({
     slug: SAIL_CHANGE_SLUG,
     label: 'Sail change',
@@ -142,5 +142,48 @@ describe('what may be dragged along the track', () => {
   it('treats a tag nobody has heard of as the crew’s', () => {
     // A team's own vocabulary is theirs to place and theirs to correct.
     expect(isRetimable('whatever-the-crew-invented')).toBe(true)
+  })
+})
+
+describe('the carried deck on a marker', () => {
+  const deckSet = change(['Main', 'J2'], {
+    t0: T(11, 40), t1: T(11, 40),
+    meta: {
+      sail: {
+        up: [{ id: null, name: 'Main' }, { id: null, name: 'J2' }],
+        onBoard: ['Main', 'J2', 'J4', 'A2'].map((name) => ({ id: null, name })),
+        battens: [],
+      },
+    },
+  })
+  const fromFile = tag({
+    slug: SAIL_CHANGE_SLUG, label: 'Sails changed', t0: T(12, 15), t1: T(12, 15),
+    source: 'auto', producer: 'eventfile', meta: { sails: ['Main', 'J4'] },
+  })
+  const day = [deckSet, fromFile]
+
+  it('says what is aboard from that point, not just what is up', () => {
+    const tip = markerTip(fromFile, 0, day)
+    expect(tip.sails).toBe('Main + J4')
+    expect(tip.aboard).toBe('Main + J2 + J4 + A2')
+  })
+
+  it('stays quiet when the deck says nothing the sails up do not', () => {
+    // A boat with nothing in the bag has two identical lists, and printing both
+    // is printing the same fact twice.
+    expect(markerTip(change(['Main', 'J2']), 0, [change(['Main', 'J2'])]).aboard).toBeNull()
+  })
+
+  it('is absent without the day to fold', () => {
+    expect(markerTip(fromFile, 0).aboard).toBeNull()
+  })
+
+  it('is not offered for a tag that is not a sail change', () => {
+    expect(markerTip(tag(), 0, day).aboard).toBeNull()
+  })
+
+  it('reads as one line for a screen reader', () => {
+    expect(markerLabel(fromFile, 0, day))
+      .toBe('Sails changed · 12:15:00 · Main + J4 · aboard Main + J2 + J4 + A2')
   })
 })

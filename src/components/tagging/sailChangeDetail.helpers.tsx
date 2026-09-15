@@ -162,8 +162,11 @@ export function sailDetail(args: {
   logRows?: { utc: number; tws?: number | null }[] | null
   tzOffsetMin?: number
   onEditSailList?: () => void
+  /** Which tab the composer opens on — the day-start prompt asks about the
+   *  deck, not about what is up. */
+  startPane?: 'up' | 'onboard' | 'battens'
 }): ComposerDetail<SailState> | null {
-  const { def, events, ctx, logRows, tzOffsetMin, onEditSailList } = args
+  const { def, events, ctx, logRows, tzOffsetMin, onEditSailList, startPane } = args
   if (def.slug !== SAIL_CHANGE_SLUG) return null
 
   return {
@@ -184,6 +187,7 @@ export function sailDetail(args: {
           twsKn={twsAt(logRows, at)}
           tzOffsetMin={tzOffsetMin}
           onEditSailList={onEditSailList}
+          startPane={startPane}
         />
       )
     },

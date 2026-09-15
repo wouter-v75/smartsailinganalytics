@@ -9,7 +9,7 @@ import TrackView from '@/components/tagging/TrackView'
 import DayPicker from '@/components/tagging/DayPicker'
 import SailChangeDetail from '@/components/tagging/SailChangeDetail'
 import { normaliseBattenCard } from '@/lib/battens'
-import { sailStateAt, type SailState } from '@/lib/tagging/sailState'
+import { sailStateAt, hasStatedDeck, weightAboard, type SailState } from '@/lib/tagging/sailState'
 import { segmentDay } from '@/lib/tagging/segments'
 import { withRequests } from '@/lib/tagging/requests'
 import { canEditTagEvent } from '@/lib/tagging/gating'
@@ -327,7 +327,35 @@ export default function TaggerPreview() {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view === 'tagger' && (
-          <TagTrack items={items} segments={segments} currentUserId="me" onOpen={setOpenId} />
+          <>
+            {/* The same two states TaggerTab renders: asked while unknown,
+                stated once it is known. */}
+            {hasStatedDeck(evts) ? (
+              (() => {
+                const deck = sailStateAt(evts, T(23, 0))
+                const kg = weightAboard(deck, (x) => (x.id ? SAIL_KG[x.id] ?? null : null))
+                return (
+                  <div className="flex w-full items-center gap-2 border-b border-[color:var(--border)] bg-surface-1 px-3 py-2">
+                    <span className="min-w-0 flex-1 truncate text-[11px] text-secondary">
+                      <span className="font-semibold">On board</span>{' '}
+                      {deck.onBoard.map((x) => x.name).join(' + ')}
+                    </span>
+                    {kg && <span className="shrink-0 font-mono text-[11px] text-muted">{kg.kg.toFixed(1)} kg</span>}
+                  </div>
+                )
+              })()
+            ) : (
+              <div className="flex items-center gap-2 border-b border-[color:var(--border)] bg-accent-bg px-3 py-2">
+                <span className="min-w-0 flex-1 text-xs text-accent">
+                  What is on board today? Set it once and it holds for the day.
+                </span>
+                <button className="min-h-[40px] shrink-0 rounded-lg bg-accent px-3 text-xs font-semibold text-accent-fg">
+                  Set the deck
+                </button>
+              </div>
+            )}
+            <TagTrack items={items} segments={segments} currentUserId="me" onOpen={setOpenId} />
+          </>
         )}
         {view === 'track' && (
           <TrackView
