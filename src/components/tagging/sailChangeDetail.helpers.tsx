@@ -281,10 +281,18 @@ export function sailSheetDetail(args: {
   if (tag.slug !== SAIL_CHANGE_SLUG) return null
 
   const before = lastChangeBefore(events.filter((e) => e.id !== tag.id), tag.t0 - 1)?.state ?? null
+  // What this tag RECORDED, for deciding whether its label and note are still
+  // derived. Not what to show — see below.
   const was = stateOf(tag)
+  // What the boat was actually carrying here: this tag's sails up, on the deck
+  // carried forward from wherever somebody last stated one. Seeding from `was`
+  // showed whatever the single tag happened to know, which for a detected
+  // change is only the sails up — so a day with eleven sails aboard opened at
+  // 12:51 and offered three.
+  const seed = sailStateAt(events, tag.t0)
 
   return {
-    initial: () => was ?? EMPTY_SAIL_STATE,
+    initial: () => (was || seed.up.length ? seed : EMPTY_SAIL_STATE),
 
     render: (value, onChange, at) => (
       <SailChangeDetail

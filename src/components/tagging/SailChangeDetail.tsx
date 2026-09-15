@@ -4,7 +4,7 @@ import { ExternalLink, Check } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import {
   toggleUp, isUp, toggleOnBoard, isOnBoard, weightAboard,
-  setBatten, withBattenCount, describeState,
+  setBatten, withBattenCount, describeState, sameSail, sameSailAcrossSources, sailKey,
   type SailState, type SailRef,
 } from '@/lib/tagging/sailState'
 import {
@@ -61,6 +61,45 @@ export interface SailChangeDetailProps {
 
 type Pane = 'up' | 'onboard' | 'battens'
 
+/**
+ * Re-point a state's sails at the rows the screen is drawing.
+ *
+ * The crew pick sails out of the inventory, so theirs carry an id; the event
+ * file knows only names. A deck folded from both — which is what a day looks
+ * like once a file lands on top of hand tagging — can hold the file's "J2"
+ * while today's list holds the inventory row for the same sail. Drawn as they
+ * arrive, that is one button showing "in the RIB" and a phantom second J2.
+ *
+ * So everything below works on the aligned copy, and the first tap writes the
+ * aligned refs back. Matching is deliberately by name across sources here and
+ * strict everywhere after: once, at the edge, is the only place it is safe.
+ */
+/** The sails in `list` that the day's list does not account for. */
+const offList = (list: SailRef[], base: SailRef[]): SailRef[] =>
+  list.filter((s) => !base.some((b) => sameSail(b, s)))
+
+function alignTo(state: SailState, base: SailRef[]): SailState {
+  if (!base.length) return state
+  const pick = (s: SailRef) => base.find((b) => sameSailAcrossSources(b, s)) ?? s
+  const dedupe = (list: SailRef[]) => {
+    const out: SailRef[] = []
+    const seen = new Set<string>()
+    for (const s of list.map(pick)) {
+      const k = sailKey(s)
+      if (seen.has(k)) continue
+      seen.add(k)
+      out.push(s)
+    }
+    return out
+  }
+  const up = dedupe(state.up)
+  const onBoard = dedupe(state.onBoard)
+  const unchanged = (a: SailRef[], b: SailRef[]) =>
+    a.length === b.length && a.every((s, i) => s === b[i])
+  if (unchanged(up, state.up) && unchanged(onBoard, state.onBoard)) return state
+  return { ...state, up, onBoard }
+}
+
 export default function SailChangeDetail({
   value, onChange, inventory, dayList, weightOf, previous, battenCard, battenCardSail,
   twsKn, tzOffsetMin = 0, onEditSailList, startPane,
@@ -70,36 +109,59 @@ export default function SailChangeDetail({
   // the wrong tab makes it look like it asked the wrong one.
   const [pane, setPane] = React.useState<Pane>(startPane ?? 'up')
 
+  // ON BOARD is chosen from the day's list. A day whose list has not been
+  // filled in yet falls back to the whole inventory — an empty tab would make
+  // the tagger useless on exactly the days somebody forgot the paperwork.
+  const base = React.useMemo(() => (dayList.length ? dayList : inventory), [dayList, inventory])
+  const usingFallback = !dayList.length && inventory.length > 0
+  const state = React.useMemo(() => alignTo(value, base), [value, base])
+
   const battenCount = battenCard?.count ?? 3
   // Make sure there is a row per batten to edit, without writing anything into
   // the tag until the crew actually sets something.
   const battens = React.useMemo(
-    () => withBattenCount(value, battenCount).battens,
-    [value, battenCount]
+    () => withBattenCount(state, battenCount).battens,
+    [state, battenCount]
   )
 
-  // ON BOARD is chosen from the day's list. A day whose list has not been filled
-  // in yet falls back to the whole inventory — an empty tab would make the
-  // tagger useless on exactly the days somebody forgot the paperwork.
-  const universe = dayList.length ? dayList : inventory
-  const usingFallback = !dayList.length && inventory.length > 0
+  // Plus anything the state already says is ABOARD. The deck carries forward
+  // from earlier in the day and the event file names sails of its own, so it
+  // can hold a sail the day's list does not — and a sail that is aboard but not
+  // drawn is a sail nobody can see, count, or take off again. You cannot be in
+  // a state the screen will not show you.
+  //
+  // Sticky for the life of the composer. Derived straight from the state, the
+  // button for a carried sail would vanish the moment it was passed back to the
+  // RIB — a one-way tap with no way to undo it, which is worse than not drawing
+  // it at all.
+  const [carried, setCarried] = React.useState<SailRef[]>(
+    () => offList(alignTo(value, dayList.length ? dayList : inventory).onBoard, dayList.length ? dayList : inventory)
+  )
+  React.useEffect(() => {
+    const extra = offList(state.onBoard, base).filter((s) => !carried.some((c) => sameSail(c, s)))
+    if (extra.length) setCarried((prev) => [...prev, ...extra])
+  }, [state.onBoard, base, carried])
+  const universe = React.useMemo(() => {
+    const extra = offList(carried, base)
+    return extra.length ? [...base, ...extra] : base
+  }, [base, carried])
 
   // UP is chosen from what is aboard. Until anything has been marked aboard,
   // offer the same universe: a first sail change of the day should not require
   // a trip through the On board tab before anything can be hoisted.
-  const hoistable = value.onBoard.length ? value.onBoard : universe
+  const hoistable = state.onBoard.length ? state.onBoard : universe
 
-  const weight = weightOf ? weightAboard(value, weightOf) : null
+  const weight = weightOf ? weightAboard(state, weightOf) : null
   const band = bandForTws(twsKn)
 
   return (
     <div className="mb-3 rounded-xl border border-[color:var(--border)] bg-surface-2/40 p-2">
       <div role="tablist" aria-label="Sail change" className="mb-2 flex gap-1">
         <PaneTab active={pane === 'up'} onClick={() => setPane('up')}>
-          Up{value.up.length > 0 ? ` · ${value.up.length}` : ''}
+          Up{state.up.length > 0 ? ` · ${state.up.length}` : ''}
         </PaneTab>
         <PaneTab active={pane === 'onboard'} onClick={() => setPane('onboard')}>
-          On board{value.onBoard.length ? ` · ${value.onBoard.length}` : ''}
+          On board{state.onBoard.length ? ` · ${state.onBoard.length}` : ''}
         </PaneTab>
         <PaneTab active={pane === 'battens'} onClick={() => setPane('battens')}>
           Battens
@@ -128,11 +190,11 @@ export default function SailChangeDetail({
               )}
               <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))' }}>
                 {hoistable.map((s, i) => {
-                  const on = isUp(value, s)
+                  const on = isUp(state, s)
                   return (
                     <button
                       key={s.id || `${s.name}-${i}`}
-                      onClick={() => onChange(toggleUp(value, s))}
+                      onClick={() => onChange(toggleUp(state, s))}
                       aria-pressed={on}
                       className={cn(
                         'flex min-h-[52px] items-center justify-center gap-1.5 rounded-lg border px-2 text-center text-xs font-semibold leading-tight',
@@ -148,10 +210,10 @@ export default function SailChangeDetail({
                 })}
               </div>
               <p className="mt-2 text-[11px] text-muted">
-                {value.up.length ? describeState(value) : 'Nothing up — this records a drop.'}
+                {state.up.length ? describeState(state) : 'Nothing up — this records a drop.'}
                 {/* Hoisting from the On board tab's universe puts the sail
                     aboard; saying so beats the crew discovering it later. */}
-                {value.onBoard.length === 0 && value.up.length > 0 &&
+                {state.onBoard.length === 0 && state.up.length > 0 &&
                   ' · hoisting also puts a sail on board'}
               </p>
             </>
@@ -174,12 +236,12 @@ export default function SailChangeDetail({
             <>
               <div className="grid gap-1.5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(96px, 1fr))' }}>
                 {universe.map((s, i) => {
-                  const aboard = isOnBoard(value, s)
-                  const up = isUp(value, s)
+                  const aboard = isOnBoard(state, s)
+                  const up = isUp(state, s)
                   return (
                     <button
                       key={s.id || `${s.name}-${i}`}
-                      onClick={() => onChange(toggleOnBoard(value, s))}
+                      onClick={() => onChange(toggleOnBoard(state, s))}
                       aria-pressed={aboard}
                       className={cn(
                         'flex min-h-[52px] flex-col items-center justify-center rounded-lg border px-2 text-center text-xs font-semibold leading-tight',
@@ -199,7 +261,7 @@ export default function SailChangeDetail({
               </div>
 
               <p className="mt-2 text-[11px] text-muted">
-                {value.onBoard.length} of {universe.length} on board
+                {state.onBoard.length} of {universe.length} on board
                 {weight && (
                   <>
                     {' · '}
@@ -257,7 +319,7 @@ export default function SailChangeDetail({
                           key={t}
                           // Tapping the one already set clears it, or a cell
                           // filled in by mistake could never be blanked.
-                          onClick={() => onChange(setBatten(withBattenCount(value, battenCount), b.no, { tension: on ? null : (t as Tension) }))}
+                          onClick={() => onChange(setBatten(withBattenCount(state, battenCount), b.no, { tension: on ? null : (t as Tension) }))}
                           aria-pressed={on}
                           aria-label={`Batten ${b.no} ${t}`}
                           className={cn(
@@ -286,7 +348,7 @@ export default function SailChangeDetail({
                       // it as 0 fights the keyboard on every negative entry.
                       const turns = raw === '' || raw === '-' ? 0 : Math.round(Number(raw))
                       if (!Number.isFinite(turns)) return
-                      onChange(setBatten(withBattenCount(value, battenCount), b.no, { turns }))
+                      onChange(setBatten(withBattenCount(state, battenCount), b.no, { turns }))
                     }}
                     className="min-h-[40px] w-12 shrink-0 rounded-lg border border-[color:var(--border)] bg-surface-2 text-center text-[16px] tabular-nums text-fg"
                   />
@@ -297,7 +359,7 @@ export default function SailChangeDetail({
                       render as "mediu…". The arrow says it applies. */}
                   {target && (
                     <button
-                      onClick={() => onChange(setBatten(withBattenCount(value, battenCount), b.no, { tension: target.tension, turns: target.turns }))}
+                      onClick={() => onChange(setBatten(withBattenCount(state, battenCount), b.no, { tension: target.tension, turns: target.turns }))}
                       className="min-w-0 flex-1 rounded-lg px-1 py-2 text-left text-[10px] font-semibold leading-tight text-muted"
                       title={`Use the card: ${formatSetting(target)}`}
                     >

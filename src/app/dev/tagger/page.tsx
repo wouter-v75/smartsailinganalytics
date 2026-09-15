@@ -92,7 +92,11 @@ const events: TagEvent[] = [
         labels: [{ group: 'Change', text: 'hoist' }],
         meta: { sail: {
           up: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }],
-          onBoard: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }, { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }],
+          // The storm jib is NOT on the day's list — it was passed across from
+          // the RIB when the forecast turned. The deck this states is what the
+          // rest of the day carries, so the On board tab has to be able to draw
+          // a sail the list has never heard of.
+          onBoard: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }, { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }, { id: 'i7', name: 'Storm jib' }],
           battens: [{ no: 1, tension: 'soft', turns: 5 }, { no: 2, tension: 'medium', turns: 0 }, { no: 3, tension: 'stiff', turns: -2 }],
         } } }),
   tag({ slug: 'race-start', label: 'Race 1 start', color: '#EF4444', producer: 'eventfile',

@@ -143,3 +143,43 @@ describe('an empty deck is not a change', () => {
     expect(d.isIncomplete!(state(['Main']))).toBe(false)
   })
 })
+
+describe('opening a later change shows the deck, not just that tag’s own list', () => {
+  // Reported from the app: a sail change at 11:34 with ELEVEN sails aboard,
+  // then one at 12:51 showing three. The fold carries the deck; the sheet was
+  // seeding from the tag's own record instead, so it showed whatever that one
+  // tag happened to know — which for a detected change is only the sails up.
+  const deckSet = withState(
+    {
+      up: [ref('MAIN_B 2026'), ref('J1.5_B 2026')],
+      onBoard: ['MAIN_B 2026', 'J1.5_B 2026', 'J2', 'J3', 'J4', 'A1', 'A2', 'A3', 'C0', 'Storm jib', 'Trysail'].map((s) => ref(s)),
+      battens: [],
+    },
+    { t0: T(11, 34), t1: T(11, 34) }
+  )
+  const later = tag({
+    t0: T(12, 51), t1: T(12, 51),
+    source: 'auto', producer: 'eventfile',
+    meta: { sails: ['MAIN_B 2026', 'J2', 'A2'] },
+  })
+
+  it('seeds the ON BOARD tab with the carried deck', () => {
+    const d = sailSheetDetail({ tag: later, events: [deckSet, later], ctx })!
+    expect(d.initial().onBoard).toHaveLength(11)
+  })
+
+  it('still seeds UP with what that change actually hoisted', () => {
+    const d = sailSheetDetail({ tag: later, events: [deckSet, later], ctx })!
+    expect(d.initial().up.map((s) => s.name)).toEqual(['MAIN_B 2026', 'J2', 'A2'])
+  })
+
+  it('leaves a change that states its own deck alone', () => {
+    const d = sailSheetDetail({ tag: deckSet, events: [deckSet, later], ctx })!
+    expect(d.initial().onBoard).toHaveLength(11)
+  })
+
+  it('is empty on a day with nothing before it either', () => {
+    const d = sailSheetDetail({ tag: tag(), events: [], ctx })!
+    expect(d.initial().up).toEqual([])
+  })
+})
