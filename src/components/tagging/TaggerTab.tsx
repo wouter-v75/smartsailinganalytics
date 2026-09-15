@@ -448,7 +448,11 @@ export default function TaggerTab({
         detailFor={(def) =>
           sailDetail({
             def,
-            events: t.events,
+            // The LINKED day, as the deck line and the weight use — otherwise
+            // the composer folds over an event file's bare names while
+            // everything around it folds over inventory rows, and the two
+            // disagree about what is aboard.
+            events,
             ctx: sailCtx,
             logRows,
             tzOffsetMin,
@@ -494,7 +498,7 @@ export default function TaggerTab({
           // and start again, which loses its requests and its place on the reel.
           detail={sailSheetDetail({
             tag: open.tag,
-            events: t.events,
+            events,
             ctx: sailCtx,
             logRows,
             tzOffsetMin,

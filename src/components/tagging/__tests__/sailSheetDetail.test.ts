@@ -183,3 +183,57 @@ describe('opening a later change shows the deck, not just that tag’s own list'
     expect(d.initial().up).toEqual([])
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Whether a save STATES the deck.
+//
+// Reported from the boat: eleven sails set aboard on the 10th, and a later sail
+// change still showing three. A stated deck resets the day's carried list, so a
+// tag that pins one it was never told stops every earlier statement reaching
+// anything after it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const sailOf = (patch: { meta?: Record<string, unknown> }) =>
+  patch.meta!.sail as SailState & { deckStated: boolean }
+
+describe('stating the deck', () => {
+  it('does not state one when the crew only changed what is up', () => {
+    const earlier = withState(state(['Main'], ['Main', 'J2', 'A2']), { t0: T(11, 0) })
+    const t = tag({ t0: T(12, 0), meta: { sails: ['Main', 'J2'] }, producer: 'eventfile' })
+    const d = detailFor(t, [earlier])
+    // Hoist the A2 as well, touching nothing on the On board tab.
+    const saved = sailOf(d.toPatch({ ...d.initial(), up: [ref('Main'), ref('J2'), ref('A2')] }, t.t0))
+    expect(saved.deckStated).toBe(false)
+    expect(saved.onBoard).toEqual([])
+  })
+
+  it('states one when a sail goes back to the RIB', () => {
+    const earlier = withState(state(['Main'], ['Main', 'J2', 'A2']), { t0: T(11, 0) })
+    const t = tag({ t0: T(12, 0), meta: { sails: ['Main'] }, producer: 'eventfile' })
+    const d = detailFor(t, [earlier])
+    const saved = sailOf(d.toPatch({ ...d.initial(), onBoard: [ref('Main'), ref('J2')] }, t.t0))
+    expect(saved.deckStated).toBe(true)
+    expect(saved.onBoard.map((s) => s.name)).toEqual(['Main', 'J2'])
+  })
+
+  it('states one when a sail is passed across from the RIB', () => {
+    const earlier = withState(state(['Main'], ['Main', 'J2']), { t0: T(11, 0) })
+    const t = tag({ t0: T(12, 0), meta: { sails: ['Main'] }, producer: 'eventfile' })
+    const d = detailFor(t, [earlier])
+    const saved = sailOf(d.toPatch(
+      { ...d.initial(), onBoard: [ref('Main'), ref('J2'), ref('A2')] }, t.t0
+    ))
+    expect(saved.deckStated).toBe(true)
+  })
+
+  it('clears a pin an older version left behind', () => {
+    // The tag already claims a deck. Saving it without touching the On board
+    // tab must let go of the claim, not re-assert it.
+    const earlier = withState(state(['Main'], ['Main', 'J2', 'A2']), { t0: T(11, 0) })
+    const pinned = withState(state(['Main'], ['Main']), { t0: T(12, 0) })
+    const d = detailFor(pinned, [earlier])
+    const saved = sailOf(d.toPatch(d.initial(), pinned.t0))
+    expect(saved.deckStated).toBe(false)
+    expect(saved.onBoard).toEqual([])
+  })
+})

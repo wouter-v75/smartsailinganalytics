@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   SAIL_CHANGE_SLUG, EMPTY_SAIL_STATE, normaliseSailState, stateOf, sailChanges,
   sailStateAt, lastChangeBefore, toggleUp, isUp, setBatten, withBattenCount,
-  stateIsEmpty, describeState, describeChange, sailKey,
+  stateIsEmpty, describeState, describeChange, sailKey, inferDeck, sameDeck,
   toggleOnBoard, isOnBoard, weightAboard, hasStatedDeck, sameSail, sameSailAcrossSources,
   type SailState, type SailRef,
 } from '../sailState'
@@ -605,5 +605,88 @@ describe('the deck folds across sources', () => {
     const b = { id: 'i2', name: 'Main' }
     expect(sameSail(a, b)).toBe(false)
     expect(sameSailAcrossSources(a, b)).toBe(true)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A stated deck resets the day's carried list; an inferred one does not. Which
+// is which decides whether an earlier statement reaches anything after it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('inferDeck', () => {
+  it('carries what was aboard and adds what went up', () => {
+    expect(inferDeck([{ id: 'i1', name: 'Main' }], [{ id: 'i3', name: 'J2' }]).map((s) => s.name))
+      .toEqual(['Main', 'J2'])
+  })
+
+  it('does not put a sail aboard twice because the sources spell it differently', () => {
+    expect(inferDeck([{ id: 'i1', name: 'Main' }], [{ id: null, name: 'main' }])).toHaveLength(1)
+  })
+})
+
+describe('sameDeck', () => {
+  it('ignores the order and the source', () => {
+    expect(sameDeck(
+      [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }],
+      [{ id: null, name: 'J2' }, { id: null, name: 'Main' }]
+    )).toBe(true)
+    expect(sameDeck([{ id: 'i1', name: 'Main' }], [])).toBe(false)
+  })
+})
+
+describe('which tags state the deck', () => {
+  const T2 = (h: number, m: number) => Date.parse(`2026-09-10T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00Z`)
+  const deck = Array.from({ length: 11 }, (_, i) => ({ id: `i${i}`, name: `S${i}` }))
+  const at = (t0: number, sail: Record<string, unknown>) =>
+    tag({ t0, t1: t0, meta: { sail } })
+
+  const stated = at(T2(11, 34), { up: [deck[0], deck[1]], onBoard: deck, battens: [], deckStated: true })
+
+  it('reaches a later change that never claimed a deck', () => {
+    const later = at(T2(12, 51), { up: [deck[0], deck[2]], onBoard: [], battens: [], deckStated: false })
+    expect(sailStateAt([stated, later], T2(12, 51)).onBoard).toHaveLength(11)
+  })
+
+  it('reaches one pinned by an older version, whose deck was only its sails up', () => {
+    // Saving used to store the on-board list inferred from what was up. That is
+    // the inference coming back, not the crew saying the boat carried nothing
+    // else — and reading it as a statement is what stranded the day at three.
+    const legacy = at(T2(12, 51), { up: [deck[0], deck[2]], onBoard: [deck[0], deck[2]], battens: [] })
+    expect(sailStateAt([stated, legacy], T2(12, 51)).onBoard).toHaveLength(11)
+  })
+
+  it('still stops at a later change that really does state one', () => {
+    const restated = at(T2(12, 51), { up: [deck[0]], onBoard: [deck[0], deck[1]], battens: [], deckStated: true })
+    expect(sailStateAt([stated, restated], T2(12, 51)).onBoard).toHaveLength(2)
+  })
+
+  it('reads an old row that stated a deck wider than its sails up', () => {
+    // No flag, but the crew plainly said something: four aboard, one up.
+    const old = at(T2(11, 0), { up: [deck[0]], onBoard: deck.slice(0, 4), battens: [] })
+    expect(hasStatedDeck([old])).toBe(true)
+    expect(sailStateAt([old], T2(12, 0)).onBoard).toHaveLength(4)
+  })
+})
+
+describe('a day that has one deliberate statement', () => {
+  const T2 = (h: number, m: number) => Date.parse(`2026-09-10T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00Z`)
+  const deck = Array.from({ length: 11 }, (_, i) => ({ id: `i${i}`, name: `S${i}` }))
+  const at = (t0: number, sail: Record<string, unknown>) => tag({ t0, t1: t0, meta: { sail } })
+
+  // Saving a sail change used to write the carried deck back onto the tag, so
+  // half a day's tags each hold a copy of the deck of their moment. Read as
+  // statements they pin it, and a correction made at 11:34 reaches nothing
+  // after the first of them.
+  const pinned = at(T2(12, 51), { up: [deck[0], deck[2]], onBoard: deck.slice(0, 3), battens: [] })
+
+  it('lets the pins an older version left behind go quiet', () => {
+    const stated = at(T2(11, 34), { up: [deck[0], deck[1]], onBoard: deck, battens: [], deckStated: true })
+    expect(sailStateAt([stated, pinned], T2(13, 0)).onBoard).toHaveLength(11)
+  })
+
+  it('still reads them when nobody has stated anything on purpose', () => {
+    // A day that predates the flag entirely has nothing better to go on.
+    const older = at(T2(11, 34), { up: [deck[0]], onBoard: deck.slice(0, 5), battens: [] })
+    expect(sailStateAt([older, pinned], T2(13, 0)).onBoard).toHaveLength(3)
   })
 })

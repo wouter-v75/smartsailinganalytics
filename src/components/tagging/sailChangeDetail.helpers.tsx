@@ -5,7 +5,8 @@ import type { ComposerDetail } from './TagComposer'
 import type { SheetDetail } from './TagSheet'
 import {
   SAIL_CHANGE_SLUG, sailStateAt, lastChangeBefore, describeState, describeChange,
-  stateIsEmpty, stateOf, EMPTY_SAIL_STATE, type SailState, type SailRef,
+  stateIsEmpty, stateOf, inferDeck, sameDeck, EMPTY_SAIL_STATE,
+  type SailState, type SailRef,
 } from '@/lib/tagging/sailState'
 import { cardForSail, type BattenCard, type SailBattenCard } from '@/lib/battens'
 import type { LinkableSail } from '@/lib/tagging/sailLink'
@@ -121,6 +122,30 @@ export function useSailContext(
 }
 
 /**
+ * What to store under `meta.sail`, and whether it counts as STATING the deck.
+ *
+ * A stated deck resets the day's carried list; an inferred one does not. So a
+ * tag may only claim to state one when the crew actually moved a sail between
+ * the boat and the RIB — anything else pins a copy of the deck of the moment,
+ * and the day stops folding: set eleven sails aboard at 11:34, and a 12:51
+ * change that somebody had once opened and saved goes on insisting on three,
+ * unreachable from the tag that knows better.
+ *
+ * Saving without touching the deck therefore CLEARS the pin as well as not
+ * making one, which is how a tag pinned by an older version heals.
+ */
+function sailMeta(value: SailState, carried: readonly SailRef[]) {
+  const deckStated = !sameDeck(value.onBoard, inferDeck(carried, value.up))
+  return {
+    sail: {
+      ...value,
+      onBoard: deckStated ? value.onBoard : [],
+      deckStated,
+    },
+  }
+}
+
+/**
  * The card for whichever main is up.
  *
  * Follows the sails, not the boat: on a day that starts with the delivery main
@@ -226,7 +251,7 @@ export function sailDetail(args: {
         // The note falls back to what actually changed — "+A2 −J2" — which is
         // the line a debrief wants and nobody would type nine times a day.
         note: describeChange(before?.state ?? null, value),
-        meta: { sail: value },
+        meta: sailMeta(value, before?.state.onBoard ?? []),
         labels: kindOfChange(before?.state ?? null, value),
       }
     },
@@ -328,7 +353,7 @@ export function sailSheetDetail(args: {
         note?: string | null
         labels?: { group: string; text: string }[]
         meta?: Record<string, unknown>
-      } = { meta: { sail: value } }
+      } = { meta: sailMeta(value, before?.onBoard ?? []) }
 
       // Keep deriving the label unless a human has CLAIMED it. `editedFields`
       // is the app's existing answer to exactly this question — the sync uses

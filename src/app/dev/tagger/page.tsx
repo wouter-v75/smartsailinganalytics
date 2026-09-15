@@ -456,7 +456,7 @@ export default function TaggerPreview() {
           currentUserId="me"
           canApproveVideo
           canCurateReel
-          detail={sailSheetDetail({ tag: open.tag, events: evts, ctx: SAIL_CTX })}
+          detail={sailSheetDetail({ tag: open.tag, events: linked, ctx: { ...SAIL_CTX, inventory } })}
           canEditDetail={canEditTagEvent(open.tag, me)}
           onRecompose={(patch) => setEvts((prev) => prev.map((e) => (
             e.id === open.tag.id

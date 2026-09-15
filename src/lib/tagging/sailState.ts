@@ -187,12 +187,77 @@ function namesFromEventFile(raw: unknown): string[] {
 
 const ref = (s: SailRef): SailRef => ({ id: s.id ?? null, name: s.name })
 
-/** Did this tag actually SAY what was on the boat, or is its on-board list just
- *  an inference from what was up? The event file only ever records sails up, so
- *  every detected change falls in the second camp. */
-function statesOnBoard(tag: TagEvent): boolean {
-  const raw = (tag.meta as Record<string, unknown> | null)?.sail as { onBoard?: unknown } | undefined
-  return Array.isArray(raw?.onBoard) && raw.onBoard.length > 0
+/**
+ * The deck a sail change implies when nobody has stated one: whatever was
+ * already aboard, plus whatever this change hoisted — because a sail cannot be
+ * hoisted from the RIB.
+ *
+ * The thing a stated deck is compared AGAINST, so that only a crew who actually
+ * moved a sail between the boat and the RIB is recorded as having said so.
+ */
+export function inferDeck(carried: readonly SailRef[], up: readonly SailRef[]): SailRef[] {
+  const out = carried.map(ref)
+  for (const s of up) if (!out.some((x) => sameSailAcrossSources(x, s))) out.push(ref(s))
+  return out
+}
+
+/** Two decks, same sails? Order-insensitive, and across sources — the file's
+ *  "Main" and the inventory's are one sail. */
+export function sameDeck(a: readonly SailRef[], b: readonly SailRef[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((x) => b.some((y) => sameSailAcrossSources(x, y)))
+}
+
+/**
+ * Did this tag actually SAY what was on the boat, or is its on-board list just
+ * an inference from what was up?
+ *
+ * It matters because a statement RESETS the carried deck and an inference does
+ * not. Get it wrong in the permissive direction and the day stops folding: the
+ * crew set eleven sails aboard at 11:34, and the 12:51 change — opened once and
+ * saved, which pinned whatever was aboard at that moment — went on insisting on
+ * three for the rest of the day, unreachable from the tag that knew better.
+ *
+ * So it is a deliberate act, recorded as one. `deckStated` is written by the
+ * composer when the crew CHANGE the deck, and cleared when they do not — see
+ * sailChangeDetail.helpers.
+ *
+ * Rows written before the flag existed get read by shape. Saving a sail change
+ * used to store the on-board list that normaliseSailState had inferred from the
+ * sails up, so an on-board list that is exactly the sails up is that inference
+ * coming back — not somebody saying the boat was carrying nothing else.
+ */
+const sailMeta = (tag: TagEvent) =>
+  (tag.meta as Record<string, unknown> | null)?.sail as
+    { onBoard?: unknown; up?: unknown; deckStated?: unknown } | undefined
+
+/** What the tag says about stating a deck, or null for a row written before it
+ *  could say anything. */
+const deckFlag = (tag: TagEvent): boolean | null => {
+  const f = sailMeta(tag)?.deckStated
+  return typeof f === 'boolean' ? f : null
+}
+
+function statesOnBoard(tag: TagEvent, dayHasExplicit: boolean): boolean {
+  const raw = sailMeta(tag)
+  const onBoard = refList(raw?.onBoard)
+  if (!onBoard.length) return false
+
+  const flag = deckFlag(tag)
+  if (flag !== null) return flag
+
+  // No flag. Once anybody has stated a deck on this day ON PURPOSE, the
+  // guesswork stops — one deliberate statement is worth more than a dozen
+  // inferences about rows written before the question could be asked, and it is
+  // how a day full of pins left by an older version comes right: state the deck
+  // once and every guess on that day goes quiet.
+  if (dayHasExplicit) return false
+
+  // Otherwise read it by shape. Saving a sail change used to store the on-board
+  // list that normaliseSailState had inferred from the sails up, so a deck that
+  // is exactly the sails up is that inference coming back — not somebody saying
+  // the boat was carrying nothing else.
+  return !sameDeck(onBoard, refList(raw?.up))
 }
 
 export interface SailChange {
@@ -204,8 +269,9 @@ export interface SailChange {
 
 /** Sail-change tags that carry a state, oldest first. */
 export function sailChanges(tags: readonly TagEvent[]): SailChange[] {
+  const dayHasExplicit = tags.some((t) => deckFlag(t) === true)
   return tags
-    .map((tag) => ({ tag, state: stateOf(tag), statedOnBoard: statesOnBoard(tag) }))
+    .map((tag) => ({ tag, state: stateOf(tag), statedOnBoard: statesOnBoard(tag, dayHasExplicit) }))
     .filter((x): x is SailChange => !!x.state)
     .sort((a, b) => a.tag.t0 - b.tag.t0)
 }
