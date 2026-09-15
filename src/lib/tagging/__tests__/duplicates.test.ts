@@ -20,7 +20,8 @@ const tag = (over: Partial<TagEvent> = {}): TagEvent => ({
   createdByUserId: 'me', meta: null,
   ...over,
 })
-const mine = (over: Partial<TagEvent> = {}) => tag(over)
+const mine = (over: Partial<TagEvent> = {}) => tag({ createdByUserId: 'me', ...over })
+const crewmate = (over: Partial<TagEvent> = {}) => tag({ createdByUserId: 'u-sam', ...over })
 const theirs = (over: Partial<TagEvent> = {}) =>
   tag({ source: 'auto', producer: 'eventfile', detectionKey: `k${n}`, confidence: 0.98, createdByUserId: null, ...over })
 
@@ -30,8 +31,8 @@ describe('findDuplicates', () => {
     const a = mine({ t0: T(12, 20, 11) })
     const b = theirs({ t0: T(12, 20) })
     const [d] = findDuplicates([a, b])
-    expect(d.mine.id).toBe(a.id)
-    expect(d.theirs.id).toBe(b.id)
+    expect(d.a.id).toBe(a.id)
+    expect(d.b.id).toBe(b.id)
     expect(d.gapMs).toBe(11_000)
     expect(d.label).toBe('Top mark')
   })
@@ -52,11 +53,21 @@ describe('findDuplicates', () => {
     expect(findDuplicates(pair, 30_000)).toHaveLength(1)
   })
 
-  it('pairs only ACROSS sources', () => {
-    // Two crew members both pressing the same rounding is a different problem
-    // with a different answer; putting it here would make the list mean two
-    // things.
-    expect(findDuplicates([mine({ t0: T(12, 20) }), mine({ t0: T(12, 20, 5) })])).toEqual([])
+  it('marks which kind of pair it is', () => {
+    expect(findDuplicates([mine({ t0: T(12, 20, 5) }), theirs()])[0].kind).toBe('crossed')
+    expect(findDuplicates([mine({ t0: T(12, 20) }), crewmate({ t0: T(12, 20, 5) })])[0].kind).toBe('crew')
+  })
+
+  it('puts the human side first on a crossed pair', () => {
+    // So the row can ask "keep mine / keep the file's" without re-deriving it.
+    const d = findDuplicates([theirs({ t0: T(12, 20) }), mine({ t0: T(12, 20, 5) })])[0]
+    expect(d.a.source).toBe('human')
+    expect(d.b.source).toBe('auto')
+  })
+
+  it('leaves two detections to the sync', () => {
+    // They share a detection_key; re-derivation reconciles them, and a person
+    // being asked about it would be a person doing the sync's job.
     expect(findDuplicates([theirs({ t0: T(12, 20) }), theirs({ t0: T(12, 20, 5) })])).toEqual([])
   })
 
@@ -69,7 +80,7 @@ describe('findDuplicates', () => {
     const auto = theirs({ t0: T(12, 20) })
     const out = findDuplicates([far, near, auto])
     expect(out).toHaveLength(1)
-    expect(out[0].mine.id).toBe(near.id)
+    expect(out[0].a.id).toBe(near.id)
   })
 
   it('pairs each of two real roundings with its own match', () => {
@@ -86,7 +97,7 @@ describe('findDuplicates', () => {
       mine({ t0: T(14, 0, 5) }), theirs({ t0: T(14, 0) }),
       mine({ t0: T(12, 20, 5) }), theirs({ t0: T(12, 20) }),
     ])
-    expect(out[0].mine.t0).toBeLessThan(out[1].mine.t0)
+    expect(out[0].a.t0).toBeLessThan(out[1].a.t0)
   })
 
   it('ignores a tag that has been thrown out', () => {
@@ -155,9 +166,105 @@ describe('a pair somebody has said is really two moments', () => {
 
 describe('sourceOf', () => {
   it('says where each side came from, in words', () => {
-    expect(sourceOf(mine())).toBe('You tagged it')
+    expect(sourceOf(mine(), { meId: 'me' })).toBe('You tagged it')
     expect(sourceOf(theirs())).toBe('From the event file')
     expect(sourceOf(theirs({ producer: 'manoeuvres' }))).toBe('Found in the log')
     expect(sourceOf(theirs({ producer: 'ai' as never }))).toBe('Detected')
+  })
+})
+
+describe('two crew members tagging the same moment', () => {
+  it('is a pair, and the earlier one comes first', () => {
+    // Neither can see what the other pressed, so this is the commoner case.
+    const a = mine({ t0: T(12, 31, 2) })
+    const b = crewmate({ t0: T(12, 31, 13) })
+    const [d] = findDuplicates([b, a])
+    expect(d.kind).toBe('crew')
+    expect(d.a.id).toBe(a.id)
+    expect(d.b.id).toBe(b.id)
+    expect(d.gapMs).toBe(11_000)
+  })
+
+  it('is NOT a pair when it is one person pressing twice', () => {
+    // A double press is not a disagreement about what happened. Asking somebody
+    // which of their own two identical tags to keep is a chore, not a question.
+    expect(findDuplicates([mine({ t0: T(12, 20) }), mine({ t0: T(12, 20, 4) })])).toEqual([])
+  })
+
+  it('reads a personal tag’s owner as its author', () => {
+    const a = tag({ scope: 'personal', ownerUserId: 'me', createdByUserId: null, t0: T(12, 20) })
+    const b = tag({ scope: 'personal', ownerUserId: 'u-sam', createdByUserId: null, t0: T(12, 20, 5) })
+    expect(findDuplicates([a, b])).toHaveLength(1)
+  })
+
+  it('is not a pair when nobody knows who placed one of them', () => {
+    // Two anonymous hand-placed tags could be the same person twice, and
+    // guessing wrong means offering to delete somebody's only record of it.
+    const a = tag({ createdByUserId: null, ownerUserId: null, t0: T(12, 20) })
+    const b = crewmate({ t0: T(12, 20, 5) })
+    expect(findDuplicates([a, b])).toEqual([])
+  })
+
+  it('competes with a crossed pair on gap, not on kind', () => {
+    // Matched greedily over BOTH kinds together: the closest pairing wins
+    // whichever kind it is, rather than one kind taking the good partners.
+    const auto = theirs({ t0: T(12, 20) })
+    const far = mine({ t0: T(12, 20, 20) })
+    const near = crewmate({ t0: T(12, 20, 1) })
+    const out = findDuplicates([auto, far, near])
+    expect(out).toHaveLength(1)
+    expect(out[0].kind).toBe('crossed')
+    expect(out[0].b.id).toBe(auto.id)
+    expect(out[0].a.id).toBe(near.id)
+  })
+
+  it('can be accepted as two real moments like any other pair', () => {
+    const b = crewmate({ id: 'bbb', t0: T(12, 20, 5) })
+    const a = mine({ id: 'aaa', t0: T(12, 20), meta: { dupOkWith: ['bbb'] } })
+    expect(findDuplicates([a, b])).toEqual([])
+  })
+})
+
+describe('sourceOf, with names', () => {
+  it('says whose it is when it knows', () => {
+    const t = crewmate()
+    expect(sourceOf(t, { meId: 'me', nameOf: () => 'Sam Whitcombe' })).toBe('Sam Whitcombe tagged it')
+  })
+
+  it('says it is yours when it is', () => {
+    expect(sourceOf(mine(), { meId: 'me', nameOf: () => 'Wouter' })).toBe('You tagged it')
+  })
+
+  it('does not invent a name it cannot read', () => {
+    // "You" against "Another crew member" is still a choice somebody can make.
+    expect(sourceOf(crewmate(), { meId: 'me', nameOf: () => null })).toBe('Another crew member')
+    expect(sourceOf(crewmate(), { meId: 'me' })).toBe('Another crew member')
+  })
+
+  it('falls back when nobody signed it', () => {
+    expect(sourceOf(tag({ createdByUserId: null, ownerUserId: null }), { meId: 'me' }))
+      .toBe('Tagged by hand')
+  })
+})
+
+describe('a cluster clears one pair at a time', () => {
+  it('shows the next pair once the first is resolved', () => {
+    // Three tags of one moment: the file's, mine two seconds later, and a
+    // crewmate's eleven seconds after that. Only the closest pairing is offered
+    // — three rows for one instant would leave two of them offering to delete
+    // tags already gone — and the rest surfaces on the next pass.
+    const auto = theirs({ id: 'auto', t0: T(12, 31) })
+    const me = mine({ id: 'me1', t0: T(12, 31, 2) })
+    const sam = crewmate({ id: 'sam1', t0: T(12, 31, 13) })
+
+    const first = findDuplicates([auto, me, sam])
+    expect(first).toHaveLength(1)
+    expect(first[0].kind).toBe('crossed')
+
+    // Keep mine: the detection is tombstoned. Sam's is now the one to settle.
+    const after = findDuplicates([{ ...auto, rejected: true }, me, sam])
+    expect(after).toHaveLength(1)
+    expect(after[0].kind).toBe('crew')
+    expect(after[0].a.id).toBe('me1')
   })
 })

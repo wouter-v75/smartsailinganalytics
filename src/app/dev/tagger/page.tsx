@@ -140,6 +140,15 @@ const events: TagEvent[] = [
   tag({ slug: 'topmark', label: 'Top mark', color: '#EF4444', source: 'human', producer: 'user',
         detectionKey: null, autoT0: null, confidence: null,
         t0: T(12, 20, 9), t1: T(12, 20, 30), meta: { raceNum: 1 } }),
+  // Two crew members tagging the same gybe, neither able to see what the other
+  // pressed. Nobody's is authoritative, so the row asks by name.
+  tag({ slug: 'mark', label: 'Mark', color: '#F59E0B', source: 'human', producer: 'user',
+        detectionKey: null, autoT0: null, confidence: null, createdByUserId: 'me',
+        t0: T(12, 40, 2), t1: T(12, 40, 20), meta: { raceNum: 1 } }),
+  tag({ slug: 'mark', label: 'Mark', color: '#F59E0B', source: 'human', producer: 'user',
+        detectionKey: null, autoT0: null, confidence: null, createdByUserId: 'u-sam',
+        note: 'Late on the sheet.',
+        t0: T(12, 40, 13), t1: T(12, 40, 30), meta: { raceNum: 1 } }),
   tag({ slug: 'incident', label: 'Incident', color: '#EF4444', source: 'human', producer: 'user',
         detectionKey: null, autoT0: null, confidence: null,
         note: 'Nearly over early — committee boat end, 8 seconds.',
@@ -202,6 +211,9 @@ const DAY_MEDIA = mediaMarks({
   photos: [T(11, 52), T(12, 12), T(12, 23)].map((t, i) => ({ id: `p${i}`, taken_utc: new Date(t).toISOString() })),
   scans: [{ id: 's1', captured_at: new Date(T(11, 35)).toISOString(), conditions: { sail_code: 'M-2026' } }],
 })
+
+// Who is on the boat, so a crew-vs-crew row can ask by name.
+const CREW: Record<string, string> = { me: 'Wouter van Dam', 'u-sam': 'Sam Whitcombe' }
 
 const SESSIONS = [
   { date: '2026-09-09', hasLog: true, event: 'Palma Week' },
@@ -319,14 +331,18 @@ export default function TaggerPreview() {
           <>
             <DuplicateList
               pairs={findDuplicates(evts)}
+              meId="me"
+              nameOf={(id) => CREW[id] ?? null}
+              canEdit={(tag) => canEditTagEvent(tag, me)}
               onOpen={setOpenId}
-              onKeepMine={(p) => setEvts((prev) => prev.map((e) => (
-                e.id === p.theirs.id ? { ...e, rejected: true } : e
-              )))}
-              onKeepTheirs={(p) => setEvts((prev) => prev.filter((e) => e.id !== p.mine.id))}
+              onDrop={(p, drop) => setEvts((prev) =>
+                drop.source === 'human'
+                  ? prev.filter((e) => e.id !== drop.id)
+                  : prev.map((e) => (e.id === drop.id ? { ...e, rejected: true } : e))
+              )}
               onKeepBoth={(p) => setEvts((prev) => prev.map((e) => (
-                e.id === p.mine.id
-                  ? { ...e, meta: { ...(e.meta || {}), dupOkWith: acceptedWith(p.mine, p.theirs.id) } }
+                e.id === p.a.id
+                  ? { ...e, meta: { ...(e.meta || {}), dupOkWith: acceptedWith(p.a, p.b.id) } }
                   : e
               )))}
             />

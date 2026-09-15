@@ -1,6 +1,6 @@
 // A day's tags.
 //
-//   GET  ?boat_id=…&date=YYYY-MM-DD[&include_rejected=1]  → { events }
+//   GET  ?boat_id=…&date=YYYY-MM-DD[&include_rejected=1]  → { events, authors }
 //   POST { boat_id, session_date, slug | tag_def_id, at | t0/t1, … }  → { event }
 //
 // The POST is the crew's one-press path, and it is deliberately the simplest
@@ -44,7 +44,29 @@ export async function GET(req: NextRequest, { params }: { params: { teamId: stri
 
   const { data, error } = await q.order('t0', { ascending: true })
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ events: (data || []).map(toTagEvent) })
+
+  const events = (data || []).map(toTagEvent)
+
+  // Who placed the hand-made ones. Needed by the duplicate list, which asks
+  // whose of two tags to keep and cannot ask that about "somebody". Resolved
+  // here rather than in the client because RLS lets a member read a teammate's
+  // name (users_select_teammate, 0002) and one lookup beats one per row.
+  const ids = Array.from(new Set(
+    events
+      .filter((e) => e.source === 'human')
+      .map((e) => e.createdByUserId || e.ownerUserId)
+      .filter((id): id is string => !!id)
+  ))
+  const authors: Record<string, string> = {}
+  if (ids.length) {
+    const { data: people } = await supabase.from('users').select('id,name,email').in('id', ids)
+    for (const p of people || []) {
+      const name = String(p.name || p.email || '').trim()
+      if (name) authors[p.id] = name
+    }
+  }
+
+  return NextResponse.json({ events, authors })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { teamId: string } }) {

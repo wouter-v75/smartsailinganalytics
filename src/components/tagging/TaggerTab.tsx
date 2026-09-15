@@ -266,22 +266,30 @@ export default function TaggerTab({
             <DuplicateList
               pairs={duplicates}
               tzOffsetMin={tzOffsetMin}
+              meId={userId}
+              nameOf={t.nameOf}
+              canEdit={t.canEdit}
               onOpen={setOpenId}
-              // Keep the crew's: the detection is TOMBSTONED rather than
-              // deleted, or the next sync would cheerfully recreate it and the
-              // same pair would be back tomorrow.
-              onKeepMine={(p) => t.patch(p.theirs.id, { op: 'reject', reason: 'duplicate of a tag the crew placed' })}
-              // Keep the file's: the crew's tag has no detection behind it, so
+              // Getting rid of one side. A DETECTION is tombstoned rather than
+              // deleted, or the next sync recreates it and the same pair is
+              // back tomorrow; a hand-placed tag has no detection behind it, so
               // it simply goes.
-              onKeepTheirs={(p) => t.remove(p.mine.id)}
-              // Both real. Recorded on the tag, so the pair stops being offered
-              // — a list with no way out grows a residue nobody can clear.
-              onKeepBoth={(p) =>
-                t.patch(p.mine.id, {
-                  op: 'recompose',
-                  meta: { dupOkWith: acceptedWith(p.mine, p.theirs.id) },
-                })
+              onDrop={(p, drop) =>
+                drop.source === 'human'
+                  ? t.remove(drop.id)
+                  : t.patch(drop.id, { op: 'reject', reason: 'duplicate of a tag the crew placed' })
               }
+              // Both real. Recorded on the pair, so it stops being offered — a
+              // list with no way out grows a residue nobody can clear. Written
+              // to whichever side this user may actually edit.
+              onKeepBoth={(p) => {
+                const carrier = t.canEdit(p.a) ? p.a : p.b
+                const other = carrier === p.a ? p.b : p.a
+                return t.patch(carrier.id, {
+                  op: 'recompose',
+                  meta: { dupOkWith: acceptedWith(carrier, other.id) },
+                })
+              }}
             />
             <ReviewQueue
             tags={t.events}

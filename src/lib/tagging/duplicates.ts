@@ -8,6 +8,13 @@
 // real. And every count, every export and every debrief reel downstream now has
 // a rounding in it that never happened.
 //
+// It happens between PEOPLE too, and more often: the bow tags the rounding and
+// so does the trimmer, because neither can see what the other pressed. Same
+// double count, but a different question at the end of it — nobody's tag is
+// authoritative, so the answer is whose to keep rather than machine-or-human.
+// Both kinds go in one list because they are one problem to whoever is
+// clearing it; the rows ask differently.
+//
 // This CANNOT be prevented at sync time, and it is worth being clear why: the
 // sync's job is to reconcile detections against the rows it has already
 // created, which it does by `detection_key`. A hand-placed tag has no key —
@@ -34,15 +41,22 @@ import type { TagEvent } from './types'
  */
 export const DUPLICATE_WINDOW_MS = 30_000
 
+/**
+ * 'crossed' — a person's tag against the machine's.
+ * 'crew'    — two people, neither of whom could see what the other pressed.
+ */
+export type DuplicateKind = 'crossed' | 'crew'
+
 export interface DuplicatePair {
   /** Stable across reloads: the two ids, in a fixed order. */
   key: string
   slug: string
   label: string
-  /** The one a person put there. */
-  mine: TagEvent
-  /** The one the event file or the detector brought. */
-  theirs: TagEvent
+  kind: DuplicateKind
+  /** 'crossed': always the HUMAN one. 'crew': the earlier of the two. */
+  a: TagEvent
+  /** 'crossed': always the DETECTION. 'crew': the later of the two. */
+  b: TagEvent
   /** How far apart they are, in ms. Always >= 0. */
   gapMs: number
 }
@@ -65,6 +79,11 @@ export function acceptedWith(tag: TagEvent, otherId: string): string[] {
   return have.includes(otherId) ? have : [...have, otherId]
 }
 
+/** Who placed a tag, for deciding whether two of them are two different people.
+ *  A personal tag's owner IS its author; a detection has none. */
+const authorOf = (t: TagEvent): string | null =>
+  t.source === 'human' ? (t.createdByUserId || t.ownerUserId || null) : null
+
 /**
  * Pairs of tags that look like one moment recorded twice.
  *
@@ -72,30 +91,48 @@ export function acceptedWith(tag: TagEvent, otherId: string): string[] {
  * three — the bow tagged it, the trimmer tagged it, and then the file arrived —
  * otherwise produces three pairs describing the same instant, and resolving one
  * would leave two stale rows offering to delete tags that are already gone.
+ * Greedy over BOTH kinds together, so the closest pairing wins whichever kind
+ * it is rather than one kind being matched first and taking the good partners.
  *
- * Only ACROSS sources: a person's tag against a machine's. Two crew members
- * both pressing the same rounding is a different problem with a different
- * answer (they are both right, and one of them should be a note), and putting
- * it in the same list would make the list mean two things.
+ * Two tags from the SAME person are not a pair. A double press is not a
+ * disagreement about what happened, and asking somebody which of their own two
+ * identical tags to keep is not a question, it is a chore.
  */
 export function findDuplicates(
   tags: readonly TagEvent[],
   windowMs: number = DUPLICATE_WINDOW_MS
 ): DuplicatePair[] {
   const live = (tags || []).filter((t) => t && !t.rejected && isNum(t.t0))
-  const mine = live.filter((t) => t.source === 'human')
-  const theirs = live.filter((t) => t.source !== 'human')
-  if (!mine.length || !theirs.length) return []
+  if (live.length < 2) return []
 
-  // Every candidate pairing, then take the closest ones first.
-  const candidates: { gap: number; a: TagEvent; b: TagEvent }[] = []
-  for (const a of mine) {
-    for (const b of theirs) {
-      if (a.slug !== b.slug) continue
-      const gap = Math.abs(a.t0 - b.t0)
+  const candidates: { gap: number; a: TagEvent; b: TagEvent; kind: DuplicateKind }[] = []
+  for (let i = 0; i < live.length; i++) {
+    for (let j = i + 1; j < live.length; j++) {
+      const x = live[i]
+      const y = live[j]
+      if (x.slug !== y.slug) continue
+      const gap = Math.abs(x.t0 - y.t0)
       if (gap > windowMs) continue
-      if (isAccepted(a, b)) continue
-      candidates.push({ gap, a, b })
+      if (isAccepted(x, y)) continue
+
+      const xHuman = x.source === 'human'
+      const yHuman = y.source === 'human'
+
+      if (xHuman && yHuman) {
+        // Two people. Same person twice is a double press, not a disagreement.
+        const ax = authorOf(x)
+        const ay = authorOf(y)
+        if (!ax || !ay || ax === ay) continue
+        const [a, b] = x.t0 <= y.t0 ? [x, y] : [y, x]
+        candidates.push({ gap, a, b, kind: 'crew' })
+      } else if (xHuman !== yHuman) {
+        // A person against the machine. The human side is always `a`, so the
+        // row can ask "keep mine / keep the file's" without re-deriving it.
+        const [a, b] = xHuman ? [x, y] : [y, x]
+        candidates.push({ gap, a, b, kind: 'crossed' })
+      }
+      // Two detections are the sync's problem, not a person's: they share a
+      // detection_key and re-derivation reconciles them.
     }
   }
   candidates.sort((x, y) => x.gap - y.gap || x.a.t0 - y.a.t0 || x.a.id.localeCompare(y.a.id))
@@ -108,20 +145,37 @@ export function findDuplicates(
     out.push({
       key: [c.a.id, c.b.id].sort().join('~'),
       slug: c.a.slug,
-      // The crew's own wording wins when they gave one; a definition's default
-      // label is the same on both sides anyway.
+      // A crew member's own wording wins when they gave one; a definition's
+      // default label is the same on both sides anyway.
       label: c.a.label || c.b.label,
-      mine: c.a,
-      theirs: c.b,
+      kind: c.kind,
+      a: c.a,
+      b: c.b,
       gapMs: c.gap,
     })
   }
-  return out.sort((x, y) => Math.min(x.mine.t0, x.theirs.t0) - Math.min(y.mine.t0, y.theirs.t0))
+  return out.sort((x, y) => Math.min(x.a.t0, x.b.t0) - Math.min(y.a.t0, y.b.t0))
 }
 
-/** Where a tag came from, in words, for the row that asks which to keep. */
-export function sourceOf(tag: TagEvent): string {
-  if (tag.source === 'human') return 'You tagged it'
+/**
+ * Where a tag came from, in words, for the row that asks which to keep.
+ *
+ * `nameOf` resolves an author id to a name. Without one — or for somebody whose
+ * name cannot be read — a human tag says who it is NOT rather than inventing a
+ * name: "You tagged it" against "Another crew member" is still a choice
+ * somebody can make.
+ */
+export function sourceOf(
+  tag: TagEvent,
+  opts: { meId?: string | null; nameOf?: (id: string) => string | null } = {}
+): string {
+  if (tag.source === 'human') {
+    const author = authorOf(tag)
+    if (author && opts.meId && author === opts.meId) return 'You tagged it'
+    const name = author && opts.nameOf ? opts.nameOf(author) : null
+    if (name) return `${name} tagged it`
+    return author ? 'Another crew member' : 'Tagged by hand'
+  }
   switch (tag.producer) {
     case 'eventfile': return 'From the event file'
     case 'manoeuvres': return 'Found in the log'

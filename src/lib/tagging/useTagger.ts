@@ -82,6 +82,9 @@ export function useTagger({ teamId, boatId, date, sessionId, userId }: TaggerArg
   const [requests, setRequests] = useState<TagRequest[]>([])
   const [me, setMe] = useState<Pick<TaggerIdentity, 'role' | 'sections'> | null>(null)
   const [can, setCan] = useState({ approveVideo: false, curateReel: false })
+  // Author id → name, for the day's hand-placed tags. Resolved server-side;
+  // absent for anybody whose name RLS will not show this reader.
+  const [authors, setAuthors] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -105,6 +108,7 @@ export function useTagger({ teamId, boatId, date, sessionId, userId }: TaggerArg
       setDefs(d.defs || [])
       setMe(d.me || null)
       setEvents(e.events || [])
+      setAuthors(e.authors || {})
       setRequests(r.requests || [])
       setCan(r.can || { approveVideo: false, curateReel: false })
     } catch (err) {
@@ -364,7 +368,8 @@ export function useTagger({ teamId, boatId, date, sessionId, userId }: TaggerArg
   return {
     // data
     defs: defs || [], buttonBar, events: visible, allEvents: events || [],
-    requests, items, me, can,
+    requests, items, me, can, authors,
+    nameOf: (id: string) => authors[id] ?? null,
     loading: defs === null || events === null,
     busy, error,
     // actions
