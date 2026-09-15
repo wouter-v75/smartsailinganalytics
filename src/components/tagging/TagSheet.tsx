@@ -1,7 +1,7 @@
 'use client'
 import * as React from 'react'
 import {
-  Check, X, Undo2, Magnet, Film, Video, MessageSquare, Trash2, Lock,
+  Check, X, Undo2, Magnet, Film, Video, MessageSquare, Trash2, Lock, ChevronDown,
 } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import type { TagDef, TagWithRequests } from '@/lib/tagging/types'
@@ -71,15 +71,28 @@ export default function TagSheet(props: TagSheetProps) {
     // already stops where the tab bar starts. TaggerTab's root is `relative`
     // for exactly this; so is the /dev/tagger harness.
     <div className="absolute inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
-      <button aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/50" />
+      <button aria-label="Close without changing anything" onClick={onClose} className="absolute inset-0 bg-black/50" />
 
       <div
         className="relative max-h-[88dvh] overflow-y-auto rounded-t-2xl border-t border-[color:var(--border-strong)] bg-surface-1"
         style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom, 0px))' }}
       >
-        {/* Grab handle — the affordance people already know means "flick me down". */}
-        <div className="sticky top-0 flex justify-center bg-surface-1 pb-1 pt-2">
-          <span className="h-1 w-10 rounded-full bg-[color:var(--border-strong)]" aria-hidden />
+        {/* Grab handle, and a real close button beside it.
+            The handle and the backdrop are the gestures people know, but neither
+            is a CONTROL: on a tall sheet the backdrop is a strip at the very top
+            of the screen, out of a thumb's reach, and a flick-down is a thing you
+            have to already know. Somebody who opened a tag to look at it needs an
+            obvious way back that does not commit to anything. */}
+        <div className="sticky top-0 z-10 flex items-center bg-surface-1 pb-1 pt-2">
+          <span className="w-11 shrink-0" aria-hidden />
+          <span className="mx-auto h-1 w-10 rounded-full bg-[color:var(--border-strong)]" aria-hidden />
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="mr-1 grid h-11 w-11 shrink-0 place-items-center rounded-lg text-secondary active:bg-surface-2"
+          >
+            <ChevronDown size={22} aria-hidden />
+          </button>
         </div>
 
         <div className="px-4 pb-4">
