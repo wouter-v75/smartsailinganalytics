@@ -100,14 +100,33 @@ not conflict** — the bowman's read and the trimmer's read sit in their own lan
 and both survive. Coder training in the literature is ~3 hours, which caps the
 general vocabulary at the order of 20–30 tags.
 
-## 9. Pure libraries, thin components
+## 9. Tagging decides what media gets pulled
+
+The shortlist is not only a debrief agenda — it is the **extraction list**. A day
+makes far more footage than anyone will upload, so tags decide what becomes a
+clip:
+
+- **Starts and mark roundings are always extracted.** They are what a debrief is
+  built from every single time, so nobody should have to ask for them.
+- **Manoeuvres are not.** A day has sixty tacks and fifty-eight are unremarkable.
+  The two worth watching earn their clip by being *tagged*, not by being
+  *detected*. `detect.ts:autoExtractable()` encodes exactly this.
+- **Anything else is requested.** Any crew member can mark a moment and ask for
+  video or a photo of it. A request for the shared debrief needs a coach or admin
+  to approve it; a request for the person's own viewing does not, because it is
+  their own eyes on footage they already have access to.
+
+This is what keeps the archive from swallowing the signal, and it is why the
+tagger is worth building rather than just improving detection.
+
+## 10. Pure libraries, thin components
 
 The existing codebase already works this way — `phaseStats.ts`, `manoeuvres.ts`,
 `startAnalysis.ts` are pure, fixture-tested modules with thin React around them.
 The merge and snap logic is where correctness lives, so it goes in pure functions
 with heavy unit tests, and the components stay dumb.
 
-## 10. Everything leaves the building
+## 11. Everything leaves the building
 
 `.ssa.json` is canonical and re-importable. The tag half also exports as
 **Sportscode XML**, the interchange format Catapult, Wyscout and Dartfish read,
@@ -287,9 +306,35 @@ A tag is **moved by shifting both endpoints** — writing `t0` alone trips the
 `t1 >= t0` window CHECK on a point tag. `merge.ts` will expose `moveTag()` as the
 one sanctioned way.
 
+### Media requests — `ssa_media_requests` (M5)
+
+Tagging decides what gets extracted (§9), so the request flow needs a home:
+
+| Column | Why |
+| --- | --- |
+| `tag_event_id` | the moment being requested |
+| `requested_by_user_id`, `requested_at` | who wants it |
+| `media_kind` | `video` \| `photo` |
+| `audience` | `debrief` (shared, needs approval) \| `personal` (does not) |
+| `status` | `pending` \| `approved` \| `rejected` \| `fulfilled` |
+| `decided_by_user_id`, `decided_at`, `decision_note` | the approval trail |
+| `asset_id` | what was produced, once it exists |
+
+A `personal` request is auto-approved — it is the requester's own eyes on footage
+they can already reach. A `debrief` request waits for coach or admin, because it
+costs upload bandwidth and everyone's attention.
+
 `ssa_phases` moves **out** of `0062` and ships with the Phases tab.
 
 ## 2.6 What the crew actually sees
+
+**The day, in segments.** The view is cut into the parts a crew talks in —
+**Pre-race · Race 1 · Between races · Race 2 · … · After racing** — with a race
+beginning at the **warning signal (the 5-minute gun)**, not the start gun,
+because the five minutes before the line is where a race is won. Segments also
+supply the ordinal identity every detection is keyed by (§2.3). Expedition
+records start guns but no finish, so an inferred finish is marked as inferred
+rather than presented as fact. `segments.ts`.
 
 **The track.** Lanes down the day, **detections first and crew tags beneath** —
 the order an F1 debrief runs in, data before the subjective account. Race,
@@ -352,9 +397,12 @@ Each milestone ends green: tests pass, `tsc --noEmit` clean, nothing half-wired.
 verified by applying the whole 62-migration chain twice to a throwaway PostgreSQL,
 plus `supabase/tests/0062_tagger_merge.sql` asserting the merge guarantees hold.
 
-### M1 · Detection — `detect.ts`
+### M1 · Detection — `segments.ts`, `detect.ts`
+- **`segments.ts`** — cut the day into pre-race / race N / between / post-race,
+  a race running from the warning signal to its finish (recorded where known,
+  inferred and flagged where not). Supplies the ordinal keys. ✅
 - Wrap `manoeuvres.ts`, `xmlEventParse.js`, `startAnalysis.ts` behind one
-  `detectDay()` returning ordinally-keyed detections with confidence.
+  `detectDay()` returning ordinally-keyed detections with confidence. ✅
 - Build the three missing detectors: mark roundings from the log, start from the
   line crossing, legs from TWD.
 - Ingest Expedition on-water comments as detections in their own lane — they are
@@ -362,7 +410,9 @@ plus `supabase/tests/0062_tagger_merge.sql` asserting the merge guarantees hold.
 - Fixture tests against the 2026-09-11 Northstar 76 day already used by
   `manoeuvres.fixture.test.ts` and `phaseStats.fixture.test.ts`.
 
-**Done:** a day with no event file still produces tacks, gybes, marks and a start.
+**Done:** a day with no event file still produces tacks, gybes, marks and a
+start; and re-running the detector after a timing shift yields the *same keys*,
+so a sync updates rather than duplicates.
 
 ### M2 · Merge and snap — `merge.ts`, `snap.ts`
 The correctness core. Pure functions, exhaustive tests:
@@ -428,3 +478,5 @@ come with this milestone.
 | `ssa_tag_events` growth | one row per detection per day, order 10²/day; indexed on (boat, date, t0) |
 | Vocabulary sprawl over a season, depressing consistency | button bar capped and curated; the picker shows usage counts; archiving a rarely-used tag is one click for the curator tier |
 | A tagged day nobody reviews | the reel is the deliverable, not the timeline; the day is "done" when a reel exists, and that is what the Debrief row shows |
+| Media requests piling up unapproved | personal requests need no approval at all; the shared queue shows a count on the Debrief row so it is visible rather than buried |
+| An inferred race finish quietly wrong | `endSource` records how each boundary was decided, the UI marks an inferred finish, and a coach can drag it |
