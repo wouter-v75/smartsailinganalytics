@@ -262,7 +262,7 @@ to the previous/next detection.
 | `edited_fields text[]` | the structured diff derivation must respect |
 | `verified_by_user_id`, `verified_at` | who vouched for it |
 | `rejected bool`, `rejected_reason` | the tombstone |
-| `confidence real` | drives the review queue's ordering |
+| `confidence numeric(3,2)` | drives the review queue's ordering |
 | `labels jsonb` | applied descriptors, `[{group, text}]` |
 | `reel_order int` | position in the day's debrief reel; NULL = not on the reel |
 
@@ -345,7 +345,7 @@ Each milestone ends green: tests pass, `tsc --noEmit` clean, nothing half-wired.
 ### M0 · Schema — *revise `0062_ssa_tagger.sql`*
 - Add the merge and descriptor columns of §2.5.
 - Move `ssa_phases` out to the Phases-tab migration.
-- Partial unique index on `detection_key`.
+- Unique index on `detection_key` (plain, not partial — see §2.5).
 - Seed endpoint for the base vocabulary (`baseTags.ts`, plus `tag_lists` migration).
 
 **Done:** migration applies clean on a fresh database and is idempotent — both
