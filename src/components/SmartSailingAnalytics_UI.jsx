@@ -16,7 +16,7 @@ import { logRateHz, isSubSecondLog, thinToOneHz, lidarSailsIn } from '../lib/log
 import { nearestTrackIndex, orderedRange, inRange } from '../lib/trackSelection';
 import { addSection, removeSection, inSections, sectionsSpan, selectButtonLabel, sectionLabel } from '../lib/trackSections';
 import { fetchDayTags, trackTags, isTagged, EVENT_FILE_SLUG } from '../lib/dayTags';
-import { raceOptions, finishesFromTags, finishNote, saveFinishTag } from '../lib/raceSelect';
+import { raceOptions, finishesFromTags, finishNote, saveFinishTag, effectiveGuns } from '../lib/raceSelect';
 import { offsetFromCoords } from '../lib/tzFromCoords';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
 import { reconcileSessionSyncState } from '../lib/syncReconcile';
@@ -5237,13 +5237,24 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
     setFinishTags(finishesFromTags(events));
   }, [tagBoat, activeDate]);
   useEffect(() => { loadDayTags(); }, [loadDayTags]);
+  // Coming back from the Tagger tab: a start deleted there changes which races this day
+  // has, and the charts should not keep showing a race somebody has just said was not
+  // one. Re-reading on the way in is cheap and needs nobody to remember a refresh.
+  useEffect(() => { if (visible) loadDayTags(); }, [visible, loadDayTags]);
 
   // ── Races, and whether their finishes are known or guessed ─────────────────
+  // The starts come from the tagger when it has any: somebody deleting a start there —
+  // a general recall, another class's gun the file recorded anyway — must remove that
+  // race from the charts and the map too, not just from the tagger.
+  const dayGuns = useMemo(() => effectiveGuns(xmlData, dayTagEvents), [xmlData, dayTagEvents]);
+  const xmlForRaces = useMemo(
+    () => (xmlData ? { ...xmlData, raceGuns: dayGuns } : xmlData), [xmlData, dayGuns]);
+
   const races = useMemo(() => raceOptions({
-    guns: xmlData?.raceGuns, markRoundings: xmlData?.markRoundings,
+    guns: dayGuns, markRoundings: xmlData?.markRoundings,
     dayStartUtc: xmlData?.dayStartUtc, dayStopUtc: xmlData?.dayStopUtc,
     dataT0: rows[0]?.utc ?? null, dataT1: rows[rows.length - 1]?.utc ?? null,
-  }, finishTags), [xmlData, rows, finishTags]);
+  }, finishTags), [xmlData, dayGuns, rows, finishTags]);
   const [raceKey, setRaceKey] = useState('');
   const race = races.find(r => r.key === raceKey) || null;
   const [finishDraft, setFinishDraft] = useState(null);   // where the finish marker sits
@@ -5490,7 +5501,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             )}
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} sections={sections} onSelection={selectSection} onRemoveSection={dropSection} onClearSections={clearSections}
+                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlForRaces} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} sections={sections} onSelection={selectSection} onRemoveSection={dropSection} onClearSections={clearSections}
                   dayTags={dayTagEvents} onRaceChosen={pickRace}
                   finishDraft={finishDraft} onFinishDraft={setFinishDraft} onSaveFinish={saveFinish}
                   finishNote={finishNote(race)} finishMsg={finishMsg} canTagFinish={!!tagBoat}/>
@@ -5573,7 +5584,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               </>
             ))}
             {canSeeAnalyticsData && rows.length>50&&section("Performance charts — 30 s phases",(
-              <PerfChartsSection sections={sections} trackRaceNum={race?.raceNum ?? null} rows={rows} xmlData={xmlData} tzOffsetMin={tz} playUtc={playUtc} onJump={jumpToUtc} activeDate={activeDate} canUseAI={canUseAI}/>
+              <PerfChartsSection sections={sections} trackRaceNum={race?.raceNum ?? null} rows={rows} xmlData={xmlForRaces} tzOffsetMin={tz} playUtc={playUtc} onJump={jumpToUtc} activeDate={activeDate} canUseAI={canUseAI}/>
             ))}
             {canSeeAnalyticsData && selTJ.length>0&&section(`Manoeuvre analysis — ${selTJ.length} total${sections.length?(sections.length>1?" in the selected sections":" in the selection"):""}`,(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>

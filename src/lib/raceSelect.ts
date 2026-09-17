@@ -10,6 +10,7 @@
 import { segmentDay, DEFAULT_FINISH_GRACE_SEC, type EndSource, type SegmentGun } from './tagging/segments'
 
 export const FINISH_SLUG = 'race-finish'
+export const START_SLUG = 'race-start'
 
 export interface RaceOption {
   key: string                    // segmentDay's stable key: 'r1', 'r2', …
@@ -43,6 +44,44 @@ export function finishesFromTags(events: { slug?: string; t0?: number }[] | null
     .filter(e => e?.slug === FINISH_SLUG && isNum(e.t0))
     .map(e => ({ utc: e.t0 as number }))
     .sort((a, b) => a.utc - b.utc)
+}
+
+// The day's STARTS, from the tagger when it has any.
+//
+// The tagger is seeded with a race-start tag per gun in the event file, and somebody can
+// then delete one — a general recall, a start that was never sailed, a gun for another
+// class that the file recorded anyway. Once that has been done, the tags are the day's
+// account of which races exist, and the event file is a stale copy of it: a deleted
+// start must take its race out of the charts, the map and the Start tab alike.
+//
+// With no start tags at all, nothing has been curated and the event file stands.
+export function startsFromTags(
+  events: { slug?: string; t0?: number; label?: string }[] | null | undefined
+): SegmentGun[] {
+  return (events || [])
+    .filter(e => e?.slug === START_SLUG && isNum(e.t0))
+    .sort((a, b) => (a.t0 as number) - (b.t0 as number))
+    .map((e, i) => {
+      // "Race 5 start" keeps its number; anything else is numbered by its place in the day.
+      const named = /race\s*(\d+)/i.exec(e.label || '')
+      return { utc: e.t0 as number, raceNum: named ? Number(named[1]) : i + 1 }
+    })
+}
+
+export interface Gun { utc: number; raceNum?: number; label?: string; color?: string }
+
+export function effectiveGuns(
+  xml: { raceGuns?: Gun[] | null } | null | undefined,
+  events: { slug?: string; t0?: number; label?: string }[] | null | undefined
+): Gun[] {
+  const tagged = startsFromTags(events)
+  if (tagged.length) {
+    return tagged.map(g => ({
+      utc: g.utc, raceNum: g.raceNum,
+      label: `Race ${g.raceNum ?? '?'} start`, color: '#EF4444',
+    }))
+  }
+  return (xml?.raceGuns || []).filter(g => isNum(g?.utc)).sort((a, b) => a.utc - b.utc)
 }
 
 // Where to suggest the finish for a race nobody has tagged: the last mark rounding

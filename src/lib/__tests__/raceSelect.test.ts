@@ -1,7 +1,10 @@
 // Picking a race, and being honest about its finish. The event file never records a
 // finish, so the value of this module is that a guessed end SAYS it is guessed.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { raceOptions, finishesFromTags, finishNote, saveFinishTag, fetchFinishTags, FINISH_SLUG } from '../raceSelect'
+import {
+  raceOptions, finishesFromTags, finishNote, saveFinishTag, fetchFinishTags,
+  startsFromTags, effectiveGuns, FINISH_SLUG,
+} from '../raceSelect'
 
 const T0 = Date.UTC(2026, 8, 11, 10, 0, 0)
 const m = (min: number) => T0 + min * 60_000
@@ -127,5 +130,41 @@ describe('reading the day’s finishes', () => {
   it('is empty rather than broken when the tags cannot be read', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     expect(await fetchFinishTags('t', 'b', '2026-09-11')).toEqual([])
+  })
+})
+
+describe('which races the day has', () => {
+  const xml = { raceGuns: [{ utc: m(10), raceNum: 5 }, { utc: m(90), raceNum: 6 }] }
+
+  it('uses the event file when nothing has been tagged', () => {
+    expect(effectiveGuns(xml, []).map(g => g.raceNum)).toEqual([5, 6])
+    expect(effectiveGuns(xml, null).map(g => g.utc)).toEqual([m(10), m(90)])
+  })
+
+  it('once starts are tagged, THEY are the day’s races', () => {
+    const tags = [
+      { slug: 'race-start', t0: m(10), label: 'Race 5 start' },
+      { slug: 'race-start', t0: m(90), label: 'Race 6 start' },
+    ]
+    expect(effectiveGuns(xml, tags).map(g => g.raceNum)).toEqual([5, 6])
+  })
+
+  it('a start deleted in the tagger takes its race with it', () => {
+    // The second start has been removed — a general recall, or another class's gun.
+    const tags = [{ slug: 'race-start', t0: m(10), label: 'Race 5 start' }]
+    const guns = effectiveGuns(xml, tags)
+    expect(guns).toHaveLength(1)
+    expect(guns[0].utc).toBe(m(10))
+    // And the race list follows: one race, not two.
+    expect(raceOptions({ guns, dayStartUtc: m(0), dayStopUtc: m(180) }).map(r => r.raceNum)).toEqual([5])
+  })
+
+  it('numbers an unnamed start by its place in the day', () => {
+    const tags = [{ slug: 'race-start', t0: m(90) }, { slug: 'race-start', t0: m(10) }]
+    expect(startsFromTags(tags).map(g => [g.utc, g.raceNum])).toEqual([[m(10), 1], [m(90), 2]])
+  })
+
+  it('ignores tags that are not starts, and starts with no time', () => {
+    expect(startsFromTags([{ slug: 'tack', t0: m(5) }, { slug: 'race-start' }])).toEqual([])
   })
 })
