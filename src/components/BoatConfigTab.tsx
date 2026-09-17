@@ -62,6 +62,8 @@ const EDIT_ROLES = ['admin', 'team_manager', 'coach', 'tl3']
 const fmt = (v: any, d = 1) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(d))
 const fmtDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—'
+const fmtClock = (ms?: number | null) =>
+  ms ? new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'
 
 export default function BoatConfigTab({
   teamId, boatId, role, isMobile, config, sessionTzOffset = 0,
@@ -89,6 +91,8 @@ export default function BoatConfigTab({
   const [polarVersions, setPolarVersions] = useState<any[]>([])              // every polar row for this boat
   const [polarUpload, setPolarUpload] = useState<PolarUpload | null>(null)   // parsed file awaiting save
   const [polarMsg, setPolarMsg] = useState('')
+  const [polarSync, setPolarSync] = useState<PolarSync>({ at: null, error: null })   // last read of the cloud
+  const [polarSave, setPolarSave] = useState<PolarSaveStatus | null>(null)           // what the last upload did
   const [rigTune, setRigTune] = useState<any>(() => pf?.rigTune ?? null)      // active rig baseline row (DB)
   const [rigBusy, setRigBusy] = useState(false)
   const [rigErr, setRigErr] = useState('')
@@ -123,17 +127,28 @@ export default function BoatConfigTab({
     return () => { alive = false }
   }, [teamId, boatId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadPolar = useCallback(() => {
-    if (!teamId || !boatId) return
-    // All versions for this boat (active first); the active one drives the tab.
-    fetch(`/api/teams/${teamId}/polars?boat_id=${boatId}`)
-      .then((r) => (r.ok ? r.json() : { polars: [] }))
-      .then((j) => {
-        const list = j.polars || []
-        setPolarVersions(list)
-        setPolar(list.find((p: any) => p.is_active) || null)
-      })
-      .catch(() => {})
+  // All versions for this boat (active first); the active one drives the tab. A failed
+  // read used to fall back to an empty list, which looks exactly like "no polar on file"
+  // — so a sign-in or server problem read as lost data. Say which it is, and hand the
+  // list back so an upload can check its rows really landed.
+  const loadPolar = useCallback(async (): Promise<any[]> => {
+    if (!teamId || !boatId) return []
+    try {
+      const res = await fetch(`/api/teams/${teamId}/polars?boat_id=${boatId}`)
+      const j = await res.json().catch(() => ({} as any))
+      if (!res.ok) {
+        setPolarSync({ at: Date.now(), error: j?.error === 'unauth' ? 'not signed in' : j?.error || `HTTP ${res.status}` })
+        return []
+      }
+      const list = j.polars || []
+      setPolarVersions(list)
+      setPolar(list.find((p: any) => p.is_active) || null)
+      setPolarSync({ at: Date.now(), error: null })
+      return list
+    } catch (e: any) {
+      setPolarSync({ at: Date.now(), error: String(e?.message || e) })
+      return []
+    }
   }, [teamId, boatId])
   useEffect(() => { loadPolar() }, [loadPolar])
 
@@ -283,38 +298,91 @@ export default function BoatConfigTab({
     const { fileName, versions, source, activeIdx } = polarUpload
     const chosen = versions.map((v, i) => ({ v, i })).filter(({ v }) => v.include)
     if (chosen.some(({ v }) => !v.name.trim())) { setPolarMsg('Every version needs a name'); return }
+    // The version to activate goes last, so it ends up as the boat's active polar.
+    chosen.sort((a, b) => Number(a.i === activeIdx) - Number(b.i === activeIdx))
+    const act = activeIdx != null ? versions[activeIdx] : null
     setImporting(true); setPolarMsg('')
+    const status: PolarSaveStatus = {
+      fileName,
+      rows: chosen.map(({ v }) => ({ name: v.name.trim(), state: 'waiting' as const })),
+      startedAt: Date.now(), finishedAt: null, verified: 'pending', activeName: act ? act.name.trim() : null,
+    }
+    const show = (patch: Partial<PolarSaveStatus> = {}) => setPolarSave({ ...status, ...patch, rows: [...status.rows] })
+    show()
     try {
-      // The version to activate goes last, so it ends up as the boat's active polar.
-      chosen.sort((a, b) => Number(a.i === activeIdx) - Number(b.i === activeIdx))
-      for (const { v, i } of chosen) {
+      for (let k = 0; k < chosen.length; k++) {
+        const { v, i } = chosen[k]
         const name = v.name.trim()
+        status.rows[k] = { name, state: 'saving' }; show()
         const data = buildPolarData(v.entries, {
           name, version: name, source, valid_from: v.validFrom || null, file_name: fileName,
           source_note: v.notes, headline: v.headline,
         })
-        const r = await fetch(`/api/teams/${teamId}/polars`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            boat_id: boatId, name, source, valid_from: v.validFrom || null, data, notes: v.notes, activate: i === activeIdx,
-          }),
-        }).then((x) => x.json())
-        if (r.error) { setPolarMsg(`${name}: ${r.error}`); return }
+        let res: Response
+        try {
+          res = await fetch(`/api/teams/${teamId}/polars`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              boat_id: boatId, name, source, valid_from: v.validFrom || null, data, notes: v.notes, activate: i === activeIdx,
+            }),
+          })
+        } catch (e: any) {
+          // No answer at all — offline, asleep, or the dev server restarted mid-upload.
+          status.rows[k] = { name, state: 'failed', detail: `the connection dropped (${String(e?.message || e)})` }
+          show({ finishedAt: Date.now(), verified: 'failed' })
+          setPolarMsg(`${name}: the connection dropped — nothing from this version on was uploaded`)
+          return
+        }
+        const j = await res.json().catch(() => ({} as any))
+        // Only an id handed back by the server means the row exists in the cloud.
+        if (!res.ok || j?.error || !j?.polar?.id) {
+          const why = j?.error === 'unauth'
+            ? 'not signed in — sign in again and re-upload'
+            : j?.error || `the server answered ${res.status}`
+          status.rows[k] = { name, state: 'failed', detail: why }
+          show({ finishedAt: Date.now(), verified: 'failed' })
+          setPolarMsg(`${name}: ${why}. Nothing from this version on was uploaded — the file is still here, press Save again.`)
+          return
+        }
+        status.rows[k] = { name, state: 'saved', id: j.polar.id }
+        show()
       }
       // Activating a version that is already on file (not uploaded again).
-      const act = activeIdx != null ? versions[activeIdx] : null
       if (act && !act.include) {
         const row = polarVersions.find((p: any) => String(p.name).trim().toLowerCase() === act.name.trim().toLowerCase())
         if (row && !row.is_active) {
-          const r = await fetch(`/api/teams/${teamId}/polars/${row.id}`, {
+          const res = await fetch(`/api/teams/${teamId}/polars/${row.id}`, {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ activate: true }),
-          }).then((x) => x.json())
-          if (r.error) { setPolarMsg(r.error); return }
+          })
+          const j = await res.json().catch(() => ({} as any))
+          if (!res.ok || j?.error) {
+            const why = j?.error || `the server answered ${res.status}`
+            show({ finishedAt: Date.now(), verified: 'failed' })
+            setPolarMsg(`Could not make “${act.name.trim()}” active: ${why}`)
+            return
+          }
         }
       }
-      setPolarUpload(null)
-    } catch (e: any) { setPolarMsg(String(e?.message || e)) }
+      // Read the cloud back: an upload counts as landed only when the rows come back.
+      const list = await loadPolar()
+      const byName = new Map(list.map((p: any) => [String(p.name).trim().toLowerCase(), p]))
+      let missing = 0
+      status.rows = status.rows.map((r) => {
+        const row: any = byName.get(r.name.toLowerCase())
+        if (!row) { missing++; return { ...r, state: 'failed' as const, detail: 'not there when the cloud was read back' } }
+        return { ...r, id: row.id, at: row.created_at }
+      })
+      const cloudActive = String(list.find((p: any) => p.is_active)?.name || '').trim().toLowerCase()
+      const activeOk = !status.activeName || cloudActive === status.activeName.toLowerCase()
+      show({ finishedAt: Date.now(), verified: missing || !activeOk ? 'partial' : 'ok' })
+      if (missing) setPolarMsg(`${missing} version${missing === 1 ? '' : 's'} did not come back when the cloud was read — upload again.`)
+      else if (!activeOk) setPolarMsg(`Uploaded, but the cloud's active polar is “${cloudActive || 'none'}”, not “${status.activeName}”.`)
+      else setPolarUpload(null)
+    } catch (e: any) {
+      setPolarMsg(String(e?.message || e))
+      show({ finishedAt: Date.now(), verified: 'failed' })
+    }
     finally { setImporting(false); loadPolar() }
   }
 
@@ -823,6 +891,8 @@ export default function BoatConfigTab({
         <PolarUploadForm
           upload={polarUpload} setUpload={setPolarUpload} onPick={pickPolarFile}
           onSave={savePolarUpload} busy={importing} msg={polarMsg} btn={btn} input={input}
+          save={polarSave} cloud={{ count: polarVersions.length, activeName: polar?.name || null, ...polarSync }}
+          onRecheck={loadPolar}
         />
       )}
       {view === 'polar' && (
@@ -869,7 +939,7 @@ export default function BoatConfigTab({
         )
       )}
       {view === 'polar' && polarVersions.length > 0 && (
-        <PolarVersions versions={polarVersions} canEdit={canEdit} busy={importing} onActivate={activatePolar} th={th} td={td} btn={btn} />
+        <PolarVersions versions={polarVersions} canEdit={canEdit} busy={importing} onActivate={activatePolar} th={th} td={td} btn={btn} sync={polarSync} />
       )}
 
       {selectedScan && (
@@ -1721,11 +1791,31 @@ interface PolarUpload {
   activeIdx: number | null   // null = keep the current active polar
 }
 
+// Where each version of an upload got to. The upload used to be silent about this:
+// a save that never reached the cloud looked the same as one that did, and the only
+// hint was a version quietly missing from the list below.
+interface PolarSaveRow {
+  name: string
+  state: 'waiting' | 'saving' | 'saved' | 'failed'
+  detail?: string
+  id?: string
+  at?: string
+}
+interface PolarSaveStatus {
+  fileName: string
+  rows: PolarSaveRow[]
+  startedAt: number
+  finishedAt: number | null
+  verified: 'pending' | 'ok' | 'partial' | 'failed'
+  activeName: string | null
+}
+interface PolarSync { at: number | null; error: string | null }   // last read of the cloud
+
 const POLAR_SOURCES: [string, string][] = [
   ['design_vpp', 'Design VPP'], ['measured', 'Measured'], ['sailmaker', 'Sailmaker'], ['blend', 'Blend'], ['other', 'Other'],
 ]
 
-function PolarUploadForm({ upload, setUpload, onPick, onSave, busy, msg, btn, input }: {
+function PolarUploadForm({ upload, setUpload, onPick, onSave, busy, msg, btn, input, save, cloud, onRecheck }: {
   upload: PolarUpload | null
   setUpload: (u: PolarUpload | null) => void
   onPick: (f: File) => void
@@ -1734,6 +1824,9 @@ function PolarUploadForm({ upload, setUpload, onPick, onSave, busy, msg, btn, in
   msg: string
   btn: (bg: string) => React.CSSProperties
   input: React.CSSProperties
+  save: PolarSaveStatus | null
+  cloud: { count: number; activeName: string | null; at: number | null; error: string | null }
+  onRecheck: () => void
 }) {
   const fileRef = React.useRef<HTMLInputElement>(null)
   const setVersion = (i: number, patch: Partial<PolarUploadVersion>) =>
@@ -1759,6 +1852,26 @@ function PolarUploadForm({ upload, setUpload, onPick, onSave, busy, msg, btn, in
           Choose file…
         </button>
       </div>
+
+      {/* What the cloud holds right now — so "did my upload land?" is answered on the page. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8, fontSize: 11 }}>
+        {cloud.error ? (
+          <span style={{ color: C.warn }}>⚠ Could not read the cloud: {cloud.error} — what is listed below may be out of date.</span>
+        ) : cloud.at ? (
+          <span style={{ color: C.dim }}>
+            <span style={{ color: C.ok }}>●</span> Cloud: {cloud.count} version{cloud.count === 1 ? '' : 's'} on file
+            {cloud.activeName ? <> · active <b style={{ color: C.head }}>{cloud.activeName}</b></> : ' · none active'}
+            {' · '}checked {fmtClock(cloud.at)}
+          </span>
+        ) : (
+          <span style={{ color: C.dim }}>Reading the cloud…</span>
+        )}
+        <button onClick={onRecheck} disabled={busy} style={{ ...btn('#0F2A45'), color: C.head, padding: '2px 8px', fontSize: 10, opacity: busy ? 0.6 : 1 }}>
+          Re-check
+        </button>
+      </div>
+
+      {save && <PolarSaveReport save={save} />}
 
       {upload && (
         <div style={{ marginTop: 12 }}>
@@ -1828,7 +1941,47 @@ function PolarUploadForm({ upload, setUpload, onPick, onSave, busy, msg, btn, in
   )
 }
 
-function PolarVersions({ versions, canEdit, busy, onActivate, th, td, btn }: {
+// Per-version result of the last upload: what reached the cloud, what did not, and why.
+function PolarSaveReport({ save }: { save: PolarSaveStatus }) {
+  const tone = save.verified === 'ok' ? C.ok : save.verified === 'pending' ? C.accent : C.warn
+  const saved = save.rows.filter((r) => r.state === 'saved').length
+  const title = save.verified === 'pending'
+    ? `Uploading ${save.fileName} to the cloud — ${saved}/${save.rows.length} done…`
+    : save.verified === 'ok'
+      ? `✓ ${saved} version${saved === 1 ? '' : 's'} of ${save.fileName} ${saved === 1 ? 'is' : 'are'} in the cloud · ${fmtClock(save.finishedAt)}`
+      : save.verified === 'partial'
+        ? `⚠ ${save.fileName}: ${saved} of ${save.rows.length} version${save.rows.length === 1 ? '' : 's'} confirmed in the cloud`
+        : `✕ ${save.fileName} did not upload`
+  const mark = (r: PolarSaveRow) =>
+    r.state === 'saved' ? '✓' : r.state === 'failed' ? '✕' : r.state === 'saving' ? '…' : '·'
+  const colour = (r: PolarSaveRow) =>
+    r.state === 'saved' ? C.ok : r.state === 'failed' ? C.warn : C.dim
+  return (
+    <div data-polar-save={save.verified} style={{ marginTop: 10, border: `1px solid ${tone}55`, borderRadius: 8, padding: '8px 10px', background: '#05121f' }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: tone, marginBottom: 4 }}>{title}</div>
+      {save.rows.map((r) => (
+        <div key={r.name} style={{ fontSize: 11, color: colour(r), display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ width: 10 }}>{mark(r)}</span>
+          <span style={{ color: r.state === 'saved' ? C.text : colour(r) }}>{r.name}</span>
+          {r.state === 'saved' && <span style={{ color: C.dim }}>· saved{r.at ? ` ${fmtDate(r.at)}` : ''}{r.id ? ` · id ${String(r.id).slice(0, 8)}` : ''}</span>}
+          {r.detail && <span>· {r.detail}</span>}
+        </div>
+      ))}
+      {save.activeName && (
+        <div style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>
+          Active polar after this upload: <b style={{ color: C.head }}>{save.activeName}</b>
+        </div>
+      )}
+      {save.verified !== 'ok' && save.verified !== 'pending' && (
+        <div style={{ fontSize: 11, color: C.dim, marginTop: 4 }}>
+          The file is still loaded above — fix what the line says and press Save again.
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PolarVersions({ versions, canEdit, busy, onActivate, th, td, btn, sync }: {
   versions: any[]
   canEdit: boolean
   busy: boolean
@@ -1836,11 +1989,17 @@ function PolarVersions({ versions, canEdit, busy, onActivate, th, td, btn }: {
   th: React.CSSProperties
   td: React.CSSProperties
   btn: (bg: string) => React.CSSProperties
+  sync: PolarSync
 }) {
   const sourceLabel = Object.fromEntries(POLAR_SOURCES)
   return (
     <div style={{ marginTop: 22 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: C.head, marginBottom: 6 }}>Polar versions</div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.head }}>Polar versions</span>
+        <span style={{ fontSize: 11, color: sync.error ? C.warn : C.dim }}>
+          {sync.error ? `⚠ cloud read failed: ${sync.error}` : `${versions.length} in the cloud · read ${fmtClock(sync.at)}`}
+        </span>
+      </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 520 }}>
           <thead>

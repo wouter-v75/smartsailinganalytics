@@ -49,7 +49,7 @@ export default function BoatConfigNext({
       actions={<Button variant="ghost" size="sm" onClick={() => setUiNext(false)}>Classic view</Button>}
     >
       {tab === 'polar' ? (
-        <TargetsView />
+        <TargetsView teamId={teamId} boatId={boatId} />
       ) : tab === 'rig' ? (
         <RigView teamId={teamId} boatId={boatId} />
       ) : err ? (
@@ -80,15 +80,57 @@ export default function BoatConfigNext({
 const T = targetsData as any
 const num = (v: number | undefined, d = 0) => (v == null || Number.isNaN(v) ? '—' : v.toFixed(d))
 
-function TargetsView() {
-  const rows: any[] = Array.isArray(T.headline) ? T.headline : []
+// The boat's ACTIVE polar, read from the cloud. This used to render the bundled
+// targets-v1.4.json unconditionally, so an uploaded polar changed nothing here and
+// the screen still said v1.4 — which reads as "my upload was lost". The bundled file
+// is now only a labelled fallback, and the state of the cloud read is on the page.
+function TargetsView({ teamId, boatId }: { teamId: string; boatId: string }) {
+  const [polar, setPolar] = React.useState<any>(null)
+  const [state, setState] = React.useState<'loading' | 'cloud' | 'none' | 'error'>('loading')
+  const [error, setError] = React.useState('')
+  const [at, setAt] = React.useState<number | null>(null)
+
+  const load = React.useCallback(async () => {
+    setState('loading')
+    try {
+      const res = await fetch(`/api/teams/${teamId}/polars?boat_id=${boatId}&active=1`)
+      const j = await res.json().catch(() => ({} as any))
+      setAt(Date.now())
+      if (!res.ok) { setError(j?.error === 'unauth' ? 'not signed in' : j?.error || `HTTP ${res.status}`); setState('error'); return }
+      const row = (j.polars || [])[0]
+      if (!row?.data) { setState('none'); return }
+      setPolar(row); setState('cloud')
+    } catch (e: any) { setAt(Date.now()); setError(String(e?.message || e)); setState('error') }
+  }, [teamId, boatId])
+  React.useEffect(() => { load() }, [load])
+
+  const src: any = state === 'cloud' ? polar.data : T
+  const rows: any[] = Array.isArray(src.headline) ? src.headline : []
   const th = 'px-3 py-1 text-right font-normal'
+  const clock = at ? new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '—'
+  const day = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: '2-digit' }) : '—')
   return (
     <div className="grid gap-3">
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-sm font-medium text-fg">{T.name}</span>
-        <Badge>{T.version}</Badge>
-        <span className="text-xs text-muted">{T.source_note} · {T.wind_reference}</span>
+        <span className="text-sm font-medium text-fg">{state === 'cloud' ? polar.name : T.name}</span>
+        <Badge>{src.version || (state === 'cloud' ? 'active' : T.version)}</Badge>
+        <span className="text-xs text-muted">{[src.source_note, src.wind_reference].filter(Boolean).join(' · ')}</span>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-xs" data-polar-state={state}>
+        {state === 'loading' ? (
+          <span className="text-muted">Reading the polar from the cloud…</span>
+        ) : state === 'cloud' ? (
+          <span className="text-muted">
+            ● In the cloud · uploaded {day(polar.created_at)}
+            {polar.valid_from ? ` · valid from ${day(polar.valid_from)}` : ''} · checked {clock}
+          </span>
+        ) : state === 'none' ? (
+          <span className="text-muted">No polar in the cloud for this boat — showing the bundled {T.version} reference.</span>
+        ) : (
+          <span className="text-[color:var(--warning)]">⚠ Could not read the cloud ({error}) — showing the bundled {T.version} reference.</span>
+        )}
+        <Button variant="ghost" size="sm" onClick={load}>Re-check</Button>
+        <Button variant="ghost" size="sm" onClick={() => setUiNext(false)}>Upload a polar (classic view)</Button>
       </div>
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
