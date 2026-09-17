@@ -2,7 +2,7 @@
 import * as React from 'react'
 import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react'
 import { cn } from '@/lib/ui'
-import { todayIso } from '@/lib/today'
+import { venueTodayIso as todayIso } from '@/lib/localStore'
 
 // Which day is being tagged.
 //

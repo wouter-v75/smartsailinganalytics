@@ -20,7 +20,7 @@ import { hashLogPayload, hashXmlPayload } from "./contentHash";
 //     ssa:syncOffsets
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { todayIso as TODAY } from "./today";
+import { venueToday } from "./today";
 import { objectUrlFor, releaseObjectUrl } from "./objectUrls";
 
 const DB_NAME = "ssa-db";
@@ -126,6 +126,26 @@ function lsDel(key) {
 // the membership object passed to saveVideo / saveLogData / saveXmlData.
 export function getSessions() { return lsGet("ssa:sessions") || []; }
 
+// ── Which venue is "today" at? ───────────────────────────────────────────────
+// The session index carries each day's tzOffset, resolved from that log's own
+// GPS (src/lib/tzFromCoords.ts). The most recent session with one is the best
+// available answer to "where is this boat sailing", and it is what makes
+// venueTodayIso() agree with the dates the sessions themselves are filed under.
+//
+// Sessions are kept sorted newest-first by upsertSession, so the first hit is
+// the latest. Returns null when no session has an offset yet — a fresh install,
+// or a day imported before the offset was recorded — and venueToday then falls
+// back to the device's own date.
+export function venueTzOffsetMin() {
+  for (const s of getSessions()) {
+    if (typeof s.tzOffset === "number" && Number.isFinite(s.tzOffset)) return s.tzOffset;
+  }
+  return null;
+}
+
+/** Today at the venue this boat is sailing at. See venueTzOffsetMin above. */
+export function venueTodayIso() { return venueToday(venueTzOffsetMin()); }
+
 // Filtered variant. Pass {teamId, boatId} from the active membership. Returns
 // only sessions whose tags match, OR untagged sessions when the caller has no
 // active membership (legacy single-tenant mode).
@@ -221,7 +241,7 @@ const clipKey = (v) => `${v.sessionDate || ''}|${v.name || ''}|${v.size || 0}`;
 
 export async function saveVideo(file, parsedMeta, membership = null) {
   const db   = await openDb();
-  const date = parsedMeta.sessionDate || TODAY();
+  const date = parsedMeta.sessionDate || venueTodayIso();
   const id   = `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
   // Already imported? Re-use that row. Top up the blob if the earlier attempt failed

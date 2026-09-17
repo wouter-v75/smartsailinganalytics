@@ -43,7 +43,11 @@ import { upsertPhotoCloud } from '../lib/cloud-photos';
 import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending as syncPendingPhotos, connectionIsGood as photoConnGood } from '../lib/photoStore';
 import { getActiveMembership } from '../lib/active-membership';
 import { daySyncRefusal } from '../lib/syncBoatGuard';
-import { todayIso as TODAY } from '../lib/today';
+// "Today" means today AT THE VENUE, resolved from the most recent session's own
+// tzOffset (see localStore.venueTzOffsetMin). It used to be the UTC date, which put
+// a 09:00 Auckland start on the previous day and gave a Med crew sailing past local
+// midnight yesterday's session by default.
+import { venueTodayIso as TODAY } from '../lib/localStore';
 
 import { currentStorageScope, scopeOfMembership } from '../lib/storageScope';
 import { unmatchedSails } from '../lib/sailResolve';

@@ -19,7 +19,7 @@ import { heicToJpeg } from "../lib/cdnScript";
 import { writeKey, readCandidates, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
 import { renderOverlay } from "../lib/photoOverlay";
-import { todayIso as TODAY } from "../lib/today";
+import { venueTodayIso as TODAY } from "../lib/localStore";   // venue-local, not UTC
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
