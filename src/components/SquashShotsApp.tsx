@@ -978,7 +978,7 @@ export default function SquashShotsApp() {
 
       if (cropDragging && cropDragging !== 'move') {
         // Resize crop box
-        let newBox = { ...cropBox };
+        const newBox = { ...cropBox };
         const minSize = 80;
 
         switch (cropDragging) {

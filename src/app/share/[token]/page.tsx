@@ -31,7 +31,7 @@ const NUM_KEYS: (keyof Row)[] = ['bsp', 'tws', 'twa', 'aws', 'awa', 'heel', 'tri
 
 // Circular mean for compass-style angles, so 359° → 001° doesn't sweep the long way.
 const lerpAngle = (a: number, b: number, t: number) => {
-  let d = ((b - a + 540) % 360) - 180
+  const d = ((b - a + 540) % 360) - 180
   return (a + d * t + 360) % 360
 }
 
