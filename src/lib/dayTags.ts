@@ -67,6 +67,32 @@ export function trackTags(events: readonly TagEvent[] | null | undefined, tzOffs
     .sort((a, b) => a.t0 - b.t0)
 }
 
+// The event file and the tagger describe the same day. Where BOTH have a moment, it is
+// drawn once — the tagger's version, because that is the one the team named and coloured
+// — and everything the tags do not cover is still drawn from the event file. Same rule as
+// phases: both sources show, neither is thrown away, and an overlap is resolved rather
+// than duplicated.
+export const EVENT_FILE_SLUG = {
+  tack: 'tack', gybe: 'gybe', mark: 'mark', gun: 'race-start', sails: 'sail-change',
+} as const
+
+// A tag detected from the log does not sit on the event file's exact second, so this is
+// a window rather than an equality. 20 s is wide enough for a detector's disagreement
+// about where a tack began, and far narrower than the gap between two real manoeuvres.
+export const TAG_MATCH_S = 20
+
+export function isTagged(
+  events: readonly { slug?: string; t0?: number }[] | null | undefined,
+  utc: number,
+  slugs: readonly string[],
+  toleranceS: number = TAG_MATCH_S
+): boolean {
+  if (!isNum(utc) || !slugs.length) return false
+  const window = toleranceS * 1000
+  return (events || []).some(e =>
+    e && isNum(e.t0) && slugs.includes(e.slug || '') && Math.abs((e.t0 as number) - utc) <= window)
+}
+
 export interface TagLegendRow { slug: string; label: string; color: string; n: number }
 
 // What kinds of tag this day holds, commonest last so the routine turns do not head the

@@ -2,7 +2,7 @@
 // about that sameness: the label, the colour and the size hierarchy come from the
 // tagger's own helpers, not from a second set of names in Analytics.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { fetchDayTags, trackTags, tagLegend, tagsInRange } from '../dayTags'
+import { fetchDayTags, trackTags, tagLegend, tagsInRange, isTagged, EVENT_FILE_SLUG, TAG_MATCH_S } from '../dayTags'
 import { markerStyle, R_MANOEUVRE, R_MOMENT } from '../tagging/markers'
 import type { TagEvent } from '../tagging/types'
 
@@ -116,5 +116,32 @@ describe('fetchDayTags', () => {
     expect(await fetchDayTags('t', 'b', '2026-09-11')).toEqual([])
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
     expect(await fetchDayTags('t', 'b', '2026-09-11')).toEqual([])
+  })
+})
+
+describe('isTagged — both sources show, an overlap is drawn once', () => {
+  const day = [
+    tag({ slug: 'tack', t0: m(20) }),
+    tag({ slug: 'sail-change', t0: m(40) }),
+  ]
+
+  it('says a moment the tagger already has is covered', () => {
+    expect(isTagged(day, m(20), [EVENT_FILE_SLUG.tack])).toBe(true)
+  })
+
+  it('allows for a detector disagreeing by a few seconds', () => {
+    expect(isTagged(day, m(20) + 15_000, [EVENT_FILE_SLUG.tack])).toBe(true)
+    expect(isTagged(day, m(20) + (TAG_MATCH_S + 5) * 1000, [EVENT_FILE_SLUG.tack])).toBe(false)
+  })
+
+  it('does not treat a different kind of tag as cover', () => {
+    expect(isTagged(day, m(20), [EVENT_FILE_SLUG.gybe])).toBe(false)
+    expect(isTagged(day, m(40), [EVENT_FILE_SLUG.mark])).toBe(false)
+  })
+
+  it('leaves an untagged event-file moment to be drawn', () => {
+    expect(isTagged(day, m(90), [EVENT_FILE_SLUG.tack])).toBe(false)
+    expect(isTagged([], m(20), [EVENT_FILE_SLUG.tack])).toBe(false)
+    expect(isTagged(null, m(20), [EVENT_FILE_SLUG.tack])).toBe(false)
   })
 })

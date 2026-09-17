@@ -14,7 +14,7 @@ import { parseLog } from '../lib/logParse';
 import { isLidarKey } from '../lib/flatLogParse';
 import { logRateHz, isSubSecondLog, thinToOneHz, lidarSailsIn } from '../lib/logResolution';
 import { nearestTrackIndex, orderedRange, inRange } from '../lib/trackSelection';
-import { fetchDayTags, trackTags } from '../lib/dayTags';
+import { fetchDayTags, trackTags, isTagged, EVENT_FILE_SLUG } from '../lib/dayTags';
 import { raceOptions, finishesFromTags, finishNote, saveFinishTag } from '../lib/raceSelect';
 import { offsetFromCoords } from '../lib/tzFromCoords';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
@@ -4462,7 +4462,6 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   },[races, raceKey]);
 
   const race = raceKey==='all' ? null : races.find(r=>r.key===raceKey) || null;
-  const hasTags = (dayTags?.length || 0) > 0;
 
   // The parent knows which finishes are TAGGED; the map only knows which race is on
   // screen. Telling it which one lets it say whether that race's end is a guess.
@@ -4625,23 +4624,26 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       L.circleMarker([last.lat,last.lon],{radius:9,fillColor:'#94A3B8',color:'#fff',weight:2,fillOpacity:1}).bindTooltip(`Day end ${fmtU(last.utc)} UTC`).addTo(map);
 
       // ── Event markers ───────────────────────────────────────────────────────
-      // Only when the day has NO tags. A tagged day is drawn from the tags instead
-      // (see the tag layer below), with the team's own labels and colours — otherwise
-      // one tack gets two dots and two different names.
-      if(xmlData && !hasTags){
+      // Both sources are drawn. Where the tagger already has the same moment the
+      // event file's dot is skipped — the tag is the version the team named and
+      // coloured — but everything the tags do not cover is still shown here.
+      if(xmlData){
         const nearest=utc=>filteredRows.reduce((a,b)=>Math.abs(b.utc-utc)<Math.abs(a.utc-utc)?b:a,filteredRows[0]);
         for(const m of (xmlData.markRoundings||[])){
+          if(isTagged(dayTags,m.utc,[EVENT_FILE_SLUG.mark])) continue;
           try{const nr=nearest(m.utc);if(Math.abs(nr.utc-m.utc)>120000)continue;
             L.circleMarker([nr.lat,nr.lon],{radius:10,fillColor:m.isTop?"#EF4444":"#8B5CF6",color:'#030F1A',weight:2,fillOpacity:m.isValid===false?0.3:1}).bindTooltip(`${m.label||'Mark'} · ${fmtU(m.utc)}`).addTo(map);
             L.marker([nr.lat,nr.lon],{icon:L.divIcon({className:'',iconSize:[0,0],iconAnchor:[-5,-12],html:`<span style="font-size:9px;font-weight:700;color:#fff;text-shadow:0 0 3px #000">${m.isTop?'▲':'▽'}</span>`})}).addTo(map);
           }catch(e){console.warn('mark err',e);}
         }
         for(const g of (xmlData.raceGuns||[])){
+          if(isTagged(dayTags,g.utc,[EVENT_FILE_SLUG.gun])) continue;
           try{const nr=nearest(g.utc);if(Math.abs(nr.utc-g.utc)>120000)continue;
             L.circleMarker([nr.lat,nr.lon],{radius:10,fillColor:'#EF4444',color:'#fff',weight:2,fillOpacity:1}).bindTooltip(`${g.label||'Gun'} · ${fmtU(g.utc)}`).addTo(map);
           }catch(e){}
         }
         for(const tj of (xmlData.tackJibes||[])){
+          if(isTagged(dayTags,tj.utc,[tj.isTack?EVENT_FILE_SLUG.tack:EVENT_FILE_SLUG.gybe])) continue;
           try{const nr=nearest(tj.utc);if(Math.abs(nr.utc-tj.utc)>60000)continue;
             // Small, as on the tagger's track and for the same reason: a day
             // has two sail changes and a hundred and forty tacks, and drawn the
@@ -4652,6 +4654,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
           }catch(e){}
         }
         for(const se of (xmlData.sailsUpEvents||[])){
+          if(isTagged(dayTags,se.utc,[EVENT_FILE_SLUG.sails])) continue;
           try{const nr=nearest(se.utc);if(Math.abs(nr.utc-se.utc)>120000)continue;
             L.marker([nr.lat,nr.lon],{icon:L.divIcon({className:'',iconSize:[0,0],iconAnchor:[0,0],html:`<div style="background:#F59E0B;border:1.5px solid #030F1A;border-radius:3px;padding:1px 4px;font-size:8px;font-weight:700;color:#000;white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis">${(se.sails||[]).slice(0,2).join('·')||'Sail'}</div>`})}).bindTooltip(`${se.label||'Sail'} · ${fmtU(se.utc)}`).addTo(map);
           }catch(e){}
@@ -4745,7 +4748,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       cancelled = true;
       if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
     };
-  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, colourMode, hasTags]);
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, colourMode, dayTags]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
