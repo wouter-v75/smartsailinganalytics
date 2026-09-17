@@ -58,7 +58,7 @@ export function tackTrends(pts: PlotPoint[]): Record<Tack, Trend | null> {
 export function plotDomain(values: number[], extra: number[] = [], padFrac = 0.06): [number, number] {
   const v = values.concat(extra).filter(Number.isFinite)
   if (!v.length) return [0, 1]
-  let lo = Math.min(...v), hi = Math.max(...v)
+  const lo = Math.min(...v), hi = Math.max(...v)
   if (hi - lo < 1e-9) return [lo - 1, hi + 1]
   const pad = (hi - lo) * padFrac
   return [lo - pad, hi + pad]
