@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../../lib/supabase/admin-guard'
+import { readCandidates, SESSION_LEAVES, photoLeaves } from '@/lib/storageKeys'
 
 const API_KEY = process.env.BUNNY_STORAGE_API_KEY!
 const ZONE = process.env.BUNNY_STORAGE_ZONE!
@@ -114,13 +115,27 @@ export async function POST(
   let photos_skipped = 0
   const log: string[] = []
 
+  // This tool imports what is already in the zone into Supabase, so it has to
+  // look in BOTH layouts: the tenant-scoped one written since storage was scoped
+  // (src/lib/storageKeys.ts) and the flat `sessions/<date>/` one that everything
+  // older sits in. Scoped first — if a day exists in both, the scoped copy is the
+  // one that belongs to this boat.
+  const scope = { teamId: params.teamId, boatId: params.boatId }
+  const firstJson = async <T,>(date: string, leaf: string): Promise<T | null> => {
+    for (const key of readCandidates(scope, date, leaf)) {
+      const hit = await bunnyJson<T>(key)
+      if (hit != null) return hit
+    }
+    return null
+  }
+
   for (const date of dates) {
     sessions_seen++
 
     // Pull log + xml first so we can store them on the session row.
     const [logFile, xmlFile] = await Promise.all([
-      bunnyJson<unknown>(`sessions/${date}/log.json`),
-      bunnyJson<unknown>(`sessions/${date}/events.json`),
+      firstJson<unknown>(date, SESSION_LEAVES.log),
+      firstJson<unknown>(date, SESSION_LEAVES.events),
     ])
 
     // Ensure session row exists, including log + xml when present.
@@ -144,7 +159,7 @@ export async function POST(
     }
 
     // Step 2 — videos from sessions/<date>/meta.json.
-    const meta = await bunnyJson<SessionMeta>(`sessions/${date}/meta.json`)
+    const meta = await firstJson<SessionMeta>(date, SESSION_LEAVES.meta)
     if (meta?.videos?.length) {
       for (const v of meta.videos) {
         // Dedupe.
@@ -220,11 +235,9 @@ export async function POST(
       }
     }
 
-    // Step 3 — photos from sessions/<date>/photos.json (index) +
-    // sessions/<date>/photos/<id>_meta.json (per-photo).
-    const photoIndex = await bunnyJson<PhotoIndex>(
-      `sessions/${date}/photos.json`
-    )
+    // Step 3 — photos from the day's photos.json index + each photo's
+    // <id>_meta.json, in whichever layout they are in.
+    const photoIndex = await firstJson<PhotoIndex>(date, SESSION_LEAVES.photoIndex)
     const photoList = photoIndex?.photos || []
     for (const p of photoList) {
       const storagePath = p.bunnyPath || p.url || null
@@ -241,9 +254,7 @@ export async function POST(
 
       // Optional richer metadata file.
       const richer = p.id
-        ? await bunnyJson<PhotoMeta>(
-            `sessions/${date}/photos/${p.id}_meta.json`
-          )
+        ? await firstJson<PhotoMeta>(date, photoLeaves(p.id).meta)
         : null
       const merged: PhotoMeta = { ...p, ...(richer || {}) }
 

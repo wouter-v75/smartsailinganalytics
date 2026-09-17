@@ -2,6 +2,7 @@
 import * as React from 'react'
 import { ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react'
 import { cn } from '@/lib/ui'
+import { todayIso } from '@/lib/today'
 
 // Which day is being tagged.
 //
@@ -32,7 +33,6 @@ function label(iso: string): string {
   })
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10)
 
 export default function DayPicker({ date, sessions, onSelect, disabled }: DayPickerProps) {
   // Oldest first, de-duplicated, and never into the future — a session row with

@@ -28,12 +28,11 @@ import {
   horizontalOnlyEdges, colorizeOrientation, matToCanvas, imageToMat,
   detectStripeFromTap,
 } from '../lib/sailscan-cv';
-// Yacht-prefs storage is built but no longer wired to detection (Auto-detect
-// removed). Will resurface in v2.x when per-yacht stripe colour is exposed.
 import {
   loadGroundTruth, findSessionByFilename, compareToReference,
   type ReferenceSession, type BenchmarkReport,
 } from '../lib/sailscan-bench';
+import { heicToJpeg } from '@/lib/cdnScript';
 
 type Step = 'select' | 'live' | 'preview' | 'mark' | 'results';
 interface P { x: number; y: number; }
@@ -59,30 +58,10 @@ const ENDPOINT_LEECH_COLOR = '#ef4444';
 const MID_COLOR = '#fbbf24';
 
 // ── HEIC support ───────────────────────────────────────
-// iPhone photos are HEIC/HEIF, which non-Safari browsers cannot render. Load
-// heic2any from CDN and convert to a JPEG File for display + canvas. EXIF is
-// still read from the ORIGINAL file (exifr handles HEIC) so timestamps survive.
-function loadHeic2any(): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if ((window as any).heic2any) { resolve((window as any).heic2any); return; }
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js';
-    s.onload = () => resolve((window as any).heic2any);
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-}
-
-// Convert HEIC/HEIF -> JPEG File for display; pass everything else through.
-async function toDisplayFile(file: File): Promise<File> {
-  const isHeic = file.type === 'image/heic' || file.type === 'image/heif'
-    || /\.(heic|heif)$/i.test(file.name);
-  if (!isHeic) return file;
-  const heic2any = await loadHeic2any();
-  const out = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
-  const blob = (Array.isArray(out) ? out[0] : out) as Blob;
-  return new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
-}
+// iPhone photos are HEIC/HEIF, which non-Safari browsers cannot render, so they are
+// converted to JPEG for display + canvas (see src/lib/cdnScript.ts). EXIF is still
+// read from the ORIGINAL file (exifr handles HEIC) so timestamps survive.
+const toDisplayFile = (file: File): Promise<File> => heicToJpeg(file);
 
 const newStripe = (): Stripe => ({ luff: null, leech: null, mid: [], userTaps: [] });
 
@@ -159,8 +138,9 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
   // fits a cubic curve and snaps midpoints to the stripe.
   const [autoDetecting,  setAutoDetecting]  = useState(false);
   const [autoDetectMsg,  setAutoDetectMsg]  = useState<string>('');
-  // The yacht-prefs key uses the boat name from xmlData.meta.boat when we
-  // wire it through; for now we use 'default' as a fallback per-device key.
+  // Per-yacht stripe-colour preferences were removed with Auto-detect; the
+  // store they lived in (src/lib/yacht-prefs.ts) had no callers left and is gone.
+  // Null keeps the shape the detection call still expects.
   const yachtKey: string | null = null;
 
   // ── timestamp + save-to-Photos state ─────────────────────────────────────

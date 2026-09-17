@@ -9,24 +9,25 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { uploadJsonToStorage, fetchFromStorage } from "../lib/bunny";
-import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, startAutoFlush } from "../lib/photoStore";
+import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, startAutoFlush, keysForPhoto } from "../lib/photoStore";
 import { offsetFromCoords } from "../lib/tzFromCoords";
 import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
 import { buildSailResolver } from "../lib/sailResolve";
 import { useUiNext } from "../lib/ui-flags";
 import PhotosNext from "./photos/PhotosNext";
+import { heicToJpeg } from "../lib/cdnScript";
+import { writeKey, readCandidates, SESSION_LEAVES } from "../lib/storageKeys";
+import { currentStorageScope } from "../lib/storageScope";
 import { renderOverlay } from "../lib/photoOverlay";
+import { todayIso as TODAY } from "../lib/today";
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
 
 // Keys for cloud layout
-const cloudKeys = (date, id) => ({
-  original: `sessions/${date}/photos/${id}.jpg`,
-  thumb:    `sessions/${date}/photos/${id}_thumb.jpg`,
-  meta:     `sessions/${date}/photos/${id}_meta.json`,
-  index:    `sessions/${date}/photos.json`,
-});
+// Keys come from photoStore, which owns the layout and the team+boat scoping
+// (src/lib/storageKeys.ts). This file used to carry a second copy, with a comment
+// on the other one asking that they be kept in step by hand.
 
 // Full-res originals are served via the binary proxy.
 // Thumbs are tiny so we fetch through the same route.
@@ -182,28 +183,13 @@ function loadExifr() {
   });
 }
 
-// Load heic2any from CDN for HEIC conversion
-function loadHeic2any() {
-  return new Promise((resolve,reject)=>{
-    if(window.heic2any){resolve(window.heic2any);return;}
-    const s=document.createElement("script");
-    s.src="https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js";
-    s.onload=()=>resolve(window.heic2any);
-    s.onerror=reject;
-    document.head.appendChild(s);
-  });
-}
-
 async function convertToJpeg(file) {
   if(file.type==="image/jpeg") return file;
 
-  // HEIC/HEIF — use heic2any library
-  const isHeic = file.type==="image/heic"||file.type==="image/heif"||/\.(heic|heif)$/i.test(file.name);
-  if(isHeic){
-    const heic2any = await loadHeic2any();
-    const blob = await heic2any({blob:file, toType:"image/jpeg", quality:0.92});
-    return new File([blob], file.name.replace(/\.[^.]+$/,".jpg"), {type:"image/jpeg"});
-  }
+  // HEIC/HEIF — heicToJpeg loads heic2any from the CDN (src/lib/cdnScript.ts)
+  // and returns the original file untouched when it is not HEIC.
+  const jpeg = await heicToJpeg(file);
+  if(jpeg!==file) return jpeg;
 
   // PNG/WebP — convert via canvas
   return new Promise((resolve,reject)=>{
@@ -279,7 +265,6 @@ const PHOTO_OVERLAY_VARS = [
 
 const SAIL_SKIP = /^(main|msail|mainsail|main-)/;
 const fmtDate = d=>{if(!d)return"";const p=d.split("-");return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:d;};
-const TODAY = ()=>new Date().toISOString().slice(0,10);
 
 // Local-time display helpers — photos are stored as true-UTC epochs (matching the
 // video + logfile model) and rendered in the venue/local zone (sessionTzOffset).
@@ -710,7 +695,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       const restored = await Promise.all(combined.map(async p=>{
         const blob = localIds.has(p.id) ? await idbGetPhoto(p.id).catch(()=>null) : null;
         const hasLocalOriginal = !!blob;
-        const keys = cloudKeys(p.sessionDate||activeDate, p.id);
+        const keys = keysForPhoto(p, activeDate);
         const objectUrl = blob
           ? URL.createObjectURL(blob)
           : (p.thumbnailUrl || (p.cloudSynced ? cloudImageUrl(keys.thumb) : null));
@@ -885,7 +870,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     if(!cloudStatus?.available) throw new Error("Cloud not available");
     const blob = await idbGetPhoto(photo.id);
     if(!blob) throw new Error("No local blob");
-    const keys = cloudKeys(photo.sessionDate||activeDate, photo.id);
+    const keys = keysForPhoto(photo, activeDate);
     const {accessKey,zone,host} = await fetch("/api/storage/credentials").then(r=>r.json());
 
     // 1) Generate and upload thumbnail
@@ -942,7 +927,11 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     const cloudEntries = list
       .filter(p => p.cloudSynced)
       .map(({objectUrl, hasLocalOriginal, ...meta}) => meta);
-    await uploadJsonToStorage(`sessions/${activeDate}/photos.json`, {
+    // The index is per (team, boat, date). It used to be per date alone, so two
+    // boats sailing one day overwrote each other's photo list.
+    const key = writeKey(await currentStorageScope(), activeDate, SESSION_LEAVES.photoIndex);
+    if (!key) return;
+    await uploadJsonToStorage(key, {
       updatedAt: Date.now(),
       photos: cloudEntries,
     });
@@ -971,7 +960,13 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   // Cloud-only photos get thumbnail URLs; we don't auto-download originals.
   const handlePullFromCloud = useCallback(async () => {
     if(!activeDate || !cloudStatus?.available) return;
-    const index = await fetchFromStorage(`sessions/${activeDate}/photos.json`);
+    // Scoped index first, then the pre-migration flat one, so a day uploaded
+    // before scoping still opens.
+    let index = null;
+    for (const k of readCandidates(await currentStorageScope(), activeDate, SESSION_LEAVES.photoIndex)) {
+      index = await fetchFromStorage(k);
+      if (index) break;
+    }
     if(!index?.photos) return { added: 0, updated: 0 };
     const cloudPhotos = index.photos;
 
@@ -986,7 +981,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           updated++;
         }
       } else {
-        const keys = cloudKeys(activeDate, cp.id);
+        const keys = keysForPhoto(cp, activeDate);
         byId.set(cp.id, {
           ...cp,
           cloudSynced: true,
@@ -1071,7 +1066,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     if(selected.hasLocalOriginal) { addLog("✓ Already local"); return; }
     setDownloadingOriginal(true);
     try {
-      const keys = cloudKeys(selected.sessionDate||activeDate, selected.id);
+      const keys = keysForPhoto(selected, activeDate);
       const res = await fetch(cloudImageUrl(keys.original));
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();

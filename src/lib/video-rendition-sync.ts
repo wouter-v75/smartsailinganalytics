@@ -20,13 +20,27 @@
 
 import { generateProxy, type ProxyProgress } from './video-proxy'
 import { uploadBlobToStorage, storageObjectSize, type UploadProgress } from './bunny-storage-upload'
+import { writeKey, proxyLeaf, originalLeaf, type StorageScope } from './storageKeys'
 
-/** Path layout — keep aligned with the design in the project memo. */
-export function proxyPathFor(sessionDate: string, videoId: string): string {
-  return `sessions/${sessionDate}/proxies/${videoId}.mp4`
+/**
+ * Where a clip's renditions go. Scoped by team+boat now (src/lib/storageKeys.ts);
+ * a clip id is unique, so these never overwrote each other the way the session
+ * JSON did — but a flat layout meant a day-wipe on one boat's prefix could reach
+ * another's bytes, and nothing in the zone said who owned what.
+ *
+ * Existing rows are unaffected: the path is WRITTEN to bunny_proxy_path /
+ * bunny_original_path and read back verbatim to sign a URL, never rebuilt from a
+ * date. Old clips keep their flat path and keep playing.
+ */
+export function proxyPathFor(
+  sessionDate: string, videoId: string, scope?: StorageScope | null
+): string {
+  return writeKey(scope, sessionDate, proxyLeaf(videoId)) ?? `sessions/${sessionDate}/proxies/${videoId}.mp4`
 }
-export function originalPathFor(sessionDate: string, videoId: string): string {
-  return `sessions/${sessionDate}/originals/${videoId}.mp4`
+export function originalPathFor(
+  sessionDate: string, videoId: string, scope?: StorageScope | null
+): string {
+  return writeKey(scope, sessionDate, originalLeaf(videoId)) ?? `sessions/${sessionDate}/originals/${videoId}.mp4`
 }
 
 export type RenditionPhase =
@@ -50,6 +64,8 @@ export interface RenditionProgress {
 interface BaseArgs {
   videoId: string
   sessionDate: string
+  /** Team + boat the clip belongs to; omitted falls back to the flat layout. */
+  scope?: StorageScope | null
   source: Blob
   onProgress?: (p: RenditionProgress) => void
   signal?: AbortSignal
@@ -140,16 +156,16 @@ async function probeBlob(blob: Blob): Promise<{ height: number | null; durationS
  * the upload failed would send them re-uploading footage the team can watch.
  */
 async function putAndFetch({
-  videoId, sessionDate, blob, title, kind, onProgress, signal, retryBaseMs = 400,
+  videoId, sessionDate, scope, blob, title, kind, onProgress, signal, retryBaseMs = 400,
 }: {
-  videoId: string; sessionDate: string; blob: Blob; title: string
+  videoId: string; sessionDate: string; scope?: StorageScope | null; blob: Blob; title: string
   kind: 'original' | 'proxy'
   onProgress?: (p: RenditionProgress) => void
   signal?: AbortSignal
   retryBaseMs?: number
 }): Promise<{ ok: boolean; path?: string; streamId?: string; streamError?: string; error?: string }> {
   const emit = (p: RenditionProgress) => onProgress?.(p)
-  const path = kind === 'proxy' ? proxyPathFor(sessionDate, videoId) : originalPathFor(sessionDate, videoId)
+  const path = kind === 'proxy' ? proxyPathFor(sessionDate, videoId, scope) : originalPathFor(sessionDate, videoId, scope)
   // The row PATCH is a small metadata write to our own API, and a blip there must
   // not cost a clip. Retry the PATCH — NOT the upload: re-sending bytes that are
   // already in Storage fixes nothing about a failed PATCH. (Before the upload
@@ -235,6 +251,7 @@ async function putAndFetch({
 export async function syncProxyForVideo({
   videoId,
   sessionDate,
+  scope,
   source,
   proxyBlobIfAvailable,
   onProgress,
@@ -302,7 +319,7 @@ export async function syncProxyForVideo({
     // would make has_original mean nothing.
     const asIs = proxyBlob === source
     const r = await putAndFetch({
-      videoId, sessionDate, blob: proxyBlob, title: `v_${videoId}`,
+      videoId, sessionDate, scope, blob: proxyBlob, title: `v_${videoId}`,
       kind: asIs ? 'original' : 'proxy', onProgress, signal, retryBaseMs,
     })
     if (!r.ok) throw new Error(r.error || 'upload failed')
@@ -322,6 +339,7 @@ export async function syncProxyForVideo({
 export async function uploadOriginalStorageFirst({
   videoId,
   sessionDate,
+  scope,
   source,
   title,
   onProgress,
@@ -334,7 +352,7 @@ export async function uploadOriginalStorageFirst({
   streamError?: string
   error?: string
 }> {
-  const r = await putAndFetch({ videoId, sessionDate, blob: source, title, kind: 'original', onProgress, signal, retryBaseMs })
+  const r = await putAndFetch({ videoId, sessionDate, scope, blob: source, title, kind: 'original', onProgress, signal, retryBaseMs })
   return r.ok
     ? { ok: true, originalPath: r.path, streamId: r.streamId, streamError: r.streamError }
     : { ok: false, error: r.error }

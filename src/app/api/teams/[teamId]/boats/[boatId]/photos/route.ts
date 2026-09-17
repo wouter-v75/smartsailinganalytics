@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase, getServiceSupabase } from '../../../../../../../lib/supabase/server'
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
 import { signBunnyUrl, bunnyConfigured } from '../../../../../../../lib/bunny-signed-url'
+import { scopedPhotoPrefix, legacySessionPrefix } from '@/lib/storageKeys'
 
 // Serve thumbnails over the Bunny CDN (signed) instead of the slow per-request
 // Vercel image proxy — the thumb key is deterministic from the original key.
@@ -22,7 +23,18 @@ const B_ZONE = process.env.BUNNY_STORAGE_ZONE
 const B_REGION = process.env.BUNNY_STORAGE_REGION || 'de'
 const bBase = () => (B_REGION === 'de' ? 'https://storage.bunnycdn.com' : `https://${B_REGION}.storage.bunnycdn.com`)
 
-// Delete every object under a Bunny Storage prefix (e.g. sessions/<date>/photos/).
+/** How many objects sit under a prefix. Used to report what a wipe could not touch. */
+async function countBunnyPrefix(prefix: string): Promise<number> {
+  if (!B_KEY || !B_ZONE) return 0
+  try {
+    const res = await fetch(`${bBase()}/${B_ZONE}/${prefix}`, { headers: { AccessKey: B_KEY } })
+    if (!res.ok) return 0
+    const items = (await res.json()) as Array<{ IsDirectory: boolean }>
+    return Array.isArray(items) ? items.filter((i) => !i.IsDirectory).length : 0
+  } catch { return 0 }
+}
+
+/** Delete every object under a Bunny Storage prefix. Caller supplies a SCOPED one. */
 async function deleteBunnyPrefix(prefix: string): Promise<{ deleted: number; errors: number }> {
   if (!B_KEY || !B_ZONE) return { deleted: 0, errors: 0 }
   let deleted = 0, errors = 0
@@ -256,9 +268,36 @@ export async function DELETE(
     deletedRows = del?.length || 0
   }
 
-  // Remove every Bunny object under the day's photo prefix (catches duplicates
-  // and orphaned objects from earlier broken runs too).
-  const bunny = await deleteBunnyPrefix(`sessions/${date}/photos/`)
+  // Remove every Bunny object under THIS BOAT'S photo prefix for the day.
+  //
+  // It used to be `sessions/${date}/photos/` — the date and nothing else. The zone
+  // is shared by every tenant, so a coach clearing their own day deleted every
+  // other team's photos for that date as well. The Coach+ check above was on this
+  // team; the key it then used belonged to all of them.
+  //
+  // scopedPhotoPrefix returns null rather than ever naming the flat prefix, so
+  // there is no path through here that can reach another team's bytes.
+  //
+  // WHAT THIS MEANS FOR OLD DATA: photos uploaded before scoping still live under
+  // the flat prefix, and are no longer deleted by a day-wipe. That is deliberate —
+  // deleting them is the cross-tenant reach being removed, and it cannot be done
+  // safely until each object's owner is known. They are reported separately below
+  // so the caller can see the day was not fully cleared.
+  const prefix = scopedPhotoPrefix({ teamId: params.teamId, boatId: params.boatId }, date)
+  const bunny = prefix
+    ? await deleteBunnyPrefix(prefix)
+    : { deleted: 0, errors: 0 }
 
-  return NextResponse.json({ ok: true, date, deletedRows, bunnyDeleted: bunny.deleted, bunnyErrors: bunny.errors, hadSession: sessionIds.length > 0 })
+  const legacyPrefix = legacySessionPrefix(date)
+  const legacyRemaining = legacyPrefix
+    ? await countBunnyPrefix(`${legacyPrefix}photos/`)
+    : 0
+
+  return NextResponse.json({
+    ok: true, date, deletedRows,
+    bunnyDeleted: bunny.deleted, bunnyErrors: bunny.errors,
+    hadSession: sessionIds.length > 0,
+    // Objects from before storage was tenant-scoped. Not ours to delete from here.
+    legacyObjectsLeft: legacyRemaining || undefined,
+  })
 }

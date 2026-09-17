@@ -18,6 +18,7 @@ import { scanLocalDateTime, scanLocalParts, localToScanStamps, tzShortOf } from 
 import { pickDesign, designCodeOf, interpDesignAtTws } from '../lib/designInterp'
 import { northstarConditions, nsCell, nsSetCell, NS_STRIPES, NS_TWS, type NsCondition, type NsMetric } from '../lib/northstarTarget'
 import { RichText } from './RichText'
+import { loadJsPdf } from '@/lib/cdnScript'
 
 const DESIGN_GREY = '#94A3B8'
 const NS_GREEN = '#22C55E' // Northstar target line
@@ -71,21 +72,7 @@ const fmtDateTime = (iso?: string | null) =>
 interface Stripe { pos: number; draft: number | null; camber: number | null; twist: number | null; entry: number | null; exit: number | null; fore: number | null; back: number | null }
 
 // jsPDF (UMD) loaded once from CDN for the Share-as-PDF action.
-let jspdfPromise: Promise<any> | null = null
-function loadJsPdf(): Promise<any> {
-  const w = window as any
-  if (w.jspdf?.jsPDF) return Promise.resolve(w.jspdf.jsPDF)
-  if (!jspdfPromise) {
-    jspdfPromise = new Promise((res, rej) => {
-      const s = document.createElement('script')
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
-      s.onload = () => res((window as any).jspdf.jsPDF)
-      s.onerror = () => rej(new Error('failed to load jsPDF'))
-      document.head.appendChild(s)
-    })
-  }
-  return jspdfPromise
-}
+
 // Draw a small line chart directly into a jsPDF doc (mm units). xs/ys are data;
 // rgb is the line colour. Returns nothing — caller manages layout.
 function pdfLineChart(doc: any, x: number, y: number, w: number, h: number, xs: number[], ys: (number | null)[], rgb: number[], label: string) {

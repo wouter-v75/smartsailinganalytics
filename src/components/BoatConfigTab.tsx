@@ -32,6 +32,7 @@ import { sailPatchFrom } from '../lib/sailEdit'
 import { useUiNext } from '../lib/ui-flags'
 import BoatConfigNext from './boat/BoatConfigNext'
 import BattenCardPanel from './boat/BattenCardPanel'
+import { loadJsPdf } from '@/lib/cdnScript'
 
 interface Sail {
   id: string
@@ -1210,21 +1211,7 @@ function normSettings(raw: any): RigSettings {
 }
 const rbtn = (bg: string): React.CSSProperties => ({ background: bg, border: 'none', borderRadius: 6, color: '#001018', fontWeight: 700, fontSize: 12, padding: '6px 12px', cursor: 'pointer' })
 
-let rigJsPdf: Promise<any> | null = null
-function loadJsPdf(): Promise<any> {
-  const w = window as any
-  if (w.jspdf?.jsPDF) return Promise.resolve(w.jspdf.jsPDF)
-  if (!rigJsPdf) {
-    rigJsPdf = new Promise((res, rej) => {
-      const s = document.createElement('script')
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
-      s.onload = () => res((window as any).jspdf.jsPDF)
-      s.onerror = () => rej(new Error('failed to load jsPDF'))
-      document.head.appendChild(s)
-    })
-  }
-  return rigJsPdf
-}
+
 
 type RigVersion = { id: string; settings: RigSettings; notes: string | null; saved_at: string; saved_by: string | null }
 const fmtWhen = (iso?: string | null) => (iso

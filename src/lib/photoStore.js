@@ -22,17 +22,43 @@ import { upsertPhotoCloud } from './cloud-photos'
 import { getBrowserSupabase } from './supabase/browser'
 import { getActiveMembership } from './active-membership'
 import { goodForOriginals, onConnectionChange } from './netAware'
+import { heicToJpeg } from './cdnScript'
+import { writeKey, photoLeaves, SESSION_LEAVES } from './storageKeys'
 
 const DB_NAME = 'ssa-db'
 const LS_PREFIX = 'ssa:photos-meta:'
 
-// ── Cloud key layout (must match PhotosTab.cloudKeys) ─────────────────────────
-export const cloudKeys = (date, id) => ({
-  original: `sessions/${date}/photos/${id}.jpg`,
-  thumb: `sessions/${date}/photos/${id}_thumb.jpg`,
-  meta: `sessions/${date}/photos/${id}_meta.json`,
-  index: `sessions/${date}/photos.json`,
+// ── Cloud key layout ─────────────────────────────────────────────────────────
+// Scoped by team+boat (src/lib/storageKeys.ts). A photo id is unique, so these
+// never overwrote one another — but the day-wipe deletes by PREFIX, and a flat
+// `sessions/<date>/photos/` prefix is every team's photos for that date. Which is
+// how a coach clearing their own day cleared everybody's.
+//
+// `scope` comes from the photo record itself (see keysFor below), so a photo
+// imported before this change has no scope, gets the old flat key, and keeps
+// resolving to the object that is actually there.
+export const cloudKeys = (date, id, scope = null) => ({
+  original: writeKey(scope, date, photoLeaves(id).original),
+  thumb: writeKey(scope, date, photoLeaves(id).thumb),
+  meta: writeKey(scope, date, photoLeaves(id).meta),
+  index: writeKey(scope, date, SESSION_LEAVES.photoIndex),
 })
+
+/**
+ * The keys for a photo we already hold — it carries its own scope.
+ *
+ * Exported because PhotosTab needs the same answer and used to get it from a
+ * second copy of the layout, kept in step by hand. `fallbackDate` covers a record
+ * whose sessionDate has not been filled in yet (the tab passes the active day).
+ */
+export const keysForPhoto = (photo, fallbackDate = null) =>
+  cloudKeys(photo?.sessionDate || fallbackDate, photo?.id, scopeOf(photo))
+
+const keysFor = (photo) => keysForPhoto(photo)
+
+/** A photo's scope, or null for one imported before scoping existed. */
+const scopeOf = (photo) =>
+  photo?.teamId && photo?.boatId ? { teamId: photo.teamId, boatId: photo.boatId } : null
 export const cloudImageUrl = (key) => `/api/bunny/image?key=${encodeURIComponent(key)}`
 
 // ── Connection gate — `good` ⇒ ok to push heavy originals ─────────────────────
@@ -150,16 +176,6 @@ function loadExifr() {
     document.head.appendChild(s)
   })
 }
-function loadHeic2any() {
-  return new Promise((resolve, reject) => {
-    if (window.heic2any) return resolve(window.heic2any)
-    const s = document.createElement('script')
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js'
-    s.onload = () => resolve(window.heic2any)
-    s.onerror = reject
-    document.head.appendChild(s)
-  })
-}
 async function readExif(file) {
   try {
     const exifr = await loadExifr()
@@ -171,12 +187,9 @@ async function readExif(file) {
 }
 async function convertToJpeg(file) {
   if (file.type === 'image/jpeg') return file
-  const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || /\.(heic|heif)$/i.test(file.name)
-  if (isHeic) {
-    const heic2any = await loadHeic2any()
-    const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })
-    return new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })
-  }
+  // heicToJpeg hands back the same file when it is not HEIC/HEIF.
+  const jpeg = await heicToJpeg(file)
+  if (jpeg !== file) return jpeg
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
@@ -303,7 +316,7 @@ async function mirror(photo) {
 // `onError(name, message)` — called for every file that does NOT make it in. Without
 // it a failed import reported only to the log console, which a phone user never sees:
 // the caller got an empty array, showed no rows, and the status simply vanished.
-export async function importFiles(files, { onLog, onError } = {}) {
+export async function importFiles(files, { onLog, onError, scope = null } = {}) {
   const all = Array.from(files)
   const imgs = all.filter(isImage)
   if (!imgs.length) {
@@ -337,12 +350,15 @@ export async function importFiles(files, { onLog, onError } = {}) {
       const id = `p_${Date.now()}_${Math.random().toString(36).slice(2)}`
       await idbPutPhoto(id, jpeg)
       const sessionDate = dateOf(exif.utc)
-      const keys = cloudKeys(sessionDate, id)
+      const keys = cloudKeys(sessionDate, id, scope)
       const lqip = await generateLqip(jpeg)
       const photo = {
         id, name: file.name, size: jpeg.size, utc: exif.utc || null,
         lat: exif.lat || null, lon: exif.lon || null, exif, lqip,
         sessionDate, objectUrl: URL.createObjectURL(jpeg),
+        // Stamped on the record so every later key for this photo agrees with the
+        // one its bytes actually went to.
+        teamId: scope?.teamId || null, boatId: scope?.boatId || null,
         // Deterministic Bunny keys from the start so the cloud row always has a
         // STABLE identity (dedupe key) — even before the thumb/original land.
         // Without this the mirror wrote null-path rows that PhotosTab could never
@@ -379,7 +395,7 @@ async function getCreds() {
   return fetch('/api/storage/credentials').then((r) => r.json())
 }
 async function writeMeta(photo) {
-  const keys = cloudKeys(photo.sessionDate, photo.id)
+  const keys = keysFor(photo)
   await uploadJsonToStorage(keys.meta, stripLocal(photo))
 }
 
@@ -388,7 +404,7 @@ async function writeMeta(photo) {
 export async function uploadThumb(photo) {
   const blob = await idbGetPhoto(photo.id)
   if (!blob) throw new Error('no local blob')
-  const keys = cloudKeys(photo.sessionDate, photo.id)
+  const keys = keysFor(photo)
   const { accessKey, zone, host } = await getCreds()
   const thumb = await generateThumbnail(blob, 480, 0.78)
   const res = await fetch(`${host}/${zone}/${keys.thumb}`, { method: 'PUT', headers: { AccessKey: accessKey, 'Content-Type': 'image/jpeg' }, body: thumb })
@@ -405,7 +421,7 @@ export async function uploadThumb(photo) {
 export async function uploadOriginal(photo) {
   const blob = await idbGetPhoto(photo.id)
   if (!blob) throw new Error('no local blob')
-  const keys = cloudKeys(photo.sessionDate, photo.id)
+  const keys = keysFor(photo)
   const { accessKey, zone, host } = await getCreds()
   const res = await fetch(`${host}/${zone}/${keys.original}`, { method: 'PUT', headers: { AccessKey: accessKey, 'Content-Type': 'image/jpeg' }, body: blob })
   if (!res.ok && res.status !== 201) throw new Error(`img HTTP ${res.status}`)
