@@ -568,6 +568,9 @@ export default function SquashShotsApp() {
       };
       img.src = imageSrc;
     }
+    // perpGeom is a plain function over points/zoom/pan — all already listed — so
+    // naming it would rebuild this effect every render without changing what it draws.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageSrc, points, zoom, pan, perpT, draggingPerp]);
 
   const rotateImage = async () => {

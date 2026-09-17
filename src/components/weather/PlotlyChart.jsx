@@ -60,10 +60,13 @@ export default function PlotlyChart({ data, layout, config, height = 320, placeh
     const ro = new ResizeObserver(() => {
       try { window.Plotly.Plots.resize(ref.current) } catch { /* ignore */ }
     })
-    ro.observe(ref.current)
+    ro.observe(gd)
     return () => {
       ro.disconnect()
-      try { window.Plotly.purge(ref.current) } catch { /* ignore */ }
+      // `gd`, not ref.current: by the time cleanup runs React may have pointed the
+      // ref at a different node (or null), and we would purge the wrong chart or
+      // silently skip the one this effect actually created.
+      try { window.Plotly.purge(gd) } catch { /* ignore */ }
     }
   }, [ready, data, layout, config, onHover, onUnhover])
 

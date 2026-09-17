@@ -2073,6 +2073,10 @@ function TagEditor({video, onSave, tagList=[], suggestionList, sessionDate, onTa
   const[input,   setInput]   = useState("");
   const[dirty,   setDirty]   = useState(false);
   const[listMode,setListMode]= useState(false);
+  // Keyed on the clip, deliberately: this resets the editor when you move to a
+  // different clip. Adding video.tags would also fire when the parent re-renders
+  // with the same clip and discard a tag being typed.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(()=>{setTags(video.tags||[]);setDirty(false);},[video.id]);
   const addTag = tag => {
     const t = tag.trim().toLowerCase();
@@ -2671,7 +2675,10 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // the real venue zone from its lat/lon. Done on mount to avoid SSR hydration drift.
   useEffect(()=>{ const m=-new Date().getTimezoneOffset(); setCsvTz(m); setXmlTz(m); setVidTz(m); vidTzRef.current=m; },[]);
 
-  const addLog=msg=>setLog(p=>[...p.slice(-30),msg]);
+  // useCallback, not a bare arrow: three useCallbacks and an effect take addLog
+  // as a dep, and a fresh identity each render made all of them rebuild on every
+  // render. setLog's updater form means it needs nothing from the closure.
+  const addLog=useCallback(msg=>setLog(p=>[...p.slice(-30),msg]),[]);
 
   const TzSelect=({value,onChange,label})=>{
     // Always include the current value (e.g. a viewer in NZ on UTC+12/+13, or a
@@ -3042,7 +3049,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     if(vids.length)handleVids(vids);
     if(imgs.length)handlePhotos(imgs);
     if(!vids.length&&!imgs.length)addLog("✕ No video or photo files found.");
-  },[handleVids,handlePhotos]);
+  },[handleVids,handlePhotos,addLog]);
 
   const parseCsvWithTz=useCallback((file,tz,auto=false)=>{
     if(!file)return;setCsvFile(file);
@@ -3116,7 +3123,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       catch(err){addLog(`✕ CSV: ${err instanceof Error?err.message:String(err)}`);}
     };
     r.readAsText(file);
-  },[]);
+  },[addLog]);
 
   const parseXmlWithTz=useCallback((file,tz)=>{
     if(!file)return;setXmlFile(file);
@@ -3126,7 +3133,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       catch(err){addLog(`✕ XML: ${err instanceof Error?err.message:String(err)}`);}
     };
     r.readAsText(file);
-  },[]);
+  },[addLog]);
 
   const handleCsv=useCallback(file=>{parseCsvWithTz(file,csvTz,true);},[csvTz,parseCsvWithTz]);
   const handleXml=useCallback(file=>{parseXmlWithTz(file,xmlTz);},[xmlTz,parseXmlWithTz]);
@@ -4393,6 +4400,20 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   const allVideosMapRef = React.useRef(allVideos);
   allVideosMapRef.current = allVideos;
 
+  // Photos get the same treatment as clips, and for the same reason. The map
+  // effect DRAWS photo markers but `photos` was not a dep, so a day's photos —
+  // which load asynchronously, after the track — never got markers until
+  // something else in the dep list happened to change. Adding `photos` itself
+  // would rebuild Leaflet on every photo state change (thumbnail loads, sync
+  // flags, objectUrl churn), which is the churn videoMarkerSig exists to avoid.
+  // Only id and position in time and space can move a marker.
+  const photoMarkerSig = React.useMemo(
+    () => (photos || []).map(p => `${p.id}:${p.utc || 0}:${p.lat ?? ''}:${p.lon ?? ''}`).join('|'),
+    [photos]
+  );
+  const photosMapRef = React.useRef(photos);
+  photosMapRef.current = photos;
+
   // ── Map init ─────────────────────────────────────────────────────────────────
   React.useEffect(()=>{
     if(!containerRef.current || filteredRows.length < 2) return;
@@ -4605,7 +4626,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       evLeg.addTo(map);
 
       // ── Photo markers ──────────────────────────────────────────────────────
-      for(const photo of (photos||[])){
+      for(const photo of (photosMapRef.current||[])){
         if(!photo.lat||!photo.lon)continue;
         try{
           const marker=L.marker([photo.lat,photo.lon],{
@@ -4644,7 +4665,10 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       cancelled = true;
       if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
     };
-  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, colourMode, colourScale, dayTags]);
+    // `tz` is read when labelling markers; winStart reaches this through hlRows,
+    // which is memoised on it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, photoMarkerSig, colourMode, colourScale, dayTags, tz]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
@@ -6684,6 +6708,10 @@ function SSAApp(){
   // overlapping boot-time calls) can't apply its late background cloud data on
   // top of a newer date. Latest loadDate wins.
   const loadDateSeqRef = useRef(0);
+  // The current loadDate, for the listeners that register once on mount and would
+  // otherwise hold the first render's closure forever. Assigned after loadDate is
+  // defined, below.
+  const loadDateRef = useRef(null);
   const[syncErrors,setSyncErrors]=useState([]);
   const noteSyncError=useCallback((label,message)=>{
     setSyncErrors(p=>[...p.filter(e=>e.label!==label),{label,message:String(message||'upload failed')}]);
@@ -6755,7 +6783,7 @@ function SSAApp(){
     if(selectedVideo&&batchSelected.has(selectedVideo.id))setSelectedVideo(null);
     clearBatch();
     addLog(`🗑 Deleted ${ids.length} clip${ids.length>1?"s":""} — local + Bunny + cloud row`);
-  },[batchSelected,selectedVideo,clearBatch,allVideos]);
+  },[batchSelected,selectedVideo,clearBatch,allVideos,addLog]);
 
   // Nuke every clip for the active day across all three stores. Unlike batch
   // delete this also removes ORPHAN cloud rows — rows whose local entry is already
@@ -6783,7 +6811,7 @@ function SSAApp(){
       setAllVideos([]); setSelectedVideo(null); clearBatch();
       addLog(`🗑 Cleared ${activeDate}: ${locals.length} local + ${n} cloud row${n===1?"":"s"} removed. Re-import to start fresh.`);
     } finally { setClearDayBusy(false); setClearDayArmed(false); }
-  },[activeDate,allVideos,clearBatch]);
+  },[activeDate,allVideos,clearBatch,addLog]);
 
   // Batch ↓ Save to disk — ask the user once for a destination folder,
   // then stream every selected clip's blob straight into it via the File
@@ -7526,7 +7554,7 @@ function SSAApp(){
         ].sort().reverse()[0]
           || [...localSessions.map(s=>s.date),...cloudSessions.map(s=>s.date)].sort().reverse()[0]
           || null;
-        if(bestDate) await loadDate(bestDate);
+        if(bestDate) await loadDateRef.current?.(bestDate);
         // Warm the new boat's Boat Config tab too.
         if(m?.team_id&&m?.boat_id) prefetchBoatConfig(m.team_id,m.boat_id);
       }catch{ /* non-fatal — boot will retry */ }
@@ -7534,6 +7562,10 @@ function SSAApp(){
     const onChange=()=>{ rescope(); };
     window.addEventListener('ssa:active-membership-changed',onChange);
     return ()=>{ window.removeEventListener('ssa:active-membership-changed',onChange); };
+    // Registered once. rescope() reaches loadDate through loadDateRef (below), so
+    // it calls the CURRENT one rather than the one this render closed over — the
+    // same reason autoSyncFnRef exists further down.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
   // Role-gated convenience flags. Default to permissive while role
@@ -7919,6 +7951,7 @@ function SSAApp(){
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
+  // Mirrored into a ref just below, for the listeners registered once on mount.
   async function loadDate(date){
     const _lt0=performance.now(); const _lm=(l)=>{ try{ console.info(`[loadDate] ${l}: +${Math.round(performance.now()-_lt0)}ms`); }catch{ /* */ } };
     const loadSeq = ++loadDateSeqRef.current;   // this call's turn; latest wins
@@ -8122,6 +8155,7 @@ function SSAApp(){
     // blob still plays from that immediately. The encoding poller keeps refreshing
     // any clip still transcoding.
   }
+  loadDateRef.current = loadDate;
 
   // Run the proxy auto-sync queue until it's empty. Returns the in-flight
   // drain promise so callers (the batch flow) can await completion; repeated
@@ -8672,7 +8706,12 @@ function SSAApp(){
     if (!held.length) return;
     addLog(`📶 Wi-Fi — uploading ${held.length} held clip${held.length === 1 ? '' : 's'}…`);
     enqueueAutoSync(held, activeDate);
-  }, [isMobile, cloudStatus, perms.canImport, allVideos, activeDate]);
+  // enqueueAutoSync is left out on purpose: it is a plain function that only pushes
+  // onto autoSyncRef and kicks the processor, so its identity carries no information
+  // — naming it would rebuild this callback on every render to no effect. addLog IS
+  // named, because it is a stable useCallback.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, cloudStatus, perms.canImport, allVideos, activeDate, addLog]);
 
   const flushRef = useRef(flushOnWifi);
   flushRef.current = flushOnWifi;

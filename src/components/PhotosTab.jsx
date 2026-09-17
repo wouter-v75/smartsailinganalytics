@@ -368,6 +368,17 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
   const [editTime,setEditTime]=useState(false);
   const [timeVal,setTimeVal]=useState('');
   const [extraGauges,setExtraGauges]=useState([]); // session-only overlay vars
+  // The values the overlay burns into the canvas, as one string. See the effect's
+  // dep list below.
+  const overlaySig=[photo.tws,photo.twa,photo.awa,photo.bsp,photo.heel,photo.vmg,
+    photo.keelAng,photo.location,photo.boat,photo.mast_var_manual_setting,
+    photo.mast_var_manual_chins,photo.mast_var_manual_rake,photo.mast_var_manual_butt,
+    photo.mast_var_manual_v1,photo.mast_var_manual_d1,photo.mast_var_manual_d2,
+    (photo.sails||[]).join(','),
+    // The user-chosen extra gauges are read as photo[k], so their VALUES belong in
+    // the signature too — otherwise adding a gauge redraws but changing its value
+    // does not.
+    extraGauges.map(k=>photo[k]).join(',')].join('|');
   useEffect(()=>{
     if(!photo?.objectUrl||!canvasRef.current){setRendered(false);return;}
     const img=new Image();
@@ -377,7 +388,16 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
     img.onload=()=>{renderOverlay(canvasRef.current,img,{tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,keelAng:photo.keelAng,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2,extra});setRendered(true);};
     img.onerror=()=>setRendered(false);
     img.src=photo.objectUrl;
-  },[photo.id,photo.objectUrl,photo.tws,photo.twa,photo.sails,extraGauges]);
+    // Every field the overlay DRAWS, not just three of them. It used to list
+    // tws/twa/sails only, so correcting heel — or any mast measurement — redrew
+    // nothing and the burned-in overlay kept showing the old value.
+    //
+    // overlaySig rather than `photo` itself: this effect loads an Image, and photo
+    // identity churns on state the overlay does not show (sync flags, thumbnail
+    // URLs), which would re-fetch the image for nothing. The rule cannot see that
+    // the signature is complete, because the extra gauges are read as photo[k].
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[photo.id,photo.objectUrl,overlaySig,extraGauges]);
   const handleExport=()=>{
     if(!canvasRef.current)return;
     const a=document.createElement("a");
@@ -563,6 +583,14 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     setPhotos(updated);savePhotos(updated);
     if(selected&&batchSelected.has(selected.id))setSelected(updated[0]||null);
     clearBatch();
+    // savePhotos is NOT named here, though the rule asks for it: it is a const
+    // useCallback declared ~170 lines further down, and a dep array is evaluated
+    // during render, in source order — so naming it throws "Cannot access
+    // 'savePhotos' before initialization" the first time this component renders.
+    // (npm run lint:undef catches exactly this; the same trap is documented on a
+    // useMemo in SmartSailingAnalytics_UI.) It writes through to localStorage and
+    // takes its argument, so a stale identity cannot give a stale result.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   },[batchSelected,photos,selected,clearBatch]);
   const [dragOver,setDragOver] = useState(false);
   const [log,setLog]           = useState([]);
@@ -859,7 +887,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     if(newPhotos.length>0 && cloudStatus?.available){
       setAutoSyncTrigger(t=>t+1);
     }
-  },[photos,activeDate,logData,xmlData,enrichPhoto,savePhotos,cloudStatus]);
+  },[photos,activeDate,logData,xmlData,enrichPhoto,savePhotos,cloudStatus,sessionTzOffset]);
 
   // Re-enrich is handled by the loading effect above (logData/xmlData are in its deps).
   // A separate effect would race with the async loading effect and cause stale-state bugs.
