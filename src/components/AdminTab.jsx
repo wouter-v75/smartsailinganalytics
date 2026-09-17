@@ -8,7 +8,7 @@
 // Props are threaded from the parent: status values to display, and the
 // state setters the storage-management tools need.
 
-import { todayIso as TODAY } from '../lib/today'
+import { venueTodayIso as TODAY } from '../lib/localStore'   // venue-local, not UTC
 const fmtDate = d => {
   if (!d) return ''
   const p = d.split('-')
