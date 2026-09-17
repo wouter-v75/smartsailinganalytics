@@ -31,6 +31,7 @@ export default function PhasePanel({
   source, onSource, mergeMode, onMergeMode,
   settings, onSettings,
   counts = { event: 0, ssa: 0, manoeuvres: 0 },
+  races = [], hiddenRaces = [], onToggleRace = null,
   sections = [], hiddenSections = [], onToggleSection = null,
   build = null,                       // last build: { reasons, rejected, phases }
   runs = [], onDeleteRun = null, onJumpRun = null,
@@ -79,6 +80,25 @@ export default function PhasePanel({
               <option value="override">keep the SSA phase</option>
             </select>
           </label>
+        )}
+        {/* Which races are in view. On and off rather than one at a time, because the
+            question is usually "these two, not that one". */}
+        {races.length > 0 && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 1, height: 18, background: C.border, margin: '0 2px' }} />
+            {races.map(r => {
+              const on = !hiddenRaces.includes(r.n)
+              return (
+                <button key={r.n} onClick={() => onToggleRace?.(r.n)} aria-pressed={on}
+                  // Named apart from the Start subtab's own race buttons, which sit a
+                  // few centimetres away and do something else entirely.
+                  aria-label={`${r.label} phases`} title={`${r.label}${on ? '' : ' — hidden'}`}
+                  style={{ ...btn(on), fontWeight: 600, opacity: on ? 1 : 0.55 }}>
+                  {r.label}
+                </button>
+              )
+            })}
+          </span>
         )}
         {/* Which sections are in the comparison. All of them, until somebody says
             otherwise — switching one off takes it out of the charts without losing

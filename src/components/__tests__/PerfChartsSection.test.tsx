@@ -43,13 +43,24 @@ describe('PerfChartsSection', () => {
     expect(screen.getByText(/4 phases of 30 s/)).toBeTruthy()
   })
 
-  it('filters by race and tack, naming races after their start guns', () => {
+  it('switches races on and off, naming them after their start guns', () => {
     render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} />)
-    const race = screen.getByLabelText('Race') as HTMLSelectElement
-    expect(Array.from(race.options).map(o => o.text)).toEqual(['All day', 'Race 5', 'Race 6'])
-    fireEvent.change(race, { target: { value: '2' } })
-    expect(screen.getByText(/2 phases of 30 s/)).toBeTruthy()     // phases 6 and 7
-    fireEvent.change(race, { target: { value: '' } })
+    // One button per race the day holds, all on to begin with.
+    const race5 = screen.getByRole('button', { name: 'Race 5 phases' })
+    const race6 = screen.getByRole('button', { name: 'Race 6 phases' })
+    expect(race5.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByText(/8 phases of 30 s/)).toBeTruthy()
+
+    // Race 5 off: only race 6's upwind phases are left.
+    fireEvent.click(race5)
+    expect(race5.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByText(/2 phases of 30 s/)).toBeTruthy()
+
+    // Both off is an honest state — nothing to chart, and both buttons still there.
+    fireEvent.click(race6)
+    expect(screen.getByText(/0 phases of 30 s/)).toBeTruthy()
+
+    fireEvent.click(race5); fireEvent.click(race6)
     fireEvent.change(screen.getByLabelText('Tack'), { target: { value: 'port' } })
     expect(screen.getByText(/4 phases of 30 s/)).toBeTruthy()
   })
@@ -217,8 +228,8 @@ describe('PerfChartsSection', () => {
   it('has a Start subtab per start gun, with the run-in table and the at-the-gun summary', () => {
     const { container } = render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
     fireEvent.click(screen.getByRole('button', { name: /Start · 2/ }))
-    expect(screen.getByRole('button', { name: /Race 5/ })).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Race 6/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Race 5 · / })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^Race 6 · / })).toBeTruthy()
     const table = container.querySelector('[data-start-table]')!
     expect(table.textContent).toContain('BSP_trg%')
     expect(table.querySelectorAll('tbody tr')).toHaveLength(49)        // −3:00 → +1:00 every 5 s
@@ -234,7 +245,7 @@ describe('PerfChartsSection', () => {
       const withLine = rows.map(r => ({ ...r, dstLine: 3 + offsetBl - (r.utc - T0) / 60000 }))
       const { container, unmount } = render(<PerfChartsSection rows={withLine} xmlData={xmlData} polarOverride={null} curvesOverride={null} />)
       fireEvent.click(screen.getByRole('button', { name: /Start · 2/ }))
-      fireEvent.click(screen.getByRole('button', { name: /Race 6/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^Race 6 · / }))
       const box = container.querySelector('[data-start-summary] [data-dist-band]')
       const out = [box?.getAttribute('data-dist-band'), box?.textContent, !!container.querySelector('[data-start-table] [data-dist-band]')]
       unmount()

@@ -217,3 +217,39 @@ describe('which sections are in the comparison', () => {
     expect(screen.queryByRole('button', { name: /^Section / })).toBeNull()
   })
 })
+
+describe('which races are in view', () => {
+  const races = [{ n: 1, label: 'Race 5' }, { n: 2, label: 'Race 6' }]
+
+  it('puts a button per race after Both, all on to begin with', () => {
+    render(<PhasePanel {...base} races={races} />)
+    expect(screen.getByRole('button', { name: 'Race 5 phases' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Race 6 phases' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('reports a race being switched off', () => {
+    const onToggleRace = vi.fn()
+    render(<PhasePanel {...base} races={races} onToggleRace={onToggleRace} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Race 6 phases' }))
+    expect(onToggleRace).toHaveBeenCalledWith(2)
+  })
+
+  it('shows a hidden race as off, so it can come back', () => {
+    render(<PhasePanel {...base} races={races} hiddenRaces={[1]} />)
+    expect(screen.getByRole('button', { name: 'Race 5 phases' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('puts the sections after the races, as asked', () => {
+    const sections = [{ id: 's1', n: 1, color: '#FDE047', range: [T0, T0 + 60_000] as [number, number] }]
+    const { container } = render(<PhasePanel {...base} races={races} sections={sections} />)
+    const labels = Array.from(container.querySelectorAll('button[aria-label]'))
+      .map(b => b.getAttribute('aria-label'))
+      .filter(l => l === 'Race 5 phases' || l === 'Section 1')
+    expect(labels).toEqual(['Race 5 phases', 'Section 1'])
+  })
+
+  it('offers no race buttons on a day with no start guns', () => {
+    render(<PhasePanel {...base} />)
+    expect(screen.queryByRole('button', { name: /^Race .* phases$/ })).toBeNull()
+  })
+})

@@ -347,7 +347,9 @@ export default function PerfChartsSection({
   const season = useSeasonCurves(boat, activeDate, curvesOverride, !fullLogHere)
   const [hiddenSeasons, setHiddenSeasons] = React.useState([])
   const [mode, setMode] = React.useState('up')
-  const [race, setRace] = React.useState('')   // '' = all day
+  // Races are switched on and off like sections, rather than picked one at a time: the
+  // question is usually "these two races, not that one", which a single choice cannot ask.
+  const [hiddenRaces, setHiddenRaces] = React.useState([])
   const [sails, setSails] = React.useState('')
   const [tack, setTack] = React.useState('')   // '' | 'port' | 'stbd'
   // Every section's phases are shown; a section can be switched off to take it out of
@@ -465,14 +467,17 @@ export default function PerfChartsSection({
 
   const guns = (xmlData.raceGuns || []).filter(g => Number.isFinite(g?.utc)).sort((a, b) => a.utc - b.utc)
   const raceLabel = i => (guns[i - 1]?.raceNum ? `Race ${guns[i - 1].raceNum}` : `Race ${i}`)
-  const races = Array.from(new Set(stats.map(s => s.race).filter(r => r != null))).sort((a, b) => a - b)
+  // From the whole day, not from what is on screen: a race switched off must still have
+  // a button to switch it back on.
+  const races = Array.from(new Set(dayStats.map(s => s.race).filter(r => r != null))).sort((a, b) => a - b)
   // "Speed vs TWA" (mode 'polar'), the report tables and the manoeuvres cover the whole day.
   const modeStats = ['polar', 'tables', 'manoeuvres', 'lidar', 'start'].includes(mode) ? stats : stats.filter(s => s.mode === mode)
   const lidarSails = LIDAR_SAILS.filter(s => hasLidar(stats, s.sail))
   const combos = Array.from(new Set(modeStats.map(s => s.sailCombo))).sort()
   const sailsSel = combos.includes(sails) ? sails : ''
+  // A phase before the first gun belongs to no race and is never hidden by a race button.
   const shown = modeStats.filter(s =>
-    (!race || String(s.race) === race) && (!sailsSel || s.sailCombo === sailsSel) && (!tack || s.tack === tack))
+    (s.race == null || !hiddenRaces.includes(s.race)) && (!sailsSel || s.sailCombo === sailsSel) && (!tack || s.tack === tack))
   const count = m => stats.filter(s => s.mode === m).length
 
   const specs = (CHARTS[mode] || [])
@@ -508,6 +513,8 @@ export default function PerfChartsSection({
         onDeleteRun={r => saveDoc(removeRun(ssaDoc, r.id))}
         onJumpRun={r => onJump?.(r.from)}
         selection={range}
+        races={races.map(n => ({ n, label: raceLabel(n) }))} hiddenRaces={hiddenRaces}
+        onToggleRace={n => setHiddenRaces(h => h.includes(n) ? h.filter(x => x !== n) : [...h, n])}
         sections={sections} hiddenSections={hiddenSections}
         onToggleSection={id => setHiddenSections(h => h.includes(id) ? h.filter(x => x !== id) : [...h, id])}
         onBuildSelection={name => makeRun(r0, r1, name, 'selection')}
@@ -544,10 +551,6 @@ export default function PerfChartsSection({
         {guns.length > 0 && (
           <button onClick={() => setMode('start')} aria-pressed={mode === 'start'} style={modeBtn(mode === 'start')}>⚑ Start · {guns.length}</button>
         )}
-        <select aria-label="Race" value={race} onChange={e => setRace(e.target.value)} style={select}>
-          <option value="">All day</option>
-          {races.map(r => <option key={r} value={String(r)}>{raceLabel(r)}</option>)}
-        </select>
         {combos.length > 1 && (
           <select aria-label="Sails" value={sailsSel} onChange={e => setSails(e.target.value)} style={select}>
             <option value="">All sails</option>
@@ -620,7 +623,7 @@ export default function PerfChartsSection({
       ) : mode === 'manoeuvres' ? (
         (() => {
           const listed = manoeuvres.filter(m =>
-            (showAllManoeuvres || isJudged(m)) && (!race || String(m.race) === race) && (!sailsSel || m.sails === sailsSel))
+            (showAllManoeuvres || isJudged(m)) && (m.race == null || !hiddenRaces.includes(m.race)) && (!sailsSel || m.sails === sailsSel))
           return (
             <div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#94A3B8', margin: '-2px 0 10px' }}>
