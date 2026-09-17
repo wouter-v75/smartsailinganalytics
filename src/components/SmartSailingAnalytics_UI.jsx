@@ -14,6 +14,8 @@ import { parseLog } from '../lib/logParse';
 import { isLidarKey } from '../lib/flatLogParse';
 import { logRateHz, isSubSecondLog, thinToOneHz, lidarSailsIn } from '../lib/logResolution';
 import { nearestTrackIndex, orderedRange, inRange } from '../lib/trackSelection';
+import { fetchDayTags, trackTags } from '../lib/dayTags';
+import { raceOptions, finishesFromTags, finishNote, saveFinishTag } from '../lib/raceSelect';
 import { offsetFromCoords } from '../lib/tzFromCoords';
 import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
 import { reconcileSessionSyncState } from '../lib/syncReconcile';
@@ -4398,7 +4400,9 @@ const MODE_LEGEND = {
   target: 'BSP vs target boat speed',
 };
 
-export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=[], selection=null, onSelection=null}){
+export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=[], selection=null, onSelection=null,
+  dayTags=[], onRaceChosen=null,
+  finishDraft=null, onFinishDraft=null, onSaveFinish=null, finishNote=null, finishMsg=null, canTagFinish=false}){
   const tz=useTz();
   const containerRef = React.useRef(null);
   const mapRef       = React.useRef(null);
@@ -4458,6 +4462,13 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   },[races, raceKey]);
 
   const race = raceKey==='all' ? null : races.find(r=>r.key===raceKey) || null;
+  const hasTags = (dayTags?.length || 0) > 0;
+
+  // The parent knows which finishes are TAGGED; the map only knows which race is on
+  // screen. Telling it which one lets it say whether that race's end is a guess.
+  const onRaceChosenRef = React.useRef(onRaceChosen);
+  React.useEffect(()=>{ onRaceChosenRef.current=onRaceChosen; },[onRaceChosen]);
+  React.useEffect(()=>{ onRaceChosenRef.current?.(raceKey==='all'?'':raceKey); },[raceKey]);
 
   const filteredRows = React.useMemo(()=>
     race ? dayRows.filter(r=>r.utc>=race.t0 && r.utc<=race.t1) : dayRows
@@ -4614,7 +4625,10 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       L.circleMarker([last.lat,last.lon],{radius:9,fillColor:'#94A3B8',color:'#fff',weight:2,fillOpacity:1}).bindTooltip(`Day end ${fmtU(last.utc)} UTC`).addTo(map);
 
       // ── Event markers ───────────────────────────────────────────────────────
-      if(xmlData){
+      // Only when the day has NO tags. A tagged day is drawn from the tags instead
+      // (see the tag layer below), with the team's own labels and colours — otherwise
+      // one tack gets two dots and two different names.
+      if(xmlData && !hasTags){
         const nearest=utc=>filteredRows.reduce((a,b)=>Math.abs(b.utc-utc)<Math.abs(a.utc-utc)?b:a,filteredRows[0]);
         for(const m of (xmlData.markRoundings||[])){
           try{const nr=nearest(m.utc);if(Math.abs(nr.utc-m.utc)>120000)continue;
@@ -4731,7 +4745,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       cancelled = true;
       if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
     };
-  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, colourMode]);
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, colourMode, hasTags]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
@@ -4761,6 +4775,70 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   },[selection,draft,filteredRows,mapGen]);
 
   // ── Section selection: a button on the map itself ───────────────────────────────
+  // ── Tags mirrored from the Tagger tab ────────────────────────────────────
+  // Drawn with the TAGGER's own style helpers — its labels, its colours, its size
+  // hierarchy (a turn small, a moment full size) — so the two screens cannot drift
+  // into naming the same moment two different things. When a day has tags they
+  // REPLACE the event file's own dots below, rather than doubling up on them.
+  const tagLayerRef = React.useRef(null);
+  React.useEffect(()=>{
+    const map=mapRef.current, L=window.L;
+    if(!map||!L) return;
+    if(tagLayerRef.current){ try{map.removeLayer(tagLayerRef.current);}catch{} tagLayerRef.current=null; }
+    const drawn=trackTags(dayTags, tz);
+    if(!drawn.length||!filteredRows.length) return;
+    const nearest=utc=>filteredRows.reduce((a,b)=>Math.abs(b.utc-utc)<Math.abs(a.utc-utc)?b:a,filteredRows[0]);
+    const layer=L.layerGroup();
+    for(const t of drawn){
+      try{
+        const nr=nearest(t.t0);
+        if(Math.abs(nr.utc-t.t0)>120000) continue;   // a tag with no track under it
+        const tip=[`${t.label} · ${t.clock}`, t.sails, t.aboard].filter(Boolean).join('<br>');
+        L.circleMarker([nr.lat,nr.lon],{
+          radius:t.r, fillColor:t.color, color:t.isManoeuvre?'transparent':'#030F1A',
+          weight:t.isManoeuvre?0:t.strokeWidth, fillOpacity:t.isManoeuvre?0.85:1,
+        }).bindTooltip(tip).addTo(layer);
+      }catch{}
+    }
+    layer.addTo(map);
+    tagLayerRef.current=layer;
+  },[dayTags,filteredRows,tz,mapGen]);
+
+  // ── The finish nobody has tagged ─────────────────────────────────────────
+  // A flashing marker on the best guess, draggable along the track. It is a draft
+  // until somebody saves it: the event file has no finish, so this is a judgement
+  // and it should look like one.
+  const finishMarkerRef = React.useRef(null);
+  React.useEffect(()=>{
+    const map=mapRef.current, L=window.L;
+    if(!map||!L) return;
+    if(finishMarkerRef.current){ try{map.removeLayer(finishMarkerRef.current);}catch{} finishMarkerRef.current=null; }
+    if(finishDraft==null||!filteredRows.length) return;
+    const nearest=utc=>filteredRows.reduce((a,b)=>Math.abs(b.utc-utc)<Math.abs(a.utc-utc)?b:a,filteredRows[0]);
+    const at=nearest(finishDraft);
+    const mk=L.marker([at.lat,at.lon],{
+      draggable:!!onFinishDraft, zIndexOffset:1500,
+      icon:L.divIcon({className:'',iconSize:[0,0],iconAnchor:[0,0],
+        html:`<div class="ssa-finish-flash" style="transform:translate(-50%,-50%);display:flex;align-items:center;gap:4px">
+          <span style="width:14px;height:14px;border-radius:50%;background:#FDE047;border:2px solid #030F1A;display:block"></span>
+          <span style="background:#FDE047;color:#030F1A;border-radius:3px;padding:1px 5px;font-size:9px;font-weight:800;white-space:nowrap">FINISH?</span>
+        </div>`}),
+    }).bindTooltip('Drag me to the finish').addTo(map);
+    // Dropped anywhere, it snaps to the nearest point of the track: a finish that is
+    // not on the boat's own path is not a time.
+    mk.on('dragend',()=>{
+      try{
+        const p=mk.getLatLng();
+        const best=filteredRows.reduce((a,b)=>{
+          const da=(a.lat-p.lat)**2+(a.lon-p.lng)**2, db=(b.lat-p.lat)**2+(b.lon-p.lng)**2;
+          return db<da?b:a;
+        },filteredRows[0]);
+        onFinishDraft?.(best.utc);
+      }catch{}
+    });
+    finishMarkerRef.current=mk;
+  },[finishDraft,filteredRows,onFinishDraft,mapGen]);
+
   React.useEffect(()=>{
     const map=mapRef.current, L=window.L;
     if(!map||!L||!onSelectionRef.current) return;
@@ -4887,8 +4965,31 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
               background:selecting?"#FDE047":"#FDE04712",borderColor:"#FDE04780"}}>
             {selecting?"✕ Cancel selecting":"✂ Select a section of the track"}
           </button>
+          {race&&!selecting&&(
+            <button onClick={()=>onSelection(orderedRange(race.t0,race.t1))}
+              title="Show only this race in the cards and charts below"
+              style={{...selBtn,color:"#06B6D4",borderColor:"#06B6D440"}}>
+              ⇲ Use {race.label} as the selection
+            </button>
+          )}
           {selecting&&<span style={{color:"#FDE047"}}>Now drag along the track on the map, from the start of the stretch to its end</span>}
           {!selecting&&!selection&&<span style={{color:"#64748B"}}>Pick a stretch (a leg, a start, a race) to see only that part in the cards and charts below</span>}
+          {finishNote&&(
+            <span style={{color:"#FDE047",fontSize:11,flex:"1 1 260px"}}>
+              ⚑ {finishNote}
+              {canTagFinish&&onSaveFinish&&finishDraft!=null&&(
+                <button onClick={onSaveFinish} disabled={finishMsg?.state==="busy"}
+                  style={{...selBtn,marginLeft:8,color:"#030F1A",background:"#FDE047",borderColor:"#FDE047"}}>
+                  {finishMsg?.state==="busy"?"Saving…":"✓ Save finish tag"}
+                </button>
+              )}
+            </span>
+          )}
+          {finishMsg&&finishMsg.state!=="busy"&&(
+            <span style={{fontSize:11,color:finishMsg.state==="ok"?"#10B981":"#F59E0B"}}>
+              {finishMsg.state==="ok"?"✓ ":"⚠ "}{finishMsg.text}
+            </span>
+          )}
           {selection&&!selecting&&(
             <>
               <span data-track-selection style={{color:"#FDE047",fontFamily:"monospace"}}>
@@ -4986,6 +5087,63 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   // time series, performance charts and tack sections below all follow it.
   const [selection, setSelection] = useState(null);
   const selectSection = r => { setSelection(r); setViewRange(r); };
+
+  // ── The day's tags, mirrored from the Tagger tab ───────────────────────────
+  // Same source, same labels, same colours: two names for one moment is two
+  // moments as far as a reader is concerned.
+  const [tagBoat, setTagBoat] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const uid = await getUidFast();
+        const m = uid ? getActiveMembership(uid) : null;
+        if (alive && m?.team_id && m?.boat_id) setTagBoat({ teamId: m.team_id, boatId: m.boat_id, role: m.role || null });
+      } catch { /* not signed in */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+  const [dayTagEvents, setDayTagEvents] = useState([]);
+  const [finishTags, setFinishTags] = useState([]);
+  const loadDayTags = useCallback(async () => {
+    if (!tagBoat || !activeDate) { setDayTagEvents([]); setFinishTags([]); return; }
+    const events = await fetchDayTags(tagBoat.teamId, tagBoat.boatId, activeDate);
+    setDayTagEvents(events);
+    setFinishTags(finishesFromTags(events));
+  }, [tagBoat, activeDate]);
+  useEffect(() => { loadDayTags(); }, [loadDayTags]);
+
+  // ── Races, and whether their finishes are known or guessed ─────────────────
+  const races = useMemo(() => raceOptions({
+    guns: xmlData?.raceGuns, markRoundings: xmlData?.markRoundings,
+    dayStartUtc: xmlData?.dayStartUtc, dayStopUtc: xmlData?.dayStopUtc,
+    dataT0: rows[0]?.utc ?? null, dataT1: rows[rows.length - 1]?.utc ?? null,
+  }, finishTags), [xmlData, rows, finishTags]);
+  const [raceKey, setRaceKey] = useState('');
+  const race = races.find(r => r.key === raceKey) || null;
+  const [finishDraft, setFinishDraft] = useState(null);   // where the finish marker sits
+  const [finishMsg, setFinishMsg] = useState(null);
+
+  // Called when the map's race filter changes. Choosing a race does not narrow the
+  // charts on its own — the map offers a button for that — but it does decide whose
+  // finish we are talking about.
+  const pickRace = useCallback(key => {
+    const r = races.find(x => x.key === key) || null;
+    setRaceKey(r ? key : '');
+    setFinishMsg(null);
+    // A race whose finish nobody has tagged opens with the marker on the best guess.
+    setFinishDraft(r && !r.hasFinish ? r.suggestedFinish : null);
+  }, [races]);
+
+  const saveFinish = async () => {
+    if (!tagBoat || !activeDate || finishDraft == null) return;
+    setFinishMsg({ state: 'busy', text: 'Saving the finish…' });
+    const res = await saveFinishTag(tagBoat.teamId, tagBoat.boatId, activeDate, finishDraft);
+    if (!res.ok) { setFinishMsg({ state: 'error', text: res.error }); return; }
+    setFinishMsg({ state: 'ok', text: 'Finish tag saved — every screen now ends this race there' });
+    setFinishDraft(null);
+    await loadDayTags();
+  };
   // Tacking analysis — highlighted tack index (null = none selected)
   const [selectedTackIdx, setSelectedTackIdx] = useState(null);
   // Performance charts → jump to a phase: open the clip that covers it (as the GPS
@@ -5198,7 +5356,10 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             )}
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} selection={selection} onSelection={selectSection}/>
+                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} selection={selection} onSelection={selectSection}
+                  dayTags={dayTagEvents} onRaceChosen={pickRace}
+                  finishDraft={finishDraft} onFinishDraft={setFinishDraft} onSaveFinish={saveFinish}
+                  finishNote={finishNote(race)} finishMsg={finishMsg} canTagFinish={!!tagBoat}/>
               ) : (
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — {onPlayClip?"pick a date in the session bar above":"select a date in the Library first"}.</div>
               )

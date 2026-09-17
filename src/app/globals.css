@@ -205,3 +205,15 @@ body {
 @media (max-width: 720px) {
   .perf-chart-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* The finish marker Analytics suggests when nobody has tagged a race's finish. It
+   flashes because it is a GUESS waiting to be confirmed — the event file records
+   start guns and mark roundings, never a finish. Drag it, then save it. */
+.ssa-finish-flash { animation: ssa-finish-pulse 1.1s ease-in-out infinite; }
+@keyframes ssa-finish-pulse {
+  0%, 100% { opacity: 1; filter: drop-shadow(0 0 2px #FDE04788); }
+  50%      { opacity: 0.45; filter: drop-shadow(0 0 7px #FDE047); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ssa-finish-flash { animation: none; filter: drop-shadow(0 0 4px #FDE047); }
+}
