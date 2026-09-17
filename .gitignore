@@ -86,3 +86,8 @@ media-in/*
 
 # Real boat data for opt-in acceptance tests (client data, never committed)
 /fixtures/local/
+
+# Throwaway probes at the repo root (_dit, _nst, _rigtest, …) — one-off scripts
+# for poking at a log or a Bunny response by hand. Root-level only, so a real
+# file named _something.js inside src/ is still tracked.
+/_*.js
