@@ -53,6 +53,10 @@ export default function WindWeightPanel({ windData = {}, locKey, resolvedTz = 'U
       if (r?.data) void storeWindweightForecast({ domain: r.domain, venue: r.venue, fc: r.data })
     })
     return () => { off = true }
+    // The primitives, not `coords`: coords is rebuilt from windData every render, so
+    // depending on the object would refetch the forecast continuously. Position is
+    // the only thing that should trigger one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coords?.latitude, coords?.longitude])
 
   const todayLocal = coords ? localDate(Date.now(), resolvedTz) : null

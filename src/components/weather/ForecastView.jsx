@@ -179,6 +179,10 @@ export default function ForecastView({
   // switches (ForecastView is dynamically imported and unmounts when hidden).
   useEffect(() => {
     onPersistChange?.({ locations, fieldModel, fieldHeight, fieldHourIdx, field })
+    // onPersistChange is left out deliberately: WeatherTab does not memoise it, so
+    // naming it would fire this push on every parent render. The effect exists to
+    // report CHANGES TO THE DATA, and the data is fully listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locations, fieldModel, fieldHeight, fieldHourIdx, field])
   // VENUE time, not the viewer's (lib venueTz). Everyone sees the clock the racing
   // runs on: a Newport forecast made in Amsterdam labelled 10:00 means 10:00 in

@@ -36,7 +36,9 @@ export default function TimelineVertical({ nodes: raw, tzOffset = 0, initialFocu
     return m
   }, [nodes])
   const childrenOf = React.useCallback((id: string) => byParent.get(id) ?? [], [byParent])
-  const roots = byParent.get('__root') ?? []
+  // Memoised because of the `?? []`: a fresh empty array each render made the
+  // defaultOpen memo below recompute every time, for a value that had not changed.
+  const roots = React.useMemo(() => byParent.get('__root') ?? [], [byParent])
 
   // All descendant event-nodes of a day, flattened + time-sorted.
   const descendantsOf = React.useCallback((id: string): TimelineNode[] => {
