@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 const STORAGE_KEY    = process.env.BUNNY_STORAGE_API_KEY;
 const STORAGE_ZONE   = process.env.BUNNY_STORAGE_ZONE;
@@ -9,6 +10,9 @@ const LIBRARY_ID     = process.env.BUNNY_STREAM_LIBRARY_ID;
 // GET /api/cloud/status
 // Returns { available, storage, stream, zone, region }
 export async function GET() {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   const storageConfigured = !!(STORAGE_KEY && STORAGE_ZONE);
   const streamConfigured  = !!(STREAM_KEY && LIBRARY_ID);
 

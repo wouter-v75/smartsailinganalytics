@@ -14,6 +14,9 @@
 // response, otherwise the next request would loop right back here.
 //
 // Anything under /api stays accessible — those routes do their own auth.
+// That is a promise each route has to keep: see requireActiveUser() in
+// src/lib/supabase/admin-guard.ts for the floor, and the token-authorised
+// exceptions (/api/share, /api/invitations, /api/hls, /api/stream/webhook).
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient, type CookieOptions } from '@supabase/ssr'

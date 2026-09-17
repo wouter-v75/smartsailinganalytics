@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 // GET /api/currents/hires?lat=49.66&lon=-1.62
 // Returns ONLY a ~20x20 km clip of the native 1.5 km AMM15 current field around
@@ -30,6 +31,9 @@ type Frame = { u: number[]; v: number[] };
 type Header = { nx: number; ny: number; lo1: number; la1: number; dx: number; dy: number };
 
 export async function GET(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   const lat = parseFloat(req.nextUrl.searchParams.get("lat") || "");
   const lon = parseFloat(req.nextUrl.searchParams.get("lon") || "");
   if (Number.isNaN(lat) || Number.isNaN(lon))

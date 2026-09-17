@@ -3,11 +3,13 @@
 // requireAdmin()        — global admin only. Used for cross-tenant ops.
 // requireTeamManager()  — admin OR team_manager (within the named team).
 //                         Used for routes scoped to /api/admin/teams/[id]/*.
+// requireActiveUser()   — any approved user. The floor for the routes that have
+//                         no RLS behind them (Bunny, the AI proxies).
 //
-// Both return either { ok: true, userId } or { ok: false, response: 401/403 }.
+// All return either { ok: true, userId } or { ok: false, response: 401/403 }.
 
 import { NextResponse } from 'next/server'
-import { getServerSupabase, getServiceSupabase } from './server'
+import { authedUserId, getServerSupabase, getServiceSupabase } from './server'
 
 export async function requireAdmin(): Promise<
   | { ok: true; userId: string }
@@ -91,4 +93,38 @@ export async function requireTeamManager(
     }
   }
   return { ok: true, userId: user.id, isAdmin: false }
+}
+
+// Any signed-in, active user. The floor for routes that spend money or touch
+// shared infrastructure (Bunny Storage / Stream, the Scaleway + Anthropic
+// proxies) and so have no RLS policy standing behind them — unlike the
+// team-scoped routes, where an unauthorised read simply returns no rows.
+//
+// `status` matters as much as the session here: a `pending` signup holds a
+// valid JWT, and without this check could upload video into the paid Stream
+// library or run transcriptions before anyone has approved them.
+export async function requireActiveUser(): Promise<
+  | { ok: true; userId: string }
+  | { ok: false; response: NextResponse }
+> {
+  const ssr = getServerSupabase()
+  const userId = await authedUserId(ssr)
+  if (!userId) {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: 'unauth' }, { status: 401 }),
+    }
+  }
+  const { data: me } = await ssr
+    .from('users')
+    .select('status')
+    .eq('id', userId)
+    .maybeSingle()
+  if (me?.status !== 'active') {
+    return {
+      ok: false,
+      response: NextResponse.json({ error: 'forbidden' }, { status: 403 }),
+    }
+  }
+  return { ok: true, userId }
 }

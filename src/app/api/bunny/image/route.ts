@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 // Binary image proxy for Bunny Storage.
 // Used for reading photo thumbnails and (optionally) full-resolution originals.
@@ -33,6 +34,9 @@ function contentTypeFor(key: string) {
 }
 
 export async function GET(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   if (!API_KEY || !ZONE)
     return NextResponse.json({ error: "Bunny Storage not configured" }, { status: 503 });
 
