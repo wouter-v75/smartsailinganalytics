@@ -1,6 +1,6 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { saveVideo, pruneInertVideos, dedupeVideos, updateVideoRotation, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList, markVideoOriginalUploaded, getVideoCloudFlags } from "../lib/localStore";
+import { saveVideo, pruneInertVideos, dedupeVideos, updateVideoRotation, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList, markVideoOriginalUploaded, getVideoCloudFlags, loadSsaPhases, saveSsaPhases, deleteSsaPhases } from "../lib/localStore";
 import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady, createStreamUpload, uploadFileToStream } from "../lib/bunny";
 import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
@@ -2610,6 +2610,7 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
 // never pushed to the cloud. Declaring them here is the whole fix.
 function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=null,setSailDiff=()=>{},syncOffsets={},onWatchingChange}){
   const perms=ROLES[role];
+  const [phaseClash,setPhaseClash]=useState(null); // {date,eventCount,ssaCount,runCount,resolve}
   // ── Refs ──────────────────────────────────────────────────────────────────
   const vidRef=useRef(null),csvRef=useRef(null),xmlRef=useRef(null),polarRef=useRef(null);
   const[pendingVids,setPendingVids]=useState([]);
@@ -3143,6 +3144,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     }));
   };
 
+  // An event file carries its own phases. When SSA has already built phases for that
+  // day — somebody chose those stretches by hand — the import ASKS instead of
+  // overwriting: the built phases live in their own store precisely so this choice
+  // exists. Resolves to 'keep' | 'aside' | 'discard'.
+  const askPhaseClash = info => new Promise(resolve => setPhaseClash({ ...info, resolve }));
+
   const saveLocal=async()=>{
     if(!pendingVids.length&&!csvParsed&&!xmlParsed)return;
     setPhase("saving");setLog([]);
@@ -3205,6 +3212,24 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       const supaForXml = getBrowserSupabase();
       const { data: { user: xmlUser } } = await supaForXml.auth.getUser();
       const xmlMembership = xmlUser ? getActiveMembership(xmlUser.id) : null;
+      // Built phases for this day? Ask before the event file's own phases arrive.
+      const builtDoc = await loadSsaPhases(d);
+      const builtCount = builtDoc?.phases?.length || 0;
+      if (builtCount && !builtDoc?.setAside) {
+        const choice = await askPhaseClash({
+          date: d, eventCount: xmlParsed.phases?.length || 0,
+          ssaCount: builtCount, runCount: builtDoc?.runs?.length || 0,
+        });
+        if (choice === 'discard') {
+          await deleteSsaPhases(d);
+          addLog(`✓ ${builtCount} SSA phases deleted — the event file's phases are the day's phases`);
+        } else if (choice === 'aside') {
+          await saveSsaPhases(d, { ...builtDoc, setAside: true }, xmlMembership);
+          addLog(`✓ ${builtCount} SSA phases set aside (kept, not charted) — the event file's phases win`);
+        } else {
+          addLog(`✓ ${builtCount} SSA phases kept alongside the event file's ${xmlParsed.phases?.length || 0}`);
+        }
+      }
       await saveXmlData(d, xmlParsed, xmlFile.name, xmlMembership);
       // Mirror to Supabase.
       try {
@@ -3561,8 +3586,34 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     </div>
   );
 
+  const phaseClashModal = phaseClash ? (
+    <div role="dialog" aria-label="Phases already built for this day"
+      style={{position:"fixed",inset:0,background:"#000A",display:"flex",alignItems:"center",justifyContent:"center",zIndex:60,padding:20}}>
+      <div style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:12,padding:18,maxWidth:520,width:"100%"}}>
+        <div style={{fontSize:14,fontWeight:700,color:"#E2E8F0",marginBottom:6}}>
+          Phases already built for {phaseClash.date}
+        </div>
+        <div style={{fontSize:12,color:"#94A3B8",lineHeight:1.6,marginBottom:14}}>
+          This event file has <b style={{color:"#E2E8F0"}}>{phaseClash.eventCount}</b> phases.
+          SSA already holds <b style={{color:"#E2E8F0"}}>{phaseClash.ssaCount}</b> built here
+          {phaseClash.runCount ? <> from <b style={{color:"#E2E8F0"}}>{phaseClash.runCount}</b> run{phaseClash.runCount===1?"":"s"}</> : null}.
+          Only “Delete” loses anything.
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
+          {[["keep","Keep both","#06B6D4"],["aside","Event file wins · keep mine aside","#0F2A45"],["discard","Delete my phases","#7F1D1D"]].map(([v,text,bg])=>(
+            <button key={v} onClick={()=>{const r=phaseClash.resolve;setPhaseClash(null);r(v);}}
+              style={{background:bg,border:"none",borderRadius:7,padding:"7px 12px",color:v==="keep"?"#001018":"#E2E8F0",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+              {text}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return(
     <div style={{flex:1,overflowY:"auto",padding:24}}>
+      {phaseClashModal}
       <div style={{maxWidth:660,margin:"0 auto",display:"flex",flexDirection:"column",gap:14}}>
         {/* Tier explanation */}
         <div style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:10,padding:"12px 14px",display:"flex",gap:16}}>

@@ -28,6 +28,14 @@ import { inRange, phaseInRange } from '../../lib/trackSelection'
 import { mergeStoredLidar } from '../../lib/lidarMerge'
 import { SECTION_ORDER, SECTION_TITLES } from '../../lib/headlineFacts'
 import { getActiveMembership } from '../../lib/active-membership'
+import PhasePanel from './PhasePanel'
+import { buildPhases } from '../../lib/buildPhases'
+import { withSettings, resolutionNote } from '../../lib/phaseSettings'
+import { phasesForSource, upsertRun, removeRun } from '../../lib/ssaPhases'
+import { loadSsaPhases, saveSsaPhases, getTagList } from '../../lib/localStore'
+import { canBuildPhases, canUploadPhases, phaseRoleNote } from '../../lib/phaseRoles'
+import { fetchBoatPhaseSettings, saveBoatPhaseSettings, writeLocalSettings } from '../../lib/phaseSettingsClient'
+import { planUpload, uploadPhaseSet } from '../../lib/phaseUpload'
 import { getUidFast } from '../../lib/supabase/browser'
 
 // Grid order per point of sail (KND report order); x is TWS unless given.
@@ -58,12 +66,61 @@ function useActiveBoat() {
       try {
         const uid = await getUidFast()
         const m = uid ? getActiveMembership(uid) : null
-        if (alive && m?.team_id && m?.boat_id) setBoat({ teamId: m.team_id, boatId: m.boat_id })
+        if (alive && m?.team_id && m?.boat_id) setBoat({ teamId: m.team_id, boatId: m.boat_id, role: m.role || null })
       } catch { /* not signed in */ }
     })()
     return () => { alive = false }
   }, [])
   return boat
+}
+
+// What a built phase carries beyond its times: whether it is a tack, how calm it was,
+// and which run it belongs to. Averaging the log loses these, so they are put back.
+const pick = p => ({ src: p.src, kind: p.kind, quality: p.quality, ...(p.runId ? { runId: p.runId } : {}) })
+
+// The phases SSA built for this day, and the runs they came from. Their own store, not
+// part of the event file: re-importing an event file must ask before replacing work
+// somebody selected by hand.
+function useSsaPhases(activeDate) {
+  const [doc, setDoc] = React.useState(null)
+  React.useEffect(() => {
+    let alive = true
+    if (!activeDate) { setDoc(null); return }
+    loadSsaPhases(activeDate).then(d => { if (alive) setDoc(d || null) }).catch(() => {})
+    return () => { alive = false }
+  }, [activeDate])
+  return [doc, setDoc]
+}
+
+// The thresholds belong to the BOAT: the team should be judging every day by the same
+// numbers. This device's copy is the fallback — offline, or a boat nobody has set yet.
+// Changing them here is local until a coach saves them for the boat.
+function usePhaseSettings(boat) {
+  const [state, setState] = React.useState({ settings: withSettings(), source: 'default', updatedAt: null })
+  React.useEffect(() => {
+    let alive = true
+    if (!boat?.teamId || !boat?.boatId) return
+    fetchBoatPhaseSettings(boat.teamId, boat.boatId).then(r => {
+      if (alive) setState({ settings: r.settings, source: r.source, updatedAt: r.updatedAt })
+    })
+    return () => { alive = false }
+  }, [boat?.teamId, boat?.boatId])
+
+  const update = React.useCallback(next => {
+    const clean = withSettings(next)
+    setState(st => ({ ...st, settings: clean, source: 'device' }))
+    writeLocalSettings(boat?.boatId, clean)
+  }, [boat?.boatId])
+
+  // Coach and up: make these the boat's numbers for everybody.
+  const saveForBoat = React.useCallback(async () => {
+    if (!boat?.teamId || !boat?.boatId) return 'no active boat'
+    const err = await saveBoatPhaseSettings(boat.teamId, boat.boatId, state.settings)
+    if (!err) setState(st => ({ ...st, source: 'boat', updatedAt: new Date().toISOString() }))
+    return err
+  }, [boat?.teamId, boat?.boatId, state.settings])
+
+  return [state.settings, update, { source: state.source, updatedAt: state.updatedAt, saveForBoat }]
 }
 
 // The boat's ACTIVE polar. `override` (tests, previews) skips the fetch: { polar, name } or null.
@@ -292,12 +349,40 @@ export default function PerfChartsSection({
   const [race, setRace] = React.useState('')   // '' = all day
   const [sails, setSails] = React.useState('')
   const [tack, setTack] = React.useState('')   // '' | 'port' | 'stbd'
+  const [phaseSource, setPhaseSource] = React.useState('event')  // 'event' | 'ssa' | 'both'
+  const [mergeMode, setMergeMode] = React.useState('add')        // where the two overlap
+  const [ssaDoc, setSsaDoc] = useSsaPhases(activeDate)
+  const [settings, setSettings, settingsMeta] = usePhaseSettings(boat)
+  const [build, setBuild] = React.useState(null)                 // last build's reasons
+  const [test, setTest] = React.useState(null)                   // a timed test in progress
+  const [upload, setUpload] = React.useState(null)   // { state, message } after an upload
+  // Set aside when an event file was re-imported and its phases were chosen. Kept, not
+  // deleted: the charts ignore them until somebody asks for them back.
+  const setAside = !!ssaDoc?.setAside && (ssaDoc?.phases?.length || 0) > 0
+  const ssaPhases = setAside ? [] : (ssaDoc?.phases || [])
+  const mayBuild = canBuildPhases(boat?.role)
+  const mayUpload = canUploadPhases(boat?.role)
+  // Charts read whichever source is chosen; the event file's own phases are untouched.
+  const xmlForStats = React.useMemo(() => {
+    if (phaseSource === 'event' || !ssaPhases.length) return xmlData
+    return { ...xmlData, phases: phasesForSource(phaseSource, xmlData?.phases || [], ssaPhases, mergeMode) }
+  }, [phaseSource, mergeMode, ssaPhases, xmlData])
   // Stats stored from a finer log win over computing from the coarser log on this device.
-  const useStored = storedStats.useStored
+  // Stats stored in the cloud were averaged over the EVENT FILE's phases, so they cannot
+  // answer for phases SSA cut itself.
+  const useStored = storedStats.useStored && phaseSource === 'event'
   const dayStats = React.useMemo(
     // Computed here from a log without lidar → still show the lidar stored for the day.
-    () => (useStored ? expandPhases(storedStats.stored.phases) : mergeStoredLidar(computePhaseStats(rows, xmlData, { polar }), storedStats.stored?.phases)),
-    [useStored, storedStats.stored, rows, xmlData, polar])
+    () => {
+      if (useStored) return expandPhases(storedStats.stored.phases)
+      const computed = mergeStoredLidar(computePhaseStats(rows, xmlForStats, { polar }), storedStats.stored?.phases)
+      if (phaseSource === 'event' || !ssaPhases.length) return computed
+      // Carry each built phase's kind and quality onto its averages, so a tack stays a
+      // tack once averaged and the calmest phases can still be picked out.
+      const by = new Map(ssaPhases.map(p => [p.utc, p]))
+      return computed.map(st => (by.has(st.utc) ? { ...st, ...pick(by.get(st.utc)) } : st))
+    },
+    [useStored, storedStats.stored, rows, xmlForStats, polar, phaseSource, ssaPhases])
   const dayManoeuvres = React.useMemo(
     () => (useStored && storedStats.stored.manoeuvres?.length ? storedStats.stored.manoeuvres : analyseManoeuvres(rows, xmlData)),
     [useStored, storedStats.stored, rows, xmlData])
@@ -307,8 +392,61 @@ export default function PerfChartsSection({
   const manoeuvres = React.useMemo(() => (range ? dayManoeuvres.filter(m => inRange(m.utc, [r0, r1])) : dayManoeuvres), [dayManoeuvres, r0, r1])
   const [showAllManoeuvres, setShowAllManoeuvres] = React.useState(false)
 
-  if (!xmlData?.phases?.length) {
-    return <div style={note}>No phases in this session’s event file — re-import the event (.ev.xml) file to see performance charts.</div>
+  // ── Building phases from a stretch of the day ────────────────────────────
+  const saveDoc = React.useCallback(next => {
+    setSsaDoc(next)
+    if (activeDate) {
+      saveSsaPhases(activeDate, next, boat ? { team_id: boat.teamId, boat_id: boat.boatId } : null).catch(() => {})
+    }
+  }, [activeDate, boat, setSsaDoc])
+
+  const makeRun = React.useCallback((from, to, name, kind, plannedS) => {
+    if (!(to > from) || !rows.length || !activeDate) return
+    const id = `run-${from}-${Math.random().toString(36).slice(2, 7)}`
+    const res = buildPhases(rows, xmlData, settings, {
+      from, to, runId: id, resolutionS: storedStats.localRes ?? undefined,
+    })
+    const run = {
+      id, name: (name || '').trim(), tags: [], from, to,
+      createdAt: Date.now(), kind, ...(plannedS ? { plannedS } : {}), settings,
+    }
+    saveDoc(upsertRun(ssaDoc, run, res.phases, activeDate))
+    setBuild(res)
+    // Show what was just built, without hiding the event file's own phases.
+    setPhaseSource(cur => (cur === 'event' ? 'both' : cur))
+  }, [rows, xmlData, settings, ssaDoc, activeDate, saveDoc, storedStats.localRes])
+
+  // Coach and up: put this day's built phases in front of the team. Both sources are
+  // kept; what is recorded is which wins where they overlap.
+  const doUpload = React.useCallback(async mode => {
+    if (!boat?.teamId || !boat?.boatId || !activeDate) return
+    const plan = planUpload(xmlData?.phases || [], ssaPhases, mode)
+    setUpload({ state: 'busy', message: 'Uploading…' })
+    const res = await uploadPhaseSet(boat.teamId, boat.boatId, activeDate, {
+      plan, eventPhases: xmlData?.phases || [], builtPhases: ssaPhases,
+      runs: ssaDoc?.runs || [], settings, userId: null,
+    })
+    setUpload(res.ok
+      ? { state: 'ok', message: `${res.set.phase_count} phases are with the team · ${new Date(res.set.created_at).toLocaleTimeString()}` }
+      : { state: 'error', message: res.needsMigration ? `${res.error} — the phases are still on this device` : res.error })
+  }, [boat, activeDate, xmlData, ssaPhases, ssaDoc, settings])
+
+  const startTest = (min, name) => {
+    if (playUtc == null) return
+    setTest({ startUtc: playUtc, plannedS: min * 60, name: name || '' })
+  }
+  // Stop takes the timeline's position when it is inside the test, so a test can be cut
+  // short; otherwise the test is the length it was started for.
+  const stopTest = name => {
+    if (!test) return
+    const planned = test.startUtc + test.plannedS * 1000
+    const end = playUtc != null && playUtc > test.startUtc && playUtc < planned ? playUtc : planned
+    makeRun(test.startUtc, end, name || test.name, 'test', test.plannedS)
+    setTest(null)
+  }
+
+  if (!xmlData?.phases?.length && !ssaPhases.length) {
+    return <div style={note}>No phases in this session’s event file — re-import the event (.ev.xml) file, or select a stretch of the track and let SSA build them.</div>
   }
   if (range && dayStats.length && !stats.length) {
     return <div style={note}>No 30 s phase has its midpoint inside the track selection — select a longer stretch.</div>
@@ -346,6 +484,32 @@ export default function PerfChartsSection({
     <div>
       <HeadlinesCard boat={boat} activeDate={activeDate} stored={storedStats.stored} canUseAI={canUseAI}
         onDone={storedStats.refresh} override={headlinesOverride} />
+      <PhasePanel
+        source={phaseSource} onSource={setPhaseSource}
+        mergeMode={mergeMode} onMergeMode={setMergeMode}
+        settings={settings} onSettings={setSettings}
+        counts={{
+          event: xmlData?.phases?.length || 0,
+          ssa: ssaPhases.filter(p => p.kind === 'steady').length,
+          manoeuvres: ssaPhases.filter(p => p.kind !== 'steady').length,
+        }}
+        build={build}
+        runs={ssaDoc?.runs || []}
+        onDeleteRun={r => saveDoc(removeRun(ssaDoc, r.id))}
+        onJumpRun={r => onJump?.(r.from)}
+        selection={range}
+        onBuildSelection={name => makeRun(r0, r1, name, 'selection')}
+        test={test} onTestStart={startTest} onTestStop={stopTest}
+        playUtc={playUtc} tzOffsetMin={tzOffsetMin}
+        canBuild={mayBuild} canUpload={mayUpload} roleNote={phaseRoleNote(boat?.role)}
+        asideCount={setAside ? ssaDoc.phases.length : 0}
+        onRestoreAside={setAside && mayBuild ? () => saveDoc({ ...ssaDoc, setAside: false }) : null}
+        settingsMeta={settingsMeta}
+        uploadPlan={ssaPhases.length ? mode => planUpload(xmlData?.phases || [], ssaPhases, mode) : null}
+        onUpload={doUpload} upload={upload}
+        resolutionNote={resolutionNote(storedStats.localRes, settings.phaseLenS)}
+        tagOptions={activeDate ? getTagList(activeDate) : []}
+      />
       {lidarSails.length > 0 && mode !== 'lidar' && (
         <div data-lidar-available style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 10px',
           padding: '8px 12px', borderRadius: 8, background: '#A78BFA14', border: '1px solid #A78BFA55' }}>

@@ -11,6 +11,9 @@ import { hashLogPayload, hashXmlPayload } from "./contentHash";
 //     store "videos"    — blobs + metadata
 //     store "log_data"  — CSV rows (keyed by date)
 //     store "xml_data"  — event file data (keyed by date)
+//     store "ssa_phases"— phases SSA built itself + the runs they came from (by date).
+//                         DELIBERATELY NOT inside xml_data: re-importing an event file
+//                         must never silently destroy work somebody selected by hand.
 //   localStorage
 //     ssa:sessions      — session index
 //     ssa:taglist:{date}
@@ -18,7 +21,7 @@ import { hashLogPayload, hashXmlPayload } from "./contentHash";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_NAME = "ssa-db";
-const DB_VER  = 4;
+const DB_VER  = 5;
 const TODAY   = () => new Date().toISOString().slice(0, 10);
 
 // ── IndexedDB bootstrap ──────────────────────────────────────────────────────
@@ -38,6 +41,9 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains("xml_data")) {
         db.createObjectStore("xml_data", { keyPath: "date" });
+      }
+      if (!db.objectStoreNames.contains("ssa_phases")) {
+        db.createObjectStore("ssa_phases", { keyPath: "date" });
       }
       if (!db.objectStoreNames.contains("photos")) {
         db.createObjectStore("photos", { keyPath: "id" });
@@ -824,4 +830,48 @@ export function saveSyncOffset(videoId, secs) {
   const o = getSyncOffsets();
   if (secs === 0) delete o[videoId]; else o[videoId] = secs;
   lsSet(OFFSET_KEY, o);
+}
+
+// ── SSA-built phases ─────────────────────────────────────────────────────────
+// The second source of phases, alongside the event file's. Kept in its own store so
+// that importing an event file for a date can ASK what to do with them rather than
+// overwrite them: they are hand-made work, and the event file is a machine's opinion.
+
+export async function loadSsaPhases(date) {
+  try {
+    const db = await openDb();
+    return (await idbGet(db, "ssa_phases", date)) || null;
+  } catch { return null; }
+}
+
+export async function saveSsaPhases(date, { runs = [], phases = [] }, membership = null) {
+  const db = await openDb();
+  await idbPut(db, "ssa_phases", {
+    date, runs, phases,
+    team_id: membership?.team_id || null,
+    boat_id: membership?.boat_id || null,
+    updatedAt: Date.now(),
+  });
+  return true;
+}
+
+// Which dates hold hand-built phases — the check the event-file import runs.
+export async function datesWithSsaPhases() {
+  try {
+    const db = await openDb();
+    const all = await idbGetAll(db, "ssa_phases");
+    return all.filter(r => (r?.phases?.length || 0) > 0).map(r => r.date);
+  } catch { return []; }
+}
+
+export async function deleteSsaPhases(date) {
+  try {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("ssa_phases", "readwrite");
+      tx.objectStore("ssa_phases").delete(date);
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+    });
+    return true;
+  } catch { return false; }
 }
