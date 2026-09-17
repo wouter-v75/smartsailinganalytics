@@ -11,6 +11,8 @@
 import React from 'react'
 import { CHANNEL_BY_KEY } from '../../lib/phaseStats'
 import { phasePoints, tackTrends, plotDomain, niceTicks, tickDecimals } from '../../lib/phasePlot'
+import { phaseSection } from '../../lib/trackSections'
+import { symbolFor, symbolPath } from '../../lib/phaseSymbols'
 
 const PORT_COLOR = '#7DD3FC'
 const localHMS = (utc, tzMin) => new Date(utc + (tzMin || 0) * 60000).toISOString().slice(11, 19)
@@ -19,7 +21,7 @@ const fmtVal = (v, ch) => (v == null ? '—' : v.toFixed(ch?.decimals ?? 1))
 export default function PhaseXYPlot({
   phases, xKey = 'tws', yKey, color = '#06B6D4', width = 560, height = 300, title = '',
   yLines = [], targetLine = null, targetLabel = 'polar', showTrend = true, refCurves = [],
-  tzOffsetMin = 0, onSelectUtc = null, activeUtc = null,
+  tzOffsetMin = 0, onSelectUtc = null, activeUtc = null, sections = [],
 }) {
   const [hoveredTack, setHoveredTack] = React.useState(null) // null | "port" | "stbd"
   const [hover, setHover] = React.useState(null)             // the hovered PlotPoint
@@ -54,21 +56,36 @@ export default function PhaseXYPlot({
   const leave = () => { setHoveredTack(null); setHover(null) }
   const select = p => { setHoveredTack(p.tack); setHover(p); onSelectUtc?.(p.utc) }
 
+  // Which section a phase belongs to decides its SHAPE; the tack decides its COLOUR.
+  // Two facts, two channels, so a plot of two sections on both tacks still reads.
+  const sectionOfPhase = p => phaseSection({ utc: p.utc, endUtc: p.endUtc ?? p.utc }, sections)
+
   const dot = (p, i, hl) => {
     const cx = px(p.x), cy = py(p.y)
-    const r = hl ? 4.5 : 3
-    const common = {
-      'data-phase': p.utc, 'data-tack': p.tack, style: { cursor: 'pointer' },
-      onMouseEnter: () => enter(p), onMouseLeave: leave, onClick: () => select(p),
-      ...(hl ? { stroke: '#fff', strokeWidth: 0.7, opacity: 1 } : {}),
-    }
-    if (p.tack === 'port') {
-      const h = r * 2.4
-      const tri = `${cx},${cy - h * 0.65} ${cx - h * 0.6},${cy + h * 0.35} ${cx + h * 0.6},${cy + h * 0.35}`
-      return <polygon key={(hl ? 'hl' : '') + i} points={tri} fill={PORT_COLOR} opacity={hl ? 1 : 0.8} {...common} />
-    }
-    return <circle key={(hl ? 'hl' : '') + i} cx={cx} cy={cy} r={r} fill={color} opacity={hl ? 1 : 0.75} {...common} />
+    const r = hl ? 4.5 : 3.2
+    const sec = sectionOfPhase(p)
+    const kind = symbolFor(sec?.n)
+    return (
+      <path
+        key={(hl ? 'hl' : '') + i}
+        d={symbolPath(kind, cx, cy, r)}
+        fill={tackColor(p.tack)}
+        opacity={hl ? 1 : 0.8}
+        data-phase={p.utc} data-tack={p.tack} data-symbol={kind}
+        {...(sec ? { 'data-section': sec.n } : {})}
+        style={{ cursor: 'pointer' }}
+        onMouseEnter={() => enter(p)} onMouseLeave={leave} onClick={() => select(p)}
+        {...(hl ? { stroke: '#fff', strokeWidth: 0.7 } : {})}
+      />
+    )
   }
+
+  // A shape drawn small, for the legend.
+  const swatch = (kind, fill) => (
+    <svg width="12" height="12" style={{ verticalAlign: 'middle', marginRight: 4 }} aria-hidden>
+      <path d={symbolPath(kind, 6, 6, 3.6)} fill={fill} />
+    </svg>
+  )
 
   const trendLine = (tack, keySuffix = '') => {
     const t = trends[tack]
@@ -87,18 +104,21 @@ export default function PhaseXYPlot({
   return (
     <div style={{ position: 'relative' }}>
       <div style={{ display: 'flex', gap: 10, marginBottom: 4, fontSize: 11, color: '#94A3B8', flexWrap: 'wrap' }}>
-        <span>
-          <svg width="9" height="9" style={{ verticalAlign: 'middle', marginRight: 3 }}>
-            <polygon points="4.5,0.5 0.5,8.5 8.5,8.5" fill={PORT_COLOR} opacity="0.8" />
-          </svg>
-          Port tack · {port.length}{r2('port')}
-        </span>
-        <span>
-          <svg width="9" height="9" style={{ verticalAlign: 'middle', marginRight: 3 }}>
-            <circle cx="4.5" cy="4.5" r="3.5" fill={color} opacity="0.8" />
-          </svg>
-          Stbd tack · {stbd.length}{r2('stbd')}
-        </span>
+        <span>{swatch('circle', PORT_COLOR)}Port tack · {port.length}{r2('port')}</span>
+        <span>{swatch('circle', color)}Stbd tack · {stbd.length}{r2('stbd')}</span>
+        {sections.length > 0 && (
+          <>
+            <span style={{ color: '#334155' }}>|</span>
+            {sections.map(sec => {
+              const n = pts.filter(p => sectionOfPhase(p)?.id === sec.id).length
+              return (
+                <span key={sec.id} data-legend-section={sec.n}>
+                  {swatch(symbolFor(sec.n), '#CBD5E1')}Section {sec.n} · {n}
+                </span>
+              )
+            })}
+          </>
+        )}
         <span style={{ color: '#64748B' }}>· hover to highlight{onSelectUtc ? ' · click to jump' : ''}</span>
       </div>
       <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ overflow: 'visible' }} role="img"

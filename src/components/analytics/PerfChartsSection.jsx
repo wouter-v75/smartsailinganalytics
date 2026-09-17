@@ -666,7 +666,7 @@ export default function PerfChartsSection({
                     BSP vs |TWA| · TWS {b.centre} kn
                     <span style={{ textTransform: 'none', letterSpacing: 0 }}> ({b.lo}–{b.hi} kn){polar && !curve ? ' · beyond the polar' : ''}</span>
                   </div>
-                  <PhaseXYPlot phases={b.phases} xKey="twa" yKey="bsp" color={COLORS.bsp} height={320} showTrend={false}
+                  <PhaseXYPlot sections={liveSections} phases={b.phases} xKey="twa" yKey="bsp" color={COLORS.bsp} height={320} showTrend={false}
                     targetLine={curve} targetLabel={`polar ${b.centre} kn`} tzOffsetMin={tzOffsetMin}
                     onSelectUtc={onJump} activeUtc={playUtc} />
                 </div>
@@ -684,7 +684,7 @@ export default function PerfChartsSection({
             return (
               <div key={`${s.y}-${s.x}`} data-chart={`${s.y}-${s.x}`}>
                 <div style={caption}>{yCh.label} vs {xCh.label}</div>
-                <PhaseXYPlot phases={shown} xKey={s.x} yKey={s.y} color={COLORS[s.y] || '#06B6D4'} height={300}
+                <PhaseXYPlot sections={liveSections} phases={shown} xKey={s.x} yKey={s.y} color={COLORS[s.y] || '#06B6D4'} height={300}
                   yLines={PCT.has(s.y) ? [100] : []} targetLine={target} tzOffsetMin={tzOffsetMin}
                   refCurves={s.x === 'tws' ? refCurvesFor(s.y) : []}
                   onSelectUtc={onJump} activeUtc={playUtc} />

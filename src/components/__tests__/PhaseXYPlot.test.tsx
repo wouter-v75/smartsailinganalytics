@@ -16,11 +16,12 @@ const phases = [phase(0, 'stbd', 21.2, 11.03), phase(1, 'port', 23.1, 11.88), ph
 const dots = (c: HTMLElement) => Array.from(c.querySelectorAll('[data-phase]'))
 
 describe('PhaseXYPlot', () => {
-  it('draws one dot per phase, port as triangles, with the tack legend', () => {
+  it('draws one dot per phase, colour by tack, with the tack legend', () => {
     const { container } = render(<PhaseXYPlot phases={phases} yKey="bsp" tzOffsetMin={120} />)
     expect(dots(container)).toHaveLength(4)
-    expect(container.querySelectorAll('polygon[data-tack="port"]')).toHaveLength(3)
-    expect(container.querySelectorAll('circle[data-tack="stbd"]')).toHaveLength(1)
+    // Every marker is a path now: its SHAPE says which section, its COLOUR which tack.
+    expect(container.querySelectorAll('path[data-tack="port"]')).toHaveLength(3)
+    expect(container.querySelectorAll('path[data-tack="stbd"]')).toHaveLength(1)
     expect(screen.getByText(/Port tack · 3/)).toBeTruthy()
     expect(screen.getByText(/Stbd tack · 1/)).toBeTruthy()
     expect(screen.getByRole('img').getAttribute('aria-label')).toBe('BSP vs TWS, 4 phases')
@@ -28,7 +29,7 @@ describe('PhaseXYPlot', () => {
 
   it('veils the other tack and shows the phase on hover', () => {
     const { container } = render(<PhaseXYPlot phases={phases} yKey="bsp" tzOffsetMin={120} />)
-    const stbdDot = container.querySelector('circle[data-tack="stbd"]')!
+    const stbdDot = container.querySelector('path[data-tack="stbd"]')!
     fireEvent.mouseEnter(stbdDot)
     const tip = screen.getByRole('tooltip')
     expect(tip.textContent).toContain('12:18:59 · Stbd')
@@ -36,7 +37,7 @@ describe('PhaseXYPlot', () => {
     expect(tip.textContent).toContain('J4_A 2026 · 5 samples')
     // veil + the hovered tack redrawn on top
     expect(container.querySelector('rect[opacity="0.62"]')).toBeTruthy()
-    expect(container.querySelectorAll('circle[data-tack="stbd"][stroke="#fff"]')).toHaveLength(1)
+    expect(container.querySelectorAll('path[data-tack="stbd"][stroke="#fff"]')).toHaveLength(1)
     fireEvent.mouseLeave(stbdDot)
     expect(screen.queryByRole('tooltip')).toBeNull()
   })
@@ -47,7 +48,7 @@ describe('PhaseXYPlot', () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { container } = render(<PhaseXYPlot phases={phases} yKey="bsp" />)
     expect(screen.getByText(/Port tack · 3 · R² \d\.\d\d/)).toBeTruthy()   // 3 port phases → trend
-    fireEvent.mouseEnter(container.querySelector('polygon[data-tack="port"]')!)
+    fireEvent.mouseEnter(container.querySelector('path[data-tack="port"]')!)
     expect(err.mock.calls.flat().join(' ')).not.toMatch(/same key/)
     err.mockRestore()
   })
@@ -56,7 +57,7 @@ describe('PhaseXYPlot', () => {
     const onSelectUtc = vi.fn()
     const { container } = render(<PhaseXYPlot phases={phases} yKey="bsp" onSelectUtc={onSelectUtc} tzOffsetMin={120} />)
     expect(screen.getByText(/hover to highlight · click to jump/)).toBeTruthy()
-    fireEvent.click(container.querySelectorAll('polygon[data-tack="port"]')[1])
+    fireEvent.click(container.querySelectorAll('path[data-tack="port"]')[1])
     expect(onSelectUtc).toHaveBeenCalledWith(T0 + 2 * 30_000)
     // a tap also opens the tooltip (no hover on touch screens)
     expect(screen.getByRole('tooltip').textContent).toContain('12:19:59 · Port')
@@ -70,6 +71,27 @@ describe('PhaseXYPlot', () => {
     expect(container.querySelector('polyline')).toBeTruthy()
     expect(screen.getByText('polar')).toBeTruthy()
     expect(container.querySelector('circle[r="7"]')).toBeTruthy()
+  })
+
+  it('marks each section with its own shape, and says so in the legend', () => {
+    // Two sections over the phases: shape says which, colour still says which tack.
+    const sections = [
+      { id: 's1', n: 1, color: '#FDE047', range: [phases[0].utc, phases[1].endUtc] as [number, number] },
+      { id: 's2', n: 2, color: '#22D3EE', range: [phases[2].utc, phases[3].endUtc] as [number, number] },
+    ]
+    const { container } = render(<PhaseXYPlot phases={phases} yKey="bsp" sections={sections} />)
+    expect(container.querySelectorAll('path[data-section="1"][data-symbol="circle"]')).toHaveLength(2)
+    expect(container.querySelectorAll('path[data-section="2"][data-symbol="triangle"]')).toHaveLength(2)
+    // Tack is still the colour, not the shape.
+    expect(container.querySelectorAll('path[data-tack="port"]')).toHaveLength(3)
+    expect(screen.getByText(/Section 1 · 2/)).toBeTruthy()
+    expect(screen.getByText(/Section 2 · 2/)).toBeTruthy()
+  })
+
+  it('draws a phase outside every section as a plain dot, and shows no section legend', () => {
+    const { container } = render(<PhaseXYPlot phases={phases} yKey="bsp" />)
+    expect(container.querySelectorAll('path[data-symbol="circle"]')).toHaveLength(phases.length)
+    expect(container.querySelector('[data-legend-section]')).toBeNull()
   })
 
   it('can drop the trend lines and widen the x-axis to the polar curve', () => {
