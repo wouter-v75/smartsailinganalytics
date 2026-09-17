@@ -5573,7 +5573,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
               </>
             ))}
             {canSeeAnalyticsData && rows.length>50&&section("Performance charts — 30 s phases",(
-              <PerfChartsSection sections={sections} rows={rows} xmlData={xmlData} tzOffsetMin={tz} playUtc={playUtc} onJump={jumpToUtc} activeDate={activeDate} canUseAI={canUseAI}/>
+              <PerfChartsSection sections={sections} trackRaceNum={race?.raceNum ?? null} rows={rows} xmlData={xmlData} tzOffsetMin={tz} playUtc={playUtc} onJump={jumpToUtc} activeDate={activeDate} canUseAI={canUseAI}/>
             ))}
             {canSeeAnalyticsData && selTJ.length>0&&section(`Manoeuvre analysis — ${selTJ.length} total${sections.length?(sections.length>1?" in the selected sections":" in the selection"):""}`,(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>

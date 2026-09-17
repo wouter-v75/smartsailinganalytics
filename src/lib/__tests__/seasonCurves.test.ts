@@ -15,7 +15,9 @@ describe('compactPhases', () => {
   it('keeps means and maxima, rounded, without empty channels', () => {
     const [p] = compactPhases([stat({ mean: { tws: 21.123456, bsp: 11.03, vang: null, heel: NaN } })].map(s => ({ ...s, max: { fsty: 17.2249, vang: null } })))
     expect(p).toEqual({ u: 1, e: 30_001, m: 'up', t: 'stbd', s: 'J4_A 2026', r: 1, n: 5, v: { tws: 21.123, bsp: 11.03 }, x: { fsty: 17.225 } })
-    expect(STATS_VERSION).toBe(2)
+    // 3 since the five minutes before a gun count as that race: stored rows carry
+    // `race`, so anything written under the old rule has to be rebuilt.
+    expect(STATS_VERSION).toBe(3)
   })
 
   it('expands stored phases back into chart / table input, old rows without maxima too', () => {

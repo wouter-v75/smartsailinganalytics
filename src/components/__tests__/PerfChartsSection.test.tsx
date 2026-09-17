@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import PerfChartsSection from '../analytics/PerfChartsSection'
 import { polarFromData } from '../../lib/polarFile'
+import { STATS_VERSION } from '../../lib/seasonCurves'
 import targetsV14 from '../../data/targets-v1.4.json'
 import { addSection } from '../../lib/trackSections'
 
@@ -43,6 +44,37 @@ describe('PerfChartsSection', () => {
     expect(screen.getByText(/4 phases of 30 s/)).toBeTruthy()
   })
 
+  it('follows the race chosen on the track, and All puts every race back', () => {
+    // xmlData's first gun is race 5; choosing it on the track narrows the phases to it.
+    const { rerender } = render(
+      <PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} trackRaceNum={5} />)
+    expect(screen.getByRole('button', { name: 'Race 5 phases' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Race 6 phases' }).getAttribute('aria-pressed')).toBe('false')
+    // Three upwind phases are race 5's; the rest are nearer race 6's gun than race 5's,
+    // so they are its approach and its beat.
+    expect(screen.getByText(/3 phases of 30 s/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'All phases' }))
+    expect(screen.getByText(/8 phases of 30 s/)).toBeTruthy()
+
+    // Letting the track go back to the whole day puts them back too.
+    rerender(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} trackRaceNum={null} />)
+    expect(screen.getByRole('button', { name: 'Race 6 phases' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('counts pre-race phases in All, and drops them as soon as a race or section is chosen', () => {
+    // The first gun is moved late, so phases 0–3 belong to no race: dock-out, sail-up,
+    // a tuning run. Part of the day, but not part of an answer about a race.
+    const lateGuns = { ...xmlData, raceGuns: [{ utc: T0 + 4 * 30_000 - 1000, raceNum: 5 }] }
+    render(<PerfChartsSection rows={rows} xmlData={lateGuns} polarOverride={null} />)
+    expect(screen.getByText(/8 phases of 30 s/)).toBeTruthy()      // all eight upwind phases
+
+    fireEvent.click(screen.getByRole('button', { name: 'Race 5 phases' }))
+    expect(screen.getByText(/0 phases of 30 s/)).toBeTruthy()      // the race off takes the pre-race with it
+    fireEvent.click(screen.getByRole('button', { name: 'All phases' }))
+    expect(screen.getByText(/8 phases of 30 s/)).toBeTruthy()
+  })
+
   it('switches races on and off, naming them after their start guns', () => {
     render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} />)
     // One button per race the day holds, all on to begin with.
@@ -51,10 +83,11 @@ describe('PerfChartsSection', () => {
     expect(race5.getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByText(/8 phases of 30 s/)).toBeTruthy()
 
-    // Race 5 off: only race 6's upwind phases are left.
+    // Race 5 off: race 6's upwind phases are left — its own, plus the approach ones in
+    // the five minutes before its gun.
     fireEvent.click(race5)
     expect(race5.getAttribute('aria-pressed')).toBe('false')
-    expect(screen.getByText(/2 phases of 30 s/)).toBeTruthy()
+    expect(screen.getByText(/5 phases of 30 s/)).toBeTruthy()
 
     // Both off is an honest state — nothing to chart, and both buttons still there.
     fireEvent.click(race6)
@@ -122,7 +155,7 @@ describe('PerfChartsSection', () => {
     // local rows are 1 Hz here, so make them look like the 6 s cloud copy
     const cloudRows = rows.filter((_, i) => i % 6 === 0)
     const storedOverride = {
-      date: '2026-09-11', stats_version: 2, polar_id: null, resolution_s: 1,
+      date: '2026-09-11', stats_version: STATS_VERSION, polar_id: null, resolution_s: 1,
       phases: [0, 1, 2, 3].map(i => ({
         u: T0 + i * 30_000, e: T0 + (i + 1) * 30_000, m: 'up', t: i % 2 ? 'port' : 'stbd', s: 'J4_A 2026', r: 1, n: 30,
         v: { tws: 20 + i, bsp: 12, twa: 40, heel: 21 }, x: { bsp: 12.5 },

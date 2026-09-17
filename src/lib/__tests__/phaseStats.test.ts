@@ -120,15 +120,41 @@ describe('groupPhases', () => {
     expect(groupPhases(stats, ['mode']).find(x => x.key.mode === 'up')?.mean.bsp).toBe(10)
   })
 
-  it('numbers races from the start guns and leaves pre-start phases out', () => {
-    expect(stats.map(s => s.race)).toEqual([null, 1, 1, 2])
-    expect(groupPhases(stats, ['race']).map(x => [x.key.race, x.n])).toEqual([['1', 2], ['2', 1]])
+  it('numbers races from the start guns, start sequences included', () => {
+    // The guns here are a minute apart, so only the phase before the first one counts
+    // as an approach: the rest are nearer the gun that has already fired, and a boat one
+    // minute into race 1 is racing it, not preparing for race 2.
+    expect(stats.map(s => s.race)).toEqual([1, 1, 1, 2])
+    expect(groupPhases(stats, ['race']).map(x => [x.key.race, x.n])).toEqual([['1', 3], ['2', 1]])
   })
 
   it('groups into bands with explicit edges', () => {
     const withTws = stats.map((s, i) => ({ ...s, mean: { ...s.mean, tws: [19, 21, 22.9, 26][i] } }))
     const g = groupPhases(withTws, ['twsBand'], { edges: { tws: [21, 23, 25] } })
     expect(g.map(x => [x.key.twsBand, x.n])).toEqual([['under 21', 1], ['21-23', 2], ['25 plus', 1]])
+  })
+})
+
+describe('the start sequence belongs to its race', () => {
+  // One gun at +10 min, another at +40 min: a day, roughly.
+  const gunA = 600, gunB = 2400
+  const seqXml = {
+    phases: [
+      phase(0, 30, 1),            // long before anything — no race
+      phase(gunA - 120, gunA - 90, 1),   // two minutes before the first gun
+      phase(gunA + 60, gunA + 90, 1),    // racing race 1
+      phase(gunB - 600, gunB - 570, 1),  // ten minutes before gun 2: still race 1
+      phase(gunB - 60, gunB - 30, 1),    // one minute before gun 2: race 2's approach
+    ],
+    sailsUpEvents: [{ utc: T0 - 1000, sails: ['MAIN_B 2026', 'J4_A 2026'] }],
+    raceGuns: [{ utc: T0 + gunA * 1000 }, { utc: T0 + gunB * 1000 }],
+  }
+  const seqRows = Array.from({ length: gunB + 60 }, (_, i) => ({
+    utc: T0 + i * 1000, bsp: 10, twa: 42, tws: 14, sog: 10,
+  }))
+
+  it('counts the five minutes before a gun as that race, and not a minute more', () => {
+    expect(computePhaseStats(seqRows, seqXml).map(s => s.race)).toEqual([null, 1, 1, 1, 2])
   })
 })
 

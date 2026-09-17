@@ -16,7 +16,9 @@ import type { Manoeuvre } from './manoeuvres'
 // channel doesn't need a bump: existing numbers are unchanged, and older rows simply
 // lack the new key until they are next recomputed.
 // 2 — stored phases carry their maxima (x); rows carry manoeuvres + log resolution (0061).
-export const STATS_VERSION = 2
+// 3: the five minutes before a start gun count as that race (src/lib/phaseStats.ts).
+// Stored rows carry `race`, so rows written under the old rule are rebuilt.
+export const STATS_VERSION = 3
 
 export interface StoredSummary { stats_version: number; polar_id: string | null; computed_at: string }
 

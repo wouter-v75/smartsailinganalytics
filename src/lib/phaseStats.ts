@@ -188,6 +188,16 @@ function lowerBound(rows: LogRow[], utc: number): number {
   return lo
 }
 
+// The start sequence belongs to the race it is a sequence FOR. A phase five minutes
+// before the gun is the approach, the line-up and the final tuning run — the part of a
+// race people argue about most — and counting it as "no race", or worse as the tail of
+// the previous one, hides it from every question asked about that race.
+//
+// Five minutes because that is the warning signal in this fleet (the same
+// DEFAULT_WARNING_LEAD_SEC the day segmenter uses); a class sailing a 3- or 10-minute
+// sequence would want its own number.
+export const WARNING_LEAD_MS = 300_000
+
 export interface PhaseStatsOpts {
   polar?: any
   minSamples?: number  // phases with fewer log rows are skipped (default 3)
@@ -242,7 +252,19 @@ export function computePhaseStats(
     }
 
     const sails = activeSailsAt(xml, (p.utc + p.endUtc) / 2)
-    const race = guns.filter(g => g <= p.utc).length
+    // The race under way, or — inside the last five minutes before a gun — the race
+    // about to start.
+    //
+    // With one guard: the phase must be NEARER the coming gun than the last one. Two
+    // classes can start three minutes apart, and then a phase two minutes before the
+    // second gun is one minute into the first race — it is being raced, not prepared
+    // for, and calling it the next race's approach would be wrong.
+    let race = guns.filter(g => g <= p.utc).length
+    const next = guns.findIndex(g => g > p.utc)
+    if (next >= 0 && guns[next] - p.utc <= WARNING_LEAD_MS) {
+      const prev = next > 0 ? guns[next - 1] : null
+      if (prev == null || guns[next] - p.utc < p.utc - prev) race = next + 1
+    }
     out.push({
       utc: p.utc, endUtc: p.endUtc, mode, tack, sails,
       sailCombo: sailComboLabel(sails), race: race || null, n: inside.length, mean, max,

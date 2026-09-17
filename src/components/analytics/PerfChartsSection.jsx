@@ -337,6 +337,7 @@ const modeBtn = on => ({
 export default function PerfChartsSection({
   rows, xmlData, tzOffsetMin = 0, playUtc = null, onJump = null, activeDate = null, canUseAI = false,
   sections = [],  // stretches picked on the GPS track; empty = the whole day
+  trackRaceNum = null,  // the race chosen on the track, so both screens agree
   polarOverride, curvesOverride, storedOverride, headlinesOverride,
 }) {
   const boat = useActiveBoat()
@@ -350,6 +351,12 @@ export default function PerfChartsSection({
   // Races are switched on and off like sections, rather than picked one at a time: the
   // question is usually "these two races, not that one", which a single choice cannot ask.
   const [hiddenRaces, setHiddenRaces] = React.useState([])
+  // Picking a race on the track narrows the phases to it: one choice, two screens, and
+  // no wondering why the map and the charts disagree. "All" puts everything back.
+  const raceOfGun = React.useCallback((n) => {
+    const guns = (xmlData?.raceGuns || []).filter(g => Number.isFinite(g?.utc)).sort((a, b) => a.utc - b.utc)
+    return guns[n - 1]?.raceNum ?? n
+  }, [xmlData])
   const [sails, setSails] = React.useState('')
   const [tack, setTack] = React.useState('')   // '' | 'port' | 'stbd'
   // Every section's phases are shown; a section can be switched off to take it out of
@@ -367,7 +374,9 @@ export default function PerfChartsSection({
   // Set aside when an event file was re-imported and its phases were chosen. Kept, not
   // deleted: the charts ignore them until somebody asks for them back.
   const setAside = !!ssaDoc?.setAside && (ssaDoc?.phases?.length || 0) > 0
-  const ssaPhases = setAside ? [] : (ssaDoc?.phases || [])
+  // Memoised: a fresh array every render would make every memo below it recompute, and
+  // the effect that follows the track's race would then set state for ever.
+  const ssaPhases = React.useMemo(() => (setAside ? [] : (ssaDoc?.phases || [])), [setAside, ssaDoc])
   const mayBuild = canBuildPhases(boat?.role)
   const mayUpload = canUploadPhases(boat?.role)
   // Charts read whichever source is chosen; the event file's own phases are untouched.
@@ -457,6 +466,21 @@ export default function PerfChartsSection({
     setTest(null)
   }
 
+  // The races this day holds, and following the track's own choice of one.
+  const raceNums = React.useMemo(
+    () => Array.from(new Set(dayStats.map(p => p.race).filter(r => r != null))).sort((a, b) => a - b), [dayStats])
+  React.useEffect(() => {
+    const next = trackRaceNum == null
+      ? []
+      : (() => {
+          const pick = raceNums.find(n => raceOfGun(n) === trackRaceNum)
+          return pick == null ? [] : raceNums.filter(n => n !== pick)
+        })()
+    // Only when it actually changes: setting state to an equal-but-new array on every
+    // render is how a render loop starts.
+    setHiddenRaces(cur => (cur.length === next.length && cur.every((v, i) => v === next[i]) ? cur : next))
+  }, [trackRaceNum, raceNums, raceOfGun])
+
   if (!xmlData?.phases?.length && !ssaPhases.length) {
     return <div style={note}>No phases in this session’s event file — re-import the event (.ev.xml) file, or select a stretch of the track and let SSA build them.</div>
   }
@@ -469,15 +493,20 @@ export default function PerfChartsSection({
   const raceLabel = i => (guns[i - 1]?.raceNum ? `Race ${guns[i - 1].raceNum}` : `Race ${i}`)
   // From the whole day, not from what is on screen: a race switched off must still have
   // a button to switch it back on.
-  const races = Array.from(new Set(dayStats.map(s => s.race).filter(r => r != null))).sort((a, b) => a - b)
+  const races = raceNums
   // "Speed vs TWA" (mode 'polar'), the report tables and the manoeuvres cover the whole day.
   const modeStats = ['polar', 'tables', 'manoeuvres', 'lidar', 'start'].includes(mode) ? stats : stats.filter(s => s.mode === mode)
   const lidarSails = LIDAR_SAILS.filter(s => hasLidar(stats, s.sail))
   const combos = Array.from(new Set(modeStats.map(s => s.sailCombo))).sort()
   const sailsSel = combos.includes(sails) ? sails : ''
-  // A phase before the first gun belongs to no race and is never hidden by a race button.
+  // A phase before the first gun belongs to no race: dock-out, the sail-up, the tuning
+  // run. It is part of the day, so it counts in All — but the moment somebody asks for a
+  // race or a section, they are asking about racing, and pre-race phases are noise in
+  // that answer.
+  const filtering = hiddenRaces.length > 0 || liveSections.length > 0
   const shown = modeStats.filter(s =>
-    (s.race == null || !hiddenRaces.includes(s.race)) && (!sailsSel || s.sailCombo === sailsSel) && (!tack || s.tack === tack))
+    (s.race == null ? !filtering : !hiddenRaces.includes(s.race))
+    && (!sailsSel || s.sailCombo === sailsSel) && (!tack || s.tack === tack))
   const count = m => stats.filter(s => s.mode === m).length
 
   const specs = (CHARTS[mode] || [])
@@ -514,6 +543,8 @@ export default function PerfChartsSection({
         onJumpRun={r => onJump?.(r.from)}
         selection={range}
         races={races.map(n => ({ n, label: raceLabel(n) }))} hiddenRaces={hiddenRaces}
+        allOn={!hiddenRaces.length && !hiddenSections.length}
+        onAll={() => { setHiddenRaces([]); setHiddenSections([]) }}
         onToggleRace={n => setHiddenRaces(h => h.includes(n) ? h.filter(x => x !== n) : [...h, n])}
         sections={sections} hiddenSections={hiddenSections}
         onToggleSection={id => setHiddenSections(h => h.includes(id) ? h.filter(x => x !== id) : [...h, id])}
@@ -623,7 +654,9 @@ export default function PerfChartsSection({
       ) : mode === 'manoeuvres' ? (
         (() => {
           const listed = manoeuvres.filter(m =>
-            (showAllManoeuvres || isJudged(m)) && (m.race == null || !hiddenRaces.includes(m.race)) && (!sailsSel || m.sails === sailsSel))
+            (showAllManoeuvres || isJudged(m))
+            && (m.race == null ? !filtering : !hiddenRaces.includes(m.race))
+            && (!sailsSel || m.sails === sailsSel))
           return (
             <div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: '#94A3B8', margin: '-2px 0 10px' }}>

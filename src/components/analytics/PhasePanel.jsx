@@ -32,6 +32,7 @@ export default function PhasePanel({
   settings, onSettings,
   counts = { event: 0, ssa: 0, manoeuvres: 0 },
   races = [], hiddenRaces = [], onToggleRace = null,
+  allOn = true, onAll = null,
   sections = [], hiddenSections = [], onToggleSection = null,
   build = null,                       // last build: { reasons, rejected, phases }
   runs = [], onDeleteRun = null, onJumpRun = null,
@@ -82,10 +83,14 @@ export default function PhasePanel({
           </label>
         )}
         {/* Which races are in view. On and off rather than one at a time, because the
-            question is usually "these two, not that one". */}
-        {races.length > 0 && (
+            question is usually "these two, not that one" — with All to undo the lot. */}
+        {(races.length > 0 || sections.length > 0) && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 1, height: 18, background: C.border, margin: '0 2px' }} />
+            <button onClick={() => onAll?.()} aria-pressed={allOn} aria-label="All phases"
+              title="Every race and every section" style={{ ...btn(allOn), fontWeight: 600 }}>
+              All
+            </button>
             {races.map(r => {
               const on = !hiddenRaces.includes(r.n)
               return (

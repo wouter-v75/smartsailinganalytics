@@ -253,3 +253,32 @@ describe('which races are in view', () => {
     expect(screen.queryByRole('button', { name: /^Race .* phases$/ })).toBeNull()
   })
 })
+
+describe('the All button', () => {
+  const races = [{ n: 1, label: 'Race 5' }, { n: 2, label: 'Race 6' }]
+  const sections = [{ id: 's1', n: 1, color: '#FDE047', range: [T0, T0 + 60_000] as [number, number] }]
+
+  it('is on until something is switched off', () => {
+    const { rerender } = render(<PhasePanel {...base} races={races} allOn />)
+    expect(screen.getByRole('button', { name: 'All phases' }).getAttribute('aria-pressed')).toBe('true')
+    rerender(<PhasePanel {...base} races={races} hiddenRaces={[1]} allOn={false} />)
+    expect(screen.getByRole('button', { name: 'All phases' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('puts everything back', () => {
+    const onAll = vi.fn()
+    render(<PhasePanel {...base} races={races} sections={sections} hiddenRaces={[1]} allOn={false} onAll={onAll} />)
+    fireEvent.click(screen.getByRole('button', { name: 'All phases' }))
+    expect(onAll).toHaveBeenCalled()
+  })
+
+  it('appears for a day with sections but no races', () => {
+    render(<PhasePanel {...base} sections={sections} />)
+    expect(screen.getByRole('button', { name: 'All phases' })).toBeTruthy()
+  })
+
+  it('stays away on a day with neither', () => {
+    render(<PhasePanel {...base} />)
+    expect(screen.queryByRole('button', { name: 'All phases' })).toBeNull()
+  })
+})
