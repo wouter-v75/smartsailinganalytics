@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { type Glossary } from '../../../../lib/debriefGlossary'
 import { MODES, buildMessages } from '../../../../lib/debriefPrompt'
 import { collapseRepeats } from '../../../../lib/transcriptClean'
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 // A 75-minute debrief took 45 s on mistral-medium (Maxi Worlds 2026, 10 Sept) — too close
 // to the old 55 s abort. 300 s is the Fluid-compute ceiling on every Vercel plan.
@@ -28,6 +29,9 @@ const MODEL = process.env.SCALEWAY_AI_MODEL || 'mistral-medium-3.5-128b'
 const log = (...a: unknown[]) => { try { console.info('[ai/debrief-summary]', ...a) } catch { /* */ } }
 
 export async function GET() {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   return NextResponse.json({ configured: !!(KEY && BASE), model: MODEL, modes: Object.keys(MODES) })
 }
 
@@ -75,6 +79,9 @@ function coerce(v: unknown): string {
 const normKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
 
 export async function POST(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   const t0 = Date.now()
   if (!KEY || !BASE) {
     return NextResponse.json({ error: 'SCALEWAY_AI_API_KEY / SCALEWAY_AI_BASE_URL not configured' }, { status: 503 })

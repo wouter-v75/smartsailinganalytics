@@ -10,10 +10,10 @@
 // is shipped in Chrome/Edge but not yet in Safari iOS, which is where
 // most field-side users live).
 //
-// Security note: /api/storage/credentials hands out the write key to any
-// fetch from the browser. Pre-existing behaviour for photo uploads.
-// Tightening that endpoint to require an authed user is a separate
-// concern — flagged in memory, not done here.
+// Security note: /api/storage/credentials hands the zone's write key to the
+// browser, because Bunny Storage has no scoped or short-lived write token to
+// hand out instead. It is now gated to signed-in, approved users; within that
+// set the key is zone-wide, so any of them can write anywhere in it.
 
 interface StorageCreds {
   accessKey: string

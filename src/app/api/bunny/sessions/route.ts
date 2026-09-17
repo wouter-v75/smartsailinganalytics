@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 const API_KEY = process.env.BUNNY_STORAGE_API_KEY!;
 const ZONE    = process.env.BUNNY_STORAGE_ZONE!;
@@ -13,6 +14,9 @@ function base() {
 // GET /api/bunny/sessions
 // Lists all session dates available in Bunny Storage by reading the sessions/ folder.
 export async function GET() {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   if (!API_KEY || !ZONE)
     return NextResponse.json([], { status: 200 }); // not configured → empty list
 

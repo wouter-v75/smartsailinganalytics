@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 const STREAM_KEY = process.env.BUNNY_STREAM_API_KEY!;
 const LIBRARY_ID = process.env.BUNNY_STREAM_LIBRARY_ID!;
 
 // DELETE /api/stream/delete   body: { streamId: string }
 export async function DELETE(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   if (!STREAM_KEY || !LIBRARY_ID)
     return NextResponse.json({ error: "Bunny Stream not configured" }, { status: 503 });
 

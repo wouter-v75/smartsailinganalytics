@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 const API_KEY = process.env.BUNNY_STORAGE_API_KEY!;
 const ZONE    = process.env.BUNNY_STORAGE_ZONE!;
@@ -16,6 +17,9 @@ function safeKey(k: string) {
 
 // GET /api/bunny/storage?key=sessions/2024-09-04/log.json
 export async function GET(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   if (!API_KEY || !ZONE)
     return NextResponse.json({ error: "Bunny Storage not configured" }, { status: 503 });
 
@@ -44,6 +48,9 @@ export async function GET(req: NextRequest) {
 
 // PUT /api/bunny/storage   body: { key: string, data: any }
 export async function PUT(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   if (!API_KEY || !ZONE)
     return NextResponse.json({ error: "Bunny Storage not configured" }, { status: 503 });
 
@@ -67,6 +74,9 @@ export async function PUT(req: NextRequest) {
 
 // DELETE /api/bunny/storage?key=sessions/3925-09-04/meta.json
 export async function DELETE(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   if (!API_KEY || !ZONE)
     return NextResponse.json({ error: "Bunny Storage not configured" }, { status: 503 });
 

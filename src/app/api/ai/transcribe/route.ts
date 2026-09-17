@@ -15,6 +15,7 @@
 // at ~4.5 MB, and a single long transcription would also blow the function
 // timeout). The client stitches the chunk texts back together in order.
 import { NextRequest, NextResponse } from 'next/server'
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 export const maxDuration = 60
 export const dynamic = 'force-dynamic'
@@ -27,10 +28,16 @@ const log = (...a: unknown[]) => { try { console.info('[ai/transcribe]', ...a) }
 
 // Health check — confirms config WITHOUT exposing the key.
 export async function GET() {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   return NextResponse.json({ configured: !!(KEY && BASE), model: MODEL })
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   const t0 = Date.now()
   if (!KEY || !BASE) {
     return NextResponse.json({ error: 'SCALEWAY_AI_API_KEY / SCALEWAY_AI_BASE_URL not configured' }, { status: 503 })

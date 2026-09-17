@@ -3,6 +3,7 @@
 // to the browser). Set ANTHROPIC_API_KEY (or NEXT_PUBLIC_ANTHROPIC_API_KEY) in the
 // environment. Returns { typeOfDay, situation, todaysWind, stability, outlook }.
 import { NextRequest, NextResponse } from 'next/server'
+import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 // LLM calls routinely exceed Vercel's default function timeout (10–15 s), which
 // kills the request and surfaces to the client as a timeout. Allow up to 60 s.
@@ -59,6 +60,9 @@ const MODEL = process.env.ANTHROPIC_FORECAST_MODEL || 'claude-sonnet-4-6'
 // Health check — confirms whether the server has the key WITHOUT exposing it.
 // GET /api/ai/forecast-summary → { configured, keyVar, model }
 export async function GET() {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   return NextResponse.json({
     configured: !!KEY,
     keyVar: process.env.ANTHROPIC_API_KEY ? 'ANTHROPIC_API_KEY'
@@ -68,6 +72,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireActiveUser()
+  if (!gate.ok) return gate.response
+
   const t0 = Date.now()
   const log = (...a: unknown[]) => console.log('[ai/forecast-summary]', `+${Date.now() - t0}ms`, ...a)
   if (!KEY) { log('no key'); return NextResponse.json({ error: 'ANTHROPIC_API_KEY not configured' }, { status: 503 }) }
