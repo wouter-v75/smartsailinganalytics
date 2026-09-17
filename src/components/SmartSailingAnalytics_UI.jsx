@@ -13,6 +13,7 @@ import { getBrowserSupabase, getUidFast } from '../lib/supabase/browser';
 import { parseLog } from '../lib/logParse';
 import { isLidarKey } from '../lib/flatLogParse';
 import { logRateHz, isSubSecondLog, thinToOneHz, lidarSailsIn } from '../lib/logResolution';
+import { slimRowForCloud } from '../lib/cloudLogRound';
 import { nearestTrackIndex, orderedRange, inRange } from '../lib/trackSelection';
 import { addSection, removeSection, inSections, sectionsSpan, selectButtonLabel, sectionLabel } from '../lib/trackSections';
 import { fetchDayTags, trackTags, isTagged, EVENT_FILE_SLUG } from '../lib/dayTags';
@@ -750,9 +751,9 @@ function reduceLogForCloud(logData,xmlData){
   }
   //    3b. Round floats. Instrument data is meaningless past 2 dp, and a raw
   //        parseFloat can serialise as 9.100000000000001 — 18 chars for one number.
-  const round=v=>(typeof v==='number'&&Number.isFinite(v)&&!Number.isInteger(v))?Math.round(v*100)/100:v;
-  const slim=r=>{ const o={}; for(const k of keep){ const v=r[k]; if(v!=null) o[k]=round(v); } return o; };
-  out=out.map(slim);
+  //        POSITION is the exception and keeps five (see lib/cloudLogRound): 0.01° of
+  //        latitude is 1.1 km, and a day rounded to that is a staircase, not a track.
+  out=out.map(r=>slimRowForCloud(r, keep));
 
   //    3c. Hard byte budget. Whatever the schema, the payload must fit — so if it
   //        still doesn't, halve the row count until it does rather than let the PUT
