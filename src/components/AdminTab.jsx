@@ -8,7 +8,7 @@
 // Props are threaded from the parent: status values to display, and the
 // state setters the storage-management tools need.
 
-const TODAY = () => new Date().toISOString().slice(0, 10)
+import { todayIso as TODAY } from '../lib/today'
 const fmtDate = d => {
   if (!d) return ''
   const p = d.split('-')

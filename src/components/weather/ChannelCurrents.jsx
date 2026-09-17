@@ -99,6 +99,11 @@ export default function ChannelCurrents({ point1 = null }) {
   const fieldsRef = useRef({})            // { overview, hires } cached
   const [field, setField] = useState(null)
   const [tier, setTier] = useState('overview')
+  // The map's zoomend handler is installed once and then outlives every later
+  // render, so it cannot read `tier` from state — it would forever see the value
+  // from the render that built the map ('overview') and never swap back down.
+  const tierRef = useRef('overview')
+  const setTierBoth = (t) => { tierRef.current = t; setTier(t) }
   const [err, setErr] = useState('')
   const [idx, setIdx] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -125,8 +130,17 @@ export default function ChannelCurrents({ point1 = null }) {
   }, [covered])
 
   // init map centred on point 1
+  //
+  // Gated on whether a field has ARRIVED, not on which field it is. With `field`
+  // itself in the deps, zooming past ZOOM_HIRES swapped overview → hires, which
+  // tore the map down and rebuilt it at zoom 9 — below ZOOM_HIRES again, so the
+  // handler swapped straight back and the two tiers ping-ponged. You could never
+  // hold a zoomed-in view of the 1.5 km field, which is the whole point of it.
+  // The velocity layer takes new data through setData() (below); the map does not
+  // need rebuilding for a tier change at all.
+  const hasField = !!field
   useEffect(() => {
-    if (!leafletReady || !covered || !field || mapRef.current || !mapDivRef.current) return
+    if (!leafletReady || !covered || !hasField || mapRef.current || !mapDivRef.current) return
     const L = window.L
     const map = L.map(mapDivRef.current, { zoomControl: true, attributionControl: false })
     addDarkBasemap(L, map, { maxZoom: 13 })
@@ -136,20 +150,22 @@ export default function ChannelCurrents({ point1 = null }) {
 
     map.on('zoomend', async () => {
       const hi = map.getZoom() >= ZOOM_HIRES
-      if (hi && tier !== 'hires') {
-        if (fieldsRef.current.hires) { setField(fieldsRef.current.hires); setTier('hires'); return }
+      if (hi && tierRef.current !== 'hires') {
+        if (fieldsRef.current.hires) { setField(fieldsRef.current.hires); setTierBoth('hires'); return }
         try {
           const j = await getJSON(`/api/currents/hires?lat=${p1.lat}&lon=${p1.lon}`)
-          fieldsRef.current.hires = j; setField(j); setTier('hires')
+          fieldsRef.current.hires = j; setField(j); setTierBoth('hires')
         } catch { /* stay on overview */ }
-      } else if (!hi && tier !== 'overview' && fieldsRef.current.overview) {
-        setField(fieldsRef.current.overview); setTier('overview')
+      } else if (!hi && tierRef.current !== 'overview' && fieldsRef.current.overview) {
+        setField(fieldsRef.current.overview); setTierBoth('overview')
       }
     })
     map.on('mousemove', (e) => setCursor({ lat: e.latlng.lat, lon: e.latlng.lng }))
     map.on('mouseout', () => setCursor(null))
     return () => { try { map.remove() } catch { /* */ } mapRef.current = null }
-  }, [leafletReady, covered, field])
+    // p1 is stable per point (useMemo above); a venue change unmounts the panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leafletReady, covered, hasField, p1.lat, p1.lon])
 
   // Open on the frame nearest NOW (clamps to the newest frame when the whole
   // published window is in the past — i.e. stale data). Beats always starting at

@@ -11,6 +11,7 @@
 import { getVideoBlob, markVideoCloudSynced, markCloudSynced } from "./localStore";
 import { hashLogPayload, hashXmlPayload } from "./contentHash";
 import { readSyncManifest, updateSyncManifest } from "./syncManifest";
+import { readCandidates, writeKey, SESSION_LEAVES, photoLeaves } from "./storageKeys";
 
 // ── Cached storage write credentials ─────────────────────────────────────────
 let _storageCreds = null;
@@ -46,6 +47,28 @@ export async function fetchFromStorage(key) {
     if (!res.ok) return null;
     return res.json();
   } catch { return null; }
+}
+
+// ── Scope-aware session files ────────────────────────────────────────────────
+// A session's JSON now lives under teams/<team>/boats/<boat>/sessions/<date>/.
+// See src/lib/storageKeys.ts for why, and for why nothing in the zone had to move:
+// reads fall back to the old flat `sessions/<date>/` key, so every session
+// uploaded before this keeps loading exactly where it is.
+
+/** Read a session file, scoped key first and the pre-migration key second. */
+export async function fetchSessionFile(scope, date, leaf) {
+  for (const key of readCandidates(scope, date, leaf)) {
+    const found = await fetchFromStorage(key);
+    if (found != null) return found;
+  }
+  return null;
+}
+
+/** Write a session file under the scoped key (legacy only if we have no scope). */
+export async function uploadSessionFile(scope, date, leaf, data) {
+  const key = writeKey(scope, date, leaf);
+  if (!key) return false;
+  return uploadJsonToStorage(key, data);
 }
 
 // ── Cloud status check ────────────────────────────────────────────────────────
@@ -160,6 +183,10 @@ export function alreadyInCloud(video) {
 
 export async function syncSessionToCloud(date, logData, xmlData, videos, onStatus, opts = {}) {
   const status = msg => onStatus?.(msg);
+  // Whose session this is. Without it the keys fall back to the flat
+  // pre-migration layout — which is what a user with no active membership
+  // always had. See src/lib/storageKeys.ts.
+  const scope = opts.scope || null;
   const onVideoSynced = opts.onVideoSynced;
   // skipped: ids whose original was already up without a legacy streamId, so
   // the caller can close their progress rows.
@@ -170,7 +197,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
     // the old "upload whenever rows exist" behaviour that re-sent multi-MB logs
     // every session. See docs/sync-caching-architecture-research.md.
     let manifest = null;
-    try { manifest = await readSyncManifest(date); } catch {}
+    try { manifest = await readSyncManifest(date, scope); } catch {}
     const manifestPatch = {};
     let syncedLogHash, syncedXmlHash;
 
@@ -183,7 +210,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       } else {
         const approxMB = (JSON.stringify(logData.rows).length / 1e6).toFixed(1);
         status(`Uploading log data to Bunny Storage (${logData.rows.length.toLocaleString()} rows · ~${approxMB} MB)…`);
-        const ok = await uploadJsonToStorage(`sessions/${date}/log.json`, {
+        const ok = await uploadSessionFile(scope, date, SESSION_LEAVES.log, {
           rows: logData.rows, startUtc: logData.startUtc,
           endUtc: logData.endUtc, uploadedAt: Date.now(),
         });
@@ -204,7 +231,7 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
         syncedXmlHash = xmlHash;
       } else {
         status("Uploading event data to Bunny Storage…");
-        const ok = await uploadJsonToStorage(`sessions/${date}/events.json`, {
+        const ok = await uploadSessionFile(scope, date, SESSION_LEAVES.events, {
           ...xmlData, uploadedAt: Date.now(),
         });
         if (!ok) status("⚠ Events upload failed — continuing…");
@@ -282,14 +309,14 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
       })),
       syncedAt: Date.now(),
     };
-    await uploadJsonToStorage(`sessions/${date}/meta.json`, meta);
+    await uploadSessionFile(scope, date, SESSION_LEAVES.meta, meta);
 
     // Record what's now in the cloud: update the session manifest with any
     // newly-uploaded log/xml hashes (optimistic on the copy we read), and
     // persist the same fingerprints locally so a future sync of unchanged data
     // skips the transfer entirely.
     if (Object.keys(manifestPatch).length) {
-      try { await updateSyncManifest(date, manifestPatch, manifest); } catch {}
+      try { await updateSyncManifest(date, manifestPatch, manifest, scope); } catch {}
     }
     try { await markCloudSynced(date, { logHash: syncedLogHash, xmlHash: syncedXmlHash }); } catch {}
 
@@ -305,16 +332,16 @@ export async function syncSessionToCloud(date, logData, xmlData, videos, onStatu
 // ── Update cloud metadata after re-enrichment ────────────────────────────────
 // Called when log/event files are uploaded after videos were already synced.
 // Updates meta.json with enriched video data + optionally uploads new log/events.
-export async function updateCloudSessionMetadata(date, { videos, logData, xmlData, photos } = {}) {
+export async function updateCloudSessionMetadata(date, { videos, logData, xmlData, photos, scope = null } = {}) {
   try {
     // 1. Read existing meta.json from cloud
-    const existing = await fetchFromStorage(`sessions/${date}/meta.json`);
+    const existing = await fetchSessionFile(scope, date, SESSION_LEAVES.meta);
     if (!existing) return false; // session not yet in cloud — nothing to update
 
     // 2. Upload log/events if provided AND actually changed vs the cloud
     //    manifest (content-hash guard — don't re-send unchanged data).
     let manifest = null;
-    try { manifest = await readSyncManifest(date); } catch {}
+    try { manifest = await readSyncManifest(date, scope); } catch {}
     const manifestPatch = {};
     let syncedLogHash, syncedXmlHash;
     const uploads = [];
@@ -323,7 +350,7 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
       if (manifest?.log?.hash === logHash) {
         syncedLogHash = logHash;
       } else {
-        uploads.push(uploadJsonToStorage(`sessions/${date}/log.json`, {
+        uploads.push(uploadSessionFile(scope, date, SESSION_LEAVES.log, {
           rows: logData.rows, startUtc: logData.startUtc,
           endUtc: logData.endUtc, uploadedAt: Date.now(),
         }));
@@ -336,7 +363,7 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
       if (manifest?.xml?.hash === xmlHash) {
         syncedXmlHash = xmlHash;
       } else {
-        uploads.push(uploadJsonToStorage(`sessions/${date}/events.json`, {
+        uploads.push(uploadSessionFile(scope, date, SESSION_LEAVES.events, {
           ...xmlData, uploadedAt: Date.now(),
         }));
         syncedXmlHash = xmlHash;
@@ -383,7 +410,7 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
     existing.enrichedAt = Date.now();
 
     // 4. Upload updated meta.json + any log/event uploads in parallel
-    uploads.push(uploadJsonToStorage(`sessions/${date}/meta.json`, existing));
+    uploads.push(uploadSessionFile(scope, date, SESSION_LEAVES.meta, existing));
 
     // 5. Update per-photo metadata if photos provided
     if (photos?.length) {
@@ -392,11 +419,11 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
         const metaObj = { ...p };
         delete metaObj.objectUrl;  // don't store blob URLs in cloud
         photoIndex.photos.push(metaObj);
-        uploads.push(uploadJsonToStorage(
-          `sessions/${date}/photos/${p.id}_meta.json`, metaObj
+        uploads.push(uploadSessionFile(
+          scope, date, photoLeaves(p.id).meta, metaObj
         ));
       }
-      uploads.push(uploadJsonToStorage(`sessions/${date}/photos.json`, photoIndex));
+      uploads.push(uploadSessionFile(scope, date, SESSION_LEAVES.photoIndex, photoIndex));
     }
 
     await Promise.all(uploads);
@@ -404,7 +431,7 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
     // Record the newly-uploaded log/xml in the manifest + locally so we don't
     // re-send them next time.
     if (Object.keys(manifestPatch).length) {
-      try { await updateSyncManifest(date, manifestPatch, manifest); } catch {}
+      try { await updateSyncManifest(date, manifestPatch, manifest, scope); } catch {}
     }
     if (syncedLogHash || syncedXmlHash) {
       try { await markCloudSynced(date, { logHash: syncedLogHash, xmlHash: syncedXmlHash }); } catch {}
@@ -417,11 +444,11 @@ export async function updateCloudSessionMetadata(date, { videos, logData, xmlDat
 }
 
 // ── Fetch a session from cloud ────────────────────────────────────────────────
-export async function fetchCloudSession(date) {
+export async function fetchCloudSession(date, scope = null) {
   const [meta, logData, xmlData] = await Promise.all([
-    fetchFromStorage(`sessions/${date}/meta.json`),
-    fetchFromStorage(`sessions/${date}/log.json`),
-    fetchFromStorage(`sessions/${date}/events.json`),
+    fetchSessionFile(scope, date, SESSION_LEAVES.meta),
+    fetchSessionFile(scope, date, SESSION_LEAVES.log),
+    fetchSessionFile(scope, date, SESSION_LEAVES.events),
   ]);
   if (!meta) return null;
   const videos = await Promise.all((meta.videos || []).map(async v => {
@@ -449,36 +476,6 @@ export async function fetchCloudSession(date) {
   };
 }
 
-// ── Download original video from Bunny Storage for offline playback ───────────
-// Fetches via Vercel proxy (read-only key), stores blob in IndexedDB.
-export async function downloadVideoForOffline(video, onProgress) {
-  try {
-    const { saveVideoBlob } = await import("./localStore");
-    const storageKey = `sessions/${video.sessionDate}/videos/${video.id}/original`;
-    const res = await fetch(`/api/bunny/storage?key=${encodeURIComponent(storageKey)}`);
-    if (!res.ok) return false;
-
-    // Stream with progress
-    const contentLength = res.headers.get("Content-Length");
-    const total = contentLength ? parseInt(contentLength) : 0;
-    const reader = res.body.getReader();
-    const chunks = [];
-    let received = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      if (total > 0) onProgress?.(Math.round((received / total) * 100));
-    }
-    const blob = new Blob(chunks, { type: "video/mp4" });
-    await saveVideoBlob(video.id, blob);
-    return true;
-  } catch (e) {
-    console.error("downloadVideoForOffline error:", e);
-    return false;
-  }
-}
 
 // ── Delete a video from Bunny Stream ─────────────────────────────────────────
 export async function deleteStreamVideo(streamId) {

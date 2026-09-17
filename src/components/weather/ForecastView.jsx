@@ -78,7 +78,6 @@ const LOCATION_META = [
   { key: '3', emoji: '🟠', accent: '#F97316' },
 ]
 
-const today = () => new Date().toISOString().slice(0, 10)
 const TZ_OPTIONS = [
   { v: 'auto',                       l: 'Auto (browser)' },
   { v: 'UTC',                        l: 'UTC' },
@@ -1399,73 +1398,6 @@ function WindProfileSection({ windData, model, timezone }) {
       />
     </Card>
   )
-}
-
-// Boundary-layer height per location: SSA-Race hpbl (self-hosted, bulk-Richardson,
-// solid) plus the GFS PBL as a coarse global reference (dotted). SSA-Race times are
-// UTC; the GFS column is venue-local wall-clock — both are mapped to venue-local
-// wall-clock so the lines align on the shared x-axis.
-export function BoundaryLayerChart({ windData, timezone }) {
-  const data = useMemo(() => {
-    // UTC ISO -> venue-local wall-clock string (parsed as the same basis as GFS).
-    const toLocalWall = (iso) => {
-      const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`)
-      const p = new Intl.DateTimeFormat('en-CA', {
-        timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-      }).formatToParts(d)
-      const g = (t) => p.find((x) => x.type === t)?.value
-      return `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}`
-    }
-    const traces = []
-    for (const [key, point] of Object.entries(windData)) {
-      const meta = LOCATION_META.find((m) => m.key === key)
-      // SSA-Race hpbl — solid, one line per self-hosted resolution present.
-      let hasRace = false
-      for (const mk of ['ICONRACE', 'ICONRACE_1KM']) {
-        const sh = point.surfaceByModel?.[mk]?.hourly
-        const sb = sh?.boundary_layer_height; const st = sh?.time
-        if (sb && st && sb.some((h) => h != null && h > 0)) {
-          hasRace = true
-          traces.push({
-            x: st.map((t) => new Date(toLocalWall(t))),
-            y: sb,
-            type: 'scatter', mode: 'lines+markers',
-            name: `${meta.emoji} Loc ${key} · ${MODELS[mk].label}`,
-            line: { color: meta.accent, width: 3 }, marker: { size: 5 },
-            connectgaps: true,
-          })
-        }
-      }
-      // GFS PBL — coarse global reference, shown ONLY where no SSA-Race hpbl exists
-      // (when the high-res self-hosted model covers the point, GFS adds noise).
-      if (!hasRace) {
-        const hr = point.gfs?.hourly || {}
-        const blh = hr.boundary_layer_height
-        const time = hr.time
-        if (blh && time && blh.some((h) => h != null && h > 0)) {
-          traces.push({
-            x: time.map((t) => new Date(t)),
-            y: blh,
-            type: 'scatter', mode: 'lines',
-            name: `${meta.emoji} Loc ${key} · GFS`,
-            line: { color: meta.accent, width: 1.5, dash: 'dot' },
-            opacity: 0.7, connectgaps: true,
-          })
-        }
-      }
-    }
-    return traces
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windData, timezone])
-  const layout = {
-    xaxis: { title: 'Time', type: 'date' },
-    yaxis: { title: 'PBL height (m)', rangemode: 'tozero' },
-    hovermode: 'x unified',
-    legend: { orientation: 'h', y: -0.2 },
-    margin: { t: 20, b: 80, l: 60, r: 20 },
-  }
-  return <PlotlyChart data={data} layout={layout} height={300} placeholder="No PBL data at the selected points" />
 }
 
 function ChartTitle({ children, inline }) {

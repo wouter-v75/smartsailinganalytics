@@ -1,11 +1,10 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { saveVideo, pruneInertVideos, dedupeVideos, updateVideoRotation, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList, markVideoOriginalUploaded, getVideoCloudFlags, loadSsaPhases, saveSsaPhases, deleteSsaPhases } from "../lib/localStore";
+import { saveVideo, pruneInertVideos, dedupeVideos, updateVideoRotation, getAllVideos, getAllVideosForMembership, getVideosForDate, updateVideoTags, updateVideoStartUtc, deleteVideo, saveLogData, getLogData, saveXmlData, getXmlData, computeAutoTags, getSessions, getSessionsForMembership, getUnsyncedCount, markCloudSynced, getTagList, saveTagList, mergeTagList, markVideoOriginalUploaded, getVideoCloudFlags, loadSsaPhases, saveSsaPhases, deleteSsaPhases, getSyncOffsets, saveSyncOffset } from "../lib/localStore";
 import { deleteStreamVideo, updateCloudSessionMetadata, checkCloudStatus, syncSessionToCloud, fetchCloudSession, listR2Sessions, waitForStreamReady, createStreamUpload, uploadFileToStream } from "../lib/bunny";
 import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
-  buildSpline, evalSpline, goldenMax, preparePolar,
-  polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
+  polarInterp, polarVMGTarget, polarPerf } from '../lib/polarCalc';
 import { toMode, TRACK_COLOUR_MODES, modeDef, needsPolar, trackValue, scaleForRows, colourFor, legendStops } from '../lib/trackColour';
 import { MEDIA_COLOURS, isDroneClip } from '../lib/mediaDecks';
 import { segmentDay, racesOf } from '../lib/tagging/segments';
@@ -40,9 +39,13 @@ import { videoBadgeSrc } from '../lib/videoBadge';
 import { canShareVideos } from '../lib/shareRoles';
 import { whatsappUrl, smsUrl, mailtoUrl, instagramUrl, canNativeShare, nativeShare } from '../lib/shareTargets';
 import { cropVideo } from '../lib/video-crop';
-import { listPhotosCloud, upsertPhotoCloud, toLegacyPhotoShape } from '../lib/cloud-photos';
+import { upsertPhotoCloud } from '../lib/cloud-photos';
 import { importFiles as importPhotoFiles, syncPhoto as syncOnePhoto, syncPending as syncPendingPhotos, connectionIsGood as photoConnGood } from '../lib/photoStore';
 import { getActiveMembership } from '../lib/active-membership';
+import { daySyncRefusal } from '../lib/syncBoatGuard';
+import { todayIso as TODAY } from '../lib/today';
+
+import { currentStorageScope, scopeOfMembership } from '../lib/storageScope';
 import { unmatchedSails } from '../lib/sailResolve';
 import SailListDiffModal from './SailListDiffModal';
 import { ErrorBoundary } from './ui';
@@ -130,10 +133,11 @@ function onWifi() {
   return c.type === "wifi" || c.type === "ethernet";
 }
 
-// Sync offset persistence — inline to avoid module resolution issues
-const OFFSET_KEY = "ssa:syncOffsets";
-function getSyncOffsets() { try { const v=localStorage.getItem(OFFSET_KEY); return v?JSON.parse(v):{};} catch{return{};} }
-function saveSyncOffset(videoId, secs) { try { const o=getSyncOffsets(); if(secs===0){delete o[videoId];}else{o[videoId]=secs;} localStorage.setItem(OFFSET_KEY,JSON.stringify(o));} catch{} }
+// Sync offsets come from localStore (imported above), which owns the key and the
+// delete-on-zero rule. This file used to carry its own byte-for-byte copy, marked
+// "inline to avoid module resolution issues" — a reason that had stopped being true:
+// thirty other symbols already come from that same module. Two writers on one
+// localStorage key is one too many.
 
 // Phase 2 — pending originals upload state. When the originals queue creates
 // a Bunny Stream video object but the (resumable) TUS upload doesn't finish,
@@ -501,7 +505,6 @@ async function extractVideoCreationTime(file) {
 // `raw` is the clock digits read as if they were UTC. Returns the true-UTC start
 // plus how we got there. localClock=true ⇒ vidTz was applied (and a later venue-tz
 // change must re-base it); localClock=false ⇒ the clock was already UTC.
-const TS_TOL_MS = 150000; // 2.5 min — camera clocks drift vs. the filename stamp
 function resolveStartUtc(result, vidTz, logWindow, durationSec = 0) {
   const raw = result.utc;
   const asUtc = raw;                       // clock was already true UTC
@@ -786,7 +789,6 @@ function reduceLogForCloud(logData,xmlData){
 const R=(n,d=1)=>(n==null||isNaN(n))?"--":Number(n).toFixed(d);
 const TACK_COLORS=['#1D9E75','#06B6D4','#8B5CF6','#F59E0B','#EF4444','#EC4899','#34D399','#60A5FA','#A78BFA','#FCD34D'];
 const fmtT=s=>{const x=Math.max(0,Math.floor(s));return`${String(Math.floor(x/60)).padStart(2,"0")}:${String(x%60).padStart(2,"0")}`;};
-const fmtUtc=u=>u?new Date(u).toISOString().slice(11,19):"--:--:--";
 // ── Venue-local clock ────────────────────────────────────────────────────────
 // Everything is STORED in true UTC and rendered at venue-local (+ sessionTzOffset).
 // Analytics used to render raw UTC, so its clocks read 2 h behind the timeline and
@@ -796,7 +798,12 @@ const TzCtx = React.createContext(0);
 const useTz = () => React.useContext(TzCtx);
 const hmLocal  = (u,tz=0)=>u?new Date(u+tz*60000).toISOString().slice(11,16):"--:--";
 const hmsLocal = (u,tz=0)=>u?new Date(u+tz*60000).toISOString().slice(11,19):"--:--:--";
-const TODAY=()=>new Date().toISOString().slice(0,10);
+// One shared empty array. `x || []` and `prop = []` mint a NEW array on every
+// render, so anything memo'd or effect-gated on them re-runs every time — and if
+// that effect also sets state, the component never stops rendering. That is what
+// an omitted `dayTags` did to GPSTrackMap (see its signature below). Frozen so a
+// caller cannot push into the shared instance.
+const EMPTY=Object.freeze([]);
 // A session is worth OFFERING when it holds anything openable — video, log,
 // events or photos. Analytics and the sessions sidebar previously required
 // (videoCount||0) > 0, so a day with only a logfile was filtered out of both
@@ -2243,6 +2250,7 @@ function RenditionSyncPanel({video, activeDate, onSynced}){
       const result = await syncProxyForVideo({
         videoId: cloudId,
         sessionDate,
+        scope: await currentStorageScope(),
         source: blob,
         onProgress: setProgress,
       });
@@ -2530,17 +2538,21 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
   if(!progress) return null;
   const {items=[], overall=0, elapsed=0, error=null} = progress;
   const done = phase==="done";
+  // A failed sync used to go on reading "⟳ Syncing to cloud…" above its own error
+  // message, with a Cancel button, for as long as the panel stayed up. Say what
+  // happened in the header too, and offer a way out rather than a cancel.
+  const failed = !!error && !done;
 
   const stateIcon = s => s==="done"?"✓":s==="active"?"⟳":s==="processing"?"⌛":s==="error"?"✕":"·";
   const stateColor = s => s==="done"?"#1D9E75":s==="active"?"#06B6D4":s==="processing"?"#F59E0B":s==="error"?"#EF4444":"#334155";
   const fmtElapsed = s => s<60?`${s}s`:`${Math.floor(s/60)}m ${s%60}s`;
 
   return(
-    <div style={{background:"#0A1929",border:`1px solid ${done?"#1D9E75":"#8B5CF6"}40`,borderRadius:10,padding:compact?"10px 12px":"14px 16px"}}>
+    <div style={{background:"#0A1929",border:`1px solid ${failed?"#EF4444":done?"#1D9E75":"#8B5CF6"}40`,borderRadius:10,padding:compact?"10px 12px":"14px 16px"}}>
       {/* Header row */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-        <span style={{fontSize:compact?11:13,fontWeight:700,color:done?"#1D9E75":"#8B5CF6"}}>
-          {done?"✓ Sync complete":"⟳ Syncing to cloud…"}
+        <span style={{fontSize:compact?11:13,fontWeight:700,color:failed?"#EF4444":done?"#1D9E75":"#8B5CF6"}}>
+          {failed?"✕ Not synced":done?"✓ Sync complete":"⟳ Syncing to cloud…"}
         </span>
         <span style={{fontSize:10,color:"#475569",marginLeft:2}}>{fmtElapsed(elapsed)}</span>
         <div style={{flex:1}}/>
@@ -2551,7 +2563,7 @@ function SyncProgressPanel({progress, phase, onCancel, compact=false}){
           <button onClick={onCancel}
             style={{background:"none",border:"1px solid #EF444440",borderRadius:5,
               padding:"2px 8px",color:"#EF4444",fontSize:10,cursor:"pointer"}}>
-            Cancel
+            {failed?"Close":"Cancel"}
           </button>
         )}
       </div>
@@ -2645,7 +2657,6 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   const[log,setLog]=useState([]);
   const[savedDate,setSavedDate]=useState(null);
   const[savedVids,setSavedVids]=useState([]);
-  const[streamStatus,setStreamStatus]=useState({});
   const[syncProgress,setSyncProgress]=useState(null);
   const syncTimerRef=useRef(null);
   const syncAbortRef=useRef(false);
@@ -2766,6 +2777,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     setPhotoErrors([]);
     const fails=[];
     const photos=await importPhotoFiles(files,{
+      scope: await currentStorageScope(),
       onLog: addLog,
       onError: (name,message)=>fails.push({name,message}),
     });
@@ -2992,7 +3004,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         addLog(`↑ ${label} — uploading…`);
         setWatchProgress({ label, pct: 0, message: 'starting…' });
         const res = await uploadOriginalStorageFirst({
-          videoId: cloudId, sessionDate, source: blob, title: label,
+          videoId: cloudId, sessionDate, scope: await currentStorageScope(), source: blob, title: label,
           onProgress: (pr) => setWatchProgress({
             label,
             pct: Math.max(0, Math.min(1, pr.pct || 0)),
@@ -3421,6 +3433,27 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
 
     try{
       let currentVidId=null;
+      // Filled by the boat guard just below, which resolves the same membership.
+      let uploadScope = null;
+
+      // ── Boat guard ─────────────────────────────────────────────────────────
+      // Same refusal the mobile sync makes: savedDate can belong to another
+      // boat, and syncSessionToCloud would file it under the active one without
+      // saying so. See src/lib/syncBoatGuard.ts.
+      {
+        const guardUser = await (async()=>{ try{ const {data:{user}} = await getBrowserSupabase().auth.getUser(); return user||null; }catch{ return null; } })();
+        const guardMem = guardUser ? getActiveMembership(guardUser.id) : null;
+        uploadScope = scopeOfMembership(guardMem);
+        const refusal = daySyncRefusal(savedDate, getSessionsForMembership(guardMem), guardMem, fmtDate);
+        if(refusal){
+          addLog(refusal);
+          setItem("log",{state:"error",pct:0});
+          progressRef.error = refusal;
+          pushProgress();
+          setPhase("saved");   // back to the saved view, clips intact, nothing sent
+          return;              // the finally below stops the elapsed timer
+        }
+      }
 
       // Enrich videos with latest log/xml before uploading so cloud gets full metadata
       const _syncLog = await getLogData(savedDate);
@@ -3490,7 +3523,6 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             if(id){
               const sidMatch=msg.match(/ID: ([a-f0-9-]+)/i);
               setItem(id,{state:"processing",pct:98,streamId:sidMatch?.[1]});
-              setStreamStatus(p=>({...p,[id]:{state:"processing",streamId:sidMatch?.[1]}}));
             }
             currentVidId=null;
           }
@@ -3503,6 +3535,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           // Mirror each clip into Supabase the moment its Bunny upload
           // finishes, so teammates see videos appear one-by-one during a
           // long session sync — they no longer wait for the entire batch.
+          scope: uploadScope,
           onVideoSynced: makeVideoMirrorCallback({
             userId: _syncUser?.id || null,
             sessionDate: savedDate,
@@ -3515,7 +3548,6 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       // Mark all successful videos as done using returned streamIds
       Object.entries(result.streamIds||{}).forEach(([vidId,streamId])=>{
         setItem(vidId,{state:"done",pct:100,streamId});
-        setStreamStatus(p=>({...p,[vidId]:{state:"processing",streamId}}));
       });
       // Clips skipped because their original was already up (watch folder or
       // Videos tab) have no new streamId — close their rows too.
@@ -3530,7 +3562,6 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       // Poll for HLS readiness
       Object.entries(result.streamIds||{}).forEach(async([vidId,streamId])=>{
         const ready=await waitForStreamReady(streamId,300000);
-        setStreamStatus(p=>({...p,[vidId]:{state:ready?"ready":"timeout",streamId,playbackUrl:ready?.playbackUrl}}));
         const vid=savedVids.find(v=>v.id===vidId);
         setItem(vidId,{state:ready?"done":"error",pct:100});
         addLog(ready?`✓ ${vid?.name} ready — HLS available`:`⚠ ${vid?.name} stream timeout`);
@@ -3549,7 +3580,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     autoVidSavedRef.current = new Set();
     setPendingVids([]);setCsvParsed(null);setXmlParsed(null);setCsvFile(null);setXmlFile(null);
     setPolarParsed(null);setPolarFile(null);
-    setPhase("idle");setLog([]);setSavedDate(null);setSavedVids([]);setStreamStatus({});
+    setPhase("idle");setLog([]);setSavedDate(null);setSavedVids([]);
     setCsvTz(DEFAULT_TZ);setXmlTz(DEFAULT_TZ);setVidTz(DEFAULT_TZ);
   };
 
@@ -3924,7 +3955,6 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
     if(!rect)return 0;
     return ((e.clientX-rect.left)/rect.width)*VB_W;
   };
-  const svgXtoUtc=svgX=>vx0+((svgX-pad.l)/W)*span;
 
   // ── Mouse event handlers ──────────────────────────────────────────────────
   const onWheel=e=>{
@@ -4101,160 +4131,6 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
   );
 }
 
-function XYPlot({points,xLabel="",yLabel="",color="#06B6D4",width=400,height=200,showTrend=true,title="",yLines=[]}){
-  const [hoveredTack, setHoveredTack] = React.useState(null); // null | "port" | "stbd"
-
-  if(!points?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
-  const hasTwa = points.some(p=>p.twa!=null);
-  const pad={t:title?20:10,r:8,b:28,l:36};
-  const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
-  // Drop non-finite samples first — one NaN y makes Math.min/max NaN, poisoning the
-  // whole y-domain so every gridline, dot and trend line renders at a NaN coordinate.
-  const fin=points.filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
-  const xs=fin.map(p=>p.x), ys=fin.map(p=>p.y);
-  const x0=xs.length?Math.min(...xs):0,x1=xs.length?Math.max(...xs):1;
-  const rawY0=ys.length?Math.min(...ys):0, rawY1=ys.length?Math.max(...ys):1;
-  const y0=Math.min(rawY0,...yLines), y1=Math.max(rawY1,...yLines);
-  const px=x=>pad.l+((x-x0)/(x1-x0||1))*W;
-  const py=y=>pad.t+H-((y-y0)/(y1-y0||1))*H;
-  const step=Math.max(1,Math.floor(fin.length/800));
-  const dots=fin.filter((_,i)=>i%step===0);
-  const xTicks=Array.from({length:5},(_,i)=>x0+(x1-x0)*i/4);
-  const yTicks=Array.from({length:4},(_,i)=>y0+(y1-y0)*i/3);
-  const reg=showTrend?linReg(fin):null;
-  const ty=x=>reg?reg.slope*x+reg.intercept:0;
-
-  // Port = twa < 0 (wind from port = starboard tack in sailing terms... 
-  // but Expedition: positive twa = starboard tack, negative = port tack)
-  const isPort = p => p.twa != null && p.twa < 0;
-  const isStbd = p => p.twa != null && p.twa >= 0;
-
-  // Triangle pointing up (▲) for port, circle for stbd
-  const portColor  = "#7DD3FC";   // light blue — port tack
-  const stbdColor  = color;        // chart color — stbd tack
-
-  const renderDot = (p, i) => {
-    const port = isPort(p);
-    const tack = hasTwa ? (port ? "port" : "stbd") : null;
-    const cx = px(p.x), cy = py(p.y);
-    const r = 2.0;
-
-    if(hasTwa && port){
-      const h = r * 2.4;
-      const pts = `${cx},${cy-h*0.65} ${cx-h*0.6},${cy+h*0.35} ${cx+h*0.6},${cy+h*0.35}`;
-      return(
-        <polygon key={i} points={pts} fill={portColor} opacity="0.75"
-          style={{cursor:"pointer"}}
-          onMouseEnter={()=>setHoveredTack("port")}
-          onMouseLeave={()=>setHoveredTack(null)}/>
-      );
-    }
-    return(
-      <circle key={i} cx={cx} cy={cy} r={r} fill={hasTwa?stbdColor:color} opacity="0.65"
-        style={{cursor:hasTwa?"pointer":"default"}}
-        onMouseEnter={hasTwa?()=>setHoveredTack("stbd"):undefined}
-        onMouseLeave={hasTwa?()=>setHoveredTack(null):undefined}/>
-    );
-  };
-
-  // Highlighted group — same shapes but larger, rendered above the veil
-  const renderDotHL = (p, i) => {
-    const port = isPort(p);
-    const cx = px(p.x), cy = py(p.y);
-    const r = 3.5;
-    if(port){
-      const h = r * 2.4;
-      const pts = `${cx},${cy-h*0.65} ${cx-h*0.6},${cy+h*0.35} ${cx+h*0.6},${cy+h*0.35}`;
-      return <polygon key={"hl"+i} points={pts} fill={portColor}
-               stroke="#fff" strokeWidth="0.6" opacity="1"
-               onMouseEnter={()=>setHoveredTack("port")}
-               onMouseLeave={()=>setHoveredTack(null)} style={{cursor:"pointer"}}/>;
-    }
-    return <circle key={"hl"+i} cx={cx} cy={cy} r={r} fill={stbdColor}
-             stroke="#fff" strokeWidth="0.6" opacity="1"
-             onMouseEnter={()=>setHoveredTack("stbd")}
-             onMouseLeave={()=>setHoveredTack(null)} style={{cursor:"pointer"}}/>;
-  };
-
-  return(
-    <div style={{position:"relative"}}>
-      {hasTwa&&(
-        <div style={{display:"flex",gap:10,marginBottom:3,fontSize:9,color:"#475569"}}>
-          <span>
-            <svg width="9" height="9" style={{verticalAlign:"middle",marginRight:3}}>
-              <polygon points="4.5,0.5 0.5,8.5 8.5,8.5" fill={portColor} opacity="0.8"/>
-            </svg>
-            Port tack
-          </span>
-          <span>
-            <svg width="9" height="9" style={{verticalAlign:"middle",marginRight:3}}>
-              <circle cx="4.5" cy="4.5" r="3.5" fill={color} opacity="0.8"/>
-            </svg>
-            Stbd tack
-          </span>
-          <span style={{color:"#334155"}}>· hover to highlight</span>
-        </div>
-      )}
-      <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible"}}>
-        {title&&<text x={pad.l+W/2} y={10} textAnchor="middle" fontSize="9" fill="#64748B" fontWeight="600">{title}</text>}
-        {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
-        {yLines.map((y,i)=>{
-          const cy=py(y);
-          if(cy<pad.t||cy>pad.t+H) return null;
-          return(<g key={"yl"+i}>
-            <line x1={pad.l} x2={pad.l+W} y1={cy} y2={cy} stroke={color} strokeWidth="1" strokeDasharray="4,3" opacity="0.6"/>
-            <text x={pad.l+W-2} y={cy-3} textAnchor="end" fontSize="7" fill={color} opacity="0.8">{y}</text>
-          </g>);
-        })}
-        <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-        <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
-        {/* All dots at base opacity — colors preserved */}
-        {hasTwa&&dots.filter(p=>!isPort(p)).map((p,i)=>renderDot(p,"s"+i))}
-        {hasTwa&&dots.filter(isPort).map((p,i)=>renderDot(p,"p"+i))}
-        {!hasTwa&&dots.map((p,i)=>renderDot(p,i))}
-        {/* Grey veil over non-hovered tack — color-preserving: sits above dots, hovered group rendered on top */}
-        {hoveredTack&&<rect x={pad.l} y={pad.t} width={W} height={H}
-          fill="#0A1929" opacity="0.62" style={{pointerEvents:"none"}}/>}
-        {/* Highlighted tack dots rendered above the veil — full color, larger, white outline */}
-        {hoveredTack==="stbd"&&dots.filter(p=>!isPort(p)).map((p,i)=>renderDotHL(p,i))}
-        {hoveredTack==="port"&&dots.filter(isPort).map((p,i)=>renderDotHL(p,i))}
-        {reg&&<line x1={px(x0)} y1={py(ty(x0))} x2={px(x1)} y2={py(ty(x1))} stroke="#fff" strokeWidth="1.5" strokeDasharray="5,3" opacity="0.7"/>}
-        {reg&&<text x={pad.l+W-2} y={pad.t+10} textAnchor="end" fontSize="8" fill="#64748B">R²={reg.r2.toFixed(2)}</text>}
-        {yTicks.map((y,i)=><text key={i} x={pad.l-4} y={py(y)+3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(1)}</text>)}
-        {xTicks.map((x,i)=><text key={i} x={px(x)} y={pad.t+H+14} textAnchor="middle" fontSize="8" fill="#475569">{x.toFixed(1)}</text>)}
-        {xLabel&&<text x={pad.l+W/2} y={height-1} textAnchor="middle" fontSize="8" fill="#475569">{xLabel}</text>}
-        {yLabel&&<text x={8} y={pad.t+H/2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t+H/2})`}>{yLabel}</text>}
-      </svg>
-    </div>
-  );
-}
-
-function AIChart({spec,rows,allVideos}){
-  if(!spec)return null;
-  const c=spec.color||"#8B5CF6";
-  if(spec.type==="xy"&&rows?.length){
-    const xf=spec.xField, yf=spec.yField;
-    const pts=rows.filter(r=>r[xf]!=null&&r[yf]!=null&&(spec.filter?eval(`(r)=>${spec.filter}`)(r):true)).map(r=>({x:r[xf],y:r[yf]}));
-    return(<div style={{background:"#0A1929",border:`1px solid ${c}30`,borderRadius:10,padding:14,marginBottom:10}}><XYPlot points={pts} xLabel={spec.xLabel||xf} yLabel={spec.yLabel||yf} color={c} width={520} height={200} title={spec.title} showTrend/></div>);
-  }
-  if(spec.type==="line"&&rows?.length){
-    const yf=spec.yField;
-    const step=Math.max(1,Math.floor(rows.length/400));
-    const pts=rows.filter((_,i)=>i%step===0).filter(r=>r[yf]!=null).map(r=>({x:r.utc,y:r[yf]}));
-    return(<div style={{background:"#0A1929",border:`1px solid ${c}30`,borderRadius:10,padding:14,marginBottom:10}}><div style={{fontSize:10,color:c,fontWeight:600,marginBottom:6}}>{spec.title}</div><LineChart points={pts} color={c} height={130} yLabel={spec.yLabel||yf} showTrend/></div>);
-  }
-  if(spec.type==="bar"&&allVideos?.length){
-    const field=spec.xField||"twsAvg";
-    const clips=allVideos.filter(v=>v[field]!=null).slice(0,12);
-    if(!clips.length)return<div style={{fontSize:10,color:"#334155"}}>No clip data for this field</div>;
-    const maxV=Math.max(...clips.map(v=>v[field]));
-    const W=520,H=160,pad={t:16,r:8,b:40,l:40};
-    const bw=(W-pad.l-pad.r)/clips.length-3;
-    return(<div style={{background:"#0A1929",border:`1px solid ${c}30`,borderRadius:10,padding:14,marginBottom:10}}><div style={{fontSize:10,color:c,fontWeight:600,marginBottom:6}}>{spec.title}</div><svg width="100%" viewBox={`0 0 ${W} ${H}`}>{clips.map((v,i)=>{const bh=((v[field]||0)/maxV)*(H-pad.t-pad.b);const x=pad.l+i*(bw+3);return(<g key={v.id}><rect x={x} y={H-pad.b-bh} width={bw} height={bh} fill={c} rx="2" opacity="0.8"/><text x={x+bw/2} y={H-pad.b+12} textAnchor="middle" fontSize="7" fill="#475569" transform={`rotate(-35,${x+bw/2},${H-pad.b+12})`}>{v.title?.slice(0,10)}</text><text x={x+bw/2} y={H-pad.b-bh-3} textAnchor="middle" fontSize="8" fill={c}>{R(v[field])}</text></g>);})}<line x1={pad.l} x2={W-pad.r} y1={H-pad.b} y2={H-pad.b} stroke="#1E3A5A" strokeWidth="1"/><text x={pad.l+((W-pad.l-pad.r)/2)} y={H-2} textAnchor="middle" fontSize="8" fill="#475569">{spec.xLabel}</text><text x={8} y={(H-pad.t-pad.b)/2+pad.t} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${(H-pad.t-pad.b)/2+pad.t})`}>{spec.yLabel}</text></svg></div>);
-  }
-  return<div style={{fontSize:10,color:"#EF4444"}}>Chart type "{spec.type}" not recognised</div>;
-}
-
 function ManoeuvreChart({tackJibes,logRows,width=400,height=140}){
   if(!tackJibes?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No manoeuvre data</div>;
   const valid=tackJibes.filter(t=>t.isValid!==false);
@@ -4264,7 +4140,11 @@ function ManoeuvreChart({tackJibes,logRows,width=400,height=140}){
   const pad={t:14,r:12,b:30,l:40};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
   const twsBins={"<8":0,"8-12":0,"12-16":0,"16-20":0,"20+":0};
-  if(logRows?.length){valid.forEach(tj=>{const nearest=logRows.reduce((a,b)=>Math.abs(b.utc-tj.utc)<Math.abs(a.utc-tj.utc)?b:a,logRows[0]);const tws=nearest?.tws||0;if(tws<8)twsBins["<8"]++;else if(tws<12)twsBins["8-12"]++;else if(tws<16)twsBins["12-16"]++;else if(tws<20)twsBins["16-20"]++;else twsBins["20+"]++;});}
+  // nearestRow binary-searches the (time-ordered) log. This used to reduce() over
+  // every row for every manoeuvre — 60 tacks against a 200k-row lidar day is 12M
+  // comparisons, redone on each render. It also drops a manoeuvre further than 5
+  // minutes from any sample, which the old scan happily binned as 0 kt.
+  if(logRows?.length){valid.forEach(tj=>{const nearest=nearestRow(logRows,tj.utc);if(!nearest)return;const tws=nearest.tws||0;if(tws<8)twsBins["<8"]++;else if(tws<12)twsBins["8-12"]++;else if(tws<16)twsBins["12-16"]++;else if(tws<20)twsBins["16-20"]++;else twsBins["20+"]++;});}
   const bins=Object.entries(twsBins);
   const maxVal=Math.max(...bins.map(([,v])=>v),1);
   const bw=W/bins.length-4;
@@ -4285,13 +4165,25 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
   const svgRef=useRef(null);
   const dragRef=useRef(null);
   const clipId=useRef('pc'+Math.random().toString(36).slice(2,8)).current;
+  // Two full filters plus two more over the survivors, on every render — and playUtc
+  // re-renders this chart continuously during playback. Memoised on the rows, and
+  // above the early returns so the hook count stays fixed. `hasPerf` replaces the
+  // old length checks on the intermediate arrays, which no longer need to exist.
+  const {polPts,tgtPts,hasPerf}=useMemo(()=>{
+    const src=rows||EMPTY;
+    const step=Math.max(1,Math.floor(src.length/300));
+    const pol=[],tgt=[];
+    let nPol=0,nTgt=0;
+    for(const r of src){
+      const okPol=r.vsPerfPct>5&&r.vsPerfPct<200;
+      const okTgt=r.vsTargPct>5&&r.vsTargPct<200;
+      if(okPol&&nPol++%step===0) pol.push({x:r.utc,y:r.vsPerfPct});
+      if(okTgt&&nTgt++%step===0) tgt.push({x:r.utc,y:r.vsTargPct});
+    }
+    return {polPts:pol,tgtPts:tgt,hasPerf:nPol>0||nTgt>0};
+  },[rows]);
   if(!rows?.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
-  const validPol=rows.filter(r=>r.vsPerfPct>5&&r.vsPerfPct<200);
-  const validTgt=rows.filter(r=>r.vsTargPct>5&&r.vsTargPct<200);
-  if(!validPol.length&&!validTgt.length)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No performance data in log</div>;
-  const step=Math.max(1,Math.floor(rows.length/300));
-  const polPts=validPol.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.vsPerfPct}));
-  const tgtPts=validTgt.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.vsTargPct}));
+  if(!hasPerf)return<div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No performance data in log</div>;
   // Room in the gutter for each section's average, as on the charts above.
   const pad={t:14,r:8,b:28,l:sections.length?86:36};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
@@ -4366,80 +4258,6 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
   );
 }
 
-// ─── AI CHART CHAT ────────────────────────────────────────────────────────────
-const LOG_FIELDS = "tws (true wind speed kn), twa (true wind angle °), bsp (boat speed kn), sog (speed over ground kn), vmg (velocity made good kn), heel (heel angle °), vsTarget (target boat speed kn), vsTargPct (% of target speed), twaTarg (target TWA °), vsPerf (polar boat speed kn), vsPerfPct (% of polar speed), rudder (rudder angle °)";
-const CLIP_FIELDS = "twsAvg, twaAvg, vmgAvg, polpercAvg, vsTargPercAvg, sogAvg, heelAvg";
-
-const CHART_SYSTEM = `You are a sailing data analyst AI for Shared Sailing Analytics.
-The user has log data (1 Hz rows with fields: ${LOG_FIELDS}) and clip summaries (fields: ${CLIP_FIELDS}).
-When the user asks a question, respond with JSON ONLY — no markdown, no explanation outside JSON.
-Return: {
-  "answer": "brief natural language answer (1-3 sentences)",
-  "chart": { "type": "xy" | "line" | "bar", "title": "chart title", "xField": "field name", "yField": "field name", "xLabel": "axis label", "yLabel": "axis label", "color": "#hexcolor" },
-  "insight": "one actionable coaching insight"
-}
-Only produce a chart if it genuinely answers the question.`;
-
-function AIChatPanel({rows, allVideos}){
-  const [messages, setMessages] = useState([]);
-  const [input, setInput]       = useState("");
-  const [loading, setLoading]   = useState(false);
-  const bottomRef = useRef(null);
-  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); },[messages]);
-  const ask = async () => {
-    const q = input.trim(); if(!q) return;
-    setMessages(p=>[...p,{role:"user",text:q}]);
-    setInput(""); setLoading(true);
-    const history = messages.map(m=>({role: m.role==="user"?"user":"assistant",content: m.rawJson ? JSON.stringify(m.rawJson) : m.text}));
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body: JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system: CHART_SYSTEM,messages:[...history,{role:"user",content:q}]})});
-      const data = await res.json();
-      const text = data.content?.find(b=>b.type==="text")?.text||"{}";
-      const parsed = JSON.parse(text.replace(/```json|```/g,"").trim());
-      setMessages(p=>[...p,{role:"assistant",text:parsed.answer||"",chart:parsed.chart,insight:parsed.insight,rawJson:parsed}]);
-    } catch(e) { setMessages(p=>[...p,{role:"assistant",text:`Error: ${e.message}`}]); }
-    setLoading(false);
-  };
-  const hasData = rows?.length > 0 || allVideos?.some(v=>v.twsAvg!=null);
-  return(
-    <div style={{background:"#0A1929",border:"1px solid #8B5CF640",borderRadius:10,padding:"14px 16px",marginBottom:14}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-        <span style={{fontSize:14,color:"#8B5CF6"}}>✦</span>
-        <div style={{fontSize:11,fontWeight:600,color:"#94A3B8",letterSpacing:1,textTransform:"uppercase"}}>Ask AI — get an answer + chart</div>
-        {!hasData&&<span style={{fontSize:9,color:"#EF4444",marginLeft:"auto"}}>Load a session first</span>}
-      </div>
-      {messages.length===0&&(
-        <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:12}}>
-          {["Plot TWS vs SOG","How does heel change with wind?","Show polar % over time","Compare VMG across clips","Which TWA gives best VMG?","Show rudder vs heel scatter"].map(s=>(<button key={s} onClick={()=>{setInput(s);}} style={{background:"#071624",border:"1px solid #8B5CF640",borderRadius:5,padding:"4px 10px",color:"#8B5CF6",cursor:"pointer",fontSize:10}}>{s}</button>))}
-        </div>
-      )}
-      {messages.length>0&&(
-        <div style={{maxHeight:480,overflowY:"auto",marginBottom:10,display:"flex",flexDirection:"column",gap:10}}>
-          {messages.map((m,i)=>(
-            <div key={i}>
-              {m.role==="user"&&(<div style={{display:"flex",justifyContent:"flex-end"}}><div style={{background:"#1E3A5A",borderRadius:"8px 8px 2px 8px",padding:"6px 10px",fontSize:11,color:"#E2E8F0",maxWidth:"70%"}}>{m.text}</div></div>)}
-              {m.role==="assistant"&&(
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  {m.text&&<div style={{background:"#071624",borderRadius:"8px 8px 8px 2px",padding:"8px 12px",fontSize:11,color:"#E2E8F0",lineHeight:1.5,maxWidth:"85%"}}>{m.text}</div>}
-                  {m.chart&&<AIChart spec={m.chart} rows={rows} allVideos={allVideos}/>}
-                  {m.insight&&<div style={{fontSize:10,color:"#475569",padding:"4px 8px",borderLeft:"2px solid #8B5CF640"}}>💡 {m.insight}</div>}
-                </div>
-              )}
-            </div>
-          ))}
-          {loading&&<div style={{fontSize:10,color:"#8B5CF6",padding:"4px 8px"}}>Thinking…</div>}
-          <div ref={bottomRef}/>
-        </div>
-      )}
-      <div style={{display:"flex",gap:6}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!loading&&ask()} placeholder={hasData?"Ask about your sailing data…":"Load a session in Videos first"} disabled={!hasData||loading} style={{flex:1,background:"#071624",border:"1px solid #8B5CF640",borderRadius:6,padding:"7px 11px",color:"#E2E8F0",fontSize:11,outline:"none",opacity:hasData?1:0.4}}/>
-        <button onClick={ask} disabled={!hasData||loading||!input.trim()} style={{background:loading||!input.trim()?"#1E3A5A":"#8B5CF6",border:"none",borderRadius:6,padding:"7px 14px",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>{loading?"…":"Ask"}</button>
-        {messages.length>0&&<button onClick={()=>setMessages([])} style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"7px 10px",color:"#475569",cursor:"pointer",fontSize:10}}>Clear</button>}
-      </div>
-    </div>
-  );
-}
-
 // ─── GPS TRACK MAP ────────────────────────────────────────────────────────────
 // playUtc   — current video UTC for boat marker (null = no video playing)
 // visible   — whether the Analytics tab is currently shown (for Leaflet resize)
@@ -4455,16 +4273,14 @@ const selectStyle = {
   borderRadius:5, padding:'4px 8px', fontSize:11, fontWeight:600,
   minHeight:30, cursor:'pointer',
 };
-// What the polar legend says it is measuring, so the scale is never ambiguous.
-const MODE_LEGEND = {
-  auto:   'VMG \u00b120\u00b0 target \u00b7 BSP reaching',
-  vmg:    'VMG vs the polar\u2019s best VMG',
-  polbsp: 'BSP vs the polar at the angle sailed',
-  target: 'BSP vs target boat speed',
-};
 
-export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=[], sections=[], onSelection=null, onRemoveSection=null, onClearSections=null,
-  dayTags=[], onRaceChosen=null,
+// The array defaults are the shared EMPTY, not fresh literals. `dayTags=[]` was a
+// new array on every render, and dayTags is a dep of the map-init effect, whose last
+// act is setMapGen(g=>g+1) — so any caller that left dayTags out (the /dev/track
+// harness, and anything else omitting it) put the map in an endless
+// render → effect → setState → render loop, rebuilding Leaflet each time.
+export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=EMPTY, onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=EMPTY, sections=EMPTY, onSelection=null, onRemoveSection=null, onClearSections=null,
+  dayTags=EMPTY, onRaceChosen=null,
   finishDraft=null, onFinishDraft=null, onSaveFinish=null, finishNote=null, finishMsg=null, canTagFinish=false}){
   const tz=useTz();
   const containerRef = React.useRef(null);
@@ -5188,12 +5004,25 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
 // ─── ANALYTICS TAB ────────────────────────────────────────────────────────────
 function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelectVideo,setActiveTab,activeDate,onSelectDate,playUtc=null,visible=true,photos=[],canUseAI=true,canSeeAnalyticsData=true,onPlayClip=null}){
   const tz=useTz();
-  const rows=logData?.rows||[];
+  // `logData?.rows||[]` handed every memo below a brand-new [] on the renders where
+  // there is no log, so each one recomputed on every render. EMPTY is one array.
+  const rows=logData?.rows||EMPTY;
   const noData=!rows.length;
   const step=Math.max(1,Math.floor(rows.length/400));
-  const twsPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.tws}));
-  const sogPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.sog}));
-  const heelPts=rows.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:Math.abs(r.heel)}));
+  // The three series used to be three unmemoised filter+map pairs — six full passes
+  // over the log on EVERY render, and playUtc ticks this component through a render
+  // per frame while a clip plays. A 10 Hz lidar day is ~200k rows. One walk, memoised
+  // on the log, decimated by `step` to the ~400 points the charts can actually draw.
+  const {twsPts,sogPts,heelPts}=useMemo(()=>{
+    const tws=[],sog=[],heel=[];
+    for(let i=0;i<rows.length;i+=step){
+      const r=rows[i];
+      tws.push({x:r.utc,y:r.tws});
+      sog.push({x:r.utc,y:r.sog});
+      heel.push({x:r.utc,y:Math.abs(r.heel)});
+    }
+    return {twsPts:tws,sogPts:sog,heelPts:heel};
+  },[rows,step]);
 
   // Shared pan/zoom state for all timeseries — null = show full session
   const [viewRange, setViewRange] = useState(null);
@@ -5311,13 +5140,15 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedVideo?.id, activeDate]);
-  const chartEvents = xmlData ? [
+  const chartEvents = useMemo(()=>xmlData ? [
     ...(xmlData.markRoundings||[]).filter(m=>m.isValid!==false).map(m=>({utc:m.utc,label:m.isTop?"⬆ top":"⬇ gate",color:m.isTop?"#EF4444":"#8B5CF6"})),
     ...(xmlData.raceGuns||[]).map(g=>({utc:g.utc,label:"🚩 start",color:"#EF4444"})),
     ...(xmlData.tackJibes||[]).filter(t=>t.isValid!==false).map(t=>({utc:t.utc,label:t.isTack?"T":"G",color:t.isTack?"#1D9E75":"#7F77DD"})),
-  ] : [];
-  // Cards and tack/mark counts follow the track selection.
-  const sr=sections.length?rows.filter(r=>inSections(r.utc,sections)):rows;
+  ] : EMPTY, [xmlData]);
+  // Cards and tack/mark counts follow the track selection. Memoised: without it this
+  // walked the whole log on every render — including the playback renders driven by
+  // playUtc, which cannot change the answer.
+  const sr=useMemo(()=>sections.length?rows.filter(r=>inSections(r.utc,sections)):rows,[rows,sections]);
   const selTJ=(xmlData?.tackJibes||[]).filter(t=>inSections(t.utc,sections));
   const selMarks=(xmlData?.markRoundings||[]).filter(m=>inSections(m.utc,sections));
   // Only rows that carry the channel: one row without TWS/SOG (a logger dropout, or a
@@ -5953,7 +5784,6 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 ))}
               </div>
             ))}
-            {canUseAI && <AIChatPanel rows={rows} allVideos={allVideos}/>}
           </>
         )}
       </div>
@@ -6770,9 +6600,6 @@ function SSAApp(){
   }, [sessionTagList, allVideos, activeDate]);
   const[cloudStatus,setCloudStatus]=useState(null);
   const[unsyncedCount,setUnsyncedCount]=useState(0);
-  const[aiQuery,setAiQuery]=useState("");
-  const[aiResult,setAiResult]=useState(null);
-  const[aiLoading,setAiLoading]=useState(false);
   // Effective auth role — either 'admin' (from users.global_role) or the
   // active membership's role. Used to gate UI features. Null until the
   // identity check resolves.
@@ -7127,6 +6954,7 @@ function SSAApp(){
             const res = await uploadOriginalStorageFirst({
               videoId: cloudId,
               sessionDate: video.sessionDate || activeDate,
+              scope: await currentStorageScope(),
               source: file,
               title: label,
               onProgress: (pr) => setMobileSyncState({
@@ -7616,7 +7444,6 @@ function SSAApp(){
     async function run(){
       const seq=++runSeq;
       try{
-        const supabase=getBrowserSupabase();
         const uid=await getUidFast();
         if(!uid||cancelled||seq!==runSeq) return;
         const m=getActiveMembership(uid);
@@ -7654,7 +7481,6 @@ function SSAApp(){
   useEffect(()=>{
     async function rescope(){
       try{
-        const supabase=getBrowserSupabase();
         const uid=await getUidFast();
         if(!uid) return;
         const m=getActiveMembership(uid);
@@ -8198,7 +8024,7 @@ function SSAApp(){
     // Admin fallback — if the boat-scoped query found nothing, try the
     // legacy single-tenant cloud session. Done BEFORE the first paint so
     // those clips are part of the early render.
-    if(!vids.length&&cloudStatus?.available&&effectiveRole==='admin'){const r2=await fetchCloudSession(date);if(r2?.videos?.length)vids=r2.videos;}
+    if(!vids.length&&cloudStatus?.available&&effectiveRole==='admin'){const r2=await fetchCloudSession(date, await currentStorageScope());if(r2?.videos?.length)vids=r2.videos;}
 
     // Re-enrich the current vids array with log + xml + sync offsets.
     const enrichAll=()=>vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
@@ -8242,7 +8068,7 @@ function SSAApp(){
         // Admin-only GLOBAL Bunny R2 fallback for a day with no team-scoped
         // log/xml. Everyone else stays inside their team's RLS-protected data.
         if((!log || !xml) && cloudStatus?.available && effectiveRole==='admin'){
-          const r2=await fetchCloudSession(date);
+          const r2=await fetchCloudSession(date, await currentStorageScope());
           if(!log && r2?.logData){ log={...r2.logData,source:'cloud'}; logChanged=true; }
           if(!xml && r2?.xmlData){ xml={...r2.xmlData,source:'cloud'}; xmlChanged=true; }
         }
@@ -8360,6 +8186,7 @@ function SSAApp(){
           await syncProxyForVideo({
             videoId: cloudId,
             sessionDate: item.sessionDate,
+            scope: await currentStorageScope(),
             source: blob,
             onProgress: ({phase, pct, message}) => {
               // Phase leads the message so it stays visible even where the
@@ -8680,8 +8507,11 @@ function SSAApp(){
             ? photoMeta.map(p=>{
                 const e={...p};
                 if(log?.rows?.length&&p.utc){
-                  const nearRow=log.rows.reduce((best,r)=>Math.abs(r.utc-p.utc)<Math.abs(best.utc-p.utc)?r:best,log.rows[0]);
-                  if(Math.abs(nearRow.utc-p.utc)<300000){e.tws=nearRow.tws;e.twa=nearRow.twa;e.awa=nearRow.awa;e.bsp=nearRow.bsp;e.heel=nearRow.heel;e.vmg=nearRow.vmg;}
+                  // nearestRow is the same "closest sample within 5 minutes" rule
+                  // written as a binary search — this was a full scan of the log
+                  // for every photo in the day.
+                  const nearRow=nearestRow(log.rows,p.utc);
+                  if(nearRow){e.tws=nearRow.tws;e.twa=nearRow.twa;e.awa=nearRow.awa;e.bsp=nearRow.bsp;e.heel=nearRow.heel;e.vmg=nearRow.vmg;}
                 }
                 if(xml){
                   const sailEvts=xml.sailsUpEvents||[];
@@ -8698,7 +8528,8 @@ function SSAApp(){
           }
           await updateCloudSessionMetadata(date,{
             videos:enrichedVids,logData:log,xmlData:xml,
-            photos:enrichedPhotos.length?enrichedPhotos:undefined
+            photos:enrichedPhotos.length?enrichedPhotos:undefined,
+            scope: await currentStorageScope(),
           });
         }catch(err){console.error("[SSA] Cloud metadata update failed:",err);}
       },500);
@@ -8789,17 +8620,13 @@ function SSAApp(){
       const uc=getUnsyncedCount();
       if(heavy && uc>0 && perms.canSync){
         // ── Boat guard ───────────────────────────────────────────────────────
-        // syncSessionToCloud files everything under the ACTIVE membership's
-        // team/boat, but activeDate can be a session belonging to a DIFFERENT
-        // boat (the local stores are keyed by date, not by boat). Pushing then
-        // would silently re-file e.g. old Northstar 72 footage and its log
-        // against Northstar 76. Refuse, and say exactly why.
+        // See src/lib/syncBoatGuard.ts. Shared with the Upload tab and the
+        // desktop library sync, which used to push without it.
         const syncMem = supaUser ? getActiveMembership(supaUser.id) : null;
-        const ownsDay = getSessionsForMembership(syncMem).some(s=>s.date===activeDate);
-        if(!ownsDay){
-          const boat = syncMem?.boat_name || "the active boat";
-          const why = `⚠ ${fmtDate(activeDate)} belongs to a different boat — not uploaded. It would be filed under ${boat}. Switch to that session's boat to sync it.`;
-          addLog(why);
+        const syncScope = scopeOfMembership(syncMem);
+        const refusal = daySyncRefusal(activeDate, getSessionsForMembership(syncMem), syncMem, fmtDate);
+        if(refusal){
+          addLog(refusal);
           setMobileSyncState({phase:"error",message:`${fmtDate(activeDate)} is another boat's session — skipped`,progress:0});
           setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),4000);
           return;
@@ -8812,6 +8639,7 @@ function SSAApp(){
         await syncSessionToCloud(activeDate,logD,xmlD,vids,msg=>{
           setMobileSyncState(p=>({...p,message:msg.length>48?msg.slice(0,45)+"…":msg}));
         },{
+          scope: syncScope,
           // Mirror each clip the moment its Bunny upload finishes so the
           // crew watching from their phones see clips appear progressively.
           // supaUser was resolved up-front in the PULL phase above.
@@ -8913,24 +8741,10 @@ function SSAApp(){
     }
   }, [cloudStatus]);
 
-  async function runAiQuery(){
-    if(!aiQuery.trim()||!allVideos.length)return;
-    setAiLoading(true);setAiResult(null);
-    try{
-      const vl=allVideos.map(v=>({id:v.id,title:v.title,date:v.sessionDate,source:v.source,tags:v.tags||[],tws:v.twsAvg!=null?+R(v.twsAvg):null,twa:v.twaAvg!=null?+R(v.twaAvg,0):null,vmg:v.vmgAvg!=null?+R(v.vmgAvg):null,polperc:v.polpercAvg!=null?+R(v.polpercAvg,0):null,vsTargPerc:v.vsTargPercAvg!=null?+R(v.vsTargPercAvg,0):null,sog:v.sogAvg!=null?+R(v.sogAvg):null}));
-      const systemPrompt=`You are the AI assistant for Shared Sailing Analytics. Fields per clip: id, title, date, tags, tws, twa, vmg, polperc, vsTargPerc, sog. Library: ${JSON.stringify(vl)}\nReturn ONLY valid JSON: {"matches":[],"explanation":"","insight":""}`;
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system:systemPrompt,messages:[{role:"user",content:aiQuery}]})});
-      const data=await res.json();const text=data.content?.find(b=>b.type==="text")?.text||"{}";
-      setAiResult(JSON.parse(text.replace(/```json|```/g,"").trim()));
-    }catch{setAiResult({matches:[],explanation:"Search unavailable.",insight:""});}
-    setAiLoading(false);
-  }
-
-  const aiIds=new Set(aiResult?.matches||[]);
   const selectedSail=sailFilter?sailInventory.find(s=>s.id===sailFilter):null;
   const sailTokens=selectedSail?[selectedSail.name,selectedSail.category,selectedSail.design_code,...(Array.isArray(selectedSail.specs?.aliases)?selectedSail.specs.aliases:[])].filter(Boolean).map(s=>String(s).trim().toLowerCase()):null;
   const matchesSail=tags=>!sailTokens||(tags||[]).some(t=>sailTokens.includes(String(t).trim().toLowerCase()));
-  const displayed=(aiResult?allVideos.filter(v=>aiIds.has(v.id)):allVideos)
+  const displayed=allVideos
     .filter(v=>{const ok=selectedTags.length===0||selectedTags.every(t=>(v.tags||[]).includes(t));const q=searchQuery.toLowerCase();return ok&&matchesSail(v.tags)&&(!q||v.title?.toLowerCase().includes(q)||(v.tags||[]).some(t=>t.includes(q)));})
     // "Date" means WHEN THE CLIP WAS SHOT, not when it was imported. It used to sort by
     // addedAt, so uploading a day's footage in three batches interleaved them and the
@@ -8952,7 +8766,6 @@ function SSAApp(){
   const allTags=[...new Set(allVideos.flatMap(v=>v.tags||[]))].sort();
   const isManTag=t=>["tack","gybe","topmark","mark","race-start","upwind","reach","downwind"].includes(t);
   const toggleTag=t=>setSelectedTags(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
-  const tabStyle=tab=>({padding:"6px 15px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600,border:"none",background:activeTab===tab?"#06B6D4":"transparent",color:activeTab===tab?"#000":"#64748B"});
 
   if(!loaded)return<div style={{minHeight:"100vh",background:"#030F1A",display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:13}}>Loading Shared Sailing Analytics…</div>;
 
@@ -9072,13 +8885,6 @@ function SSAApp(){
           </select>
         </nav>
         <div style={{flex:1}}/>
-        {canUseAI && (
-        <div style={{display:"flex",gap:5,width:290}}>
-          <input value={aiQuery} onChange={e=>setAiQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&runAiQuery()} placeholder="✦ AI search…" style={{flex:1,background:"#071624",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#E2E8F0",fontSize:11,outline:"none"}}/>
-          <button onClick={runAiQuery} disabled={aiLoading} style={{background:aiLoading?"#1E3A5A":"#8B5CF6",border:"none",borderRadius:6,padding:"5px 12px",color:"#fff",fontWeight:700,cursor:"pointer",fontSize:11}}>{aiLoading?"…":"Search"}</button>
-          {aiResult&&<button onClick={()=>setAiResult(null)} style={{background:"none",border:"1px solid #EF444440",borderRadius:6,padding:"5px 8px",color:"#EF4444",cursor:"pointer",fontSize:11}}>✕</button>}
-        </div>
-        )}
         <div style={{display:"flex",alignItems:"center",gap:5,background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"4px 8px"}}>
           <span style={{fontSize:8,color:"#334155",letterSpacing:1}}>ROLE</span>
           <select value={role} onChange={e=>setRole(e.target.value)} style={{background:"transparent",border:"none",color:"#94A3B8",fontSize:11,cursor:"pointer",outline:"none"}}>
@@ -9086,8 +8892,6 @@ function SSAApp(){
           </select>
         </div>
       </header>
-
-      {aiResult&&<div style={{background:"#0D1829",borderBottom:"1px solid #8B5CF620",padding:"7px 18px",display:"flex",gap:10,alignItems:"flex-start",flexShrink:0}}><span style={{color:"#8B5CF6",fontSize:12}}>✦</span><div style={{flex:1}}><div style={{fontSize:11,color:"#A78BFA",fontWeight:600,marginBottom:1}}>{aiResult.matches?.length||0} clips — {aiResult.explanation}</div>{aiResult.insight&&<div style={{fontSize:10,color:"#334155"}}>💡 {aiResult.insight}</div>}</div></div>}
 
       {/* ── Tab panes ────────────────────────────────────────────────────────────
           Library and Analytics stay mounted after first visit (visibility:hidden
@@ -9183,6 +8987,17 @@ function SSAApp(){
                 {/* ── Sync ↑ button — visible when session has unsynced local data ── */}
                 {cloudStatus?.available&&perms.canSync&&(logData||xmlData||allVideos.length>0)&&(
                   <button onClick={async()=>{
+                    // Boat guard, before anything is read or any progress shown:
+                    // activeDate may belong to another boat, and the push would
+                    // file it under this one. See src/lib/syncBoatGuard.ts.
+                    const libScope = scopeOfMembership(activeMem);
+                    const libRefusal = daySyncRefusal(activeDate, getSessionsForMembership(activeMem), activeMem, fmtDate);
+                    if(libRefusal){
+                      addLog(libRefusal);
+                      setLibSyncProgress({items:[],overall:0,elapsed:0,error:libRefusal});
+                      setLibSyncPhase("syncing");
+                      return;
+                    }
                     const vids=await getVideosForDate(activeDate);
                     const logD=await getLogData(activeDate);
                     const xmlD=await getXmlData(activeDate);
@@ -9222,6 +9037,7 @@ function SSAApp(){
                           });
                         },
                         {
+                          scope: libScope,
                           // Per-video Supabase mirror — clips appear for
                           // teammates as each finishes, not after the batch.
                           onVideoSynced: makeVideoMirrorCallback({

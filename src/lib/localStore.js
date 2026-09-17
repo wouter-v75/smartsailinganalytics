@@ -20,9 +20,11 @@ import { hashLogPayload, hashXmlPayload } from "./contentHash";
 //     ssa:syncOffsets
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { todayIso as TODAY } from "./today";
+import { objectUrlFor, releaseObjectUrl } from "./objectUrls";
+
 const DB_NAME = "ssa-db";
 const DB_VER  = 5;
-const TODAY   = () => new Date().toISOString().slice(0, 10);
 
 // ── IndexedDB bootstrap ──────────────────────────────────────────────────────
 function openDb() {
@@ -243,7 +245,7 @@ export async function saveVideo(file, parsedMeta, membership = null) {
     if (parsedMeta.duration) prior.duration = parsedMeta.duration;
     prior.localBlobModifiedAt = Date.now(); // tells the sync the local bytes are newer
     try { await idbPut(db, "videos", prior); } catch { /* non-fatal */ }
-    return { ...prior, blob: undefined, objectUrl: prior.blob ? URL.createObjectURL(prior.blob) : null, hasLocalBlob: !!prior.blob };
+    return { ...prior, blob: undefined, objectUrl: objectUrlFor(prior.id, prior.blob), hasLocalBlob: !!prior.blob };
   }
 
   // Keep the blob whenever the device can hold it — Android and desktop can, iOS
@@ -303,7 +305,7 @@ export async function saveVideo(file, parsedMeta, membership = null) {
   return {
     ...entry,
     blob:      undefined,
-    objectUrl: storeBlob ? URL.createObjectURL(file) : null,
+    objectUrl: storeBlob ? objectUrlFor(entry.id, file) : null,
   };
 }
 
@@ -324,6 +326,7 @@ export async function saveVideoBlob(id, blob) {
     if (!entry) return false;
     entry.blob = blob;
     await idbPut(db, "videos", entry);
+    releaseObjectUrl(id);   // these are different bytes to whatever was minted
     return true;
   } catch { return false; }
 }
@@ -369,6 +372,7 @@ export async function updateVideoBlobAndDuration(id, blob, durationSec, newStart
     entry.originalPath       = null;
     entry.originalStreamId   = null;
     await idbPut(db, "videos", entry);
+    releaseObjectUrl(id);   // the crop replaced the bytes the old URL pointed at
     return true;
   } catch { return false; }
 }
@@ -431,7 +435,7 @@ export async function getVideosForDate(date) {
   return entries.map(e => ({
     ...e,
     blob:        undefined,
-    objectUrl:   e.blob ? URL.createObjectURL(e.blob) : null,
+    objectUrl:   objectUrlFor(e.id, e.blob),
     hasLocalBlob: !!e.blob,   // flag so UI/sync knows blob is available
   }));
 }
@@ -477,7 +481,7 @@ export async function dedupeVideos() {
       // Never delete a row that exists in the cloud — it's not a stray, it's the copy.
       if (v.streamId || v.cloudSynced || v.syncedToDb) continue;
       if (v.id === keep.id) continue;
-      try { await idbDelete(db, "videos", v.id); removed++; } catch { /* keep going */ }
+      try { await idbDelete(db, "videos", v.id); releaseObjectUrl(v.id); removed++; } catch { /* keep going */ }
     }
   }
   return removed;
@@ -490,7 +494,7 @@ export async function pruneInertVideos() {
     (e) => !e.blob && !e.streamId && !e.cloudSynced && !e.syncedToDb
   );
   for (const e of dead) {
-    try { await idbDelete(db, "videos", e.id); } catch { /* keep going */ }
+    try { await idbDelete(db, "videos", e.id); releaseObjectUrl(e.id); } catch { /* keep going */ }
   }
   return dead.length;
 }
@@ -501,7 +505,7 @@ export async function getAllVideos() {
   return entries.map(e => ({
     ...e,
     blob:        undefined,
-    objectUrl:   e.blob ? URL.createObjectURL(e.blob) : null,
+    objectUrl:   objectUrlFor(e.id, e.blob),
     hasLocalBlob: !!e.blob,
     rotation:    e.rotation || 0,
   })).sort((a, b) => b.addedAt - a.addedAt);
@@ -558,6 +562,7 @@ export async function updateVideoStartUtc(id, startUtc, sessionDate = null) {
 export async function deleteVideo(id) {
   const db = await openDb();
   await idbDelete(db, "videos", id);
+  releaseObjectUrl(id);
 }
 
 // ── Log (CSV) store — IndexedDB ───────────────────────────────────────────────

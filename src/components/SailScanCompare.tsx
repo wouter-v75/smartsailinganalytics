@@ -14,6 +14,7 @@
 import React, { useMemo, useState } from 'react'
 import { pickDesign, designCodeOf } from '../lib/designInterp'
 import { scanLocalDateTime } from '../lib/scanTime'
+import { loadJsPdf } from '@/lib/cdnScript'
 
 const C = {
   bg: '#0A1929', panel: '#0d2236', border: '#1E3A5A', accent: '#06B6D4',
@@ -26,21 +27,7 @@ const DESIGN_GREY = '#94A3B8'
 const fmt = (v: number | null | undefined, dp = 1) => (v == null || Number.isNaN(v) ? '—' : Number(v).toFixed(dp))
 
 // jsPDF (UMD) loaded once from CDN for Share-as-PDF.
-let jspdfPromise: Promise<any> | null = null
-function loadJsPdf(): Promise<any> {
-  const w = window as any
-  if (w.jspdf?.jsPDF) return Promise.resolve(w.jspdf.jsPDF)
-  if (!jspdfPromise) {
-    jspdfPromise = new Promise((res, rej) => {
-      const s = document.createElement('script')
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
-      s.onload = () => res((window as any).jspdf.jsPDF)
-      s.onerror = () => rej(new Error('failed to load jsPDF'))
-      document.head.appendChild(s)
-    })
-  }
-  return jspdfPromise
-}
+
 const rgbOf = (hex: string) => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]
 
 // render an image URL to a JPEG data-URL via canvas (needs CORS; null if tainted).

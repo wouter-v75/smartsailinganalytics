@@ -291,7 +291,7 @@ export default function BackfillPanel({
             onClick={runFromBunny}
             disabled={status === 'running' || !boatId}
             className="rounded-lg bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white px-4 py-2 text-sm font-medium"
-            title="Scans Bunny Cloud Storage (sessions/<date>/) for every session ever uploaded."
+            title="Scans Bunny Cloud Storage for every session ever uploaded — this boat's own prefix and the older shared sessions/<date>/ one."
           >
             Backfill from Bunny cloud
           </button>

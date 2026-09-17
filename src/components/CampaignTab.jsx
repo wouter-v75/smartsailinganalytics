@@ -120,7 +120,6 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
   const crossBoatEdit = role === 'admin' || role === 'team_manager'
   // Clicking a backlog-item link in a debrief jumps to the Backlog sub-tab and
   // highlights that item.
-  const [highlightItem, setHighlightItem] = useState(null)
   const onOpenItem = () => { /* backlog pruned — debrief→item links are no-ops */ }
   // Clicking "Day details" on a Plan DayCard jumps to the Day sub-tab on that
   // date. DayView consumes pendingDayDate via initialDate (one-shot consume).
@@ -256,61 +255,21 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
 
 // ── Backlog ──────────────────────────────────────────────────────────────────
 const CAT_COLOR = { racing: '#1D9E75', technical: '#F59E0B', 'whole-team': '#8B5CF6' }
-const KIND_LABEL = { action: 'Action', fmea: 'FMEA', task: 'Task', test: 'Test', training: 'Training', deliverable: 'Deliverable', milestone: 'Milestone' }
-// Kinds offered when creating an item (existing action/deliverable/milestone stay valid for old rows).
-const KIND_ADD_OPTIONS = [['task', 'Task'], ['test', 'Test'], ['training', 'Training'], ['fmea', 'FMEA']]
 // "Location" in the UI — the DB column is still called `venue` for stability.
 // Where the work happens; office covers desk / planning / writeup days.
 const VENUES = [['on-water', 'On the water'], ['dock', 'Dock'], ['shed', 'Shed'], ['office', 'Office']]
 const VENUE_LABEL = { 'on-water': 'On the water', dock: 'Dock', shed: 'Shed', office: 'Office' }
 const PRIO_COLOR = { 1: '#EF4444', 2: '#F97316', 3: '#F59E0B', 4: '#64748B', 5: '#475569' }
-const ANSWER_META = {
-  unanswered: { label: 'Not tested', c: '#64748B' },
-  partial: { label: 'Partial', c: '#F59E0B' },
-  answered: { label: 'Answered', c: '#1D9E75' },
-}
-// 'owner' is TL1 in every respect but sharing (migration 0058), so it sits with tl1.
-const WRITE_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl1', 'tl2', 'owner']
-const TAG_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl2', 'consultant'] // TL2 and up
 // TL3 and above may EDIT plan / backlog / day / debrief / speed notes / weather.
 const EDIT_ROLES = ['admin', 'team_manager', 'coach', 'tl3']
 // TL2 and above may see the "what can we test now" picker.
 const TESTNOW_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl2']
-const WIND_STEPS = [0, 5, 10, 15, 20, 25, 30]
-const SOD = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 // FMEA: RPN = S×O×D (1–1000). High severity is top priority regardless of RPN.
 const fmeaRpn = (m) => (Number(m?.severity) || 0) * (Number(m?.occurrence) || 0) * (Number(m?.detection) || 0)
-const rpnToPriority = (m) => {
-  const sev = Number(m?.severity) || 0
-  const rpn = fmeaRpn(m)
-  if (sev >= 9 || rpn >= 200) return 1
-  if (rpn >= 120) return 2
-  if (rpn >= 60) return 3
-  if (rpn >= 30) return 4
-  return 5
-}
 
 
 // ── Day sub-tab ──────────────────────────────────────────────────────────────
 const safeName = (n) => n.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80)
-
-function PlanItemRow({ item, highlight, selectable, checked, onToggle }) {
-  const sub = item.subteams
-  const catColor = sub ? CAT_COLOR[sub.category] || '#64748B' : '#334155'
-  const wind = item.wind_min_kt != null || item.wind_max_kt != null
-    ? `${item.wind_min_kt ?? '0'}–${item.wind_max_kt ?? '∞'}kt`
-    : null
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#071624', borderLeft: `3px solid ${highlight ? '#06B6D4' : catColor}`, borderRadius: 6, padding: '6px 9px', flexWrap: 'wrap' }}>
-      {selectable && <input type="checkbox" checked={!!checked} onChange={() => onToggle?.(item.id)} style={{ margin: 0, cursor: 'pointer' }} />}
-      <span style={{ fontSize: 11, fontWeight: 800, color: PRIO_COLOR[item.priority] || '#475569' }}>{item.priority ? `P${item.priority}` : 'P–'}</span>
-      <span style={{ fontSize: 12, color: '#E2E8F0', flex: 1, minWidth: 100 }}>{item.title}</span>
-      {sub && <span style={{ fontSize: 9, color: catColor }}>{sub.label}</span>}
-      {item.venue && <span style={{ fontSize: 9, color: '#94A3B8' }}>{VENUE_LABEL[item.venue]}</span>}
-      {wind && <span style={{ fontSize: 9, color: '#7DD3FC', fontFamily: 'monospace' }}>{wind}</span>}
-    </div>
-  )
-}
 
 function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVideo, onOpenItem, scopeAll, activeBoatName, initialDate, onConsumeInitialDate }) {
   const [date, setDate] = useState(initialDate || todayStr())
@@ -332,8 +291,6 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
   const canEditDebrief = EDIT_ROLES.includes(role)
   const canSeeForecast = role !== 'guest'   // TL1+ (consultant within window via RLS)
   const canEditForecast = EDIT_ROLES.includes(role)
-  const canSeeTestNow = TESTNOW_ROLES.includes(role)  // TL2+
-  const canMoveTests = EDIT_ROLES.includes(role)      // TL3+
   const base = `/api/teams/${teamId}/boats/${boatId}/campaign`
 
   const loadCalendar = useCallback(async () => {
@@ -1602,25 +1559,6 @@ export function MyDebriefNotesCard({ teamId, boatId, date, wrapperStyle }) {
         )}
         {err && <span style={{ fontSize: 12, color: '#EF4444' }}>{err}</span>}
       </div>
-    </div>
-  )
-}
-
-function Placeholder({ title, note }) {
-  return (
-    <div
-      style={{
-        border: '1px dashed #1E3A5A',
-        borderRadius: 12,
-        padding: 40,
-        textAlign: 'center',
-        color: '#64748B',
-      }}
-    >
-      <div style={{ fontSize: 15, fontWeight: 700, color: '#8A97A9', marginBottom: 6 }}>
-        {title}
-      </div>
-      <div style={{ fontSize: 12 }}>{note}</div>
     </div>
   )
 }

@@ -5,7 +5,8 @@
 // replacement for local "synced" flags. See
 // docs/sync-caching-architecture-research.md (Phases 1–2).
 
-import { uploadJsonToStorage, fetchFromStorage } from './bunny'
+import { fetchSessionFile, uploadSessionFile } from './bunny'
+import { SESSION_LEAVES, type StorageScope } from './storageKeys'
 
 export interface SyncManifest {
   version: number
@@ -18,19 +19,30 @@ export interface SyncManifest {
   photos?: { count?: number } | null
 }
 
-const keyFor = (date: string) => `sessions/${date}/sync-manifest.json`
+// The manifest is per (team, boat, date) now — it used to be per date alone, so two
+// boats sailing the same day shared one manifest and each read the other's hashes.
+// See src/lib/storageKeys.ts.
 
 // Read the manifest for a session. Returns null if none exists yet (first sync)
 // or on any network error — callers must treat "no manifest" as "upload".
-export async function readSyncManifest(date: string): Promise<SyncManifest | null> {
-  const m = (await fetchFromStorage(keyFor(date))) as SyncManifest | null
+export async function readSyncManifest(
+  date: string,
+  scope?: StorageScope | null
+): Promise<SyncManifest | null> {
+  const m = (await fetchSessionFile(scope, date, SESSION_LEAVES.syncManifest)) as SyncManifest | null
   if (!m || typeof m !== 'object') return null
   return m
 }
 
 // Write the manifest, stamping updatedAt. Best-effort; returns success bool.
-export async function writeSyncManifest(date: string, manifest: SyncManifest): Promise<boolean> {
-  return uploadJsonToStorage(keyFor(date), { ...manifest, version: 1, updatedAt: Date.now() })
+export async function writeSyncManifest(
+  date: string,
+  manifest: SyncManifest,
+  scope?: StorageScope | null
+): Promise<boolean> {
+  return uploadSessionFile(scope, date, SESSION_LEAVES.syncManifest, {
+    ...manifest, version: 1, updatedAt: Date.now(),
+  })
 }
 
 // Read-modify-write merge. `base` (if provided) is used for optimistic
@@ -40,9 +52,10 @@ export async function writeSyncManifest(date: string, manifest: SyncManifest): P
 export async function updateSyncManifest(
   date: string,
   patch: Partial<SyncManifest>,
-  base?: SyncManifest | null
+  base?: SyncManifest | null,
+  scope?: StorageScope | null
 ): Promise<SyncManifest> {
-  const current = (await readSyncManifest(date)) || { version: 1, updatedAt: 0 }
+  const current = (await readSyncManifest(date, scope)) || { version: 1, updatedAt: 0 }
   // If someone else advanced the manifest since we based our decision on it,
   // merge onto the current cloud copy (our patch still applies — we only add
   // hashes we just uploaded).
@@ -57,6 +70,6 @@ export async function updateSyncManifest(
     if (!patch.log && current.log) merged.log = current.log
     if (!patch.xml && current.xml) merged.xml = current.xml
   }
-  await writeSyncManifest(date, merged)
+  await writeSyncManifest(date, merged, scope)
   return merged
 }
