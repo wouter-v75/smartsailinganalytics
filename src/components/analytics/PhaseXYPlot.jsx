@@ -10,7 +10,7 @@
 
 import React from 'react'
 import { CHANNEL_BY_KEY } from '../../lib/phaseStats'
-import { phasePoints, tackTrends, plotDomain, niceTicks, tickDecimals } from '../../lib/phasePlot'
+import { phasePoints, tackTrends, linearTrend, plotDomain, niceTicks, tickDecimals } from '../../lib/phasePlot'
 import { phaseSection } from '../../lib/trackSections'
 import { symbolFor, symbolPath } from '../../lib/phaseSymbols'
 
@@ -52,13 +52,23 @@ export default function PhaseXYPlot({
   const trends = showTrend ? tackTrends(pts) : { port: null, stbd: null }
   const tackColor = t => (t === 'port' ? PORT_COLOR : color)
 
-  const enter = p => { setHoveredTack(p.tack); setHover(p) }
+  const enter = p => { setHoveredTack(bySection ? (sectionOfPhase(p)?.id || null) : p.tack); setHover(p) }
   const leave = () => { setHoveredTack(null); setHover(null) }
-  const select = p => { setHoveredTack(p.tack); setHover(p); onSelectUtc?.(p.utc) }
+  const select = p => { setHoveredTack(bySection ? (sectionOfPhase(p)?.id || null) : p.tack); setHover(p); onSelectUtc?.(p.utc) }
 
-  // Which section a phase belongs to decides its SHAPE; the tack decides its COLOUR.
-  // Two facts, two channels, so a plot of two sections on both tacks still reads.
+  // WHOLE SESSION, or one race: the split that matters is the tack, and it is a colour,
+  // as it has always been.
+  //
+  // SECTIONS: the split that matters is which stretch, so the section takes over both
+  // channels — colour AND shape — and gets a trend of its own. Two stretches drawn in
+  // one colour with one trend line through them answer nothing; the comparison IS the
+  // question somebody selected them to ask.
+  const bySection = sections.length > 0
   const sectionOfPhase = p => phaseSection({ utc: p.utc, endUtc: p.endUtc ?? p.utc }, sections)
+  const ptsOf = sec => pts.filter(p => sectionOfPhase(p)?.id === sec.id)
+  const sectionTrends = showTrend && bySection
+    ? sections.map(sec => ({ sec, trend: linearTrend(ptsOf(sec)), n: ptsOf(sec).length }))
+    : []
 
   const dot = (p, i, hl) => {
     const cx = px(p.x), cy = py(p.y)
@@ -69,7 +79,7 @@ export default function PhaseXYPlot({
       <path
         key={(hl ? 'hl' : '') + i}
         d={symbolPath(kind, cx, cy, r)}
-        fill={tackColor(p.tack)}
+        fill={bySection && sec ? sec.color : tackColor(p.tack)}
         opacity={hl ? 1 : 0.8}
         data-phase={p.utc} data-tack={p.tack} data-symbol={kind}
         {...(sec ? { 'data-section': sec.n } : {})}
@@ -104,19 +114,24 @@ export default function PhaseXYPlot({
   return (
     <div style={{ position: 'relative' }}>
       <div style={{ display: 'flex', gap: 10, marginBottom: 4, fontSize: 11, color: '#94A3B8', flexWrap: 'wrap' }}>
-        <span>{swatch('circle', PORT_COLOR)}Port tack · {port.length}{r2('port')}</span>
-        <span>{swatch('circle', color)}Stbd tack · {stbd.length}{r2('stbd')}</span>
-        {sections.length > 0 && (
+        {bySection ? (
           <>
-            <span style={{ color: '#334155' }}>|</span>
             {sections.map(sec => {
-              const n = pts.filter(p => sectionOfPhase(p)?.id === sec.id).length
+              const secPts = ptsOf(sec)
+              const t = sectionTrends.find(x => x.sec.id === sec.id)?.trend
               return (
                 <span key={sec.id} data-legend-section={sec.n}>
-                  {swatch(symbolFor(sec.n), '#CBD5E1')}Section {sec.n} · {n}
+                  {swatch(symbolFor(sec.n), sec.color)}Section {sec.n} · {secPts.length}
+                  {t ? ` · R² ${t.r2.toFixed(2)}` : ''}
                 </span>
               )
             })}
+            <span style={{ color: '#334155' }}>· port {port.length} / stbd {stbd.length}, named in the tooltip</span>
+          </>
+        ) : (
+          <>
+            <span>{swatch('circle', PORT_COLOR)}Port tack · {port.length}{r2('port')}</span>
+            <span>{swatch('circle', color)}Stbd tack · {stbd.length}{r2('stbd')}</span>
           </>
         )}
         <span style={{ color: '#64748B' }}>· hover to highlight{onSelectUtc ? ' · click to jump' : ''}</span>
@@ -155,12 +170,23 @@ export default function PhaseXYPlot({
         <line x1={pad.l} x2={pad.l + W} y1={pad.t + H} y2={pad.t + H} stroke="#1E3A5A" strokeWidth="1" />
         {stbd.map((p, i) => dot(p, 's' + i))}
         {port.map((p, i) => dot(p, 'p' + i))}
-        {trendLine('stbd')}
-        {trendLine('port')}
+        {bySection
+          ? sectionTrends.map(({ sec, trend }) => {
+              if (!trend) return null
+              const dim = hoveredTack && hoveredTack !== sec.id
+              return (
+                <line key={'tr' + sec.id} data-section-trend={sec.n}
+                  x1={px(trend.x0)} y1={py(trend.slope * trend.x0 + trend.intercept)}
+                  x2={px(trend.x1)} y2={py(trend.slope * trend.x1 + trend.intercept)}
+                  stroke={sec.color} strokeWidth="1.5" strokeDasharray="5,3"
+                  opacity={dim ? 0.15 : 0.9} style={{ pointerEvents: 'none' }} />
+              )
+            })
+          : <>{trendLine('stbd')}{trendLine('port')}</>}
         {/* Grey veil over the non-hovered tack; the hovered tack is redrawn on top */}
         {hoveredTack && <rect x={pad.l} y={pad.t} width={W} height={H} fill="#0A1929" opacity="0.62" style={{ pointerEvents: 'none' }} />}
-        {hoveredTack && pts.filter(p => p.tack === hoveredTack).map((p, i) => dot(p, i, true))}
-        {hoveredTack && trendLine(hoveredTack, 'hl')}
+        {hoveredTack && pts.filter(p => (bySection ? sectionOfPhase(p)?.id : p.tack) === hoveredTack).map((p, i) => dot(p, i, true))}
+        {hoveredTack && !bySection && trendLine(hoveredTack, 'hl')}
         {active && <circle cx={px(active.x)} cy={py(active.y)} r="7" fill="none" stroke="#F8FAFC" strokeWidth="1.2" style={{ pointerEvents: 'none' }} />}
         {yTicks.map((y, i) => <text key={i} x={pad.l - 6} y={py(y) + 4} textAnchor="end" fontSize="12" fill="#94A3B8">{y.toFixed(yDec)}</text>)}
         {xTicks.map((x, i) => <text key={i} x={px(x)} y={pad.t + H + 20} textAnchor="middle" fontSize="12" fill="#94A3B8">{x.toFixed(xDec)}</text>)}

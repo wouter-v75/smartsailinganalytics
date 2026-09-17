@@ -73,6 +73,32 @@ describe('PhaseXYPlot', () => {
     expect(container.querySelector('circle[r="7"]')).toBeTruthy()
   })
 
+  it('keeps tack as the colour when no section is chosen — a whole session, or one race', () => {
+    const { container } = render(<PhaseXYPlot phases={phases} yKey="bsp" />)
+    const fills = new Set(Array.from(container.querySelectorAll('path[data-phase]')).map(e => e.getAttribute('fill')))
+    expect(fills.size).toBe(2)                                  // port and starboard
+    expect(screen.getByText(/Port tack · 3/)).toBeTruthy()
+    expect(container.querySelector('[data-section-trend]')).toBeNull()
+  })
+
+  it('gives each section its own colour and its own trend once sections are shown', () => {
+    // Section 1 holds three phases (enough for a trend); section 2 holds one, which is
+    // not a trend and must not be drawn as though it were.
+    const sections = [
+      { id: 's1', n: 1, color: '#FDE047', range: [phases[0].utc, phases[2].endUtc] as [number, number] },
+      { id: 's2', n: 2, color: '#22D3EE', range: [phases[3].utc, phases[3].endUtc] as [number, number] },
+    ]
+    const { container } = render(<PhaseXYPlot phases={phases} yKey="bsp" sections={sections} />)
+    // Colour now says WHICH STRETCH, not which tack.
+    expect(container.querySelectorAll('path[data-section="1"][fill="#FDE047"]')).toHaveLength(3)
+    expect(container.querySelectorAll('path[data-section="2"][fill="#22D3EE"]')).toHaveLength(1)
+    // One trend, for the section that has the points for one, in that section's colour.
+    expect(container.querySelectorAll('[data-section-trend]')).toHaveLength(1)
+    expect(container.querySelector('[data-section-trend="1"]')!.getAttribute('stroke')).toBe('#FDE047')
+    // The tacks are still counted, they just no longer carry the colour.
+    expect(screen.getByText(/port 3 \/ stbd 1/)).toBeTruthy()
+  })
+
   it('marks each section with its own shape, and says so in the legend', () => {
     // Two sections over the phases: shape says which, colour still says which tack.
     const sections = [

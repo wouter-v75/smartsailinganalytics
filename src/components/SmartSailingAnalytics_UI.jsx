@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { POLAR_KEY, savePolarToLS, loadPolarFromLS, parsePolarFile,
   buildSpline, evalSpline, goldenMax, preparePolar,
   polarInterp, polarVMGTarget, polarPerf, perfColor } from '../lib/polarCalc';
-import { trackPct, toMode, TRACK_COLOUR_MODES } from '../lib/trackColour';
+import { toMode, TRACK_COLOUR_MODES, modeDef, needsPolar, trackValue, scaleForRows, colourFor, legendStops } from '../lib/trackColour';
 import { MEDIA_COLOURS, isDroneClip } from '../lib/mediaDecks';
 import { segmentDay, racesOf } from '../lib/tagging/segments';
 import { getBrowserSupabase, getUidFast } from '../lib/supabase/browser';
@@ -4535,6 +4535,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     race ? dayRows.filter(r=>r.utc>=race.t0 && r.utc<=race.t1) : dayRows
   ,[dayRows, race]);
 
+
   const winStart = videoStartUtc ? videoStartUtc+(syncOffset||0)*1000 : null;
   const winEnd   = winStart ? winStart+(videoDurationSec||0)*1000 : null;
   const hlRows   = React.useMemo(()=>
@@ -4542,6 +4543,11 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   ,[filteredRows, winStart, winEnd]);
 
   const polar = React.useMemo(()=>loadPolarFromLS(),[]);
+  // The colour scale comes from the day being shown, not from a fixed band: a whole
+  // afternoon inside one colour tells you nothing, which is what a fixed band does to
+  // a steady day.
+  const colourScale = React.useMemo(
+    ()=>scaleForRows(polar, filteredRows, colourMode), [polar, filteredRows, colourMode]);
 
   // Keep callbacks in refs so Leaflet click closures always have the latest values
   const onSelectVideoRef = React.useRef(onSelectVideo);
@@ -4600,8 +4606,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       let seg = {color:null, pts:[]};
       for(let i=0;i<sampled.length;i++){
         const row = sampled[i];
-        const pct = trackPct(polar, row, colourMode);
-        const color = pct==null ? '#1E4080' : perfColor(pct);
+        const color = colourFor(trackValue(polar, row, colourMode), colourScale);
         const pt = [row.lat, row.lon];
         if(!seg.color){ seg={color,pts:[pt]}; }
         else if(color!==seg.color){ seg.pts.push(pt); if(seg.pts.length>1) segments.push({...seg,pts:[...seg.pts]}); seg={color,pts:[pt]}; }
@@ -4761,9 +4766,21 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       });
 
       // ── Legends ─────────────────────────────────────────────────────────────
-      if(polar){
+      if(colourScale){
+        const stops=legendStops(colourScale);
+        const def=modeDef(colourMode);
+        const head=def.kind==='pct' ? `⬡ ${polar?.filename||'Polar'} · ${def.label}` : def.label;
         const leg=L.control({position:'bottomright'});
-        leg.onAdd=()=>{const d=L.DomUtil.create('div','');d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.9';d.innerHTML=`<div style="font-weight:700;color:#E2E8F0;margin-bottom:4px;font-size:10px">⬡ ${polar.filename||'Polar'} · ${polar.tws?.[0]}–${polar.tws?.[polar.tws.length-1]} kn</div><div><span style="display:inline-block;width:10px;height:5px;background:#EF4444;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≤ 90%</div><div><span style="display:inline-block;width:10px;height:5px;background:#86EFAC;border-radius:1px;margin-right:5px;vertical-align:middle"></span>100%</div><div><span style="display:inline-block;width:10px;height:5px;background:#15803D;border-radius:1px;margin-right:5px;vertical-align:middle"></span>≥ 110%</div><div style="margin-top:3px;color:#475569;font-size:8px">${MODE_LEGEND[colourMode]||''}</div>`;return d;};
+        leg.onAdd=()=>{
+          const d=L.DomUtil.create('div','');
+          d.style.cssText='background:rgba(3,15,26,0.92);border:1px solid #1E3A5A;border-radius:7px;padding:8px 11px;font-size:9px;color:#94A3B8;line-height:1.8';
+          const swatches=stops.map(st=>`<span style="display:inline-block;width:22px;height:7px;background:${st.color}"></span>`).join('');
+          const labels=stops.map(st=>`<span style="display:inline-block;width:22px;text-align:center;font-size:8px;color:#64748B">${st.label}</span>`).join('');
+          d.innerHTML=`<div style="font-weight:700;color:#E2E8F0;margin-bottom:4px;font-size:10px">${head}</div>`
+            +`<div style="display:flex;gap:2px">${swatches}</div><div style="display:flex;gap:2px;margin-top:2px">${labels}</div>`
+            +`<div style="margin-top:4px;color:#475569;font-size:8px">${def.hint}</div>`;
+          return d;
+        };
         leg.addTo(map);
       }
       const evLeg=L.control({position:'bottomleft'});
@@ -4810,7 +4827,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       cancelled = true;
       if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
     };
-  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, colourMode, dayTags]);
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, colourMode, colourScale, dayTags]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
@@ -5111,11 +5128,20 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
           <select
             value={colourMode}
             onChange={e=>setColourMode(e.target.value)}
-            disabled={!polar}
-            title={polar?TRACK_COLOUR_MODES.find(m=>m.key===colourMode)?.hint:"Upload a polar to colour the track"}
-            style={{...selectStyle,opacity:polar?1:0.5}}
+            title={modeDef(colourMode).hint}
+            style={selectStyle}
           >
-            {TRACK_COLOUR_MODES.map(m=><option key={m.key} value={m.key}>{m.label}</option>)}
+            {Array.from(new Set(TRACK_COLOUR_MODES.map(m=>m.group))).map(group=>(
+              <optgroup key={group} label={group}>
+                {TRACK_COLOUR_MODES.filter(m=>m.group===group).map(m=>(
+                  // Only the polar modes need a polar; a channel off the log is
+                  // colourable on any day.
+                  <option key={m.key} value={m.key} disabled={!polar&&needsPolar(m.key)}>
+                    {m.label}{!polar&&needsPolar(m.key)?' · needs a polar':''}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
           </select>
         </label>
 
@@ -5124,9 +5150,13 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
             boat speed and under on VMG — and that disagreement is the
             information, so the measure has to be a choice rather than something
             the map decides halfway up the beat. */}
-        {polar
-          ? <span style={{color:"#475569"}}>{TRACK_COLOUR_MODES.find(m=>m.key===colourMode)?.hint}</span>
-          : <span style={{color:"#475569"}}>No polar loaded — track in uniform blue. Upload one in the Uploads tab.</span>}
+        {colourScale
+          ? <span style={{color:"#475569"}}>{modeDef(colourMode).hint}</span>
+          : <span style={{color:"#475569"}}>
+              {needsPolar(colourMode)
+                ? "No polar loaded — colour by a channel off the log instead, or upload one in the Uploads tab."
+                : `This log has no ${modeDef(colourMode).label} readings — track in uniform blue.`}
+            </span>}
 
         {race&&(
           <span style={{color:"#7DD3FC",fontFamily:"monospace"}}>

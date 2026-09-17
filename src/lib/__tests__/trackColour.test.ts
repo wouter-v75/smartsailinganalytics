@@ -24,8 +24,11 @@ const at = (twa: number, tws = 12) => {
 }
 
 describe('the modes are a real choice', () => {
-  it('offers auto plus the three the crew asked for', () => {
-    expect(TRACK_COLOUR_MODES.map((m) => m.key)).toEqual(['auto', 'vmg', 'polbsp', 'target'])
+  it('leads with auto plus the three the crew asked for', () => {
+    // The channels off the log come after them; these four are the polar questions.
+    expect(TRACK_COLOUR_MODES.map((m) => m.key).slice(0, 4)).toEqual(['auto', 'vmg', 'polbsp', 'target'])
+    expect(TRACK_COLOUR_MODES.filter((m) => m.kind === 'pct').map((m) => m.key))
+      .toEqual(['auto', 'vmg', 'polbsp', 'target'])
   })
 
   it('every mode has a label and says what it measures', () => {
