@@ -270,7 +270,7 @@ function HeadlinesCard({ boat, activeDate, stored, canUseAI, onDone, override })
   )
 }
 const select = { background: '#071624', border: '1px solid #1E3A5A', borderRadius: 6, color: '#CBD5E1', fontSize: 11, padding: '4px 6px', cursor: 'pointer' }
-const caption = { fontSize: 9, color: '#475569', marginBottom: 4, letterSpacing: 1, textTransform: 'uppercase' }
+const caption = { fontSize: 11, color: '#94A3B8', marginBottom: 5, letterSpacing: 1, textTransform: 'uppercase' }
 const modeBtn = on => ({
   fontSize: 11, fontWeight: 700, borderRadius: 6, padding: '5px 10px', cursor: 'pointer',
   border: `1px solid ${on ? '#06B6D4' : '#1E3A5A'}`, background: on ? '#06B6D420' : '#071624', color: on ? '#06B6D4' : '#94A3B8',
@@ -481,7 +481,7 @@ export default function PerfChartsSection({
         </div>
       ) : mode === 'polar' ? (
         bands.length ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 12 }}>
+          <div className="perf-chart-grid">
             {bands.map(b => {
               const curve = polarCurve(polar, b.centre)
               return (
@@ -490,7 +490,7 @@ export default function PerfChartsSection({
                     BSP vs |TWA| · TWS {b.centre} kn
                     <span style={{ textTransform: 'none', letterSpacing: 0 }}> ({b.lo}–{b.hi} kn){polar && !curve ? ' · beyond the polar' : ''}</span>
                   </div>
-                  <PhaseXYPlot phases={b.phases} xKey="twa" yKey="bsp" color={COLORS.bsp} height={190} showTrend={false}
+                  <PhaseXYPlot phases={b.phases} xKey="twa" yKey="bsp" color={COLORS.bsp} height={320} showTrend={false}
                     targetLine={curve} targetLabel={`polar ${b.centre} kn`} tzOffsetMin={tzOffsetMin}
                     onSelectUtc={onJump} activeUtc={playUtc} />
                 </div>
@@ -501,14 +501,14 @@ export default function PerfChartsSection({
           <div style={note}>No 2 kn wind band has 3 or more phases with these filters.</div>
         )
       ) : specs.length ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(260px,1fr))', gap: 12 }}>
+        <div className="perf-chart-grid">
           {specs.map(s => {
             const yCh = CHANNEL_BY_KEY[s.y], xCh = CHANNEL_BY_KEY[s.x]
             const target = s.x === 'tws' ? polarTargetLine(polar, mode, s.y, Math.min(...tws), Math.max(...tws)) : null
             return (
               <div key={`${s.y}-${s.x}`} data-chart={`${s.y}-${s.x}`}>
                 <div style={caption}>{yCh.label} vs {xCh.label}</div>
-                <PhaseXYPlot phases={shown} xKey={s.x} yKey={s.y} color={COLORS[s.y] || '#06B6D4'} height={170}
+                <PhaseXYPlot phases={shown} xKey={s.x} yKey={s.y} color={COLORS[s.y] || '#06B6D4'} height={300}
                   yLines={PCT.has(s.y) ? [100] : []} targetLine={target} tzOffsetMin={tzOffsetMin}
                   refCurves={s.x === 'tws' ? refCurvesFor(s.y) : []}
                   onSelectUtc={onJump} activeUtc={playUtc} />

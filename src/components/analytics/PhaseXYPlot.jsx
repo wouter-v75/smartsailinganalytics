@@ -17,7 +17,7 @@ const localHMS = (utc, tzMin) => new Date(utc + (tzMin || 0) * 60000).toISOStrin
 const fmtVal = (v, ch) => (v == null ? '—' : v.toFixed(ch?.decimals ?? 1))
 
 export default function PhaseXYPlot({
-  phases, xKey = 'tws', yKey, color = '#06B6D4', width = 400, height = 170, title = '',
+  phases, xKey = 'tws', yKey, color = '#06B6D4', width = 560, height = 300, title = '',
   yLines = [], targetLine = null, targetLabel = 'polar', showTrend = true, refCurves = [],
   tzOffsetMin = 0, onSelectUtc = null, activeUtc = null,
 }) {
@@ -30,7 +30,7 @@ export default function PhaseXYPlot({
     return <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1E3A5A', fontSize: 10 }}>No data</div>
   }
 
-  const pad = { t: title ? 20 : 10, r: 8, b: 28, l: 36 }
+  const pad = { t: title ? 24 : 12, r: 12, b: 40, l: 52 }
   const W = width - pad.l - pad.r, H = height - pad.t - pad.b
   const [x0, x1] = plotDomain(pts.map(p => p.x), (targetLine || []).map(p => p.x))
   // Season reference curves are clipped to the day's wind range (± half a 1 kn bin), so a
@@ -86,7 +86,7 @@ export default function PhaseXYPlot({
 
   return (
     <div style={{ position: 'relative' }}>
-      <div style={{ display: 'flex', gap: 10, marginBottom: 3, fontSize: 9, color: '#475569', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 4, fontSize: 11, color: '#94A3B8', flexWrap: 'wrap' }}>
         <span>
           <svg width="9" height="9" style={{ verticalAlign: 'middle', marginRight: 3 }}>
             <polygon points="4.5,0.5 0.5,8.5 8.5,8.5" fill={PORT_COLOR} opacity="0.8" />
@@ -99,11 +99,11 @@ export default function PhaseXYPlot({
           </svg>
           Stbd tack · {stbd.length}{r2('stbd')}
         </span>
-        <span style={{ color: '#334155' }}>· hover to highlight{onSelectUtc ? ' · click to jump' : ''}</span>
+        <span style={{ color: '#64748B' }}>· hover to highlight{onSelectUtc ? ' · click to jump' : ''}</span>
       </div>
       <svg width="100%" viewBox={`0 0 ${width} ${height}`} style={{ overflow: 'visible' }} role="img"
         aria-label={`${yCh?.label || yKey} vs ${xCh?.label || xKey}, ${pts.length} phases`}>
-        {title && <text x={pad.l + W / 2} y={10} textAnchor="middle" fontSize="9" fill="#64748B" fontWeight="600">{title}</text>}
+        {title && <text x={pad.l + W / 2} y={13} textAnchor="middle" fontSize="12" fill="#CBD5E1" fontWeight="600">{title}</text>}
         {yTicks.map((y, i) => <line key={i} x1={pad.l} x2={pad.l + W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1" />)}
         {yLines.map((y, i) => {
           const cy = py(y)
@@ -111,7 +111,7 @@ export default function PhaseXYPlot({
           return (
             <g key={'yl' + i}>
               <line x1={pad.l} x2={pad.l + W} y1={cy} y2={cy} stroke={color} strokeWidth="1" strokeDasharray="4,3" opacity="0.6" />
-              <text x={pad.l + W - 2} y={cy - 3} textAnchor="end" fontSize="7" fill={color} opacity="0.8">{y}</text>
+              <text x={pad.l + W - 2} y={cy - 3} textAnchor="end" fontSize="10" fill={color} opacity="0.9">{y}</text>
             </g>
           )
         })}
@@ -121,14 +121,14 @@ export default function PhaseXYPlot({
             <g key={'ref' + c.label} data-ref={c.label} style={{ pointerEvents: 'none' }}>
               <polyline points={c.points.map(p => `${px(p.x)},${py(p.y)}`).join(' ')} fill="none"
                 stroke={c.color} strokeWidth="1.4" strokeDasharray="6,3" opacity="0.7" />
-              <text x={px(last.x) + 2} y={py(last.y) - 3} fontSize="7" fill={c.color} opacity="0.9">{c.label}</text>
+              <text x={px(last.x) + 2} y={py(last.y) - 4} fontSize="10" fill={c.color} opacity="0.95">{c.label}</text>
             </g>
           )
         })}
         {targetLine && (
           <g style={{ pointerEvents: 'none' }}>
             <polyline points={targetLine.map(p => `${px(p.x)},${py(p.y)}`).join(' ')} fill="none" stroke="#E2E8F0" strokeWidth="1.2" strokeDasharray="2,3" opacity="0.55" />
-            <text x={px(targetLine[targetLine.length - 1].x) - 2} y={py(targetLine[targetLine.length - 1].y) - 4} textAnchor="end" fontSize="7" fill="#94A3B8">{targetLabel}</text>
+            <text x={px(targetLine[targetLine.length - 1].x) - 2} y={py(targetLine[targetLine.length - 1].y) - 4} textAnchor="end" fontSize="10" fill="#CBD5E1">{targetLabel}</text>
           </g>
         )}
         <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t + H} stroke="#1E3A5A" strokeWidth="1" />
@@ -142,10 +142,10 @@ export default function PhaseXYPlot({
         {hoveredTack && pts.filter(p => p.tack === hoveredTack).map((p, i) => dot(p, i, true))}
         {hoveredTack && trendLine(hoveredTack, 'hl')}
         {active && <circle cx={px(active.x)} cy={py(active.y)} r="7" fill="none" stroke="#F8FAFC" strokeWidth="1.2" style={{ pointerEvents: 'none' }} />}
-        {yTicks.map((y, i) => <text key={i} x={pad.l - 4} y={py(y) + 3} textAnchor="end" fontSize="8" fill="#475569">{y.toFixed(yDec)}</text>)}
-        {xTicks.map((x, i) => <text key={i} x={px(x)} y={pad.t + H + 14} textAnchor="middle" fontSize="8" fill="#475569">{x.toFixed(xDec)}</text>)}
-        <text x={pad.l + W / 2} y={height - 1} textAnchor="middle" fontSize="8" fill="#475569">{xCh ? `${xCh.label} (${xCh.unit})` : xKey}</text>
-        <text x={8} y={pad.t + H / 2} textAnchor="middle" fontSize="8" fill="#475569" transform={`rotate(-90,8,${pad.t + H / 2})`}>
+        {yTicks.map((y, i) => <text key={i} x={pad.l - 6} y={py(y) + 4} textAnchor="end" fontSize="12" fill="#94A3B8">{y.toFixed(yDec)}</text>)}
+        {xTicks.map((x, i) => <text key={i} x={px(x)} y={pad.t + H + 20} textAnchor="middle" fontSize="12" fill="#94A3B8">{x.toFixed(xDec)}</text>)}
+        <text x={pad.l + W / 2} y={height - 6} textAnchor="middle" fontSize="12" fill="#CBD5E1">{xCh ? `${xCh.label} (${xCh.unit})` : xKey}</text>
+        <text x={13} y={pad.t + H / 2} textAnchor="middle" fontSize="12" fill="#CBD5E1" transform={`rotate(-90,13,${pad.t + H / 2})`}>
           {yCh ? `${yCh.label} (${yCh.unit})` : yKey}
         </text>
       </svg>

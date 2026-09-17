@@ -191,3 +191,17 @@ body {
     }
   }
 }
+
+/* Analytics → Performance charts (30 s phases). Two charts per row on desktop, one
+   on a phone: the old auto-fill grid packed 3-4 narrow charts per row, which shrank
+   the SVG (and with it every axis label, since the font sizes are viewBox units)
+   past reading. A media query needs a class — these charts are otherwise styled
+   inline. */
+.perf-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+@media (max-width: 720px) {
+  .perf-chart-grid { grid-template-columns: minmax(0, 1fr); }
+}

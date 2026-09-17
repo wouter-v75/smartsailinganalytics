@@ -82,10 +82,10 @@ describe('PhaseXYPlot', () => {
     expect(screen.queryByText(/R²/)).toBeNull()
     expect(screen.getByText('polar 20 kn')).toBeTruthy()
     // The x-axis spans the curve: every curve point lies inside the plot area
-    // (pad.l 36 … width 400 − pad.r 8), not off to the right of the dots' range.
+    // (pad.l 52 … width 560 − pad.r 12), not off to the right of the dots' range.
     const xs = container.querySelector('polyline')!.getAttribute('points')!.split(' ').map(p => Number(p.split(',')[0]))
-    expect(Math.min(...xs)).toBeGreaterThanOrEqual(36)
-    expect(Math.max(...xs)).toBeLessThanOrEqual(392)
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(52)
+    expect(Math.max(...xs)).toBeLessThanOrEqual(548)
     const ticks = Array.from(container.querySelectorAll('svg text')).map(t => Number(t.textContent)).filter(Number.isFinite)
     expect(ticks).toContain(150)
   })
