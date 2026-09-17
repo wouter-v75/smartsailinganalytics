@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import PerfChartsSection from '../analytics/PerfChartsSection'
 import { polarFromData } from '../../lib/polarFile'
 import targetsV14 from '../../data/targets-v1.4.json'
+import { addSection } from '../../lib/trackSections'
 
 const T0 = Date.UTC(2026, 8, 11, 10, 18, 59)
 
@@ -248,14 +249,38 @@ describe('PerfChartsSection', () => {
 
   it('narrows everything to a stretch picked on the GPS track', () => {
     // Phases 0–3 have their midpoints inside the first 2 minutes.
-    const { rerender } = render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} range={[T0, T0 + 120_000]} />)
+    const one = addSection([], [T0, T0 + 120_000])
+    const { rerender } = render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} sections={one} />)
     expect(screen.getByRole('button', { name: /Upwind · 4/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Downwind · 0/ })).toBeTruthy()
     expect(screen.getByText(/4 phases of 30 s in the track selection/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Tack'), { target: { value: 'port' } })
     expect(screen.getByText(/2 phases of 30 s in the track selection/)).toBeTruthy()
-    rerender(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} range={[T0 + 1000, T0 + 10_000]} />)
-    expect(screen.getByText(/No 30 s phase has its midpoint inside the track selection/)).toBeTruthy()
+    const tooShort = addSection([], [T0 + 1000, T0 + 10_000])
+    rerender(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} sections={tooShort} />)
+    expect(screen.getByText(/No 30 s phase has its midpoint inside the selected section/)).toBeTruthy()
+  })
+
+  it('takes several sections at once — phases from any of them count', () => {
+    // Two minutes at the start, and one 30 s phase from the downwind at the end.
+    const two = addSection(addSection([], [T0, T0 + 120_000]), [T0 + 8 * 30_000, T0 + 9 * 30_000])
+    render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} sections={two} />)
+    expect(screen.getByRole('button', { name: /Upwind · 4/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Downwind · 1/ })).toBeTruthy()
+    // The line counts the phases of the mode on screen (upwind); the downwind one is
+    // in the button beside it.
+    expect(screen.getByText(/4 phases of 30 s in 2 sections/)).toBeTruthy()
+  })
+
+  it('takes a section out of the comparison without losing it', () => {
+    const two = addSection(addSection([], [T0, T0 + 120_000]), [T0 + 8 * 30_000, T0 + 9 * 30_000])
+    render(<PerfChartsSection rows={rows} xmlData={xmlData} polarOverride={null} curvesOverride={null} sections={two} />)
+    expect(screen.getByRole('button', { name: /Downwind · 1/ })).toBeTruthy()
+    // Switch the downwind section off: its phase leaves the charts, its button stays.
+    fireEvent.click(screen.getByRole('button', { name: 'Section 2' }))
+    expect(screen.getByRole('button', { name: /Downwind · 0/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Section 2' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByText(/4 phases of 30 s in the track selection/)).toBeTruthy()
   })
 
   it('explains how to get lidar when the log has no lidar channels', () => {

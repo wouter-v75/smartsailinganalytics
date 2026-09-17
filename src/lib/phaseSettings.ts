@@ -70,9 +70,15 @@ export const DEFAULT_SETTINGS: PhaseSettings = {
 // KND phases can sit in the same chart; 10 s is the trim-work setting.
 export const PHASE_LENGTHS = [10, 20, 30, 60] as const
 
-// Live test runs: start, let it run, or stop it early.
-export const TEST_DURATIONS_MIN = [1, 2, 5, 7] as const
-export const DEFAULT_TEST_MIN = 2
+// Generating phases over a stretch that starts at the timeline: pick how long, or stop
+// it early. 30 s is the default because it is one phase at the default phase length —
+// the smallest useful thing to generate, and what somebody checking a single moment
+// wants.
+export const TEST_DURATIONS_S = [30, 60, 120, 300, 420] as const
+export const DEFAULT_TEST_S = 30
+
+export const durationLabel = (s: number): string =>
+  s < 60 ? `${s} s` : s % 60 === 0 ? `${s / 60} min` : `${Math.floor(s / 60)} min ${s % 60} s`
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 

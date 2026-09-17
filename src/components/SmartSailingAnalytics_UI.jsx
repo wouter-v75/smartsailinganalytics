@@ -14,6 +14,7 @@ import { parseLog } from '../lib/logParse';
 import { isLidarKey } from '../lib/flatLogParse';
 import { logRateHz, isSubSecondLog, thinToOneHz, lidarSailsIn } from '../lib/logResolution';
 import { nearestTrackIndex, orderedRange, inRange } from '../lib/trackSelection';
+import { addSection, removeSection, inSections, sectionsSpan, selectButtonLabel, sectionLabel } from '../lib/trackSections';
 import { fetchDayTags, trackTags, isTagged, EVENT_FILE_SLUG } from '../lib/dayTags';
 import { raceOptions, finishesFromTags, finishNote, saveFinishTag } from '../lib/raceSelect';
 import { offsetFromCoords } from '../lib/tzFromCoords';
@@ -3858,7 +3859,7 @@ function linReg(pts){
 // onViewRange(newRange | null) — lifted state for cross-chart sync
 function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
                    yLines=[],showTrend=false,events=[],playUtc=null,
-                   viewRange=null,onViewRange=null}){
+                   viewRange=null,onViewRange=null,sections=[],unit=""}){
   const tz=useTz();
   const svgRef  = useRef(null);
   const dragRef = useRef(null);   // {startSvgX, startVR:[x0,x1]} while dragging
@@ -3869,7 +3870,10 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
   if(!points?.length) return <div style={{height,display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:10}}>No data</div>;
 
   const VB_W=400;  // logical viewBox width
-  const pad={t:14,r:8,b:28,l:36};
+  // With sections chosen, the left gutter widens to hold each one's average — the
+  // number is the point of picking two stretches, so it belongs beside the picture
+  // rather than under it.
+  const pad={t:14,r:8,b:28,l:sections.length?86:36};
   const W=VB_W-pad.l-pad.r, H=height-pad.t-pad.b;
 
   // Full data range
@@ -3901,6 +3905,14 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
   // Trend line from visible points only
   const reg=showTrend&&visPts.length>1?linReg(visPts.map(p=>({x:(p.x-vx0)/span,y:p.y}))):null;
   const ty=t=>reg?reg.slope*t+reg.intercept:0;
+
+  // One average per section, in the section's own colour. Computed from the points,
+  // not the visible window: a section keeps its number when the chart is panned.
+  const sectionAvgs=sections.map(sec=>{
+    const ys=points.filter(pt=>Number.isFinite(pt.y)&&pt.x>=sec.range[0]&&pt.x<=sec.range[1]).map(pt=>pt.y);
+    return {...sec, mean: ys.length? ys.reduce((a,b)=>a+b,0)/ys.length : null, n: sec.n};
+  });
+  const decimals=Math.abs(y1-y0)>=20?0:1;
 
   const visEvents=events.filter(e=>e.utc>=vx0&&e.utc<=vx1);
   const isZoomed=viewRange&&(vx0>allX0||vx1<allX1);
@@ -4014,6 +4026,23 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
             <rect x={pad.l} y={pad.t-2} width={W} height={H+4}/>
           </clipPath>
         </defs>
+        {/* Each chosen section as a band in its own colour, behind the data */}
+        {sections.map(sec=>{
+          const a=Math.max(sec.range[0],vx0), b=Math.min(sec.range[1],vx1);
+          if(!(b>a)) return null;
+          return <rect key={sec.id} x={px(a)} y={pad.t} width={Math.max(1,px(b)-px(a))} height={H}
+            fill={sec.color} opacity="0.10"/>;
+        })}
+        {/* Averages, in the gutter, each in its section's colour */}
+        {sectionAvgs.map((sec,i)=>(
+          <g key={"avg"+sec.id}>
+            <rect x={4} y={pad.t+i*16} width={9} height={9} rx={2} fill={sec.color}/>
+            <text x={pad.l-8} y={pad.t+i*16+9} textAnchor="end" fontSize="11" fill={sec.color} fontWeight="700">
+              {sec.mean==null?"—":sec.mean.toFixed(decimals)}{sec.mean==null?"":unit}
+            </text>
+            <text x={17} y={pad.t+i*16+9} textAnchor="start" fontSize="9" fill="#64748B">{sec.n}</text>
+          </g>
+        ))}
         {/* Grid lines */}
         {yTicks.map((y,i)=><line key={i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke="#0F2030" strokeWidth="1"/>)}
         {yLines.map((y,i)=><line key={"r"+i} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={color} strokeWidth="0.5" strokeDasharray="3,3" opacity="0.5"/>)}
@@ -4021,7 +4050,15 @@ function LineChart({points,color="#06B6D4",height=120,yLabel="",yMin,yMax,
         <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
         {/* Data — clipped so it never bleeds outside the plot area */}
         <g clipPath={`url(#${clipId})`}>
-          <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>
+          <path d={d} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" opacity={sections.length?0.35:0.9}/>
+          {/* The trace inside each section, in that section's colour, so the picture
+              and the figure beside it are obviously the same stretch. */}
+          {sections.map(sec=>{
+            const inside=visPts.filter(pt=>pt.x>=sec.range[0]&&pt.x<=sec.range[1]);
+            if(inside.length<2) return null;
+            const dd=inside.map((pt,i)=>`${i===0?"M":"L"}${px(pt.x).toFixed(1)},${py(pt.y).toFixed(1)}`).join(" ");
+            return <path key={sec.id} d={dd} fill="none" stroke={sec.color} strokeWidth="1.8" strokeLinejoin="round"/>;
+          })}
           {reg&&<line x1={px(vx0)} y1={py(ty(0))} x2={px(vx1)} y2={py(ty(1))} stroke="#fff" strokeWidth="1" strokeDasharray="4,3" opacity="0.5"/>}
           {/* Playback cursor */}
           {playUtc&&playUtc>=vx0&&playUtc<=vx1&&(()=>{
@@ -4242,7 +4279,7 @@ function ManoeuvreChart({tackJibes,logRows,width=400,height=140}){
   );
 }
 
-function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,playUtc=null}){
+function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,playUtc=null,sections=[]}){
   const tz=useTz();
   const svgRef=useRef(null);
   const dragRef=useRef(null);
@@ -4254,7 +4291,8 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
   const step=Math.max(1,Math.floor(rows.length/300));
   const polPts=validPol.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.vsPerfPct}));
   const tgtPts=validTgt.filter((_,i)=>i%step===0).map(r=>({x:r.utc,y:r.vsTargPct}));
-  const pad={t:14,r:8,b:28,l:36};
+  // Room in the gutter for each section's average, as on the charts above.
+  const pad={t:14,r:8,b:28,l:sections.length?86:36};
   const W=width-pad.l-pad.r, H=height-pad.t-pad.b;
   const allPts=[...polPts,...tgtPts];
   if(!allPts.length)return null;
@@ -4271,6 +4309,12 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
   const mkLine=pts=>pts.length<2?"":pts.map((p,i)=>`${i===0?"M":"L"}${px(p.x).toFixed(1)},${py(p.y).toFixed(1)}`).join(" ");
   const xTicks=Array.from({length:5},(_,i)=>vx0+span*i/4);
   const yTicks=[60,80,100,120,140];
+  // vs polar is the figure people compare between two stretches, so that is the one
+  // printed beside the chart.
+  const sectionAvgs=sections.map(sec=>{
+    const ys=polPts.filter(pt=>pt.x>=sec.range[0]&&pt.x<=sec.range[1]&&Number.isFinite(pt.y)).map(pt=>pt.y);
+    return {...sec, mean: ys.length? ys.reduce((a,b)=>a+b,0)/ys.length : null};
+  });
   const isZoomed=viewRange&&(vx0>allX0||vx1<allX1);
   // Reuse same pan/zoom logic as LineChart
   const VB_W=width;
@@ -4285,11 +4329,29 @@ function PerfChart({rows,width=400,height=110,viewRange=null,onViewRange=null,pl
       <svg ref={svgRef} width="100%" viewBox={`0 0 ${width} ${height}`} style={{overflow:"visible",cursor:onViewRange?"grab":"default",display:"block"}}
         onWheel={onViewRange?onWheel:undefined} onMouseDown={onViewRange?onMouseDown:undefined} onMouseMove={onViewRange?onMouseMove:undefined} onMouseUp={onViewRange?onMouseUp:undefined} onMouseLeave={onViewRange?onMouseUp:undefined}>
         <defs><clipPath id={clipId}><rect x={pad.l} y={pad.t-2} width={W} height={H+4}/></clipPath></defs>
+        {sections.map(sec=>{
+          const a=Math.max(sec.range[0],vx0), b=Math.min(sec.range[1],vx1);
+          if(!(b>a)) return null;
+          return <rect key={sec.id} x={px(a)} y={pad.t} width={Math.max(1,px(b)-px(a))} height={H} fill={sec.color} opacity="0.10"/>;
+        })}
+        {sectionAvgs.map((sec,i)=>(
+          <g key={"avg"+sec.id}>
+            <rect x={4} y={pad.t+i*16} width={9} height={9} rx={2} fill={sec.color}/>
+            <text x={pad.l-8} y={pad.t+i*16+9} textAnchor="end" fontSize="11" fill={sec.color} fontWeight="700">
+              {sec.mean==null?"—":`${sec.mean.toFixed(0)}%`}
+            </text>
+            <text x={17} y={pad.t+i*16+9} textAnchor="start" fontSize="9" fill="#64748B">{sec.n}</text>
+          </g>
+        ))}
         {yTicks.map(y=><line key={y} x1={pad.l} x2={pad.l+W} y1={py(y)} y2={py(y)} stroke={y===100?"#475569":"#0F2030"} strokeWidth={y===100?"1":"0.5"} strokeDasharray={y===100?"4,2":"none"}/>)}
         <line x1={pad.l} x2={pad.l} y1={pad.t} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
         <line x1={pad.l} x2={pad.l+W} y1={pad.t+H} y2={pad.t+H} stroke="#1E3A5A" strokeWidth="1"/>
         <g clipPath={`url(#${clipId})`}>
-          {visPol.length>1&&<path d={mkLine(visPol)} fill="none" stroke="#22C55E" strokeWidth="1.5" strokeLinejoin="round" opacity="0.9"/>}
+          {visPol.length>1&&<path d={mkLine(visPol)} fill="none" stroke="#22C55E" strokeWidth="1.5" strokeLinejoin="round" opacity={sections.length?0.3:0.9}/>}
+          {sections.map(sec=>{
+            const inside=visPol.filter(pt=>pt.x>=sec.range[0]&&pt.x<=sec.range[1]);
+            return inside.length<2?null:<path key={sec.id} d={mkLine(inside)} fill="none" stroke={sec.color} strokeWidth="1.8" strokeLinejoin="round"/>;
+          })}
           {visTgt.length>1&&<path d={mkLine(visTgt)} fill="none" stroke="#22C55E" strokeWidth="1.5" strokeLinejoin="round" opacity="0.7"/>}
           {playUtc&&playUtc>=vx0&&playUtc<=vx1&&(()=>{const cx=px(playUtc);return(<g><line x1={cx} x2={cx} y1={pad.t} y2={pad.t+H} stroke="#F59E0B" strokeWidth="1.5" opacity="0.9"/><polygon points={`${cx-4},${pad.t} ${cx+4},${pad.t} ${cx},${pad.t+7}`} fill="#F59E0B" opacity="0.9"/></g>);})()}
           {isZoomed&&(()=>{const bx=pad.l,bw=W,by=pad.t+H+22,bh=3;const hx=bx+((vx0-allX0)/fullSpan)*bw;const hw=((vx1-vx0)/fullSpan)*bw;return(<g><rect x={bx} y={by} width={bw} height={bh} fill="#0F2030" rx="1"/><rect x={hx} y={by} width={Math.max(4,hw)} height={bh} fill="#F59E0B" rx="1" opacity="0.7"/></g>);})()}
@@ -4400,7 +4462,7 @@ const MODE_LEGEND = {
   target: 'BSP vs target boat speed',
 };
 
-export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=[], selection=null, onSelection=null,
+export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=[], onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=[], sections=[], onSelection=null, onRemoveSection=null, onClearSections=null,
   dayTags=[], onRaceChosen=null,
   finishDraft=null, onFinishDraft=null, onSaveFinish=null, finishNote=null, finishMsg=null, canTagFinish=false}){
   const tz=useTz();
@@ -4762,20 +4824,29 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     const map=mapRef.current, L=window.L;
     if(!map||!L) return;
     if(selLayerRef.current){ try{ selLayerRef.current.remove(); }catch{} selLayerRef.current=null; }
-    const r=draft||selection;
-    if(!r) return;
-    const [a,b]=orderedRange(r[0],r[1]);
-    const pts=filteredRows.filter(x=>x.utc>=a&&x.utc<=b);
-    if(pts.length<2) return;
-    const step=Math.max(1,Math.floor(pts.length/800));
+    // Each saved section in its own colour — the same colour its chip and its average
+    // beside the charts use, which is the whole point of giving them colours. The drag
+    // in progress is drawn in the selecting yellow until it becomes a section.
+    const drawn=[
+      ...sections.map(sec=>({range:sec.range,color:sec.color,label:sectionLabel(sec)})),
+      ...(draft?[{range:orderedRange(draft[0],draft[1]),color:'#FDE047',label:'Selecting'}]:[]),
+    ];
+    if(!drawn.length) return;
     const g=L.layerGroup();
-    L.polyline(pts.filter((_,i)=>i%step===0||i===pts.length-1).map(x=>[x.lat,x.lon]),{color:'#FDE047',weight:7,opacity:0.9,interactive:false}).addTo(g);
     const dot={radius:7,weight:2,color:'#030F1A',fillOpacity:1,interactive:false};
-    L.circleMarker([pts[0].lat,pts[0].lon],{...dot,fillColor:'#FDE047'}).addTo(g);
-    L.circleMarker([pts[pts.length-1].lat,pts[pts.length-1].lon],{...dot,fillColor:'#F97316'}).addTo(g);
+    for(const d of drawn){
+      const [a,b]=d.range;
+      const pts=filteredRows.filter(x=>x.utc>=a&&x.utc<=b);
+      if(pts.length<2) continue;
+      const step=Math.max(1,Math.floor(pts.length/800));
+      L.polyline(pts.filter((_,i)=>i%step===0||i===pts.length-1).map(x=>[x.lat,x.lon]),
+        {color:d.color,weight:7,opacity:0.9,interactive:false}).addTo(g);
+      L.circleMarker([pts[0].lat,pts[0].lon],{...dot,fillColor:d.color}).bindTooltip(`${d.label} · start`).addTo(g);
+      L.circleMarker([pts[pts.length-1].lat,pts[pts.length-1].lon],{...dot,fillColor:d.color,fillOpacity:0.55}).bindTooltip(`${d.label} · end`).addTo(g);
+    }
     g.addTo(map);
     selLayerRef.current=g;
-  },[selection,draft,filteredRows,mapGen]);
+  },[sections,draft,filteredRows,mapGen]);
 
   // ── Section selection: a button on the map itself ───────────────────────────────
   // ── Tags mirrored from the Tagger tab ────────────────────────────────────
@@ -4950,13 +5021,12 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   const haversine=(a,b)=>{const R=6371,dl=(b.lat-a.lat)*Math.PI/180,dn=(b.lon-a.lon)*Math.PI/180,x=Math.sin(dl/2)**2+Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*Math.sin(dn/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));};
   let distKm=0; for(let i=1;i<filteredRows.length;i++) distKm+=haversine(filteredRows[i-1],filteredRows[i]);
   const distNm=(distKm/1.852).toFixed(1);
-  let selNm=null;
-  if(selection){
-    const sp=filteredRows.filter(r=>inRange(r.utc,selection));
+  // Per section: how long it is and how far the boat went in it.
+  const sectionStats=sections.map(sec=>{
+    const sp=filteredRows.filter(r=>inRange(r.utc,sec.range));
     let km=0; for(let i=1;i<sp.length;i++) km+=haversine(sp[i-1],sp[i]);
-    selNm=(km/1.852).toFixed(1);
-  }
-  const selMin=selection?Math.round((selection[1]-selection[0])/60000):0;
+    return { ...sec, min:Math.round((sec.range[1]-sec.range[0])/60000), nm:(km/1.852).toFixed(1) };
+  });
   const selBtn={background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"3px 9px",color:"#94A3B8",cursor:"pointer",fontSize:10};
 
   return(
@@ -4966,7 +5036,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
           <button onClick={()=>setSelecting(s=>!s)} aria-pressed={selecting}
             style={{...selBtn,fontSize:12,fontWeight:600,padding:"6px 12px",color:selecting?"#030F1A":"#FDE047",
               background:selecting?"#FDE047":"#FDE04712",borderColor:"#FDE04780"}}>
-            {selecting?"✕ Cancel selecting":"✂ Select a section of the track"}
+            {selecting?"✕ Cancel selecting":selectButtonLabel(sections)}
           </button>
           {race&&!selecting&&(
             <button onClick={()=>onSelection(orderedRange(race.t0,race.t1))}
@@ -4976,7 +5046,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
             </button>
           )}
           {selecting&&<span style={{color:"#FDE047"}}>Now drag along the track on the map, from the start of the stretch to its end</span>}
-          {!selecting&&!selection&&<span style={{color:"#64748B"}}>Pick a stretch (a leg, a start, a race) to see only that part in the cards and charts below</span>}
+          {!selecting&&!sections.length&&<span style={{color:"#64748B"}}>Pick a stretch (a leg, a start, a race) to see only that part in the cards and charts below. Pick more than one to compare them.</span>}
           {finishNote&&(
             <span style={{color:"#FDE047",fontSize:11,flex:"1 1 260px"}}>
               ⚑ {finishNote}
@@ -4993,13 +5063,23 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
               {finishMsg.state==="ok"?"✓ ":"⚠ "}{finishMsg.text}
             </span>
           )}
-          {selection&&!selecting&&(
+          {sectionStats.length>0&&!selecting&&(
             <>
-              <span data-track-selection style={{color:"#FDE047",fontFamily:"monospace"}}>
-                {hmLocal(selection[0],tz)}–{hmLocal(selection[1],tz)} · {selMin} min · {selNm} nm
-              </span>
-              <span style={{color:"#475569"}}>charts below show this stretch only</span>
-              <button onClick={()=>onSelection(null)} style={{...selBtn,color:"#06B6D4",borderColor:"#06B6D440"}}>↩ Whole session</button>
+              {sectionStats.map(sec=>(
+                <span key={sec.id} data-track-section={sec.n}
+                  style={{display:"inline-flex",alignItems:"center",gap:6,fontFamily:"monospace",color:"#E2E8F0",
+                    border:`1px solid ${sec.color}66`,background:`${sec.color}14`,borderRadius:999,padding:"2px 4px 2px 8px"}}>
+                  <span style={{width:9,height:9,borderRadius:2,background:sec.color,display:"inline-block"}} aria-hidden />
+                  {sec.n} · {hmLocal(sec.range[0],tz)}–{hmLocal(sec.range[1],tz)} · {sec.min} min · {sec.nm} nm
+                  {onRemoveSection&&(
+                    <button onClick={()=>onRemoveSection(sec.id)} aria-label={`Remove ${sectionLabel(sec)}`}
+                      style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:12,lineHeight:1,padding:"0 3px"}}>×</button>
+                  )}
+                </span>
+              ))}
+              {onClearSections&&(
+                <button onClick={onClearSections} style={{...selBtn,color:"#06B6D4",borderColor:"#06B6D440"}}>↩ Whole session</button>
+              )}
             </>
           )}
         </div>
@@ -5088,8 +5168,20 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const [viewRange, setViewRange] = useState(null);
   // A stretch picked on the GPS track ([utc0, utc1]); null = whole session. The cards,
   // time series, performance charts and tack sections below all follow it.
-  const [selection, setSelection] = useState(null);
-  const selectSection = r => { setSelection(r); setViewRange(r); };
+  // Several stretches at once: "which of these was better" is the question people
+  // bring to a track, and one selection cannot answer it.
+  const [sections, setSections] = useState([]);
+  const selectSection = r => {
+    const next = addSection(sections, r);
+    setSections(next);
+    setViewRange(sectionsSpan(next));
+  };
+  const dropSection = id => {
+    const next = removeSection(sections, id);
+    setSections(next);
+    setViewRange(sectionsSpan(next));
+  };
+  const clearSections = () => { setSections([]); setViewRange(null); };
 
   // ── The day's tags, mirrored from the Tagger tab ───────────────────────────
   // Same source, same labels, same colours: two names for one moment is two
@@ -5160,7 +5252,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
     timeseriesRef.current?.scrollIntoView({behavior:"smooth",block:"start"});
   };
   // Reset view when the session changes
-  useEffect(()=>{ setViewRange(null); setSelection(null); }, [activeDate]);
+  useEffect(()=>{ setViewRange(null); setSections([]); }, [activeDate]);
   // Auto-zoom to video clip range when video is selected and has a start time.
   // Depends on both selectedVideo?.id AND activeDate so it re-fires when a new
   // session is loaded (rows might have been empty on the previous render).
@@ -5183,9 +5275,9 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
     ...(xmlData.tackJibes||[]).filter(t=>t.isValid!==false).map(t=>({utc:t.utc,label:t.isTack?"T":"G",color:t.isTack?"#1D9E75":"#7F77DD"})),
   ] : [];
   // Cards and tack/mark counts follow the track selection.
-  const sr=selection?rows.filter(r=>inRange(r.utc,selection)):rows;
-  const selTJ=(xmlData?.tackJibes||[]).filter(t=>inRange(t.utc,selection));
-  const selMarks=(xmlData?.markRoundings||[]).filter(m=>inRange(m.utc,selection));
+  const sr=sections.length?rows.filter(r=>inSections(r.utc,sections)):rows;
+  const selTJ=(xmlData?.tackJibes||[]).filter(t=>inSections(t.utc,sections));
+  const selMarks=(xmlData?.markRoundings||[]).filter(m=>inSections(m.utc,sections));
   // Only rows that carry the channel: one row without TWS/SOG (a logger dropout, or a
   // column the cloud copy left out) used to turn the sum and the max into NaN → "--".
   // Loops, not Math.max(...arr): a 4 h log at 1 Hz is past the spread-argument limit.
@@ -5329,10 +5421,19 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
           <>
             {canSeeAnalyticsData && (
               <>
-                {selection&&(
-                  <div style={{fontSize:10,color:"#FDE047",marginBottom:6,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-                    <span>✂ Track selection {hmLocal(selection[0],tz)}–{hmLocal(selection[1],tz)} — cards, charts and tacks below show this stretch</span>
-                    <button onClick={()=>selectSection(null)} style={{background:"none",border:"1px solid #06B6D440",borderRadius:4,padding:"2px 8px",color:"#06B6D4",cursor:"pointer",fontSize:10}}>↩ Whole session</button>
+                {sections.length>0&&(
+                  <div style={{fontSize:10,color:"#94A3B8",marginBottom:6,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                    <span>Cards, charts and tacks below show {sections.length===1?"this stretch":"these stretches"}:</span>
+                    {sections.map(sec=>(
+                      <span key={sec.id} style={{display:"inline-flex",alignItems:"center",gap:6,border:`1px solid ${sec.color}66`,
+                        background:`${sec.color}14`,borderRadius:999,padding:"2px 4px 2px 8px",color:"#E2E8F0"}}>
+                        <span style={{width:9,height:9,borderRadius:2,background:sec.color,display:"inline-block"}} aria-hidden />
+                        {sectionLabel(sec)} · {hmLocal(sec.range[0],tz)}–{hmLocal(sec.range[1],tz)}
+                        <button onClick={()=>dropSection(sec.id)} aria-label={`Remove ${sectionLabel(sec)}`}
+                          style={{background:"none",border:"none",color:"#94A3B8",cursor:"pointer",fontSize:12,lineHeight:1,padding:"0 3px"}}>×</button>
+                      </span>
+                    ))}
+                    <button onClick={clearSections} style={{background:"none",border:"1px solid #06B6D440",borderRadius:4,padding:"2px 8px",color:"#06B6D4",cursor:"pointer",fontSize:10}}>↩ Whole session</button>
                   </div>
                 )}
                 {/* auto-fit, not repeat(4,1fr). A `1fr` track will not shrink
@@ -5359,7 +5460,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             )}
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} selection={selection} onSelection={selectSection}
+                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlData} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} sections={sections} onSelection={selectSection} onRemoveSection={dropSection} onClearSections={clearSections}
                   dayTags={dayTagEvents} onRaceChosen={pickRace}
                   finishDraft={finishDraft} onFinishDraft={setFinishDraft} onSaveFinish={saveFinish}
                   finishNote={finishNote(race)} finishMsg={finishMsg} canTagFinish={!!tagBoat}/>
@@ -5421,30 +5522,30 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                   <div>
                     <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>TRUE WIND SPEED (kn)</div>
-                    <LineChart points={twsPts} color="#7DD3FC" height={110} yLabel="TWS kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                    <LineChart sections={sections} points={twsPts} color="#7DD3FC" height={110} yLabel="TWS kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                   <div>
                     <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>SPEED OVER GROUND (kn)</div>
-                    <LineChart points={sogPts} color="#FBBF24" height={110} yLabel="SOG kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                    <LineChart sections={sections} points={sogPts} color="#FBBF24" height={110} yLabel="SOG kn" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                 </div>
                 {/* ── Charts row 2: Heel + Polar % ─────────────────────────── */}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                   <div>
                     <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>HEEL ANGLE (°)</div>
-                    <LineChart points={heelPts} color="#F97316" height={110} yLabel="Heel °" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
+                    <LineChart sections={sections} points={heelPts} color="#F97316" height={110} yLabel="Heel °" showTrend events={chartEvents} playUtc={playUtc} viewRange={viewRange} onViewRange={setViewRange}/>
                   </div>
                   <div>
                     <div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>POLAR % &amp; TARGET %</div>
-                    <PerfChart rows={rows} height={110} viewRange={viewRange} onViewRange={setViewRange} playUtc={playUtc}/>
+                    <PerfChart rows={rows} sections={sections} height={110} viewRange={viewRange} onViewRange={setViewRange} playUtc={playUtc}/>
                   </div>
                 </div>
               </>
             ))}
             {canSeeAnalyticsData && rows.length>50&&section("Performance charts — 30 s phases",(
-              <PerfChartsSection rows={rows} xmlData={xmlData} tzOffsetMin={tz} playUtc={playUtc} onJump={jumpToUtc} activeDate={activeDate} canUseAI={canUseAI} range={selection}/>
+              <PerfChartsSection sections={sections} rows={rows} xmlData={xmlData} tzOffsetMin={tz} playUtc={playUtc} onJump={jumpToUtc} activeDate={activeDate} canUseAI={canUseAI}/>
             ))}
-            {canSeeAnalyticsData && selTJ.length>0&&section(`Manoeuvre analysis — ${selTJ.length} total${selection?" in the selection":""}`,(
+            {canSeeAnalyticsData && selTJ.length>0&&section(`Manoeuvre analysis — ${selTJ.length} total${sections.length?(sections.length>1?" in the selected sections":" in the selection"):""}`,(
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
                 <div><div style={{fontSize:9,color:"#475569",marginBottom:4,letterSpacing:1}}>MANOEUVRES BY WIND STRENGTH</div><ManoeuvreChart tackJibes={selTJ} logRows={rows} width={360} height={130}/></div>
                 <div>

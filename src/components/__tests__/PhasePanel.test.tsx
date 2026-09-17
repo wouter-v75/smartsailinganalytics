@@ -62,24 +62,32 @@ describe('building from the track', () => {
   })
 })
 
-describe('a timed test', () => {
+describe('generating phases over a stretch', () => {
   it('will not start without somewhere to start from', () => {
     render(<PhasePanel {...base} playUtc={null} />)
-    expect(screen.getByRole('button', { name: /Start test/ }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: /Generate phases/ }).hasAttribute('disabled')).toBe(true)
   })
 
-  it('starts for the chosen number of minutes', () => {
+  it('offers 30 s and starts on it by default — one phase at the default length', () => {
     const onTestStart = vi.fn()
     render(<PhasePanel {...base} playUtc={T0} onTestStart={onTestStart} />)
-    fireEvent.change(screen.getByLabelText('Test duration'), { target: { value: '5' } })
-    fireEvent.click(screen.getByRole('button', { name: /Start test/ }))
-    expect(onTestStart).toHaveBeenCalledWith(5, '')
+    expect((screen.getByLabelText('Duration') as HTMLSelectElement).value).toBe('30')
+    fireEvent.click(screen.getByRole('button', { name: /Generate phases/ }))
+    expect(onTestStart).toHaveBeenCalledWith(30, '')
   })
 
-  it('shows a running test and can stop it early', () => {
+  it('takes the duration in seconds, whatever was picked', () => {
+    const onTestStart = vi.fn()
+    render(<PhasePanel {...base} playUtc={T0} onTestStart={onTestStart} />)
+    fireEvent.change(screen.getByLabelText('Duration'), { target: { value: '300' } })
+    fireEvent.click(screen.getByRole('button', { name: /Generate phases/ }))
+    expect(onTestStart).toHaveBeenCalledWith(300, '')
+  })
+
+  it('shows what is being generated and can stop it early', () => {
     const onTestStop = vi.fn()
-    render(<PhasePanel {...base} playUtc={T0 + 30_000} test={{ startUtc: T0, plannedS: 120 }} onTestStop={onTestStop} />)
-    expect(screen.getByText(/Test running from 10:00:00 · 2 min planned/)).toBeTruthy()
+    render(<PhasePanel {...base} playUtc={T0 + 20_000} test={{ startUtc: T0, plannedS: 30 }} onTestStop={onTestStop} />)
+    expect(screen.getByText(/Generating from 10:00:00 · 30 s planned/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Stop/ }))
     expect(onTestStop).toHaveBeenCalled()
   })
@@ -146,5 +154,66 @@ describe('runs', () => {
     expect(onDeleteRun).toHaveBeenCalledWith(run)
     rerender(<PhasePanel {...base} canBuild={false} runs={[run]} onDeleteRun={onDeleteRun} />)
     expect(screen.queryByLabelText('Delete run Line-up 1')).toBeNull()
+  })
+})
+
+describe('saving to the SSA phase database', () => {
+  const withPhases = {
+    ...base, counts: { event: 139, ssa: 6, manoeuvres: 2 }, playUtc: T0,
+    uploadPlan: () => ({ mode: 'add' as const, toUpload: [1, 2, 3], overlapping: 1, standDownEvent: 0, manoeuvres: 2 }),
+  }
+
+  it('sits beside Generate phases for a coach, and uploads in the chosen mode', () => {
+    const onUpload = vi.fn()
+    render(<PhasePanel {...withPhases} canUpload onUpload={onUpload} />)
+    fireEvent.click(screen.getByRole('button', { name: /Save to the SSA phase database/ }))
+    expect(onUpload).toHaveBeenCalledWith('add')
+  })
+
+  it('is not offered below coach', () => {
+    render(<PhasePanel {...withPhases} canUpload={false} />)
+    expect(screen.queryByRole('button', { name: /Save to the SSA phase database/ })).toBeNull()
+  })
+
+  it('is not offered before anything has been generated', () => {
+    render(<PhasePanel {...withPhases} canUpload counts={{ event: 139, ssa: 0, manoeuvres: 0 }} />)
+    expect(screen.queryByRole('button', { name: /Save to the SSA phase database/ })).toBeNull()
+  })
+
+  it('says what it is doing while it uploads', () => {
+    render(<PhasePanel {...withPhases} canUpload upload={{ state: 'busy', message: 'Uploading…' }} />)
+    const btn = screen.getByRole('button', { name: /Saving…/ })
+    expect(btn.hasAttribute('disabled')).toBe(true)
+  })
+})
+
+describe('which sections are in the comparison', () => {
+  const sections = [
+    { id: 's1', n: 1, color: '#FDE047', range: [T0, T0 + 60_000] as [number, number] },
+    { id: 's2', n: 2, color: '#22D3EE', range: [T0 + 120_000, T0 + 180_000] as [number, number] },
+  ]
+
+  it('shows a button per section, all on to begin with', () => {
+    render(<PhasePanel {...base} sections={sections} />)
+    expect(screen.getByRole('button', { name: 'Section 1' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Section 2' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('reports a section being switched off', () => {
+    const onToggleSection = vi.fn()
+    render(<PhasePanel {...base} sections={sections} onToggleSection={onToggleSection} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Section 2' }))
+    expect(onToggleSection).toHaveBeenCalledWith('s2')
+  })
+
+  it('shows a hidden section as off, so it can be brought back', () => {
+    render(<PhasePanel {...base} sections={sections} hiddenSections={['s1']} />)
+    expect(screen.getByRole('button', { name: 'Section 1' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Section 2' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('offers nothing when no section has been picked', () => {
+    render(<PhasePanel {...base} />)
+    expect(screen.queryByRole('button', { name: /^Section / })).toBeNull()
   })
 })

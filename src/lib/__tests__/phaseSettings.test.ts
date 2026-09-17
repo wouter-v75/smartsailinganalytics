@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   DEFAULT_SETTINGS, DEFAULT_GATE, withSettings, settingsWarnings, resolutionNote,
-  PHASE_LENGTHS, TEST_DURATIONS_MIN, DEFAULT_TEST_MIN,
+  PHASE_LENGTHS, TEST_DURATIONS_S, DEFAULT_TEST_S, durationLabel,
 } from '../phaseSettings'
 
 describe('withSettings', () => {
@@ -83,8 +83,16 @@ describe('offered choices', () => {
     expect(PHASE_LENGTHS).toContain(30)
   })
 
-  it('offers the test durations the team asked for, defaulting to 2 min', () => {
-    expect(TEST_DURATIONS_MIN).toEqual([1, 2, 5, 7])
-    expect(TEST_DURATIONS_MIN).toContain(DEFAULT_TEST_MIN)
+  it('offers 30 s through 7 min, and starts on 30 s — one phase at the default length', () => {
+    expect(TEST_DURATIONS_S).toEqual([30, 60, 120, 300, 420])
+    expect(DEFAULT_TEST_S).toBe(30)
+    expect(TEST_DURATIONS_S).toContain(DEFAULT_TEST_S)
+  })
+
+  it('writes a duration the way a person says it', () => {
+    expect(durationLabel(30)).toBe('30 s')
+    expect(durationLabel(60)).toBe('1 min')
+    expect(durationLabel(420)).toBe('7 min')
+    expect(durationLabel(90)).toBe('1 min 30 s')
   })
 })

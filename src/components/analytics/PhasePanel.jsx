@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react'
-import { PHASE_LENGTHS, TEST_DURATIONS_MIN, DEFAULT_TEST_MIN, settingsWarnings } from '../../lib/phaseSettings'
+import { PHASE_LENGTHS, TEST_DURATIONS_S, DEFAULT_TEST_S, durationLabel, settingsWarnings } from '../../lib/phaseSettings'
 import { runLabel } from '../../lib/ssaPhases'
 import { planSentence } from '../../lib/phaseUpload'
 
@@ -31,6 +31,7 @@ export default function PhasePanel({
   source, onSource, mergeMode, onMergeMode,
   settings, onSettings,
   counts = { event: 0, ssa: 0, manoeuvres: 0 },
+  sections = [], hiddenSections = [], onToggleSection = null,
   build = null,                       // last build: { reasons, rejected, phases }
   runs = [], onDeleteRun = null, onJumpRun = null,
   selection = null,                   // [utc0, utc1] picked on the track
@@ -46,7 +47,7 @@ export default function PhasePanel({
 }) {
   const [open, setOpen] = React.useState(false)
   const [name, setName] = React.useState('')
-  const [testMin, setTestMin] = React.useState(DEFAULT_TEST_MIN)
+  const [testS, setTestS] = React.useState(DEFAULT_TEST_S)
   const [uploadMode, setUploadMode] = React.useState('add')
   const [savingSettings, setSavingSettings] = React.useState(null)   // error text, or ''
   const warnings = settingsWarnings(settings)
@@ -79,6 +80,30 @@ export default function PhasePanel({
             </select>
           </label>
         )}
+        {/* Which sections are in the comparison. All of them, until somebody says
+            otherwise — switching one off takes it out of the charts without losing
+            the stretch itself. */}
+        {sections.length > 0 && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 1, height: 18, background: C.border, margin: '0 2px' }} />
+            {sections.map(sec => {
+              const on = !hiddenSections.includes(sec.id)
+              return (
+                <button key={sec.id} onClick={() => onToggleSection?.(sec.id)} aria-pressed={on}
+                  aria-label={`Section ${sec.n}`} title={`Section ${sec.n}${on ? '' : ' — hidden'}`}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700,
+                    borderRadius: 6, padding: '4px 9px', cursor: 'pointer',
+                    border: `1px solid ${on ? sec.color : C.border}`,
+                    background: on ? `${sec.color}1f` : C.card, color: on ? C.head : C.quiet,
+                  }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 2, background: sec.color, opacity: on ? 1 : 0.35 }} aria-hidden />
+                  {sec.n}
+                </button>
+              )
+            })}
+          </span>
+        )}
         <button onClick={() => setOpen(o => !o)} aria-expanded={open} style={{ ...btn(open), marginLeft: 'auto' }}>
           {open ? '▾' : '▸'} Settings
         </button>
@@ -108,7 +133,7 @@ export default function PhasePanel({
           {test ? (
             <>
               <span style={{ fontSize: 11, color: C.accent }}>
-                ● Test running from {hms(test.startUtc, tzOffsetMin)} · {Math.round(test.plannedS / 60)} min planned
+                ● Generating from {hms(test.startUtc, tzOffsetMin)} · {durationLabel(test.plannedS)} planned
               </span>
               <button onClick={() => onTestStop?.(name)} style={{ ...btn(true), borderColor: C.ok, color: C.ok }}>■ Stop</button>
             </>
@@ -120,16 +145,27 @@ export default function PhasePanel({
                 ✂ Phases from the selection
               </button>
               <label style={label}>
-                Test
-                <select value={testMin} aria-label="Test duration" onChange={e => setTestMin(Number(e.target.value))} style={{ ...field, cursor: 'pointer' }}>
-                  {TEST_DURATIONS_MIN.map(m => <option key={m} value={m}>{m} min</option>)}
+                Duration
+                <select value={testS} aria-label="Duration" onChange={e => setTestS(Number(e.target.value))} style={{ ...field, cursor: 'pointer' }}>
+                  {TEST_DURATIONS_S.map(sec => <option key={sec} value={sec}>{durationLabel(sec)}</option>)}
                 </select>
               </label>
-              <button onClick={() => onTestStart?.(testMin, name)} disabled={playUtc == null}
-                title={playUtc == null ? 'Put the timeline where the test starts' : undefined}
+              <button onClick={() => onTestStart?.(testS, name)} disabled={playUtc == null}
+                title={playUtc == null ? 'Put the timeline where the stretch starts' : undefined}
                 style={{ ...btn(playUtc != null), opacity: playUtc == null ? 0.45 : 1 }}>
-                ▶ Start test
+                ▶ Generate phases
               </button>
+              {/* Coach and up: the same upload the review below describes, next to the
+                  button that made the phases — which is where somebody is looking when
+                  they decide these are worth keeping. The mode and what it will do stay
+                  visible below, so this is a shortcut, not a hidden decision. */}
+              {canUpload && uploadPlan && hasSsa && (
+                <button onClick={() => onUpload?.(uploadMode)} disabled={upload?.state === 'busy'}
+                  title={`${planSentence(uploadPlan(uploadMode))} · ${uploadMode === 'add' ? 'added to' : 'overriding'} the event file's phases`}
+                  style={{ ...btn(true), opacity: upload?.state === 'busy' ? 0.6 : 1 }}>
+                  {upload?.state === 'busy' ? '☁ Saving…' : '☁ Save to the SSA phase database'}
+                </button>
+              )}
             </>
           )}
         </div>

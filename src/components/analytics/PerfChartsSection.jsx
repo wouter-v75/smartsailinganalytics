@@ -24,7 +24,8 @@ import { uploadSessionStats } from '../../lib/phaseStatsUpload'
 import { CHANNEL_BY_KEY, computePhaseStats } from '../../lib/phaseStats'
 import { polarTargetLine, twsBands, polarCurve } from '../../lib/phasePlot'
 import { polarFromData } from '../../lib/polarFile'
-import { inRange, phaseInRange } from '../../lib/trackSelection'
+import { inRange } from '../../lib/trackSelection'
+import { inSections, phaseInSections, sectionsSpan } from '../../lib/trackSections'
 import { mergeStoredLidar } from '../../lib/lidarMerge'
 import { SECTION_ORDER, SECTION_TITLES } from '../../lib/headlineFacts'
 import { getActiveMembership } from '../../lib/active-membership'
@@ -335,7 +336,7 @@ const modeBtn = on => ({
 
 export default function PerfChartsSection({
   rows, xmlData, tzOffsetMin = 0, playUtc = null, onJump = null, activeDate = null, canUseAI = false,
-  range = null,   // [utc0, utc1] — a stretch picked on the GPS track; null = the whole day
+  sections = [],  // stretches picked on the GPS track; empty = the whole day
   polarOverride, curvesOverride, storedOverride, headlinesOverride,
 }) {
   const boat = useActiveBoat()
@@ -349,6 +350,11 @@ export default function PerfChartsSection({
   const [race, setRace] = React.useState('')   // '' = all day
   const [sails, setSails] = React.useState('')
   const [tack, setTack] = React.useState('')   // '' | 'port' | 'stbd'
+  // Every section's phases are shown; a section can be switched off to take it out of
+  // the comparison without losing the stretch itself.
+  const [hiddenSections, setHiddenSections] = React.useState([])
+  const liveSections = React.useMemo(
+    () => sections.filter(sec => !hiddenSections.includes(sec.id)), [sections, hiddenSections])
   const [phaseSource, setPhaseSource] = React.useState('event')  // 'event' | 'ssa' | 'both'
   const [mergeMode, setMergeMode] = React.useState('add')        // where the two overlap
   const [ssaDoc, setSsaDoc] = useSsaPhases(activeDate)
@@ -386,10 +392,14 @@ export default function PerfChartsSection({
   const dayManoeuvres = React.useMemo(
     () => (useStored && storedStats.stored.manoeuvres?.length ? storedStats.stored.manoeuvres : analyseManoeuvres(rows, xmlData)),
     [useStored, storedStats.stored, rows, xmlData])
-  // A track selection narrows everything below (charts, tables, lidar, tacks & gybes) to its phases.
+  // The track sections narrow everything below (charts, tables, lidar, tacks & gybes) to
+  // their phases. Several sections are a comparison, so a phase in ANY of them counts.
+  const range = React.useMemo(() => sectionsSpan(liveSections), [liveSections])
   const [r0, r1] = range || []
-  const stats = React.useMemo(() => (range ? dayStats.filter(p => phaseInRange(p, [r0, r1])) : dayStats), [dayStats, r0, r1])
-  const manoeuvres = React.useMemo(() => (range ? dayManoeuvres.filter(m => inRange(m.utc, [r0, r1])) : dayManoeuvres), [dayManoeuvres, r0, r1])
+  const stats = React.useMemo(
+    () => (liveSections.length ? dayStats.filter(p => phaseInSections(p, liveSections)) : dayStats), [dayStats, liveSections])
+  const manoeuvres = React.useMemo(
+    () => (liveSections.length ? dayManoeuvres.filter(m => inSections(m.utc, liveSections)) : dayManoeuvres), [dayManoeuvres, liveSections])
   const [showAllManoeuvres, setShowAllManoeuvres] = React.useState(false)
 
   // ── Building phases from a stretch of the day ────────────────────────────
@@ -431,12 +441,12 @@ export default function PerfChartsSection({
       : { state: 'error', message: res.needsMigration ? `${res.error} — the phases are still on this device` : res.error })
   }, [boat, activeDate, xmlData, ssaPhases, ssaDoc, settings])
 
-  const startTest = (min, name) => {
+  const startTest = (seconds, name) => {
     if (playUtc == null) return
-    setTest({ startUtc: playUtc, plannedS: min * 60, name: name || '' })
+    setTest({ startUtc: playUtc, plannedS: seconds, name: name || '' })
   }
-  // Stop takes the timeline's position when it is inside the test, so a test can be cut
-  // short; otherwise the test is the length it was started for.
+  // Stop takes the timeline's position when it is inside the stretch, so generating can
+  // be cut short; otherwise it runs for the length it was started for.
   const stopTest = name => {
     if (!test) return
     const planned = test.startUtc + test.plannedS * 1000
@@ -448,8 +458,8 @@ export default function PerfChartsSection({
   if (!xmlData?.phases?.length && !ssaPhases.length) {
     return <div style={note}>No phases in this session’s event file — re-import the event (.ev.xml) file, or select a stretch of the track and let SSA build them.</div>
   }
-  if (range && dayStats.length && !stats.length) {
-    return <div style={note}>No 30 s phase has its midpoint inside the track selection — select a longer stretch.</div>
+  if (liveSections.length && dayStats.length && !stats.length) {
+    return <div style={note}>No 30 s phase has its midpoint inside the selected {sections.length === 1 ? 'section' : 'sections'} — select a longer stretch.</div>
   }
   if (!stats.length) return <div style={note}>No log rows fall inside the event file’s phases.</div>
 
@@ -498,6 +508,8 @@ export default function PerfChartsSection({
         onDeleteRun={r => saveDoc(removeRun(ssaDoc, r.id))}
         onJumpRun={r => onJump?.(r.from)}
         selection={range}
+        sections={sections} hiddenSections={hiddenSections}
+        onToggleSection={id => setHiddenSections(h => h.includes(id) ? h.filter(x => x !== id) : [...h, id])}
         onBuildSelection={name => makeRun(r0, r1, name, 'selection')}
         test={test} onTestStart={startTest} onTestStop={stopTest}
         playUtc={playUtc} tzOffsetMin={tzOffsetMin}
@@ -562,7 +574,7 @@ export default function PerfChartsSection({
         )}
       </div>
       <div style={{ fontSize: 9, color: '#475569', marginBottom: 10 }}>
-        {shown.length} phases of 30 s{range ? ' in the track selection' : ''}{combos.length === 1 ? ` · ${combos[0]}` : ''} · each dot is one phase average
+        {shown.length} phases of 30 s{liveSections.length ? (liveSections.length > 1 ? ` in ${liveSections.length} sections` : ' in the track selection') : ''}{combos.length === 1 ? ` · ${combos[0]}` : ''} · each dot is one phase average
         {onJump ? ' · click a dot to jump to it' : ''}
       </div>
       {(mode === 'up' || mode === 'down') && (
