@@ -161,6 +161,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   React.useEffect(()=>{
     if(!containerRef.current || filteredRows.length < 2) return;
     let cancelled = false;   // the Leaflet <script> can finish loading AFTER unmount
+    let sizeObs = null;      // waits for the container to have real dimensions
 
     const initMap = () => {
       const L = window.L;
@@ -400,12 +401,49 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       setMapGen(g=>g+1);
     };
 
+    // ── Don't build into a zero-size container ──────────────────────────────
+    // A tab that isn't showing has a 0x0 box. Leaflet fixes the map's pixel
+    // origin at construction, and that arithmetic on a zero-size box produces
+    // undefined points — which surfaced as `Cannot read properties of undefined
+    // (reading 'x')` taking out the whole Analytics pane through its
+    // ErrorBoundary. It is reachable on an ordinary page load, because
+    // AnalyticsTab mounts as soon as the day's log arrives even while another
+    // tab is in front (see hasMountedAnalytics in SSAApp). Same family as the
+    // `_leaflet_pos` crash noted above fitBounds.
+    //
+    // So wait for real dimensions. The observer fires when the tab is first
+    // shown, and the existing `visible` effect below still handles the
+    // invalidateSize for a map that was built while already on screen.
+    const hasSize = () => {
+      const el = containerRef.current;
+      if(!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    };
+    const stopObserving = () => { try{ sizeObs?.disconnect(); }catch{} sizeObs = null; };
+    const build = () => {
+      if(cancelled) return;
+      // No ResizeObserver (very old browser): keep the previous behaviour
+      // rather than never drawing a map at all.
+      if(typeof ResizeObserver === 'undefined'){ initMap(); return; }
+      if(!hasSize()){
+        if(!sizeObs && containerRef.current){
+          sizeObs = new ResizeObserver(()=>{ if(hasSize()){ stopObserving(); build(); } });
+          sizeObs.observe(containerRef.current);
+        }
+        return;
+      }
+      stopObserving();
+      initMap();
+    };
+
     if(!window.L){
       if(!document.getElementById('leaflet-css')){const css=document.createElement('link');css.id='leaflet-css';css.rel='stylesheet';css.href='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';document.head.appendChild(css);}
-      const js=document.createElement('script');js.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';js.onload=initMap;document.head.appendChild(js);
-    } else { initMap(); }
+      const js=document.createElement('script');js.src='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';js.onload=build;document.head.appendChild(js);
+    } else { build(); }
     return()=>{
       cancelled = true;
+      stopObserving();
       if(mapRef.current){ mapRef.current.remove(); mapRef.current=null; boatMarkerRef.current=null; }
     };
     // `tz` is read when labelling markers; winStart reaches this through hlRows,
