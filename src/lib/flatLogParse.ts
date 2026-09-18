@@ -125,7 +125,35 @@ export function isFlatLocalLog(text: string): boolean {
   if (first.trim().startsWith('!')) return false
   const cols = first.split(',').map(norm)
   const has = (k: string) => cols.includes(k)
-  return has('datetime') && !has('utc') && has('lat') && has('lon') && (has('bsp') || has('tws'))
+  if (!has('lat') || !has('lon') || !(has('bsp') || has('tws'))) return false
+  // One `Datetime` column, or the SPLIT PAIR `UtcDate,UtcTime` — the same clock in
+  // two cells. See splitLocalClock below for why the pair is local despite its name.
+  return (has('datetime') && !has('utc')) || hasSplitLocalClock(cols)
+}
+
+/**
+ * `UtcDate` + `UtcTime`: the navigator's other layout, and LOCAL WALL-CLOCK despite
+ * the name.
+ *
+ * The 2026-09 lidar exports (`…_LSB.csv`, 171 columns) and the 157-column September
+ * exports split the stamp across two cells instead of carrying one `Datetime`. Before
+ * this they matched neither isFlatOleLog (which wants a column normalising to exactly
+ * `utc`) nor isFlatLocalLog (which wanted `datetime`), so detectLogFormat fell through
+ * to flat-NMEA and the NMEA parser returned ZERO ROWS — without throwing. Four days of
+ * September 2026, every one of them a lidar day, could not be imported at all and said
+ * nothing about it.
+ *
+ * WHY LOCAL, when the columns say Utc. The 2026-09-07 file's first row reads 10:20:38,
+ * one second after that day's event-file DayStart at 10:20:37 — which is the comparison
+ * the comment above already makes for the `Datetime` layout, on the same day. Checked
+ * against the stored event files (true UTC from the onboard assistant) for all four
+ * days, the log only lines up after subtracting the venue offset: 09-12's first fix at
+ * 11:34:42 against a first event at 09:34:41Z. Read as UTC, every row would be an
+ * offset late and the video and photo overlays would silently desync — the same trap
+ * the `Datetime` note warns about.
+ */
+export function hasSplitLocalClock(normCols: string[]): boolean {
+  return normCols.includes('utcdate') && normCols.includes('utctime')
 }
 
 export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[]>): FlatLogResult {
@@ -158,6 +186,11 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   // Both are the single time column — which CLOCK they carry differs, and that is
   // decided by the caller (see detectLogFormat), not here.
   const utcIdx = headerCols.findIndex((h) => norm(h) === 'utc' || norm(h) === 'datetime')
+  // The split pair. utcParts wants one string, so the two cells are joined per row
+  // (below) into the `<date> <time>` shape it already understands.
+  const normCols = headerCols.map(norm)
+  const dateIdx = utcIdx >= 0 ? -1 : normCols.indexOf('utcdate')
+  const timeIdx = utcIdx >= 0 ? -1 : normCols.indexOf('utctime')
   // High-resolution clock: some exports write `Utc` only to the MINUTE (no
   // seconds), which collapses every row in a minute onto one instant and makes
   // the video overlay freeze. When a seconds-of-day column is present
@@ -271,7 +304,12 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   const rows: FlatLogRow[] = []
   for (let i = 1; i < lines.length; i++) {
     const c = lines[i].split(',')
-    const up = utcParts(utcIdx >= 0 ? c[utcIdx] : undefined)
+    const stamp = utcIdx >= 0
+      ? c[utcIdx]
+      : (dateIdx >= 0 && timeIdx >= 0 && c[dateIdx]?.trim() && c[timeIdx]?.trim())
+        ? `${c[dateIdx].trim()} ${c[timeIdx].trim()}`
+        : undefined
+    const up = utcParts(stamp)
     if (up == null) continue
     // Prefer the seconds-of-day clock for resolution; fall back to the Utc cell.
     let utc = up.ms

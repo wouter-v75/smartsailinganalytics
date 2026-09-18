@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(npm run test)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint)",
+      "Bash(npm run eval:ai)",
+      "Bash(npm run db:list)",
+      "Bash(curl -s http://localhost:*)",
+      "WebSearch",
+      "WebFetch"
+    ]
+  }
+}
