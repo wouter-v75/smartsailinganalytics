@@ -14,6 +14,7 @@
     "db:new": "supabase migration new",
     "db:diff": "supabase db diff",
     "db:link": "supabase link --project-ref gwwtnlfzbvkjuirlsmtk",
+    "media:upload": "vite-node scripts/day-media-upload.ts",
     "lidar:import": "vite-node scripts/lidar-import.ts",
     "headlines:backfill": "vite-node scripts/headlines-backfill.ts",
     "verify": "tsc --noEmit && next lint && npm run lint:undef && vitest run && next build",
