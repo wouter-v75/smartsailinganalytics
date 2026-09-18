@@ -63,6 +63,7 @@ Usage:
   --only DATE       just this date (repeatable)
   --mode patch      overwrite lat/lon only, keeping every stored row (DEFAULT)
   --mode reduce     rebuild the whole cloud copy from the file
+  --boat ID         which boat, when two of them sailed the same day
   --help            this text
 
 Needs .env.local (Supabase URL + service key).`
@@ -77,8 +78,12 @@ if (args.includes('--mode') && !['patch', 'reduce'].includes(modeArg || '')) {
   console.error(`--mode must be patch or reduce\n\n${USAGE}`); process.exit(1)
 }
 const only = args.flatMap((a, i) => (a === '--only' ? [args[i + 1]] : [])).filter(Boolean)
+// Two boats can sail the same date, and a date alone then names two sessions. Rather
+// than guess which one a file belongs to, the script refuses and asks for this.
+const boatArg = args[args.indexOf('--boat') + 1]
+const boat = args.includes('--boat') ? boatArg : null
 const pathArgs = args.filter((a, i) =>
-  !a.startsWith('--') && args[i - 1] !== '--only' && args[i - 1] !== '--mode')
+  !a.startsWith('--') && args[i - 1] !== '--only' && args[i - 1] !== '--mode' && args[i - 1] !== '--boat')
 
 const inputFiles = pathArgs.flatMap(a => {
   const p = resolve(a.replace(/^~(?=\/|$)/, homedir()))
@@ -161,9 +166,11 @@ async function main() {
 
   // Array.from, not spread: tsconfig targets es5.
   const days = Array.from(byDay.keys()).sort()
-  const { data: sessions, error } = await sb.from('sessions')
+  let q = sb.from('sessions')
     .select('id, date, team_id, boat_id, tz_offset_minutes, log_data, xml_data, boats(name)')
     .in('date', days)
+  if (boat) q = q.eq('boat_id', boat)
+  const { data: sessions, error } = await q
   if (error) { console.error(`sessions: ${error.message}`); process.exit(1) }
 
   const perDay = new Map<string, any[]>()
@@ -178,7 +185,11 @@ async function main() {
   for (const day of days) {
     const rows = perDay.get(day) || []
     if (!rows.length) { problems.push(`${day}: no session row — import it in the app first`); continue }
-    if (rows.length > 1) { problems.push(`${day}: ${rows.length} sessions (more than one boat) — not touching it`); continue }
+    if (rows.length > 1) {
+      const which = rows.map((r: any) => `${r.boat_id} (${r.boats?.name || '?'})`).join(', ')
+      problems.push(`${day}: ${rows.length} sessions — pass --boat to say which: ${which}`)
+      continue
+    }
     const s = rows[0]
     const file = byDay.get(day)!
     const tz = s.tz_offset_minutes ?? 120
