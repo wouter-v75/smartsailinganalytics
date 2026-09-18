@@ -4,8 +4,10 @@
 // stable, but cannot tell once that setter arrives as a hook PARAMETER. The
 // setters really are stable, so adding them is a no-op at runtime.
 //
-// Refuses anything that is not a `setSomething` — a genuinely missing
-// dependency is a real finding and must not be silently papered over.
+// The same applies to a `useRef` object: its identity never changes either.
+//
+// Refuses anything else — a genuinely missing dependency is a real finding and
+// must not be silently papered over by a tool.
 import { execFileSync } from 'child_process'
 import fs from 'fs'
 
@@ -23,7 +25,8 @@ for (const file of process.argv.slice(2)) {
   const L = fs.readFileSync(file,'utf8').split('\n')
   for (const m of msgs.sort((a,b) => b.line - a.line)) {
     const names = [...m.message.split('Either')[0].matchAll(/'([\w$]+)'/g)].map(x => x[1])
-    const unsafe = names.filter(n => !/^set[A-Z]/.test(n))
+    const stable = n => /^set[A-Z]/.test(n) || /Ref$/.test(n)   // useState setter | useRef object
+    const unsafe = names.filter(n => !stable(n))
     if (unsafe.length) { console.log(`  ${file}:${m.line} NOT a stable setter — leaving for a human: ${unsafe.join(', ')}`); continue }
     for (let i = m.line - 1; i < Math.min(m.line + 200, L.length); i++) {
       const dep = L[i].match(/\},\s*\[([^\]]*)\]\s*\);?\s*$/)
