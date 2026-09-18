@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
+// @ts-expect-error — plain-JS module, no d.ts
+import { hasOpenableData } from '../hasOpenableData'
 
-// Mirror of the predicate in SmartSailingAnalytics_UI.jsx. That file is an 8k-line
-// client component that cannot be imported under jsdom without pulling in the whole
-// app, so the rule is pinned here; keep the two in step.
-const hasOpenableData = (s: any) =>
-  (s?.videoCount || 0) > 0 || !!s?.hasLog || !!s?.hasXml || (s?.photoCount || 0) > 0
+// This used to be a hand-kept COPY of the predicate, because it lived inside an
+// 8k-line client component that could not be imported under jsdom. It now has a
+// module of its own, so the test exercises the real thing and can no longer
+// drift away from it.
 
 describe('session visibility in Analytics + the sessions sidebar', () => {
   it('shows a LOG-ONLY day — the case that was invisible before', () => {

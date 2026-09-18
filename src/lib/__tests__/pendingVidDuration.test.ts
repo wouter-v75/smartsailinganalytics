@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 
-// Mirror of the preview <video> onLoadedMetadata merge in
-// SmartSailingAnalytics_UI.jsx. That element reports DURATION; it must never
+// Mirror of the preview <video> onLoadedMetadata merge in UploadTab.jsx (it was
+// in SmartSailingAnalytics_UI.jsx when this was written). Still a copy: the
+// handler is written inline in JSX, so there is nothing importable to point at.
+// Extracting it would make this a real test. That element reports DURATION; it must never
 // touch the timestamp. It used to also stamp startUtc/tsSource from the file's
 // mtime, which raced the async extraction in handleVids — and because that path
 // logged nothing, a clip with a perfectly good filename timestamp could be filed
