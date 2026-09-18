@@ -1,0 +1,3196 @@
+'use client'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { getActiveMembership } from '../lib/active-membership';
+import { prefetchBoatConfig } from '../lib/boatConfigPrefetch';
+import { checkCloudStatus, createStreamUpload, deleteStreamVideo, fetchCloudSession, listR2Sessions, syncSessionToCloud, updateCloudSessionMetadata, uploadFileToStream } from '../lib/bunny';
+import { upsertPhotoCloud } from '../lib/cloud-photos';
+import { getSessionCloud, listSessionsCloud } from '../lib/cloud-sessions';
+import { fetchTagList as cloudFetchTagList, saveTagListCloud } from '../lib/cloud-tag-list';
+import { deleteVideosCloud, ensureCloudVideoId, isCloudVideoId, listVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape, upsertVideoCloud } from '../lib/cloud-videos';
+import { connInfo, onWifi } from '../lib/connection';
+import { hasOpenableData } from '../lib/hasOpenableData';
+import { prefetchHls } from '../lib/hlsLoader';
+import { computeAutoTags, dedupeVideos, deleteVideo, getAllVideos, getAllVideosForMembership, getLogData, getSessions, getSessionsForMembership, getSyncOffsets, getTagList, getUnsyncedCount, getVideoBlob, getVideosForDate, getXmlData, markCloudSynced, markVideoOriginalUploaded, pruneInertVideos, saveSyncOffset, saveTagList, updateVideoBlobAndDuration, updateVideoRotation, updateVideoStartUtc, updateVideoTags, venueTodayIso as TODAY } from '../lib/localStore';
+import { nearestRow } from '../lib/logRowLookup';
+import { clearPendingOrigStream, getPendingOrigStream, setPendingOrigStream } from '../lib/pendingOrigStreams';
+import { startAutoFlush as startPhotoAutoFlush, syncPending as syncPendingPhotos } from '../lib/photoStore';
+import { clipUrlIsFresh } from '../lib/playerStage';
+import { canShareVideos } from '../lib/shareRoles';
+import { requestPersistentStorage } from '../lib/storagePersist';
+import { currentStorageScope, scopeOfMembership } from '../lib/storageScope';
+import { getBrowserSupabase, getUidFast } from '../lib/supabase/browser';
+import { daySyncRefusal } from '../lib/syncBoatGuard';
+import { reconcileSessionSyncState } from '../lib/syncReconcile';
+import { buildDayTimeline } from '../lib/timeline/buildNodes';
+import { sortForUpload } from '../lib/uploadOrder';
+import { cropVideo } from '../lib/video-crop';
+import { syncProxyForVideo, uploadOriginalStorageFirst } from '../lib/video-rendition-sync';
+import { videoBadgeSrc } from '../lib/videoBadge';
+import { enrichVideo, isAutoTag } from '../lib/videoEnrich';
+import { AnalyticsTab } from './AnalyticsTab';
+import SailListDiffModal from './SailListDiffModal';
+import { UploadTab } from './UploadTab';
+import { MobileShell } from './mobile/MobileShell';
+import { AdminTab, BoatConfigTab, CampaignTab, PhotosTab, TaggerTab, TimelineTab, ToolsTabs, WeatherTab } from './ssa/LazyTabs';
+import { SrcBadge } from './ssa/SrcBadge';
+import { TzCtx } from './ssa/TzContext';
+import { DEFAULT_TZ, ROLES } from './ssa/constants';
+import { fmtDate, fmtT } from './ssa/format';
+import { useIsMobile } from './ssa/useIsMobile';
+import { BatchSyncPanel } from './sync/BatchSyncPanel';
+import { RenditionSyncPanel } from './sync/RenditionSyncPanel';
+import { SyncControl } from './sync/SyncControl';
+import { SyncProgressPanel } from './sync/SyncProgressPanel';
+import { ErrorBoundary } from './ui';
+import { DeleteButton } from './video/DeleteButton';
+import { ShareButton } from './video/ShareButton';
+import { StartTimeEditor } from './video/StartTimeEditor';
+import { TagEditor } from './video/TagEditor';
+import { VideoCard } from './video/VideoCard';
+import { VideoCropStatusBanner } from './video/VideoCropStatusBanner';
+import { VideoPlayer } from './video/VideoPlayer';
+
+function SSAApp(){
+  const isMobile = useIsMobile();
+  const[role,setRole]=useState("coach");
+  const[activeTab,setActiveTab]=useState("timeline");
+  // See above: the watcher lives in UploadTab, so the tab must stay mounted.
+  const [uploadWatching, setUploadWatching] = useState(false);
+  const[allVideos,setAllVideos]=useState([]);
+  const[logData,setLogData]=useState(null);
+  const[sessionTzOffset,setSessionTzOffset]=useState(DEFAULT_TZ);
+  const[sessionTagList,setSessionTagList]=useState([]);
+  const[xmlData,setXmlData]=useState(null);
+  const[selectedVideo,setSelectedVideo]=useState(null);
+  // Timeline clip playback: open the real overlay player in a modal ON TOP of
+  // the current view (usually the Timeline) instead of switching to the Videos
+  // tab — so you never leave the timeline.
+  const[videoModalOpen,setVideoModalOpen]=useState(false);
+  // Phase B — crop state. The two cut markers are set by the player
+  // toolbar buttons ("Delete UPTO here" / "Delete FROM here") and shown
+  // as red lines on the timeline. The Save button commits via ffmpeg.
+  //   pendingCrop : { deleteUpTo: secs|null, deleteFrom: secs|null } | null
+  //   cropBusy    : true while the save is running
+  //   cropProgress: { pct, message } during the save
+  //   cropError   : last error string, surfaced as a small banner
+  const[pendingCrop, setPendingCrop]   = useState(null);
+  const[cropBusy,    setCropBusy]      = useState(false);
+  const[cropProgress,setCropProgress]  = useState(null);
+  const[cropError,   setCropError]     = useState(null);
+  // Clear any pending crop when the selected video changes so cut marks
+  // can't leak across clips.
+  useEffect(()=>{
+    setPendingCrop(null); setCropProgress(null); setCropError(null); setCropBusy(false);
+  },[selectedVideo?.id]);
+  const[syncOffsets,setSyncOffsets]=useState(()=>getSyncOffsets());
+  const[selectedTags,setSelectedTags]=useState([]);
+  const[searchQuery,setSearchQuery]=useState("");
+  const[sortBy,setSortBy]=useState("date");
+  // Sail inventory (BoatConfig) → sail-name filter dropdown in Videos + Photos.
+  const[sailInventory,setSailInventory]=useState([]);
+  const[sailFilter,setSailFilter]=useState(""); // selected sail id, "" = all
+  const[sessions,setSessions]=useState([]);
+  const[activeDate,setActiveDate]=useState(TODAY());
+  // Effective "TAP TO ADD" suggestion list: union of the curated session tag
+  // list (what gets persisted via saveTagListCloud) and the actual MANUAL
+  // tags applied to every clip in the active session. This way a tag that
+  // someone added directly to a clip on another device (or before we wired
+  // tag-list cloud sync) still appears as a suggestion next time anyone
+  // opens that session's TagEditor. Auto-computed tags (tws-/race-/upwind/
+  // tack etc.) are deliberately excluded — they'd just clutter the picker.
+  // Must come AFTER activeDate's useState — referencing it before throws a
+  // TDZ "Cannot access 'P' before initialization" in the Vercel production
+  // build (caught Mar 2026 prerender).
+  const tagSuggestionList = useMemo(() => {
+    const set = new Set(sessionTagList);
+    for (const v of allVideos) {
+      if (v.sessionDate !== activeDate) continue;
+      for (const t of (v.tags || [])) {
+        if (!t || isAutoTag(t)) continue;
+        set.add(t);
+      }
+    }
+    return [...set].sort();
+  }, [sessionTagList, allVideos, activeDate]);
+  const[cloudStatus,setCloudStatus]=useState(null);
+  const[unsyncedCount,setUnsyncedCount]=useState(0);
+  // Effective auth role — either 'admin' (from users.global_role) or the
+  // active membership's role. Used to gate UI features. Null until the
+  // identity check resolves.
+  const[effectiveRole,setEffectiveRole]=useState(null);
+  // Campaign engine config (null = off / unavailable). See the fetch effect below.
+  const[campaignCfg,setCampaignCfg]=useState(null);
+  // Resolved active workspace (team+boat) — a fallback so the Timeline works even
+  // when the campaign feature flag is off (campaignCfg would be null then).
+  const[activeMem,setActiveMem]=useState(null);
+  // Who is signed in — the tagger marks personal tags as mine/not-mine with it.
+  const[myUid,setMyUid]=useState(null);
+  useEffect(()=>{
+    let alive=true;
+    const read=async()=>{ try{ const uid=await getUidFast(); if(uid&&alive){ setMyUid(uid); setActiveMem(getActiveMembership(uid)); } }catch{} };
+    read();
+    const on=()=>read();
+    window.addEventListener('ssa:active-membership-changed',on);
+    return ()=>{ alive=false; window.removeEventListener('ssa:active-membership-changed',on); };
+  },[]);
+  // Fetch the boat's sail inventory for the Videos/Photos sail-name filter and
+  // the event-file saillist reconciliation.
+  const refetchSails=()=>{
+    const tId=campaignCfg?.teamId, bId=campaignCfg?.boatId;
+    if(!tId||!bId){setSailInventory([]);return;}
+    fetch(`/api/teams/${tId}/sails?boat_id=${bId}`).then(r=>r.json())
+      .then(j=>setSailInventory(Array.isArray(j?.sails)?j.sails:[])).catch(()=>{});
+  };
+  useEffect(()=>{refetchSails();},[campaignCfg?.teamId,campaignCfg?.boatId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const[sailDiff,setSailDiff]=useState(null); // {names:[]} when an event file's sails differ from inventory
+  const[loaded,setLoaded]=useState(false);
+  const[playUtc,setPlayUtc]=useState(null);
+  const[photos,setPhotos]=useState([]);
+  const[hasMountedAnalytics,setHasMountedAnalytics]=useState(false);
+  const[streamPollTick,setStreamPollTick]=useState(0); // re-arms the Bunny Stream encoding poll
+  const playUtcThrottle=useRef(0);
+  const[libSyncProgress,setLibSyncProgress]=useState(null);
+  const[libSyncPhase,setLibSyncPhase]=useState(null);
+  const libSyncAbortRef=useRef(false);
+  const libSyncTimerRef=useRef(null);
+  // Mobile-specific sync state — phase: null | "pulling" | "pushing" | "done" | "error"
+  const[mobileSyncState,setMobileSyncState]=useState({phase:null,message:"",progress:0});
+
+  // ── Logger ────────────────────────────────────────────────────────────────
+  // SSAApp has NO upload console — `addLog` belongs to UploadTab and is not in this
+  // scope. Calling it from here threw `ReferenceError: addLog is not defined`, and
+  // because several of those calls sit BEFORE the work they announce, they killed it:
+  //
+  //     addLog('📶 Wi-Fi — uploading N held clips…')   ← threw
+  //     enqueueAutoSync(held, activeDate)               ← never ran
+  //
+  // …which is exactly why clips never uploaded on Wi-Fi. Give SSAApp its own logger
+  // so every call site resolves. Anything the USER must act on goes to the sync-error
+  // panel / mobileSyncState, which are visible on mobile; this is the trace channel.
+  const addLog = useCallback((msg) => { try { console.log('[ssa]', msg); } catch { /* */ } }, []);
+
+  // Upload failures, surfaced IN THE UI. addLog() only writes to the console —
+  // on mobile you're in the Videos tab and would never see it, so a failing
+  // upload looked like a no-op. These are shown in the sync panel itself.
+  // Ref mirror — the sync queues need the current clip list while draining, WITHOUT
+  // calling getAllVideos(), which mints a brand-new blob: URL for every video on every
+  // call. Called once per queued item, that leaked N object URLs per clip and pinned
+  // every source Blob in memory.
+  const allVideosRef = useRef([]);
+  useEffect(()=>{ allVideosRef.current = allVideos; },[allVideos]);
+
+  // Cache the authenticated user for the lifetime of the page. auth.getUser() is a
+  // ~0.3-0.7s round-trip and the boot path was calling it ~6x (3 of them inside
+  // loadDate alone). The auth user can't change without a full reload, so caching
+  // is safe; an onAuthStateChange clears it if a session ever swaps in place.
+  const authUserRef = useRef(undefined); // undefined = not yet fetched; null = signed out
+  const getUserCached = useCallback(async () => {
+    if (authUserRef.current !== undefined) return authUserRef.current;
+    try { const { data:{ session } } = await getBrowserSupabase().auth.getSession(); authUserRef.current = session?.user || null; }
+    catch { authUserRef.current = null; }
+    return authUserRef.current;
+  }, []);
+  useEffect(() => {
+    const { data } = getBrowserSupabase().auth.onAuthStateChange((_e, session) => { authUserRef.current = session?.user || null; });
+    return () => { try { data?.subscription?.unsubscribe(); } catch { /* */ } };
+  }, []);
+  // Monotonic token so a superseded loadDate (rapid date switch, or the two
+  // overlapping boot-time calls) can't apply its late background cloud data on
+  // top of a newer date. Latest loadDate wins.
+  const loadDateSeqRef = useRef(0);
+  // The current loadDate, for the listeners that register once on mount and would
+  // otherwise hold the first render's closure forever. Assigned after loadDate is
+  // defined, below.
+  const loadDateRef = useRef(null);
+  const[syncErrors,setSyncErrors]=useState([]);
+  const noteSyncError=useCallback((label,message)=>{
+    setSyncErrors(p=>[...p.filter(e=>e.label!==label),{label,message:String(message||'upload failed')}]);
+  },[]);
+
+  // ── Phase B auto-sync queue ─────────────────────────────────────────────────
+  // Background queue that uploads newly-imported videos to Bunny Storage as
+  // proxy MP4s without any manual button press. Drives `mobileSyncState` so
+  // the existing top-of-screen progress strip shows what's happening.
+  //
+  // Sequential by design — ffmpeg.wasm is single-instance per page, parallel
+  // runs just contend for the same WASM core. One clip at a time keeps memory
+  // bounded too.
+  //
+  // The Ref-based queue avoids stale-closure problems with the processor loop;
+  // the React state lives only on the visible progress strip.
+  const autoSyncRef = useRef({
+    queue: [],          // [{videoId, sessionDate, label}, …]
+    running: false,
+    activePromise: null,// in-flight drain promise — lets the batch flow await it
+    done: 0,
+    total: 0,
+    failed: 0,          // so the final state can report failure instead of a fake ✓
+  });
+
+  // ── Phase B.3 originals queue ───────────────────────────────────────────────
+  // Full-resolution originals follow the proxies ("two-tier" sync). They are
+  // large, so the queue only drains on an unmetered link unless force-run via
+  // the batch button. A connection-change listener resumes a held queue.
+  const originalsSyncRef = useRef({
+    queue: [],          // [{videoId, sessionDate, label}, …]
+    running: false,
+    done: 0,
+    total: 0,
+  });
+  // Shared timer that clears the progress strip a few seconds after a queue
+  // finishes. Held in a ref so a follow-on phase (proxies → originals) can
+  // cancel the pending clear instead of having its progress wiped mid-run.
+  const syncClearTimerRef = useRef(null);
+
+  // Batch select / delete — admin + coach only
+  const[batchMode,setBatchMode]=useState(false);
+  const[batchSelected,setBatchSelected]=useState(()=>new Set());
+  const toggleBatchSelect=useCallback(id=>{
+    setBatchSelected(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+  },[]);
+  const clearBatch=useCallback(()=>{setBatchMode(false);setBatchSelected(new Set());},[]);
+  // A clip lives in THREE stores — IndexedDB (blob), Bunny (rendition) and the
+  // Supabase `videos` row. This used to delete only the first, so the cloud row
+  // survived and merged straight back in on the next load as a phantom cloud-only
+  // clip: deleted clips kept coming back. Delete all three, Bunny + cloud first so
+  // that if anything fails we still have the local entry to retry from.
+  const handleBatchDelete=useCallback(async()=>{
+    if(!batchSelected.size)return;
+    const ids=[...batchSelected];
+    const targets=allVideos.filter(v=>batchSelected.has(v.id));
+    let supabaseUser=null;
+    try{
+      const supabase=getBrowserSupabase();
+      const {data:{user}}=await supabase.auth.getUser();
+      supabaseUser=user;
+    }catch{}
+    for(const v of targets){
+      if(v.streamId){try{await deleteStreamVideo(v.streamId);}catch{}}
+      if(supabaseUser){try{await deleteVideosCloud({userId:supabaseUser.id,id:v.cloudId||v.id});}catch{}}
+    }
+    for(const id of ids){try{await deleteVideo(id);}catch{}}
+    setAllVideos(p=>p.filter(v=>!batchSelected.has(v.id)));
+    if(selectedVideo&&batchSelected.has(selectedVideo.id))setSelectedVideo(null);
+    clearBatch();
+    addLog(`🗑 Deleted ${ids.length} clip${ids.length>1?"s":""} — local + Bunny + cloud row`);
+  },[batchSelected,selectedVideo,clearBatch,allVideos,addLog]);
+
+  // Nuke every clip for the active day across all three stores. Unlike batch
+  // delete this also removes ORPHAN cloud rows — rows whose local entry is already
+  // gone, which the library can't always surface for selection, and which are the
+  // residue of the old delete path that never touched Supabase. Use to start a day
+  // fresh before re-importing.
+  const[clearDayBusy,setClearDayBusy]=useState(false);
+  const[clearDayArmed,setClearDayArmed]=useState(false);
+  const handleClearDay=useCallback(async()=>{
+    if(!activeDate)return;
+    setClearDayBusy(true);
+    try{
+      // 1. Bunny renditions — needs the stream ids, which only exist while the rows do.
+      for(const v of allVideos){ if(v.streamId){try{await deleteStreamVideo(v.streamId);}catch{}} }
+      // 2. Cloud rows for the whole day (catches orphans with no local entry).
+      let n=0;
+      try{
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(user){ const r=await deleteVideosCloud({userId:user.id,date:activeDate}); n=r.deleted; }
+      }catch{}
+      // 3. Local IDB.
+      const locals=await getVideosForDate(activeDate);
+      for(const v of locals){try{await deleteVideo(v.id);}catch{}}
+      setAllVideos([]); setSelectedVideo(null); clearBatch();
+      addLog(`🗑 Cleared ${activeDate}: ${locals.length} local + ${n} cloud row${n===1?"":"s"} removed. Re-import to start fresh.`);
+    } finally { setClearDayBusy(false); setClearDayArmed(false); }
+  },[activeDate,allVideos,clearBatch,addLog]);
+
+  // Batch ↓ Save to disk — ask the user once for a destination folder,
+  // then stream every selected clip's blob straight into it via the File
+  // System Access API. Anchor-download fallback for browsers that don't
+  // support showDirectoryPicker (notably Safari) — but that path will
+  // again only honour the user's chosen folder for the first download;
+  // subsequent ones go to the OS default. Progress is surfaced through
+  // the existing sync state strip.
+  const handleBatchSaveToDisk = useCallback(async () => {
+    if (!batchSelected.size) return;
+    const selected = allVideos.filter(v => batchSelected.has(v.id) && v.hasLocalBlob);
+    if (!selected.length) { alert('None of the selected clips have a local file on this device.'); return; }
+
+    let dirHandle = null;
+    if ('showDirectoryPicker' in window) {
+      try {
+        dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      } catch (e) {
+        // AbortError = user cancelled. Anything else, fall through to the
+        // single-prompt download path with a console warning.
+        if (e?.name === 'AbortError') return;
+        console.warn('[batch-save] showDirectoryPicker failed, falling back to downloads:', e);
+      }
+    }
+
+    setMobileSyncState({ phase: 'pushing', message: `Saving 0/${selected.length}…`, progress: 0 });
+    let saved = 0;
+    for (let i = 0; i < selected.length; i++) {
+      const v = selected[i];
+      const label = v.title || v.name || v.id;
+      try {
+        const blob = await getVideoBlob(v.id);
+        if (!blob) { console.warn('[batch-save] no local blob for', v.id); continue; }
+        const stem = (v.title || v.name || 'clip').replace(/\.[^.]+$/, '');
+        const name = `${stem}.mp4`;
+
+        if (dirHandle) {
+          // FS Access API — stream the blob straight into the picked
+          // folder, no per-file prompts, no Downloads-folder hijack.
+          const fh = await dirHandle.getFileHandle(name, { create: true });
+          const writable = await fh.createWritable();
+          try {
+            await blob.stream().pipeTo(writable);
+          } catch (e) {
+            try { await writable.abort(); } catch {}
+            throw e;
+          }
+        } else {
+          // Legacy anchor-download — only really useful for one file at
+          // a time. We still try in case the user is on Safari; they'll
+          // get the first file in their chosen folder and the rest in
+          // their default Downloads.
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
+          await new Promise(r => setTimeout(r, 400));
+        }
+
+        saved++;
+        setMobileSyncState({
+          phase: 'pushing',
+          message: `Saved ${saved}/${selected.length} · ${label}`,
+          progress: Math.round((saved / selected.length) * 100),
+        });
+      } catch (e) {
+        console.error('[batch-save] failed for', v.id, e);
+      }
+    }
+
+    setMobileSyncState({
+      phase: 'done',
+      message: `✓ Saved ${saved} of ${selected.length} to disk`,
+      progress: 100,
+    });
+    setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 4000);
+    if (saved < selected.length) {
+      alert(`Saved ${saved} of ${selected.length}. The rest failed (see console).${dirHandle ? '' : '\n\nTip: your browser does not support a single-folder picker. On Chrome/Edge the batch saves all clips to one folder; on Safari only the first goes where you asked.'}`);
+    }
+  }, [batchSelected, allVideos]);
+
+  // Batch ↑ Upload compressed — pick N compressed files, match each to a
+  // selected clip by filename stem (case-insensitive prefix), then push
+  // each to Bunny Stream as the cloud "original". The local IDB blobs
+  // stay untouched so HD-local debrief playback still works.
+  const handleBatchUploadCompressed = useCallback(async () => {
+    if (!batchSelected.size) return;
+    const selected = allVideos.filter(v => batchSelected.has(v.id));
+    if (!selected.length) return;
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = 'video/mp4,video/quicktime,.mp4,.mov,.m4v';
+    input.onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      if (!files.length) return;
+      // Match files to clips by filename stem (case-insensitive). Accepts
+      // "<stem>.mp4", "<stem>_<anything>.mp4", "<stem>-<anything>.mp4"
+      // — e.g. matches "Race1.mp4" → Race1.mp4 / Race1_720p.mp4 / Race1-720.mp4.
+      const norm = s => (s || '').replace(/\.[^.]+$/, '').toLowerCase().trim();
+      const pairs = [];
+      const usedFiles = new Set();
+      for (const v of selected) {
+        const clipStem = norm(v.title || v.name || v.id);
+        if (!clipStem) continue;
+        const match = files.find(f => {
+          if (usedFiles.has(f)) return false;
+          const fs = norm(f.name);
+          return fs === clipStem || fs.startsWith(clipStem + '_') || fs.startsWith(clipStem + '-');
+        });
+        if (match) {
+          pairs.push({ video: v, file: match });
+          usedFiles.add(match);
+        }
+      }
+      if (!pairs.length) {
+        alert('No picked files matched the selected clips by name.\n\nThe match looks at filename stem — e.g. a clip titled "Race1" matches Race1.mp4 / Race1_720p.mp4 / Race1-compressed.mp4. Re-export from "Save to disk" if you renamed them.');
+        return;
+      }
+      if (pairs.length < selected.length) {
+        if (!confirm(`Matched ${pairs.length} of ${selected.length} clips. Continue with those?`)) return;
+      }
+
+      // Upload in DEBRIEF order, not library order. Uploads are serial and each
+      // clip becomes watchable as its own bytes land, so this decides what the
+      // team sees first. `selected` follows allVideos, which is sorted newest
+      // first for display — on 8 Sept that sent the race start LAST, behind ten
+      // gybes, undoing the clip script's care in cutting starts first.
+      const ordered = sortForUpload(
+        pairs.map(p => ({ ...p, tags: p.video.tags, title: p.video.title || p.video.name || p.video.id }))
+      );
+      pairs.length = 0;
+      pairs.push(...ordered);
+
+      try {
+        const supabase = getBrowserSupabase();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { alert('You need to be signed in.'); return; }
+
+        for (let i = 0; i < pairs.length; i++) {
+          const { video, file } = pairs[i];
+          const label = video.title || video.name || video.id;
+          try {
+            const cloudId = await ensureCloudVideoId({
+              userId: user.id,
+              video,
+              sessionDate: video.sessionDate || activeDate,
+            });
+            if (!cloudId) { console.warn('[batch-upload-compressed] no cloud row for', video.id); continue; }
+            setMobileSyncState({ phase: 'pushing', message: `Uploading ${i+1}/${pairs.length} · ${label}`, progress: 0 });
+            // STORAGE FIRST, then Bunny fetches it into Stream itself.
+            //
+            // Uploading straight to Stream left a clip unwatchable for 60-120
+            // minutes while it transcoded — longer than the trim and the upload
+            // put together, and the actual reason footage reached the team late.
+            // Landing it in Storage makes it playable as a progressive 720p MP4
+            // the moment the bytes arrive, per clip, and Bunny pulls it into
+            // Stream server-side so nothing crosses our uplink twice.
+            //
+            // KNOWN TRADE: the Storage PUT is a plain XHR and does NOT resume,
+            // where the old TUS path did. Clips are 7-80 MB apart from the start,
+            // so a retry is cheap, but a dropped connection on a big start clip
+            // restarts it. Revisit if that bites on the water.
+            const res = await uploadOriginalStorageFirst({
+              videoId: cloudId,
+              sessionDate: video.sessionDate || activeDate,
+              scope: await currentStorageScope(),
+              source: file,
+              title: label,
+              onProgress: (pr) => setMobileSyncState({
+                phase: 'pushing',
+                message: `Uploading ${i+1}/${pairs.length} · ${label}${pr.message ? ' · ' + pr.message : ''}`,
+                progress: Math.round((pr.pct || 0) * 100),
+              }),
+            });
+            if (!res.ok) { console.warn('[batch-upload-compressed] failed for', video.id, res.error); continue; }
+            // The ladder is an upgrade, not a precondition — a clip with only the
+            // Storage copy still plays, so this is a warning, not a failure.
+            if (res.streamError) console.warn('[batch-upload-compressed] adaptive encode not queued for', video.id, res.streamError);
+            clearPendingOrigStream(video.id);
+            // Persist it too, so a later Push to Cloud of this session skips it.
+            await markVideoOriginalUploaded(video.id, { originalPath: res.originalPath || null, originalStreamId: res.streamId || null });
+            setAllVideos(p => p.map(v => v.id === video.id
+              ? { ...v, hasOriginal: true, originalStreamId: res.streamId || null, streamProcessing: Boolean(res.streamId), cloudId }
+              : v));
+          } catch (err) {
+            console.error('[batch-upload-compressed] failed for', video.id, err);
+          }
+        }
+        setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${pairs.length} compressed clip${pairs.length===1?'':'s'}`, progress: 100 });
+        setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 4000);
+        clearBatch();
+      } catch (err) {
+        console.error('[batch-upload-compressed] outer failure', err);
+        setMobileSyncState({ phase: 'error', message: err?.message || 'Batch upload failed', progress: 0 });
+      }
+    };
+    input.click();
+  }, [batchSelected, allVideos, activeDate, clearBatch]);
+
+  // Batch sync — admin + coach only. A pending offset (seconds) that can be
+  // applied to every clip currently in batchSelected.
+  const[batchSyncOffset,setBatchSyncOffset]=useState(0);
+  const[batchSyncOpen,setBatchSyncOpen]=useState(false);
+  const[batchSyncBusy,setBatchSyncBusy]=useState(false);
+
+  // Bake a sync offset into one or more clips' startUtc — local IDB + cloud
+  // row + auto-tag recomputation in one shot. Used by both the per-clip Save
+  // button in the SyncControl and the batch Sync apply path. Returns the
+  // number of clips actually updated (clips with no startUtc are skipped).
+  // Rotate a clip — TL3 and above (the senior ladder, same as Boat Config). Writes the
+  // ANGLE to IndexedDB and to the cloud row; the source file is never re-encoded, which
+  // is the entire point: QuickTime Player's rotate transcodes and strips the capture
+  // metadata, so clips arrived carrying their edit time instead of their recording time.
+  const canRotate = ['admin','team_manager','coach','tl3'].includes(effectiveRole);
+  const rotateVideo = useCallback(async (video, deg) => {
+    if (!canRotate || !video?.id) return;
+    setAllVideos(p => p.map(v => v.id === video.id ? { ...v, rotation: deg } : v));
+    setSelectedVideo(v => (v && v.id === video.id ? { ...v, rotation: deg } : v));
+    try { await updateVideoRotation(video.id, deg); } catch { /* local only */ }
+    const cloudId = video.cloudId || (isCloudVideoId(video.id) ? video.id : null);
+    if (cloudId) {
+      try {
+        await fetch(`/api/videos/${encodeURIComponent(cloudId)}/rotation`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rotation: deg }),
+        });
+      } catch { /* stays local until the next sync */ }
+    }
+  }, [canRotate]);
+
+  const saveSyncForVideos = useCallback(async (videos, offsetSecs) => {
+    if (!offsetSecs || !videos?.length) return 0;
+    let supabaseUser = null;
+    try {
+      const supabase = getBrowserSupabase();
+      const { data: { user } } = await supabase.auth.getUser();
+      supabaseUser = user;
+    } catch {}
+    const enriched = {};
+    const newOffsetMap = { ...syncOffsets };
+    for (const v of videos) {
+      if (v.startUtc == null) continue;
+      const newStartUtc = v.startUtc + offsetSecs * 1000;
+      // Recompute auto-tags from the new startUtc (window shifts).
+      const autoTags = computeAutoTags(newStartUtc, v.duration, logData, xmlData, 0);
+      const manualTags = (v.tags || []).filter(t => !isAutoTag(t));
+      const mergedTags = [...new Set([...autoTags, ...manualTags])];
+      // 1. Local IDB (no-op for cloud-only entries).
+      try { await updateVideoStartUtc(v.id, newStartUtc); } catch {}
+      try { await updateVideoTags(v.id, mergedTags); } catch {}
+      // 2. Cloud row — propagate startUtc + tags + reset stored offset.
+      if (supabaseUser) {
+        try {
+          await upsertVideoCloud({
+            userId: supabaseUser.id,
+            sessionDate: v.sessionDate || activeDate,
+            title: v.title || v.name || null,
+            startUtc: newStartUtc,
+            durationSec: v.duration ?? null,
+            tags: mergedTags,
+            syncOffsetSecs: 0,                // baked in
+            thumbnailUrl: v.thumbnailUrl ?? null,
+            bunnyStreamId: v.streamId ?? null,
+            bunnyStoragePath: v.bunny_storage_path ?? null,
+            bytes: v.size ?? null,
+            externalId: v.externalId || v.id,
+          });
+        } catch { /* non-fatal — local copy is updated */ }
+      }
+      // 3. Local sync-offset preference → 0.
+      saveSyncOffset(v.id, 0);
+      delete newOffsetMap[v.id];
+      enriched[v.id] = enrichVideo({ ...v, startUtc: newStartUtc, tags: mergedTags }, logData, xmlData, newOffsetMap);
+    }
+    const updatedCount = Object.keys(enriched).length;
+    if (updatedCount) {
+      setSyncOffsets(newOffsetMap);
+      setAllVideos(p => p.map(v => enriched[v.id] || v));
+      if (selectedVideo && enriched[selectedVideo.id]) setSelectedVideo(enriched[selectedVideo.id]);
+    }
+    return updatedCount;
+  }, [activeDate, syncOffsets, logData, xmlData, selectedVideo]);
+
+  // Fire-and-forget cloud upsert for a single clip's metadata. Used by
+  // every code path that mutates a clip's tags / startUtc / duration on
+  // disk — crop, StartTimeEditor, Re-tag-all — so that the videos row
+  // reflects the change and other users / devices pick it up via the
+  // cloud-authoritative tags merge in loadDate. `overrides` lets the
+  // caller send the post-mutation values (e.g. newStartUtc after a crop)
+  // even when the in-memory `video` shape hasn't been re-rendered yet.
+  const pushVideoMetadataToCloud = useCallback(async (video, overrides = {}) => {
+    if (!video) return false;
+    try {
+      const supabase = getBrowserSupabase();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return false;
+      await upsertVideoCloud({
+        userId: user.id,
+        sessionDate: video.sessionDate || activeDate,
+        title: video.title || video.name || null,
+        startUtc: video.startUtc ?? null,
+        durationSec: video.duration ?? null,
+        tags: video.tags ?? [],
+        syncOffsetSecs: syncOffsets[video.id] ?? 0,
+        thumbnailUrl: video.thumbnailUrl ?? null,
+        bunnyStreamId: video.streamId ?? null,
+        bunnyStoragePath: video.bunny_storage_path ?? null,
+        bytes: video.size ?? null,
+        externalId: video.externalId || video.id,
+        ...overrides,
+      });
+      return true;
+    } catch (e) { console.warn('[cloud] meta push failed', e); return false; }
+  }, [activeDate, syncOffsets]);
+
+  // Persist tag edits to BOTH local IDB and the Supabase row. Without the
+  // cloud upsert, tag edits on cloud-only clips (uploaded from another
+  // device, no local IDB entry) silently revert on the next library reload
+  // — updateVideoTags is a no-op for missing IDB entries. On desktop the
+  // earlier wiring didn't even hit IDB, only React state, so every tag
+  // edit reverted there too. Used by both TagEditor onSave handlers.
+  const saveTagsForVideo = useCallback(async (video, newTags) => {
+    if (!video) return;
+    // 1. Local IDB (no-op for cloud-only entries).
+    try { await updateVideoTags(video.id, newTags); } catch (e) { console.warn('[tags] IDB write failed', e); }
+    // 2. Cloud row — preserves the edit across tab close + other devices.
+    //    Surface failures: silent returns from upsertVideoCloud (no active
+    //    membership, RLS denial, network) were hiding real cloud-sync
+    //    breakage and making "tags don't propagate" hard to diagnose.
+    try {
+      const supabase = getBrowserSupabase();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.warn('[tags] cloud sync skipped — not signed in');
+      } else {
+        const res = await upsertVideoCloud({
+          userId: user.id,
+          sessionDate: video.sessionDate || activeDate,
+          title: video.title || video.name || null,
+          startUtc: video.startUtc ?? null,
+          durationSec: video.duration ?? null,
+          tags: newTags,
+          syncOffsetSecs: syncOffsets[video.id] ?? 0,
+          thumbnailUrl: video.thumbnailUrl ?? null,
+          bunnyStreamId: video.streamId ?? null,
+          bunnyStoragePath: video.bunny_storage_path ?? null,
+          bytes: video.size ?? null,
+          externalId: video.externalId || video.id,
+        });
+        if (!res.ok) {
+          console.warn('[tags] cloud upsert FAILED', {
+            videoId: video.id,
+            externalId: video.externalId || video.id,
+            sessionDate: video.sessionDate || activeDate,
+            error: res.error,
+            noMembership: res.noMembership,
+          });
+        } else {
+          // Action=updated means the dedupe found the existing row and
+          // applied tags. action=created means the server didn't find a
+          // matching row (external_id / bunny_stream_id mismatch) and
+          // inserted a NEW row — symptom of a duplicate-clip problem
+          // where the original cloud row still has the old tags.
+          console.log('[tags] cloud upsert OK', {
+            videoId: video.id,
+            externalId: video.externalId || video.id,
+            cloudRowId: res.videoId,
+            action: res.action,
+            tags: newTags,
+          });
+          if (res.action === 'created') {
+            console.warn('[tags] ⚠ INSERTED a new cloud row instead of updating — likely a duplicate. mobile will keep reading the original row.', {
+              externalIdSent: video.externalId || video.id,
+              newRowId: res.videoId,
+            });
+          }
+        }
+      }
+    } catch (e) { console.warn('[tags] cloud upsert threw', e); }
+    // 3. Update React state so the UI reflects immediately.
+    setAllVideos(p => p.map(v => v.id === video.id ? { ...v, tags: newTags } : v));
+    setSelectedVideo(p => p && p.id === video.id ? { ...p, tags: newTags } : p);
+  }, [activeDate, syncOffsets]);
+
+  // Video thumbnail load tracking — mirrors the PhotosTab pattern
+  const[videoThumbsLoading,setVideoThumbsLoading]=useState(false);
+  const[videoLoadedIds,setVideoLoadedIds]=useState(()=>new Set());
+  const[videoTotalThumbs,setVideoTotalThumbs]=useState(0);
+  const markVideoThumbLoaded=useCallback(id=>{
+    setVideoLoadedIds(prev=>{
+      if(prev.has(id))return prev;
+      const n=new Set(prev);n.add(id);return n;
+    });
+  },[]);
+  const perms=ROLES[role];
+
+  // Mount analytics pane on first visit OR as soon as log data arrives
+  // (whichever comes first — avoids blank tab after upload without visiting first)
+  useEffect(()=>{
+    if(activeTab==="analytics"||logData) setHasMountedAnalytics(true);
+  },[activeTab, logData]);
+
+  // Safety: if user switches to Analytics or Tags and logData is missing, reload
+  // from IDB. The tagger needs the day's rows to detect anything and the event
+  // file to split the day into races — without them every tag lands in one
+  // undifferentiated pile and the "pull them in" bar never appears.
+  useEffect(()=>{
+    if((activeTab==="analytics"||activeTab==="tagger") && !logData && activeDate){
+      loadDate(activeDate);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[activeTab]);
+
+  // Resolve ONE clip's signed playback URL, on demand. loadDate no longer resolves
+  // every clip on the day (that was ~one /url request per clip and the startup
+  // bottleneck — see the boot profiling). The grid cards render from the inline
+  // Bunny poster; a clip only needs a playback URL when it's actually selected to
+  // play, which is what the effect below drives. Idempotent: a clip that already
+  // has a resolved https URL is skipped.
+  // Clips whose URL is being resolved right now — so the selection effect, the
+  // player's quiet retry and "Try again" cannot start three fetches for one clip.
+  const clipUrlInflightRef = useRef(new Set());
+  const ensureClipUrl = useCallback(async (videoId, { force = false } = {}) => {
+    if (!videoId) return;
+    const v = allVideosRef.current.find(x => x.id === videoId);
+    if (!v) return;
+    // Resolved AND not about to expire. A signed Storage URL lives one hour, and
+    // any https URL used to count as resolved forever — so a clip first opened an
+    // hour earlier replayed a dead link and the phone said "not available".
+    if (!force && clipUrlIsFresh(v)) return;
+    if (!(v.hasProxy || v.hasOriginal || v.streamId)) return;            // nothing in the cloud to resolve
+    if (clipUrlInflightRef.current.has(videoId)) return;
+    clipUrlInflightRef.current.add(videoId);
+    const patch = (p) => {
+      setAllVideos(prev => prev.map(x => x.id === videoId ? { ...x, ...p } : x));
+      setSelectedVideo(prev => (prev && prev.id === videoId) ? { ...prev, ...p } : prev);
+    };
+    patch({ urlResolving: true, urlFailed: false });
+    let upd = null, gone = false, encodeFailed = false, signedOut = false;
+    // A hung request on marina wifi used to hold "bear with us" up indefinitely
+    // (and, via the in-flight guard, block every retry). Bound each attempt.
+    const bounded = () => (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') ? AbortSignal.timeout(10_000) : undefined;
+    try {
+      // A phone waking up, a cold server, one dropped request — none of those mean
+      // the clip is gone. Three tries, a little apart, before saying so.
+      for (let attempt = 0; attempt < 3 && !upd && !gone; attempt++) {
+        if (attempt) await new Promise(r => setTimeout(r, attempt === 1 ? 800 : 2500));
+        try {
+          if (v.hasProxy || v.hasOriginal) {
+            const res = await fetch(`/api/videos/${encodeURIComponent(v.cloudId || v.id)}/url?prefer=${isMobile ? 'proxy' : 'auto'}`, { cache: 'no-store', signal: bounded() });
+            if (res.ok) {
+              const j = await res.json();
+              // start_url: the iPhone's start-light playlist (see lib/hlsMaster); its
+              // link expires too, so it counts toward re-resolving.
+              const exp = j?.expires_at || j?.start_expires_at || null;
+              if (j?.url) upd = { objectUrl: j.url, servedRendition: j.served || null, urlExpiresAt: exp ? exp * 1000 : null, hlsStartUrl: j.start_url || null, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
+              else if (j?.kind === 'processing') upd = { streamProcessing: true, thumbnailUrl: v.thumbnailUrl || j.thumbnail || null };
+            } else if (res.status === 404 && !v.streamId) gone = true;   // no rendition anywhere — retrying will not change that
+            else if (res.status === 401) { gone = true; signedOut = true; }  // not a network problem — say so
+          }
+          if (!upd && !gone && v.streamId) {
+            const res = await fetch(`/api/stream/status/${v.streamId}`, { cache: 'no-store', signal: bounded() });
+            if (res.ok) {
+              const s = await res.json();
+              if (s.playbackUrl) upd = { objectUrl: s.playbackUrl, urlExpiresAt: null, thumbnailUrl: v.thumbnailUrl || s.thumbnailUrl || null };
+              else if (s.failed) { gone = true; encodeFailed = true; }
+              else upd = { streamProcessing: true, thumbnailUrl: v.thumbnailUrl || s.thumbnailUrl || null };   // the poller takes it from here
+            }
+          }
+        } catch { /* offline / transient — the next attempt */ }
+      }
+    } finally {
+      clipUrlInflightRef.current.delete(videoId);
+    }
+    if (!upd) { patch({ urlResolving: false, urlFailed: true, urlFailReason: signedOut ? 'auth' : null, ...(encodeFailed ? { streamFailed: true } : {}) }); return; }
+    // Defer revoking the old blob: URL — a live <video> may still be reading it
+    // (see the note in loadDate); revoking synchronously spams ERR_FILE_NOT_FOUND.
+    const old = v.objectUrl;
+    if (old && String(old).startsWith('blob:')) setTimeout(() => { try { URL.revokeObjectURL(old); } catch { /* */ } }, 15_000);
+    patch({ ...upd, urlResolving: false, urlFailed: false, urlFailReason: null });
+  }, [isMobile]);
+
+  // When a clip becomes selected, make sure its playback URL is resolved (it plays
+  // the instant the fetch returns; a clip with a local blob already plays from that).
+  useEffect(()=>{
+    setPlayUtc(selectedVideo?.startUtc||null);
+    if(selectedVideo?.id) ensureClipUrl(selectedVideo.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[selectedVideo?.id]);
+
+  // Self-heal. loadDate, the log re-enrich and mobile sync all rebuild the clip
+  // list, and any of them can drop the selected clip's link after it was
+  // resolved; the effect above only runs when the selection CHANGES, so nothing
+  // fetched it again. Whenever the selected clip has no link (and has not already
+  // failed), get one — ensureClipUrl skips fresh links and dedupes in-flight ones.
+  useEffect(()=>{
+    if(selectedVideo?.id && !selectedVideo.objectUrl && !selectedVideo.urlFailed) ensureClipUrl(selectedVideo.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[selectedVideo?.id, selectedVideo?.objectUrl]);
+
+  // Warm the bundled hls.js a few seconds after start-up (off the boot path), so
+  // the first play on Android does not wait for the chunk. iPhones play HLS
+  // natively and have no MediaSource — they skip it.
+  useEffect(()=>{
+    const t=setTimeout(()=>{ if(typeof window!=="undefined"&&window.MediaSource) prefetchHls(); },3000);
+    return ()=>clearTimeout(t);
+  },[]);
+
+  // Poll Bunny Stream for clips still encoding their adaptive HLS ladder.
+  // Once a clip is ready, swap its playback URL in with no manual reload.
+  // Self-terminating: stops as soon as no clip is left processing, and is
+  // capped (~10 min) so a genuinely stuck encode can't poll forever.
+  // The cap is PER BATCH, not per session. streamPollTick only ever incremented, so
+  // once it maxed out the poller was dead for everything uploaded afterwards too —
+  // those clips sat "processing" with no one asking whether they were done. Reset
+  // the budget whenever a clip starts processing that wasn't already being watched.
+  const pollingIdsRef=useRef(new Set());
+  const procKey=allVideos.filter(v=>v.streamProcessing).map(v=>v.id).sort().join(',');
+  useEffect(()=>{
+    const now=new Set(allVideos.filter(v=>v.streamProcessing).map(v=>v.id));
+    let fresh=false;
+    for(const id of now) if(!pollingIdsRef.current.has(id)) { fresh=true; break; }
+    pollingIdsRef.current=now;
+    if(fresh) setStreamPollTick(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[procKey]);
+
+  useEffect(()=>{
+    if(!allVideos.some(v=>v.streamProcessing&&!v.streamStalled)) return;
+    // 4K originals take Bunny well past the old ten-minute ceiling, so back off
+    // rather than giving up: 20 s while it is plausibly nearly done, then a minute.
+    // ~35 min of patience in total, after which the clip is marked stalled and the
+    // UI says so instead of repeating "1-3 min" indefinitely.
+    const MAX_TICKS=40;
+    const delay=streamPollTick<10?20000:60000;
+    if(streamPollTick>MAX_TICKS){
+      const ids=allVideos.filter(v=>v.streamProcessing&&!v.streamStalled).map(v=>v.id);
+      if(ids.length) setAllVideos(prev=>prev.map(v=>ids.includes(v.id)?{...v,streamStalled:true}:v));
+      return;
+    }
+    const t=setTimeout(async()=>{
+      const procs=allVideos.filter(v=>v.streamProcessing);
+      const updates={};
+      await Promise.all(procs.map(async v=>{
+        try{
+          const res=await fetch(`/api/videos/${encodeURIComponent(v.cloudId||v.id)}/url?prefer=${isMobile?'proxy':'auto'}`);
+          if(res.ok){
+            const j=await res.json();
+            const exp=j?.expires_at||j?.start_expires_at||null;
+            if(j?.url){ updates[v.id]={objectUrl:j.url,servedRendition:j.served||null,urlExpiresAt:exp?exp*1000:null,hlsStartUrl:j.start_url||null,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||j.thumbnail||null}; return; }
+            // A poster can arrive well before the renditions do — take it, so the
+            // card stops being a black rectangle while the encode finishes.
+            if(j?.thumbnail&&!v.thumbnailUrl) updates[v.id]={thumbnailUrl:j.thumbnail};
+          }
+          // Ask Bunny directly as well. /url answers from OUR row; the encode's real
+          // state lives at Stream, and a row that never got refreshed would otherwise
+          // keep reporting "processing" long after the encode finished.
+          if(!updates[v.id]?.objectUrl&&v.streamId){
+            const sr=await fetch(`/api/stream/status/${v.streamId}`);
+            if(sr.ok){ const st=await sr.json();
+              if(st?.playbackUrl) updates[v.id]={objectUrl:st.playbackUrl,streamProcessing:false,streamStalled:false,thumbnailUrl:v.thumbnailUrl||st.thumbnailUrl||null};
+              // Not ready — but carry BACK what Bunny said, so the UI can show the
+              // difference between "encoding, 40% done" and "queued, nothing has
+              // happened for an hour". Those need opposite responses from the crew
+              // and looked identical all afternoon on 7 Sept.
+              else updates[v.id]={...(updates[v.id]||{}),
+                streamPhase:st?.phase||null,
+                streamPct:typeof st?.encodeProgress==='number'?st.encodeProgress:null,
+                streamBytes:typeof st?.storageSize==='number'?st.storageSize:null,
+                streamFailed:!!st?.failed,
+                streamSeenAt:Date.now()};
+            }
+          }
+        }catch{}
+      }));
+      if(Object.keys(updates).length){
+        setAllVideos(prev=>prev.map(v=>updates[v.id]?{...v,...updates[v.id]}:v));
+        setSelectedVideo(prev=>(prev&&updates[prev.id])?{...prev,...updates[prev.id]}:prev);
+      }
+      setStreamPollTick(n=>n+1); // re-arm until no clip is processing
+    },delay);
+    return ()=>clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[allVideos,streamPollTick,isMobile]);
+
+  // "Check again" on a stalled encode: clear the flag, re-arm the poll budget and
+  // ask now. A clip Bunny finished after we stopped watching comes good without a
+  // page reload — which was the only way out before.
+  // opts.force re-resolves even a link that looks fresh — the player's quiet
+  // retry and "Try again" use it after a failed load.
+  const recheckStream=useCallback((videoId, opts)=>{
+    setAllVideos(prev=>prev.map(v=>v.id===videoId?{...v,streamStalled:false}:v));
+    setSelectedVideo(prev=>(prev&&prev.id===videoId)?{...prev,streamStalled:false}:prev);
+    setStreamPollTick(0);
+    ensureClipUrl(videoId, opts);
+  },[ensureClipUrl]);
+
+  // Throttled callback passed to VideoPlayer — ~12 fps max to keep renders light
+  const handlePlayUtc=useCallback(utc=>{
+    const now=performance.now();
+    if(now-playUtcThrottle.current<80) return;
+    playUtcThrottle.current=now;
+    setPlayUtc(utc);
+  },[]);
+
+  // Resolve the effective auth role once on mount and re-resolve when the
+  // active membership changes. Admin (global_role='admin') always wins.
+  useEffect(()=>{
+    let cancelled=false;
+    async function resolve(){
+      try{
+        const supabase=getBrowserSupabase();
+        // Verified user id — getClaims() checks the JWT signature locally against
+        // the cached JWKS (asymmetric key), skipping the ~0.9s getUser() round-trip.
+        // Fall back to getUser() if claims can't be verified. The admin decision
+        // stays server-authoritative: the global_role read below is RLS-gated.
+        let uid=null;
+        try {
+          if(typeof supabase.auth.getClaims==='function'){
+            const {data:cl}=await supabase.auth.getClaims();
+            const c=cl?.claims;
+            // trust the local token only while still valid; expired JWT still
+            // has a good signature but every query with it 401s -> getUser() below
+            if(c?.sub && typeof c.exp==='number' && c.exp > Math.floor(Date.now()/1000)+30){ uid=c.sub; }
+          }
+        } catch { /* fall through to getUser */ }
+        if(!uid){ const {data:{user}}=await supabase.auth.getUser(); uid=user?.id||null; }
+        if(!uid||cancelled) return;
+        const {data:profile}=await supabase.from('users').select('global_role').eq('id',uid).maybeSingle();
+        if(cancelled) return;
+        if(profile?.global_role==='admin'){ setEffectiveRole('admin'); return; }
+        const m=getActiveMembership(uid);
+        setEffectiveRole(m?.role||null);
+      } catch { /* non-fatal */ }
+    }
+    resolve();
+    const onChange=()=>resolve();
+    window.addEventListener('ssa:active-membership-changed',onChange);
+    return ()=>{ cancelled=true; window.removeEventListener('ssa:active-membership-changed',onChange); };
+  },[]);
+
+  // Campaign engine config for the active team. Null unless the team has
+  // features.campaign_engine = true AND the active membership has a boat. When
+  // set, it carries {teamId, boatId, members, targetDate, startDate} and
+  // the Campaign tab becomes available.
+  useEffect(()=>{
+    let cancelled=false;
+    // Bumped on every run so a SLOW earlier fetch cannot land after a newer one
+    // and repaint the previous workspace's boat/event over the current one.
+    // `cancelled` alone only covers unmount, not switch-during-flight.
+    let runSeq=0;
+    async function run(){
+      const seq=++runSeq;
+      try{
+        const uid=await getUidFast();
+        if(!uid||cancelled||seq!==runSeq) return;
+        const m=getActiveMembership(uid);
+        if(!m||!m.team_id||!m.boat_id){ setCampaignCfg(null); return; }
+        const res=await fetch(`/api/teams/${m.team_id}/campaign/config?boat_id=${m.boat_id}`);
+        if(cancelled||seq!==runSeq) return;
+        // A failed fetch must not leave the PREVIOUS workspace's boat/event on
+        // screen — that is how a deck generated as Warp came out titled Northstar.
+        // Better an obviously-missing placeholder than a confidently wrong name.
+        if(!res.ok){ setCampaignCfg(null); return; }
+        const j=await res.json();
+        if(cancelled||seq!==runSeq) return;
+        // Prefer the API's boat name: it is read from `boats` for the ACTIVE
+        // boat_id, so it survives a rename and cannot go stale. The membership
+        // copy in localStorage is only a fallback.
+        setCampaignCfg(j?.campaignOn ? {...j, teamId:m.team_id, boatId:m.boat_id, boatName:(j.boatName||m.boat_name||null)} : null);
+      } catch { setCampaignCfg(null); /* non-fatal — campaign tab just stays hidden */ }
+    }
+    run();
+    // Drop the old workspace's config the INSTANT the pill switches, then refetch.
+    // Without this the deck kept the previous boat/event for the whole round-trip,
+    // and forever if the refetch failed.
+    const onChange=()=>{ setCampaignCfg(null); run(); };
+    window.addEventListener('ssa:active-membership-changed',onChange);
+    return ()=>{ cancelled=true; window.removeEventListener('ssa:active-membership-changed',onChange); };
+  },[]);
+
+  // Workspace-switch isolation. When the user changes their active
+  // membership via UserPill, in-memory `sessions` / `allVideos` still hold
+  // the previous workspace's data — including LOCAL entries that belong to
+  // another team's boat. Reset both, re-read local (now filtered by the new
+  // membership) and re-fetch the cloud session list for the new workspace.
+  // Without this, an admin switching teams keeps seeing the previous team's
+  // folders in the sidebar.
+  useEffect(()=>{
+    async function rescope(){
+      try{
+        const uid=await getUidFast();
+        if(!uid) return;
+        const m=getActiveMembership(uid);
+        // Clear what we may still have from the previous workspace.
+        setSessions([]);
+        setAllVideos([]);
+        setActiveDate(null);
+        setSelectedVideo(null);
+        setLogData(null);
+        setXmlData(null);
+        // Re-load filtered local data for the new workspace.
+        const localSessions=getSessionsForMembership(m).sort((a,b)=>b.date.localeCompare(a.date));
+        setSessions(localSessions);
+        const vids=await getAllVideosForMembership(m);
+        setAllVideos(vids);
+        // Cloud list will be refreshed by the boot effect's
+        // listSessionsCloud call when it re-runs; but to make the
+        // switch feel instant, also trigger one here.
+        const cloudSessions=await listSessionsCloud({userId:uid});
+        if(cloudSessions.length>0){
+          setSessions(p=>{
+            const merged=[...p];
+            for(const s of cloudSessions){
+              const existing=merged.find(x=>x.date===s.date);
+              if(existing){
+                if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
+                if(s.event!==undefined) existing.event=s.event;
+              }else{
+                merged.push({date:s.date,source:'supabase',videoCount:s.video_count||0,photoCount:s.photo_count||0,event:s.event||null});
+              }
+            }
+            return merged.sort((a,b)=>b.date.localeCompare(a.date));
+          });
+        }
+        // Open the most recent day that has VIDEO data for the NEW boat, and load
+        // it — so the switch lands on a populated folder with thumbnails already
+        // loading, instead of a blank date the user has to click into.
+        const today2=TODAY();
+        const bestDate=[
+          ...localSessions.filter(s=>hasOpenableData(s) && s.date<=today2).map(s=>s.date),
+          ...cloudSessions.map(s=>s.date),
+        ].sort().reverse()[0]
+          || [...localSessions.map(s=>s.date),...cloudSessions.map(s=>s.date)].sort().reverse()[0]
+          || null;
+        if(bestDate) await loadDateRef.current?.(bestDate);
+        // Warm the new boat's Boat Config tab too.
+        if(m?.team_id&&m?.boat_id) prefetchBoatConfig(m.team_id,m.boat_id);
+      }catch{ /* non-fatal — boot will retry */ }
+    }
+    const onChange=()=>{ rescope(); };
+    window.addEventListener('ssa:active-membership-changed',onChange);
+    return ()=>{ window.removeEventListener('ssa:active-membership-changed',onChange); };
+    // Registered once. rescope() reaches loadDate through loadDateRef (below), so
+    // it calls the CURRENT one rather than the one this render closed over — the
+    // same reason autoSyncFnRef exists further down.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  // Role-gated convenience flags. Default to permissive while role
+  // resolves so UI doesn't briefly hide things from admins.
+  // tl1: no SailScan, no analytics data (map OK), no SailScan-tagged photos.
+  // guest: no SailScan, no SquashShots, no analytics data, no SailScan
+  //   photos, only the latest session day shown.
+  // consultant: full access — already gated by valid_from/valid_to via RLS.
+  const canSeeSailScanTab     = !['tl1','owner','guest'].includes(effectiveRole);
+  const canSeeSquashShotsTab  = effectiveRole !== 'guest';
+  // Tools tab (Squash + SailScan combined): TL2 and above, plus consultant (in-period).
+  const canSeeToolsTab        = ['admin','team_manager','coach','tl3','tl2','consultant'].includes(effectiveRole);
+  // Boat Config tab: TL3 and above (the senior team-leadership ladder). Not
+  // visible to TL2 or lower. Edits (sails/polars/rig) are TL3+ via EDIT_ROLES
+  // in BoatConfigTab and the DB RLS. Consultants (e.g. a sailmaker) also get
+  // the tab but only see the Sail inventory + Sail data sub-tabs (Rig / Targets
+  // / Log profile are hidden for them inside BoatConfigTab via canSeeTuning).
+  const canSeeBoatConfig      = ['admin','team_manager','coach','tl3','consultant'].includes(effectiveRole);
+  const canSeeAnalyticsData   = !['tl1','owner','guest'].includes(effectiveRole);
+
+  // Durability + background sync (Phase 4): ask for persistent storage so
+  // unsynced captures survive eviction, and register an app-level pending-photo
+  // flush that fires when the link improves / the app resumes (the iOS fallback
+  // for the missing Background Sync API). Runs once for the app's lifetime.
+  useEffect(()=>{
+    requestPersistentStorage().catch(()=>{});
+    const stop = startPhotoAutoFlush({});
+    return stop;
+  },[]);
+
+  // Windweight MOS producer: when a session's log with on-board air-temp/sea-temp
+  // /RH loads, store the hourly forecast-vs-observed windweight + Δheel samples
+  // into windweight_samples for calculated-vs-observed analysis. Fire-and-forget,
+  // idempotent per (boat, hour), guarded to logs that actually carry the sensors.
+  useEffect(()=>{
+    if(!logData?.rows?.length || !activeDate) return;
+    let cancelled=false;
+    (async()=>{
+      let uid=null;
+      try{ const {data:{user}}=await getBrowserSupabase().auth.getUser(); uid=user?.id||null; }catch{}
+      if(cancelled||!uid) return;
+      const am = getActiveMembership(uid);
+      if(!am?.team_id || !am?.boat_id) return;
+      const { storeWindweightSamples } = await import('../lib/windweightSamples');
+      if(cancelled) return;
+      storeWindweightSamples({ logData, sessionDate: activeDate, teamId: am.team_id, boatId: am.boat_id,
+        tzOffsetMin: sessionTzOffset||0, mastHeight: 34 }).catch(()=>{});
+    })();
+    return ()=>{ cancelled=true; };
+  },[logData, activeDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  const canSeeSailScanPhotos  = !['tl1','owner','guest'].includes(effectiveRole);
+  const canUseAI              = effectiveRole === null || !['tl1','owner','consultant','guest'].includes(effectiveRole);
+  const showOnlyLatestDay     = effectiveRole === 'guest';
+  // Kept for backwards-compat with mobile shell prop; analytics tab is now
+  // visible to every role (the content inside is what's gated).
+  const canSeeAnalytics = true;
+  // Campaign tab available only when the active team has the engine on.
+  const campaignOn = !!campaignCfg;
+  // Open a clip referenced from a debrief note: switch to the Library tab,
+  // load that date if needed, and select the clip. loadDate honours the
+  // pending-clip ref at its first paint (see below).
+  const campaignPendingClipRef = React.useRef(null);
+  const openCampaignVideo = async (date, clipId) => {
+    campaignPendingClipRef.current = clipId || null;
+    setActiveTab("library");
+    if (date && date !== activeDate) {
+      await loadDate(date);
+    } else {
+      setSelectedVideo(prev => {
+        const m = allVideos.find(v => v.id === clipId || v.cloudId === clipId || v.externalId === clipId);
+        return m || prev;
+      });
+      campaignPendingClipRef.current = null;
+    }
+  };
+
+  // Timeline → play a clip in a modal overlay with the full instrument data
+  // overlay, WITHOUT leaving the timeline. Loads that day's log/telemetry so
+  // the overlay has data, resolves the clip into selectedVideo (loadDate does
+  // this via campaignPendingClipRef), then opens the modal.
+  const openVideoModal = async (date, clipId) => {
+    campaignPendingClipRef.current = clipId || null;
+    if (date && date !== activeDate) {
+      await loadDate(date);
+    } else {
+      setSelectedVideo(prev => {
+        const m = allVideos.find(v => v.id === clipId || v.cloudId === clipId || v.externalId === clipId);
+        return m || prev;
+      });
+      campaignPendingClipRef.current = null;
+    }
+    setVideoModalOpen(true);
+  };
+
+  // Play a clip we already hold, without leaving the tab we are on. The Videos
+  // tab is gone on a phone, so the Analytics track, the performance charts and
+  // the clip list all open the modal player instead of navigating away. The day
+  // is already loaded — we are looking at its track — so there is nothing to
+  // fetch; openVideoModal's date/clipId round-trip would be wasted work here.
+  const playClipInModal = useCallback((clip) => {
+    if (!clip) return;
+    setSelectedVideo(clip);
+    setVideoModalOpen(true);
+  }, []);
+
+  // Sessions visible in the sidebar — guests see only the latest day.
+  const visibleSessions = useMemo(
+    () => showOnlyLatestDay && sessions.length ? [sessions[0]] : sessions,
+    [sessions, showOnlyLatestDay]
+  );
+
+  // When SailScan (or SquashShots) saves a new photo + creates a session,
+  // they emit a CustomEvent so the sessions sidebar and PhotosTab can pick
+  // up the new date without requiring a full page reload. We also use this
+  // hook to mirror the photo's metadata into Supabase (active membership
+  // scope) so teammates see it without re-importing.
+  useEffect(()=>{
+    const refresh=async (e)=>{
+      try{
+        const sx=getSessions().sort((a,b)=>b.date.localeCompare(a.date));
+        setSessions(sx);
+      }catch(err){console.warn("[ssa:photo-saved] refresh failed",err);}
+
+      // Mirror the saved photo to Supabase. The CustomEvent detail carries
+      // {id, date, source}; the full metadata lives in localStorage.
+      try {
+        const detail = e?.detail || {};
+        if(!detail.id || !detail.date) return;
+        const supabase=getBrowserSupabase();
+        const {data:{user}}=await supabase.auth.getUser();
+        if(!user) return;
+        const list = JSON.parse(localStorage.getItem(`ssa:photos-meta:${detail.date}`) || "[]");
+        const photo = list.find(p => p.id === detail.id);
+        if(!photo) return;
+        await upsertPhotoCloud({
+          userId: user.id,
+          sessionDate: detail.date,
+          takenUtc: photo.utc,
+          exif: photo.exif,
+          thumbnailUrl: photo.thumbnailUrl,
+          bunnyStoragePath: photo.bunnyPath || photo.url || null,
+          bytes: photo.size,
+          analysis: photo.analysis,
+        });
+      } catch(err) { /* non-fatal */ }
+    };
+    window.addEventListener("ssa:photo-saved",refresh);
+    return ()=>window.removeEventListener("ssa:photo-saved",refresh);
+  },[]);
+
+  // Seamless photo sync (like videos): on app open / tab refocus / coming back
+  // online, push any pending photo THUMBNAILS (with their tags) immediately and
+  // full ORIGINALS when on a good (WiFi) connection. No user action required.
+  useEffect(()=>{
+    if(!cloudStatus?.available) return;
+    const flush=()=>{ if(cloudStatus?.available) syncPendingPhotos({}).catch(()=>{}); };
+    flush(); // on open / when cloud becomes available
+    const onVis=()=>{ if(typeof document!=="undefined" && document.visibilityState==="visible") flush(); };
+    if(typeof document!=="undefined") document.addEventListener("visibilitychange",onVis);
+    if(typeof window!=="undefined") window.addEventListener("online",flush);
+    return ()=>{
+      if(typeof document!=="undefined") document.removeEventListener("visibilitychange",onVis);
+      if(typeof window!=="undefined") window.removeEventListener("online",flush);
+    };
+  },[cloudStatus?.available]);
+
+  useEffect(()=>{
+    async function boot(){
+      const today=TODAY();
+      // ── STARTUP PROFILING ────────────────────────────────────────────────
+      // Cheap phase timing so a single cold load reveals the bottleneck. Open the
+      // browser console and filter for "[boot]". Each line is ms since boot start;
+      // the big jumps are your slow steps. Remove once the culprit is found.
+      const _pt0=performance.now();
+      const _pm=(label)=>{ try{ console.info(`[boot] ${label}: +${Math.round(performance.now()-_pt0)}ms`); }catch{ /* */ } };
+      // Read the active membership BEFORE pulling local data so we only show
+      // sessions/videos belonging to the current workspace. Untagged legacy
+      // entries are visible only when there is no active membership.
+      const supaForBoot = getBrowserSupabase();
+      // Fast path: read the user from the STORED session (cookie), not the
+      // /auth/v1/user endpoint. getUser() is a ~0.9s round-trip that was gating
+      // FIRST PAINT; getSession() is local. Safe here because (a) every cloud
+      // read is RLS-gated — the JWT sent with each request is what the server
+      // validates, so a stale/tampered session yields empty results, never
+      // another tenant's data — and (b) the admin gate is resolved separately by
+      // a verified getUser + users.global_role lookup (see effectiveRole effect).
+      const { data: { session: bootSession } } = await supaForBoot.auth.getSession();
+      const bootUser = bootSession?.user || null;
+      authUserRef.current = bootUser;   // seed cache; onAuthStateChange keeps it fresh
+      const bootMembership = bootUser ? getActiveMembership(bootUser.id) : null;
+      _pm('auth.getSession + membership (local, no round-trip)');
+      // Revalidate the session in the background — does not block paint. Prefer
+      // getClaims(): with the project's asymmetric signing key it verifies the JWT
+      // locally against the cached JWKS (no /auth/v1/user round-trip). Only when
+      // the signature/subject can't be confirmed do we fall back to the
+      // authoritative getUser(), so a transient JWKS fetch failure can't wrongly
+      // drop the cached user. Corrects the cache if the server disagrees.
+      (async()=>{
+        try {
+          if(typeof supaForBoot.auth.getClaims==='function'){
+            const { data:cl } = await supaForBoot.auth.getClaims();
+            const c = cl?.claims;
+            const fresh = !!c?.sub && typeof c.exp==='number' && c.exp > Math.floor(Date.now()/1000)+30;
+            // only "confirm" the seeded user when the token is still valid; an
+            // expired-but-signed token must NOT short-circuit the refresh, or an
+            // infrequent user is left holding a dead session (looks like lost access)
+            if(fresh && authUserRef.current && authUserRef.current.id===c.sub) return;
+            const { data:{ user:v } } = await supaForBoot.auth.getUser(); // revalidates + refreshes
+            authUserRef.current = v || null;
+            return;
+          }
+        } catch { /* fall through to getUser */ }
+        try { const { data:{ user:v } } = await supaForBoot.auth.getUser(); authUserRef.current = v || null; } catch { /* */ }
+      })();
+      const localSessions=getSessionsForMembership(bootMembership).sort((a,b)=>b.date.localeCompare(a.date));setSessions(localSessions);
+      _pm(`local sessions (${localSessions.length})`);
+
+      // Drop clips that have neither a local blob nor a cloud copy — they can't be
+      // played, thumbnailed or uploaded, so they're pure noise in the library. These
+      // are the leftovers of the Android "skip blob on mobile" bug; crew (TL3) can't
+      // delete clips themselves, so the app clears them out on load.
+      try {
+        const nDead = await pruneInertVideos();
+        if (nDead) addLog(`🧹 Removed ${nDead} unusable clip${nDead === 1 ? '' : 's'} (no video data, never reached the cloud) — re-import to upload them.`);
+        // Collapse duplicate rows left by retried imports — each copy was separately
+        // queued to sync, so the same footage would upload several times over.
+        const nDupe = await dedupeVideos();
+        if (nDupe) addLog(`🧹 Merged ${nDupe} duplicate clip entr${nDupe === 1 ? 'y' : 'ies'} from repeated imports.`);
+      } catch { /* non-fatal */ }
+      _pm('prune + dedupe');
+
+      // ── Mobile progressive load ───────────────────────────────────────────
+      // On mobile we only fetch full video blobs + log data for the latest session.
+      // Older sessions show thumbnail/metadata only — full data loads on-demand.
+      const vids=await getAllVideosForMembership(bootMembership);
+      _pm(`getAllVideos (${vids.length} clips, blob URLs minted)`);
+      // Open the most recent day that has ANY data — video, log, events or photos.
+      // This used to prefer VIDEO footage and only fall back when there was no
+      // video anywhere, which meant a day with just a logfile was never opened:
+      // upload a log to a boat that already has clips and the app still landed on
+      // the last day someone filmed. Empty sessions are still skipped.
+      const videoDates=vids.map(v=>v.sessionDate).filter(Boolean).sort();
+      const latestVideoDate=videoDates.length?videoDates[videoDates.length-1]:null;
+      const latestDataDate=localSessions
+        .filter(s=>hasOpenableData(s) && s.date<=today)
+        .map(s=>s.date).sort().reverse()[0] || null;
+      const latestDate=[latestDataDate,latestVideoDate].filter(Boolean).sort().reverse()[0]
+        ||localSessions[0]?.date||today;
+      const isRecent=(date)=>date===today||date===latestDate;
+      // On mobile: skip expensive enrichVideo (requires full log read) for old sessions.
+      // Clips share dates (e.g. 10 sessions ⇒ ~10 unique days but ~100 clips), so read
+      // each day's log+xml ONCE and reuse. Reading them per-clip re-deserialised the same
+      // big day-logs from IndexedDB ~N times and was the dominant first-paint cost
+      // (~6s for 97 clips). Cache the PROMISE so concurrent map() calls dedupe too.
+      const _lxCache=new Map();
+      const _getLX=(d)=>{ let p=_lxCache.get(d); if(!p){ p=(async()=>({log:await getLogData(d),xml:await getXmlData(d)}))(); _lxCache.set(d,p); } return p; };
+      const enriched=await Promise.all(vids.map(async v=>{
+        const d=v.sessionDate||today;
+        if(!isRecent(d)) return v; // fast first paint: only enrich recent clips (old clips enrich after paint on desktop / on demand on mobile)
+        const {log,xml}=await _getLX(d);
+        return enrichVideo(v,log,xml);
+      }));
+      setAllVideos(enriched);
+      _pm('enrich videos (log+xml reads)');
+      if(enriched.length>0)setSelectedVideo(enriched[0]);
+
+      // Reuse the per-date cache — latestDate was almost always already read above.
+      const {log:latestLog,xml:latestXml}=await _getLX(latestDate);
+      if(latestLog){setLogData({...latestLog,source:"local"});setSessionTzOffset(latestLog.tzOffset??DEFAULT_TZ);}
+      if(latestXml)setXmlData({...latestXml,source:"local"});
+      setActiveDate(latestDate);
+      // Tag list — paint from the LOCAL list immediately, then refresh from the
+      // cloud in the background. cloudFetchTagList is a network round-trip that was
+      // sitting in the pre-paint path (~1.3s of first paint on a real load).
+      setSessionTagList(getTagList(latestDate));
+      if(bootUser){
+        cloudFetchTagList({userId:bootUser.id,date:latestDate})
+          .then(tl=>{ if(tl) setSessionTagList(tl); })
+          .catch(()=>{});
+      }
+      const latestSession=localSessions.find(s=>s.date===latestDate);
+      if(latestSession?.tzOffset!=null)setSessionTzOffset(latestSession.tzOffset);
+      setUnsyncedCount(getUnsyncedCount());setLoaded(true);
+      _pm('★ FIRST PAINT (loaded=true)');
+
+      // Desktop: finish enriching the OLDER clips in the background now that
+      // first paint is done (mobile keeps them fully on-demand). This is what
+      // used to make desktop boot slow — it enriched every clip's log BEFORE paint.
+      if(!isMobile){
+        (async()=>{
+          const oldClips=vids.filter(v=>!isRecent(v.sessionDate||today));
+          if(!oldClips.length) return;
+          const more=await Promise.all(oldClips.map(async v=>{ const d=v.sessionDate||today; const {log,xml}=await _getLX(d); return enrichVideo(v,log,xml); }));
+          const byId=new Map(more.map(v=>[v.id,v]));
+          setAllVideos(p=>p.map(v=>byId.get(v.id)||v));
+        })().catch(()=>{});
+      }
+
+      // Cloud check — on mobile defer until after paint
+      const doCloud=async()=>{
+        _pm('cloud: start');
+        const cs=await checkCloudStatus();setCloudStatus(cs);
+        _pm('cloud: checkCloudStatus');
+        // Bunny R2 session listing is GLOBAL — every date in the zone, every
+        // team. Historically only admins saw it; now we skip it entirely when
+        // a workspace is active (per-team isolation wins). The Supabase
+        // session list below is the team-scoped source of truth.
+        if(cs?.available && effectiveRole==='admin' && !bootMembership){
+          const remote=await listR2Sessions();
+          const localDates=new Set(localSessions.map(s=>s.date));
+          const newR=remote.filter(s=>!localDates.has(s.date));
+          if(newR.length>0)setSessions(p=>[...p,...newR].sort((a,b)=>b.date.localeCompare(a.date)));
+        }
+        // Supabase sessions list (active membership scope) — merge into UI.
+        try {
+          const user=bootUser;   // reuse — no third auth.getUser round-trip
+          if(user){
+            // <UserPill> resolves the active membership and writes it to
+            // localStorage asynchronously. On a first login — especially
+            // mobile on slow wifi — that can land well after this boot step,
+            // which would make the cloud session list come back empty and
+            // leave the app blank until a manual Sync. Wait for it (up to
+            // ~20s; the loop exits the instant the membership appears).
+            const _wl=performance.now(); let _wi=0;
+            for(;_wi<80 && !getActiveMembership(user.id);_wi++){
+              await new Promise(r=>setTimeout(r,250));
+            }
+            _pm(`cloud: membership-wait (${Math.round(performance.now()-_wl)}ms, ${_wi} polls)`);
+            // Eagerly warm the Boat Config tab (sails/scans/polar/rig) so it's
+            // ready before the user opens it. Fire-and-forget.
+            { const am=getActiveMembership(user.id); if(am?.team_id&&am?.boat_id) prefetchBoatConfig(am.team_id,am.boat_id); }
+            const cloudSessions=await listSessionsCloud({userId:user.id});
+            _pm(`cloud: listSessionsCloud (${cloudSessions.length} sessions)`);
+            if(cloudSessions.length>0){
+              setSessions(p=>{
+                const merged=[...p];
+                for(const s of cloudSessions){
+                  const existing=merged.find(m=>m.date===s.date);
+                  if(existing){
+                    // Fill in the cloud video/photo counts if the local entry lacks them.
+                    if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                    if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
+                    // Campaign event name (regatta) — cloud is the source of truth.
+                    if(s.event!==undefined) existing.event=s.event;
+                  }else{
+                    merged.push({date:s.date, source:'supabase', videoCount:s.video_count||0, photoCount:s.photo_count||0, event:s.event||null});
+                  }
+                }
+                return merged.sort((a,b)=>b.date.localeCompare(a.date));
+              });
+              // Pick the freshest session of either tier and jump there.
+              // Previously we only jumped to the newest cloud date when
+              // the user had ZERO local clips on the local-latest date —
+              // which meant someone with stale May-20 clips on their
+              // phone stayed on May 20 even though the cloud had a May-27
+              // session ready. Now we always land on max(latest local,
+              // newest cloud), so a refresh after a coach's desktop sync
+              // takes mobile straight to the new session and auto-fills
+              // its thumbnails via loadDate.
+              //
+              // Uses `latestDate` (the date boot() actually set active)
+              // rather than the `activeDate` state var — that one's a
+              // stale closure, frozen at TODAY() from the initial render.
+              // Newest day with ANY data across local + cloud — same rule as boot
+              // above, so the cloud step cannot drag the view back to the last
+              // day someone filmed after boot correctly opened a log-only day.
+              // A cloud row carries no hasLog flag, so treat any cloud session as
+              // having data (it would not exist otherwise).
+              const newestCloudDate = cloudSessions.map(s => s.date).sort().reverse()[0];
+              const bestDate = [latestDate, newestCloudDate].filter(Boolean).sort().reverse()[0];
+              if (bestDate && bestDate !== latestDate) {
+                await loadDate(bestDate);
+                _pm(`cloud: loadDate(${bestDate})`);
+              }
+            }
+          }
+        } catch { /* non-fatal */ }
+        _pm('cloud: done');
+      };
+      if(isMobile) setTimeout(doCloud,1500); else doCloud();
+    }
+    boot();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+
+  // Mirrored into a ref just below, for the listeners registered once on mount.
+  async function loadDate(date){
+    const _lt0=performance.now(); const _lm=(l)=>{ try{ console.info(`[loadDate] ${l}: +${Math.round(performance.now()-_lt0)}ms`); }catch{ /* */ } };
+    const loadSeq = ++loadDateSeqRef.current;   // this call's turn; latest wins
+    setActiveDate(date);
+    // Reset video thumbnail load tracking for the new date
+    setVideoThumbsLoading(true);
+    setVideoLoadedIds(new Set());
+    setVideoTotalThumbs(0);
+    setStreamPollTick(0); // fresh encoding-poll budget for the new session
+
+    // ── Load log + xml — LOCAL ONLY here. The cloud download (getSessionCloud,
+    // ~2.4s cold) is deferred to a background pass AFTER the video grid paints
+    // (see end of function). The grid's thumbnails come from the inline Bunny
+    // poster, not the day-log, so there's no reason to block clips-visible on it.
+    let log = await getLogData(date);
+    let xml = await getXmlData(date);
+    _lm('local log+xml');
+
+    // Reflect local state immediately — and clear the previous date's overlay.
+    // Null when this is a cloud-only day; the background pass fills it in when
+    // the download lands.
+    setLogData(log?{...log,source:log.source||"local"}:null);
+    if(log)setSessionTzOffset(log.tzOffset??DEFAULT_TZ);
+    setXmlData(xml?{...xml,source:xml.source||"local"}:null);
+
+    // Self-heal sync state against the cloud manifest, then refresh the unsynced
+    // badge — so a log/xml already in the cloud (from another device or a lost
+    // local flag) is recognised as synced and never re-uploaded (Phase 2).
+    reconcileSessionSyncState(date).then(()=>setUnsyncedCount(getUnsyncedCount())).catch(()=>{});
+    // ── Load videos ─────────────────────────────────────────────────────────
+    let vids=await getVideosForDate(date);
+    if(!vids.length){const all=await getAllVideos();vids=all.filter(v=>v.sessionDate===date);}
+    _lm('local video rows');
+    // Merge Supabase rows in. A clip can exist BOTH on this device (local
+    // IDB, has the blob) and in Supabase (a cloud row). They must collapse
+    // to ONE entry, or the library shows duplicates and batch-sync tries to
+    // sync the blob-less cloud copy. The link is external_id (the cloud row
+    // stores the local IDB id it was mirrored from); legacy rows fall back
+    // to a bunny_stream_id match. When a match is found we keep the LOCAL
+    // entry (its id + blob drive transcode/upload/crop) and copy the cloud
+    // rendition state onto it; the cloud UUID is stashed as `cloudId` for
+    // rendition PATCH + playback-URL resolution.
+    try {
+      const user=await getUserCached();
+      _lm('getUser #3 (cached)');
+      if(user){
+        const cloudVids=await listVideosCloud({userId:user.id,date});
+        _lm(`listVideosCloud (${cloudVids.length} clips)`);
+        if(cloudVids.length){
+          const localById=new Map(vids.map(v=>[v.id,v]));
+          const localByStream=new Map(vids.filter(v=>v.streamId).map(v=>[v.streamId,v]));
+          for(const cv of cloudVids){
+            const shaped=toLegacyVideoShape(cv);
+            const local=(shaped.externalId && localById.get(shaped.externalId))
+                      || (cv.bunny_stream_id && localByStream.get(cv.bunny_stream_id))
+                      || null;
+            if(local){
+              // Always link the cloud row so a later resync targets the
+              // same Supabase entry. Only adopt the cloud's rendition
+              // flags (hasProxy / hasOriginal / streamId) when the local
+              // blob is in sync with what's actually uploaded — measured
+              // by comparing localBlobModifiedAt (stamped on every crop)
+              // against the cloud's proxy_uploaded_at. Without a stamp on
+              // the local entry the cloud is assumed fresh, so legacy
+              // already-uploaded clips don't get re-queued for sync.
+              local.cloudId=shaped.id;
+              // Tags are CLOUD-AUTHORITATIVE: every editor path now pushes
+              // the tag set to the videos row, so adopting the cloud's
+              // tags on every load propagates desktop edits to mobile (and
+              // vice versa). Without this the merge kept the device's
+              // stale IDB tags forever.
+              if(Array.isArray(shaped.tags)) local.tags=shaped.tags;
+              // startUtc is CLOUD-AUTHORITATIVE too — same reasoning as tags, and
+              // for a bug that was live on 2026-07-11: the TIMELINE reads
+              // videos.start_utc straight from the API, while the library, the
+              // player and Analytics read this merged LOCAL entry. With no adoption
+              // here the two stores drift and the SAME clip renders at two different
+              // times (timeline 14:32, player 12:32). Take the cloud's start time and
+              // write it back into IDB so both stores converge instead of arguing.
+              if(shaped.startUtc!=null && shaped.startUtc!==local.startUtc){
+                local.startUtc=shaped.startUtc;
+                updateVideoStartUtc(local.id,shaped.startUtc).catch(()=>{});
+              }
+              const localMtime = local.localBlobModifiedAt || 0;
+              const proxyMtime = shaped.proxyUploadedAt ? new Date(shaped.proxyUploadedAt).getTime() : 0;
+              const origMtime  = shaped.originalUploadedAt ? new Date(shaped.originalUploadedAt).getTime() : 0;
+              const cloudMtime = Math.max(proxyMtime, origMtime);
+              const cloudFresh = localMtime === 0 || cloudMtime >= localMtime;
+              if(cloudFresh){
+                local.hasProxy=shaped.hasProxy;
+                local.hasOriginal=shaped.hasOriginal;
+                local.originalStreamId=shaped.originalStreamId;
+                if(shaped.streamId && !local.streamId) local.streamId=shaped.streamId;
+              }
+            } else {
+              vids.push(shaped); // cloud-only clip (uploaded from another device)
+            }
+          }
+        }
+      }
+    } catch { /* non-fatal */ }
+
+    // Admin fallback — if the boat-scoped query found nothing, try the
+    // legacy single-tenant cloud session. Done BEFORE the first paint so
+    // those clips are part of the early render.
+    if(!vids.length&&cloudStatus?.available&&effectiveRole==='admin'){const r2=await fetchCloudSession(date, await currentStorageScope());if(r2?.videos?.length)vids=r2.videos;}
+
+    // Re-enrich the current vids array with log + xml + sync offsets.
+    const enrichAll=()=>vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
+
+    // EARLY PAINT — render the cards now. The videos GET route attaches each
+    // clip's Bunny poster thumbnail inline, so the library can show an image
+    // immediately instead of waiting on a per-clip signed-URL round-trip.
+    // Playback URLs are resolved below in the background; that triggers a
+    // second, cheap re-render once they land.
+    _lm('video cloud-merge done → early paint');
+    {
+      const early=enrichAll();
+      setAllVideos(early);
+      setVideoTotalThumbs(early.filter(v => v.thumbnailUrl || (v.objectUrl && v.source!=="cloud")).length);
+      setVideoThumbsLoading(false);
+      const pend=campaignPendingClipRef.current;
+      const match=pend?early.find(v=>v.id===pend||v.cloudId===pend||v.externalId===pend):null;
+      setSelectedVideo(match||early[0]||null);
+      if(pend) campaignPendingClipRef.current=null;
+    }
+
+    // ── Background: cloud day-log/xml + tag list + timeline ──────────────────
+    // The grid is already on screen. The day-log is only needed for the on-clip
+    // instrument overlay and auto-tags, so download it now (this is the ~2.4s
+    // getSessionCloud that used to gate the grid) and re-enrich when it lands.
+    // Guarded by loadSeq so a fast date switch can't clobber the newer date.
+    (async()=>{
+      try {
+        let logChanged=false, xmlChanged=false;
+        if(!log || !xml){
+          const user=await getUserCached();
+          if(user){
+            const cs=await getSessionCloud({userId:user.id,date});
+            _lm('getSessionCloud (log_data+xml_data download)');
+            if(cs){
+              if(!log && cs.log_data){ log={...cs.log_data,source:'supabase'}; logChanged=true; }
+              if(!xml && cs.xml_data){ xml={...cs.xml_data,source:'supabase'}; xmlChanged=true; }
+            }
+          }
+        }
+        // Admin-only GLOBAL Bunny R2 fallback for a day with no team-scoped
+        // log/xml. Everyone else stays inside their team's RLS-protected data.
+        if((!log || !xml) && cloudStatus?.available && effectiveRole==='admin'){
+          const r2=await fetchCloudSession(date, await currentStorageScope());
+          if(!log && r2?.logData){ log={...r2.logData,source:'cloud'}; logChanged=true; }
+          if(!xml && r2?.xmlData){ xml={...r2.xmlData,source:'cloud'}; xmlChanged=true; }
+        }
+        if(loadDateSeqRef.current!==loadSeq) return; // superseded by a newer loadDate
+
+        if(logChanged && log){ setLogData({...log,source:log.source||"cloud"}); setSessionTzOffset(log.tzOffset??DEFAULT_TZ); }
+        if(xmlChanged && xml){ setXmlData({...xml,source:xml.source||"cloud"}); }
+
+        // Auto-build this day's Timeline Tree (needs xml) — best-effort, persists
+        // to timeline_nodes. Backfills days uploaded before the producer existed.
+        try {
+          if(xml && campaignCfg?.teamId && campaignCfg?.boatId){
+            const tlNodes=buildDayTimeline({ xml, boatId: campaignCfg.boatId, date });
+            if(tlNodes.length){
+              fetch(`/api/teams/${campaignCfg.teamId}/timeline`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ boat_id: campaignCfg.boatId, session_date: date, nodes: tlNodes })}).catch(()=>{});
+            }
+          }
+        } catch {}
+        _lm('xml + timeline build');
+
+        // Re-enrich the grid now that the day-log/xml is in — overlay averages
+        // and auto-tags populate. Keep the current selection, refreshed.
+        if(logChanged || xmlChanged){
+          // Re-enrich what is on screen NOW, not the `vids` snapshot taken before
+          // the clip links were resolved. Replacing the list with that snapshot
+          // wiped the selected clip's playback link a couple of seconds after it
+          // arrived — on a phone without the day's log (i.e. most crew), the
+          // player then waited on "bear with us" for good.
+          const ids=new Set(vids.map(v=>v.id));
+          setAllVideos(prev=>prev.map(v=>ids.has(v.id)?enrichVideo(v,log,xml,syncOffsets):v));
+          setSelectedVideo(prev=> prev&&ids.has(prev.id) ? enrichVideo(prev,log,xml,syncOffsets) : prev);
+        }
+      } catch { /* non-fatal */ }
+
+      // Tag list (cloud-backed when signed in) — also off the paint path.
+      try {
+        const user=await getUserCached();
+        if(loadDateSeqRef.current!==loadSeq) return;
+        if(user) setSessionTagList(await cloudFetchTagList({userId:user.id,date}));
+        else setSessionTagList(getTagList(date));
+      } catch { setSessionTagList(getTagList(date)); }
+      _lm('tag list');
+    })();
+
+    // Playback URLs are NOT resolved here any more. Fetching a signed URL for every
+    // clip on the day was ~one request per clip and the dominant cold-start cost
+    // (boot profiling showed loadDate at ~4.7s for a 30-clip day). The grid cards
+    // render from the inline Bunny poster attached by the videos GET route; a clip's
+    // signed playback URL is resolved lazily by ensureClipUrl the moment it becomes
+    // the selected clip (see the resolve-on-select effect above). A clip with a local
+    // blob still plays from that immediately. The encoding poller keeps refreshing
+    // any clip still transcoding.
+  }
+  loadDateRef.current = loadDate;
+
+  // Run the proxy auto-sync queue until it's empty. Returns the in-flight
+  // drain promise so callers (the batch flow) can await completion; repeated
+  // calls while running return the same promise rather than starting a
+  // second drain.
+  function processAutoSyncQueue(){
+    if (autoSyncRef.current.activePromise) return autoSyncRef.current.activePromise;
+    autoSyncRef.current.activePromise = (async () => {
+    if (syncClearTimerRef.current) { clearTimeout(syncClearTimerRef.current); syncClearTimerRef.current = null; }
+    autoSyncRef.current.running = true;
+    try {
+      while (autoSyncRef.current.queue.length > 0) {
+        const item = autoSyncRef.current.queue.shift();
+        const idx = autoSyncRef.current.done + 1;
+        const total = autoSyncRef.current.total;
+        const label = item.label || `clip ${idx}`;
+
+        setMobileSyncState({
+          phase: 'pushing',
+          message: `Preparing ${idx}/${total} · ${label}`,
+          progress: 0,
+        });
+
+        try {
+          // Need an authed user — without it we have no Supabase row to
+          // mark the proxy against. Quietly skip; the user can sync
+          // manually once they sign in.
+          const supabase = getBrowserSupabase();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) { addLog(`✕ ${label}: not signed in — cannot upload.`); autoSyncRef.current.failed++; autoSyncRef.current.done = idx; continue; }
+
+          // Source blob from IDB. If it's missing (e.g. mobile-skipped
+          // storage on a small device) the user has no way to re-upload
+          // from here; flag and move on.
+          const blob = await getVideoBlob(item.videoId);
+          if (!blob) {
+            console.warn('[autoSync] no local blob for', item.videoId);
+            addLog(`✕ ${label}: no video data on this device — re-import the clip.`);
+            noteSyncError(label,'no video data on this device — re-import the clip');
+            autoSyncRef.current.failed++;
+            autoSyncRef.current.done = idx; continue;
+          }
+
+          // Find the in-memory video record for ensureCloudVideoId to work
+          // out title/duration/etc.
+          const localVid = allVideosRef.current.find(v => v.id === item.videoId)
+                          || { id: item.videoId, sessionDate: item.sessionDate };
+
+          const cloudId = await ensureCloudVideoId({
+            userId: user.id,
+            video: localVid,
+            sessionDate: item.sessionDate,
+          });
+          if (!cloudId) {
+            console.warn('[autoSync] no cloud row for', item.videoId);
+            addLog(`✕ ${label}: no active boat workspace — can't create the cloud entry.`);
+            noteSyncError(label,"no active boat workspace — can't create the cloud entry");
+            autoSyncRef.current.failed++;
+            autoSyncRef.current.done = idx; continue;
+          }
+
+          await syncProxyForVideo({
+            videoId: cloudId,
+            sessionDate: item.sessionDate,
+            scope: await currentStorageScope(),
+            source: blob,
+            onProgress: ({phase, pct}) => {
+              // Phase leads the message so it stays visible even where the
+              // progress line is narrow (the clip name is what gets clipped,
+              // not the phase the user needs to see).
+              const phaseLabel = phase === 'transcoding' ? 'Compressing'
+                               : phase === 'uploading'   ? 'Uploading'
+                               : phase === 'marking'     ? 'Finalizing'
+                               : phase;
+              setMobileSyncState({
+                phase: 'pushing',
+                message: `${phaseLabel} ${idx}/${total} · ${label}`,
+                progress: Math.round((pct||0) * 100),
+              });
+            },
+          });
+
+          // Update the live UI so the clip's "proxy ready" badge shows up
+          // without waiting for a manual refresh.
+          setAllVideos(p => p.map(v => v.id === item.videoId
+            ? {...v, hasProxy: true, cloudId, streamProcessing: true, proxyUploadedAt: new Date().toISOString()}
+            : v));
+        } catch (e) {
+          // Surface it. Silently swallowing this is what made an upload "succeed"
+          // in a second while nothing left the phone.
+          console.error('[autoSync] failed for', item.videoId, e);
+          addLog(`✕ ${label}: ${e?.message || 'upload failed'}`);
+          noteSyncError(label, e?.message || 'upload failed');
+          autoSyncRef.current.failed++;
+        }
+        autoSyncRef.current.done = idx;
+      }
+    } finally {
+      autoSyncRef.current.running = false;
+      // Report the TRUTH. This used to always say "✓ Synced N" even when every clip
+      // had failed — which is precisely why an instant no-op looked like a success.
+      const nFailed = autoSyncRef.current.failed || 0;
+      const nOk = Math.max(0, autoSyncRef.current.done - nFailed);
+      if (nFailed) {
+        setMobileSyncState({
+          phase: 'error',
+          message: `${nFailed} clip${nFailed===1?'':'s'} failed to upload — see the log`,
+          progress: 0,
+        });
+      } else {
+        setMobileSyncState({ phase: 'done', message: `✓ Synced ${nOk} clip${nOk===1?'':'s'}`, progress: 100 });
+      }
+      autoSyncRef.current.done = 0;
+      autoSyncRef.current.total = 0;
+      autoSyncRef.current.failed = 0;
+      // A SUCCESS may fade; a FAILURE must not. It used to auto-clear after a few
+      // seconds, so the one thing the user needed to read was the one thing they
+      // couldn't. Errors now stay until dismissed (or until the next upload run).
+      if (!nFailed) {
+        syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
+      }
+    }
+    })();
+    autoSyncRef.current.activePromise.finally(() => { autoSyncRef.current.activePromise = null; });
+    return autoSyncRef.current.activePromise;
+  }
+
+  // ── Phase B.3 originals queue ───────────────────────────────────────────────
+  // Add session clips to the originals upload queue. Skips anything already
+  // uploaded or already queued.
+  function enqueueOriginals(videos, sessionDate){
+    if (!videos?.length) return;
+    const queued = new Set(originalsSyncRef.current.queue.map(it => it.videoId));
+    // Same debrief-first ordering as the compressed batch: starts, then
+    // roundings, then manoeuvres. The queue drains serially, so whatever is
+    // queued first is what the team can watch first.
+    const items = sortForUpload(videos.filter(v => !v.hasOriginal && !queued.has(v.id)))
+      // Each clip keeps its OWN session date — not the batch-wide one — so a
+      // May-19 clip can't be filed under a May-20 cloud session.
+      .map(v => ({ videoId: v.id, sessionDate: v.sessionDate || sessionDate, label: v.title || v.name || v.id }));
+    if (!items.length) return;
+    originalsSyncRef.current.queue.push(...items);
+    originalsSyncRef.current.total += items.length;
+  }
+
+  // Drain the originals queue — uploads the full-resolution source bytes
+  // (no transcode). Runs only when the user explicitly presses the
+  // "Upload originals" button; originals are multi-GB so they are never
+  // uploaded automatically.
+  async function processOriginalsQueue(){
+    if (originalsSyncRef.current.running) return;
+    if (autoSyncRef.current.activePromise) return;        // let proxies finish first
+    if (!originalsSyncRef.current.queue.length) return;
+    if (syncClearTimerRef.current) { clearTimeout(syncClearTimerRef.current); syncClearTimerRef.current = null; }
+    originalsSyncRef.current.running = true;
+    try {
+      while (originalsSyncRef.current.queue.length > 0) {
+        const item = originalsSyncRef.current.queue.shift();
+        const idx = originalsSyncRef.current.done + 1;
+        const total = originalsSyncRef.current.total;
+        const label = item.label || `clip ${idx}`;
+
+        setMobileSyncState({ phase: 'pushing', message: `Uploading HD ${idx}/${total} · ${label}`, progress: 0 });
+
+        try {
+          const supabase = getBrowserSupabase();
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) { originalsSyncRef.current.done = idx; continue; }
+
+          const blob = await getVideoBlob(item.videoId);
+          if (!blob) {
+            console.warn('[originals] no local blob for', item.videoId);
+            addLog(`✕ ${label}: no video data on this device — re-import the clip.`);
+            noteSyncError(label,'no video data on this device — re-import the clip');
+            originalsSyncRef.current.failed = (originalsSyncRef.current.failed||0) + 1;
+            originalsSyncRef.current.done = idx; continue;
+          }
+
+          const localVid = allVideosRef.current.find(v => v.id === item.videoId)
+                          || { id: item.videoId, sessionDate: item.sessionDate };
+          const cloudId = await ensureCloudVideoId({
+            userId: user.id,
+            video: localVid,
+            sessionDate: item.sessionDate,
+          });
+          if (!cloudId) {
+            console.warn('[originals] no cloud row for', item.videoId);
+            originalsSyncRef.current.done = idx; continue;
+          }
+
+          // Bunny Stream's TUS metadata wants a File (name + type).
+          const safeName = `${(label || cloudId)}`.replace(/[^\w.-]+/g, '_');
+          const fileForUpload = new File([blob], `${safeName}.mp4`, {
+            type: blob.type || 'video/mp4',
+          });
+
+          // Reuse a Stream video object from a prior unfinished attempt so the
+          // TUS client resumes it; otherwise create a fresh one.
+          let streamId = getPendingOrigStream(item.videoId);
+          if (!streamId) {
+            const created = await createStreamUpload(label || cloudId, blob.size);
+            streamId = created?.streamId || null;
+            if (streamId) setPendingOrigStream(item.videoId, streamId);
+          }
+          if (!streamId) {
+            console.warn('[originals] could not create Stream video for', item.videoId);
+            originalsSyncRef.current.done = idx; continue;
+          }
+
+          // Resumable TUS upload to Bunny Stream. uploadFileToStream auto-
+          // retries dropped chunks and resumes from localStorage; a hard
+          // failure leaves the pending streamId so the next run continues it.
+          const uploaded = await uploadFileToStream(
+            { streamId },
+            fileForUpload,
+            (pct) => {
+              setMobileSyncState({
+                phase: 'pushing',
+                message: `Uploading HD ${idx}/${total} · ${label}`,
+                progress: pct,
+              });
+            }
+          );
+          if (!uploaded) {
+            console.warn('[originals] Stream upload interrupted for', item.videoId);
+            originalsSyncRef.current.done = idx; continue;
+          }
+
+          // Record the original (its Bunny Stream GUID) on the Supabase row.
+          try {
+            const patchRes = await fetch(
+              `/api/videos/${encodeURIComponent(cloudId)}/renditions`,
+              {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ original: { streamId } }),
+              }
+            );
+            if (!patchRes.ok) {
+              const j = await patchRes.json().catch(() => null);
+              console.warn('[originals] renditions PATCH failed:', j?.error || patchRes.status);
+            }
+          } catch (e) {
+            console.warn('[originals] renditions PATCH threw:', e);
+          }
+
+          clearPendingOrigStream(item.videoId);
+          setAllVideos(p => p.map(v => v.id === item.videoId
+            ? { ...v, hasOriginal: true, originalStreamId: streamId }
+            : v));
+        } catch (e) {
+          console.error('[originals] failed for', item.videoId, e);
+          addLog(`✕ ${label}: ${e?.message || 'original upload failed'}`);
+          noteSyncError(label, e?.message || 'original upload failed');
+          originalsSyncRef.current.failed = (originalsSyncRef.current.failed||0) + 1;
+        }
+        originalsSyncRef.current.done = idx;
+      }
+    } finally {
+      originalsSyncRef.current.running = false;
+      const nFailed = originalsSyncRef.current.failed || 0;
+      const nOk = Math.max(0, originalsSyncRef.current.done - nFailed);
+      if (nFailed) {
+        setMobileSyncState({ phase: 'error', message: `${nFailed} original${nFailed===1?'':'s'} failed — see the log`, progress: 0 });
+      } else {
+        setMobileSyncState({ phase: 'done', message: `✓ Uploaded ${nOk} original${nOk===1?'':'s'}`, progress: 100 });
+      }
+      originalsSyncRef.current.done = 0;
+      originalsSyncRef.current.total = 0;
+      originalsSyncRef.current.failed = 0;
+      if (!nFailed) {
+        syncClearTimerRef.current = setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3500);
+      }
+    }
+  }
+
+  // Batch "Sync proxies" — coach/admin button. Transcodes + uploads every
+  // un-proxied clip in the session. Proxies ONLY — the full-resolution
+  // originals are a separate, deliberate action (handleBatchUploadOriginals)
+  // so a slow link is never hit with a multi-GB upload by surprise.
+  async function handleBatchSyncProxies(){
+    if (!cloudStatus?.available) return;
+    setSyncErrors([]);
+    // Only clips whose source file is on THIS device can be transcoded +
+    // uploaded from here. Cloud-only clips (uploaded elsewhere) have no
+    // local blob — skip them rather than erroring on a missing blob.
+    const toSync = allVideos.filter(v => !v.hasProxy && v.hasLocalBlob);
+    if (!toSync.length) return;
+    enqueueAutoSync(toSync, activeDate);
+    await processAutoSyncQueue();
+  }
+
+  // Batch "Upload originals" — coach/admin button. Uploads the full-
+  // resolution source for every clip in the session that doesn't have one
+  // yet. Deliberately manual: originals are multi-GB, so the user triggers
+  // this only when on fast wifi.
+  function handleBatchUploadOriginals(){
+    if (!cloudStatus?.available) return;
+    setSyncErrors([]);
+    // Only clips with the source file on this device can be uploaded.
+    const toUpload = allVideos.filter(v => !v.hasOriginal && v.hasLocalBlob);
+    if (!toUpload.length) return;
+    enqueueOriginals(toUpload, activeDate);
+    processOriginalsQueue();
+  }
+
+  // Add clips to the auto-sync queue and kick the processor if idle.
+  // Caller passes the local IDB video records (id + title/name for labels).
+  function enqueueAutoSync(videos, sessionDate){
+    if (!videos?.length) return;
+    const items = videos
+      // Filter out anything already proxy-uploaded so re-imports don't
+      // re-transcode unnecessarily.
+      .filter(v => !v.hasProxy)
+      .map(v => ({
+        videoId: v.id,
+        // Each clip keeps its OWN session date — not the batch-wide
+        // activeDate — so a May-19 clip can't be filed under May 20.
+        sessionDate: v.sessionDate || sessionDate,
+        label: v.title || v.name || v.id,
+      }));
+    if (!items.length) return;
+    autoSyncRef.current.queue.push(...items);
+    autoSyncRef.current.total += items.length;
+    processAutoSyncQueue();
+  }
+
+  async function handleImported({date,videos,logData:ld,xmlData:xd,keepTab=false}){
+    if(ld)setLogData({...ld,source:"local"});if(xd)setXmlData({...xd,source:"local"});
+    // Read local sessions filtered to the active workspace so imports into
+    // workspace A don't appear when later viewing workspace B.
+    const supaForReload = getBrowserSupabase();
+    const { data: { user: reloadUser } } = await supaForReload.auth.getUser();
+    const reloadMembership = reloadUser ? getActiveMembership(reloadUser.id) : null;
+    setSessions(getSessionsForMembership(reloadMembership));setUnsyncedCount(getUnsyncedCount());
+    // Load from IDB to ensure state matches storage (catches second import race)
+    await loadDate(date);
+    // DON'T jump to Videos. Importing used to switch tabs automatically, which
+    // threw the user off the very log that says what is happening — the upload
+    // messages, the per-clip progress bar, and any failure all live on the
+    // Upload tab. The tab bar is always visible, so getting to Videos is one
+    // click whenever they actually want it.
+    //
+    // keepTab is still accepted so the watcher can be explicit about it, but the
+    // default is now to stay either way: the switch was wrong for a manual
+    // import too, which is what the request was about.
+    void keepTab;
+
+    // ── Phase B auto-sync (mobile only) ────────────────────────────────────
+    // Mobile users (especially TL1/crew/etc.) need their imports to reach
+    // the cloud without having to find a button, so mobile imports auto-sync
+    // their proxies in the background. Desktop is deliberately NOT auto-synced:
+    // coaches crop clips first and then push everything with the batch
+    // "Sync proxies" button (see BatchSyncPanel / handleBatchSyncProxies).
+    if (isMobile && videos?.length && cloudStatus?.available) {
+      // WI-FI ONLY. Phone clips are smaller than a GoPro's, but a session is still
+      // hundreds of MB — never spend a crew member's cellular data without asking.
+      // On mobile data we hold the clips; `flushOnWifi` below picks them up the
+      // moment a Wi-Fi link appears, and the Upload button is always there to
+      // override. See onWifi() for why an unknown link counts as "not Wi-Fi".
+      if (onWifi()) {
+        enqueueAutoSync(videos, date);
+      } else {
+        addLog(`📶 ${videos.length} clip${videos.length === 1 ? '' : 's'} held — will upload automatically on Wi-Fi (or tap Upload now).`);
+      }
+    }
+
+    // ── Re-enrich & update cloud metadata ──────────────────────────────────
+    // When log/event files are uploaded after videos were already synced,
+    // update the cloud metadata so other devices get enriched data.
+    if((ld||xd)&&cloudStatus?.available){
+      // loadDate already enriched allVideos in state — use the freshly enriched data
+      // Small delay to let loadDate's setState propagate
+      setTimeout(async()=>{
+        try{
+          const log=await getLogData(date);
+          const xml=await getXmlData(date);
+          const vids=await getVideosForDate(date);
+          const enrichedVids=vids.map(v=>enrichVideo(v,log,xml,syncOffsets));
+          // Get photos from localStorage for this date
+          const photoMeta=JSON.parse(localStorage.getItem(`ssa:photos-meta:${date}`)||"[]");
+          const enrichedPhotos=photoMeta.length&&(log||xml)
+            ? photoMeta.map(p=>{
+                const e={...p};
+                if(log?.rows?.length&&p.utc){
+                  // nearestRow is the same "closest sample within 5 minutes" rule
+                  // written as a binary search — this was a full scan of the log
+                  // for every photo in the day.
+                  const nearRow=nearestRow(log.rows,p.utc);
+                  if(nearRow){e.tws=nearRow.tws;e.twa=nearRow.twa;e.awa=nearRow.awa;e.bsp=nearRow.bsp;e.heel=nearRow.heel;e.vmg=nearRow.vmg;}
+                }
+                if(xml){
+                  const sailEvts=xml.sailsUpEvents||[];
+                  const before=sailEvts.filter(s=>s.utc<=p.utc).sort((a,b)=>b.utc-a.utc)[0];
+                  e.sails=before?.sails||[];
+                  e.boat=xml.meta?.boat||null;e.location=xml.meta?.location||null;
+                }
+                return e;
+              })
+            : photoMeta;
+          // Save enriched photos back to localStorage
+          if(enrichedPhotos.length&&(log||xml)){
+            localStorage.setItem(`ssa:photos-meta:${date}`,JSON.stringify(enrichedPhotos.map(({objectUrl,...p})=>p)));
+          }
+          await updateCloudSessionMetadata(date,{
+            videos:enrichedVids,logData:log,xmlData:xml,
+            photos:enrichedPhotos.length?enrichedPhotos:undefined,
+            scope: await currentStorageScope(),
+          });
+        }catch(err){console.error("[SSA] Cloud metadata update failed:",err);}
+      },500);
+    }
+  }
+
+  // ── Mobile cloud sync handler ──────────────────────────────────────────────
+  // Two-phase sync tailored for phones:
+  //   1. PULL — fetch cloud session for the active date so thumbnails/video URLs
+  //      appear even when only local metadata existed before. Merges cloud
+  //      videos with any local ones (cloud thumbnails win when local has none).
+  //   2. PUSH — if the user has unsynced local data + canSync, upload it.
+  // Progress is reported via mobileSyncState so the top-bar button can show
+  // a spinner and the content area can show a non-blocking toast.
+  async function handleMobileCloudSync(opts){
+    // heavy = run the upload PUSH (log/xml/videos). Auto-sync sets heavy=false on
+    // a metered/poor link so only the light session-list PULL runs there.
+    const heavy = !opts || opts.heavy !== false;
+    // pushVideos = also upload the VIDEO BLOBS. Only ever true for a sync the user
+    // explicitly pressed. The automatic path must never do it: video originals are
+    // multi-GB, and auto-sync fires on mount / foreground / regained link, so it
+    // would silently start a huge upload for whatever session happens to be loaded
+    // — including an old boat's session — and then pin mobileSyncState to "pushing",
+    // which disables the whole BatchSyncPanel (that is the stuck 63% DJI upload).
+    // Logs + events still sync automatically; they are small.
+    const pushVideos = !!opts?.pushVideos;
+    if(!cloudStatus?.available){
+      setMobileSyncState({phase:"error",message:"Cloud not configured",progress:0});
+      setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2500);
+      return;
+    }
+    try{
+      // ── PULL phase — team-scoped, works for EVERY role ─────────────────
+      // Previously this was admin-only and used the global Bunny R2
+      // listing. That left TL1/crew/coach unable to see anything but the
+      // current local day. Now every role refreshes the Supabase
+      // (RLS-protected, team-scoped) session list; admins additionally
+      // merge the global R2 listing.
+      setMobileSyncState({phase:"pulling",message:"Fetching cloud sessions…",progress:10});
+
+      let supaUser=null;
+      try{const sb=getBrowserSupabase();const {data:{user}}=await sb.auth.getUser();supaUser=user||null;}catch{}
+
+      // Supabase team-scoped session list — all roles.
+      if(supaUser){
+        try{
+          const cloudSessions=await listSessionsCloud({userId:supaUser.id});
+          if(cloudSessions.length){
+            setSessions(prev=>{
+              const merged=[...prev];
+              for(const s of cloudSessions){
+                const existing=merged.find(m=>m.date===s.date);
+                if(existing){
+                  if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                  if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
+                  if(s.event!==undefined) existing.event=s.event;
+                }else{
+                  merged.push({date:s.date,source:'supabase',videoCount:s.video_count||0,photoCount:s.photo_count||0,event:s.event||null});
+                }
+              }
+              return merged.sort((a,b)=>b.date.localeCompare(a.date));
+            });
+          }
+        }catch{ /* non-fatal */ }
+      }
+
+      // Admin-only extra: merge the global Bunny R2 listing.
+      if(effectiveRole==='admin'){
+        try{
+          const remote=await listR2Sessions();
+          if(remote.length){
+            setSessions(prev=>{
+              const byDate=new Map(prev.map(s=>[s.date,s]));
+              for(const s of remote) if(!byDate.has(s.date)) byDate.set(s.date,{...s,source:"cloud"});
+              return Array.from(byDate.values()).sort((a,b)=>b.date.localeCompare(a.date));
+            });
+          }
+        }catch{ /* non-fatal */ }
+      }
+
+      // Refresh the active date's videos + thumbnails through the standard
+      // loader (Supabase-first, resolves proxy/stream URLs + thumbnails).
+      setMobileSyncState({phase:"pulling",message:`Loading ${activeDate}…`,progress:45});
+      await loadDate(activeDate);
+      setMobileSyncState({phase:"pulling",message:"Thumbnails refreshed",progress:70});
+
+      // PUSH phase — only if heavy (good link), user has permission + unsynced local
+      const uc=getUnsyncedCount();
+      if(heavy && uc>0 && perms.canSync){
+        // ── Boat guard ───────────────────────────────────────────────────────
+        // See src/lib/syncBoatGuard.ts. Shared with the Upload tab and the
+        // desktop library sync, which used to push without it.
+        const syncMem = supaUser ? getActiveMembership(supaUser.id) : null;
+        const syncScope = scopeOfMembership(syncMem);
+        const refusal = daySyncRefusal(activeDate, getSessionsForMembership(syncMem), syncMem, fmtDate);
+        if(refusal){
+          addLog(refusal);
+          setMobileSyncState({phase:"error",message:`${fmtDate(activeDate)} is another boat's session — skipped`,progress:0});
+          setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),4000);
+          return;
+        }
+        setMobileSyncState({phase:"pushing",message:`Uploading ${uc} unsynced…`,progress:75});
+        const logD=await getLogData(activeDate);
+        const xmlD=await getXmlData(activeDate);
+        // Videos only when the user asked for it — see `pushVideos` above.
+        const vids=pushVideos?await getVideosForDate(activeDate):[];
+        await syncSessionToCloud(activeDate,logD,xmlD,vids,msg=>{
+          setMobileSyncState(p=>({...p,message:msg.length>48?msg.slice(0,45)+"…":msg}));
+        },{
+          scope: syncScope,
+          // Mirror each clip the moment its Bunny upload finishes so the
+          // crew watching from their phones see clips appear progressively.
+          // supaUser was resolved up-front in the PULL phase above.
+          onVideoSynced: makeVideoMirrorCallback({
+            userId: supaUser?.id || null,
+            sessionDate: activeDate,
+            syncOffsets,
+          }),
+        });
+        markCloudSynced(activeDate);
+        setUnsyncedCount(getUnsyncedCount());
+      }
+      setMobileSyncState({phase:"done",message:"✓ Synced",progress:100});
+      setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),2200);
+    }catch(e){
+      setMobileSyncState({phase:"error",message:"Sync failed: "+(e?.message||e),progress:0});
+      setTimeout(()=>setMobileSyncState({phase:null,message:"",progress:0}),3500);
+    }
+  }
+
+  // ── Wi-Fi flush — push clips that were held on mobile data ────────────────
+  // Clips imported on cellular are deliberately NOT auto-uploaded (see handleImported).
+  // They'd otherwise sit local forever, so re-check whenever the link changes, the app
+  // comes back to the foreground, or connectivity returns — and push the moment we're
+  // on Wi-Fi. Proxies only; originals stay manual (multi-GB, user's call).
+  const flushOnWifi = useCallback(() => {
+    if (!isMobile || !cloudStatus?.available || !perms.canImport) return;
+    if (!onWifi()) return;
+    const held = allVideos.filter(v => !v.hasProxy && v.hasLocalBlob);
+    if (!held.length) return;
+    addLog(`📶 Wi-Fi — uploading ${held.length} held clip${held.length === 1 ? '' : 's'}…`);
+    enqueueAutoSync(held, activeDate);
+  // enqueueAutoSync is left out on purpose: it is a plain function that only pushes
+  // onto autoSyncRef and kicks the processor, so its identity carries no information
+  // — naming it would rebuild this callback on every render to no effect. addLog IS
+  // named, because it is a stable useCallback.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobile, cloudStatus, perms.canImport, allVideos, activeDate, addLog]);
+
+  const flushRef = useRef(flushOnWifi);
+  flushRef.current = flushOnWifi;
+  useEffect(() => {
+    const fire = () => { try { flushRef.current?.(); } catch { /* */ } };
+    const onVis = () => { if (document.visibilityState === "visible") fire(); };
+    const c = typeof navigator !== "undefined"
+      ? (navigator.connection || navigator.mozConnection || navigator.webkitConnection)
+      : null;
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", fire);
+    c?.addEventListener?.("change", fire);          // wifi ⇄ cellular transitions
+    const t = setTimeout(fire, 2500);               // and once after the app settles
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("online", fire);
+      c?.removeEventListener?.("change", fire);
+      clearTimeout(t);
+    };
+  }, []); // register once — the ref keeps the callback fresh
+
+  // ── Automatic cloud sync — event-driven, network-aware ────────────────────
+  // No timers: fires on app foreground, when connectivity returns, and once on
+  // mount. The light session-list PULL runs on any online link; the heavy upload
+  // PUSH (logs/videos) only on a good/unmetered link. Debounced + exponential
+  // backoff so a flaky offshore signal never spins or drains the battery. The
+  // video transcode/upload queues are NOT touched here.
+  const autoSyncMetaRef = useRef({ last: 0, running: false, backoffUntil: 0 });
+  async function autoCloudSync(reason){
+    const st = autoSyncMetaRef.current;
+    if(!cloudStatus?.available) return;
+    const ci = connInfo();
+    if(!ci.online) return;
+    if(st.running) return;
+    if(mobileSyncState?.phase==="pulling"||mobileSyncState?.phase==="pushing") return; // a sync is already active
+    const now = Date.now();
+    if(now < st.backoffUntil) return;
+    if(reason!=="online" && now - st.last < 20000) return; // debounce (a regained link bypasses)
+    st.running = true;
+    try {
+      await handleMobileCloudSync({ heavy: ci.good });
+      st.last = Date.now(); st.backoffUntil = 0;
+    } catch {
+      st.backoffUntil = Date.now() + Math.min(Math.max((st.backoffUntil - now) * 2, 15000), 5*60*1000);
+    } finally { st.running = false; }
+  }
+  const autoSyncFnRef = useRef(null);
+  autoSyncFnRef.current = autoCloudSync;
+  useEffect(() => {
+    const fire = (reason) => { try { autoSyncFnRef.current?.(reason); } catch { /* */ } };
+    const onVis = () => { if (document.visibilityState === "visible") fire("foreground"); };
+    const onOnline = () => fire("online");
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("online", onOnline);
+    const t = setTimeout(() => fire("mount"), 1500); // let the initial load settle first
+    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("online", onOnline); clearTimeout(t); };
+  }, []); // register once
+  // Fire once when cloud status first resolves to available (mount may race it).
+  const cloudReadyFiredRef = useRef(false);
+  useEffect(() => {
+    if (cloudStatus?.available && !cloudReadyFiredRef.current) {
+      cloudReadyFiredRef.current = true;
+      autoSyncFnRef.current?.("cloud-ready");
+    } else if (!cloudStatus?.available) {
+      cloudReadyFiredRef.current = false;
+    }
+  }, [cloudStatus]);
+
+  const selectedSail=sailFilter?sailInventory.find(s=>s.id===sailFilter):null;
+  const sailTokens=selectedSail?[selectedSail.name,selectedSail.category,selectedSail.design_code,...(Array.isArray(selectedSail.specs?.aliases)?selectedSail.specs.aliases:[])].filter(Boolean).map(s=>String(s).trim().toLowerCase()):null;
+  const matchesSail=tags=>!sailTokens||(tags||[]).some(t=>sailTokens.includes(String(t).trim().toLowerCase()));
+  const displayed=allVideos
+    .filter(v=>{const ok=selectedTags.length===0||selectedTags.every(t=>(v.tags||[]).includes(t));const q=searchQuery.toLowerCase();return ok&&matchesSail(v.tags)&&(!q||v.title?.toLowerCase().includes(q)||(v.tags||[]).some(t=>t.includes(q)));})
+    // "Date" means WHEN THE CLIP WAS SHOT, not when it was imported. It used to sort by
+    // addedAt, so uploading a day's footage in three batches interleaved them and the
+    // library read out of order. Sort by startUtc — the clip's place on the water —
+    // ASCENDING, so the session reads first-to-last like the day did. Clips with no
+    // start time yet sink to the bottom rather than jumping to the top.
+    .sort((a,b)=>{
+      if(sortBy==="tws")   return (b.twsAvg||0)-(a.twsAvg||0);
+      if(sortBy==="twa")   return (Math.abs(a.twaAvg||0))-(Math.abs(b.twaAvg||0));
+      if(sortBy==="vmg")   return (b.vmgAvg||0)-(a.vmgAvg||0);
+      if(sortBy==="polar") return (b.polpercAvg||0)-(a.polpercAvg||0);
+      const ta=a.startUtc??null, tb=b.startUtc??null;
+      if(ta==null && tb==null) return (b.addedAt||0)-(a.addedAt||0); // neither timed: newest import first
+      if(ta==null) return 1;                                          // untimed clips last
+      if(tb==null) return -1;
+      return ta-tb;                                                   // chronological, as sailed
+    });
+
+  const allTags=[...new Set(allVideos.flatMap(v=>v.tags||[]))].sort();
+  const isManTag=t=>["tack","gybe","topmark","mark","race-start","upwind","reach","downwind"].includes(t);
+  const toggleTag=t=>setSelectedTags(p=>p.includes(t)?p.filter(x=>x!==t):[...p,t]);
+
+  if(!loaded)return<div style={{minHeight:"100vh",background:"#030F1A",display:"flex",alignItems:"center",justifyContent:"center",color:"#334155",fontSize:13}}>Loading Shared Sailing Analytics…</div>;
+
+  // Event-file saillist reconciliation modal (rendered over both layouts).
+  const sailDiffModal = sailDiff && campaignCfg?.teamId && campaignCfg?.boatId ? (
+    <SailListDiffModal
+      teamId={campaignCfg.teamId} boatId={campaignCfg.boatId}
+      canEdit={['admin','team_manager','coach'].includes(effectiveRole)}
+      inventory={sailInventory} names={sailDiff.names}
+      onClose={()=>setSailDiff(null)} onResolved={refetchSails}
+    />
+  ) : null;
+
+  // Timeline clip playback — the real overlay player in a modal over everything
+  // (incl. the Timeline). Minimal props: no crop / sync / HD-toggle toolbar
+  // buttons, but the base "Fullscreen (with data overlay)" control stays.
+  const videoModal = (videoModalOpen && selectedVideo) ? (
+    <div onClick={()=>setVideoModalOpen(false)} style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(3,15,26,0.55)",display:"flex",alignItems:"stretch",justifyContent:"flex-end",overflow:"hidden"}}>
+      {/* Left spacer keeps the narrow timeline visible; the drawer FLEXES to fill
+          the rest — no 100vw (which would include the scrollbar and cause a
+          document-wide horizontal scroll). Full screen on mobile. */}
+      {!isMobile && <div style={{width:320,flexShrink:0}} aria-hidden/>}
+      <div onClick={e=>e.stopPropagation()} style={{position:"relative",flex:"1 1 auto",minWidth:0,height:"100%",overflowY:"auto",background:"#050E1C",borderLeft:"1px solid #1E3A5A",boxShadow:"-12px 0 40px rgba(0,0,0,0.5)",padding:isMobile?"40px 10px 12px":"44px 16px 16px"}}>
+        <button onClick={()=>setVideoModalOpen(false)} aria-label="Close" style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",zIndex:3,width:38,height:34,borderRadius:8,border:"1px solid #1E3A5A",background:"#0A1929",color:"#E2E8F0",fontSize:18,lineHeight:"1",cursor:"pointer"}}>✕</button>
+        {/* Cap the width so the 16:9 stage + controls fit the viewport height —
+            the BOX fills the screen, the video sizes to fit inside it. */}
+        <div style={{width:"100%",maxWidth:isMobile?"none":"calc((100vh - 190px) * 16 / 9)",margin:"0 auto"}}>
+          <VideoPlayer onRecheckStream={recheckStream}
+            video={selectedVideo}
+            logData={logData}
+            xmlData={xmlData}
+            syncOffset={syncOffsets[selectedVideo.id]||0}
+            sessionTzOffset={sessionTzOffset}
+            onPlayUtc={handlePlayUtc}
+            onRotate={canRotate ? (deg)=>rotateVideo(selectedVideo, deg) : null}
+            canShare={canShareVideos(effectiveRole)}
+            autoPlay
+          />
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  // ── Mobile render ────────────────────────────────────────────────────────────
+  if(isMobile) return(
+    <TzCtx.Provider value={sessionTzOffset||0}>
+    <>{sailDiffModal}{videoModal}<MobileShell
+      onRecheckStream={recheckStream}
+      activeTab={activeTab} setActiveTab={setActiveTab}
+      role={role} perms={perms}
+      allVideos={allVideos} setAllVideos={setAllVideos}
+      sessions={visibleSessions} setSessions={setSessions}
+      activeDate={activeDate} setActiveDate={setActiveDate}
+      selectedVideo={selectedVideo} setSelectedVideo={setSelectedVideo}
+      logData={logData} setLogData={setLogData}
+      xmlData={xmlData} setXmlData={setXmlData}
+      sessionTzOffset={sessionTzOffset}
+      sessionTagList={sessionTagList} setSessionTagList={setSessionTagList}
+      syncOffsets={syncOffsets} setSyncOffsets={setSyncOffsets}
+      saveSyncForVideos={saveSyncForVideos}
+      saveTagsForVideo={saveTagsForVideo}
+      tagSuggestionList={tagSuggestionList}
+      cloudStatus={cloudStatus} unsyncedCount={unsyncedCount}
+      searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+      sortBy={sortBy} setSortBy={setSortBy}
+      selectedTags={selectedTags} setSelectedTags={setSelectedTags}
+      allTags={allTags} isManTag={isManTag} toggleTag={toggleTag}
+      displayed={displayed}
+      loadDate={loadDate} onSelectDate={loadDate} handleImported={handleImported}
+      handlePlayUtc={handlePlayUtc} playUtc={playUtc}
+      canSeeAnalytics={canSeeAnalytics} canUseAI={canUseAI}
+      canSeeSailScanTab={canSeeSailScanTab} canSeeSquashShotsTab={canSeeSquashShotsTab} canSeeToolsTab={canSeeToolsTab} canSeeBoatConfig={canSeeBoatConfig}
+      canSeeAnalyticsData={canSeeAnalyticsData} canSeeSailScanPhotos={canSeeSailScanPhotos}
+      showOnlyLatestDay={showOnlyLatestDay} effectiveRole={effectiveRole}
+      campaignOn={campaignOn} campaignCfg={campaignCfg} activeMem={activeMem} openCampaignVideo={openCampaignVideo} openVideoModal={openVideoModal}
+      playClipInModal={playClipInModal} myUid={myUid}
+      sailInventory={sailInventory} setSailDiff={setSailDiff}
+      onRotateVideo={canRotate ? rotateVideo : null}
+      hasMountedAnalytics={hasMountedAnalytics}
+      updateVideoTagsFn={updateVideoTags}
+      computeAutoTagsFn={computeAutoTags}
+      photos={photos} setPhotos={setPhotos}
+      onMobileSync={handleMobileCloudSync}
+      onSyncProxies={handleBatchSyncProxies}
+      onUploadOriginals={handleBatchUploadOriginals}
+      syncErrors={syncErrors}
+      mobileSyncState={mobileSyncState}
+      setMobileSyncState={setMobileSyncState}
+      onThumbLoad={markVideoThumbLoaded}
+      videoThumbsLoading={videoThumbsLoading}
+      videoLoadedIds={videoLoadedIds}
+      videoTotalThumbs={videoTotalThumbs}
+    /></>
+    </TzCtx.Provider>
+  );
+
+  return(
+    <TzCtx.Provider value={sessionTzOffset||0}>
+    <>{sailDiffModal}{videoModal}
+    <div style={{minHeight:"100vh",width:"100%",maxWidth:"100%",overflowX:"hidden",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
+      <header style={{background:"#050E1C",borderBottom:"1px solid #1E3A5A",padding:"0 18px",display:"flex",alignItems:"center",height:52,gap:14,position:"sticky",top:0,zIndex:100,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontSize:15,fontWeight:700,color:"#E2E8F0"}}>Shared</span><span style={{fontSize:15,fontWeight:700,color:"#06B6D4"}}>Sailing Analytics</span></div>
+        <nav style={{marginLeft:10}}>
+          <select value={activeTab} onChange={e=>setActiveTab(e.target.value)} title="Menu"
+            style={{background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"6px 12px",color:"#E2E8F0",fontSize:12,fontWeight:600,cursor:"pointer",outline:"none",minWidth:130}}>
+            {["timeline","campaign","boatconfig","weather","library","photos","tagger","analytics","upload","tools","admin"].filter(tab => {
+              if (tab === "campaign" && (!campaignOn || effectiveRole === 'guest')) return false;
+              if (tab === "boatconfig" && (!campaignOn || !canSeeBoatConfig)) return false;
+              if (tab === "tools" && !canSeeToolsTab) return false;
+              if (tab === "admin" && effectiveRole !== 'admin') return false;
+              if (tab === "tagger" && effectiveRole === 'guest') return false;
+              return true;
+            }).map(tab=>{
+              const label = tab==="timeline"?"Timeline":tab==="library"?"Videos":tab==="weather"?"Weather":tab==="boatconfig"?"Boat":tab==="tools"?"Tools":tab==="tagger"?"Tags":tab.charAt(0).toUpperCase()+tab.slice(1);
+              return <option key={tab} value={tab} style={{background:"#0A1929"}}>{label}{tab==="upload"&&unsyncedCount>0?` (${unsyncedCount})`:""}</option>;
+            })}
+          </select>
+        </nav>
+        <div style={{flex:1}}/>
+        <div style={{display:"flex",alignItems:"center",gap:5,background:"#071624",border:"1px solid #1E3A5A",borderRadius:7,padding:"4px 8px"}}>
+          <span style={{fontSize:8,color:"#334155",letterSpacing:1}}>ROLE</span>
+          <select value={role} onChange={e=>setRole(e.target.value)} style={{background:"transparent",border:"none",color:"#94A3B8",fontSize:11,cursor:"pointer",outline:"none"}}>
+            {Object.entries(ROLES).map(([k,v])=><option key={k} value={k} style={{background:"#0A1929"}}>{v.label}</option>)}
+          </select>
+        </div>
+      </header>
+
+      {/* ── Tab panes ────────────────────────────────────────────────────────────
+          Library and Analytics stay mounted after first visit (visibility:hidden
+          rather than display:none) so the video element keeps playing and
+          Leaflet retains its map dimensions when switching between tabs.
+          Upload and Admin are cheap to remount on demand.
+      ─────────────────────────────────────────────────────────────────────── */}
+      <div style={{display:"flex",flex:1,overflow:"hidden",position:"relative"}}>
+
+        {/* ── LIBRARY PANE — always mounted ──────────────────────────────────── */}
+        <div style={{
+          position:"absolute",inset:0,display:"flex",overflow:"hidden",
+          visibility:activeTab==="library"?"visible":"hidden",
+          pointerEvents:activeTab==="library"?"auto":"none",
+          zIndex:activeTab==="library"?2:1,
+        }}>
+          {/* Sidebar */}
+          <aside style={{width:160,background:"#050E1C",borderRight:"1px solid #1E3A5A",display:"flex",flexDirection:"column",overflowY:"auto",flexShrink:0}}>
+            <div style={{padding:"12px 11px 6px"}}>
+              <div style={{fontSize:9,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:7}}>Sessions</div>
+              {visibleSessions.length===0&&<div style={{fontSize:10,color:"#1E3A5A",padding:"4px 3px"}}>No sessions yet</div>}
+              {(()=>{
+                // Compute Day N per regatta: group all known sessions by
+                // event, sort each group by date, assign 1..N. Built once
+                // over the full session list so day numbering survives
+                // photo-only or no-video days within the regatta.
+                const evMap=new Map(); // date → {event, dayN}
+                const g=new Map();
+                for(const s of visibleSessions){ if(s.event){ if(!g.has(s.event)) g.set(s.event,[]); g.get(s.event).push(s.date); } }
+                for(const [ev,ds] of g){ ds.slice().sort().forEach((d,i)=>evMap.set(d,{event:ev,dayN:i+1})); }
+                return visibleSessions.filter(s=>hasOpenableData(s) && s.date<=TODAY()).map(s=>{
+                  const isLocal=!(s.cloudSynced||s.source==="cloud"||s.source==="supabase");const isActive=activeDate===s.date;
+                  const ev=evMap.get(s.date);
+                  return(<div key={s.date} onClick={()=>loadDate(s.date)} style={{padding:"5px 6px",borderRadius:5,cursor:"pointer",marginBottom:2,background:isActive?"#1E3A5A":"transparent",border:`1px solid ${isActive?"#06B6D430":"transparent"}`}}>
+                    <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:2}}><span style={{fontSize:11,color:isActive?"#06B6D4":"#64748B",fontFamily:"monospace"}}>{s.date===TODAY()?"Today":fmtDate(s.date)}</span><SrcBadge source={isLocal?"local":"cloud"}/></div>
+                    {ev&&<div style={{fontSize:9,color:"#EF4444",fontWeight:700,marginBottom:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={`${ev.event} Day ${ev.dayN}`}>🏁 {ev.event} Day {ev.dayN}</div>}
+                    <div style={{fontSize:9,color:"#1E3A5A"}}>{s.videoCount||0}v{s.hasLog?" ·log":""}{s.hasXml?" ·ev":""}{s.location?` · ${s.location}`:""}</div>
+                  </div>);
+                });
+              })()}
+            </div>
+            <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
+            <div style={{padding:"0 11px 8px"}}>
+              <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search clips…" style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7}}/>
+              {sailInventory.length>0&&<select value={sailFilter} onChange={e=>setSailFilter(e.target.value)} style={{width:"100%",background:"#071624",border:`1px solid ${sailFilter?"#06B6D4":"#1E3A5A"}`,borderRadius:5,padding:"5px 8px",color:sailFilter?"#06B6D4":"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7,cursor:"pointer"}}>
+                <option value="">All sails</option>
+                {sailInventory.filter(s=>!s.retired).map(s=><option key={s.id} value={s.id}>{s.category?`${s.category} · ${s.name}`:s.name}</option>)}
+              </select>}
+              {["date","tws","twa","vmg","polar"].map(s=><button key={s} onClick={()=>setSortBy(s)} style={{display:"block",width:"100%",textAlign:"left",background:sortBy===s?"#1E3A5A":"none",border:"none",borderRadius:4,padding:"3px 6px",color:sortBy===s?"#06B6D4":"#334155",cursor:"pointer",fontSize:10,marginBottom:1}}>{sortBy===s?"▸ ":"  "}{s==="date"?"Time (as sailed)":s==="tws"?"Wind (TWS)":s==="twa"?"Wind angle":s==="vmg"?"VMG":"Polar %"}</button>)}
+            </div>
+            {allTags.length>0&&<div style={{padding:"0 11px",flex:1}}>
+              <div style={{fontSize:8,color:"#1E3A5A",letterSpacing:2,textTransform:"uppercase",marginBottom:5}}>Filter</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+                {allTags.filter(isManTag).map(t=><button key={t} onClick={()=>toggleTag(t)} style={{background:selectedTags.includes(t)?"#06B6D4":"#0A1929",border:`1px solid ${selectedTags.includes(t)?"#06B6D4":"#1E3A5A"}`,borderRadius:3,padding:"1px 5px",color:selectedTags.includes(t)?"#000":"#7DD3FC",fontSize:9,cursor:"pointer",fontFamily:"monospace"}}>{t}</button>)}
+              </div>
+              {selectedTags.length>0&&<button onClick={()=>setSelectedTags([])} style={{background:"none",border:"1px solid #EF444440",borderRadius:4,padding:"2px 8px",color:"#EF4444",fontSize:9,cursor:"pointer",width:"100%",marginTop:6}}>Clear</button>}
+            </div>}
+          </aside>
+
+          {/* Library main content */}
+          <main style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
+
+            {/* ── Sync modal overlay ──────────────────────────────────────── */}
+            {libSyncProgress&&(
+              <div style={{position:"absolute",inset:0,background:"rgba(3,15,26,0.88)",
+                zIndex:50,display:"flex",flexDirection:"column",justifyContent:"center",
+                alignItems:"center",padding:24}}>
+                <div style={{width:"100%",maxWidth:480}}>
+                  <SyncProgressPanel progress={libSyncProgress} phase={libSyncPhase||"syncing"}
+                    onCancel={()=>{
+                      libSyncAbortRef.current=true;
+                      clearInterval(libSyncTimerRef.current);
+                      setLibSyncProgress(null);setLibSyncPhase(null);
+                    }}/>
+                  {libSyncPhase==="done"&&(
+                    <button onClick={()=>{setLibSyncProgress(null);setLibSyncPhase(null);setUnsyncedCount(getUnsyncedCount());}}
+                      style={{marginTop:12,width:"100%",background:"#1D9E75",border:"none",
+                        borderRadius:8,padding:"10px",color:"#fff",fontWeight:700,
+                        fontSize:13,cursor:"pointer"}}>
+                      ✓ Done
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div style={{width:280,minWidth:280,overflowY:"auto",padding:"10px 8px",flexShrink:0,borderRight:"1px solid #0F2030"}}>
+              {(logData||xmlData)&&<div style={{display:"flex",gap:7,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+                {logData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:logData.source==="local"?"#1D9E7510":"#8B5CF610",border:`1px solid ${logData.source==="local"?"#1D9E7530":"#8B5CF630"}`,color:logData.source==="local"?"#1D9E75":"#8B5CF6"}}>{logData.source==="local"?"● Local":"● Cloud"} log · {logData.rows?.length?.toLocaleString()} rows</span>}
+                {xmlData&&<span style={{fontSize:10,padding:"2px 7px",borderRadius:3,background:"#8B5CF610",border:"1px solid #8B5CF630",color:"#8B5CF6"}}>{xmlData.source==="local"?"● Local":"● Cloud"} events · {xmlData.tackJibes?.length} manoeuvres</span>}
+                <span style={{fontSize:10,color:"#1E3A5A"}}>{displayed.length} clip{displayed.length!==1?"s":""}</span>
+                <div style={{flex:1}}/>
+                {/* ── Sync ↑ button — visible when session has unsynced local data ── */}
+                {cloudStatus?.available&&perms.canSync&&(logData||xmlData||allVideos.length>0)&&(
+                  <button onClick={async()=>{
+                    // Boat guard, before anything is read or any progress shown:
+                    // activeDate may belong to another boat, and the push would
+                    // file it under this one. See src/lib/syncBoatGuard.ts.
+                    const libScope = scopeOfMembership(activeMem);
+                    const libRefusal = daySyncRefusal(activeDate, getSessionsForMembership(activeMem), activeMem, fmtDate);
+                    if(libRefusal){
+                      addLog(libRefusal);
+                      setLibSyncProgress({items:[],overall:0,elapsed:0,error:libRefusal});
+                      setLibSyncPhase("syncing");
+                      return;
+                    }
+                    const vids=await getVideosForDate(activeDate);
+                    const logD=await getLogData(activeDate);
+                    const xmlD=await getXmlData(activeDate);
+                    const items=[
+                      {id:"log",label:"Log & Events",state:"pending",pct:0},
+                      ...vids.map(v=>({id:v.id,label:v.name||v.title,state:"pending",pct:0}))
+                    ];
+                    libSyncAbortRef.current=false;
+                    const startMs=Date.now();
+                    libSyncTimerRef.current=setInterval(()=>
+                      setLibSyncProgress(p=>p?{...p,elapsed:Math.round((Date.now()-startMs)/1000)}:p),1000);
+                    setLibSyncProgress({items,overall:0,elapsed:0,error:null});
+                    setLibSyncPhase("syncing");
+                    const setItem=(id,patch)=>setLibSyncProgress(p=>p?{...p,items:p.items.map(it=>it.id===id?{...it,...patch}:it)}:p);
+                    try{
+                      let curVid=null;
+                      // Resolve user once so the mirror callback below can
+                      // push each clip to Supabase as soon as it lands.
+                      let libUser=null;
+                      try{const sb=getBrowserSupabase();const {data:{user}}=await sb.auth.getUser();libUser=user||null;}catch{}
+                      await syncSessionToCloud(activeDate,logD,xmlD,
+                        vids,
+                        msg=>{
+                          if(libSyncAbortRef.current)return;
+                          if(msg.includes("log")&&msg.includes("✓")) setItem("log",{state:"done",pct:100});
+                          const vMatch=vids.find(v=>msg.includes(v.name||v.title||"")&&msg.includes("✓"));
+                          if(vMatch) setItem(vMatch.id,{state:"done",pct:100});
+                          else if(vids.find(v=>msg.includes(v.name||v.title||""))){
+                            const vf=vids.find(v=>msg.includes(v.name||v.title||""));
+                            if(vf&&!curVid){curVid=vf.id;setItem(curVid,{state:"active",pct:50});}
+                          }
+                          // recalc overall
+                          setLibSyncProgress(p=>{
+                            if(!p)return p;
+                            const avg=p.items.reduce((s,it)=>s+(it.pct||0),0)/p.items.length;
+                            return{...p,overall:Math.round(avg)};
+                          });
+                        },
+                        {
+                          scope: libScope,
+                          // Per-video Supabase mirror — clips appear for
+                          // teammates as each finishes, not after the batch.
+                          onVideoSynced: makeVideoMirrorCallback({
+                            userId: libUser?.id || null,
+                            sessionDate: activeDate,
+                            syncOffsets,
+                          }),
+                        });
+                      setLibSyncPhase("done");
+                      setLibSyncProgress(p=>p?{...p,overall:100}:p);
+                      markCloudSynced(activeDate);
+                      setUnsyncedCount(getUnsyncedCount());
+                    }catch(e){
+                      setLibSyncProgress(p=>p?{...p,error:String(e)}:p);
+                    }finally{clearInterval(libSyncTimerRef.current);}
+                  }}
+                  style={{background:"#8B5CF6",border:"none",borderRadius:5,padding:"3px 10px",
+                    color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,display:"flex",
+                    alignItems:"center",gap:4}}>
+                    ↑ {unsyncedCount>0?"Sync":"Re-sync"}{unsyncedCount>0?` (${unsyncedCount})`:""}
+                  </button>
+                )}
+                {xmlData&&allVideos.length>0&&perms.canImport&&(
+                  <button onClick={async()=>{
+                    let count=0;
+                    const updated=await Promise.all(allVideos.map(async v=>{
+                      if(!v.startUtc)return v;
+                      const newTags=computeAutoTags(v.startUtc,v.duration,logData,xmlData,syncOffsets[v.id]||0);
+                      const manualTags=(v.tags||[]).filter(t=>{if(isAutoTag(t))return false;const meta=xmlData?.meta;if(meta?.location&&t===meta.location.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.boat&&t===meta.boat.toLowerCase().replace(/\s+/g,"-"))return false;if(meta?.dayType&&t===meta.dayType.toLowerCase().replace(/\s+/g,"-"))return false;return true;});
+                      const merged=[...new Set([...newTags,...manualTags])];
+                      await updateVideoTags(v.id,merged);
+                      // Push to cloud so other devices pick up the re-tag.
+                      pushVideoMetadataToCloud(v,{tags:merged});
+                      count++;return{...v,tags:merged};
+                    }));
+                    setAllVideos(updated);
+                    if(selectedVideo){const u=updated.find(v=>v.id===selectedVideo.id);if(u)setSelectedVideo(u);}
+                    alert(`Re-tagged ${count} clip${count!==1?"s":""} using event data.`);
+                  }} style={{background:"#8B5CF620",border:"1px solid #8B5CF640",borderRadius:5,padding:"3px 10px",color:"#8B5CF6",cursor:"pointer",fontSize:10,fontWeight:600}}>
+                    ⚡ Re-tag {allVideos.filter(v=>v.startUtc).length} clips
+                  </button>
+                )}
+              </div>}
+              {/* ── Batch cloud sync — coach/admin, Phase B.3 ──────────────── */}
+              {cloudStatus?.available && perms.canSync && allVideos.length>0 && (
+                <BatchSyncPanel
+                  videos={allVideos}
+                  syncState={mobileSyncState}
+                  onSyncProxies={handleBatchSyncProxies}
+                  onUploadOriginals={handleBatchUploadOriginals}
+                  syncErrors={syncErrors}
+                />
+              )}
+              {allVideos.length===0&&<div style={{textAlign:"center",padding:"50px 20px",color:"#1E3A5A"}}><div style={{fontSize:32,marginBottom:14,opacity:0.4}}>📹</div><div style={{fontSize:13,fontWeight:600,color:"#334155",marginBottom:6}}>No videos for this session</div><div style={{fontSize:11,marginBottom:16}}>{perms.canImport?"Import in the Upload tab.":"Session not yet uploaded to cloud."}</div>{perms.canImport&&<button onClick={()=>setActiveTab("upload")} style={{background:"#06B6D4",border:"none",borderRadius:8,padding:"8px 20px",color:"#000",fontWeight:700,cursor:"pointer",fontSize:12}}>Go to Upload</button>}</div>}
+              {/* ── Clear-day nuke (admin/coach). Shown even with 0 local clips,
+                     because ORPHAN cloud rows are exactly what needs clearing. ── */}
+              {perms.canDelete && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                  {clearDayBusy ? (
+                    <span style={{fontSize:11,color:"#EF4444"}}>Clearing {activeDate}…</span>
+                  ) : clearDayArmed ? (
+                    <>
+                      <span style={{fontSize:11,color:"#EF4444",fontWeight:600}}>Delete ALL clips for {fmtDate(activeDate)} — local, Bunny and cloud?</span>
+                      <button onClick={handleClearDay} style={{background:"#EF4444",border:"none",borderRadius:6,padding:"5px 12px",color:"#fff",cursor:"pointer",fontSize:11,fontWeight:700}}>Delete all</button>
+                      <button onClick={()=>setClearDayArmed(false)} style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:11}}>Cancel</button>
+                    </>
+                  ) : (
+                    <button onClick={()=>setClearDayArmed(true)} style={{background:"none",border:"1px solid #EF444430",borderRadius:6,padding:"5px 12px",color:"#EF4444",cursor:"pointer",fontSize:11,opacity:0.75}}>🗑 Clear all clips for this day</button>
+                  )}
+                </div>
+              )}
+              {/* ── Batch select toolbar (admin/coach only) ── */}
+              {perms.canDelete && allVideos.length > 0 && (
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                  <button onClick={()=>batchMode?clearBatch():setBatchMode(true)}
+                    style={{background:batchMode?"#EF444420":"#0A1929",border:`1px solid ${batchMode?"#EF444440":"#1E3A5A"}`,
+                      borderRadius:6,padding:"5px 12px",color:batchMode?"#EF4444":"#64748B",cursor:"pointer",fontSize:11,fontWeight:600}}>
+                    {batchMode?"✕ Cancel":"☑ Select"}
+                  </button>
+                  {batchMode&&(
+                    <>
+                      <button onClick={()=>{const allIds=new Set(displayed.map(v=>v.id));setBatchSelected(allIds);}}
+                        style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:10}}>All</button>
+                      <button onClick={()=>setBatchSelected(new Set())}
+                        style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#64748B",cursor:"pointer",fontSize:10}}>None</button>
+                      <span style={{fontSize:11,color:"#475569",fontFamily:"monospace"}}>{batchSelected.size} selected</span>
+                      {batchSelected.size>0&&(
+                        <>
+                          <button onClick={()=>setBatchSyncOpen(o=>!o)}
+                            style={{marginLeft:"auto",background:batchSyncOpen?"#06B6D420":"#0A1929",border:`1px solid ${batchSyncOpen?"#06B6D450":"#1E3A5A"}`,borderRadius:6,padding:"5px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                            ⟲ Sync {batchSelected.size}
+                          </button>
+                          <button onClick={handleBatchSaveToDisk}
+                            title="Download each selected clip's local file to disk for external ffmpeg compression"
+                            style={{background:"#06B6D420",border:"1px solid #06B6D450",borderRadius:6,padding:"5px 12px",color:"#06B6D4",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                            ↓ Save {batchSelected.size} to disk
+                          </button>
+                          <button onClick={handleBatchUploadCompressed}
+                            title="Upload compressed copies (from disk) for each selected clip — matched by filename stem. Local HD blobs are left untouched."
+                            style={{background:"#8B5CF620",border:"1px solid #8B5CF650",borderRadius:6,padding:"5px 12px",color:"#A78BFA",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                            ↑ Upload {batchSelected.size} compressed
+                          </button>
+                          <button onClick={()=>{if(confirm(`Delete ${batchSelected.size} video${batchSelected.size>1?"s":""}? This cannot be undone.`))handleBatchDelete();}}
+                            style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"5px 14px",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:700}}>
+                            🗑 Delete {batchSelected.size}
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+              {/* ── Batch sync offset panel — apply the same shift to every
+                  selected clip in one go. Bakes into startUtc (local + cloud)
+                  and recomputes auto-tags from the shifted window. ── */}
+              {batchMode && batchSelected.size>0 && batchSyncOpen && (
+                <div style={{marginBottom:10,maxWidth:420}}>
+                  <SyncControl
+                    offset={batchSyncOffset}
+                    onChange={setBatchSyncOffset}
+                    saving={batchSyncBusy}
+                    saveLabel={`💾 Apply to ${batchSelected.size}`}
+                    onSave={async(secs)=>{
+                      setBatchSyncBusy(true);
+                      try {
+                        const sel = allVideos.filter(v => batchSelected.has(v.id));
+                        const n = await saveSyncForVideos(sel, secs);
+                        if (n === 0) {
+                          alert('Nothing to update — none of the selected clips have a start time set.');
+                        }
+                      } finally {
+                        setBatchSyncBusy(false);
+                        setBatchSyncOffset(0);
+                        setBatchSyncOpen(false);
+                        setBatchSelected(new Set());
+                      }
+                    }}/>
+                </div>
+              )}
+              {/* ── Loading thumbnails banner ── */}
+              {(() => {
+                const loadedCount = Math.min(videoLoadedIds.size, videoTotalThumbs);
+                const isLoading = videoThumbsLoading || (videoTotalThumbs > 0 && loadedCount < videoTotalThumbs);
+                if(!isLoading) return null;
+                const pct = videoTotalThumbs > 0 ? Math.round((loadedCount/videoTotalThumbs)*100) : 0;
+                return (
+                  <div style={{background:"#06B6D410",border:"1px solid #06B6D430",borderRadius:6,padding:"7px 10px",marginBottom:12}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:10,color:"#06B6D4",fontFamily:"monospace",marginBottom:5}}>
+                      <span>⟳ Loading thumbnails…</span>
+                      <span>{videoThumbsLoading ? "…" : `${loadedCount} / ${videoTotalThumbs}`}</span>
+                    </div>
+                    <div style={{height:4,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
+                      <div style={{
+                        height:"100%",
+                        width: videoThumbsLoading ? "15%" : `${pct}%`,
+                        background:"#06B6D4",
+                        transition:"width 0.2s ease-out",
+                        animation: videoThumbsLoading ? "ssa-thumb-pulse 1.2s ease-in-out infinite" : "none",
+                      }}/>
+                    </div>
+                    <style>{`@keyframes ssa-thumb-pulse { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+                  </div>
+                );
+              })()}
+              {(()=>{
+                const groups=[]; const seen=new Map();
+                for(const v of displayed){const d=v.sessionDate||"unknown";if(!seen.has(d)){seen.set(d,[]);groups.push(d);}seen.get(d).push(v);}
+                const SKIP_HDR=new Set(["race-start","topmark","mark","upwind","reach","downwind","tack","gybe","race","training"]);
+                return groups.map(date=>{
+                  const vids=seen.get(date);
+                  const location=(vids[0]?.tags||[]).find(t=>!SKIP_HDR.has(t)&&t.includes("-")&&!t.startsWith("tws-")&&!/-20\d{2}$/.test(t)&&t.length>3&&!/^\d/.test(t))||null;
+                  const boat=(vids[0]?.tags||[]).find(t=>!SKIP_HDR.has(t)&&!t.startsWith("tws-")&&!t.includes("-")&&t.length>2&&!/^\d/.test(t))||null;
+                  return(<div key={date} style={{marginBottom:18}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,paddingBottom:5,borderBottom:"1px solid #0F2030"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"#64748B",fontFamily:"monospace"}}>{date===TODAY()?"Today":fmtDate(date)}</div>
+                      {location&&<span style={{fontSize:9,padding:"1px 6px",borderRadius:3,background:"#06B6D420",border:"1px solid #06B6D440",color:"#06B6D4",fontWeight:600}}>{location}</span>}
+                      {boat&&<span style={{fontSize:9,color:"#334155",fontFamily:"monospace"}}>{boat}</span>}
+                      <span style={{fontSize:9,color:"#1E3A5A",marginLeft:"auto"}}>{vids.length} clip{vids.length!==1?"s":""}</span>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8}}>
+                      {vids.map(v=><VideoCard key={v.id} video={v} selected={selectedVideo?.id===v.id} onClick={()=>setSelectedVideo(v)} onThumbLoad={markVideoThumbLoaded} batchMode={batchMode} batchSelected={batchSelected} onBatchToggle={toggleBatchSelect} sessionTzOffset={sessionTzOffset}/>)}
+                    </div>
+                  </div>);
+                });
+              })()}
+            </div>
+            {selectedVideo&&(
+              <div style={{flex:1,background:"#050E1C",borderLeft:"1px solid #1E3A5A",overflowY:"auto",padding:16,minWidth:400}}>
+                {/* onPlayUtc wires VideoPlayer → shared playUtc state → Analytics */}
+                <VideoPlayer onRecheckStream={recheckStream}
+                  video={selectedVideo}
+                  logData={logData}
+                  xmlData={xmlData}
+                  syncOffset={syncOffsets[selectedVideo.id]||0}
+                  sessionTzOffset={sessionTzOffset}
+                  onPlayUtc={handlePlayUtc}
+                  onRotate={canRotate ? (deg)=>rotateVideo(selectedVideo, deg) : null}
+                  canShare={canShareVideos(effectiveRole)}
+                  canPlayLocalHD={['admin','coach'].includes(effectiveRole)}
+                  // Phase B crop UX: three toolbar buttons + timeline
+                  // markers. Gated on perms.canSync + local original
+                  // present. Re-clicking a button moves that marker.
+                  pendingCrop={pendingCrop}
+                  cropBusy={cropBusy}
+                  cropProgress={cropProgress}
+                  onDeleteUpTo={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? (t)=>{
+                          const clamped = Math.max(0, Math.min(t, (selectedVideo.duration||0)));
+                          setPendingCrop(p => ({ ...(p||{deleteFrom:null}), deleteUpTo: clamped }));
+                          setCropError(null);
+                        }
+                      : undefined
+                  }
+                  onDeleteFromHere={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? (t)=>{
+                          const clamped = Math.max(0, Math.min(t, (selectedVideo.duration||0)));
+                          setPendingCrop(p => ({ ...(p||{deleteUpTo:null}), deleteFrom: clamped }));
+                          setCropError(null);
+                        }
+                      : undefined
+                  }
+                  onSaveCrop={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? async ()=>{
+                          // Compute the keep range from the two markers,
+                          // clamped to the clip's actual duration.
+                          const fullDur = selectedVideo.duration || 0;
+                          const startSec = pendingCrop?.deleteUpTo ?? 0;
+                          const endSec   = pendingCrop?.deleteFrom ?? fullDur;
+                          if (endSec - startSec < 0.5) {
+                            setCropError("Nothing to keep — markers overlap.");
+                            return;
+                          }
+                          setCropBusy(true);
+                          setCropError(null);
+                          setCropProgress({ pct: 0, message: "Loading original…" });
+                          try {
+                            const blob = await getVideoBlob(selectedVideo.id);
+                            if (!blob) {
+                              setCropError("Original not on this device.");
+                              setCropBusy(false); setCropProgress(null); return;
+                            }
+                            const result = await cropVideo({
+                              source: blob,
+                              startSec, endSec,
+                              inputStem: `v_${selectedVideo.id}`,
+                              onProgress: ({progress, message}) => setCropProgress({ pct: progress, message }),
+                            });
+                            setCropProgress({ pct: 0.95, message: "Saving…" });
+                            const newStartUtc = (typeof selectedVideo.startUtc === "number")
+                              ? selectedVideo.startUtc + Math.round(startSec * 1000)
+                              : null;
+                            const ok = await updateVideoBlobAndDuration(
+                              selectedVideo.id, result.blob, result.durationSec, newStartUtc
+                            );
+                            if (!ok) {
+                              setCropError("Failed to save cropped video.");
+                              setCropBusy(false); setCropProgress(null); return;
+                            }
+                            // Recompute auto-tags for the new time window.
+                            const cur = (allVideos.find(v=>v.id===selectedVideo.id) || selectedVideo) || {};
+                            const startUtcForTags = (typeof newStartUtc === 'number') ? newStartUtc : cur.startUtc;
+                            let mergedTags = cur.tags || [];
+                            if (typeof startUtcForTags === 'number') {
+                              const autoTags = new Set(computeAutoTags(startUtcForTags, result.durationSec, logData, xmlData, syncOffsets[selectedVideo.id]||0));
+                              const manualTags = (cur.tags||[]).filter(t => !isAutoTag(t));
+                              mergedTags = [...new Set([...autoTags, ...manualTags])];
+                              await updateVideoTags(selectedVideo.id, mergedTags);
+                            }
+                            const patch = {
+                              duration: result.durationSec,
+                              size: result.bytes,
+                              tags: mergedTags,
+                              hasProxy: false,
+                              proxyPath: null,
+                              proxyUploadedAt: null,
+                              objectUrl: null,
+                            };
+                            if (typeof newStartUtc === 'number') patch.startUtc = newStartUtc;
+                            setAllVideos(p => p.map(v => v.id === selectedVideo.id ? {...v, ...patch} : v));
+                            setSelectedVideo(p => p && p.id === selectedVideo.id ? {...p, ...patch} : p);
+                            // Push the post-crop metadata (new tags, startUtc,
+                            // duration) to the cloud row so teammates pick
+                            // them up on next library load.
+                            pushVideoMetadataToCloud(selectedVideo, {
+                              tags: mergedTags,
+                              ...(typeof newStartUtc === 'number' ? { startUtc: newStartUtc } : {}),
+                              durationSec: result.durationSec,
+                              bytes: result.bytes,
+                            });
+                            setPendingCrop(null);
+                            setCropProgress(null);
+                            setCropBusy(false);
+                            // Reload the date so the player picks up the new blob.
+                            loadDate(activeDate);
+                          } catch (e) {
+                            setCropError(e?.message || String(e));
+                            setCropBusy(false); setCropProgress(null);
+                          }
+                        }
+                      : undefined
+                  }
+                  // ↓ Save to disk — download the local blob as MP4 so the
+                  // user can run native ffmpeg + VideoToolbox compression on
+                  // it (much faster than ffmpeg.wasm for multi-GB sources).
+                  onExportToDisk={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? async () => {
+                          try {
+                            const blob = await getVideoBlob(selectedVideo.id);
+                            if (!blob) { alert('No local file to export.'); return; }
+                            // Strip any extension from the title (camera files
+                            // often end in .MP4) and tack on .mp4 so the
+                            // downloaded file is unambiguous.
+                            const stem = (selectedVideo.title || selectedVideo.name || 'clip').replace(/\.[^.]+$/, '');
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = `${stem}.mp4`;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            // Browsers need the URL alive for the duration of
+                            // the streaming download. 60s is generous for any
+                            // realistic SSD write speed.
+                            setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
+                          } catch (e) {
+                            alert(`Export failed: ${e?.message || e}`);
+                          }
+                        }
+                      : undefined
+                  }
+                  // ↑ Upload compressed — file picker that pushes the
+                  // chosen file STRAIGHT to Bunny Stream as the cloud's
+                  // "original" rendition. The IDB blob is deliberately
+                  // not touched, so the coach can keep playing the full
+                  // HD locally (HD-local toggle) while teammates stream
+                  // the smaller compressed version's adaptive ladder.
+                  onUploadCompressed={
+                    perms.canSync && selectedVideo.hasLocalBlob
+                      ? () => {
+                          const input = document.createElement('input');
+                          input.type = 'file';
+                          input.accept = 'video/mp4,video/quicktime,.mp4,.mov,.m4v';
+                          input.onchange = async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            try {
+                              const supabase = getBrowserSupabase();
+                              const { data: { user } } = await supabase.auth.getUser();
+                              if (!user) { alert('You need to be signed in.'); return; }
+                              const cloudId = await ensureCloudVideoId({
+                                userId: user.id,
+                                video: selectedVideo,
+                                sessionDate: selectedVideo.sessionDate || activeDate,
+                              });
+                              if (!cloudId) {
+                                alert('No cloud row available — check your team membership.');
+                                return;
+                              }
+                              const label = selectedVideo.title || selectedVideo.name || cloudId;
+                              setMobileSyncState({ phase: 'pushing', message: `Uploading compressed · ${label}`, progress: 0 });
+                              // Reuse a pending Stream video object from a
+                              // half-finished attempt so the TUS client
+                              // resumes; otherwise create a fresh one.
+                              let streamId = getPendingOrigStream(selectedVideo.id);
+                              if (!streamId) {
+                                const created = await createStreamUpload(label, file.size);
+                                streamId = created?.streamId || null;
+                                if (streamId) setPendingOrigStream(selectedVideo.id, streamId);
+                              }
+                              if (!streamId) {
+                                setMobileSyncState({ phase: 'error', message: 'Stream create failed', progress: 0 });
+                                alert('Could not create a Stream video.');
+                                return;
+                              }
+                              const uploaded = await uploadFileToStream(
+                                { streamId },
+                                file,
+                                (pct) => setMobileSyncState({
+                                  phase: 'pushing',
+                                  message: `Uploading compressed · ${label}`,
+                                  progress: pct,
+                                }),
+                              );
+                              if (!uploaded) {
+                                setMobileSyncState({ phase: 'error', message: 'Upload interrupted', progress: 0 });
+                                alert('Upload was interrupted — retry to resume.');
+                                return;
+                              }
+                              // Flip has_original=true + record the Stream GUID.
+                              await fetch(
+                                `/api/videos/${encodeURIComponent(cloudId)}/renditions`,
+                                {
+                                  method: 'PATCH',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ original: { streamId } }),
+                                },
+                              ).catch(()=>{});
+                              clearPendingOrigStream(selectedVideo.id);
+                              setAllVideos(p => p.map(v => v.id === selectedVideo.id
+                                ? { ...v, hasOriginal: true, originalStreamId: streamId, streamProcessing: true, cloudId }
+                                : v));
+                              setSelectedVideo(p => p && p.id === selectedVideo.id
+                                ? { ...p, hasOriginal: true, originalStreamId: streamId, streamProcessing: true, cloudId }
+                                : p);
+                              setMobileSyncState({ phase: 'done', message: `✓ Compressed uploaded · ${label}`, progress: 100 });
+                              setTimeout(() => setMobileSyncState({ phase: null, message: '', progress: 0 }), 3000);
+                            } catch (err) {
+                              console.error('[upload-compressed] failed', err);
+                              setMobileSyncState({ phase: 'error', message: err?.message || 'Upload failed', progress: 0 });
+                              alert(`Upload failed: ${err?.message || err}`);
+                            }
+                          };
+                          input.click();
+                        }
+                      : undefined
+                  }
+                />
+                <div style={{marginTop:12}}>
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:2}}>
+                    <div title={selectedVideo.title||""} style={{fontSize:13,fontWeight:600,color:"#E2E8F0",flex:1,marginRight:8,fontFamily:"monospace"}}>{(()=>{
+                      if(selectedVideo.startUtc==null) return "—";
+                      const d=new Date(selectedVideo.startUtc + (sessionTzOffset||0)*60000);
+                      return `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}:${String(d.getUTCSeconds()).padStart(2,"0")}`;
+                    })()}</div>
+                    <SrcBadge source={videoBadgeSrc(selectedVideo)}/>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+                    <div style={{fontSize:10,color:"#334155"}}>{fmtDate(selectedVideo.sessionDate)} · {selectedVideo.camera}{selectedVideo.duration?` · ${fmtT(selectedVideo.duration)}`:""}</div>
+                    {selectedVideo.tsSource&&(<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:selectedVideo.tsSource==="mp4-meta"?"#1D9E7515":"#F59E0B15",border:`1px solid ${selectedVideo.tsSource==="mp4-meta"?"#1D9E7530":"#F59E0B30"}`,color:selectedVideo.tsSource==="mp4-meta"?"#1D9E75":"#F59E0B"}}>{selectedVideo.tsSource==="mp4-meta"?"📷 camera metadata":"⚠ file modified time"}</span>)}
+                  </div>
+                  {['admin','coach'].includes(effectiveRole) && <div style={{marginBottom:12}}><SyncControl offset={syncOffsets[selectedVideo.id]||0} onChange={v=>{saveSyncOffset(selectedVideo.id,v);setSyncOffsets(p=>({...p,[selectedVideo.id]:v}));}} onSave={async(secs)=>{ await saveSyncForVideos([selectedVideo], secs); }}/></div>}
+                  <div style={{marginBottom:12}}>
+                    {/* Where the start time CAME FROM. The import log lives in the
+                        Upload tab, which the app leaves the moment an import finishes —
+                        so this rode along on the clip instead. It states the two
+                        timestamps the file carries and how they relate to its duration,
+                        which is what decides whether a stamp marks the start or the end
+                        of the recording. */}
+                    {(selectedVideo.tsHow||selectedVideo.tsDiag)&&(
+                      <div style={{background:selectedVideo.tsSuspect?"#F59E0B12":"#071624",
+                        border:`1px solid ${selectedVideo.tsSuspect?"#F59E0B40":"#1E3A5A"}`,
+                        borderRadius:7,padding:"7px 9px",marginBottom:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                          <span style={{fontSize:10,fontWeight:700,color:selectedVideo.tsSuspect?"#F59E0B":"#7DD3FC",letterSpacing:0.5}}>
+                            TIMESTAMP{selectedVideo.cameraVendor?` · ${selectedVideo.cameraVendor}`:""}
+                          </span>
+                          <button onClick={()=>{
+                            const txt=[selectedVideo.name,selectedVideo.tsHow,selectedVideo.tsDiag].filter(Boolean).join('\n');
+                            try{navigator.clipboard?.writeText(txt);}catch{}
+                          }} style={{marginLeft:"auto",background:"none",border:"1px solid #1E3A5A",borderRadius:4,
+                            color:"#64748B",fontSize:9,padding:"1px 6px",cursor:"pointer"}}>Copy</button>
+                        </div>
+                        {selectedVideo.tsHow&&<div style={{fontSize:10,color:"#94A3B8",lineHeight:1.4}}>{selectedVideo.tsHow}</div>}
+                        {selectedVideo.tsDiag&&<div style={{fontSize:9,color:"#64748B",fontFamily:"monospace",marginTop:3,wordBreak:"break-word",lineHeight:1.45}}>{selectedVideo.tsDiag}</div>}
+                      </div>
+                    )}
+                    <StartTimeEditor video={selectedVideo} logData={logData} sessionTzOffset={sessionTzOffset} onSave={async(id,startUtc)=>{
+                      // The clip's DAY = the venue-local date of the new start time.
+                      // Recompute it so the clip moves to the right folder (not just
+                      // its displayed time).
+                      const newDate=new Date(startUtc+(sessionTzOffset||0)*60000).toISOString().slice(0,10);
+                      const oldDate=selectedVideo.sessionDate||activeDate;
+                      await updateVideoStartUtc(id,startUtc,newDate);
+                      const updatedVideo={...selectedVideo,startUtc,sessionDate:newDate};
+                      const autoTags=computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0);
+                      const autoTags2=new Set(computeAutoTags(startUtc,selectedVideo.duration,logData,xmlData,syncOffsets[id]||0));const manualTags=(selectedVideo.tags||[]).filter(t=>!autoTags2.has(t));
+                      const mergedTags=[...new Set([...autoTags,...manualTags])];
+                      await updateVideoTags(id,mergedTags);
+                      // Push to cloud so teammates / other devices pick up the new
+                      // start time, folder date + recomputed tag set.
+                      pushVideoMetadataToCloud(selectedVideo,{startUtc,tags:mergedTags,sessionDate:newDate});
+                      const enriched=enrichVideo({...updatedVideo,tags:mergedTags},logData,xmlData,syncOffsets);
+                      setAllVideos(p=>p.map(v=>v.id===id?enriched:v));
+                      setSelectedVideo(enriched);
+                      // Day changed → open the corrected folder (and load its log)
+                      // so the clip doesn't appear to vanish from the old one.
+                      if(newDate!==oldDate) loadDate(newDate);
+                    }}/>
+                  </div>
+                  {/* Crop status banner — only renders when there's an
+                      error to surface or the user marked a cut but the
+                      original blob isn't on this device. The whole crop
+                      UI is otherwise inside the video player toolbar. */}
+                  {perms.canSync && (
+                    <VideoCropStatusBanner
+                      video={selectedVideo}
+                      pendingCrop={pendingCrop}
+                      cropError={cropError}
+                      onDismissError={()=>setCropError(null)}
+                    />
+                  )}
+                  {/* Manual proxy sync — any role that can import sees
+                      this. Auto-sync runs in the background after each
+                      import (see enqueueAutoSync), but the manual button
+                      stays useful for re-syncing after a crop or for
+                      retrying a previously-failed upload. */}
+                  {perms.canImport && (
+                    <RenditionSyncPanel
+                      video={selectedVideo}
+                      activeDate={activeDate}
+                      onSynced={(id, {proxyStreamId, proxyBytes, cloudId}) => {
+                        // Proxy is now on Bunny Stream and encoding — flag it
+                        // processing so the poll effect swaps in the adaptive
+                        // URL once Bunny finishes, with no manual reload.
+                        const patch = { hasProxy: true, proxyStreamId, cloudId, streamProcessing: true, proxyUploadedAt: new Date().toISOString() };
+                        if (typeof proxyBytes === 'number') patch.proxyBytes = proxyBytes;
+                        setAllVideos(p => p.map(v => v.id === id ? {...v, ...patch} : v));
+                        setSelectedVideo(p => p && p.id === id ? {...p, ...patch} : p);
+                      }}
+                    />
+                  )}
+                  {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={selectedVideo} tagList={sessionTagList} suggestionList={tagSuggestionList} sessionDate={activeDate} onTagListChange={async updated=>{
+                    setSessionTagList(updated);
+                    try {
+                      const supabase=getBrowserSupabase();
+                      const {data:{user}}=await supabase.auth.getUser();
+                      if(user) await saveTagListCloud({userId:user.id,date:activeDate,tags:updated});
+                      else saveTagList(activeDate,updated);
+                    } catch { saveTagList(activeDate,updated); }
+                  }} onSave={async (id,tags)=>{ const vid=allVideos.find(v=>v.id===id)||selectedVideo; await saveTagsForVideo(vid, tags); }}/>}
+                  <ShareButton video={selectedVideo} canShare={canShareVideos(effectiveRole)}/>
+                  {perms.canDelete&&(<DeleteButton video={selectedVideo} cloudStatus={cloudStatus} onDeleted={id=>{setAllVideos(p=>p.filter(v=>v.id!==id));setSelectedVideo(null);saveSyncOffset(id,0);}}/>)}
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+
+        {/* ── ANALYTICS PANE — lazy-mounted on first visit, then kept alive ─── */}
+        {hasMountedAnalytics&&(
+          <div style={{
+            position:"absolute",inset:0,display:"flex",overflow:"hidden",
+            visibility:activeTab==="analytics"?"visible":"hidden",
+            pointerEvents:activeTab==="analytics"?"auto":"none",
+            zIndex:activeTab==="analytics"?2:1,
+          }}>
+            <ErrorBoundary label="Analytics"><AnalyticsTab
+              logData={logData} xmlData={xmlData} allVideos={allVideos}
+              sessions={sessions} selectedVideo={selectedVideo}
+              onSelectVideo={setSelectedVideo} setActiveTab={setActiveTab}
+              activeDate={activeDate}
+              onSelectDate={loadDate}
+              playUtc={playUtc}
+              visible={activeTab==="analytics"} photos={photos}
+              canUseAI={canUseAI} canSeeAnalyticsData={canSeeAnalyticsData}
+            /></ErrorBoundary>
+          </div>
+        )}
+
+        {/* ── UPLOAD & ADMIN — standard conditional render ─────────────────── */}
+        {activeTab==="photos"&&(
+          <div style={{position:"absolute",inset:0,display:"flex",overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Photos"><PhotosTab role={role} logData={logData} xmlData={xmlData} activeDate={activeDate} sessions={visibleSessions} loadDate={loadDate} cloudStatus={cloudStatus} onPhotosChange={setPhotos} canSeeSailScanPhotos={canSeeSailScanPhotos} sessionTzOffset={sessionTzOffset} sailInventory={sailInventory} canClearDay={['admin','team_manager','coach'].includes(effectiveRole)}/></ErrorBoundary>
+          </div>
+        )}
+        {(activeTab==="upload"||uploadWatching)&&(
+          <div style={{position:"absolute",inset:0,display:activeTab==="upload"?"flex":"none",overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Upload"><UploadTab onWatchingChange={setUploadWatching} role={role} cloudStatus={cloudStatus} onImported={handleImported} sailInventory={sailInventory} campaignCfg={campaignCfg} setSailDiff={setSailDiff} syncOffsets={syncOffsets}/></ErrorBoundary>
+          </div>
+        )}
+        {activeTab==="tools"&&(
+          <ToolsTabs teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId}/>
+        )}
+        {activeTab==="admin"&&(
+          <div style={{position:"absolute",inset:0,overflowY:"auto",padding:20,zIndex:2}}>
+            <ErrorBoundary label="Admin"><AdminTab
+              unsyncedCount={unsyncedCount}
+              cloudStatus={cloudStatus}
+              sessions={sessions}
+              setSessions={setSessions}
+              setLogData={setLogData}
+              setXmlData={setXmlData}
+            /></ErrorBoundary>
+          </div>
+        )}
+        {activeTab==="campaign"&&campaignOn&&effectiveRole!=='guest'&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Campaign"><CampaignTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} onOpenVideo={openCampaignVideo}/></ErrorBoundary>
+          </div>
+        )}
+        {activeTab==="boatconfig"&&campaignOn&&canSeeBoatConfig&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Boat config"><BoatConfigTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} sessionTzOffset={sessionTzOffset}/></ErrorBoundary>
+          </div>
+        )}
+        {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}
+        {activeTab==="weather"&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Weather"><WeatherTab isMobile={false} effectiveRole={effectiveRole} boatName={campaignCfg?.boatName || activeMem?.boat_name} eventName={campaignCfg?.event} logData={logData} teamId={campaignCfg?.teamId} boatId={campaignCfg?.boatId} targetDate={campaignCfg?.targetDate}/></ErrorBoundary>
+          </div>
+        )}
+        {activeTab==="timeline"&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Timeline"><TimelineTab teamId={campaignCfg?.teamId||activeMem?.team_id} boatId={campaignCfg?.boatId||activeMem?.boat_id} tzOffset={sessionTzOffset} onOpenVideo={openVideoModal}/></ErrorBoundary>
+          </div>
+        )}
+        {activeTab==="tagger"&&(
+          <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
+            <ErrorBoundary label="Tagging"><TaggerTab
+              teamId={campaignCfg?.teamId||activeMem?.team_id}
+              boatId={campaignCfg?.boatId||activeMem?.boat_id}
+              date={activeDate}
+              userId={myUid}
+              tzOffsetMin={sessionTzOffset}
+              logRows={logData?.rows}
+              xml={xmlData}
+              playheadUtc={playUtc}
+              sessions={visibleSessions}
+              onSelectDate={loadDate}
+              onEditSailList={()=>setActiveTab("campaign")}
+            /></ErrorBoundary>
+          </div>
+        )}
+      </div>
+    </div>
+    </>
+    </TzCtx.Provider>
+  );
+}
+
+export default SSAApp;
+
+export { SSAApp };
