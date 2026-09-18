@@ -38,7 +38,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   return(
     <div onClick={handleClick} style={{background:isBatchSelected?"#EF444420":selected&&!batchMode?"#0F2A45":"#0A1929",border:`2px solid ${isBatchSelected?"#EF4444":selected&&!batchMode?"#06B6D4":"#1E3A5A"}`,borderRadius:10,overflow:"hidden",cursor:"pointer",transition:"border-color 0.12s"}}>
       <div style={{aspectRatio:"16/9",width:"100%",background:"#071624",display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden"}}>
-        {video.thumbnailUrl?<img src={thumbSrc(video.thumbnailUrl,640)} alt="" loading="eager" fetchpriority="high" decoding="async" onLoad={handleLoaded}
+        {video.thumbnailUrl?<img src={thumbSrc(video.thumbnailUrl,640)} alt="" loading="eager" fetchPriority="high" decoding="async" onLoad={handleLoaded}
           onError={e=>{
             // Optimiser unavailable (plan quota, a hiccup): fall back to the original once.
             const el=e.currentTarget;

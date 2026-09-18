@@ -210,12 +210,12 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                     <div style={{width:96,height:64,flexShrink:0,alignSelf:"center",background:"#071624",position:"relative",overflow:"hidden"}}>
                       {v.thumbnailUrl
                         ? <img src={thumbSrc(v.thumbnailUrl,256)} alt=""
-                            /* loading=eager + fetchpriority=high stop the
+                            /* loading=eager + fetchPriority=high stop the
                                browser parking below-the-fold thumbnails at
                                Low priority — on weak wifi those requests
                                otherwise never start and the loader hangs
                                (e.g. 6/10) until a rotation re-prioritises. */
-                            loading="eager" fetchpriority="high" decoding="async"
+                            loading="eager" fetchPriority="high" decoding="async"
                             onLoad={()=>onThumbLoad?.(v.id)}
                             onError={e=>{
                               // Optimiser unavailable (plan quota, a hiccup): fall back to the original once.
