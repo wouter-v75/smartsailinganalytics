@@ -213,8 +213,6 @@ describe('racesOf', () => {
 })
 
 describe('racingRoundingFilter — a rounding only counts while racing', () => {
-  const M = 60_000
-  const H = 60 * M
   // Two races off one day: guns at 12:00 and 14:00, roundings in each.
   const day = (over: Partial<Parameters<typeof segmentDay>[0]> = {}) => segmentDay({
     guns: [{ utc: T('12:00'), raceNum: 1 }, { utc: T('14:00'), raceNum: 2 }],

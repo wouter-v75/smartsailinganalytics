@@ -39,7 +39,9 @@ export default function SquashShotsApp() {
 
   // Long-press state
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [longPressActive, setLongPressActive] = useState(false);
+  // Set but never rendered — the long-press affordance it was meant to show was
+  // never built. Kept as a setter so the press handling still reads clearly.
+  const [, setLongPressActive] = useState(false);
   const longPressCoords = useRef<Point | null>(null);
   const touchMoved = useRef(false);
   const touchStartPos = useRef<{ x: number; y: number } | null>(null);
@@ -160,7 +162,8 @@ export default function SquashShotsApp() {
   };
 
   // Loading state for album/file picker
-  const [isLoading, setIsLoading] = useState(false);
+  // Set but never rendered: no spinner was ever wired to it.
+  const [, setIsLoading] = useState(false);
   const [activeButton, setActiveButton] = useState<string | null>(null);
   const originalFile = useRef<File | null>(null);
 

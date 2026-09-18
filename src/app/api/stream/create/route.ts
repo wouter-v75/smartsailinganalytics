@@ -14,7 +14,9 @@ export async function POST(req: NextRequest) {
   if (!STREAM_KEY || !LIBRARY_ID)
     return NextResponse.json({ error: "Bunny Stream not configured" }, { status: 503 });
 
-  const { fileName, fileSizeBytes } = await req.json();
+  // fileSizeBytes is accepted for call-site compatibility but not forwarded:
+  // Bunny sizes the video from the upload itself.
+  const { fileName } = await req.json();
   if (!fileName)
     return NextResponse.json({ error: "fileName required" }, { status: 400 });
 

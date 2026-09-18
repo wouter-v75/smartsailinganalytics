@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectLegs, roundingsFromLegs, detectLegsAndRoundings } from '../detectLegs'
+import { detectLegs, detectLegsAndRoundings } from '../detectLegs'
 import type { PhaseLogRow } from '../autoPhases'
 
 const T0 = Date.parse('2026-09-11T12:00:00Z')

@@ -141,7 +141,6 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
   // Per-yacht stripe-colour preferences were removed with Auto-detect; the
   // store they lived in (src/lib/yacht-prefs.ts) had no callers left and is gone.
   // Null keeps the shape the detection call still expects.
-  const yachtKey: string | null = null;
 
   // ── timestamp + save-to-Photos state ─────────────────────────────────────
   const [photoTimestamp, setPhotoTimestamp] = useState<string>('');     // datetime-local string
@@ -393,7 +392,7 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
     let best: DragTarget | null = null;
     let bestDist = threshold;
     stripes.forEach((s, si) => {
-      const checkPt = (pt: P | null, role: 'luff' | 'leech', midIdx?: number) => {
+      const checkPt = (pt: P | null, role: 'luff' | 'leech') => {
         if (!pt) return;
         const d = Math.hypot(pt.x - coords.x, pt.y - coords.y);
         if (d < bestDist) {
@@ -1068,8 +1067,6 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
 
   const twistRows: { fromIdx: number; toIdx: number; deg: number }[] = [];
   for (let i = 0; i < orderedForTwist.length - 1; i++) {
-    const A = orderedForTwist[i + 1].s;   // upper stripe (numerically larger y? no, sorted ascending)
-    const B = orderedForTwist[i].s;       // lower stripe
     // We sorted ascending midY. In image space, top of sail = smaller y. So
     // orderedForTwist[0] = topmost stripe, [last] = bottommost.
     // Twist = upper_chord_angle - lower_chord_angle, with upper = [i] (top),
