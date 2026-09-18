@@ -44,13 +44,33 @@ export default function AdminTab({
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <button onClick={()=>{
-            if(!confirm("Remove sessions with obviously wrong dates (year < 2000 or > 2100) from the index? Video blobs are untouched."))return;
+            if(!confirm("Remove sessions with obviously wrong dates (year < 2000 or > 2100)? Their log and event data goes too. Video blobs are untouched."))return;
             const all=JSON.parse(localStorage.getItem("ssa:sessions")||"[]");
-            const valid=all.filter(s=>{const y=parseInt((s.date||"").slice(0,4));return y>=2000&&y<=2100;});
-            const removed=all.length-valid.length;
+            const badDate=d=>{const y=parseInt((d||"").slice(0,4));return !(y>=2000&&y<=2100);};
+            const valid=all.filter(s=>!badDate(s.date));
+            const dropped=all.filter(s=>badDate(s.date)).map(s=>s.date);
             localStorage.setItem("ssa:sessions",JSON.stringify(valid));
+            // The index entry was only half of it: the log, events and hand-built phases
+            // live in IndexedDB keyed BY DATE, so dropping the index alone left them
+            // behind as rows nothing could reach or remove. A date like 1900-01-26 comes
+            // from a timestamp column the parser did not recognise, and the log under it
+            // is unusable — take it with the entry.
+            if(dropped.length){
+              const req=indexedDB.open("ssa-db");
+              req.onsuccess=e=>{
+                const db=e.target.result;
+                for(const store of ["log_data","xml_data","ssa_phases"]){
+                  if(!db.objectStoreNames.contains(store))continue;
+                  const os=db.transaction(store,"readwrite").objectStore(store);
+                  for(const d of dropped){ try{ os.delete(d); }catch{ /* keep going */ } }
+                }
+              };
+              for(const d of dropped){ try{ localStorage.removeItem(`ssa:photos-meta:${d}`); localStorage.removeItem(`ssa:taglist:${d}`); }catch{ /* */ } }
+            }
             setSessions(valid);
-            alert(`Removed ${removed} bad session(s). Reload the page then re-import your log files.`);
+            alert(dropped.length
+              ? `Removed ${dropped.length} bad session(s) — ${dropped.join(", ")} — with their log and event data. Reload the page.`
+              : "No bad-date sessions found.");
           }} style={{background:"#EF444420",border:"1px solid #EF444450",borderRadius:6,padding:"7px 14px",color:"#EF4444",cursor:"pointer",fontSize:11,fontWeight:600}}>
             🗑 Remove bad-date sessions
           </button>

@@ -526,7 +526,8 @@ function PlanConditions({ base, date, canEdit, isMobile, teamId, boatId }) {
     await fetch(`${base}/conditions`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, [field]: val }),
+      // A person typing a plan for a day is asking for that day to exist.
+      body: JSON.stringify({ date, [field]: val, createIfMissing: true }),
     })
     if (field === 'plan') setPlan(val); else if (field === 'timings') setTimings(val)
   }
@@ -623,7 +624,7 @@ function BoatConfigDayCard({ teamId, boatId, base, date, canEdit, isMobile }) {
       await fetch(`${base}/conditions`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, sailList: { source: 'manual', sails: draft } }),
+        body: JSON.stringify({ date, sailList: { source: 'manual', sails: draft }, createIfMissing: true }),
       })
       load()
     } finally { setSaving(false) }
@@ -746,7 +747,7 @@ function WeatherCard({ base, date, canEdit }) {
     const res = await fetch(`${base}/conditions`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date, details: next }),
+      body: JSON.stringify({ date, details: next, createIfMissing: true }),
     })
     if (!res.ok) { setErr('could not save the notes'); return }
     setDetails(next)

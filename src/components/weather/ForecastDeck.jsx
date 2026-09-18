@@ -1813,8 +1813,16 @@ export default function ForecastDeck({ p1lat, p1lon, windData, mastHeight = 20, 
           let rest = String(details.comments || '')
           if (rest.startsWith('Forecast summary')) { const i = rest.indexOf(SEP); rest = i >= 0 ? rest.slice(i + SEP.length) : '' }
           const comments = rest.trim() ? `${block}${SEP}${rest}` : block
-          const wrote = await fetch(`${cbase}/conditions`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: noteDate, details: { ...details, comments } }) }).then((r) => r.ok).catch(() => false)
-          setNoteMsg(wrote ? `summary added to ${noteDate} Weather notes` : 'summary note save failed (campaign access?)')
+          // NO createIfMissing. Generating a forecast is not sailing, and this used to
+          // bring a session row into being for every day somebody made a deck — ten
+          // empty days in three weeks, each holding nothing but this note. The note
+          // lands when the day already exists; otherwise it is skipped and said so.
+          const res = await fetch(`${cbase}/conditions`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: noteDate, details: { ...details, comments } }) }).catch(() => null)
+          const body = res && res.ok ? await res.json().catch(() => null) : null
+          setNoteMsg(
+            body?.ok === false ? `no session for ${noteDate} yet — summary not saved`
+            : res && res.ok ? `summary added to ${noteDate} Weather notes`
+            : 'summary note save failed (campaign access?)')
         }
       } catch { /* best-effort — the deck is the primary output */ }
     } catch (e) { setErr(e?.message || 'generation failed') } finally { setBusy(false) }

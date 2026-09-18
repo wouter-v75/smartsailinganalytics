@@ -70,6 +70,7 @@ export async function PATCH(
         timings?: string | null
         plan?: string | null
         sailList?: { source?: string; sails?: Array<{ id?: string; name: string }> } | null
+        createIfMissing?: boolean
       }
     | null
   if (!body?.date || !DATE_RE.test(body.date)) {
@@ -78,6 +79,22 @@ export async function PATCH(
 
   let sess = await findSession(supabase, params.teamId, params.boatId, body.date)
   if (!sess) {
+    // A session row is a claim that the boat did something that day, and the session
+    // list is read that way. So a write only BRINGS ONE INTO BEING when a person asked
+    // for it — typing a plan, the timings, a sail list — never when the app wrote
+    // something of its own accord.
+    //
+    // This defaults to false because of what it cost: the forecast deck saves its AI
+    // summary into conditions.details_today for "today", and that one line created a
+    // session every morning somebody generated a deck. Ten empty days between
+    // 2026-08-27 and 09-17, each holding nothing but a weather note for a day the boat
+    // never sailed. Generating a forecast is not sailing.
+    if (!body.createIfMissing) {
+      return NextResponse.json(
+        { ok: false, skipped: 'no session for that date; nothing was created' },
+        { status: 200 },
+      )
+    }
     const { data: ins, error: insErr } = await supabase
       .from('sessions')
       .insert({ team_id: params.teamId, boat_id: params.boatId, date: body.date, created_by_user_id: user.id })
