@@ -583,6 +583,22 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     }
     // Relabel event-file sail names to the SSA inventory name where linked.
     if(Array.isArray(e.sails)&&e.sails.length) e.sails=e.sails.map(s=>sailResolver.resolve(s));
+    // Re-bundle what we just resolved into `analysis`, the shape that travels.
+    // This used to set only the flat fields above, which are what THIS device
+    // draws its overlay from — so a photo looked fully tagged here while the
+    // Supabase row kept whatever it was imported with. Everything that is not
+    // this component reads analysis_data: the Timeline (DayMedia, DayTimeline)
+    // and every other device. A photo imported on a laptop without that day's
+    // log in IndexedDB therefore showed instruments to the person who imported
+    // it and to nobody else, permanently.
+    // Only rebuilt when the live lookup actually learned something, so a day
+    // whose log is not loaded cannot blank an analysis baked in at import.
+    if(matched||xml){
+      e.analysis={
+        sails:e.sails||[], raceTags:e.raceTags||[], boat:e.boat||null, location:e.location||null,
+        inst:{ tws:e.tws??null, twa:e.twa??null, awa:e.awa??null, bsp:e.bsp??null, heel:e.heel??null, vmg:e.vmg??null },
+      };
+    }
     return e;
   },[sailResolver]);
 
