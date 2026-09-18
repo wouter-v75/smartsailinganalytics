@@ -67,15 +67,18 @@ function findDecls(lines) {
 }
 
 function identsIn(text) {
+  // Deliberately naive: scan the RAW text. An earlier version stripped strings
+  // and template literals first, and its backtick regex swallowed 100k of
+  // SSAApp's 187k characters — every import inside the swallowed span was
+  // silently dropped and only `npm run lint:undef` noticed. Over-detecting is
+  // the safe direction: a name that only appears in a comment yields an unused
+  // import, which pruneUnused() below removes with ESLint as the judge.
   const out = new Set()
-  // strip strings and comments so their words do not count as references
-  const clean = text
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
-    .replace(/`(?:\\.|\$\{[^}]*\}|[^`\\])*`/g, m => m.replace(/[^$\{\}\w]/g, ' '))
-    .replace(/'(?:\\.|[^'\\])*'/g, "''")
-    .replace(/"(?:\\.|[^"\\])*"/g, '""')
-  for (const m of clean.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)/g)) out.add(m[1])
+  // Drop spread/rest dots first: `{...rotStyle(d)}` puts a `.` immediately
+  // before the name, and the lookbehind below would otherwise read it as a
+  // property access and skip the import. That is how rotStyle went missing.
+  const flat = text.replace(/\.\.\./g, ' ')
+  for (const m of flat.matchAll(/(?<![.\w$])([A-Za-z_$][\w$]*)/g)) out.add(m[1])
   return out
 }
 
