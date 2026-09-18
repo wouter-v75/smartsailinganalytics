@@ -93,6 +93,40 @@ export default function BackfillPanel({
     setLog((p) => [...p, line])
   }
 
+  // What is still under the old flat `sessions/<date>/` keys, and whose is it?
+  // Reports only — see src/app/api/.../storage-audit for why nothing has to move,
+  // and why a day two boats both claim is never resolved automatically.
+  async function auditStorage() {
+    if (!boatId) { setErr('Pick a boat first.'); return }
+    setErr(null); setStatus('running'); setCounts(initial); setLog([])
+    append('Auditing the pre-migration storage layout…')
+    try {
+      const res = await fetch(`/api/teams/${teamId}/boats/${boatId}/storage-audit`)
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) { setErr(j.error || `failed (${res.status})`); setStatus('error'); return }
+      const sum = j.summary || {}
+      append(`${sum.dates ?? 0} date(s) still in the flat layout`)
+      if (sum.collisions?.length) {
+        append(`⚠ ${sum.collisions.length} date(s) claimed by MORE THAN ONE boat — one boat's`)
+        append("  session files overwrote another's on these days. Not recoverable:")
+        for (const c of j.collisions || []) {
+          append(`  · ${c.date} — ${(c.claimants || []).length} boats`)
+        }
+      } else {
+        append('✓ no dates claimed by more than one boat')
+      }
+      if (sum.unclaimed?.length) append(`${sum.unclaimed.length} date(s) with no session row (orphans)`)
+      const claim = j.claimableByThisBoat || []
+      append(claim.length
+        ? `${claim.length} date(s) belong to this boat alone and can be filed under it`
+        : 'nothing for this boat to claim')
+      append('Report only — nothing was changed.')
+      setStatus('done')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e)); setStatus('error')
+    }
+  }
+
   async function runFromBunny() {
     if (!boatId) {
       setErr('Pick a boat first.')
@@ -294,6 +328,14 @@ export default function BackfillPanel({
             title="Scans Bunny Cloud Storage for every session ever uploaded — this boat's own prefix and the older shared sessions/<date>/ one."
           >
             Backfill from Bunny cloud
+          </button>
+          <button
+            onClick={auditStorage}
+            disabled={status === 'running' || !boatId}
+            className="rounded-lg bg-slate-600 hover:bg-slate-700 disabled:opacity-50 text-white px-4 py-2 text-sm font-medium"
+            title="Reports what is still under the old shared sessions/<date>/ keys, and which dates two boats both claim. Changes nothing."
+          >
+            Audit old storage layout
           </button>
         </div>
 
