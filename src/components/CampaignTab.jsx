@@ -254,24 +254,18 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
 }
 
 // ── Backlog ──────────────────────────────────────────────────────────────────
-const CAT_COLOR = { racing: '#1D9E75', technical: '#F59E0B', 'whole-team': '#8B5CF6' }
 // "Location" in the UI — the DB column is still called `venue` for stability.
 // Where the work happens; office covers desk / planning / writeup days.
 const VENUES = [['on-water', 'On the water'], ['dock', 'Dock'], ['shed', 'Shed'], ['office', 'Office']]
 const VENUE_LABEL = { 'on-water': 'On the water', dock: 'Dock', shed: 'Shed', office: 'Office' }
-const PRIO_COLOR = { 1: '#EF4444', 2: '#F97316', 3: '#F59E0B', 4: '#64748B', 5: '#475569' }
 // TL3 and above may EDIT plan / backlog / day / debrief / speed notes / weather.
 const EDIT_ROLES = ['admin', 'team_manager', 'coach', 'tl3']
-// TL2 and above may see the "what can we test now" picker.
-const TESTNOW_ROLES = ['admin', 'team_manager', 'coach', 'tl3', 'tl2']
-// FMEA: RPN = S×O×D (1–1000). High severity is top priority regardless of RPN.
-const fmeaRpn = (m) => (Number(m?.severity) || 0) * (Number(m?.occurrence) || 0) * (Number(m?.detection) || 0)
 
 
 // ── Day sub-tab ──────────────────────────────────────────────────────────────
 const safeName = (n) => n.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80)
 
-function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVideo, onOpenItem, scopeAll, activeBoatName, initialDate, onConsumeInitialDate }) {
+function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onOpenItem, scopeAll, activeBoatName, initialDate, onConsumeInitialDate }) {
   const [date, setDate] = useState(initialDate || todayStr())
   // A non-null `initialDate` from the parent means "jump to this date".
   // Consume it once so subsequent in-tab navigations aren't overridden.
@@ -295,12 +289,19 @@ function DayView({ teamId, boatId, role, config, canEditPlan, isMobile, onOpenVi
 
   const loadCalendar = useCallback(async () => {
     try {
+      setErr(null)
       const res = await fetch(`${base}/calendar`)
-      if (!res.ok) return
+      // try/finally with no catch: a bad response returned silently and a thrown
+      // one became an unhandled rejection, so a failed load showed an empty day
+      // with no explanation — while the error banner below sat in the JSX with
+      // nothing able to set it.
+      if (!res.ok) { setErr(`Could not load the day (HTTP ${res.status})`); return }
       const j = await res.json()
       const list = j.sessions || []
       setAllDays(list.map((s) => ({ id: s.id, date: s.date })))
       setSession(list.find((s) => s.date === date) || null)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not load the day')
     } finally {
       setLoading(false)
     }
@@ -1563,9 +1564,10 @@ export function MyDebriefNotesCard({ teamId, boatId, date, wrapperStyle }) {
   )
 }
 
-function PlanView({ teamId, boatId, canEditPlan, canEditDates, canSeeTesting, isMobile, boats, boatScope, scopeAll, crossBoatEdit, onOpenDay }) {
+function PlanView({ teamId, boatId, canEditPlan, canSeeTesting, isMobile, boats, boatScope, scopeAll, crossBoatEdit, onOpenDay }) {
   const [sessions, setSessions] = useState([])
-  const [targetDate, setTargetDate] = useState(null)
+  // Fetched and stored but never read; nothing displays the target date here.
+  const [, setTargetDate] = useState(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
   // Picked block types for the "+ Add block" creator. Empty means "create the
@@ -2293,7 +2295,7 @@ function RegattaForm({ initial, onSubmit, onCancel }) {
   )
 }
 
-function RegattaCard({ regatta, base, canEdit, isMobile, showBoatChip, onChanged, onOpenDay }) {
+function RegattaCard({ regatta, base, canEdit, showBoatChip, onChanged, onOpenDay }) {
   const [editing, setEditing] = useState(false)
   const [docs, setDocs] = useState([])
   const [docsLoaded, setDocsLoaded] = useState(false)
@@ -2511,7 +2513,7 @@ function Counter({ value, label, sub }) {
   )
 }
 
-function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, isMobile, onChanged, showBoatChip, onOpenDay }) {
+function DayCard({ base, session, isPast, canEditPlan, canSeeTesting, onChanged, showBoatChip, onOpenDay }) {
   const [objective, setObjective] = useState(session.objective || '')
   const [objDirty, setObjDirty] = useState(false)
   const [adding, setAdding] = useState(false)

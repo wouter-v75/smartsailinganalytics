@@ -66,8 +66,6 @@ export function missText(
 }
 
 const fmt = (v: any, d = 1) => (v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toFixed(d))
-const fmtDateTime = (iso?: string | null) =>
-  iso ? new Date(iso).toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'
 
 interface Stripe { pos: number; draft: number | null; camber: number | null; twist: number | null; entry: number | null; exit: number | null; fore: number | null; back: number | null }
 
@@ -483,11 +481,6 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   // UNTAGGED main scan gets the mainsail's design curve instead of falling through to a
   // jib's (which stops at the 75% stripe, hiding the main's 87% design row entirely).
   const design = useMemo(() => pickDesign(sails || [], targetSail, activeJib, designTws, cond.sail_type), [sails, targetSail, activeJib, designTws, cond.sail_type])
-  const designByPos = useMemo(() => {
-    const m: Record<number, any> = {}
-    ;(design?.sections || []).forEach((s: any) => { if (s.posPct != null) m[s.posPct] = s })
-    return m
-  }, [design])
 
   // ── NORTHSTAR target (mainsail only) — the sailmaker's reference trim, held in
   // the same units as the design shapes and interpolated to the same TWS, so it

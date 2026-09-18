@@ -8,15 +8,13 @@
 //   4) Admin/Coach can optionally download full-res to IDB for offline debrief
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { uploadJsonToStorage, fetchFromStorage } from "../lib/bunny";
+import { uploadJsonToStorage } from "../lib/bunny";
 import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, startAutoFlush, keysForPhoto } from "../lib/photoStore";
-import { offsetFromCoords } from "../lib/tzFromCoords";
 import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
 import { buildSailResolver } from "../lib/sailResolve";
 import { useUiNext } from "../lib/ui-flags";
 import PhotosNext from "./photos/PhotosNext";
-import { heicToJpeg } from "../lib/cdnScript";
-import { writeKey, readCandidates, SESSION_LEAVES } from "../lib/storageKeys";
+import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
 import { renderOverlay } from "../lib/photoOverlay";
 import { venueTodayIso as TODAY } from "../lib/localStore";   // venue-local, not UTC
@@ -112,102 +110,11 @@ async function idbDeletePhoto(id) {
   });
 }
 
-async function idbHasPhoto(id) {
-  const db = await openDb();
-  return new Promise((res)=>{
-    const tx  = db.transaction("photos","readonly");
-    const req = tx.objectStore("photos").getKey(id);
-    req.onsuccess = ()=>res(!!req.result);
-    req.onerror   = ()=>res(false);
-  });
-}
 
 // ── EXIF parser ───────────────────────────────────────────────────────────────
-async function extractExif(file) {
-  try {
-    const buf  = await file.slice(0,131072).arrayBuffer();
-    const view = new DataView(buf);
-    const u8   = new Uint8Array(buf);
-    let exifOffset = -1;
-    for(let i=0;i<u8.length-8;i++){
-      if(u8[i]===0xFF&&u8[i+1]===0xE1&&u8[i+4]===0x45&&u8[i+5]===0x78&&u8[i+6]===0x69&&u8[i+7]===0x66){
-        exifOffset=i+10; break;
-      }
-    }
-    if(exifOffset<0) return null;
-    const le = view.getUint16(exifOffset)===0x4949;
-    const g16= o=>view.getUint16(exifOffset+o,le);
-    const g32= o=>view.getUint32(exifOffset+o,le);
-    const gStr=(o,l)=>String.fromCharCode(...u8.slice(exifOffset+o,exifOffset+o+l)).replace(/\0/g,"").trim();
-    const ifd=g32(4), n=g16(ifd);
-    let dtStr=null, gpsOff=null;
-    for(let i=0;i<n;i++){
-      const eo=ifd+2+i*12, tag=g16(eo), type=g16(eo+2), cnt=g32(eo+4), vo=g32(eo+8);
-      if((tag===0x0132||tag===0x9003||tag===0x9004)&&!dtStr)
-        dtStr=type===2&&cnt<=4?gStr(eo+8,cnt):gStr(vo,cnt);
-      if(tag===0x8825) gpsOff=vo;
-    }
-    let lat=null,lon=null;
-    if(gpsOff!=null){
-      try{
-        const ge=g16(gpsOff); let latRef="N",lonRef="E",latD=null,lonD=null;
-        for(let i=0;i<ge;i++){
-          const eo=gpsOff+2+i*12,gt=g16(eo),gv=g32(eo+8);
-          if(gt===1)latRef=gStr(eo+8,1); if(gt===3)lonRef=gStr(eo+8,1);
-          if(gt===2||gt===4){
-            const d=[0,1,2].map(j=>{const n=g32(gv+j*8),d=g32(gv+j*8+4);return d?n/d:0;});
-            if(gt===2)latD=d; else lonD=d;
-          }
-        }
-        if(latD&&lonD){
-          lat=(latD[0]+latD[1]/60+latD[2]/3600)*(latRef==="S"?-1:1);
-          lon=(lonD[0]+lonD[1]/60+lonD[2]/3600)*(lonRef==="W"?-1:1);
-        }
-      }catch{}
-    }
-    let utc=null;
-    if(dtStr){const m=dtStr.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);if(m)utc=Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]);}
-    return{utc,lat,lon};
-  }catch{return null;}
-}
 
 // Load exifr from CDN for robust EXIF extraction (JPEG, HEIC, TIFF)
-function loadExifr() {
-  return new Promise((resolve,reject)=>{
-    if(window.exifr){resolve(window.exifr);return;}
-    const s=document.createElement("script");
-    s.src="https://unpkg.com/exifr@7.1.3/dist/full.umd.js";
-    s.onload=()=>resolve(window.exifr);
-    s.onerror=reject;
-    document.head.appendChild(s);
-  });
-}
 
-async function convertToJpeg(file) {
-  if(file.type==="image/jpeg") return file;
-
-  // HEIC/HEIF — heicToJpeg loads heic2any from the CDN (src/lib/cdnScript.ts)
-  // and returns the original file untouched when it is not HEIC.
-  const jpeg = await heicToJpeg(file);
-  if(jpeg!==file) return jpeg;
-
-  // PNG/WebP — convert via canvas
-  return new Promise((resolve,reject)=>{
-    const url=URL.createObjectURL(file);
-    const img=new Image();
-    img.onload=()=>{
-      const c=document.createElement("canvas");
-      c.width=img.naturalWidth;c.height=img.naturalHeight;
-      c.getContext("2d").drawImage(img,0,0);
-      c.toBlob(blob=>{
-        URL.revokeObjectURL(url);
-        blob?resolve(new File([blob],file.name.replace(/\.[^.]+$/,".jpg"),{type:"image/jpeg"})):reject(new Error("Conversion failed"));
-      },"image/jpeg",0.92);
-    };
-    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error("Load failed"));};
-    img.src=url;
-  });
-}
 
 function nearestLogRow(rows,utc,maxMs=300000){
   if(!rows?.length||!utc)return null;
@@ -404,7 +311,6 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
     a.download=`${photo.name?.replace(/\.[^.]+$/,"")||"photo"}_overlay.jpg`;
     a.href=canvasRef.current.toDataURL("image/jpeg",0.92);a.click();
   };
-  const dateStr = photo.utc ? fmtLocalDate(photo.utc,tzOffset) : null;
   return(
     <div style={{flex:1,background:"#050E1C",borderLeft:onClose?"none":"1px solid #1E3A5A",overflowY:"auto",padding:onClose?"0 14px 20px":16,width:"100%"}}>
       {/* Mobile: sticky back bar at top */}
@@ -560,14 +466,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [photos,setPhotos]     = useState([]);   // metadata only — no blobs
   const [selected,setSelected] = useState(null);
   const [uploading,setUploading]= useState(false);
-  const [syncing,setSyncing]   = useState(false);
   const [clearingDay,setClearingDay] = useState(false);
-  const [syncState,setSyncState] = useState(null); // { phase, current, total, msg }
   const [downloadingOriginal,setDownloadingOriginal] = useState(false);
-  // Phase B — counter bumped after an import to auto-trigger a full sync
-  // so photos reach the cloud without a manual button press (mirrors the
-  // video auto-sync). Effect lives below handleSyncAll's definition.
-  const [autoSyncTrigger,setAutoSyncTrigger] = useState(0);
   // Batch select / delete — admin + coach only
   const canDelete = role === "admin" || role === "coach";
   const [batchMode,setBatchMode] = useState(false);
@@ -592,9 +492,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     // takes its argument, so a stale identity cannot give a stale result.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[batchSelected,photos,selected,clearBatch]);
-  const [dragOver,setDragOver] = useState(false);
   const [log,setLog]           = useState([]);
-  const fileRef = useRef(null);
   const addLog  = msg => setLog(p=>[...p.slice(-20),msg]);
 
   const canSync = role === "admin" || role === "coach";
@@ -835,59 +733,6 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const toggleWifiOnly = ()=>{ const v=!wifiOnly; setWifiOnly(v); setWifiOnlyState(v); if(!v) syncPendingPhotos({}).then(r=>{ if(r.originals) setRefreshNonce(n=>n+1); }).catch(()=>{}); };
 
 
-  const handleFiles = useCallback(async(files)=>{
-    const imgs=Array.from(files).filter(f=>f.type.startsWith("image/")||/\.(jpg|jpeg|png|heic|heif|webp)$/i.test(f.name));
-    if(!imgs.length){addLog("No image files found");return;}
-    addLog(`Processing ${imgs.length} photo${imgs.length>1?"s":""}…`);
-    const newPhotos=[];
-    for(const file of imgs){
-      try{
-        let exif=null;
-        try{
-          const exifr=await loadExifr();
-          const data=await exifr.parse(file,{tiff:true,exif:true,gps:true,ifd0:true});
-          const dt=data?.DateTimeOriginal||data?.DateTime;
-          // EXIF datetime = camera LOCAL wall-clock with no zone. Capture it as a
-          // wall-clock-as-UTC epoch (local getters invert exifr's local build).
-          const wallMs=dt instanceof Date?Date.UTC(dt.getFullYear(),dt.getMonth(),dt.getDate(),dt.getHours(),dt.getMinutes(),dt.getSeconds()):null;
-          exif={wallMs,lat:data?.latitude??null,lon:data?.longitude??null,camera:data?.Model||null};
-        }catch{const ex=await extractExif(file); exif=ex?{wallMs:ex.utc,lat:ex.lat,lon:ex.lon,camera:null}:null;}
-        // Convert camera local wall-clock → TRUE UTC via the venue offset, DST-aware.
-        // The venue is defined by the LOGFILE's lat/lon (the footage was shot at the
-        // same place — on board / from the RIB), NEVER the viewer's machine zone, so
-        // someone in NZ sees data in the venue's local time. Falls back to the photo's
-        // own GPS, then the session display offset. Photo epochs then line up with the
-        // log timeline, so nearest-row TWS/tags are correct.
-        let utc=null;
-        if(exif?.wallMs!=null){
-          const lr=(logData?.rows||[]).find(r=>Number.isFinite(r.lat)&&Number.isFinite(r.lon));
-          const logOff=lr?offsetFromCoords(lr.lat,lr.lon,exif.wallMs)?.offsetMin:null;
-          const off=logOff!=null?logOff:(offsetFromCoords(exif.lat,exif.lon,exif.wallMs)?.offsetMin ?? sessionTzOffset);
-          utc=exif.wallMs-off*60000;
-        }
-        addLog(`${file.name.slice(0,25)}: ${utc?fmtLocalHM(utc,sessionTzOffset)+" "+TZ_SHORT(sessionTzOffset):"no timestamp"}${exif?.lat?" 📍":""}`);
-        let jpeg;
-        try{jpeg=await convertToJpeg(file);}catch{jpeg=file;}
-        // Store blob in IDB
-        const id=`p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        await idbPutPhoto(id, jpeg);
-        const objectUrl = URL.createObjectURL(jpeg);
-        let photo={id,name:file.name,size:jpeg.size,utc,lat:exif?.lat||null,lon:exif?.lon||null,
-          sessionDate:activeDate,objectUrl,cloudSynced:false,addedAt:Date.now()};
-        photo=enrichPhoto(photo,logData,xmlData);
-        newPhotos.push(photo);
-      }catch(e){addLog(`✕ ${file.name.slice(0,20)}: ${e.message}`);}
-    }
-    const updated=[...photos,...newPhotos];
-    setPhotos(updated);savePhotos(updated);
-    if(newPhotos.length>0)setSelected(newPhotos[0]);
-    addLog(`✓ ${newPhotos.length} photo${newPhotos.length>1?"s":""} added`);
-    // Phase B — auto-push new photos to the cloud (no manual button).
-    // Bump the trigger; the effect below handleSyncAll runs the upload.
-    if(newPhotos.length>0 && cloudStatus?.available){
-      setAutoSyncTrigger(t=>t+1);
-    }
-  },[photos,activeDate,logData,xmlData,enrichPhoto,savePhotos,cloudStatus,sessionTzOffset]);
 
   // Re-enrich is handled by the loading effect above (logData/xmlData are in its deps).
   // A separate effect would race with the async loading effect and cause stale-state bugs.
@@ -983,110 +828,6 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     }
     setUploading(false);
   };
-
-  // ── Pull cloud photos for this session, merge with local state ──────────────
-  // Cloud-only photos get thumbnail URLs; we don't auto-download originals.
-  const handlePullFromCloud = useCallback(async () => {
-    if(!activeDate || !cloudStatus?.available) return;
-    // Scoped index first, then the pre-migration flat one, so a day uploaded
-    // before scoping still opens.
-    let index = null;
-    for (const k of readCandidates(await currentStorageScope(), activeDate, SESSION_LEAVES.photoIndex)) {
-      index = await fetchFromStorage(k);
-      if (index) break;
-    }
-    if(!index?.photos) return { added: 0, updated: 0 };
-    const cloudPhotos = index.photos;
-
-    // Merge: local wins on id collision (keeps objectUrl), but mark cloudSynced.
-    const byId = new Map(photos.map(p => [p.id, p]));
-    let added = 0, updated = 0;
-    for(const cp of cloudPhotos) {
-      if(byId.has(cp.id)) {
-        const local = byId.get(cp.id);
-        if(!local.cloudSynced) {
-          byId.set(cp.id, {...local, ...cp, cloudSynced: true, objectUrl: local.objectUrl, hasLocalOriginal: local.hasLocalOriginal});
-          updated++;
-        }
-      } else {
-        const keys = keysForPhoto(cp, activeDate);
-        byId.set(cp.id, {
-          ...cp,
-          cloudSynced: true,
-          sessionDate: activeDate,
-          objectUrl: cloudImageUrl(keys.thumb),
-          hasLocalOriginal: false,
-        });
-        added++;
-      }
-    }
-    const merged = Array.from(byId.values()).sort((a,b)=>(b.utc||0)-(a.utc||0));
-    setPhotos(merged);
-    savePhotos(merged);
-    return { added, updated };
-  }, [activeDate, cloudStatus, photos, savePhotos]);
-
-  // ── Full sync: push all local-only + pull all cloud-only ────────────────────
-  const handleSyncAll = async () => {
-    if(!cloudStatus?.available) { addLog("✕ Cloud not available"); return; }
-    setSyncing(true);
-    try {
-      // PHASE 1 — Pull cloud index first so we don't re-upload anything
-      setSyncState({ phase: "pull", current: 0, total: 0, msg: "Fetching cloud index…" });
-      const pullResult = await handlePullFromCloud();
-      if(pullResult?.added)   addLog(`✓ Pulled ${pullResult.added} cloud photo${pullResult.added>1?"s":""}`);
-      if(pullResult?.updated) addLog(`✓ Updated ${pullResult.updated} photo${pullResult.updated>1?"s":""}`);
-
-      // PHASE 2 — Push every local photo that isn't cloud-synced yet.
-      // Read fresh state because handlePullFromCloud may have merged.
-      const currentList = JSON.parse(localStorage.getItem(LS_KEY)||"[]");
-      const toPush = currentList.filter(p => !p.cloudSynced);
-      const total = toPush.length;
-      if(total === 0) {
-        setSyncState({ phase: "done", current: 0, total: 0, msg: "Nothing to upload" });
-        addLog("✓ Nothing to push — all photos in cloud");
-      } else {
-        addLog(`Pushing ${total} photo${total>1?"s":""} to cloud…`);
-        let pushed = 0;
-        let latestList = currentList;
-        for(let i=0; i<total; i++) {
-          const p = toPush[i];
-          setSyncState({ phase: "push", current: i+1, total, msg: `Uploading ${p.name?.slice(0,20)||"photo"}…` });
-          try {
-            const updatedPhoto = await uploadPhotoToCloud(p);
-            latestList = latestList.map(x => x.id===p.id ? {...updatedPhoto} : x);
-            // Keep in-state UI in sync too
-            setPhotos(prev => prev.map(x => x.id===p.id ? {...x, cloudSynced: true} : x));
-            pushed++;
-          } catch(e) {
-            addLog(`✕ ${p.name?.slice(0,20)||p.id}: ${e.message}`);
-          }
-        }
-        // Persist and write the updated index once at the end
-        localStorage.setItem(LS_KEY, JSON.stringify(latestList));
-        try { await writePhotoIndex(latestList.map(p => ({...p, objectUrl: null}))); } catch {}
-        setSyncState({ phase: "done", current: pushed, total, msg: `✓ Synced ${pushed}/${total}` });
-        addLog(`✓ Pushed ${pushed}/${total} photos`);
-      }
-    } catch(e) {
-      setSyncState({ phase: "error", msg: String(e.message||e) });
-      addLog(`✕ Sync error: ${e.message||e}`);
-    }
-    // Keep the final state visible briefly, then clear
-    setTimeout(() => setSyncState(null), 3500);
-    setSyncing(false);
-  };
-
-  // Phase B — auto-sync after import. handleAddFiles bumps autoSyncTrigger;
-  // this effect (declared after handleSyncAll so there's no TDZ) runs the
-  // full pull+push. Guarded against the initial 0 value and re-entrancy.
-  useEffect(() => {
-    if (autoSyncTrigger === 0) return;
-    if (syncing) return;
-    if (!cloudStatus?.available) return;
-    handleSyncAll();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSyncTrigger]);
 
   // ── Admin/Coach: download full-res original for offline use ─────────────────
   const handleDownloadOriginal = async () => {
@@ -1267,29 +1008,6 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             </button>
           )}
 
-          {/* ── Sync progress readout ── */}
-          {syncState && (
-            <div style={{
-              marginBottom:8, padding:"6px 8px",
-              background: syncState.phase==="error" ? "#EF444415" : "#06B6D410",
-              border: `1px solid ${syncState.phase==="error" ? "#EF444440" : "#06B6D430"}`,
-              borderRadius:5, fontSize:9, fontFamily:"monospace",
-              color: syncState.phase==="error" ? "#EF4444" : "#06B6D4",
-            }}>
-              <div style={{marginBottom: syncState.total>0 ? 4 : 0}}>
-                {syncState.total>0 ? `${syncState.current}/${syncState.total} · ` : ""}{syncState.msg}
-              </div>
-              {syncState.total>0 && (
-                <div style={{height:3,background:"#0A1929",borderRadius:2,overflow:"hidden"}}>
-                  <div style={{
-                    height:"100%",
-                    width:`${Math.round((syncState.current/syncState.total)*100)}%`,
-                    background:"#06B6D4", transition:"width 0.15s",
-                  }}/>
-                </div>
-              )}
-            </div>
-          )}
           <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
             placeholder="Search photos…"
             style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7}}/>

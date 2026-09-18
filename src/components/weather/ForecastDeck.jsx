@@ -53,31 +53,19 @@ const ALL_TODAY = ['ICONRACE', 'ICONRACE_1KM', 'AROME', 'METNO', 'HRRR', 'NAM', 
 // HRRR is 3 km with hourly rapid refresh — the local model, like AROME. NAM is 12 km:
 // regional, better than the globals, well short of a 1-3 km model.
 const WEIGHTS = { ICONRACE: 7.0, ICONRACE_1KM: 8.5, AROME: 8.5, METNO: 8.5, HRRR: 8.5, NAM: 3.0, ECMWF: 1.3, ICON: 1.3, ARPEGE: 0.9, ITALIA: 1.5, DMI: 1.0 }
-const RACE_HOURS = [10, 11, 12, 13, 14, 15, 16, 17]; const RACE0 = 10; const RACE1 = 17
+const RACE0 = 10; const RACE1 = 17   // the racing window, in venue-local hours
 const RACE_FILL = 'rgba(56,189,248,0.13)'
-const CARD = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
-const cardinal = (deg) => (deg == null || Number.isNaN(deg) ? '' : CARD[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16])
 const pad2 = (n) => String(n).padStart(2, '0')
 const round5 = (x) => (x == null ? null : Math.round(x / 5) * 5)
 // 8-way SOLID BLACK arrow pointing the way the wind BLOWS (toward = TWD+180).
 // Heavy/filled glyphs (U+2B06 family + U+27A1); U+FE0E forces the monochrome
 // black text form rather than a coloured emoji. Fixed size for every direction.
-const ARROWS = ['⬆', '⬈', '➡', '⬊', '⬇', '⬋', '⬅', '⬉']
-const ARROW_SIZE = 15
-const arrowGlyph = (twd) => (twd == null ? '' : ARROWS[Math.round((((twd + 180) % 360) + 360) % 360 / 45) % 8] + '\uFE0E')
 
 function circMean(d) { if (!d.length) return null; let s = 0; let c = 0; for (const x of d) { const r = (x * Math.PI) / 180; s += Math.sin(r); c += Math.cos(r) } return (((Math.atan2(s, c) * 180) / Math.PI) % 360 + 360) % 360 }
 function circStd(d) { if (d.length < 2) return 0; let s = 0; let c = 0; for (const x of d) { const r = (x * Math.PI) / 180; s += Math.sin(r); c += Math.cos(r) } const R = Math.hypot(s, c) / d.length; return R <= 0 ? 180 : (Math.sqrt(-2 * Math.log(Math.min(1, R))) * 180) / Math.PI }
 // TWD range = circular mean ± 1σ (was: full min/max envelope, which one outlier
 // model could blow open). σ from the circular standard deviation, floored at 3°
 // so a single-model hour still shows a usable band rather than a bare number.
-function circRange(d) {
-  if (!d.length) return null
-  const m = circMean(d)
-  const sd = Math.max(3, circStd(d))
-  const wrap = (x) => Math.round(((x % 360) + 360) % 360)
-  return [wrap(m - sd), wrap(m + sd)]
-}
 // Weighted variants of the circular stats above -- used for the TWD (direction)
 // mean/range so the model WEIGHTS bias the DIRECTION the same way weightedBand
 // biases the speed (heavy bias to SSA-1km + AROME). Items: [{ v: deg, w }].
@@ -760,11 +748,6 @@ function diagChips(dg) {
 // 2 nm) centred on point 1, from the actual wind field. This is DETERMINISTIC —
 // the AI can't see the spatial field, only summarised point data, so we compute
 // it here and feed it to both the deck and the AI brief.
-function offsetLL(lat, lon, nm, brgDeg) {
-  const R = nm / 60
-  const b = (brgDeg * Math.PI) / 180
-  return [lat + R * Math.cos(b), lon + (R * Math.sin(b)) / Math.max(0.2, Math.cos((lat * Math.PI) / 180))]
-}
 // Average the field over a grid of points across a `sideNm`-square box (default
 // 4 nm) centred on point 1, rotated into the wind axis (along = upwind, cross =
 // right looking upwind). Gives robust TWS gradients (left/right, top/bottom) and
@@ -814,10 +797,6 @@ function toSentences(text) {
   return String(text).split(/(?<=[.!?])\s+(?=[A-Z0-9“"])/).map((s) => s.trim()).filter(Boolean)
 }
 // pptxgenjs runs: one paragraph per item, with inter-paragraph spacing.
-function paraRuns(items, { color, size = 13, spaceAfter = 12 } = {}) {
-  const arr = (items || []).filter(Boolean)
-  return arr.map((t) => ({ text: t, options: { breakLine: true, paraSpaceAfter: spaceAfter, color, fontFace: FONT, fontSize: size } }))
-}
 // Accept either an AI array field or a legacy string (split to sentences).
 function asItems(val) {
   if (Array.isArray(val)) return val.filter(Boolean)

@@ -265,10 +265,8 @@ export function detectDay(input: DetectInput): Detection[] {
   // otherwise has no roundings at all — and roundings are one of the two things
   // always worth pulling footage of. Only a FALLBACK: where the event file has
   // them, it is the better source and mixing the two would double-count.
-  let legs: Leg[] = []
   if (!eventRoundings.length && rows.length && !input.skipLegDetection) {
     const found2 = detectLegsAndRoundings(rows)
-    legs = found2.legs
     for (const r of found2.roundings) {
       if (!racing(r.utc)) continue
       const s = seg(r.utc)

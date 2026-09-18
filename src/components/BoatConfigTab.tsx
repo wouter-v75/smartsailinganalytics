@@ -1054,7 +1054,6 @@ function mmPos(v: any): string {
   const n = Number(m[0])
   return `${/aft/i.test(str) ? -Math.abs(n) : n} mm`
 }
-const sectionCols = (cols: any[], section: string) => (cols || []).filter((c) => c && c.section === section)
 const twsNum = (c: any): number | null => {
   if (c == null) return null
   if (typeof c.twsMhKn === 'number') return c.twsMhKn

@@ -2072,7 +2072,7 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   );
 }
 
-function TagEditor({video, onSave, tagList=[], suggestionList, sessionDate, onTagListChange}){
+function TagEditor({video, onSave, tagList=[], suggestionList, onTagListChange}){
   const[tags,    setTags]    = useState(video.tags||[]);
   const[input,   setInput]   = useState("");
   const[dirty,   setDirty]   = useState(false);
@@ -6002,12 +6002,11 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         onRecheckStream,
                         logData,xmlData,loadDate,syncOffsets,setSyncOffsets,
                         saveSyncForVideos,saveTagsForVideo,
-                        sessionTzOffset,searchQuery,setSearchQuery,sortBy,setSortBy,
+                        sessionTzOffset,searchQuery,setSearchQuery,
                         selectedTags,setSelectedTags,toggleTag,allTags,isManTag,displayed,perms,
                         onSyncProxies,onUploadOriginals,mobileSyncState,syncErrors,onRotateVideo,
-                        setActiveTab,cloudStatus,updateVideoTagsFn,
-                        computeAutoTagsFn,sessionTagList,setSessionTagList,tagSuggestionList,
-                        handlePlayUtc,onDeleted,role,effectiveRole,
+                        cloudStatus,sessionTagList,setSessionTagList,tagSuggestionList,
+                        handlePlayUtc,effectiveRole,
                         onThumbLoad,videoThumbsLoading,videoLoadedIds,videoTotalThumbs}){
   const [view, setView]   = React.useState("clips"); // "clips" | "player" | "sessions"
   const video = selectedVideo;
@@ -8226,7 +8225,7 @@ function SSAApp(){
             sessionDate: item.sessionDate,
             scope: await currentStorageScope(),
             source: blob,
-            onProgress: ({phase, pct, message}) => {
+            onProgress: ({phase, pct}) => {
               // Phase leads the message so it stays visible even where the
               // progress line is narrow (the clip name is what gets clipped,
               // not the phase the user needs to see).

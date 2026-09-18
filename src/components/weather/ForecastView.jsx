@@ -22,7 +22,7 @@ import {
   kmhToKnots, decimalToDMS,
   calculateTheoreticalSeaProfile, pressureToAltitude,
   interpolateSpeedAtHeight,
-  labelWithCycle, withCycleLabel, localForecastWindow, localRacingWindow,
+  labelWithCycle, withCycleLabel, localRacingWindow,
 } from './openMeteo'
 import { useModelCycles } from './modelCycles'
 import { resolveVenueTz, deviceTz, wallHour, formatWall } from './venueTz'
@@ -78,18 +78,6 @@ const LOCATION_META = [
   { key: '3', emoji: '🟠', accent: '#F97316' },
 ]
 
-const TZ_OPTIONS = [
-  { v: 'auto',                       l: 'Auto (browser)' },
-  { v: 'UTC',                        l: 'UTC' },
-  { v: 'Europe/London',              l: 'Europe/London' },
-  { v: 'Europe/Paris',               l: 'Europe/Paris' },
-  { v: 'Europe/Madrid',              l: 'Europe/Madrid' },
-  { v: 'Europe/Rome',                l: 'Europe/Rome' },
-  { v: 'Europe/Helsinki',            l: 'Europe/Helsinki' },
-  { v: 'America/New_York',           l: 'America/New_York' },
-  { v: 'America/Los_Angeles',        l: 'America/Los_Angeles' },
-  { v: 'Australia/Sydney',           l: 'Australia/Sydney' },
-]
 
 // Props:
 //   windData, activeModel, resolvedTz — fetched data (lifted to WeatherTab so
@@ -137,7 +125,10 @@ export default function ForecastView({
   const activeModelObj = useMemo(() => withCycleLabel(MODELS[activeModel], cycles[activeModel]), [activeModel, cycles])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState(null)
-  const [progress, setProgress] = useState(null) // { done, total, label } during fetch
+  // Set but never rendered — the progress bar this feeds was never wired up. It
+  // updates once per model per location during a fetch, so re-adding the readout
+  // is the only thing that would make those re-renders worth anything.
+  const [, setProgress] = useState(null) // { done, total, label } during fetch
 
   // ── Animated wind-field overlay (appears once all 3 points are set) ──
   const [velocityReady, setVelocityReady] = useState(false)
@@ -586,16 +577,6 @@ export default function ForecastView({
     markersRef.current[key] = m
   }
 
-  function clearLocation(key) {
-    setLocations((prev) => {
-      const next = { ...prev }; delete next[key]; return next
-    })
-    // Drop that point's fetched data too so the table goes back to placeholder.
-    if (windData[key]) {
-      const next = { ...windData }; delete next[key]
-      onDataChange?.(next, activeModel, resolvedTz)
-    }
-  }
 
   // Reset everything: clear all 3 points, the fetched model data, and the 2D
   // field. Map markers drop via the locations->markers effect; field overlays
@@ -1441,14 +1422,6 @@ function Field({ label, children }) {
 const inputStyle = {
   background: '#071624', border: '1px solid #1E3A5A', borderRadius: 6,
   color: '#E2E8F0', padding: '6px 9px', fontSize: 13,
-}
-const btnPrimary = {
-  background: '#06B6D4', border: 'none', borderRadius: 6, color: '#000',
-  fontWeight: 700, fontSize: 13, padding: '7px 16px', cursor: 'pointer',
-}
-const btnGhost = {
-  background: '#1E3A5A', border: 'none', borderRadius: 4, color: '#94A3B8',
-  fontSize: 10, padding: '3px 8px', cursor: 'pointer',
 }
 const th = { padding: '6px 4px', textAlign: 'center', color: '#94A3B8', fontWeight: 600, fontSize: 10, borderBottom: '1px solid #1E3A5A' }
 const td = { padding: '4px', textAlign: 'center', color: '#E2E8F0', fontFamily: 'monospace', borderBottom: '1px solid #0F2030' }
