@@ -17,6 +17,7 @@
     "media:upload": "vite-node scripts/day-media-upload.ts",
     "lidar:import": "vite-node scripts/lidar-import.ts",
     "headlines:backfill": "vite-node scripts/headlines-backfill.ts",
+    "docs:pdf": "node scripts/md2pdf.mjs",
     "verify": "tsc --noEmit && next lint && npm run lint:undef && vitest run && next build",
     "lint:undef": "eslint --no-eslintrc --parser-options=ecmaVersion:2022,sourceType:module,ecmaFeatures:{jsx:true} --rule '{\"no-undef\":\"error\",\"no-use-before-define\":[\"error\",{\"functions\":false,\"classes\":false,\"variables\":false}]}' --env browser,node,es2022 --report-unused-disable-directives-severity off --no-inline-config 'src/**/*.{js,jsx}'"
   },

@@ -14,6 +14,27 @@ something costs you an hour.
 All of these are dry-run by default and need `--write` to do anything. They read
 `.env.local` and must run **outside** Claude Code's Bash sandbox.
 
+## Docs are delivered as PDF, never as `.md`
+
+The Markdown in `docs/` is the editable **source**. What gets handed over — to
+Wouter, to a coach, to anyone — is **the PDF**. Nobody reads a `.md` in a
+terminal, and these docs are mostly wide tables, which are unreadable raw. Write
+the Markdown, then always produce and deliver the PDF alongside it:
+
+```bash
+npm run docs:pdf docs/<name>.md      # writes docs/<name>.pdf next to it
+```
+
+`pandoc`, `weasyprint` and `wkhtmltopdf` are **not installed**; the script goes
+Markdown → HTML → PDF through headless Google Chrome. Two traps:
+
+- **It must run outside Claude Code's Bash sandbox.** Seatbelt blocks Chrome's
+  ProcessSingleton unix socket — "Failed to create socket directory" — and it
+  aborts before rendering anything.
+- **Chrome does not exit after `--print-to-pdf`.** The script waits for the file
+  to stop growing and then kills it. That kill is load-bearing; without it the
+  command hangs until it is timed out and backgrounded.
+
 ## Traps that have each cost a day
 
 **Clocks are local wall-time even when something calls them UTC.** The log
