@@ -89,6 +89,13 @@ if (!TEAM || !files.length) {
 }
 
 const expand = (p: string) => p.replace(/^~/, process.env.HOME || '~')
+
+// Only these formats are GPS tracker logs. Everything else in a Downloads
+// folder — weather exports, polars, route files, instrument logs from another
+// boat — must be REFUSED, not quietly skipped: a glob of ~/Downloads/*.csv once
+// reached the write stage with 160 files and was stopped only by a null
+// position on the first one.
+const TRACKER_FORMATS = new Set(['vakaros-csv', 'gpx'])
 const kn = (v: number | null | undefined) => (v == null ? '–' : v.toFixed(1))
 
 async function main() {
@@ -100,27 +107,52 @@ async function main() {
   if (!owner) throw new Error(`no user ${OWNER_EMAIL}`)
   console.log(`team ${team.name} (${team.id}) · created_by ${owner.email}`)
 
-  // ── 1. parse every file ───────────────────────────────────────────────────
+  // ── 1. parse every file, and refuse anything that is not a track ──────────
+  if (boatNames.length && boatNames.length !== files.length) {
+    throw new Error(`${boatNames.length} --boat names for ${files.length} files — they are matched in order, so give one each or none`)
+  }
+  console.log(`${files.length} file(s):`)
+  for (const f of files) console.log(`   ${path.basename(expand(f))}`)
+
+  const rejects: string[] = []
   const loaded = files.map((f, i) => {
     const p = expand(f)
+    const name = path.basename(p)
     const text = fs.readFileSync(p, 'utf8')
     const parsed: any = parseLog(text)
-    const plan = planTrackerIngest(text, { filename: path.basename(p) })
+    const plan = planTrackerIngest(text, { filename: name })
+    const hasFix = parsed.rows?.some((r: any) =>
+      Number.isFinite(r?.lat) && Number.isFinite(r?.lon))
+    if (!TRACKER_FORMATS.has(parsed.format)) rejects.push(`${name} — ${parsed.format}, not a GPS tracker log`)
+    else if (!hasFix) rejects.push(`${name} — no lat/lon in any row`)
+    else if (!plan.sessionDate) rejects.push(`${name} — no usable timestamps`)
     return {
-      file: path.basename(p),
+      file: name,
       boatName: boatNames[i] || plan.title || path.basename(p, path.extname(p)),
       rows: parsed.rows, plan, parsed,
     }
   })
 
-  const dates = Array.from(new Set(loaded.map((l) => l.plan.sessionDate).filter(Boolean)))
+  if (rejects.length) {
+    console.error(`\n${rejects.length} of ${files.length} file(s) are not importable tracks:`)
+    for (const r of rejects.slice(0, 15)) console.error(`   ${r}`)
+    if (rejects.length > 15) console.error(`   …and ${rejects.length - 15} more`)
+    throw new Error('refusing to import — pass only the tracker files for one day')
+  }
+
+  const dates = Array.from(new Set(loaded.map((l) => l.plan.sessionDate!)))
   if (dates.length !== 1) throw new Error(`files span ${dates.length} dates (${dates.join(', ')}) — import one day at a time`)
-  const date = dates[0]!
-  const tz = loaded[0].plan.tzOffsetMin ?? 0
-  console.log(`date ${date} · venue clock UTC${tz >= 0 ? '+' : ''}${tz / 60}`)
+  const date = dates[0]
+  // The venue clock comes from a file that actually carries one, not from
+  // whichever file happened to be listed first.
+  const tzs = Array.from(new Set(loaded.map((l) => l.plan.tzOffsetMin).filter((v) => v != null)))
+  if (tzs.length > 1) throw new Error(`files disagree about the venue offset (${tzs.join(', ')} min)`)
+  const tz = (tzs[0] ?? null) as number | null
+  if (tz == null) throw new Error('no file carries a UTC offset — GPX has none, so pass --tz <minutes>')
+  console.log(`\ndate ${date} · venue clock UTC${tz >= 0 ? '+' : ''}${tz / 60}`)
 
   // ── 2. the model wind, and the current, for this venue and day ────────────
-  const pos = medianPosition(loaded[0].rows)!
+  const pos = medianPosition(loaded.flatMap((l) => l.rows))!
   const wx: any = await (await fetch(
     `https://archive-api.open-meteo.com/v1/archive?latitude=${pos.lat.toFixed(2)}&longitude=${pos.lon.toFixed(2)}` +
     `&start_date=${date}&end_date=${date}&hourly=wind_speed_10m,wind_direction_10m&wind_speed_unit=kn&timezone=UTC`)).json()
