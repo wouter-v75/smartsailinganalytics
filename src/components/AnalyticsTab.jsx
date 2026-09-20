@@ -66,13 +66,20 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   // Same source, same labels, same colours: two names for one moment is two
   // moments as far as a reader is concerned.
   const [tagBoat, setTagBoat] = useState(null);
+  // A workspace can be scoped to a TEAM but no boat — that is what a team-wide
+  // membership becomes when the team has no boats yet. Sessions are boat-scoped,
+  // so listSessionsCloud returns nothing and saveLogDataCloud writes nothing:
+  // the app looked empty and silent, with no way to tell that from "no data".
+  const [noBoatScope, setNoBoatScope] = useState(false);
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const uid = await getUidFast();
         const m = uid ? getActiveMembership(uid) : null;
-        if (alive && m?.team_id && m?.boat_id) setTagBoat({ teamId: m.team_id, boatId: m.boat_id, role: m.role || null });
+        if (!alive) return;
+        if (m?.team_id && m?.boat_id) setTagBoat({ teamId: m.team_id, boatId: m.boat_id, role: m.role || null });
+        setNoBoatScope(!!m?.team_id && !m?.boat_id);
       } catch { /* not signed in */ }
     })();
     return () => { alive = false; };
@@ -371,7 +378,17 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                   finishDraft={finishDraft} onFinishDraft={setFinishDraft} onSaveFinish={saveFinish}
                   finishNote={finishNote(race)} finishMsg={finishMsg} canTagFinish={!!tagBoat}/>
               ) : (
+                noBoatScope ? (
+                  <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10,lineHeight:1.6}}>
+                    This workspace is scoped to a <strong>team</strong>, not a boat — and sessions belong to a boat,
+                    so none can be listed or uploaded here.
+                    <br/>
+                    Pick a boat from the workspace switcher (top right). If the team has no boats yet, add one in
+                    Boat config first; the switcher then offers one workspace per boat.
+                  </div>
+                ) : (
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — {onPlayClip?"pick a date in the session bar above":"select a date in the Library first"}.</div>
+                )
               )
             ))}
             {canSeeAnalyticsData && <div ref={timeseriesRef} style={{scrollMarginTop:12}}/>}

@@ -122,6 +122,34 @@ async function loadMemberships(userId: string): Promise<MembershipRow[]> {
   return rows.filter((m) => isWindowOpen(m.valid_from, m.valid_to))
 }
 
+/**
+ * The persisted workspace, resolved against the rows that exist NOW.
+ *
+ * In order of how sure we are:
+ *   1. the exact row it named
+ *   2. an EXPANSION of it — a workspace stored while the team had no boats
+ *      carries the bare membership uuid, and once a boat exists the expansion
+ *      replaces that row with `<uuid>::<boatId>`
+ *   3. any BOAT-SCOPED row in the same team
+ *
+ * Without 2 and 3 the lookup misses and the caller falls through to the GLOBAL
+ * default, which is the current Northstar boat. Someone who created a team,
+ * opened it before adding a boat, then added one, was silently moved to a
+ * different team's boat on the next load — no sessions for the team they
+ * thought they were in, and nothing saying why.
+ */
+export function resolveStoredWorkspace(
+  ms: MembershipRow[],
+  stored: { id?: string; team_id?: string } | null | undefined
+): MembershipRow | undefined {
+  if (!stored) return undefined
+  return (
+    ms.find((m) => m.id === stored.id) ||
+    (stored.id ? ms.find((m) => m.id.startsWith(`${stored.id}::`)) : undefined) ||
+    (stored.team_id ? ms.find((m) => m.team_id === stored.team_id && m.boat_id) : undefined)
+  )
+}
+
 function isWindowOpen(from: string | null, to: string | null): boolean {
   const now = Date.now()
   if (from && new Date(from).getTime() > now) return false
@@ -205,7 +233,7 @@ export default function UserPill() {
       const isOldNorthstar = (m: MembershipRow) => /northstar\s*72\b/i.test(m.boat_name || '')
       const isCurrentNorthstar = (m: MembershipRow) => /northstar\s*76\b/i.test(m.boat_name || '')
       const stored = getActiveMembership(uid)
-      const storedRow = ms.find((m) => m.id === stored?.id)
+      const storedRow = resolveStoredWorkspace(ms, stored)
       const preferredDefault =
         ms.find(isCurrentNorthstar) ||        // the current Northstar boat (76)
         ms.find((m) => !isOldNorthstar(m)) ||  // any boat that isn't the retired 72
