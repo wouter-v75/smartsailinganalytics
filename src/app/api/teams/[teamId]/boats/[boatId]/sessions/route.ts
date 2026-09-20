@@ -47,6 +47,31 @@ export async function GET(
     if (d) scansByDate[d] = (scansByDate[d] || 0) + 1
   }
 
+  // Whether each session HOLDS a log / event file.
+  //
+  // The Analytics date picker filters on hasOpenableData(), which reads hasLog
+  // / hasXml — and this route never reported them, so a session that exists
+  // only in the cloud was filtered out of the picker entirely. SSAApp's own
+  // comment records the assumption ("a cloud row carries no hasLog flag"), and
+  // it holds right up until a session is created by something other than the
+  // browser: a script import then lands a perfectly good day that the UI
+  // refuses to offer, with nothing to say why.
+  //
+  // Asked as two FILTERED queries rather than by selecting log_data, because
+  // the projection would drag a megabyte of JSONB per session across the wire
+  // to answer a yes/no question.
+  const withData = async (column: string) => {
+    const { data: rows } = await supabase
+      .from('sessions')
+      .select('date')
+      .eq('team_id', params.teamId)
+      .eq('boat_id', params.boatId)
+      .not(column, 'is', null)
+      .limit(200)
+    return new Set(((rows || []) as Array<{ date: string }>).map((r) => r.date))
+  }
+  const [logDates, xmlDates] = await Promise.all([withData('log_data'), withData('xml_data')])
+
   // Flatten the embedded aggregates into plain integers.
   const sessions = ((data || []) as unknown as Array<Record<string, unknown>>).map((row) => {
     const { videos, photos, ...rest } = row
@@ -55,6 +80,8 @@ export async function GET(
       video_count: (videos as { count: number }[] | undefined)?.[0]?.count ?? 0,
       photo_count: (photos as { count: number }[] | undefined)?.[0]?.count ?? 0,
       scan_count: scansByDate[String((rest as { date?: string }).date || '')] ?? 0,
+      has_log: logDates.has(String((rest as { date?: string }).date || '')),
+      has_xml: xmlDates.has(String((rest as { date?: string }).date || '')),
     }
   })
 
