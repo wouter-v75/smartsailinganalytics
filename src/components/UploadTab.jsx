@@ -1,6 +1,7 @@
 'use client'
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getActiveMembership } from '../lib/active-membership';
+import { setSessionShared, shareLabel, squadsForTeam } from '../lib/squadShare';
 import { syncSessionToCloud, waitForStreamReady } from '../lib/bunny';
 import { saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { mergeTagListCloud } from '../lib/cloud-tag-list';
@@ -62,6 +63,23 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // squad day goes through `npm run tracker:import`, which assigns each file a
   // boat of its own.
   const[csvFiles,setCsvFiles]=useState([]);
+  // "Share these data with the squad." Only asked when the active boat's team
+  // is actually IN a squad — a team of one boat must never see the question.
+  const[squads,setSquads]=useState([]);
+  const[shareWithSquad,setShareWithSquad]=useState(false);
+  useEffect(()=>{
+    let alive=true;
+    (async()=>{
+      try{
+        const { data: { user } } = await getBrowserSupabase().auth.getUser();
+        const m=user?getActiveMembership(user.id):null;
+        if(!m?.team_id){ if(alive) setSquads([]); return; }
+        const list=await squadsForTeam(m.team_id);
+        if(alive) setSquads(list);
+      }catch{ if(alive) setSquads([]); }
+    })();
+    return()=>{alive=false;};
+  },[]);
   const[xmlFile,setXmlFile]=useState(null);
   // ── Polar state ──────────────────────────────────────────────────────────
   const[polarFile,setPolarFile]=useState(null);
@@ -681,6 +699,19 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             logData: cloudLog,
             tzOffsetMinutes: csvTz,
           });
+          // Sharing is a SEPARATE call carrying only the flag, so it cannot
+          // disturb the log that was just written — and so an upload that
+          // leaves the box unticked does not silently un-share a session
+          // somebody shared earlier from Analytics.
+          if (ok && squads.length && shareWithSquad) {
+            const mem = getActiveMembership(user.id);
+            if (mem?.team_id && mem?.boat_id) {
+              const r = await setSessionShared(mem.team_id, mem.boat_id, d, true);
+              addLog(r.ok
+                ? `🤝 Shared with ${squads.map(q=>q.name).join(', ')} → ${d}`
+                : `⚠ Could not share with the squad: ${r.error}`);
+            }
+          }
           const mb = (JSON.stringify(cloudLog).length / 1048576).toFixed(2);
           if (ok) addLog(`☁ Log synced to cloud → ${d} · ${cloudLog.rows.length.toLocaleString()} of ${csvParsed.rows.length.toLocaleString()} rows · ${mb} MB`);
           else addLog(`⚠ Log NOT synced (${mb} MB payload) — saved on this device only. Check the console for the HTTP status; an active boat workspace must be selected.`);
@@ -1222,6 +1253,27 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
                     Merged on the clock, duplicates dropped:{" "}
                     {csvFiles.map(f=>f.name).join(" · ")}
                   </div>
+                )}
+                {squads.length>0&&(
+                  <label style={{
+                    display:"flex",alignItems:"flex-start",gap:8,marginTop:8,padding:"8px 10px",
+                    background:shareWithSquad?"#0B2136":"#071624",
+                    border:`1px solid ${shareWithSquad?"#1D9E75":"#1E3A5A"}`,
+                    borderRadius:6,cursor:"pointer",fontSize:10,lineHeight:1.5,
+                    color:shareWithSquad?"#7DD3FC":"#94A3B8",
+                  }}>
+                    <input type="checkbox" checked={shareWithSquad}
+                      onChange={e=>setShareWithSquad(e.target.checked)}
+                      style={{marginTop:2,cursor:"pointer"}}/>
+                    <span>
+                      {shareLabel(squads)}
+                      <br/>
+                      <span style={{color:"#475569",fontSize:9}}>
+                        The track and its derived analysis only — not video, photos or debriefs.
+                        You can change this later on the session in Analytics.
+                      </span>
+                    </span>
+                  </label>
                 )}
                 <div style={{fontSize:9,color:"#334155",marginTop:6,lineHeight:1.5}}>
                   <strong style={{color:"#475569"}}>Accepted:</strong> Expedition CSV (1 Hz / 4 Hz, incl. lidar),
