@@ -11,6 +11,7 @@ import { extractBoatLengthM } from '../lib/sailMath';
 import { getUidFast } from '../lib/supabase/browser';
 import { addSection, inSections, removeSection, sectionLabel, sectionsSpan } from '../lib/trackSections';
 import { GPSTrackMap } from './GPSTrackMap';
+import { loadSquadTracks } from '../lib/squadTracks';
 import PerfChartsSection from './analytics/PerfChartsSection';
 import { LineChart } from './charts/LineChart';
 import { ManoeuvreChart } from './charts/ManoeuvreChart';
@@ -65,13 +66,20 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   // Same source, same labels, same colours: two names for one moment is two
   // moments as far as a reader is concerned.
   const [tagBoat, setTagBoat] = useState(null);
+  // A workspace can be scoped to a TEAM but no boat — that is what a team-wide
+  // membership becomes when the team has no boats yet. Sessions are boat-scoped,
+  // so listSessionsCloud returns nothing and saveLogDataCloud writes nothing:
+  // the app looked empty and silent, with no way to tell that from "no data".
+  const [noBoatScope, setNoBoatScope] = useState(false);
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const uid = await getUidFast();
         const m = uid ? getActiveMembership(uid) : null;
-        if (alive && m?.team_id && m?.boat_id) setTagBoat({ teamId: m.team_id, boatId: m.boat_id, role: m.role || null });
+        if (!alive) return;
+        if (m?.team_id && m?.boat_id) setTagBoat({ teamId: m.team_id, boatId: m.boat_id, role: m.role || null });
+        setNoBoatScope(!!m?.team_id && !m?.boat_id);
       } catch { /* not signed in */ }
     })();
     return () => { alive = false; };
@@ -142,6 +150,20 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   };
   // Reset view when the session changes
   useEffect(()=>{ setViewRange(null); setSections([]); }, [activeDate]);
+
+  // ── The rest of the squad on the same day ────────────────────────────────
+  // A dinghy squad trains together and nearly every question is comparative, so
+  // the other boats' tracks are loaded beside the active one. RLS decides what
+  // comes back, and a boat with no session that day is simply absent.
+  const [squadTracks,setSquadTracks]=useState([]);
+  useEffect(()=>{
+    if(!tagBoat?.teamId||!activeDate){ setSquadTracks([]); return; }
+    let alive=true;
+    loadSquadTracks({ teamId:tagBoat.teamId, date:activeDate, excludeBoatId:tagBoat.boatId })
+      .then(t=>{ if(alive) setSquadTracks(t); })
+      .catch(()=>{ if(alive) setSquadTracks([]); });
+    return()=>{ alive=false; };
+  }, [tagBoat?.teamId, tagBoat?.boatId, activeDate]);
   // Auto-zoom to video clip range when video is selected and has a start time.
   // Depends on both selectedVideo?.id AND activeDate so it re-fires when a new
   // session is loaded (rows might have been empty on the previous render).
@@ -352,11 +374,21 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             {section("GPS track",(
               rows.length > 0 ? (
                 <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlForRaces} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} sections={sections} onSelection={selectSection} onRemoveSection={dropSection} onClearSections={clearSections}
-                  dayTags={dayTagEvents} onRaceChosen={pickRace}
+                  dayTags={dayTagEvents} onRaceChosen={pickRace} squadTracks={squadTracks}
                   finishDraft={finishDraft} onFinishDraft={setFinishDraft} onSaveFinish={saveFinish}
                   finishNote={finishNote(race)} finishMsg={finishMsg} canTagFinish={!!tagBoat}/>
               ) : (
+                noBoatScope ? (
+                  <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10,lineHeight:1.6}}>
+                    This workspace is scoped to a <strong>team</strong>, not a boat — and sessions belong to a boat,
+                    so none can be listed or uploaded here.
+                    <br/>
+                    Pick a boat from the workspace switcher (top right). If the team has no boats yet, add one in
+                    Boat config first; the switcher then offers one workspace per boat.
+                  </div>
+                ) : (
                 <div style={{padding:12,background:"#071624",borderRadius:8,color:"#F59E0B",fontSize:10}}>Load a session with GPS data — {onPlayClip?"pick a date in the session bar above":"select a date in the Library first"}.</div>
+                )
               )
             ))}
             {canSeeAnalyticsData && <div ref={timeseriesRef} style={{scrollMarginTop:12}}/>}

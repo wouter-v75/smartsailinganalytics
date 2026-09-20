@@ -17,12 +17,17 @@ import { isLogV3, expandLogV3 } from './logV3Parse'
 // @ts-ignore — JS module, typed as any
 import { parseCsvLog } from './csvLogParse'
 import { effectiveAliases, type BoatLogProfile } from './logProfile'
+import { isVakarosCsv, parseVakarosCsv } from './vakarosCsvParse'
+import { isGpx, parseGpx } from './gpxParse'
 
 // 'raw' (the Expedition sparse !-log, expLogParse) is RETIRED 2026-06-29 — the
 // Northstar 76 export moved to the flat-CSV (flat-ole) format. The literal is kept
 // in the union only so old UI labels comparing to it stay valid; it is never
 // produced by detectLogFormat anymore. (expLogParse.ts can be deleted.)
-export type LogFormat = 'raw' | 'flat-ole' | 'flat-nmea' | 'log-v3' | 'flat-local'
+export type LogFormat =
+  | 'raw' | 'flat-ole' | 'flat-nmea' | 'log-v3' | 'flat-local'
+  | 'vakaros-csv'   // GPS-only (dinghy) — see vakarosCsvParse.ts
+  | 'gpx'           // the universal fallback — see gpxParse.ts
 
 export interface ParseLogResult {
   format: LogFormat
@@ -30,6 +35,12 @@ export interface ParseLogResult {
   startUtc: number
   endUtc: number
   version?: string | null
+  // Set by formats that carry their own clock and cadence. The Vakaros export
+  // does: its timestamps have an explicit UTC offset, so the venue offset and
+  // the session date need never be asked for at upload. See the SSA
+  // fundamentals — dropping the file should be the whole interaction.
+  tzOffsetMin?: number | null
+  rateHz?: number | null
 }
 
 export interface ParseLogOpts {
@@ -42,6 +53,10 @@ export function detectLogFormat(text: string): LogFormat {
   // channel map. Must be tested BEFORE isFlatOleLog, which rejects any file whose
   // first line starts with `!` and would send this to the legacy NMEA parser —
   // yielding zero rows, silently.
+  // GPS-only tracker exports first: their header is unambiguous and they share
+  // no shape with the instrument formats below.
+  if (isVakarosCsv(text)) return 'vakaros-csv'
+  if (isGpx(text)) return 'gpx'
   if (isLogV3(text)) return 'log-v3'
   // Before flat-OLE: same shape, but a `Datetime` column of LOCAL wall-clock rather
   // than a `Utc` one. The distinction is the whole point — see below.
@@ -55,6 +70,26 @@ export function parseLog(text: string, opts: ParseLogOpts = {}): ParseLogResult 
   const tz = opts.tzOffsetMin || 0
   const format = detectLogFormat(text)
 
+  if (format === 'vakaros-csv') {
+    // A dinghy track: lat/lon/sog/cog/hdg/heel/trim and nothing else. twd, tws,
+    // twa and the phase list are SYNTHESISED downstream (phase B of
+    // docs/dinghy-adaptation-plan-2026-09.md), not invented here.
+    const p = parseVakarosCsv(text, { boatProfile: opts.boatProfile })
+    return {
+      format, rows: p.rows, startUtc: p.startUtc, endUtc: p.endUtc,
+      tzOffsetMin: p.tzOffsetMin, rateHz: p.rateHz,
+    }
+  }
+  if (format === 'gpx') {
+    // Phones, watches, Velocitek exports. No heading, heel or pitch; sog/cog may
+    // be derived from position, which the result flags.
+    const p = parseGpx(text)
+    return {
+      format, rows: p.rows, startUtc: p.startUtc, endUtc: p.endUtc,
+      tzOffsetMin: null,          // GPX times are UTC; the venue offset is unknown
+      rateHz: p.rateHz,
+    }
+  }
   if (format === 'log-v3') {
     // Expand the sparse rows into the fixed-column layout, then reuse the flat-OLE
     // pipeline wholesale — same labels, so the same aliases, units and FILETIME

@@ -55,6 +55,13 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   const csvParsedRef=useRef(csvParsed); useEffect(()=>{csvParsedRef.current=csvParsed;},[csvParsed]);
   const[xmlParsed,setXmlParsed]=useState(null);
   const[csvFile,setCsvFile]=useState(null);
+  // Several logfiles can be chosen at once — a day split across exports, or a
+  // device that writes one file per session. They are parsed separately (they
+  // may even be different formats) and their rows merged on the clock.
+  // NOT a way to import several BOATS: this tab saves to the ACTIVE boat, so a
+  // squad day goes through `npm run tracker:import`, which assigns each file a
+  // boat of its own.
+  const[csvFiles,setCsvFiles]=useState([]);
   const[xmlFile,setXmlFile]=useState(null);
   // ── Polar state ──────────────────────────────────────────────────────────
   const[polarFile,setPolarFile]=useState(null);
@@ -458,12 +465,25 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     if(!vids.length&&!imgs.length)addLog("✕ No video or photo files found.");
   },[handleVids,handlePhotos,addLog]);
 
-  const parseCsvWithTz=useCallback((file,tz,auto=false)=>{
-    if(!file)return;setCsvFile(file);
-    const r=new FileReader();
-    r.onload=e=>{
+  const parseCsvWithTz=useCallback((fileOrFiles,tz,auto=false)=>{
+    const files=Array.isArray(fileOrFiles)?fileOrFiles:(fileOrFiles?[fileOrFiles]:[]);
+    if(!files.length)return;
+    setCsvFile(files[0]); setCsvFiles(files);
+    Promise.all(files.map(f=>new Promise((res,rej)=>{
+      const fr=new FileReader();
+      fr.onload=ev=>res({name:f.name,text:ev.target.result});
+      fr.onerror=()=>rej(new Error(`could not read ${f.name}`));
+      fr.readAsText(f);
+    }))).then(parts=>{
+      const e={target:{result:parts.length===1?parts[0].text:parts}};
+      return e;
+    }).then(e=>{
       try{
-        const text=e.target.result;
+        // One file reads as before. Several are parsed independently and their
+        // rows merged, because two exports of the same day are not guaranteed
+        // to share a format, a rate, or even a clock convention.
+        const multi=Array.isArray(e.target.result);
+        const text=multi?e.target.result[0].text:e.target.result;
         // Format is auto-detected from the file (raw / flat-OLE / log-v3 / flat-NMEA);
         // the active boat's stored log profile (channel-label aliases) is applied
         // on top. raw + flat-OLE are already UTC → the tz offset only affects the
@@ -472,19 +492,41 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         try{ boatProfile=JSON.parse(localStorage.getItem('ssa:log-profile:active')||'null'); }catch{}
         let effTz=tz;
         let p=parseLog(text,{boatProfile,tzOffsetMin:effTz});
+        const mergeIn=()=>{
+          if(!multi) return;
+          const seen=new Set(p.rows.map(r=>r.utc));
+          const extraNames=[];
+          for(const part of e.target.result.slice(1)){
+            const q=parseLog(part.text,{boatProfile,tzOffsetMin:effTz});
+            let added=0;
+            for(const row of q.rows){ if(!seen.has(row.utc)){ seen.add(row.utc); p.rows.push(row); added++; } }
+            extraNames.push(`${part.name} (${added.toLocaleString()} rows${q.format!==p.format?`, ${q.format}`:''})`);
+          }
+          p.rows.sort((a,b)=>a.utc-b.utc);
+          p.startUtc=p.rows[0]?.utc||p.startUtc; p.endUtc=p.rows[p.rows.length-1]?.utc||p.endUtc;
+          p.mergedFrom=[`${e.target.result[0].name} (${(p.rows.length).toLocaleString()} total)`,...extraNames];
+        };
+        mergeIn();
         // Auto-derive the LOCAL/venue timezone (display) from the log's GPS
         // position, DST-aware — so the user never has to pick it. Manual changes
         // via the dropdown call this with auto=false and are respected.
         if(auto){
           const gp=p.rows.find(rr=>Number.isFinite(rr.lat)&&Number.isFinite(rr.lon));
           const at=p.startUtc||gp?.utc;
-          const z=gp&&at?offsetFromCoords(gp.lat,gp.lon,at):null;
+          // A format that carries its OWN UTC offset beats a coordinate lookup:
+          // it is what the device recorded against the sailor's own clock, it
+          // needs no position fix, and it cannot be wrong about DST. The Vakaros
+          // export stamps every row `...+0100`. Everything else still falls back
+          // to the DST-aware lookup from the log's first GPS position.
+          const z=p.tzOffsetMin!=null
+            ?{offsetMin:p.tzOffsetMin,zone:'the file\u2019s own timestamps'}
+            :(gp&&at?offsetFromCoords(gp.lat,gp.lon,at):null);
           if(z){
             effTz=z.offsetMin;
             setCsvTz(effTz);
             // flat-NMEA timestamps were converted with the old offset → re-parse.
             // Both local-clock formats were converted with the OLD offset → re-parse.
-            if(p.format==='flat-nmea'||p.format==='flat-local') p=parseLog(text,{boatProfile,tzOffsetMin:effTz});
+            if(p.format==='flat-nmea'||p.format==='flat-local'){ p=parseLog(text,{boatProfile,tzOffsetMin:effTz}); mergeIn(); }
             // The venue zone (from the LOG's lat/lon) is authoritative for the
             // whole session — drive the VIDEO offset from it too, and re-base any
             // already-queued clips so their camera wall-clock → true-UTC uses the
@@ -503,14 +545,15 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               setVidTz(effTz); vidTzRef.current=effTz;
             }
             const lbl=TZ_OPTIONS.find(o=>o.offsetMin===effTz)?.label||`UTC${effTz>=0?'+':''}${effTz/60}`;
-            addLog(`🌍 Timezone from log position (${z.zone}) → ${lbl} · applied to log, video & photos`);
+            const src=p.tzOffsetMin!=null?'Timezone from the log file':'Timezone from log position';
+            addLog(`🌍 ${src} (${z.zone}) → ${lbl} · applied to log, video & photos`);
           }
         }
         // Sample rate + lidar sails, for the card and for saveLocal (a 4 Hz lidar export
         // is stored as a 1 Hz copy after its stats are computed from every row).
         p.hz=logRateHz(p.rows); p.lidarSails=lidarSailsIn(p.rows);
         setCsvParsed(p);
-        const fmtLabel=[p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':'flat CSV',
+        const fmtLabel=[p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':p.format==='vakaros-csv'?'Vakaros GPS':'flat CSV',
           p.hz>=1.5?`${p.hz} Hz`:null, p.lidarSails.length?`lidar ${p.lidarSails.map(s=>s.label.toLowerCase()).join('/')}`:null].filter(Boolean).join(' · ');
         // flat-local carries VENUE wall-clock, like the legacy flat-NMEA export, so
         // the timezone actually decides where its rows land — say which one was used
@@ -520,16 +563,17 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         // A zero-row parse used to report as a green tick, so an unreadable file
         // looked like a successful upload and only surfaced later as an empty
         // chart in Analytics. Say so at the point the file is read.
+        const srcLabel = files.length>1 ? `${files.length} files` : files[0].name;
         if(!p.rows.length){
-          addLog(`⚠ Log (${fmtLabel.trim()}): 0 rows read from ${file.name} — the format wasn't recognised. Nothing will show in Analytics.`);
+          addLog(`⚠ Log (${fmtLabel.trim()}): 0 rows read from ${srcLabel} — the format wasn't recognised. Nothing will be saved.`);
         } else {
-          addLog(`✓ Log (${fmtLabel.trim()}): ${p.rows.length.toLocaleString()} rows · ${file.name} · ${tzNote}`);
+          addLog(`✓ Log (${fmtLabel.trim()}): ${p.rows.length.toLocaleString()} rows · ${srcLabel} · ${tzNote}`);
+          if(p.mergedFrom) for(const m of p.mergedFrom) addLog(`   · ${m}`);
           if(p.hz>=1.5) addLog(`· ${p.hz} Hz log: performance${p.lidarSails.length?', lidar':''} and tack/gybe stats use every row; this device keeps a 1 Hz copy for charts and video`);
         }
       }
-      catch(err){addLog(`✕ CSV: ${err instanceof Error?err.message:String(err)}`);}
-    };
-    r.readAsText(file);
+      catch(err){addLog(`✕ Logfile: ${err instanceof Error?err.message:String(err)}`);}
+    }).catch(err=>addLog(`✕ Logfile: ${err instanceof Error?err.message:String(err)}`));
   },[addLog]);
 
   const parseXmlWithTz=useCallback((file,tz)=>{
@@ -542,7 +586,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     r.readAsText(file);
   },[addLog]);
 
-  const handleCsv=useCallback(file=>{parseCsvWithTz(file,csvTz,true);},[csvTz,parseCsvWithTz]);
+  const handleCsv=useCallback(files=>{parseCsvWithTz(Array.from(files||[]),csvTz,true);},[csvTz,parseCsvWithTz]);
   const handleXml=useCallback(file=>{parseXmlWithTz(file,xmlTz);},[xmlTz,parseXmlWithTz]);
 
   // ── Polar upload handler — parses and persists to localStorage ────────────
@@ -561,7 +605,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
-  const onCsvTzChange=tz=>{setCsvTz(tz);if(csvFile)parseCsvWithTz(csvFile,tz);};
+  const onCsvTzChange=tz=>{setCsvTz(tz);if(csvFiles.length)parseCsvWithTz(csvFiles,tz);};
   const onXmlTzChange=tz=>{setXmlTz(tz);if(xmlFile)parseXmlWithTz(xmlFile,tz);};
   const onVidTzChange=tz=>{
     setVidTz(tz);
@@ -597,7 +641,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     // XML events → its own date
     const xmlDate = xmlParsed?.meta?.date || null;
 
-    if (csvParsed) {
+    // A parse that produced NO ROWS is not a session. Saving it anyway created
+    // a row dated TODAY (no timestamps to derive a date from) holding an empty
+    // log, which then became the newest session and hijacked what Analytics
+    // opened. The warning at parse time already says the format was not
+    // recognised; there is nothing here worth writing.
+    if (csvParsed?.rows?.length) {
       const d = csvDate || fallbackDate;
       addLog(`Saving log → session ${fmtDate(d)}…`);
       // Tag the log entry with the active workspace so cross-tenant local
@@ -610,7 +659,8 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       // log. Keep a 1 Hz copy; the stats below still come from csvParsed.rows (every row).
       const thinned = isSubSecondLog(csvParsed.rows);
       const logRows = thinned ? thinToOneHz(csvParsed.rows) : csvParsed.rows;
-      await saveLogData(d, logRows, csvFile.name, csvParsed.startUtc, csvParsed.endUtc, csvTz, logMembership);
+      const logName = csvFiles.length>1 ? `${csvFiles.length} files · ${csvFile.name}` : csvFile.name;
+      await saveLogData(d, logRows, logName, csvParsed.startUtc, csvParsed.endUtc, csvTz, logMembership);
       // Mirror to Supabase if there's an active membership.
       try {
         const supabase = getBrowserSupabase();
@@ -620,7 +670,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           // a full session log is tens of MB, over the upload route's size
           // limit. The full-resolution log stays on this device.
           const cloudLog = reduceLogForCloud(
-            { rows: logRows, fileName: csvFile.name, startUtc: csvParsed.startUtc, endUtc: csvParsed.endUtc, tzOffset: csvTz },
+            { rows: logRows, fileName: csvFiles.length>1?`${csvFiles.length} files · ${csvFile.name}`:csvFile.name, startUtc: csvParsed.startUtc, endUtc: csvParsed.endUtc, tzOffset: csvTz },
             xmlParsed
           );
           const ok = await saveLogDataCloud({
@@ -1155,12 +1205,31 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               {/* Log file */}
               <div style={{background:"#0A1929",border:`1px solid ${csvParsed?"#1D9E75":"#1E3A5A"}`,borderRadius:10,padding:14}}>
-                <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Expedition log (CSV)</div>
-                <input ref={csvRef} type="file" accept=".csv,text/csv" style={{display:"none"}} onChange={e=>handleCsv(e.target.files[0])}/>
+                <div style={{fontSize:9,fontWeight:700,color:"#475569",letterSpacing:2,textTransform:"uppercase",marginBottom:8}}>Logfile</div>
+                {/* The format is detected from the file itself, so the label no
+                    longer names one system. It said "Expedition log (CSV)"
+                    while happily reading Vakaros and GPX too, which told a
+                    dinghy sailor their file was not welcome. */}
+                <input ref={csvRef} type="file" multiple accept=".csv,.gpx,text/csv,application/gpx+xml" style={{display:"none"}} onChange={e=>handleCsv(e.target.files)}/>
                 <button onClick={()=>csvRef.current?.click()} style={{width:"100%",background:csvParsed?"#1D9E7512":"#071624",border:`1px solid ${csvParsed?"#1D9E75":"#1E3A5A"}`,borderRadius:6,padding:"9px 0",color:csvParsed?"#1D9E75":"#7DD3FC",cursor:"pointer",fontSize:11}}>
-                  {csvParsed?`✓ ${csvFile.name}`:"Choose file"}
+                  {csvParsed?(csvFiles.length>1?`✓ ${csvFiles.length} files`:`✓ ${csvFile.name}`):"Choose file(s)"}
                 </button>
                 {csvParsed&&<div style={{marginTop:6,fontSize:10,color:"#475569"}}>{csvParsed.rows.length.toLocaleString()} rows{csvParsed.hz>=1.5?` · ${csvParsed.hz} Hz`:""}{csvParsed.lidarSails?.length?` · lidar: ${csvParsed.lidarSails.map(s=>s.label).join(", ")}`:""}</div>}
+                {csvParsed&&csvFiles.length>1&&(
+                  <div style={{marginTop:4,fontSize:9,color:"#334155",lineHeight:1.5}}>
+                    Merged on the clock, duplicates dropped:{" "}
+                    {csvFiles.map(f=>f.name).join(" · ")}
+                  </div>
+                )}
+                <div style={{fontSize:9,color:"#334155",marginTop:6,lineHeight:1.5}}>
+                  <strong style={{color:"#475569"}}>Accepted:</strong> Expedition CSV (1 Hz / 4 Hz, incl. lidar),
+                  Expedition <code>!log=v3</code>, flat CSV with a <code>Utc</code> or local <code>Datetime</code> column,
+                  legacy NMEA CSV, <strong style={{color:"#475569"}}>Vakaros Atlas CSV</strong> and <strong style={{color:"#475569"}}>GPX</strong>
+                  {" "}(phones, watches, Velocitek exports). The format is detected from the file — nothing to choose.
+                  <br/>
+                  <strong style={{color:"#475569"}}>Several files</strong> are merged into one session on their timestamps.
+                  To import a whole squad, one file per boat, use <code>npm run tracker:import</code> — this tab saves to the boat you have open.
+                </div>
                 <TzSelect value={csvTz} onChange={onCsvTzChange} label="Local / venue timezone (display)"/>
                 <div style={{fontSize:9,color:"#334155",marginTop:5}}>
                   <strong style={{color:"#475569"}}>Auto-detected from the log's GPS position</strong> (DST-aware) when you choose a file — change it only to override.

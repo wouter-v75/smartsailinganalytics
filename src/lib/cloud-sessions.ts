@@ -20,6 +20,10 @@ export interface CloudSessionRow {
   created_by_user_id: string | null
   /** Number of videos in this session (from the API's aggregate embed). */
   video_count?: number
+  photo_count?: number
+  /** Whether the row holds a log / event file — see the sessions route. */
+  has_log?: boolean
+  has_xml?: boolean
 }
 
 function endpoint(teamId: string, boatId: string | null, date?: string): string | null {

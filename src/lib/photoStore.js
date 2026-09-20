@@ -76,7 +76,16 @@ export function connectionIsGood() {
 // ── IndexedDB blob store (shared schema with PhotosTab) ───────────────────────
 function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 4)
+        // Opened WITHOUT a version on purpose. localStore.js owns this database's schema
+    // and opens it at DB_VER; hardcoding a number here means that the day DB_VER is
+    // bumped, every open() left behind on the old number throws
+    // "The requested version (N) is less than the existing version (N+1)" and the
+    // feature dies silently. That is exactly what commit 333255e did on 17 Sep 2026:
+    // it took DB_VER to 5 for the phases store and left four call sites on 4, which
+    // broke photo import, SailScan and SquashShots. A versionless open attaches to
+    // whatever version exists; the upgrade handler below still runs if the database
+    // does not exist yet, and localStore creates anything it misses.
+    const req = indexedDB.open(DB_NAME)
     req.onupgradeneeded = (e) => {
       const db = e.target.result
       if (!db.objectStoreNames.contains('videos')) {

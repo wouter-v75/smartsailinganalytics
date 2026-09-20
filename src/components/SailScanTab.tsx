@@ -1190,7 +1190,16 @@ export default function SailScanTab({ teamId = null, boatId = null }: { teamId?:
       // Persist blob to IndexedDB (same db SquashShots uses, so PhotosTab finds it)
       const id = `p_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const db: IDBDatabase = await new Promise((resolve, reject) => {
-        const req = indexedDB.open('ssa-db', 4);
+                // Opened WITHOUT a version on purpose. localStore.js owns this database's schema
+        // and opens it at DB_VER; hardcoding a number here means that the day DB_VER is
+        // bumped, every open() left behind on the old number throws
+        // "The requested version (N) is less than the existing version (N+1)" and the
+        // feature dies silently. That is exactly what commit 333255e did on 17 Sep 2026:
+        // it took DB_VER to 5 for the phases store and left four call sites on 4, which
+        // broke photo import, SailScan and SquashShots. A versionless open attaches to
+        // whatever version exists; the upgrade handler below still runs if the database
+        // does not exist yet, and localStore creates anything it misses.
+        const req = indexedDB.open('ssa-db');
         req.onupgradeneeded = (e: any) => {
           const d = e.target.result;
           if (!d.objectStoreNames.contains('photos')) d.createObjectStore('photos', { keyPath: 'id' });

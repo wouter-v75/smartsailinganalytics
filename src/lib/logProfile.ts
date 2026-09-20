@@ -50,7 +50,7 @@ export type LogField =
 // (expLogParse) and the flat-CSV column headers (flatLogParse / csvLogParse).
 // Values are pre-normalised. A boat's override list is PREPENDED to these.
 export const DEFAULT_ALIASES: Record<LogField, string[]> = {
-  lat: ['lat'], lon: ['lon'],
+  lat: ['lat', 'latitude'], lon: ['lon', 'longitude'],
   bsp: ['bsp', 'boatspeed'],
   awa: ['awa', 'awangle'],
   aws: ['aws'],
@@ -59,7 +59,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   twd: ['twd', 'twdirn'],
   heel: ['heel'],
   trim: ['trim'],
-  sog: ['sog', 'extsog'],
+  sog: ['sog', 'extsog', 'sogkts'],
   cog: ['cog'],
   vmg: ['vmg'],
   rudder: ['rudder'],
@@ -108,7 +108,7 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   leeway: ['leeway', 'dx900lwy'],
   set: ['set'],
   drift: ['drift'],
-  hdg: ['hdg', 'heading'],
+  hdg: ['hdg', 'heading', 'hdgtrue'],
   // performance / targets — alias the per-format column labels onto canonical keys
   vsTarget: ['vstarget', 'vstarg', 'targbsp', 'targetbsp', 'targetboatspeed'],   // target boat speed (kn)
   vsTargPct: ['vstargpct', 'vstargetpct'],                    // BSP as % of target
@@ -148,11 +148,62 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   baro: ['baro', 'barometer', 'pressure', 'airpressure', 'mslp', 'presssure'],
 }
 
+// ── Per-boat METHODS ────────────────────────────────────────────────────────
+// The profile stopped being only an alias map when the first GPS-only boat
+// arrived. An instrumented boat MEASURES twd/tws and ships a polar and an event
+// file; a dinghy has none of those and everything must be DERIVED from the
+// track. Rather than branch on boat type all over the app (boat type is the
+// wrong axis — see docs/one-product-capability-profiles-2026-09.md), the boat
+// declares which method to use and the pipeline reads it.
+//
+// Deliberately NOT here: the compass offset. Devices move between boats, so a
+// magnetometer bias is a property of the tracker, not the hull — it belongs on
+// the tracker record. See docs/dinghy-adaptation-plan-2026-09.md §5.
+
+export type WindDirMethod = 'measured' | 'derived-cog' | 'derived-fleet' | 'model' | 'manual'
+export type WindSpeedMethod = 'measured' | 'model' | 'manual'
+export type PolarMethod = 'measured' | 'published' | 'learned' | 'none'
+export type PhaseMethod = 'event-file' | 'derived'
+
+export interface BoatMethods {
+  windDirection?: WindDirMethod
+  windSpeed?: WindSpeedMethod
+  polar?: PolarMethod
+  phases?: PhaseMethod
+  manoeuvres?: { minSogKn?: number; targets?: { tack: number; gybe: number } }
+}
+
 export interface BoatLogProfile {
   aliases?: Partial<Record<LogField, string[]>>
   // optional, advisory only — auto-detect still decides the format:
   expectedFormat?: 'raw' | 'flat-ole' | 'flat-nmea'
   note?: string | null
+  // ── added for the dinghy work; every field optional, so an existing boat
+  //    with only `aliases` keeps behaving exactly as before ──
+  class?: string                       // 'ILCA 7' | '49er' | 'Northstar 76'
+  methods?: BoatMethods
+  calibration?: { leewayDeg?: number }
+  classRules?: { electronicsWhileRacing?: boolean }
+  channels?: LogField[]                // observed at last ingest; not hand-set
+}
+
+// Sensible methods for a boat that has not declared any, inferred from what its
+// log format can actually supply. This is what keeps the N76 working unchanged
+// while a dinghy gets derived everything, with no per-boat setup required.
+export function defaultMethodsForFormat(format?: string | null): Required<Omit<BoatMethods, 'manoeuvres'>> {
+  const gpsOnly = format === 'vakaros-csv' || format === 'vakaros-vkx' ||
+    format === 'velocitek-vcc' || format === 'gpx' || format === 'tractrac'
+  return gpsOnly
+    ? { windDirection: 'derived-cog', windSpeed: 'model', polar: 'learned', phases: 'derived' }
+    : { windDirection: 'measured', windSpeed: 'measured', polar: 'measured', phases: 'event-file' }
+}
+
+// Effective methods = boat overrides on top of the format defaults.
+export function effectiveMethods(
+  profile?: BoatLogProfile | null,
+  format?: string | null
+): BoatMethods {
+  return { ...defaultMethodsForFormat(format), ...(profile?.methods || {}) }
 }
 
 // Read a boat's stored log profile (boat.specs.log_profile), tolerant of shape.

@@ -597,11 +597,17 @@ function SSAApp(){
                   if(existing){
                     // Fill in the cloud video/photo counts if the local entry lacks them.
                     if(!existing.videoCount && s.video_count) existing.videoCount=s.video_count;
+                    // A day held locally may still be the one the cloud knows
+                    // carries a log — e.g. imported by a script on another
+                    // machine. Never downgrade a flag that is already true.
+                    if(s.has_log) existing.hasLog=true;
+                    if(s.has_xml) existing.hasXml=true;
                     if(!existing.photoCount && s.photo_count) existing.photoCount=s.photo_count;
                     // Campaign event name (regatta) — cloud is the source of truth.
                     if(s.event!==undefined) existing.event=s.event;
                   }else{
-                    merged.push({date:s.date, source:'supabase', videoCount:s.video_count||0, photoCount:s.photo_count||0, event:s.event||null});
+                    merged.push({date:s.date, source:'supabase', videoCount:s.video_count||0, photoCount:s.photo_count||0, event:s.event||null,
+                      hasLog:!!s.has_log, hasXml:!!s.has_xml});
                   }
                 }
                 return merged.sort((a,b)=>b.date.localeCompare(a.date));
