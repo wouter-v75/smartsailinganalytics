@@ -11,6 +11,7 @@ import { extractBoatLengthM } from '../lib/sailMath';
 import { getUidFast } from '../lib/supabase/browser';
 import { addSection, inSections, removeSection, sectionLabel, sectionsSpan } from '../lib/trackSections';
 import { GPSTrackMap } from './GPSTrackMap';
+import { loadSquadTracks } from '../lib/squadTracks';
 import PerfChartsSection from './analytics/PerfChartsSection';
 import { LineChart } from './charts/LineChart';
 import { ManoeuvreChart } from './charts/ManoeuvreChart';
@@ -142,6 +143,20 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   };
   // Reset view when the session changes
   useEffect(()=>{ setViewRange(null); setSections([]); }, [activeDate]);
+
+  // ── The rest of the squad on the same day ────────────────────────────────
+  // A dinghy squad trains together and nearly every question is comparative, so
+  // the other boats' tracks are loaded beside the active one. RLS decides what
+  // comes back, and a boat with no session that day is simply absent.
+  const [squadTracks,setSquadTracks]=useState([]);
+  useEffect(()=>{
+    if(!tagBoat?.teamId||!activeDate){ setSquadTracks([]); return; }
+    let alive=true;
+    loadSquadTracks({ teamId:tagBoat.teamId, date:activeDate, excludeBoatId:tagBoat.boatId })
+      .then(t=>{ if(alive) setSquadTracks(t); })
+      .catch(()=>{ if(alive) setSquadTracks([]); });
+    return()=>{ alive=false; };
+  }, [tagBoat?.teamId, tagBoat?.boatId, activeDate]);
   // Auto-zoom to video clip range when video is selected and has a start time.
   // Depends on both selectedVideo?.id AND activeDate so it re-fires when a new
   // session is loaded (rows might have been empty on the previous render).
@@ -352,7 +367,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             {section("GPS track",(
               rows.length > 0 ? (
                 <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlForRaces} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} sections={sections} onSelection={selectSection} onRemoveSection={dropSection} onClearSections={clearSections}
-                  dayTags={dayTagEvents} onRaceChosen={pickRace}
+                  dayTags={dayTagEvents} onRaceChosen={pickRace} squadTracks={squadTracks}
                   finishDraft={finishDraft} onFinishDraft={setFinishDraft} onSaveFinish={saveFinish}
                   finishNote={finishNote(race)} finishMsg={finishMsg} canTagFinish={!!tagBoat}/>
               ) : (

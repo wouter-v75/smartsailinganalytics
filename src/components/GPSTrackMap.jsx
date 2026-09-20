@@ -30,7 +30,7 @@ const selectStyle = {
 // harness, and anything else omitting it) put the map in an endless
 // render → effect → setState → render loop, rebuilding Leaflet each time.
 export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=EMPTY, onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=EMPTY, sections=EMPTY, onSelection=null, onRemoveSection=null, onClearSections=null,
-  dayTags=EMPTY, onRaceChosen=null,
+  dayTags=EMPTY, onRaceChosen=null, squadTracks=EMPTY,
   finishDraft=null, onFinishDraft=null, onSaveFinish=null, finishNote=null, finishMsg=null, canTagFinish=false}){
   const tz=useTz();
   const containerRef = React.useRef(null);
@@ -55,6 +55,17 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   const [selecting,setSelecting] = React.useState(false);
   const [draft,setDraft]         = React.useState(null);   // [utcA, utcB] while dragging
   const [mapGen,setMapGen]       = React.useState(0);
+  // The squad's other boats, drawn beside the active one. Hidden rather than
+  // removed, so toggling is instant and the colour stays with the boat.
+  const [hiddenBoats,setHiddenBoats] = React.useState(()=>new Set());
+  const shownSquad = React.useMemo(
+    ()=>squadTracks.filter(t=>!hiddenBoats.has(t.boatId)),
+    [squadTracks,hiddenBoats]);
+  // Leaflet is rebuilt wholesale by the map effect, so it needs a dep that
+  // changes when the VISIBLE set does — not the array identity.
+  const squadSig = React.useMemo(
+    ()=>shownSquad.map(t=>`${t.boatId}:${t.rows.length}`).join('|'),
+    [shownSquad]);
   const selLayerRef              = React.useRef(null);
 
   const dayStart = xmlData?.dayStartUtc || null;
@@ -196,6 +207,23 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       }
       if(seg.pts.length>1) segments.push(seg);
       let allLatLngs = [];
+
+      // ── The rest of the squad ──────────────────────────────────────────────
+      // Drawn FIRST so the active boat sits on top, thinner and dimmer so the
+      // colour ramp on the active track stays readable. Their points are NOT
+      // added to allLatLngs: a boat that sailed somewhere else entirely would
+      // otherwise zoom the map out and hide the day being looked at.
+      for(const t of shownSquad){
+        const pts=t.rows.map(r=>[r.lat,r.lon]);
+        if(pts.length<2) continue;
+        L.polyline(pts,{color:t.colour,weight:2,opacity:0.55,smoothFactor:1,dashArray:'4 3'})
+          .bindTooltip(t.sailNumber?`${t.boatName} · ${t.sailNumber}`:t.boatName,{sticky:true})
+          .addTo(map);
+        const end=pts[pts.length-1];
+        L.marker(end,{icon:L.divIcon({className:'',iconSize:[0,0],iconAnchor:[-4,6],
+          html:`<span style="font-size:9px;font-weight:700;color:${t.colour};text-shadow:0 0 3px #000;white-space:nowrap">${t.boatName}</span>`})}).addTo(map);
+      }
+
       for(const s of segments){
         L.polyline(s.pts,{color:s.color,weight:3,opacity:0.92,smoothFactor:1}).addTo(map);
         allLatLngs=allLatLngs.concat(s.pts);
@@ -449,7 +477,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     // `tz` is read when labelling markers; winStart reaches this through hlRows,
     // which is memoised on it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, photoMarkerSig, colourMode, colourScale, dayTags, tz]);
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, photoMarkerSig, colourMode, colourScale, dayTags, tz, squadSig]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
@@ -743,6 +771,43 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
               {races.map(r=><option key={r.key} value={r.key}>{r.label}</option>)}
             </select>
           </label>
+        )}
+
+        {squadTracks.length>0&&(
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{color:"#94A3B8"}}>Squad</span>
+            {squadTracks.map(t=>{
+              const on=!hiddenBoats.has(t.boatId);
+              return (
+                <button
+                  key={t.boatId}
+                  type="button"
+                  onClick={()=>setHiddenBoats(prev=>{
+                    const next=new Set(prev);
+                    if(next.has(t.boatId)) next.delete(t.boatId); else next.add(t.boatId);
+                    return next;
+                  })}
+                  title={`${on?'Hide':'Show'} ${t.boatName}${t.sailNumber?` · ${t.sailNumber}`:''}`}
+                  aria-pressed={on}
+                  style={{
+                    display:"flex",alignItems:"center",gap:5,
+                    background:on?'#0B2136':'#071624',
+                    color:on?'#E2E8F0':'#64748B',
+                    border:`1px solid ${on?t.colour:'#1E3A5A'}`,
+                    borderRadius:5,padding:'3px 8px',fontSize:11,fontWeight:600,
+                    minHeight:30,cursor:'pointer',
+                  }}
+                >
+                  <span style={{
+                    width:9,height:9,borderRadius:2,flex:'0 0 auto',
+                    background:on?t.colour:'transparent',
+                    border:`1.5px solid ${t.colour}`,opacity:on?1:0.5,
+                  }}/>
+                  {t.boatName}
+                </button>
+              );
+            })}
+          </div>
         )}
 
         <label style={{display:"flex",alignItems:"center",gap:6,color:"#94A3B8"}}>

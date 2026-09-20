@@ -36,6 +36,8 @@ import { planTrackerIngest } from '../src/lib/trackerIngest'
 import { findSegments } from '../src/lib/wind/segment'
 import { synthesise } from '../src/lib/wind/synthesise'
 import { eventsFromSegments, countManoeuvres } from '../src/lib/wind/trackEvents'
+import { buildPhases } from '../src/lib/buildPhases'
+import { DEFAULT_SETTINGS } from '../src/lib/phaseSettings'
 import { estimateTwd } from '../src/lib/wind/estimate'
 import { solveCompassOffset } from '../src/lib/wind/compassCalibration'
 import {
@@ -227,8 +229,26 @@ async function main() {
     console.log(`   twd ${(s.twdCoverage * 100).toFixed(0)}% derived · mid-session twd ${mid?.twd?.toFixed(0) ?? '–'}° twa ${mid?.twa?.toFixed(0) ?? '–'}° bsp ${kn(mid?.bsp)} kn`)
     console.log(`   compass:    ${cal.ok ? `${cal.calibration.offsetDeg.toFixed(1)}° ±${cal.calibration.uncertaintyDeg.toFixed(1)} · leeway ${cal.calibration.leewayDeg.toFixed(1)}°` : cal.reason}`)
 
+    // Build the phases here, and put them IN the synthesised event file.
+    //
+    // A dinghy has no KND event file, and the Analytics phase picker reads
+    // exactly two sources: xmlData.phases (the event file's own) and SSA phases
+    // built in the browser and kept in IndexedDB. A freshly imported GPS
+    // session has neither, so the picker has nothing to offer and the charts
+    // stay empty — which is what "phase selection is not available" means.
+    //
+    // Since the whole event file for this session is synthesised anyway, the
+    // phases belong in it. They keep src:'ssa' and their kind/quality, so a
+    // reader can still tell they were cut from the track rather than logged by
+    // an onboard assistant.
+    const built = buildPhases(s.rows as any, ev, DEFAULT_SETTINGS)
+    const steady = built.phases.filter((p) => p.kind === 'steady')
+    const evWithPhases = { ...ev, phases: built.phases, derived: true }
+    console.log(`   phases:     ${built.phases.length} (${steady.length} steady, ${built.phases.length - steady.length} manoeuvre) · ${built.rejected.length} rejected`)
+    for (const r of built.reasons.slice(0, 3)) console.log(`                 ${String(r.n).padStart(4)} × ${r.reason}`)
+
     const logData = { rows: s.rows, format: 'vakaros-csv' }
-    const reduced = reduceLogForCloud(logData, ev)
+    const reduced = reduceLogForCloud(logData, evWithPhases)
     const bytes = JSON.stringify(reduced).length
     console.log(`   cloud log:  ${reduced.rows.length.toLocaleString()} rows (${(bytes / 1024).toFixed(0)} kB) after reduceLogForCloud`)
 
@@ -239,7 +259,7 @@ async function main() {
       team_id: team.id, boat_id: boat.id, date,
       title: l.plan.title, location: venue,
       tz_offset_minutes: tz, training_day_id: day?.id ?? null,
-      log_data: reduced, xml_data: ev,
+      log_data: reduced, xml_data: evWithPhases,
       created_by_user_id: owner.id, updated_at: new Date().toISOString(),
     }
     if (existing) {
