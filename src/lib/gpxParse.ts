@@ -65,8 +65,13 @@ const EMPTY: GpxResult = {
 }
 
 export function isGpx(text: string): boolean {
+  // A TRACK, not merely a GPX file. Most GPX in a sailor's folder is marks and
+  // routes — 35 of 41 in one real Downloads folder — and those carry <wpt> or
+  // <rtept> with no <trkpt> anywhere. Accepting them here would say the format
+  // was understood and then produce no rows, which is the same mislabelling
+  // that made every unrecognised CSV claim to be a legacy N72 log.
   const head = text.slice(0, 2000)
-  return /<gpx[\s>]/i.test(head) && /<trkpt[\s>]|<rtept[\s>]|<wpt[\s>]/i.test(text.slice(0, 20000))
+  return /<gpx[\s>]/i.test(head) && /<trkpt[\s>]/i.test(text.slice(0, 200000))
 }
 
 /** Bearing from a to b, degrees true. */
