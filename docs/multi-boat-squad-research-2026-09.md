@@ -144,7 +144,7 @@ has to be right (§3c).
 
 | tracker | file / channel | how it comes off | rate | identity in file? |
 |---|---|---|---|---|
-| **Vakaros Atlas 2 / Edge** | `.vkx` (open spec) + "several popular formats" | **Vakaros Connect app — logs stored on the sailor's phone** | configurable **1 / 2 / 5 / 10 Hz** (GNSS itself 25 Hz) | **no** — see §3b |
+| **Vakaros Atlas 2 / Edge** | `.vkx` (open spec) **and CSV** — 8 columns, confirmed §3d | **Vakaros Connect app — logs stored on the sailor's phone** | configurable **1 / 2 / 5 / 10 Hz** (GNSS itself 25 Hz); **two rates seen in one session** | **no** — confirmed for CSV too, §3d |
 | **Vakaros RaceSense** | live mesh → RC coordinator tablet → cloud | event-run; free live tracking for coaches; RTK cm-level via Swift Navigation Skylark | live | yes (event roster) |
 | **Velocitek SpeedPuck / ProStart** | `.vcc` (times, positions, speeds, headings, Doppler-derived) | **Velocitek Control Center** (Win/Mac), exports VCC / GPX / KML; v3.0 uploads straight to ChartedSails | ~1 Hz | not documented |
 | **Sailmon MAX / Element / E4** | CSV | Sailmon app / cloud — **CSV download requires the ~$100/yr Gold tier** *(unverified)* | varies | boat profile in the app |
@@ -205,6 +205,30 @@ of how much I'd trust them:
 it can be viewed but contributes to no squad statistic. An unlabelled track
 silently averaged into a speed test is worse than a missing one.
 
+### 3d. Confirmed against two real Atlas exports
+
+Two files from one session (Palma, 8 Feb 2026) settle what the vendor pages
+could not. Full detail in Part 4 of the TWD doc; the ingestion-relevant points:
+
+- Header is `timestamp,latitude,longitude,sog_kts,cog,hdg_true,heel,trim`.
+- **CRLF line endings** — strip `\r` or the last column silently vanishes.
+- **Timestamps carry an explicit UTC offset** (`...+0100`), so this format is
+  free of the local-wall-time trap. **Take the session date from the first
+  timestamp, never from the filename.**
+- **No device identity in the file**, exactly as the `.vkx` spec predicted.
+- **Filenames are user-typed and unparseable.** The two real files were
+  `Miss Behavior 2 2-8-2026.csv` and `Torvar's second  08-02-2026.csv` — the
+  same date in `M-D-YYYY` and `DD-MM-YYYY`, one naming a boat and the other a
+  session, plus a curly apostrophe and a double space. This is decisive
+  evidence for §3b: the filename cannot carry identity reliably, so identity
+  must come from auth or the registry.
+- **2 Hz and 10 Hz in the same session** — resampling is mandatory.
+- Attitude quality is per-device and varies wildly (one unit logged heel
+  −173°…+133°). Needs outlier rejection.
+- **Per-device compass bias of 5–15°** is real and measurable. Two boats 36 m
+  apart disagreed by 10.2° on heading-derived TWD and 0.2° on COG-derived TWD.
+  A squad day therefore *calibrates its own devices* — see §4c.
+
 ### 3c. Time and sample rate
 
 The good news, and it is genuinely good: **GPS time is UTC and excellent**, so
@@ -247,6 +271,19 @@ coach actually asks, *which side had more?*
 
 **This is why the multi-boat model must come before the wind estimator**, not
 after. Build the estimator fleet-scoped from the start.
+
+### 4c. The squad calibrates its own instruments
+
+Measured on two real boats sailing together: heading-derived TWD disagreed by
+**10.2°**, COG-derived by **0.2°**. Because boats that close share one wind, the
+disagreement *is* the relative compass error — so a squad session yields a
+per-device heading offset for free, and the `COG − HDG` decomposition splits it
+from leeway (Part 4, §17).
+
+Caveat that determines when this works: a cross-wind current is algebraically
+indistinguishable from a compass offset. **Calibrate on non-tidal days, carry
+the offsets to tidal venues.** This belongs in the build order as a step, and
+the offsets belong on the tracker record, not the session.
 
 ### 4b. Everything else the squad scope gives you
 
@@ -294,19 +331,23 @@ roles, and nobody does the protocol-aware speed test on GPS-only boats.
    reuse the tagger's vocabulary and lead/lag model.
 6. **Fleet-scoped wind estimator** (the wind doc's L1→L5), pooling every boat in
    the day.
-7. **Pair speed test** with shift compensation and the windward/leeward swap.
-8. **Squad debrief** — one timeline, N boats, media attached.
+7. **Per-device compass calibration** from the crab decomposition, stored on
+   `trackers` and applied on ingest (§4c). Cheap, and it makes every
+   heading-derived metric comparable across the squad.
+8. **Pair speed test** with shift compensation and the windward/leeward swap.
+9. **Squad debrief** — one timeline, N boats, media attached.
 
-Note that 1–5 are all plumbing, and 6–8 are the product. The plumbing is most of
+Note that 1–5 are all plumbing, and 6–9 are the product. The plumbing is most of
 the work, which is the usual shape and worth saying out loud before starting.
 
 ---
 
 ## 7. Open questions
 
-- **What does Vakaros Connect actually name its exported files?** The whole
-  coach-bulk-upload path hinges on it, and I could not establish it from public
-  material. One afternoon with a real device answers it.
+- ~~What does Vakaros Connect actually name its exported files?~~ **Answered**
+  (§3d): a user-typed label plus a date in an inconsistent format. The filename
+  is unusable as an identity carrier, which settles §3b in favour of
+  auth-derived identity.
 - **Is there any Vakaros cloud/API for a coach to pull a squad's logs**, or is
   the phone the only exit? Nothing public suggests an API.
 - **Does RaceSense expose coach-accessible data outside an event?** Live

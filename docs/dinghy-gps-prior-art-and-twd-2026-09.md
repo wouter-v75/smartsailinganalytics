@@ -114,8 +114,11 @@ records for declination (0x03), race timer (0x04), line position (0x05), a
 parser exists in the wild (`SCarlsen7757/Vakaros.Vkx.Parser.NET`). **Note: no
 licence file on the Vakaros repo** — check before vendoring anything.
 
-That quaternion matters enormously for §6: **heading is the difference between a
-hard problem and an easy one.**
+That quaternion is useful — but **not for the wind**. See Part 4: measured
+against two real Atlas tracks, the magnetometer carries a 5–15° per-device bias
+while GPS COG agrees between boats to 0.2°. Heading is a *diagnostic* channel
+(manoeuvre detection, turn rate, low speed where COG is undefined), not the
+primary input to a wind estimate.
 
 ---
 
@@ -194,6 +197,10 @@ record**, with track analysis as table stakes. Not "another tracker app".
 Everything below assumes: position at 1–25 Hz, SOG, COG, optionally heading and
 heel, no wind sensor, no speed-through-water, no polar to start with.
 
+**Read Part 4 before implementing any of it** — the method ladder below was
+written from desk research and has since been run against two real Atlas tracks.
+The main correction: prefer **COG over heading** throughout.
+
 ### What you are really solving
 
 The observable is velocity **over ground**:
@@ -256,7 +263,8 @@ after (SSA's `manoeuvres.ts` already uses −40…−10 s and +17…+23 s window
 the N76 — same idea, retuned), and bisect.
 
 Refinements that matter:
-- Bisect **headings** if you have them (Vakaros quaternion), COG otherwise.
+- Bisect **COG**, not heading (Part 4 — heading carries per-device compass bias;
+  leeway is symmetric between tacks and cancels in the bisector).
 - Use the **circular** mean — `startAnalysis.ts` already has `circularMean`.
 - Weight by steadiness: reject windows containing a gust response, a wave set,
   a big heel excursion, or a second manoeuvre inside the settle time (SSA
@@ -329,9 +337,12 @@ competitors do**. RaceQs says its VMG "incorporates current effects" without
 claiming to solve for the current vector; everyone else is silent. It is the
 one place where SSA could be genuinely better rather than equal.
 
-Independent cross-check when heading is available: with `hdg` from the Vakaros
-quaternion, `COG − HDG` is leeway + current crab directly. Two routes to `C`
-that must agree is a strong internal consistency test.
+Independent cross-check when heading is available: `COG − HDG` is leeway +
+current crab + **compass error**, and Part 4 shows how to separate them — the
+part that flips sign between tacks is leeway, the tack-independent part is
+compass offset *or* cross-wind current, and those two are algebraically
+degenerate. In non-tidal water the common mode is the compass; in tidal water
+this cross-check only works once the compass has been calibrated elsewhere.
 
 ### L5 — Pool the fleet / the training group
 
@@ -480,8 +491,9 @@ Concrete consequences, in dependency order:
 6. **Fleet ingestion is on the critical path**, not optional (§3, §5-L5).
    The TracTrac research already done is the other half of this product.
 7. **`.vkx` first.** It is the open format, the Atlas Edge is the dinghy device
-   at $749, and the quaternion gives heading — which is what makes L4's
-   cross-check possible. GPX second as the universal fallback.
+   at $749. The quaternion gives heading, heel and pitch — worth parsing for
+   manoeuvre detection and for the per-device compass calibration of Part 4,
+   though not as the wind input. GPX second as the universal fallback.
 
 **Before writing the estimator**: read SAP's `com.sap.sailing.windestimation`
 bundle (Apache 2.0). It is the only production implementation of maneuver-based
@@ -792,3 +804,174 @@ be the estimator's scope. Do not build this per-boat and generalise later.
 - [Open-Meteo Historical Forecast API](https://open-meteo.com/en/docs/historical-forecast-api) (15-minutely, ICON-D2 2 km, HARMONIE AROME)
 - [OpenWeather One Call 3.0 / Time Machine](https://openweathermap.org/api/one-call-3) · [History API by timestamp](https://openweathermap.org/api/history-api-timestamp)
 - [Observation-driven correction of numerical weather prediction for marine winds](https://arxiv.org/html/2512.03606v1) (assimilating point observations to correct model wind — the formal version of §13b)
+
+---
+
+# Part 4 — Field validation against two real Atlas tracks
+
+Parts 1–3 were desk research. This part is what changed after running the
+method ladder against **two Vakaros Atlas CSV exports from the same session** —
+Bay of Palma, 8 Feb 2026, 11:56–15:09 local (+0100), two boats training together.
+
+The session turned out to be close to ideal for this: median separation **36 m**,
+87 % of the time within 100 m, three hours. Two boats that close share one wind,
+so **any disagreement between them is instrument or method error, not weather.**
+That is the strongest validation signal available without an anemometer, and it
+costs nothing.
+
+## 15. What the Atlas CSV export actually contains
+
+```
+timestamp,latitude,longitude,sog_kts,cog,hdg_true,heel,trim
+2026-02-08T11:56:40.049+0100,39.5310307,2.5704827,0.400,266.1,245.8,-1.8,7.7
+```
+
+Eight channels, including true heading, heel and pitch. Findings that matter for
+the parser:
+
+- **Timestamps are ISO 8601 with an explicit UTC offset.** Unambiguous. This is
+  the *one* clock in SSA's world without the local-wall-time-labelled-UTC trap
+  in CLAUDE.md — record it as the exception, and take the session date from the
+  first timestamp.
+- **CRLF line endings.** A naive `split(',')` on the header produces a final
+  column named `trim\r`, so `trim` silently reads as undefined on every row.
+  Cost: one wrong conclusion ("the pitch channel is garbage") before it was
+  spotted. Strip `\r` before parsing.
+- **No device identity of any kind** — no serial, no boat name, no session
+  header. Confirms that the `.vkx` finding in §3b of the multi-boat doc extends
+  to the CSV export. Identity lives only in the filename.
+- **Filenames are user-typed and must never be parsed.** The two files here were
+  `Miss Behavior 2 2-8-2026.csv` and `Torvar's second  08-02-2026.csv` — the
+  same day written `M-D-YYYY` and `DD-MM-YYYY`, one naming a *boat* and the
+  other naming a *session*, plus a curly apostrophe and a double space.
+- **Logging rate is per-device and differs within a session**: 2 Hz (22,812
+  rows) and 10 Hz (104,617 rows) on the same afternoon. Resampling to a common
+  grid is mandatory, not an optimisation.
+- Gaps happen: six gaps > 5 s on one device (longest 22 s), none on the other.
+- **Attitude plausibility varies enormously between devices.** One logged heel
+  spanning −173°…+133° and pitch −88°…+82°; the other −42°…+48° and −8°…+25°.
+  Attitude needs outlier rejection before use, and a badly mounted device is
+  visible in the data.
+
+## 16. The correction: COG beats heading, and it is not close
+
+Running the L2 symmetry estimator on each boat independently, whole session:
+
+| channel used | boat A | boat B | **disagreement** |
+|---|---|---|---|
+| `hdg_true` (magnetometer) | 259.8° | 249.7° | **10.2°** |
+| `cog` (GPS Doppler) | 265.1° | 264.9° | **0.2°** |
+
+Two boats 36 m apart cannot experience a 10° difference in wind direction. The
+disagreement is **per-device magnetometer bias**.
+
+This inverts the recommendation in §6-L1 and §2d. The reasoning that led the
+desk research astray was that heading is closer to *through-water* direction,
+so it should be the cleaner wind input. What that missed:
+
+**Leeway is symmetric between tacks and therefore cancels in any bisector or
+symmetry fit.** It widens the apparent tack angle — it does not bias the
+estimate of where the wind is coming from. Compass error does not cancel, and
+on these devices it is an order of magnitude larger than the thing heading was
+supposed to fix.
+
+> **COG is the primary wind channel, always. Heading is a diagnostic channel** —
+> manoeuvre detection, rate of turn, and low speed where GPS COG becomes
+> undefined — not an input to the wind estimate.
+
+## 17. Separating compass error from leeway (and why "non-tidal" matters)
+
+`crab = COG − HDG` decomposes on opposite upwind tacks:
+
+- the part that **flips sign** between tacks is **leeway**
+- the **tack-independent** part is a **compass offset**
+
+Measured, at the device-independent TWD of 265°:
+
+| boat | crab, tack 1 | crab, tack 2 | compass offset δ | leeway |
+|---|---|---|---|---|
+| Miss Behavior 2 | +6.9° (heel 20°) | +3.4° (heel −17°) | **−5.1°** | 1.8° |
+| Torvar 2nd | +19.8° (heel 19°) | +9.3° (heel −19°) | **−14.5°** | 5.3° |
+
+Leeway of 2–5° upwind is physically sensible. And the decomposition
+**cross-validates**: these offsets predict a heading-derived disagreement of
+**9.4°** between the two boats; the independent symmetry fits measured **10.2°**.
+Two unrelated routes, one answer.
+
+*(Sample: ~20 steady upwind segments per boat per tack, no standard errors
+computed — treat δ as ±2–3°.)*
+
+### The degeneracy
+
+**A cross-wind current produces exactly the same common-mode crab signature as
+a compass offset.** They are algebraically indistinguishable in this
+decomposition. Palma in February has negligible tide, so the common mode is
+attributable to the compass. On a tidal venue the same −14.5° could be half a
+knot of cross-tide.
+
+Hence the operational rule:
+
+> **Calibrate devices on non-tidal training days, then carry the per-device
+> offsets to tidal venues** — where a *calibrated* compass becomes valuable
+> again, because `COG − HDG` then measures the current, which is the §6-L4
+> input.
+
+Non-tidal water is not merely where COG is better; it is the only place where
+the compass offset is identifiable at all.
+
+## 18. Time-resolved TWD needs a quality gate, not a better fit
+
+A naive 45-minute rolling re-fit failed badly — median error **75°** against the
+model, with windows returning 5° and 118°. The failing windows were **two-boat
+speed-test runs held on a single tack**, which genuinely cannot yield an
+absolute TWD: there is no opposite tack to bisect against.
+
+Adding a gate — both tacks present upwind for ≥ 2 min, symmetry score ≥ 0.35 —
+and pooling both boats:
+
+| window (local) | pooled TWD | Open-Meteo |
+|---|---|---|
+| 13:15 | 270° | 273° |
+| 13:30 | 268° | 273° |
+| 13:45 | 266° | 273° |
+| 14:00 | 263° | 284° |
+| 12:30 / 12:45 / 13:00 / 14:15 | *unmeasured* | — |
+
+**Median error 7°, max 21°**, with four windows correctly refusing to answer.
+
+Two things this confirms empirically rather than by argument:
+
+1. **The "mark unmeasured rather than invent" principle (§8) is not a nicety.**
+   The difference between a 75° median error and a 7° one is entirely the gate.
+2. **Pooling rescues individual failures.** At 13:45 boat A alone returned 140°;
+   pooled with boat B the answer was 266°. This is the §5-L5 fleet multiplier
+   observed directly, on two boats rather than five.
+
+It also confirms the architecture: **a windowed re-fit is the wrong shape.**
+Absolute anchors where the geometry supports them, relative tracking (L3)
+between, exactly as §6 proposed.
+
+## 19. Agreement with the model, and a corrected claim
+
+COG-derived session TWD **265°** against Open-Meteo's **262–273°** for
+11:00–13:00 local. Agreement within a few degrees — and *expected*, because a
+COG-derived estimate is **ground wind**, the same reference forecasts are issued
+in (§11).
+
+**Correction to an intermediate conclusion:** at one point the heading-derived
+figure of ~256° suggested the model was locally wrong by ~20°. It was not. That
+gap was the compass bias. The model was right, and the mutual agreement between
+track and model is now a point of confidence rather than a discrepancy to
+explain.
+
+## 20. What Part 4 changes
+
+- §2d, §6-L1, §6-L4, §9.7 — corrected in place; COG is the wind channel.
+- **New requirement:** per-device compass offset, solved per boat per session
+  from the crab decomposition, stored on the boat/tracker and carried forward.
+- **New requirement:** the estimator must have a quality gate and an
+  `unmeasured` state before it is shown to anyone.
+- **Validated:** the fleet multiplier, the ground-wind framing, and the
+  segment-then-fit approach.
+- **Still unvalidated:** everything about current (L4), because this venue has
+  none — and TWS inference, which was not attempted.
