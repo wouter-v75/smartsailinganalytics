@@ -105,3 +105,58 @@ export function planSentence(plan: UploadPlan): string {
   }
   return bits.join(' · ')
 }
+
+// ── Reading a set back ──────────────────────────────────────────────────────
+// This route had a POST and no caller for its GET: uploadPhaseSet() put a set
+// in front of the team and NOTHING in the app ever asked for one. A coach's
+// upload reached the database and stopped there — the same shape as the
+// device-locality traps in CLAUDE.md, where data reaches the cloud and the app
+// never reads it back.
+
+export interface ActivePhaseSet {
+  id: string
+  date: string
+  source: string | null
+  phase_len_s: number | null
+  phase_count: number
+  resolution_mode: string | null
+  note: string | null
+  created_at: string
+  created_by_user_id: string | null
+  settings: PhaseSettings | null
+  runs: PhaseRun[]
+  phases: BuiltPhase[]
+}
+
+export interface PhaseSetHistoryRow {
+  id: string
+  phase_count: number
+  created_at: string
+  created_by_user_id: string | null
+  note: string | null
+}
+
+/**
+ * The phase set in force for this session, and the ones stood down before it.
+ * Returns nulls rather than throwing: a team with no uploaded set is the normal
+ * case, and so is a browser that is offline.
+ */
+export async function fetchPhaseSets(
+  teamId: string,
+  boatId: string,
+  date: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<{ active: ActivePhaseSet | null; history: PhaseSetHistoryRow[]; needsMigration?: boolean }> {
+  try {
+    const res = await fetchImpl(`/api/teams/${teamId}/boats/${boatId}/phases/${date}`)
+    const j = await res.json().catch(() => ({}))
+    if (!res.ok) return { active: null, history: [], needsMigration: !!j?.needsMigration }
+    return {
+      active: j?.active ?? null,
+      history: Array.isArray(j?.history) ? j.history : [],
+    }
+  } catch {
+    return { active: null, history: [] }
+  }
+}
+

@@ -35,7 +35,7 @@ import { phasesForSource, upsertRun, removeRun } from '../../lib/ssaPhases'
 import { loadSsaPhases, saveSsaPhases, getTagList } from '../../lib/localStore'
 import { canBuildPhases, canUploadPhases, phaseRoleNote } from '../../lib/phaseRoles'
 import { fetchBoatPhaseSettings, saveBoatPhaseSettings, writeLocalSettings } from '../../lib/phaseSettingsClient'
-import { planUpload, uploadPhaseSet } from '../../lib/phaseUpload'
+import { fetchPhaseSets, planUpload, uploadPhaseSet } from '../../lib/phaseUpload'
 import { getUidFast } from '../../lib/supabase/browser'
 
 // Grid order per point of sail (KND report order); x is TWS unless given.
@@ -81,15 +81,32 @@ const pick = p => ({ src: p.src, kind: p.kind, quality: p.quality, ...(p.runId ?
 // The phases SSA built for this day, and the runs they came from. Their own store, not
 // part of the event file: re-importing an event file must ask before replacing work
 // somebody selected by hand.
-function useSsaPhases(activeDate) {
+function useSsaPhases(activeDate, boat) {
   const [doc, setDoc] = React.useState(null)
+  // The set the TEAM is working from, if a coach has uploaded one.
+  const [teamSet, setTeamSet] = React.useState(null)
+
   React.useEffect(() => {
     let alive = true
     if (!activeDate) { setDoc(null); return }
     loadSsaPhases(activeDate).then(d => { if (alive) setDoc(d || null) }).catch(() => {})
     return () => { alive = false }
   }, [activeDate])
-  return [doc, setDoc]
+
+  // Read the uploaded set back. uploadPhaseSet() had no counterpart: a coach put
+  // phases "in front of the team" and nothing ever asked the server for them, so
+  // they reached the database and stopped there. Every other device saw nothing.
+  React.useEffect(() => {
+    let alive = true
+    setTeamSet(null)
+    if (!activeDate || !boat?.teamId || !boat?.boatId) return
+    fetchPhaseSets(boat.teamId, boat.boatId, activeDate)
+      .then(r => { if (alive) setTeamSet(r.active) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [activeDate, boat?.teamId, boat?.boatId])
+
+  return [doc, setDoc, teamSet]
 }
 
 // The thresholds belong to the BOAT: the team should be judging every day by the same
@@ -365,7 +382,7 @@ export default function PerfChartsSection({
     () => sections.filter(sec => !hiddenSections.includes(sec.id)), [sections, hiddenSections])
   const [phaseSource, setPhaseSource] = React.useState('event')  // 'event' | 'ssa' | 'both'
   const [mergeMode, setMergeMode] = React.useState('add')        // where the two overlap
-  const [ssaDoc, setSsaDoc] = useSsaPhases(activeDate)
+  const [ssaDoc, setSsaDoc, teamSet] = useSsaPhases(activeDate, boat)
   const [settings, setSettings, settingsMeta] = usePhaseSettings(boat)
   const [build, setBuild] = React.useState(null)                 // last build's reasons
   const [test, setTest] = React.useState(null)                   // a timed test in progress
@@ -375,7 +392,23 @@ export default function PerfChartsSection({
   const setAside = !!ssaDoc?.setAside && (ssaDoc?.phases?.length || 0) > 0
   // Memoised: a fresh array every render would make every memo below it recompute, and
   // the effect that follows the track's race would then set state for ever.
-  const ssaPhases = React.useMemo(() => (setAside ? [] : (ssaDoc?.phases || [])), [setAside, ssaDoc])
+  //
+  // Where BOTH exist, the phases built on this device win: they are work in
+  // progress, and silently replacing them with the team's set would lose it. The
+  // team's set is offered instead (the banner below), so the choice is visible
+  // rather than made for you.
+  const localPhases = React.useMemo(() => (setAside ? [] : (ssaDoc?.phases || [])), [setAside, ssaDoc])
+  const usingTeamSet = !localPhases.length && (teamSet?.phases?.length || 0) > 0
+  const ssaPhases = React.useMemo(
+    () => (usingTeamSet ? teamSet.phases : localPhases),
+    [usingTeamSet, teamSet, localPhases])
+  // Adopting the team's set is pointless while the source is 'event', which
+  // ignores SSA phases outright. Same move makeRun() makes after a local build:
+  // show what just arrived without hiding the event file's own phases.
+  React.useEffect(() => {
+    if (usingTeamSet) setPhaseSource(cur => (cur === 'event' ? 'both' : cur))
+  }, [usingTeamSet])
+
   const mayBuild = canBuildPhases(boat?.role)
   const mayUpload = canUploadPhases(boat?.role)
   // Charts read whichever source is chosen; the event file's own phases are untouched.
@@ -527,6 +560,19 @@ export default function PerfChartsSection({
     <div>
       <HeadlinesCard boat={boat} activeDate={activeDate} stored={storedStats.stored} canUseAI={canUseAI}
         onDone={storedStats.refresh} override={headlinesOverride} />
+      {teamSet && (
+        <div style={{
+          margin: '0 0 8px', padding: '7px 10px', borderRadius: 8, fontSize: 10, lineHeight: 1.6,
+          background: usingTeamSet ? '#0B2136' : '#071624',
+          border: `1px solid ${usingTeamSet ? '#1D9E75' : '#1E3A5A'}`,
+          color: usingTeamSet ? '#7DD3FC' : '#64748B',
+        }}>
+          {usingTeamSet
+            ? `Showing the team's phase set — ${teamSet.phase_count} phases, uploaded ${new Date(teamSet.created_at).toLocaleString()}.`
+            : `The team has a phase set for this day (${teamSet.phase_count} phases, uploaded ${new Date(teamSet.created_at).toLocaleString()}), but the phases built on this device are being shown instead.`}
+          {teamSet.note ? ` · ${teamSet.note}` : ''}
+        </div>
+      )}
       <PhasePanel
         source={phaseSource} onSource={setPhaseSource}
         mergeMode={mergeMode} onMergeMode={setMergeMode}
