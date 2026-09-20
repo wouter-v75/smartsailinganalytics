@@ -15,6 +15,41 @@ something usable on its own. No step is allowed to leave the N76 worse off.
 
 ---
 
+## Status — 20 Sep 2026
+
+| step | state |
+|---|---|
+| 1 · per-boat profile | **done** — `boat.specs.log_profile` widened with `methods`, defaults inferred from the log format |
+| 2 · channel provenance | **done** — `provenance.ts`, ranges per channel, `unavailable` first-class |
+| 3 · parsers | **done** for Vakaros CSV and GPX. `.vkx`, Velocitek `.vcc`, Sailmon CSV still to do |
+| — · upload path | **done** — `trackerIngest.planTrackerIngest`, `needs: []` for a Vakaros file |
+| 4 · derived phases | **done** — `wind/segment.ts`; not yet wired into `buildPhases` |
+| 5 · trackers + calibration | solver **done** (`wind/compassCalibration.ts`); migration **written, NOT applied** |
+| 6 · wind synthesis | **done** to L2 + gate + model fallback (`wind/estimate.ts`, `wind/synthesise.ts`). L3 and L4 outstanding |
+| — · current baseline | **done** — `oceanCurrent.ts`, reported as the TWD bias it causes |
+| 7 · learned polars | not started |
+| 8 · multi-boat scope | migration **written, NOT applied**; pooling already works in the estimator |
+| 9 · coach product | not started |
+| 10 · fleet / TracTrac | not started |
+
+End to end on the two real Atlas files, both boats pooled:
+
+```
+upload asks:  NOTHING — date, venue clock and boat all inferred
+twd:          57% / 63% derived, the rest modelled, 0% unavailable
+rolling TWD:  median 5°, max 10° against Open-Meteo, over 7 windows
+              5 windows correctly refuse ("sailed on one tack only")
+compass:      −5.1° and −14.4°, predicting the 10.2° disagreement measured
+```
+
+**Three things were wrong in this plan or the research and are now corrected in
+place:** heading is not the wind channel (COG is); the no-go penalty does not
+break the 180° ambiguity, so the model prior is load-bearing rather than
+optional; and the segmenter must compare each sample to the segment's running
+mean, not to its predecessor, or a gradual turn is swallowed whole.
+
+---
+
 ## 0. The idea in one diagram
 
 ```
