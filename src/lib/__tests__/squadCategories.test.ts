@@ -30,20 +30,23 @@ describe('toShares', () => {
 })
 
 describe('inertWithoutTracks', () => {
-  it('names the categories that do nothing without tracks', () => {
-    // These hang off a shared DAY, and a day is only visible when its session
-    // is shared — which needs tracks. Silently inert is worse than flagged.
+  it('flags logdata, which is the track at full rate and nothing on its own', () => {
+    expect(inertWithoutTracks({ ...NO_SHARES, logdata: true })).toEqual(['All logfile data'])
+    expect(inertWithoutTracks({ ...NO_SHARES, logdata: true, tracks: true })).toEqual([])
+  })
+
+  it('does NOT flag notes, scans or tags — they work without tracks', () => {
+    // Measured against the live policies with a single-team account: with
+    // tracks OFF and notes/tags ON, the squad still saw 2 tags and 1 debrief,
+    // because those gate on the DAY's shared flag rather than on the tracks
+    // category. "Read our debrief but do not see where we sailed" is a real
+    // choice. An earlier version of this function claimed otherwise, which
+    // would have been a false reassurance about a privacy control.
     const s = { ...NO_SHARES, notes: true, sailscans: true, tags: 'all' as const }
-    expect(inertWithoutTracks(s)).toEqual(['Sail scans', 'Notes', 'Tags'])
+    expect(inertWithoutTracks(s)).toEqual([])
   })
 
-  it('says nothing once tracks are on', () => {
-    expect(inertWithoutTracks({ ...NO_SHARES, tracks: true, notes: true })).toEqual([])
-  })
-
-  it('does not flag videos or photos, which stand alone', () => {
-    // A clip carries its own shared_with_squad flag and does not need the
-    // session's, so it is not inert without tracks.
+  it('does not flag videos or photos, which carry their own per-item flag', () => {
     expect(inertWithoutTracks({ ...NO_SHARES, videos: true, photos: true })).toEqual([])
   })
 })

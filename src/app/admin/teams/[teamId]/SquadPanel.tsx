@@ -248,8 +248,8 @@ export default function SquadPanel({ teamId }: { teamId: string }) {
                 {/* A box that silently does nothing is worse than one that says so. */}
                 {inert.length > 0 && (
                   <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-                    {inert.join(', ')} {inert.length === 1 ? 'needs' : 'need'} <strong>Tracks</strong> to
-                    be shared as well — they hang off a shared day, so on their own they show nothing.
+                    {inert.join(', ')} {inert.length === 1 ? 'needs' : 'need'} <strong>Tracks</strong> as
+                    well — it is the full log behind the track, so with no track it adds nothing.
                   </div>
                 )}
 

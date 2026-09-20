@@ -100,21 +100,23 @@ export function toShares(raw: unknown): SquadShares {
 }
 
 /**
- * Categories that hang off a session and therefore do nothing on their own.
+ * Categories that genuinely do nothing without `tracks`.
  *
- * Notes, scans and tags are all attached to a DAY, and a day is only visible
- * when its session is shared — which needs `tracks`. Ticking "notes" with
- * tracks off is not dangerous, it is simply inert, and a box that silently
- * does nothing is worse than one that says so.
+ * ONLY `logdata`. It is not a thing of its own — it is the difference between
+ * a thinned position track and every channel at full rate, so with no track to
+ * refine it refines nothing.
+ *
+ * Notes, scans and tags are deliberately NOT here, though an earlier version
+ * of this file claimed they were. They gate on the DAY's shared flag, not on
+ * the tracks category, so "you may read our debrief but not see where we
+ * sailed" is a real and reasonable choice a team can make — measured against
+ * the live policies with a single-team account, which returned 2 tags and 1
+ * note with tracks off. Telling a team those boxes were inert would have been
+ * a false reassurance about a privacy control, which is the worst kind.
  */
 export function inertWithoutTracks(s: SquadShares): string[] {
-  if (s.tracks) return []
-  const out: string[] = []
-  if (s.logdata) out.push('All logfile data')
-  if (s.sailscans) out.push('Sail scans')
-  if (s.notes) out.push('Notes')
-  if (s.tags !== 'none') out.push('Tags')
-  return out
+  if (s.tracks || !s.logdata) return []
+  return ['All logfile data']
 }
 
 /** One line describing what this team currently gives the squad. */
