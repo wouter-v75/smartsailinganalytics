@@ -97,7 +97,8 @@ describe('media sharing', () => {
     const spy = (async (u: string, init: any) => { url = u; body = JSON.parse(init.body); return { ok: true, json: async () => ({}) } }) as unknown as typeof fetch
     const { setMediaShared } = await import('../squadShare')
     await setMediaShared('videos', 'vid-1', true, spy)
-    expect(url).toBe('/api/videos/vid-1/share')
+    // NOT /share — that URL already mints an external capability token.
+    expect(url).toBe('/api/videos/vid-1/squad-share')
     expect(body).toEqual({ shared_with_squad: true })
   })
 

@@ -1,5 +1,12 @@
 // "Shared with the squad", for one videos row.
 //
+// NAMED squad-share, NOT share, because `[videoId]/share` next door is a
+// different thing entirely: it mints a capability TOKEN that lets somebody
+// outside SSA watch one clip. This sets a column that lets a squad partner who
+// is already in SSA see it through the normal route. Two mechanisms, two
+// names — the first cut of this called both `share` under a second slug name
+// (`[id]`), which collides at the same URL and which Next refuses to build.
+//
 // Its own route rather than a field on the media PUT, for the same reason the
 // session flag is sent alone: an ordinary save must never be able to change who
 // can see something. This endpoint sets exactly one column and nothing else.
@@ -11,7 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase, authedUserId } from '@/lib/supabase/server'
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, { params }: { params: { videoId: string } }) {
   const supabase = getServerSupabase()
   const uid = await authedUserId(supabase)
   if (!uid) return NextResponse.json({ error: 'unauth' }, { status: 401 })
@@ -24,7 +31,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const { data, error } = await supabase
     .from('videos')
     .update({ shared_with_squad: body.shared_with_squad })
-    .eq('id', params.id)
+    .eq('id', params.videoId)
     .select('id, shared_with_squad')
     .single()
 

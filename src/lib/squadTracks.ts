@@ -104,10 +104,15 @@ export async function loadSquadTracks(opts: LoadOpts): Promise<SquadTrack[]> {
 
   const sameTeam = loaded.filter((t): t is SquadTrack => t != null)
 
-  // …and the boats from OTHER teams that shared this day with a squad. Once
-  // each boat is its own team — which is how a real squad is structured — this
-  // is where nearly every other track comes from, so it is not an extra: it is
-  // the main path.
+  // …and the boats from OTHER teams that shared this day with a squad.
+  //
+  // BOTH paths are first-class, because a team is a PROGRAMME and not a boat.
+  // A team legitimately holds several boats — a campaign that kept its old hull
+  // alongside the new one, a national squad running two 49ers under one
+  // management — and those need no squad at all: they are already one team's
+  // data. The squad path is for boats under DIFFERENT ownership that agreed to
+  // train together. Neither is the "main" one; which dominates depends entirely
+  // on how the programme is organised, and SSA should not push it either way.
   let shared: SquadTrack[] = []
   try {
     const res = await f(`/api/squads/tracks/${opts.date}`)

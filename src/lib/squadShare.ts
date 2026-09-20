@@ -85,7 +85,13 @@ export async function setSessionShared(
 
 export type MediaKind = 'videos' | 'photos'
 
-/** Share or un-share one clip or photo. */
+/**
+ * Share or un-share one clip or photo.
+ *
+ * `squad-share`, not `share`: /api/videos/<id>/share already exists and does
+ * something else — it mints an external capability token. These are different
+ * decisions with different audiences and they must not share a URL.
+ */
 export async function setMediaShared(
   kind: MediaKind,
   id: string,
@@ -93,7 +99,7 @@ export async function setMediaShared(
   fetchImpl: typeof fetch = fetch
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const res = await fetchImpl(`/api/${kind}/${id}/share`, {
+    const res = await fetchImpl(`/api/${kind}/${id}/squad-share`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shared_with_squad: shared }),

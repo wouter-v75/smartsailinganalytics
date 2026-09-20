@@ -119,8 +119,9 @@ describe('tracks other teams shared with the squad', () => {
   })
 
   it('includes a boat from another team that shared this day', async () => {
-    // Once every boat is its own team, this is where nearly every other track
-    // comes from — not an extra path, the main one.
+    // The cross-OWNERSHIP path. Not "the main path" — a team that fields two
+    // boats itself gets both from the same-team path below, with no squad at
+    // all. Both are first-class; see the module header.
     const t = await load()
     const other = t.find((x) => x.boatId === 'b-torvar')!
     expect(other).toBeTruthy()

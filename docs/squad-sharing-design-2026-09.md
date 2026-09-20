@@ -1,8 +1,24 @@
-# Sharing between teams — how a squad works when every boat is its own team
+# Sharing between teams — how a squad works when the boats have different owners
 
-The design question: an Olympic squad trains together, but each boat is a
-separate team in SSA with its own data, its own coach relationship and its own
+The design question: an Olympic squad trains together, but the boats belong to
+different people — different crews, different campaigns, sometimes different
+nations — each with its own data, its own coach relationship and its own
 privacy. They need to see each other's tracks. How?
+
+**First, what a TEAM is, because getting this wrong distorts everything after
+it.** A team in SSA is a *programme or organisation*, not a boat. It routinely
+holds several boats: a campaign that kept Northstar 72 when Northstar 76
+arrived; a national squad running two 49ers under one management. Those boats
+share a team because they share an owner — and they need no squad at all, since
+one team's boats are already visible to that team. Splitting them into separate
+teams to make them "peers" would be cargo-culting the squad model onto data
+that was never divided.
+
+A squad is for the other case: **boats under different ownership**, where
+visibility has to be negotiated rather than assumed. The two cases coexist in
+one venue all the time — three teams in a squad, one of which fields two
+boats — and the schema below handles that without a special case, because
+membership is keyed on the team and sharing is decided per session.
 
 **The short answer: a SQUAD that teams join by consent, sharing is scoped to
 what a squad is actually for (days trained together), and reciprocity is
@@ -153,8 +169,13 @@ to preserve.
 
 ## 5. What this looks like on the water
 
-The morning brief: five 49ers and a RIB. Each crew owns its own team; the squad
-coach is a member of all five, or three of them, or none.
+The morning brief: five 49ers and a RIB, under four different campaigns — one
+of them fields two of the boats. So: four teams, one holding two boats, all
+four in the squad. The squad coach is a member of all four, or three, or none.
+
+That mixed shape is the normal one, and nothing in the design treats it as a
+special case: the two-boat team already sees both its own boats, and the squad
+decides the other three.
 
 - **After sailing**, whoever has the files runs one import. Each file is routed
   to its own boat, in its own team. Boats that did not share stay private and
@@ -163,7 +184,9 @@ coach is a member of all five, or three of them, or none.
   accuracy argument, not a nicety: 3–5° from one boat, ~1° from five.
 - **Each crew opens their own session** and sees the squad's other tracks on
   the map, toggleable, exactly as the current multi-boat map already draws
-  them. They see tracks and speed; they do not see anyone's debrief.
+  them. The two-boat team sees its stablemate by the same mechanism, without
+  having shared anything. They see tracks and speed; they do not see anyone's
+  debrief.
 - **A crew that left the squad in March** still has the January days. Their
   April days were never shared.
 
@@ -182,6 +205,8 @@ CREATE TABLE squad_members (
   id UUID PRIMARY KEY,
   squad_id UUID NOT NULL REFERENCES squads(id) ON DELETE CASCADE,
   team_id  UUID NOT NULL REFERENCES teams(id)  ON DELETE CASCADE,
+  -- DROPPED before shipping: see §8. A team joins ONCE, with all its boats,
+  -- and decides per SESSION what it shares. 0071 has no boat_id here.
   boat_id  UUID NOT NULL REFERENCES boats(id)  ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('invited','active','left')),
   -- what this team contributes. Narrow by default; each team decides.
@@ -233,9 +258,14 @@ because it already asks the same question through RLS.
   teams' memberships.
 - **Who creates a squad?** Any team manager, or only on invitation from one?
   The first is simpler and matches how people actually organise.
-- **Is `boat_id` on `squad_members` right**, or should a team contribute
-  several boats to one squad? A national squad with two 49ers in one team is
-  real. The unique key allows it; the UI should too.
+- ~~**Is `boat_id` on `squad_members` right**, or should a team contribute
+  several boats to one squad?~~ **Decided: no `boat_id`.** As shipped in 0071,
+  `squad_members` is `UNIQUE (squad_id, team_id)` with no boat column, and
+  `shares_squad_with()` reasons purely about teams. A team with two 49ers joins
+  once and shares whichever *sessions* it chooses, boat by boat — which is
+  strictly more expressive than a per-boat membership, and avoids the question
+  of what happens when a team acquires a boat mid-block. The sketch in §6 still
+  shows the `boat_id` column; the migration is the authority, not the sketch.
 - **Regattas.** A squad day is training. Does the same machinery cover "we all
   sailed the same regatta, pool it"? Probably — a regatta is a day with a
   shared venue and an event tracker — but the tracker's own roster may make
