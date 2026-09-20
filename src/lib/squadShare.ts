@@ -76,6 +76,63 @@ export async function setSessionShared(
   }
 }
 
+// ── Media ───────────────────────────────────────────────────────────────────
+// The same decision on videos and photos, because the usual case is ONE drone
+// operator or coach filming the whole squad from the RIB: that footage is of
+// everybody and was taken by somebody working for everybody. Onboard footage
+// with crew audio simply stays unticked — a judgement the person who shot it
+// can make and the schema cannot.
+
+export type MediaKind = 'videos' | 'photos'
+
+/** Share or un-share one clip or photo. */
+export async function setMediaShared(
+  kind: MediaKind,
+  id: string,
+  shared: boolean,
+  fetchImpl: typeof fetch = fetch
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetchImpl(`/api/${kind}/${id}/share`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shared_with_squad: shared }),
+    })
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}))
+      return { ok: false, error: j?.error || `the server answered ${res.status}` }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'could not reach the server' }
+  }
+}
+
+/**
+ * Share every clip or photo in a session at once.
+ *
+ * A drone operator comes back with dozens of clips of six boats; asking them to
+ * tick each one is asking them not to bother. Returns what actually happened
+ * rather than a bare boolean, because a partial failure here is worth seeing —
+ * half-shared media is the kind of thing somebody discovers much later.
+ */
+export async function setSessionMediaShared(
+  kind: MediaKind,
+  ids: string[],
+  shared: boolean,
+  fetchImpl: typeof fetch = fetch
+): Promise<{ ok: boolean; changed: number; failed: number; error?: string }> {
+  if (!ids.length) return { ok: true, changed: 0, failed: 0 }
+  const results = await Promise.all(ids.map((id) => setMediaShared(kind, id, shared, fetchImpl)))
+  const failed = results.filter((r) => !r.ok).length
+  return {
+    ok: failed === 0,
+    changed: results.length - failed,
+    failed,
+    error: failed ? results.find((r) => !r.ok)?.error : undefined,
+  }
+}
+
 /** One line for the checkbox or toggle. */
 export function shareLabel(squads: SquadSummary[]): string {
   if (!squads.length) return ''

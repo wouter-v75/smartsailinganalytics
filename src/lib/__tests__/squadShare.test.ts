@@ -90,3 +90,41 @@ describe('shareLabel', () => {
     expect(shareLabel([])).toBe('')
   })
 })
+
+describe('media sharing', () => {
+  it('sends only the flag, to its own endpoint', async () => {
+    let url = '', body: any = null
+    const spy = (async (u: string, init: any) => { url = u; body = JSON.parse(init.body); return { ok: true, json: async () => ({}) } }) as unknown as typeof fetch
+    const { setMediaShared } = await import('../squadShare')
+    await setMediaShared('videos', 'vid-1', true, spy)
+    expect(url).toBe('/api/videos/vid-1/share')
+    expect(body).toEqual({ shared_with_squad: true })
+  })
+
+  it('shares a whole session of clips at once', async () => {
+    // A drone operator comes back with dozens of clips of six boats.
+    const spy = (async () => ({ ok: true, json: async () => ({}) })) as unknown as typeof fetch
+    const { setSessionMediaShared } = await import('../squadShare')
+    const r = await setSessionMediaShared('videos', ['a', 'b', 'c'], true, spy)
+    expect(r).toEqual({ ok: true, changed: 3, failed: 0, error: undefined })
+  })
+
+  it('reports a PARTIAL failure rather than claiming success', async () => {
+    // Half-shared media is the kind of thing somebody discovers much later.
+    let n = 0
+    const flaky = (async () => { n++; return n === 2
+      ? { ok: false, json: async () => ({ error: 'denied' }) }
+      : { ok: true, json: async () => ({}) } }) as unknown as typeof fetch
+    const { setSessionMediaShared } = await import('../squadShare')
+    const r = await setSessionMediaShared('photos', ['a', 'b', 'c'], true, flaky)
+    expect(r.ok).toBe(false)
+    expect(r.changed).toBe(2)
+    expect(r.failed).toBe(1)
+    expect(r.error).toBe('denied')
+  })
+
+  it('does nothing, successfully, for an empty session', async () => {
+    const { setSessionMediaShared } = await import('../squadShare')
+    expect(await setSessionMediaShared('videos', [], true)).toEqual({ ok: true, changed: 0, failed: 0 })
+  })
+})

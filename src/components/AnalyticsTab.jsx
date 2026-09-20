@@ -12,7 +12,7 @@ import { getUidFast } from '../lib/supabase/browser';
 import { addSection, inSections, removeSection, sectionLabel, sectionsSpan } from '../lib/trackSections';
 import { GPSTrackMap } from './GPSTrackMap';
 import { loadSquadTracks } from '../lib/squadTracks';
-import { setSessionShared, shareLabel, squadsForTeam } from '../lib/squadShare';
+import { setSessionMediaShared, setSessionShared, shareLabel, squadsForTeam } from '../lib/squadShare';
 import PerfChartsSection from './analytics/PerfChartsSection';
 import { LineChart } from './charts/LineChart';
 import { ManoeuvreChart } from './charts/ManoeuvreChart';
@@ -178,6 +178,26 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
       .catch(()=>{});
     return()=>{alive=false;};
   },[tagBoat?.teamId, tagBoat?.boatId, activeDate, squads.length]);
+
+  // Media follows the same decision, in bulk: one drone operator films the
+  // whole squad, and asking them to tick forty clips is asking them not to.
+  const [mediaBusy,setMediaBusy]=useState(false);
+  const [mediaMsg,setMediaMsg]=useState(null);
+  const shareMedia = useCallback(async (next)=>{
+    const vids=(allVideos||[]).filter(v=>v.id).map(v=>v.id);
+    const pics=(photos||[]).filter(p=>p.id).map(p=>p.id);
+    if(!vids.length&&!pics.length){ setMediaMsg('nothing to share on this day'); return; }
+    setMediaBusy(true); setMediaMsg(null);
+    const [v,p2]=await Promise.all([
+      setSessionMediaShared('videos',vids,next),
+      setSessionMediaShared('photos',pics,next),
+    ]);
+    setMediaBusy(false);
+    const changed=v.changed+p2.changed, failed=v.failed+p2.failed;
+    setMediaMsg(failed
+      ? `${changed} shared, ${failed} refused — ${v.error||p2.error||''}`
+      : `${changed} item${changed===1?'':'s'} ${next?'shared with':'taken back from'} the squad`);
+  },[allVideos,photos]);
 
   const toggleShared = useCallback(async ()=>{
     if(!tagBoat?.teamId||!tagBoat?.boatId||!activeDate||shareBusy) return;
@@ -435,6 +455,26 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                   <span style={{color:"#475569"}}> Track and derived analysis only — not video, photos or debriefs.</span>
                 </span>
                 {shareErr&&<span style={{color:"#F59E0B"}}>{shareErr}</span>}
+                <span style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{color:"#475569"}}>
+                    Video &amp; photos ({(allVideos||[]).length}+{(photos||[]).length}):
+                  </span>
+                  <button type="button" disabled={mediaBusy} onClick={()=>shareMedia(true)}
+                    title="Share this day's clips and photos with the squad — for drone or coach-boat footage of everyone"
+                    style={{background:"#071624",border:"1px solid #1E3A5A",color:"#7DD3FC",
+                      borderRadius:5,padding:"3px 9px",fontSize:10,fontWeight:600,
+                      minHeight:26,cursor:mediaBusy?"wait":"pointer",opacity:mediaBusy?0.6:1}}>
+                    Share all
+                  </button>
+                  <button type="button" disabled={mediaBusy} onClick={()=>shareMedia(false)}
+                    title="Stop sharing this day's clips and photos"
+                    style={{background:"#071624",border:"1px solid #1E3A5A",color:"#94A3B8",
+                      borderRadius:5,padding:"3px 9px",fontSize:10,fontWeight:600,
+                      minHeight:26,cursor:mediaBusy?"wait":"pointer",opacity:mediaBusy?0.6:1}}>
+                    Take back
+                  </button>
+                  {mediaMsg&&<span style={{color:"#475569"}}>{mediaMsg}</span>}
+                </span>
               </div>
             )}
             {section("GPS track",(
