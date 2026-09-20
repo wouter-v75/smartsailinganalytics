@@ -23,6 +23,8 @@ export interface SquadTrack {
   boatId: string
   boatName: string
   sailNumber: string | null
+  /** The owning team, when it is not the viewer's own. */
+  teamName?: string | null
   rows: SquadTrackRow[]
   /** Stable per boat, so a boat keeps its colour across sessions. */
   colour: string
@@ -100,7 +102,32 @@ export async function loadSquadTracks(opts: LoadOpts): Promise<SquadTrack[]> {
     } catch { return null }
   }))
 
-  return loaded
-    .filter((t): t is SquadTrack => t != null)
+  const sameTeam = loaded.filter((t): t is SquadTrack => t != null)
+
+  // …and the boats from OTHER teams that shared this day with a squad. Once
+  // each boat is its own team — which is how a real squad is structured — this
+  // is where nearly every other track comes from, so it is not an extra: it is
+  // the main path.
+  let shared: SquadTrack[] = []
+  try {
+    const res = await f(`/api/squads/tracks/${opts.date}`)
+    if (res.ok) {
+      const j = await res.json()
+      shared = (j?.tracks || [])
+        .filter((t: any) => t.boatId && t.boatId !== opts.excludeBoatId)
+        .map((t: any) => ({
+          boatId: t.boatId,
+          boatName: t.boatName,
+          sailNumber: t.sailNumber ?? null,
+          teamName: t.teamName ?? null,
+          rows: t.rows || [],
+          colour: colourForBoat(t.boatId),
+        }))
+    }
+  } catch { /* a squad is optional; its absence is not an error */ }
+
+  // A boat reachable BOTH ways — same team and squad-shared — must appear once.
+  const seen = new Set(sameTeam.map((t) => t.boatId))
+  return [...sameTeam, ...shared.filter((t) => !seen.has(t.boatId))]
     .sort((a, b) => a.boatName.localeCompare(b.boatName))
 }
