@@ -478,7 +478,14 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         if(auto){
           const gp=p.rows.find(rr=>Number.isFinite(rr.lat)&&Number.isFinite(rr.lon));
           const at=p.startUtc||gp?.utc;
-          const z=gp&&at?offsetFromCoords(gp.lat,gp.lon,at):null;
+          // A format that carries its OWN UTC offset beats a coordinate lookup:
+          // it is what the device recorded against the sailor's own clock, it
+          // needs no position fix, and it cannot be wrong about DST. The Vakaros
+          // export stamps every row `...+0100`. Everything else still falls back
+          // to the DST-aware lookup from the log's first GPS position.
+          const z=p.tzOffsetMin!=null
+            ?{offsetMin:p.tzOffsetMin,zone:'the file\u2019s own timestamps'}
+            :(gp&&at?offsetFromCoords(gp.lat,gp.lon,at):null);
           if(z){
             effTz=z.offsetMin;
             setCsvTz(effTz);
@@ -503,14 +510,15 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               setVidTz(effTz); vidTzRef.current=effTz;
             }
             const lbl=TZ_OPTIONS.find(o=>o.offsetMin===effTz)?.label||`UTC${effTz>=0?'+':''}${effTz/60}`;
-            addLog(`🌍 Timezone from log position (${z.zone}) → ${lbl} · applied to log, video & photos`);
+            const src=p.tzOffsetMin!=null?'Timezone from the log file':'Timezone from log position';
+            addLog(`🌍 ${src} (${z.zone}) → ${lbl} · applied to log, video & photos`);
           }
         }
         // Sample rate + lidar sails, for the card and for saveLocal (a 4 Hz lidar export
         // is stored as a 1 Hz copy after its stats are computed from every row).
         p.hz=logRateHz(p.rows); p.lidarSails=lidarSailsIn(p.rows);
         setCsvParsed(p);
-        const fmtLabel=[p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':'flat CSV',
+        const fmtLabel=[p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':p.format==='vakaros-csv'?'Vakaros GPS':'flat CSV',
           p.hz>=1.5?`${p.hz} Hz`:null, p.lidarSails.length?`lidar ${p.lidarSails.map(s=>s.label.toLowerCase()).join('/')}`:null].filter(Boolean).join(' · ');
         // flat-local carries VENUE wall-clock, like the legacy flat-NMEA export, so
         // the timezone actually decides where its rows land — say which one was used
