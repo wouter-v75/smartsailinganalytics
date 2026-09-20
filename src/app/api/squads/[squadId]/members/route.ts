@@ -10,9 +10,25 @@ import { getServerSupabase, authedUserId } from '@/lib/supabase/server'
 
 type Params = { params: { squadId: string } }
 
-// POST { team_id, status?, valid_from?, valid_to? }
+const BOOL_CATEGORIES = [
+  'tracks', 'logdata', 'videos', 'photos', 'sailscans', 'comments', 'notes',
+] as const
+
+/** Only the categories the policies know about, in the shapes they expect. */
+function normaliseShares(raw: Record<string, unknown>) {
+  const out: Record<string, unknown> = {}
+  for (const k of BOOL_CATEGORIES) out[k] = raw[k] === true
+  out.tags = raw.tags === 'race' || raw.tags === 'all' ? raw.tags : 'none'
+  return out
+}
+
+// POST { team_id, status?, shares?, valid_from?, valid_to? }
 // Adds a team, or updates its row. `status` is 'active' when a team joins of
-// its own accord and 'invited' when another team is asking it to.
+// its own accord and 'invited' when an admin is offering it the place.
+//
+// `shares` is the team's OWN decision about what it contributes, so it is
+// written only when present — an admin extending an invitation must not be
+// able to preset it, and a later status change must not silently reset it.
 export async function POST(req: NextRequest, { params }: Params) {
   const supabase = getServerSupabase()
   const uid = await authedUserId(supabase)
@@ -30,6 +46,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     valid_to: body.valid_to ?? null,
     invited_by_user_id: uid,
   }
+  if (body.shares && typeof body.shares === 'object') {
+    // Normalised server-side: a client cannot invent a category, and `tags`
+    // cannot arrive as anything but the three values the policy understands.
+    row.shares = normaliseShares(body.shares)
+  }
   // Only a real decision is recorded as one: an invitation is not consent.
   if (status !== 'invited') {
     row.decided_by_user_id = uid
@@ -39,7 +60,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   const { data, error } = await supabase
     .from('squad_members')
     .upsert(row, { onConflict: 'squad_id,team_id' })
-    .select('id, team_id, status, valid_from, valid_to')
+    .select('id, team_id, status, shares, valid_from, valid_to')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 403 })
   return NextResponse.json({ member: data })

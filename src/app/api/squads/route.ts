@@ -26,7 +26,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('squads')
-    .select('id, name, note, created_at, squad_members(id, team_id, status, valid_from, valid_to, teams(name))')
+    .select('id, name, note, created_at, squad_members(id, team_id, status, shares, valid_from, valid_to, teams(name))')
     .order('created_at', { ascending: false })
   if (error) return dbError(error)
   return NextResponse.json({ squads: data || [] })

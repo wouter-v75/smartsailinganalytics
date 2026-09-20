@@ -505,6 +505,13 @@ export default function UserPill() {
           {me.global_role === 'admin' && (
             <>
               <Link
+                href="/admin/squads"
+                className="block px-3 py-2 hover:bg-slate-700 text-slate-100"
+                onClick={() => setOpen(false)}
+              >
+                Squads
+              </Link>
+              <Link
                 href="/admin/users"
                 className="block px-3 py-2 hover:bg-slate-700 text-slate-100"
                 onClick={() => setOpen(false)}
