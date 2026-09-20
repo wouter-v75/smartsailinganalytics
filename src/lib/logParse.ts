@@ -15,7 +15,7 @@
 import { isFlatOleLog, isFlatLocalLog, parseFlatOleLog } from './flatLogParse'
 import { isLogV3, expandLogV3 } from './logV3Parse'
 // @ts-ignore — JS module, typed as any
-import { parseCsvLog } from './csvLogParse'
+import { parseCsvLog, isFlatNmeaLog } from './csvLogParse'
 import { effectiveAliases, type BoatLogProfile } from './logProfile'
 import { isVakarosCsv, parseVakarosCsv } from './vakarosCsvParse'
 import { isGpx, parseGpx } from './gpxParse'
@@ -28,6 +28,7 @@ export type LogFormat =
   | 'raw' | 'flat-ole' | 'flat-nmea' | 'log-v3' | 'flat-local'
   | 'vakaros-csv'   // GPS-only (dinghy) — see vakarosCsvParse.ts
   | 'gpx'           // the universal fallback — see gpxParse.ts
+  | 'unknown'       // nothing recognised it — say so, do not guess
 
 export interface ParseLogResult {
   format: LogFormat
@@ -62,7 +63,12 @@ export function detectLogFormat(text: string): LogFormat {
   // than a `Utc` one. The distinction is the whole point — see below.
   if (isFlatLocalLog(text)) return 'flat-local'
   if (isFlatOleLog(text)) return 'flat-ole'   // N76 flat-CSV (OLE serial OR slash-date Utc)
-  return 'flat-nmea'                           // legacy N72 NMEA-position CSV
+  if (isFlatNmeaLog(text)) return 'flat-nmea'  // legacy N72 NMEA-position CSV
+  // 'flat-nmea' USED TO BE THE FALLBACK, so every unrecognised file claimed to
+  // be a legacy N72 log: a folder of weather exports, polars and route files
+  // all identified as one, and the only sign was a zero-row parse further down.
+  // An unrecognised file now says it is unrecognised.
+  return 'unknown'
 }
 
 export function parseLog(text: string, opts: ParseLogOpts = {}): ParseLogResult {
@@ -79,6 +85,12 @@ export function parseLog(text: string, opts: ParseLogOpts = {}): ParseLogResult 
       format, rows: p.rows, startUtc: p.startUtc, endUtc: p.endUtc,
       tzOffsetMin: p.tzOffsetMin, rateHz: p.rateHz,
     }
+  }
+  if (format === 'unknown') {
+    // Nothing claimed it. Return the empty result rather than handing it to a
+    // parser that will find nothing and imply the file was the wrong version of
+    // a format it never was.
+    return { format, rows: [], startUtc: 0, endUtc: 0 }
   }
   if (format === 'gpx') {
     // Phones, watches, Velocitek exports. No heading, heel or pitch; sog/cog may

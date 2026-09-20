@@ -36,6 +36,19 @@ describe('isGpx', () => {
     expect(isGpx('<gpx></gpx>')).toBe(false)        // no points
     expect(isGpx('')).toBe(false)
   })
+
+  it('refuses a marks or route file — GPX, but not a logfile', () => {
+    // 35 of 41 GPX files in a real Downloads folder were marks or routes.
+    // Accepting them would report the format as understood and then find no
+    // rows, which is exactly the mislabelling this change is about.
+    const marks = '<?xml version="1.0"?><gpx version="1.1">' +
+      '<wpt lat="50.1" lon="-1.2"><name>Mark 1</name></wpt>' +
+      '<wpt lat="50.2" lon="-1.3"><name>Mark 2</name></wpt></gpx>'
+    expect(isGpx(marks)).toBe(false)
+    const route = '<?xml version="1.0"?><gpx version="1.1"><rte>' +
+      '<rtept lat="50.1" lon="-1.2"/><rtept lat="50.2" lon="-1.3"/></rte></gpx>'
+    expect(isGpx(route)).toBe(false)
+  })
 })
 
 describe('parseGpx', () => {

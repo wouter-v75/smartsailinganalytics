@@ -553,7 +553,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         // is stored as a 1 Hz copy after its stats are computed from every row).
         p.hz=logRateHz(p.rows); p.lidarSails=lidarSailsIn(p.rows);
         setCsvParsed(p);
-        const fmtLabel=[p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':p.format==='vakaros-csv'?'Vakaros GPS':'flat CSV',
+        const fmtLabel=[p.format==='raw'?`raw ${p.version||''}`:p.format==='flat-ole'?'flat UTC':p.format==='log-v3'?'log v3':p.format==='flat-local'?'flat local':p.format==='vakaros-csv'?'Vakaros GPS':p.format==='gpx'?'GPX':p.format==='unknown'?'unrecognised':'flat CSV',
           p.hz>=1.5?`${p.hz} Hz`:null, p.lidarSails.length?`lidar ${p.lidarSails.map(s=>s.label.toLowerCase()).join('/')}`:null].filter(Boolean).join(' · ');
         // flat-local carries VENUE wall-clock, like the legacy flat-NMEA export, so
         // the timezone actually decides where its rows land — say which one was used
@@ -565,7 +565,9 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         // chart in Analytics. Say so at the point the file is read.
         const srcLabel = files.length>1 ? `${files.length} files` : files[0].name;
         if(!p.rows.length){
-          addLog(`⚠ Log (${fmtLabel.trim()}): 0 rows read from ${srcLabel} — the format wasn't recognised. Nothing will be saved.`);
+          addLog(p.format==='unknown'
+            ? `⚠ ${srcLabel}: not a logfile SSA recognises — nothing will be saved. Accepted formats are listed under the picker.`
+            : `⚠ Log (${fmtLabel.trim()}): 0 rows read from ${srcLabel} — the file parsed as ${p.format} but held no rows. Nothing will be saved.`);
         } else {
           addLog(`✓ Log (${fmtLabel.trim()}): ${p.rows.length.toLocaleString()} rows · ${srcLabel} · ${tzNote}`);
           if(p.mergedFrom) for(const m of p.mergedFrom) addLog(`   · ${m}`);

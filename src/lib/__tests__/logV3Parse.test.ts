@@ -117,15 +117,19 @@ describe('end to end through parseLog', () => {
     expect(t.toISOString().slice(0, 16)).toBe('2026-09-02T06:52')
   })
 
-  it('reproduces the old outcome: without the channel map it falls to NMEA and yields 0 rows', () => {
-    // Strip the `!boat,0,1,2,…` line — now there is no map, so detection cannot
-    // see v3, isFlatOleLog still rejects the leading `!`, and the file goes to the
-    // legacy NMEA parser. That is exactly what happened to every v3 log before
-    // this format existed: uploaded, badged "log", zero rows, empty chart.
+  it('without the channel map it is UNRECOGNISED — no longer mislabelled as NMEA', () => {
+    // Strip the `!boat,0,1,2,…` line: detection cannot see v3, and isFlatOleLog
+    // still rejects the leading `!`.
+    //
+    // It used to land on 'flat-nmea', because that was the fallback for anything
+    // unrecognised — so a v3 log with a missing map was reported as a legacy N72
+    // export, uploaded, badged "log", and showed zero rows and an empty chart
+    // with nothing to say the format had not been understood. 'flat-nmea' now
+    // requires a POSITIVE match, so this reads as what it is: unknown.
     const noMap = FILE.split('\n').filter((l) => !/^!boat,/.test(l)).join('\n')
     expect(isLogV3(noMap)).toBe(false)
     const legacy = parseLog(noMap)
-    expect(legacy.format).toBe('flat-nmea')
+    expect(legacy.format).toBe('unknown')
     expect(legacy.rows.length).toBe(0)
   })
 

@@ -33,6 +33,30 @@ export function expToUtc(ds, ts, offsetMin = 0) {
   return Date.UTC(yr, m - 1, d, h, mn, sc) - offsetMin * 60000;
 }
 
+// Does this look like the legacy N72 export?
+//
+// It used to be assumed: detectLogFormat returned 'flat-nmea' when nothing else
+// matched, so EVERY unrecognised file claimed to be a legacy N72 log. A folder
+// of weather exports, polars and route files all identified as it, and the only
+// sign of trouble was a zero-row parse further down.
+//
+// Two shapes count, because the parser below supports both:
+//   • a NAMED header — Expedition writes Pos[dddmm.mm], dd/mm/yy, hhmmss
+//   • a HEADER-LESS export, which the parser reads by fixed position: its first
+//     line is already data, wide enough to reach the columns it wants, and
+//     starts with an NMEA "ddmm.mmmmH dddmm.mmmmH" position
+export function isFlatNmeaLog(text) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n").filter(l => l.trim());
+  if (!lines.length) return false;
+  const norm = s => String(s || "").toLowerCase().replace(/%/g, "pct").replace(/[^a-z0-9]/g, "");
+  const cols = lines[0].split(",").map(norm);
+  const hasPos = cols.some(c => c.startsWith("posdddmm"));
+  if (hasPos && (cols.includes("ddmmyy") || cols.includes("hhmmss"))) return true;
+  const first = lines[0].split(",");
+  return first.length >= 27 &&
+    /^\s*\d{3,4}\.\d+\s*[NS]\s+\d{4,5}\.\d+\s*[EW]/.test(first[0]);
+}
+
 export function parseCsvLog(text, offsetMin = 0) {
   const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim());
   if (!lines.length) return { rows: [], startUtc: 0, endUtc: 0 };
