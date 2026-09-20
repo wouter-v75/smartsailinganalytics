@@ -23,6 +23,8 @@ export interface SquadTrack {
   boatId: string
   boatName: string
   sailNumber: string | null
+  /** The owning team, when it is not the viewer's own. */
+  teamName?: string | null
   rows: SquadTrackRow[]
   /** Stable per boat, so a boat keeps its colour across sessions. */
   colour: string
@@ -100,7 +102,37 @@ export async function loadSquadTracks(opts: LoadOpts): Promise<SquadTrack[]> {
     } catch { return null }
   }))
 
-  return loaded
-    .filter((t): t is SquadTrack => t != null)
+  const sameTeam = loaded.filter((t): t is SquadTrack => t != null)
+
+  // …and the boats from OTHER teams that shared this day with a squad.
+  //
+  // BOTH paths are first-class, because a team is a PROGRAMME and not a boat.
+  // A team legitimately holds several boats — a campaign that kept its old hull
+  // alongside the new one, a national squad running two 49ers under one
+  // management — and those need no squad at all: they are already one team's
+  // data. The squad path is for boats under DIFFERENT ownership that agreed to
+  // train together. Neither is the "main" one; which dominates depends entirely
+  // on how the programme is organised, and SSA should not push it either way.
+  let shared: SquadTrack[] = []
+  try {
+    const res = await f(`/api/squads/tracks/${opts.date}`)
+    if (res.ok) {
+      const j = await res.json()
+      shared = (j?.tracks || [])
+        .filter((t: any) => t.boatId && t.boatId !== opts.excludeBoatId)
+        .map((t: any) => ({
+          boatId: t.boatId,
+          boatName: t.boatName,
+          sailNumber: t.sailNumber ?? null,
+          teamName: t.teamName ?? null,
+          rows: t.rows || [],
+          colour: colourForBoat(t.boatId),
+        }))
+    }
+  } catch { /* a squad is optional; its absence is not an error */ }
+
+  // A boat reachable BOTH ways — same team and squad-shared — must appear once.
+  const seen = new Set(sameTeam.map((t) => t.boatId))
+  return [...sameTeam, ...shared.filter((t) => !seen.has(t.boatId))]
     .sort((a, b) => a.boatName.localeCompare(b.boatName))
 }

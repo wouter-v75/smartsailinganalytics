@@ -50,7 +50,19 @@ resolution).
 
 **`next build` while `next dev` is running corrupts the dev server.** Both write
 `.next/`; every page then 500s with `Cannot find module './NNNN.js'`, including
-pages you never touched. Stop the server, `rm -rf .next`, restart.
+pages you never touched. Stop the server, `rm -rf .next`, restart. To build
+without stopping dev, copy the tree to `$TMPDIR` (excluding `.next` and
+`.git`), symlink `node_modules`, and build there — it gets its own `.next`.
+
+**Nothing but `next build` sees the ROUTE TREE, so it has its own test.** A
+commit added `api/videos/[id]/share` beside the existing `[videoId]/share`;
+tsc, vitest, `next lint` and `lint:undef` were all green and Vercel died in
+1.1 s with *"You cannot use different slug names for the same dynamic path"*.
+It is a property of the directory layout, not of any file, so no file-based
+check can catch it. `src/lib/__tests__/appRoutes.test.ts` now asserts one slug
+name per level and one `route.ts` per resolved URL. Two dirs differing only in
+slug name resolve to the SAME URL — so even where Next tolerates it, one of
+them is silently unreachable.
 
 **`localStore.js` owns the `ssa-db` schema and is the only file allowed to name
 a version.** Everything else opens `indexedDB.open('ssa-db')` versionless. A

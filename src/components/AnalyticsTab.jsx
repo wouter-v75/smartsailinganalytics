@@ -12,6 +12,7 @@ import { getUidFast } from '../lib/supabase/browser';
 import { addSection, inSections, removeSection, sectionLabel, sectionsSpan } from '../lib/trackSections';
 import { GPSTrackMap } from './GPSTrackMap';
 import { loadSquadTracks } from '../lib/squadTracks';
+import { setSessionMediaShared, setSessionShared, shareLabel, squadsForTeam } from '../lib/squadShare';
 import PerfChartsSection from './analytics/PerfChartsSection';
 import { LineChart } from './charts/LineChart';
 import { ManoeuvreChart } from './charts/ManoeuvreChart';
@@ -150,6 +151,62 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   };
   // Reset view when the session changes
   useEffect(()=>{ setViewRange(null); setSections([]); }, [activeDate]);
+
+  // ── Sharing this session with the squad ──────────────────────────────────
+  // The same decision the Upload tab asks at import, changeable afterwards:
+  // a track shared in haste can be taken back, and one held back can be given
+  // once the crew has seen it. Only shown when the team is in a squad.
+  const [squads, setSquads] = useState([]);
+  const [shared, setShared] = useState(null);      // null until known
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareErr, setShareErr] = useState(null);
+
+  useEffect(()=>{
+    let alive=true;
+    if(!tagBoat?.teamId){ setSquads([]); return; }
+    squadsForTeam(tagBoat.teamId).then(s=>{ if(alive) setSquads(s); }).catch(()=>{});
+    return()=>{alive=false;};
+  },[tagBoat?.teamId]);
+
+  useEffect(()=>{
+    let alive=true;
+    setShared(null); setShareErr(null);
+    if(!tagBoat?.teamId||!tagBoat?.boatId||!activeDate||!squads.length) return;
+    fetch(`/api/teams/${tagBoat.teamId}/boats/${tagBoat.boatId}/sessions/${activeDate}`)
+      .then(r=>r.ok?r.json():null)
+      .then(j=>{ if(alive) setShared(!!(j?.session?.shared_with_squad ?? j?.shared_with_squad)); })
+      .catch(()=>{});
+    return()=>{alive=false;};
+  },[tagBoat?.teamId, tagBoat?.boatId, activeDate, squads.length]);
+
+  // Media follows the same decision, in bulk: one drone operator films the
+  // whole squad, and asking them to tick forty clips is asking them not to.
+  const [mediaBusy,setMediaBusy]=useState(false);
+  const [mediaMsg,setMediaMsg]=useState(null);
+  const shareMedia = useCallback(async (next)=>{
+    const vids=(allVideos||[]).filter(v=>v.id).map(v=>v.id);
+    const pics=(photos||[]).filter(p=>p.id).map(p=>p.id);
+    if(!vids.length&&!pics.length){ setMediaMsg('nothing to share on this day'); return; }
+    setMediaBusy(true); setMediaMsg(null);
+    const [v,p2]=await Promise.all([
+      setSessionMediaShared('videos',vids,next),
+      setSessionMediaShared('photos',pics,next),
+    ]);
+    setMediaBusy(false);
+    const changed=v.changed+p2.changed, failed=v.failed+p2.failed;
+    setMediaMsg(failed
+      ? `${changed} shared, ${failed} refused — ${v.error||p2.error||''}`
+      : `${changed} item${changed===1?'':'s'} ${next?'shared with':'taken back from'} the squad`);
+  },[allVideos,photos]);
+
+  const toggleShared = useCallback(async ()=>{
+    if(!tagBoat?.teamId||!tagBoat?.boatId||!activeDate||shareBusy) return;
+    const next=!shared;
+    setShareBusy(true); setShareErr(null);
+    const r=await setSessionShared(tagBoat.teamId, tagBoat.boatId, activeDate, next);
+    setShareBusy(false);
+    if(r.ok) setShared(next); else setShareErr(r.error||'could not change sharing');
+  },[tagBoat, activeDate, shared, shareBusy]);
 
   // ── The rest of the squad on the same day ────────────────────────────────
   // A dinghy squad trains together and nearly every question is comparative, so
@@ -370,6 +427,55 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
                   {card("Target %",vsTargAvg?R(vsTargAvg)+"%":"--","","#EF4444")}
                 </div>
               </>
+            )}
+            {squads.length>0&&shared!==null&&(
+              <div style={{
+                display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",
+                margin:"0 0 10px",padding:"8px 11px",borderRadius:8,fontSize:10,lineHeight:1.5,
+                background:shared?"#0B2136":"#071624",
+                border:`1px solid ${shared?"#1D9E75":"#1E3A5A"}`,
+                color:shared?"#7DD3FC":"#94A3B8",
+              }}>
+                <button type="button" onClick={toggleShared} disabled={shareBusy}
+                  aria-pressed={shared}
+                  title={shared?"Stop sharing this track with the squad":"Share this track with the squad"}
+                  style={{
+                    background:shared?"#1D9E75":"#071624",
+                    border:`1px solid ${shared?"#1D9E75":"#1E3A5A"}`,
+                    color:shared?"#03121C":"#7DD3FC",
+                    borderRadius:5,padding:"4px 10px",fontSize:11,fontWeight:700,
+                    minHeight:28,cursor:shareBusy?"wait":"pointer",opacity:shareBusy?0.6:1,
+                  }}>
+                  {shareBusy?"…":shared?"Shared with the squad":"Not shared"}
+                </button>
+                <span>
+                  {shared
+                    ? `${squads.map(q=>q.name).join(", ")} can see this track.`
+                    : shareLabel(squads).replace(/^Share this track with /,"Share with ") + "."}
+                  <span style={{color:"#475569"}}> Track and derived analysis only — not video, photos or debriefs.</span>
+                </span>
+                {shareErr&&<span style={{color:"#F59E0B"}}>{shareErr}</span>}
+                <span style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{color:"#475569"}}>
+                    Video &amp; photos ({(allVideos||[]).length}+{(photos||[]).length}):
+                  </span>
+                  <button type="button" disabled={mediaBusy} onClick={()=>shareMedia(true)}
+                    title="Share this day's clips and photos with the squad — for drone or coach-boat footage of everyone"
+                    style={{background:"#071624",border:"1px solid #1E3A5A",color:"#7DD3FC",
+                      borderRadius:5,padding:"3px 9px",fontSize:10,fontWeight:600,
+                      minHeight:26,cursor:mediaBusy?"wait":"pointer",opacity:mediaBusy?0.6:1}}>
+                    Share all
+                  </button>
+                  <button type="button" disabled={mediaBusy} onClick={()=>shareMedia(false)}
+                    title="Stop sharing this day's clips and photos"
+                    style={{background:"#071624",border:"1px solid #1E3A5A",color:"#94A3B8",
+                      borderRadius:5,padding:"3px 9px",fontSize:10,fontWeight:600,
+                      minHeight:26,cursor:mediaBusy?"wait":"pointer",opacity:mediaBusy?0.6:1}}>
+                    Take back
+                  </button>
+                  {mediaMsg&&<span style={{color:"#475569"}}>{mediaMsg}</span>}
+                </span>
+              </div>
             )}
             {section("GPS track",(
               rows.length > 0 ? (

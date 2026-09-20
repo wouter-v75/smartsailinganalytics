@@ -22,7 +22,7 @@ export async function GET(
   const { data, error } = await supabase
     .from('sessions')
     .select(
-      'id, date, title, log_data, xml_data, tz_offset_minutes, created_at, updated_at, created_by_user_id'
+      'id, date, title, log_data, xml_data, tz_offset_minutes, shared_with_squad, created_at, updated_at, created_by_user_id'
     )
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)
@@ -40,6 +40,8 @@ interface PutBody {
   log_data?: unknown
   xml_data?: unknown
   tz_offset_minutes?: number | null
+  /** Squad sharing, decided per session — see migration 0071. */
+  shared_with_squad?: boolean
 }
 
 export async function PUT(
@@ -66,6 +68,10 @@ export async function PUT(
   if ('log_data' in body) row.log_data = body.log_data
   if ('xml_data' in body) row.xml_data = body.xml_data
   if ('tz_offset_minutes' in body) row.tz_offset_minutes = body.tz_offset_minutes
+  // Only when the caller says so. Absent must NOT mean false, or every ordinary
+  // save — a title edit, a re-upload — would quietly un-share a session that
+  // somebody had deliberately shared.
+  if ('shared_with_squad' in body) row.shared_with_squad = !!body.shared_with_squad
 
   // Upsert by (boat_id, date) — that's the unique constraint from 0003.
   // If the row already exists we don't overwrite created_by; PostgREST
@@ -74,7 +80,7 @@ export async function PUT(
     .from('sessions')
     .upsert(row, { onConflict: 'boat_id,date' })
     .select(
-      'id, date, title, log_data, xml_data, tz_offset_minutes, updated_at'
+      'id, date, title, log_data, xml_data, tz_offset_minutes, shared_with_squad, updated_at'
     )
     .single()
 
