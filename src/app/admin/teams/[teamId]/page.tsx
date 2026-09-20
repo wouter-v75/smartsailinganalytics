@@ -11,6 +11,7 @@ import TeamHeader from './TeamHeader'
 import BoatsPanel from './BoatsPanel'
 import MembershipsPanel from './MembershipsPanel'
 import InvitationsPanel from './InvitationsPanel'
+import SquadPanel from './SquadPanel'
 import PendingRequestsPanel from './PendingRequestsPanel'
 import BackfillPanel from './BackfillPanel'
 import WipeLocalCachePanel from '../../../../components/WipeLocalCachePanel'
@@ -34,15 +35,20 @@ export default async function TeamDetailPage({
     .maybeSingle()
   if (!me || me.status !== 'active') redirect('/')
 
-  // Allow access for global admin OR active team_manager of THIS team.
+  // Allow access for global admin OR an active team_manager or COACH of THIS
+  // team. Coach was added for the squad panel: joining a squad is a decision
+  // the team takes for itself, and on a dinghy programme the person who takes
+  // it is the coach, not a manager. The squad_members policy gates the write
+  // either way — this only decides who can reach the page.
   const service: ReturnType<typeof getServiceSupabase> = getServiceSupabase()
+  const runnerRoles = ['team_manager', 'coach']
   if (me.global_role !== 'admin') {
     const { data: mgr } = await service
       .from('memberships')
       .select('id, valid_from, valid_to')
       .eq('user_id', user.id)
       .eq('team_id', params.teamId)
-      .eq('role', 'team_manager')
+      .in('role', runnerRoles)
     const now = Date.now()
     const ok = (mgr || []).some((m) => {
       if (m.valid_from && new Date(m.valid_from).getTime() > now) return false
@@ -133,6 +139,8 @@ export default async function TeamDetailPage({
         />
 
         <InvitationsPanel teamId={team.id} boats={boats || []} />
+
+        <SquadPanel teamId={team.id} />
 
         <BackfillPanel teamId={team.id} boats={boats || []} />
 
