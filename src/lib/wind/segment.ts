@@ -187,3 +187,68 @@ export const steadySeconds = (segs: Segment[]): number =>
  */
 export const segmentsIn = (segs: Segment[], from: number, to: number): Segment[] =>
   segs.filter((s) => s.endUtc >= from && s.startUtc < to)
+
+/**
+ * Coalesce consecutive segments that are really one leg.
+ *
+ * The segmenter deliberately breaks on any wobble — a speed dip, a heel
+ * excursion, a second of bad fix — because for FITTING a wind, more independent
+ * pieces of steady evidence is better and each carries its own duration weight.
+ * But for finding MANOEUVRES that fragmentation is fatal: on a real 3-hour
+ * track the median turn between adjacent segments is 5°, and 114 of 126 pairs
+ * turn less than 50°, so almost every "gap" is a wobble inside one leg rather
+ * than a tack.
+ *
+ * So: segments are the unit of evidence, LEGS are the unit of structure. This
+ * merges neighbours whose bearings agree and whose gap is short, giving back
+ * the same Segment shape with `dur` summed over the real steady time (not wall
+ * time, which would count the wobbles as if the boat had been steady through
+ * them).
+ */
+export function mergeLegs(
+  segs: Segment[],
+  opts: { toleranceDeg?: number; maxGapSec?: number } = {}
+): Segment[] {
+  const tol = opts.toleranceDeg ?? 15
+  const maxGap = opts.maxGapSec ?? 30
+  const sorted = [...segs].sort((a, b) => a.startUtc - b.startUtc)
+  const out: Segment[] = []
+  let group: Segment[] = []
+
+  const flush = () => {
+    if (!group.length) return
+    const w = group.map((s) => s.dur)
+    const total = w.reduce((a, b) => a + b, 0)
+    const wmean = (pick: (s: Segment) => number | null): number | null => {
+      const vals = group.filter((s) => pick(s) != null)
+      if (!vals.length) return null
+      return vals.reduce((a, s) => a + (pick(s) as number) * s.dur, 0) /
+        vals.reduce((a, s) => a + s.dur, 0)
+    }
+    const bearings = group.map((s) => s.bearing)
+    out.push({
+      t: (group[0].startUtc + group[group.length - 1].endUtc) / 2,
+      startUtc: group[0].startUtc,
+      endUtc: group[group.length - 1].endUtc,
+      dur: total,
+      bearing: circularMean(bearings),
+      sog: group.reduce((a, s) => a + s.sog * s.dur, 0) / total,
+      hdg: group.some((s) => s.hdg != null) ? circularMean(
+        group.filter((s) => s.hdg != null).map((s) => s.hdg as number)) : null,
+      heel: wmean((s) => s.heel),
+      steadiness: circularR(bearings),
+    })
+    group = []
+  }
+
+  for (const s of sorted) {
+    if (!group.length) { group = [s]; continue }
+    const prev = group[group.length - 1]
+    const gapSec = (s.startUtc - prev.endUtc) / 1000
+    const legBearing = circularMean(group.map((g) => g.bearing))
+    if (gapSec <= maxGap && Math.abs(angleDiff(s.bearing, legBearing)) <= tol) group.push(s)
+    else { flush(); group = [s] }
+  }
+  flush()
+  return out
+}
