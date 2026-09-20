@@ -129,3 +129,67 @@ describe('media sharing', () => {
     expect(await setSessionMediaShared('videos', [], true)).toEqual({ ok: true, changed: 0, failed: 0 })
   })
 })
+
+describe('squadStanding — a team must know it is in a squad', () => {
+  const squadsJson = {
+    squads: [{
+      id: 'sq1', name: 'Dragon Squad',
+      squad_members: [
+        { team_id: 't1', status: 'active', teams: { name: 'Dragon' } },
+        { team_id: 't2', status: 'active', teams: { name: 'Team Torvar' } },
+      ],
+    }],
+  }
+  const fetchSquads = (async () => ({ ok: true, json: async () => squadsJson })) as unknown as typeof fetch
+  const noSquads = (async () => ({ ok: true, json: async () => ({ squads: [] }) })) as unknown as typeof fetch
+
+  it('reports the squad and who else is in it', async () => {
+    const { squadStanding } = await import('../squadShare')
+    const r = await squadStanding('t1', async () => 0, fetchSquads)
+    expect(r.squads).toHaveLength(1)
+    expect(r.squads[0].name).toBe('Dragon Squad')
+    expect(r.squads[0].otherTeams).toEqual(['Team Torvar'])
+  })
+
+  it('does not count anything when there is no squad', async () => {
+    // The counts are three queries; a team not in a squad should not pay for
+    // them, and should see no squad vocabulary at all.
+    const { squadStanding } = await import('../squadShare')
+    let calls = 0
+    const r = await squadStanding('t1', async () => { calls++; return 5 }, noSquads)
+    expect(r.squads).toEqual([])
+    expect(calls).toBe(0)
+    expect(r.shared).toEqual({ sessions: 0, videos: 0, photos: 0 })
+  })
+
+  it('counts what is ACTUALLY shared, because joining shares nothing', async () => {
+    const { squadStanding } = await import('../squadShare')
+    const r = await squadStanding('t1', async (t) => ({ sessions: 2, videos: 0, photos: 7 }[t] ?? 0), fetchSquads)
+    expect(r.shared).toEqual({ sessions: 2, videos: 0, photos: 7 })
+  })
+
+  it('survives a failing count rather than breaking the user menu', async () => {
+    const { squadStanding } = await import('../squadShare')
+    const r = await squadStanding('t1', async () => { throw new Error('rls') }, fetchSquads)
+    expect(r.shared).toEqual({ sessions: 0, videos: 0, photos: 0 })
+    expect(r.squads).toHaveLength(1)   // the relationship still shows
+  })
+})
+
+describe('sharedSummary', () => {
+  it('reassures when nothing is shared', async () => {
+    const { sharedSummary } = await import('../squadShare')
+    expect(sharedSummary({ sessions: 0, videos: 0, photos: 0 }))
+      .toBe('Nothing shared yet — you choose per track.')
+  })
+
+  it('names only the categories that are non-zero', async () => {
+    const { sharedSummary } = await import('../squadShare')
+    expect(sharedSummary({ sessions: 2, videos: 0, photos: 0 })).toBe('Sharing 2 tracks.')
+    expect(sharedSummary({ sessions: 1, videos: 0, photos: 0 })).toBe('Sharing 1 track.')
+    expect(sharedSummary({ sessions: 2, videos: 3, photos: 7 }))
+      .toBe('Sharing 2 tracks, 3 clips and 7 photos.')
+    expect(sharedSummary({ sessions: 0, videos: 1, photos: 1 }))
+      .toBe('Sharing 1 clip and 1 photo.')
+  })
+})

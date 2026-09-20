@@ -148,3 +148,53 @@ export function shareLabel(squads: SquadSummary[]): string {
     ? `Share this track with ${names} — ${others} other ${others === 1 ? 'team' : 'teams'} will see it`
     : `Share this track with ${names}`
 }
+
+// ── "Am I in a squad, and what is it seeing?" ───────────────────────────────
+// A team must never be in a squad without knowing it — design doc §7, "no
+// silent sharing". Being in a squad shares NOTHING by itself, so the honest
+// answer has two halves: the standing relationship, and the count of items
+// actually shared under it. Showing only the first invites the reasonable fear
+// that joining handed everything over; showing only the second hides the
+// relationship from a team that has not uploaded yet.
+
+export interface SquadStanding {
+  squads: SquadSummary[]
+  /** Items of this team's OWN data currently visible to the squad. */
+  shared: { sessions: number; videos: number; photos: number }
+}
+
+/**
+ * Counts what this team is exposing. Reads through the caller's own session,
+ * so RLS applies and a team can only ever count its own.
+ *
+ * Counting failures return 0 rather than throwing: this is a reassurance
+ * panel, and it must not be the thing that breaks the user menu.
+ */
+export async function squadStanding(
+  teamId: string,
+  countImpl: (table: MediaKind | 'sessions') => Promise<number>,
+  fetchImpl: typeof fetch = fetch
+): Promise<SquadStanding> {
+  const squads = await squadsForTeam(teamId, fetchImpl)
+  if (!squads.length) {
+    return { squads, shared: { sessions: 0, videos: 0, photos: 0 } }
+  }
+  const [sessions, videos, photos] = await Promise.all(
+    (['sessions', 'videos', 'photos'] as const).map((t) =>
+      countImpl(t).catch(() => 0))
+  )
+  return { squads, shared: { sessions, videos, photos } }
+}
+
+/** Plain English for the panel: what the squad can actually see today. */
+export function sharedSummary(shared: SquadStanding['shared']): string {
+  const parts: string[] = []
+  if (shared.sessions) parts.push(`${shared.sessions} track${shared.sessions === 1 ? '' : 's'}`)
+  if (shared.videos) parts.push(`${shared.videos} clip${shared.videos === 1 ? '' : 's'}`)
+  if (shared.photos) parts.push(`${shared.photos} photo${shared.photos === 1 ? '' : 's'}`)
+  if (!parts.length) return 'Nothing shared yet — you choose per track.'
+  const list = parts.length > 1
+    ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+    : parts[0]
+  return `Sharing ${list}.`
+}

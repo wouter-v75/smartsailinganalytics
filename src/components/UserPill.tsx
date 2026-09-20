@@ -10,6 +10,13 @@
 //
 // Active-membership choice persists in localStorage keyed by user id, so it
 // survives reloads and is per-browser.
+//
+// It also states the team's SQUAD standing. A team must never be in a squad
+// without knowing it (squad design doc §7, "no silent sharing"), and the only
+// other places that mention a squad are the upload tick-box and the Analytics
+// toggle — both of which a team that has not uploaded yet will never see. This
+// is the standing answer, and it says what is ACTUALLY shared, because joining
+// a squad on its own shares nothing.
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -21,6 +28,9 @@ import {
   getActiveMembership,
   setActiveMembership,
 } from '../lib/active-membership'
+import {
+  squadStanding, sharedSummary, type SquadStanding,
+} from '../lib/squadShare'
 
 function toActiveMembership(m: MembershipRow): ActiveMembership {
   return {
@@ -182,6 +192,7 @@ export default function UserPill() {
   const [memberships, setMemberships] = useState<MembershipRow[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [quota, setQuota] = useState<QuotaState | null>(null)
+  const [standing, setStanding] = useState<SquadStanding | null>(null)
   const [open, setOpen] = useState(false)
   const popRef = useRef<HTMLDivElement>(null)
 
@@ -268,6 +279,34 @@ export default function UserPill() {
       cancelled = true
     }
   }, [])
+
+  // Squad standing for the ACTIVE team. Re-runs when the workspace switches,
+  // because a coach in two teams gets a different answer for each.
+  //
+  // activeId/memberships rather than the derived `active` below: that is
+  // computed after an early return, so it is not available to a hook.
+  const activeTeamId =
+    memberships.find((m) => m.id === activeId)?.team_id || null
+
+  useEffect(() => {
+    if (!activeTeamId) { setStanding(null); return }
+    let cancelled = false
+    const supabase = getBrowserSupabase()
+    // RLS scopes these to the caller, and team_id pins them to the team on
+    // screen — a coach in two teams counts each separately.
+    const count = async (table: 'sessions' | 'videos' | 'photos') => {
+      const { count: n } = await supabase
+        .from(table)
+        .select('id', { count: 'exact', head: true })
+        .eq('team_id', activeTeamId)
+        .eq('shared_with_squad', true)
+      return n || 0
+    }
+    squadStanding(activeTeamId, count)
+      .then((r) => { if (!cancelled) setStanding(r) })
+      .catch(() => { if (!cancelled) setStanding(null) })
+    return () => { cancelled = true }
+  }, [activeTeamId])
 
   // Close menu on outside click.
   useEffect(() => {
@@ -420,6 +459,30 @@ export default function UserPill() {
                 No memberships yet — ask the admin.
               </div>
             )}
+
+            {/* Squad standing. Rendered only when there IS one — a team not in
+                a squad should never see squad vocabulary at all. */}
+            {standing && standing.squads.length > 0 && (
+              <div className="mt-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 px-2 py-1.5">
+                <div className="text-[10px] uppercase tracking-wide text-cyan-300 mb-0.5">
+                  {standing.squads.length === 1 ? 'Squad' : 'Squads'}
+                </div>
+                {standing.squads.map((sq) => (
+                  <div key={sq.id} className="text-slate-100 text-sm truncate">
+                    {sq.name}
+                    {sq.otherTeams.length > 0 && (
+                      <span className="text-slate-400 text-xs">
+                        {' '}with {sq.otherTeams.join(', ')}
+                      </span>
+                    )}
+                  </div>
+                ))}
+                <div className="text-xs text-slate-300 mt-1">
+                  {sharedSummary(standing.shared)}
+                </div>
+              </div>
+            )}
+
             {others.length > 0 && (
               <>
                 <div className="text-[10px] uppercase tracking-wide text-slate-500 mt-2 mb-1">
