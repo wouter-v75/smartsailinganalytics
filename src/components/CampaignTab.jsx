@@ -19,6 +19,7 @@ import { uploadBlobToStorage } from '../lib/bunny-storage-upload'
 import { generateThumbnail } from '../lib/photoStore'
 import { RichText, FormatHint } from './RichText'
 import AudioBrief from './AudioBrief'
+import NoteRecorder from './NoteRecorder'
 import { myComments } from '../lib/tagging/comments'
 
 const BLOCK_META = {
@@ -351,7 +352,7 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
 
       {/* Weather forecast (PDF only) — TL1+ view, TL3+ edit. */}
       {canSeeForecast && (
-        <WeatherCard base={base} date={date} canEdit={canEditForecast} />
+        <WeatherCard base={base} date={date} canEdit={canEditForecast} teamId={teamId} boatId={boatId} />
       )}
 
       {/* Row 1 — Plan | Boat config (sail list for the day) */}
@@ -451,7 +452,7 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
 // button for editors. When empty + canEdit, shows a "+ Add {label}" affordance.
 // When empty + !canEdit, renders nothing. Each save is field-scoped so the
 // surrounding fetch state isn't disturbed.
-function EditableTextBlock({ label, value, canEdit, placeholder, onSave, accent = false }) {
+function EditableTextBlock({ label, value, canEdit, placeholder, onSave, accent = false, teamId, boatId }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(value || '')
   const [saving, setSaving] = useState(false)
@@ -470,8 +471,15 @@ function EditableTextBlock({ label, value, canEdit, placeholder, onSave, accent 
 
   return (
     <div style={{ marginTop: 14, borderTop: '1px solid #1E3A5A', paddingTop: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6, gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>{label}</span>
+        {canEdit && !editing && (
+          <NoteRecorder
+            value={value} label={label} canEdit={canEdit}
+            teamId={teamId} boatId={boatId}
+            onCommit={(next) => onSave(next)}
+          />
+        )}
         {canEdit && !editing && hasContent && (
           <button onClick={() => setEditing(true)} style={btnGhost}>Edit</button>
         )}
@@ -550,6 +558,7 @@ function PlanConditions({ base, date, canEdit, isMobile, teamId, boatId }) {
         label="Timings"
         value={timings}
         canEdit={canEdit}
+        teamId={teamId} boatId={boatId}
         placeholder="Dock out, warning signal, first start…"
         onSave={(v) => patch('timings', v)}
       />
@@ -557,6 +566,7 @@ function PlanConditions({ base, date, canEdit, isMobile, teamId, boatId }) {
         label="Plan"
         value={plan}
         canEdit={canEdit}
+        teamId={teamId} boatId={boatId}
         placeholder="Today's plan, intent, focus areas…"
         onSave={(v) => patch('plan', v)}
       />
@@ -715,7 +725,7 @@ function BoatConfigDayCard({ teamId, boatId, base, date, canEdit, isMobile }) {
   )
 }
 
-function WeatherCard({ base, date, canEdit }) {
+function WeatherCard({ base, date, canEdit, teamId, boatId }) {
   const [docs, setDocs] = useState([])
   const [uploading, setUploading] = useState(false)
   const [err, setErr] = useState(null)
@@ -821,6 +831,7 @@ function WeatherCard({ base, date, canEdit }) {
           label="Notes"
           value={details?.comments || ''}
           canEdit={canEdit}
+          teamId={teamId} boatId={boatId}
           placeholder="Expected shifts, sea-breeze timing, cloud, tide…"
           onSave={saveComments}
           accent
@@ -1264,8 +1275,22 @@ function NotesCard({ title, aiMode, fields, showDocuments, documentsScope = 'deb
         if (!canEdit && !hasContent) return null
         return (
           <div key={f.key} style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>{f.label}</div>
+              {canEdit && !isEditing && (
+                <NoteRecorder
+                  value={cur} label={f.label} canEdit={canEdit}
+                  teamId={teamId} boatId={boatId}
+                  onCommit={async (next) => {
+                    await fetch(`${base}/debrief`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ date, [f.key]: next }),
+                    })
+                    load()
+                  }}
+                />
+              )}
               {canEdit && !isEditing && hasContent && (
                 <button onClick={() => startEdit(f.key)} style={btnGhost}>Edit</button>
               )}

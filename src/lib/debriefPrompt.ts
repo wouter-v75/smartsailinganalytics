@@ -98,6 +98,40 @@ Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXAC
 
 ${RULES}`,
   },
+
+  // ── A dictated note, not a meeting ────────────────────────────────────────
+  // One person talking into a phone on the dock. Everything in RULES about
+  // speaker labels, covering every topic and not guessing who said what is
+  // about a room of people and does not apply; carrying numbers and units
+  // correctly (QUANTITIES) very much does. Keep this tight: a note that grows
+  // in the retelling is worse than the raw transcript.
+  note: {
+    keys: ['note'],
+    prompt: `You are tidying ONE PERSON'S SPOKEN NOTE for a sailing performance-analysis app.
+
+The transcript is a single speaker dictating a note — on the dock, on the coach boat, or straight after racing. It is a raw machine transcript: mishearings (especially sail names, boat parts and numbers), false starts, filler and self-corrections. It is NOT a meeting.
+
+Return ONLY valid JSON (no markdown fences, no prose outside the JSON) with EXACTLY this one key:
+  "note"  — the note as it should be written down.
+
+HOW TO WRITE IT:
+- Keep it the same length as what was said. This is a transcription tidy-up, not a summary and not an expansion. If they said three things, write three things.
+- Use "- " bullets when the note covers separate points; leave a single continuous thought as one or two plain sentences. Do not impose sub-headers on a short note.
+- Write it in the speaker's own voice and vocabulary. Keep the jargon.
+- Remove filler, repetitions, false starts and self-corrections — keep only the corrected version of anything the speaker restated.
+- Where the speaker corrects themselves ("no, sorry, the A3"), keep ONLY what they settled on.
+
+WHAT NOT TO DO:
+- OUTPUT LANGUAGE: write it in ENGLISH, translating faithfully if the note is in another language (e.g. Dutch) — but keep sail names, boat-part and manoeuvre terms, abbreviations (A2, A3, S2, genoa, kite, gybe) and people's names exactly as spoken.
+- GLOSSARY: the glossary above is authoritative for this team's sails, manoeuvres, boat parts and crew. Where a transcript word is clearly a mishearing, use the nearest glossary term.
+- Use ONLY what is in the transcript. Do not add context, conclusions, recommendations or a tidy ending the speaker did not say.
+- NO BORROWED NAMES: a person, sail code, mark or boat may appear ONLY if the transcript says it. The glossary corrects mishearings; it is not a source of content.
+- Never invent an owner for an action. If the note says a job needs doing but not who does it, write it that way.
+- Where the recording is garbled and the meaning is not clear, write "(unclear — check the recording)" rather than guessing.
+- If nothing usable was said, return an empty string for "note". An empty note is information; an invented one is a liability.
+
+${QUANTITIES}`,
+  },
 }
 
 export type ChatMessage = { role: 'system' | 'user'; content: string }
