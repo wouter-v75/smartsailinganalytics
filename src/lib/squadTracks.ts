@@ -17,7 +17,26 @@
 // full resolution and its colour modes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface SquadTrackRow { utc: number; lat: number; lon: number }
+export interface SquadTrackRow {
+  utc: number
+  lat: number
+  lon: number
+  /** Present only when the owning team shares `logdata`. See the route. */
+  sog?: number
+  cog?: number
+}
+
+/**
+ * How much of the owning team's log this viewer was given.
+ *
+ *   track  position only — the default, and all a reference line needs
+ *   speed  + sog/cog, because that team shares `logdata`
+ *   full   every channel at the logged rate, asked for with detail=full
+ *
+ * Carried so the client never has to guess whether a missing channel means
+ * WITHHELD or NOT LOGGED — two very different things to tell a coach.
+ */
+export type TrackDetail = 'track' | 'speed' | 'full'
 
 export interface SquadTrack {
   boatId: string
@@ -28,6 +47,8 @@ export interface SquadTrack {
   rows: SquadTrackRow[]
   /** Stable per boat, so a boat keeps its colour across sessions. */
   colour: string
+  /** What the server actually gave us. Absent for same-team tracks. */
+  detail?: TrackDetail
 }
 
 /**
@@ -46,7 +67,13 @@ export function colourForBoat(boatId: string): string {
   return SQUAD_COLOURS[h % SQUAD_COLOURS.length]
 }
 
-/** One point per `stepMs`, keeping the first of each bucket. */
+/**
+ * One point per `stepMs`, keeping the first of each bucket.
+ *
+ * Carries sog/cog through when they are there. Dropping them would undo the
+ * `logdata` permission a team deliberately granted, one layer below the code
+ * that asked for it — the kind of silent narrowing that is very hard to find.
+ */
 export function thinTrack(rows: any[], stepMs = 4000): SquadTrackRow[] {
   const out: SquadTrackRow[] = []
   let bucket = -Infinity
@@ -56,7 +83,10 @@ export function thinTrack(rows: any[], stepMs = 4000): SquadTrackRow[] {
     const b = Math.floor(utc / stepMs)
     if (b === bucket) continue
     bucket = b
-    out.push({ utc, lat, lon })
+    const point: SquadTrackRow = { utc, lat, lon }
+    if (Number.isFinite(r.sog)) point.sog = r.sog
+    if (Number.isFinite(r.cog)) point.cog = r.cog
+    out.push(point)
   }
   return out
 }
@@ -68,6 +98,14 @@ export interface LoadOpts {
   excludeBoatId?: string | null
   stepMs?: number
   fetchImpl?: typeof fetch
+  /**
+   * Ask for every channel at the logged rate from teams that share `logdata`.
+   *
+   * Off by default and should stay that way for the map: a session's log is
+   * about a megabyte and six boats would be six, to draw six reference lines.
+   * Only a caller that will actually read the channels should set it.
+   */
+  detail?: 'track' | 'full'
 }
 
 /**
@@ -115,7 +153,8 @@ export async function loadSquadTracks(opts: LoadOpts): Promise<SquadTrack[]> {
   // on how the programme is organised, and SSA should not push it either way.
   let shared: SquadTrack[] = []
   try {
-    const res = await f(`/api/squads/tracks/${opts.date}`)
+    const q = opts.detail === 'full' ? '?detail=full' : ''
+    const res = await f(`/api/squads/tracks/${opts.date}${q}`)
     if (res.ok) {
       const j = await res.json()
       shared = (j?.tracks || [])
@@ -127,6 +166,7 @@ export async function loadSquadTracks(opts: LoadOpts): Promise<SquadTrack[]> {
           teamName: t.teamName ?? null,
           rows: t.rows || [],
           colour: colourForBoat(t.boatId),
+          detail: t.detail,
         }))
     }
   } catch { /* a squad is optional; its absence is not an error */ }
