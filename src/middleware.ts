@@ -27,6 +27,16 @@ const PUBLIC_PATHS = new Set<string>([
   '/auth/callback',
   '/auth/confirm',
   '/auth/reset-password',
+  // The public marketing site. '/' is BOTH: signed out it renders the front
+  // page, signed in it renders the app — src/app/page.tsx decides, on the
+  // server, so nothing here needs to know which. Letting '/' through means an
+  // anonymous visitor lands on the front door instead of a login form.
+  '/',
+  '/features',
+  '/pricing',
+  '/support',
+  '/privacy',
+  '/request-access',
 ])
 
 // Path-prefix matches that bypass the auth gate entirely (anonymous AND
