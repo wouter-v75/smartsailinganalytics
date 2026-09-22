@@ -74,7 +74,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
   const [noBoatScope, setNoBoatScope] = useState(false);
   useEffect(() => {
     let alive = true;
-    (async () => {
+    const read = async () => {
       try {
         const uid = await getUidFast();
         const m = uid ? getActiveMembership(uid) : null;
@@ -82,8 +82,19 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
         if (m?.team_id && m?.boat_id) setTagBoat({ teamId: m.team_id, boatId: m.boat_id, role: m.role || null });
         setNoBoatScope(!!m?.team_id && !m?.boat_id);
       } catch { /* not signed in */ }
-    })();
-    return () => { alive = false; };
+    };
+    read();
+    // Re-read when the workspace SWITCHES, not only on mount.
+    //
+    // This used to have [] deps and never fire again, so after switching team
+    // the tab kept the boat it started with. Everything keyed off tagBoat went
+    // with it: the day's tags were fetched for the previous boat, squad tracks
+    // were loaded for the previous TEAM, and — the visible one — the active
+    // boat was no longer matched by excludeBoatId, so it was drawn a second
+    // time as a reference line underneath itself.
+    const onChange = () => { read(); };
+    window.addEventListener('ssa:active-membership-changed', onChange);
+    return () => { alive = false; window.removeEventListener('ssa:active-membership-changed', onChange); };
   }, []);
   const [dayTagEvents, setDayTagEvents] = useState([]);
   const [finishTags, setFinishTags] = useState([]);

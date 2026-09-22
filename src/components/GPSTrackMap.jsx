@@ -64,7 +64,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   // Leaflet is rebuilt wholesale by the map effect, so it needs a dep that
   // changes when the VISIBLE set does — not the array identity.
   const squadSig = React.useMemo(
-    ()=>shownSquad.map(t=>`${t.boatId}:${t.rows.length}`).join('|'),
+    ()=>shownSquad.map(t=>`${t.boatId}:${t.rows.length}:${t.detail||'track'}`).join('|'),
     [shownSquad]);
   const selLayerRef              = React.useRef(null);
 
@@ -126,6 +126,19 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
   // a steady day.
   const colourScale = React.useMemo(
     ()=>scaleForRows(polar, filteredRows, colourMode), [polar, filteredRows, colourMode]);
+
+  // The ramp a SQUAD PARTNER's track is drawn with, when its team shares
+  // `logdata` and the route therefore sent sog.
+  //
+  // Built from the ACTIVE boat's own speed, not the partner's, so the same
+  // colour means the same speed on every boat on the map — which is the
+  // comparison the whole feature exists to make. Null in the colour modes a
+  // partner cannot satisfy (no polar, no wind of their own), and then they keep
+  // their identity colour rather than being painted with an invented number.
+  const speedScale = React.useMemo(()=>{
+    if(colourMode!=='bsp') return null;
+    return scaleForRows(polar, filteredRows, 'bsp');
+  },[polar, filteredRows, colourMode]);
 
   // Keep callbacks in refs so Leaflet click closures always have the latest values
   const onSelectVideoRef = React.useRef(onSelectVideo);
@@ -216,9 +229,45 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       for(const t of shownSquad){
         const pts=t.rows.map(r=>[r.lat,r.lon]);
         if(pts.length<2) continue;
-        L.polyline(pts,{color:t.colour,weight:2,opacity:0.55,smoothFactor:1,dashArray:'4 3'})
-          .bindTooltip(t.sailNumber?`${t.boatName} · ${t.sailNumber}`:t.boatName,{sticky:true})
-          .addTo(map);
+
+        // SPEED-COLOURED when that team shares its log. The route only sends
+        // sog if the owning team ticked `logdata`, so a coloured partner track
+        // IS the permission, visible — and an identity-coloured one is a team
+        // that chose not to, not a boat with no speed.
+        //
+        // The scale is the ACTIVE boat's, deliberately: the whole point is to
+        // read two boats against each other, and a partner normalised to its
+        // own range would paint its slowest moment the same red as the active
+        // boat's, which is the exact comparison this is meant to make. Same
+        // colour, same speed, every boat.
+        //
+        // Only for speed. A partner has no polar and no wind, so VMG% or TWA
+        // cannot be honoured for them; those modes keep the identity colour
+        // rather than inventing a number.
+        const canSpeed = speedScale && t.rows.some(r=>Number.isFinite(r.sog));
+        if(canSpeed){
+          const segs=[]; let sg={color:null,pts:[]};
+          for(const r of t.rows){
+            const c = Number.isFinite(r.sog) ? colourFor(r.sog, speedScale) : t.colour;
+            const pt=[r.lat,r.lon];
+            if(!sg.color){ sg={color:c,pts:[pt]}; }
+            else if(c!==sg.color){ sg.pts.push(pt); if(sg.pts.length>1) segs.push({...sg,pts:[...sg.pts]}); sg={color:c,pts:[pt]}; }
+            else { sg.pts.push(pt); }
+          }
+          if(sg.pts.length>1) segs.push(sg);
+          for(const g of segs){
+            L.polyline(g.pts,{color:g.color,weight:3,opacity:0.7,smoothFactor:1}).addTo(map);
+          }
+          // A thin identity-coloured line under it, so WHOSE track it is stays
+          // readable once the ramp has taken the colour away.
+          L.polyline(pts,{color:t.colour,weight:6,opacity:0.18,smoothFactor:1})
+            .bindTooltip(t.sailNumber?`${t.boatName} · ${t.sailNumber} — speed`:`${t.boatName} — speed`,{sticky:true})
+            .addTo(map);
+        } else {
+          L.polyline(pts,{color:t.colour,weight:2,opacity:0.55,smoothFactor:1,dashArray:'4 3'})
+            .bindTooltip(t.sailNumber?`${t.boatName} · ${t.sailNumber}`:t.boatName,{sticky:true})
+            .addTo(map);
+        }
         const end=pts[pts.length-1];
         L.marker(end,{icon:L.divIcon({className:'',iconSize:[0,0],iconAnchor:[-4,6],
           html:`<span style="font-size:9px;font-weight:700;color:${t.colour};text-shadow:0 0 3px #000;white-space:nowrap">${t.boatName}</span>`})}).addTo(map);
@@ -477,7 +526,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     // `tz` is read when labelling markers; winStart reaches this through hlRows,
     // which is memoised on it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, photoMarkerSig, colourMode, colourScale, dayTags, tz, squadSig]);
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, photoMarkerSig, colourMode, colourScale, speedScale, dayTags, tz, squadSig]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
@@ -787,7 +836,15 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
                     if(next.has(t.boatId)) next.delete(t.boatId); else next.add(t.boatId);
                     return next;
                   })}
-                  title={`${on?'Hide':'Show'} ${t.boatName}${t.sailNumber?` · ${t.sailNumber}`:''}`}
+                  title={
+                    `${on?'Hide':'Show'} ${t.boatName}${t.sailNumber?` · ${t.sailNumber}`:''}` +
+                    // Says WHY a track is a plain line, which is otherwise
+                    // indistinguishable from a boat that logged no speed.
+                    (t.rows.some(r=>Number.isFinite(r.sog))
+                      ? (speedScale ? ' — coloured by speed, same scale as yours'
+                                    : ' — shares its log; switch Colour by to BSP to see its speed')
+                      : ' — position only; this team has not shared its log')
+                  }
                   aria-pressed={on}
                   style={{
                     display:"flex",alignItems:"center",gap:5,
@@ -804,6 +861,12 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
                     border:`1.5px solid ${t.colour}`,opacity:on?1:0.5,
                   }}/>
                   {t.boatName}
+                  {t.rows.some(r=>Number.isFinite(r.sog))&&(
+                    <span
+                      aria-hidden
+                      style={{fontSize:9,opacity:on?0.85:0.4,letterSpacing:-1}}
+                    >▞</span>
+                  )}
                 </button>
               );
             })}
