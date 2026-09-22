@@ -150,6 +150,14 @@ export default function PrivacyPage() {
               draw on and cannot leak one team&rsquo;s day into another&rsquo;s summary.
             </li>
             <li className="border-l-2 border-border pl-4">
+              <b className="text-fg">Everyone in the room has to agree first.</b> The team
+              debrief recorder does not run until every sailor and coach on the team has ticked
+              the consent box in their own profile. It is asked at signup, it defaults to no,
+              and anyone can withdraw it at any time — which stops the recorder for the whole
+              team until they agree again. Owners, consultants and guests are not counted,
+              because they are not in the debrief.
+            </li>
+            <li className="border-l-2 border-border pl-4">
               <b className="text-fg">You can switch it off.</b> A team that does not want AI
               transcription simply does not use it; every note can be typed. Nothing else in SSA
               depends on it.
@@ -203,6 +211,11 @@ export default function PrivacyPage() {
             and from video storage, not flagged as hidden.
           </div>
           <div className="rounded-xl border border-border bg-surface-1 p-5 text-[14px] leading-relaxed text-secondary">
+            <b className="text-fg">Consent is recorded and revocable.</b> Agreeing to be
+            recorded is a tick box in your own profile, dated when you set it, and untickable
+            at any time without asking anyone.
+          </div>
+          <div className="rounded-xl border border-border bg-surface-1 p-5 text-[14px] leading-relaxed text-secondary">
             <b className="text-fg">A crew member can ask for their own data.</b> Access, correction
             and erasure requests go to the team manager or straight to us, and we answer within a
             month as the GDPR requires.
@@ -222,13 +235,6 @@ export default function PrivacyPage() {
         lead="A privacy page that claims everything is finished is the one you should not believe."
       >
         <ul className="max-w-2xl space-y-3 text-[14px] leading-relaxed text-secondary">
-          <li className="border-l-2 border-border pl-4">
-            <b className="text-fg">Debrief recording consent is a team process, not a product
-            feature yet.</b> Recording a debrief captures the voices of everyone in the room.
-            Today it is up to the coach to tell the crew that; SSA does not yet prompt for or
-            record consent. If you run a squad with minors, agree this with parents before you
-            press record, and ask us where it stands before you rely on it.
-          </li>
           <li className="border-l-2 border-border pl-4">
             <b className="text-fg">There is no automatic retention schedule.</b> Data stays until
             you ask for it to go. Some programmes want a fixed deletion horizon; if you need one,

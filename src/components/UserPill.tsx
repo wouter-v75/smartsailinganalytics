@@ -511,6 +511,17 @@ export default function UserPill() {
             )}
           </div>
 
+          {/* Everyone gets their profile. It is where recording consent is
+              changed, so it has to be reachable by someone who has just been
+              told by their coach that they have not agreed yet. */}
+          <Link
+            href="/profile"
+            className="block px-3 py-2 hover:bg-slate-700 text-slate-100"
+            onClick={() => setOpen(false)}
+          >
+            Your profile
+          </Link>
+
           {/* Admin links */}
           {me.global_role === 'admin' && (
             <>

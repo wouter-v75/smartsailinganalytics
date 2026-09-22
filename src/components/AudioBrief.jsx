@@ -3,6 +3,13 @@
 // fields → review/edit → save. Desktop-only (gated by the caller passing isMobile)
 // so the heavy compression runs on a real CPU; and editors-only (canEdit).
 //
+// CONSENT GATE. A debrief recording captures everyone in the room, so it will
+// not run until every coach/tl1/tl2/tl3 in the team has agreed in their profile
+// (migration 0078; owners, consultants and guests are not counted — they are not
+// in the debrief). The button stays VISIBLE and explains itself when pressed: a
+// control that silently vanishes teaches a coach nothing, and the fix is a
+// sentence they can relay to the person who has not ticked the box.
+//
 // Props: { mode, fields:[{key,label}], onSaved:(values)=>Promise, canEdit, isMobile }
 import React, { useEffect, useRef, useState } from 'react'
 import { runAudioBrief } from '../lib/debriefAudio'
@@ -24,14 +31,44 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
   const [glossaryExtra, setGlossaryExtra] = useState(null)
+  // null = not yet known. Until it is known the button is allowed to be pressed;
+  // the check runs again on press, so nothing slips through a slow fetch.
+  const [consent, setConsent] = useState(null)
+  const [blocked, setBlocked] = useState(false)
 
   // The boat's live sail wardrobe + class glossary, feeding the summariser so
   // sail names self-maintain from the Boat tab. Shared with NoteRecorder and
   // cached per boat — a day's page mounts many of these.
   useEffect(() => { loadBoatVocab(teamId, boatId).then(setGlossaryExtra) }, [teamId, boatId])
 
+  useEffect(() => {
+    if (!teamId) return
+    let off = false
+    fetch(`/api/teams/${teamId}/recording-consent`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!off && j) setConsent(j) })
+      .catch(() => { /* leave null — press-time check will try again */ })
+    return () => { off = true }
+  }, [teamId])
+
   // Desktop + editors only. On mobile the button simply isn't shown.
   if (isMobile || !canEdit) return null
+
+  // Re-checked on press rather than trusted from mount: someone may have
+  // withdrawn consent while this page was open, and withdrawal has to bite
+  // immediately to mean anything.
+  async function guardedOpen() {
+    setBlocked(false)
+    let c = consent
+    if (teamId) {
+      try {
+        const r = await fetch(`/api/teams/${teamId}/recording-consent`)
+        if (r.ok) { c = await r.json(); setConsent(c) }
+      } catch { /* fall back to what we already had */ }
+    }
+    if (c && !c.allConsented) { setBlocked(true); return }
+    if (inputRef.current) inputRef.current.click()
+  }
 
   async function onPick(e) {
     const file = e.target.files && e.target.files[0]
@@ -62,7 +99,7 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
       <input ref={inputRef} type="file" accept="audio/*" style={{ display: 'none' }} onChange={onPick} />
 
       {!result && (
-        <button onClick={() => inputRef.current && inputRef.current.click()} disabled={busy}
+        <button onClick={guardedOpen} disabled={busy}
           style={{ ...btn, background: busy ? '#0F2030' : '#06253044', borderColor: '#06B6D4', color: busy ? '#8a97a9' : '#06B6D4', fontWeight: 700 }}>
           {busy ? `${STAGE[stage] || 'Working'}… ${Math.round(pct * 100)}%` : '🎙 Summarise from a recording'}
         </button>
@@ -71,6 +108,21 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
       {busy && (
         <div style={{ height: 6, background: '#0F2030', borderRadius: 4, overflow: 'hidden', marginTop: 8, border: '1px solid #1E3A5A' }}>
           <i style={{ display: 'block', height: '100%', width: `${Math.round(pct * 100)}%`, background: '#06B6D4', transition: 'width .15s' }} />
+        </div>
+      )}
+
+      {blocked && (
+        <div style={{ marginTop: 8, background: '#2A1A0A', border: '1px solid #B45309', borderRadius: 10, padding: 12, fontSize: 12, color: '#FCD34D', lineHeight: 1.6 }}>
+          <b>Not all of your team have agreed to team recording.</b> They can do so in their
+          profile.
+          {consent && consent.pending && consent.pending.length > 0 && (
+            <div style={{ marginTop: 6, color: '#E8C98A' }}>
+              Still to agree: {consent.pending.join(', ')}
+            </div>
+          )}
+          <div style={{ marginTop: 8 }}>
+            <a href="/profile" style={{ color: '#FCD34D', textDecoration: 'underline' }}>Open your profile</a>
+          </div>
         </div>
       )}
 

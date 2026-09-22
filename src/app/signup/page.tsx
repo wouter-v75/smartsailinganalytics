@@ -20,6 +20,11 @@ interface InviteSnapshot {
   email: string | null
 }
 
+// Only these roles sit in a debrief, so only they are asked (and only they gate
+// the recorder — see migration 0078). An owner, consultant or guest signing up
+// through an invite is not shown a question that does not apply to them.
+const DEBRIEF_ROLES = new Set(['coach', 'tl1', 'tl2', 'tl3'])
+
 function SignupForm() {
   const searchParams = useSearchParams()
   const inviteToken = searchParams.get('invite')
@@ -28,6 +33,12 @@ function SignupForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
+  // Two separate answers, deliberately. Accepting the data clause is required to
+  // have an account at all; agreeing to be captured in a team debrief recording
+  // is optional, revocable from the profile page, and defaults to NO. Consent
+  // that is pre-ticked is not consent.
+  const [privacyAccepted, setPrivacyAccepted] = useState(false)
+  const [recordingConsent, setRecordingConsent] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<'pending' | 'invited' | null>(null)
 
@@ -64,6 +75,10 @@ function SignupForm() {
       setError('Password must be at least 8 characters.')
       return
     }
+    if (!privacyAccepted) {
+      setError('Please confirm you have read how SSA handles your data.')
+      return
+    }
     setBusy(true)
     try {
       const supabase = getBrowserSupabase()
@@ -71,7 +86,13 @@ function SignupForm() {
         email,
         password,
         options: {
-          data: { name },
+          // handle_new_user() reads these straight off the signup metadata and
+          // stamps the timestamps server-side. Anything missing reads as NO.
+          data: {
+            name,
+            privacy_accepted: privacyAccepted,
+            recording_consent: recordingConsent,
+          },
           emailRedirectTo: `${window.location.origin}/auth/callback${
             inviteToken ? `?invite=${encodeURIComponent(inviteToken)}` : ''
           }`,
@@ -232,6 +253,47 @@ function SignupForm() {
             <p className="mt-1 text-xs text-slate-500">
               At least 8 characters.
             </p>
+          </div>
+
+          {/* Without an invite the role is not known yet, so the question is
+              asked anyway and simply gates nobody if the role turns out not to
+              be a sailing one. */}
+          <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <label className="flex gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                required
+                checked={privacyAccepted}
+                onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600"
+              />
+              <span className="text-xs leading-relaxed text-slate-700">
+                I have read how SSA handles my data. My sailing data, video and photos are
+                held in the EU and belong to my team; all AI processing runs inside an EU
+                account and no model vendor receives my data.{' '}
+                <a href="/privacy" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                  Read the full page
+                </a>
+                .
+              </span>
+            </label>
+
+            {(!invite || DEBRIEF_ROLES.has(invite.role)) && (
+              <label className="flex gap-2.5 cursor-pointer border-t border-slate-200 pt-3">
+                <input
+                  type="checkbox"
+                  checked={recordingConsent}
+                  onChange={(e) => setRecordingConsent(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600"
+                />
+                <span className="text-xs leading-relaxed text-slate-700">
+                  <strong>Team debrief recordings (optional).</strong> I agree that my voice may
+                  be captured when my team records a debrief, and that the recording is
+                  transcribed and summarised. The team recorder only works once everyone in the
+                  crew has agreed, and you can change this any time in your profile.
+                </span>
+              </label>
+            )}
           </div>
 
           {error && (
