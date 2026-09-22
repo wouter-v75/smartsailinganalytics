@@ -45,6 +45,8 @@ export default function SquadPanel({ teamId }: { teamId: string }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
+  const [code, setCode] = useState('')
+  const [redeeming, setRedeeming] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -98,6 +100,30 @@ export default function SquadPanel({ teamId }: { teamId: string }) {
     }
   }
 
+  // Somebody sent this team a squad code. Redeeming it creates an INVITED
+  // row — it does not join, and shares nothing. The team still picks its
+  // categories below and presses Join, so a code that ends up in the wrong
+  // hands costs nothing but a line in this panel.
+  async function redeem() {
+    const c = code.trim()
+    if (!c || redeeming) return
+    setRedeeming(true); setErr(null); setSaved(null)
+    try {
+      const res = await fetch('/api/squads/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: c, team_id: teamId }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) { setErr(j?.error || `the server answered ${res.status}`); return }
+      setCode('')
+      setSaved(`Invited to ${j?.squad_name || 'the squad'} — choose what to share below, then Join.`)
+      await load()
+    } catch {
+      setErr('Could not reach the server.')
+    } finally { setRedeeming(false) }
+  }
+
   async function leave(squadId: string, name: string) {
     // Said plainly rather than softened: revocation is not retroactive, and
     // pretending otherwise would be a lie about what other people already have.
@@ -137,16 +163,51 @@ export default function SquadPanel({ teamId }: { teamId: string }) {
         </div>
       )}
 
-      {squads.length === 0 ? (
-        <div className="bg-white rounded-xl shadow border border-slate-200 p-4 text-sm text-slate-600">
+      {/* Redeeming a code may be the first thing that ever happens here, when
+          there is no squad card yet to hang a confirmation on. */}
+      {saved && (
+        <div className="mb-2 rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800">
+          {saved}
+        </div>
+      )}
+
+      {squads.length === 0 && (
+        <div className="bg-white rounded-xl shadow border border-slate-200 p-4 text-sm text-slate-600 mb-3">
           This team is not in a squad, and has not been invited to one.
           <div className="text-slate-400 text-xs mt-1">
-            A squad lets teams that train together see each other&rsquo;s days. An
-            administrator sets one up and invites the teams; joining is then this
-            team&rsquo;s own decision.
+            A squad lets teams that train together see each other&rsquo;s days.
+            Whoever runs the squad can send you a join code.
           </div>
         </div>
-      ) : (
+      )}
+
+      <div className="bg-white rounded-xl shadow border border-slate-200 p-3 mb-3">
+        <label className="block text-[10px] uppercase tracking-wide text-slate-500 mb-1">
+          Have a squad code?
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void redeem() } }}
+            placeholder="Paste it here"
+            className="flex-1 text-sm border border-slate-300 rounded-lg px-2 py-1.5 font-mono"
+          />
+          <button
+            onClick={redeem}
+            disabled={redeeming || !code.trim()}
+            className="text-sm px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {redeeming ? 'Checking…' : 'Use code'}
+          </button>
+        </div>
+        <p className="text-xs text-slate-400 mt-1">
+          This only puts your team in front of the squad. You still choose what
+          to share, and nothing is shared until you do.
+        </p>
+      </div>
+
+      {squads.length > 0 && (
         <div className="space-y-3">
           {squads.map((sq) => {
             const mine = sq.squad_members.find((m) => m.team_id === teamId)!

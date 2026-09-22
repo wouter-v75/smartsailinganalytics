@@ -14,6 +14,7 @@
 // this safe to hand to a national federation running six campaigns.
 
 import { useCallback, useEffect, useState } from 'react'
+import { isLive, codeNote } from '@/lib/squadCodes'
 
 interface Team { id: string; name: string }
 interface Member {
@@ -47,7 +48,7 @@ function contributes(m: Member): string {
   return on.length ? on.join(', ') : 'nothing yet'
 }
 
-export default function SquadsAdmin({ teams }: { teams: Team[] }) {
+export default function SquadsAdmin({ teams, isAdmin = false }: { teams: Team[]; isAdmin?: boolean }) {
   const [squads, setSquads] = useState<Squad[] | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -204,14 +205,19 @@ export default function SquadsAdmin({ teams }: { teams: Team[] }) {
                     </tbody>
                   </table>
 
-                  {eligible.length > 0 && (
+                  <JoinCodes squadId={sq.id} onChanged={load} />
+
+                  {/* Admins can still add a team they can see directly; a team
+                      manager cannot, because there is no picker that does not
+                      leak the team directory. Codes work for both. */}
+                  {isAdmin && eligible.length > 0 && (
                     <div className="mt-3 flex items-center gap-2">
                       <select
                         value={invitePick[sq.id] || ''}
                         onChange={(e) => setInvitePick((p) => ({ ...p, [sq.id]: e.target.value }))}
                         className="text-sm border border-slate-300 rounded-lg px-2 py-1.5 bg-white"
                       >
-                        <option value="">Allow a team to join…</option>
+                        <option value="">Or add a team directly (admin)…</option>
                         {eligible.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
                       <button
@@ -225,8 +231,8 @@ export default function SquadsAdmin({ teams }: { teams: Team[] }) {
                   )}
                   <div className="text-xs text-slate-400 mt-2">
                     An invited team appears here as <strong>invited</strong> until its own
-                    coach or manager joins it, on that team&rsquo;s page. Inviting a team
-                    shares nothing.
+                    coach or manager joins it, on that team&rsquo;s page. Neither a code
+                    nor an invitation shares anything.
                   </div>
                 </div>
               )
@@ -234,6 +240,100 @@ export default function SquadsAdmin({ teams }: { teams: Team[] }) {
           </div>
         )}
       </section>
+    </div>
+  )
+}
+
+
+// The codes for one squad. A code is how a squad manager reaches a team they
+// do not run: they send it, the other team's coach or manager redeems it on
+// their own team page, and an INVITED row appears. Consent never moves.
+function JoinCodes({ squadId, onChanged }: { squadId: string; onChanged: () => void }) {
+  const [codes, setCodes] = useState<any[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [copied, setCopied] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/squads/${squadId}/codes`)
+      if (!res.ok) { setCodes([]); return }
+      const j = await res.json()
+      setCodes(j?.codes || [])
+    } catch { setCodes([]) }
+  }, [squadId])
+  useEffect(() => { void load() }, [load])
+
+  async function mint() {
+    setBusy(true); setErr(null)
+    try {
+      const res = await fetch(`/api/squads/${squadId}/codes`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ max_uses: 10, expires_in_days: 30 }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) { setErr(j?.error || `the server answered ${res.status}`); return }
+      await load(); onChanged()
+    } finally { setBusy(false) }
+  }
+
+  async function withdraw(id: string) {
+    setBusy(true)
+    try {
+      await fetch(`/api/squads/${squadId}/codes?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      await load()
+    } finally { setBusy(false) }
+  }
+
+
+  return (
+    <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 p-3">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] uppercase tracking-wide text-slate-500">Join codes</div>
+        <button
+          onClick={mint}
+          disabled={busy}
+          className="text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          New code
+        </button>
+      </div>
+      {err && <div className="text-xs text-red-600 mt-1">{err}</div>}
+      {codes === null ? (
+        <div className="text-xs text-slate-400 mt-1">Loading…</div>
+      ) : codes.length === 0 ? (
+        <div className="text-xs text-slate-500 mt-1">
+          None yet. A code lets another team&rsquo;s coach or manager put their team
+          in front of this squad — send it however you like.
+        </div>
+      ) : (
+        <ul className="mt-1 space-y-1">
+          {codes.map((c) => (
+            <li key={c.id} className="flex items-center gap-2 text-xs">
+              <code className={isLive(c) ? 'font-mono text-slate-800' : 'font-mono text-slate-400 line-through'}>
+                {c.token}
+              </code>
+              <span className="text-slate-400">
+                {c.used_count}/{c.max_uses}
+                {codeNote(c) && ` · ${codeNote(c)}`}
+              </span>
+              {isLive(c) && (
+                <>
+                  <button
+                    onClick={() => { navigator.clipboard?.writeText(c.token); setCopied(c.id) }}
+                    className="text-blue-600 hover:underline"
+                  >
+                    {copied === c.id ? 'copied' : 'copy'}
+                  </button>
+                  <button onClick={() => withdraw(c.id)} disabled={busy} className="text-red-600 hover:underline">
+                    withdraw
+                  </button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

@@ -65,6 +65,12 @@ export default function MembershipsPanel({
 
   // ── Add-membership form ────────────────────────────────────────────
   const [userId, setUserId] = useState('')
+  // What the picked person already holds here. Drives the hint and the button
+  // label: "Add membership" reads like it is only for new people, which is why
+  // nobody found the way to make somebody manager AND coach.
+  const heldHere = userId
+    ? memberships.filter((m) => m.user_id === userId).map((m) => m.role)
+    : []
   const [boatId, setBoatId] = useState<string>('') // '' = team-wide
   const [role, setRole] = useState<Role>('tl2')
   const [validFrom, setValidFrom] = useState('')
@@ -146,6 +152,7 @@ export default function MembershipsPanel({
         Memberships ({memberships.length})
       </h2>
 
+      {/* Roles this person already holds on this team, for the hint below. */}
       <form
         onSubmit={add}
         className="mb-3 grid grid-cols-1 sm:grid-cols-6 gap-2 items-end bg-white p-3 rounded-xl border border-slate-200"
@@ -161,9 +168,19 @@ export default function MembershipsPanel({
             {activeUsers.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.name} ({u.email})
+                {memberships.some((m) => m.user_id === u.id) ? ' — already on this team' : ''}
               </option>
             ))}
           </select>
+          {/* One person may hold SEVERAL roles here — team_manager AND coach is
+              the normal case on a small campaign, and the schema has always
+              allowed it. Saying so is the whole fix: the form could always do
+              it, and read like it was only for adding new people. */}
+          {heldHere.length > 0 && (
+            <p className="mt-1 text-xs text-blue-700">
+              Already {heldHere.join(', ')} here. Adding another role keeps both.
+            </p>
+          )}
         </div>
 
         <div>
@@ -252,7 +269,7 @@ export default function MembershipsPanel({
             disabled={busy || !userId}
             className="rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 text-sm font-medium"
           >
-            Add membership
+            {heldHere.length > 0 ? 'Add another role' : 'Add membership'}
           </button>
           {err && (
             <span className="ml-3 text-sm text-red-600">{err}</span>
