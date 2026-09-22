@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import DictateButton from './DictateButton'
+import SquadCommentThread from './SquadCommentThread'
 import type { TagDef, TagWithRequests } from '@/lib/tagging/types'
 import type { SnapOutcome } from '@/lib/tagging/snap'
 
@@ -82,6 +83,12 @@ export interface TagSheetProps {
   onRequestVideo: () => void
   onNominate: () => void
   onSetReel: (order: number | null) => void
+  /**
+   * The team the viewer speaks for — their active workspace's team. Absent
+   * means no squad thread is offered, which is right for anyone whose team is
+   * in no squad: there would be nobody to say it to.
+   */
+  viewerTeamId?: string | null
 }
 
 const clock = (utc: number, tz = 0) => new Date(utc + tz * 60_000).toISOString().slice(11, 19)
@@ -344,6 +351,12 @@ export default function TagSheet(props: TagSheetProps) {
               className="mt-2"
             />
           </div>
+
+          {/* 4b. What the SQUAD said about it. A personal tag is nobody's
+              business but its owner's, so it never grows a thread. */}
+          {t.scope !== 'personal' && (
+            <SquadCommentThread tagId={t.id} authorTeamId={props.viewerTeamId ?? null} />
+          )}
 
           {/* 5. The rare things, last */}
           <div className="flex flex-wrap gap-2 border-t border-[color:var(--border)] pt-3">

@@ -235,3 +235,33 @@ export async function runAudioBrief(file, mode, { onStage, glossaryExtra } = {})
     return { fields, transcript }
   } finally { releaseWakeLock() }
 }
+
+// ── One dictated note ───────────────────────────────────────────────────────
+// Same pipeline, 'note' mode: a person talking into a phone rather than a room
+// of people. Returns the tidied text, and the raw transcript so the user can
+// check it against what they actually said.
+//
+//   runAudioNote(blobOrFile, { onStage, glossaryExtra }) → { note, transcript }
+//
+// Falls back to the raw transcript if the tidy-up fails: a note in the user's
+// own words is a fine outcome, losing what they just said is not.
+export async function runAudioNote(file, { onStage, glossaryExtra } = {}) {
+  const stage = (s, p) => { if (onStage) onStage(s, p) }
+  const releaseWakeLock = await holdWakeLock()
+  try {
+    stage('compress', 0)
+    const { chunks } = await compressToMp3Chunks(file, { onProgress: (p) => stage('compress', p) })
+    if (!chunks.length) throw new Error('no audio decoded from that recording')
+    stage('transcribe', 0)
+    const transcript = await transcribeChunks(chunks, (p) => stage('transcribe', p))
+    if (!transcript.trim()) throw new Error('transcript came back empty — was anything recorded?')
+    stage('summarise', 0)
+    let note = ''
+    try {
+      const fields = await summarise(transcript, 'note', glossaryExtra)
+      note = (fields && fields.note) || ''
+    } catch { /* fall through to the raw transcript */ }
+    stage('done', 1)
+    return { note: note.trim() || transcript.trim(), transcript }
+  } finally { releaseWakeLock() }
+}

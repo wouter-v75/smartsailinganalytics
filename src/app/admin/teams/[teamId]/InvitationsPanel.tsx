@@ -120,11 +120,25 @@ export default function InvitationsPanel({
         setErr(j.error || `failed (${res.status})`)
         return
       }
-      // Surface email-delivery problems so the team_manager knows to copy
-      // the URL manually if Resend isn't configured / failed.
+      // Surface email-delivery problems. WHICH advice depends on what actually
+      // happened, and the two are opposite:
+      //
+      //   provisioned — the account EXISTS and is active, and the invite link
+      //     was deliberately consumed, so copying it hands over a dead URL.
+      //     They recover with "Forgot password?", which goes to their own
+      //     address. We do NOT surface the one-click set-password link: it is
+      //     a capability to become that person, and the inviter should not
+      //     hold it for somebody else's address.
+      //
+      //   not provisioned — no account was made, the invite link is live, and
+      //     copying it is exactly right.
       if (j.email_sent && !j.email_sent.ok) {
         setErr(
-          `Invite created, but email failed: ${j.email_sent.error}. Copy the URL below.`
+          j.provisioned
+            ? `Set up and active — but the email failed: ${j.email_sent.error}. ` +
+              `Tell them to sign in and use "Forgot password?"; it goes to their address. ` +
+              `The invite link below is already used and will not work.`
+            : `Invite created, but email failed: ${j.email_sent.error}. Copy the URL below.`
         )
       }
       setEmail('')

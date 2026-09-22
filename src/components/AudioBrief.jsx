@@ -6,7 +6,7 @@
 // Props: { mode, fields:[{key,label}], onSaved:(values)=>Promise, canEdit, isMobile }
 import React, { useEffect, useRef, useState } from 'react'
 import { runAudioBrief } from '../lib/debriefAudio'
-import { vocabForBoat } from '../lib/debriefGlossary'
+import { loadBoatVocab } from '../lib/boatVocab'
 
 const STAGE = { compress: 'Compressing audio', transcribe: 'Transcribing', summarise: 'Summarising', done: 'Done' }
 
@@ -25,33 +25,10 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
   const [err, setErr] = useState(null)
   const [glossaryExtra, setGlossaryExtra] = useState(null)
 
-  // Pull the boat's live sail inventory → feeds the actual wardrobe into the
-  // Whisper bias + summary glossary, so sail names self-maintain from the Boat tab.
-  // The boat's NAME is fetched alongside it, because crew and rival-boat names are
-  // per-team: priming Whisper with another team's crew makes it place those people
-  // in a session they were never at.
-  useEffect(() => {
-    if (!teamId || !boatId) return
-    let live = true
-    Promise.all([
-      fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`).then((r) => (r.ok ? r.json() : { sails: [] })).catch(() => ({ sails: [] })),
-      fetch(`/api/teams/${teamId}/boats`).then((r) => (r.ok ? r.json() : { boats: [] })).catch(() => ({ boats: [] })),
-    ]).then(([sj, bj]) => {
-      if (!live) return
-      const names = Array.from(new Set((sj.sails || [])
-        .filter((s) => !s.retired)
-        .map((s) => String(s.name || '').replace(/[_-]\d{2,4}$/, '').replace(/_/g, ' ').trim())
-        .filter(Boolean)))
-      const boat = (bj.boats || []).find((b) => b.id === boatId)
-      const vocab = vocabForBoat(boat?.name) || {}
-      const extra = {
-        ...vocab,
-        ...(names.length ? { sails: [...(vocab.sails || []), ...names] } : {}),
-      }
-      setGlossaryExtra(Object.keys(extra).length ? extra : null)
-    })
-    return () => { live = false }
-  }, [teamId, boatId])
+  // The boat's live sail wardrobe + class glossary, feeding the summariser so
+  // sail names self-maintain from the Boat tab. Shared with NoteRecorder and
+  // cached per boat — a day's page mounts many of these.
+  useEffect(() => { loadBoatVocab(teamId, boatId).then(setGlossaryExtra) }, [teamId, boatId])
 
   // Desktop + editors only. On mobile the button simply isn't shown.
   if (isMobile || !canEdit) return null

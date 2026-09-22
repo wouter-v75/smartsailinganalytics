@@ -40,22 +40,32 @@ export default async function TeamDetailPage({
   // the team takes for itself, and on a dinghy programme the person who takes
   // it is the coach, not a manager. The squad_members policy gates the write
   // either way — this only decides who can reach the page.
+  //
+  // TWO LEVELS, because the page now has two audiences. A COACH may reach it
+  // for the Squad panel — joining a squad is the team's own decision and on a
+  // dinghy programme the coach is who takes it. Everything else here (invite,
+  // approve, memberships, boats) is guarded server-side by requireTeamManager,
+  // so showing those panels to a coach would offer buttons that answer 403.
+  // `canManage` decides what renders; the API is still the authority.
   const service: ReturnType<typeof getServiceSupabase> = getServiceSupabase()
-  const runnerRoles = ['team_manager', 'coach']
-  if (me.global_role !== 'admin') {
-    const { data: mgr } = await service
+  const inWindow = (m: { valid_from: string | null; valid_to: string | null }) => {
+    const now = Date.now()
+    if (m.valid_from && new Date(m.valid_from).getTime() > now) return false
+    if (m.valid_to && new Date(m.valid_to).getTime() < now) return false
+    return true
+  }
+  let canManage = me.global_role === 'admin'
+  if (!canManage) {
+    const { data: rows } = await service
       .from('memberships')
-      .select('id, valid_from, valid_to')
+      .select('role, valid_from, valid_to')
       .eq('user_id', user.id)
       .eq('team_id', params.teamId)
-      .in('role', runnerRoles)
-    const now = Date.now()
-    const ok = (mgr || []).some((m) => {
-      if (m.valid_from && new Date(m.valid_from).getTime() > now) return false
-      if (m.valid_to && new Date(m.valid_to).getTime() < now) return false
-      return true
-    })
-    if (!ok) redirect('/')
+      .in('role', ['team_manager', 'coach'])
+    const live = (rows || []).filter(inWindow)
+    if (!live.length) redirect('/')
+    // Several rows is normal: one person is often manager AND coach.
+    canManage = live.some((m) => m.role === 'team_manager')
   }
   const [{ data: team }, { data: boats }, { data: memberships }, { data: users }] =
     await Promise.all([
@@ -113,6 +123,18 @@ export default async function TeamDetailPage({
 
         <TeamHeader team={team} />
 
+        {/* The Squad panel is the one thing a coach may use here. */}
+        <SquadPanel teamId={team.id} />
+
+        {!canManage && (
+          <p className="text-xs text-slate-500 mb-8">
+            Inviting people, approving them and editing boats are a team
+            manager&rsquo;s job — ask yours, or a site administrator.
+          </p>
+        )}
+
+        {canManage && (
+        <>
         <PendingRequestsPanel
           teamId={team.id}
           pendingUsers={pendingForTeam || []}
@@ -140,11 +162,11 @@ export default async function TeamDetailPage({
 
         <InvitationsPanel teamId={team.id} boats={boats || []} />
 
-        <SquadPanel teamId={team.id} />
-
         <BackfillPanel teamId={team.id} boats={boats || []} />
 
         <WipeLocalCachePanel />
+        </>
+        )}
       </div>
     </div>
   )
