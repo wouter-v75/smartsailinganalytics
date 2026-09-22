@@ -150,3 +150,61 @@ describe('tracks other teams shared with the squad', () => {
     for (const x of t) expect(x.colour).toBe(colourForBoat(x.boatId))
   })
 })
+
+describe('logdata — what the viewer was actually given', () => {
+  const withSog = (n: number) => ({
+    session: { log_data: { rows: Array.from({ length: n }, (_, i) => ({
+      utc: 1000 + i * 1000, lat: 39.5 + i * 1e-4, lon: 2.57, sog: 6 + i * 0.01, cog: 250,
+    })) } },
+  })
+
+  it('carries sog and cog through thinning when they are there', () => {
+    // Dropping them here would undo a `logdata` permission one layer below the
+    // code that asked for it — silent narrowing, very hard to find.
+    const out = thinTrack([
+      { utc: 0, lat: 1, lon: 2, sog: 6.2, cog: 250 },
+      { utc: 5000, lat: 1.1, lon: 2, sog: 6.4, cog: 251 },
+    ], 4000)
+    expect(out[0]).toEqual({ utc: 0, lat: 1, lon: 2, sog: 6.2, cog: 250 })
+    expect(out).toHaveLength(2)
+  })
+
+  it('omits them when the row has none, rather than writing undefined', () => {
+    const out = thinTrack([{ utc: 0, lat: 1, lon: 2 }], 4000)
+    expect(out[0]).toEqual({ utc: 0, lat: 1, lon: 2 })
+    expect('sog' in out[0]).toBe(false)
+  })
+
+  it('asks for detail=full only when told to, and never by default', async () => {
+    const seen: string[] = []
+    const f = (async (url: string) => {
+      seen.push(url)
+      if (url.startsWith('/api/squads/tracks/')) return { ok: true, json: async () => ({ tracks: [] }) }
+      if (url.endsWith('/boats')) return { ok: true, json: async () => ({ boats: [] }) }
+      return { ok: true, json: async () => ({}) }
+    }) as unknown as typeof fetch
+
+    await loadSquadTracks({ teamId: 't1', date: '2026-02-08', fetchImpl: f })
+    expect(seen.some((u) => u.includes('detail=full'))).toBe(false)
+
+    seen.length = 0
+    await loadSquadTracks({ teamId: 't1', date: '2026-02-08', fetchImpl: f, detail: 'full' })
+    expect(seen.some((u) => u === '/api/squads/tracks/2026-02-08?detail=full')).toBe(true)
+  })
+
+  it('keeps the server\'s `detail` so the client need not guess', async () => {
+    // "No sog" means WITHHELD or NOT LOGGED, and those are very different
+    // things to tell a coach. The server says which.
+    const f = (async (url: string) => {
+      if (url.startsWith('/api/squads/tracks/')) return { ok: true, json: async () => ({ tracks: [
+        { teamId: 't2', teamName: 'Team Torvar', boatId: 'b-t', boatName: 'Sunrise',
+          detail: 'speed', rows: [{ utc: 1, lat: 1, lon: 2, sog: 6 }, { utc: 5000, lat: 1, lon: 2, sog: 6 }] },
+      ] }) }
+      if (url.endsWith('/boats')) return { ok: true, json: async () => ({ boats: [] }) }
+      return { ok: true, json: async () => ({}) }
+    }) as unknown as typeof fetch
+    const t = await loadSquadTracks({ teamId: 't1', date: '2026-02-08', fetchImpl: f })
+    expect(t[0].detail).toBe('speed')
+    expect(t[0].rows[0].sog).toBe(6)
+  })
+})
