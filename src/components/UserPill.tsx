@@ -31,6 +31,7 @@ import {
 import {
   squadStanding, sharedSummary, type SquadStanding,
 } from '../lib/squadShare'
+import { collapseWorkspaces, workspaceLabel } from '../lib/memberships'
 
 function toActiveMembership(m: MembershipRow): ActiveMembership {
   return {
@@ -59,6 +60,8 @@ interface MembershipRow {
   valid_to: string | null
   team_name: string
   boat_name: string | null
+  /** Every role held in this team+boat. See lib/memberships.collapseWorkspaces. */
+  roles?: string[]
 }
 
 // Internal helper: fetch memberships for the user and join in team + boat
@@ -129,7 +132,13 @@ async function loadMemberships(userId: string): Promise<MembershipRow[]> {
     }
   }
 
-  return rows.filter((m) => isWindowOpen(m.valid_from, m.valid_to))
+  // One entry per team+BOAT, not per membership. A person who is both
+  // team_manager and coach of a team holds two rows there; without this the
+  // switcher offered the same team and boat twice, labelled with different
+  // roles and with no way to tell which to pick.
+  return collapseWorkspaces(
+    rows.filter((m) => isWindowOpen(m.valid_from, m.valid_to))
+  ) as MembershipRow[]
 }
 
 /**
@@ -168,8 +177,9 @@ function isWindowOpen(from: string | null, to: string | null): boolean {
 }
 
 function membershipLabel(m: MembershipRow): string {
-  const scope = m.boat_name ? `${m.team_name} · ${m.boat_name}` : m.team_name
-  return `${scope} (${m.role})`
+  // Every role the person holds here, not just the strongest — a manager who
+  // also coaches wants to see both, and showing one makes the other look lost.
+  return workspaceLabel(m)
 }
 
 interface QuotaState {
