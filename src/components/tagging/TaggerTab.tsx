@@ -485,6 +485,8 @@ export default function TaggerTab({
           item={open}
           def={openDef}
           currentUserId={userId}
+          // The team whose workspace this is — who the viewer comments AS.
+          viewerTeamId={teamId}
           canApproveVideo={t.can.approveVideo}
           canCurateReel={t.can.curateReel}
           tzOffsetMin={tzOffsetMin}
