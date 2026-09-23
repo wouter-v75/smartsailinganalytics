@@ -12,14 +12,17 @@
 
 import type { Metadata } from 'next'
 
-// Vercel sets VERCEL_URL for every deployment including previews, so the
-// fallback works without configuration — but a preview URL in a shared card is
-// wrong, which is why NEXT_PUBLIC_SITE_URL should be set to the real domain in
-// production. No domain is hardcoded here because guessing one would silently
-// point every card at a host we do not control.
-export const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ||
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
+// The canonical host, and it is deliberately NOT VERCEL_URL.
+//
+// Canonical links, sitemap entries and social cards must all name the one host
+// the site actually lives at. VERCEL_URL is a different value on every
+// deployment, so using it would mean a preview build advertising itself as the
+// site: cards pointing at a URL that will 404 next week, and a sitemap offering
+// crawlers a hostname that is not the product. Previews wanting their own value
+// set NEXT_PUBLIC_SITE_URL explicitly.
+const PRODUCTION_URL = 'https://ssa.wvsailing.co.uk'
+
+export const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || PRODUCTION_URL
 
 export const SITE_NAME = 'Shared Sailing Analytics'
 
