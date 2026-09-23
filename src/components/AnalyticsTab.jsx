@@ -13,6 +13,7 @@ import { addSection, inSections, removeSection, sectionLabel, sectionsSpan } fro
 import { GPSTrackMap } from './GPSTrackMap';
 import { loadSquadTracks } from '../lib/squadTracks';
 import { setSessionMediaShared, setSessionShared, shareLabel, squadsForTeam } from '../lib/squadShare';
+import AskPanel from './analytics/AskPanel';
 import PerfChartsSection from './analytics/PerfChartsSection';
 import { LineChart } from './charts/LineChart';
 import { ManoeuvreChart } from './charts/ManoeuvreChart';
@@ -289,6 +290,16 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
     return rel?`${rel} · ${long}`:long;
   })();
   const sessionMeta=xmlData?.meta||{};
+  // A clip the Ask answer points at is one of the day's own videos — look it up by
+  // id and hand it to whichever player this shell has, rather than teaching the
+  // answer modal how video playback works here.
+  const playAskClip=useCallback(m=>{
+    const v=(allVideos||[]).find(x=>x.id===m?.id);
+    if(!v) return;
+    if(onPlayClip){ onPlayClip(v); return; }
+    onSelectVideo(v); setActiveTab("library");
+  },[allVideos,onPlayClip,onSelectVideo,setActiveTab]);
+
   // Days that can be opened from the banner, oldest first (◀ = earlier day).
   const openable=(sessions||[]).filter(s=>hasOpenableData(s)&&s.date<=TODAY()).sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
   const dateIdx=openable.findIndex(s=>s.date===activeDate);
@@ -359,6 +370,18 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
           )}
           {!logData&&<span style={{fontSize:10,color:"#EF4444"}}>No log data loaded — pick a date above</span>}
         </div>
+
+        {/* ── Ask the data ─────────────────────────────────────────────────────
+            Above the charts, not below them: the question is what somebody
+            arrives with, and everything under here is the long way round to the
+            same answer. Role-gated (canUseAI) and gated on canSeeAnalyticsData,
+            because it reads the same numbers those tables show. */}
+        {canSeeAnalyticsData&&(
+          <AskPanel boat={tagBoat} activeDate={activeDate} canUseAI={canUseAI}
+            races={races.length} hasManoeuvres={(xmlData?.tackJibes||[]).length>0}
+            hasPhotos={(photos||[]).length>0} manyDays={openable.length>2}
+            onPlayClip={playAskClip}/>
+        )}
 
         {/* ── Now Playing bar — live instrument data from video ── */}
         {liveActive&&(
