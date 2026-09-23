@@ -73,9 +73,11 @@ Tables ship in `supabase/migrations/0003_data_schema.sql`. RLS policies enforce 
 
 team_manager is intentionally **not** in the upload list. A team_manager who also sails holds a second membership (typically `tl2` or `coach`) for that role.
 
-| Action                              | admin | team_manager | coach | tl2 | tl1 | consultant |
-| ----------------------------------- | :---: | :----------: | :---: | :-: | :-: | :--------: |
-| Upload photo / video / log to boat  | ✅    | ❌           | ✅    | ✅  | ✅  | ⏱         |
+`tl3` was added in 0025 and **was missing from the upload policies until 0079** — it could rewrite the campaign plan but not add a photo, while a `tl1` could. Fixed there, for the dinghy case above all: a coach does not hold every sailor's tracker, so each sailor has to be able to upload their own track to their own boat.
+
+| Action                              | admin | team_manager | coach | tl3 | tl2 | tl1 | consultant |
+| ----------------------------------- | :---: | :----------: | :---: | :-: | :-: | :-: | :--------: |
+| Upload photo / video / log to boat  | ✅    | ❌           | ✅    | ✅  | ✅  | ✅  | ⏱         |
 | View own uploads                    | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         |
 | View teammates' uploads (same boat) | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         |
 | View other boats' uploads (same team) | ✅  | ✅           | ✅    | ❌  | ❌  | ❌         |
