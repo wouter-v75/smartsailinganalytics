@@ -434,6 +434,7 @@ export default function AskAnswerModal({
 
 const TOOL_TITLE = {
   compare_phases: 'Compared the boat’s steady-state phases',
+  scatter_phases: 'Plotted every phase, one dot each',
   day_timeseries: 'Read the instruments through the day',
   list_manoeuvres: 'Looked at the tacks and gybes',
   find_media: 'Looked for photos, clips and scans',

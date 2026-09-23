@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
     summary: s.result.summary,
     unavailable: s.result.unavailable ?? null,
     tables: s.result.tables,
-    charts: s.result.tables.flatMap(t => chartsFor(t, { time: s.tool === 'day_timeseries' })),
+    charts: s.result.charts ?? s.result.tables.flatMap(t => chartsFor(t, { time: s.tool === 'day_timeseries' })),
     media: s.result.media,
   }))
 

@@ -24,11 +24,12 @@ import { CHANNELS, groupPhases, type GroupKey, type Mode, type PhaseStat } from 
 import { expandPhases, STATS_VERSION, type StoredPhase } from '../seasonCurves'
 import { isJudged, manoeuvreAverages, manoeuvreNote, type Manoeuvre } from '../manoeuvres'
 import { signBunnyUrl, bunnyConfigured } from '../bunny-signed-url'
+import { linearTrend } from '../phasePlot'
 import type {
   ComparePhasesArgs, DayTimeseriesArgs, FindMediaArgs, ListManoeuvresArgs,
-  PhaseFilters, SearchNotesArgs, ToolArgs, ToolName,
+  PhaseFilters, ScatterPhasesArgs, SearchNotesArgs, ToolArgs, ToolName,
 } from './askTools'
-import type { AnswerColumn, AnswerTable, MediaItem, ToolResult } from './askTypes'
+import type { AnswerColumn, AnswerTable, ChartSeries, ChartSpec, MediaItem, ToolResult } from './askTypes'
 import { emptyResult } from './askTypes'
 import type { AskContext } from './askRisk'
 
@@ -169,6 +170,113 @@ export function buildCompareTable(
   }
 }
 
+// ── scatter_phases ───────────────────────────────────────────────────────────
+// The KND X-Y plot: one dot per phase, coloured by tack, with a least-squares
+// line and R² through each colour. The app has drawn this for a long time
+// (PhaseXYPlot); it simply was not reachable by asking, so the first person to
+// ask for "a scatter of BSP against SOG" got two traces against the clock.
+//
+// The dots go in the CHART. The model is given the summary table only — n, the
+// means, the slope and R² per series. Hundreds of coordinate pairs would tell it
+// nothing it can put in a sentence, and would crowd out everything that does.
+
+const SPLIT_LABEL: Record<string, string> = {
+  tack: 'Tack', sailCombo: 'Sails', mode: 'Point of sail', date: 'Day', none: 'All phases',
+}
+
+const seriesKeyOf = (p: PhaseStat & { date: string }, splitBy: string): string => {
+  if (splitBy === 'tack') return TACK_LABEL[p.tack] || p.tack
+  if (splitBy === 'mode') return MODE_LABEL[p.mode] || p.mode
+  if (splitBy === 'sailCombo') return p.sailCombo || '—'
+  if (splitBy === 'date') return p.date
+  return 'All phases'
+}
+
+export function buildScatter(
+  phases: (PhaseStat & { date: string })[],
+  a: ScatterPhasesArgs,
+  from: string,
+  to: string,
+): ToolResult {
+  const xCh = CH.get(a.x), yCh = CH.get(a.y)
+  const xd = xCh?.decimals ?? 2, yd = yCh?.decimals ?? 2
+
+  // One point per phase that HAS both values. A phase missing either is not a
+  // dot at the origin; it is not a dot.
+  const pts = phases
+    .map(p => ({ p, x: p.mean[a.x], y: p.mean[a.y] }))
+    .filter((q): q is { p: PhaseStat & { date: string }; x: number; y: number } =>
+      typeof q.x === 'number' && Number.isFinite(q.x) && typeof q.y === 'number' && Number.isFinite(q.y))
+  if (!pts.length) {
+    return emptyResult('', `No phase between ${from} and ${to} has both ${xCh?.label || a.x} and ${yCh?.label || a.y}.`)
+  }
+
+  const keys: string[] = []
+  for (const q of pts) {
+    const k = seriesKeyOf(q.p, a.splitBy)
+    if (!keys.includes(k)) keys.push(k)
+  }
+  keys.sort()
+
+  // Thin evenly across the whole range when there are more dots than asked for,
+  // so the shape of the cloud survives — never take the first N, which would
+  // quietly crop the chart to the start of the season.
+  const step = Math.max(1, Math.ceil(pts.length / a.maxPoints))
+
+  const series: ChartSeries[] = []
+  const rows: (string | number | null)[][] = []
+  for (const k of keys) {
+    const own = pts.filter(q => seriesKeyOf(q.p, a.splitBy) === k)
+    const drawn = step > 1 ? own.filter((_, i) => i % step === 0) : own
+    // The trend is fitted to EVERY point, not to the thinned ones drawn: the line
+    // and its R² describe the data, not the sample that fitted on screen.
+    const trend = a.trend ? linearTrend(own) : null
+    series.push({
+      label: k,
+      points: drawn.map(q => ({ x: round(q.x, xd), y: round(q.y, yd) })),
+      trend,
+      n: own.length,
+    })
+    const mean = (xs: number[]) => xs.reduce((s, v) => s + v, 0) / xs.length
+    rows.push([
+      k, own.length,
+      round(mean(own.map(q => q.x)), xd),
+      round(mean(own.map(q => q.y)), yd),
+      trend ? round(trend.slope, 3) : null,
+      trend ? round(trend.r2, 2) : null,
+    ])
+  }
+
+  const columns: AnswerColumn[] = [
+    { key: 'series', label: SPLIT_LABEL[a.splitBy] || 'Series', group: true },
+    { key: 'n', label: 'n' },
+    { key: 'meanX', label: `mean ${xCh?.label || a.x}`, unit: xCh?.unit || '', decimals: xd },
+    { key: 'meanY', label: `mean ${yCh?.label || a.y}`, unit: yCh?.unit || '', decimals: yd },
+    { key: 'slope', label: 'trend slope', decimals: 3 },
+    { key: 'r2', label: 'R²', decimals: 2 },
+  ]
+
+  const chart: ChartSpec = {
+    kind: 'scatter',
+    title: `${yCh?.label || a.y} vs ${xCh?.label || a.x}`,
+    xType: 'number',
+    xLabel: xCh?.label || a.x,
+    yLabel: yCh?.label || a.y,
+    unit: yCh?.unit || '',
+    xUnit: xCh?.unit || '',
+    series,
+  }
+
+  const span = from === to ? from : `${from} to ${to}`
+  const thinned = step > 1 ? `, ${series.reduce((n, s) => n + s.points.length, 0)} of them drawn` : ''
+  return {
+    summary: `${pts.length} phases with both channels over ${span}${thinned}. Trend slope and R² are fitted to every phase, not just the drawn ones.`,
+    tables: [{ title: `${yCh?.label || a.y} vs ${xCh?.label || a.x}, ${span}`, columns, rows }],
+    media: [],
+    charts: [chart],
+  }
+}
+
 function meanOf(part: PhaseStat[]): Record<string, number | null> {
   const out: Record<string, number | null> = {}
   for (const ch of CHANNELS) {
@@ -234,6 +342,22 @@ export function makeExecutor(d: AskDeps) {
         tables: [table],
         media: [],
       }
+    }
+
+    if (name === 'scatter_phases') {
+      const a = args as ScatterPhasesArgs
+      const [from, to] = dayRange(a.dateFrom, a.dateTo)
+      const all = await loadPhases(d, from, to)
+      if (!all.length) {
+        return emptyResult('', from === to
+          ? `No stored performance data for ${from}. Someone needs to open that day's Performance charts once so its phases are computed.`
+          : `No stored performance data between ${from} and ${to}.`)
+      }
+      const kept = filterPhases(all, a)
+      if (!kept.length) {
+        return emptyResult('', `Nothing matched that filter — ${all.length} phases in range, none inside it.`)
+      }
+      return buildScatter(kept, a, from, to)
     }
 
     if (name === 'day_timeseries') {
@@ -609,9 +733,14 @@ export async function loadContext(d: AskDeps): Promise<{ ctx: AskContext; prompt
     sailCombos.length ? `Sail combinations sailed: ${sailCombos.join('; ')}.` : 'No sail combinations recorded.',
     races.length ? `Races: ${races.join(', ')}.` : 'No races on this day.',
     `Media on this day: ${photos} photos, ${videos} clips, ${tags} tags. Sail scans for this boat: ${scans || 0}.`,
+    // Spelled out, because the first live question about "the season" was answered
+    // from a single day: the model has to be handed the range, not left to infer
+    // that one exists.
     ctx.dates.length > 1
-      ? `Other days with stored data: ${ctx.dates.length} in total, ${ctx.dates[0]} to ${ctx.dates[ctx.dates.length - 1]}. Group by "date" over a range to compare days.`
-      : 'This is the only day with stored data.',
+      ? `THE SEASON = every stored day: dateFrom ${ctx.dates[0]}, dateTo ${ctx.dates[ctx.dates.length - 1]} (${ctx.dates.length} days). `
+        + 'When the question says "the season", "this year", "all of it" or "overall", pass exactly those two dates to compare_phases or scatter_phases. '
+        + 'Do NOT answer a question about the season from the open day alone.'
+      : 'This is the only day with stored data, so there is no season to compare against.',
     `Metrics with values on this day: ${channels.join(', ')}.`,
     days[0]?.polar_name ? `Polar in use: ${days[0].polar_name}.` : 'No polar is active, so VMG% and %Pol are unavailable.',
     'Dates are YYYY-MM-DD. Every clock time you are shown is already venue-local — never convert one.',

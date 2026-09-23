@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
       summary: result.summary,
       unavailable: result.unavailable ?? null,
       tables: result.tables,
-      charts: result.tables.flatMap(t => chartsFor(t, { time: next.name === 'day_timeseries' })),
+      charts: result.charts ?? result.tables.flatMap(t => chartsFor(t, { time: next.name === 'day_timeseries' })),
       media: result.media,
     })
   } catch (e: unknown) {

@@ -30,18 +30,32 @@ export interface AnswerTable {
   tzOffsetMin?: number
 }
 
+export interface Trend {
+  slope: number
+  intercept: number
+  r2: number
+  x0: number
+  x1: number
+}
+
 export interface ChartSeries {
   label: string
   points: { x: number | string; y: number | null }[]
+  /** Least-squares line through THIS series, on a scatter. Never drawn by the model. */
+  trend?: Trend | null
+  /** Points behind the series, for the legend — a trend without its n says nothing. */
+  n?: number
 }
 
 export interface ChartSpec {
-  kind: 'bar' | 'line'
+  kind: 'bar' | 'line' | 'scatter'
   title: string
-  xType: 'category' | 'time'
+  xType: 'category' | 'time' | 'number'
   xLabel: string
   yLabel: string
+  /** The y unit. A scatter's x has its own — see xUnit. */
   unit: string
+  xUnit?: string
   series: ChartSeries[]
   /** Set for a time axis: x values are UTC ms, to be shown at this offset. */
   tzOffsetMin?: number
@@ -72,6 +86,13 @@ export interface ToolResult {
   summary: string
   tables: AnswerTable[]
   media: MediaItem[]
+  /**
+   * Charts the tool built itself, instead of letting askCharts derive them from
+   * the table. A scatter needs this: its picture is one dot per phase — hundreds
+   * of them — while its TABLE is the handful of summary rows the model reads.
+   * Sending the model the dots would be pointless and would blow the context.
+   */
+  charts?: ChartSpec[]
   /** Set when the tool could not answer — the model must relay this, not guess around it. */
   unavailable?: string
 }

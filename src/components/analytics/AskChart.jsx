@@ -16,7 +16,9 @@ const C = {
 // Series colours in SSA's chart order. Port red / starboard green when the series
 // ARE the tacks, because that is what everyone on a boat already reads them as.
 const SERIES = ['#06B6D4', '#F59E0B', '#8B5CF6', '#10B981']
-const TACK_COLOR = { Port: '#EF4444', Stbd: '#22C55E', Starboard: '#22C55E' }
+// The colours PhaseXYPlot has always used, so a scatter here reads the same as the
+// one in Performance charts: port light blue, starboard green.
+const TACK_COLOR = { Port: '#7DD3FC', Stbd: '#22C55E', Starboard: '#22C55E' }
 const colorFor = (label, i) => TACK_COLOR[label] || SERIES[i % SERIES.length]
 // The day you are looking at, picked out of the days either side of it. Comparing
 // today with the season is the commonest thing this chart is asked to show, and
@@ -54,12 +56,13 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
   if (!values.length) return null
 
   const isBar = spec.kind === 'bar'
+  const isScatter = spec.kind === 'scatter'
   // A bar chart that does not start at zero misleads by construction — but a
   // percentage-of-polar chart that DOES start at zero shows nothing, because the
   // interesting range is 90–105. Zero-based unless every value is far from zero.
   const dataMin = Math.min(...values), dataMax = Math.max(...values)
   const spread = dataMax - dataMin
-  const zeroBased = isBar && dataMin >= 0 && dataMin < spread * 2
+  const zeroBased = isBar && !isScatter && dataMin >= 0 && dataMin < spread * 2
   const lo = zeroBased ? 0 : dataMin - spread * 0.15 || dataMin - 1
   const hi = dataMax + spread * 0.15 || dataMax + 1
 
@@ -84,18 +87,28 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
       <figcaption style={{ fontSize: 11, color: '#CBD5E1', fontWeight: 600, marginBottom: 2 }}>
         {spec.title}{spec.unit ? <span style={{ color: C.dim, fontWeight: 400 }}> ({spec.unit})</span> : null}
       </figcaption>
-      {multi && (
+      {(multi || isScatter) && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 3 }}>
           {spec.series.map((s, i) => (
             <span key={s.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: C.text }}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: colorFor(s.label, i) }} />
+              <span style={{ width: 8, height: 8, borderRadius: isScatter ? 8 : 2, background: colorFor(s.label, i) }} />
               {s.label}
+              {/* Never a trend without the n behind it and how much of the
+                  scatter it actually explains. */}
+              {isScatter && s.n != null && <span style={{ color: C.dim }}>· {s.n}</span>}
+              {isScatter && s.trend && <span style={{ color: C.dim }}>· R² {s.trend.r2.toFixed(2)}</span>}
             </span>
           ))}
         </div>
       )}
-      <svg viewBox={`0 0 ${VB_W} ${height}`} width="100%" height={height} role="img"
-        aria-label={`${spec.title} by ${spec.xLabel}`} style={{ display: 'block' }}>
+      {/* width:100% with a fixed height and a 400-unit viewBox does NOT fill the
+          container: SVG preserves the aspect ratio, so it draws at 400px wide and
+          centres it, leaving dead space either side. Letting the height follow the
+          width instead fills the panel AND gives the axis ~1.75× the room, which
+          is most of what made the labels feel cramped in the first place. */}
+      <svg viewBox={`0 0 ${VB_W} ${height}`} role="img"
+        aria-label={`${spec.title} by ${spec.xLabel}`}
+        style={{ display: 'block', width: '100%', height: 'auto' }}>
         {ticks.map(t => (
           <g key={t}>
             <line x1={pad.l} x2={VB_W - pad.r} y1={py(t)} y2={py(t)} stroke={C.grid} strokeWidth="1" />
@@ -104,7 +117,39 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
         ))}
         <line x1={pad.l} x2={VB_W - pad.r} y1={pad.t + H} y2={pad.t + H} stroke={C.axis} strokeWidth="1" />
 
-        {isBar ? (() => {
+        {isScatter ? (() => {
+          const xs = spec.series.flatMap(s => s.points.map(p => Number(p.x))).filter(Number.isFinite)
+          const x0 = Math.min(...xs), x1 = Math.max(...xs)
+          const xpad = (x1 - x0) * 0.06 || 1
+          const lox = x0 - xpad, hix = x1 + xpad
+          const px = x => pad.l + ((Number(x) - lox) / ((hix - lox) || 1)) * W
+          const xticks = niceTicks(lox, hix, 4)
+          return (
+            <>
+              {xticks.map(t => (
+                <text key={`xt${t}`} x={px(t)} y={pad.t + H + 12} textAnchor="middle" fontSize="8" fill={C.text}>{t}</text>
+              ))}
+              {spec.series.map((s, si) => (
+                <g key={s.label}>
+                  {s.points.map((p, i) => (
+                    p.y == null ? null : (
+                      <circle key={i} cx={px(p.x)} cy={py(p.y)} r="2.6" fill={colorFor(s.label, si)} opacity="0.7">
+                        <title>{`${s.label}: ${spec.xLabel} ${p.x}${spec.xUnit ? ` ${spec.xUnit}` : ''}, ${spec.yLabel} ${p.y}${spec.unit ? ` ${spec.unit}` : ''}`}</title>
+                      </circle>
+                    )
+                  ))}
+                  {/* Dashed, over the dots, only across the x-range it was fitted to —
+                      a trend drawn past its own data is an extrapolation nobody asked for. */}
+                  {s.trend && (
+                    <line x1={px(s.trend.x0)} y1={py(s.trend.slope * s.trend.x0 + s.trend.intercept)}
+                      x2={px(s.trend.x1)} y2={py(s.trend.slope * s.trend.x1 + s.trend.intercept)}
+                      stroke={colorFor(s.label, si)} strokeWidth="1.4" strokeDasharray="5 4" opacity="0.95" />
+                  )}
+                </g>
+              ))}
+            </>
+          )
+        })() : isBar ? (() => {
           const slot = W / Math.max(1, categories.length)
           const inner = slot * 0.72
           const bw = inner / spec.series.length
@@ -177,7 +222,7 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
         })()}
       </svg>
       <div style={{ fontSize: 9, color: C.dim, textAlign: 'center', marginTop: -4 }}>
-        {spec.xLabel}{spec.xType === 'time' ? ' (venue-local)' : ''}
+        {spec.xLabel}{spec.xUnit ? ` (${spec.xUnit})` : ''}{spec.xType === 'time' ? ' (venue-local)' : ''}
       </div>
     </figure>
   )
