@@ -24,14 +24,25 @@ export const metadata: Metadata = pageMeta({
   path: '/support',
 })
 
-type Role = 'Everyone' | 'Coach' | 'Sailor' | 'Consultant' | 'Admin'
+// Only the roles a READER of this manual can hold. The site-admin role is ours,
+// not a customer's, and badging a chapter with it told a coach nothing except
+// that there is a door they cannot open.
+type Role = 'Everyone' | 'Coach' | 'Sailor'
 
+// Every named role gets a colour of its own. Sailor was grey-on-grey, which read
+// as "not applicable to you" — the exact opposite of what a badge on a chapter is
+// for, and wrong: a sailor may tag, record a note and upload media. 'Everyone'
+// stays neutral on purpose; it is the absence of a restriction, not a role you
+// are singled out by.
+// border-current, not border-accent/50: these colours are CSS variables, and
+// Tailwind's /opacity modifier cannot compute alpha from a var() — it silently
+// drops the rule and the badge falls back to the default light-grey border,
+// which on a dark card is the washed-out look this was meant to fix.
+// currentColor gives each badge a border in its own colour, for free.
 const ROLE_STYLE: Record<Role, string> = {
   Everyone: 'border-border text-muted',
-  Coach: 'border-accent/40 text-accent',
-  Sailor: 'border-border text-secondary',
-  Consultant: 'border-border text-secondary',
-  Admin: 'border-warning/40 text-warning',
+  Coach: 'border-current text-accent',
+  Sailor: 'border-current text-success',
 }
 
 type Chapter = { title: string; roles: Role[]; steps: string[]; note?: string }
@@ -64,13 +75,13 @@ const MANUAL: Part[] = [
       },
       {
         title: 'Set up your boat',
-        roles: ['Coach', 'Admin'],
+        roles: ['Coach'],
         steps: [
           'Open Boat config and add the boat’s sail wardrobe.',
           'Add the rig settings you start the season on.',
           'Tell us what the boat records — instruments, a tracker, or nothing — so the analysis matches.',
         ],
-        note: 'The sail wardrobe is not admin for its own sake: it feeds the debrief transcription, so your sail names come out right instead of as mishearings.',
+        note: 'The sail wardrobe is not paperwork for its own sake: it feeds the debrief transcription, so your sail names come out right instead of as mishearings.',
       },
     ],
   },
@@ -80,7 +91,7 @@ const MANUAL: Part[] = [
     chapters: [
       {
         title: 'Import the day’s log',
-        roles: ['Coach', 'Admin'],
+        roles: ['Coach'],
         steps: [
           'Open Upload and drop in the day’s log export.',
           'Check the date and boat SSA inferred, and correct them if they are wrong.',
@@ -90,7 +101,7 @@ const MANUAL: Part[] = [
       },
       {
         title: 'Upload video and photos',
-        roles: ['Coach', 'Sailor', 'Admin'],
+        roles: ['Coach', 'Sailor'],
         steps: [
           'Drop clips and photos into Upload — phone, GoPro, drone or coach boat.',
           'Leave the tab open while they transcode. Large clips take a while.',
@@ -151,7 +162,7 @@ const MANUAL: Part[] = [
     chapters: [
       {
         title: 'Invite your crew',
-        roles: ['Coach', 'Admin'],
+        roles: ['Coach'],
         steps: [
           'Open the team’s people list and send an invitation.',
           'Pick the role: coach, sailor, consultant or guest.',
@@ -171,7 +182,7 @@ const MANUAL: Part[] = [
       },
       {
         title: 'Share days with another boat',
-        roles: ['Coach', 'Admin'],
+        roles: ['Coach'],
         steps: [
           'Set up a squad with the other owners.',
           'Choose which categories you contribute: tracks and analysis, photos, video.',
@@ -187,7 +198,7 @@ const MANUAL: Part[] = [
     chapters: [
       {
         title: 'Fix photos that are blank for everyone but you',
-        roles: ['Coach', 'Admin'],
+        roles: ['Coach'],
         steps: [
           'Check that the day’s log was imported before the photos.',
           'If it was not, tell us the date and boat — we can repair it without you re-importing.',
@@ -205,7 +216,7 @@ const MANUAL: Part[] = [
       },
       {
         title: 'Fix a day on the wrong date',
-        roles: ['Coach', 'Admin'],
+        roles: ['Coach'],
         steps: [
           'Check the timezone the log was exported in.',
           'Tell us the boat and what the date should be.',
@@ -235,7 +246,7 @@ const QA: { group: string; items: { q: string; a: string }[] }[] = [
       },
       {
         q: 'My account says it is awaiting approval',
-        a: 'A new account has to be activated by an admin. If it has been more than a day, email us.',
+        a: 'A new account has to be activated by your team manager. Ask them first — they can do it in a moment. If it has been more than a day, email us.',
       },
       {
         q: 'Can I use it on my phone?',
