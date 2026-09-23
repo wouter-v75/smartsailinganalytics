@@ -7,6 +7,7 @@
 // No cookie banner, because there is no analytics cookie to consent to. Every
 // competitor has one; not needing it is the better answer.
 import Link from 'next/link'
+import Logo from './Logo'
 
 const NAV = [
   { href: '/features', label: 'Features' },
@@ -21,7 +22,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-20 border-b border-border bg-bg/85 backdrop-blur">
         <div className="mx-auto flex max-w-5xl items-center gap-4 px-5 py-3.5">
           <Link href="/" className="flex items-center gap-2.5 font-bold tracking-tight">
-            <Burgee />
+            <Logo size={22} />
             <span className="text-[15px]">Shared Sailing Analytics</span>
           </Link>
           <nav className="ml-auto hidden items-center gap-5 text-[13px] text-secondary sm:flex">
@@ -53,7 +54,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       <footer className="mt-24 border-t border-border">
         <div className="mx-auto grid max-w-5xl gap-8 px-5 py-10 text-[13px] sm:grid-cols-3">
           <div>
-            <div className="mb-2 flex items-center gap-2 font-bold"><Burgee /> SSA</div>
+            <div className="mb-2 flex items-center gap-2 font-bold"><Logo size={20} /> SSA</div>
             <p className="text-muted">
               The whole of a sailing day, joined and shared with everyone on the programme.
             </p>
@@ -82,16 +83,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
       </footer>
     </div>
-  )
-}
-
-// A burgee, drawn rather than imported — one shape, no image request.
-function Burgee() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" className="shrink-0">
-      <path d="M3 1.5v13" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M4 2.5h9l-3.2 2.6L13 7.7H4z" fill="var(--accent)" />
-    </svg>
   )
 }
 
