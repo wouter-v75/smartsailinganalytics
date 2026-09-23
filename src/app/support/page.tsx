@@ -97,7 +97,7 @@ const MANUAL: Part[] = [
           'Check the date and boat SSA inferred, and correct them if they are wrong.',
           'Confirm. The log is parsed, the phases found, and the day appears.',
         ],
-        note: 'Sailors can import too, not just the coach — which is the point for a squad, where the coach does not hold everyone’s tracker and each sailor uploads their own track to their own boat. Import a day once: re-importing the same day’s log replaces what is stored for it, so if you are trying to fix something else, ask us first.',
+        note: 'Senior sailors can import too, not just the coach — which is the point for a squad, where the coach does not hold everyone’s tracker and each sailor uploads their own track to their own boat. If Upload refuses you, ask your coach to move you up a level. Import a day once: re-importing the same day’s log replaces what is stored for it, so if you are trying to fix something else, ask us first.',
       },
       {
         title: 'Upload video and photos',
