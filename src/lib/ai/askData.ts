@@ -25,9 +25,10 @@ import { expandPhases, STATS_VERSION, type StoredPhase } from '../seasonCurves'
 import { isJudged, manoeuvreAverages, manoeuvreNote, type Manoeuvre } from '../manoeuvres'
 import { signBunnyUrl, bunnyConfigured } from '../bunny-signed-url'
 import { linearTrend } from '../phasePlot'
+import { rankDrivers } from './drivers'
 import type {
   ComparePhasesArgs, DayTimeseriesArgs, FindMediaArgs, ListManoeuvresArgs,
-  PhaseFilters, ScatterPhasesArgs, SearchNotesArgs, ToolArgs, ToolName,
+  PhaseFilters, RankDriversArgs, ScatterPhasesArgs, SearchNotesArgs, ToolArgs, ToolName,
 } from './askTools'
 import type { AnswerColumn, AnswerTable, ChartSeries, ChartSpec, MediaItem, ToolResult } from './askTypes'
 import { emptyResult } from './askTypes'
@@ -277,6 +278,122 @@ export function buildScatter(
   }
 }
 
+// ── rank_drivers ─────────────────────────────────────────────────────────────
+// "What is the dominant parameter to get right for optimum VMG% in 12-14 kn?"
+//
+// The maths is in ./drivers — banded, so a channel with an OPTIMUM (heel: slow
+// below it and slow above it) is found rather than scored at zero by a
+// correlation. What this file adds is the vocabulary: which channels are worth
+// testing, and which must never be, because they are the target wearing a hat.
+
+// Ranking bsp against vmgPct discovers that going fast makes you go fast. These
+// are the same quantity restated, and they would top every ranking forever.
+const TAUTOLOGIES: Record<string, string[]> = {
+  vmgPct: ['bsp', 'sog', 'bspPol', 'logPolPct', 'logTrgPct', 'bspSog'],
+  bspPol: ['bsp', 'sog', 'vmgPct', 'logPolPct', 'logTrgPct', 'bspSog'],
+  bsp: ['sog', 'bspPol', 'vmgPct', 'logPolPct', 'logTrgPct', 'bspSog'],
+}
+// What a crew can actually go and change, plus the things that describe how the
+// boat is sitting. TWS is excluded as a candidate — it is the conditions, and it
+// is what the confound check measures everything else against.
+const DEFAULT_CANDIDATES = [
+  'heel', 'trim', 'twa', 'awa', 'rudder', 'fsty', 'mainsheet', 'vang', 'cunningham',
+  'jibTack', 'bobstay', 'v1wwd', 'v1lwd', 'upDflct', 'lwDflct',
+]
+
+export function buildDrivers(
+  phases: (PhaseStat & { date: string })[],
+  a: RankDriversArgs,
+  from: string,
+  to: string,
+): ToolResult {
+  const banned = new Set([a.target, 'tws', ...(TAUTOLOGIES[a.target] || [])])
+  const candidates = (a.candidates?.length ? a.candidates : DEFAULT_CANDIDATES).filter(k => !banned.has(k))
+  if (!candidates.length) {
+    return emptyResult('', 'Every channel asked for is either the target itself or the same quantity under another name.')
+  }
+
+  const rows = phases
+    .map(p => ({ values: p.mean, target: p.mean[a.target] }))
+    .filter((r): r is { values: Record<string, number | null>; target: number } =>
+      typeof r.target === 'number' && Number.isFinite(r.target))
+  if (rows.length < 12) {
+    return emptyResult('', `Only ${rows.length} phases have ${CH.get(a.target)?.label || a.target} — too few to rank anything.`)
+  }
+
+  const { ranked, caveats } = rankDrivers({
+    rows, candidates, conditionsKey: 'tws', bands: a.bands, minPerBand: a.minPerBand,
+  })
+  if (!ranked.length) {
+    return emptyResult('', `No channel had enough phases spread across enough of its range to rank, in ${rows.length} phases.`)
+  }
+
+  const tLabel = CH.get(a.target)?.label || a.target
+  const tDec = CH.get(a.target)?.decimals ?? 1
+  const lbl = (k: string) => CH.get(k)?.label || k
+  const unit = (k: string) => CH.get(k)?.unit || ''
+  const dec = (k: string) => CH.get(k)?.decimals ?? 1
+
+  // Ranked, with the share of variation each accounts for and what it is worth in
+  // the target's own units — a share with no size attached persuades nobody.
+  const rankTable: AnswerTable = {
+    title: `What moves ${tLabel} most, ${from === to ? from : `${from} to ${to}`}`,
+    columns: [
+      { key: 'channel', label: 'Channel', group: true },
+      { key: 'n', label: 'n' },
+      { key: 'share', label: 'share of variation', unit: '%', decimals: 0 },
+      { key: 'spread', label: `best band − worst`, unit: CH.get(a.target)?.unit || '', decimals: tDec },
+      { key: 'bestFrom', label: 'fastest band from', decimals: 1 },
+      { key: 'bestTo', label: 'to', decimals: 1 },
+      { key: 'confound', label: 'moves with wind?' },
+    ],
+    rows: ranked.map(dr => [
+      lbl(dr.key), dr.n, round(dr.eta2 * 100, 0), round(dr.spread, tDec),
+      round(dr.best.lo, dec(dr.key)), round(dr.best.hi, dec(dr.key)),
+      dr.rWithConditions >= 0.5 ? 'yes' : '',
+    ]),
+  }
+
+  // The winner, band by band: this is the row a trimmer can act on.
+  const top = ranked[0]
+  const bandTable: AnswerTable = {
+    title: `${tLabel} by ${lbl(top.key)}${unit(top.key) ? ` (${unit(top.key)})` : ''} band`,
+    columns: [
+      { key: 'band', label: `${lbl(top.key)} band`, group: true },
+      { key: 'n', label: 'n' },
+      { key: 'target', label: tLabel, unit: CH.get(a.target)?.unit || '', decimals: tDec },
+    ],
+    rows: top.bands.map(b => [
+      `${round(b.lo, dec(top.key))}–${round(b.hi, dec(top.key))}`, b.n, round(b.mean, tDec),
+    ]),
+  }
+
+  const chart: ChartSpec = {
+    kind: 'bar',
+    title: `${tLabel} by ${lbl(top.key)} band`,
+    xType: 'category',
+    xLabel: `${lbl(top.key)}${unit(top.key) ? ` (${unit(top.key)})` : ''}`,
+    yLabel: tLabel,
+    unit: CH.get(a.target)?.unit || '',
+    series: [{
+      label: tLabel,
+      points: top.bands.map(b => ({ x: `${round(b.lo, dec(top.key))}–${round(b.hi, dec(top.key))}`, y: round(b.mean, tDec) })),
+    }],
+  }
+
+  return {
+    summary: [
+      `${rows.length} phases, ${candidates.length} channels tested.`,
+      `${lbl(top.key)} accounts for the most: ${round(top.eta2 * 100, 0)}% of the variation in ${tLabel}, worth ${round(top.spread, tDec)} between its best and worst band, fastest at ${round(top.best.lo, dec(top.key))}–${round(top.best.hi, dec(top.key))}${unit(top.key) ? ` ${unit(top.key)}` : ''}.`,
+      'YOU MUST RELAY THESE CAVEATS:',
+      ...caveats.map(c => `• ${c}`),
+    ].join(' '),
+    tables: [rankTable, bandTable],
+    media: [],
+    charts: [chart],
+  }
+}
+
 function meanOf(part: PhaseStat[]): Record<string, number | null> {
   const out: Record<string, number | null> = {}
   for (const ch of CHANNELS) {
@@ -342,6 +459,18 @@ export function makeExecutor(d: AskDeps) {
         tables: [table],
         media: [],
       }
+    }
+
+    if (name === 'rank_drivers') {
+      const a = args as RankDriversArgs
+      const [from, to] = dayRange(a.dateFrom, a.dateTo)
+      const all = await loadPhases(d, from, to)
+      if (!all.length) return emptyResult('', `No stored performance data between ${from} and ${to}.`)
+      const kept = filterPhases(all, a)
+      if (kept.length < 12) {
+        return emptyResult('', `Only ${kept.length} phases match that filter — far too few to say what matters. Widen the wind band or the date range.`)
+      }
+      return buildDrivers(kept, a, from, to)
     }
 
     if (name === 'scatter_phases') {
