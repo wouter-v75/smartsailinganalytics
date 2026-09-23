@@ -1,55 +1,31 @@
-'use client'
+// `/` is two pages behind one URL.
+//
+// Signed out, it is the public front page — the thing a coach forwards to a
+// programme manager (docs/web-and-support-2026-09.md). Signed in, it is the app,
+// exactly as before: AppHome is the previous contents of this file, unchanged
+// but for its name.
+//
+// The session is read on the SERVER so a signed-in user never sees a flash of
+// marketing, and an anonymous visitor is never bounced to /login from the front
+// door. Middleware lets `/` through for both; the decision is made here.
+import type { Metadata } from 'next'
+import { pageMeta } from '../lib/siteMeta'
+import { getServerSupabase } from '../lib/supabase/server'
+import Home from '../components/marketing/Home'
+import AppHome from './AppHome'
 
-import dynamic from 'next/dynamic'
-import UserPill from '../components/UserPill'
+export const dynamic = 'force-dynamic'
 
-// The main app is a large, entirely client-side component (IndexedDB, blob URLs,
-// localStorage — it never rendered on the server anyway). Statically importing it
-// here put its ~500 KB into the SAME page chunk as UserPill, so the top-right
-// username could not paint until the whole component had downloaded and parsed.
-// Code-split it into its own chunk (ssr:false) so the shell + UserPill render
-// immediately and the heavy app streams in behind a lightweight fallback.
-const SmartSailingAnalytics = dynamic(
-  () => import('../components/SmartSailingAnalytics_UI'),
-  {
-    ssr: false,
-    loading: () => (
-      <div
-        style={{
-          position: 'fixed',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: '#030F1A',
-          color: '#7DD3FC',
-          fontSize: 13,
-          letterSpacing: 0.5,
-        }}
-      >
-        <div
-          style={{
-            width: 22,
-            height: 22,
-            border: '2px solid #1E3A5A',
-            borderTopColor: '#06B6D4',
-            borderRadius: '50%',
-            marginRight: 10,
-            animation: 'ssa-spin 0.8s linear infinite',
-          }}
-        />
-        Loading…
-        <style>{'@keyframes ssa-spin{to{transform:rotate(360deg)}}'}</style>
-      </div>
-    ),
-  }
-)
+// One title for both faces of this route. A signed-in user sees the app and
+// never reads it; an anonymous visitor — and every link preview — sees this.
+export const metadata: Metadata = pageMeta({
+  title: 'The whole of a sailing day, with the whole team',
+  description:
+    'Video, photos, instrument data, the forecast, sail shape and what the team said about it — joined to the minute they happened, and shared with everyone on the programme before dinner.',
+  path: '/',
+})
 
-export default function Home() {
-  return (
-    <>
-      <UserPill />
-      <SmartSailingAnalytics />
-    </>
-  )
+export default async function Page() {
+  const { data: { user } } = await getServerSupabase().auth.getUser()
+  return user ? <AppHome /> : <Home />
 }

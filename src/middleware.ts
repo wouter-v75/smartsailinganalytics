@@ -27,6 +27,25 @@ const PUBLIC_PATHS = new Set<string>([
   '/auth/callback',
   '/auth/confirm',
   '/auth/reset-password',
+  // The public marketing site. '/' is BOTH: signed out it renders the front
+  // page, signed in it renders the app — src/app/page.tsx decides, on the
+  // server, so nothing here needs to know which. Letting '/' through means an
+  // anonymous visitor lands on the front door instead of a login form.
+  '/',
+  '/features',
+  '/pricing',
+  '/support',
+  '/privacy',
+  '/request-access',
+  // Metadata routes. These are fetched by crawlers and by link-preview bots
+  // (WhatsApp, Slack, iMessage) which never carry a session, so a redirect to
+  // /login here means a blank social card and an unindexed site — i.e. the word
+  // of mouth the whole public site exists to serve, quietly broken. The matcher
+  // below exempts static file extensions but not these, because Next generates
+  // them as routes rather than files.
+  '/robots.txt',
+  '/sitemap.xml',
+  '/opengraph-image',
 ])
 
 // Path-prefix matches that bypass the auth gate entirely (anonymous AND
@@ -177,6 +196,6 @@ export async function middleware(request: NextRequest) {
 // Match every page route except API, _next assets, and static files.
 export const config = {
   matcher: [
-    '/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff|woff2|ttf|eot)).*)',
+    '/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|woff|woff2|ttf|eot|mp4|webm|m4v)).*)',
   ],
 }

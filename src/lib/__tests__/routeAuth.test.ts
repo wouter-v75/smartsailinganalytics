@@ -24,6 +24,11 @@ const PUBLIC_ROUTES: Record<string, string> = {
   'invitations/[token]/stash': 'same invitation token, carried through signup',
   'hls/[guid]/[file]': 'the signed link minted by /api/videos/[id]/url — AVPlayer does not send our cookie',
   'stream/webhook': "Bunny's HMAC signature (verifyBunnySignature) — the caller is Bunny, not a user",
+  'access-request':
+    'the public "Request access" form — the sender has no account and that is the point. ' +
+    'It only ever INSERTS into access_requests and never reads anything back, and it is ' +
+    'gated by a honeypot field, a per-IP rate limit, strict validation with length caps, ' +
+    'and a unique index on (lower(email), day) so a flood collapses to one row per address.',
 }
 
 // Any of these in the file body counts as authorising the caller.

@@ -1,9 +1,34 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import { siteUrl, SITE_NAME } from '../lib/siteMeta'
 
+// metadataBase turns every relative OG/canonical URL below into an absolute one;
+// without it Next warns and social cards resolve against nothing. The public
+// pages override title/description via pageMeta(); what stays here is the
+// template, the card defaults and the crawling rules.
 export const metadata: Metadata = {
-  title: 'Shared Sailing Analytics',
-  description: 'Sailing team video intelligence platform',
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: SITE_NAME,
+    // Page titles read "Pricing — Shared Sailing Analytics" without each page
+    // having to repeat the suffix.
+    template: `%s — ${SITE_NAME}`,
+  },
+  description:
+    'The whole of a sailing day — video, instrument data, sail shape and the debrief — joined to the minute it happened and shared with the whole programme.',
+  applicationName: SITE_NAME,
+  openGraph: {
+    siteName: SITE_NAME,
+    type: 'website',
+    locale: 'en_GB',
+  },
+  twitter: { card: 'summary_large_image' },
+  robots: {
+    // The marketing pages should be found; everything behind auth is excluded
+    // by robots.ts, which is the file crawlers actually read for paths.
+    index: true,
+    follow: true,
+  },
 }
 
 // Video and poster hosts. Opening the connection (DNS + TCP + TLS) while the
