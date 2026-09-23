@@ -18,8 +18,23 @@ const C = {
 const SERIES = ['#06B6D4', '#F59E0B', '#8B5CF6', '#10B981']
 const TACK_COLOR = { Port: '#EF4444', Stbd: '#22C55E', Starboard: '#22C55E' }
 const colorFor = (label, i) => TACK_COLOR[label] || SERIES[i % SERIES.length]
+// The day you are looking at, picked out of the days either side of it. Comparing
+// today with the season is the commonest thing this chart is asked to show, and
+// without this you have to read the axis to find which bar is yours.
+const HIGHLIGHT = '#FBBF24'
 
 const VB_W = 400
+
+// A category axis of ISO dates is unreadable at chart width — eleven of
+// "2026-09-11" at 8px in a 400-unit viewBox overlap into a smear. Shorten them to
+// the day and month, which is what anyone reading a season is actually scanning for.
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+const MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const shortLabel = cat => {
+  const m = ISO_DATE.exec(cat)
+  if (m) return `${Number(m[3])} ${MONTH[Number(m[2]) - 1]}`
+  return cat.length > 14 ? `${cat.slice(0, 13)}…` : cat
+}
 
 const niceTicks = (lo, hi, count = 4) => {
   if (!(hi > lo)) return [lo]
@@ -33,7 +48,7 @@ const niceTicks = (lo, hi, count = 4) => {
 
 const fmt = (v, unit) => (v == null ? '—' : `${Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(Math.abs(v) >= 10 ? 1 : 2)}${unit ? ` ${unit}` : ''}`)
 
-export default function AskChart({ spec, height = 170 }) {
+export default function AskChart({ spec, height = 170, highlight = null }) {
   if (!spec?.series?.length) return null
   const values = spec.series.flatMap(s => s.points.map(p => p.y)).filter(v => typeof v === 'number' && Number.isFinite(v))
   if (!values.length) return null
@@ -48,7 +63,14 @@ export default function AskChart({ spec, height = 170 }) {
   const lo = zeroBased ? 0 : dataMin - spread * 0.15 || dataMin - 1
   const hi = dataMax + spread * 0.15 || dataMax + 1
 
-  const pad = { t: 10, r: 10, b: 34, l: 44 }
+  // ~4.6 units per character at font-size 8 in this viewBox. If the longest label
+  // will not sit inside its slot, the whole axis tilts rather than overlapping.
+  const catLabels = isBar ? spec.series[0].points.map(p => shortLabel(String(p.x))) : []
+  const widest = catLabels.reduce((a, t) => Math.max(a, t.length), 0) * 4.6
+  const slotW = catLabels.length ? (VB_W - 54) / catLabels.length : VB_W
+  // 0.9, not 1.0: "fits" has to mean visibly separated, not merely not-overlapping.
+  const tilt = isBar && widest > slotW * 0.9
+  const pad = { t: 10, r: 10, b: tilt ? 46 : 34, l: 44 }
   const W = VB_W - pad.l - pad.r
   const H = height - pad.t - pad.b
   const py = v => pad.t + H - ((v - lo) / (hi - lo || 1)) * H
@@ -93,11 +115,12 @@ export default function AskChart({ spec, height = 170 }) {
                 if (v == null) return null
                 const x = pad.l + ci * slot + (slot - inner) / 2 + si * bw
                 const y = py(v), base = py(Math.max(lo, 0))
+                const mine = highlight != null && cat === String(highlight)
                 return (
                   <g key={s.label}>
                     <rect x={x} y={Math.min(y, base)} width={Math.max(1, bw - 2)} height={Math.max(1, Math.abs(base - y))}
-                      fill={colorFor(s.label, si)} opacity="0.85" rx="1.5">
-                      <title>{`${cat}${multi ? ` · ${s.label}` : ''}: ${fmt(v, spec.unit)}`}</title>
+                      fill={mine ? HIGHLIGHT : colorFor(s.label, si)} opacity={mine ? 1 : 0.85} rx="1.5">
+                      <title>{`${cat}${multi ? ` · ${s.label}` : ''}: ${fmt(v, spec.unit)}${mine ? ' — the day you are looking at' : ''}`}</title>
                     </rect>
                     {categories.length * spec.series.length <= 10 && (
                       <text x={x + (bw - 2) / 2} y={Math.min(y, base) - 3} textAnchor="middle" fontSize="7.5" fill="#CBD5E1">
@@ -107,9 +130,17 @@ export default function AskChart({ spec, height = 170 }) {
                   </g>
                 )
               })}
-              <text x={pad.l + ci * slot + slot / 2} y={pad.t + H + 12} textAnchor="middle" fontSize="8" fill={C.text}>
-                {cat.length > 12 ? `${cat.slice(0, 11)}…` : cat}
-              </text>
+              {(() => {
+                const mine = highlight != null && cat === String(highlight)
+                const text = shortLabel(cat)
+                const cx = pad.l + ci * slot + slot / 2
+                const common = { fontSize: 8, fill: mine ? HIGHLIGHT : C.text, fontWeight: mine ? 700 : 400 }
+                // Straight when they fit, tilted when they do not. Tilting every
+                // axis would be uglier; a smear of overlapping dates is worse.
+                return tilt
+                  ? <text x={cx} y={pad.t + H + 10} textAnchor="end" transform={`rotate(-40 ${cx} ${pad.t + H + 10})`} {...common}>{text}</text>
+                  : <text x={cx} y={pad.t + H + 12} textAnchor="middle" {...common}>{text}</text>
+              })()}
             </g>
           ))
         })() : (() => {
