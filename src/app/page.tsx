@@ -26,6 +26,18 @@ export const metadata: Metadata = pageMeta({
 })
 
 export default async function Page() {
-  const { data: { user } } = await getServerSupabase().auth.getUser()
+  // The front door must render even if the session lookup does not. An
+  // anonymous visitor arriving from a forwarded link has no session to read, and
+  // a transient auth failure showing them a 500 would cost exactly the first
+  // impression this page exists for. Falling back to the marketing page is
+  // always the safe direction: the worst case is a signed-in user seeing the
+  // public page and clicking Sign in, which works.
+  let user = null
+  try {
+    const result = await getServerSupabase().auth.getUser()
+    user = result.data.user
+  } catch (e) {
+    console.warn('[page] auth lookup failed, showing marketing:', e instanceof Error ? e.message : e)
+  }
   return user ? <AppHome /> : <Home />
 }
