@@ -21,14 +21,16 @@
 
 import type { ToolSpec } from './scaleway'
 
-export type ToolName = 'compare_phases' | 'day_timeseries' | 'list_manoeuvres' | 'find_media' | 'search_notes'
-export const TOOL_NAMES: ToolName[] = ['compare_phases', 'day_timeseries', 'list_manoeuvres', 'find_media', 'search_notes']
+export type ToolName = 'compare_phases' | 'scatter_phases' | 'day_timeseries' | 'list_manoeuvres' | 'find_media' | 'search_notes'
+export const TOOL_NAMES: ToolName[] = ['compare_phases', 'scatter_phases', 'day_timeseries', 'list_manoeuvres', 'find_media', 'search_notes']
 
 export const MODES = ['up', 'down', 'reach'] as const
 export const TACKS = ['port', 'stbd'] as const
 export const GROUP_KEYS = ['mode', 'tack', 'sailCombo', 'race', 'twsBand', 'twaBand', 'heelBand', 'date'] as const
 export const MEDIA_KINDS = ['photo', 'video', 'sailscan', 'tag'] as const
 export const MANOEUVRE_KINDS = ['tack', 'gybe', 'all'] as const
+/** How a scatter's dots are split into coloured series. */
+export const SPLIT_KEYS = ['tack', 'sailCombo', 'mode', 'date', 'none'] as const
 
 // The metrics worth naming in the schema. Lidar sail-shape channels (mnCa25,
 // jibTw50, spiDr75 …) are accepted too but not enumerated — 54 of them would
@@ -69,6 +71,16 @@ export interface ComparePhasesArgs extends PhaseFilters {
   minPhases: number
 }
 
+export interface ScatterPhasesArgs extends PhaseFilters {
+  x: string
+  y: string
+  splitBy: 'tack' | 'sailCombo' | 'mode' | 'date' | 'none'
+  dateFrom?: string
+  dateTo?: string
+  trend: boolean
+  maxPoints: number
+}
+
 export interface DayTimeseriesArgs {
   channels: string[]
   date?: string
@@ -99,7 +111,7 @@ export interface SearchNotesArgs {
   limit: number
 }
 
-export type ToolArgs = ComparePhasesArgs | DayTimeseriesArgs | ListManoeuvresArgs | FindMediaArgs | SearchNotesArgs
+export type ToolArgs = ComparePhasesArgs | ScatterPhasesArgs | DayTimeseriesArgs | ListManoeuvresArgs | FindMediaArgs | SearchNotesArgs
 
 export type Validated =
   | { ok: true; name: ToolName; args: ToolArgs }
@@ -159,10 +171,39 @@ export const TOOLS: ToolSpec[] = [
   {
     type: 'function',
     function: {
+      name: 'scatter_phases',
+      description:
+        'An X-Y scatter: one dot per 30 s steady-state phase, with a least-squares trend line and R² through each coloured series. '
+        + 'This is the KND-style plot the crew already know from the Performance charts. '
+        + 'Use it WHENEVER the question plots one measurement against another — "scatter", "X-Y", "X vs Y", "BSP against TWS", '
+        + '"SOG on the x-axis and BSP on the y-axis", or anything asking for a trend line or a correlation. '
+        + 'It covers one day or a whole range of days: for the SEASON, give dateFrom and dateTo spanning the stored days listed in the context. '
+        + 'splitBy chooses the colours — "tack" for port vs starboard, which is what is wanted unless the question says otherwise.',
+      parameters: {
+        type: 'object',
+        properties: {
+          x: { type: 'string', description: `The channel on the horizontal axis, e.g. tws or sog. One of: ${CORE_METRICS.join(', ')}.` },
+          y: { type: 'string', description: `The channel on the vertical axis, e.g. bsp or vmgPct. One of: ${CORE_METRICS.join(', ')}.` },
+          splitBy: { type: 'string', enum: [...SPLIT_KEYS], description: 'What the colours mean. Default "tack" (port vs starboard). "none" for a single colour.' },
+          dateFrom: ISO_DATE,
+          dateTo: ISO_DATE,
+          trend: { type: 'boolean', description: 'Draw a least-squares line with R² through each series. Default true.' },
+          maxPoints: { type: 'integer', description: 'Cap the dots, thinning evenly if there are more. Default 800.' },
+          ...FILTER_PROPS,
+        },
+        required: ['x', 'y'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'day_timeseries',
       description:
-        'The day\'s instruments through time, thinned to a drawable number of points. '
-        + 'Use it for "when did X happen", "how did the breeze move", "show heel through the day" — not for comparisons, which compare_phases does better.',
+        'ONE day\'s instruments against the CLOCK, thinned to a drawable number of points. The horizontal axis is always time. '
+        + 'Use it only for "when did X happen" — when the breeze went left, how heel moved through the afternoon. '
+        + 'Never use it to plot one measurement against another: "BSP vs SOG" is scatter_phases, not two separate traces against time. '
+        + 'Never use it for a season or a range of days — it reads a single day.',
       parameters: {
         type: 'object',
         properties: {
@@ -332,6 +373,33 @@ export function validate(name: string, argumentsRaw: string): Validated {
     return { ok: true, name, args }
   }
 
+  if (name === 'scatter_phases') {
+    const x = asStrings(o.x)[0] || (typeof o.x === 'string' ? o.x.trim() : '')
+    const y = asStrings(o.y)[0] || (typeof o.y === 'string' ? o.y.trim() : '')
+    const bad = [x, y].filter(k => !isMetricKey(k))
+    if (bad.length || !x || !y) {
+      return {
+        ok: false,
+        error: `scatter_phases needs "x" and "y" as metric keys${bad.length ? ` — ${bad.join(' and ')} ${bad.length === 1 ? 'is not one' : 'are not'}` : ''}. Use: ${CORE_METRICS.join(', ')}.`,
+      }
+    }
+    if (x === y) return { ok: false, error: 'scatter_phases needs two different channels — plotting a channel against itself shows a straight line and nothing else.' }
+    const args: ScatterPhasesArgs = {
+      x, y,
+      splitBy: oneOf(o.splitBy, SPLIT_KEYS) ?? 'tack',
+      trend: o.trend === false ? false : true,
+      maxPoints: clamp(int(o.maxPoints) ?? 800, 50, 2000),
+      ...filters(o),
+    }
+    const from = date(o.dateFrom), to = date(o.dateTo)
+    if (from) args.dateFrom = from
+    if (to) args.dateTo = to
+    if (args.dateFrom && args.dateTo && args.dateFrom > args.dateTo) {
+      const t = args.dateFrom; args.dateFrom = args.dateTo; args.dateTo = t
+    }
+    return { ok: true, name, args }
+  }
+
   if (name === 'day_timeseries') {
     const channels = Array.from(new Set(asStrings(o.channels).filter(isMetricKey))).slice(0, 4)
     if (!channels.length) {
@@ -478,6 +546,20 @@ export function tokensFor(name: ToolName, args: ToolArgs, openDate?: string | nu
       ...(a.minPhases > 1
         ? [{ path: 'minPhases', label: 'Minimum phases', text: `at least ${a.minPhases} phases`, kind: 'number' as const, value: a.minPhases, editable: true }]
         : []),
+    ]
+  }
+  if (name === 'scatter_phases') {
+    const a = args as ScatterPhasesArgs
+    return [
+      ...dateTokens(a.dateFrom, a.dateTo, openDate),
+      ...filterTokens(a),
+      { path: 'y', label: 'Vertical axis', text: `${a.y} vs ${a.x}`, kind: 'text', value: a.y, editable: true },
+      {
+        path: 'splitBy', label: 'Colours', text: a.splitBy === 'none' ? 'one colour' : `coloured by ${BY_WORD[a.splitBy] || a.splitBy}`,
+        kind: 'enum', value: a.splitBy,
+        options: [...SPLIT_KEYS].map(k => ({ value: k, label: k === 'none' ? 'one colour' : BY_WORD[k] || k })),
+        editable: true,
+      },
     ]
   }
   if (name === 'day_timeseries') {
