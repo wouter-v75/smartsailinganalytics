@@ -1,8 +1,9 @@
 'use client'
 
-// The front page's hero clip: the Northstar 76 under way, which is the whole
-// pitch in four seconds and the one thing on the page no competitor can copy —
-// it is the actual boat the product was built on.
+// The front page's hero clip: Northstar — the 2026 Maxi World Champion — at the
+// Maxi Worlds in Porto Cervo. This is the whole pitch in four seconds and the one
+// thing on the page no competitor can copy: it is the actual boat the product was
+// built on, winning the event it was built for.
 //
 // Client component for one reason: prefers-reduced-motion. CSS can hide a
 // looping video but it cannot stop it playing, and a silent autoplaying loop is
@@ -59,7 +60,7 @@ export default function HeroVideo() {
               // metadata, not auto: the clip is 2 MB and the page must be
               // readable on marina wifi before it is decorative.
               preload="metadata"
-              aria-label="The Northstar 76 racing under main and jib"
+              aria-label="Northstar, the 2026 Maxi World Champion, racing at the Maxi Worlds in Porto Cervo"
             />
           )}
           {/* Keeps the caption legible over bright water without dimming the
@@ -67,7 +68,7 @@ export default function HeroVideo() {
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/55 to-transparent" />
           <figcaption className="pointer-events-none absolute inset-x-0 bottom-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 text-[12px]">
             <span className="font-medium text-white/85">
-              GBR 76X — a real day, from the season SSA was built on
+              Northstar, 2026 Maxi World Champion — Maxi Worlds, Porto Cervo
             </span>
             {/* The footage is someone's work and is credited on the page it sells
                 from, not buried in a file name. */}

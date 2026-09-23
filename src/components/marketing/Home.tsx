@@ -23,7 +23,7 @@ export default function Home() {
       {/* ── What it is, in one sentence a coach can paste ─────────────────── */}
       <section className="border-b border-border py-16 sm:py-24">
         <div className="mb-4 text-[12px] font-bold uppercase tracking-[0.14em] text-accent">
-          For grand-prix programmes and Olympic squads
+          Built with the 2026 Maxi World Champion
         </div>
         <h1 className="max-w-3xl text-[30px] font-bold leading-[1.18] tracking-tight sm:text-[44px] sm:leading-[1.1]">
           The whole of a sailing day, on one timeline, with the whole team — before dinner.
@@ -105,9 +105,10 @@ export default function Home() {
         </p>
         <ul className="mt-6 max-w-2xl space-y-3 text-[14px] leading-relaxed text-secondary">
           <li className="border-l-2 border-border pl-4">
-            <b className="text-fg">It is in daily use by one grand-prix programme</b>, across two
-            boats and a full season. We are looking for three more teams for 2027, which is why
-            the founding rates exist.
+            <b className="text-fg">It is in daily use by one grand-prix programme</b> — Northstar,
+            which won the 2026 Maxi World Championship — across two boats and a full season. One
+            programme is still one programme, and we are looking for three more teams for 2027,
+            which is why the founding rates exist.
           </li>
           <li className="border-l-2 border-border pl-4">
             <b className="text-fg">Wind from a GPS track is being built now</b>, on the paired data
