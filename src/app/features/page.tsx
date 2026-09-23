@@ -2,14 +2,16 @@
 // Nobody arrives wanting to read about "the Analytics tab"; they arrive with a
 // day that needs turning into something the team can learn from.
 import type { Metadata } from 'next'
+import { pageMeta } from '../../lib/siteMeta'
 import Link from 'next/link'
 import { Shell, Hero, Section, Card } from '../../components/marketing/Shell'
 
-export const metadata: Metadata = {
-  title: 'Features — Shared Sailing Analytics',
+export const metadata: Metadata = pageMeta({
+  title: 'Features',
   description:
     'Video, photos, instrument data, forecast, sail shape and the debrief, joined to the minute they happened and shared with the whole programme.',
-}
+  path: '/features',
+})
 
 export default function FeaturesPage() {
   return (

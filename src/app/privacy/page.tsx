@@ -16,14 +16,16 @@
 // docs/squad-sharing-design-2026-09.md. Where something is not settled yet, it
 // says so rather than implying a policy that does not exist.
 import type { Metadata } from 'next'
+import { pageMeta } from '../../lib/siteMeta'
 import Link from 'next/link'
 import { Shell, Hero, Section } from '../../components/marketing/Shell'
 
-export const metadata: Metadata = {
-  title: 'Data and AI — Shared Sailing Analytics',
+export const metadata: Metadata = pageMeta({
+  title: 'Data and AI',
   description:
-    'Where your data lives, who can see it, and exactly what happens when AI touches your crew’s video and voices. All inference runs inside an EU account; nothing goes to a third-party AI vendor.',
-}
+    'Where your data lives, who can see it, and exactly what happens when AI touches your crew’s video and voices. All inference runs inside an EU account; no model vendor receives your data.',
+  path: '/privacy',
+})
 
 const SUBPROCESSORS = [
   ['Supabase', 'Database, authentication, file storage', 'Ireland (eu-west-1)'],

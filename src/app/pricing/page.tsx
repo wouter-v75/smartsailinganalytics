@@ -6,14 +6,16 @@
 // you can afford". The questions below are procurement questions — ownership,
 // GDPR, exit, who can see what — not invented enthusiasm.
 import type { Metadata } from 'next'
+import { pageMeta } from '../../lib/siteMeta'
 import Link from 'next/link'
 import { Shell, Hero, Section } from '../../components/marketing/Shell'
 
-export const metadata: Metadata = {
-  title: 'Pricing — Shared Sailing Analytics',
+export const metadata: Metadata = pageMeta({
+  title: 'Pricing',
   description:
     'Coach €1,200, Squad €3,000, Programme €6,000 per year. Every boat in the programme included, no per-seat charge. Founding rates until 31 March 2027.',
-}
+  path: '/pricing',
+})
 
 const PLANS = [
   {

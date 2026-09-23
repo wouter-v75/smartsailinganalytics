@@ -1,12 +1,14 @@
 import type { Metadata } from 'next'
+import { pageMeta } from '../../lib/siteMeta'
 import { Shell, Hero } from '../../components/marketing/Shell'
 import RequestForm from '../../components/marketing/RequestForm'
 
-export const metadata: Metadata = {
-  title: 'Request access — Shared Sailing Analytics',
+export const metadata: Metadata = pageMeta({
+  title: 'Request access',
   description:
     'SSA is invite-only. Tell us what you sail and we will show you a real day from a real season.',
-}
+  path: '/request-access',
+})
 
 export default function RequestAccessPage() {
   return (

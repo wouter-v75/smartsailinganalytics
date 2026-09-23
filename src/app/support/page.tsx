@@ -13,14 +13,16 @@
 //   - limitations stated plainly, because that is the tacit question every
 //     reader is really asking
 import type { Metadata } from 'next'
+import { pageMeta } from '../../lib/siteMeta'
 import Link from 'next/link'
 import { Shell, Hero } from '../../components/marketing/Shell'
 
-export const metadata: Metadata = {
-  title: 'Support and manual — Shared Sailing Analytics',
+export const metadata: Metadata = pageMeta({
+  title: 'Support and manual',
   description:
     'How to import a day, sync video, record a debrief, share with a squad and fix the things that go wrong. Plus what SSA reads, and what it does not do yet.',
-}
+  path: '/support',
+})
 
 type Role = 'Everyone' | 'Coach' | 'Sailor' | 'Consultant' | 'Admin'
 

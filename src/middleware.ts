@@ -37,6 +37,15 @@ const PUBLIC_PATHS = new Set<string>([
   '/support',
   '/privacy',
   '/request-access',
+  // Metadata routes. These are fetched by crawlers and by link-preview bots
+  // (WhatsApp, Slack, iMessage) which never carry a session, so a redirect to
+  // /login here means a blank social card and an unindexed site — i.e. the word
+  // of mouth the whole public site exists to serve, quietly broken. The matcher
+  // below exempts static file extensions but not these, because Next generates
+  // them as routes rather than files.
+  '/robots.txt',
+  '/sitemap.xml',
+  '/opengraph-image',
 ])
 
 // Path-prefix matches that bypass the auth gate entirely (anonymous AND
