@@ -1,0 +1,16 @@
+-- Scrub the last mentions of tl2 from live policy bodies.
+--
+-- 0083 rewrote the 13 policies that granted tl2 WITHOUT tl3, because those would
+-- have taken rights away from promoted users. These 12 grant both, so they kept
+-- working the moment every tl2 became a tl3 — functionally there was nothing to
+-- fix.
+--
+-- They are cleaned up anyway. A live policy naming a role that cannot exist is
+-- dead text that reads as fact: the next person to copy one of these lists as a
+-- template propagates a role the CHECK constraint rejects, and the one after
+-- that wonders whether tl2 means something. That is the same drift that let tl3
+-- ship in 0025 and stay out of the upload policies until 0080.
+--
+-- No behaviour change. Verify with: every role that could reach these tables
+-- before can still reach them.
+

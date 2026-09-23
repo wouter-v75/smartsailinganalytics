@@ -8,7 +8,7 @@ import { rolePermissions } from '../rolePermissions'
 // real boundary — but a wrong flag still shows someone a control they should
 // not see, so the matrix is pinned here.
 
-const ROLES = ['admin','team_manager','coach','tl3','tl2','tl1','owner','consultant','guest']
+const ROLES = ['admin','team_manager','coach','tl3','tl1','owner','consultant','guest']
 
 describe('rolePermissions', () => {
   it('is permissive while the role is still resolving', () => {
@@ -36,15 +36,15 @@ describe('rolePermissions', () => {
   })
 
   describe('the team-leader ladder', () => {
-    it('gives Boat Config to TL3 but not TL2', () => {
+    it('gives Boat Config to Sailor Gold but not Silver', () => {
       expect(rolePermissions('tl3').canSeeBoatConfig).toBe(true)
-      expect(rolePermissions('tl2').canSeeBoatConfig).toBe(false)
+      expect(rolePermissions('tl1').canSeeBoatConfig).toBe(false)
       expect(rolePermissions('tl1').canSeeBoatConfig).toBe(false)
     })
 
-    it('gives the Tools tab down to TL2 but not TL1', () => {
+    it('gives the Tools tab to Sailor Gold but not Silver', () => {
       expect(rolePermissions('tl3').canSeeToolsTab).toBe(true)
-      expect(rolePermissions('tl2').canSeeToolsTab).toBe(true)
+      expect(rolePermissions('tl3').canSeeToolsTab).toBe(true)
       expect(rolePermissions('tl1').canSeeToolsTab).toBe(false)
     })
 

@@ -9,12 +9,13 @@
 // For active users, only Disable is offered. For disabled users, Reactivate.
 
 import { useMemo, useState } from 'react'
+import { roleLabel } from '../../../lib/roleLabels'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 
 type Status = 'pending' | 'active' | 'disabled'
 type Action = 'approve' | 'disable' | 'reactivate'
-type Role = 'team_manager' | 'coach' | 'tl3' | 'tl2' | 'tl1' | 'owner' | 'consultant' | 'guest'
+type Role = 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'owner' | 'consultant' | 'guest'
 
 interface TeamWithBoats {
   id: string
@@ -22,7 +23,7 @@ interface TeamWithBoats {
   boats: { id: string; name: string }[]
 }
 
-const ROLES: Role[] = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'owner', 'consultant', 'guest']
+const ROLES: Role[] = ['team_manager', 'coach', 'tl3', 'tl1', 'owner', 'consultant', 'guest']
 
 export default function UserActions({
   userId,
@@ -63,8 +64,7 @@ export default function UserActions({
     }
     return ''
   })()
-  const initialRole: Role = requestedRole || 'tl2'
-
+  const initialRole: Role = requestedRole || 'tl3'
   const [teamId, setTeamId] = useState<string>(initialTeamId)
   const [boatId, setBoatId] = useState<string>(initialBoatId)
   const [role, setRole] = useState<Role>(initialRole)
@@ -206,7 +206,7 @@ export default function UserActions({
               >
                 {ROLES.map((r) => (
                   <option key={r} value={r}>
-                    {r}
+                    {roleLabel(r)}
                   </option>
                 ))}
               </select>

@@ -1753,7 +1753,7 @@ function SSAApp(){
                       }}
                     />
                   )}
-                  {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={selectedVideo} tagList={sessionTagList} suggestionList={tagSuggestionList} sessionDate={activeDate} onTagListChange={async updated=>{
+                  {['admin','coach','tl3'].includes(effectiveRole)&&<TagEditor video={selectedVideo} tagList={sessionTagList} suggestionList={tagSuggestionList} sessionDate={activeDate} onTagListChange={async updated=>{
                     setSessionTagList(updated);
                     try {
                       const supabase=getBrowserSupabase();

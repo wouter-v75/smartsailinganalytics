@@ -25,7 +25,7 @@ import type { MembershipRole } from './active-membership'
  * second, silently-drifting copy of the permission model.
  */
 export const ROLE_RANK: MembershipRole[] = [
-  'owner', 'team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'consultant', 'guest',
+  'owner', 'team_manager', 'coach', 'tl3', 'tl1', 'consultant', 'guest',
 ]
 
 const rankOf = (r: string): number => {

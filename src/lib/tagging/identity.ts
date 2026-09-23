@@ -9,7 +9,7 @@ import type { TaggerIdentity } from './types'
 
 /** Rank used only to pick the most capable of several memberships. */
 const ROLE_ORDER = [
-  'guest', 'consultant', 'owner', 'tl1', 'tl2', 'tl3', 'coach', 'team_manager', 'admin',
+  'guest', 'consultant', 'owner', 'tl1', 'tl3', 'coach', 'team_manager', 'admin',
 ]
 const rank = (r: string) => {
   const i = ROLE_ORDER.indexOf(r)

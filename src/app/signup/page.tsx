@@ -23,7 +23,7 @@ interface InviteSnapshot {
 // Only these roles sit in a debrief, so only they are asked (and only they gate
 // the recorder — see migration 0078). An owner, consultant or guest signing up
 // through an invite is not shown a question that does not apply to them.
-const DEBRIEF_ROLES = new Set(['coach', 'tl1', 'tl2', 'tl3'])
+const DEBRIEF_ROLES = new Set(['coach', 'tl1', 'tl3'])
 
 function SignupForm() {
   const searchParams = useSearchParams()

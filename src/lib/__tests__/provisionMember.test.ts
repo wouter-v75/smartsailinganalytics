@@ -43,7 +43,7 @@ function fakeService({ existingUser = null as null | { id: string; status?: stri
 const args = {
   email: ' Crew@Example.com ',
   teamId: 'team-1',
-  role: 'tl2',
+  role: 'tl3',
   boatId: 'boat-1',
   approvedBy: 'manager-1',
 }
@@ -74,7 +74,7 @@ describe('provisionTeamMember', () => {
     const { service, calls } = fakeService()
     await provisionTeamMember(service, args)
     expect(calls.find((c) => c.table === 'memberships')!.payload).toMatchObject({
-      user_id: 'new-user-id', team_id: 'team-1', boat_id: 'boat-1', role: 'tl2',
+      user_id: 'new-user-id', team_id: 'team-1', boat_id: 'boat-1', role: 'tl3',
     })
   })
 

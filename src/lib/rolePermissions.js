@@ -11,8 +11,8 @@
 // independently. A flag that reads too permissively shows a control that then
 // fails server-side; it does not grant access.
 //
-//   tl1        no SailScan, no analytics data (the map is fine), no
-//              SailScan-tagged photos.
+//   tl1        Sailor Silver: no SailScan, no analytics data (the map is fine),
+//              no SailScan-tagged photos.
 //   owner      same restrictions as tl1.
 //   guest      the above, plus no SquashShots, and only the latest session day.
 //   consultant full access — already bounded by valid_from/valid_to in RLS —
@@ -25,13 +25,12 @@ export function rolePermissions(effectiveRole) {
   return {
     canSeeSailScanTab:    !['tl1','owner','guest'].includes(effectiveRole),
     canSeeSquashShotsTab: effectiveRole !== 'guest',
-    // Tools tab (Squash + SailScan combined): TL2 and above, plus consultant.
-    // Named roles rather than an exclusion list, so a role added later is
-    // hidden until someone decides it belongs.
-    canSeeToolsTab:       ['admin','team_manager','coach','tl3','tl2','consultant'].includes(effectiveRole),
-    // Boat Config tab: TL3 and above (the senior team-leadership ladder), not
-    // TL2 or lower. EDITS are TL3+ via EDIT_ROLES in BoatConfigTab and the DB
-    // RLS. A consultant (a sailmaker, say) gets the tab but sees only the Sail
+    // Tools tab (Squash + SailScan combined): Sailor Gold and above, plus
+    // consultant. Named roles rather than an exclusion list, so a role added
+    // later is hidden until someone decides it belongs.
+    canSeeToolsTab:       ['admin','team_manager','coach','tl3','consultant'].includes(effectiveRole),
+    // Boat Config tab: Sailor Gold (tl3) and above, not Sailor Silver. EDITS are
+    // the same set, via EDIT_ROLES in BoatConfigTab and the DB RLS. A consultant (a sailmaker, say) gets the tab but sees only the Sail
     // inventory + Sail data sub-tabs — Rig / Targets / Log profile are hidden
     // inside BoatConfigTab via canSeeTuning.
     canSeeBoatConfig:     ['admin','team_manager','coach','tl3','consultant'].includes(effectiveRole),

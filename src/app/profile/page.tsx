@@ -18,7 +18,7 @@ import { getBrowserSupabase } from '../../lib/supabase/browser'
 // The roles that are actually in a debrief. An owner (team_manager), a
 // consultant on a date-boxed window and a guest are not, so their answer
 // gates nobody — mirrors team_recording_consent() in migration 0078.
-const DEBRIEF_ROLES = new Set(['coach', 'tl1', 'tl2', 'tl3'])
+const DEBRIEF_ROLES = new Set(['coach', 'tl1', 'tl3'])
 
 interface Me {
   id: string

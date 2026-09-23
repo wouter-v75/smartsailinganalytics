@@ -7,12 +7,14 @@
 // Stored as JSON in localStorage keyed by user id so it's per-browser-per-user.
 // Falls back gracefully when localStorage is unavailable.
 
+// 'tl2' was removed in migration 0083 and its holders promoted to 'tl3'. It is
+// not in this union, so anything still naming it fails to compile rather than
+// quietly matching nobody at runtime. Display names live in lib/roleLabels.ts.
 export type MembershipRole =
   | 'team_manager'
   | 'coach'
   | 'tl3'
   | 'tl1'
-  | 'tl2'
   | 'owner'
   | 'consultant'
   | 'guest'

@@ -19,7 +19,6 @@ places.
 | `team_manager` | per team         | admin / team manager assigns membership | No |
 | `coach`        | per (team, boat) | admin / team manager assigns membership | No |
 | `tl3`          | per (team, boat) | admin / team manager assigns membership | No |
-| `tl2`          | per (team, boat) | admin / team manager assigns membership | No |
 | `tl1`          | per (team, boat) | admin / team manager assigns membership | No |
 | `owner`        | per (team, boat) | admin / team manager assigns membership | No |
 | `consultant`   | per (team, boat) | admin / team manager assigns membership | **Yes — `valid_from` / `valid_to`** |
@@ -28,9 +27,20 @@ places.
 `admin` is a global flag on the user, not a membership. Everyone else holds one
 or more memberships and switches between them in the app.
 
-**The sailing ladder is `tl1 → tl2 → tl3`**, tl3 being the most senior. It is not
-obvious from the names, and reading it backwards is how tl3 ended up unable to
-upload while tl1 could (fixed in 0079/0080).
+**The sailing ladder is two tiers, and people see the names, not the values:**
+
+| stored value | what everyone sees |
+| --- | --- |
+| `tl3` | **Sailor Gold** — uploads days, sees the analysis, edits boat setup |
+| `tl1` | **Sailor Silver** — sees the day, the map and the media |
+
+`tl2` was removed in migration 0083 and its holders promoted to `tl3`; three
+tiers turned out to be one more than anyone used. The stored values stay `tl1`
+and `tl3` because renaming them would mean rewriting all 84 live policies that
+name them, on a production database, where missing one silently removes
+someone's access — which is exactly how `tl3` existed for 55 migrations without
+being able to upload. The names live in `src/lib/roleLabels.ts` and every
+human-facing surface reads from there.
 
 ### What decides what you can SEE
 
@@ -50,8 +60,8 @@ and which *tabs* you get.
 From `src/lib/rolePermissions.js` unless noted. These decide what is OFFERED;
 RLS is the boundary.
 
-| | admin | team_manager | coach | tl3 | tl2 | tl1 | owner | consultant | guest |
-| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| | admin | team manager | coach | Sailor Silver | owner | consultant | guest |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | Timeline / day view | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⏱ | latest day only |
 | Analytics tab (GPS map) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⏱ | ✅ |
 | Analytics — charts, polars, data | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ⏱ | ❌ |
@@ -72,8 +82,8 @@ sub-tabs; Rig settings, Targets and Log profile are hidden (`canSeeTuning`,
 
 Enforced by RLS. ⏱ = allowed only inside the consultant's date window.
 
-| Action | admin | team_manager | coach | tl3 | tl2 | tl1 | owner | consultant | guest |
-| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Action | admin | team manager | coach | Sailor Silver | owner | consultant | guest |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Upload log + event file** (`sessions`) | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ | ❌ |
 | **Upload video** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ | ❌ |
 | **Upload photos** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ | ❌ |
@@ -92,9 +102,9 @@ Enforced by RLS. ⏱ = allowed only inside the consultant's date window.
 may edit anyone's. A team_manager therefore edits only what they created.
 
 ⁴ Campaign **spine, debrief backlog, debrief notes and manoeuvre events** (0015,
-0016, 0017, 0019) still say `ARRAY['coach','tl1','tl2']` — so tl1/tl2 can write
-those while **tl3 cannot**, which is the same omission 0079 fixed for uploads.
-Known, not yet fixed; it needs its own reviewed change.
+0016, 0017, 0019) were re-pointed to include `tl3` back in 0025, and 0083/0085
+removed the last mentions of `tl2` from every live policy. No policy now names a
+role that cannot exist.
 
 ### Why uploads are tl3 and up
 
@@ -134,7 +144,7 @@ powers over someone who is only in Team B.
 | Send / revoke invitations | ✅ | ✅ | ❌ | ❌ |
 | Rename their team | ✅ | ✅ | ❌ | ❌ |
 | Delete a team | ✅ | ❌ | ❌ | ❌ |
-| Curate the team's tag list | ✅ | ✅ | ✅ | tl2 |
+| Curate the team's tag list | ✅ | ✅ | ✅ | Sailor Gold |
 | **View their team's events** (audit log) | ✅ | ✅ | ❌ | own rows only |
 | **Edit / delete events** | ✅ | ❌ | ❌ | ❌ |
 
