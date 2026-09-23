@@ -36,7 +36,7 @@ export default function HeroVideo() {
 
   return (
     <figure className="m-0">
-      <div className="relative overflow-hidden rounded-xl border border-border bg-surface-1">
+      <div className="ssa-hero-media relative overflow-hidden rounded-xl border border-border bg-surface-1">
         {/* 832×464 ≈ 16:9; reserving the box stops the page jumping as it loads. */}
         <div className="relative aspect-[832/464] w-full">
           {reduced ? (

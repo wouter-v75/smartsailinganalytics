@@ -250,8 +250,8 @@ export default function PrivacyPage() {
         </ul>
       </Section>
 
-      <section className="py-14">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">Questions your legal team needs answered?</h2>
+      <section className="ssa-reveal py-14">
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">Questions your legal team needs answered?</h2>
         <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">
           Send them straight over. A federation&rsquo;s data-protection officer asking hard questions
           is a good sign, not an obstacle, and the answers above are the ones we would give them.
