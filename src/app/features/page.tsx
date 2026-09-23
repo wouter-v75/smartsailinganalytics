@@ -5,6 +5,18 @@ import type { Metadata } from 'next'
 import { pageMeta } from '../../lib/siteMeta'
 import Link from 'next/link'
 import { Shell, Hero, Section, Card } from '../../components/marketing/Shell'
+import DayShape, { type Stage } from '../../components/marketing/DayShape'
+import { DemoFrame, WindFieldDemo, OverlayDemo, PolarDemo } from '../../components/marketing/ProductDemos'
+import FisheyeDemo from '../../components/marketing/FisheyeDemo'
+
+// The rail beside the four sections. Ids match the Section ids below, which is
+// how the rail knows where you are and where its links go.
+const STAGES: Stage[] = [
+  { id: 'before',  title: 'Before you go out', note: 'Forecast, plan, rig and sails' },
+  { id: 'water',   title: 'On the water',      note: 'Whatever the boat records' },
+  { id: 'after',   title: 'After racing',      note: 'The debrief, and the numbers behind it' },
+  { id: 'season',  title: 'Across the season', note: 'Where one day becomes a trend' },
+]
 
 export const metadata: Metadata = pageMeta({
   title: 'Features',
@@ -22,7 +34,9 @@ export default function FeaturesPage() {
         between a maxi and an ILCA is which channels the boat records.
       </Hero>
 
+      <DayShape stages={STAGES}>
       <Section
+        id="before"
         title="Before you go out"
         lead="The day starts before the dock-out, and what was expected is half of what makes the debrief useful."
       >
@@ -44,9 +58,19 @@ export default function FeaturesPage() {
             than from a rule of thumb.
           </Card>
         </div>
+      
+        <div className="mt-6">
+          <DemoFrame
+            label="Wind, with height"
+            note="The Gulf of St Tropez, where SSA runs a 2 km domain. Three profiles over real terrain — but the values are invented, the scale is left off, and how many levels the tool actually carries is not shown."
+          >
+            <WindFieldDemo />
+          </DemoFrame>
+        </div>
       </Section>
 
       <Section
+        id="water"
         title="On the water"
         lead="Record what the day actually was, from whatever the boat carries."
       >
@@ -69,9 +93,19 @@ export default function FeaturesPage() {
             reads draft, camber and twist off the stripes; lidar where the boat has it.
           </Card>
         </div>
+      
+        <div className="mt-6">
+          <DemoFrame
+            label="A clip, carrying the boat's state"
+            note="A glimpse. The readouts are deliberately wrong, and only two of them are shown."
+          >
+            <OverlayDemo />
+          </DemoFrame>
+        </div>
       </Section>
 
       <Section
+        id="after"
         title="After racing"
         lead="The part that decides whether the day was worth recording — and the part every other tool leaves to a folder of unwatched footage."
       >
@@ -94,9 +128,25 @@ export default function FeaturesPage() {
             clips, the numbers and the debrief — not just whoever did the import.
           </Card>
         </div>
+      
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <DemoFrame
+            label="Speed against angle"
+            note="Randomised points, blanked axes. The shape of the question, with none of anyone's answers."
+          >
+            <PolarDemo />
+          </DemoFrame>
+          <DemoFrame
+            label="A season on one screen"
+            note="Move your pointer down it. The rows are unlabelled on purpose."
+          >
+            <FisheyeDemo />
+          </DemoFrame>
+        </div>
       </Section>
 
       <Section
+        id="season"
         title="Across the season"
         lead="One day is an anecdote. The value is in the fourth time you have seen the same thing."
       >
@@ -120,6 +170,7 @@ export default function FeaturesPage() {
           </Card>
         </div>
       </Section>
+      </DayShape>
 
       <section className="ssa-reveal py-14">
         <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">Does it work with what we have?</h2>
