@@ -307,30 +307,34 @@ export default function SupportPage() {
         <div className="text-[12px] font-bold uppercase tracking-[0.14em] text-muted">Contents</div>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           {MANUAL.map((p) => (
-            <a key={p.part} href={`#${slug(p.part)}`} className="rounded-lg border border-border bg-surface-1 px-4 py-3 text-[14px] font-semibold transition-colors hover:border-border-strong">
+            <a key={p.part} href={`#${slug(p.part)}`} className="ssa-lift rounded-lg border border-border bg-surface-1 px-4 py-3 text-[14px] font-semibold transition-colors hover:border-border-strong">
               {p.part}
             </a>
           ))}
-          <a href="#qa" className="rounded-lg border border-border bg-surface-1 px-4 py-3 text-[14px] font-semibold transition-colors hover:border-border-strong">
+          <a href="#qa" className="ssa-lift rounded-lg border border-border bg-surface-1 px-4 py-3 text-[14px] font-semibold transition-colors hover:border-border-strong">
             Common questions
           </a>
-          <a href="#classes" className="rounded-lg border border-border bg-surface-1 px-4 py-3 text-[14px] font-semibold transition-colors hover:border-border-strong">
+          <a href="#classes" className="ssa-lift rounded-lg border border-border bg-surface-1 px-4 py-3 text-[14px] font-semibold transition-colors hover:border-border-strong">
             What SSA reads
           </a>
-          <a href="#limits" className="rounded-lg border border-border bg-surface-1 px-4 py-3 text-[14px] font-semibold transition-colors hover:border-border-strong">
+          <a href="#limits" className="ssa-lift rounded-lg border border-border bg-surface-1 px-4 py-3 text-[14px] font-semibold transition-colors hover:border-border-strong">
             What it does not do yet
           </a>
         </div>
       </nav>
 
       {MANUAL.map((part) => (
-        <section key={part.part} id={slug(part.part)} className="scroll-mt-24 border-b border-border py-12">
-          <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">{part.part}</h2>
+        <section key={part.part} id={slug(part.part)} className="ssa-reveal scroll-mt-24 border-b border-border py-12">
+          <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">{part.part}</h2>
           <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-secondary">{part.blurb}</p>
 
           <div className="mt-7 space-y-4">
-            {part.chapters.map((c) => (
-              <article key={c.title} className="rounded-xl border border-border bg-surface-1 p-5">
+            {part.chapters.map((c, i) => (
+              <article
+                key={c.title}
+                style={{ '--i': i } as React.CSSProperties}
+                className="ssa-card ssa-reveal-item rounded-xl border border-border bg-surface-1 p-5"
+              >
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-[15px] font-bold">{c.title}</h3>
                   {c.roles.map((r) => (
@@ -362,7 +366,7 @@ export default function SupportPage() {
 
       {/* ── Q&A ───────────────────────────────────────────────────────────── */}
       <section id="qa" className="scroll-mt-24 border-b border-border py-12">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">Common questions</h2>
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">Common questions</h2>
         <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-secondary">
           Grouped so you can rule out most of them at a glance.
         </p>
@@ -385,7 +389,7 @@ export default function SupportPage() {
 
       {/* ── What SSA reads ────────────────────────────────────────────────── */}
       <section id="classes" className="scroll-mt-24 border-b border-border py-12">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">What SSA reads</h2>
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">What SSA reads</h2>
         <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-secondary">
           SSA is organised by what a boat records, not by class. A 76-foot maxi and an ILCA use
           the same product; what differs is how many of these rows apply.
@@ -411,7 +415,7 @@ export default function SupportPage() {
 
       {/* ── Limitations. The tacit question. ──────────────────────────────── */}
       <section id="limits" className="scroll-mt-24 border-b border-border py-12">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">What it does not do yet</h2>
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">What it does not do yet</h2>
         <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-secondary">
           You are going to find this out anyway, so you may as well find it out here.
         </p>
@@ -439,7 +443,7 @@ export default function SupportPage() {
       </section>
 
       <section className="py-14">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">Not answered here?</h2>
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">Not answered here?</h2>
         <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">
           Email <a href="mailto:wouterv@runbox.com" className="text-accent hover:underline">wouterv@runbox.com</a> with
           the boat, the date and what you expected to see. Every question that arrives is treated

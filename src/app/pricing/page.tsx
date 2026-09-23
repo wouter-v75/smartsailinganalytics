@@ -120,10 +120,11 @@ export default function PricingPage() {
 
       <Section title="Plans">
         <div className="grid gap-4 lg:grid-cols-3">
-          {PLANS.map((p) => (
+          {PLANS.map((p, i) => (
             <div
               key={p.name}
-              className={`flex flex-col rounded-xl border bg-surface-1 p-6 ${
+              style={{ '--i': i } as React.CSSProperties}
+              className={`ssa-card ssa-reveal-item flex flex-col rounded-xl border bg-surface-1 p-6 ${
                 p.highlight ? 'border-accent' : 'border-border'
               }`}
             >
@@ -198,8 +199,8 @@ export default function PricingPage() {
         </div>
       </Section>
 
-      <section className="py-14">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">Still the wrong shape?</h2>
+      <section className="ssa-reveal py-14">
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">Still the wrong shape?</h2>
         <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">
           Class associations, federations and events are priced case by case, and hardware or
           service partners are a different conversation again. Say which you are and we will

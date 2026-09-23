@@ -90,7 +90,14 @@ body {
      persistent document-wide horizontal scrollbar on every page. */
   max-width: 100%;
   width: 100%;
-  overflow-x: hidden;
+  /* `clip`, not `hidden`. Both stop horizontal scrolling, but `hidden` makes the
+     element a SCROLL CONTAINER — and once body is a scroll container, the
+     document is no longer the nearest scrollport, so every CSS scroll-driven
+     animation attaches to a timeline that never advances. The reveals on the
+     public pages silently sat at progress 1 (fully finished, before the section
+     had entered the screen) until this changed. `clip` prevents the scroll
+     without creating the container. */
+  overflow-x: clip;
   background: var(--bg);
   color: var(--text);
 }
@@ -216,4 +223,102 @@ body {
 }
 @media (prefers-reduced-motion: reduce) {
   .ssa-finish-flash { animation: none; filter: drop-shadow(0 0 4px #FDE047); }
+}
+
+/* ── Public site motion ─────────────────────────────────────────────────────
+   The marketing pages are server-rendered text. Their motion is therefore all
+   CSS and all progressive enhancement: no JavaScript decides whether anything is
+   visible, so a failed hydration, a blocked script or an old browser costs a
+   fade, never the content. That is the same bet Linear makes — its homepage runs
+   ~180 CSS animations and ~400 transitions with no canvas, video or WebGL
+   anywhere — and it is the only bet worth making on a page whose job is to
+   survive being forwarded.
+
+   Everything below sits inside BOTH `@supports (animation-timeline: view())`
+   and `prefers-reduced-motion: no-preference`. Outside either, the page is
+   simply static and correct. */
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+
+    /* Sections rise as they enter. `both` so the element holds its end state
+       after the range instead of snapping back on the way out — a section that
+       re-fades when you scroll past it reads as a bug. */
+    .ssa-reveal {
+      animation: ssa-reveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 55%;
+    }
+    @keyframes ssa-reveal {
+      from { opacity: 0; transform: translateY(18px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    /* Cards in a grid land one after another. --i is the card's index. The
+       stagger is deliberately small: 40ms reads as "together but alive", and
+       anything longer reads as a queue the reader has to wait for. */
+    .ssa-reveal-item {
+      animation: ssa-reveal linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 60%;
+      animation-delay: calc(var(--i, 0) * 40ms);
+    }
+
+    /* The hero clip's frame tightens as it arrives, so the boat feels like it
+       settles into the page rather than being pasted on it. */
+    .ssa-hero-media {
+      animation: ssa-hero-media linear both;
+      animation-timeline: view();
+      animation-range: entry 10% cover 30%;
+    }
+    @keyframes ssa-hero-media {
+      from { opacity: 0; transform: scale(0.965) translateY(22px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    /* A hairline that draws itself across a section heading as the section
+       arrives — the cheapest possible "this page is alive" signal. */
+    .ssa-rule::after {
+      animation: ssa-rule linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 70%;
+    }
+    @keyframes ssa-rule { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  }
+}
+
+/* Hover micro-interactions. Plain CSS, so they work everywhere, and gated on a
+   fine pointer: a card that "lifts" under a thumb just looks like a rendering
+   glitch, and :hover on touch sticks after the tap. */
+@media (hover: hover) and (pointer: fine) {
+  .ssa-card {
+    transition: transform 180ms cubic-bezier(.2,.7,.3,1),
+                border-color 180ms ease,
+                background-color 180ms ease;
+  }
+  .ssa-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--border-strong);
+    background-color: var(--surface-2);
+  }
+  .ssa-lift { transition: transform 180ms cubic-bezier(.2,.7,.3,1), opacity 180ms ease; }
+  .ssa-lift:hover { transform: translateY(-1px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ssa-card, .ssa-lift { transition: none; }
+  .ssa-card:hover, .ssa-lift:hover { transform: none; }
+}
+
+/* The underline a section heading draws. Sits here rather than inline because it
+   needs a pseudo-element, and it must have a resting state for the browsers that
+   never run the animation above. */
+.ssa-rule { position: relative; padding-bottom: 14px; }
+.ssa-rule::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: 0;
+  width: 44px; height: 2px;
+  background: var(--accent);
+  transform-origin: left center;
+  border-radius: 2px;
 }

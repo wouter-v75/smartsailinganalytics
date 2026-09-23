@@ -9,12 +9,16 @@
 import Link from 'next/link'
 import { Shell, Card } from './Shell'
 import HeroVideo from './HeroVideo'
+import CountUp from './CountUp'
 
+// The four numbers that carry the "measured, not claimed" claim. They count up
+// when they scroll into view — see CountUp for why that is the one piece of
+// JavaScript on this page's motion layer.
 const STATS = [
-  { n: '731', l: 'clips joined to the day they were shot' },
-  { n: '133,000', l: 'rows of instrument data on one season' },
-  { n: '109 h', l: 'of measured wind paired with raw GPS track' },
-  { n: '1,067', l: 'tacks and gybes measured, not estimated' },
+  { v: 731, s: '', l: 'clips joined to the day they were shot' },
+  { v: 133000, s: '', l: 'rows of instrument data on one season' },
+  { v: 109, s: ' h', l: 'of measured wind paired with raw GPS track' },
+  { v: 1067, s: '', l: 'tacks and gybes measured, not estimated' },
 ]
 
 export default function Home() {
@@ -34,7 +38,7 @@ export default function Home() {
           everyone on the programme rather than sitting on the analyst&rsquo;s laptop.
         </p>
         <div className="mt-8 flex flex-wrap items-center gap-3">
-          <Link href="/request-access" className="rounded-lg bg-accent px-5 py-2.5 text-[14px] font-semibold text-accent-fg transition-opacity hover:opacity-90">
+          <Link href="/request-access" className="ssa-lift rounded-lg bg-accent px-5 py-2.5 text-[14px] font-semibold text-accent-fg transition-opacity hover:opacity-90">
             Request access
           </Link>
           <Link href="/features" className="rounded-lg border border-border px-5 py-2.5 text-[14px] text-secondary transition-colors hover:border-border-strong hover:text-fg">
@@ -52,16 +56,16 @@ export default function Home() {
       </section>
 
       {/* ── Two front doors, one product ──────────────────────────────────── */}
-      <section className="border-b border-border py-12 sm:py-16">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">Who it is for</h2>
+      <section className="ssa-reveal border-b border-border py-12 sm:py-16">
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">Who it is for</h2>
         <div className="mt-7 grid gap-4 sm:grid-cols-2">
-          <Card title="Grand-prix programmes">
+          <Card title="Grand-prix programmes" index={0}>
             A fully instrumented boat: Expedition logs, masthead wind, lidar sail shape, rig
             loads. SSA joins all of it to the day&rsquo;s video and photos, runs the phase and
             manoeuvre analysis, and puts the result in front of the whole crew — not just
             whoever imported the data.
           </Card>
-          <Card title="Olympic and class squads">
+          <Card title="Olympic and class squads" index={1}>
             Boats with a GPS tracker and nothing else. SSA derives the wind from the track,
             so the same phase stats, manoeuvre analysis and start work apply — and a squad
             can compare its boats against each other, day by day.
@@ -75,17 +79,23 @@ export default function Home() {
       </section>
 
       {/* ── Evidence, not adjectives ──────────────────────────────────────── */}
-      <section className="border-b border-border py-12 sm:py-16">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">Measured, not claimed</h2>
+      <section className="ssa-reveal border-b border-border py-12 sm:py-16">
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">Measured, not claimed</h2>
         <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">
           Every sailing-analytics tool says it finds the wind from your track. None of them
           publishes how close it gets. These are SSA&rsquo;s own numbers, from real seasons.
         </p>
         <div className="mt-7 grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-4">
-          {STATS.map((s) => (
-            <div key={s.l} className="bg-surface-1 p-5">
-              <div className="text-[26px] font-bold tracking-tight text-accent">{s.n}</div>
-              <div className="mt-1.5 text-[13px] leading-snug text-muted">{s.l}</div>
+          {STATS.map((stat, i) => (
+            <div
+              key={stat.l}
+              className="ssa-reveal-item bg-surface-1 p-5"
+              style={{ '--i': i } as React.CSSProperties}
+            >
+              <div className="text-[26px] font-bold tracking-tight text-accent">
+                <CountUp value={stat.v} suffix={stat.s} />
+              </div>
+              <div className="mt-1.5 text-[13px] leading-snug text-muted">{stat.l}</div>
             </div>
           ))}
         </div>
@@ -98,8 +108,8 @@ export default function Home() {
       </section>
 
       {/* ── What it does not do. The credibility mechanism. ────────────────── */}
-      <section className="border-b border-border py-12 sm:py-16">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">Where SSA is today</h2>
+      <section className="ssa-reveal border-b border-border py-12 sm:py-16">
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">Where SSA is today</h2>
         <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">
           You are going to ask, so here it is without the varnish.
         </p>
@@ -128,8 +138,8 @@ export default function Home() {
       </section>
 
       {/* ── Price, in full ────────────────────────────────────────────────── */}
-      <section className="border-b border-border py-12 sm:py-16">
-        <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">What it costs</h2>
+      <section className="ssa-reveal border-b border-border py-12 sm:py-16">
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">What it costs</h2>
         <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">
           Annual, invoiced, everyone on the team included — and every boat in the programme,
           which is where tools priced per hull charge you twice. A budget holder cannot start
@@ -141,7 +151,7 @@ export default function Home() {
             { name: 'Squad', price: '€3,000', who: 'A coach and up to 8 boats' },
             { name: 'Programme', price: '€6,000', who: 'One instrumented campaign, every boat included' },
           ].map((p) => (
-            <div key={p.name} className="rounded-xl border border-border bg-surface-1 p-5">
+            <div key={p.name} className="ssa-card rounded-xl border border-border bg-surface-1 p-5">
               <div className="text-[13px] font-bold uppercase tracking-wider text-muted">{p.name}</div>
               <div className="mt-2 text-[24px] font-bold tracking-tight">{p.price}<span className="text-[14px] font-normal text-muted">/year</span></div>
               <div className="mt-2 text-[13px] leading-snug text-secondary">{p.who}</div>
@@ -155,7 +165,7 @@ export default function Home() {
       </section>
 
       {/* ── Close ─────────────────────────────────────────────────────────── */}
-      <section className="py-16 sm:py-20">
+      <section className="ssa-reveal py-16 sm:py-20">
         <h2 className="max-w-2xl text-[22px] font-bold leading-snug tracking-tight sm:text-[28px]">
           If someone on your programme sent you this, they have already done the hard part.
         </h2>
@@ -164,7 +174,7 @@ export default function Home() {
           you can send us a log and a few clips.
         </p>
         <div className="mt-7 flex flex-wrap items-center gap-3">
-          <Link href="/request-access" className="rounded-lg bg-accent px-5 py-2.5 text-[14px] font-semibold text-accent-fg transition-opacity hover:opacity-90">
+          <Link href="/request-access" className="ssa-lift rounded-lg bg-accent px-5 py-2.5 text-[14px] font-semibold text-accent-fg transition-opacity hover:opacity-90">
             Request access
           </Link>
           <a href="mailto:wouterv@runbox.com" className="text-[14px] text-secondary hover:text-fg">

@@ -26,7 +26,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </Link>
           <nav className="ml-auto hidden items-center gap-5 text-[13px] text-secondary sm:flex">
             {NAV.map((n) => (
-              <Link key={n.href} href={n.href} className="transition-colors hover:text-fg">{n.label}</Link>
+              <Link key={n.href} href={n.href} className="ssa-lift transition-colors hover:text-fg">{n.label}</Link>
             ))}
           </nav>
           <div className="ml-auto flex items-center gap-2 sm:ml-0">
@@ -105,7 +105,7 @@ export function Hero({ eyebrow, title, children }: {
       {eyebrow && (
         <div className="mb-3 text-[12px] font-bold uppercase tracking-[0.14em] text-accent">{eyebrow}</div>
       )}
-      <h1 className="max-w-3xl text-[28px] font-bold leading-[1.2] tracking-tight sm:text-[40px] sm:leading-[1.15]">
+      <h1 className="ssa-rule max-w-3xl text-[28px] font-bold leading-[1.2] tracking-tight sm:text-[40px] sm:leading-[1.15]">
         {title}
       </h1>
       {children && <div className="mt-5 max-w-2xl text-[15px] leading-relaxed text-secondary">{children}</div>}
@@ -117,19 +117,22 @@ export function Section({ id, title, lead, children }: {
   id?: string; title: string; lead?: React.ReactNode; children: React.ReactNode
 }) {
   return (
-    <section id={id} className="scroll-mt-24 border-b border-border py-12 sm:py-16">
-      <h2 className="text-[20px] font-bold tracking-tight sm:text-[24px]">{title}</h2>
+    <section id={id} className="ssa-reveal scroll-mt-24 border-b border-border py-12 sm:py-16">
+      <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">{title}</h2>
       {lead && <div className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">{lead}</div>}
       <div className="mt-7">{children}</div>
     </section>
   )
 }
 
-export function Card({ title, badge, children }: {
-  title: string; badge?: string; children: React.ReactNode
+export function Card({ title, badge, index, children }: {
+  title: string; badge?: string; index?: number; children: React.ReactNode
 }) {
   return (
-    <div className="rounded-xl border border-border bg-surface-1 p-5">
+    <div
+      className="ssa-card ssa-reveal-item rounded-xl border border-border bg-surface-1 p-5"
+      style={index == null ? undefined : ({ '--i': index } as React.CSSProperties)}
+    >
       <div className="mb-2 flex items-center gap-2">
         <h3 className="text-[15px] font-bold">{title}</h3>
         {badge && (
