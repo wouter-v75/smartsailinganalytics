@@ -92,6 +92,18 @@ export default function FeaturesPage() {
             Sail photos carry the instrument state at the instant of the shutter. SailScan
             reads draft, camber and twist off the stripes; lidar where the boat has it.
           </Card>
+          <Card title="Tagging, by everyone" index={4}>
+            Mark the moments that mattered as they happen, in the team&rsquo;s own vocabulary.
+            <b className="text-fg"> The whole team tags, not just the coach</b> — team tags the
+            crew shares, squad tags across the boats you train with, and personal tags nobody
+            else sees. All three carry through to video, photos and the track, and stay
+            findable across the season.
+          </Card>
+          <Card title="Nobody waits for the analyst" index={5}>
+            The day is on every crew member&rsquo;s phone as soon as it is uploaded — the video,
+            the numbers, the track. Not tomorrow morning, and not once somebody has prepared a
+            deck about it.
+          </Card>
         </div>
       
         <div className="mt-6">
@@ -109,6 +121,20 @@ export default function FeaturesPage() {
         title="After racing"
         lead="The part that decides whether the day was worth recording — and the part every other tool leaves to a folder of unwatched footage."
       >
+        <div className="mb-4 rounded-xl border border-accent bg-surface-1 p-5">
+          <h3 className="text-[15px] font-bold">
+            The goal: everyone arrives at the debrief having already done their own digging
+          </h3>
+          <p className="mt-2 max-w-3xl text-[14px] leading-relaxed text-secondary">
+            The usual shape of a debrief is one person presenting and everyone else receiving.
+            That wastes the crew. When the day reaches every member the moment it is uploaded,
+            the trimmer has already looked at their own leg, the helm has already found the
+            two tacks that cost something, and the meeting starts from four opinions instead
+            of one. SSA is built for that: the tools are pointed at the people doing the
+            sailing, not only at the person doing the analysis.
+          </p>
+        </div>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <Card title="The debrief, recorded" index={0}>
             Press record and talk. The recording is transcribed and tidied into your own
@@ -119,13 +145,11 @@ export default function FeaturesPage() {
             Every tack, gybe, start and leg found and measured: loss through the manoeuvre,
             target versus actual, mode, and how it compares with the rest of the season.
           </Card>
-          <Card title="Tagging" index={2}>
-            Mark the moments that mattered, in the team&rsquo;s own vocabulary, and find them
-            again across the season. Tags carry through to video, photos and the track.
-          </Card>
-          <Card title="Shared with the whole team" index={3}>
-            The point of the product. Every crew member sees the day on their phone, with the
-            clips, the numbers and the debrief — not just whoever did the import.
+          <Card title="Everyone can dig for themselves" index={3}>
+            Every crew member gets the day on their phone — clips, numbers, track and debrief
+            — with the tools to go through it, not just a report about it. Senior sailors
+            upload their own tracks and build their own phases; anyone can tag what they
+            found and bring it to the meeting.
           </Card>
         </div>
       

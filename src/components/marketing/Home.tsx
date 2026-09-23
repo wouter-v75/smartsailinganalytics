@@ -33,9 +33,10 @@ export default function Home() {
           The whole of a sailing day, on one timeline, with the whole team — before dinner.
         </h1>
         <p className="mt-6 max-w-2xl text-[16px] leading-relaxed text-secondary">
-          Video, photos, instrument data, the forecast, sail shape, rig numbers and what the
-          team actually said about it — joined to the minute they happened, and shared with
-          everyone on the programme rather than sitting on the analyst&rsquo;s laptop.
+          Video, photos, instrument data, the forecast, sail shape and what the team actually
+          said — joined to the minute they happened, and on every crew member&rsquo;s phone the
+          moment it is uploaded. Not tomorrow morning, and not once somebody has made a deck
+          about it.
         </p>
         <div className="mt-8 flex flex-wrap items-center gap-3">
           <Link href="/request-access" className="ssa-lift rounded-lg bg-accent px-5 py-2.5 text-[14px] font-semibold text-accent-fg transition-opacity hover:opacity-90">
@@ -75,6 +76,48 @@ export default function Home() {
           One product, not two. What changes between an ILCA and a 76-foot maxi is which
           channels the boat records, and SSA states which of those every number came from —
           measured, derived, or modelled.
+        </p>
+      </section>
+
+      {/* ── Why it is built this way ──────────────────────────────────────── */}
+      <section className="ssa-reveal border-b border-border py-12 sm:py-16">
+        <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">
+          Built so the crew turns up with something to say
+        </h2>
+        <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">
+          The usual debrief is one person presenting and everyone else receiving. That wastes
+          the people who were actually sailing the boat. Everything here follows from wanting
+          the opposite.
+        </p>
+        <div className="mt-7 grid gap-4 sm:grid-cols-3">
+          {[
+            {
+              t: 'Share it, do not gatekeep it',
+              d: 'The day reaches every member of the programme, not the analyst\u2019s laptop. One import, everybody sees it.',
+            },
+            {
+              t: 'Nobody waits for the morning',
+              d: 'Video and data are on each crew member\u2019s phone as soon as they are uploaded \u2014 while the day is still fresh.',
+            },
+            {
+              t: 'Let people do their own digging',
+              d: 'The crew get the tools, not a report: tag what you found, check your own leg, bring it to the meeting.',
+            },
+          ].map((v, i) => (
+            <div
+              key={v.t}
+              className="ssa-card ssa-reveal-item rounded-xl border border-border bg-surface-1 p-5"
+              style={{ '--i': i } as React.CSSProperties}
+            >
+              <h3 className="text-[15px] font-bold">{v.t}</h3>
+              <p className="mt-2 text-[14px] leading-relaxed text-secondary">{v.d}</p>
+            </div>
+          ))}
+        </div>
+        <p className="mt-5 max-w-2xl text-[15px] leading-relaxed text-secondary">
+          <b className="text-fg">The goal is a debrief where four people have already looked.</b>{' '}
+          The trimmer has been through their own leg, the helm has found the two tacks that
+          cost something, and the meeting starts from several opinions rather than one.
         </p>
       </section>
 

@@ -10,6 +10,8 @@
 // it. A static file has no runtime, cannot fail, and is faster for the preview
 // bots that actually fetch it. See src/lib/__tests__/appAssetPaths.test.ts.
 //
+// The mark here must match src/app/icon.svg and src/components/marketing/Logo.tsx.
+//
 // Run this after changing the hero footage or the wording on the card. It needs
 // ffmpeg (for the frame) and Chrome, and must run OUTSIDE Claude Code's Bash
 // sandbox — Seatbelt blocks Chrome's ProcessSingleton socket, exactly as for
@@ -66,7 +68,8 @@ const html = `<!doctype html><meta charset="utf-8">
   <div class="band">
     <div>
       <div class="id">
-        <svg width="34" height="34" viewBox="0 0 64 64">
+        <svg width="36" height="36" viewBox="0 0 64 64">
+          <rect width="64" height="64" rx="15" fill="#0B2032"/>
           <path d="M30 10 L16 52 L34 52 Q39 30 30 10 Z" fill="#22D3EE"/>
           <path d="M44 20 L36 52 L50 52 Q54 35 44 20 Z" fill="#EAF6FA"/>
         </svg>
