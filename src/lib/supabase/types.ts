@@ -4,12 +4,16 @@
 
 export type AppUserStatus = 'pending' | 'active' | 'disabled'
 export type GlobalRole = 'admin' | null
+// Kept in step with public.memberships' role CHECK constraint by hand. It had
+// drifted: 'tl3' was never added when the role shipped in migration 0025, and
+// 'tl2' outlived its removal in 0083. A union that disagrees with the database
+// does not fail loudly — it just stops type-checking the case you forgot.
 export type MembershipRole =
   | 'team_manager'
   | 'coach'
+  | 'tl3'
   | 'tl1'
   | 'owner'
-  | 'tl2'
   | 'consultant'
   | 'guest'
 

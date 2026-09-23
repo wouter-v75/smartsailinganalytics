@@ -127,7 +127,7 @@ export default function CampaignTab({ teamId, boatId, role, config, isMobile, on
   const [pendingDayDate, setPendingDayDate] = useState(null)
   const onOpenDay = (date) => { setSub('day'); setPendingDayDate(date) }
   const canEditDates = ['admin', 'team_manager'].includes(role)
-  const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl2', 'consultant'].includes(role)
+  const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl3', 'consultant'].includes(role)
 
   // Campaign belongs to the TEAM, which may run more than one boat at once
   // (e.g. an old hull + new hull during a transition). The Plan calendar
@@ -281,7 +281,7 @@ function DayView({ teamId, boatId, role, canEditPlan, isMobile, onOpenVideo, onO
   const [allDays, setAllDays] = useState([]) // [{id, date}]
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
-  const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl3', 'tl2', 'consultant'].includes(role)
+  const canSeeTesting = ['admin', 'team_manager', 'coach', 'tl3', 'consultant'].includes(role)
   // TL3 and above edit notes, weather, plan/timings.
   const canEditDebrief = EDIT_ROLES.includes(role)
   const canSeeForecast = role !== 'guest'   // TL1+ (consultant within window via RLS)

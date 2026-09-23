@@ -78,7 +78,7 @@ describe('base vocabulary', () => {
   })
 
   it('keeps team comments to TL2 and up, and personal notes open to all', () => {
-    expect(BASE_TAGS.find((t) => t.slug === 'team-note')!.minRole).toBe('tl2')
+    expect(BASE_TAGS.find((t) => t.slug === 'team-note')!.minRole).toBe('tl3')
     const personal = BASE_TAGS.find((t) => t.slug === 'note')!
     expect(personal.minRole).toBe('tl1')
     expect(personal.privateByDefault).toBe(true)

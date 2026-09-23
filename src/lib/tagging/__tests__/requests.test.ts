@@ -44,7 +44,7 @@ describe('who may approve what', () => {
 
   it('lets the coach tier approve footage', () => {
     for (const r of ['admin', 'coach', 'team_manager']) expect(canApproveMedia(who(r))).toBe(true)
-    for (const r of ['tl1', 'tl2', 'guest']) expect(canApproveMedia(who(r))).toBe(false)
+    for (const r of ['tl1', 'guest']) expect(canApproveMedia(who(r))).toBe(false)
   })
 
   it('keeps debrief selection with the coach, not the media team', () => {
@@ -54,7 +54,7 @@ describe('who may approve what', () => {
   })
 
   it('lets everyone who sails ask for something', () => {
-    for (const r of ['coach', 'tl3', 'tl2', 'tl1', 'owner', 'consultant']) {
+    for (const r of ['coach', 'tl3', 'tl1', 'owner', 'consultant']) {
       expect(canRequest(who(r))).toBe(true)
     }
     expect(canRequest(who('guest'))).toBe(false)

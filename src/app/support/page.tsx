@@ -91,13 +91,13 @@ const MANUAL: Part[] = [
     chapters: [
       {
         title: 'Import the day’s log',
-        roles: ['Coach'],
+        roles: ['Coach', 'Sailor'],
         steps: [
           'Open Upload and drop in the day’s log export.',
           'Check the date and boat SSA inferred, and correct them if they are wrong.',
           'Confirm. The log is parsed, the phases found, and the day appears.',
         ],
-        note: 'Import a day once. Re-importing the same day’s log replaces what is stored for it — if you are trying to fix something else, ask us first.',
+        note: 'Senior sailors can import too, not just the coach — which is the point for a squad, where the coach does not hold everyone’s tracker and each sailor uploads their own track to their own boat. If Upload refuses you, ask your coach to move you up a level. Import a day once: re-importing the same day’s log replaces what is stored for it, so if you are trying to fix something else, ask us first.',
       },
       {
         title: 'Upload video and photos',
@@ -230,7 +230,7 @@ const MANUAL: Part[] = [
           'Email wouterv@runbox.com with the boat, the date and what you expected to see.',
           'A screenshot saves a round trip.',
         ],
-        note: 'Replies are usually same-day out of season and slower between April and September, when we are on the water too. Anything that stops a team working is handled first.',
+        note: 'Out of season, replies are usually same-day. Between April and September we are on the water a lot ourselves, so it can be a tad slow — anything that stops a team working is still handled first.',
       },
     ],
   },
@@ -246,7 +246,7 @@ const QA: { group: string; items: { q: string; a: string }[] }[] = [
       },
       {
         q: 'My account says it is awaiting approval',
-        a: 'A new account has to be activated by your team manager. Ask them first — they can do it in a moment. If it has been more than a day, email us.',
+        a: 'Your team manager activates it — ask them, it takes them a moment. Only come to us if there is nobody in your team who can.',
       },
       {
         q: 'Can I use it on my phone?',
@@ -430,13 +430,10 @@ export default function SupportPage() {
             with the whole team included.
           </li>
           <li className="border-l-2 border-border pl-4">
-            <b className="text-fg">Importing a day is still a job for one person.</b> It is being
-            made self-service; today a coach or analyst does it on a laptop.
-          </li>
-          <li className="border-l-2 border-border pl-4">
-            <b className="text-fg">Support is slower in season.</b> We sail too. Out of season,
-            usually same day; April to September, slower, with anything that stops a team working
-            handled first.
+            <b className="text-fg">Support is slower in season, because we sail too — a lot.</b>
+            Out of season a reply is usually same-day. Between April and September it can be a tad
+            slow, with anything that stops a team working handled first. If that is a problem for
+            how your programme runs, say so before you sign rather than after.
           </li>
         </ul>
       </section>

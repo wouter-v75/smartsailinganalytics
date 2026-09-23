@@ -65,7 +65,7 @@ describe('strongestRole', () => {
   it('ranks manager above coach above crew', () => {
     expect(strongestRole(['tl1', 'coach', 'team_manager'])).toBe('team_manager')
     expect(strongestRole(['tl1', 'coach'])).toBe('coach')
-    expect(strongestRole(['guest', 'tl2'])).toBe('tl2')
+    expect(strongestRole(['guest', 'tl3'])).toBe('tl3')
   })
 
   it('sorts an unknown role last but still returns it', () => {

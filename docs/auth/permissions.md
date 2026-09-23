@@ -1,87 +1,206 @@
 # SSA Permission Matrix
 
-Authoritative reference. Implemented in `supabase/migrations/0002_rls_policies.sql` (database side) and enforced again in the app UI to hide features users can't reach.
+Authoritative reference. The database side lives in `supabase/migrations/0002_rls_policies.sql`
+and the migrations that amend it; the app repeats the same rules in the UI so
+people are not offered controls that will fail.
+
+**Re-derived from the code and the live policies on 23 Sep 2026.** The tables
+below were rebuilt by reading `src/lib/rolePermissions.js`, `src/lib/phaseRoles.ts`,
+`src/lib/shareRoles.ts`, `src/components/BoatConfigTab.tsx` and the RLS policies
+themselves, then checking the upload rules against the live database role by
+role. The previous version predated `tl3` and `owner` and was wrong in several
+places.
 
 ## Role definitions
 
 | Role           | Scope            | Created by | Time-windowed? |
 | -------------- | ---------------- | ---------- | -------------- |
-| `admin`        | global           | manual SQL update on `users.global_role` | No |
-| `team_manager` | per team         | admin assigns membership | No |
-| `coach`        | per (team, boat) | admin assigns membership | No |
-| `tl2`          | per (team, boat) | admin assigns membership | No |
-| `tl1`          | per (team, boat) | admin assigns membership | No |
-| `consultant`   | per (team, boat) | admin assigns membership | **Yes — `valid_from` / `valid_to`** |
-| `guest`        | per (team, boat) | admin assigns membership | Optional |
+| `admin`        | global           | manual SQL on `users.global_role` | No |
+| `team_manager` | per team         | admin / team manager assigns membership | No |
+| `coach`        | per (team, boat) | admin / team manager assigns membership | No |
+| `tl3`          | per (team, boat) | admin / team manager assigns membership | No |
+| `tl1`          | per (team, boat) | admin / team manager assigns membership | No |
+| `owner`        | per (team, boat) | admin / team manager assigns membership | No |
+| `consultant`   | per (team, boat) | admin / team manager assigns membership | **Yes — `valid_from` / `valid_to`** |
+| `guest`        | per (team, boat) | admin / team manager assigns membership | Optional |
 
-A user can hold multiple memberships and switches between them in the app.
+`admin` is a global flag on the user, not a membership. Everyone else holds one
+or more memberships and switches between them in the app.
 
-## Feature-level UI gating (added in 0008)
+**The sailing ladder is two tiers, and people see the names, not the values:**
 
-| Feature                                    | admin | team_manager | coach | tl2 | tl1 | consultant | guest |
-| ------------------------------------------ | :---: | :----------: | :---: | :-: | :-: | :--------: | :---: |
-| **SailScan tab**                           | ✅    | ✅           | ✅    | ✅  | ❌  | ⏱         | ❌    |
-| **SquashShots tab**                        | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         | ❌    |
-| Analytics tab — **GPS map**                | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         | ✅    |
-| Analytics tab — **charts, polar, AI**      | ✅    | ✅           | ✅    | ✅  | ❌  | ⏱         | ❌    |
-| Header **AI search**                       | ✅    | ✅           | ✅    | ✅  | ❌  | ❌         | ❌    |
-| Photos tab — see SailScan-tagged photos    | ✅    | ✅           | ✅    | ✅  | ❌  | ⏱         | ❌    |
-| Sessions list — **only latest day**        | full  | full         | full  | full| full| full       | latest-only |
+| stored value | what everyone sees |
+| --- | --- |
+| `tl3` | **Sailor Gold** — uploads days, sees the analysis, edits boat setup |
+| `tl1` | **Sailor Silver** — sees the day, the map and the media |
 
-Consultants get full access within their `valid_from`/`valid_to` window; outside it, RLS denies all reads automatically.
+`tl2` was removed in migration 0083 and its holders promoted to `tl3`; three
+tiers turned out to be one more than anyone used. The stored values stay `tl1`
+and `tl3` because renaming them would mean rewriting all 84 live policies that
+name them, on a production database, where missing one silently removes
+someone's access — which is exactly how `tl3` existed for 55 migrations without
+being able to upload. The names live in `src/lib/roleLabels.ts` and every
+human-facing surface reads from there.
 
-## Resource × role matrix
+### What decides what you can SEE
 
-Legend: ✅ allowed · ❌ forbidden · ⏱ allowed only inside `valid_from … valid_to`.
+Two questions, and they have different answers.
 
-### User profiles & approvals
+**The day itself** — sessions, video, photos, the GPS track, the debrief, the
+sail inventory — is **not** gated by role. `has_boat_access(team_id, boat_id)`
+asks only whether you hold a live membership covering that boat:
 
-| Action                                 | admin | coach | tl2 | tl1 | consultant |
-| -------------------------------------- | :---: | :---: | :-: | :-: | :--------: |
-| See own profile                        | ✅    | ✅    | ✅  | ✅  | ✅         |
-| See teammates' profile (name, email)   | ✅    | ✅    | ✅  | ✅  | ⏱         |
-| Edit own profile                       | ✅    | ✅    | ✅  | ✅  | ✅         |
-| Approve pending users                  | ✅    | ❌    | ❌  | ❌  | ❌         |
-| Suspend / disable users                | ✅    | ❌    | ❌  | ❌  | ❌         |
+- a membership with `boat_id` set → that boat only
+- a membership with `boat_id` NULL → every boat in the team
+- outside `valid_from … valid_to` → nothing
 
-### Teams & boats
+So "can a Sailor Silver see the other boat's day?" is a question about how their
+membership was created, not about their role.
 
-| Action                       | admin | coach | tl2 | tl1 | consultant |
-| ---------------------------- | :---: | :---: | :-: | :-: | :--------: |
-| Create team                  | ✅    | ❌    | ❌  | ❌  | ❌         |
-| Rename / delete team         | ✅    | ❌    | ❌  | ❌  | ❌         |
-| View team metadata           | ✅    | ✅    | ✅  | ✅  | ⏱         |
-| Create boat in team          | ✅    | ✅    | ❌  | ❌  | ❌         |
-| Edit / delete boat           | ✅    | ✅    | ❌  | ❌  | ❌         |
-| View boat metadata           | ✅    | ✅    | ✅  | ✅  | ⏱         |
+**The analysis** — phase stats, runs, datasets, manoeuvre events, polars, sail
+scans — *is* gated by role, at Sailor Gold and up, via
+`has_analysis_access(team_id, boat_id)`: boat access **and** one of
+team_manager, coach, tl3, consultant. Until migration 0086 this rule lived only
+in the client, so anyone with a session token could read the lot straight from
+the API; the database now enforces what the interface always showed. Nobody's
+experience changed.
 
-### Memberships (who's in a team)
+Verified against the live database, evaluating the helper as each role:
 
-| Action                       | admin | coach | tl2 | tl1 | consultant |
-| ---------------------------- | :---: | :---: | :-: | :-: | :--------: |
-| See own memberships          | ✅    | ✅    | ✅  | ✅  | ✅         |
-| See team's memberships       | ✅    | ✅    | ❌  | ❌  | ❌         |
-| Add / remove memberships     | ✅    | ❌    | ❌  | ❌  | ❌         |
-| Change role of a membership  | ✅    | ❌    | ❌  | ❌  | ❌         |
-| Set consultant time window   | ✅    | ❌    | ❌  | ❌  | ❌         |
+| | coach | Gold | Silver | owner | guest | consultant | team manager |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| may read analysis | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
 
-Coaches can request membership changes via admin out-of-band; the system does not let them mutate memberships directly.
+Consultant is included because looking at the analysis is what they are brought
+in for, and their access already ends by itself on a date.
 
-### Sessions, photos, videos, mast_settings, tag_lists (added in L3.A, refined in 0007)
+## Tabs and features the UI offers
 
-Tables ship in `supabase/migrations/0003_data_schema.sql`. RLS policies enforce the matrix below via the `has_boat_access` / `has_team_role` / `is_admin` helpers from 0002. Consultant uploads (added in 0007) are gated by their `valid_from`/`valid_to` window — when the window closes, RLS denies both reads and writes, so they can no longer see or edit anything they contributed (data stays in the team archive).
+From `src/lib/rolePermissions.js` unless noted. These decide what is OFFERED;
+RLS is the boundary.
 
-team_manager is intentionally **not** in the upload list. A team_manager who also sails holds a second membership (typically `tl2` or `coach`) for that role.
+| | admin | team manager | coach | Sailor Silver | owner | consultant | guest |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Timeline / day view | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⏱ | latest day only |
+| Analytics tab (GPS map) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⏱ | ✅ |
+| Analytics — charts, polars, data | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ⏱ | ❌ |
+| SailScan tab | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ⏱ | ❌ |
+| SquashShots tab | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⏱ | ❌ |
+| Tools tab (Squash + SailScan) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ⏱ | ❌ |
+| Photos — SailScan-tagged photos | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ⏱ | ❌ |
+| Boat Config tab | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ partial¹ | ❌ |
+| AI (debrief summary, AI search) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌² | ❌ |
 
-| Action                              | admin | team_manager | coach | tl2 | tl1 | consultant |
-| ----------------------------------- | :---: | :----------: | :---: | :-: | :-: | :--------: |
-| Upload photo / video / log to boat  | ✅    | ❌           | ✅    | ✅  | ✅  | ⏱         |
-| View own uploads                    | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         |
-| View teammates' uploads (same boat) | ✅    | ✅           | ✅    | ✅  | ✅  | ⏱         |
-| View other boats' uploads (same team) | ✅  | ✅           | ✅    | ❌  | ❌  | ❌         |
-| Edit own uploads                    | ✅    | ❌           | ✅    | ✅  | ✅  | ⏱         |
-| Edit others' uploads                | ✅    | ❌           | ✅    | ❌  | ❌  | ❌         |
-| Delete uploads                      | ✅    | ❌           | ✅    | ❌  | ❌  | ❌         |
+These are now enforced in the database too, not only the interface — see
+*What decides what you can SEE* above.
+
+¹ A consultant sees Boat Config but only the **Sail inventory** and **Sail data**
+sub-tabs; Rig settings, Targets and Log profile are hidden (`canSeeTuning`,
+`BoatConfigTab.tsx`). A sailmaker gets what they came for and not the tuning.
+
+² Deliberate: AI is metered per team, and a consultant is not the team.
+
+## What each role can DO
+
+Enforced by RLS. ⏱ = allowed only inside the consultant's date window.
+
+| Action | admin | team manager | coach | Sailor Silver | owner | consultant | guest |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Upload log + event file** (`sessions`) | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ | ❌ |
+| **Upload video** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ | ❌ |
+| **Upload photos** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ | ❌ |
+| **Upload rig / mast settings** | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ | ❌ |
+| Edit a row you created | ✅ | ✅³ | ✅ | ✅ | ✅ | ✅ | ✅ | ⏱ | ✅ |
+| Edit anyone's row | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Delete uploads | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Edit Boat Config (rig, sails, targets) | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Build phases from a day | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Upload a phase set | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Share a clip outside the team | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
+| Write the campaign plan / day | ✅ | ✅ | ✅ | ✅ | ❌⁴ | ❌⁴ | ❌ | ❌ | ❌ |
+| Counted for debrief-recording consent | — | ❌ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
+
+³ `own_or_coach()` names no roles: whoever created a row may edit it, and a coach
+may edit anyone's. A team_manager therefore edits only what they created.
+
+⁴ Campaign **spine, debrief backlog, debrief notes and manoeuvre events** (0015,
+0016, 0017, 0019) were re-pointed to include `tl3` back in 0025, and 0083/0085
+removed the last mentions of `tl2` from every live policy. No policy now names a
+role that cannot exist.
+
+### Why uploads are tl3 and up
+
+Putting a day into the archive is a senior job — a bad import overwrites a day
+for the whole team (re-importing a log replaces what is stored). tl3 exists
+precisely so a squad can hand that to its senior sailors: on the dinghy side the
+coach does not hold every sailor's tracker, so each sailor uploads their own
+track to their own boat.
+
+`team_manager` is excluded on purpose, since 0007. One who also sails holds a
+second membership — coach or tl3 — for that.
+
+`consultant` keeps uploads, bounded by `valid_from`/`valid_to`. A sailmaker who
+cannot upload the scan they came to take is no use, and the date window is the
+control rather than the role.
+
+## Administration — who runs a team
+
+Verified against the live policies on 23 Sep 2026. A `team_manager` runs their
+own team end to end; the site admin is needed only for things that cross teams.
+"Their own team" is enforced by `manages_user()`: a team manager of Team A has no
+powers over someone who is only in Team B.
+
+| Action | admin | team_manager | coach | others |
+| --- | :---: | :---: | :---: | :---: |
+| **Approve a pending user** (own team) | ✅ | ✅ | ❌ | ❌ |
+| **Suspend / disable a user** (own team) | ✅ | ✅ | ❌ | ❌ |
+| Act on a user outside their team | ✅ | ❌ | ❌ | ❌ |
+| Act on a **site admin** | ✅ | ❌ | ❌ | ❌ |
+| Grant or remove `global_role = admin` | ✅ | ❌ | ❌ | ❌ |
+| **Create a boat** | ✅ | ✅ | ❌ | ❌ |
+| **Edit / delete a boat** | ✅ | ✅ | ❌ | ❌ |
+| **View boat metadata** | ✅ | ✅ | ✅ | ✅ (own boats) |
+| **Add / remove memberships** | ✅ | ✅ | ❌ | ❌ |
+| **Change the role of a membership** | ✅ | ✅ | ❌ | ❌ |
+| **Set a consultant's date window** | ✅ | ✅ | ❌ | ❌ |
+| Send / revoke invitations | ✅ | ✅ | ❌ | ❌ |
+| Rename their team | ✅ | ✅ | ❌ | ❌ |
+| Delete a team | ✅ | ❌ | ❌ | ❌ |
+| Curate the team's tag list | ✅ | ✅ | ✅ | Sailor Gold |
+| **View their team's events** (audit log) | ✅ | ✅ | ❌ | own rows only |
+| **Edit / delete events** | ✅ | ❌ | ❌ | ❌ |
+
+### Why a team manager cannot edit the audit log
+
+`events` is the audit trail. Its value is precisely that it records what happened
+and cannot be rewritten by the person who did it — a team manager who can delete
+the record of their own action is the one thing an audit log must not permit.
+Reading is the part they actually need, and that is what 0081 gave them. Admin
+keeps update/delete for GDPR erasure requests, which is a different job done for
+a different reason and is itself logged.
+
+### Two limits that are not obvious
+
+A team manager can disable a teammate, so they could in principle lock out a
+colleague. They cannot touch a **site admin** (0082) — without that, anyone who
+could become team_manager of a team the admin belongs to could disable the admin
+and leave nobody able to undo it. They also cannot set `global_role`, so they
+cannot mint an admin sideways.
+
+Both are enforced twice: in the row policy (which rows) and in a `BEFORE UPDATE`
+trigger (which columns). Either alone would be a gap, and the trigger is what
+still holds if a future policy edit is careless.
+
+### Sessions, photos, videos, mast_settings, tag_lists
+
+Superseded — see **What each role can DO** above, which is the current and
+verified version. Tables ship in `0003_data_schema.sql`; uploads were narrowed to
+tl3-and-up in `0080_uploads_tl3_and_up.sql`.
+
+Reads follow `has_boat_access` (membership + boat + date window), not role.
+Consultant writes are bounded by `valid_from`/`valid_to`: when the window closes,
+RLS denies reads and writes alike, so they can no longer see or edit anything
+they contributed — the data itself stays in the team archive.
 
 ### Analyses (SailScan, SquashShots, AI commentary)
 

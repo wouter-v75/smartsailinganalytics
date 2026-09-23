@@ -102,7 +102,7 @@ const NOTE_TAGS: BaseTag[] = [
   // The crew's shared running commentary on a day. TL2 and up, because it is
   // the team's record rather than a private aide-memoire.
   mk('team-note', 'Team comment', '#7F77DD', {
-    sort: 6, onButtonBar: true, minRole: 'tl2', leadSec: 15, lagSec: 15,
+    sort: 6, onButtonBar: true, minRole: 'tl3', leadSec: 15, lagSec: 15,
   }),
 ]
 

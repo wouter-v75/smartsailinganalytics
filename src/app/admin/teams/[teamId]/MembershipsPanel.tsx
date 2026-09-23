@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { roleLabel } from '../../../../lib/roleLabels'
 import { useRouter } from 'next/navigation'
 
 interface Boat {
@@ -23,7 +24,7 @@ interface MembershipRow {
   id: string
   user_id: string
   boat_id: string | null
-  role: 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'tl2' | 'owner' | 'consultant' | 'guest'
+  role: 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'owner' | 'consultant' | 'guest'
   valid_from: string | null
   valid_to: string | null
   data_from: string | null
@@ -45,7 +46,7 @@ function firstUser(u: MembershipRow['users']): JoinedUser | null {
 // Full membership-role spectrum the admin can grant. Order top-down by
 // privilege so the dropdown reads naturally. `consultant` keeps the
 // extra valid_from / valid_to date pickers.
-const ROLES = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'owner', 'consultant', 'guest'] as const
+const ROLES = ['team_manager', 'coach', 'tl3', 'tl1', 'owner', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
 
 export default function MembershipsPanel({
@@ -72,7 +73,7 @@ export default function MembershipsPanel({
     ? memberships.filter((m) => m.user_id === userId).map((m) => m.role)
     : []
   const [boatId, setBoatId] = useState<string>('') // '' = team-wide
-  const [role, setRole] = useState<Role>('tl2')
+  const [role, setRole] = useState<Role>('tl3')
   const [validFrom, setValidFrom] = useState('')
   const [validTo, setValidTo] = useState('')
   const [dataFrom, setDataFrom] = useState('') // session-date range the consultant may VIEW
@@ -111,7 +112,7 @@ export default function MembershipsPanel({
       }
       setUserId('')
       setBoatId('')
-      setRole('tl2')
+      setRole('tl3')
       setValidFrom('')
       setValidTo('')
       setDataFrom('')
@@ -208,7 +209,7 @@ export default function MembershipsPanel({
           >
             {ROLES.map((r) => (
               <option key={r} value={r}>
-                {r}
+                {roleLabel(r)}
               </option>
             ))}
           </select>
@@ -385,12 +386,12 @@ function MembershipListRow({
             >
               {ROLES.map((r) => (
                 <option key={r} value={r}>
-                  {r}
+                  {roleLabel(r)}
                 </option>
               ))}
             </select>
           ) : (
-            <span className="text-xs text-slate-500">{membership.role}</span>
+            <span className="text-xs text-slate-500">{roleLabel(membership.role)}</span>
           )}
         </div>
         <div className="text-xs text-slate-500">

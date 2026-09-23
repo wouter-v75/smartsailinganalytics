@@ -92,7 +92,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
         </div>
         )}
         {/* Tags — admin / coach / TL2 only */}
-        {['admin','coach','tl2'].includes(effectiveRole)&&<TagEditor video={video} tagList={sessionTagList} suggestionList={tagSuggestionList} sessionDate={activeDate}
+        {['admin','coach','tl3'].includes(effectiveRole)&&<TagEditor video={video} tagList={sessionTagList} suggestionList={tagSuggestionList} sessionDate={activeDate}
           onTagListChange={async t=>{
             setSessionTagList(t);
             try {

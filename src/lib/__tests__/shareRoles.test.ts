@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { canShareVideos, ROLE_LABELS } from '../shareRoles'
 
 describe('canShareVideos', () => {
-  it('admits TL2 and up', () => {
-    for (const r of ['admin', 'team_manager', 'coach', 'tl3', 'tl2']) expect(canShareVideos(r)).toBe(true)
+  it('admits Sailor Gold and up', () => {
+    for (const r of ['admin', 'team_manager', 'coach', 'tl3']) expect(canShareVideos(r)).toBe(true)
   })
   it('admits the boat owner — TL1 in all else, but sharing is the point of the role', () => {
     expect(canShareVideos('owner')).toBe(true)

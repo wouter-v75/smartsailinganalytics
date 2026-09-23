@@ -5,11 +5,12 @@
 // WhatsApp.
 
 import { useEffect, useMemo, useState } from 'react'
+import { roleLabel } from '../../../../lib/roleLabels'
 import { useRouter } from 'next/navigation'
 import QRCodeSVG from '../../../../components/QRCodeSVG'
 
-type Role = 'team_manager' | 'coach' | 'tl3' | 'tl2' | 'tl1' | 'owner' | 'consultant' | 'guest'
-const ROLES: Role[] = ['team_manager', 'coach', 'tl3', 'tl2', 'tl1', 'owner', 'consultant', 'guest']
+type Role = 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'owner' | 'consultant' | 'guest'
+const ROLES: Role[] = ['team_manager', 'coach', 'tl3', 'tl1', 'owner', 'consultant', 'guest']
 
 interface Invitation {
   id: string
@@ -50,7 +51,7 @@ export default function InvitationsPanel({
 
   // Form state — email
   const [email, setEmail] = useState('')
-  const [emailRole, setEmailRole] = useState<Role>('tl2')
+  const [emailRole, setEmailRole] = useState<Role>('tl3')
   const [emailBoatId, setEmailBoatId] = useState('')
   // Consultant-only windows (shown when emailRole === 'consultant').
   const [validFrom, setValidFrom] = useState('') // login access window
@@ -266,7 +267,7 @@ export default function InvitationsPanel({
           >
             {ROLES.map((r) => (
               <option key={r} value={r}>
-                {r}
+                {roleLabel(r)}
               </option>
             ))}
           </select>
@@ -361,7 +362,7 @@ export default function InvitationsPanel({
             >
               {ROLES.map((r) => (
                 <option key={r} value={r}>
-                  {r}
+                  {roleLabel(r)}
                 </option>
               ))}
             </select>

@@ -31,11 +31,11 @@ export const ROLE_RANK: Record<string, number> = {
 }
 
 /** Roles a tag's min_role can be set to, most permissive first. */
-export const MIN_ROLE_CHOICES = ['tl1', 'tl2', 'tl3', 'coach'] as const
+export const MIN_ROLE_CHOICES = ['tl1', 'tl3', 'coach'] as const
 
-/** May APPLY tags — the crew. Mirrors ARRAY['coach','tl1','tl2','consultant']
+/** May APPLY tags — the crew. Mirrors ARRAY['coach','tl1','tl3','consultant']
  *  (tl3 and owner pass that gate through has_team_role's tl1/tl2 ladder). */
-const CREW_ROLES = new Set(['admin', 'coach', 'tl3', 'tl2', 'tl1', 'owner', 'consultant'])
+const CREW_ROLES = new Set(['admin', 'coach', 'tl3', 'tl1', 'owner', 'consultant'])
 
 /** May curate the shared vocabulary and tidy anyone's tag — the campaign-edit
  *  tier. Mirrors ARRAY['coach','tl3','team_manager']. */
