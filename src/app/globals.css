@@ -322,3 +322,14 @@ body {
   transform-origin: left center;
   border-radius: 2px;
 }
+
+/* Glimpses on the public site fade at their edges, so each reads as a corner of
+   a screen rather than a screenshot of one. That is a product decision as much
+   as a visual one — anything that reads as a complete specification can be
+   handed to a model and copied by the afternoon, so these show the shape and
+   stop. Masked rather than cropped, so nothing has a hard edge that invites you
+   to imagine what was cut off. */
+.ssa-demo-fade {
+  -webkit-mask-image: radial-gradient(120% 115% at 42% 42%, #000 52%, transparent 100%);
+          mask-image: radial-gradient(120% 115% at 42% 42%, #000 52%, transparent 100%);
+}
