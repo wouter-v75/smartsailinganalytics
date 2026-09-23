@@ -44,16 +44,35 @@ human-facing surface reads from there.
 
 ### What decides what you can SEE
 
-Reads are **not** gated by role. `has_boat_access(team_id, boat_id)` asks only
-whether you hold a live membership covering that boat:
+Two questions, and they have different answers.
+
+**The day itself** — sessions, video, photos, the GPS track, the debrief, the
+sail inventory — is **not** gated by role. `has_boat_access(team_id, boat_id)`
+asks only whether you hold a live membership covering that boat:
 
 - a membership with `boat_id` set → that boat only
 - a membership with `boat_id` NULL → every boat in the team
 - outside `valid_from … valid_to` → nothing
 
-So "can a tl1 see the other boat's day?" is a question about how their
-membership was created, not about being a tl1. Role decides what you can *do*
-and which *tabs* you get.
+So "can a Sailor Silver see the other boat's day?" is a question about how their
+membership was created, not about their role.
+
+**The analysis** — phase stats, runs, datasets, manoeuvre events, polars, sail
+scans — *is* gated by role, at Sailor Gold and up, via
+`has_analysis_access(team_id, boat_id)`: boat access **and** one of
+team_manager, coach, tl3, consultant. Until migration 0086 this rule lived only
+in the client, so anyone with a session token could read the lot straight from
+the API; the database now enforces what the interface always showed. Nobody's
+experience changed.
+
+Verified against the live database, evaluating the helper as each role:
+
+| | coach | Gold | Silver | owner | guest | consultant | team manager |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| may read analysis | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+Consultant is included because looking at the analysis is what they are brought
+in for, and their access already ends by itself on a date.
 
 ## Tabs and features the UI offers
 
@@ -71,6 +90,9 @@ RLS is the boundary.
 | Photos — SailScan-tagged photos | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ⏱ | ❌ |
 | Boat Config tab | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ⏱ partial¹ | ❌ |
 | AI (debrief summary, AI search) | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌² | ❌ |
+
+These are now enforced in the database too, not only the interface — see
+*What decides what you can SEE* above.
 
 ¹ A consultant sees Boat Config but only the **Sail inventory** and **Sail data**
 sub-tabs; Rig settings, Targets and Log profile are hidden (`canSeeTuning`,
