@@ -99,7 +99,7 @@ From how SailGP/Oracle, Njord/SailLab, SailSync.ai and Kinetix operate, plus the
 | `calibration_versions` | Versioned calibration record per boat/date — see the data rule below. |
 | `ai_query_log` | From the branch (renumber to `0056`). Unifies feedback across all AI surfaces. |
 
-**Grain:** the unit of performance is the **`run`** (steady-state segment), not the session. Everything joins `run → conditions → sail combo → mast_settings/rig_settings_versions → polar target`.
+**Grain — CORRECTED 2026-09-23:** this said the unit of performance was the **`run`** (steady-state segment). It is not, and never was: `runs`, `configs`, `datasets` and `manoeuvre_events` were created by `0015`–`0017`, never held a single row, and `0089` drops them. The real grain is the **30 s phase** — `src/lib/phaseStats.ts`, stored per boat and date in `session_phase_stats` (`0060`/`0061`) and validated against the KND SailingPerf report. Everything joins `phase → mode/tack/sailCombo/race → TWS/TWA/heel band → polar target`, with `groupPhases()` as the aggregation. Read `run` as `phase` wherever it appears below. See `docs/ai-query-analysis-2026-09.md` §1.2.
 
 **Normaliser (mandatory, first):** express **every metric as polar %**. Without it, wind strength dominates every comparison and the tool learns nothing.
 

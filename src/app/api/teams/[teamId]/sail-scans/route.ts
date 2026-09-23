@@ -50,7 +50,7 @@ export async function GET(
   let q = supabase
     .from('sail_scans')
     .select(
-      'id,sail_id,session_id,run_id,captured_at,source,tws_kn,twa_deg,' +
+      'id,sail_id,session_id,captured_at,source,tws_kn,twa_deg,' +
         'conditions,stripes,summary,report_ref,notes,updated_at'
     )
     .eq('team_id', params.teamId)

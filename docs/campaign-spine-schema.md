@@ -1,5 +1,25 @@
 # SSA Campaign Spine — Data Schema (design doc)
 
+> ## ⚠ Superseded in part — the `run` no longer exists (2026-09-23)
+>
+> The **session-centric half of this document is live and load-bearing**: `sessions`,
+> `videos`, `photos`, `session_blocks`, `session_attachments` and `debriefs` all carry
+> real data and are queried every day.
+>
+> The **run-centric half was never built on**. `runs`, `configs`, `datasets` and
+> `manoeuvre_events` were created by `0015`–`0017` and **never held a single row**, and
+> migration `0089` drops them, along with the `run_id` columns on `videos` and
+> `sail_scans` (which could only ever have been NULL).
+>
+> What took its place is the **30 s phase** — `src/lib/phaseStats.ts`, stored per boat
+> and date in `session_phase_stats` (`0060`/`0061`) and validated against the KND
+> SailingPerf report. That is the grain the Analytics tab, the report tables, the season
+> curves and Analytics → Ask the data all work on. Two competing answers to "what is the
+> unit of performance" was one too many, and only one of them ever held a row.
+>
+> Read §3 onward as design history, not as the schema. Anything below that names a
+> `run`, a `config` or a `dataset` describes a thing that is not there.
+
 **Status:** draft for review · **Scope:** the session-centric data model that turns SSA from a video/data sharing tool into a campaign engine for the 72ft programme.
 
 This document defines the *entities, fields, and relationships* only. No SQL yet — once the model is agreed it becomes migration `0014+` in the existing `supabase/migrations/` series, following the conventions already in `0003_data_schema.sql`.
