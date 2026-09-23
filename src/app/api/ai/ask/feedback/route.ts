@@ -24,8 +24,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'verdict must be 1, -1 or null' }, { status: 400 })
   }
 
-  // `rating` / `correction` / `rated_*` are 0055's column names, kept so the two
-  // AI surfaces share one feedback vocabulary (migration 0087).
+  // `rating` / `correction` / `rated_*` keep the names the table already had
+  // (0087 adopted them, 0088 dropped the rest). Good names; renaming a column to
+  // say the same thing differently is churn.
   const { error } = await supabase
     .from('ai_query_log')
     .update({
