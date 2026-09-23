@@ -21,8 +21,8 @@
 
 import type { ToolSpec } from './scaleway'
 
-export type ToolName = 'compare_phases' | 'scatter_phases' | 'day_timeseries' | 'list_manoeuvres' | 'find_media' | 'search_notes'
-export const TOOL_NAMES: ToolName[] = ['compare_phases', 'scatter_phases', 'day_timeseries', 'list_manoeuvres', 'find_media', 'search_notes']
+export type ToolName = 'compare_phases' | 'rank_drivers' | 'scatter_phases' | 'day_timeseries' | 'list_manoeuvres' | 'find_media' | 'search_notes'
+export const TOOL_NAMES: ToolName[] = ['compare_phases', 'rank_drivers', 'scatter_phases', 'day_timeseries', 'list_manoeuvres', 'find_media', 'search_notes']
 
 export const MODES = ['up', 'down', 'reach'] as const
 export const TACKS = ['port', 'stbd'] as const
@@ -71,6 +71,15 @@ export interface ComparePhasesArgs extends PhaseFilters {
   minPhases: number
 }
 
+export interface RankDriversArgs extends PhaseFilters {
+  target: string
+  candidates?: string[]
+  dateFrom?: string
+  dateTo?: string
+  bands: number
+  minPerBand: number
+}
+
 export interface ScatterPhasesArgs extends PhaseFilters {
   x: string
   y: string
@@ -111,7 +120,7 @@ export interface SearchNotesArgs {
   limit: number
 }
 
-export type ToolArgs = ComparePhasesArgs | ScatterPhasesArgs | DayTimeseriesArgs | ListManoeuvresArgs | FindMediaArgs | SearchNotesArgs
+export type ToolArgs = ComparePhasesArgs | RankDriversArgs | ScatterPhasesArgs | DayTimeseriesArgs | ListManoeuvresArgs | FindMediaArgs | SearchNotesArgs
 
 export type Validated =
   | { ok: true; name: ToolName; args: ToolArgs }
@@ -165,6 +174,35 @@ export const TOOLS: ToolSpec[] = [
           ...FILTER_PROPS,
         },
         required: ['by', 'metrics'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'rank_drivers',
+      description:
+        'Answers "what matters most". Ranks every channel the boat logs by how much of a target metric it accounts for, '
+        + 'inside whatever slice of phases you filter to, and says which band of the winning channel was fastest — the optimum, not just the direction. '
+        + 'Use it for "what is the dominant parameter for VMG% in 12-14 knots", "what should we get right downwind", "what is costing us upwind", '
+        + '"which setting matters most". '
+        + 'ALWAYS narrow it: a point of sail at least, and a wind band when the question names one, because what matters in 8 knots is not what matters in 25. '
+        + 'It reports association, never cause, and returns caveats you MUST pass on to the reader word for word.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target: { type: 'string', description: `What is being optimised — normally vmgPct upwind and downwind, bspPol when reaching. One of: ${CORE_METRICS.join(', ')}.` },
+          candidates: {
+            type: 'array', items: { type: 'string' },
+            description: 'Channels to rank. Omit this to test every channel the boat logs, which is usually what you want.',
+          },
+          dateFrom: ISO_DATE,
+          dateTo: ISO_DATE,
+          bands: { type: 'integer', description: 'How many equal-count bands to split each channel into. Default 3.' },
+          minPerBand: { type: 'integer', description: 'Fewest phases a band may hold. Default 5.' },
+          ...FILTER_PROPS,
+        },
+        required: ['target'],
       },
     },
   },
@@ -373,6 +411,28 @@ export function validate(name: string, argumentsRaw: string): Validated {
     return { ok: true, name, args }
   }
 
+  if (name === 'rank_drivers') {
+    const target = typeof o.target === 'string' ? o.target.trim() : ''
+    if (!isMetricKey(target)) {
+      return { ok: false, error: `rank_drivers needs "target" as a metric key${target ? ` — ${target} is not one` : ''}. Use: ${CORE_METRICS.join(', ')}.` }
+    }
+    const asked = asStrings(o.candidates).filter(isMetricKey)
+    const args: RankDriversArgs = {
+      target,
+      bands: clamp(int(o.bands) ?? 3, 2, 5),
+      minPerBand: clamp(int(o.minPerBand) ?? 5, 3, 40),
+      ...filters(o),
+    }
+    if (asked.length) args.candidates = Array.from(new Set(asked.filter(k => k !== target)))
+    const from = date(o.dateFrom), to = date(o.dateTo)
+    if (from) args.dateFrom = from
+    if (to) args.dateTo = to
+    if (args.dateFrom && args.dateTo && args.dateFrom > args.dateTo) {
+      const t = args.dateFrom; args.dateFrom = args.dateTo; args.dateTo = t
+    }
+    return { ok: true, name, args }
+  }
+
   if (name === 'scatter_phases') {
     const x = asStrings(o.x)[0] || (typeof o.x === 'string' ? o.x.trim() : '')
     const y = asStrings(o.y)[0] || (typeof o.y === 'string' ? o.y.trim() : '')
@@ -546,6 +606,16 @@ export function tokensFor(name: ToolName, args: ToolArgs, openDate?: string | nu
       ...(a.minPhases > 1
         ? [{ path: 'minPhases', label: 'Minimum phases', text: `at least ${a.minPhases} phases`, kind: 'number' as const, value: a.minPhases, editable: true }]
         : []),
+    ]
+  }
+  if (name === 'rank_drivers') {
+    const a = args as RankDriversArgs
+    return [
+      ...dateTokens(a.dateFrom, a.dateTo, openDate),
+      ...filterTokens(a),
+      { path: 'target', label: 'Optimising', text: `for ${a.target}`, kind: 'text', value: a.target, editable: true },
+      { path: 'bands', label: 'Bands per channel', text: `${a.bands} bands`, kind: 'number', value: a.bands, editable: true },
+      { path: 'minPerBand', label: 'Fewest phases per band', text: `at least ${a.minPerBand} per band`, kind: 'number', value: a.minPerBand, editable: true },
     ]
   }
   if (name === 'scatter_phases') {

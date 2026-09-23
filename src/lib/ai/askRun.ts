@@ -64,6 +64,7 @@ const RULES = [
   '• When a question asks to see something, or when a picture would show what the numbers say, call find_media as well.',
   '• If the question could mean two different things, or the data cannot answer it, do NOT pick a reading. Answer with no lines and put two or three better, specific questions in "suggestions".',
   '• If a tool says something is unavailable, say so plainly in the answer. Never fill the gap from general sailing knowledge — this crew only wants what their own boat recorded.',
+  '• When a tool hands you caveats, put every one of them in the answer, in its own sentence. A ranking of what matters is worthless, and worse than nothing, without them — the data shows association, never cause.',
   '',
   'Write like a coach in a debrief: short sentences, the number first, no preamble, no restating the question. British English. Never claim a cause you cannot see in the data — "VMG% was 3 points lower on port" is right, "the trimmer was late" is not.',
 ].join('\n')
