@@ -246,7 +246,7 @@ const QA: { group: string; items: { q: string; a: string }[] }[] = [
       },
       {
         q: 'My account says it is awaiting approval',
-        a: 'A new account has to be activated by your team manager. Ask them first — they can do it in a moment. If it has been more than a day, email us.',
+        a: 'Your team manager activates it — ask them, it takes them a moment. Only come to us if there is nobody in your team who can.',
       },
       {
         q: 'Can I use it on my phone?',

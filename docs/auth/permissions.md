@@ -111,46 +111,53 @@ second membership — coach or tl3 — for that.
 cannot upload the scan they came to take is no use, and the date window is the
 control rather than the role.
 
-## Resource × role matrix — administration
+## Administration — who runs a team
 
-The tables in this section cover accounts, teams and memberships and predate
-`tl3` and `owner`; where they disagree with the two tables above, the ones above
-are correct.
+Verified against the live policies on 23 Sep 2026. A `team_manager` runs their
+own team end to end; the site admin is needed only for things that cross teams.
+"Their own team" is enforced by `manages_user()`: a team manager of Team A has no
+powers over someone who is only in Team B.
 
-Legend: ✅ allowed · ❌ forbidden · ⏱ allowed only inside `valid_from … valid_to`.
+| Action | admin | team_manager | coach | others |
+| --- | :---: | :---: | :---: | :---: |
+| **Approve a pending user** (own team) | ✅ | ✅ | ❌ | ❌ |
+| **Suspend / disable a user** (own team) | ✅ | ✅ | ❌ | ❌ |
+| Act on a user outside their team | ✅ | ❌ | ❌ | ❌ |
+| Act on a **site admin** | ✅ | ❌ | ❌ | ❌ |
+| Grant or remove `global_role = admin` | ✅ | ❌ | ❌ | ❌ |
+| **Create a boat** | ✅ | ✅ | ❌ | ❌ |
+| **Edit / delete a boat** | ✅ | ✅ | ❌ | ❌ |
+| **View boat metadata** | ✅ | ✅ | ✅ | ✅ (own boats) |
+| **Add / remove memberships** | ✅ | ✅ | ❌ | ❌ |
+| **Change the role of a membership** | ✅ | ✅ | ❌ | ❌ |
+| **Set a consultant's date window** | ✅ | ✅ | ❌ | ❌ |
+| Send / revoke invitations | ✅ | ✅ | ❌ | ❌ |
+| Rename their team | ✅ | ✅ | ❌ | ❌ |
+| Delete a team | ✅ | ❌ | ❌ | ❌ |
+| Curate the team's tag list | ✅ | ✅ | ✅ | tl2 |
+| **View their team's events** (audit log) | ✅ | ✅ | ❌ | own rows only |
+| **Edit / delete events** | ✅ | ❌ | ❌ | ❌ |
 
-### User profiles & approvals
+### Why a team manager cannot edit the audit log
 
-| Action                                 | admin | coach | tl2 | tl1 | consultant |
-| -------------------------------------- | :---: | :---: | :-: | :-: | :--------: |
-| See own profile                        | ✅    | ✅    | ✅  | ✅  | ✅         |
-| See teammates' profile (name, email)   | ✅    | ✅    | ✅  | ✅  | ⏱         |
-| Edit own profile                       | ✅    | ✅    | ✅  | ✅  | ✅         |
-| Approve pending users                  | ✅    | ❌    | ❌  | ❌  | ❌         |
-| Suspend / disable users                | ✅    | ❌    | ❌  | ❌  | ❌         |
+`events` is the audit trail. Its value is precisely that it records what happened
+and cannot be rewritten by the person who did it — a team manager who can delete
+the record of their own action is the one thing an audit log must not permit.
+Reading is the part they actually need, and that is what 0081 gave them. Admin
+keeps update/delete for GDPR erasure requests, which is a different job done for
+a different reason and is itself logged.
 
-### Teams & boats
+### Two limits that are not obvious
 
-| Action                       | admin | coach | tl2 | tl1 | consultant |
-| ---------------------------- | :---: | :---: | :-: | :-: | :--------: |
-| Create team                  | ✅    | ❌    | ❌  | ❌  | ❌         |
-| Rename / delete team         | ✅    | ❌    | ❌  | ❌  | ❌         |
-| View team metadata           | ✅    | ✅    | ✅  | ✅  | ⏱         |
-| Create boat in team          | ✅    | ✅    | ❌  | ❌  | ❌         |
-| Edit / delete boat           | ✅    | ✅    | ❌  | ❌  | ❌         |
-| View boat metadata           | ✅    | ✅    | ✅  | ✅  | ⏱         |
+A team manager can disable a teammate, so they could in principle lock out a
+colleague. They cannot touch a **site admin** (0082) — without that, anyone who
+could become team_manager of a team the admin belongs to could disable the admin
+and leave nobody able to undo it. They also cannot set `global_role`, so they
+cannot mint an admin sideways.
 
-### Memberships (who's in a team)
-
-| Action                       | admin | coach | tl2 | tl1 | consultant |
-| ---------------------------- | :---: | :---: | :-: | :-: | :--------: |
-| See own memberships          | ✅    | ✅    | ✅  | ✅  | ✅         |
-| See team's memberships       | ✅    | ✅    | ❌  | ❌  | ❌         |
-| Add / remove memberships     | ✅    | ❌    | ❌  | ❌  | ❌         |
-| Change role of a membership  | ✅    | ❌    | ❌  | ❌  | ❌         |
-| Set consultant time window   | ✅    | ❌    | ❌  | ❌  | ❌         |
-
-Coaches can request membership changes via admin out-of-band; the system does not let them mutate memberships directly.
+Both are enforced twice: in the row policy (which rows) and in a `BEFORE UPDATE`
+trigger (which columns). Either alone would be a gap, and the trigger is what
+still holds if a future policy edit is careless.
 
 ### Sessions, photos, videos, mast_settings, tag_lists
 
