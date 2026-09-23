@@ -8,6 +8,7 @@
 // candour is the fastest route to being believed.
 import Link from 'next/link'
 import { Shell, Card } from './Shell'
+import HeroVideo from './HeroVideo'
 
 const STATS = [
   { n: '731', l: 'clips joined to the day they were shot' },
@@ -40,6 +41,13 @@ export default function Home() {
             What it does
           </Link>
           <span className="text-[13px] text-muted">From €1,200/yr. Every boat included. No free tier.</span>
+        </div>
+
+        {/* The boat, before the claims. A programme manager who has never heard
+            of SSA reads the headline and then wants to know whether these people
+            actually sail — this answers that before the evidence section has to. */}
+        <div className="mt-12">
+          <HeroVideo />
         </div>
       </section>
 

@@ -84,6 +84,12 @@ media-in/*
 *.avi
 *.mkv
 
+# The ONE exception: the public marketing site's own assets. These are not
+# sailing footage being shuffled around — they are part of the page, they have
+# to be in the deploy, and they are small and stable. Nothing else under
+# public/ may carry video; keep this list explicit rather than widening it.
+!public/media/hero-n76.mp4
+
 # Real boat data for opt-in acceptance tests (client data, never committed)
 /fixtures/local/
 
