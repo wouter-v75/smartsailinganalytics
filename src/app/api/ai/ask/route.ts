@@ -149,6 +149,10 @@ export async function POST(req: NextRequest) {
   try {
     const { data: row } = await supabase.from('ai_query_log').insert({
       team_id: teamId, boat_id: boatId, session_date: date, user_id: uid,
+      // `route` and the feedback column names are 0055's — one vocabulary across
+      // every AI surface, so a curation query does not need to know which one
+      // wrote the row. See supabase/migrations/0087_ai_query_log.sql.
+      route: 'ask',
       question,
       answer: { ...run.answer, suggestions: run.suggestions },
       steps: run.steps.map(s => ({
@@ -158,7 +162,7 @@ export async function POST(req: NextRequest) {
         unavailable: s.result.unavailable ?? null,
       })),
       risk: { level, before: before.findings, after },
-      model: MODEL, ms: run.ms, used_tools: run.usedTools,
+      model: MODEL, latency_ms: run.ms, used_tools: run.usedTools,
     }).select('id').maybeSingle()
     logId = (row as { id?: string } | null)?.id || null
   } catch { /* the answer matters more than the record of it */ }

@@ -24,9 +24,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'verdict must be 1, -1 or null' }, { status: 400 })
   }
 
+  // `rating` / `correction` / `rated_*` are 0055's column names, kept so the two
+  // AI surfaces share one feedback vocabulary (migration 0087).
   const { error } = await supabase
     .from('ai_query_log')
-    .update({ verdict: verdict ?? null, verdict_note: (note || '').trim().slice(0, 1000) || null })
+    .update({
+      rating: verdict ?? null,
+      correction: (note || '').trim().slice(0, 1000) || null,
+      rated_by: verdict == null ? null : uid,
+      rated_at: verdict == null ? null : new Date().toISOString(),
+    })
     .eq('id', logId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })

@@ -239,14 +239,32 @@ tools. It never falls back to guessing from memory.
 | 5 | Agent loop | `lib/ai/askRun.ts` | pure; executor injected; ≤3 rounds; testable with a fake model |
 | 6 | Data executors | `lib/ai/askData.ts` | RLS-scoped reads for phases, log, media, notes |
 | 7 | Route | `api/ai/ask/route.ts` | auth, `canUseAI`, 60 s cap, logs to `ai_query_log` |
-| 8 | Log table | `0087_ai_query_log.sql` | RLS per team; 👍/👎 column |
+| 8 | Log table | `0087_ai_query_log.sql` | one log for every AI surface; read follows the day |
 | 9 | Ask bar | `components/analytics/AskPanel.jsx` | suggestions when empty; disabled with a reason, never silently |
 | 10 | Answer modal | `components/analytics/AskAnswerModal.jsx` | chips, answer, charts, tables, evidence, provenance, feedback, follow-up |
 | 11 | Chart renderer | `components/analytics/AskChart.jsx` | bar/line in SSA's chart style |
 | 12 | Tests | `__tests__/` | tools, verify, charts, loop |
 
-Migration number **0087** — `main` is at 0086, which sidesteps the `0055` collision
-still sitting on `ai-sovereign-mistral`.
+Migration number **0087** — `main` is at 0086. That sidesteps the `0055` *numbering*
+collision on `ai-sovereign-mistral`, but not the real one: **`ai_query_log` already
+exists on the remote database**, created by that branch's 0055 even though the
+migration was never recorded as applied. The first push failed on it — *relation
+already exists*, then *column `session_date` does not exist*.
+
+So 0087 **adopts and extends** the table instead of creating one. It keeps 0055's
+vocabulary where the two overlap (`rating` / `correction` / `rated_by` / `rated_at`,
+`latency_ms`) and adds `session_date`, `steps`, `risk`, `used_tools`; `route` says
+which surface wrote the row. One log for every AI surface is what the roadmap asks
+for, and two names for one thing is the mess it avoids. Both paths — a fresh
+database and one already carrying the 0055 table — converge on the same shape, and
+the branch's `CREATE TABLE IF NOT EXISTS` no-ops if it ever merges.
+
+One deliberate narrowing: 0055 let any coach or team manager read the whole team's
+log. 0087 makes reading follow the **day**, as every other derived table in this
+repo does — a question quotes its day's numbers back, so somebody who cannot see
+that day should not read it. You always see your own questions regardless. Curating
+few-shot examples across a team is a service-key job in a script, not something that
+needs to be reachable from a browser.
 
 ### Deliberately not in this slice
 
