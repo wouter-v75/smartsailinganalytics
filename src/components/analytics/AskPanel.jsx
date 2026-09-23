@@ -206,6 +206,7 @@ export default function AskPanel({
           onPlayClip={onPlayClip}
           onComputeStats={computeStats}
           computing={computing}
+          activeDate={activeDate}
         />
       )}
     </>

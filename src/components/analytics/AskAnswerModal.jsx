@@ -115,8 +115,11 @@ const input = {
 
 // ── Table behind a chart ─────────────────────────────────────────────────────
 
-function ResultTable({ table }) {
+function ResultTable({ table, highlight = null }) {
   const [open, setOpen] = useState(false)
+  // A row is "yours" when one of its grouping cells IS the day on screen. Only
+  // ever fires for a table grouped by day, which is exactly where it is wanted.
+  const isMine = row => highlight != null && table.columns.some((c, j) => c.group && String(row[j]) === String(highlight))
   return (
     <div style={{ marginTop: 6 }}>
       <button onClick={() => setOpen(o => !o)} style={{ ...btn(), fontSize: 10 }}>
@@ -135,17 +138,22 @@ function ResultTable({ table }) {
               </tr>
             </thead>
             <tbody>
-              {table.rows.map((r, i) => (
-                <tr key={i}>
-                  {r.map((v, j) => (
-                    <td key={j} style={{
-                      textAlign: table.columns[j]?.group ? 'left' : 'right', padding: '3px 8px',
-                      color: v == null ? C.faint : C.text, borderBottom: `1px solid ${C.soft}`, whiteSpace: 'nowrap',
-                      fontVariantNumeric: 'tabular-nums',
-                    }}>{v == null ? '—' : String(v)}</td>
-                  ))}
-                </tr>
-              ))}
+              {table.rows.map((r, i) => {
+                const mine = isMine(r)
+                return (
+                  <tr key={i} style={mine ? { background: '#FBBF2412' } : undefined}>
+                    {r.map((v, j) => (
+                      <td key={j} style={{
+                        textAlign: table.columns[j]?.group ? 'left' : 'right', padding: '3px 8px',
+                        color: v == null ? C.faint : mine ? '#FBBF24' : C.text,
+                        fontWeight: mine ? 700 : 400,
+                        borderBottom: `1px solid ${C.soft}`, whiteSpace: 'nowrap',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>{v == null ? '—' : String(v)}</td>
+                    ))}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
           {table.droppedThin > 0 && (
@@ -207,7 +215,7 @@ function MediaStrip({ items, onPlayClip, onOpenPhoto }) {
 
 export default function AskAnswerModal({
   question, result, busy, error, onClose, onAsk, onEditToken, onFeedback,
-  onPlayClip, onComputeStats, computing,
+  onPlayClip, onComputeStats, computing, activeDate = null,
 }) {
   const [followUp, setFollowUp] = useState('')
   const [verdict, setVerdict] = useState(null)
@@ -340,6 +348,14 @@ export default function AskAnswerModal({
             <div style={{ ...caption, marginBottom: 5 }}>
               {i + 1}. {TOOL_TITLE[s.tool] || s.tool}
             </div>
+            {/* The tokens read as decoration unless you are told they are not.
+                Somebody who edited one on the first live test still did not
+                register them as the feature — so the line above them says it. */}
+            {onEditToken && (s.tokens || []).some(t => t.editable) && (
+              <div style={{ fontSize: 9.5, color: C.faint, marginBottom: 4 }}>
+                What it understood — <span style={{ color: '#7DD3FC' }}>tap any of these to change it</span> and the numbers redraw.
+              </div>
+            )}
             <div style={{ marginBottom: s.charts?.length || s.media?.length ? 8 : 0 }}>
               {(s.tokens || []).map(t => (
                 <TokenChip key={`${t.path}-${t.text}`} token={t} busy={s.busy}
@@ -354,9 +370,9 @@ export default function AskAnswerModal({
             )}
 
             {s.charts?.map((c, ci) => (
-              <div key={ci} style={{ marginTop: 8 }}><AskChart spec={c} /></div>
+              <div key={ci} style={{ marginTop: 8 }}><AskChart spec={c} highlight={activeDate} /></div>
             ))}
-            {s.tables?.map((t, ti) => <ResultTable key={ti} table={t} />)}
+            {s.tables?.map((t, ti) => <ResultTable key={ti} table={t} highlight={activeDate} />)}
             {s.media?.length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <MediaStrip items={s.media} onPlayClip={onPlayClip} onOpenPhoto={setPhoto} />

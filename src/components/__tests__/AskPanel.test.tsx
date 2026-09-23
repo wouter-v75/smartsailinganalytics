@@ -267,3 +267,122 @@ describe('AskPanel — editing a search token', () => {
     expect(screen.getByText(/VMG% was 99.1 on starboard/)).toBeTruthy()
   })
 })
+
+// ── What the first live test sent back ───────────────────────────────────────
+// Eleven days grouped by date: the axis was a smear of overlapping ISO dates,
+// nothing marked which bar was the day on screen, and the person who edited a
+// token did not recognise the chips as the feature.
+
+const seasonAnswer = {
+  ...answered,
+  answer: { lines: ['VMG% on 2026-09-11 was 96.4 against a season median of 99.1.'], bottomLine: [], dropped: [] },
+  steps: [{
+    ...answered.steps[0],
+    args: { by: ['date'], metrics: ['vmgPct'], modes: ['up'], dateFrom: '2026-07-27', dateTo: '2026-10-03', minPhases: 3 },
+    tokens: [
+      { path: 'dateRange', label: 'Days', text: '2026-07-27 → 2026-10-03', kind: 'daterange', value: ['2026-07-27', '2026-10-03'], editable: true },
+      { path: 'by', label: 'Split by', text: 'by day', kind: 'groups', value: ['date'], options: [{ value: 'date', label: 'day' }], editable: true },
+    ],
+    tables: [{
+      title: 'VMG% by day',
+      columns: [
+        { key: 'date', label: 'Day', group: true },
+        { key: 'n', label: 'n' },
+        { key: 'vmgPct', label: 'VMG%', unit: '%', decimals: 1 },
+      ],
+      rows: [
+        ['2026-07-27', 20, 96.1], ['2026-09-01', 31, 100.8], ['2026-09-04', 18, 100.5],
+        ['2026-09-08', 24, 97.2], ['2026-09-09', 12, 86.4], ['2026-09-10', 29, 97.4],
+        ['2026-09-11', 33, 97.1], ['2026-09-12', 15, 95.8], ['2026-09-15', 22, 95.0],
+        ['2026-09-26', 17, 88.3], ['2026-10-03', 19, 88.2],
+      ],
+    }],
+    charts: [{
+      kind: 'bar', title: 'VMG%', xType: 'category', xLabel: 'Day', yLabel: 'VMG%', unit: '%',
+      series: [{
+        label: 'VMG%',
+        points: [
+          { x: '2026-07-27', y: 96.1 }, { x: '2026-09-01', y: 100.8 }, { x: '2026-09-04', y: 100.5 },
+          { x: '2026-09-08', y: 97.2 }, { x: '2026-09-09', y: 86.4 }, { x: '2026-09-10', y: 97.4 },
+          { x: '2026-09-11', y: 97.1 }, { x: '2026-09-12', y: 95.8 }, { x: '2026-09-15', y: 95.0 },
+          { x: '2026-09-26', y: 88.3 }, { x: '2026-10-03', y: 88.2 },
+        ],
+      }],
+    }],
+    media: [],
+  }],
+}
+
+const askSeason = async () => {
+  jsonOnce(seasonAnswer)
+  panel()
+  ask('how does today compare with the season upwind?')
+  await screen.findByText(/season median/)
+}
+
+describe('AskPanel — a season of days', () => {
+  it('shortens ISO dates on the axis instead of printing them in full', async () => {
+    await askSeason()
+    const svg = document.querySelector('svg[role="img"]')!
+    const labels = Array.from(svg.querySelectorAll('text')).map(t => t.textContent)
+    expect(labels).toContain('11 Sep')
+    expect(labels).not.toContain('2026-09-11')
+  })
+
+  // The requirement is that the axis is readable, not that it is tilted. Shortened
+  // dates fit eleven-across on their own; the tilt is the safety net for categories
+  // that are long whatever you do to them.
+  it('leaves shortened dates horizontal, because they now fit', async () => {
+    await askSeason()
+    const svg = document.querySelector('svg[role="img"]')!
+    const axis = Array.from(svg.querySelectorAll('text')).filter(t => /^\d+ [A-Z][a-z]{2}$/.test(t.textContent || ''))
+    expect(axis).toHaveLength(11)
+    expect(axis.every(t => !t.getAttribute('transform'))).toBe(true)
+  })
+
+  it('tilts the axis when the categories are long whatever is done to them', async () => {
+    const sails = [
+      'MAIN_B 2026/J4_A 2026', 'MAIN_B 2026/J2_A 2026', 'MAIN_A 2026/A2_B 2026', 'MAIN_A 2026/J1_A 2026',
+      'MAIN_A 2026/A3_A 2026', 'MAIN_B 2026/J3_B 2026', 'MAIN_A 2026/C0_A 2026', 'MAIN_B 2026/J1_B 2026',
+    ]
+    jsonOnce({
+      ...seasonAnswer,
+      steps: [{
+        ...seasonAnswer.steps[0],
+        tables: [],
+        charts: [{
+          kind: 'bar', title: 'VMG%', xType: 'category', xLabel: 'Sails', yLabel: 'VMG%', unit: '%',
+          series: [{ label: 'VMG%', points: sails.map((x, i) => ({ x, y: 95 + i })) }],
+        }],
+      }],
+    })
+    panel()
+    ask('which sail combination was quickest upwind?')
+    await screen.findByText(/season median/)
+    const svg = document.querySelector('svg[role="img"]')!
+    const tilted = Array.from(svg.querySelectorAll('text')).filter(t => (t.getAttribute('transform') || '').includes('rotate(-40'))
+    expect(tilted).toHaveLength(8)
+  })
+
+  it('picks the open day out of the bars', async () => {
+    await askSeason()
+    const svg = document.querySelector('svg[role="img"]')!
+    const gold = Array.from(svg.querySelectorAll('rect')).filter(r => r.getAttribute('fill') === '#FBBF24')
+    expect(gold).toHaveLength(1)
+    expect(gold[0].querySelector('title')?.textContent).toMatch(/2026-09-11.*the day you are looking at/)
+  })
+
+  it('picks the same day out of the table', async () => {
+    await askSeason()
+    fireEvent.click(await screen.findByRole('button', { name: /Show the 11 rows behind this/ }))
+    const mine = within(await screen.findByRole('table')).getByText('2026-09-11').closest('tr')!
+    expect(mine.getAttribute('style')).toContain('rgba(251, 191, 36, 0.07)')
+    const others = within(screen.getByRole('table')).getByText('2026-09-26').closest('tr')!
+    expect(others.getAttribute('style') || '').not.toContain('251, 191, 36')
+  })
+
+  it('says the chips are controls, because one live user did not notice', async () => {
+    await askSeason()
+    expect(screen.getByText(/tap any of these to change it/)).toBeTruthy()
+  })
+})
