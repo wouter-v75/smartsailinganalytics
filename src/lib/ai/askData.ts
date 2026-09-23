@@ -26,6 +26,7 @@ import { isJudged, manoeuvreAverages, manoeuvreNote, type Manoeuvre } from '../m
 import { signBunnyUrl, bunnyConfigured } from '../bunny-signed-url'
 import { linearTrend } from '../phasePlot'
 import { rankDrivers } from './drivers'
+import { matchesSail, vocabularyBlock } from './vocabulary'
 import type {
   ComparePhasesArgs, DayTimeseriesArgs, FindMediaArgs, ListManoeuvresArgs,
   PhaseFilters, RankDriversArgs, ScatterPhasesArgs, SearchNotesArgs, ToolArgs, ToolName,
@@ -101,7 +102,9 @@ export function filterPhases<T extends PhaseStat>(stats: T[], f: PhaseFilters): 
     if (f.modes?.length && !f.modes.includes(s.mode)) return false
     if (f.tack && s.tack !== f.tack) return false
     if (f.race != null && s.race !== f.race) return false
-    if (f.sailCombo && !(s.sailCombo || '').toLowerCase().includes(f.sailCombo.toLowerCase())) return false
+    // Squashed match, not a literal one: the inventory holds "J2_A_2026" next to
+    // "J2_B 2026", so a literal substring makes the filter a spelling test.
+    if (f.sailCombo && !matchesSail(s.sailCombo, f.sailCombo)) return false
     if (!within(s.mean.tws, f.twsMin, f.twsMax)) return false
     if (!within(s.mean.twa, f.twaMin, f.twaMax)) return false
     if (!within(s.mean.heel, f.heelMin, f.heelMax)) return false
@@ -627,7 +630,7 @@ async function findMedia(
       const utc = p.taken_utc ? new Date(p.taken_utc).getTime() : null
       const inst = p.analysis_data?.inst || null
       const sails: string[] = p.analysis_data?.sails || []
-      if (a.sail && !sails.some(s => s.toLowerCase().includes(a.sail!.toLowerCase()))) continue
+      if (a.sail && !sails.some(s => matchesSail(s, a.sail!))) continue
       // A photo carries its own instruments, so it is judged on those, not on a phase.
       if (hasConditions) {
         if (!within(inst?.tws, a.twsMin, a.twsMax)) continue
@@ -670,24 +673,32 @@ async function findMedia(
     }
   }
 
+  // Scans carry no session_id at all (0 of 58 on this boat), so their only date is
+  // captured_at — and a scan can sit outside every sailing day's range. Counting
+  // the ones just outside turns "nothing found" into something actionable.
+  let outsideRange = 0
+  const outsideDates: string[] = []
+
   if (a.kinds.includes('sailscan')) {
-    const { data } = await d.supabase
+    const { data, error } = await d.supabase
       .from('sail_scans')
       .select('id, captured_at, tws_kn, twa_deg, summary, notes, photo_id, session_id, sails:sail_id(name)')
       .eq('team_id', d.teamId).eq('boat_id', d.boatId)
       .order('captured_at', { ascending: false })
       .limit(200)
+    // A failed query read as an empty one is the worst kind of wrong: it looks
+    // exactly like "your boat has none of those".
+    if (error) throw new Error(`sail scans: ${error.message}`)
     for (const s of (data || []) as any[]) {
       const date = s.session_id ? dateOf.get(s.session_id) || null : null
       const utc = s.captured_at ? new Date(s.captured_at).getTime() : null
-      if (date && (date < from || date > to)) continue
-      if (!date && utc != null) {
-        const iso = new Date(utc).toISOString().slice(0, 10)
-        if (iso < from || iso > to) continue
-      }
       const sailName: string | null = s.sails?.name || null
-      if (a.sail && !(sailName || '').toLowerCase().includes(a.sail.toLowerCase())) continue
+      // Sail and text first, so a scan rejected only for its DATE can be counted
+      // and reported — "none in that range, but two in June" is an answer.
+      if (a.sail && !matchesSail(sailName, a.sail)) continue
       if (!wantsText(s.notes)) continue
+      const iso = date || (utc == null ? null : new Date(utc).toISOString().slice(0, 10))
+      if (iso && (iso < from || iso > to)) { outsideRange++; outsideDates.push(iso); continue }
       if (hasConditions) {
         if (!within(s.tws_kn, a.twsMin, a.twsMax)) continue
         if (!within(s.twa_deg == null ? null : Math.abs(s.twa_deg), a.twaMin, a.twaMax)) continue
@@ -699,8 +710,7 @@ async function findMedia(
       ].filter(Boolean).join(' · ')
       items.push({
         kind: 'sailscan', id: s.id, title: sailName ? `${sailName} scan` : 'Sail scan',
-        atLocal: utc == null ? null : hm(utc, tz), utc,
-        date: date || (utc == null ? null : new Date(utc).toISOString().slice(0, 10)),
+        atLocal: utc == null ? null : hm(utc, tz), utc, date: iso,
         thumbUrl: null, fullUrl: null, conditions: cond || null, note: s.notes || null,
       })
     }
@@ -731,7 +741,14 @@ async function findMedia(
   }
 
   if (!items.length) {
-    return emptyResult('', `Nothing found between ${from} and ${to} matching that.`)
+    const what = [a.sail ? `"${a.sail}"` : '', a.text ? `"${a.text}"` : ''].filter(Boolean).join(' and ')
+    if (outsideRange) {
+      const span = outsideDates.sort()
+      return emptyResult('', `Nothing${what ? ` for ${what}` : ''} between ${from} and ${to} — but ${outsideRange} `
+        + `${outsideRange === 1 ? 'item exists' : 'items exist'} outside that range, on ${span[0]}`
+        + `${span.length > 1 ? ` to ${span[span.length - 1]}` : ''}. Widen the dates to include ${span.length > 1 ? 'them' : 'it'}.`)
+    }
+    return emptyResult('', `Nothing found between ${from} and ${to}${what ? ` matching ${what}` : ''}.`)
   }
   items.sort((x, y) => (y.utc ?? 0) - (x.utc ?? 0))
   const kept = items.slice(0, a.limit)
@@ -874,5 +891,12 @@ export async function loadContext(d: AskDeps): Promise<{ ctx: AskContext; prompt
     days[0]?.polar_name ? `Polar in use: ${days[0].polar_name}.` : 'No polar is active, so VMG% and %Pol are unavailable.',
     'Dates are YYYY-MM-DD. Every clock time you are shown is already venue-local — never convert one.',
   ]
-  return { ctx, prompt: lines.join('\n') }
+
+  // The boat's own sail inventory, so an answer can use the name as it is really
+  // stored rather than the one somebody typed at it.
+  const { data: sailRows } = await d.supabase
+    .from('sails').select('name').eq('team_id', d.teamId).order('name')
+  const sailNames = ((sailRows || []) as { name: string }[]).map(r => r.name).filter(Boolean)
+
+  return { ctx, prompt: `${lines.join('\n')}\n\n${vocabularyBlock(sailNames, meta.boat ?? null)}` }
 }
