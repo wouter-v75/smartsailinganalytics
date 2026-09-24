@@ -143,7 +143,16 @@ export async function runAsk(opts: {
   if (!final.ok) return { ok: false, status: final.status, error: final.error, ms: Date.now() - t0 }
 
   const parsed = extractJson(final.content)
-  const answer = verifyAnswer(parsed, steps.map(s => s.result), opts.extraNumbers || [])
+  // The RESOLVED ARGUMENTS count as known numbers. "Toe-in accounts for 20 % of the
+  // variation in VMG% in 12-14 kn" was deleted because the 12 and the 14 are the
+  // wind band from the question — they are in the call, not in any result table.
+  // They are also on screen as editable chips, so a reader can check them at a
+  // glance; a number the person can see is not one the model invented.
+  const answer = verifyAnswer(
+    parsed,
+    steps.map(s => s.result),
+    [...(opts.extraNumbers || []), ...steps.map(s => s.args)],
+  )
   const suggestions = Array.isArray(parsed?.suggestions)
     ? (parsed!.suggestions as unknown[]).filter((s): s is string => typeof s === 'string' && !!s.trim()).slice(0, 3)
     : []

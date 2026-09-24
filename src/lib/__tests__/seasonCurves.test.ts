@@ -15,8 +15,12 @@ describe('compactPhases', () => {
   it('keeps means and maxima, rounded, without empty channels', () => {
     const [p] = compactPhases([stat({ mean: { tws: 21.123456, bsp: 11.03, vang: null, heel: NaN } })].map(s => ({ ...s, max: { fsty: 17.2249, vang: null } })))
     expect(p).toEqual({ u: 1, e: 30_001, m: 'up', t: 'stbd', s: 'J4_A 2026', r: 1, n: 5, v: { tws: 21.123, bsp: 11.03 }, x: { fsty: 17.225 } })
-    // 3 since the five minutes before a gun count as that race: stored rows carry
-    // `race`, so anything written under the old rule has to be rebuilt.
+    // A tripwire, not a formality: every bump strands every stored row until a
+    // backfill runs, and Ask reads only rows AT the current version — so it goes
+    // blind on the whole season in between. Bump only when the stored numbers are
+    // WRONG, never merely when a channel has been added: on 24 Sep 2026 toe-in was
+    // added and this was deliberately left alone, because only 13 of 33 days can be
+    // rebuilt from the cloud log and the rest would have vanished from Ask.
     expect(STATS_VERSION).toBe(3)
   })
 

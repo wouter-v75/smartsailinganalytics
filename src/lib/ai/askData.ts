@@ -125,6 +125,41 @@ const TACK_LABEL: Record<string, string> = { port: 'Port', stbd: 'Stbd' }
 const cellText = (key: string, v: string | undefined) =>
   v == null ? '' : key === 'tack' ? TACK_LABEL[v] || v : key === 'mode' ? MODE_LABEL[v] || v : v
 
+/**
+ * How much of the filtered sailing a metric is actually present for.
+ *
+ * A channel added later is computed only for days that have been rebuilt since —
+ * toe-in exists on 13 of 33 stored days, because the rest cannot be recomputed from
+ * the cloud log. Averaging over whichever days happen to have it, and saying
+ * nothing, would answer "toe-in across the season" from a third of the season while
+ * looking exactly like an answer from all of it.
+ *
+ * Reported per metric when coverage is short, in days as well as phases, because
+ * "412 of 1,205 phases" and "13 of 33 days" are different warnings: the first says
+ * the average is thin, the second says it is from a different season than the one
+ * that was asked about.
+ */
+export function coverageNote(
+  phases: (PhaseStat & { date: string })[],
+  metrics: string[],
+  threshold = 0.95,
+): string {
+  const days = new Set(phases.map(p => p.date)).size
+  const notes: string[] = []
+  for (const m of metrics) {
+    const withValue = phases.filter(p => typeof p.mean[m] === 'number' && Number.isFinite(p.mean[m] as number))
+    if (!withValue.length) { notes.push(`${CH.get(m)?.label || m} is on none of these phases`); continue }
+    if (withValue.length >= phases.length * threshold) continue
+    const mDays = new Set(withValue.map(p => p.date)).size
+    notes.push(
+      `${CH.get(m)?.label || m} is on ${withValue.length} of ${phases.length} phases`
+      + (days > 1 ? ` and ${mDays} of ${days} days` : '')
+      + ' — the rest have no value for it, so this is not the whole period',
+    )
+  }
+  return notes.join('. ')
+}
+
 export function buildCompareTable(
   phases: (PhaseStat & { date: string })[],
   args: ComparePhasesArgs,
@@ -319,8 +354,10 @@ export function buildScatter(
 
   const span = from === to ? from : `${from} to ${to}`
   const thinned = step > 1 ? `, ${series.reduce((n, s) => n + s.points.length, 0)} of them drawn` : ''
+  const cover = coverageNote(phases, [a.x, a.y])
   return {
-    summary: `${pts.length} phases with both channels over ${span}${thinned}. Trend slope and R² are fitted to every phase, not just the drawn ones.`,
+    summary: `${pts.length} phases with both channels over ${span}${thinned}. Trend slope and R² are fitted to every phase, not just the drawn ones.`
+      + (cover ? ` ${cover}. Say so in the answer.` : ''),
     tables: [{ title: `${yCh?.label || a.y} vs ${xCh?.label || a.x}, ${span}`, columns, rows }],
     media: [],
     charts: [chart],
@@ -346,7 +383,7 @@ const TAUTOLOGIES: Record<string, string[]> = {
 // boat is sitting. TWS is excluded as a candidate — it is the conditions, and it
 // is what the confound check measures everything else against.
 const DEFAULT_CANDIDATES = [
-  'heel', 'trim', 'twa', 'awa', 'rudder', 'fsty', 'mainsheet', 'vang', 'cunningham',
+  'heel', 'trim', 'twa', 'awa', 'rudder', 'toeIn', 'fsty', 'mainsheet', 'vang', 'cunningham',
   'jibTack', 'bobstay', 'v1wwd', 'v1lwd', 'upDflct', 'lwDflct',
 ]
 
@@ -503,8 +540,11 @@ export function makeExecutor(d: AskDeps) {
       if (!table.rows.length) {
         return emptyResult('', `Every group had fewer than ${a.minPhases} phases, so none is worth reporting. Widen the filter or lower minPhases.`)
       }
+      const cover = coverageNote(kept, a.metrics)
       return {
-        summary: `${kept.length} phases of ${all.length}, in ${table.rows.length} group${table.rows.length === 1 ? '' : 's'}${table.droppedThin ? `; ${table.droppedThin} group(s) left out for having fewer than ${a.minPhases} phases` : ''}.`,
+        summary: `${kept.length} phases of ${all.length}, in ${table.rows.length} group${table.rows.length === 1 ? '' : 's'}`
+          + `${table.droppedThin ? `; ${table.droppedThin} group(s) left out for having fewer than ${a.minPhases} phases` : ''}.`
+          + (cover ? ` ${cover}. Say so in the answer.` : ''),
         tables: [table],
         media: [],
       }

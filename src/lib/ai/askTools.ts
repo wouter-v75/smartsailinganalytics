@@ -36,7 +36,7 @@ export const SPLIT_KEYS = ['tack', 'sailCombo', 'mode', 'date', 'none'] as const
 // jibTw50, spiDr75 …) are accepted too but not enumerated — 54 of them would
 // crowd out everything else in the model's context for a rarely asked question.
 export const CORE_METRICS = [
-  'vmgPct', 'bspPol', 'bsp', 'tws', 'twa', 'awa', 'sog', 'heel', 'trim', 'rudder',
+  'vmgPct', 'bspPol', 'bsp', 'tws', 'twa', 'awa', 'sog', 'heel', 'trim', 'rudder', 'toeIn',
   'fsty', 'mainsheet', 'vang', 'cunningham', 'jibTack', 'bobstay', 'v1wwd', 'v1lwd',
   'upDflct', 'lwDflct', 'bspSog', 'logPolPct', 'logTrgPct',
 ] as const

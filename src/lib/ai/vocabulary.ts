@@ -81,6 +81,7 @@ export const CHANNEL_PHRASES: [string, string][] = [
   ['fore and aft trim, bow up, rake of the boat', 'trim'],
   ['forestay load, headstay load, sag, luff sag, rig tension', 'fsty'],
   ['helm, weather helm, rudder angle, fighting the wheel', 'rudder'],
+  ['toe-in, toe in, toe, rudder difference, the angle between the rudders', 'toeIn — starboard rudder minus port, so a negative number is the starboard rudder sitting lower than the port one'],
   ['mainsheet load, sheet load on the main', 'mainsheet'],
   ['kicker', 'vang'],
   ['mast bend, deflection, how much the rig is bending', 'upDflct and lwDflct'],
