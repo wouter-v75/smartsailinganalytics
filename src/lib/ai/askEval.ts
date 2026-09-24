@@ -126,9 +126,17 @@ export interface EvalSummary {
 export const summarise = (results: CaseResult[]): EvalSummary =>
   ({ total: results.length, passed: results.filter(r => r.pass).length, results })
 
-/** One line per case, and the reasons under the ones that failed. */
+/**
+ * The FAILURES and the count — not every case again.
+ *
+ * The runner already prints each case as it goes, so repeating the passes here
+ * printed all sixteen twice and buried the one line anybody is looking for. A
+ * clean run now ends in a single line; a bad one puts the reasons at the bottom,
+ * where the eye already is.
+ */
 export function formatSummary(s: EvalSummary): string {
-  const lines = s.results.map(r =>
-    r.pass ? `  ✓ ${r.id}` : [`  ✗ ${r.id}`, ...r.failures.map(x => `      ${x}`)].join('\n'))
-  return [...lines, '', `${s.passed}/${s.total} passed`].join('\n')
+  const failed = s.results.filter(r => !r.pass)
+  const detail = failed.flatMap(r => [`  ✗ ${r.id}`, ...r.failures.map(x => `      ${x}`)])
+  const count = `${s.passed}/${s.total} passed`
+  return detail.length ? [...detail, '', count].join('\n') : count
 }
