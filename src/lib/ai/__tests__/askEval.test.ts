@@ -95,15 +95,28 @@ describe('gradeCase — it grades the tool call, not the prose', () => {
 })
 
 describe('formatSummary', () => {
-  it('counts, and puts the reasons under the failures', () => {
-    const s = summarise([
+  it('names the failures and the reasons, and counts', () => {
+    const text = formatSummary(summarise([
       { id: 'ok', pass: true, failures: [] },
       { id: 'bad', pass: false, failures: ['did not call scatter_phases'] },
-    ])
-    const text = formatSummary(s)
-    expect(text).toContain('✓ ok')
+    ]))
+    expect(text).toContain('✗ bad')
     expect(text).toContain('did not call scatter_phases')
     expect(text).toContain('1/2 passed')
+  })
+
+  // The runner prints every case as it goes; repeating the passes here printed
+  // all sixteen twice and buried the line anybody actually reads.
+  it('does not print the passes again', () => {
+    const text = formatSummary(summarise([
+      { id: 'ok', pass: true, failures: [] },
+      { id: 'bad', pass: false, failures: ['x'] },
+    ]))
+    expect(text).not.toContain('ok')
+  })
+
+  it('ends a clean run in one line', () => {
+    expect(formatSummary(summarise([{ id: 'ok', pass: true, failures: [] }]))).toBe('1/1 passed')
   })
 })
 
