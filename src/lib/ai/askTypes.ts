@@ -59,6 +59,12 @@ export interface ChartSpec {
   series: ChartSeries[]
   /** Set for a time axis: x values are UTC ms, to be shown at this offset. */
   tzOffsetMin?: number
+  /**
+   * Context lines drawn behind the data — the polar target, the season median.
+   * They are NOT series: they have no dots, no n and no trend, because they are
+   * what the dots are being judged against rather than more of the same thing.
+   */
+  refLines?: { label: string; color?: string; dashed?: boolean; points: { x: number; y: number }[] }[]
 }
 
 export type MediaKind = 'photo' | 'video' | 'sailscan' | 'tag'

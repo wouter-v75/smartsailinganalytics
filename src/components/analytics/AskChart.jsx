@@ -54,6 +54,10 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
   if (!spec?.series?.length) return null
   const values = spec.series.flatMap(s => s.points.map(p => p.y)).filter(v => typeof v === 'number' && Number.isFinite(v))
   if (!values.length) return null
+  // Reference lines widen the y domain, but only as far as the data's own span
+  // again: an unreachable polar target in light air must not squash every dot
+  // into the bottom eighth of the chart to make room for it.
+  const refValues = (spec.refLines || []).flatMap(r => r.points.map(p => p.y)).filter(Number.isFinite)
 
   const isBar = spec.kind === 'bar'
   const isScatter = spec.kind === 'scatter'
@@ -61,10 +65,13 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
   // percentage-of-polar chart that DOES start at zero shows nothing, because the
   // interesting range is 90–105. Zero-based unless every value is far from zero.
   const dataMin = Math.min(...values), dataMax = Math.max(...values)
-  const spread = dataMax - dataMin
+  const dataSpan = dataMax - dataMin || 1
+  const refMin = refValues.length ? Math.max(Math.min(...refValues), dataMin - dataSpan) : dataMin
+  const refMax = refValues.length ? Math.min(Math.max(...refValues), dataMax + dataSpan) : dataMax
+  const spread = Math.max(dataMax, refMax) - Math.min(dataMin, refMin)
   const zeroBased = isBar && !isScatter && dataMin >= 0 && dataMin < spread * 2
-  const lo = zeroBased ? 0 : dataMin - spread * 0.15 || dataMin - 1
-  const hi = dataMax + spread * 0.15 || dataMax + 1
+  const lo = zeroBased ? 0 : Math.min(dataMin, refMin) - spread * 0.15 || dataMin - 1
+  const hi = Math.max(dataMax, refMax) + spread * 0.15 || dataMax + 1
 
   // ~4.6 units per character at font-size 8 in this viewBox. If the longest label
   // will not sit inside its slot, the whole axis tilts rather than overlapping.
@@ -124,11 +131,34 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
           const lox = x0 - xpad, hix = x1 + xpad
           const px = x => pad.l + ((Number(x) - lox) / ((hix - lox) || 1)) * W
           const xticks = niceTicks(lox, hix, 4)
+          const clampY = v => Math.max(pad.t, Math.min(pad.t + H, py(v)))
           return (
             <>
               {xticks.map(t => (
                 <text key={`xt${t}`} x={px(t)} y={pad.t + H + 12} textAnchor="middle" fontSize="8" fill={C.text}>{t}</text>
               ))}
+              {/* Behind the dots, and labelled at the end of the line rather than in
+                  the legend: the polar and the season are what the cloud is being
+                  judged against, not more of the same measurement. */}
+              {(spec.refLines || []).map(ref => {
+                const inside = ref.points.filter(p => p.x >= lox && p.x <= hix)
+                if (inside.length < 2) return null
+                // A reference that misses the y-range entirely would be clamped
+                // into a flat line along the edge of the chart — which reads as
+                // data and is not. Better absent than drawn somewhere it is not.
+                if (!inside.some(p => p.y >= lo && p.y <= hi)) return null
+                const last = inside[inside.length - 1]
+                return (
+                  <g key={ref.label} opacity="0.6">
+                    <polyline points={inside.map(p => `${px(p.x)},${clampY(p.y)}`).join(' ')}
+                      fill="none" stroke={ref.color || '#E2E8F0'} strokeWidth="1.2"
+                      strokeDasharray={ref.dashed ? '2,3' : undefined} />
+                    <text x={px(last.x) - 2} y={clampY(last.y) - 4} textAnchor="end" fontSize="8" fill={ref.color || '#CBD5E1'}>
+                      {ref.label}
+                    </text>
+                  </g>
+                )
+              })}
               {spec.series.map((s, si) => (
                 <g key={s.label}>
                   {s.points.map((p, i) => (

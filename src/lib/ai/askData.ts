@@ -21,10 +21,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { CHANNELS, groupPhases, type GroupKey, type Mode, type PhaseStat } from '../phaseStats'
-import { expandPhases, STATS_VERSION, type StoredPhase } from '../seasonCurves'
+import { expandPhases, STATS_VERSION, type SeasonRow, type StoredPhase } from '../seasonCurves'
 import { isJudged, manoeuvreAverages, manoeuvreNote, type Manoeuvre } from '../manoeuvres'
 import { signBunnyUrl, bunnyConfigured } from '../bunny-signed-url'
-import { linearTrend } from '../phasePlot'
+import { linearTrend, polarTargetLine } from '../phasePlot'
+import { seasonCurves } from '../seasonCurves'
+import { polarFromData } from '../polarFile'
 import { rankDrivers } from './drivers'
 import { matchesSail, vocabularyBlock } from './vocabulary'
 import type {
@@ -174,6 +176,25 @@ export function buildCompareTable(
   }
 }
 
+/**
+ * The active polar and the boat's stored days — loaded only when a chart can
+ * actually use them (x = TWS), because both are a real read and most scatters
+ * have nothing to draw them on.
+ */
+async function loadRefs(d: AskDeps, wanted: boolean): Promise<{ polar?: unknown; seasonRows?: SeasonRow[] }> {
+  if (!wanted) return {}
+  const [{ data: polarRow }, { data: season }] = await Promise.all([
+    d.supabase.from('polars').select('data')
+      .eq('team_id', d.teamId).eq('boat_id', d.boatId).eq('is_active', true).maybeSingle(),
+    d.supabase.from('session_phase_stats').select('date, phases')
+      .eq('team_id', d.teamId).eq('boat_id', d.boatId).eq('stats_version', STATS_VERSION),
+  ])
+  return {
+    polar: polarFromData((polarRow as { data?: unknown } | null)?.data),
+    seasonRows: (season || []) as SeasonRow[],
+  }
+}
+
 // ── scatter_phases ───────────────────────────────────────────────────────────
 // The KND X-Y plot: one dot per phase, coloured by tack, with a least-squares
 // line and R² through each colour. The app has drawn this for a long time
@@ -201,6 +222,8 @@ export function buildScatter(
   a: ScatterPhasesArgs,
   from: string,
   to: string,
+  /** The boat's active polar and its stored days — the two things a cloud of dots is judged against. */
+  refs: { polar?: unknown; seasonRows?: SeasonRow[] } = {},
 ): ToolResult {
   const xCh = CH.get(a.x), yCh = CH.get(a.y)
   const xd = xCh?.decimals ?? 2, yd = yCh?.decimals ?? 2
@@ -260,6 +283,28 @@ export function buildScatter(
     { key: 'r2', label: 'R²', decimals: 2 },
   ]
 
+  // ── What the dots are being judged against ─────────────────────────────────
+  // A cloud of BSP against TWS says nothing on its own: fast for the breeze, or
+  // slow for it? The polar target and the season median are the two answers, and
+  // they are the lines the crew already read in Performance charts. Only drawn
+  // where they mean something — x must be TWS, and a single point of sail, since
+  // an upwind target through downwind dots would be nonsense.
+  const soleMode: Mode | null = a.modes?.length === 1 ? a.modes[0] : null
+  const refLines: NonNullable<ChartSpec['refLines']> = []
+  if (a.x === 'tws' && soleMode) {
+    const xs = pts.map(q => q.x)
+    const target = polarTargetLine(refs.polar, soleMode, a.y, Math.min(...xs), Math.max(...xs))
+    if (target) refLines.push({ label: 'polar', color: '#E2E8F0', dashed: true, points: target })
+
+    if (refs.seasonRows?.length) {
+      const { curves } = seasonCurves(refs.seasonRows)
+      for (const [season, byMode] of Object.entries(curves)) {
+        const points = (byMode[soleMode]?.[a.y] || []).map(c => ({ x: c.x, y: c.y }))
+        if (points.length >= 2) refLines.push({ label: season, color: '#94A3B8', dashed: true, points })
+      }
+    }
+  }
+
   const chart: ChartSpec = {
     kind: 'scatter',
     title: `${yCh?.label || a.y} vs ${xCh?.label || a.x}`,
@@ -269,6 +314,7 @@ export function buildScatter(
     unit: yCh?.unit || '',
     xUnit: xCh?.unit || '',
     series,
+    ...(refLines.length ? { refLines } : {}),
   }
 
   const span = from === to ? from : `${from} to ${to}`
@@ -489,7 +535,7 @@ export function makeExecutor(d: AskDeps) {
       if (!kept.length) {
         return emptyResult('', `Nothing matched that filter — ${all.length} phases in range, none inside it.`)
       }
-      return buildScatter(kept, a, from, to)
+      return buildScatter(kept, a, from, to, await loadRefs(d, a.x === 'tws'))
     }
 
     if (name === 'day_timeseries') {
@@ -619,12 +665,13 @@ async function findMedia(
     !a.text || (s || '').toLowerCase().includes(a.text.toLowerCase())
 
   if (a.kinds.includes('photo') && sessionIds.length) {
-    const { data } = await d.supabase
+    const { data, error } = await d.supabase
       .from('photos')
       .select('id, session_id, taken_utc, thumbnail_url, bunny_storage_path, analysis_data')
       .in('session_id', sessionIds)
       .order('taken_utc', { ascending: false })
       .limit(400)
+    if (error) throw new Error(`photos: ${error.message}`)
     for (const p of (data || []) as any[]) {
       const date = dateOf.get(p.session_id) || null
       const utc = p.taken_utc ? new Date(p.taken_utc).getTime() : null
@@ -649,12 +696,13 @@ async function findMedia(
   }
 
   if (a.kinds.includes('video') && sessionIds.length) {
-    const { data } = await d.supabase
+    const { data, error } = await d.supabase
       .from('videos')
       .select('id, session_id, title, start_utc, duration_ms, thumbnail_url, bunny_stream_id')
       .in('session_id', sessionIds)
       .order('start_utc', { ascending: false })
       .limit(200)
+    if (error) throw new Error(`videos: ${error.message}`)
     for (const v of (data || []) as any[]) {
       if (!wantsText(v.title)) continue
       const date = dateOf.get(v.session_id) || null
@@ -725,7 +773,8 @@ async function findMedia(
       .order('t0', { ascending: false })
       .limit(200)
     if (a.text) q = q.or(`note.ilike.%${a.text}%,label.ilike.%${a.text}%`)
-    const { data } = await q
+    const { data, error } = await q
+    if (error) throw new Error(`tags: ${error.message}`)
     for (const t of (data || []) as any[]) {
       const t0 = new Date(t.t0).getTime(), t1 = new Date(t.t1).getTime()
       if (!matchesWindow(t.session_date, t0, t1)) continue
@@ -742,11 +791,20 @@ async function findMedia(
 
   if (!items.length) {
     const what = [a.sail ? `"${a.sail}"` : '', a.text ? `"${a.text}"` : ''].filter(Boolean).join(' and ')
-    if (outsideRange) {
-      const span = outsideDates.sort()
-      return emptyResult('', `Nothing${what ? ` for ${what}` : ''} between ${from} and ${to} — but ${outsideRange} `
-        + `${outsideRange === 1 ? 'item exists' : 'items exist'} outside that range, on ${span[0]}`
-        + `${span.length > 1 ? ` to ${span[span.length - 1]}` : ''}. Widen the dates to include ${span.length > 1 ? 'them' : 'it'}.`)
+    // Only now — the normal path never pays for this.
+    let n = outsideRange
+    const dates = [...outsideDates]
+    for (const kind of ['photo', 'video'] as const) {
+      if (!a.kinds.includes(kind)) continue
+      const o = await countOutside(d, kind, from, to)
+      n += o.n
+      dates.push(...o.dates)
+    }
+    if (n) {
+      const span = dates.sort()
+      return emptyResult('', `Nothing${what ? ` for ${what}` : ''} between ${from} and ${to} — but ${n} `
+        + `${n === 1 ? 'item exists' : 'items exist'} outside that range, ${span.length > 1 ? `between ${span[0]} and ${span[span.length - 1]}` : `on ${span[0]}`}. `
+        + `Widen the dates to include ${n === 1 ? 'it' : 'them'}.`)
     }
     return emptyResult('', `Nothing found between ${from} and ${to}${what ? ` matching ${what}` : ''}.`)
   }
@@ -756,6 +814,47 @@ async function findMedia(
     summary: `${kept.length} of ${items.length} item${items.length === 1 ? '' : 's'}, newest first. Times are venue-local.`,
     tables: [],
     media: kept,
+  }
+}
+
+/**
+ * How much of this kind sits OUTSIDE the range that was searched, and when.
+ *
+ * Photos and clips are found through their session, and the sessions are picked
+ * by date — so anything outside the range is not merely absent from the result,
+ * it was never fetched. When the answer would otherwise be a flat "nothing
+ * found", one cheap count each turns it into "nothing in September, but eleven
+ * in June", which is the difference between a dead end and a next move.
+ *
+ * Runs ONLY when nothing was found, so it costs nothing on the normal path.
+ */
+async function countOutside(
+  d: AskDeps,
+  kind: 'photo' | 'video',
+  from: string,
+  to: string,
+): Promise<{ n: number; dates: string[] }> {
+  const table = kind === 'photo' ? 'photos' : 'videos'
+  const col = kind === 'photo' ? 'taken_utc' : 'start_utc'
+  const dayAfter = new Date(`${to}T00:00:00Z`)
+  dayAfter.setUTCDate(dayAfter.getUTCDate() + 1)
+
+  const side = async (older: boolean) => {
+    let q = d.supabase.from(table)
+      .select(col, { count: 'exact' })
+      .eq('team_id', d.teamId).eq('boat_id', d.boatId)
+      .not(col, 'is', null)
+    q = older
+      ? q.lt(col, `${from}T00:00:00Z`).order(col, { ascending: false })
+      : q.gte(col, dayAfter.toISOString()).order(col, { ascending: true })
+    const { data, count } = await q.limit(1)
+    const ts = (data as Record<string, string>[] | null)?.[0]?.[col]
+    return { n: count || 0, date: ts ? ts.slice(0, 10) : null }
+  }
+  const [before, after] = await Promise.all([side(true), side(false)])
+  return {
+    n: before.n + after.n,
+    dates: [before.date, after.date].filter((x): x is string => !!x).sort(),
   }
 }
 
