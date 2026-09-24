@@ -93,3 +93,40 @@ describe('allowedNumbers', () => {
     expect(set.has('2.7')).toBe(false)
   })
 })
+
+// Found by the eval on 24 Sep: "show the main sail cambers for best upwind VMG%"
+// produced a true sentence that was then deleted. The stripe heights live glued
+// to letters inside the column label, where numbersIn cannot see them — correctly,
+// since it must not read the 4 in "J4" as a value.
+describe('numbers that live inside a column label', () => {
+  const lidar: ToolResult = {
+    summary: '',
+    tables: [{
+      title: 'MN CA25, MN CA50, MN CA75 by TWS band',
+      columns: [
+        { key: 'twsBand', label: 'TWS band (kn)', group: true },
+        { key: 'n', label: 'n' },
+        { key: 'mnCa25', label: 'MN CA25', unit: '%', decimals: 1 },
+        { key: 'mnCa50', label: 'MN CA50', unit: '%', decimals: 1 },
+        { key: 'mnCa75', label: 'MN CA75', unit: '%', decimals: 1 },
+      ],
+      rows: [['11-13', 20, 7.3, 6.6, 3.9]],
+    }],
+    media: [],
+  }
+
+  it('keeps a sentence citing the stripe heights it is reporting on', () => {
+    const v = verifyAnswer(
+      { answer: ['Mainsail cambers: 7.3 % at 25 %, 6.6 % at 50 %, 3.9 % at 75 %.'] },
+      [lidar],
+    )
+    expect(v.lines).toHaveLength(1)
+    expect(v.dropped).toHaveLength(0)
+  })
+
+  // The label is a licence to echo it, not to invent alongside it.
+  it('still drops a value that is in no cell and no label', () => {
+    const v = verifyAnswer({ answer: ['Mainsail camber was 9.9 % at 25 %.'] }, [lidar])
+    expect(v.lines).toHaveLength(0)
+  })
+})

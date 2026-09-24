@@ -38,6 +38,16 @@ export function allowedNumbers(results: ToolResult[], extra: unknown[] = []): Se
       source.push(t.title)
       source.push(t.columns.map(c => c.label))
       source.push(t.rows)
+      // Digits GLUED INSIDE a column label. "MN CA25" is the mainsail's camber at
+      // the 25 % stripe, and numbersIn() will not see that 25 because it is stuck
+      // to letters — correctly, since it must not read the 4 in "J4" as a value.
+      // The consequence was that a true lidar sentence ("7.3 % at 25 %, 6.6 % at
+      // 50 %") was deleted for citing the stripe heights it was reporting on.
+      // Only what literally appears in a header is allowed: a model cannot invent
+      // a measurement this way, only echo a label.
+      for (const c of t.columns) {
+        for (const run of (c.label || '').match(/\d+(?:\.\d+)?/g) || []) source.push(run)
+      }
     }
     for (const m of r.media) {
       source.push(m.title, m.conditions, m.note, m.atLocal, m.date)

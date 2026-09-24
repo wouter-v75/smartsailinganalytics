@@ -22,7 +22,8 @@
     "twd:truth": "vite-node scripts/twd-groundtruth.ts",
     "tracker:import": "vite-node scripts/tracker-import.ts --",
     "verify": "tsc --noEmit && next lint && npm run lint:undef && vitest run && next build",
-    "lint:undef": "eslint --no-eslintrc --parser-options=ecmaVersion:2022,sourceType:module,ecmaFeatures:{jsx:true} --rule '{\"no-undef\":\"error\",\"no-use-before-define\":[\"error\",{\"functions\":false,\"classes\":false,\"variables\":false}]}' --env browser,node,es2022 --report-unused-disable-directives-severity off --no-inline-config 'src/**/*.{js,jsx}'"
+    "lint:undef": "eslint --no-eslintrc --parser-options=ecmaVersion:2022,sourceType:module,ecmaFeatures:{jsx:true} --rule '{\"no-undef\":\"error\",\"no-use-before-define\":[\"error\",{\"functions\":false,\"classes\":false,\"variables\":false}]}' --env browser,node,es2022 --report-unused-disable-directives-severity off --no-inline-config 'src/**/*.{js,jsx}'",
+    "eval:ask": "vite-node scripts/ask-eval.ts --"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.10",

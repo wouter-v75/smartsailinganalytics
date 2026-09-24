@@ -72,7 +72,7 @@ const RULES = [
 const FINAL_INSTRUCTION = [
   'Now write the answer as JSON, and call no more tools.',
   '{"answer": ["…"], "bottomLine": ["…"], "suggestions": ["…"]}',
-  '• "answer": up to 6 short sentences, each carrying a number you were given by a tool.',
+  '• "answer": up to 6 short sentences, each carrying a number you were given by a tool — EXCEPT when the honest answer is that the boat does not record the thing asked about, which you write as a plain sentence with no numbers in it. Never return an empty answer: say what is missing.',
   '• "bottomLine": up to 2 sentences — what to do differently. Omit it if the data does not support one.',
   '• "suggestions": only when you could not answer — two or three better questions. Otherwise [].',
   'Every number must appear in a tool result exactly as you write it. A sentence with a number that does not is deleted before the crew sees it.',
