@@ -111,6 +111,23 @@ export const CHANNELS: Channel[] = [
       return v == null ? null : tack === 'stbd' ? v : -v
     },
   },
+  // TOE-IN — the angle between the two rudders on a twin-rudder boat, as the crew
+  // define it: STARBOARD MINUS PORT. Not tack-dependent and deliberately NOT
+  // absolute: the sign is the whole point, and flipping it by tack the way `rudder`
+  // does would average two opposite conventions into nothing.
+  //
+  // On the Northstar 76 this sits around −1.2° through a day, swinging to ±15°
+  // in a manoeuvre, so ±20° is a plausibility cap that rejects a dropout without
+  // clipping anything real. It needs BOTH rudders: one alone says nothing about
+  // the angle between them, and a phase logging only one gets no value rather
+  // than half an answer.
+  {
+    key: 'toeIn', label: 'TOE-IN', unit: '°', decimals: 2, modes: ALL, lo: -20, hi: 20,
+    get: r => {
+      const port = num(r.ruddP), stbd = num(r.ruddS)
+      return port == null || stbd == null ? null : stbd - port
+    },
+  },
   { key: 'jibTack', label: 'JibTack', unit: 't', decimals: 2, modes: ALL, get: r => num(r.jibTackLoad) },
   { key: 'vang', label: 'Vang', unit: 't', decimals: 2, modes: ALL, get: r => num(r.vang) },
   { key: 'cunningham', label: 'Cunningham', unit: 't', decimals: 2, modes: ALL, get: r => num(r.cunninghamLoad) },

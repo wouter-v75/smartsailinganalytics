@@ -18,6 +18,16 @@ import type { Manoeuvre } from './manoeuvres'
 // 2 — stored phases carry their maxima (x); rows carry manoeuvres + log resolution (0061).
 // 3: the five minutes before a start gun count as that race (src/lib/phaseStats.ts).
 // Stored rows carry `race`, so rows written under the old rule are rebuilt.
+// Still 3 after TOE-IN joined CHANNELS (24 Sep 2026), deliberately. The version
+// means THE STORED NUMBERS ARE WRONG, and adding a channel changes none of them —
+// a v3 row is not wrong, it is incomplete. A bump would have been actively worse:
+// only 13 of the 33 stored days can be rebuilt from the cloud log, because five
+// hold stats computed from a ~1 s device log that the ~2-6 s cloud copy must not
+// overwrite (11 Sep among them, the day validated against the KND report) and
+// eight have no event-file phases in the cloud session at all. Since Ask reads
+// only rows AT the current version, bumping would have hidden twenty days to add
+// one channel. `npm run stats:backfill -- --missing toeIn` fills in what it can;
+// the tools report the coverage of what it cannot.
 export const STATS_VERSION = 3
 
 export interface StoredSummary { stats_version: number; polar_id: string | null; computed_at: string }
