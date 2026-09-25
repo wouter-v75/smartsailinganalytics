@@ -3,6 +3,9 @@ import * as React from 'react'
 import { Play, Camera } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import { renderOverlay } from '@/lib/photoOverlay'
+import PhotoViewer from '@/components/photos/PhotoViewer'
+import SailGeometryCard from '@/components/photos/SailGeometryCard'
+import { isAnnotation, type SailTrimAnnotation } from '@/lib/sailTrimOverlay'
 import { racingTagsOf, RACE_RED } from '@/lib/racingTags'
 
 // Media for a day: photo + video thumbnails (TWS/TWD/tags baked from the log /
@@ -11,7 +14,15 @@ import { racingTagsOf, RACE_RED } from '@/lib/racingTags'
 // (which opens the real Videos-tab player *with* the instrument data overlay);
 // if no handler is supplied we fall back to an inline HLS/MP4 player. Clicking a
 // photo opens a lightbox with its TWS/TWD/TWA/sail data.
-interface PhotoItem { id: string; thumb: string | null; tws?: number | null; twd?: number | null; twa?: number | null; sails: string[]; inst: Record<string, any> }
+interface PhotoItem {
+  id: string; thumb: string | null
+  /** Signed URL for the FULL-RESOLUTION original, from the photos route. */
+  original: string | null
+  tws?: number | null; twd?: number | null; twa?: number | null
+  sails: string[]; inst: Record<string, any>
+  /** The sail-geometry payload, if the photo has been measured. */
+  sailTrim: { annotation: SailTrimAnnotation; overlay?: boolean } | null
+}
 interface VideoItem { id: string; thumb: string | null; title: string | null; tags: string[] }
 
 const r = (v?: number | null, d = 0) => (v == null ? null : v.toFixed(d))
@@ -36,7 +47,12 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
         setPhotos((j?.photos || []).map((p: any) => {
           const a = p.analysis_data || {}, inst = a.inst || {}
           const sails = a.sails ?? inst.sails ?? []
-          return { id: p.id, thumb: p.thumbnail_url, tws: inst.tws ?? null, twd: inst.twd ?? null, twa: inst.twa ?? null, sails, inst: { ...inst, sails } }
+          const st = a.sailTrim && isAnnotation(a.sailTrim.annotation) ? a.sailTrim : null
+          return {
+            id: p.id, thumb: p.thumbnail_url, original: p.original_url || null,
+            tws: inst.tws ?? null, twd: inst.twd ?? null, twa: inst.twa ?? null,
+            sails, inst: { ...inst, sails }, sailTrim: st,
+          }
         }))
       })
       .catch(() => { if (alive) setPhotos([]) })
@@ -111,8 +127,19 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
 
       <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
         {openPhoto && (
-          <DialogContent title="Photo">
-            <PhotoOverlayImage src={openPhoto.thumb} inst={openPhoto.inst} />
+          <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3">
+            {/* The SAME viewer the Photos tab uses: the full-resolution original
+                over the thumbnail, zoom, pan, and the sail-geometry lines. This
+                used to be handed `openPhoto.thumb` — a second copy of the fault
+                that made every photo look grainy. */}
+            <PhotoViewer
+              photoId={openPhoto.id}
+              thumbUrl={openPhoto.thumb}
+              fullUrl={openPhoto.original}
+              inst={openPhoto.inst}
+              sailTrim={openPhoto.sailTrim}
+              height="70vh" />
+            {openPhoto.sailTrim && <SailGeometryCard annotation={openPhoto.sailTrim.annotation} compact />}
           </DialogContent>
         )}
       </Dialog>
