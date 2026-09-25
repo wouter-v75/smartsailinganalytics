@@ -425,7 +425,10 @@ and correct the skew. **Test this before committing to video.**
 ## 7. Plan
 
 Every stage ends with something usable, and every stage is validated against
-the logged sensors.
+the logged sensors. Stages 0–4 are the near slice: three points on one sail,
+measured properly. **§8 is where that is going** — twist and draft at every
+stripe on both sails, for boats that have no instruments at all — and it
+reorders some of what follows.
 
 ### Stage 0 — pin the definitions and kill Rhino (≈2 weeks)
 
@@ -556,17 +559,208 @@ Still to do, and all of it is the rig model rather than code:
 
 ### Stage 4 — boats we do not own (opportunistic)
 
-- No rig model for a rival. Options, in order of preference: published class or
-  design dimensions; a one-off model built from a dockside image set; single-view
-  metrology with the mast section as the reference length; a 2 m stereo pair on
-  the RIB for depth. Expect a factor-of-2 worse uncertainty and say so.
+- ~~No rig model for a rival.~~ — **solved by the certificates** (§3.1), and
+  §8 argues this is the beginning of the interesting part rather than an
+  opportunistic afterthought: the same certificates carry the sail girths, which
+  are what turn an astern photograph into twist and camber.
+- Expect a factor-of-2 worse uncertainty than our own boat and say so — the
+  range is longer and the sail identification is inferred rather than known.
 - Also: for our own boats, a handful of **passive markers** on the spreaders and
   boom (the Maciel 2021 trick) would cut Stage 1's uncertainty substantially for
   the cost of some tape. Worth a trial in Stage 1, not a dependency.
 
 ---
 
-## 8. Risks, honestly
+## 8. The longer game — twist and draft for boats with no instruments
+
+Sections 6 and 7 measure three points on one sail. The destination is different
+and much larger: **twist and draft at every stripe, on the main and the jib, for
+a boat we do not own and cannot instrument.** Northstar has lidar and SailScan;
+the five rivals in §3.1 have a photograph and a certificate. If a photograph and
+a certificate are enough, SSA can say what a rival's sails are doing, which is
+not a thing anyone can currently buy.
+
+The plan below is not a straight extension of Stage 4. The difficulty is
+distributed very differently from how it looks, and one quantity in the list is
+much harder than the rest.
+
+### 8.1 What the astern projection preserves, and what it destroys
+
+Take the camera dead astern, looking forward. It images the athwartships-vertical
+plane; fore-and-aft is the axis it collapses. Every quantity on the wish list
+sorts cleanly by which direction it mostly lives in:
+
+| quantity | mostly lies | from astern |
+|---|---|---|
+| leech offset at a given height | athwartships | **measured directly** — this is Stage 0 |
+| camber **depth** (the bulge) | athwartships | **measured directly** |
+| twist (chord angle per stripe) | a ratio of the two | **solvable, given the chord length** |
+| chord length per stripe | fore-and-aft | foreshortened to nearly nothing |
+| draft **position** (% aft along the chord) | fore-and-aft | **the hard one** |
+
+The counter-intuitive line is the second. A sheeted mainsail's **chord** runs
+mostly fore-and-aft — Northstar's boom is E = 10.33 m aft of the mast while the
+leech is a metre or two to leeward — so the chord is precisely what the
+projection ruins. But the sail **bulges to leeward**, and leeward is
+athwartships: the belly is in the plane the camera resolves best. The thing that
+looks hardest to see from behind is in fact the easiest, and the humble length
+you would divide it by is the thing that is lost.
+
+So camber % = (a quantity the photo measures well) ÷ (a quantity the photo
+cannot measure at all). Everything turns on where the denominator comes from.
+
+### 8.2 The girths are the denominator, and the certificates carry them
+
+They do — for both sails, for all six boats, parsed from the same PDFs as §3.1.
+MHW/MTW/MUW are the mainsail's widths at 1/2, 3/4 and 7/8 hoist; HHW/HTW/HUW are
+the headsail's at the same fractions of the luff:
+
+| boat | E | MHW | MTW | MUW | MHW/E | MTW/E | MUW/E | HLP | HHW | HTW | HUW | HHW/LP | HTW/LP | HUW/LP |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Northstar III | 10.33 | 7.04 | 4.93 | 3.63 | 0.682 | 0.477 | 0.351 | 8.96 | 4.90 | 2.66 | 1.48 | 0.547 | 0.297 | 0.165 |
+| Jethou | 10.17 | 7.02 | 5.00 | 3.64 | 0.690 | 0.492 | 0.358 | 8.54 | 4.54 | 2.44 | 1.34 | 0.532 | 0.286 | 0.157 |
+| Bella Mente | 9.66 | 6.74 | 4.91 | 3.74 | 0.698 | 0.508 | 0.387 | 8.72 | 4.60 | 2.50 | 1.40 | 0.528 | 0.287 | 0.161 |
+| Balthasar | 9.88 | 6.78 | 4.91 | 3.71 | 0.686 | 0.497 | 0.376 | 8.52 | 4.56 | 2.51 | 1.40 | 0.535 | 0.295 | 0.164 |
+| Jolt | 9.86 | 6.67 | 4.76 | 3.62 | 0.676 | 0.483 | 0.367 | 8.70 | 4.64 | 2.54 | 1.42 | 0.533 | 0.292 | 0.163 |
+| Django 7X | 9.63 | 6.68 | 4.83 | 3.70 | 0.694 | 0.502 | 0.384 | 8.83 | 4.64 | 2.45 | 1.33 | 0.525 | 0.277 | 0.151 |
+
+Two things follow, and the second is the surprise.
+
+**Twist and camber need no machine learning.** Given the chord length at a stripe
+(the girth) and the athwartships component of the chord (the photograph), the
+fore-and-aft component is Pythagoras and the chord angle falls out; the
+difference between two stripes' chord angles is twist. Camber depth is the
+sagitta the photograph already shows, divided by the girth. For a rival's
+**mainsail** that is a complete answer from a photograph and a certificate, with
+no training data anywhere in it.
+
+**Normalised, the whole fleet is one sail.** MHW/E spans 0.676–0.698 across six
+different designers — a **3.2 % spread**. HHW/LP spans 0.525–0.547, **4.1 %**.
+The planforms tighten as you come down the sail and loosen at the head, where
+designers actually differ: MUW/E spreads 9.8 %, HUW/LP 8.9 %. So for a Maxi 72
+whose certificate we do not have at all, the girths are predictable from E or LP
+to a few per cent — and a few per cent on the denominator is a few per cent on
+the camber, which is inside the number's usefulness.
+
+One gap worth naming: the widths are at 1/2, 3/4 and 7/8 — **there is no
+quarter-height width.** Draft stripes usually sit at about 1/4, 1/2 and 3/4, so
+the middle and upper stripes land on MHW and MTW almost exactly, and the lower
+stripe has to be interpolated between the foot (E, or HLP, at zero height) and
+MHW. That is a short, well-anchored interpolation rather than an extrapolation,
+which is why it is a footnote and not a problem.
+
+### 8.3 The headsail gap is real, and SSA is the only one who can close it
+
+The certificate dimensions **one** headsail. Northstar's is ID# J1.5-B, and
+`HLP` and `HSA` each appear exactly once in the file. The boat is rated to carry
+four. So J2, J3 and J4 — which is most of the wind range — have no girths at
+all, while the mainsail, which barely changes across the range, is fully
+described. The certificate covers the sail that changes least and omits the ones
+that change most.
+
+Three ways in, best first:
+
+1. **Measure them once on our own boat and keep them.** SailScan already
+   measures chord per stripe. Every J2/J3/J4 scan is a girth table for a sail
+   IRC never dimensioned — and these are fleet-standard sails from the same few
+   lofts, so Northstar's J3 profile is a real prior for another Maxi 72's J3.
+   This turns a hole in the certificate into a dataset SSA owns and nobody else
+   has. It is the clearest case in this document of the instrumented boat paying
+   for the un-instrumented ones.
+2. **Scale from LP.** Smaller headsails are flatter, not scaled copies, so this
+   is wrong — but wrong *systematically*, which means (1) measures the
+   correction once and it applies thereafter.
+3. **Which jib is up is already a Stage 0 output.** The clew position that
+   shipped this week discriminates between J1/J2/J3 on its own, because the clew
+   moves aft and inboard as LP shrinks. The sail identification the rest of this
+   depends on is a by-product of what is already built.
+
+### 8.4 Where the machine learning actually belongs
+
+Not photograph → shape. **Learn the residual.**
+
+Build the deterministic model of §8.2, run it on our own boat, and use lidar and
+SailScan to measure its *error*. Then fit a small correction — a handful of
+parameters — rather than a mapping from pixels to camber.
+
+The reason is arithmetic, not taste. The scarce resource is not photographs and
+not lidar hours; it is their **intersection** — frames shot from the RIB while
+the lidar was running on a sail whose state is known. SSA holds nine photographs
+for 5 Sept. A residual model with a few parameters can be fitted on tens of
+paired samples and will tell you honestly when it is extrapolating. An
+end-to-end model needs thousands and, when it is wrong about a rival's camber,
+is wrong confidently and silently. That is the same argument that killed the
+sail-on-sail edge detector in Stage 0: a detector that picks the wrong edge with
+confidence is worse than no detector.
+
+### 8.5 Video is not a convenience — it is the data engine
+
+§6.3 and Stage 3 treat video as a later refinement that turns stills into a time
+series. That undersells it. A single pass down the transom at 30 fps is roughly
+**18,000 frames**, of which some hundreds will have a usable ψ and heel. Against
+nine photographs for a day, that is not an improvement in convenience; it is two
+orders of magnitude of training data for every stage that follows.
+
+And the selection criterion already exists: ψ is measured, not assumed, so
+frames can be *scored and chosen* rather than hoped for. **Video frame selection
+should come before automatic target detection, not after it** — the detector
+wants labels, and every marked frame is a label, so the cheapest way to get a
+detector is to make marking cheap and frames plentiful first.
+
+### 8.6 The ψ spread is parallax — geometry where the ML was planned
+
+Draft position is the one quantity §8.1 marks as genuinely hard, because a
+position along a chord is a fore-and-aft measure and a single astern frame has
+no fore-and-aft information at all.
+
+A burst of video frames does. Over a pass, ψ sweeps through several degrees,
+and those frames view the *same sail state* from different angles. That is
+parallax: the fore-and-aft shape one frame cannot see is constrained by the
+spread across many. A few degrees is a short baseline, but the sail is 10 m deep
+and the measurement is a shape rather than a range, which is a far kinder problem
+than the stereo depth estimate §4.5 dismissed.
+
+This is the most valuable untested idea in this document, because it converts the
+hardest sub-problem from one needing training data into one needing none. It
+should be tried on a single video before any commitment is made to the learned
+route.
+
+### 8.7 Already measured, currently thrown away: mast bend
+
+`traceMastFromSeed` follows the mast sub-pixel over 76–90 % of frame height and
+then **fits a straight line through it and discards the curve.** Those points are
+a mast-bend measurement — free, on every frame, for rivals as well as for us, and
+bend is what sets the mainsail's entry. It should be kept and reported rather
+than fitted away. The fix is small and the data is already in hand on every frame
+ever marked.
+
+### 8.8 The order this argues for
+
+Each step reuses what the step before it built, and none of them is blocked on
+the one after:
+
+1. **More targets, same geometry.** Leech at every spreader and every stripe,
+   main *and* jib. `leechTargets` and the reference-height machinery generalise
+   from one height to N almost unchanged. Highest value per unit of work in the
+   whole document, and it needs no new science.
+2. **Twist and camber from the girths** (§8.2), validated against our own lidar
+   and SailScan. This either works or says exactly what is wrong.
+3. **Video frame selection** (§8.5) — the data engine, before the detector.
+4. **Automatic targets**, trained on the labels steps 1–3 have been generating
+   all along.
+5. **Parallax for draft position** (§8.6); the residual correction (§8.4) only
+   for what parallax and geometry leave over.
+6. **Rivals.** By this point the only thing that is theirs rather than ours is
+   the certificate, and §3.1 has six of those.
+
+The order matters more than any single step in it. Steps 3 and 4 are routinely
+run the other way round, which is how projects like this end up hand-labelling
+for months to train a detector on a corpus that a week of video would have made
+redundant.
+
+---
+
+## 9. Risks, honestly
 
 | Risk | Severity | Mitigation |
 |---|---|---|
@@ -583,7 +777,7 @@ subtly different from what the speed team means, very precisely.
 
 ---
 
-## 9. What I need decided
+## 10. What I need decided
 
 1. **The definition.** Probably already answered — §4.4 measures the 6 Sept
    panels as rotated ~23° to stand the mast up, which makes the existing
