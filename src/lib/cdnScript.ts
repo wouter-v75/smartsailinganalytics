@@ -65,6 +65,7 @@ export function loadCdnGlobal<T>(
 
 const HEIC2ANY_URL = 'https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js'
 const JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+const EXIFR_URL = 'https://unpkg.com/exifr@7.1.3/dist/full.umd.js'
 
 type Heic2Any = (opts: { blob: Blob; toType: string; quality?: number }) => Promise<Blob | Blob[]>
 
@@ -106,4 +107,21 @@ export function loadJsPdf(): Promise<JsPdfCtor> {
     (w) => (w.jspdf as { jsPDF?: JsPdfCtor } | undefined)?.jsPDF,
     'jsPDF'
   )
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- exifr ships no types for the UMD build
+export type Exifr = { parse: (input: File | Blob | ArrayBuffer, opts?: any) => Promise<any> }
+
+/**
+ * exifr, for reading EXIF off a photo in the browser.
+ *
+ * `photoStore.js` still has its own copy of this loader from before
+ * `loadCdnGlobal` existed; new callers use this one. Worth knowing when you
+ * read the EXIF this returns: the capture time has no timezone and is venue
+ * LOCAL wall-clock, and the re-exported/overlaid files that reach SSA have had
+ * `FocalLength`, `Model` and `LensModel` stripped — only the untouched
+ * originals still carry them.
+ */
+export function loadExifr(): Promise<Exifr> {
+  return loadCdnGlobal<Exifr>(EXIFR_URL, (w) => w.exifr as Exifr | undefined, 'exifr')
 }
