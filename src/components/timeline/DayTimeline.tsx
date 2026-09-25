@@ -575,6 +575,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
               initialFileName={`photo-${geomFor.id.slice(0, 8)}.jpg`}
               photoLabel="this photo"
               twaDeg={geomFor.twa ?? null}
+              initialResult={(geomFor.raw?.analysis_data?.sailTrim)?.result ?? null}
               onSaveToPhoto={async (save: any) => {
                 await applyGeometry(geomFor, {
                   annotation: save.annotation, overlay: !!save.showOverlay,

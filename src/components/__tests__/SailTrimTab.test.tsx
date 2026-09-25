@@ -511,6 +511,67 @@ describe('SailTrimTab', () => {
     expect(sigma).toBeGreaterThan(100)
   })
 
+  it('reopens a saved measurement with its points where they were', async () => {
+    // "Edit points" on a photo that already has geometry. The marks have to come
+    // back, AND the choices that decide what they mean — a different scale
+    // reference or heel against the same clicks is a different number.
+    const P = makeCamera(RIG)
+    const saves: SailTrimSave[] = []
+    const { unmount } = render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: '17.5' } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    fireEvent.click(stepButton('Jib clew'))
+    click(P(-1_100, 1_500, 2_000))
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(1))
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(1))
+    const first = saves[0]
+    unmount()
+
+    // Reopen it the way the photo viewer does.
+    vi.stubGlobal('fetch', async () => ({
+      ok: true, blob: async () => new Blob([new Uint8Array([0xff, 0xd8])], { type: 'image/jpeg' }),
+    } as unknown as Response))
+    const again: SailTrimSave[] = []
+    render(
+      <SailTrimTab
+        initialFileUrl="/api/bunny/image?key=x.jpg"
+        initialFileName="_MG_0397.JPG"
+        initialResult={first.result}
+        onSaveToPhoto={(v) => { again.push(v) }} />,
+    )
+    // The marks are back — the clew step shows its point, and the heel that was
+    // typed came with it.
+    await waitFor(() =>
+      expect(within(screen.getByTestId('sailtrim-steps')).getAllByText('1/1').length).toBeGreaterThan(0))
+    expect(screen.getByDisplayValue('17.5')).toBeTruthy()
+    // …and the measurement comes straight back without re-marking anything.
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(1))
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(again).toHaveLength(1))
+    expect(again[0].annotation.targets[0].mm).toBeCloseTo(first.annotation.targets[0].mm, 6)
+    vi.unstubAllGlobals()
+  })
+
+  it('deletes a point on right-click', async () => {
+    const P = makeCamera(RIG)
+    render(<SailTrimTab />)
+    await openAFrame()
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    await waitFor(() =>
+      expect(within(screen.getByTestId('sailtrim-steps')).getByText('2/2')).toBeTruthy())
+
+    const high = P(0, 0, 29_000)
+    fireEvent(mainCanvas(), new MouseEvent('contextmenu', {
+      clientX: high.x, clientY: high.y, bubbles: true, cancelable: true,
+    }))
+    await waitFor(() =>
+      expect(within(screen.getByTestId('sailtrim-steps')).getByText('1/2')).toBeTruthy())
+  })
+
   it('does not let a new leech point drag a calibration mark it landed near', async () => {
     // Found while checking why a frame with three points on each leech came back
     // with one measurement. findNear searched EVERY step, so a click meant as the

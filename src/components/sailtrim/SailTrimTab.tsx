@@ -141,7 +141,7 @@ export interface SailTrimSave {
 
 export default function SailTrimTab(
   {
-    boatName = '', initialFileUrl = '', initialFileName = '',
+    boatName = '', initialFileUrl = '', initialFileName = '', initialResult = null,
     onSaveToPhoto, photoLabel = '', twaDeg = null,
   }: {
     boatName?: string;
@@ -152,6 +152,10 @@ export default function SailTrimTab(
     twaDeg?: number | null;
     /** The photo's own name — `initialFileUrl` is an API path with no filename in it. */
     initialFileName?: string;
+    /** A measurement already saved on this photo, to reopen and edit. The marks
+     *  go back exactly where they were, along with the choices that decide what
+     *  they mean — scale reference, baseline, heel, tack, definition. */
+    initialResult?: unknown;
     /** Present when the tool is measuring a photo that belongs to something:
      *  adds "Save to photo", which is the only way the numbers reach anyone else.
      *  Returning a `warning` means it saved but did not fully share — worth
@@ -295,6 +299,7 @@ export default function SailTrimTab(
         // last path segment is not a filename. The host passes the real one.
         const name = initialFileName || initialFileUrl.split('/').pop() || 'frame.jpg';
         await openFile(new File([blob], name, { type: blob.type || 'image/jpeg' }));
+        if (!cancelled) restoreFrom(initialResult);
       } catch (e) {
         if (!cancelled) setLoadError(`Could not load the picture: ${(e as Error)?.message || 'network error'}. The file picker still works.`);
       } finally {
@@ -303,7 +308,39 @@ export default function SailTrimTab(
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialFileUrl, initialFileName]);
+  }, [initialFileUrl, initialFileName, initialResult]);
+
+  /**
+   * Put a saved measurement back on the picture.
+   *
+   * Called after `openFile`, which clears the marks — restoring before it would
+   * be silently undone. Everything is optional: a record saved before a field
+   * existed simply leaves that one alone rather than resetting it.
+   *
+   * The RIG MODEL is deliberately not restored. It is boat-level state that may
+   * have been corrected since — a certificate read, a wheel measured — and the
+   * current one is the better answer. Reopening to edit points is not the same
+   * as reproducing an old number exactly; the saved JSON is there for that.
+   */
+  const restoreFrom = (saved: unknown) => {
+    const r = saved as { marks?: Record<string, unknown> } | null;
+    const m = r?.marks as {
+      marks?: Marks; mastMode?: 'line' | 'auto' | 'manual'; defn?: 'boat' | 'world';
+      focalMm?: string; scaleKey?: string; baselineKey?: string;
+      heelDeg?: string; tack?: 'port' | 'stbd' | null;
+    } | undefined;
+    if (!m?.marks || typeof m.marks !== 'object') return;
+    setMarks(m.marks);
+    if (m.mastMode) setMastMode(m.mastMode);
+    if (m.defn) setDefn(m.defn);
+    if (typeof m.focalMm === 'string' && m.focalMm) setFocalMm(m.focalMm);
+    if (m.scaleKey) setScaleKey(m.scaleKey);
+    if (m.baselineKey) setBaselineKey(m.baselineKey);
+    if (typeof m.heelDeg === 'string' && m.heelDeg) setHeelDeg(m.heelDeg);
+    if (m.tack !== undefined) setTack(m.tack);
+    setRestored(true);
+  };
+  const [restored, setRestored] = useState(false);
 
   /** One downscaled copy serves both detectors. */
   const decodeForCv = useCallback((img: HTMLImageElement) => {
@@ -429,6 +466,20 @@ export default function SailTrimTab(
       });
     }
     return best;
+  };
+
+  /** Right-click a mark to remove it. Moving one is a drag; adding one is a
+   *  click on empty picture; this is the third thing a point needs. */
+  const onContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!imgSize) return;
+    e.preventDefault();
+    const near = findNear(toImage(e.clientX, e.clientY));
+    if (!near) return;
+    setMarks((m) => {
+      const pts = (m[near.step] || []).slice();
+      pts.splice(near.idx, 1);
+      return { ...m, [near.step]: pts };
+    });
   };
 
   // ── pointer handling ─────────────────────────────────────────────────────
@@ -912,7 +963,10 @@ export default function SailTrimTab(
           : (cal && cameraRollDeg(cal.axis, cal.heelDeg) != null ? 'heel' : 'assumed-level'),
       },
       checks,
-      marks: { marks, mastMode, defn, focalMm, rig },
+      // Everything needed to put the tool back exactly as it was. `marks` alone
+      // is not enough: the same clicks against a different scale reference or a
+      // different heel give a different answer, so the choices travel too.
+      marks: { marks, mastMode, defn, focalMm, rig, scaleKey, baselineKey, heelDeg, tack },
       algorithmVersion: SAILTRIM_VERSION,
     };
   };
@@ -1144,7 +1198,8 @@ export default function SailTrimTab(
       <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
         <canvas
           ref={canvasRef}
-          onPointerDown={onPointerDown}
+          onContextMenu={onContextMenu}
+        onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerLeave={() => { downRef.current = null; dragRef.current = null; setHover(null); }}
@@ -1195,6 +1250,14 @@ export default function SailTrimTab(
             <div style={{ fontSize: 11, color: '#FCA5A5', marginTop: 7, lineHeight: 1.45 }}>{loadError}</div>
           )}
           {fileName && <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 7, wordBreak: 'break-all' }}>{fileName}{capturedAt ? ` · ${capturedAt}` : ''}</div>}
+          {restored && (
+            <div style={{ fontSize: 11, color: '#4ADE80', marginTop: 5, lineHeight: 1.45 }}>
+              Reopened the saved measurement — the points are back where they were,
+              with the scale reference, baseline, heel and tack that were used. The
+              RIG MODEL is the current one, not the saved one: if a certificate has
+              been read since, these numbers use it.
+            </div>
+          )}
           {exifNote && <div style={{ fontSize: 11, color: focalMm ? '#64748B' : '#FCD34D', marginTop: 5, lineHeight: 1.45 }}>{exifNote}</div>}
           {imgSize && (
             <div style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5, color: horizon ? '#4ADE80' : '#FCD34D' }}>
@@ -1275,7 +1338,8 @@ export default function SailTrimTab(
             );
           })}
           <div style={{ fontSize: 11, color: '#64748B', marginTop: 6, lineHeight: 1.5 }}>
-            Click to place · drag a cross to nudge it · drag elsewhere to pan · wheel to zoom.
+            Click to place · drag a cross to nudge it · RIGHT-CLICK a cross to delete it ·
+            drag elsewhere to pan · wheel to zoom.
           </div>
         </div>
 
@@ -1460,6 +1524,34 @@ export default function SailTrimTab(
           </div>
 
           {!calibration.cal && <div style={{ fontSize: 12, color: '#FCD34D' }}>{calibration.why}</div>}
+
+          {/* A height above or below where a leech was drawn does not cross it,
+              and produces nothing. That is right, but it used to be SILENT: four
+              heights marked and one number back, with no way to see that three
+              of them missed. Say which, and why. */}
+          {calibration.cal && (() => {
+            const marked = HEIGHT_TAGS.filter((t) => (marks[`h:${t.key}`] || []).length > 0);
+            if (!marked.length) return null;
+            const gaps = LEECH_SAILS
+              .filter((sl) => (marks[`leech:${sl.key}`] || []).length >= 2)
+              .map((sl) => ({
+                sl,
+                missed: marked.filter((t) => !measurements.some((m) => m.key === `${sl.key}@${t.key}`)),
+              }))
+              .filter((g) => g.missed.length > 0);
+            if (!gaps.length) return null;
+            return (
+              <div style={{ fontSize: 11, color: '#FCD34D', marginBottom: 9, lineHeight: 1.5 }}>
+                {gaps.map((g) => (
+                  <div key={g.sl.key} style={{ marginBottom: 3 }}>
+                    <b>{g.sl.label}</b> does not reach {g.missed.map((t) => heightShort(t.key)).join(', ')} —
+                    it is only drawn between two of the heights you marked. Extend it past
+                    the highest and lowest and each one gets a number.
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
 
           {measurements.map((m) => {
             const primary = defn === 'boat' ? m.boatFrameMm : m.worldHorizontalMm;

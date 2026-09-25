@@ -74,7 +74,7 @@ export default function SailGeometryCard({
           {onRemeasure && (
             <button onClick={onRemeasure}
               style={{ background: 'none', border: '1px solid #1E3A5A', borderRadius: 6, padding: '5px 10px', color: '#94A3B8', cursor: 'pointer', fontSize: 10 }}>
-              Re-measure…
+              Edit points…
             </button>
           )}
         </div>
