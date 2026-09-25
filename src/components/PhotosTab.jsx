@@ -834,7 +834,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
 
   const savePhotos = useCallback((updated)=>{
     // Save metadata to localStorage (no blobs)
-    const meta = updated.map(({objectUrl,...p})=>p);
+    const meta = updated.map(({objectUrl,fullUrl,...p})=>p);
     try{ localStorage.setItem(LS_KEY, JSON.stringify(meta)); }
     catch(e){ console.error("savePhotos localStorage:", e); }
     // (flush effect declared below handles deferred originals)
@@ -934,7 +934,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     if(!imgRes.ok && imgRes.status !== 201) throw new Error(`img HTTP ${imgRes.status}`);
 
     // 3) Upload per-photo metadata JSON
-    const {objectUrl, hasLocalOriginal, ...meta} = photo;
+    const {objectUrl, fullUrl, hasLocalOriginal, ...meta} = photo;
     const metaPayload = {...meta, cloudSynced: true, originalSize: blob.size, thumbSize: thumbBlob.size};
     await uploadJsonToStorage(keys.meta, metaPayload);
 
@@ -967,7 +967,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const writePhotoIndex = useCallback(async (list) => {
     const cloudEntries = list
       .filter(p => p.cloudSynced)
-      .map(({objectUrl, hasLocalOriginal, ...meta}) => meta);
+      .map(({objectUrl, fullUrl, hasLocalOriginal, ...meta}) => meta);
     // The index is per (team, boat, date). It used to be per date alone, so two
     // boats sailing one day overwrote each other's photo list.
     const key = writeKey(await currentStorageScope(), activeDate, SESSION_LEAVES.photoIndex);
@@ -990,12 +990,13 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const [geomFor, setGeomFor] = useState(null);   // the photo being measured
 
   const persistPhotoPatch = useCallback(async (photo, patch) => {
-    let next = null;
-    setPhotos(prev => {
-      next = prev.map(p => p.id === photo.id ? { ...p, ...patch } : p);
-      savePhotos(next);
-      return next;
-    });
+    // Built from `photos` rather than inside a setState updater: React runs an
+    // updater during the next render, not at the call site, so `next` read back
+    // on the line after would still be null — and the cloud index would silently
+    // never be rewritten.
+    const next = photos.map(p => p.id === photo.id ? { ...p, ...patch } : p);
+    setPhotos(next);
+    savePhotos(next);
     setSelected(s => (s && s.id === photo.id) ? { ...s, ...patch } : s);
     setGeomFor(g => (g && g.id === photo.id) ? { ...g, ...patch } : g);
 
@@ -1006,7 +1007,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     const { data:{ user } } = await getBrowserSupabase().auth.getUser();
     if(!user) throw new Error('Not signed in — saved on this device only.');
     if(!(merged.bunnyPath || merged.url)) throw new Error('This photo is not in the cloud yet, so there is no shared row to write to. Saved on this device only; it will travel once the photo uploads.');
-    await upsertPhotoCloud({
+    // upsertPhotoCloud REPORTS failure, it does not throw one — it returns false
+    // for a rejected request and for a dropped connection alike. Ignoring that
+    // is how a save that never left the browser gets reported as shared.
+    const ok = await upsertPhotoCloud({
       userId: user.id,
       sessionDate: merged.sessionDate || activeDate,
       takenUtc: merged.utc ?? null,
@@ -1016,8 +1020,9 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       bytes: merged.size ?? null,
       analysis: merged.analysis ?? null,
     });
-    if(next) await writePhotoIndex(next);
-  }, [activeDate, savePhotos, writePhotoIndex]);
+    if(!ok) throw new Error('The shared copy was refused — no active boat, or the request failed.');
+    await writePhotoIndex(next);
+  }, [photos, activeDate, savePhotos, writePhotoIndex]);
 
   const handleSaveSailTrim = useCallback(async (photo, save) => {
     const payload = {
