@@ -9,11 +9,14 @@
 //
 // There are only three kinds of number in here:
 //
-//   scaleRefs   lengths that lie ACROSS the boat, so they are not foreshortened
-//               when seen from astern and can set the image scale. Spreader tip
-//               to tip is the good one. A fore-and-aft length — mast chord,
-//               boom length, J — is useless for this: from astern it projects
-//               to almost nothing.
+//   scaleRefs   lengths that are NOT foreshortened seen from astern, so they
+//               can set the image scale. Anything athwartships qualifies —
+//               spreader tip to tip — but so does anything up the mast, since
+//               the mast lies in the plane perpendicular to the line of sight:
+//               P, the mainsail hoist between the black bands, is five times
+//               the baseline of a spreader and is on every IRC certificate.
+//               A fore-and-aft length — mast chord, boom length, J — is useless
+//               for this: from astern it projects to almost nothing.
 //
 //   depths      how far forward of the mast each target sits. Forward positive,
 //               so the boom is negative. These feed the depth correction and
@@ -32,7 +35,11 @@
 // in, and the migration for it is written (0090) but deliberately not applied.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type Provenance = 'designer' | 'measured' | 'estimate'
+export type Provenance = 'designer' | 'measured' | 'derived' | 'estimate'
+//   designer  off the rig drawing
+//   measured  somebody measured it on the boat — an IRC measurer, say
+//   derived   worked out from measured numbers, carrying the working's error
+//   estimate  a guess, and the sigma says so
 
 export interface RigValue {
   mm: number
@@ -89,10 +96,17 @@ export function defaultRigModel(boat = ''): RigModel {
       { key: 'tack-mast', label: 'Forestay tack → mast (J)', ...v(8000, 800) },
       { key: 'custom', label: 'Something else (type the separation)', ...v(0, 0) },
     ],
+    // Fore-and-aft offsets from the mast, forward positive. These are the
+    // numbers to get from a certificate rather than from here: the first cut
+    // of this file guessed the clew at +8 m FORWARD, and the six Maxi 72
+    // certificates put it about a metre ABAFT the mast — a 100 %-LP jib's clew
+    // lands on the mast, which is what "100 %" means. Nine metres of error, and
+    // it is the multiplier on ψ, so it mattered. What is left here is a Maxi
+    // 72 shape, still flagged as the guesswork it is.
     depths: {
-      leech: v(6000, 800),
-      clew: v(8000, 800),
-      boom: v(-5000, 500),
+      leech: v(-400, 700),
+      clew: v(-1100, 900),
+      boom: v(-10000, 1500),
     },
     sensorWidthMm: 36,
     notes: '',

@@ -40,6 +40,36 @@ vi.mock('@/lib/cdnScript', () => ({
 
 import RigShotTab from '../rigshot/RigShotTab'
 
+/** Northstar III's own endorsed certificate, trimmed to what the parser reads. */
+const IRC_CERT = `IRC Boat Data
+BOAT:
+Name:
+Sail Number:
+Design:
+Cert No.:
+NORTHSTAR III
+GBR76X
+JUDEL/VROLIJK 76 Custom
+50945
+ENDORSED CERTIFICATE
+Expires: 31 Dec 26
+HULL
+LH
+LWP
+Boat Weight:
+DLR
+Draft:
+23.20
+22.26
+17017
+47
+5.73
+HLP 8.96
+HLU/HLUmax 30.60
+J 8.86
+E 10.33
+P 31.44`
+
 // ── the canvas the operator clicks on ───────────────────────────────────────
 // One image pixel per CSS pixel, origin at the element's top-left, so a click
 // at client (x, y) lands on image pixel (x, y) at zoom 1, pan 0.
@@ -166,6 +196,12 @@ describe('RigShotTab', () => {
     // rig is exactly 6 m tip to tip, so the number is right and the model
     // still, correctly, says it is a guess
 
+    // The synthetic clew is 8 m FORWARD of the mast; the rig model's default is
+    // a Maxi 72's real clew, about a metre abaft it. Tell the tool where this
+    // one actually is — which also exercises the depth editor.
+    fireEvent.click(screen.getByText('edit'))
+    fireEvent.change(screen.getByDisplayValue('-1100'), { target: { value: '8000' } })
+
     // ── measure ─────────────────────────────────────────────────────────────
     fireEvent.click(stepButton('Jib clew'))
     click(P(8_000, 1_900, SPREADER_Z))
@@ -223,6 +259,38 @@ describe('RigShotTab', () => {
     click({ x: 2_012, y: 3_000 })
     await waitFor(() =>
       expect(within(screen.getByTestId('rigshot-steps')).getByText('2/2')).toBeTruthy())
+  })
+
+  it('takes its dimensions from a pasted IRC certificate', async () => {
+    render(<RigShotTab />)
+    await openAFrame()
+    fireEvent.click(screen.getByText('edit'))
+
+    // Before: nothing is known, and the tool says so.
+    expect(screen.getByText(/Still guesswork/)).toBeTruthy()
+
+    const box = screen.getByPlaceholderText(/IRC Boat Data/)
+    fireEvent.change(box, { target: { value: IRC_CERT } })
+    fireEvent.click(screen.getByText('Read certificate'))
+
+    await waitFor(() => expect(screen.getByText(/P 31.44 m, J 8.86 m, E 10.33 m/)).toBeTruthy())
+    // …and after: nothing left to apologise for, the boat named itself, and the
+    // scale is P rather than a guessed spreader.
+    expect(screen.queryByText(/Still guesswork/)).toBeNull()
+    expect(screen.getByDisplayValue('NORTHSTAR III')).toBeTruthy()
+    expect(screen.getByDisplayValue('31440')).toBeTruthy()
+    expect(screen.getByDisplayValue('8860')).toBeTruthy()
+    expect(screen.getByDisplayValue('-10330')).toBeTruthy()
+  })
+
+  it('says so, and changes nothing, when the paste is not a certificate', async () => {
+    render(<RigShotTab />)
+    await openAFrame()
+    fireEvent.click(screen.getByText('edit'))
+    fireEvent.change(screen.getByPlaceholderText(/IRC Boat Data/), { target: { value: 'IRC rating is great' } })
+    fireEvent.click(screen.getByText('Read certificate'))
+    await waitFor(() => expect(screen.getByText(/does not read as an IRC certificate/)).toBeTruthy())
+    expect(screen.getByText(/Still guesswork/)).toBeTruthy()
   })
 
   it('a point placed on a full step restarts that step rather than being lost', async () => {

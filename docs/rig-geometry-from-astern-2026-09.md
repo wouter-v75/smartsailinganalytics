@@ -165,6 +165,46 @@ gradient structure tensor and orientation masking; `sail-scan-ai/` is a vendored
 YOLO11 + SAM 2.1 stripe pipeline; `docs/sailscan/prior-art.md` is the stripe
 survey. The detector work is not starting from zero.
 
+### 3.1 The rig dimensions already exist — for the whole fleet
+
+An endorsed IRC certificate carries exactly the three things the photograph
+cannot supply, measured by a measurer, and it is issued for competitors too.
+Parsed from the six Maxi 72 certificates (`npm run irc:rigmodel -- <folder>`):
+
+| boat | sail no | LH | kg | **P** | **E** | **J** | HLU | HLP | rake | clew | leech | boom |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Northstar III | GBR76X | 23.20 | 17017 | **31.44** | 10.33 | 8.86 | 30.60 | 8.96 | 16.8° | −1.05 | −0.35 | −10.33 |
+| Jethou | GBR74R | 23.50 | 15088 | 30.74 | 10.17 | 8.35 | 29.54 | 8.54 | 16.4° | −1.09 | −0.34 | −10.17 |
+| Bella Mente | USA45 | 22.55 | 14694 | 30.20 | 9.66 | 8.40 | 29.58 | 8.72 | 16.5° | −1.22 | −0.38 | −9.66 |
+| Balthasar | MLT5 | 21.95 | 15985 | 30.00 | 9.88 | 8.44 | 28.48 | 8.52 | 17.2° | −0.96 | −0.27 | −9.88 |
+| Jolt | GBR72N | 21.95 | 15064 | 29.82 | 9.86 | 8.38 | 28.98 | 8.70 | 16.8° | −1.21 | −0.36 | −9.86 |
+| Django 7X | GBR8N | 21.40 | 12147 | 28.52 | 9.63 | 8.53 | 28.12 | 8.83 | 17.7° | −1.16 | −0.31 | −9.63 |
+
+Metres; the last three are fore-and-aft offsets from the mast, forward
+positive, and are *derived* from J/HLU/HLP rather than read off.
+
+**P is the scale reference, and it is the thing that was missing.** It is not
+an athwartships length, but it does not need to be: seen from astern the mast
+lies in the plane perpendicular to the line of sight, so the mainsail hoist
+between the black bands projects at **full length**. Rake costs cos(rake) —
+0.06 % at 2°, 0.2 % at 4° — and mast bend costs the arc-to-chord difference,
+about 0.02 % for 300 mm of sagitta over 31 m. At 31.44 m it is five times the
+baseline of a spreader and lands the scale an order of magnitude tighter: on a
+6,000 px frame P spans ~5,000 px, so ±1 px at each end is ±0.04 %.
+
+**J is the ψ baseline** — forestay tack to the mast at deck, both centreplane
+points visible from astern — and **E puts the boom**. The jib's corners come
+out of J, HLU and HLP by construction.
+
+Two caveats. J is measured to the *front* of the mast, not its centreline —
+half a section, ~200 mm, which scales ψ by the same fraction. And the clew's
+height up the luff is the one thing the certificate does not carry; it is taken
+as 15 % ± 6 % of the luff, which is where the clew's ±0.5 m comes from.
+
+And the point that matters beyond our own boat: **five of those six are
+rivals.** Stage 4 had no answer for a boat whose rig model we do not have. IRC
+is the answer.
+
 ---
 
 ## 4. The physics that decides the project
@@ -197,6 +237,16 @@ To hold ±20 mm by alignment alone the RIB would have to be within **0.6 m** of
 the extended centreline at 260 m — i.e. ψ ≤ 0.14°. That is not achievable, is
 not verifiable by eye, and is not what "mast and headstay in line" delivers in
 practice. **The current manual method has no way to know how far off it was.**
+
+> **Which target this bites is not where I first assumed.** The 8 m above was a
+> guess. Northstar's IRC certificate (§3.1) gives J 8.86, HLU 30.60, HLP 8.96 —
+> a 101 %-LP jib, and a 100 % jib's clew lands *on the mast*. Worked through,
+> the clew sits about **1.1 m ABAFT** the mast and the leech at spreader 2 about
+> **0.35 m** abaft it. So on the two jib targets ψ costs ~18 and ~6 mm per
+> degree, not 140. The boom is the opposite case: E 10.33 m aft of the mast
+> makes it **180 mm per degree**, and gives it a −4 % depth error at 260 m. The
+> principle is unchanged and the arithmetic is the same; what changed is which
+> of the three measurements needs the care.
 
 But: any two identifiable points on the boat's **centreplane** at different
 fore-and-aft positions give ψ directly, because their lateral separation in the
@@ -393,11 +443,8 @@ through the full UI path. What remains in this stage:
   — outer edge? centre of the ring? leech tape centreline? The tool computes
   both today so the decision is not blocking, but it is still the decision that
   matters most.
-- Feed it the **rig model's** real numbers in place of the placeholder scale
-  references and fore-and-aft offsets, and wire the heel straight off the log
-  row rather than typing it in. **This is the only thing standing between the
-  tool and a millimetre answer** — without one known athwartships length there
-  is no scale, and every geometric correction is already in place.
+- ~~Feed it the rig model's real numbers~~ — **done, from the IRC certificates**
+  (§3.1). Wire the heel straight off the log row rather than typing it in.
 - **Find the frames the compilations were made from.** SSA holds 9 photos for
   5 Sept — 11:42, 12:37×3, 12:46×3, 13:37, 14:25 — and *none* at 11:53, 11:58
   or 12:03, which are the three moments the 6 Sept compilations use. Only the
@@ -457,11 +504,14 @@ future change to the detectors gets checked.
 
 Still to do, and all of it is the rig model rather than code:
 
-- **The dimensions.** `src/lib/rigModel.ts` holds them per boat with the
-  provenance of each — `designer`, `measured` or `estimate` — and an estimate's
-  sigma propagates into every measurement made with it. The tool lists what is
-  still guesswork and refuses to pretend otherwise. `supabase/migrations/0090`
-  adds `boats.rig_model` and a `rig_shots` table; **not applied**.
+- **The dimensions — now solved from IRC** (§3.1). `src/lib/ircCertificate.ts`
+  reads a certificate into a rig model; paste one into the tool, or run
+  `npm run irc:rigmodel -- <folder of PDFs> --out models` for the whole fleet.
+  `src/lib/rigModel.ts` holds them per boat with the provenance of each —
+  `designer`, `measured`, `derived` or `estimate` — and anything short of a
+  real number propagates its sigma into every measurement.
+  `supabase/migrations/0090` adds `boats.rig_model` and a `rig_shots` table;
+  **not applied**.
 - **Centreplane landmarks** are still clicked, not detected. Two points is a
   small ask, and ψ is the one number that most rewards being got right.
 - **The log row** — heel, TWS, TWA, `JibIO%` — is still typed in rather than
@@ -526,7 +576,14 @@ subtly different from what the speed team means, very precisely.
    mast? Boom: outboard end, or a fixed station along it?
 3. **The tolerance that matters.** Is ±20 mm right, or is ±50 mm plenty, or does
    the team actually need ±10 mm? The whole error budget is set by this answer.
-4. **Does the Rhino rig model exist for both N76 and N72**, and can I have it?
+   With P as the scale and ψ measured, the jib targets should now sit inside
+   ±20 mm; the boom is the one that will need the baseline marked every time.
+4. ~~**Does the Rhino rig model exist for both N76 and N72?**~~ — **moot.** The
+   IRC certificates carry everything the measurement needs (§3.1), for the
+   whole fleet, measured and endorsed. A rig drawing would still improve two
+   things: the mast's athwartships section (a better short-range scale check)
+   and the height of spreader 2 (which is what the leech target is defined
+   against, and is currently taken as 20 m).
 5. **Is the 5–6 Sept Rhino session reproducible** — the same operator measuring
    the same dimensions again — so Stage 0 has a human-repeatability figure to
    compare against? Without it we can say the tool is consistent, but not that

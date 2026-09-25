@@ -35,9 +35,10 @@ import {
   detectHorizon, traceMastFromSeed, type Pixels, type HorizonResult, type MastTrace,
 } from '../../lib/rigShotCv';
 import {
-  rigModelFor, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
+  rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
+import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
 import { heicToJpeg, loadExifr, loadJsPdf } from '@/lib/cdnScript';
 
 // ── the marks the operator places ───────────────────────────────────────────
@@ -131,6 +132,8 @@ export default function RigShotTab(
   const [boat, setBoat] = useState(boatName);
   const [rig, setRig] = useState<RigModel>(() => rigModelFor(boatName));
   const [rigOpen, setRigOpen] = useState(false);
+  const [certText, setCertText] = useState('');
+  const [certNote, setCertNote] = useState('');
   const [scaleKey, setScaleKey] = useState('spreader2');
   const [baselineKey, setBaselineKey] = useState('bow-transom');
   const [heelDeg, setHeelDeg] = useState<string>('');
@@ -141,7 +144,16 @@ export default function RigShotTab(
   const scaleRef = rig.scaleRefs.find((s) => s.key === scaleKey) ?? rig.scaleRefs[0];
   const baseRef = rig.baselines.find((b) => b.key === baselineKey) ?? rig.baselines[0];
 
-  useEffect(() => { setRig(rigModelFor(boat)); }, [boat]);
+  // Follow the boat name to its stored model — but KEEP the current one when
+  // there is nothing stored, renaming it instead. Reloading unconditionally
+  // threw away a model the moment its boat was named, which is exactly what
+  // happens after reading a certificate (it names the boat), and what happens
+  // in any browser where localStorage is blocked and the save silently did
+  // nothing.
+  useEffect(() => {
+    const stored = loadRigModel(boat);
+    setRig((cur) => stored ?? (cur.boat === boat ? cur : { ...cur, boat }));
+  }, [boat]);
 
   // ── canvas / view ─────────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1065,6 +1077,38 @@ export default function RigShotTab(
                 </div>
               ))}
               <div style={{ fontSize: 10.5, color: '#64748B', marginBottom: 9 }}>value · ± (mm)</div>
+              {/* The fleet's dimensions already exist, measured and endorsed,
+                  on an IRC certificate — yours and every rival's. P is the one
+                  that matters: the mast lies in the image plane seen from
+                  astern, so the mainsail hoist sets the scale over a 31 m
+                  baseline instead of a spreader's 6 m. */}
+              <div style={{ marginBottom: 9 }}>
+                <label style={lbl}>Paste an IRC certificate (select all in the PDF, copy, paste here)</label>
+                <textarea
+                  style={{ ...inp, height: 62, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
+                  value={certText}
+                  onChange={(e) => setCertText(e.target.value)}
+                  placeholder="IRC Boat Data … J 8.86 … E 10.33 … P 31.44"
+                />
+                <div style={{ display: 'flex', gap: 6, marginTop: 5, alignItems: 'center' }}>
+                  <button style={btn(true)} disabled={!certText.trim()} onClick={() => {
+                    const cert = parseIrcCertificate(certText);
+                    if (!cert) { setCertNote('That does not read as an IRC certificate — nothing changed.'); return; }
+                    const m = rigModelFromIrc(cert);
+                    const withBoat = { ...m, boat: m.boat || boat };
+                    setRig(withBoat); saveRigModel(withBoat);
+                    if (withBoat.boat && withBoat.boat !== boat) setBoat(withBoat.boat);
+                    setScaleKey('P'); setBaselineKey('tack-mast');
+                    setCertNote(`${cert.name || 'boat'} — P ${cert.rig.p} m, J ${cert.rig.j} m, E ${cert.rig.e} m. Scale set to P.`);
+                    setCertText('');
+                  }}>Read certificate</button>
+                  {certNote && <span style={{ fontSize: 10.5, color: certNote.startsWith('That does not') ? '#FCD34D' : '#4ADE80', lineHeight: 1.4 }}>{certNote}</span>}
+                </div>
+                <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 5, lineHeight: 1.5 }}>
+                  Or run <code>npm run irc:rigmodel -- &lt;folder of PDFs&gt; --out models</code> and
+                  import the JSON below — that also does the whole fleet at once.
+                </div>
+              </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <button style={btn()} onClick={() => download(exportRigModel(rig), `${(boat || 'rig').replace(/\W+/g, '-')}.rigmodel.json`, 'application/json')}>Export model</button>
                 <button style={btn()} onClick={() => importRef.current?.click()}>Import…</button>
