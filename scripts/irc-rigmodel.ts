@@ -1,16 +1,16 @@
 // scripts/irc-rigmodel.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Turn IRC certificates into RigShot rig models, and compare a fleet.
+// Turn IRC certificates into SailTrim rig models, and compare a fleet.
 //
 //   npx vite-node scripts/irc-rigmodel.ts -- "<folder or PDFs>" [--out <dir>] [--spreader 20]
 //
-// An endorsed IRC certificate carries everything RigShot cannot get from the
+// An endorsed IRC certificate carries everything SailTrim cannot get from the
 // photograph: P (the scale, because the mast lies in the image plane seen from
 // astern), J (the ψ baseline, and where the jib's corners are), E (the boom).
 // It is issued for competitors too, so this is also how a rival boat becomes
 // measurable — the thing stage 4 of the plan had no answer for.
 //
-// `--out` writes one <boat>.rigmodel.json per certificate, which RigShot
+// `--out` writes one <boat>.rigmodel.json per certificate, which SailTrim
 // imports directly (Rig model → edit → Import…).
 //
 // Runs OUTSIDE the Bash sandbox: it reads PDFs through pdf-parse.
@@ -79,7 +79,7 @@ console.log(w.map((n) => '─'.repeat(n)).join('  '))
 for (const r of rows) console.log(fmt(r))
 console.log(`
 metres, forward of the mast positive. clew/leech/boom are the fore-and-aft
-offsets RigShot needs; clew and leech are DERIVED from J/HLU/HLP with the clew
+offsets SailTrim needs; clew and leech are DERIVED from J/HLU/HLP with the clew
 at ${(0.15 * 100).toFixed(0)}% of the luff (±6%), spreader 2 at ${spreaderHeightM} m.`)
 }
 

@@ -1,4 +1,4 @@
-// src/components/__tests__/RigShotTab.test.tsx
+// src/components/__tests__/SailTrimTab.test.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // Drives the digitiser the way an operator does — open a frame, click the marks
 // in order — and checks the number that comes out on screen.
@@ -23,7 +23,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import {
   makeCamera, RIG, MAST_HALF_WIDTH, SPREADER_HALF, SPREADER_Z, TACK, TRANSOM,
 } from '../../lib/__tests__/support/rigCamera'
-import type { Px } from '../../lib/rigShot'
+import type { Px } from '../../lib/sailTrim'
 
 // The CDN-loaded libraries are the only thing this component reaches out for.
 vi.mock('@/lib/cdnScript', () => ({
@@ -38,7 +38,7 @@ vi.mock('@/lib/cdnScript', () => ({
   }),
 }))
 
-import RigShotTab from '../rigshot/RigShotTab'
+import SailTrimTab from '../sailtrim/SailTrimTab'
 
 /** Northstar III's own endorsed certificate, trimmed to what the parser reads. */
 const IRC_CERT = `IRC Boat Data
@@ -79,7 +79,7 @@ const CANVAS_H = RIG.imgH
 beforeAll(() => {
   // @ts-expect-error jsdom has no ResizeObserver
   global.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} }
-  global.URL.createObjectURL = vi.fn(() => 'blob:rigshot')
+  global.URL.createObjectURL = vi.fn(() => 'blob:sailtrim')
   global.URL.revokeObjectURL = vi.fn()
   // jsdom's canvas has no 2D context; the component already tolerates null.
   HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never
@@ -124,7 +124,7 @@ function click(p: Px) {
 
 /** Step names repeat in the form below, so scope to the step list. */
 const stepButton = (label: string) =>
-  within(screen.getByTestId('rigshot-steps')).getByText(label)
+  within(screen.getByTestId('sailtrim-steps')).getByText(label)
 
 /** jsdom has no 2D canvas, so the one-click trace has nothing to trace — the
  *  manual edge flow is the one that can be driven here, and reaching it is
@@ -146,9 +146,9 @@ async function openAFrame() {
   await waitFor(() => expect(screen.getByText(/· 100%/)).toBeTruthy())
 }
 
-describe('RigShotTab', () => {
+describe('SailTrimTab', () => {
   it('opens on the prompt to use an original frame, not a compilation', () => {
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     expect(screen.getByText(/Open an astern frame/)).toBeTruthy()
     expect(screen.getByText(/rotated to stand the/)).toBeTruthy()
     // the workflow is visible before anything is loaded, and the mast starts
@@ -160,14 +160,14 @@ describe('RigShotTab', () => {
   })
 
   it('says so when the frame has no focal length, and fills it in when it has', async () => {
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     await openAFrame()
     expect(screen.getByText(/Canon EOS R6m2 · 254 mm/)).toBeTruthy()
   })
 
   it('measures a synthetic clew to within a few millimetres of truth', async () => {
     const P = makeCamera(RIG)
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     await openAFrame()
 
     // heel, as it would come off the log
@@ -229,7 +229,7 @@ describe('RigShotTab', () => {
     // clew ~1.1 m abaft it and the boom E = 10.33 m abaft — so they exercise
     // the depth correction in opposite directions.
     const P = makeCamera(RIG)
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     await openAFrame()
     useManualMast()
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
@@ -258,7 +258,7 @@ describe('RigShotTab', () => {
 
   it('warns, loudly and specifically, when the misalignment was never measured', async () => {
     const P = makeCamera(RIG)
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     await openAFrame()
     useManualMast()
 
@@ -285,17 +285,17 @@ describe('RigShotTab', () => {
     // and the step sticks at 1/2 with nothing to say why — found by driving the
     // real tool. 12 px apart is inside the old 22 px radius and outside the
     // 7 px one that applies while a step is still being filled.
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     await openAFrame()
     useManualMast()
     click({ x: 2_000, y: 3_000 })
     click({ x: 2_012, y: 3_000 })
     await waitFor(() =>
-      expect(within(screen.getByTestId('rigshot-steps')).getByText('2/2')).toBeTruthy())
+      expect(within(screen.getByTestId('sailtrim-steps')).getByText('2/2')).toBeTruthy())
   })
 
   it('takes its dimensions from a pasted IRC certificate', async () => {
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     await openAFrame()
     fireEvent.click(screen.getByText('edit'))
 
@@ -317,7 +317,7 @@ describe('RigShotTab', () => {
   })
 
   it('says so, and changes nothing, when the paste is not a certificate', async () => {
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     await openAFrame()
     fireEvent.click(screen.getByText('edit'))
     fireEvent.change(screen.getByPlaceholderText(/IRC Boat Data/), { target: { value: 'IRC rating is great' } })
@@ -328,14 +328,14 @@ describe('RigShotTab', () => {
 
   it('a point placed on a full step restarts that step rather than being lost', async () => {
     const P = makeCamera(RIG)
-    render(<RigShotTab />)
+    render(<SailTrimTab />)
     await openAFrame()
     useManualMast()
     click(P(0, -MAST_HALF_WIDTH, 5_000))
     click(P(0, MAST_HALF_WIDTH, 5_000))
-    expect(within(screen.getByTestId('rigshot-steps')).getByText('2/2')).toBeTruthy()
+    expect(within(screen.getByTestId('sailtrim-steps')).getByText('2/2')).toBeTruthy()
     click(P(0, -MAST_HALF_WIDTH, 6_000))
     await waitFor(() =>
-      expect(within(screen.getByTestId('rigshot-steps')).getByText('1/2')).toBeTruthy())
+      expect(within(screen.getByTestId('sailtrim-steps')).getByText('1/2')).toBeTruthy())
   })
 })

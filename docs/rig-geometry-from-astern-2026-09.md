@@ -308,7 +308,7 @@ automated method can emit **both**, and heel is in the log for our boats.
 > **logged heel of 22.7°**. Agreement to **0.14°**, from a photograph, with no
 > rig dimensions involved.
 >
-> Two consequences. RigShot's "Across the mast" default already matches the
+> Two consequences. SailTrim's "Across the mast" default already matches the
 > historical Rhino numbers. And the rotation is invisible once applied — so a
 > compilation panel must never be fed to the tool as if it were an original.
 
@@ -429,9 +429,9 @@ the logged sensors.
 
 ### Stage 0 — pin the definitions and kill Rhino (≈2 weeks)
 
-**The digitiser is built** — Tools → RigShot (`src/components/rigshot/`, maths
-in `src/lib/rigShot.ts`, detection in `src/lib/rigShotCv.ts`, dimensions in
-`src/lib/rigModel.ts`). `/dev/rigshot` opens it without a signed-in session. It takes an original frame, the mast edges at two
+**The digitiser is built** — Tools → SailTrim (`src/components/sailtrim/`, maths
+in `src/lib/sailTrim.ts`, detection in `src/lib/sailTrimCv.ts`, dimensions in
+`src/lib/rigModel.ts`). `/dev/sailtrim` opens it without a signed-in session. It takes an original frame, the mast edges at two
 heights, a scale reference, an optional centreplane baseline and the three
 targets, and returns each measurement **in both frames with a sigma**, beside
 the number the Rhino method would have given. ψ, the range and the camera roll
@@ -499,7 +499,7 @@ log, over six frames:
 
 Worst disagreement 1.57°, and the answers move by less than 0.2° between
 decoding at 900 px and 1600 px wide. Repeatable with
-`npm run rigshot:validate -- <frames> --heel 23.5,23.2,…`, which is how any
+`npm run sailtrim:validate -- <frames> --heel 23.5,23.2,…`, which is how any
 future change to the detectors gets checked.
 
 Still to do, and all of it is the rig model rather than code:
@@ -510,7 +510,7 @@ Still to do, and all of it is the rig model rather than code:
   `src/lib/rigModel.ts` holds them per boat with the provenance of each —
   `designer`, `measured`, `derived` or `estimate` — and anything short of a
   real number propagates its sigma into every measurement.
-  `supabase/migrations/0090` adds `boats.rig_model` and a `rig_shots` table;
+  `supabase/migrations/0090` adds `boats.rig_model` and a `sail_trim` table;
   **not applied**.
 - **Centreplane landmarks** are still clicked, not detected. Two points is a
   small ask, and ψ is the one number that most rewards being got right.
@@ -569,7 +569,7 @@ subtly different from what the speed team means, very precisely.
 1. **The definition.** Probably already answered — §4.4 measures the 6 Sept
    panels as rotated ~23° to stand the mast up, which makes the existing
    numbers **boat-frame athwartships**. Confirm that is deliberate rather than
-   an artefact of making the panels look tidy side by side, and RigShot's
+   an artefact of making the panels look tidy side by side, and SailTrim's
    default is already right.
 2. **The exact target points.** Clew: ring centre or sail corner? Leech at
    spreader 2: at the spreader *tip* height or the spreader *root* height on the

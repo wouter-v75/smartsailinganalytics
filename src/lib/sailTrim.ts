@@ -1,6 +1,6 @@
-// src/lib/rigShot.ts
+// src/lib/sailTrim.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// RigShot — the three astern speed-team measurements, done properly.
+// SailTrim — the three astern speed-team measurements, done properly.
 //
 //   mast centreline → jib clew
 //   mast centreline → jib leech at spreader 2
@@ -613,7 +613,7 @@ export function runChecks(cal: Calibration): Check[] {
 
 // ── export ──────────────────────────────────────────────────────────────────
 
-export interface RigShotResult {
+export interface SailTrimResult {
   photo: string
   capturedAt: string | null
   boat: string
@@ -639,9 +639,9 @@ export interface RigShotResult {
   algorithmVersion: string
 }
 
-export const RIGSHOT_VERSION = 'rigshot-v0.2-horizon'
+export const SAILTRIM_VERSION = 'sailtrim-v0.2-horizon'
 
-export function toCsv(r: RigShotResult): string {
+export function toCsv(r: SailTrimResult): string {
   const head = [
     'photo', 'captured_at', 'boat', 'target',
     'boat_frame_mm', 'boat_frame_sigma_mm',

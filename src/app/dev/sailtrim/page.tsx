@@ -1,8 +1,8 @@
 'use client'
 import * as React from 'react'
-import RigShotTab from '@/components/rigshot/RigShotTab'
+import SailTrimTab from '@/components/sailtrim/SailTrimTab'
 
-// Preview harness for the RigShot digitiser (Tools → RigShot), so the tool can
+// Preview harness for the SailTrim digitiser (Tools → SailTrim), so the tool can
 // be opened and driven against a real frame without a signed-in session, a team
 // and a boat behind it. Dev-only, like the rest of /dev/*.
 //
@@ -12,14 +12,14 @@ import RigShotTab from '@/components/rigshot/RigShotTab'
 // means in the picture.
 // `?src=/some.jpg` loads a frame straight from a URL, so the tool can be driven
 // without a file picker.
-export default function RigShotHarness() {
+export default function SailTrimHarness() {
   const [src, setSrc] = React.useState('')
   React.useEffect(() => {
     setSrc(new URLSearchParams(window.location.search).get('src') || '')
   }, [])
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
-      <RigShotTab boatName="Northstar 76" initialFileUrl={src} />
+      <SailTrimTab boatName="Northstar 76" initialFileUrl={src} />
     </div>
   )
 }

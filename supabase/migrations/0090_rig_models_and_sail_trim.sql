@@ -1,16 +1,16 @@
 -- ============================================================================
--- SSA RigShot — 0090 rig models on boats, and the astern geometry measurement
+-- SSA SailTrim — 0090 rig models on boats, and the astern geometry measurement
 --
 --   • boats.rig_model    — the handful of dimensions that turn pixels into
 --                          millimetres, with the provenance of each one. The
 --                          `boats` table has carried no specs at all until now.
---   • rig_shots          — mast centreline → jib clew / jib leech at spreader 2
+--   • sail_trim          — mast centreline → jib clew / jib leech at spreader 2
 --                          / boom, measured off one astern frame, with the pose
 --                          that produced them and every mark that was clicked.
 --
 -- WHY A SEPARATE TABLE FROM sail_scans. A sail scan is the SHAPE of one sail —
 -- camber, draft, twist per stripe — and comes from a scan report or the boat's
--- own lidar. A rig shot is the POSITION of the sails relative to the boat, from
+-- own lidar. A sail-trim shot is the POSITION of the sails relative to the boat, from
 -- a photograph taken from another boat. Different source, different geometry,
 -- different failure modes, and one row per PHOTO rather than per sail. They
 -- join through photo_id and session_id where both exist.
@@ -40,11 +40,11 @@ ALTER TABLE public.boats
     ADD COLUMN IF NOT EXISTS rig_model JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 COMMENT ON COLUMN public.boats.rig_model IS
-    'RigShot rig dimensions: athwartships scale references, centreplane baselines, '
+    'SailTrim rig dimensions: athwartships scale references, centreplane baselines, '
     'fore-and-aft target offsets. Every value carries source = designer|measured|estimate.';
 
--- ── rig_shots ────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.rig_shots (
+-- ── sail_trim ────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.sail_trim (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_id            UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,  -- denorm RLS
     boat_id            UUID NOT NULL REFERENCES public.boats(id) ON DELETE CASCADE,  -- denorm RLS
@@ -84,39 +84,39 @@ CREATE TABLE IF NOT EXISTS public.rig_shots (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS rig_shots_team_boat_idx ON public.rig_shots(team_id, boat_id, captured_at);
-CREATE INDEX IF NOT EXISTS rig_shots_session_idx   ON public.rig_shots(session_id);
-CREATE INDEX IF NOT EXISTS rig_shots_photo_idx     ON public.rig_shots(photo_id);
+CREATE INDEX IF NOT EXISTS sail_trim_team_boat_idx ON public.sail_trim(team_id, boat_id, captured_at);
+CREATE INDEX IF NOT EXISTS sail_trim_session_idx   ON public.sail_trim(session_id);
+CREATE INDEX IF NOT EXISTS sail_trim_photo_idx     ON public.sail_trim(photo_id);
 
-DROP TRIGGER IF EXISTS rig_shots_touch ON public.rig_shots;
-CREATE TRIGGER rig_shots_touch BEFORE UPDATE ON public.rig_shots
+DROP TRIGGER IF EXISTS sail_trim_touch ON public.sail_trim;
+CREATE TRIGGER sail_trim_touch BEFORE UPDATE ON public.sail_trim
     FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 
 -- ── RLS, matching sail_scans exactly ─────────────────────────────────────────
--- Reads go through the analysis gate (0086) because a rig shot IS analysis;
+-- Reads go through the analysis gate (0086) because a sail-trim shot IS analysis;
 -- writes through the same leadership set as sail scans (0037). Deliberately
 -- copied rather than invented: a new table with its own idea of who may read
 -- is how a gate ends up open on one route and shut on another.
-ALTER TABLE public.rig_shots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sail_trim ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS rig_shots_select ON public.rig_shots;
-CREATE POLICY rig_shots_select ON public.rig_shots FOR SELECT TO authenticated
+DROP POLICY IF EXISTS sail_trim_select ON public.sail_trim;
+CREATE POLICY sail_trim_select ON public.sail_trim FOR SELECT TO authenticated
     USING (public.is_admin() OR public.has_analysis_access(team_id, boat_id));
 
-DROP POLICY IF EXISTS rig_shots_insert ON public.rig_shots;
-CREATE POLICY rig_shots_insert ON public.rig_shots FOR INSERT TO authenticated
+DROP POLICY IF EXISTS sail_trim_insert ON public.sail_trim;
+CREATE POLICY sail_trim_insert ON public.sail_trim FOR INSERT TO authenticated
     WITH CHECK (public.is_admin() OR public.has_team_role(team_id, ARRAY['team_manager','coach','tl3']));
 
-DROP POLICY IF EXISTS rig_shots_update ON public.rig_shots;
-CREATE POLICY rig_shots_update ON public.rig_shots FOR UPDATE TO authenticated
+DROP POLICY IF EXISTS sail_trim_update ON public.sail_trim;
+CREATE POLICY sail_trim_update ON public.sail_trim FOR UPDATE TO authenticated
     USING (public.is_admin() OR public.has_team_role(team_id, ARRAY['team_manager','coach','tl3']))
     WITH CHECK (public.is_admin() OR public.has_team_role(team_id, ARRAY['team_manager','coach','tl3']));
 
-DROP POLICY IF EXISTS rig_shots_delete ON public.rig_shots;
-CREATE POLICY rig_shots_delete ON public.rig_shots FOR DELETE TO authenticated
+DROP POLICY IF EXISTS sail_trim_delete ON public.sail_trim;
+CREATE POLICY sail_trim_delete ON public.sail_trim FOR DELETE TO authenticated
     USING (public.is_admin() OR public.has_team_role(team_id, ARRAY['team_manager','coach','tl3']));
 
 -- NOTE when this is applied: sail_scans also carries a SQUAD read route
--- (sail_scans_squad_select, 0086). Decide deliberately whether a rig shot of
+-- (sail_scans_squad_select, 0086). Decide deliberately whether a sail-trim shot of
 -- your boat should reach a squad partner before adding the equivalent here —
 -- policies OR together, so an open squad policy opens the whole gate.

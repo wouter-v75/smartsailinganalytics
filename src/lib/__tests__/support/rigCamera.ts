@@ -1,17 +1,17 @@
 // src/lib/__tests__/support/rigCamera.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// A synthetic astern camera, so rigShot can be checked against ground truth.
+// A synthetic astern camera, so sailTrim can be checked against ground truth.
 //
 // Boat frame:  x forward, y starboard, z up the mast, origin at the mast heel.
 // Heel φ rotates the boat about x. The camera sits astern at range R with its
 // optical axis at ψ to the boat's centreplane, optionally rolled by ρ.
 //
-// FULL PERSPECTIVE — not the scaled-orthographic approximation rigShot.ts uses
+// FULL PERSPECTIVE — not the scaled-orthographic approximation sailTrim.ts uses
 // — so the tests also measure what that approximation costs. Not a `.test.ts`,
 // so vitest does not try to run it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Px } from '../../rigShot'
+import type { Px } from '../../sailTrim'
 
 export interface Rig {
   heelDeg: number; psiDeg: number; rollDeg: number; rangeMm: number

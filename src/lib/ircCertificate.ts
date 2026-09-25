@@ -3,7 +3,7 @@
 // An IRC certificate is a rig model that already exists, for every boat in the
 // fleet — yours and theirs.
 //
-// RigShot needs three things the photograph cannot supply: one length that lies
+// SailTrim needs three things the photograph cannot supply: one length that lies
 // ACROSS the boat (to set the scale), the fore-and-aft offset of each target
 // from the mast (for the depth and misalignment corrections), and the
 // fore-and-aft separation of two centreplane points (to measure ψ). An endorsed
@@ -273,7 +273,7 @@ const v = (mm: number, sigmaMm: number, source: Provenance) =>
   ({ mm: Math.round(mm), sigmaMm: Math.round(sigmaMm), source })
 
 /**
- * Build a RigShot rig model from a certificate.
+ * Build a SailTrim rig model from a certificate.
  *
  * Certificate figures are `measured` — an IRC measurer measured them and
  * endorsed the result — while anything worked out from them is `derived` and

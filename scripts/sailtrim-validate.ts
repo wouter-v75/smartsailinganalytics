@@ -1,9 +1,9 @@
-// scripts/rigshot-validate.ts
+// scripts/sailtrim-validate.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Run RigShot's two detectors over real photographs and check them against the
+// Run SailTrim's two detectors over real photographs and check them against the
 // boat's own instruments.
 //
-//   npx vite-node scripts/rigshot-validate.ts -- <files or a folder> [--heel 23.5,23.2,…] [--width 1600]
+//   npx vite-node scripts/sailtrim-validate.ts -- <files or a folder> [--heel 23.5,23.2,…] [--width 1600]
 //
 // For each frame it finds the sea horizon and traces the mast, then reports the
 // angle between them — which IS the heel. Give it the logged heel per frame and
@@ -22,8 +22,8 @@
 import { execFileSync } from 'child_process'
 import { readdirSync, statSync } from 'fs'
 import { join, extname, basename } from 'path'
-import { detectHorizon, traceMastFromSeed, type Pixels } from '../src/lib/rigShotCv'
-import { imageHeelDeg } from '../src/lib/rigShot'
+import { detectHorizon, traceMastFromSeed, type Pixels } from '../src/lib/sailTrimCv'
+import { imageHeelDeg } from '../src/lib/sailTrim'
 
 const argv = process.argv.slice(2)
 const flag = (name: string): string | null => {

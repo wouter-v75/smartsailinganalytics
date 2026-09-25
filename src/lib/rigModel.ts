@@ -1,6 +1,6 @@
 // src/lib/rigModel.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// The handful of rig dimensions RigShot needs, and where they came from.
+// The handful of rig dimensions SailTrim needs, and where they came from.
 //
 // This is the whole difference between a number of pixels and a number of
 // millimetres. Everything else in the tool — the pose, the misalignment, the

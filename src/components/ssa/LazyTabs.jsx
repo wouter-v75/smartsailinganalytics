@@ -20,9 +20,9 @@ const SailScanTab    = dynamic(() => import("../SailScanTab"),    { ssr:false, l
 
 const TaggerTab      = dynamic(() => import("../tagging/TaggerTab"), { ssr:false, loading:TabLoading });
 
-const RigShotTab     = dynamic(() => import("../rigshot/RigShotTab"), { ssr:false, loading:TabLoading });
+const SailTrimTab     = dynamic(() => import("../sailtrim/SailTrimTab"), { ssr:false, loading:TabLoading });
 
-// Tools tab = SEPARATE sub-tabs (Squash | SailScan | RigShot), one visible at a
+// Tools tab = SEPARATE sub-tabs (Squash | SailScan | SailTrim), one visible at a
 // time, each filling the whole area. All stay mounted (display toggle) so
 // in-progress state (a loaded scan / marks) survives switching. Replaces the old
 // stacked 85dvh-each layout that made everything small.
@@ -41,7 +41,7 @@ function ToolsTabs({ teamId, boatId }) {
       <div style={{ flexShrink: 0, display: "flex", gap: 2, background: "#0F2A45", borderBottom: "1px solid #1E3A5A" }}>
         {tabBtn('squash', '🎯 Squash')}
         {tabBtn('sailscan', '⛵ SailScan')}
-        {tabBtn('rigshot', '📐 RigShot')}
+        {tabBtn('sailtrim', '📐 SailTrim')}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <div style={{ position: "absolute", inset: 0, display: sub === 'squash' ? 'block' : 'none' }}>
@@ -50,8 +50,8 @@ function ToolsTabs({ teamId, boatId }) {
         <div style={{ position: "absolute", inset: 0, display: sub === 'sailscan' ? 'block' : 'none' }}>
           <ErrorBoundary label="SailScan"><SailScanTab teamId={teamId} boatId={boatId}/></ErrorBoundary>
         </div>
-        <div style={{ position: "absolute", inset: 0, display: sub === 'rigshot' ? 'block' : 'none' }}>
-          <ErrorBoundary label="RigShot"><RigShotTab/></ErrorBoundary>
+        <div style={{ position: "absolute", inset: 0, display: sub === 'sailtrim' ? 'block' : 'none' }}>
+          <ErrorBoundary label="SailTrim"><SailTrimTab/></ErrorBoundary>
         </div>
       </div>
     </div>

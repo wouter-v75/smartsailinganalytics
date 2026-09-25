@@ -5,7 +5,7 @@ import {
   measureTarget, intersectPolyline, leechTargets, runChecks,
   imageHeelDeg, effectiveHeelDeg, psiFromHeelShortening,
   type Px, type Calibration,
-} from '../rigShot'
+} from '../sailTrim'
 import {
   makeCamera, RIG, MAST_HALF_WIDTH, SPREADER_HALF, SPREADER_Z, TACK, TRANSOM,
   type Rig,
@@ -42,7 +42,7 @@ function buildCalibration(rig: Rig, opts: { psiBaseline?: boolean; heelKnown?: b
   }
 }
 
-describe('rigShot — scale and range', () => {
+describe('sailTrim — scale and range', () => {
   it('recovers ~6 mm/px and ~260 m from the 6 Sept shooting geometry', () => {
     const cal = buildCalibration(RIG)
     // 6.2 mm/px is what the 1905 mm dimension measures out at on the originals.
@@ -61,7 +61,7 @@ describe('rigShot — scale and range', () => {
   })
 })
 
-describe('rigShot — the mast axis', () => {
+describe('sailTrim — the mast axis', () => {
   it('apparent lean is heel plus camera roll', () => {
     const upright = mastAxisFromPoints({ x: 100, y: 900 }, { x: 100, y: 100 })!
     expect(upright.tiltDeg).toBeCloseTo(0, 6)
@@ -85,7 +85,7 @@ describe('rigShot — the mast axis', () => {
   })
 })
 
-describe('rigShot — misalignment', () => {
+describe('sailTrim — misalignment', () => {
   it('recovers ψ from a centreplane baseline', () => {
     for (const psiDeg of [-1.5, -0.4, 0, 0.7, 2.2]) {
       const cal = buildCalibration({ ...RIG, psiDeg })
@@ -105,7 +105,7 @@ describe('rigShot — misalignment', () => {
   })
 })
 
-describe('rigShot — the measurement', () => {
+describe('sailTrim — the measurement', () => {
   const TARGET = { depthMm: 8_000, athwartMm: 1_900, zMm: SPREADER_Z }
   const target = (rig: Rig) => ({
     key: 'clew', label: 'Jib clew',
@@ -191,7 +191,7 @@ describe('rigShot — the measurement', () => {
   })
 })
 
-describe('rigShot — the leech is an intersection, not a point', () => {
+describe('sailTrim — the leech is an intersection, not a point', () => {
   it('crosses a polyline with an arbitrary line', () => {
     const poly: Px[] = [{ x: 100, y: 0 }, { x: 120, y: 100 }, { x: 140, y: 200 }]
     const hit = intersectPolyline(poly, { x: 0, y: 50 }, { x: 1, y: 0 })
@@ -221,7 +221,7 @@ describe('rigShot — the leech is an intersection, not a point', () => {
   })
 })
 
-describe('rigShot — checks', () => {
+describe('sailTrim — checks', () => {
   it('passes everything when the frame is fully calibrated', () => {
     // Fully calibrated now includes a horizon — that is what makes
     // world-horizontal a measurement rather than an assumption.
@@ -257,7 +257,7 @@ describe('rigShot — checks', () => {
   })
 })
 
-describe('rigShot — the horizon', () => {
+describe('sailTrim — the horizon', () => {
   const axis = mastAxisFromPoints({ x: 100, y: 900 }, { x: 100, y: 100 })!   // dead upright
 
   it('is preferred over the logged heel, and says which it used', () => {
@@ -336,7 +336,7 @@ describe('rigShot — the horizon', () => {
   })
 })
 
-describe('rigShot — effective heel', () => {
+describe('sailTrim — effective heel', () => {
   it('prefers the photo, falls back to the log, then to nothing', () => {
     const cal = buildCalibration(RIG)
     expect(effectiveHeelDeg({ ...cal, horizon: { tiltDeg: cal.axis.tiltDeg - 19, rms: 1, samples: 100 } }))

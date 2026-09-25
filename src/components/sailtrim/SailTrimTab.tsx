@@ -1,7 +1,7 @@
 'use client';
-// src/components/rigshot/RigShotTab.tsx
+// src/components/sailtrim/SailTrimTab.tsx
 // ─────────────────────────────────────────────────────────────────────────────
-// RigShot — the speed team's three astern measurements, digitised here instead
+// SailTrim — the speed team's three astern measurements, digitised here instead
 // of drawn by hand in Rhino. docs/rig-geometry-from-astern-2026-09.md has the
 // derivation; what the tool adds over a scaled overlay is:
 //
@@ -15,7 +15,7 @@
 //   • both candidate definitions, boat-frame and world-horizontal
 //   • a sigma on every number, and the Rhino-equivalent beside it
 //
-// Geometry in src/lib/rigShot.ts, detection in src/lib/rigShotCv.ts, the
+// Geometry in src/lib/sailTrim.ts, detection in src/lib/sailTrimCv.ts, the
 // dimensions in src/lib/rigModel.ts — all three tested on their own. This file
 // is the canvas, the clicks and the form.
 //
@@ -28,12 +28,12 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
   mmPerPxFromReference, rangeMmFrom, runChecks, cameraRollDeg, imageHeelDeg,
-  toCsv, RIGSHOT_VERSION,
-  type Px, type Calibration, type Measurement, type Check, type RigShotResult, type Horizon,
-} from '../../lib/rigShot';
+  toCsv, SAILTRIM_VERSION,
+  type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
+} from '../../lib/sailTrim';
 import {
   detectHorizon, traceMastFromSeed, type Pixels, type HorizonResult, type MastTrace,
-} from '../../lib/rigShotCv';
+} from '../../lib/sailTrimCv';
 import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
   type RigModel, type Provenance,
@@ -103,7 +103,7 @@ interface Kept {
   psiMeasured: boolean;
 }
 
-export default function RigShotTab(
+export default function SailTrimTab(
   { boatName = '', initialFileUrl = '' }: { boatName?: string; initialFileUrl?: string } = {},
 ) {
   // ── image ─────────────────────────────────────────────────────────────────
@@ -727,7 +727,7 @@ export default function RigShotTab(
   }, []);
 
   // ── export ────────────────────────────────────────────────────────────────
-  const result = (): RigShotResult => {
+  const result = (): SailTrimResult => {
     const cal = calibration.cal;
     return {
       photo: fileName,
@@ -752,7 +752,7 @@ export default function RigShotTab(
       },
       checks,
       marks: { marks, mastMode, defn, focalMm, rig },
-      algorithmVersion: RIGSHOT_VERSION,
+      algorithmVersion: SAILTRIM_VERSION,
     };
   };
 
@@ -763,7 +763,7 @@ export default function RigShotTab(
     a.href = url; a.download = name; a.click();
     URL.revokeObjectURL(url);
   };
-  const base = () => (fileName.replace(/\.[^.]+$/, '') || 'rigshot');
+  const base = () => (fileName.replace(/\.[^.]+$/, '') || 'sailtrim');
 
   /**
    * A one-page report. SSA hands things over as PDF — nobody reads a CSV at a
@@ -806,14 +806,20 @@ export default function RigShotTab(
     };
 
     doc.setFontSize(16); doc.setTextColor(20); doc.setFont('helvetica', 'bold');
-    doc.text(safe(`RigShot — ${boat || 'unnamed boat'}`), M, y); y += 7;
+    doc.text(safe(`SailTrim — ${boat || 'unnamed boat'}`), M, y); y += 7;
     doc.setFont('helvetica', 'normal');
     line([fileName, capturedAt || '', `${imgSize.w}×${imgSize.h}`].filter(Boolean).join('   ·   '), 10);
     y += 2;
 
-    const picW = PW - 2 * M, picH = Math.min(120, (picW * H) / W);
+    // Fit the frame inside the box preserving its aspect. Clamping the HEIGHT
+    // while keeping the full column width - which is what this did - stretches a
+    // portrait frame sideways: 186 mm wide against a 120 mm cap is a 2:3 photo
+    // drawn at 3:2. Scale both sides by the same factor and centre the result.
+    const boxW = PW - 2 * M, boxH = 150;
+    const picScale = Math.min(boxW / W, boxH / H);
+    const picW = W * picScale, picH = H * picScale;
     need(picH + 4);
-    doc.addImage(pic, 'JPEG', M, y, picW, picH); y += picH + 7;
+    doc.addImage(pic, 'JPEG', M + (boxW - picW) / 2, y, picW, picH); y += picH + 7;
 
     // ── the numbers ──────────────────────────────────────────────────────────
     doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(20);
@@ -871,8 +877,8 @@ export default function RigShotTab(
 
     need(10);
     doc.setFontSize(7.5); doc.setTextColor(140);
-    doc.text(safe(`${RIGSHOT_VERSION}  ·  geometry per docs/rig-geometry-from-astern-2026-09.md`), M, PH - 8);
-    doc.save(`${base()}.rigshot.pdf`);
+    doc.text(safe(`${SAILTRIM_VERSION}  ·  geometry per docs/rig-geometry-from-astern-2026-09.md`), M, PH - 8);
+    doc.save(`${base()}.sailtrim.pdf`);
   };
 
   const keepFrame = () => {
@@ -989,7 +995,7 @@ export default function RigShotTab(
         </div>
 
         {/* steps */}
-        <div style={panel} data-testid="rigshot-steps">
+        <div style={panel} data-testid="sailtrim-steps">
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <div style={{ ...hdr, flex: 1 }}>Marks</div>
             <button style={{ ...btn(), padding: '3px 8px', fontSize: 10.5 }}
@@ -1311,11 +1317,11 @@ export default function RigShotTab(
           <div style={hdr}>Export</div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button style={btn()} disabled={!measurements.length}
-              onClick={() => download(JSON.stringify(result(), null, 2), `${base()}.rigshot.json`, 'application/json')}>
+              onClick={() => download(JSON.stringify(result(), null, 2), `${base()}.sailtrim.json`, 'application/json')}>
               JSON
             </button>
             <button style={btn()} disabled={!measurements.length}
-              onClick={() => download(toCsv(result()), `${base()}.rigshot.csv`, 'text/csv')}>
+              onClick={() => download(toCsv(result()), `${base()}.sailtrim.csv`, 'text/csv')}>
               CSV
             </button>
             <button style={btn(true)} disabled={!measurements.length} onClick={exportPdf}>
@@ -1327,7 +1333,7 @@ export default function RigShotTab(
                   const csv = toCsv({ ...result(), photo: k.photo, boat: k.boat, capturedAt: k.capturedAt, measurements: k.measurements });
                   return i === 0 ? csv : csv.split('\n').slice(1).join('\n');
                 }).join('\n'),
-                'rigshot-session.csv', 'text/csv')}>
+                'sailtrim-session.csv', 'text/csv')}>
               Session CSV
             </button>
           </div>

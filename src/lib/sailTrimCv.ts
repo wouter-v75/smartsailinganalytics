@@ -1,6 +1,6 @@
-// src/lib/rigShotCv.ts
+// src/lib/sailTrimCv.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// The two things RigShot can find in the picture by itself.
+// The two things SailTrim can find in the picture by itself.
 //
 //   detectHorizon()      the sea horizon — world-horizontal, by definition,
 //                        so the camera's roll for free and, with the mast, the
@@ -27,7 +27,7 @@
 // hundreds of columns; anything above a few px is not the horizon.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { mastAxisFromPoints, type Px, type MastAxis, type Horizon } from './rigShot'
+import { mastAxisFromPoints, type Px, type MastAxis, type Horizon } from './sailTrim'
 
 /** The subset of ImageData these need, so tests can hand over a plain object. */
 export interface Pixels {

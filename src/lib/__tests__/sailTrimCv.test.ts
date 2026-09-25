@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   theilSen, robustLine, detectHorizon, traceMastFromSeed, mastWidthAt,
   type Pixels,
-} from '../rigShotCv'
+} from '../sailTrimCv'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Synthetic frames. Every colour below is chosen against the real 5 Sept
@@ -41,7 +41,7 @@ function seascape(W = 1200, H = 800, tiltDeg = 0, yMid = H * 0.62) {
   return { canvas: c, horizonY, tiltDeg }
 }
 
-describe('rigShotCv — robust line fitting', () => {
+describe('sailTrimCv — robust line fitting', () => {
   it('Theil–Sen ignores a large minority of nonsense', () => {
     const xs: number[] = [], ys: number[] = []
     for (let x = 0; x < 100; x++) { xs.push(x); ys.push(3 + 0.5 * x) }
@@ -67,7 +67,7 @@ describe('rigShotCv — robust line fitting', () => {
   })
 })
 
-describe('rigShotCv — the horizon', () => {
+describe('sailTrimCv — the horizon', () => {
   it('recovers a level horizon', () => {
     const h = detectHorizon(seascape(1200, 800, 0).canvas)!
     expect(h).not.toBeNull()
@@ -135,7 +135,7 @@ function rigFrame(W = 900, H = 1600, tiltDeg = 17, bendPx = 0) {
   return { canvas: c, centreAt, tiltDeg }
 }
 
-describe('rigShotCv — tracing the mast from one click', () => {
+describe('sailTrimCv — tracing the mast from one click', () => {
   it('recovers the lean from a single seed', () => {
     const { canvas, centreAt } = rigFrame(900, 1600, 17)
     const y = 800
