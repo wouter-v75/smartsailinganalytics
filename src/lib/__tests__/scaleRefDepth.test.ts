@@ -120,6 +120,22 @@ describe('the rig model’s new references', () => {
     }
   })
 
+  it('carries Northstar 76’s sail widths out of the box, with no certificate pasted', () => {
+    // Twist divides a leech offset by the sail's width. Those widths lived
+    // behind "paste an IRC certificate", so a browser that had never done it
+    // showed no twist at all and did not say why. They are measured, endorsed
+    // and not going to change, so they ship.
+    const m = rigModelFor('Northstar 76')
+    expect(m.widths?.main).toEqual({ foot: 10.33, half: 7.04, threeQuarter: 4.93, upper: 3.63 })
+    expect(m.widths?.jib).toEqual({ foot: 8.96, half: 4.90, threeQuarter: 2.66, upper: 1.48 })
+    // and under the name the certificate uses too
+    expect(rigModelFor('NORTHSTAR III').widths?.jib?.half).toBe(4.90)
+  })
+
+  it('gives a boat we have no certificate for no widths, rather than Northstar’s', () => {
+    expect(rigModelFor('Jethou').widths?.main).toBeUndefined()
+  })
+
   it('leaves a boat nobody has measured on the honest guesses', () => {
     const m = rigModelFor('Jethou')
     expect(m.scaleRefs.find((r) => r.key === 'wheels')!.mm).toBe(0)

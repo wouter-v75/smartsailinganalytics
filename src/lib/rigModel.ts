@@ -249,6 +249,7 @@ export function defaultRigModel(boat = ''): RigModel {
 const MEASURED: Record<string, {
   scaleRefs?: Record<string, Partial<Pick<ScaleRef, 'mm' | 'sigmaMm' | 'depthMm' | 'source'>>>
   baselines?: Record<string, Partial<RigValue>>
+  widths?: { main?: SailWidths; jib?: SailWidths }
 }> = {
   'northstar 76': {
     scaleRefs: {
@@ -256,8 +257,18 @@ const MEASURED: Record<string, {
       // centres — the wheels themselves are the fuzzy part, not the tape.
       wheels: { mm: 3375, sigmaMm: 10, source: 'measured' },
     },
+    // Off Northstar III's own endorsed certificate (50945, GBR76X), tabulated
+    // in §8.2 of the doc. Here rather than behind a paste because they are
+    // measured, endorsed and not going to change — and because twist divides by
+    // them, so a tool that has them is a tool that works out of the box.
+    widths: {
+      main: { foot: 10.33, half: 7.04, threeQuarter: 4.93, upper: 3.63 },  // E, MHW, MTW, MUW
+      jib: { foot: 8.96, half: 4.90, threeQuarter: 2.66, upper: 1.48 },    // HLP, HHW, HTW, HUW
+    },
   },
 }
+// The certificate names the boat NORTHSTAR III; the app calls it Northstar 76.
+MEASURED['northstar iii'] = MEASURED['northstar 76']
 
 /** Apply the measured numbers for a boat on top of a model. */
 export function withMeasured(m: RigModel): RigModel {
@@ -267,6 +278,7 @@ export function withMeasured(m: RigModel): RigModel {
     ...m,
     scaleRefs: m.scaleRefs.map((r) => ({ ...r, ...(known.scaleRefs?.[r.key] || {}) })),
     baselines: m.baselines.map((b) => ({ ...b, ...(known.baselines?.[b.key] || {}) })),
+    widths: { ...(known.widths || {}), ...(m.widths || {}) },
   }
 }
 
@@ -327,7 +339,10 @@ function readStore(): Store {
  * edits; the default only fills gaps.
  */
 export function migrateRigModel(stored: RigModel, boat = stored.boat): RigModel {
-  const base = defaultRigModel(boat)
+  // `withMeasured`, not the bare default: a model stored before a boat's real
+  // numbers were known should pick them up, which is the whole point of
+  // migrating rather than returning it verbatim.
+  const base = withMeasured(defaultRigModel(boat))
   return {
     ...base,
     ...stored,
