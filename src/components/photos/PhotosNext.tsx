@@ -11,6 +11,10 @@ import { setUiNext } from '@/lib/ui-flags'
 // grid + a design-system lightbox. Behind ?ui=next.
 interface Photo {
   id: string; objectUrl?: string | null; lqip?: string | null; utc?: number | null
+  /** The full-resolution original. `objectUrl` is the 480 px thumb for anyone
+   *  who did not import the photo themselves, so the grid uses that and the
+   *  detail view uses this. */
+  fullUrl?: string | null
   name?: string | null; sails?: string[]; tws?: number | null; twa?: number | null
   heel?: number | null; bsp?: number | null
 }
@@ -88,7 +92,8 @@ export default function PhotosNext({
       <Dialog open={!!sel} onOpenChange={(o) => { if (!o) setSel(null) }}>
         {sel && (
           <DialogContent title={sel.name || 'Photo'}>
-            {sel.objectUrl && <img src={sel.objectUrl} alt="" className="w-full rounded" />}
+            {/* the original, not the 480 px thumb the grid uses */}
+            {(sel.fullUrl || sel.objectUrl) && <img src={(sel.fullUrl || sel.objectUrl) as string} alt="" className="w-full rounded" />}
             <div className="mt-3 flex flex-wrap gap-2">
               {r(sel.tws) != null && <Badge tone="accent">TWS {r(sel.tws)} kt</Badge>}
               {r(sel.twa) != null && <Badge>TWA {r(sel.twa)}°</Badge>}
