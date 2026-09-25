@@ -410,9 +410,19 @@ export default function SailTrimTab(
     const active = steps[activeStep];
     const filling = active ? (marks[active.key] || []).length < active.max : false;
     const threshold = ((filling ? NEAR_PX_WHILE_FILLING : NEAR_PX) * imageScale()) / zoom;
+    // While a step is still being FILLED, only its own marks can be grabbed.
+    // Searching every step meant a click meant as the next leech point could
+    // land near the spreader-2 mark, or a mast-line end, and silently DRAG that
+    // one instead — no new point, and a calibration mark quietly moved. With
+    // eight or ten marks on a frame that is a real chance every click, and the
+    // damage is invisible until the numbers come out wrong.
+    //
+    // Once the step is full the radius widens and every mark is grabbable again,
+    // which is what makes going back to nudge one work.
+    const searchable = filling && active ? [active] : steps;
     let best: { step: string; idx: number } | null = null;
     let bestD = threshold;
-    for (const s of steps) {
+    for (const s of searchable) {
       (marks[s.key] || []).forEach((m, i) => {
         const d = Math.hypot(m.x - p.x, m.y - p.y);
         if (d < bestD) { bestD = d; best = { step: s.key, idx: i }; }
