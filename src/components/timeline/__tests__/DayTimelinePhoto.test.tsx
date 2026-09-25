@@ -181,14 +181,55 @@ describe('DayTimeline — photos', () => {
     expect(screen.queryByText(/Analyse sail geometry/)).toBeNull()
   })
 
+  it('shows ONE card per burst — the middle frame — and says how many it stands for', async () => {
+    // 2026-09-04 put 24 frames into three seconds. On a time axis they stack into
+    // each other and read as one picture repeated.
+    const at = (sec: number) => new Date(T0 + sec * 1000).toISOString()
+    photos = [
+      ...Array.from({ length: 5 }, (_, i) => photoRow({ id: `b${i}`, taken_utc: at(100 + i), bunny_storage_path: `p/b${i}.jpg` })),
+      photoRow({ id: 'lonely', taken_utc: at(900), bunny_storage_path: 'p/z.jpg' }),
+    ]
+    await show()
+    // Two cards, not six.
+    expect(document.querySelectorAll('img')).toHaveLength(2)
+    // And the burst card says so.
+    expect(screen.getByTitle('5 frames in this burst')).toBeTruthy()
+    expect(screen.getByText('⧉5')).toBeTruthy()
+  })
+
+  it('opens the MIDDLE frame of a burst, and steps to the others', async () => {
+    const at = (sec: number) => new Date(T0 + sec * 1000).toISOString()
+    photos = Array.from({ length: 5 }, (_, i) =>
+      photoRow({ id: `b${i}`, taken_utc: at(100 + i), bunny_storage_path: `p/b${i}.jpg` }))
+    await show()
+    await openLightbox()
+    // Five frames → the third, so neither end of the burst represents it.
+    await waitFor(() => expect(screen.getByText(/frame 3 of 5/)).toBeTruthy())
+    await act(async () => { fireEvent.click(screen.getByText(/prev/)) })
+    expect(screen.getByText(/frame 2 of 5/)).toBeTruthy()
+    await act(async () => { fireEvent.click(screen.getByText(/next/)) })
+    await act(async () => { fireEvent.click(screen.getByText(/next/)) })
+    expect(screen.getByText(/frame 4 of 5/)).toBeTruthy()
+    // The hidden frames are reachable, which is the point of the stepper.
+    expect(screen.getByText(/a 4s burst/)).toBeTruthy()
+  })
+
+  it('leaves a lone photograph alone — no chip, no stepper', async () => {
+    await show()
+    expect(screen.queryByText(/frames in this burst/)).toBeNull()
+    await openLightbox()
+    expect(screen.queryByText(/frame \d+ of/)).toBeNull()
+  })
+
   it('prints seconds when a minute holds a burst, so the frames are telling apart', async () => {
     // 2026-09-04's leeway set put 24 frames into 11:50 and 17 into 11:49. The
     // card shows HH:MM, so two dozen genuinely different photographs read as two
     // dozen copies of one — which is exactly how it was reported.
+    // More than a burst apart, so each is its own card, but inside one minute.
     const at = (s: number) => new Date(T0 + s * 1000).toISOString()
     photos = [
-      photoRow({ id: 'a', taken_utc: at(10), bunny_storage_path: 'p/a.jpg' }),
-      photoRow({ id: 'b', taken_utc: at(16), bunny_storage_path: 'p/b.jpg' }),
+      photoRow({ id: 'a', taken_utc: at(11), bunny_storage_path: 'p/a.jpg' }),
+      photoRow({ id: 'b', taken_utc: at(26), bunny_storage_path: 'p/b.jpg' }),
       photoRow({ id: 'c', taken_utc: at(41), bunny_storage_path: 'p/c.jpg' }),
       photoRow({ id: 'lonely', taken_utc: at(3600), bunny_storage_path: 'p/d.jpg' }),
     ]

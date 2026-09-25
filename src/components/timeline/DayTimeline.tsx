@@ -10,6 +10,7 @@ import PhotoViewer from '@/components/photos/PhotoViewer'
 import SailGeometryCard, { MeasureGeometryButton } from '@/components/photos/SailGeometryCard'
 import { isAnnotation, annotationHeadline, type SailTrimAnnotation } from '@/lib/sailTrimOverlay'
 import { savePhotoSailTrim, type PhotoRow } from '@/lib/savePhotoSailTrim'
+import { groupBursts } from '@/lib/burstGroup'
 
 // The digitiser is a big component with its own CDN libraries; almost nobody
 // scrolling a timeline opens it, so it arrives as its own chunk on demand.
@@ -62,6 +63,9 @@ const COMMENT_C = '#7F77DD'
 // gybes → downwind, balanced/none → reach).
 const LEG_C: Record<string, string> = { upwind: '#EF4444', reach: '#F59E0B', downwind: '#22C55E' }
 const LEG_ORDER = ['upwind', 'reach', 'downwind'] as const
+/** Frames closer together than this are one burst. */
+const BURST_GAP_MS = 10_000
+
 const hms = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 16)
 /** With seconds — for frames from a burst, which share a minute. */
 const hmsSec = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 19)
@@ -253,7 +257,20 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const videos = React.useMemo(() => (media || []).filter((m) => m.type === 'video'), [media])
   const droneVideos = React.useMemo(() => videos.filter(isDroneClip), [videos])
   const onboardVideos = React.useMemo(() => videos.filter((m) => !isDroneClip(m)), [videos])
-  const photos = React.useMemo(() => (media || []).filter((m) => m.type === 'photo'), [media])
+  // Photographs come off a motor drive: 2026-09-04 has 41 of its 61 frames in
+  // two bursts, three and five seconds long. On a time axis those stack into one
+  // another and read as the same picture repeated. One card per burst, showing
+  // the middle frame, with the rest reachable from it.
+  const photoBursts = React.useMemo(
+    () => groupBursts((media || []).filter((m) => m.type === 'photo'), (m) => m.t, BURST_GAP_MS),
+    [media],
+  )
+  const photos = React.useMemo(() => photoBursts.map((b) => b.lead), [photoBursts])
+  /** Every frame of the burst a given lead stands for. */
+  const burstOf = React.useCallback(
+    (m: MediaItem) => photoBursts.find((b) => b.frames.some((f) => f.id === m.id)) || null,
+    [photoBursts],
+  )
   const scanItems = React.useMemo(() => (media || []).filter((m) => m.type === 'sailscan'), [media])
   const noteItems = React.useMemo(() => (media || []).filter((m) => m.type === 'comment'), [media])
 
@@ -524,7 +541,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
           {vPlaced.map(({ m, y }, i) => { const cy = y + G.VIDEO_H / 2, mag = magFor(G.VIDEO_X, G.VIDEO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.VIDEO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} onClick={() => clickMedia(m)} /> })}
           {dPlaced.map(({ m, y }, i) => { const cy = y + G.DRONE_H / 2, mag = magFor(G.DRONE_X, G.DRONE_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.DRONE_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.DRONE_X} y={y} w={G.DRONE_W} h={G.DRONE_H} color={DRONE_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} onClick={() => clickMedia(m)} /> })}
-          {pPlaced.map(({ m, y }, i) => { const cy = y + G.PHOTO_H / 2, mag = magFor(G.PHOTO_X, G.PHOTO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.PHOTO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} onClick={() => clickMedia(m)} /> })}
+          {pPlaced.map(({ m, y }, i) => { const cy = y + G.PHOTO_H / 2, mag = magFor(G.PHOTO_X, G.PHOTO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.PHOTO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} burstCount={burstOf(m)?.frames.length || 1} onClick={() => clickMedia(m)} /> })}
           {sPlaced.map(({ m, y }, i) => { const cy = y + G.SCAN_H / 2, mag = magFor(G.SCAN_X, G.SCAN_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.SCAN_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.SCAN_X} y={y} w={G.SCAN_W} h={G.SCAN_H} color={SCAN_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} onClick={() => clickMedia(m)} /> })}
 
           {nPlaced.map(({ m, y }, i) => { const cy = y + G.NOTE_H / 2, mag = magFor(G.NOTE_X, G.NOTE_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.NOTE_H * 0.55 : 0; return <CommentCard key={m.id} m={m} x={G.NOTE_X} y={y} w={G.NOTE_W} h={G.NOTE_H} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
@@ -579,6 +596,29 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
               inst={openPhoto.inst || {}}
               sailTrim={openPhoto.sailTrim || null}
               height="68vh" />
+            {(() => {
+              // Stepping through the burst the card stands for. Without this the
+              // other 23 frames of 11:50 would be visible only in the Photos tab,
+              // which is hiding data rather than tidying it.
+              const b = burstOf(openPhoto)
+              if (!b || b.frames.length < 2) return null
+              const i = b.frames.findIndex((f) => f.id === openPhoto.id)
+              const go = (d: number) => setOpenPhoto(b.frames[Math.min(b.frames.length - 1, Math.max(0, i + d))])
+              return (
+                <div className="mb-2 flex items-center gap-2">
+                  <button onClick={() => go(-1)} disabled={i <= 0}
+                    className="rounded-md border border-[color:var(--border)] px-2 py-1 text-xs disabled:opacity-40">← prev</button>
+                  <span className="font-mono text-xs text-muted">
+                    frame {i + 1} of {b.frames.length} · {hmsSec(openPhoto.t, tz)}
+                  </span>
+                  <button onClick={() => go(1)} disabled={i >= b.frames.length - 1}
+                    className="rounded-md border border-[color:var(--border)] px-2 py-1 text-xs disabled:opacity-40">next →</button>
+                  <span className="ml-auto text-[11px] text-muted">
+                    a {((b.t1 - b.t0) / 1000).toFixed(0)}s burst — the timeline shows its middle frame
+                  </span>
+                </div>
+              )
+            })()}
             {openPhoto.sailTrim
               ? <SailGeometryCard
                   annotation={openPhoto.sailTrim.annotation}
@@ -634,11 +674,14 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 // driven by the cursor's proximity (macOS-Dock fisheye): `mag` is this card's
 // scale, `push` nudges it away from the cursor so the lens spreads cleanly, and
 // `focused` (card right under the cursor) reveals its sail / event / TWS / TWA.
-function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, onClick, showSeconds = false }: {
+function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, onClick, showSeconds = false, burstCount = 1 }: {
   m: MediaItem; x: number; y: number; w: number; h: number; color: string; tz: number
   index: number; mag: number; push: number; focused: boolean
   /** Several frames share this minute (a burst), so print the seconds. */
-  showSeconds?: boolean; ev: TimelineNode | null; onClick: () => void
+  showSeconds?: boolean
+  /** How many frames this card stands for; >1 draws the burst chip. */
+  burstCount?: number
+  ev: TimelineNode | null; onClick: () => void
 }) {
   const evStyle = ev ? EVENT_STYLE[ev.kind] : null
   const racing = racingTagsOf(m.tags)
@@ -653,6 +696,12 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
         {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="tl-parallax-img h-full w-full object-cover" />
           : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : m.type === 'sailscan' ? <Sailboat size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
         <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{showSeconds ? hmsSec(m.t, tz) : hms(m.t, tz)}</span>
+        {burstCount > 1 && (
+          // Says the card stands for more than it shows, so the other frames are
+          // hidden rather than lost.
+          <span className="absolute right-1 top-1 rounded bg-black/70 px-1 py-px font-mono text-[9px] font-semibold text-white/90"
+                title={`${burstCount} frames in this burst`}>⧉{burstCount}</span>
+        )}
         {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${focused ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}
 
         {/* Racing tags — ALWAYS on the card (not hover-only), so the manoeuvres are
