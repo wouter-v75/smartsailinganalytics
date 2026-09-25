@@ -1,6 +1,7 @@
 'use client'
 import * as React from 'react'
 import dynamic from 'next/dynamic'
+import { createPortal } from 'react-dom'
 import { Play, Camera, ZoomIn, ZoomOut, Sailboat, MessageSquare } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
@@ -62,6 +63,8 @@ const COMMENT_C = '#7F77DD'
 const LEG_C: Record<string, string> = { upwind: '#EF4444', reach: '#F59E0B', downwind: '#22C55E' }
 const LEG_ORDER = ['upwind', 'reach', 'downwind'] as const
 const hms = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 16)
+/** With seconds — for frames from a burst, which share a minute. */
+const hmsSec = (ms: number, tz: number) => new Date(ms + tz * 60000).toISOString().slice(11, 19)
 const r = (v?: number | null, d = 0) => (v == null ? null : v.toFixed(d))
 
 function chipStyle(t: string): { bg: string; c: string; bd: string } {
@@ -152,6 +155,8 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [media, setMedia] = React.useState<MediaItem[] | null>(null)
   const [openPhoto, setOpenPhoto] = React.useState<MediaItem | null>(null)
   const [geomFor, setGeomFor] = React.useState<MediaItem | null>(null)
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => { setMounted(true) }, [])
 
   // Measuring from the timeline writes to the SAME shared row the Photos tab
   // writes to, so a measurement made here is a measurement everybody has.
@@ -435,6 +440,19 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   }
   const onTouchEnd = (e: React.TouchEvent) => { if (e.touches.length < 2) pinch.current = null }
 
+  // A photographer firing a burst puts 24 frames in one minute — 09-04's leeway
+  // set does exactly that — and the card label only shows HH:MM, so two dozen
+  // genuinely different frames read as two dozen copies of one. Where a minute
+  // holds more than one, the cards in it get their seconds.
+  const crowdedMinutes = React.useMemo(() => {
+    const n = new Map<string, number>()
+    for (const m of media || []) {
+      const k = `${m.type}|${hms(m.t, tz)}`
+      n.set(k, (n.get(k) || 0) + 1)
+    }
+    return new Set(Array.from(n).filter(([, c]) => c > 1).map(([k]) => k))
+  }, [media, tz])
+
   const clickMedia = (m: MediaItem) =>
     m.type === 'video' ? (onPlayVideo ? onPlayVideo(m.id) : setOpenVideo(m))
       : m.type === 'sailscan' ? setOpenScan(m)
@@ -504,10 +522,10 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
             <div className="pointer-events-none absolute z-[60] rounded bg-[color:var(--accent)] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[color:var(--accent-fg)]" style={{ left: 0, top: cursor.y - 9 }}>{hms(cursor.t, tz)}</div>
           )}
 
-          {vPlaced.map(({ m, y }, i) => { const cy = y + G.VIDEO_H / 2, mag = magFor(G.VIDEO_X, G.VIDEO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.VIDEO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
-          {dPlaced.map(({ m, y }, i) => { const cy = y + G.DRONE_H / 2, mag = magFor(G.DRONE_X, G.DRONE_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.DRONE_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.DRONE_X} y={y} w={G.DRONE_W} h={G.DRONE_H} color={DRONE_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
-          {pPlaced.map(({ m, y }, i) => { const cy = y + G.PHOTO_H / 2, mag = magFor(G.PHOTO_X, G.PHOTO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.PHOTO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
-          {sPlaced.map(({ m, y }, i) => { const cy = y + G.SCAN_H / 2, mag = magFor(G.SCAN_X, G.SCAN_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.SCAN_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.SCAN_X} y={y} w={G.SCAN_W} h={G.SCAN_H} color={SCAN_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
+          {vPlaced.map(({ m, y }, i) => { const cy = y + G.VIDEO_H / 2, mag = magFor(G.VIDEO_X, G.VIDEO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.VIDEO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.VIDEO_X} y={y} w={G.VIDEO_W} h={G.VIDEO_H} color={VIDEO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} onClick={() => clickMedia(m)} /> })}
+          {dPlaced.map(({ m, y }, i) => { const cy = y + G.DRONE_H / 2, mag = magFor(G.DRONE_X, G.DRONE_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.DRONE_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.DRONE_X} y={y} w={G.DRONE_W} h={G.DRONE_H} color={DRONE_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} onClick={() => clickMedia(m)} /> })}
+          {pPlaced.map(({ m, y }, i) => { const cy = y + G.PHOTO_H / 2, mag = magFor(G.PHOTO_X, G.PHOTO_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.PHOTO_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.PHOTO_X} y={y} w={G.PHOTO_W} h={G.PHOTO_H} color={PHOTO_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} onClick={() => clickMedia(m)} /> })}
+          {sPlaced.map(({ m, y }, i) => { const cy = y + G.SCAN_H / 2, mag = magFor(G.SCAN_X, G.SCAN_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.SCAN_H * 0.55 : 0; return <MediaCard key={m.id} m={m} x={G.SCAN_X} y={y} w={G.SCAN_W} h={G.SCAN_H} color={SCAN_C} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} showSeconds={crowdedMinutes.has(`${m.type}|${hms(m.t, tz)}`)} onClick={() => clickMedia(m)} /> })}
 
           {nPlaced.map(({ m, y }, i) => { const cy = y + G.NOTE_H / 2, mag = magFor(G.NOTE_X, G.NOTE_W, cy), push = ptr ? Math.sign(cy - ptr.y) * (mag - 1) * G.NOTE_H * 0.55 : 0; return <CommentCard key={m.id} m={m} x={G.NOTE_X} y={y} w={G.NOTE_W} h={G.NOTE_H} tz={tz} index={Math.min(i, 12)} mag={mag} push={push} focused={mag > 1 + MAG_AMP * 0.6} ev={nearestEvent(m.t)} onClick={() => clickMedia(m)} /> })}
 
@@ -517,9 +535,15 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         </div>
       </div>
 
-      {geomFor && (
+      {geomFor && mounted && createPortal((
+        // PORTALLED to <body>, and above the app's own Dialog (z-1100).
+        // `fixed` is not enough here: the timeline's cards carry zIndex 100 and
+        // up (to ~300 when magnified) and sit inside transformed ancestors, so a
+        // z-index set within that subtree competes with the thumbnails instead of
+        // covering them — which is exactly how the digitiser came to open BEHIND
+        // them. Leaving the stacking context is the fix; raising the number is not.
         <div role="dialog" aria-modal="true" aria-label="Sail geometry"
-             className="fixed inset-0 z-[80] flex flex-col bg-[#030F1A]">
+             className="fixed inset-0 z-[1200] flex flex-col bg-[#030F1A]">
           <div className="flex shrink-0 items-center gap-3 border-b border-[#1E3A5A] bg-[#0F2A45] px-3 py-2">
             <button onClick={() => { setOpenPhoto(geomFor); setGeomFor(null) }}
               className="rounded-md border border-[#1E3A5A] bg-[#0A1929] px-3 py-1.5 text-[12.5px] font-semibold text-[#E2E8F0]">
@@ -541,7 +565,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
               }} />
           </div>
         </div>
-      )}
+      ), document.body)}
 
       <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
         {openPhoto && (
@@ -610,23 +634,25 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 // driven by the cursor's proximity (macOS-Dock fisheye): `mag` is this card's
 // scale, `push` nudges it away from the cursor so the lens spreads cleanly, and
 // `focused` (card right under the cursor) reveals its sail / event / TWS / TWA.
-function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, onClick }: {
+function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, onClick, showSeconds = false }: {
   m: MediaItem; x: number; y: number; w: number; h: number; color: string; tz: number
-  index: number; mag: number; push: number; focused: boolean; ev: TimelineNode | null; onClick: () => void
+  index: number; mag: number; push: number; focused: boolean
+  /** Several frames share this minute (a burst), so print the seconds. */
+  showSeconds?: boolean; ev: TimelineNode | null; onClick: () => void
 }) {
   const evStyle = ev ? EVENT_STYLE[ev.kind] : null
   const racing = racingTagsOf(m.tags)
   return (
     <button
       onClick={onClick}
-      title={m.type === 'video' ? (m.title || 'Play video') : hms(m.t, tz)}
+      title={m.type === 'video' ? (m.title || 'Play video') : hmsSec(m.t, tz)}
       className="tl-card-in absolute overflow-visible rounded-lg text-left shadow-md transition-[transform,box-shadow] duration-[110ms] ease-out will-change-transform motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
       style={{ left: x, top: y, width: w, height: h, transformOrigin: 'center', ['--i' as any]: index, zIndex: 100 + Math.round((mag - 1) * 200), boxShadow: focused ? '0 8px 26px rgba(0,0,0,0.45)' : undefined, transform: `translateY(${push.toFixed(1)}px) scale(${mag.toFixed(3)})` }}
     >
       <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ border: `2px solid ${color}`, background: 'var(--surface-2)' }}>
         {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="tl-parallax-img h-full w-full object-cover" />
           : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : m.type === 'sailscan' ? <Sailboat size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
-        <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{hms(m.t, tz)}</span>
+        <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{showSeconds ? hmsSec(m.t, tz) : hms(m.t, tz)}</span>
         {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${focused ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}
 
         {/* Racing tags — ALWAYS on the card (not hover-only), so the manoeuvres are
