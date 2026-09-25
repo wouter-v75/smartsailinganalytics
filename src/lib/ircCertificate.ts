@@ -288,7 +288,9 @@ export function rigModelFromIrc(cert: IrcCertificate, opts: { spreaderHeightM?: 
   const scaleRefs = [...base.scaleRefs]
   const put = (key: string, label: string, mm: number, sigmaMm: number, source: Provenance) => {
     const i = scaleRefs.findIndex((s) => s.key === key)
-    const entry = { key, label, mm, sigmaMm, source, depthMm: 0 }
+    // Both of these run UP THE RIG, so ψ does not foreshorten them — which is
+    // what makes them the right scale for a shot well off the centreplane.
+    const entry = { key, label, mm, sigmaMm, source, depthMm: 0, orientation: 'vertical' as const }
     if (i >= 0) scaleRefs[i] = entry; else scaleRefs.unshift(entry)
   }
   if (p) {

@@ -7,6 +7,7 @@ import {
   type Px, type Calibration,
   tackFromTwa, leewardSign,
   centreplaneFoot,
+  unbiasAthwartshipsScale,
 } from '../sailTrim'
 import {
   makeCamera, RIG, MAST_HALF_WIDTH, SPREADER_HALF, SPREADER_Z, TACK, TRANSOM,
@@ -387,6 +388,115 @@ describe('sailTrim — measured from the CENTREPLANE, not the mast line', () => 
 
     const never = runChecks(buildCalibration(RIG, { psiBaseline: false })).find((x) => x.key === 'psi')!
     expect(never.detail).toMatch(/no centreplane baseline marked/)
+  })
+})
+
+describe('sailTrim — a camera WELL off the centreplane', () => {
+  // The shots are actually taken 10-20 degrees off, not one. Everything here is
+  // measured against the full perspective camera in support/rigCamera, so these
+  // are the method's real errors rather than its intentions.
+  const CLEW = { y: 1_500, d: -1_100 }
+  const BOOM = { y: 900, d: -10_330 }
+
+  /** Calibrate the way the tool does, with either kind of scale reference. */
+  function measure(psiDeg: number, ref: 'athwart' | 'vertical') {
+    const rig: Rig = { ...RIG, psiDeg }
+    const P = makeCamera(rig)
+    const axis = mastAxisFromPoints(P(0, 0, 3_000), P(0, 0, 30_000))!
+    let mmPerPx = ref === 'athwart'
+      ? mmPerPxFromReference(P(0, -SPREADER_HALF, SPREADER_Z), P(0, SPREADER_HALF, SPREADER_Z), 2 * SPREADER_HALF)!
+      : mmPerPxFromReference(P(0, 0, 2_000), P(0, 0, 29_000), 27_000)!
+    const baseline = {
+      aft: P(TRANSOM.x, 0, TRANSOM.z), fwd: P(TACK.x, 0, TACK.z),
+      separationMm: TACK.x - TRANSOM.x,
+    }
+    let psi = solvePsi(baseline, axis.across, mmPerPx, rig.heelDeg, { clickSigmaPx: 0 })
+    if (ref === 'athwart') {
+      const fixed = unbiasAthwartshipsScale(mmPerPx, psi.deg)
+      mmPerPx = fixed.mmPerPxAtMast
+      psi = solvePsi(baseline, axis.across, mmPerPx, rig.heelDeg, { clickSigmaPx: 0 })
+    }
+    const cal: Calibration = {
+      axis, mmPerPxAtMast: mmPerPx, scaleRelSigma: 0.002,
+      rangeMm: rangeMmFrom({ widthMm: rig.sensorWidthMm, focalLengthMm: rig.focalMm, imageLongEdgePx: rig.imgW }, mmPerPx),
+      psi, heelDeg: rig.heelDeg, heelSigmaDeg: 0.5, clickSigmaPx: 0, tack: 'port',
+    }
+    const at = (t: { y: number; d: number }) => measureTarget(cal, {
+      key: 'x', label: 'x', point: P(t.d, t.y, 8_000), depthMm: t.d, depthSigmaMm: 0,
+    })
+    return { psi: cal.psi.deg, clew: at(CLEW), boom: at(BOOM) }
+  }
+
+  it('recovers psi to better than a tenth of a degree, out to 25°', () => {
+    // The bias an athwartships reference puts in is exact and invertible:
+    // sin(psi_measured) = tan(psi_true). Left in, 20° reads as 21.4°.
+    for (const psiDeg of [5, 10, 15, 20, 25]) {
+      expect(Math.abs(measure(psiDeg, 'athwart').psi - psiDeg)).toBeLessThan(0.1)
+    }
+    // A vertical reference needs no un-biasing and gets none, so what is left is
+    // the projection's own residual: under 0.2° to 15°, 0.6° by 25°. Worth
+    // recording rather than smoothing over — it is the better reference for the
+    // SCALE and the slightly worse one for psi.
+    expect(Math.abs(measure(15, 'vertical').psi - 15)).toBeLessThan(0.2)
+    expect(Math.abs(measure(25, 'vertical').psi - 25)).toBeLessThan(0.6)
+  })
+
+  it('un-biases an athwartships scale — without it 20° costs 6 % on the clew', () => {
+    const rig: Rig = { ...RIG, psiDeg: 20 }
+    const P = makeCamera(rig)
+    const raw = mmPerPxFromReference(
+      P(0, -SPREADER_HALF, SPREADER_Z), P(0, SPREADER_HALF, SPREADER_Z), 2 * SPREADER_HALF)!
+    const truth = mmPerPxFromReference(P(0, 0, 2_000), P(0, 0, 29_000), 27_000)!
+    // Biased HIGH, by about sec(20°) = 1.064 — not exactly, because a real
+    // perspective camera is not a scaled-orthographic one, which is the whole
+    // reason a residual survives this correction.
+    expect(raw / truth).toBeGreaterThan(1.03)
+    expect(raw / truth).toBeLessThan(1.08)
+    const fixed = unbiasAthwartshipsScale(raw, Math.asin(Math.tan(20 * Math.PI / 180)) / (Math.PI / 180))
+    // Most of it removed: ~5 % out becomes ~1.2 %. Not zero — the leftover is
+    // the perspective the scaled-orthographic model does not carry.
+    expect(Math.abs(fixed.mmPerPxAtMast / truth - 1)).toBeLessThan(0.02)
+    expect(Math.abs(fixed.mmPerPxAtMast / truth - 1))
+      .toBeLessThan(Math.abs(raw / truth - 1) / 3)
+    expect(fixed.psiDeg).toBeCloseTo(20, 0)
+  })
+
+  it('holds the NEAR targets to about 1 % all the way out to 20°', () => {
+    // The clew is a metre abaft the mast; it barely feels psi.
+    for (const ref of ['athwart', 'vertical'] as const) {
+      for (const psiDeg of [5, 10, 15, 20]) {
+        const err = Math.abs(measure(psiDeg, ref).clew.boatFrameMm / CLEW.y - 1)
+        expect(err).toBeLessThan(0.015)
+      }
+    }
+  })
+
+  it('loses a few per cent on the BOOM, and the sigma now admits it', () => {
+    // 10 m abaft the mast is where the small-angle projection shows. This is a
+    // MODELLING residual — it does not average away — so the test pins the size
+    // rather than pretending it is not there.
+    const at15 = measure(15, 'vertical').boom
+    const err = Math.abs(at15.boatFrameMm / BOOM.y - 1)
+    expect(err).toBeGreaterThan(0.01)
+    expect(err).toBeLessThan(0.06)
+    // The reported uncertainty covers it, which is the least it can do.
+    expect(at15.boatFrameSigmaMm).toBeGreaterThan(Math.abs(at15.boatFrameMm - BOOM.y))
+    // and it grows with psi, rather than being a fixed fudge
+    const at5 = measure(5, 'vertical').boom
+    expect(at5.boatFrameSigmaMm).toBeLessThan(at15.boatFrameSigmaMm)
+  })
+
+  it('says out loud that the shot is well off the centreplane', () => {
+    const rig: Rig = { ...RIG, psiDeg: 15 }
+    const cal = buildCalibration(rig)
+    const c = runChecks({ ...cal, psi: { deg: 15, sigmaDeg: 0.1, measured: true } })
+      .find((x) => x.key === 'psi-large')!
+    expect(c).toBeTruthy()
+    expect(c.ok).toBe(false)
+    expect(c.detail).toMatch(/small-angle/)
+    expect(c.detail).toMatch(/VERTICAL scale reference/)
+    // and does NOT nag at the angles the model is comfortable at
+    expect(runChecks(buildCalibration(RIG)).find((x) => x.key === 'psi-large')).toBeUndefined()
   })
 })
 
