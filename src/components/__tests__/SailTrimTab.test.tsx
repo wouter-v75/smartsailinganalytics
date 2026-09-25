@@ -126,12 +126,13 @@ function click(p: Px) {
 const stepButton = (label: string) =>
   within(screen.getByTestId('sailtrim-steps')).getByText(label)
 
-/** jsdom has no 2D canvas, so the one-click trace has nothing to trace — the
- *  manual edge flow is the one that can be driven here, and reaching it is
- *  itself worth asserting. */
+/** The four-click edge flow. The default is now two points on the centreline
+ *  (see `useLineMast`); the edge flow is still what most of these tests drive,
+ *  because it exercises the bisection as well as the axis. */
 function useManualMast() {
-  fireEvent.click(screen.getByText('mark mast by hand'))
+  fireEvent.click(screen.getByText('edges'))
 }
+
 
 async function openAFrame() {
   sizeCanvas()
@@ -151,9 +152,9 @@ describe('SailTrimTab', () => {
     render(<SailTrimTab />)
     expect(screen.getByText(/Open an astern frame/)).toBeTruthy()
     expect(screen.getByText(/rotated to stand the/)).toBeTruthy()
-    // the workflow is visible before anything is loaded, and the mast starts
-    // as one click rather than four
-    expect(stepButton('Mast')).toBeTruthy()
+    // the workflow is visible before anything is loaded, and the mast starts as
+    // two points on the centreline — a straight line where the operator put it
+    expect(stepButton('Mast centreline')).toBeTruthy()
     expect(stepButton('Jib clew')).toBeTruthy()
     useManualMast()
     expect(stepButton('Mast edges, low')).toBeTruthy()
@@ -221,6 +222,55 @@ describe('SailTrimTab', () => {
     // and the frame reports itself as fully calibrated
     expect(screen.queryByText(/no centreplane baseline marked/)).toBeNull()
     expect(screen.getByText(/range ≈ 260 m/)).toBeTruthy()
+  })
+
+  it('takes the mast axis as the straight line through two marks, and nothing else', async () => {
+    // The default. The traced alternative follows the mast's edge and can wander
+    // onto a shroud or the sail; asked for a straight line between two markers,
+    // the tool must give exactly that — so the recovered axis is checked against
+    // the camera model's own projection of the mast, not against itself.
+    const P = makeCamera(RIG)
+    const saves: SailTrimSave[] = []
+    render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+
+    // two points on the CENTRELINE, low and high
+    const low = P(0, 0, 3_000), high = P(0, 0, 29_000)
+    click(low); click(high)
+    await waitFor(() =>
+      expect(within(screen.getByTestId('sailtrim-steps')).getByText('2/2')).toBeTruthy())
+
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    fireEvent.click(stepButton('Jib clew'))
+    click(P(-1_100, 1_500, 2_000))
+
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(1))
+    const reading = Number(screen.getByText(/\u00B1 \d+ mm/).parentElement!.textContent!.match(/^(\d+)/)![1])
+    expect(Math.abs(reading - 1_500)).toBeLessThan(25)
+
+    // The axis that travels is the two marks THEMSELVES — not a fit through
+    // them, not a trace, not a smoothed version. This is the whole request.
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(1))
+    const axis = saves[0].annotation.axis!
+    // `low` is the larger image y, whichever order they were clicked in.
+    const want = low.y >= high.y ? { lo: low, hi: high } : { lo: high, hi: low }
+    expect(axis.low.x).toBeCloseTo(want.lo.x, 6)
+    expect(axis.low.y).toBeCloseTo(want.lo.y, 6)
+    expect(axis.high.x).toBeCloseTo(want.hi.x, 6)
+    expect(axis.high.y).toBeCloseTo(want.hi.y, 6)
+  })
+
+  it('offers the traced mast as an alternative, not as the default', async () => {
+    render(<SailTrimTab />)
+    await openAFrame()
+    expect(stepButton('Mast centreline')).toBeTruthy()
+    fireEvent.click(screen.getByText('auto-trace'))
+    expect(stepButton('Mast')).toBeTruthy()
+    fireEvent.click(screen.getByText('two points'))
+    expect(stepButton('Mast centreline')).toBeTruthy()
   })
 
   it('measures the clew and the boom as well as the leech', async () => {

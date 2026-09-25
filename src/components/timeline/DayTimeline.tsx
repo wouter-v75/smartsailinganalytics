@@ -1,9 +1,21 @@
 'use client'
 import * as React from 'react'
+import dynamic from 'next/dynamic'
 import { Play, Camera, ZoomIn, ZoomOut, Sailboat, MessageSquare } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
-import { PhotoOverlayImage, FallbackVideoPlayer } from './DayMedia'
+import { FallbackVideoPlayer } from './DayMedia'
+import PhotoViewer from '@/components/photos/PhotoViewer'
+import SailGeometryCard, { MeasureGeometryButton } from '@/components/photos/SailGeometryCard'
+import { isAnnotation, annotationHeadline, type SailTrimAnnotation } from '@/lib/sailTrimOverlay'
+import { savePhotoSailTrim, type PhotoRow } from '@/lib/savePhotoSailTrim'
+
+// The digitiser is a big component with its own CDN libraries; almost nobody
+// scrolling a timeline opens it, so it arrives as its own chunk on demand.
+const SailTrimTab = dynamic(() => import('../sailtrim/SailTrimTab'), {
+  ssr: false,
+  loading: () => <div className="flex h-full items-center justify-center text-sm text-[#7DD3FC]">Loading the digitiser…</div>,
+})
 import SailScanDetail from '@/components/SailScanDetail'
 import { racingTagsOf, isMainsailTag, RACE_RED } from '@/lib/racingTags'
 import { teamComments, firstName, clip, type Comment } from '@/lib/tagging/comments'
@@ -63,6 +75,8 @@ interface MediaItem {
   id: string; type: 'video' | 'photo' | 'sailscan' | 'comment'; thumb: string | null; t: number
   title?: string | null; tags: string[]; tws?: number | null; twa?: number | null; twaTarg?: number | null; twd?: number | null; sails: string[]; inst?: Record<string, any>
   original?: string | null; sailName?: string | null; raw?: any
+  /** The sail-geometry payload, when the photo has been measured. */
+  sailTrim?: { annotation: SailTrimAnnotation; overlay?: boolean } | null
   // Comments only: who said it (their full name, shortened on the card) and
   // what they said.
   who?: string | null; text?: string | null; kindLabel?: string | null
@@ -137,6 +151,24 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const G = geometry(compact)
   const [media, setMedia] = React.useState<MediaItem[] | null>(null)
   const [openPhoto, setOpenPhoto] = React.useState<MediaItem | null>(null)
+  const [geomFor, setGeomFor] = React.useState<MediaItem | null>(null)
+
+  // Measuring from the timeline writes to the SAME shared row the Photos tab
+  // writes to, so a measurement made here is a measurement everybody has.
+  const applyGeometry = React.useCallback(async (m: MediaItem, payload: { annotation: SailTrimAnnotation; overlay: boolean; headline?: string; result?: unknown }) => {
+    if (!teamId || !boatId || !m.raw) throw new Error('No boat in context for this photo.')
+    await savePhotoSailTrim({ teamId, boatId, row: m.raw as PhotoRow, payload, sessionDate: date })
+    const next = { ...m, sailTrim: payload, raw: { ...m.raw, analysis_data: { ...(m.raw.analysis_data || {}), sailTrim: payload } } }
+    setMedia((list) => (list ? list.map((x) => (x.id === m.id ? next : x)) : list))
+    setOpenPhoto((p) => (p && p.id === m.id ? next : p))
+    setGeomFor((g) => (g && g.id === m.id ? next : g))
+  }, [teamId, boatId, date])
+
+  const toggleGeometryOverlay = React.useCallback((m: MediaItem) => {
+    if (!m.sailTrim) return
+    const payload = { ...m.sailTrim, overlay: !m.sailTrim.overlay } as { annotation: SailTrimAnnotation; overlay: boolean }
+    applyGeometry(m, payload).catch(() => { /* the row keeps what it had */ })
+  }, [applyGeometry])
   const [openVideo, setOpenVideo] = React.useState<MediaItem | null>(null)
   const [openScan, setOpenScan] = React.useState<MediaItem | null>(null)
   const [openNote, setOpenNote] = React.useState<MediaItem | null>(null)
@@ -175,7 +207,10 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       const phs: MediaItem[] = (pj?.photos || []).map((p: any) => {
         const a = p.analysis_data || {}, inst = a.inst || {}
         const sails = a.sails ?? inst.sails ?? []
-        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, original: p.original_url || null, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twaTarg: inst.twaTarg ?? inst.twa_targ ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails } }
+        const st = a.sailTrim && isAnnotation(a.sailTrim.annotation) ? a.sailTrim : null
+        // `raw` is the whole row: saving geometry has to send every column back,
+        // because the route writes the row entire and nulls what it is not given.
+        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, original: p.original_url || null, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twaTarg: inst.twaTarg ?? inst.twa_targ ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails }, sailTrim: st, raw: p }
       })
       // Sail scans are boat-scoped (no date filter on the API) → keep the ones
       // captured on this day.
@@ -482,8 +517,62 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         </div>
       </div>
 
+      {geomFor && (
+        <div role="dialog" aria-modal="true" aria-label="Sail geometry"
+             className="fixed inset-0 z-[80] flex flex-col bg-[#030F1A]">
+          <div className="flex shrink-0 items-center gap-3 border-b border-[#1E3A5A] bg-[#0F2A45] px-3 py-2">
+            <button onClick={() => { setOpenPhoto(geomFor); setGeomFor(null) }}
+              className="rounded-md border border-[#1E3A5A] bg-[#0A1929] px-3 py-1.5 text-[12.5px] font-semibold text-[#E2E8F0]">
+              ← Back to photo
+            </button>
+            <div className="text-[12.5px] font-extrabold text-[#38BDF8]">📐 Sail geometry</div>
+            <div className="flex-1 truncate font-mono text-[11px] text-[#94A3B8]">{date}</div>
+          </div>
+          <div className="relative min-h-0 flex-1">
+            <SailTrimTab
+              initialFileUrl={geomFor.original || ''}
+              initialFileName={`photo-${geomFor.id.slice(0, 8)}.jpg`}
+              photoLabel="this photo"
+              onSaveToPhoto={async (save: any) => {
+                await applyGeometry(geomFor, {
+                  annotation: save.annotation, overlay: !!save.showOverlay,
+                  headline: annotationHeadline(save.annotation), result: save.result,
+                })
+              }} />
+          </div>
+        </div>
+      )}
+
       <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
-        {openPhoto && <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3"><PhotoOverlayImage src={openPhoto.original || openPhoto.thumb} inst={openPhoto.inst || {}} /></DialogContent>}
+        {openPhoto && (
+          <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3">
+            {/* The same viewer the Photos tab uses — full-resolution original
+                over the thumbnail, zoom, pan, and the sail-geometry lines. */}
+            <PhotoViewer
+              photoId={openPhoto.id}
+              thumbUrl={openPhoto.thumb}
+              fullUrl={openPhoto.original || null}
+              inst={openPhoto.inst || {}}
+              sailTrim={openPhoto.sailTrim || null}
+              height="68vh" />
+            {openPhoto.sailTrim
+              ? <SailGeometryCard
+                  annotation={openPhoto.sailTrim.annotation}
+                  overlayOn={!!openPhoto.sailTrim.overlay}
+                  onToggleOverlay={teamId && boatId ? () => toggleGeometryOverlay(openPhoto) : null}
+                  onRemeasure={teamId && boatId ? () => { setGeomFor(openPhoto); setOpenPhoto(null) } : null}
+                  compact />
+              : <MeasureGeometryButton
+                  onClick={teamId && boatId && openPhoto.original
+                    ? () => { setGeomFor(openPhoto); setOpenPhoto(null) } : null}
+                  compact />}
+            {!openPhoto.original && !openPhoto.sailTrim && (
+              <div className="text-xs text-muted">
+                The full-resolution original is not in the cloud for this photo, so there is nothing to measure on.
+              </div>
+            )}
+          </DialogContent>
+        )}
       </Dialog>
       <Dialog open={!!openVideo} onOpenChange={(o) => { if (!o) setOpenVideo(null) }}>
         {openVideo && (

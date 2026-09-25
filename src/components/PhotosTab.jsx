@@ -15,11 +15,11 @@ import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
 import { buildSailResolver } from "../lib/sailResolve";
 import { useUiNext } from "../lib/ui-flags";
 import PhotosNext from "./photos/PhotosNext";
-import PhotoCanvas from "./photos/PhotoCanvas";
+import PhotoViewer from "./photos/PhotoViewer";
+import SailGeometryCard, { MeasureGeometryButton } from "./photos/SailGeometryCard";
 import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
-import { renderOverlay } from "../lib/photoOverlay";
-import { drawSailTrimAnnotation, isAnnotation, annotationHeadline } from "../lib/sailTrimOverlay";
+import { isAnnotation, annotationHeadline } from "../lib/sailTrimOverlay";
 import { venueTodayIso as TODAY } from "../lib/localStore";   // venue-local, not UTC
 
 // The digitiser is a big component with its own CDN libraries, and most visits
@@ -302,7 +302,6 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
 // Exported for its own test: it is the whole right-hand pane, it composes the
 // canvas, and a throw in here takes the Photos tab with it.
 export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime,onMeasureGeometry,onToggleGeometryOverlay}){
-  const [rendered,setRendered]=useState(false);
   const [editTime,setEditTime]=useState(false);
   const [timeVal,setTimeVal]=useState('');
   const [extraGauges,setExtraGauges]=useState([]); // session-only overlay vars
@@ -317,76 +316,20 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
     // the signature too — otherwise adding a gauge redraws but changing its value
     // does not.
     extraGauges.map(k=>photo[k]).join(',')].join('|');
-  // The sail-geometry lines are burned into the same composite, so a new
-  // measurement or a flick of the overlay switch has to reach the compose effect
-  // exactly as an instrument change does.
   const geom = sailTrimOf(photo);
-  const geomSig = geom ? `${geom.overlay?1:0}|${geom.annotation.measuredAt}|${geom.annotation.targets.length}` : '';
-  // ── compose once, at full resolution ──────────────────────────────────────
-  // The composite — photograph plus burned-in overlay, at the image's OWN size
-  // — is what gets exported and what PhotoCanvas looks at. Held in state, not a
-  // ref, so that re-composing actually reaches the viewport.
+  // The picture itself — loading, both overlays and the viewport — is
+  // PhotoViewer's job now, and the timeline uses the same one. What is left here
+  // is the instrument VALUES it draws, which only this tab knows how to build.
   const composeRef=useRef(null);
-  const haveFull=useRef(false);
-  const [compose,setCompose]=useState(null);
-  const [composed,setComposed]=useState(null);
-  const [fullLoaded,setFullLoaded]=useState(false);
-  const [fullMissing,setFullMissing]=useState(false);
-  const [fullSlow,setFullSlow]=useState(false);
-  const [retryFull,setRetryFull]=useState(0);
-  const slowTimer=useRef(null);
-
-  useEffect(()=>{
-    const thumb=photo?.objectUrl, full=photo?.fullUrl;
-    if(!thumb&&!full){setRendered(false);setCompose(null);setComposed(null);return;}
-    let dead=false;
-    haveFull.current=false; setFullLoaded(false); setFullMissing(false); setFullSlow(false);
-    if(slowTimer.current) clearTimeout(slowTimer.current);
+  const [rendered,setRendered]=useState(false);
+  const inst=React.useMemo(()=>{
     const extra=extraGauges.map(k=>{const o=PHOTO_OVERLAY_VARS.find(x=>x.key===k);if(!o)return null;const v=photo[k];
       return {l:o.label,v:v!=null?(o.unit==='°'?R(v,o.dec)+'°':R(v,o.dec)+(o.unit?' '+o.unit:'')):'--',c:'#A78BFA'};}).filter(Boolean);
-    const inst={tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,keelAng:photo.keelAng,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2,extra};
-    const draw=(img,isFull)=>{
-      // The thumbnail is only a placeholder. If the original has already
-      // landed, a late-arriving thumb must not paint over it.
-      if(dead||(!isFull&&haveFull.current))return;
-      if(isFull)haveFull.current=true;
-      const c=composeRef.current||(composeRef.current=document.createElement('canvas'));
-      renderOverlay(c,img,inst);
-      // Sail geometry on top: the measured lines are about the picture itself, so
-      // they belong under the gauge boxes in importance but over the photograph.
-      // renderOverlay has just sized the canvas to the image, which is the frame
-      // the annotation's points are in — modulo resolution, which it scales for.
-      if(geom?.overlay){
-        const gctx=c.getContext('2d');
-        if(gctx) drawSailTrimAnnotation(gctx, geom.annotation);
-      }
-      setCompose(c); setComposed({w:c.width,h:c.height}); setRendered(true);
-      if(isFull){setFullLoaded(true);setFullSlow(false);if(slowTimer.current)clearTimeout(slowTimer.current);}
-    };
-    const load=(url,isFull)=>{
-      if(!url)return;
-      const i=new Image(); i.crossOrigin="anonymous";
-      i.onload=()=>draw(i,isFull);
-      // The browser import uploads the original only once the connection is
-      // good enough (photoStore.goodForOriginals), so a photo can be in the
-      // cloud as a thumbnail and nothing else. Say that, rather than leaving
-      // "loading full resolution…" up for ever over a soft picture.
-      i.onerror=()=>{ if(isFull&&!dead){ setFullMissing(true); setFullSlow(false); if(slowTimer.current)clearTimeout(slowTimer.current); } };
-      i.src=url;
-    };
-    load(thumb,false);
-    if(full&&full!==thumb){
-      // A retry gets a fresh URL: a browser that has cached the failure will
-      // not go back to the network for the same one.
-      load(retryFull?`${full}${full.includes('?')?'&':'?'}retry=${retryFull}`:full,true);
-      slowTimer.current=setTimeout(()=>{ if(!dead&&!haveFull.current) setFullSlow(true); },12000);
-    }
-    return ()=>{dead=true; if(slowTimer.current) clearTimeout(slowTimer.current);};
-    // Every field the overlay DRAWS, not just three of them. It used to list
-    // tws/twa/sails only, so correcting heel — or any mast measurement — redrew
-    // nothing and the burned-in overlay kept showing the old value.
+    return {tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,keelAng:photo.keelAng,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2,extra};
+    // Every field the overlay DRAWS. It once listed tws/twa/sails only, so
+    // correcting heel redrew nothing and the burned-in overlay kept the old value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[photo.id,photo.objectUrl,photo.fullUrl,overlaySig,geomSig,extraGauges,retryFull]);
+  },[overlaySig,extraGauges,photo]);
 
   const handleExport=()=>{
     if(!composeRef.current)return;
@@ -409,13 +352,12 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
           <SrcBadge source={photo.cloudSynced?"cloud":"local"}/>
         </div>
       )}
-      <PhotoCanvas
-        source={compose} sourceSize={composed} resetKey={photo.id}
-        fullStatus={(!photo.fullUrl||photo.fullUrl===photo.objectUrl||fullLoaded)?'none'
-          :fullMissing?'missing':fullSlow?'slow':'loading'}
-        onRetryFull={()=>setRetryFull(n=>n+1)}>
+      <PhotoViewer
+        photoId={photo.id} thumbUrl={photo.objectUrl} fullUrl={photo.fullUrl}
+        inst={inst} sailTrim={geom}
+        onComposed={(c)=>{composeRef.current=c;setRendered(true);}}>
         {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5,pointerEvents:"none"}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
-      </PhotoCanvas>
+      </PhotoViewer>
       {/* Overlay variables — add extra gauges to the photo overlay, this session only. */}
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
         <span style={{fontSize:9,color:"#64748B",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
@@ -523,56 +465,15 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
           </div>
         );
       })()}
-      {/* ── Sail geometry (SailTrim) ────────────────────────────────────────
-          The three astern measurements the speed team draws by hand in Rhino.
-          The numbers are shown unsigned: the sign is a direction in the image,
-          which nobody says out loud. */}
+      {/* Sail geometry — the same card the timeline shows. */}
       {geom && (
-        <div style={{background:"#0A1929",border:"1px solid #38BDF840",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,gap:8}}>
-            <div style={{fontSize:9,color:"#38BDF8",letterSpacing:2,textTransform:"uppercase"}}>📐 Sail geometry</div>
-            <div style={{fontSize:8,color:"#8A97A9",fontFamily:"monospace"}}>{geom.annotation.version}</div>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.max(1,Math.min(3,geom.annotation.targets.length))},1fr)`,gap:8}}>
-            {geom.annotation.targets.map(t=>(
-              <div key={t.key} style={{background:"#071624",borderRadius:6,padding:"7px 8px",border:`1px solid ${t.colour}20`,textAlign:"center"}}>
-                <div style={{fontSize:8,color:"#4E5D71",marginBottom:2}}>{t.label.replace(/^Jib /,"").replace(/ @ reference height$/," @ ref")}</div>
-                <div style={{fontSize:14,fontWeight:700,color:t.colour,fontFamily:"monospace"}}>
-                  {Math.round(Math.abs(t.mm))}<span style={{fontSize:8,marginLeft:1}}>mm</span>
-                </div>
-                <div style={{fontSize:8,color:"#64748B",fontFamily:"monospace"}}>±{Math.round(t.sigmaMm)}</div>
-              </div>
-            ))}
-          </div>
-          <div style={{marginTop:7,fontSize:9,color:"#64748B",lineHeight:1.5}}>
-            {geom.annotation.defn==="world"?"World-horizontal":"Athwartships"} from the mast axis ·{" "}
-            <span style={{color:geom.annotation.psiMeasured?"#4ADE80":"#FCD34D"}}>
-              ψ {geom.annotation.psiDeg.toFixed(2)}° {geom.annotation.psiMeasured?"measured":"assumed"}
-            </span>
-            {geom.annotation.heelDeg!=null&&<> · heel {geom.annotation.heelDeg.toFixed(1)}°</>}
-          </div>
-          <div style={{marginTop:8,display:"flex",gap:7,flexWrap:"wrap"}}>
-            {onToggleGeometryOverlay&&(
-              <button onClick={()=>onToggleGeometryOverlay(photo)}
-                style={{background:geom.overlay?"#38BDF820":"none",border:"1px solid #38BDF840",borderRadius:6,padding:"5px 10px",color:"#38BDF8",cursor:"pointer",fontSize:10,fontWeight:600}}>
-                {geom.overlay?"✓ lines on the photo":"Draw lines on the photo"}
-              </button>
-            )}
-            {onMeasureGeometry&&(
-              <button onClick={()=>onMeasureGeometry(photo)}
-                style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#94A3B8",cursor:"pointer",fontSize:10}}>
-                Re-measure…
-              </button>
-            )}
-          </div>
-        </div>
+        <SailGeometryCard
+          annotation={geom.annotation}
+          overlayOn={!!geom.overlay}
+          onToggleOverlay={onToggleGeometryOverlay ? () => onToggleGeometryOverlay(photo) : null}
+          onRemeasure={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}/>
       )}
-      {!geom&&onMeasureGeometry&&(
-        <button onClick={()=>onMeasureGeometry(photo)}
-          style={{width:"100%",background:"#0A1929",border:"1px solid #38BDF840",borderRadius:8,padding:"10px 0",color:"#38BDF8",fontWeight:700,cursor:"pointer",fontSize:12,marginBottom:10}}>
-          📐 Analyse sail geometry
-        </button>
-      )}
+      {!geom && <MeasureGeometryButton onClick={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}/>}
 
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button onClick={handleExport} disabled={!rendered} style={{flex:1,background:rendered?"#8B5CF6":"#1E3A5A",border:"none",borderRadius:7,padding:"9px 0",color:rendered?"#fff":"#475569",fontWeight:700,cursor:rendered?"pointer":"default",fontSize:12}}>⬇ Export JPEG</button>

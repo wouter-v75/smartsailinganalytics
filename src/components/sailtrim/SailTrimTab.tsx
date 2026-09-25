@@ -56,6 +56,17 @@ interface StepDef {
   optional?: boolean;
 }
 
+// The default, and the one the speed team asked for: two marks on the mast's
+// centreline and a STRAIGHT line between them, drawn exactly where they put it.
+// The traced alternative below follows the mast's EDGE sub-pixel, which is more
+// precise when it works and wanders onto a shroud, a halyard or the sail's edge
+// when it does not — and a line that has quietly wandered looks just like one
+// that has not. Two clicks are cheap; a wrong axis is not, because every
+// measurement is taken from it.
+const MAST_LINE: StepDef = {
+  key: 'mastLine', label: 'Mast centreline', min: 2, max: 2, colour: '#38BDF8', group: 'calibrate',
+  hint: 'Two points on the middle of the mast, as far apart up and down as you can see it — low near the gooseneck, high near the top. The axis is the straight line through them, and nothing is inferred.',
+};
 const MAST_AUTO: StepDef = {
   key: 'mastSeed', label: 'Mast', min: 1, max: 1, colour: '#38BDF8', group: 'calibrate',
   hint: 'One click anywhere on the mast’s edge, roughly. It is traced from there, sub-pixel, up and down as far as the contrast holds — and the trace is drawn, so you can see where it went.',
@@ -149,7 +160,7 @@ export default function SailTrimTab(
   // ── marks ─────────────────────────────────────────────────────────────────
   const [marks, setMarks] = useState<Marks>({});
   const [activeStep, setActiveStep] = useState(0);
-  const [mastMode, setMastMode] = useState<'auto' | 'manual'>('auto');
+  const [mastMode, setMastMode] = useState<'line' | 'auto' | 'manual'>('line');
 
   // ── detection ─────────────────────────────────────────────────────────────
   const cvPixels = useRef<{ px: Pixels; scale: number } | null>(null);
@@ -199,7 +210,10 @@ export default function SailTrimTab(
   const [hover, setHover] = useState<Px | null>(null);
 
   const steps: StepDef[] = useMemo(
-    () => [...(mastMode === 'auto' ? [MAST_AUTO] : MAST_MANUAL), ...OTHER_STEPS],
+    () => [
+      ...(mastMode === 'line' ? [MAST_LINE] : mastMode === 'auto' ? [MAST_AUTO] : MAST_MANUAL),
+      ...OTHER_STEPS,
+    ],
     [mastMode],
   );
 
@@ -489,7 +503,12 @@ export default function SailTrimTab(
   // ── the calibration ──────────────────────────────────────────────────────
   const calibration = useMemo((): { cal: Calibration | null; why: string } => {
     let axis = null;
-    if (mastMode === 'auto') {
+    if (mastMode === 'line') {
+      const line = marks.mastLine || [];
+      if (line.length < 2) return { cal: null, why: 'Mark two points on the mast’s centreline.' };
+      axis = mastAxisFromPoints(line[0], line[1]);
+      if (!axis) return { cal: null, why: 'The two mast marks are the same point.' };
+    } else if (mastMode === 'auto') {
       axis = mastTrace?.axis ?? null;
       if (!axis) return { cal: null, why: traceNote || 'Click once on the mast.' };
     } else {
@@ -626,6 +645,8 @@ export default function SailTrimTab(
       ctx.stroke();
     }
 
+    // In 'line' mode the axis is exactly the straight line through the two marks
+    // — nothing is drawn that the operator did not place.
     const axis = calibration.cal?.axis ?? (mastMode === 'auto' ? mastTrace?.axis ?? null : null);
     if (axis) {
       const a = toScreen(axis.low), b = toScreen(axis.high);
@@ -1104,10 +1125,18 @@ export default function SailTrimTab(
         <div style={panel} data-testid="sailtrim-steps">
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <div style={{ ...hdr, flex: 1 }}>Marks</div>
-            <button style={{ ...btn(), padding: '3px 8px', fontSize: 10.5 }}
-              onClick={() => { setMastMode((m) => (m === 'auto' ? 'manual' : 'auto')); setActiveStep(0); }}>
-              {mastMode === 'auto' ? 'mark mast by hand' : 'trace mast from one click'}
-            </button>
+            <div style={{ display: 'flex', gap: 3 }}>
+              {([
+                ['line', 'two points'],
+                ['manual', 'edges'],
+                ['auto', 'auto-trace'],
+              ] as const).map(([mode, text]) => (
+                <button key={mode} style={{ ...btn(mastMode === mode), padding: '3px 7px', fontSize: 10 }}
+                  onClick={() => { setMastMode(mode); setActiveStep(0); }}>
+                  {text}
+                </button>
+              ))}
+            </div>
           </div>
           {steps.map((s, i) => {
             const pts = marks[s.key] || [];
