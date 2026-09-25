@@ -97,7 +97,10 @@ export function buildAnnotation(args: {
       key: m.key,
       label: m.label,
       point,
-      foot: footOnAxis(args.axis, point),
+      // The measurement's OWN foot when it has one: the centreplane at this
+      // target's depth, which is what the number is from. Falling back to the
+      // mast axis draws a line that disagrees with its own label by d·sinψ.
+      foot: m.foot ?? footOnAxis(args.axis, point),
       mm: args.defn === 'world' ? m.worldHorizontalMm : m.boatFrameMm,
       sigmaMm: args.defn === 'world' ? m.worldHorizontalSigmaMm : m.boatFrameSigmaMm,
       colour: args.colours[m.key] || '#38BDF8',
@@ -265,7 +268,7 @@ export function drawSailTrimAnnotation(
   // clew by 17 mm per degree per metre was measured or assumed.
   const fs = Math.max(10, 15 * u)
   const caption = [
-    a.defn === 'world' ? 'world-horizontal from mast axis' : 'athwartships from mast axis',
+    a.defn === 'world' ? 'world-horizontal from centreplane' : 'athwartships from centreplane',
     a.leewardPositive
       ? `${a.tack === 'stbd' ? 'stbd' : 'port'} tack, leeward positive`
       : 'unsigned - no tack known',

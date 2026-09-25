@@ -581,6 +581,10 @@ export default function SailTrimTab(
         scaleRelSigma: scaleRelSigma(scaleRef)
           + (scaleDepthUncorrected ? Math.abs(refDepthMm) / 150_000 : 0),
         rangeMm, psi, tack, scaleDepthUncorrected, scaleRefDepthMm: refDepthMm,
+        // Clicked, but the chosen baseline has no length in the model, so ψ
+        // quietly fell back to 0 ± 1°. That is not the same as not having
+        // bothered, and the checks should not pretend it is.
+        baselineMarkedButUnmeasured: (marks.baseline || []).length >= 2 && !((baseRef?.mm ?? 0) > 0),
         heelDeg: heel != null && Number.isFinite(heel) ? heel : null,
         heelSigmaDeg: 0.5, clickSigmaPx: CLICK_SIGMA_PX, horizon: hz,
       },

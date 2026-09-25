@@ -147,7 +147,10 @@ export function defaultRigModel(boat = ''): RigModel {
       { key: 'tack-mast', label: 'Forestay tack → mast (J)', ...v(8000, 800) },
       // Also dockside-measurable, and both ends are unambiguous centreplane
       // points that stay visible from astern under way.
-      { key: 'mast-transom', label: 'Mast (at deck) → transom centre', ...v(0, 0) },
+      // (tack → transom) − J. A baseline with NO length is worse than no
+      // baseline: solvePsi needs a separation, so selecting one silently drops
+      // back to ψ = 0 ± 1° — and a degree of ψ is ±180 mm on a boom at E.
+      { key: 'mast-transom', label: 'Mast (at deck) → transom centre', ...v(13000, 2200) },
       { key: 'custom', label: 'Something else (type the separation)', ...v(0, 0) },
     ],
     // Fore-and-aft offsets from the mast, forward positive. These are the

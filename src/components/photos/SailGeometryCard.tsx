@@ -54,7 +54,7 @@ export default function SailGeometryCard({
         ))}
       </div>
       <div style={{ marginTop: 7, fontSize: 9, color: '#64748B', lineHeight: 1.5 }}>
-        {annotation.defn === 'world' ? 'World-horizontal' : 'Athwartships'} from the mast axis ·{' '}
+        {annotation.defn === 'world' ? 'World-horizontal' : 'Athwartships'} from the centreplane ·{' '}
         <span style={{ color: annotation.psiMeasured ? '#4ADE80' : '#FCD34D' }}>
           ψ {annotation.psiDeg.toFixed(2)}° {annotation.psiMeasured ? 'measured' : 'assumed'}
         </span>

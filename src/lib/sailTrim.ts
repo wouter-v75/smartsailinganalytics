@@ -411,6 +411,10 @@ export interface Calibration {
    * printing — `leewardPositive` on the measurement says which you have.
    */
   tack?: 'port' | 'stbd' | null
+  /** Two baseline points were clicked but the chosen baseline has no length, so
+   *  ψ could not be solved. The difference between "not marked" and "marked and
+   *  silently ignored" is worth saying out loud. */
+  baselineMarkedButUnmeasured?: boolean
   /** The scale reference's own offset from the mast, forward positive. */
   scaleRefDepthMm?: number
   /** True when that offset could NOT be corrected for — no focal length, so no
@@ -462,6 +466,9 @@ export interface Measurement {
    * is merely image-right-positive and should not be shown.
    */
   leewardPositive?: boolean
+  /** Where the CENTREPLANE is at this target's depth — the other end of the
+   *  measured line, and what to draw to. Not a point on the mast. */
+  foot?: Px
 }
 
 /**
@@ -475,6 +482,31 @@ export interface Measurement {
  * World horizontal: the same offset taken along the true-horizontal direction,
  * measured to the point where that horizontal line crosses the mast axis.
  */
+/**
+ * Where the boat's CENTREPLANE crosses a target's own depth, in the image.
+ *
+ * This is the thing a measurement is actually taken from, and it is NOT the
+ * mast's line. The centreplane is a plane; a camera that is not in it sees it as
+ * a region, not a line, so "distance from the centreplane" can only be read off
+ * the picture once the target's depth is known. At depth d the plane sits
+ * −d·sinψ·cos(heel) away from the mast axis, which is exactly the term
+ * `measureTarget` adds — this returns the same displacement as a POINT, so the
+ * line drawn on the photograph ends where the number says it does.
+ *
+ * On Northstar's boom, E = 10.33 m abaft the mast: at ψ = 0.42° that is 73 mm,
+ * about 21 px on a 68 m shot. Draw the foot on the mast instead and the line and
+ * its label disagree by that much.
+ */
+export function centreplaneFoot(cal: Calibration, point: Px, depthMm: number): Px {
+  const onMast = intersectLineWithAxis(point, cal.axis.across, cal.axis)
+    ?? { x: cal.axis.low.x, y: cal.axis.low.y }
+  if (!depthMm) return onMast
+  const mmPerPx = mmPerPxAtDepth(cal.mmPerPxAtMast, depthMm, cal.rangeMm)
+  if (!(mmPerPx > 0)) return onMast
+  const offPx = -(depthMm * Math.sin(cal.psi.deg * DEG) * cosHeel(effectiveHeelDeg(cal))) / mmPerPx
+  return { x: onMast.x + cal.axis.across.x * offPx, y: onMast.y + cal.axis.across.y * offPx }
+}
+
 export function measureTarget(cal: Calibration, t: TargetInput): Measurement {
   const { axis, psi } = cal
   const psiRad = psi.deg * DEG
@@ -549,6 +581,7 @@ export function measureTarget(cal: Calibration, t: TargetInput): Measurement {
     depthScaleApplied,
     rollApplied,
     leewardPositive: cal.tack != null,
+    foot: centreplaneFoot(cal, t.point, t.depthMm),
   }
 }
 
@@ -625,7 +658,9 @@ export function runChecks(cal: Calibration): Check[] {
     ok: cal.psi.measured,
     detail: cal.psi.measured
       ? `ψ = ${cal.psi.deg.toFixed(2)}° ± ${cal.psi.sigmaDeg.toFixed(2)}°`
-      : 'no centreplane baseline marked — ψ assumed 0 ± 1°, and a degree of ψ is ±17 mm for every metre a target sits from the mast',
+      : cal.baselineMarkedButUnmeasured
+        ? 'a centreplane baseline was MARKED but the chosen baseline has no length in the rig model, so ψ fell back to 0 ± 1°. Type its fore-and-aft separation, or pick one that has a number. A degree of ψ is ±17 mm for every metre a target sits abaft the mast, so on a boom at E it is ±180 mm — which is why the boom then reads as a distance to the mast LINE rather than to the centreplane.'
+        : 'no centreplane baseline marked — ψ assumed 0 ± 1°, and a degree of ψ is ±17 mm for every metre a target sits from the mast',
   })
 
   if (cal.scaleRefDepthMm) {
