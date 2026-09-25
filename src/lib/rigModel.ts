@@ -102,6 +102,42 @@ export const LEECH_SAILS = [
 ] as const
 export type LeechSail = (typeof LEECH_SAILS)[number]['key']
 
+/** …and the luff at the other end of the same chord. */
+export const LUFF_SAILS = [
+  { key: 'main', label: 'Main luff (the mast)', colour: '#60A5FA' },
+  { key: 'jib', label: 'Jib luff (the forestay)', colour: '#86EFAC' },
+] as const
+
+/**
+ * How far FORWARD of the mast a sail's luff sits at a fraction of its hoist.
+ *
+ * This is why a luff cannot simply be measured like a leech and subtracted: it
+ * is at a different DEPTH, so it images at a different scale and ψ displaces it
+ * by a different amount. The jib's is the worst case — the forestay runs from a
+ * tack J forward of the mast to a masthead directly above it, so at a quarter
+ * hoist it is still three-quarters of J forward. On Northstar that is 6.6 m.
+ *
+ * The main's luff is the mast, which is what the tool's own axis follows, so it
+ * is at depth zero by construction. Mast rake tilts it aft with height — about
+ * 2°, half a metre at mid-hoist — which is small enough to leave for now and
+ * large enough to write down.
+ */
+export function luffDepthMm(
+  sail: 'main' | 'jib',
+  fraction: number | null,
+  m: RigModel,
+): { mm: number; sigmaMm: number } {
+  if (sail === 'main') return { mm: 0, sigmaMm: 400 }
+  const j = m.baselines.find((b) => b.key === 'tack-mast')
+  const jMm = j && j.mm > 0 ? j.mm : 8_600
+  // No fraction (a spreader height) ⇒ take mid-luff and own the spread.
+  const f = fraction == null ? 0.5 : fraction
+  return {
+    mm: jMm * (1 - f),
+    sigmaMm: fraction == null ? jMm * 0.3 : Math.max(200, (j?.sigmaMm ?? 200)),
+  }
+}
+
 export interface RigModel {
   boat: string
   updatedAt: string

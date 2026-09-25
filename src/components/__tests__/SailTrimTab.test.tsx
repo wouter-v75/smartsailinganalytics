@@ -465,6 +465,50 @@ describe('SailTrimTab', () => {
     expect(saves[0].fields['sailtrim_jib@spr2_mm']).toBeTruthy()
   })
 
+  it('takes the chord from the LUFF, not the centreplane, once the luff is marked', async () => {
+    // A sail's shape is measured leech-to-luff. The tool used to take
+    // centreplane-to-leech, which assumes the forestay does not sag — and it
+    // sags most at mid-luff, exactly where twist is most sensitive. Marking the
+    // luff makes the chord a measurement instead of an assumption.
+    const P = makeCamera(RIG)
+    const saves: SailTrimSave[] = []
+    render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    fireEvent.click(stepButton('50 % stripe'))
+    click(P(0, 0, 15_000))
+
+    // A jib leech 1500 mm to leeward at that height…
+    fireEvent.click(stepButton('Jib leech'))
+    click(P(-400, 1_500, 9_000)); click(P(-400, 1_500, 21_000))
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(1))
+    const leechOnly = saves[0].annotation.targets.find((t) => t.key === 'jib@stripe50')!
+
+    // …and a luff sagged 300 mm to leeward, on the forestay, well forward.
+    fireEvent.click(stepButton('Jib luff (the forestay)'))
+    click(P(4_430, 300, 9_000)); click(P(4_430, 300, 21_000))
+    await waitFor(() =>
+      expect(saves[0].annotation.targets.length).toBeGreaterThan(0))
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(2))
+    const withLuff = saves[1].annotation.targets
+
+    // The leech measurement itself is unchanged — it is still centreplane to
+    // leech, which is the speed team's own number and must not move.
+    const leechAgain = withLuff.find((t) => t.key === 'jib@stripe50')!
+    expect(leechAgain.mm).toBeCloseTo(leechOnly.mm, 0)
+    // And the luff is now measured too, near where it was put.
+    const luff = withLuff.find((t) => t.key === 'luff-jib@stripe50')!
+    expect(luff).toBeTruthy()
+    expect(Math.abs(Math.abs(luff.mm) - 300)).toBeLessThan(120)
+  })
+
   it('measures a height only on the sails whose leech actually spans it', async () => {
     // A height above or below where a leech was drawn does not cross it. That is
     // a gap in the marking, not an error, and it should silently produce no

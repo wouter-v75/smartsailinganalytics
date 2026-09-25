@@ -37,7 +37,7 @@ import {
 } from '../../lib/sailTrimCv';
 import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
-  HEIGHT_TAGS, LEECH_SAILS, heightShort,
+  HEIGHT_TAGS, LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
@@ -95,6 +95,19 @@ const OTHER_STEPS: StepDef[] = [
     key: `h:${t.key}`, label: t.label, min: 1, max: 1, colour: '#A78BFA',
     group: 'calibrate', optional: true,
     hint: `Where ${t.label.toLowerCase()} meets the mast. Mark as many heights as you want measured — every leech you have drawn is read at every height you have marked, and the tag is what lets today's number be compared with the same number from another day.`,
+  })),
+  // The LUFF, at the other end of the chord. Marking it is what turns
+  // "centreplane → leech" into the real thing a sail's shape is measured on.
+  // The jib's matters most: the forestay SAGS to leeward under load, most at
+  // mid-luff, so leaving it on the centreplane over-reads the chord angle by
+  // most exactly where twist is most sensitive — about 0.29° of twist per
+  // 100 mm of sag. The main's luff is the mast and barely moves.
+  ...LUFF_SAILS.map((sl): StepDef => ({
+    key: `luff:${sl.key}`, label: sl.label, min: 2, max: 8, colour: sl.colour,
+    group: 'target', optional: true,
+    hint: sl.key === 'jib'
+      ? 'Points down the FORESTAY, spanning the heights you marked. It is the jib\u2019s luff, it sags to leeward under load, and that sag is the difference between a chord and a guess. Marking it also MEASURES the sag, which is a number in its own right and one nobody has for a rival.'
+      : 'Points down the mast\u2019s forward face where the mainsail\u2019s luff runs. Optional: the mast is already the tool\u2019s axis, so this only buys you the sideways bend — worth it on a bendy rig, skippable otherwise.',
   })),
   ...LEECH_SAILS.map((sl): StepDef => ({
     key: `leech:${sl.key}`, label: sl.label, min: 2, max: 8, colour: sl.colour,
@@ -681,27 +694,32 @@ export default function SailTrimTab(
    * to do with it.
    */
   const leechCrossings = useCallback((): {
-    key: string; label: string; point: Px; sail: string; tag: string;
+    key: string; label: string; point: Px; sail: string; tag: string; edge: 'leech' | 'luff';
   }[] => {
     const cal = calibration.cal;
     if (!cal) return [];
-    const out: { key: string; label: string; point: Px; sail: string; tag: string }[] = [];
-    for (const sl of LEECH_SAILS) {
-      const poly = marks[`leech:${sl.key}`] || [];
-      if (poly.length < 2) continue;
-      for (const t of HEIGHT_TAGS) {
-        const at = (marks[`h:${t.key}`] || [])[0];
-        if (!at) continue;
-        const pts = leechTargets(poly, cal.axis, at, cal.heelDeg, cal.horizon);
-        const point = defn === 'boat' ? pts.boatFrame : pts.worldHorizontal;
-        // A height above or below where the leech was drawn simply does not
-        // cross it. That is a gap in the marking, not an error — skip it.
-        if (!point) continue;
-        out.push({
-          key: `${sl.key}@${t.key}`,
-          label: `${sl.label} @ ${heightShort(t.key)}`,
-          point, sail: sl.key, tag: t.key,
-        });
+    const out: { key: string; label: string; point: Px; sail: string; tag: string; edge: 'leech' | 'luff' }[] = [];
+    for (const edge of ['leech', 'luff'] as const) {
+      const sails = edge === 'leech' ? LEECH_SAILS : LUFF_SAILS;
+      for (const sl of sails) {
+        const poly = marks[`${edge}:${sl.key}`] || [];
+        if (poly.length < 2) continue;
+        for (const t of HEIGHT_TAGS) {
+          const at = (marks[`h:${t.key}`] || [])[0];
+          if (!at) continue;
+          // Same intersection either side: the height line is perpendicular to
+          // the mast (or horizontal), and it crosses each curve once.
+          const pts = leechTargets(poly, cal.axis, at, cal.heelDeg, cal.horizon);
+          const point = defn === 'boat' ? pts.boatFrame : pts.worldHorizontal;
+          // A height above or below where the curve was drawn simply does not
+          // cross it. That is a gap in the marking, not an error — skip it.
+          if (!point) continue;
+          out.push({
+            key: `${edge === 'luff' ? 'luff-' : ''}${sl.key}@${t.key}`,
+            label: `${sl.label} @ ${heightShort(t.key)}`,
+            point, sail: sl.key, tag: t.key, edge,
+          });
+        }
       }
     }
     return out;
@@ -715,14 +733,22 @@ export default function SailTrimTab(
 
   /** Which STEP a measurement came from, for its colour. */
   const stepKeyFor = (key: string) =>
-    key.includes('@') ? `leech:${key.split('@')[0]}` : key;
+    key.includes('@')
+      ? (key.startsWith('luff-') ? `luff:${key.slice(5).split('@')[0]}` : `leech:${key.split('@')[0]}`)
+      : key;
 
   const measurements = useMemo((): Measurement[] => {
     const cal = calibration.cal;
     if (!cal) return [];
     const out: Measurement[] = [];
     for (const c of leechCrossings()) {
-      const d = c.sail === 'main' ? rig.depths.mainLeech : rig.depths.leech;
+      // The luff sits at a DIFFERENT depth from the leech — the forestay is
+      // metres forward of the mast — so it images at a different scale and ψ
+      // moves it by a different amount. Measuring it with the leech's depth
+      // would put back most of the error marking it was meant to remove.
+      const d = c.edge === 'luff'
+        ? luffDepthMm(c.sail as 'main' | 'jib', STATION_FRACTION[c.tag as keyof typeof STATION_FRACTION], rig)
+        : (c.sail === 'main' ? rig.depths.mainLeech : rig.depths.leech);
       out.push(measureTarget(cal, {
         key: c.key, label: c.label, point: c.point,
         depthMm: d.mm, depthSigmaMm: d.sigmaMm,
@@ -738,7 +764,9 @@ export default function SailTrimTab(
       }
     }
     return out;
-  }, [calibration, marks, rig.depths, leechCrossings]);
+    // `rig`, not `rig.depths`: the luff's depth is read off the BASELINES (J),
+    // so a corrected J has to reach these measurements too.
+  }, [calibration, marks, rig, leechCrossings]);
 
   /**
    * Twist, where there is both a measurement and a width to divide it by.
@@ -749,22 +777,50 @@ export default function SailTrimTab(
    * this appears the moment one is read and not before.
    */
   const twist = useMemo(() => {
-    const out: { sail: 'main' | 'jib'; rows: ReturnType<typeof twistBetween>; angles: ReturnType<typeof stationAngles> }[] = [];
+    const out: {
+      sail: 'main' | 'jib'
+      rows: ReturnType<typeof twistBetween>
+      angles: ReturnType<typeof stationAngles>
+      sag: { tag: string; mm: number }[]
+      haveLuff: boolean
+    }[] = [];
     for (const sail of ['main', 'jib'] as const) {
       const w = rig.widths?.[sail];
       if (!w) continue;
+      const val = (m: typeof measurements[number]) =>
+        defn === 'boat' ? m.boatFrameMm : m.worldHorizontalMm;
+      const sig = (m: typeof measurements[number]) =>
+        defn === 'boat' ? m.boatFrameSigmaMm : m.worldHorizontalSigmaMm;
+      const luffAt = (tag: string) => measurements.find((m) => m.key === `luff-${sail}@${tag}`);
+
       const leech = measurements
         .filter((m) => m.key.startsWith(`${sail}@`))
-        .map((m) => ({
-          tag: m.key.split('@')[1] as keyof typeof STATION_FRACTION,
-          mm: defn === 'boat' ? m.boatFrameMm : m.worldHorizontalMm,
-          sigmaMm: defn === 'boat' ? m.boatFrameSigmaMm : m.worldHorizontalSigmaMm,
-        }))
+        .map((m) => {
+          const tag = m.key.split('@')[1] as keyof typeof STATION_FRACTION;
+          const lu = luffAt(tag);
+          return {
+            tag,
+            // THE CHORD, which is what a sail's shape is measured on: leech
+            // MINUS luff. Without the luff marked this falls back to the
+            // centreplane, which assumes the forestay does not sag — and it
+            // sags most at mid-luff, which is where twist is most sensitive.
+            mm: val(m) - (lu ? val(lu) : 0),
+            sigmaMm: lu ? Math.hypot(sig(m), sig(lu)) : sig(m),
+            luffMm: lu ? val(lu) : null,
+          };
+        })
         .filter((l) => STATION_FRACTION[l.tag] != null);
       if (leech.length < 1) continue;
       const angles = stationAngles(sail, w, leech);
       if (!angles.length) continue;
-      out.push({ sail, angles, rows: twistBetween(angles) });
+      out.push({
+        sail, angles, rows: twistBetween(angles),
+        // Luff offset from the centreplane: for the jib that IS forestay sag,
+        // measured from the photograph. Nobody has this for a rival.
+        sag: leech.filter((l) => l.luffMm != null)
+          .map((l) => ({ tag: l.tag, mm: l.luffMm as number })),
+        haveLuff: leech.some((l) => l.luffMm != null),
+      });
     }
     return out;
   }, [measurements, rig.widths, defn]);
@@ -1612,6 +1668,19 @@ export default function SailTrimTab(
                       </span>
                     </div>
                   ))}
+                  {t.sag.length > 0 && (
+                    <div style={{ fontSize: 10.5, color: '#86EFAC', fontFamily: 'monospace', marginTop: 2 }}>
+                      {t.sail === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
+                      {t.sag.map((x) => `${heightShort(x.tag)} ${Math.round(Math.abs(x.mm))}`).join(' · ')} mm
+                    </div>
+                  )}
+                  {!t.haveLuff && (
+                    <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 2, lineHeight: 1.4 }}>
+                      luff not marked — the chord is taken from the centreplane, which
+                      assumes no {t.sail === 'jib' ? 'forestay sag' : 'sideways mast bend'}.
+                      {t.sail === 'jib' && ' Worth ~0.29° of twist per 100 mm.'}
+                    </div>
+                  )}
                   {t.rows.map((r) => (
                     <div key={`${r.from}-${r.to}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 2 }}>
                       <span>{r.from.replace('stripe', '')} % → {r.to.replace('stripe', '')} %</span>

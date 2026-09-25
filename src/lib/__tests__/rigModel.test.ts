@@ -3,6 +3,7 @@ import {
   defaultRigModel, missingFrom, isComplete, scaleRelSigma,
   loadRigModel, saveRigModel, listRigModels, rigModelFor,
   exportRigModel, importRigModel,
+  luffDepthMm, rigModelFor,
 } from '../rigModel'
 
 // jsdom 25's localStorage has no clear(); the repo stubs it the same way in
@@ -17,6 +18,42 @@ beforeEach(() => {
   })
 })
 afterEach(() => { vi.unstubAllGlobals() })
+
+describe('luffDepthMm — where a luff sits, fore and aft', () => {
+  const m = rigModelFor('Northstar 76')
+
+  it('puts the main’s luff on the mast, because it IS the mast', () => {
+    expect(luffDepthMm('main', 0.5, m).mm).toBe(0)
+  })
+
+  it('walks the jib’s luff forward as it comes down the forestay', () => {
+    // The forestay runs from a tack J forward of the mast to a masthead
+    // directly above it, so at a quarter hoist it is still three-quarters of J
+    // forward. This is why a luff cannot be measured with the leech's depth.
+    const j = m.baselines.find((b) => b.key === 'tack-mast')!.mm
+    expect(luffDepthMm('jib', 0.25, m).mm).toBeCloseTo(j * 0.75, 6)
+    expect(luffDepthMm('jib', 0.50, m).mm).toBeCloseTo(j * 0.50, 6)
+    expect(luffDepthMm('jib', 0.75, m).mm).toBeCloseTo(j * 0.25, 6)
+    // Forward of the mast is positive, and it is metres not millimetres of it.
+    expect(luffDepthMm('jib', 0.25, m).mm).toBeGreaterThan(5_000)
+  })
+
+  it('takes mid-luff when the height has no fraction, and widens for it', () => {
+    // A spreader has no canonical fraction of hoist, so the depth is a guess
+    // and the sigma says so rather than pretending otherwise.
+    const spr = luffDepthMm('jib', null, m)
+    const known = luffDepthMm('jib', 0.5, m)
+    expect(spr.mm).toBeCloseTo(known.mm, 6)
+    expect(spr.sigmaMm).toBeGreaterThan(known.sigmaMm * 2)
+    // …and wide enough to matter: metres, not millimetres.
+    expect(spr.sigmaMm).toBeGreaterThan(1_000)
+  })
+
+  it('still answers for a boat with no J in the model', () => {
+    const bare = { ...m, baselines: m.baselines.filter((b) => b.key !== 'tack-mast') }
+    expect(luffDepthMm('jib', 0.5, bare).mm).toBeGreaterThan(0)
+  })
+})
 
 describe('rigModel — provenance', () => {
   it('a fresh model is honest about being guesswork', () => {
