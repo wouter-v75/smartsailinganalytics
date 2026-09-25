@@ -29,7 +29,8 @@ const ZBTN = {
 export default function PhotoCanvas({
   source,                 // HTMLCanvasElement | HTMLImageElement | null
   sourceSize,             // {w,h} of it, or null
-  loadingFull = false,    // show "loading full resolution…"
+  fullStatus = 'none',    // none | loading | slow | missing
+  onRetryFull = null,
   resetKey = '',          // changing this refits (a different photo)
   height = '62vh',
   children = null,        // anything to overlay in the corner (a timestamp…)
@@ -173,9 +174,36 @@ export default function PhotoCanvas({
           </span>
         </div>
       )}
-      {loadingFull && (
-        <div style={{ position: 'absolute', top: 8, left: 10, background: 'rgba(3,15,26,0.82)', borderRadius: 4, padding: '3px 8px', fontSize: 10, color: '#FCD34D' }}>
-          loading full resolution…
+      {/* The same three-stage story the video player tells, for the same
+          reason: a picture that is quietly still arriving looks exactly like a
+          picture that is soft, and on a phone at a regatta it is usually the
+          former. 12 s matches VideoPlayer's threshold. */}
+      {fullStatus !== 'none' && (
+        <div style={{ position: 'absolute', top: 8, left: 10, maxWidth: 260, background: 'rgba(3,15,26,0.88)', borderRadius: 6, padding: '6px 9px', fontSize: 10.5, lineHeight: 1.45 }}>
+          {fullStatus === 'missing' ? (
+            <>
+              <div style={{ color: '#FCD34D', fontWeight: 700 }}>Thumbnail only</div>
+              <div style={{ color: '#94A3B8', marginTop: 3 }}>
+                The full-resolution original has not reached the cloud yet — it uploads
+                when the importing device next has a good connection.
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ color: '#7DD3FC', fontWeight: 700 }}>⏳ loading full resolution…</div>
+              {fullStatus === 'slow' && (
+                <div style={{ color: '#94A3B8', marginTop: 4 }}>
+                  Still loading — on a slow connection this can take a while.
+                </div>
+              )}
+            </>
+          )}
+          {onRetryFull && fullStatus !== 'loading' && (
+            <button onClick={onRetryFull}
+              style={{ marginTop: 6, background: '#1E3A5A', border: 'none', borderRadius: 5, padding: '4px 10px', color: '#7DD3FC', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>
+              Try again
+            </button>
+          )}
         </div>
       )}
       {children}

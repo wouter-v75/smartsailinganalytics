@@ -115,11 +115,36 @@ describe('PhotoCanvas', () => {
     }).not.toThrow()
   })
 
-  it('shows the full-resolution notice only while one is on its way', () => {
+  it('tells the same three-stage story the video player does', () => {
     const { rerender } = mount()
-    expect(screen.queryByText(/loading full resolution/)).toBeNull()
     const source = document.createElement('canvas')
-    rerender(<PhotoCanvas source={source} sourceSize={IMG} resetKey="p1" loadingFull />)
+    expect(screen.queryByText(/loading full resolution/)).toBeNull()
+
+    rerender(<PhotoCanvas source={source} sourceSize={IMG} resetKey="p1" fullStatus="loading" />)
     expect(screen.getByText(/loading full resolution/)).toBeTruthy()
+    expect(screen.queryByText(/Still loading/)).toBeNull()      // not yet — it is not slow yet
+
+    rerender(<PhotoCanvas source={source} sourceSize={IMG} resetKey="p1" fullStatus="slow" />)
+    expect(screen.getByText(/Still loading/)).toBeTruthy()
+
+    rerender(<PhotoCanvas source={source} sourceSize={IMG} resetKey="p1" fullStatus="missing" />)
+    expect(screen.getByText('Thumbnail only')).toBeTruthy()
+    expect(screen.queryByText(/loading full resolution/)).toBeNull()
+  })
+
+  it('offers a retry once waiting has turned into a problem, not before', () => {
+    const onRetryFull = vi.fn()
+    const source = document.createElement('canvas')
+    const { rerender } = render(
+      <PhotoCanvas source={source} sourceSize={IMG} resetKey="p1" fullStatus="loading" onRetryFull={onRetryFull} />)
+    expect(screen.queryByText('Try again')).toBeNull()
+
+    rerender(<PhotoCanvas source={source} sourceSize={IMG} resetKey="p1" fullStatus="slow" onRetryFull={onRetryFull} />)
+    fireEvent.click(screen.getByText('Try again'))
+    expect(onRetryFull).toHaveBeenCalledTimes(1)
+
+    rerender(<PhotoCanvas source={source} sourceSize={IMG} resetKey="p1" fullStatus="missing" onRetryFull={onRetryFull} />)
+    fireEvent.click(screen.getByText('Try again'))
+    expect(onRetryFull).toHaveBeenCalledTimes(2)
   })
 })

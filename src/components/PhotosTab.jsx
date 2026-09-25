@@ -305,12 +305,16 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
   const [composed,setComposed]=useState(null);
   const [fullLoaded,setFullLoaded]=useState(false);
   const [fullMissing,setFullMissing]=useState(false);
+  const [fullSlow,setFullSlow]=useState(false);
+  const [retryFull,setRetryFull]=useState(0);
+  const slowTimer=useRef(null);
 
   useEffect(()=>{
     const thumb=photo?.objectUrl, full=photo?.fullUrl;
     if(!thumb&&!full){setRendered(false);setCompose(null);setComposed(null);return;}
     let dead=false;
-    haveFull.current=false; setFullLoaded(false); setFullMissing(false);
+    haveFull.current=false; setFullLoaded(false); setFullMissing(false); setFullSlow(false);
+    if(slowTimer.current) clearTimeout(slowTimer.current);
     const extra=extraGauges.map(k=>{const o=PHOTO_OVERLAY_VARS.find(x=>x.key===k);if(!o)return null;const v=photo[k];
       return {l:o.label,v:v!=null?(o.unit==='°'?R(v,o.dec)+'°':R(v,o.dec)+(o.unit?' '+o.unit:'')):'--',c:'#A78BFA'};}).filter(Boolean);
     const inst={tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,keelAng:photo.keelAng,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2,extra};
@@ -322,7 +326,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
       const c=composeRef.current||(composeRef.current=document.createElement('canvas'));
       renderOverlay(c,img,inst);
       setCompose(c); setComposed({w:c.width,h:c.height}); setRendered(true);
-      if(isFull)setFullLoaded(true);
+      if(isFull){setFullLoaded(true);setFullSlow(false);if(slowTimer.current)clearTimeout(slowTimer.current);}
     };
     const load=(url,isFull)=>{
       if(!url)return;
@@ -332,17 +336,22 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
       // good enough (photoStore.goodForOriginals), so a photo can be in the
       // cloud as a thumbnail and nothing else. Say that, rather than leaving
       // "loading full resolution…" up for ever over a soft picture.
-      i.onerror=()=>{ if(isFull&&!dead) setFullMissing(true); };
+      i.onerror=()=>{ if(isFull&&!dead){ setFullMissing(true); setFullSlow(false); if(slowTimer.current)clearTimeout(slowTimer.current); } };
       i.src=url;
     };
     load(thumb,false);
-    if(full&&full!==thumb)load(full,true);
-    return ()=>{dead=true};
+    if(full&&full!==thumb){
+      // A retry gets a fresh URL: a browser that has cached the failure will
+      // not go back to the network for the same one.
+      load(retryFull?`${full}${full.includes('?')?'&':'?'}retry=${retryFull}`:full,true);
+      slowTimer.current=setTimeout(()=>{ if(!dead&&!haveFull.current) setFullSlow(true); },12000);
+    }
+    return ()=>{dead=true; if(slowTimer.current) clearTimeout(slowTimer.current);};
     // Every field the overlay DRAWS, not just three of them. It used to list
     // tws/twa/sails only, so correcting heel — or any mast measurement — redrew
     // nothing and the burned-in overlay kept showing the old value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[photo.id,photo.objectUrl,photo.fullUrl,overlaySig,extraGauges]);
+  },[photo.id,photo.objectUrl,photo.fullUrl,overlaySig,extraGauges,retryFull]);
 
   const handleExport=()=>{
     if(!composeRef.current)return;
@@ -367,15 +376,11 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
       )}
       <PhotoCanvas
         source={compose} sourceSize={composed} resetKey={photo.id}
-        loadingFull={!fullLoaded&&!fullMissing&&!!photo.fullUrl&&photo.fullUrl!==photo.objectUrl}>
+        fullStatus={(!photo.fullUrl||photo.fullUrl===photo.objectUrl||fullLoaded)?'none'
+          :fullMissing?'missing':fullSlow?'slow':'loading'}
+        onRetryFull={()=>setRetryFull(n=>n+1)}>
         {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5,pointerEvents:"none"}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
       </PhotoCanvas>
-      {fullMissing&&(
-        <div style={{marginTop:-6,marginBottom:10,fontSize:10.5,color:"#FCD34D",lineHeight:1.5}}>
-          Only the thumbnail is in the cloud for this photo — the full-resolution original
-          uploads when the importing device next has a good connection.
-        </div>
-      )}
       {/* Overlay variables — add extra gauges to the photo overlay, this session only. */}
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
         <span style={{fontSize:9,color:"#64748B",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
