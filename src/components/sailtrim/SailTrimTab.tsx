@@ -41,6 +41,7 @@ import {
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
+import { stationAngles, twistBetween, STATION_FRACTION } from '../../lib/sailTwist';
 import {
   buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
 } from '../../lib/sailTrimOverlay';
@@ -738,6 +739,35 @@ export default function SailTrimTab(
     }
     return out;
   }, [calibration, marks, rig.depths, leechCrossings]);
+
+  /**
+   * Twist, where there is both a measurement and a width to divide it by.
+   *
+   * A leech offset is a position; divided by the sail's width at that height it
+   * is a chord ANGLE, and the difference between two heights is twist. The
+   * widths come off the certificate (MHW/MTW/MUW, HHW/HTW/HUW) — which is why
+   * this appears the moment one is read and not before.
+   */
+  const twist = useMemo(() => {
+    const out: { sail: 'main' | 'jib'; rows: ReturnType<typeof twistBetween>; angles: ReturnType<typeof stationAngles> }[] = [];
+    for (const sail of ['main', 'jib'] as const) {
+      const w = rig.widths?.[sail];
+      if (!w) continue;
+      const leech = measurements
+        .filter((m) => m.key.startsWith(`${sail}@`))
+        .map((m) => ({
+          tag: m.key.split('@')[1] as keyof typeof STATION_FRACTION,
+          mm: defn === 'boat' ? m.boatFrameMm : m.worldHorizontalMm,
+          sigmaMm: defn === 'boat' ? m.boatFrameSigmaMm : m.worldHorizontalSigmaMm,
+        }))
+        .filter((l) => STATION_FRACTION[l.tag] != null);
+      if (leech.length < 1) continue;
+      const angles = stationAngles(sail, w, leech);
+      if (!angles.length) continue;
+      out.push({ sail, angles, rows: twistBetween(angles) });
+    }
+    return out;
+  }, [measurements, rig.widths, defn]);
 
   const checks: Check[] = useMemo(
     () => (calibration.cal ? runChecks(calibration.cal) : []),
@@ -1558,6 +1588,49 @@ export default function SailTrimTab(
               </div>
             );
           })()}
+
+          {/* Twist. A leech offset is a position; divided by the sail's width at
+              that height it is a chord ANGLE, and the difference between two
+              heights is twist. Appears the moment a certificate is read, because
+              the widths are what it needs. */}
+          {twist.length > 0 && (
+            <div style={{ marginBottom: 11, paddingBottom: 9, borderBottom: '1px solid #16304A' }}>
+              <div style={{ fontSize: 9, color: '#4ADE80', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>
+                Twist
+              </div>
+              {twist.map((t) => (
+                <div key={t.sail} style={{ marginBottom: 7 }}>
+                  <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 3, textTransform: 'capitalize' }}>{t.sail}</div>
+                  {t.angles.map((a) => (
+                    <div key={a.tag} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B', fontFamily: 'monospace' }}>
+                      <span>chord @ {(a.fraction * 100).toFixed(0)} %</span>
+                      <span>
+                        {a.angle.deg.toFixed(2)}° ±{a.angle.sigmaDeg.toFixed(2)}
+                        <span style={{ color: a.width.source === 'certificate' ? '#4ADE80' : '#FCD34D', marginLeft: 6 }}>
+                          {a.width.m.toFixed(2)} m{a.width.source === 'interpolated' ? '*' : ''}
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                  {t.rows.map((r) => (
+                    <div key={`${r.from}-${r.to}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 2 }}>
+                      <span>{r.from.replace('stripe', '')} % → {r.to.replace('stripe', '')} %</span>
+                      <span style={{ fontFamily: 'monospace' }}>
+                        {r.twistDeg >= 0 ? '+' : ''}{r.twistDeg.toFixed(2)}° ±{r.sigmaDeg.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <div style={{ fontSize: 10, color: '#64748B', lineHeight: 1.45, marginTop: 4 }}>
+                Widths off the certificate — MHW/MTW/MUW and HHW/HTW/HUW. A{' '}
+                <span style={{ color: '#FCD34D' }}>*</span> is interpolated: the certificate
+                stops at half hoist, so the 25 % stripe has no measured width and is taken
+                between the foot and the half. Twist is a DIFFERENCE, so an error common to
+                both stations largely cancels.
+              </div>
+            </div>
+          )}
 
           {measurements.map((m) => {
             const primary = defn === 'boat' ? m.boatFrameMm : m.worldHorizontalMm;

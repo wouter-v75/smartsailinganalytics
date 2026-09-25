@@ -52,6 +52,24 @@ export interface IrcRig {
   /** Rated areas, m². */
   hsa: number | null
   spa: number | null
+  /**
+   * Sail WIDTHS, m — luff to leech at 1/2, 3/4 and 7/8 of the hoist.
+   *
+   * These are the denominator of every shape number. A leech offset alone says
+   * where the leech is; divided by the width at that height it becomes a chord
+   * ANGLE, and the difference between two heights is TWIST. The photograph can
+   * give the first and never the second, and the certificate has had them all
+   * along — `MHW`/`MTW`/`MUW` for the main, `HHW`/`HTW`/`HUW` for the headsail.
+   *
+   * The catch, and it is §8.3's: the certificate dimensions ONE headsail. On
+   * Northstar that is the J1.5. J2, J3 and J4 have no widths anywhere.
+   */
+  mhw: number | null
+  mtw: number | null
+  muw: number | null
+  hhw: number | null
+  htw: number | null
+  huw: number | null
 }
 
 export interface IrcCertificate {
@@ -163,6 +181,12 @@ export function parseIrcCertificate(text: string): IrcCertificate | null {
     hlu: fields.HLU ?? fields.HLUmax ?? null,
     hsa: fields.HSA ?? null,
     spa: fields.SPA ?? null,
+    mhw: fields.MHW ?? null,
+    mtw: fields.MTW ?? null,
+    muw: fields.MUW ?? null,
+    hhw: fields.HHW ?? null,
+    htw: fields.HTW ?? null,
+    huw: fields.HUW ?? null,
   }
   // Plausibility, because a wrong number here is worse than a missing one: it
   // propagates into every millimetre the tool reports. These bounds are wide
@@ -173,6 +197,19 @@ export function parseIrcCertificate(text: string): IrcCertificate | null {
   rig.j = sane(rig.j, 1, 35)
   rig.hlu = sane(rig.hlu, 3, 85)
   rig.hlp = sane(rig.hlp, 1, 35)
+  // Widths narrow as they go up, and every one is shorter than the foot it
+  // belongs to. Bounds wide enough for a sportsboat and a J-class alike.
+  rig.mhw = sane(rig.mhw, 0.5, 30)
+  rig.mtw = sane(rig.mtw, 0.3, 25)
+  rig.muw = sane(rig.muw, 0.2, 20)
+  rig.hhw = sane(rig.hhw, 0.3, 30)
+  rig.htw = sane(rig.htw, 0.2, 25)
+  rig.huw = sane(rig.huw, 0.1, 20)
+  // A width that is not smaller than the one below it is a misread, not a sail.
+  if (rig.mhw != null && rig.mtw != null && rig.mtw >= rig.mhw) { rig.mtw = null; rig.muw = null }
+  if (rig.mtw != null && rig.muw != null && rig.muw >= rig.mtw) rig.muw = null
+  if (rig.hhw != null && rig.htw != null && rig.htw >= rig.hhw) { rig.htw = null; rig.huw = null }
+  if (rig.htw != null && rig.huw != null && rig.huw >= rig.htw) rig.huw = null
   // A mast hoist shorter than the boom, or a foretriangle base longer than the
   // hoist, means the parse went wrong even if each number looks reasonable.
   if (rig.p != null && rig.e != null && rig.p < rig.e) { rig.p = null; rig.e = null }
@@ -332,6 +369,12 @@ export function rigModelFromIrc(cert: IrcCertificate, opts: { spreaderHeightM?: 
     scaleRefs,
     baselines,
     clewHeightMm: geom ? Math.round(geom.clewHeightMm) : undefined,
+    // The widths, straight off the certificate. The foot is E for the main and
+    // HLP for the headsail — both already parsed, both the width at zero hoist.
+    widths: {
+      main: { foot: e, half: cert.rig.mhw, threeQuarter: cert.rig.mtw, upper: cert.rig.muw },
+      jib: { foot: cert.rig.hlp, half: cert.rig.hhw, threeQuarter: cert.rig.htw, upper: cert.rig.huw },
+    },
     depths: {
       // E is to the outer band on the boom; aft of the mast, so negative.
       boom: e ? v(-e * 1000, 150, 'measured') : base.depths.boom,

@@ -35,6 +35,8 @@
 // in, and the migration for it is written (0090) but deliberately not applied.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { SailWidths } from './sailTwist'
+
 export type Provenance = 'designer' | 'measured' | 'derived' | 'estimate'
 //   designer  off the rig drawing
 //   measured  somebody measured it on the boat — an IRC measurer, say
@@ -116,6 +118,15 @@ export interface RigModel {
   // for weeks and quietly biased the wheels; one dead field is enough.
   /** Camera side: sensor width in mm along the long edge. 36 = full frame. */
   sensorWidthMm: number
+  /**
+   * Luff-to-leech widths per sail, metres — the denominator that turns a leech
+   * position into a chord ANGLE, and so into twist. Off the certificate:
+   * MHW/MTW/MUW and HHW/HTW/HUW, with E and HLP as the foot.
+   *
+   * The headsail's are for the ONE rated sail. Flying anything else and these
+   * are the wrong denominators; §8.3 of the doc is about closing that.
+   */
+  widths?: { main?: SailWidths; jib?: SailWidths }
   /** How far the jib's clew sits ABOVE ITS TACK, mm — derived from the
    *  certificate. Not a measurement input: it is what lets the tool draw a
    *  "the clew is about this high" guide, which is the one thing that stops
