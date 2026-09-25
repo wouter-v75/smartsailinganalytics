@@ -95,6 +95,7 @@ export function toLegacyPhotoShape(p: CloudPhotoRow): Record<string, unknown> {
     raceTags?: string[]
     boat?: string | null
     location?: string | null
+    sailTrim?: unknown
   } | null) || {}
   const inst = a.inst || {}
   return {
@@ -110,6 +111,10 @@ export function toLegacyPhotoShape(p: CloudPhotoRow): Record<string, unknown> {
     bsp: inst.bsp ?? null, heel: inst.heel ?? null, vmg: inst.vmg ?? null,
     sails: a.sails || [], raceTags: a.raceTags || [],
     boat: a.boat ?? null, location: a.location ?? null,
+    // Sail geometry, measured once in SailTrim and carried here so that the
+    // annotation draws for everyone. PhotosTab reads `sailtrim_data` as a JSON
+    // string (the shape SailScan established), so hand it one.
+    sailtrim_data: a.sailTrim ? JSON.stringify(a.sailTrim) : null,
     sessionDate: p.sessions?.date || '',
     source: 'supabase',
   }

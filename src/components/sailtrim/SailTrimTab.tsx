@@ -2,7 +2,7 @@
 // src/components/sailtrim/SailTrimTab.tsx
 // ─────────────────────────────────────────────────────────────────────────────
 // SailTrim — the speed team's three astern measurements, digitised here instead
-// of drawn by hand in Rhino. docs/rig-geometry-from-astern-2026-09.md has the
+// of drawn by hand in Rhino. docs/sail-geometry-from-astern-2026-09.md has the
 // derivation; what the tool adds over a scaled overlay is:
 //
 //   • ψ, the camera's off-centreplane angle, measured from the photo and
@@ -39,6 +39,9 @@ import {
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
+import {
+  buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
+} from '../../lib/sailTrimOverlay';
 import { heicToJpeg, loadExifr, loadJsPdf } from '@/lib/cdnScript';
 
 // ── the marks the operator places ───────────────────────────────────────────
@@ -103,8 +106,33 @@ interface Kept {
   psiMeasured: boolean;
 }
 
+/** What a host (the photo viewer) gets back when the operator saves onto a photo. */
+export interface SailTrimSave {
+  result: SailTrimResult;
+  annotation: SailTrimAnnotation;
+  /** Flat, filterable headline fields to hang on the photo beside the JSON. */
+  fields: Record<string, string>;
+  /** Whether the operator asked for the lines to be burned into the picture. */
+  showOverlay: boolean;
+}
+
 export default function SailTrimTab(
-  { boatName = '', initialFileUrl = '' }: { boatName?: string; initialFileUrl?: string } = {},
+  {
+    boatName = '', initialFileUrl = '', initialFileName = '',
+    onSaveToPhoto, photoLabel = '',
+  }: {
+    boatName?: string;
+    initialFileUrl?: string;
+    /** The photo's own name — `initialFileUrl` is an API path with no filename in it. */
+    initialFileName?: string;
+    /** Present when the tool is measuring a photo that belongs to something:
+     *  adds "Save to photo", which is the only way the numbers reach anyone else.
+     *  Returning a `warning` means it saved but did not fully share — worth
+     *  saying, because "saved" that only reached this browser is the failure
+     *  mode this whole feature exists to avoid. */
+    onSaveToPhoto?: (save: SailTrimSave) => void | Promise<void | { warning?: string }>;
+    photoLabel?: string;
+  } = {},
 ) {
   // ── image ─────────────────────────────────────────────────────────────────
   const [imageSrc, setImageSrc] = useState('');
@@ -112,6 +140,8 @@ export default function SailTrimTab(
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
   const [capturedAt, setCapturedAt] = useState<string | null>(null);
   const [exifNote, setExifNote] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [loadingFrame, setLoadingFrame] = useState(false);
   const cachedImage = useRef<HTMLImageElement | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -207,22 +237,39 @@ export default function SailTrimTab(
   };
 
   // A frame handed in by URL rather than by the file picker — the /dev harness,
-  // and the hook a "measure this photo" button in PhotosTab will use.
+  // and the "Sail geometry" button in the photo viewer.
+  //
+  // It says when it fails. The photo the viewer hands over is the cloud
+  // ORIGINAL, and for a photo whose original has not finished uploading that URL
+  // 404s — which used to leave the tool sitting there empty with the file picker
+  // showing, as though nothing had been asked of it.
   useEffect(() => {
     if (!initialFileUrl) return;
     let cancelled = false;
+    setLoadError('');
+    setLoadingFrame(true);
     (async () => {
       try {
         const r = await fetch(initialFileUrl);
-        if (!r.ok || cancelled) return;
+        if (cancelled) return;
+        if (!r.ok) {
+          setLoadError(`Could not load the picture (HTTP ${r.status}). If this photo's full-resolution original has not reached the cloud yet, there is nothing to measure on — open the frame from disk instead.`);
+          return;
+        }
         const blob = await r.blob();
-        const name = initialFileUrl.split('/').pop() || 'frame.jpg';
+        // `initialFileUrl` is an API path with the key in a query string, so the
+        // last path segment is not a filename. The host passes the real one.
+        const name = initialFileName || initialFileUrl.split('/').pop() || 'frame.jpg';
         await openFile(new File([blob], name, { type: blob.type || 'image/jpeg' }));
-      } catch { /* the picker still works */ }
+      } catch (e) {
+        if (!cancelled) setLoadError(`Could not load the picture: ${(e as Error)?.message || 'network error'}. The file picker still works.`);
+      } finally {
+        if (!cancelled) setLoadingFrame(false);
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialFileUrl]);
+  }, [initialFileUrl, initialFileName]);
 
   /** One downscaled copy serves both detectors. */
   const decodeForCv = useCallback((img: HTMLImageElement) => {
@@ -756,6 +803,59 @@ export default function SailTrimTab(
     };
   };
 
+  /**
+   * The annotation: the finished geometry resolved to pixels and millimetres.
+   *
+   * Built here, where the rig model and the heel are, and never re-derived
+   * downstream — see src/lib/sailTrimOverlay.ts for why.
+   */
+  const annotation = (): SailTrimAnnotation | null => {
+    const cal = calibration.cal;
+    if (!cal || !imgSize || !measurements.length) return null;
+    const lp = leechPoint();
+    return buildAnnotation({
+      version: SAILTRIM_VERSION,
+      imageSize: imgSize,
+      defn,
+      axis: { low: cal.axis.low, high: cal.axis.high },
+      measurements,
+      points: {
+        leechSpr2: lp,
+        clew: (marks.clew || [])[0],
+        boom: (marks.boom || [])[0],
+      },
+      colours: Object.fromEntries(
+        steps.map((st) => [st.key === 'leech' ? 'leechSpr2' : st.key, st.colour]),
+      ),
+      psiDeg: cal.psi.deg,
+      psiMeasured: cal.psi.measured,
+      heelDeg: imageHeelDeg(cal.axis, cal.horizon) ?? cal.heelDeg,
+    });
+  };
+
+  const [showOverlay, setShowOverlay] = useState(true);
+  const [saveState, setSaveState] = useState<'' | 'saving' | 'saved' | 'error'>('');
+  const [saveMsg, setSaveMsg] = useState('');
+  const [saveWarn, setSaveWarn] = useState('');
+
+  const saveToPhoto = async () => {
+    if (!onSaveToPhoto) return;
+    const ann = annotation();
+    if (!ann) return;
+    setSaveState('saving'); setSaveMsg(''); setSaveWarn('');
+    try {
+      const r = await onSaveToPhoto({
+        result: result(), annotation: ann, fields: annotationFields(ann), showOverlay,
+      });
+      setSaveState('saved');
+      setSaveMsg(annotationHeadline(ann));
+      setSaveWarn(r && typeof r === 'object' && r.warning ? r.warning : '');
+    } catch (e) {
+      setSaveState('error');
+      setSaveMsg((e as Error)?.message || 'Save failed');
+    }
+  };
+
   const download = (text: string, name: string, type: string) => {
     const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
@@ -877,7 +977,7 @@ export default function SailTrimTab(
 
     need(10);
     doc.setFontSize(7.5); doc.setTextColor(140);
-    doc.text(safe(`${SAILTRIM_VERSION}  ·  geometry per docs/rig-geometry-from-astern-2026-09.md`), M, PH - 8);
+    doc.text(safe(`${SAILTRIM_VERSION}  ·  geometry per docs/sail-geometry-from-astern-2026-09.md`), M, PH - 8);
     doc.save(`${base()}.sailtrim.pdf`);
   };
 
@@ -978,6 +1078,12 @@ export default function SailTrimTab(
           <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }}
             onChange={(e) => { const f = e.target.files?.[0]; if (f) openFile(f); e.target.value = ''; }} />
           <button style={btn(true)} onClick={() => fileRef.current?.click()}>Open frame…</button>
+          {loadingFrame && !imgSize && (
+            <div style={{ fontSize: 11, color: '#7DD3FC', marginTop: 7 }}>Fetching the full-resolution original…</div>
+          )}
+          {loadError && (
+            <div style={{ fontSize: 11, color: '#FCA5A5', marginTop: 7, lineHeight: 1.45 }}>{loadError}</div>
+          )}
           {fileName && <div style={{ fontSize: 11, color: '#94A3B8', marginTop: 7, wordBreak: 'break-all' }}>{fileName}{capturedAt ? ` · ${capturedAt}` : ''}</div>}
           {exifNote && <div style={{ fontSize: 11, color: focalMm ? '#64748B' : '#FCD34D', marginTop: 5, lineHeight: 1.45 }}>{exifNote}</div>}
           {imgSize && (
@@ -1309,6 +1415,45 @@ export default function SailTrimTab(
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* save back onto the photo this was opened from */}
+        {onSaveToPhoto && (
+          <div style={{ ...panel, borderColor: '#38BDF850' }}>
+            <div style={hdr}>Save to photo</div>
+            <div style={{ fontSize: 11, color: '#94A3B8', lineHeight: 1.5, marginBottom: 8 }}>
+              Writes these measurements onto{photoLabel ? ` ${photoLabel}` : ' the photo'} so
+              they travel with it — every teammate, the gallery and the timeline see them,
+              not just this browser.
+            </div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 11.5, color: '#CBD5E1', cursor: 'pointer', marginBottom: 9, lineHeight: 1.45 }}>
+              <input type="checkbox" checked={showOverlay} onChange={(e) => setShowOverlay(e.target.checked)}
+                style={{ marginTop: 2, accentColor: '#38BDF8' }} />
+              <span>
+                Draw the lines on the picture
+                <span style={{ color: '#64748B' }}> — the three measurements and the mast axis,
+                  burned in beside the instrument overlay. Can be turned off again on the photo.</span>
+              </span>
+            </label>
+            <button data-testid="sailtrim-save-to-photo" style={btn(true)}
+              disabled={!measurements.length || saveState === 'saving'} onClick={saveToPhoto}>
+              {saveState === 'saving' ? 'Saving…' : 'Save to photo'}
+            </button>
+            {saveState === 'saved' && (
+              <div style={{ fontSize: 11, color: '#4ADE80', marginTop: 7, lineHeight: 1.45 }}>Saved · {saveMsg}</div>
+            )}
+            {saveState === 'saved' && saveWarn && (
+              <div style={{ fontSize: 11, color: '#FCD34D', marginTop: 5, lineHeight: 1.45 }}>{saveWarn}</div>
+            )}
+            {saveState === 'error' && (
+              <div style={{ fontSize: 11, color: '#FCA5A5', marginTop: 7, lineHeight: 1.45 }}>{saveMsg}</div>
+            )}
+            {!measurements.length && (
+              <div style={{ fontSize: 11, color: '#64748B', marginTop: 7 }}>
+                Nothing to save yet — mark the mast, a scale reference and at least one target.
+              </div>
+            )}
           </div>
         )}
 

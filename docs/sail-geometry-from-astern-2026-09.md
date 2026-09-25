@@ -1,4 +1,4 @@
-# Rig geometry from astern — prior art, method and plan
+# Sail geometry from astern — prior art, method and plan
 
 **Automating the three speed-team measurements that are made by hand in Rhino
 today: mast centreline → jib clew, mast centreline → jib leech at spreader 2,
@@ -436,7 +436,26 @@ heights, a scale reference, an optional centreplane baseline and the three
 targets, and returns each measurement **in both frames with a sigma**, beside
 the number the Rhino method would have given. ψ, the range and the camera roll
 are all reported. It recovers a synthetic target of known position to ±5 mm
-through the full UI path. What remains in this stage:
+through the full UI path.
+
+**It is also reachable from the photo itself** — Photos → a photo →
+*Analyse sail geometry* opens the same digitiser on that photo's
+full-resolution original, and *Save to photo* writes the result back onto it:
+the three numbers on a card beside the instrument data, and, if the box is
+ticked, the lines burned into the picture beside the gauge overlay. That matters
+more than it sounds. A measurement that lives in a downloaded JSON is a
+measurement one person has; a measurement on the photo is one the whole team
+has, in the place they were already looking.
+
+What travels is a small **annotation record** (`src/lib/sailTrimOverlay.ts`) —
+the geometry already resolved to pixels and millimetres, not the marks — carried
+in the photo row's `analysis_data`. The alternative, shipping the clicks and
+re-deriving on each device, would need the rig model to travel too and would
+quietly give a different answer the day a default changed. The record says which
+pixel frame its points are in, so the same three lines draw correctly on the
+6000 px original, on the 480 px thumbnail and into a PDF.
+
+What remains in this stage:
 
 - **Decide the definition** (§4.4): boat-frame athwartships, world-horizontal,
   or both. Decide what "the clew" and "the leech at spreader 2" mean precisely

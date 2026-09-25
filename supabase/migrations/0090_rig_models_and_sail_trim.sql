@@ -18,7 +18,7 @@
 -- NOT YET APPLIED. Written so that the day the rig designer's dimensions
 -- arrive it is one `npm run db:push` away, and so the shape is on the record
 -- while the definitions are still being settled. Additive and idempotent.
--- See docs/rig-geometry-from-astern-2026-09.md.
+-- See docs/sail-geometry-from-astern-2026-09.md.
 -- ============================================================================
 
 -- ── boats.rig_model ──────────────────────────────────────────────────────────

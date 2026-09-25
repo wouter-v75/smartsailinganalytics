@@ -38,7 +38,7 @@ vi.mock('@/lib/cdnScript', () => ({
   }),
 }))
 
-import SailTrimTab from '../sailtrim/SailTrimTab'
+import SailTrimTab, { type SailTrimSave } from '../sailtrim/SailTrimTab'
 
 /** Northstar III's own endorsed certificate, trimmed to what the parser reads. */
 const IRC_CERT = `IRC Boat Data
@@ -254,6 +254,106 @@ describe('SailTrimTab', () => {
     // both recovered to within a couple of centimetres of where they were put
     expect(Math.abs(values[0] - 1_500)).toBeLessThan(25)
     expect(Math.abs(values[1] - 2_400)).toBeLessThan(25)
+  })
+
+  it('hands a host the finished annotation, in the frame\u2019s own pixels', async () => {
+    // What the photo viewer needs back. Not the marks — the geometry RESOLVED,
+    // so that every other device draws the same three lines without owning the
+    // rig model or re-deriving anything.
+    const P = makeCamera(RIG)
+    const saves: SailTrimSave[] = []
+    render(<SailTrimTab onSaveToPhoto={(s) => { saves.push(s) }} photoLabel="_MG_0397.JPG" />)
+    await openAFrame()
+    useManualMast()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+
+    click(P(0, -MAST_HALF_WIDTH, 5_000)); click(P(0, MAST_HALF_WIDTH, 5_000))
+    fireEvent.click(stepButton('Mast edges, high'))
+    click(P(0, -MAST_HALF_WIDTH, 30_000)); click(P(0, MAST_HALF_WIDTH, 30_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    fireEvent.click(stepButton('Centreplane baseline'))
+    click(P(TRANSOM.x, 0, TRANSOM.z)); click(P(TACK.x, 0, TACK.z))
+    fireEvent.change(screen.getByDisplayValue('21000'), { target: { value: String(TACK.x - TRANSOM.x) } })
+    fireEvent.click(stepButton('Jib clew'))
+    click(P(-1_100, 1_500, 2_000))
+    fireEvent.click(stepButton('Boom'))
+    click(P(-10_000, 2_400, 1_400))
+
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(2))
+
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(1))
+    const { annotation, fields, showOverlay, result } = saves[0]
+
+    // The overlay box is on by default: having measured, you want to see it.
+    expect(showOverlay).toBe(true)
+
+    // The annotation is in the ORIGINAL frame's pixels, and says so — that is
+    // the only thing that lets a 480 px thumbnail draw the same lines.
+    expect(annotation.imageSize).toEqual({ w: RIG.imgW, h: RIG.imgH })
+    expect(annotation.psiMeasured).toBe(true)
+    expect(annotation.targets.map((t) => t.key)).toEqual(['clew', 'boom'])
+
+    // Each target carries both ends of the line it measured, in image pixels,
+    // and the clew's is where the camera model says the clew is.
+    const clew = annotation.targets.find((t) => t.key === 'clew')!
+    const truth = P(-1_100, 1_500, 2_000)
+    expect(Math.abs(clew.point.x - truth.x)).toBeLessThan(1)
+    expect(Math.abs(clew.point.y - truth.y)).toBeLessThan(1)
+    expect(Math.abs(Math.abs(clew.mm) - 1_500)).toBeLessThan(25)
+    // The foot is on the mast axis, which is what the measurement is FROM.
+    expect(annotation.axis).toBeTruthy()
+
+    // Flat fields for a photo list to filter on, and the full result for reopening.
+    expect(fields.sailtrim_clew_mm).toMatch(/^1[45]\d\d$/)
+    expect(fields.sailtrim_psi_measured).toBe('1')
+    expect(result.measurements).toHaveLength(2)
+
+    // It survives the JSON round trip it is about to be put through.
+    expect(JSON.parse(JSON.stringify(annotation)).targets).toHaveLength(2)
+
+    // And it says so on screen, with the numbers rather than a bare tick.
+    await waitFor(() => expect(screen.getByText(/^Saved ·/)).toBeTruthy())
+  })
+
+  it('says a save only reached this browser, rather than claiming success', async () => {
+    // "Saved" that did not leave the device is the failure this whole feature
+    // exists to avoid — a photo's instrument data was invisible to everyone but
+    // the importer for exactly this reason.
+    const P = makeCamera(RIG)
+    render(<SailTrimTab onSaveToPhoto={() => ({ warning: 'Not signed in — saved on this device only.' })} />)
+    await openAFrame()
+    useManualMast()
+    click(P(0, -MAST_HALF_WIDTH, 5_000)); click(P(0, MAST_HALF_WIDTH, 5_000))
+    fireEvent.click(stepButton('Mast edges, high'))
+    click(P(0, -MAST_HALF_WIDTH, 30_000)); click(P(0, MAST_HALF_WIDTH, 30_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    fireEvent.click(stepButton('Jib clew'))
+    click(P(-1_100, 1_500, 2_000))
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(1))
+
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(screen.getByText(/saved on this device only/)).toBeTruthy())
+    expect(screen.getByText(/^Saved ·/)).toBeTruthy()
+  })
+
+  it('reports a picture it could not fetch, instead of sitting there empty', async () => {
+    // The viewer hands over the CLOUD ORIGINAL's URL, which 404s for a photo
+    // whose original has not finished uploading.
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: false, status: 404 } as Response))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<SailTrimTab initialFileUrl="/api/bunny/image?key=missing.jpg" initialFileName="_MG_0397.JPG" />)
+    await waitFor(() => expect(screen.getByText(/HTTP 404/)).toBeTruthy())
+    expect(screen.getByText(/has not reached the cloud yet/)).toBeTruthy()
+    vi.unstubAllGlobals()
+  })
+
+  it('does not offer "Save to photo" when it was not opened from one', async () => {
+    render(<SailTrimTab />)
+    await openAFrame()
+    expect(screen.queryByTestId('sailtrim-save-to-photo')).toBeNull()
   })
 
   it('warns, loudly and specifically, when the misalignment was never measured', async () => {

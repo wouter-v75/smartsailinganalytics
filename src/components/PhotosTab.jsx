@@ -8,6 +8,7 @@
 //   4) Admin/Coach can optionally download full-res to IDB for offline debrief
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { uploadJsonToStorage } from "../lib/bunny";
 import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, startAutoFlush, keysForPhoto } from "../lib/photoStore";
 import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
@@ -18,7 +19,26 @@ import PhotoCanvas from "./photos/PhotoCanvas";
 import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
 import { renderOverlay } from "../lib/photoOverlay";
+import { drawSailTrimAnnotation, isAnnotation, annotationHeadline } from "../lib/sailTrimOverlay";
 import { venueTodayIso as TODAY } from "../lib/localStore";   // venue-local, not UTC
+
+// The digitiser is a big component with its own CDN libraries, and most visits
+// to the Photos tab never open it — so it arrives as its own chunk, on demand.
+const SailTrimTab = dynamic(() => import("./sailtrim/SailTrimTab"), {
+  ssr: false,
+  loading: () => <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:"#7DD3FC",fontSize:13}}>Loading the digitiser…</div>,
+});
+
+/** The sail-geometry payload on a photo, or null. Tolerates the string form. */
+function sailTrimOf(photo){
+  const raw = photo?.sailtrim_data;
+  if(!raw) return null;
+  let parsed;
+  try { parsed = typeof raw === "string" ? JSON.parse(raw) : raw; }
+  catch { return null; }
+  if(!parsed || !isAnnotation(parsed.annotation)) return null;
+  return parsed;
+}
 
 const DB_NAME = "ssa-db";
 const R = (n, d=1) => (n==null||isNaN(n))?"--":Number(n).toFixed(d);
@@ -279,7 +299,9 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
   );
 }
 
-function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime}){
+// Exported for its own test: it is the whole right-hand pane, it composes the
+// canvas, and a throw in here takes the Photos tab with it.
+export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime,onMeasureGeometry,onToggleGeometryOverlay}){
   const [rendered,setRendered]=useState(false);
   const [editTime,setEditTime]=useState(false);
   const [timeVal,setTimeVal]=useState('');
@@ -295,6 +317,11 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
     // the signature too — otherwise adding a gauge redraws but changing its value
     // does not.
     extraGauges.map(k=>photo[k]).join(',')].join('|');
+  // The sail-geometry lines are burned into the same composite, so a new
+  // measurement or a flick of the overlay switch has to reach the compose effect
+  // exactly as an instrument change does.
+  const geom = sailTrimOf(photo);
+  const geomSig = geom ? `${geom.overlay?1:0}|${geom.annotation.measuredAt}|${geom.annotation.targets.length}` : '';
   // ── compose once, at full resolution ──────────────────────────────────────
   // The composite — photograph plus burned-in overlay, at the image's OWN size
   // — is what gets exported and what PhotoCanvas looks at. Held in state, not a
@@ -325,6 +352,14 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
       if(isFull)haveFull.current=true;
       const c=composeRef.current||(composeRef.current=document.createElement('canvas'));
       renderOverlay(c,img,inst);
+      // Sail geometry on top: the measured lines are about the picture itself, so
+      // they belong under the gauge boxes in importance but over the photograph.
+      // renderOverlay has just sized the canvas to the image, which is the frame
+      // the annotation's points are in — modulo resolution, which it scales for.
+      if(geom?.overlay){
+        const gctx=c.getContext('2d');
+        if(gctx) drawSailTrimAnnotation(gctx, geom.annotation);
+      }
       setCompose(c); setComposed({w:c.width,h:c.height}); setRendered(true);
       if(isFull){setFullLoaded(true);setFullSlow(false);if(slowTimer.current)clearTimeout(slowTimer.current);}
     };
@@ -351,7 +386,7 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
     // tws/twa/sails only, so correcting heel — or any mast measurement — redrew
     // nothing and the burned-in overlay kept showing the old value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[photo.id,photo.objectUrl,photo.fullUrl,overlaySig,extraGauges,retryFull]);
+  },[photo.id,photo.objectUrl,photo.fullUrl,overlaySig,geomSig,extraGauges,retryFull]);
 
   const handleExport=()=>{
     if(!composeRef.current)return;
@@ -488,6 +523,57 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
           </div>
         );
       })()}
+      {/* ── Sail geometry (SailTrim) ────────────────────────────────────────
+          The three astern measurements the speed team draws by hand in Rhino.
+          The numbers are shown unsigned: the sign is a direction in the image,
+          which nobody says out loud. */}
+      {geom && (
+        <div style={{background:"#0A1929",border:"1px solid #38BDF840",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,gap:8}}>
+            <div style={{fontSize:9,color:"#38BDF8",letterSpacing:2,textTransform:"uppercase"}}>📐 Sail geometry</div>
+            <div style={{fontSize:8,color:"#8A97A9",fontFamily:"monospace"}}>{geom.annotation.version}</div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:`repeat(${Math.max(1,Math.min(3,geom.annotation.targets.length))},1fr)`,gap:8}}>
+            {geom.annotation.targets.map(t=>(
+              <div key={t.key} style={{background:"#071624",borderRadius:6,padding:"7px 8px",border:`1px solid ${t.colour}20`,textAlign:"center"}}>
+                <div style={{fontSize:8,color:"#4E5D71",marginBottom:2}}>{t.label.replace(/^Jib /,"").replace(/ @ reference height$/," @ ref")}</div>
+                <div style={{fontSize:14,fontWeight:700,color:t.colour,fontFamily:"monospace"}}>
+                  {Math.round(Math.abs(t.mm))}<span style={{fontSize:8,marginLeft:1}}>mm</span>
+                </div>
+                <div style={{fontSize:8,color:"#64748B",fontFamily:"monospace"}}>±{Math.round(t.sigmaMm)}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:7,fontSize:9,color:"#64748B",lineHeight:1.5}}>
+            {geom.annotation.defn==="world"?"World-horizontal":"Athwartships"} from the mast axis ·{" "}
+            <span style={{color:geom.annotation.psiMeasured?"#4ADE80":"#FCD34D"}}>
+              ψ {geom.annotation.psiDeg.toFixed(2)}° {geom.annotation.psiMeasured?"measured":"assumed"}
+            </span>
+            {geom.annotation.heelDeg!=null&&<> · heel {geom.annotation.heelDeg.toFixed(1)}°</>}
+          </div>
+          <div style={{marginTop:8,display:"flex",gap:7,flexWrap:"wrap"}}>
+            {onToggleGeometryOverlay&&(
+              <button onClick={()=>onToggleGeometryOverlay(photo)}
+                style={{background:geom.overlay?"#38BDF820":"none",border:"1px solid #38BDF840",borderRadius:6,padding:"5px 10px",color:"#38BDF8",cursor:"pointer",fontSize:10,fontWeight:600}}>
+                {geom.overlay?"✓ lines on the photo":"Draw lines on the photo"}
+              </button>
+            )}
+            {onMeasureGeometry&&(
+              <button onClick={()=>onMeasureGeometry(photo)}
+                style={{background:"none",border:"1px solid #1E3A5A",borderRadius:6,padding:"5px 10px",color:"#94A3B8",cursor:"pointer",fontSize:10}}>
+                Re-measure…
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {!geom&&onMeasureGeometry&&(
+        <button onClick={()=>onMeasureGeometry(photo)}
+          style={{width:"100%",background:"#0A1929",border:"1px solid #38BDF840",borderRadius:8,padding:"10px 0",color:"#38BDF8",fontWeight:700,cursor:"pointer",fontSize:12,marginBottom:10}}>
+          📐 Analyse sail geometry
+        </button>
+      )}
+
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button onClick={handleExport} disabled={!rendered} style={{flex:1,background:rendered?"#8B5CF6":"#1E3A5A",border:"none",borderRadius:7,padding:"9px 0",color:rendered?"#fff":"#475569",fontWeight:700,cursor:rendered?"pointer":"default",fontSize:12}}>⬇ Export JPEG</button>
         {!photo.cloudSynced&&<button onClick={onUpload} disabled={uploading} style={{flex:1,background:uploading?"#1E3A5A":"#06B6D4",border:"none",borderRadius:7,padding:"9px 0",color:uploading?"#475569":"#000",fontWeight:700,cursor:uploading?"default":"pointer",fontSize:12}}>{uploading?"Uploading…":"☁ Upload"}</button>}
@@ -637,6 +723,11 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     // whose log is not loaded cannot blank an analysis baked in at import.
     if(matched||xml){
       e.analysis={
+        // Anything else already in `analysis` is kept. This rebuild used to be a
+        // wholesale replacement, which would silently delete the SailTrim
+        // annotation the moment the day's log loaded and re-enriched the photo —
+        // and the deletion would then be pushed to the cloud row as an update.
+        ...(photo.analysis||{}),
         sails:e.sails||[], raceTags:e.raceTags||[], boat:e.boat||null, location:e.location||null,
         inst:{ tws:e.tws??null, twa:e.twa??null, awa:e.awa??null, bsp:e.bsp??null, heel:e.heel??null, vmg:e.vmg??null },
       };
@@ -886,6 +977,83 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       photos: cloudEntries,
     });
   }, [activeDate]);
+
+  // ── Sail geometry (SailTrim) on a photo ──────────────────────────────────
+  // The digitiser opens on the photo's full-resolution original and hands back a
+  // finished annotation. Persisting it has to do THREE things, and the middle one
+  // is the one that matters: localStorage keeps it for this browser, the Supabase
+  // row's analysis_data is what every other member reads, and the session
+  // photos.json index is what a fresh device sees before the row query returns.
+  // Write only the first and the numbers exist for whoever clicked and nobody
+  // else — the same failure that made photo instrument data invisible to
+  // everyone but the importer.
+  const [geomFor, setGeomFor] = useState(null);   // the photo being measured
+
+  const persistPhotoPatch = useCallback(async (photo, patch) => {
+    let next = null;
+    setPhotos(prev => {
+      next = prev.map(p => p.id === photo.id ? { ...p, ...patch } : p);
+      savePhotos(next);
+      return next;
+    });
+    setSelected(s => (s && s.id === photo.id) ? { ...s, ...patch } : s);
+    setGeomFor(g => (g && g.id === photo.id) ? { ...g, ...patch } : g);
+
+    // The team-shared row. `analysis` is the only field that travels.
+    const merged = { ...photo, ...patch };
+    const { getBrowserSupabase } = await import('../lib/supabase/browser');
+    const { upsertPhotoCloud } = await import('../lib/cloud-photos');
+    const { data:{ user } } = await getBrowserSupabase().auth.getUser();
+    if(!user) throw new Error('Not signed in — saved on this device only.');
+    if(!(merged.bunnyPath || merged.url)) throw new Error('This photo is not in the cloud yet, so there is no shared row to write to. Saved on this device only; it will travel once the photo uploads.');
+    await upsertPhotoCloud({
+      userId: user.id,
+      sessionDate: merged.sessionDate || activeDate,
+      takenUtc: merged.utc ?? null,
+      exif: merged.exif ?? null,
+      thumbnailUrl: merged.thumbnailUrl ?? null,
+      bunnyStoragePath: merged.bunnyPath || merged.url,
+      bytes: merged.size ?? null,
+      analysis: merged.analysis ?? null,
+    });
+    if(next) await writePhotoIndex(next);
+  }, [activeDate, savePhotos, writePhotoIndex]);
+
+  const handleSaveSailTrim = useCallback(async (photo, save) => {
+    const payload = {
+      annotation: save.annotation,
+      overlay: !!save.showOverlay,
+      headline: annotationHeadline(save.annotation),
+      result: save.result,
+    };
+    const patch = {
+      ...save.fields,
+      sailtrim_data: JSON.stringify(payload),
+      analysis: { ...(photo.analysis || {}), sailTrim: payload },
+    };
+    try {
+      await persistPhotoPatch(photo, patch);
+    } catch (e) {
+      // Local state is already updated — this is "saved, not shared", which is
+      // worth a warning rather than an error that implies nothing happened.
+      return { warning: `${e?.message || 'The shared copy could not be written.'} Teammates will not see these numbers until it syncs.` };
+    }
+    return {};
+  }, [persistPhotoPatch]);
+
+  /** Turn the burned-in lines on or off on a photo that already has geometry. */
+  const handleToggleSailTrimOverlay = useCallback(async (photo) => {
+    let parsed;
+    try { parsed = typeof photo.sailtrim_data === 'string' ? JSON.parse(photo.sailtrim_data) : photo.sailtrim_data; }
+    catch { return; }
+    if(!parsed) return;
+    const payload = { ...parsed, overlay: !parsed.overlay };
+    const patch = {
+      sailtrim_data: JSON.stringify(payload),
+      analysis: { ...(photo.analysis || {}), sailTrim: payload },
+    };
+    try { await persistPhotoPatch(photo, patch); } catch { /* local toggle still applied */ }
+  }, [persistPhotoPatch]);
 
   // ── Upload-only for the currently selected photo (legacy single-photo flow) ─
   const handleUpload = async () => {
@@ -1201,7 +1369,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {/* ── Detail panel — desktop-only (mobile renders as overlay below) ── */}
       {!isNarrow && (selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
-           canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}/>
+           canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}
+           onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#4E5D71"}}>
           <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#64748B"}}>Select a photo to view</div></div>
         </div>)}
@@ -1213,7 +1382,39 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           <PhotoDetail photo={selected} onDelete={()=>{handleDelete();setMobileDetailOpen(false);}}
             onUpload={handleUpload} uploading={uploading}
             canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}
-            onClose={()=>setMobileDetailOpen(false)} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}/>
+            onClose={()=>setMobileDetailOpen(false)} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}
+            onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null}/>
+        </div>
+      )}
+
+      {/* ── The digitiser, full screen ──────────────────────────────────────
+          Full screen because it is a measuring instrument: the mast is two
+          pixels wide at fit zoom, and the marking has to be done zoomed in with
+          the rig model and the checks visible beside it. It is handed the
+          full-resolution ORIGINAL — never the composite, whose burned-in gauges
+          and any previous annotation would then be measured as though they were
+          the photograph. */}
+      {geomFor && (
+        <div style={{position:"fixed",inset:0,zIndex:80,background:"#030F1A",display:"flex",flexDirection:"column"}}
+             role="dialog" aria-modal="true" aria-label="Sail geometry">
+          <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:12,padding:"9px 12px",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>
+            <button onClick={()=>setGeomFor(null)}
+              style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:7,padding:"7px 13px",color:"#E2E8F0",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>
+              ← Back to photo
+            </button>
+            <div style={{fontSize:12.5,fontWeight:800,color:"#38BDF8"}}>📐 Sail geometry</div>
+            <div style={{fontSize:11,color:"#94A3B8",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
+              {geomFor.name||"Photo"}{geomFor.utc?` · ${fmtLocalDT(geomFor.utc,sessionTzOffset)} ${TZ_SHORT(sessionTzOffset)}`:""}
+            </div>
+          </div>
+          <div style={{flex:1,minHeight:0,position:"relative"}}>
+            <SailTrimTab
+              boatName={geomFor.boat||""}
+              initialFileUrl={geomFor.fullUrl||geomFor.objectUrl||""}
+              initialFileName={geomFor.name||"photo.jpg"}
+              photoLabel={geomFor.name||"this photo"}
+              onSaveToPhoto={(save)=>handleSaveSailTrim(geomFor,save)}/>
+          </div>
         </div>
       )}
     </div>

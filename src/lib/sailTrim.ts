@@ -9,7 +9,7 @@
 // Today these are drawn by hand in Rhino: scale the photo off something known,
 // draw a horizontal line from the mast, read the number. That method has three
 // silent errors in it, and this module exists to remove all three. See
-// docs/rig-geometry-from-astern-2026-09.md for the full derivation; the short
+// docs/sail-geometry-from-astern-2026-09.md for the full derivation; the short
 // version:
 //
 //  1. MISALIGNMENT (ψ). The camera is never exactly on the boat's centreplane.
