@@ -68,10 +68,10 @@ const OTHER_STEPS: StepDef[] = [
     hint: 'The two ends of something whose true length you know AND that lies across the boat — spreader tip to tip. Never a fore-and-aft length: from astern those are foreshortened to nothing.' },
   { key: 'baseline', label: 'Centreplane baseline', min: 2, max: 2, colour: '#F472B6', group: 'calibrate', optional: true,
     hint: 'Two points on the boat’s centreline, as far apart fore-and-aft as possible — forestay tack and transom centre. Aft point first. This is what measures ψ; skipping it costs ±1° of unknown misalignment.' },
-  { key: 'spreader', label: 'Spreader 2 on the mast', min: 1, max: 1, colour: '#A78BFA', group: 'calibrate',
-    hint: 'Where spreader 2 meets the mast. Sets the height the leech measurement is taken at.' },
+  { key: 'spreader', label: 'Reference height on the mast', min: 1, max: 1, colour: '#A78BFA', group: 'calibrate',
+    hint: 'Where spreader 2 meets the mast, by convention — but it is simply the height the leech is measured at, so put it where the leech you want is actually visible. The same height every time, or the numbers do not compare.' },
   { key: 'leech', label: 'Jib leech', min: 2, max: 6, colour: '#4ADE80', group: 'target',
-    hint: 'Two to four points down the jib leech through the spreader-2 region. It is a curve; the measurement point is where that curve crosses the reference line.' },
+    hint: 'Two to four points down the JIB\u2019s leech, around the reference height. CHECK WHICH SAIL YOU ARE ON \u2014 the silhouette against the sky is the MAINSAIL\u2019s leech high up and the jib\u2019s lower down, and on the 5 Sept frames the two sit within ~150 mm of each other, so a reading off the wrong one looks perfectly reasonable. It is a curve; the measurement point is where it crosses the reference line.' },
   { key: 'clew', label: 'Jib clew', min: 1, max: 1, colour: '#FB923C', group: 'target',
     hint: 'The clew itself. Keep to the same feature every time — the ring centre, say.' },
   { key: 'boom', label: 'Boom', min: 1, max: 1, colour: '#F87171', group: 'target',
@@ -343,7 +343,12 @@ export default function RigShotTab(
   // ── pointer handling ─────────────────────────────────────────────────────
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!imgSize) return;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    // Capture keeps a drag alive if the pointer leaves the canvas. `?.` only
+    // guards the method being absent — it still THROWS on a pointer id the
+    // browser has no active pointer for, which aborts the handler and silently
+    // eats the click. Never happens to a hand on a trackpad; happens every
+    // time to a synthetic event, which is how it was found.
+    try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* not capturable */ }
     downRef.current = { client: { x: e.clientX, y: e.clientY }, moved: false };
     const p = toImage(e.clientX, e.clientY);
     const near = findNear(p);
@@ -744,15 +749,23 @@ export default function RigShotTab(
 
     const jsPDF = await loadJsPdf();
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    // jsPDF's built-in fonts are WinAnsi: ψ, em dashes and curly quotes are not
+    // in them, and a missing glyph does not fall back — it comes out as a
+    // different letter entirely (ψ printed as "È"). Everything written to the
+    // page goes through here.
+    const safe = (t: string) => t
+      .replace(/ψ/g, 'psi').replace(/[–—]/g, '-')
+      .replace(/[’‘]/g, "'").replace(/[“”]/g, '"')
+      .replace(/≈/g, '~').replace(/×/g, 'x').replace(/⇒/g, '=>');
     const PW = 210, PH = 297, M = 12;
     let y = 16;
     const need = (mm: number) => { if (y + mm > PH - M) { doc.addPage(); y = M + 4; } };
     const line = (t: string, size = 9, colour = 90) => {
-      need(6); doc.setFontSize(size); doc.setTextColor(colour); doc.text(t, M, y); y += size * 0.52 + 1.6;
+      need(6); doc.setFontSize(size); doc.setTextColor(colour); doc.text(safe(t), M, y); y += size * 0.52 + 1.6;
     };
 
     doc.setFontSize(16); doc.setTextColor(20); doc.setFont('helvetica', 'bold');
-    doc.text(`RigShot — ${boat || 'unnamed boat'}`, M, y); y += 7;
+    doc.text(safe(`RigShot — ${boat || 'unnamed boat'}`), M, y); y += 7;
     doc.setFont('helvetica', 'normal');
     line([fileName, capturedAt || '', `${imgSize.w}×${imgSize.h}`].filter(Boolean).join('   ·   '), 10);
     y += 2;
@@ -770,7 +783,7 @@ export default function RigShotTab(
       need(6);
       doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(9); doc.setTextColor(bold ? 20 : 45);
       let x = M;
-      cells.forEach((c, i) => { doc.text(c, x, y); x += cw[i]; });
+      cells.forEach((c, i) => { doc.text(safe(c), x, y); x += cw[i]; });
       y += 5.2;
     };
     row(cols, true);
@@ -796,7 +809,7 @@ export default function RigShotTab(
       + (cal.rangeMm ? `  ·  range ${(cal.rangeMm / 1000).toFixed(0)} m` : '  ·  range unknown (no focal length)'));
     line(cal.psi.measured
       ? `\u03c8 ${cal.psi.deg.toFixed(2)}\u00b0 \u00b1 ${cal.psi.sigmaDeg.toFixed(2)}\u00b0, measured from the centreplane baseline and corrected for`
-      : '\u03c8 not measured \u2014 assumed 0 \u00b1 1\u00b0, which is \u00b1140 mm on a target 8 m forward');
+      : '\u03c8 not measured \u2014 assumed 0 \u00b1 1\u00b0, and a degree of \u03c8 is \u00b117 mm for every metre a target sits from the mast');
     const ih = imageHeelDeg(cal.axis, cal.horizon);
     line(horizon
       ? `horizon ${horizon.tiltDeg.toFixed(2)}\u00b0 (${horizon.samples} columns, rms ${horizon.rms.toFixed(1)} px)`
@@ -811,13 +824,13 @@ export default function RigShotTab(
       doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(20);
       need(8); doc.text('Read this before quoting the numbers', M, y); y += 6;
       doc.setFont('helvetica', 'normal');
-      for (const g of gaps) for (const t of doc.splitTextToSize(`\u2022 ${g}`, PW - 2 * M) as string[]) line(t, 9, 60);
-      for (const c of failed) for (const t of doc.splitTextToSize(`\u2022 ${c.label}: ${c.detail}`, PW - 2 * M) as string[]) line(t, 9, 60);
+      for (const g of gaps) for (const t of doc.splitTextToSize(safe(`\u2022 ${g}`), PW - 2 * M) as string[]) line(t, 9, 60);
+      for (const c of failed) for (const t of doc.splitTextToSize(safe(`\u2022 ${c.label}: ${c.detail}`), PW - 2 * M) as string[]) line(t, 9, 60);
     }
 
     need(10);
     doc.setFontSize(7.5); doc.setTextColor(140);
-    doc.text(`${RIGSHOT_VERSION}  ·  geometry per docs/rig-geometry-from-astern-2026-09.md`, M, PH - 8);
+    doc.text(safe(`${RIGSHOT_VERSION}  ·  geometry per docs/rig-geometry-from-astern-2026-09.md`), M, PH - 8);
     doc.save(`${base()}.rigshot.pdf`);
   };
 

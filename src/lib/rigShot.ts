@@ -529,7 +529,7 @@ export function runChecks(cal: Calibration): Check[] {
     ok: cal.psi.measured,
     detail: cal.psi.measured
       ? `ψ = ${cal.psi.deg.toFixed(2)}° ± ${cal.psi.sigmaDeg.toFixed(2)}°`
-      : 'no centreplane baseline marked — ψ assumed 0 ± 1°, which is ±140 mm on a target 8 m forward',
+      : 'no centreplane baseline marked — ψ assumed 0 ± 1°, and a degree of ψ is ±17 mm for every metre a target sits from the mast',
   })
 
   out.push({
