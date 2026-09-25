@@ -51,8 +51,33 @@ resolution).
 **`next build` while `next dev` is running corrupts the dev server.** Both write
 `.next/`; every page then 500s with `Cannot find module './NNNN.js'`, including
 pages you never touched. Stop the server, `rm -rf .next`, restart. To build
-without stopping dev, copy the tree to `$TMPDIR` (excluding `.next` and
-`.git`), symlink `node_modules`, and build there — it gets its own `.next`.
+without stopping dev, build in a copy that gets its own `.next` — always the
+**same** directory, wiped first:
+
+```bash
+B="$TMPDIR/ssa-build"; rm -rf "$B" && mkdir -p "$B"
+rsync -a --exclude .next --exclude .git --exclude node_modules ./ "$B"/
+ln -s "$PWD/node_modules" "$B/node_modules" && (cd "$B" && npx next build)
+```
+
+Never a fresh name per task (`ssa-motion`, `ssa-badge`, …): each copy is
+~750 MB with its build, nothing reaps `$TMPDIR` on macOS, and ten of them
+filled the disk in September 2026. If you find stray `$TMPDIR/ssa-*` dirs,
+they hold no `.git` and are safe to delete.
+
+**Stop every dev server you start before you finish.** A backgrounded
+`next dev` outlives its session: kill the `npm`/`next dev` parent and the
+`next-server` child survives, orphaned. 26 of them were found running from
+deleted copies — holding the deleted `.next` caches open (so `rm` freed
+nothing) and pushing GBs into swap. From the directory you started it in,
+kill every Next process running there — and only there, so Wouter's own dev
+server in another checkout survives:
+
+```bash
+for p in $(pgrep -f "next dev|next-server"); do
+  [ "$(lsof -a -p $p -d cwd -Fn | sed -n 's/^n//p')" = "$(pwd -P)" ] && kill $p
+done
+```
 
 **Nothing but `next build` sees the ROUTE TREE, so it has its own test.** A
 commit added `api/videos/[id]/share` beside the existing `[videoId]/share`;
