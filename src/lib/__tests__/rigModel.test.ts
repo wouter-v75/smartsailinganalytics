@@ -4,6 +4,7 @@ import {
   loadRigModel, saveRigModel, listRigModels, rigModelFor,
   exportRigModel, importRigModel,
   luffDepthMm, rigModelFor,
+  migrateRigModel,
 } from '../rigModel'
 
 // jsdom 25's localStorage has no clear(); the repo stubs it the same way in
@@ -18,6 +19,49 @@ beforeEach(() => {
   })
 })
 afterEach(() => { vi.unstubAllGlobals() })
+
+describe('migrateRigModel — a stored model gains fields added since', () => {
+  it('fills in a field the stored model predates', () => {
+    // The bug: a model saved before `widths` existed was returned verbatim, so
+    // the sail girths were missing for ever — and twist, which divides by them,
+    // silently showed nothing at all.
+    const old = defaultRigModel('Northstar 76') as RigModel & { widths?: unknown }
+    delete old.widths
+    const m = migrateRigModel(old)
+    expect(m.widths).toBeDefined()
+  })
+
+  it('keeps the operator’s own edits — the default only fills gaps', () => {
+    const stored = defaultRigModel('Northstar 76')
+    stored.scaleRefs = stored.scaleRefs.map((r) =>
+      r.key === 'spreader2' ? { ...r, mm: 6240, sigmaMm: 5, source: 'designer' as const } : r)
+    stored.depths = { ...stored.depths, boom: { mm: -10330, sigmaMm: 150, source: 'measured' } }
+    const m = migrateRigModel(stored)
+    expect(m.scaleRefs.find((r) => r.key === 'spreader2')!.mm).toBe(6240)
+    expect(m.depths.boom.mm).toBe(-10330)
+    expect(m.depths.boom.source).toBe('measured')
+  })
+
+  it('fills a DEPTH added since, without disturbing the ones stored', () => {
+    const stored = defaultRigModel('X') as RigModel
+    // a model from before the main's leech had its own depth
+    const depths = { ...stored.depths } as Record<string, unknown>
+    delete depths.mainLeech
+    const m = migrateRigModel({ ...stored, depths: depths as RigModel['depths'] })
+    expect(m.depths.mainLeech).toBeDefined()
+    expect(m.depths.leech).toEqual(stored.depths.leech)
+  })
+
+  it('is what loadRigModel hands back, so the migration is not optional', () => {
+    const stored = defaultRigModel('Northstar 76') as RigModel & { widths?: unknown }
+    delete stored.widths
+    window.localStorage.setItem('ssa-rig-models-v1',
+      JSON.stringify({ 'northstar 76': stored }))
+    expect(loadRigModel('Northstar 76')!.widths).toBeDefined()
+    expect(rigModelFor('Northstar 76').widths).toBeDefined()
+    window.localStorage.removeItem('ssa-rig-models-v1')
+  })
+})
 
 describe('luffDepthMm — where a luff sits, fore and aft', () => {
   const m = rigModelFor('Northstar 76')

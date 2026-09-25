@@ -1691,11 +1691,36 @@ export default function SailTrimTab(
               that height it is a chord ANGLE, and the difference between two
               heights is twist. Appears the moment a certificate is read, because
               the widths are what it needs. */}
+          {/* When there is no twist, SAY WHY. An empty panel is how a missing
+              certificate and a leech that only crossed a spreader looked
+              identical — and identical to everything working. */}
+          {calibration.cal && twist.length === 0 && measurements.some((m) => m.key.includes('@')) && (
+            <div style={{ fontSize: 11, color: '#FCD34D', marginBottom: 9, lineHeight: 1.5 }}>
+              <b>No twist yet.</b>{' '}
+              {!rig.widths?.main && !rig.widths?.jib
+                ? 'The sail WIDTHS are missing — they are the denominator a leech offset is divided by to become an angle. Paste an IRC certificate into the rig model below (MHW/MTW/MUW and HHW/HTW/HUW come off it).'
+                : !HEIGHT_TAGS.some((t) => STATION_FRACTION[t.key] != null && (marks[`h:${t.key}`] || []).length > 0)
+                  ? 'Only spreader heights are marked. A spreader has no fixed fraction of the hoist, so there is no width to divide by — mark a 25 / 50 / 75 % STRIPE as well.'
+                  : 'The leeches do not cross a marked stripe height. Extend them past the highest and lowest stripe you marked.'}
+            </div>
+          )}
+
           {twist.length > 0 && (
             <div style={{ marginBottom: 11, paddingBottom: 9, borderBottom: '1px solid #16304A' }}>
               <div style={{ fontSize: 9, color: '#4ADE80', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>
                 Twist
               </div>
+              {(['main', 'jib'] as const)
+                .filter((sail) => !twist.some((t) => t.sail === sail))
+                .filter((sail) => (marks[`leech:${sail}`] || []).length >= 2)
+                .map((sail) => (
+                  <div key={sail} style={{ fontSize: 10.5, color: '#FCD34D', marginBottom: 5, lineHeight: 1.45 }}>
+                    <b style={{ textTransform: 'capitalize' }}>{sail}</b>: leech marked, but no twist —
+                    {!rig.widths?.[sail]
+                      ? ' its widths are not in the rig model.'
+                      : ' it does not cross a 25 / 50 / 75 % stripe height. Spreader heights alone cannot give twist.'}
+                  </div>
+                ))}
               {twist.map((t) => (
                 <div key={t.sail} style={{ marginBottom: 7 }}>
                   <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 3, textTransform: 'capitalize' }}>{t.sail}</div>

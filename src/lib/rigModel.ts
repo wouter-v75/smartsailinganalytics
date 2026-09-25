@@ -314,10 +314,35 @@ function readStore(): Store {
   try { return JSON.parse(window.localStorage.getItem(KEY) || '{}') as Store } catch { return {} }
 }
 
+/**
+ * A stored model, brought forward onto the CURRENT shape.
+ *
+ * Without this, a model saved before a field existed never gains it: the store
+ * is returned verbatim and the new key is simply absent for ever. That is how
+ * `widths` — the sail girths that twist is divided by — stayed missing on a
+ * browser that had read a certificate weeks earlier, and why the twist panel
+ * showed nothing at all with no explanation.
+ *
+ * Stored values win wherever they exist, because they are the operator's own
+ * edits; the default only fills gaps.
+ */
+export function migrateRigModel(stored: RigModel, boat = stored.boat): RigModel {
+  const base = defaultRigModel(boat)
+  return {
+    ...base,
+    ...stored,
+    depths: { ...base.depths, ...stored.depths },
+    widths: { ...(base.widths || {}), ...(stored.widths || {}) },
+    scaleRefs: stored.scaleRefs?.length ? stored.scaleRefs : base.scaleRefs,
+    baselines: stored.baselines?.length ? stored.baselines : base.baselines,
+  }
+}
+
 export function loadRigModel(boat: string): RigModel | null {
   const key = (boat || '').trim().toLowerCase()
   if (!key) return null
-  return readStore()[key] ?? null
+  const stored = readStore()[key]
+  return stored ? migrateRigModel(stored, stored.boat || boat) : null
 }
 
 export function saveRigModel(m: RigModel): void {
@@ -334,8 +359,10 @@ export function listRigModels(): RigModel[] {
 
 /** Model for a boat, falling back to the marked-as-guesswork default. */
 export function rigModelFor(boat: string): RigModel {
-  // A stored model wins — somebody has edited it deliberately. Otherwise the
-  // default, with anything measured for this boat written over the guesses.
+  // A stored model wins — somebody has edited it deliberately — but brought
+  // forward onto the current shape first, so fields added since it was saved
+  // are present rather than silently missing. Otherwise the default, with
+  // anything measured for this boat written over the guesses.
   return loadRigModel(boat) ?? withMeasured(defaultRigModel(boat))
 }
 
@@ -352,15 +379,11 @@ export function importRigModel(text: string): RigModel | null {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Partial<RigModel>
   if (!Array.isArray(o.scaleRefs) || !o.depths) return null
-  const base = defaultRigModel(typeof o.boat === 'string' ? o.boat : '')
+  const boat = typeof o.boat === 'string' ? o.boat : ''
+  const merged = migrateRigModel(o as RigModel, boat)
   return {
-    ...base,
-    ...o,
-    boat: typeof o.boat === 'string' ? o.boat : base.boat,
-    scaleRefs: o.scaleRefs.length ? o.scaleRefs : base.scaleRefs,
-    baselines: Array.isArray(o.baselines) && o.baselines.length ? o.baselines : base.baselines,
-    depths: { ...base.depths, ...o.depths },
-    sensorWidthMm: typeof o.sensorWidthMm === 'number' ? o.sensorWidthMm : base.sensorWidthMm,
+    ...merged,
+    sensorWidthMm: typeof o.sensorWidthMm === 'number' ? o.sensorWidthMm : merged.sensorWidthMm,
     notes: typeof o.notes === 'string' ? o.notes : '',
     updatedAt: new Date().toISOString(),
   }
