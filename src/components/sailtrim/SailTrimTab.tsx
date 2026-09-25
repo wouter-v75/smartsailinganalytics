@@ -27,7 +27,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
-  mmPerPxFromReference, rangeMmFrom, runChecks, cameraRollDeg, imageHeelDeg,
+  mmPerPxFromReference, mmPerPxAtMastFromRef, runChecks, cameraRollDeg, imageHeelDeg,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -520,19 +520,27 @@ export default function SailTrimTab(
 
     const sc = marks.scale || [];
     if (sc.length < 2) return { cal: null, why: 'Mark a scale reference.' };
-    const mmPerPxAtMast = mmPerPxFromReference(sc[0], sc[1], scaleRef?.mm ?? 0);
-    if (!mmPerPxAtMast) {
+    const mmPerPxAtRef = mmPerPxFromReference(sc[0], sc[1], scaleRef?.mm ?? 0);
+    if (!mmPerPxAtRef) {
       return { cal: null, why: 'The scale reference needs a true length in the rig model, and two points apart.' };
     }
 
     const heel = heelDeg.trim() === '' ? null : Number(heelDeg);
     const focal = focalMm.trim() === '' ? 0 : Number(focalMm);
-    const rangeMm = imgSize
-      ? rangeMmFrom(
-        { widthMm: rig.sensorWidthMm, focalLengthMm: focal, imageLongEdgePx: Math.max(imgSize.w, imgSize.h) },
-        mmPerPxAtMast,
-      )
-      : null;
+    const sensor = {
+      widthMm: rig.sensorWidthMm,
+      focalLengthMm: focal,
+      imageLongEdgePx: imgSize ? Math.max(imgSize.w, imgSize.h) : 0,
+    };
+    // A reference that is not in the mast plane measures a different scale from
+    // the mast's. The wheels are ~10 m abaft it and image larger; taken as the
+    // mast's scale that reads every measurement low by depth/range. Referred
+    // back here, once, so nothing downstream has to know where the ruler was.
+    const refDepthMm = scaleRef?.depthMm ?? 0;
+    const referred = mmPerPxAtMastFromRef(mmPerPxAtRef, refDepthMm, sensor);
+    const mmPerPxAtMast = referred.mmPerPxAtMast;
+    const rangeMm = imgSize ? referred.rangeMm : null;
+    const scaleDepthUncorrected = refDepthMm !== 0 && !referred.corrected;
 
     const hz: Horizon | null = horizon ? { tiltDeg: horizon.tiltDeg, rms: horizon.rms, samples: horizon.samples } : null;
     const heelForPsi = imageHeelDeg(axis, hz) ?? (heel != null && Number.isFinite(heel) ? heel : null);
@@ -547,7 +555,13 @@ export default function SailTrimTab(
 
     return {
       cal: {
-        axis, mmPerPxAtMast, scaleRelSigma: scaleRelSigma(scaleRef), rangeMm, psi,
+        axis, mmPerPxAtMast,
+        // An uncorrected off-mast reference is a SYSTEMATIC error, not noise,
+        // and the honest thing is to widen the scale sigma until somebody
+        // supplies a focal length. depth/range with a 150 m guess at the range.
+        scaleRelSigma: scaleRelSigma(scaleRef)
+          + (scaleDepthUncorrected ? Math.abs(refDepthMm) / 150_000 : 0),
+        rangeMm, psi, scaleDepthUncorrected, scaleRefDepthMm: refDepthMm,
         heelDeg: heel != null && Number.isFinite(heel) ? heel : null,
         heelSigmaDeg: 0.5, clickSigmaPx: CLICK_SIGMA_PX, horizon: hz,
       },
@@ -1011,7 +1025,7 @@ export default function SailTrimTab(
   };
 
   // ── rig model editing ────────────────────────────────────────────────────
-  type Patch = Partial<{ mm: number; sigmaMm: number; source: Provenance }>;
+  type Patch = Partial<{ mm: number; sigmaMm: number; source: Provenance; depthMm: number }>;
   const setScaleField = (key: string, patch: Patch) => {
     setRig((m) => {
       const next = { ...m, scaleRefs: m.scaleRefs.map((s) => (s.key === key ? { ...s, ...patch } : s)) };
@@ -1221,6 +1235,22 @@ export default function SailTrimTab(
               <input style={inp} type="number" value={scaleRef?.sigmaMm ?? 0}
                 onChange={(e) => setScaleField(scaleKey, { sigmaMm: Number(e.target.value) })} />
             </div>
+            {/* Only shown for a reference that is not in the mast plane — for a
+                spreader it is 0 and asking about it would be noise. The wheels
+                are the case it exists for. */}
+            {(scaleRef?.depthMm ?? 0) !== 0 && (
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={lbl}>…and how far abaft the mast (mm, forward positive)</label>
+                <input style={inp} type="number" value={scaleRef?.depthMm ?? 0}
+                  onChange={(e) => setScaleField(scaleKey, { depthMm: Number(e.target.value) })} />
+                <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 4, lineHeight: 1.45 }}>
+                  This reference is off the mast plane, so it images at a different
+                  scale from the mast — abaft is nearer the camera and larger. The
+                  tool refers it back, which needs the focal length; without one the
+                  bias goes straight into every measurement, and the checks say so.
+                </div>
+              </div>
+            )}
             <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={srcPill(scaleRef?.source ?? 'estimate')}>{scaleRef?.source ?? 'estimate'}</span>
               <span style={{ fontSize: 10.5, color: '#64748B' }}>

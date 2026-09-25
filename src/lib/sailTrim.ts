@@ -244,6 +244,53 @@ export function rangeMmFrom(sensor: SensorSpec, mmPerPxAtMast: number): number |
 }
 
 /**
+ * Refer a scale measured on something that is NOT in the mast plane back TO the
+ * mast plane.
+ *
+ * Every reference used until now sat at the mast — spreaders, mast width, P up
+ * the mast itself — so "mm per pixel at the reference" and "mm per pixel at the
+ * mast" were the same number and the distinction never came up. The steering
+ * wheels are not: they are ten metres or so abaft the mast, which is nearer the
+ * camera, so they image LARGER and give fewer mm per pixel. Take that as the
+ * mast's scale and every measurement on the frame reads low by depth/range —
+ * about 4 % at 260 m, which is several times the error the rest of this file
+ * works to remove.
+ *
+ * The camera model closes it without iterating: the range that comes back from
+ * a scale is the range to whatever was measured, and the reference's own depth
+ * is the difference between that and the mast.
+ *
+ * @param mmPerPxAtRef  scale where the reference actually is.
+ * @param refDepthMm    the reference's offset from the mast, FORWARD positive.
+ * @param sensor        camera, for the range. Without a focal length there is
+ *                      no range, and no correction is possible.
+ */
+export function mmPerPxAtMastFromRef(
+  mmPerPxAtRef: number,
+  refDepthMm: number,
+  sensor: SensorSpec,
+): { mmPerPxAtMast: number; rangeMm: number | null; corrected: boolean } {
+  const rangeToRef = rangeMmFrom(sensor, mmPerPxAtRef)
+  if (!refDepthMm) {
+    return { mmPerPxAtMast: mmPerPxAtRef, rangeMm: rangeToRef, corrected: true }
+  }
+  if (rangeToRef == null) {
+    // Honest failure: hand back the uncorrected scale and say it is uncorrected,
+    // so the caller can widen the sigma and the checks can say so out loud.
+    return { mmPerPxAtMast: mmPerPxAtRef, rangeMm: null, corrected: false }
+  }
+  const rangeToMast = rangeToRef - refDepthMm
+  if (!(rangeToMast > 0)) {
+    return { mmPerPxAtMast: mmPerPxAtRef, rangeMm: rangeToRef, corrected: false }
+  }
+  return {
+    mmPerPxAtMast: (mmPerPxAtRef * rangeToMast) / rangeToRef,
+    rangeMm: rangeToMast,
+    corrected: true,
+  }
+}
+
+/**
  * Scale at a target's own depth. `depthMm` is FORWARD-positive from the mast
  * plane; the camera is astern, so forward is farther and images smaller.
  * Range unknown ⇒ no correction, and the caller inflates sigma instead.
@@ -332,6 +379,11 @@ export interface Calibration {
   /** The sea horizon, when it could be found. Authoritative for
    *  world-horizontal; makes `heelDeg` a check rather than an input. */
   horizon?: Horizon | null
+  /** The scale reference's own offset from the mast, forward positive. */
+  scaleRefDepthMm?: number
+  /** True when that offset could NOT be corrected for — no focal length, so no
+   *  range — and the scale is therefore biased by depth/range. */
+  scaleDepthUncorrected?: boolean
 }
 
 /** Heel to use for the geometry: what the image says, else what the log says. */
@@ -531,6 +583,17 @@ export function runChecks(cal: Calibration): Check[] {
       ? `ψ = ${cal.psi.deg.toFixed(2)}° ± ${cal.psi.sigmaDeg.toFixed(2)}°`
       : 'no centreplane baseline marked — ψ assumed 0 ± 1°, and a degree of ψ is ±17 mm for every metre a target sits from the mast',
   })
+
+  if (cal.scaleRefDepthMm) {
+    out.push({
+      key: 'scale-depth',
+      label: 'Scale reference off the mast plane',
+      ok: !cal.scaleDepthUncorrected,
+      detail: cal.scaleDepthUncorrected
+        ? `the reference sits ${Math.abs(cal.scaleRefDepthMm / 1000).toFixed(1)} m ${cal.scaleRefDepthMm < 0 ? 'abaft' : 'forward of'} the mast and there is no focal length, so its scale CANNOT be referred to the mast plane. Every measurement on this frame is biased by depth/range — a few per cent. Enter the focal length, or use a reference at the mast.`
+        : `${Math.abs(cal.scaleRefDepthMm / 1000).toFixed(1)} m ${cal.scaleRefDepthMm < 0 ? 'abaft' : 'forward of'} the mast, referred back to the mast plane`,
+    })
+  }
 
   out.push({
     key: 'range',

@@ -94,11 +94,25 @@ export function defaultRigModel(boat = ''): RigModel {
       { key: 'spreader1', label: 'Spreader 1, tip to tip', ...v(7000, 700), depthMm: 0 },
       { key: 'spreader3', label: 'Spreader 3, tip to tip', ...v(5000, 500), depthMm: 0 },
       { key: 'mastwidth', label: 'Mast width, athwartships', ...v(300, 40), depthMm: 0 },
+      // The one a tape measure can reach. Everything above it is up the rig and
+      // has to come off a drawing or a certificate; the wheels are at waist
+      // height on the dock, and they are athwartships, which is the direction
+      // an astern camera resolves best. That makes them the first scale
+      // reference that can be MEASURED for a rival as well as for us.
+      //
+      // The catch, and it is the whole reason ScaleRef carries a depth: they
+      // are ~10 m abaft the mast, so they image larger than anything in the
+      // mast plane. Left uncorrected that biases every measurement on the frame
+      // by depth/range — ~4 % at 260 m. `depthMm` must be real for this one.
+      { key: 'wheels', label: 'Steering wheels, centre to centre', ...v(0, 0), depthMm: -10000 },
       { key: 'custom', label: 'Something else (type the length)', ...v(0, 0), depthMm: 0 },
     ],
     baselines: [
       { key: 'bow-transom', label: 'Forestay tack → transom centre', ...v(21000, 2000) },
       { key: 'tack-mast', label: 'Forestay tack → mast (J)', ...v(8000, 800) },
+      // Also dockside-measurable, and both ends are unambiguous centreplane
+      // points that stay visible from astern under way.
+      { key: 'mast-transom', label: 'Mast (at deck) → transom centre', ...v(0, 0) },
       { key: 'custom', label: 'Something else (type the separation)', ...v(0, 0) },
     ],
     // Fore-and-aft offsets from the mast, forward positive. These are the
@@ -115,6 +129,43 @@ export function defaultRigModel(boat = ''): RigModel {
     },
     sensorWidthMm: 36,
     notes: '',
+  }
+}
+
+/**
+ * Numbers somebody has actually measured on a specific boat.
+ *
+ * The default model above is a generic maxi with every value flagged as a
+ * guess, which is right for a boat we know nothing about and wrong for one we
+ * have been aboard. These are the measurements, keyed by boat name lowercased,
+ * and they are applied on top of the default so a new device starts from the
+ * real numbers rather than from the guesswork.
+ *
+ * Anything in here is `measured`: it came off a tape, not off a drawing. Add to
+ * it from the dock — the wheels and the mast-to-transom distance are both a
+ * two-minute job with a tape and need no access to the rig.
+ */
+const MEASURED: Record<string, {
+  scaleRefs?: Record<string, Partial<Pick<ScaleRef, 'mm' | 'sigmaMm' | 'depthMm' | 'source'>>>
+  baselines?: Record<string, Partial<RigValue>>
+}> = {
+  'northstar 76': {
+    scaleRefs: {
+      // Measured on the dock, 2026-09. ±10 mm is a tape across two wheel
+      // centres — the wheels themselves are the fuzzy part, not the tape.
+      wheels: { mm: 3375, sigmaMm: 10, source: 'measured' },
+    },
+  },
+}
+
+/** Apply the measured numbers for a boat on top of a model. */
+export function withMeasured(m: RigModel): RigModel {
+  const known = MEASURED[(m.boat || '').trim().toLowerCase()]
+  if (!known) return m
+  return {
+    ...m,
+    scaleRefs: m.scaleRefs.map((r) => ({ ...r, ...(known.scaleRefs?.[r.key] || {}) })),
+    baselines: m.baselines.map((b) => ({ ...b, ...(known.baselines?.[b.key] || {}) })),
   }
 }
 
@@ -179,7 +230,9 @@ export function listRigModels(): RigModel[] {
 
 /** Model for a boat, falling back to the marked-as-guesswork default. */
 export function rigModelFor(boat: string): RigModel {
-  return loadRigModel(boat) ?? defaultRigModel(boat)
+  // A stored model wins — somebody has edited it deliberately. Otherwise the
+  // default, with anything measured for this boat written over the guesses.
+  return loadRigModel(boat) ?? withMeasured(defaultRigModel(boat))
 }
 
 // ── serialisation, for handing a model to someone else ──────────────────────
