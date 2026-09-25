@@ -14,6 +14,7 @@ import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
 import { buildSailResolver } from "../lib/sailResolve";
 import { useUiNext } from "../lib/ui-flags";
 import PhotosNext from "./photos/PhotosNext";
+import PhotoCanvas from "./photos/PhotoCanvas";
 import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
 import { renderOverlay } from "../lib/photoOverlay";
@@ -279,7 +280,6 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
 }
 
 function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime}){
-  const canvasRef=useRef(null);
   const [rendered,setRendered]=useState(false);
   const [editTime,setEditTime]=useState(false);
   const [timeVal,setTimeVal]=useState('');
@@ -295,30 +295,60 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
     // the signature too — otherwise adding a gauge redraws but changing its value
     // does not.
     extraGauges.map(k=>photo[k]).join(',')].join('|');
+  // ── compose once, at full resolution ──────────────────────────────────────
+  // The composite — photograph plus burned-in overlay, at the image's OWN size
+  // — is what gets exported and what PhotoCanvas looks at. Held in state, not a
+  // ref, so that re-composing actually reaches the viewport.
+  const composeRef=useRef(null);
+  const haveFull=useRef(false);
+  const [compose,setCompose]=useState(null);
+  const [composed,setComposed]=useState(null);
+  const [fullLoaded,setFullLoaded]=useState(false);
+  const [fullMissing,setFullMissing]=useState(false);
+
   useEffect(()=>{
-    if(!photo?.objectUrl||!canvasRef.current){setRendered(false);return;}
-    const img=new Image();
-    img.crossOrigin="anonymous";
+    const thumb=photo?.objectUrl, full=photo?.fullUrl;
+    if(!thumb&&!full){setRendered(false);setCompose(null);setComposed(null);return;}
+    let dead=false;
+    haveFull.current=false; setFullLoaded(false); setFullMissing(false);
     const extra=extraGauges.map(k=>{const o=PHOTO_OVERLAY_VARS.find(x=>x.key===k);if(!o)return null;const v=photo[k];
       return {l:o.label,v:v!=null?(o.unit==='°'?R(v,o.dec)+'°':R(v,o.dec)+(o.unit?' '+o.unit:'')):'--',c:'#A78BFA'};}).filter(Boolean);
-    img.onload=()=>{renderOverlay(canvasRef.current,img,{tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,keelAng:photo.keelAng,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2,extra});setRendered(true);};
-    img.onerror=()=>setRendered(false);
-    img.src=photo.objectUrl;
+    const inst={tws:photo.tws,twa:photo.twa,awa:photo.awa,bsp:photo.bsp,heel:photo.heel,vmg:photo.vmg,keelAng:photo.keelAng,sails:photo.sails,location:photo.location,boat:photo.boat,mast_var_manual_setting:photo.mast_var_manual_setting,mast_var_manual_chins:photo.mast_var_manual_chins,mast_var_manual_rake:photo.mast_var_manual_rake,mast_var_manual_butt:photo.mast_var_manual_butt,mast_var_manual_v1:photo.mast_var_manual_v1,mast_var_manual_d1:photo.mast_var_manual_d1,mast_var_manual_d2:photo.mast_var_manual_d2,extra};
+    const draw=(img,isFull)=>{
+      // The thumbnail is only a placeholder. If the original has already
+      // landed, a late-arriving thumb must not paint over it.
+      if(dead||(!isFull&&haveFull.current))return;
+      if(isFull)haveFull.current=true;
+      const c=composeRef.current||(composeRef.current=document.createElement('canvas'));
+      renderOverlay(c,img,inst);
+      setCompose(c); setComposed({w:c.width,h:c.height}); setRendered(true);
+      if(isFull)setFullLoaded(true);
+    };
+    const load=(url,isFull)=>{
+      if(!url)return;
+      const i=new Image(); i.crossOrigin="anonymous";
+      i.onload=()=>draw(i,isFull);
+      // The browser import uploads the original only once the connection is
+      // good enough (photoStore.goodForOriginals), so a photo can be in the
+      // cloud as a thumbnail and nothing else. Say that, rather than leaving
+      // "loading full resolution…" up for ever over a soft picture.
+      i.onerror=()=>{ if(isFull&&!dead) setFullMissing(true); };
+      i.src=url;
+    };
+    load(thumb,false);
+    if(full&&full!==thumb)load(full,true);
+    return ()=>{dead=true};
     // Every field the overlay DRAWS, not just three of them. It used to list
     // tws/twa/sails only, so correcting heel — or any mast measurement — redrew
     // nothing and the burned-in overlay kept showing the old value.
-    //
-    // overlaySig rather than `photo` itself: this effect loads an Image, and photo
-    // identity churns on state the overlay does not show (sync flags, thumbnail
-    // URLs), which would re-fetch the image for nothing. The rule cannot see that
-    // the signature is complete, because the extra gauges are read as photo[k].
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[photo.id,photo.objectUrl,overlaySig,extraGauges]);
+  },[photo.id,photo.objectUrl,photo.fullUrl,overlaySig,extraGauges]);
+
   const handleExport=()=>{
-    if(!canvasRef.current)return;
+    if(!composeRef.current)return;
     const a=document.createElement("a");
     a.download=`${photo.name?.replace(/\.[^.]+$/,"")||"photo"}_overlay.jpg`;
-    a.href=canvasRef.current.toDataURL("image/jpeg",0.92);a.click();
+    a.href=composeRef.current.toDataURL("image/jpeg",0.92);a.click();
   };
   return(
     <div style={{flex:1,background:"#050E1C",borderLeft:onClose?"none":"1px solid #1E3A5A",overflowY:"auto",padding:onClose?"0 14px 20px":16,width:"100%"}}>
@@ -335,10 +365,17 @@ function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDown
           <SrcBadge source={photo.cloudSynced?"cloud":"local"}/>
         </div>
       )}
-      <div style={{position:"relative",marginBottom:12}}>
-        <canvas ref={canvasRef} style={{width:"100%",borderRadius:8,border:"1px solid #1E3A5A",display:"block"}}/>
-        {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
-      </div>
+      <PhotoCanvas
+        source={compose} sourceSize={composed} resetKey={photo.id}
+        loadingFull={!fullLoaded&&!fullMissing&&!!photo.fullUrl&&photo.fullUrl!==photo.objectUrl}>
+        {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5,pointerEvents:"none"}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
+      </PhotoCanvas>
+      {fullMissing&&(
+        <div style={{marginTop:-6,marginBottom:10,fontSize:10.5,color:"#FCD34D",lineHeight:1.5}}>
+          Only the thumbnail is in the cloud for this photo — the full-resolution original
+          uploads when the importing device next has a good connection.
+        </div>
+      )}
       {/* Overlay variables — add extra gauges to the photo overlay, this session only. */}
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
         <span style={{fontSize:9,color:"#64748B",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>
@@ -650,7 +687,17 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         const objectUrl = blob
           ? URL.createObjectURL(blob)
           : (p.thumbnailUrl || (p.cloudSynced ? cloudImageUrl(keys.thumb) : null));
-        return { ...p, objectUrl, hasLocalOriginal };
+        // The GRID wants the thumb — it is painting a 94 px box and there are
+        // hundreds of them. The DETAIL view wants the original, which has been
+        // sitting in Bunny since import: `day-media-upload` puts the camera's
+        // own bytes there untouched. Until now the detail view drew the 480 px
+        // thumb for everyone who had not imported the photo themselves, which
+        // is everyone but one person — hence "too grainy to be of any use",
+        // and an overlay export that was 480 px wide as well.
+        const fullUrl = blob
+          ? URL.createObjectURL(blob)
+          : (p.cloudSynced ? cloudImageUrl(keys.original) : null);
+        return { ...p, objectUrl, fullUrl, hasLocalOriginal };
       }));
       if (cancelled) return;
       // 3) Enrich ALL photos (local + shared) with the day's log/event data, then
