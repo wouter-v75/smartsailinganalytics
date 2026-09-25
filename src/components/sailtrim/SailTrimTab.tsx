@@ -36,6 +36,7 @@ import {
 } from '../../lib/sailTrimCv';
 import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
+  HEIGHT_TAGS, LEECH_SAILS, heightShort,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
@@ -82,13 +83,23 @@ const OTHER_STEPS: StepDef[] = [
     hint: 'The two ends of something whose true length you know AND that lies across the boat — spreader tip to tip. Never a fore-and-aft length: from astern those are foreshortened to nothing.' },
   { key: 'baseline', label: 'Centreplane baseline', min: 2, max: 2, colour: '#F472B6', group: 'calibrate', optional: true,
     hint: 'Two points on the boat’s centreline, as far apart fore-and-aft as possible — forestay tack and transom centre. Aft point first. This is what measures ψ; skipping it costs ±1° of unknown misalignment.' },
-  { key: 'spreader', label: 'Reference height on the mast', min: 1, max: 1, colour: '#A78BFA', group: 'calibrate',
-    hint: 'Where spreader 2 meets the mast, by convention — but it is simply the height the leech is measured at, so put it where the leech you want is actually visible. The same height every time, or the numbers do not compare.' },
-  { key: 'leech', label: 'Jib leech', min: 2, max: 6, colour: '#4ADE80', group: 'target',
-    hint: 'Two to four points down the JIB\u2019s leech, around the reference height. CHECK WHICH SAIL YOU ARE ON \u2014 the silhouette against the sky is the MAINSAIL\u2019s leech high up and the jib\u2019s lower down, and on the 5 Sept frames the two sit within ~150 mm of each other, so a reading off the wrong one looks perfectly reasonable. It is a curve; the measurement point is where it crosses the reference line.' },
-  { key: 'clew', label: 'Jib clew', min: 1, max: 1, colour: '#FB923C', group: 'target',
+  ...HEIGHT_TAGS.map((t): StepDef => ({
+    key: `h:${t.key}`, label: t.label, min: 1, max: 1, colour: '#A78BFA',
+    group: 'calibrate', optional: true,
+    hint: `Where ${t.label.toLowerCase()} meets the mast. Mark as many heights as you want measured — every leech you have drawn is read at every height you have marked, and the tag is what lets today's number be compared with the same number from another day.`,
+  })),
+  ...LEECH_SAILS.map((sl): StepDef => ({
+    key: `leech:${sl.key}`, label: sl.label, min: 2, max: 8, colour: sl.colour,
+    group: 'target', optional: true,
+    hint: sl.key === 'jib'
+      ? 'Points down the JIB\u2019s leech, spanning every height you marked. CHECK WHICH SAIL YOU ARE ON \u2014 the silhouette against the sky is the MAINSAIL\u2019s leech high up and the jib\u2019s lower down, and on the 5 Sept frames the two sit within ~150 mm of each other, so a reading off the wrong one looks perfectly reasonable.'
+      : 'Points down the MAINSAIL\u2019s leech, spanning every height you marked. High up this is the outer silhouette against the sky; lower down the jib\u2019s leech crosses in front of it, so follow the roach rather than the outermost edge.',
+  })),
+  // Optional like the rest: the tool measures whatever is marked, and asking for
+  // a clew on a frame somebody opened to read two leech heights is just nagging.
+  { key: 'clew', label: 'Jib clew', min: 1, max: 1, colour: '#FB923C', group: 'target', optional: true,
     hint: 'The clew itself. Keep to the same feature every time — the ring centre, say.' },
-  { key: 'boom', label: 'Boom', min: 1, max: 1, colour: '#F87171', group: 'target',
+  { key: 'boom', label: 'Boom', min: 1, max: 1, colour: '#F87171', group: 'target', optional: true,
     hint: 'The point on the boom you are measuring to. Same one every time.' },
 ];
 
@@ -570,24 +581,62 @@ export default function SailTrimTab(
   }, [mastMode, mastTrace, traceNote, marks, scaleRef, baseRef, heelDeg, focalMm, rig.sensorWidthMm, imgSize, horizon]);
 
   // ── the measurements ─────────────────────────────────────────────────────
-  const leechPoint = useCallback((): Px | null => {
+  /**
+   * Every leech, read at every marked height.
+   *
+   * A leech is a curve, so "the leech" is not a number until a height is named.
+   * Each tagged mark on the mast crosses each sail's polyline once, and the
+   * crossing is the target — which is why the tag travels with the measurement:
+   * a millimetre figure with no height against it cannot be compared with the
+   * same figure from another day, and comparing is the only thing anybody wants
+   * to do with it.
+   */
+  const leechCrossings = useCallback((): {
+    key: string; label: string; point: Px; sail: string; tag: string;
+  }[] => {
     const cal = calibration.cal;
-    const spreader = (marks.spreader || [])[0];
-    const leech = marks.leech || [];
-    if (!cal || !spreader || leech.length < 2) return null;
-    const pts = leechTargets(leech, cal.axis, spreader, cal.heelDeg, cal.horizon);
-    return defn === 'boat' ? pts.boatFrame : pts.worldHorizontal;
+    if (!cal) return [];
+    const out: { key: string; label: string; point: Px; sail: string; tag: string }[] = [];
+    for (const sl of LEECH_SAILS) {
+      const poly = marks[`leech:${sl.key}`] || [];
+      if (poly.length < 2) continue;
+      for (const t of HEIGHT_TAGS) {
+        const at = (marks[`h:${t.key}`] || [])[0];
+        if (!at) continue;
+        const pts = leechTargets(poly, cal.axis, at, cal.heelDeg, cal.horizon);
+        const point = defn === 'boat' ? pts.boatFrame : pts.worldHorizontal;
+        // A height above or below where the leech was drawn simply does not
+        // cross it. That is a gap in the marking, not an error — skip it.
+        if (!point) continue;
+        out.push({
+          key: `${sl.key}@${t.key}`,
+          label: `${sl.label} @ ${heightShort(t.key)}`,
+          point, sail: sl.key, tag: t.key,
+        });
+      }
+    }
+    return out;
   }, [calibration, marks, defn]);
+
+  /** Where a measurement's target sits on the picture, by its key. */
+  const pointForKey = useCallback((key: string): Px | null => {
+    if (key === 'clew' || key === 'boom') return (marks[key] || [])[0] ?? null;
+    return leechCrossings().find((c) => c.key === key)?.point ?? null;
+  }, [marks, leechCrossings]);
+
+  /** Which STEP a measurement came from, for its colour. */
+  const stepKeyFor = (key: string) =>
+    key.includes('@') ? `leech:${key.split('@')[0]}` : key;
 
   const measurements = useMemo((): Measurement[] => {
     const cal = calibration.cal;
     if (!cal) return [];
     const out: Measurement[] = [];
-    const lp = leechPoint();
-    if (lp) {
+    for (const c of leechCrossings()) {
+      const d = c.sail === 'main' ? rig.depths.mainLeech : rig.depths.leech;
       out.push(measureTarget(cal, {
-        key: 'leechSpr2', label: 'Jib leech @ reference height', point: lp,
-        depthMm: rig.depths.leech.mm, depthSigmaMm: rig.depths.leech.sigmaMm,
+        key: c.key, label: c.label, point: c.point,
+        depthMm: d.mm, depthSigmaMm: d.sigmaMm,
       }));
     }
     for (const key of ['clew', 'boom'] as const) {
@@ -600,7 +649,7 @@ export default function SailTrimTab(
       }
     }
     return out;
-  }, [calibration, marks, rig.depths, leechPoint]);
+  }, [calibration, marks, rig.depths, leechCrossings]);
 
   const checks: Check[] = useMemo(
     () => (calibration.cal ? runChecks(calibration.cal) : []),
@@ -720,9 +769,8 @@ export default function SailTrimTab(
     const cal = calibration.cal;
     if (cal) {
       for (const m of measurements) {
-        const key = m.key === 'leechSpr2' ? 'leech' : m.key;
-        const step = steps.find((s) => s.key === key);
-        const pt = m.key === 'leechSpr2' ? leechPoint() : (marks[key] || [])[0];
+        const step = steps.find((s) => s.key === stepKeyFor(m.key));
+        const pt = pointForKey(m.key);
         if (!pt) continue;
         const foot = footOnAxis(pt);
         if (!foot) continue;
@@ -761,7 +809,7 @@ export default function SailTrimTab(
         ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2); ctx.stroke();
       }
     }
-  }, [marks, activeStep, calibration, measurements, defn, horizon, mastTrace, mastMode, imgSize, steps, leechPoint, footOnAxis, scaleKey, rig.clewHeightMm]);
+  }, [marks, activeStep, calibration, measurements, defn, horizon, mastTrace, mastMode, imgSize, steps, pointForKey, footOnAxis, scaleKey, rig.clewHeightMm]);
 
   const draw = useCallback(() => {
     const c = canvasRef.current;
@@ -847,20 +895,15 @@ export default function SailTrimTab(
   const annotation = (): SailTrimAnnotation | null => {
     const cal = calibration.cal;
     if (!cal || !imgSize || !measurements.length) return null;
-    const lp = leechPoint();
     return buildAnnotation({
       version: SAILTRIM_VERSION,
       imageSize: imgSize,
       defn,
       axis: { low: cal.axis.low, high: cal.axis.high },
       measurements,
-      points: {
-        leechSpr2: lp,
-        clew: (marks.clew || [])[0],
-        boom: (marks.boom || [])[0],
-      },
+      points: Object.fromEntries(measurements.map((m) => [m.key, pointForKey(m.key)])),
       colours: Object.fromEntries(
-        steps.map((st) => [st.key === 'leech' ? 'leechSpr2' : st.key, st.colour]),
+        measurements.map((m) => [m.key, steps.find((st) => st.key === stepKeyFor(m.key))?.colour || '#38BDF8']),
       ),
       psiDeg: cal.psi.deg,
       psiMeasured: cal.psi.measured,
@@ -1038,7 +1081,7 @@ export default function SailTrimTab(
       saveRigModel(next); return next;
     });
   };
-  const setDepthField = (key: 'leech' | 'clew' | 'boom', patch: Patch) => {
+  const setDepthField = (key: keyof RigModel['depths'], patch: Patch) => {
     setRig((m) => {
       const next = { ...m, depths: { ...m.depths, [key]: { ...m.depths[key], ...patch } } };
       saveRigModel(next); return next;
@@ -1291,9 +1334,11 @@ export default function SailTrimTab(
                 Fore-and-aft offsets from the mast, forward positive — so the boom is
                 negative. These set the depth correction and how much ψ costs.
               </div>
-              {(['leech', 'clew', 'boom'] as const).map((k) => (
-                <div key={k} style={{ display: 'grid', gridTemplateColumns: '54px 1fr 1fr 66px', gap: 6, alignItems: 'center', marginBottom: 5 }}>
-                  <span style={{ fontSize: 12, color: '#94A3B8', textTransform: 'capitalize' }}>{k}</span>
+              {(['leech', 'mainLeech', 'clew', 'boom'] as const).map((k) => (
+                <div key={k} style={{ display: 'grid', gridTemplateColumns: '68px 1fr 1fr 66px', gap: 6, alignItems: 'center', marginBottom: 5 }}>
+                  <span style={{ fontSize: 11.5, color: '#94A3B8' }}>
+                    {k === 'leech' ? 'jib leech' : k === 'mainLeech' ? 'main leech' : k}
+                  </span>
                   <input style={inp} type="number" value={rig.depths[k].mm}
                     onChange={(e) => setDepthField(k, { mm: Number(e.target.value), source: 'designer' })} />
                   <input style={inp} type="number" value={rig.depths[k].sigmaMm}

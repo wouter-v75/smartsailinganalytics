@@ -33,7 +33,7 @@ describe('rigModel — provenance', () => {
     const m = defaultRigModel('Northstar 76')
     m.scaleRefs[0] = { ...m.scaleRefs[0], mm: 6240, sigmaMm: 5, source: 'designer' }
     m.baselines[0] = { ...m.baselines[0], mm: 20880, sigmaMm: 20, source: 'designer' }
-    for (const k of ['leech', 'clew', 'boom'] as const) {
+    for (const k of ['leech', 'mainLeech', 'clew', 'boom'] as const) {
       m.depths[k] = { ...m.depths[k], sigmaMm: 50, source: 'designer' }
     }
     expect(missingFrom(m)).toEqual([])

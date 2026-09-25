@@ -406,6 +406,88 @@ describe('SailTrimTab', () => {
     expect(screen.queryByTestId('sailtrim-save-to-photo')).toBeNull()
   })
 
+  it('reads every leech at every marked height, and tags each result', async () => {
+    // A leech is a curve, so "the leech" is not a number until a height is
+    // named. Two sails × two tagged heights = four measurements, each carrying
+    // which sail and which height it is — without that tag a millimetre figure
+    // cannot be compared with the same figure from another day.
+    const P = makeCamera(RIG)
+    const saves: SailTrimSave[] = []
+    render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+
+    // mast axis, then scale
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    // two heights on the mast, each its own tagged step
+    fireEvent.click(stepButton('Spreader 2'))
+    click(P(0, 0, 12_000))
+    fireEvent.click(stepButton('50 % stripe'))
+    click(P(0, 0, 18_000))
+
+    // The synthetic leeches are placed at the fore-and-aft depths the rig model
+    // assumes for each sail, so the depth correction has the right lever and the
+    // athwartships number can be checked against truth.
+    fireEvent.click(stepButton('Jib leech'))
+    click(P(-400, 1_500, 8_000)); click(P(-400, 1_500, 22_000))
+    fireEvent.click(stepButton('Main leech'))
+    click(P(-6_000, 2_500, 8_000)); click(P(-6_000, 2_500, 22_000))
+
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(4))
+
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(1))
+    const t = saves[0].annotation.targets
+
+    expect(t.map((x) => x.key).sort()).toEqual(
+      ['jib@spr2', 'jib@stripe50', 'main@spr2', 'main@stripe50'])
+    expect(t.find((x) => x.key === 'jib@spr2')!.label).toBe('Jib leech @ spr 2')
+    expect(t.find((x) => x.key === 'main@stripe50')!.label).toBe('Main leech @ 50 %')
+
+    // Each recovers the athwartships offset it was drawn at.
+    for (const k of ['jib@spr2', 'jib@stripe50']) {
+      expect(Math.abs(Math.abs(t.find((x) => x.key === k)!.mm) - 1_500)).toBeLessThan(40)
+    }
+    for (const k of ['main@spr2', 'main@stripe50']) {
+      expect(Math.abs(Math.abs(t.find((x) => x.key === k)!.mm) - 2_500)).toBeLessThan(60)
+    }
+
+    // The two sails are drawn in different colours, so the lines on the photo
+    // say which is which without reading the labels.
+    expect(t.find((x) => x.key === 'jib@spr2')!.colour)
+      .not.toBe(t.find((x) => x.key === 'main@spr2')!.colour)
+
+    // And the flat fields keep the tag, which is what makes a photo list
+    // filterable by "jib leech at spreader 2".
+    expect(saves[0].fields['sailtrim_jib@spr2_mm']).toBeTruthy()
+  })
+
+  it('measures a height only on the sails whose leech actually spans it', async () => {
+    // A height above or below where a leech was drawn does not cross it. That is
+    // a gap in the marking, not an error, and it should silently produce no
+    // measurement rather than a wrong one.
+    const P = makeCamera(RIG)
+    render(<SailTrimTab />)
+    await openAFrame()
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    fireEvent.click(stepButton('Spreader 1'))
+    click(P(0, 0, 6_000))            // low — inside the leech
+    fireEvent.click(stepButton('Spreader 3'))
+    click(P(0, 0, 26_000))           // high — ABOVE where the leech was drawn
+
+    fireEvent.click(stepButton('Jib leech'))
+    click(P(-400, 1_500, 4_000)); click(P(-400, 1_500, 10_000))
+
+    // One measurement, not two.
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(1))
+  })
+
   it('warns, loudly and specifically, when the misalignment was never measured', async () => {
     const P = makeCamera(RIG)
     render(<SailTrimTab />)
@@ -457,13 +539,24 @@ describe('SailTrimTab', () => {
     fireEvent.click(screen.getByText('Read certificate'))
 
     await waitFor(() => expect(screen.getByText(/P 31.44 m, J 8.86 m, E 10.33 m/)).toBeTruthy())
-    // …and after: nothing left to apologise for, the boat named itself, and the
-    // scale is P rather than a guessed spreader.
-    expect(screen.queryByText(/Still guesswork/)).toBeNull()
+    // …and after: the boat named itself, the scale is P rather than a guessed
+    // spreader, and the jib's corners came out of J/HLU/HLP.
     expect(screen.getByDisplayValue('NORTHSTAR III')).toBeTruthy()
     expect(screen.getByDisplayValue('31440')).toBeTruthy()
     expect(screen.getByDisplayValue('8860')).toBeTruthy()
     expect(screen.getByDisplayValue('-10330')).toBeTruthy()
+
+    // ONE thing is still guesswork, and it is the right one: the certificate
+    // carries no main-leech depth, because that quantity is the mainsail's width
+    // at the height being measured — MHW/MTW/MUW, which this parser does not yet
+    // read — and it changes by three metres over the hoist. The tool says so
+    // rather than inventing an average.
+    const gaps = screen.getByText(/Still guesswork/).textContent || ''
+    expect(gaps).toMatch(/the main leech's fore-and-aft offset/)
+    expect(gaps).not.toMatch(/jib leech/)
+    expect(gaps).not.toMatch(/clew/)
+    expect(gaps).not.toMatch(/boom/)
+    expect(gaps).not.toMatch(/scale reference/)
   })
 
   it('says so, and changes nothing, when the paste is not a certificate', async () => {
