@@ -5,6 +5,7 @@ import {
   measureTarget, intersectPolyline, leechTargets, runChecks,
   imageHeelDeg, effectiveHeelDeg, psiFromHeelShortening,
   type Px, type Calibration,
+  tackFromTwa, leewardSign,
 } from '../sailTrim'
 import {
   makeCamera, RIG, MAST_HALF_WIDTH, SPREADER_HALF, SPREADER_Z, TACK, TRANSOM,
@@ -13,7 +14,10 @@ import {
 
 const DEG = Math.PI / 180
 
-function buildCalibration(rig: Rig, opts: { psiBaseline?: boolean; heelKnown?: boolean } = {}): Calibration {
+function buildCalibration(
+  rig: Rig,
+  opts: { psiBaseline?: boolean; heelKnown?: boolean; tack?: 'port' | 'stbd' | null } = {},
+): Calibration {
   const P = makeCamera(rig)
   const axis = mastAxisFromEdges([
     { port: P(0, -MAST_HALF_WIDTH, 5_000), stbd: P(0, MAST_HALF_WIDTH, 5_000) },
@@ -39,6 +43,8 @@ function buildCalibration(rig: Rig, opts: { psiBaseline?: boolean; heelKnown?: b
     axis, mmPerPxAtMast, scaleRelSigma: 0.002, rangeMm, psi,
     heelDeg: opts.heelKnown === false ? null : rig.heelDeg,
     heelSigmaDeg: 0.5, clickSigmaPx: 1.5,
+    // The synthetic rig is heeled to starboard, i.e. sailing on port tack.
+    tack: opts.tack === undefined ? 'port' : opts.tack,
   }
 }
 
@@ -218,6 +224,96 @@ describe('sailTrim — the leech is an intersection, not a point', () => {
     // — which is exactly why the definition has to be settled.
     expect(Math.hypot(boatFrame!.x - worldHorizontal!.x, boatFrame!.y - worldHorizontal!.y))
       .toBeGreaterThan(5)
+  })
+})
+
+describe('sailTrim — which side of the centreline', () => {
+  it('reads the tack off TWA the way the rest of SSA does', () => {
+    // manoeuvres.ts and phaseStats.ts both use `twa >= 0 ? stbd : port`.
+    // Disagreeing with them here would flip every sign silently.
+    expect(tackFromTwa(38)).toBe('stbd')
+    expect(tackFromTwa(141)).toBe('stbd')
+    expect(tackFromTwa(0)).toBe('stbd')
+    expect(tackFromTwa(-38)).toBe('port')
+    expect(tackFromTwa(-141)).toBe('port')
+    expect(tackFromTwa(null)).toBeNull()
+    expect(tackFromTwa(undefined)).toBeNull()
+    expect(tackFromTwa(NaN)).toBeNull()
+  })
+
+  it('flips only on starboard tack', () => {
+    // From astern image-right is starboard. On starboard tack starboard is
+    // WINDWARD, so it has to come out negative; on port tack it is already the
+    // leeward side and nothing changes.
+    expect(leewardSign('stbd')).toBe(-1)
+    expect(leewardSign('port')).toBe(1)
+    expect(leewardSign(null)).toBe(1)
+    expect(leewardSign(undefined)).toBe(1)
+  })
+
+  it('gives the SAME trim the same number on either tack', () => {
+    // The whole reason the convention exists. A target two metres to leeward is
+    // +2000 whichever way the boat is going.
+    const P = makeCamera(RIG)
+    const toStarboard = P(-1_100, 2_000, 8_000)
+
+    const onPort = measureTarget(buildCalibration(RIG, { tack: 'port' }), {
+      key: 't', label: 't', point: toStarboard, depthMm: -1_100, depthSigmaMm: 100,
+    })
+    const onStbd = measureTarget(buildCalibration(RIG, { tack: 'stbd' }), {
+      key: 't', label: 't', point: toStarboard, depthMm: -1_100, depthSigmaMm: 100,
+    })
+
+    // On PORT tack, starboard is leeward: positive.
+    expect(onPort.boatFrameMm).toBeGreaterThan(0)
+    // On STARBOARD tack, the same point is to WINDWARD — above the centreline —
+    // and reads negative. This is the boom case the convention was asked for.
+    expect(onStbd.boatFrameMm).toBeLessThan(0)
+    // Same magnitude, opposite sign.
+    expect(onStbd.boatFrameMm).toBeCloseTo(-onPort.boatFrameMm, 6)
+    expect(onStbd.worldHorizontalMm).toBeCloseTo(-onPort.worldHorizontalMm, 6)
+    expect(onStbd.naiveMm).toBeCloseTo(-onPort.naiveMm, 6)
+    // And both are the honest ~2000 mm away from the mast.
+    expect(Math.abs(onPort.boatFrameMm)).toBeGreaterThan(1_950)
+    expect(Math.abs(onPort.boatFrameMm)).toBeLessThan(2_050)
+  })
+
+  it('does not put a sign on an uncertainty', () => {
+    const P = makeCamera(RIG)
+    const pt = P(-1_100, 2_000, 8_000)
+    const m = measureTarget(buildCalibration(RIG, { tack: 'stbd' }), {
+      key: 't', label: 't', point: pt, depthMm: -1_100, depthSigmaMm: 100,
+    })
+    expect(m.boatFrameMm).toBeLessThan(0)
+    expect(m.boatFrameSigmaMm).toBeGreaterThan(0)
+    expect(m.worldHorizontalSigmaMm).toBeGreaterThan(0)
+  })
+
+  it('says the sign is not referred to the boat when the tack is unknown', () => {
+    const P = makeCamera(RIG)
+    const pt = P(-1_100, 2_000, 8_000)
+    const known = measureTarget(buildCalibration(RIG, { tack: 'port' }), {
+      key: 't', label: 't', point: pt, depthMm: -1_100, depthSigmaMm: 100,
+    })
+    const unknown = measureTarget(buildCalibration(RIG, { tack: null }), {
+      key: 't', label: 't', point: pt, depthMm: -1_100, depthSigmaMm: 100,
+    })
+    expect(known.leewardPositive).toBe(true)
+    expect(unknown.leewardPositive).toBe(false)
+    // Unflipped, so the value is whatever the image said — which is why the
+    // display hides the sign in this case rather than printing a fact it has not
+    // established.
+    expect(unknown.boatFrameMm).toBeCloseTo(known.boatFrameMm, 6)
+  })
+
+  it('makes the missing tack a failed check, with the boom named', () => {
+    const none = runChecks(buildCalibration(RIG, { tack: null })).find((c) => c.key === 'tack')!
+    expect(none.ok).toBe(false)
+    expect(none.detail).toMatch(/boom/)
+    const stbd = runChecks(buildCalibration(RIG, { tack: 'stbd' })).find((c) => c.key === 'tack')!
+    expect(stbd.ok).toBe(true)
+    expect(stbd.detail).toMatch(/starboard tack/)
+    expect(stbd.detail).toMatch(/LEEWARD POSITIVE/)
   })
 })
 

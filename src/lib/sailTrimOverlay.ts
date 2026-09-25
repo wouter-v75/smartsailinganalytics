@@ -48,6 +48,15 @@ export interface SailTrimAnnotation {
   psiMeasured: boolean
   /** The heel the geometry actually used, degrees. */
   heelDeg: number | null
+  /** The tack, when the log gave one. */
+  tack?: 'port' | 'stbd' | null
+  /**
+   * True when `mm` is LEEWARD POSITIVE — so a boom or main leech above the
+   * centreline is negative, and the same trim reads the same on either tack.
+   * False (or absent) when the tack was unknown and the sign only says which way
+   * round the photograph is, in which case it is not shown.
+   */
+  leewardPositive?: boolean
   measuredAt: number
 }
 
@@ -77,6 +86,7 @@ export function buildAnnotation(args: {
   psiDeg: number
   psiMeasured: boolean
   heelDeg: number | null
+  tack?: 'port' | 'stbd' | null
   measuredAt?: number
 }): SailTrimAnnotation {
   const targets: AnnotationTarget[] = []
@@ -102,8 +112,21 @@ export function buildAnnotation(args: {
     psiDeg: args.psiDeg,
     psiMeasured: args.psiMeasured,
     heelDeg: args.heelDeg,
+    tack: args.tack ?? null,
+    leewardPositive: args.tack != null,
     measuredAt: args.measuredAt ?? Date.now(),
   }
+}
+
+/**
+ * How a target's millimetres should be written.
+ *
+ * Signed only when the tack was known and the sign therefore means leeward vs
+ * windward. Otherwise unsigned: the raw sign says which way round the picture
+ * is, which is not a fact about the boat and should not be printed as one.
+ */
+export function formatMm(a: SailTrimAnnotation, mm: number): string {
+  return a.leewardPositive ? String(Math.round(mm)) : String(Math.round(Math.abs(mm)))
 }
 
 /** Reject anything that is not a usable annotation — these arrive from JSON. */
@@ -126,11 +149,14 @@ const isPx = (p: unknown): p is Px =>
  */
 export function annotationHeadline(a: SailTrimAnnotation): string {
   if (!a.targets.length) return 'no measurements'
-  const bit = (key: string, name: string) => {
-    const t = a.targets.find((x) => x.key === key)
-    return t ? `${name} ${Math.round(Math.abs(t.mm))}` : null
-  }
-  const parts = [bit('leechSpr2', 'leech'), bit('clew', 'clew'), bit('boom', 'boom')].filter(Boolean)
+  // Whatever was measured, in the order it was measured. The old version named
+  // three fixed keys, so a frame marked for two leech heights and nothing else
+  // came back "no measurements" because it had no clew.
+  const shortName = (key: string) =>
+    key === 'leechSpr2' ? 'leech'            // measured before the heights were tagged
+      : key.includes('@') ? key.replace('@', ' ')
+        : key
+  const parts = a.targets.slice(0, 4).map((t) => `${shortName(t.key)} ${formatMm(a, t.mm)}`)
   return `${parts.join(' · ')} mm`
 }
 
@@ -147,7 +173,9 @@ export function annotationFields(a: SailTrimAnnotation): Record<string, string> 
     sailtrim_psi_deg: a.psiDeg.toFixed(2),
     sailtrim_psi_measured: a.psiMeasured ? '1' : '0',
   }
-  for (const t of a.targets) out[`sailtrim_${t.key}_mm`] = Math.abs(t.mm).toFixed(0)
+  if (a.tack) out.sailtrim_tack = a.tack
+  out.sailtrim_leeward_positive = a.leewardPositive ? '1' : '0'
+  for (const t of a.targets) out[`sailtrim_${t.key}_mm`] = formatMm(a, t.mm)
   return out
 }
 
@@ -219,7 +247,7 @@ export function drawSailTrimAnnotation(
       stroke({ x: q.x - n.x * tick, y: q.y - n.y * tick }, { x: q.x + n.x * tick, y: q.y + n.y * tick }, t.colour, 2)
     }
     if (!labels) continue
-    const text = `${Math.round(Math.abs(t.mm))}`
+    const text = formatMm(a, t.mm)
     ctx.font = `700 ${Math.max(11, 22 * u)}px system-ui, -apple-system, sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'bottom'
@@ -238,6 +266,9 @@ export function drawSailTrimAnnotation(
   const fs = Math.max(10, 15 * u)
   const caption = [
     a.defn === 'world' ? 'world-horizontal from mast axis' : 'athwartships from mast axis',
+    a.leewardPositive
+      ? `${a.tack === 'stbd' ? 'stbd' : 'port'} tack, leeward positive`
+      : 'unsigned - no tack known',
     `psi ${a.psiDeg.toFixed(2)}° ${a.psiMeasured ? 'measured' : 'ASSUMED'}`,
     a.heelDeg != null ? `heel ${a.heelDeg.toFixed(1)}°` : null,
     a.version,

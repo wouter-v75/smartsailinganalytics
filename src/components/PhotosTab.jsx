@@ -1319,6 +1319,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
               initialFileUrl={geomFor.fullUrl||geomFor.objectUrl||""}
               initialFileName={geomFor.name||"photo.jpg"}
               photoLabel={geomFor.name||"this photo"}
+              twaDeg={geomFor.twa ?? null}
               onSaveToPhoto={(save)=>handleSaveSailTrim(geomFor,save)}/>
           </div>
         </div>

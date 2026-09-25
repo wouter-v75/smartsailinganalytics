@@ -27,7 +27,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
-  mmPerPxFromReference, mmPerPxAtMastFromRef, runChecks, cameraRollDeg, imageHeelDeg,
+  mmPerPxFromReference, mmPerPxAtMastFromRef, runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -141,10 +141,14 @@ export interface SailTrimSave {
 export default function SailTrimTab(
   {
     boatName = '', initialFileUrl = '', initialFileName = '',
-    onSaveToPhoto, photoLabel = '',
+    onSaveToPhoto, photoLabel = '', twaDeg = null,
   }: {
     boatName?: string;
     initialFileUrl?: string;
+    /** TWA from the log at this photo's instant. It fixes the TACK, which is
+     *  what makes the sign of a measurement mean something about the boat
+     *  rather than about which way round the picture is. */
+    twaDeg?: number | null;
     /** The photo's own name — `initialFileUrl` is an API path with no filename in it. */
     initialFileName?: string;
     /** Present when the tool is measuring a photo that belongs to something:
@@ -162,6 +166,10 @@ export default function SailTrimTab(
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null);
   const [capturedAt, setCapturedAt] = useState<string | null>(null);
   const [exifNote, setExifNote] = useState('');
+  // From the log when the host has it; overridable, because a photo taken on a
+  // roll-tack or outside the log's window has no honest row behind it.
+  const [tack, setTack] = useState<'port' | 'stbd' | null>(() => tackFromTwa(twaDeg));
+  useEffect(() => { setTack(tackFromTwa(twaDeg)); }, [twaDeg]);
   const [loadError, setLoadError] = useState('');
   const [loadingFrame, setLoadingFrame] = useState(false);
   const cachedImage = useRef<HTMLImageElement | null>(null);
@@ -572,13 +580,13 @@ export default function SailTrimTab(
         // supplies a focal length. depth/range with a 150 m guess at the range.
         scaleRelSigma: scaleRelSigma(scaleRef)
           + (scaleDepthUncorrected ? Math.abs(refDepthMm) / 150_000 : 0),
-        rangeMm, psi, scaleDepthUncorrected, scaleRefDepthMm: refDepthMm,
+        rangeMm, psi, tack, scaleDepthUncorrected, scaleRefDepthMm: refDepthMm,
         heelDeg: heel != null && Number.isFinite(heel) ? heel : null,
         heelSigmaDeg: 0.5, clickSigmaPx: CLICK_SIGMA_PX, horizon: hz,
       },
       why: '',
     };
-  }, [mastMode, mastTrace, traceNote, marks, scaleRef, baseRef, heelDeg, focalMm, rig.sensorWidthMm, imgSize, horizon]);
+  }, [mastMode, mastTrace, traceNote, marks, scaleRef, baseRef, heelDeg, focalMm, rig.sensorWidthMm, imgSize, horizon, tack]);
 
   // ── the measurements ─────────────────────────────────────────────────────
   /**
@@ -908,6 +916,7 @@ export default function SailTrimTab(
       psiDeg: cal.psi.deg,
       psiMeasured: cal.psi.measured,
       heelDeg: imageHeelDeg(cal.axis, cal.horizon) ?? cal.heelDeg,
+      tack,
     });
   };
 
@@ -1318,6 +1327,22 @@ export default function SailTrimTab(
               <span style={srcPill(baseRef?.source ?? 'estimate')}>{baseRef?.source ?? 'estimate'}</span>
             </div>
 
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={lbl}>Tack {twaDeg != null && <span style={{ color: '#64748B' }}>— log says TWA {twaDeg.toFixed(0)}°</span>}</label>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {([['stbd', 'Starboard'], ['port', 'Port'], [null, 'unknown']] as const).map(([t, text]) => (
+                  <button key={String(t)} style={{ ...btn(tack === t), padding: '4px 9px', fontSize: 11 }}
+                    onClick={() => setTack(t)}>{text}</button>
+                ))}
+              </div>
+              <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 4, lineHeight: 1.45 }}>
+                Sets which side is leeward, and so the SIGN: measurements come out
+                leeward-positive, a boom or main leech above the centreline reads
+                negative, and the same trim reads the same on either tack. Left
+                unknown, a sign would only say which way round the photograph is,
+                so the numbers are shown unsigned.
+              </div>
+            </div>
             <div>
               <label style={lbl}>Heel (°, from the log)</label>
               <input style={inp} type="number" step="0.1" value={heelDeg} onChange={(e) => setHeelDeg(e.target.value)} placeholder="23.5" />

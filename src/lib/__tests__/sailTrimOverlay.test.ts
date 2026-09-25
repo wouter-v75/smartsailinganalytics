@@ -140,7 +140,7 @@ describe('isAnnotation', () => {
 })
 
 describe('annotationHeadline', () => {
-  it('names the three targets in speed-team order, unsigned', () => {
+  it('names the targets it has, unsigned while the tack is unknown', () => {
     expect(annotationHeadline(build())).toBe('leech 1479 · clew 1103 · boom 2210 mm')
   })
 
@@ -158,15 +158,31 @@ describe('annotationHeadline', () => {
 })
 
 describe('annotationFields', () => {
-  it('flattens to one string per key, unsigned, for filtering', () => {
+  it('flattens to one string per key for filtering', () => {
+    // No tack on this fixture, so the sign would only say which way round the
+    // photograph is — the values come out unsigned and say so.
     expect(annotationFields(build())).toEqual({
       sailtrim_defn: 'boat',
       sailtrim_psi_deg: '0.42',
       sailtrim_psi_measured: '1',
+      sailtrim_leeward_positive: '0',
       sailtrim_leechSpr2_mm: '1479',
       sailtrim_clew_mm: '1103',
       sailtrim_boom_mm: '2210',
     })
+  })
+
+  it('keeps the SIGN once a tack is known — a boom above the centreline is negative', () => {
+    const a = build()
+    a.tack = 'stbd'
+    a.leewardPositive = true
+    const f = annotationFields(a)
+    expect(f.sailtrim_tack).toBe('stbd')
+    expect(f.sailtrim_leeward_positive).toBe('1')
+    // The clew is stored at −1103 and now reports it, rather than flattening to
+    // 1103 as it did when the sign was only a fact about the image.
+    expect(f['sailtrim_clew_mm']).toBe('-1103')
+    expect(f['sailtrim_leechSpr2_mm']).toBe('1479')
   })
 
   it('records an assumed psi as such — it is the difference between a measurement and a guess', () => {
