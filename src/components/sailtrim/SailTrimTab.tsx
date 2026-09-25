@@ -1086,6 +1086,24 @@ export default function SailTrimTab(
       psiMeasured: cal.psi.measured,
       heelDeg: imageHeelDeg(cal.axis, cal.horizon) ?? cal.heelDeg,
       tack,
+      // The SHAPE, not just the positions. Computed here where the rig model
+      // is, and carried on the record so it reaches the photo it was measured
+      // on — it used to stop at this panel.
+      chords: twist.flatMap((t) => t.angles.map((a) => ({
+        sail: t.sail,
+        tag: a.tag,
+        fraction: a.fraction,
+        chordMm: a.leechMm,
+        widthM: a.width.m,
+        widthSource: a.width.source,
+        angleDeg: a.angle.deg,
+        angleSigmaDeg: a.angle.sigmaDeg,
+        luffMm: t.sag.find((x) => x.tag === a.tag)?.mm ?? null,
+      }))),
+      twist: twist.flatMap((t) => t.rows.map((r) => ({
+        sail: t.sail, from: r.from, to: r.to,
+        twistDeg: r.twistDeg, sigmaDeg: r.sigmaDeg, interpolated: r.interpolated,
+      }))),
     });
   };
 

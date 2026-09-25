@@ -210,6 +210,57 @@ describe('PhotoDetail — sail geometry', () => {
     expect(src.some(u => u === 'https://cdn/thumb.jpg')).toBe(true)
   })
 
+  it('shows the TWIST on the photo, not just the millimetres', async () => {
+    // This is what was missing: twist was computed in the tool's own panel and
+    // never put on the annotation, so it never reached the photo it was
+    // measured on. The card is where anyone actually reads it.
+    const withShape = {
+      ...annotation,
+      chords: [
+        { sail: 'jib', tag: 'stripe25', fraction: 0.25, chordMm: 1003, widthM: 6.93,
+          widthSource: 'interpolated', angleDeg: 8.32, angleSigmaDeg: 0.18, luffMm: -150 },
+        { sail: 'jib', tag: 'stripe50', fraction: 0.50, chordMm: 1271, widthM: 4.90,
+          widthSource: 'certificate', angleDeg: 15.04, angleSigmaDeg: 0.28, luffMm: -200 },
+      ],
+      twist: [
+        { sail: 'jib', from: 'stripe25', to: 'stripe50', twistDeg: 6.72, sigmaDeg: 0.34, interpolated: true },
+      ],
+    }
+    await show({
+      ...basePhoto,
+      sailtrim_data: JSON.stringify({ annotation: withShape, overlay: false }),
+    })
+    expect(screen.getByText(/Twist/)).toBeTruthy()
+    expect(screen.getByText('25 % → 50 %')).toBeTruthy()
+    expect(screen.getByText(/\+6\.72°/)).toBeTruthy()
+    // the chord angles and which width they used
+    expect(screen.getByText(/8\.32°/)).toBeTruthy()
+    expect(screen.getByText(/4\.90 m/)).toBeTruthy()          // certificate
+    expect(screen.getByText(/6\.93 m\*/)).toBeTruthy()        // interpolated, starred
+    // and the sag, because the luff was marked
+    expect(screen.getByText(/forestay sag:/)).toBeTruthy()
+    expect(screen.getByText(/25% 150 · 50% 200 mm/)).toBeTruthy()
+  })
+
+  it('says the chord came off the centreplane when no luff was marked', async () => {
+    const noLuff = {
+      ...annotation,
+      chords: [{ sail: 'jib', tag: 'stripe50', fraction: 0.5, chordMm: 1271, widthM: 4.9,
+        widthSource: 'certificate', angleDeg: 15.04, angleSigmaDeg: 0.28, luffMm: null }],
+      twist: [],
+    }
+    await show({ ...basePhoto, sailtrim_data: JSON.stringify({ annotation: noLuff, overlay: false }) })
+    expect(screen.getByText(/luff not marked/)).toBeTruthy()
+    expect(screen.getByText(/a straight forestay/)).toBeTruthy()
+    // no sag READOUT — the warning mentions the forestay, the measurement is absent
+    expect(screen.queryByText(/forestay sag:/)).toBeNull()
+  })
+
+  it('leaves the twist block out entirely when there is no certificate behind it', async () => {
+    await show(withGeometry(true))
+    expect(screen.queryByText(/chord @/)).toBeNull()
+  })
+
   it('still renders the instrument data it always did', async () => {
     await show(withGeometry(true))
     expect(screen.getByText('14.2')).toBeTruthy()   // TWS

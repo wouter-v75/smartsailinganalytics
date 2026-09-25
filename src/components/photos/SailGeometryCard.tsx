@@ -53,6 +53,60 @@ export default function SailGeometryCard({
           </div>
         ))}
       </div>
+      {/* SHAPE. The millimetres above say where the leech is; this says what the
+          sail is doing — chord angle per stripe and the twist between them.
+          Present once a certificate has been read, because its sail widths are
+          the denominator. */}
+      {(annotation.twist?.length || annotation.chords?.length) ? (
+        <div style={{ marginTop: 9, paddingTop: 8, borderTop: '1px solid #16304A' }}>
+          <div style={{ fontSize: 9, color: '#4ADE80', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 5 }}>
+            Twist
+          </div>
+          {(['main', 'jib'] as const).map((sail) => {
+            const rows = (annotation.twist || []).filter((w) => w.sail === sail)
+            const chords = (annotation.chords || []).filter((c) => c.sail === sail)
+            if (!rows.length && !chords.length) return null
+            const sag = chords.filter((c) => c.luffMm != null)
+            return (
+              <div key={sail} style={{ marginBottom: 6 }}>
+                <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'capitalize', marginBottom: 2 }}>{sail}</div>
+                {chords.map((c) => (
+                  <div key={c.tag} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#64748B', fontFamily: 'monospace' }}>
+                    <span>chord @ {(c.fraction * 100).toFixed(0)} %</span>
+                    <span>
+                      {c.angleDeg.toFixed(2)}° ±{c.angleSigmaDeg.toFixed(2)}
+                      <span style={{ color: c.widthSource === 'certificate' ? '#4ADE80' : '#FCD34D', marginLeft: 5 }}>
+                        {c.widthM.toFixed(2)} m{c.widthSource === 'interpolated' ? '*' : ''}
+                      </span>
+                    </span>
+                  </div>
+                ))}
+                {rows.map((w) => (
+                  <div key={`${w.from}-${w.to}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 1 }}>
+                    <span>{w.from.replace('stripe', '')} % → {w.to.replace('stripe', '')} %</span>
+                    <span style={{ fontFamily: 'monospace' }}>
+                      {w.twistDeg >= 0 ? '+' : ''}{w.twistDeg.toFixed(2)}° ±{w.sigmaDeg.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+                {sag.length > 0 && (
+                  <div style={{ fontSize: 10, color: '#86EFAC', fontFamily: 'monospace', marginTop: 1 }}>
+                    {sail === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
+                    {sag.map((c) => `${(c.fraction * 100).toFixed(0)}% ${Math.round(Math.abs(c.luffMm as number))}`).join(' · ')} mm
+                  </div>
+                )}
+                {chords.length > 0 && sag.length === 0 && (
+                  <div style={{ fontSize: 9.5, color: '#FCD34D', marginTop: 1, lineHeight: 1.4 }}>
+                    luff not marked — chord taken from the centreplane
+                    {sail === 'jib' ? ', i.e. a straight forestay. ~0.29° of twist per 100 mm it is not.' : ''}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+
       <div style={{ marginTop: 7, fontSize: 9, color: '#64748B', lineHeight: 1.5 }}>
         {annotation.defn === 'world' ? 'World-horizontal' : 'Athwartships'} from the centreplane ·{' '}
         <span style={{ color: annotation.psiMeasured ? '#4ADE80' : '#FCD34D' }}>

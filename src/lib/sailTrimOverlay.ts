@@ -33,6 +33,39 @@ export interface AnnotationTarget {
   colour: string
 }
 
+/**
+ * A sail's shape at one station: the chord, the width it was divided by, and
+ * the angle that came out. Carried so the photo can SHOW the shape, not just
+ * the positions — twist was computed in the tool and then left behind, which
+ * meant it never reached the photo it was measured on.
+ */
+export interface AnnotationChord {
+  sail: 'main' | 'jib'
+  tag: string
+  /** Fraction of hoist. */
+  fraction: number
+  /** Leech minus luff, mm. The luff term is zero when it was not marked. */
+  chordMm: number
+  /** The sail's width there, m, and where the number came from. */
+  widthM: number
+  widthSource: 'certificate' | 'interpolated'
+  angleDeg: number
+  angleSigmaDeg: number
+  /** The luff's own offset from the centreplane — forestay SAG for a jib —
+   *  or null when the luff was not marked and the chord assumed it was zero. */
+  luffMm: number | null
+}
+
+export interface AnnotationTwist {
+  sail: 'main' | 'jib'
+  from: string
+  to: string
+  twistDeg: number
+  sigmaDeg: number
+  /** True when either station's width had to be interpolated. */
+  interpolated: boolean
+}
+
 export interface SailTrimAnnotation {
   version: string
   /** The pixel frame `point`/`foot`/`axis` are expressed in. */
@@ -50,6 +83,10 @@ export interface SailTrimAnnotation {
   heelDeg: number | null
   /** The tack, when the log gave one. */
   tack?: 'port' | 'stbd' | null
+  /** Chord angle per station, and the twist between them. Present once the
+   *  certificate's sail widths are known — they are the denominator. */
+  chords?: AnnotationChord[]
+  twist?: AnnotationTwist[]
   /**
    * True when `mm` is LEEWARD POSITIVE — so a boom or main leech above the
    * centreline is negative, and the same trim reads the same on either tack.
@@ -87,6 +124,8 @@ export function buildAnnotation(args: {
   psiMeasured: boolean
   heelDeg: number | null
   tack?: 'port' | 'stbd' | null
+  chords?: AnnotationChord[]
+  twist?: AnnotationTwist[]
   measuredAt?: number
 }): SailTrimAnnotation {
   const targets: AnnotationTarget[] = []
@@ -117,6 +156,8 @@ export function buildAnnotation(args: {
     heelDeg: args.heelDeg,
     tack: args.tack ?? null,
     leewardPositive: args.tack != null,
+    chords: args.chords ?? [],
+    twist: args.twist ?? [],
     measuredAt: args.measuredAt ?? Date.now(),
   }
 }
@@ -179,6 +220,15 @@ export function annotationFields(a: SailTrimAnnotation): Record<string, string> 
   if (a.tack) out.sailtrim_tack = a.tack
   out.sailtrim_leeward_positive = a.leewardPositive ? '1' : '0'
   for (const t of a.targets) out[`sailtrim_${t.key}_mm`] = formatMm(a, t.mm)
+  // Twist and sag as their own flat fields — a photo list can only filter on
+  // these, and "show me the frames where the jib twisted more than 8°" is the
+  // question the whole thing exists to answer.
+  for (const w of a.twist || []) {
+    out[`sailtrim_twist_${w.sail}_${w.from}_${w.to}_deg`] = w.twistDeg.toFixed(2)
+  }
+  for (const c of a.chords || []) {
+    if (c.luffMm != null) out[`sailtrim_sag_${c.sail}_${c.tag}_mm`] = Math.round(Math.abs(c.luffMm)).toString()
+  }
   return out
 }
 
