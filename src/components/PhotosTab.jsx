@@ -10,7 +10,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { uploadJsonToStorage } from "../lib/bunny";
-import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, startAutoFlush, keysForPhoto } from "../lib/photoStore";
+import { syncPending as syncPendingPhotos, connectionIsGood, clearDayCloud, startAutoFlush, keysForPhoto, photoOriginalUrl } from "../lib/photoStore";
 import { getWifiOnly, setWifiOnly, connectionLabel } from "../lib/netAware";
 import { buildSailResolver } from "../lib/sailResolve";
 import { useUiNext } from "../lib/ui-flags";
@@ -790,9 +790,9 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         // thumb for everyone who had not imported the photo themselves, which
         // is everyone but one person — hence "too grainy to be of any use",
         // and an overlay export that was 480 px wide as well.
-        const fullUrl = blob
-          ? URL.createObjectURL(blob)
-          : (p.cloudSynced ? cloudImageUrl(keys.original) : null);
+        // The RECORDED path, not one reconstructed from the id — see
+        // photoOriginalUrl, which exists entirely to explain why.
+        const fullUrl = blob ? URL.createObjectURL(blob) : photoOriginalUrl(p, activeDate);
         return { ...p, objectUrl, fullUrl, hasLocalOriginal };
       }));
       if (cancelled) return;
@@ -1086,7 +1086,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     setDownloadingOriginal(true);
     try {
       const keys = keysForPhoto(selected, activeDate);
-      const res = await fetch(cloudImageUrl(keys.original));
+      const res = await fetch(cloudImageUrl(selected.bunnyPath || keys.original));
       if(!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       await idbPutPhoto(selected.id, blob);

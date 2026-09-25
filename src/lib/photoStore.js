@@ -61,6 +61,30 @@ const scopeOf = (photo) =>
   photo?.teamId && photo?.boatId ? { teamId: photo.teamId, boatId: photo.boatId } : null
 export const cloudImageUrl = (key) => `/api/bunny/image?key=${encodeURIComponent(key)}`
 
+/**
+ * Where to fetch a photo's FULL-RESOLUTION original from, or null if nowhere.
+ *
+ * The trap this exists to close: `keysForPhoto` RECONSTRUCTS a key from
+ * `sessionDate` + `photo.id`. That is correct only for a photo the browser
+ * uploaded, because the browser derived the key from the same id. A photo put up
+ * by `npm run media:upload` lives at `sessions/<date>/photos/p_<ts>_<rand>.jpg`
+ * and its row id is a Supabase UUID, so the reconstruction names a key that has
+ * never existed — and the viewer then says the original "has not reached the
+ * cloud yet" over a file that has been in Bunny for weeks. Twice now a photo has
+ * looked soft with a confident explanation printed over it.
+ *
+ * So: the path the row RECORDS beats any path we can derive. Derivation is the
+ * fallback for a record old enough not to carry one.
+ */
+export const photoOriginalUrl = (photo, fallbackDate = null) => {
+  if (!photo) return null
+  const recorded = photo.bunnyPath || photo.url || null
+  if (recorded) return cloudImageUrl(recorded)
+  if (!photo.cloudSynced) return null
+  const k = keysForPhoto(photo, fallbackDate).original
+  return k ? cloudImageUrl(k) : null
+}
+
 // ── Connection gate — `good` ⇒ ok to push heavy originals ─────────────────────
 export function connectionIsGood() {
   if (typeof navigator === 'undefined') return false
