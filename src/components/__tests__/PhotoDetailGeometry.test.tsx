@@ -171,6 +171,45 @@ describe('PhotoDetail — sail geometry', () => {
     }
   })
 
+  it('asks for the ORIGINAL at the path the row records', async () => {
+    // Twice now this URL has been wrong, and both times the symptom was a photo
+    // that looked soft with a confident explanation over it. First the viewer
+    // was handed the 480 px thumbnail; then it was handed a key RECONSTRUCTED
+    // from sessionDate + photo.id, which is right only for a photo the browser
+    // itself uploaded. Anything put up by `npm run media:upload` lives at
+    // `sessions/<date>/photos/p_<ts>_<rand>.jpg` under a Supabase UUID, so the
+    // reconstruction 404s and the viewer says the original "has not reached the
+    // cloud yet" about a file that has been there for weeks.
+    const src: string[] = []
+    const realImage = global.Image
+    class Spy {
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      crossOrigin = ''
+      naturalWidth = IMG_W
+      naturalHeight = IMG_H
+      set src(v: string) { src.push(v); setTimeout(() => this.onload?.(), 0) }
+    }
+    // @ts-expect-error swapping the global constructor
+    global.Image = Spy
+    try {
+      await show({
+        ...basePhoto,
+        objectUrl: 'https://cdn/thumb.jpg',
+        fullUrl: '/api/bunny/image?key=' +
+          encodeURIComponent('sessions/2026-09-12/photos/p_1790328226840_rqkezf6hhvi.jpg'),
+      })
+    } finally {
+      // @ts-expect-error restoring it
+      global.Image = realImage
+    }
+    const full = src.find(u => u.includes('/api/bunny/image'))
+    expect(full).toBeTruthy()
+    expect(decodeURIComponent(full!)).toContain('p_1790328226840_rqkezf6hhvi.jpg')
+    // And the thumbnail is still fetched too — it is what paints first.
+    expect(src.some(u => u === 'https://cdn/thumb.jpg')).toBe(true)
+  })
+
   it('still renders the instrument data it always did', async () => {
     await show(withGeometry(true))
     expect(screen.getByText('14.2')).toBeTruthy()   // TWS
