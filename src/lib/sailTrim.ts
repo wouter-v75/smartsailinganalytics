@@ -357,6 +357,25 @@ export function solvePsi(
   return { deg, sigmaDeg, measured: true }
 }
 
+/**
+ * TWA → tack, the way the rest of SSA reads it (`manoeuvres.ts`, `phaseStats.ts`):
+ * wind on the starboard bow is a positive TWA.
+ */
+export const tackFromTwa = (twaDeg: number | null | undefined): 'port' | 'stbd' | null =>
+  twaDeg == null || !Number.isFinite(twaDeg) ? null : (twaDeg >= 0 ? 'stbd' : 'port')
+
+/**
+ * +1 or −1, converting an image-signed athwartships offset into a
+ * LEEWARD-POSITIVE one.
+ *
+ * From astern, image-right is starboard. On starboard tack the wind is from
+ * starboard, so starboard is WINDWARD and its offsets must come out negative —
+ * hence the flip. On port tack windward is already the negative side, so
+ * nothing changes.
+ */
+export const leewardSign = (tack: 'port' | 'stbd' | null | undefined): number =>
+  tack === 'stbd' ? -1 : 1
+
 /** cos(heel), or 1 with a shrug when heel is not known. */
 const cosHeel = (heelDeg: number | null): number =>
   heelDeg == null || !Number.isFinite(heelDeg) ? 1 : Math.cos(heelDeg * DEG)
@@ -379,6 +398,19 @@ export interface Calibration {
   /** The sea horizon, when it could be found. Authoritative for
    *  world-horizontal; makes `heelDeg` a check rather than an input. */
   horizon?: Horizon | null
+  /**
+   * Which tack the boat is on, from the log.
+   *
+   * It is what turns the sign of a measurement from a fact about the IMAGE into
+   * a fact about the BOAT. `across` points image-right, which seen from astern
+   * is starboard; but "150 mm to starboard" means opposite things on opposite
+   * tacks, and a boom above the centreline is the case anybody cares about. With
+   * the tack known the convention becomes LEEWARD POSITIVE, so the same trim
+   * reads the same number whichever way the boat is going and a boom to windward
+   * reads negative. Without it the sign stays image-relative and is not worth
+   * printing — `leewardPositive` on the measurement says which you have.
+   */
+  tack?: 'port' | 'stbd' | null
   /** The scale reference's own offset from the mast, forward positive. */
   scaleRefDepthMm?: number
   /** True when that offset could NOT be corrected for — no focal length, so no
@@ -423,6 +455,13 @@ export interface Measurement {
   mmPerPxUsed: number
   depthScaleApplied: boolean
   rollApplied: boolean
+  /**
+   * True when the tack was known, so the sign means LEEWARD POSITIVE — a boom
+   * or a main leech above the centreline reads negative, and the same trim reads
+   * the same number on both tacks. False when it was not, in which case the sign
+   * is merely image-right-positive and should not be shown.
+   */
+  leewardPositive?: boolean
 }
 
 /**
@@ -487,6 +526,10 @@ export function measureTarget(cal: Calibration, t: TargetInput): Measurement {
     return Math.hypot(...terms)
   }
 
+  // Referred to the boat: leeward positive, so a boom above the centreline is
+  // negative and the same trim reads the same on both tacks. Applied to the
+  // VALUES only — a sigma has no side.
+  const flip = leewardSign(cal.tack)
   const boatFrameSigmaMm = sigma(boatFrameMm)
   // The world-horizontal number inherits everything above plus, when the roll
   // correction could not be applied, an unknown camera roll. d(1/cos)/dρ at a
@@ -497,14 +540,15 @@ export function measureTarget(cal: Calibration, t: TargetInput): Measurement {
   return {
     key: t.key,
     label: t.label,
-    boatFrameMm,
+    boatFrameMm: boatFrameMm * flip,
     boatFrameSigmaMm,
-    worldHorizontalMm,
+    worldHorizontalMm: worldHorizontalMm * flip,
     worldHorizontalSigmaMm,
-    naiveMm,
+    naiveMm: naiveMm * flip,
     mmPerPxUsed: mmPerPx,
     depthScaleApplied,
     rollApplied,
+    leewardPositive: cal.tack != null,
   }
 }
 
@@ -594,6 +638,15 @@ export function runChecks(cal: Calibration): Check[] {
         : `${Math.abs(cal.scaleRefDepthMm / 1000).toFixed(1)} m ${cal.scaleRefDepthMm < 0 ? 'abaft' : 'forward of'} the mast, referred back to the mast plane`,
     })
   }
+
+  out.push({
+    key: 'tack',
+    label: 'Sign of the measurement',
+    ok: cal.tack != null,
+    detail: cal.tack != null
+      ? `${cal.tack === 'stbd' ? 'starboard' : 'port'} tack, so the numbers are LEEWARD POSITIVE — a boom or a main leech above the centreline reads negative, and the same trim reads the same on either tack`
+      : 'no tack known, so a sign would only say which way round the photograph is. Give the tool the TWA from the log, or set the tack by hand, and the boom and main leech become signed about the centreline.',
+  })
 
   out.push({
     key: 'range',
