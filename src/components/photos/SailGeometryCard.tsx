@@ -92,7 +92,10 @@ export default function SailGeometryCard({
                 {sag.length > 0 && (
                   <div style={{ fontSize: 10, color: '#86EFAC', fontFamily: 'monospace', marginTop: 1 }}>
                     {sail === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
-                    {sag.map((c) => `${(c.fraction * 100).toFixed(0)}% ${Math.round(Math.abs(c.luffMm as number))}`).join(' · ')} mm
+                    {sag.map((c) => `${(c.fraction * 100).toFixed(0)}% ${Math.round(Math.abs(c.luffMm as number))}${c.luffSource === 'fitted' ? '†' : ''}`).join(' · ')} mm
+                    {sag.some((c) => c.luffSource === 'fitted') && (
+                      <span style={{ color: '#64748B' }}> † fitted — the luff is hidden there</span>
+                    )}
                   </div>
                 )}
                 {chords.length > 0 && sag.length === 0 && (

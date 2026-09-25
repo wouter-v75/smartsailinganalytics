@@ -41,7 +41,7 @@ import {
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
-import { stationAngles, twistBetween, STATION_FRACTION } from '../../lib/sailTwist';
+import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION } from '../../lib/sailTwist';
 import {
   buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
 } from '../../lib/sailTrimOverlay';
@@ -781,7 +781,7 @@ export default function SailTrimTab(
       sail: 'main' | 'jib'
       rows: ReturnType<typeof twistBetween>
       angles: ReturnType<typeof stationAngles>
-      sag: { tag: string; mm: number }[]
+      sag: { tag: string; mm: number; source: 'measured' | 'fitted' | 'assumed-zero' }[]
       haveLuff: boolean
     }[] = [];
     for (const sail of ['main', 'jib'] as const) {
@@ -793,32 +793,55 @@ export default function SailTrimTab(
         defn === 'boat' ? m.boatFrameSigmaMm : m.worldHorizontalSigmaMm;
       const luffAt = (tag: string) => measurements.find((m) => m.key === `luff-${sail}@${tag}`);
 
+      // From astern most of the jib's luff is behind the sails, so it will
+      // often be crossed at one station and not the others. That is enough: the
+      // forestay is pinned at both ends, so one interior point fits the whole
+      // sag profile — and which profile barely matters (0.1-0.3°) next to
+      // measuring none at all (1.5°).
+      const sagFit = fitLuffSag(
+        HEIGHT_TAGS
+          .map((t) => ({ f: STATION_FRACTION[t.key], lu: luffAt(t.key) }))
+          .filter((x): x is { f: number; lu: NonNullable<typeof x.lu> } => x.f != null && !!x.lu)
+          .map((x) => ({ fraction: x.f, mm: val(x.lu) })),
+      );
+
       const leech = measurements
         .filter((m) => m.key.startsWith(`${sail}@`))
         .map((m) => {
           const tag = m.key.split('@')[1] as keyof typeof STATION_FRACTION;
+          const f = STATION_FRACTION[tag];
           const lu = luffAt(tag);
+          const fitted = lu == null && sagFit && f != null ? sagFit(f) : null;
+          const luffMm = lu ? val(lu) : fitted;
           return {
             tag,
             // THE CHORD, which is what a sail's shape is measured on: leech
-            // MINUS luff. Without the luff marked this falls back to the
-            // centreplane, which assumes the forestay does not sag — and it
-            // sags most at mid-luff, which is where twist is most sensitive.
-            mm: val(m) - (lu ? val(lu) : 0),
-            sigmaMm: lu ? Math.hypot(sig(m), sig(lu)) : sig(m),
-            luffMm: lu ? val(lu) : null,
+            // MINUS luff. Falling back to the centreplane assumes the forestay
+            // does not sag, and it sags most at mid-luff — which is exactly
+            // where twist is most sensitive.
+            mm: val(m) - (luffMm ?? 0),
+            // A fitted luff is a model, not a measurement: charge a third of it.
+            sigmaMm: lu ? Math.hypot(sig(m), sig(lu))
+              : fitted != null ? Math.hypot(sig(m), Math.abs(fitted) / 3)
+                : sig(m),
+            luffMm,
+            luffSource: (lu ? 'measured' : fitted != null ? 'fitted' : 'assumed-zero') as
+              'measured' | 'fitted' | 'assumed-zero',
           };
         })
         .filter((l) => STATION_FRACTION[l.tag] != null);
       if (leech.length < 1) continue;
-      const angles = stationAngles(sail, w, leech);
+      const angles = stationAngles(sail, w, leech).map((a) => {
+        const src = leech.find((l) => l.tag === a.tag);
+        return { ...a, luffSource: src?.luffSource, luffMm: src?.luffMm ?? null };
+      });
       if (!angles.length) continue;
       out.push({
         sail, angles, rows: twistBetween(angles),
         // Luff offset from the centreplane: for the jib that IS forestay sag,
         // measured from the photograph. Nobody has this for a rival.
         sag: leech.filter((l) => l.luffMm != null)
-          .map((l) => ({ tag: l.tag, mm: l.luffMm as number })),
+          .map((l) => ({ tag: l.tag, mm: l.luffMm as number, source: l.luffSource })),
         haveLuff: leech.some((l) => l.luffMm != null),
       });
     }
@@ -1098,7 +1121,8 @@ export default function SailTrimTab(
         widthSource: a.width.source,
         angleDeg: a.angle.deg,
         angleSigmaDeg: a.angle.sigmaDeg,
-        luffMm: t.sag.find((x) => x.tag === a.tag)?.mm ?? null,
+        luffMm: a.luffMm ?? null,
+        luffSource: a.luffSource ?? 'assumed-zero',
       }))),
       twist: twist.flatMap((t) => t.rows.map((r) => ({
         sail: t.sail, from: r.from, to: r.to,
@@ -1689,7 +1713,10 @@ export default function SailTrimTab(
                   {t.sag.length > 0 && (
                     <div style={{ fontSize: 10.5, color: '#86EFAC', fontFamily: 'monospace', marginTop: 2 }}>
                       {t.sail === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
-                      {t.sag.map((x) => `${heightShort(x.tag)} ${Math.round(Math.abs(x.mm))}`).join(' · ')} mm
+                      {t.sag.map((x) => `${heightShort(x.tag)} ${Math.round(Math.abs(x.mm))}${x.source === 'fitted' ? '†' : ''}`).join(' · ')} mm
+                      {t.sag.some((x) => x.source === 'fitted') && (
+                        <span style={{ color: '#64748B' }}> † fitted, pinned at tack and masthead</span>
+                      )}
                     </div>
                   )}
                   {!t.haveLuff && (

@@ -54,6 +54,13 @@ export interface AnnotationChord {
   /** The luff's own offset from the centreplane — forestay SAG for a jib —
    *  or null when the luff was not marked and the chord assumed it was zero. */
   luffMm: number | null
+  /**
+   * How that luff term was arrived at. `fitted` means the luff was not visible
+   * at THIS height — most of it is hidden behind the sails from astern — and
+   * the sag was fitted from wherever it was visible, pinned to zero at the tack
+   * and the masthead. One visible point is worth nearly as much as all of it.
+   */
+  luffSource?: 'measured' | 'fitted' | 'assumed-zero'
 }
 
 export interface AnnotationTwist {

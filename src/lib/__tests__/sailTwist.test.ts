@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   STATION_FRACTION, widthAt, chordAngle, stationAngles, twistBetween,
   type SailWidths,
+  fitLuffSag,
 } from '../sailTwist'
 
 /** Northstar III, off the certificate: E, MHW, MTW, MUW / HLP, HHW, HTW, HUW. */
@@ -93,6 +94,59 @@ describe('chordAngle', () => {
     // Not a measurement: a mismarked point, or the wrong sail's edge.
     expect(chordAngle(9_000, 20, widthAt(MAIN, 0.5)!)).toBeNull()
     expect(chordAngle(-9_000, 20, widthAt(MAIN, 0.5)!)).toBeNull()
+  })
+})
+
+describe('fitLuffSag — most of the luff is hidden from astern', () => {
+  it('fits the whole profile from ONE visible point', () => {
+    // The forestay is pinned at the tack and the masthead, both on the
+    // centreplane, so sag is zero at 0 and 1. One interior measurement is
+    // therefore the whole curve.
+    const f = fitLuffSag([{ fraction: 0.25, mm: 225 }])!
+    expect(f).toBeTruthy()
+    expect(f(0.25)).toBeCloseTo(225, 6)
+    expect(f(0.5)).toBeCloseTo(300, 6)      // peak = 225 / (4·0.25·0.75)
+    expect(f(0.75)).toBeCloseTo(225, 6)
+  })
+
+  it('pins both ends at zero', () => {
+    const f = fitLuffSag([{ fraction: 0.5, mm: 300 }])!
+    expect(f(0)).toBeCloseTo(0, 9)
+    expect(f(1)).toBeCloseTo(0, 9)
+  })
+
+  it('uses two visible points as two, not one', () => {
+    // Least squares, so a second station improves the fit rather than replacing
+    // the first. Perfectly parabolic input comes back exactly.
+    const f = fitLuffSag([{ fraction: 0.25, mm: 225 }, { fraction: 0.5, mm: 300 }])!
+    expect(f(0.5)).toBeCloseTo(300, 6)
+    // Inconsistent input lands between them rather than on either.
+    const g = fitLuffSag([{ fraction: 0.25, mm: 225 }, { fraction: 0.5, mm: 200 }])!
+    expect(g(0.5)).toBeGreaterThan(200)
+    expect(g(0.5)).toBeLessThan(300)
+  })
+
+  it('keeps the sign, so sag to windward would come back negative', () => {
+    expect(fitLuffSag([{ fraction: 0.5, mm: -300 }])!(0.5)).toBeCloseTo(-300, 6)
+  })
+
+  it('declines when there is nothing interior to fit', () => {
+    expect(fitLuffSag([])).toBeNull()
+    // the ends carry no information: they are zero by construction
+    expect(fitLuffSag([{ fraction: 0, mm: 0 }, { fraction: 1, mm: 0 }])).toBeNull()
+  })
+
+  it('the profile SHAPE barely matters next to measuring it at all', () => {
+    // Same measured point at 25 %, parabola vs half-sine. The two disagree by
+    // far less than the error of assuming no sag — which is the whole reason a
+    // crude pinned parabola is good enough.
+    const measured = 200
+    const parab = fitLuffSag([{ fraction: 0.25, mm: measured }])!
+    const sinePeak = measured / Math.sin(Math.PI * 0.25)
+    const sine = (f: number) => sinePeak * Math.sin(Math.PI * f)
+    expect(Math.abs(parab(0.5) - sine(0.5))).toBeLessThan(0.12 * Math.abs(parab(0.5)))
+    // …while assuming zero is 100 % out.
+    expect(Math.abs(parab(0.5))).toBeGreaterThan(200)
   })
 })
 

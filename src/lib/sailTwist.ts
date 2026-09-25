@@ -137,6 +137,36 @@ function quadratic(p: [number, number][], x: number): number {
   return y0 * L(x0, x1, x2) + y1 * L(x1, x0, x2) + y2 * L(x2, x0, x1)
 }
 
+/**
+ * The sag profile of a luff, fitted from however little of it was visible.
+ *
+ * From astern most of the jib's luff is hidden behind the jib and the main —
+ * you get the bottom of the forestay and little else. That would be fatal if
+ * the sag had to be measured where it is used, and it does not: the forestay is
+ * pinned at BOTH ends, tack and masthead, and both are on the centreplane. So
+ * sag is zero at 0 and at 1, and ONE interior measurement determines the rest.
+ *
+ * The shape barely matters. Taking the same measured point at the 25 % stripe
+ * and asking a parabola and a half-sine for the twist between 25 % and 50 %,
+ * they differ by 0.1-0.3°; measuring nothing at all costs 1.5°. So the crude
+ * pinned parabola is used and the argument for a better one is weak.
+ *
+ * Least squares over whatever stations were measured, so two visible points are
+ * used as two, not one.
+ */
+export function fitLuffSag(
+  measured: { fraction: number; mm: number }[],
+): ((fraction: number) => number) | null {
+  const shape = (f: number) => 4 * f * (1 - f)
+  const pts = measured.filter((m) => m.fraction > 0 && m.fraction < 1 && Number.isFinite(m.mm))
+  if (!pts.length) return null
+  let num = 0, den = 0
+  for (const p of pts) { const w = shape(p.fraction); num += p.mm * w; den += w * w }
+  if (!(Math.abs(den) > 1e-9)) return null
+  const peak = num / den
+  return (f: number) => peak * shape(f)
+}
+
 export interface ChordAngle {
   deg: number
   sigmaDeg: number
@@ -187,6 +217,9 @@ export interface StationAngle {
   leechMm: number
   width: WidthAt
   angle: ChordAngle
+  /** How the luff term at this station was arrived at. */
+  luffSource?: 'measured' | 'fitted' | 'assumed-zero'
+  luffMm?: number | null
 }
 
 /**
