@@ -223,6 +223,39 @@ describe('RigShotTab', () => {
     expect(screen.getByText(/range ≈ 260 m/)).toBeTruthy()
   })
 
+  it('measures the clew and the boom as well as the leech', async () => {
+    // The three targets the speed team actually wants. The clew and the boom
+    // sit at very different depths from the mast — the certificate puts the
+    // clew ~1.1 m abaft it and the boom E = 10.33 m abaft — so they exercise
+    // the depth correction in opposite directions.
+    const P = makeCamera(RIG)
+    render(<RigShotTab />)
+    await openAFrame()
+    useManualMast()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+
+    click(P(0, -MAST_HALF_WIDTH, 5_000)); click(P(0, MAST_HALF_WIDTH, 5_000))
+    fireEvent.click(stepButton('Mast edges, high'))
+    click(P(0, -MAST_HALF_WIDTH, 30_000)); click(P(0, MAST_HALF_WIDTH, 30_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    // the rig model's own defaults say where these sit fore-and-aft
+    fireEvent.click(stepButton('Jib clew'))
+    click(P(-1_100, 1_500, 2_000))
+    fireEvent.click(stepButton('Boom'))
+    click(P(-10_000, 2_400, 1_400))
+
+    // "Jib clew" appears as the step name too, so wait on the measurement panel
+    await waitFor(() => expect(screen.getAllByText(/± \d+ mm/)).toHaveLength(2))
+    const values = screen.getAllByText(/± \d+ mm/)
+      .map((el) => Number(el.parentElement!.textContent!.match(/^(\d+)/)![1]))
+    expect(values).toHaveLength(2)
+    // both recovered to within a couple of centimetres of where they were put
+    expect(Math.abs(values[0] - 1_500)).toBeLessThan(25)
+    expect(Math.abs(values[1] - 2_400)).toBeLessThan(25)
+  })
+
   it('warns, loudly and specifically, when the misalignment was never measured', async () => {
     const P = makeCamera(RIG)
     render(<RigShotTab />)

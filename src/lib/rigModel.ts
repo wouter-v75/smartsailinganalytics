@@ -70,6 +70,11 @@ export interface RigModel {
   depths: Record<'leech' | 'clew' | 'boom', RigValue>
   /** Camera side: sensor width in mm along the long edge. 36 = full frame. */
   sensorWidthMm: number
+  /** How far the jib's clew sits ABOVE ITS TACK, mm — derived from the
+   *  certificate. Not a measurement input: it is what lets the tool draw a
+   *  "the clew is about this high" guide, which is the one thing that stops
+   *  you marking the wrong sail's edge. */
+  clewHeightMm?: number
   notes: string
 }
 

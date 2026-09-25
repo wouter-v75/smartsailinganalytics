@@ -506,7 +506,7 @@ export default function RigShotTab(
     const lp = leechPoint();
     if (lp) {
       out.push(measureTarget(cal, {
-        key: 'leechSpr2', label: 'Jib leech @ spreader 2', point: lp,
+        key: 'leechSpr2', label: 'Jib leech @ reference height', point: lp,
         depthMm: rig.depths.leech.mm, depthSigmaMm: rig.depths.leech.sigmaMm,
       }));
     }
@@ -594,6 +594,47 @@ export default function RigShotTab(
       ctx.setLineDash([]);
     }
 
+    // ── where the rig model says to look ──────────────────────────────────
+    // Faint, dashed, labelled "≈" — a PREDICTION from the certificate, never a
+    // mark. It exists because of a mistake: marking the outer silhouette at
+    // spreader-2 height and calling it the jib leech, when the silhouette up
+    // there is the mainsail's. The two sit within ~150 mm of each other on
+    // these frames, so the number looked right. A line saying "the clew is
+    // about this high" is what catches that.
+    if (calibration.cal) {
+      const cal0 = calibration.cal;
+      const across = cal0.axis.across;
+      const guide = (through: Px, label: string) => {
+        const q = toScreen(through);
+        const half = 4000;
+        ctx.strokeStyle = 'rgba(167,139,250,0.40)';
+        ctx.lineWidth = px(1);
+        ctx.setLineDash([px(5), px(7)]);
+        ctx.beginPath();
+        ctx.moveTo(q.x - across.x * half, q.y - across.y * half);
+        ctx.lineTo(q.x + across.x * half, q.y + across.y * half);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(167,139,250,0.85)';
+        ctx.font = `600 ${px(11)}px system-ui, sans-serif`;
+        ctx.fillText(label, q.x + across.x * px(70) + px(6), q.y + across.y * px(70) - px(4));
+      };
+      // P's lower black band is the mainsail's tack — the boom's height.
+      const sc = marks.scale || [];
+      if (scaleKey === 'P' && sc.length === 2) {
+        const lower = sc[0].y > sc[1].y ? sc[0] : sc[1];
+        guide(lower, 'boom / main tack height');
+      }
+      // The jib's clew sits clewHeightMm above ITS OWN tack — which is the
+      // forward point of the centreplane baseline, when that is marked.
+      const base = marks.baseline || [];
+      if (base.length >= 2 && rig.clewHeightMm) {
+        const up = rig.clewHeightMm / cal0.mmPerPxAtMast;
+        const tack = base[1];
+        guide({ x: tack.x + cal0.axis.up.x * up, y: tack.y + cal0.axis.up.y * up }, 'jib clew \u2248 this height');
+      }
+    }
+
     const cal = calibration.cal;
     if (cal) {
       for (const m of measurements) {
@@ -638,7 +679,7 @@ export default function RigShotTab(
         ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2); ctx.stroke();
       }
     }
-  }, [marks, activeStep, calibration, measurements, defn, horizon, mastTrace, mastMode, imgSize, steps, leechPoint, footOnAxis]);
+  }, [marks, activeStep, calibration, measurements, defn, horizon, mastTrace, mastMode, imgSize, steps, leechPoint, footOnAxis, scaleKey, rig.clewHeightMm]);
 
   const draw = useCallback(() => {
     const c = canvasRef.current;

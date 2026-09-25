@@ -315,6 +315,7 @@ export function rigModelFromIrc(cert: IrcCertificate, opts: { spreaderHeightM?: 
     boat: cert.name || base.boat,
     scaleRefs,
     baselines,
+    clewHeightMm: geom ? Math.round(geom.clewHeightMm) : undefined,
     depths: {
       // E is to the outer band on the boom; aft of the mast, so negative.
       boom: e ? v(-e * 1000, 150, 'measured') : base.depths.boom,
