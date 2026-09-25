@@ -61,13 +61,48 @@ export interface Baseline extends RigValue {
   label: string
 }
 
+// ── the heights a leech is measured AT ──────────────────────────────────────
+// A leech is a curve; "the leech" is not a number until you say at what height.
+// The speed team says it two ways — by draft stripe and by spreader — so both
+// are here, and a measurement carries which one it is. Without the tag a
+// measurement cannot be compared with the same measurement from another day,
+// which is the only thing anybody wants to do with it.
+
+export const HEIGHT_TAGS = [
+  { key: 'stripe25', label: '25 % stripe', short: '25 %' },
+  { key: 'stripe50', label: '50 % stripe', short: '50 %' },
+  { key: 'stripe75', label: '75 % stripe', short: '75 %' },
+  { key: 'spr1', label: 'Spreader 1', short: 'spr 1' },
+  { key: 'spr2', label: 'Spreader 2', short: 'spr 2' },
+  { key: 'spr3', label: 'Spreader 3', short: 'spr 3' },
+] as const
+
+export type HeightTag = (typeof HEIGHT_TAGS)[number]['key']
+
+export const heightShort = (k: string): string =>
+  HEIGHT_TAGS.find((t) => t.key === k)?.short ?? k
+
+/** The two sails a leech can belong to. */
+export const LEECH_SAILS = [
+  { key: 'main', label: 'Main leech', colour: '#38BDF8' },
+  { key: 'jib', label: 'Jib leech', colour: '#4ADE80' },
+] as const
+export type LeechSail = (typeof LEECH_SAILS)[number]['key']
+
 export interface RigModel {
   boat: string
   updatedAt: string
   scaleRefs: ScaleRef[]
   baselines: Baseline[]
-  /** Fore-and-aft offsets from the mast for each target, forward positive. */
-  depths: Record<'leech' | 'clew' | 'boom', RigValue>
+  /** Fore-and-aft offsets from the mast for each target, forward positive.
+   *  `leech` is the JIB's; the main's leech is a very different distance aft. */
+  depths: Record<'leech' | 'mainLeech' | 'clew' | 'boom', RigValue>
+  // NOT here yet, deliberately: a remembered height per tag, so a later frame
+  // could draw "spreader 2 is about here" the way it already draws the boom and
+  // the clew. It needs a datum that survives between frames, and the only stable
+  // one is the mainsail tack — P's lower black band — which is identified only
+  // when P is the scale reference. `ScaleRef.depthMm` sat in this file unread
+  // for weeks and quietly biased the wheels; one dead field is enough.
   /** Camera side: sensor width in mm along the long edge. 36 = full frame. */
   sensorWidthMm: number
   /** How far the jib's clew sits ABOVE ITS TACK, mm — derived from the
@@ -124,6 +159,11 @@ export function defaultRigModel(boat = ''): RigModel {
     // 72 shape, still flagged as the guesswork it is.
     depths: {
       leech: v(-400, 700),
+      // The main's leech is out near the end of the boom, not a few hundred
+      // millimetres abaft the mast like the jib's. E is 10.33 m on Northstar and
+      // the leech sweeps forward as it rises, so this is a mid-hoist average
+      // with a sigma that admits the spread.
+      mainLeech: v(-6000, 2500),
       clew: v(-1100, 900),
       boom: v(-10000, 1500),
     },
@@ -177,8 +217,11 @@ export function missingFrom(m: RigModel): string[] {
   if (!m.baselines.some((b) => b.source !== 'estimate' && b.mm > 0)) {
     out.push('a centreplane baseline separation — without it ψ cannot be corrected')
   }
+  const depthLabel: Record<string, string> = {
+    leech: "the jib leech's", mainLeech: "the main leech's", clew: "the clew's", boom: "the boom's",
+  }
   for (const [k, d] of Object.entries(m.depths)) {
-    if (d.source === 'estimate') out.push(`the ${k}'s fore-and-aft offset from the mast`)
+    if (d.source === 'estimate') out.push(`${depthLabel[k] || `the ${k}'s`} fore-and-aft offset from the mast`)
   }
   return out
 }

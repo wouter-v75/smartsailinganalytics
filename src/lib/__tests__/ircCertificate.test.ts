@@ -176,8 +176,16 @@ describe('ircCertificate — building a rig model', () => {
     expect(model.scaleRefs.every((s) => s.source !== 'designer')).toBe(true)
   })
 
-  it('leaves nothing as guesswork once a certificate is in', () => {
-    expect(missingFrom(model)).toEqual([])
+  it('leaves exactly one thing as guesswork — the one the certificate has no answer for', () => {
+    // Everything the photograph cannot supply and the certificate can: the
+    // scale, the baseline, the jib's corners, the boom. The MAIN's leech depth
+    // is the mainsail's width at the height being measured — MHW/MTW/MUW, on the
+    // certificate but not yet parsed, and changing by three metres over the
+    // hoist. One number cannot stand for it, so it stays flagged rather than
+    // being averaged into false confidence. See §8 of the doc.
+    expect(missingFrom(model)).toEqual([
+      "the main leech's fore-and-aft offset from the mast",
+    ])
     expect(model.boat).toBe('NORTHSTAR III')
     expect(model.notes).toMatch(/IRC cert 50945 \(endorsed\)/)
   })

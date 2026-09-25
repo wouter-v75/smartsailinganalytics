@@ -321,6 +321,15 @@ export function rigModelFromIrc(cert: IrcCertificate, opts: { spreaderHeightM?: 
       boom: e ? v(-e * 1000, 150, 'measured') : base.depths.boom,
       clew: geom ? v(geom.clewDepthMm, geom.clewDepthSigmaMm, 'derived') : base.depths.clew,
       leech: geom ? v(geom.leechDepthMm, geom.leechDepthSigmaMm, 'derived') : base.depths.leech,
+      // NOT derived here, deliberately. The main's leech depth is the mainsail's
+      // width at the height being measured — MHW at half hoist, MTW at three
+      // quarters, MUW at seven eighths — all of which ARE on the certificate and
+      // none of which this parser reads yet. One number cannot stand for a
+      // quantity that changes by three metres over the hoist, so rather than
+      // derive a confident average it stays the flagged estimate until the
+      // girths are parsed and the depth is looked up per height tag. See §8 of
+      // docs/sail-geometry-from-astern-2026-09.md.
+      mainLeech: base.depths.mainLeech,
     },
     notes: [
       `IRC cert ${cert.certNo}${cert.endorsed ? ' (endorsed)' : ''}, ${cert.sailNumber}, ${cert.design}`,
