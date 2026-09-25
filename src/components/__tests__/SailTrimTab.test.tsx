@@ -511,6 +511,37 @@ describe('SailTrimTab', () => {
     expect(sigma).toBeGreaterThan(100)
   })
 
+  it('does not let a new leech point drag a calibration mark it landed near', async () => {
+    // Found while checking why a frame with three points on each leech came back
+    // with one measurement. findNear searched EVERY step, so a click meant as the
+    // next leech point could land near the spreader mark or a mast-line end and
+    // silently move THAT instead — no new point, and a calibration mark quietly
+    // shifted. Invisible until the numbers come out wrong.
+    const P = makeCamera(RIG)
+    render(<SailTrimTab />)
+    await openAFrame()
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    // A height mark, then leech points deliberately placed right on top of it.
+    fireEvent.click(stepButton('Spreader 2'))
+    const at = P(0, 0, 12_000)
+    click(at)
+    await waitFor(() =>
+      expect(within(screen.getByTestId('sailtrim-steps')).getAllByText('1/1').length).toBeGreaterThan(0))
+
+    fireEvent.click(stepButton('Jib leech'))
+    click({ x: at.x + 2, y: at.y + 2 })      // all but on top of the height mark
+    click({ x: at.x + 5, y: at.y + 40 })
+    click({ x: at.x + 8, y: at.y + 90 })
+
+    // Three points went in, not one — and the height mark is still there.
+    await waitFor(() =>
+      expect(within(screen.getByTestId('sailtrim-steps')).getByText('3/2–8')).toBeTruthy())
+    expect(within(screen.getByTestId('sailtrim-steps')).getAllByText('1/1').length).toBeGreaterThan(0)
+  })
+
   it('places both mast edges even when they are a few pixels apart', async () => {
     // At fit zoom the mast is a few pixels wide. A grab radius generous enough
     // to nudge a placed mark turns the second click into a nudge of the first,
