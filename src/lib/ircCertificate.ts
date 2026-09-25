@@ -308,6 +308,20 @@ export function rigModelFromIrc(cert: IrcCertificate, opts: { spreaderHeightM?: 
     // call it 200 mm, and it only scales ψ by the same fraction.
     const entry = { key: 'tack-mast', label: 'J — forestay tack → mast', mm: j * 1000, sigmaMm: 200, source: 'measured' as Provenance }
     if (i >= 0) baselines[i] = entry; else baselines.unshift(entry)
+
+    // Mast → transom follows: it is the tack → transom distance less J. The
+    // first term is still an estimate, so this inherits its sigma — but it is a
+    // NUMBER, and a baseline without one silently disables the ψ correction.
+    const bt = baselines.find((b) => b.key === 'bow-transom')
+    const mt = baselines.findIndex((b) => b.key === 'mast-transom')
+    if (bt && bt.mm > 0 && mt >= 0) {
+      baselines[mt] = {
+        ...baselines[mt],
+        mm: Math.round(bt.mm - j * 1000),
+        sigmaMm: Math.round(Math.hypot(bt.sigmaMm, 200)),
+        source: 'derived' as Provenance,
+      }
+    }
   }
 
   return {

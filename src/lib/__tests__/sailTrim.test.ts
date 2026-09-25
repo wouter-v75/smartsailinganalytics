@@ -6,6 +6,7 @@ import {
   imageHeelDeg, effectiveHeelDeg, psiFromHeelShortening,
   type Px, type Calibration,
   tackFromTwa, leewardSign,
+  centreplaneFoot,
 } from '../sailTrim'
 import {
   makeCamera, RIG, MAST_HALF_WIDTH, SPREADER_HALF, SPREADER_Z, TACK, TRANSOM,
@@ -314,6 +315,78 @@ describe('sailTrim — which side of the centreline', () => {
     expect(stbd.ok).toBe(true)
     expect(stbd.detail).toMatch(/starboard tack/)
     expect(stbd.detail).toMatch(/LEEWARD POSITIVE/)
+  })
+})
+
+describe('sailTrim — measured from the CENTREPLANE, not the mast line', () => {
+  it('puts the foot on the mast only for a target in the mast plane', () => {
+    const P = makeCamera(RIG)
+    const cal = buildCalibration(RIG)
+    const pt = P(0, 2_000, 8_000)
+    const foot = centreplaneFoot(cal, pt, 0)
+    // depth 0 ⇒ the centreplane and the mast's line coincide there.
+    const onAxis = (cal.axis.high.x - cal.axis.low.x) * (foot.y - cal.axis.low.y)
+      - (cal.axis.high.y - cal.axis.low.y) * (foot.x - cal.axis.low.x)
+    expect(Math.abs(onAxis)).toBeLessThan(1e-6)
+  })
+
+  // A camera a degree off the centreplane — which is every real shot, and the
+  // only case where the centreplane and the mast's line are different things.
+  const OFF: Rig = { ...RIG, psiDeg: 1 }
+
+  it('moves the foot OFF the mast for a target abaft it, by d·sin psi', () => {
+    // The boom is E abaft the mast. The centreplane there is not where the mast
+    // is drawn, and the line on the photograph has to end where the number says.
+    const P = makeCamera(OFF)
+    const cal = buildCalibration(OFF)
+    expect(cal.psi.measured).toBe(true)
+    expect(Math.abs(cal.psi.deg)).toBeGreaterThan(0.5)    // recovered the 1°
+
+    const boom = P(-10_330, 900, 2_000)
+    const atMast = centreplaneFoot(cal, boom, 0)
+    const atBoom = centreplaneFoot(cal, boom, -10_330)
+    const shiftPx = Math.hypot(atBoom.x - atMast.x, atBoom.y - atMast.y)
+    expect(shiftPx).toBeGreaterThan(1)
+
+    // …and it is the displacement the measurement itself applies, so the drawn
+    // line and its label agree. Compare the two ways of getting the same mm.
+    const m = measureTarget(cal, {
+      key: 'boom', label: 'Boom', point: boom, depthMm: -10_330, depthSigmaMm: 150,
+    })
+    const mmPerPxAtBoom = mmPerPxAtDepth(cal.mmPerPxAtMast, -10_330, cal.rangeMm)
+    const drawnMm = Math.hypot(boom.x - m.foot!.x, boom.y - m.foot!.y) * mmPerPxAtBoom
+    expect(drawnMm).toBeCloseTo(Math.abs(m.boatFrameMm), 0)
+  })
+
+  it('draws a line whose LENGTH is the number — which the mast foot was not', () => {
+    // The regression. footOnAxis was what got drawn; for the boom it is short by
+    // d·sin psi, so the picture disagreed with its own label. On Northstar's
+    // boom at one degree that is ~180 mm.
+    const P = makeCamera(OFF)
+    const cal = buildCalibration(OFF)
+    const boom = P(-10_330, 900, 2_000)
+    const m = measureTarget(cal, {
+      key: 'boom', label: 'Boom', point: boom, depthMm: -10_330, depthSigmaMm: 150,
+    })
+    const mmPerPxAtBoom = mmPerPxAtDepth(cal.mmPerPxAtMast, -10_330, cal.rangeMm)
+    const onMast = centreplaneFoot(cal, boom, 0)
+    const mastMm = Math.hypot(boom.x - onMast.x, boom.y - onMast.y) * mmPerPxAtBoom
+    // The two differ by about d·sin psi — 10.33 m at 1° is ~180 mm — and it is
+    // the centreplane one that matches the printed number.
+    expect(Math.abs(mastMm - Math.abs(m.boatFrameMm))).toBeGreaterThan(100)
+  })
+
+  it('says when a baseline was clicked but had no length to measure psi with', () => {
+    const cal = { ...buildCalibration(RIG, { psiBaseline: false }), baselineMarkedButUnmeasured: true }
+    const c = runChecks(cal).find((x) => x.key === 'psi')!
+    expect(c.ok).toBe(false)
+    expect(c.detail).toMatch(/MARKED but/)
+    expect(c.detail).toMatch(/no length in the rig model/)
+    // and names the cost on the boom, which is the target that suffers
+    expect(c.detail).toMatch(/180 mm/)
+
+    const never = runChecks(buildCalibration(RIG, { psiBaseline: false })).find((x) => x.key === 'psi')!
+    expect(never.detail).toMatch(/no centreplane baseline marked/)
   })
 })
 

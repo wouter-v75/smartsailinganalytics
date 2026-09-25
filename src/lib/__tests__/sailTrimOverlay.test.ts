@@ -220,11 +220,11 @@ describe('drawSailTrimAnnotation', () => {
   it('says which definition the numbers are, and whether psi was measured', () => {
     const boat = fakeCtx(1000, 1000)
     drawSailTrimAnnotation(boat, build('boat'))
-    expect(texts(boat).join(' ')).toContain('athwartships from mast axis')
+    expect(texts(boat).join(' ')).toContain('athwartships from centreplane')
 
     const world = fakeCtx(1000, 1000)
     drawSailTrimAnnotation(world, build('world'))
-    expect(texts(world).join(' ')).toContain('world-horizontal from mast axis')
+    expect(texts(world).join(' ')).toContain('world-horizontal from centreplane')
 
     const assumed = build()
     assumed.psiMeasured = false
