@@ -27,7 +27,8 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
-  mmPerPxFromReference, mmPerPxAtMastFromRef, runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa,
+  mmPerPxFromReference, mmPerPxAtMastFromRef, unbiasAthwartshipsScale,
+  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -557,20 +558,28 @@ export default function SailTrimTab(
     // back here, once, so nothing downstream has to know where the ruler was.
     const refDepthMm = scaleRef?.depthMm ?? 0;
     const referred = mmPerPxAtMastFromRef(mmPerPxAtRef, refDepthMm, sensor);
-    const mmPerPxAtMast = referred.mmPerPxAtMast;
+    let mmPerPxAtMast = referred.mmPerPxAtMast;
     const rangeMm = imgSize ? referred.rangeMm : null;
     const scaleDepthUncorrected = refDepthMm !== 0 && !referred.corrected;
 
     const hz: Horizon | null = horizon ? { tiltDeg: horizon.tiltDeg, rms: horizon.rms, samples: horizon.samples } : null;
     const heelForPsi = imageHeelDeg(axis, hz) ?? (heel != null && Number.isFinite(heel) ? heel : null);
     const base = marks.baseline || [];
-    const psi = solvePsi(
-      base.length >= 2 && (baseRef?.mm ?? 0) > 0
-        ? { aft: base[0], fwd: base[1], separationMm: baseRef.mm }
-        : null,
-      axis.across, mmPerPxAtMast, heelForPsi,
-      { clickSigmaPx: CLICK_SIGMA_PX },
-    );
+    const baseline = base.length >= 2 && (baseRef?.mm ?? 0) > 0
+      ? { aft: base[0], fwd: base[1], separationMm: baseRef.mm }
+      : null;
+    let psi = solvePsi(baseline, axis.across, mmPerPxAtMast, heelForPsi, { clickSigmaPx: CLICK_SIGMA_PX });
+
+    // An ATHWARTSHIPS reference images at cos ψ of its true extent, so both the
+    // scale AND the ψ that came out of it are biased by sec ψ. Undo it — exactly,
+    // no iteration — then re-solve ψ on the corrected scale. Matters not at all
+    // at a degree and a great deal at fifteen, which is where these shots are
+    // actually taken from.
+    if (scaleRef?.orientation !== 'vertical' && psi.measured) {
+      const fixed = unbiasAthwartshipsScale(mmPerPxAtMast, psi.deg);
+      mmPerPxAtMast = fixed.mmPerPxAtMast;
+      psi = solvePsi(baseline, axis.across, mmPerPxAtMast, heelForPsi, { clickSigmaPx: CLICK_SIGMA_PX });
+    }
 
     return {
       cal: {

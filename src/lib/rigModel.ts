@@ -54,6 +54,17 @@ export interface ScaleRef extends RigValue {
   /** Fore-and-aft offset of the reference itself from the mast, forward
    *  positive. Spreaders are at the mast, so 0. */
   depthMm: number
+  /**
+   * Which way the reference LIES, which decides whether ψ foreshortens it.
+   *
+   * A vertical length — P between the black bands, anything up the mast — is
+   * unaffected: rotating the camera about a vertical axis does not shorten a
+   * vertical line. An athwartships one images at cos ψ of its true extent, so a
+   * scale derived from it is too big by sec ψ and drags ψ itself with it. That
+   * is 3.5 % at 15° and 6.4 % at 20°, and it is correctable exactly once the
+   * tool knows which kind it is holding — see `unbiasAthwartshipsScale`.
+   */
+  orientation?: 'athwartships' | 'vertical'
 }
 
 export interface Baseline extends RigValue {
@@ -125,10 +136,10 @@ export function defaultRigModel(boat = ''): RigModel {
     boat,
     updatedAt: new Date().toISOString(),
     scaleRefs: [
-      { key: 'spreader2', label: 'Spreader 2, tip to tip', ...v(6000, 600), depthMm: 0 },
-      { key: 'spreader1', label: 'Spreader 1, tip to tip', ...v(7000, 700), depthMm: 0 },
-      { key: 'spreader3', label: 'Spreader 3, tip to tip', ...v(5000, 500), depthMm: 0 },
-      { key: 'mastwidth', label: 'Mast width, athwartships', ...v(300, 40), depthMm: 0 },
+      { key: 'spreader2', label: 'Spreader 2, tip to tip', ...v(6000, 600), depthMm: 0, orientation: 'athwartships' },
+      { key: 'spreader1', label: 'Spreader 1, tip to tip', ...v(7000, 700), depthMm: 0, orientation: 'athwartships' },
+      { key: 'spreader3', label: 'Spreader 3, tip to tip', ...v(5000, 500), depthMm: 0, orientation: 'athwartships' },
+      { key: 'mastwidth', label: 'Mast width, athwartships', ...v(300, 40), depthMm: 0, orientation: 'athwartships' },
       // The one a tape measure can reach. Everything above it is up the rig and
       // has to come off a drawing or a certificate; the wheels are at waist
       // height on the dock, and they are athwartships, which is the direction
@@ -139,7 +150,7 @@ export function defaultRigModel(boat = ''): RigModel {
       // are ~10 m abaft the mast, so they image larger than anything in the
       // mast plane. Left uncorrected that biases every measurement on the frame
       // by depth/range — ~4 % at 260 m. `depthMm` must be real for this one.
-      { key: 'wheels', label: 'Steering wheels, centre to centre', ...v(0, 0), depthMm: -10000 },
+      { key: 'wheels', label: 'Steering wheels, centre to centre', ...v(0, 0), depthMm: -10000, orientation: 'athwartships' },
       { key: 'custom', label: 'Something else (type the length)', ...v(0, 0), depthMm: 0 },
     ],
     baselines: [

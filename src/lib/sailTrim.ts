@@ -376,6 +376,36 @@ export const tackFromTwa = (twaDeg: number | null | undefined): 'port' | 'stbd' 
 export const leewardSign = (tack: 'port' | 'stbd' | null | undefined): number =>
   tack === 'stbd' ? -1 : 1
 
+/**
+ * Undo the bias an ATHWARTSHIPS scale reference puts into the whole calibration.
+ *
+ * Seen from ψ off the centreplane, an athwartships length images at cos ψ of its
+ * true extent, so the mm-per-pixel derived from one is too BIG by 1/cos ψ. Every
+ * measurement then reads high by sec ψ — 3.5 % at 15°, 6.4 % at 20° — and, worse,
+ * `solvePsi` inherits the same factor and returns asin(tan ψ) instead of ψ:
+ * 15° reads as 15.6°, 20° as 21.4°.
+ *
+ * Both are invertible exactly, and neither needs iterating. `sin(ψ_biased) =
+ * tan(ψ_true)` gives ψ back, and cos of that puts the scale right. Checked
+ * against a full perspective camera at 5-25°: ψ comes back within 0.1°.
+ *
+ * A VERTICAL reference — P between the black bands, or any length up the mast —
+ * has none of this: rotating the camera about a vertical axis does not
+ * foreshorten a vertical line. That is the reference to use when the shot is a
+ * long way off the centreplane, and it is on every IRC certificate.
+ */
+export function unbiasAthwartshipsScale(
+  mmPerPxRaw: number,
+  psiBiasedDeg: number,
+): { mmPerPxAtMast: number; psiDeg: number } {
+  const sinB = Math.sin(psiBiasedDeg * DEG)
+  // |sin ψ_biased| >= 1 means tan ψ >= 1, i.e. 45° off the centreplane. That is
+  // not an astern photograph and there is nothing sensible to return.
+  if (!(Math.abs(sinB) < 1)) return { mmPerPxAtMast: mmPerPxRaw, psiDeg: psiBiasedDeg }
+  const psiDeg = Math.atan(sinB) / DEG
+  return { mmPerPxAtMast: mmPerPxRaw * Math.cos(psiDeg * DEG), psiDeg }
+}
+
 /** cos(heel), or 1 with a shrug when heel is not known. */
 const cosHeel = (heelDeg: number | null): number =>
   heelDeg == null || !Number.isFinite(heelDeg) ? 1 : Math.cos(heelDeg * DEG)
@@ -550,6 +580,12 @@ export function measureTarget(cal: Calibration, t: TargetInput): Measurement {
     terms.push(t.depthSigmaMm * perDepth)
     // scale
     terms.push(Math.abs(valueMm) * cal.scaleRelSigma)
+    // The projection model is a SMALL-ANGLE one. Measured against a full
+    // perspective camera, a target at depth d picks up roughly 0.3 % of its
+    // value per degree of ψ per 10 m of depth — about −4 % on a boom at E at
+    // 15°. It is a modelling residual, not noise, so it cannot be averaged away;
+    // the least this can do is stop reporting a confidence it has not got.
+    terms.push(Math.abs(valueMm) * 0.003 * Math.abs(psi.deg) * (Math.abs(t.depthMm) / 10_000))
     // range unknown ⇒ the depth correction is simply missing. Charge for it:
     // the correction is d/R, and R is anywhere from ~80 m to ~400 m.
     if (!depthScaleApplied && t.depthMm !== 0) {
@@ -682,6 +718,15 @@ export function runChecks(cal: Calibration): Check[] {
       ? `${cal.tack === 'stbd' ? 'starboard' : 'port'} tack, so the numbers are LEEWARD POSITIVE — a boom or a main leech above the centreline reads negative, and the same trim reads the same on either tack`
       : 'no tack known, so a sign would only say which way round the photograph is. Give the tool the TWA from the log, or set the tack by hand, and the boom and main leech become signed about the centreline.',
   })
+
+  if (Math.abs(cal.psi.deg) > 6) {
+    out.push({
+      key: 'psi-large',
+      label: 'Well off the centreplane',
+      ok: false,
+      detail: `ψ = ${cal.psi.deg.toFixed(1)}°. The projection here is a small-angle model and starts to show it: measured against a full perspective camera, a target at the boom's depth reads a few per cent low by 15°, growing with ψ. The near targets — clew, jib leech — stay within about 1 %. Use a VERTICAL scale reference (P, between the mast's black bands) rather than an athwartships one, and treat the boom as indicative.`,
+    })
+  }
 
   out.push({
     key: 'range',

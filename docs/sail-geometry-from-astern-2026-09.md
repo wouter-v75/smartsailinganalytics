@@ -319,6 +319,50 @@ of **4.8°** and puts the mast **22.1°** off true vertical against a logged
 heel of **22.1°**. The camera on a RIB is never level; the horizon says by how
 much.
 
+### 4.6 How far off the centreplane can this actually go?
+
+§4.2 treats ψ as a small nuisance to be measured and removed. The real shots are
+not small: **the 4 Sept frames are 10–20° off**, which is a different regime, and
+the honest answer needed measuring rather than asserting. What follows is the
+tool's error against the full perspective camera in
+`src/lib/__tests__/support/rigCamera.ts` — ground truth, not self-consistency.
+
+| ψ | ψ recovered | jib leech (0.4 m aft) | clew (1.1 m aft) | boom (10.3 m aft) |
+|---|---|---|---|---|
+| 0° | 0.00° | 0.00 % | 0.00 % | 0.00 % |
+| 5° | 5.05° | −0.25 % | −0.30 % | −1.4 % (−13 mm) |
+| 10° | 10.10° | −0.26 % | −0.36 % | −2.6 % (−23 mm) |
+| 15° | 15.17° | −0.01 % | −0.15 % | −3.6 % (−32 mm) |
+| 20° | 20.31° | +0.52 % | +0.33 % | −4.4 % (−40 mm) |
+
+**The near targets are fine.** Jib leech and clew stay inside ±1 % all the way to
+20°, because they sit within a metre or so of the mast plane and ψ acts through
+depth. Those are the measurements the speed team asks for most, and they survive
+the angle.
+
+**The boom does not.** At E = 10.33 m it loses 3–6 %, and the loss is a modelling
+residual rather than noise — it will not average away over frames. The reported
+sigma now carries it (±43 mm at 15°, against a −39 mm error), so the number stops
+claiming a precision it has not got, but the number itself is biased.
+
+**And one real bug this uncovered.** An *athwartships* scale reference — the
+spreaders, and the steering wheels of §8 — images at cos ψ of its true extent, so
+the mm-per-pixel derived from it is too big by **sec ψ**: 3.5 % at 15°, 6.4 % at
+20°. Worse, `solvePsi` inherits the same factor and returns **asin(tan ψ)**, so
+20° reads as 21.4°. Both invert exactly and without iterating —
+`unbiasAthwartshipsScale` — and ψ then comes back inside 0.1° out to 25°.
+
+A **vertical** reference has none of this: rotating the camera about a vertical
+axis does not foreshorten a vertical line. **P, between the mast's black bands,
+is the right scale for an off-centreplane shot**, and it is on every certificate.
+
+What would fix the boom is not another correction term but a different model:
+the scaled-orthographic projection of §4.3 is what breaks at these angles, and
+replacing it with a full perspective solve is its own piece of work. It belongs
+with §8, which already needs the same machinery for parallax.
+
+---
+
 ### 4.5 What about stereo off the RIB?
 
 Not needed. Two cameras on a 2 m baseline at 260 m give depth to ≈±0.4 m —
