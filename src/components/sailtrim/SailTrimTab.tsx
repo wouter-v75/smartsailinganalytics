@@ -65,18 +65,24 @@ interface StepDef {
 // when it does not — and a line that has quietly wandered looks just like one
 // that has not. Two clicks are cheap; a wrong axis is not, because every
 // measurement is taken from it.
+/** The mast, and everything that describes it. Purple — it used to share
+ *  #38BDF8 with the main leech, which are the two longest lines on the picture
+ *  and the two easiest to confuse. */
+const MAST_C = '#A855F7';
+const MAST_RGB = '168,85,247';
+
 const MAST_LINE: StepDef = {
-  key: 'mastLine', label: 'Mast centreline', min: 2, max: 2, colour: '#38BDF8', group: 'calibrate',
+  key: 'mastLine', label: 'Mast centreline', min: 2, max: 2, colour: MAST_C, group: 'calibrate',
   hint: 'Two points on the middle of the mast, as far apart up and down as you can see it — low near the gooseneck, high near the top. The axis is the straight line through them, and nothing is inferred.',
 };
 const MAST_AUTO: StepDef = {
-  key: 'mastSeed', label: 'Mast', min: 1, max: 1, colour: '#38BDF8', group: 'calibrate',
+  key: 'mastSeed', label: 'Mast', min: 1, max: 1, colour: MAST_C, group: 'calibrate',
   hint: 'One click anywhere on the mast’s edge, roughly. It is traced from there, sub-pixel, up and down as far as the contrast holds — and the trace is drawn, so you can see where it went.',
 };
 const MAST_MANUAL: StepDef[] = [
-  { key: 'mastLow', label: 'Mast edges, low', min: 2, max: 2, colour: '#38BDF8', group: 'calibrate',
+  { key: 'mastLow', label: 'Mast edges, low', min: 2, max: 2, colour: MAST_C, group: 'calibrate',
     hint: 'Port then starboard edge of the mast, low down. Zoom in first — at fit zoom the mast is two pixels wide.' },
-  { key: 'mastHigh', label: 'Mast edges, high', min: 2, max: 2, colour: '#38BDF8', group: 'calibrate',
+  { key: 'mastHigh', label: 'Mast edges, high', min: 2, max: 2, colour: MAST_C, group: 'calibrate',
     hint: 'The same two edges as high as you can still see them. The further apart the two heights, the better the axis.' },
 ];
 const OTHER_STEPS: StepDef[] = [
@@ -780,7 +786,7 @@ export default function SailTrimTab(
     }
 
     if (mastMode === 'auto' && mastTrace) {
-      ctx.strokeStyle = 'rgba(56,189,248,0.9)';
+      ctx.strokeStyle = `rgba(${MAST_RGB},0.9)`;
       ctx.lineWidth = px(1.4);
       ctx.beginPath();
       mastTrace.points.forEach((p, i) => {
@@ -797,7 +803,7 @@ export default function SailTrimTab(
       const a = toScreen(axis.low), b = toScreen(axis.high);
       const dx = b.x - a.x, dy = b.y - a.y;
       const L = Math.hypot(dx, dy) || 1;
-      ctx.strokeStyle = 'rgba(56,189,248,0.5)';
+      ctx.strokeStyle = `rgba(${MAST_RGB},0.5)`;
       ctx.lineWidth = px(1.2);
       ctx.setLineDash([px(10), px(8)]);
       ctx.beginPath();

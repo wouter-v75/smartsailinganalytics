@@ -234,7 +234,7 @@ export function drawSailTrimAnnotation(
     stroke(
       { x: lo.x - (dx / L) * ext, y: lo.y - (dy / L) * ext },
       { x: hi.x + (dx / L) * ext, y: hi.y + (dy / L) * ext },
-      'rgba(56,189,248,0.55)', 1.1, [9, 7],
+      'rgba(168,85,247,0.55)', 1.1, [9, 7],   // purple: the mast, as in the tool
     )
   }
 
