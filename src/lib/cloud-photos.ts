@@ -119,3 +119,62 @@ export function toLegacyPhotoShape(p: CloudPhotoRow): Record<string, unknown> {
     source: 'supabase',
   }
 }
+
+// ── local ⇄ cloud, for a photo this machine also holds ───────────────────────
+
+/**
+ * Fold the team's cloud row into the local record for the same photo.
+ *
+ * The local copy wins for the BYTES — the original is in IndexedDB and needs no
+ * round trip — and the photo tab therefore used to drop the cloud row outright
+ * whenever a local one existed. That threw away everything only the cloud knows,
+ * and the loss fell on the one person who had imported the day: full geometry in
+ * the timeline, an instrument card and nothing else in the photo tab.
+ *
+ * Two different rules, because the fields are two different kinds of thing:
+ *
+ *   SAIL GEOMETRY is CLOUD-AUTHORITATIVE. It is a few kB, both save paths write
+ *   it to the shared row the moment it is measured (PhotosTab through
+ *   upsertPhotoCloud, the timeline through savePhotoSailTrim), and it is meant
+ *   to be the one copy everybody sees. So the cloud's wins outright, and the
+ *   local one is the fallback for when the shared write did not land — which
+ *   the photo tab already warns about at the time.
+ *
+ *   EVERYTHING ELSE is gap-filled: the cloud supplies what the local record has
+ *   no value for, and a local value is kept. `photos` carries no `updated_at`,
+ *   so there is no way to tell a teammate's newer edit from this machine's
+ *   older one; filling gaps is the most that can be claimed honestly. A
+ *   teammate CHANGING a field this machine already has will not propagate, and
+ *   closing that needs a modified time on the row.
+ */
+export function mergeCloudIntoLocal<T extends Record<string, unknown>>(
+  local: T,
+  cloud: Record<string, unknown> | null | undefined,
+): T {
+  if (!cloud) return local
+  const out: Record<string, unknown> = { ...local }
+
+  // Absent means null, undefined, or an empty list — `??` alone would let an
+  // empty `sails: []` from an import that read no tags block the cloud's.
+  const absent = (v: unknown) => v == null || (Array.isArray(v) && v.length === 0)
+
+  for (const k of ['sails', 'raceTags', 'boat', 'location',
+    'tws', 'twa', 'awa', 'bsp', 'heel', 'vmg'] as const) {
+    if (absent(out[k]) && !absent(cloud[k])) out[k] = cloud[k]
+  }
+
+  // The whole analysis blob, so a key added later survives without this list
+  // having to learn about it. Local wins per key; cloud-only keys come through.
+  const la = (local.analysis ?? null) as Record<string, unknown> | null
+  const ca = (cloud.analysis ?? null) as Record<string, unknown> | null
+  if (ca) out.analysis = la ? { ...ca, ...la } : ca
+
+  // …except sail geometry, which the cloud owns outright.
+  if (cloud.sailtrim_data != null) {
+    out.sailtrim_data = cloud.sailtrim_data
+    if (ca && (ca as { sailTrim?: unknown }).sailTrim !== undefined) {
+      out.analysis = { ...(out.analysis as Record<string, unknown> || {}), sailTrim: (ca as { sailTrim?: unknown }).sailTrim }
+    }
+  }
+  return out as T
+}

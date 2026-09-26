@@ -657,9 +657,12 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       let cloudOnly = [];
       // Cloud-authored fields for photos we ALSO hold locally, by Bunny path.
       const cloudExtras = new Map();
+      // Captured from the dynamic import below, which is block-scoped to its try.
+      let mergeCloud = (m) => m;
       try {
         const { getBrowserSupabase } = await import('../lib/supabase/browser');
-        const { listPhotosCloud, toLegacyPhotoShape } = await import('../lib/cloud-photos');
+        const { listPhotosCloud, toLegacyPhotoShape, mergeCloudIntoLocal } = await import('../lib/cloud-photos');
+        mergeCloud = mergeCloudIntoLocal;
         const { data:{ user } } = await getBrowserSupabase().auth.getUser();
         if (user) {
           const cps = await listPhotosCloud({ userId: user.id, date: activeDate });
@@ -670,14 +673,13 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             const k = shape.bunnyPath || null;
             if (k && localKeys.has(k)) {
               // A local copy wins for the BYTES — it has the original in
-              // IndexedDB and needs no round trip. But it is not the record of
-              // what the team has measured: a sail-geometry annotation saved
-              // from the TIMELINE goes to the cloud row and never touches this
-              // machine's IndexedDB, so discarding the cloud shape here lost it
-              // for the one person who imported the day. Full details in the
-              // timeline, an instrument card and nothing else here — which is
-              // the CLAUDE.md trap inside out: the importer is the one who
-              // cannot see it.
+              // IndexedDB and needs no round trip — but NOT for what the team
+              // has measured. Keep the cloud shape and fold it in below: sail
+              // geometry is a few kB, both save paths write it to the shared row
+              // immediately, and it is meant to be the one copy everybody sees.
+              // Dropping it here lost it for the one person who imported the
+              // day — the CLAUDE.md trap inside out, which is why it read as
+              // "the photo tab has no sail geometry" rather than as a sync gap.
               cloudExtras.set(k, shape);
               continue;
             }
@@ -691,13 +693,12 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       //    them entirely — that per-photo open was what made the folder slow.
       const localIds = new Set(meta.map(m=>m.id));
       // Local record + whatever the cloud row carries that this machine cannot
-      // know about. Local wins where both have a value: the operator's own edit
-      // is saved locally first and is the more recent of the two.
+      // know about. Sail geometry is cloud-authoritative; the rest is gap-filled.
+      // See mergeCloudIntoLocal for why those are two different rules.
       const withCloud = meta.map((m) => {
         const k = m.bunnyPath || m.url || null;
         const cloud = k ? cloudExtras.get(k) : null;
-        if (!cloud) return m;
-        return { ...m, sailtrim_data: m.sailtrim_data ?? cloud.sailtrim_data ?? null };
+        return cloud ? mergeCloud(m, cloud) : m;
       });
       const combined = [...withCloud, ...cloudOnly];
       const restored = await Promise.all(combined.map(async p=>{
