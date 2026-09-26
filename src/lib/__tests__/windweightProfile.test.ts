@@ -99,6 +99,37 @@ describe('windweightFromProfile', () => {
     expect(r.fProfile).toBeLessThan(1.03)
   })
 
+  // The sub-lowest-level fill is a log law whose slope and z0 are a matched pair.
+  // Clamping z0 into its sane band without re-deriving the slope left a STEP at the
+  // lowest level: a well-mixed column (v10 4.0, v20 4.05 — the ordinary sea-breeze
+  // case) read ~1 m/s through the bottom 10 m of the rig against 4 m/s above it.
+  // That fed shearIntegral, so WW% was wrong too, not just the deck's profile chart.
+  it('the sub-lowest-level fill meets the lowest published level, at any shear', () => {
+    const hs = [10, 20, 30, 50]
+    const cases: Array<[string, number[]]> = [
+      ['well mixed',        [4.0, 4.05, 4.08, 4.12]],
+      ['mild shear',        [4.0, 4.4, 4.65, 4.95]],
+      ['strong shear',      [4.0, 8.0, 9.0, 9.8]],
+      ['light + big shear', [1.0, 4.5, 5.2, 5.8]],
+      ['inverted',          [5.0, 4.0, 3.6, 3.3]],
+      ['calm at 10 m',      [0.0, 4.0, 4.5, 5.0]],
+    ]
+    for (const [label, ss] of cases) {
+      const v = profileReader(hs, ss)!
+      expect(`${label}: ${v(10).toFixed(3)}`).toBe(`${label}: ${ss[0].toFixed(3)}`)
+      // and it approaches that level from below, never crossing it
+      expect(v(9.5)).toBeLessThanOrEqual(ss[0] + 1e-9)
+    }
+  })
+
+  it('a well-mixed column loads the rig MORE than the standard log day', () => {
+    // Uniform wind puts more air on the bottom of the rig than a log profile does,
+    // so the index belongs above 100. Pre-fix this read 64%.
+    const r = windweightFromProfile({ heightsM: [10, 20, 30, 50], speedsMs: [4.0, 4.05, 4.08, 4.12], H: 34 })!
+    expect(r.ww).toBeGreaterThan(100)
+    expect(r.vEffKt).toBeGreaterThan(r.vHKt)
+  })
+
   it('a low-shear (unstable) column scores heavier than a strongly sheared one', () => {
     const hs = [10, 30, 50]
     const flat = windweightFromProfile({ heightsM: hs, speedsMs: [11.5, 12.0, 12.2], H: 34 })!

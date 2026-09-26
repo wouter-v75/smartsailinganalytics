@@ -227,8 +227,18 @@ export function profileReader(heightsM: number[], speedsMs: number[]): ((z: numb
   let slope = (nx.v - lo.v) / (Math.log(nx.h) - Math.log(lo.h))
   let z0eff = Number.NaN
   if (slope > 1e-6) z0eff = Math.exp(Math.log(lo.h) - lo.v / slope)
-  if (!isFinite(z0eff) || z0eff <= 0) { z0eff = Z0_REF; slope = lo.v / Math.log(lo.h / Z0_REF) }
-  z0eff = Math.min(Math.max(z0eff, 1e-5), 5)
+  if (!isFinite(z0eff) || z0eff <= 0) z0eff = Z0_REF
+  // z0eff must stay BELOW the lowest level, or ln(lo.h/z0eff) flips sign.
+  z0eff = Math.min(Math.max(z0eff, 1e-5), Math.min(5, lo.h * 0.9))
+  // The fill has to pass through the lowest level. slope and z0eff are a matched
+  // pair — slope === lo.v / ln(lo.h/z0eff) is exactly how z0eff was derived — so
+  // clamping z0eff WITHOUT re-deriving slope broke that identity and left a step at
+  // lo.h. A near-uniform pair (v10 4.0, v20 4.05, the well-mixed sea-breeze case)
+  // drove z0eff far below the floor, and the whole rig below 10 m then read ~1 m/s
+  // against 4 m/s above it — visible as a kink in the deck's rig profile, but it
+  // also fed shearIntegral, so f_profile and WW% were wrong, not just the picture.
+  // Re-deriving is a no-op whenever the clamp did not bite.
+  slope = lo.v > 0 ? lo.v / Math.log(lo.h / z0eff) : 0
 
   return (z: number) => {
     const zz = Math.max(z, 1e-3)
