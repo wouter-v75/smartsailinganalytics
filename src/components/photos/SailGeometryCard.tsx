@@ -57,15 +57,29 @@ export default function SailGeometryCard({
           sail is doing — chord angle per stripe and the twist between them.
           Present once a certificate has been read, because its sail widths are
           the denominator. */}
-      {(annotation.twist?.length || annotation.chords?.length) ? (
-        <div style={{ marginTop: 9, paddingTop: 8, borderTop: '1px solid #16304A' }}>
+      {/* THE BOX IS ALWAYS HERE, even with nothing in it.
+          It used to render only when there was a twist or a chord to show, so a
+          measurement saved before the boat's sail widths were known looked
+          exactly like a tool with no twist in it — and the remedy, which is to
+          reopen and save again, was nowhere on screen. Dashes and a reason. */}
+      {(() => {
+        const anyShape = !!(annotation.twist?.length || annotation.chords?.length)
+        return (
+        <div style={{ marginTop: 9, paddingTop: 8, borderTop: '1px solid #16304A' }} data-testid="sailgeom-twist">
           <div style={{ fontSize: 9, color: '#4ADE80', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 5 }}>
             Twist
           </div>
+          {!anyShape && (
+            <div style={{ fontSize: 9.5, color: '#FCD34D', marginBottom: 5, lineHeight: 1.45 }}>
+              Not computed when this was saved — the boat&rsquo;s sail widths are the
+              denominator a leech offset is divided by to become an angle, and they were
+              not known then. <b>Reopen it in SailTrim and save again</b> and the numbers
+              will be here; the marks are all still on the frame.
+            </div>
+          )}
           {(['main', 'jib'] as const).map((sail) => {
             const rows = (annotation.twist || []).filter((w) => w.sail === sail)
             const chords = (annotation.chords || []).filter((c) => c.sail === sail)
-            if (!rows.length && !chords.length) return null
             const sag = chords.filter((c) => c.luffMm != null)
             return (
               <div key={sail} style={{ marginBottom: 6 }}>
@@ -81,14 +95,19 @@ export default function SailGeometryCard({
                     </span>
                   </div>
                 ))}
-                {rows.map((w) => (
+                {rows.length > 0 ? rows.map((w) => (
                   <div key={`${w.from}-${w.to}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 1 }}>
                     <span>{w.from.replace('stripe', '')} % → {w.to.replace('stripe', '')} %</span>
                     <span style={{ fontFamily: 'monospace' }}>
                       {w.twistDeg >= 0 ? '+' : ''}{w.twistDeg.toFixed(2)}° ±{w.sigmaDeg.toFixed(2)}
                     </span>
                   </div>
-                ))}
+                )) : (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#64748B', marginTop: 1 }}>
+                    <span>twist between stripes</span>
+                    <span style={{ fontFamily: 'monospace' }}>—</span>
+                  </div>
+                )}
                 {sag.length > 0 && (
                   <div style={{ fontSize: 10, color: '#86EFAC', fontFamily: 'monospace', marginTop: 1 }}>
                     {sail === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
@@ -108,7 +127,8 @@ export default function SailGeometryCard({
             )
           })}
         </div>
-      ) : null}
+        )
+      })()}
 
       <div style={{ marginTop: 7, fontSize: 9, color: '#64748B', lineHeight: 1.5 }}>
         {annotation.defn === 'world' ? 'World-horizontal' : 'Athwartships'} from the centreplane ·{' '}
