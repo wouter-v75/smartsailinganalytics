@@ -655,6 +655,8 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       // 1) Cloud (team-shared) photos for this date. Dedupe against local by the
       //    stable Bunny original path.
       let cloudOnly = [];
+      // Cloud-authored fields for photos we ALSO hold locally, by Bunny path.
+      const cloudExtras = new Map();
       try {
         const { getBrowserSupabase } = await import('../lib/supabase/browser');
         const { listPhotosCloud, toLegacyPhotoShape } = await import('../lib/cloud-photos');
@@ -666,7 +668,19 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           for (const cp of cps) {
             const shape = toLegacyPhotoShape(cp);
             const k = shape.bunnyPath || null;
-            if (k && localKeys.has(k)) continue;
+            if (k && localKeys.has(k)) {
+              // A local copy wins for the BYTES — it has the original in
+              // IndexedDB and needs no round trip. But it is not the record of
+              // what the team has measured: a sail-geometry annotation saved
+              // from the TIMELINE goes to the cloud row and never touches this
+              // machine's IndexedDB, so discarding the cloud shape here lost it
+              // for the one person who imported the day. Full details in the
+              // timeline, an instrument card and nothing else here — which is
+              // the CLAUDE.md trap inside out: the importer is the one who
+              // cannot see it.
+              cloudExtras.set(k, shape);
+              continue;
+            }
             cloudOnly.push({ ...shape, name: 'Photo', cloudSynced: true, hasLocalOriginal: false });
           }
         }
@@ -676,7 +690,16 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       //    cloud-shared photos (all a TL3 sees) never do, so skip the IDB lookup for
       //    them entirely — that per-photo open was what made the folder slow.
       const localIds = new Set(meta.map(m=>m.id));
-      const combined = [...meta, ...cloudOnly];
+      // Local record + whatever the cloud row carries that this machine cannot
+      // know about. Local wins where both have a value: the operator's own edit
+      // is saved locally first and is the more recent of the two.
+      const withCloud = meta.map((m) => {
+        const k = m.bunnyPath || m.url || null;
+        const cloud = k ? cloudExtras.get(k) : null;
+        if (!cloud) return m;
+        return { ...m, sailtrim_data: m.sailtrim_data ?? cloud.sailtrim_data ?? null };
+      });
+      const combined = [...withCloud, ...cloudOnly];
       const restored = await Promise.all(combined.map(async p=>{
         const blob = localIds.has(p.id) ? await idbGetPhoto(p.id).catch(()=>null) : null;
         const hasLocalOriginal = !!blob;
