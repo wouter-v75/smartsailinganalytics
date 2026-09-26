@@ -275,3 +275,63 @@ describe('the clew as the bottom leech station', () => {
     expect(rows.map((r) => `${r.from}->${r.to}`)).toEqual(['clew->stripe25', 'stripe25->stripe50'])
   })
 })
+
+describe('the 7/8 stripe', () => {
+  it('sits at 0.875, where the certificate measures MUW and HUW', () => {
+    // Not 0.87. Landing on the certificate's own station makes the width a
+    // measured number rather than one interpolated from 75 %, and up there the
+    // sail is narrowest, so the chord angle is most sensitive to that error.
+    expect(STATION_FRACTION.stripe87).toBe(0.875)
+    const w = widthAt(MAIN, STATION_FRACTION.stripe87!)!
+    expect(w.m).toBe(MAIN.upper)
+    expect(w.source).toBe('certificate')
+  })
+
+  it('extends the profile above 75 %', () => {
+    const angles = stationAngles('main', MAIN, [
+      { tag: 'clew', mm: -688, sigmaMm: 23 },
+      { tag: 'stripe50', mm: 349, sigmaMm: 22 },
+      { tag: 'stripe87', mm: 900, sigmaMm: 26 },
+    ])
+    expect(angles.map((a) => a.tag)).toEqual(['clew', 'stripe50', 'stripe87'])
+    // The clew is to WINDWARD here, which is what light air does. With the tack
+    // known the angles are leeward-positive, so the twist to the station above
+    // ADDS the two sides instead of subtracting them.
+    const [low] = twistBetween(angles, true)
+    expect(low.twistDeg).toBeCloseTo(angles[1].angle.deg - angles[0].angle.deg, 10)
+    expect(low.twistDeg).toBeGreaterThan(Math.abs(angles[1].angle.deg))
+  })
+})
+
+describe('twistBetween — which frame the sign is in', () => {
+  // The distinction that caught me out: normalising to the station furthest from
+  // the centreplane keeps the two tacks reading alike when the sign is merely
+  // athwartships, but it MISREADS a profile that crosses over, because the
+  // furthest station can be the windward one. With a tack the angles are already
+  // leeward-positive and the plain difference is right.
+  const angles = stationAngles('main', MAIN, [
+    { tag: 'clew', mm: -688, sigmaMm: 23 },     // to windward, light air
+    { tag: 'stripe50', mm: 349, sigmaMm: 22 },  // to leeward
+  ])
+
+  it('with a tack, adds across the centreplane', () => {
+    const [row] = twistBetween(angles, true)
+    expect(row.twistDeg).toBeGreaterThan(0)
+    expect(row.twistDeg).toBeCloseTo(angles[1].angle.deg - angles[0].angle.deg, 10)
+  })
+
+  it('without a tack, falls back to the guess — and says so by differing', () => {
+    // Documenting the limit rather than pretending it is not there: the fallback
+    // flips this one, because the windward clew is the station furthest out.
+    const [row] = twistBetween(angles, false)
+    expect(row.twistDeg).toBeLessThan(0)
+  })
+
+  it('agrees with the fallback when nothing crosses over', () => {
+    const same = stationAngles('main', MAIN, [
+      { tag: 'stripe25', mm: 400, sigmaMm: 19 },
+      { tag: 'stripe50', mm: 900, sigmaMm: 22 },
+    ])
+    expect(twistBetween(same, true)[0].twistDeg).toBeCloseTo(twistBetween(same, false)[0].twistDeg, 10)
+  })
+})

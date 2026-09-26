@@ -352,7 +352,7 @@ describe('stationsFor — which stations a sail is read at', () => {
     // main@spr1 and main@spr2 came out -281 and +163 mm, two numbers straddling
     // zero — and a spreader carries no fraction of the hoist, so it cannot give
     // twist either.
-    expect(stationsFor('main').map((t) => t.key)).toEqual(['stripe25', 'stripe50', 'stripe75'])
+    expect(stationsFor('main').map((t) => t.key)).toEqual(['stripe25', 'stripe50', 'stripe75', 'stripe87'])
     expect(stationsFor('main').some((t) => t.key.startsWith('spr'))).toBe(false)
   })
 

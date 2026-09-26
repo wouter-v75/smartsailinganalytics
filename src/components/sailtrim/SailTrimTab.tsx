@@ -139,7 +139,7 @@ const OTHER_STEPS: StepDef[] = [
   { key: 'clew', label: 'Jib clew', min: 1, max: 1, colour: '#FB923C', group: 'target', optional: true,
     hint: 'The clew itself. Keep to the same feature every time — the ring centre, say.' },
   { key: 'boom', label: 'Boom', min: 1, max: 1, colour: '#F87171', group: 'target', optional: true,
-    hint: 'The point on the boom you are measuring to. Same one every time.' },
+    hint: 'The MAINSAIL\u2019s clew, at the boom\u2019s outboard end. Same point every time. It doubles as the bottom station of the main\u2019s twist profile: the clew is where the leech meets the foot, so it sits at fraction 0 and its width is E off the certificate.' },
 ];
 
 type Marks = Record<string, Px[]>;
@@ -902,11 +902,11 @@ export default function SailTrimTab(
       );
 
       // The CLEW is the bottom of the leech — fraction 0, width = the foot off
-      // the certificate — so it anchors the profile instead of the lowest figure
-      // starting a quarter of the way up. Only the jib has a clew mark; the
-      // main's would be the boom's outboard end, and the `boom` mark is "the
-      // point you are measuring to", which is not necessarily that.
-      const clewMeasurement = sail === 'jib' ? measurements.find((m) => m.key === 'clew') : undefined;
+      // the certificate (HLP for the headsail, E for the main) — so it anchors
+      // the profile instead of the lowest figure starting a quarter of the way
+      // up. The main's clew is the boom's outboard end, and Wouter confirmed the
+      // boom mark is that point, so it serves.
+      const clewMeasurement = measurements.find((m) => m.key === (sail === 'jib' ? 'clew' : 'boom'));
       const leech = measurements
         .filter((m) => m.key.startsWith(`${sail}@`))
         .map((m) => {
@@ -948,7 +948,10 @@ export default function SailTrimTab(
       });
       if (!angles.length) continue;
       out.push({
-        sail, angles, rows: twistBetween(angles),
+        // The tack makes the measurements leeward-positive, so the twist is the
+        // plain signed difference and stays right where the leech crosses the
+        // centreplane. Without one, twistBetween has to guess a frame.
+        sail, angles, rows: twistBetween(angles, tack != null),
         // Luff offset from the centreplane: for the jib that IS forestay sag,
         // measured from the photograph. Nobody has this for a rival.
         sag: leech.filter((l) => l.luffMm != null)
@@ -957,7 +960,7 @@ export default function SailTrimTab(
       });
     }
     return out;
-  }, [measurements, rig.widths, defn]);
+  }, [measurements, rig.widths, defn, tack]);
 
   const checks: Check[] = useMemo(
     () => (calibration.cal ? runChecks(calibration.cal) : []),

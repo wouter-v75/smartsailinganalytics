@@ -964,12 +964,12 @@ describe('SailTrimTab', () => {
     expect(within(box).getByText('Jib')).toBeTruthy()
     expect(within(box).getByText('Accuracy Main')).toBeTruthy()
     expect(within(box).getByText('Accuracy jib')).toBeTruthy()
-    for (const station of ['25 %', '50 %', '75 %']) {
+    for (const station of ['25 %', '50 %', '75 %', '87.5 %']) {
       expect(within(box).getByText(station)).toBeTruthy()
     }
-    // Every cell is a dash rather than the table being absent: 4 stations
-    // (25/50/75 % and the clew) x (2 sails + 2 accuracies).
-    expect(within(box).getAllByText('—').length).toBe(16)
+    // Every cell is a dash rather than the table being absent: 5 stations
+    // (25/50/75/87.5 % and the clew) x (2 sails + 2 accuracies).
+    expect(within(box).getAllByText('—').length).toBe(20)
     // And it says WHY, naming the first thing to fix, per sail.
     expect(within(box).getAllByText(/no boat named/).length).toBe(2)
   })
@@ -1010,8 +1010,8 @@ describe('SailTrimTab', () => {
     // …and the between-station twist, which is what gets trimmed.
     expect(within(box).getByText(/25\u219250/)).toBeTruthy()
     // The main has no stripes marked, so its column is dashes and it says why;
-    // the jib's clew row is dashed too, because no clew was marked here.
-    expect(within(box).getAllByText('—').length).toBe(10)
+    // the jib's 87.5 % and clew rows are dashed too, neither being marked here.
+    expect(within(box).getAllByText('—').length).toBe(14)
     expect(within(box).getByText(/no stripe stations marked on this sail/)).toBeTruthy()
   })
 })

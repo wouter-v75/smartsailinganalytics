@@ -85,6 +85,12 @@ export const HEIGHT_TAGS = [
   { key: 'stripe25', label: '25 % stripe', short: '25 %' },
   { key: 'stripe50', label: '50 % stripe', short: '50 %' },
   { key: 'stripe75', label: '75 % stripe', short: '75 %' },
+  // The 7/8 stripe. 0.875 rather than 0.87 deliberately: that is exactly where
+  // the certificate measures MUW and HUW, so the width is a measured number
+  // instead of one interpolated from the 75 % station. Half a per cent of hoist
+  // is nothing next to the width error interpolation would add up there, where
+  // the sail is narrowest and the chord angle most sensitive to it.
+  { key: 'stripe87', label: '87.5 % stripe', short: '87.5 %' },
   { key: 'spr1', label: 'Spreader 1', short: 'spr 1' },
   { key: 'spr2', label: 'Spreader 2', short: 'spr 2' },
   { key: 'spr3', label: 'Spreader 3', short: 'spr 3' },

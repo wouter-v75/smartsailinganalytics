@@ -61,6 +61,7 @@ export const STATION_FRACTION: Record<TwistTag, number | null> = {
   stripe25: 0.25,
   stripe50: 0.50,
   stripe75: 0.75,
+  stripe87: 0.875,
   spr1: null,
   spr2: null,
   spr3: null,
@@ -261,8 +262,23 @@ export function stationAngles(
   return out.sort((a, b) => a.fraction - b.fraction)
 }
 
-/** Twist between each adjacent pair of stations, lowest first. */
-export function twistBetween(angles: StationAngle[]): TwistRow[] {
+/**
+ * Twist between each adjacent pair of stations, lowest first.
+ *
+ * `leewardPositive` says whether the angles are already signed leeward-positive,
+ * which chordAngle manages only when the TACK was known. Pass it when it is:
+ * the plain signed difference is then the twist, and it stays correct when the
+ * leech crosses the centreplane — which in light air it does, the clew and the
+ * lower stations ending up to windward while the head falls away to leeward.
+ *
+ * Without a tack the sign is athwartships rather than leeward-positive and means
+ * nothing on its own, so the difference is flipped into the frame of whichever
+ * station is furthest from the centreplane. That keeps the two tacks reading
+ * alike, which is the most that can be said — but it MISREADS a profile that
+ * crosses over, because the furthest station can be the windward one. Hence the
+ * flag: guessing is for when there is nothing better.
+ */
+export function twistBetween(angles: StationAngle[], leewardPositive = false): TwistRow[] {
   const out: TwistRow[] = []
   for (let i = 0; i < angles.length - 1; i++) {
     const lo = angles[i], hi = angles[i + 1]
@@ -287,10 +303,12 @@ export function twistBetween(angles: StationAngle[]): TwistRow[] {
       // on far more reliably than a station sitting near zero, it is unchanged
       // on the opposite tack, and unlike magnitudes it adds the two sides when
       // the leech crosses over instead of subtracting them.
-      twistDeg: (hi.angle.deg - lo.angle.deg)
-        * (Math.abs(hi.angle.deg) >= Math.abs(lo.angle.deg)
-          ? Math.sign(hi.angle.deg) || 1
-          : Math.sign(lo.angle.deg) || 1),
+      twistDeg: leewardPositive
+        ? hi.angle.deg - lo.angle.deg
+        : (hi.angle.deg - lo.angle.deg)
+          * (Math.abs(hi.angle.deg) >= Math.abs(lo.angle.deg)
+            ? Math.sign(hi.angle.deg) || 1
+            : Math.sign(lo.angle.deg) || 1),
       sigmaDeg: Math.hypot(lo.angle.sigmaDeg, hi.angle.sigmaDeg),
       interpolated: lo.width.source === 'interpolated' || hi.width.source === 'interpolated',
     })
