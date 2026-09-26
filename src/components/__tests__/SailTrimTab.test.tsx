@@ -901,4 +901,39 @@ describe('SailTrimTab', () => {
     // The spreader lands on the same 1500 mm edge, found by interpolation.
     expect(Math.abs(Math.abs(t.find((x) => x.key === 'jib@spr2')!.mm) - 1_500)).toBeLessThan(40)
   })
+
+  it('names the boat from an id alone, and takes a name that arrives late', async () => {
+    // Why this exists: of the three places that render this tab, only PhotosTab
+    // passed a boat. Tools -> SailTrim rendered <SailTrimTab/> bare and the
+    // timeline passed no boat either, so both silently fell back to the generic
+    // maxi estimates — no measured scale reference and NO SAIL WIDTHS, hence no
+    // twist, with nothing on screen connecting that to the missing boat. Both
+    // had the boat's ID in hand the whole time.
+    const calls: string[] = []
+    const realFetch = global.fetch
+    global.fetch = (async (url: any, init?: any) => {
+      const u = String(url)
+      if (u.includes('/api/boats/rig-model')) {
+        calls.push(u)
+        return { ok: true, json: async () => ({ boat: 'Northstar 76', boatId: 'b-1', rigModel: null, canEdit: true }) } as any
+      }
+      return realFetch ? realFetch(url, init) : ({ ok: false, json: async () => ({}) } as any)
+    }) as any
+    try {
+      render(<SailTrimTab boatId="b-1" />)
+      await openAFrame()
+      // It asked by ID, not by a name it did not have.
+      await waitFor(() => expect(calls.some((c) => c.includes('boat_id=b-1'))).toBe(true))
+      // …and the reply's name lands in the Boat field, so the operator can see
+      // which boat's numbers are in play.
+      await waitFor(() => expect(screen.getByDisplayValue('Northstar 76')).toBeTruthy())
+      expect(screen.queryByText(/No boat named/)).toBeNull()
+    } finally { global.fetch = realFetch }
+  })
+
+  it('still warns when there is no boat and no id', async () => {
+    render(<SailTrimTab />)
+    await openAFrame()
+    expect(screen.getByText(/No boat named/)).toBeTruthy()
+  })
 })

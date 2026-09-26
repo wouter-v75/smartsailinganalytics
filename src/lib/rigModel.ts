@@ -513,6 +513,8 @@ export interface CloudRigModel {
   canEdit: boolean
   /** Null when the boat is not found, or not reachable by this caller. */
   boatId: string | null
+  /** The boat's name AS STORED. The caller may only have had an id. */
+  boat: string | null
 }
 
 /**
@@ -522,28 +524,31 @@ export interface CloudRigModel {
  * every caller's fallback is the same: use the local one. Distinguishing the
  * reasons here would only move the decision somewhere that cannot act on it.
  */
-export async function fetchRigModel(boat: string): Promise<CloudRigModel | null> {
-  if (!boat.trim() || typeof fetch === 'undefined') return null
+export async function fetchRigModel(boat: string, boatId?: string | null): Promise<CloudRigModel | null> {
+  if ((!boat.trim() && !boatId) || typeof fetch === 'undefined') return null
+  const q = boatId ? `boat_id=${encodeURIComponent(boatId)}` : `boat=${encodeURIComponent(boat)}`
   try {
-    const r = await fetch(`/api/boats/rig-model?boat=${encodeURIComponent(boat)}`)
+    const r = await fetch(`/api/boats/rig-model?${q}`)
     if (!r.ok) return null
-    const j = await r.json() as { rigModel: RigModel | null; canEdit?: boolean; boatId?: string | null }
+    const j = await r.json() as { boat?: string | null; rigModel: RigModel | null; canEdit?: boolean; boatId?: string | null }
+    const name = j.boat || boat
     return {
-      rigModel: j.rigModel ? migrateRigModel(j.rigModel, j.rigModel.boat || boat) : null,
+      rigModel: j.rigModel ? migrateRigModel(j.rigModel, j.rigModel.boat || name) : null,
       canEdit: j.canEdit === true,
       boatId: j.boatId ?? null,
+      boat: j.boat ?? null,
     }
   } catch { return null }
 }
 
 /** Store it for the whole team. Resolves to null on success, or a reason. */
-export async function putRigModel(boat: string, m: RigModel): Promise<string | null> {
-  if (!boat.trim() || typeof fetch === 'undefined') return 'no boat'
+export async function putRigModel(boat: string, m: RigModel, boatId?: string | null): Promise<string | null> {
+  if ((!boat.trim() && !boatId) || typeof fetch === 'undefined') return 'no boat'
   try {
     const r = await fetch('/api/boats/rig-model', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ boat, model: { ...m, updatedAt: new Date().toISOString() } }),
+      body: JSON.stringify({ boat, boat_id: boatId || undefined, model: { ...m, updatedAt: new Date().toISOString() } }),
     })
     if (r.ok) return null
     const j = await r.json().catch(() => ({})) as { error?: string }

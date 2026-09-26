@@ -571,6 +571,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           </div>
           <div className="relative min-h-0 flex-1">
             <SailTrimTab
+              boatId={boatId || null}
               initialFileUrl={geomFor.original || ''}
               initialFileName={`photo-${geomFor.id.slice(0, 8)}.jpg`}
               photoLabel="this photo"

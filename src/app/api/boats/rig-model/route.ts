@@ -2,7 +2,10 @@
 // millimetres for SailTrim.
 //
 //   GET  ?boat=Northstar%2076   → { boat, boatId, rigModel, canEdit }
-//   PUT  { boat, model }        → { ok, rigModel }   coach only, per boats_update
+//   GET  ?boat_id=<uuid>        → the same, and the NAME, which is what the tab
+//                                 needs: two of its three call sites have the
+//                                 boat's id in hand and no name at all.
+//   PUT  { boat | boat_id, model } → { ok, rigModel }   coach only, per boats_update
 //
 // WHY IT IS A ROUTE AND NOT JUST localStorage. The model used to live in a
 // hardcoded map plus each browser's own storage, so a dimension measured on the
@@ -25,10 +28,23 @@ import { getServerSupabase } from '../../../../lib/supabase/server'
 
 const norm = (s: string) => s.trim().toLowerCase()
 
-/** The caller's accessible boats, matched on name — case and spacing forgiven. */
-async function findBoat(supabase: ReturnType<typeof getServerSupabase>, boat: string) {
+type BoatRow = { id: string; team_id: string; name: string; rig_model: unknown }
+
+/**
+ * The caller's accessible boats, by id when there is one and by name otherwise.
+ *
+ * The id is preferred wherever a caller has it: a name is what somebody typed,
+ * and two boats in a programme can be a keystroke apart ("Northstar 76" /
+ * "Northstar72"). RLS does the gating either way — boats_select only returns
+ * boats this caller may see, so neither a name nor an id can be used to fish.
+ */
+async function findBoat(supabase: ReturnType<typeof getServerSupabase>, boat: string, boatId?: string | null) {
   const { data, error } = await supabase.from('boats').select('id, team_id, name, rig_model')
-  if (error) return { error: error.message, boat: null as null | { id: string; team_id: string; name: string; rig_model: unknown } }
+  if (error) return { error: error.message, boat: null as null | BoatRow }
+  if (boatId) {
+    const byId = (data || []).find((b) => b.id === boatId)
+    return { error: null, boat: (byId as BoatRow | undefined) ?? null }
+  }
   const want = norm(boat)
   const hit = (data || []).find((b) => norm(b.name) === want)
     // The certificate calls it NORTHSTAR III and the app calls it Northstar 76,
@@ -45,10 +61,14 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
-  const boat = new URL(req.url).searchParams.get('boat') || ''
-  if (!boat.trim()) return NextResponse.json({ error: 'boat required' }, { status: 400 })
+  const sp = new URL(req.url).searchParams
+  const boat = sp.get('boat') || ''
+  const boatId = sp.get('boat_id') || ''
+  if (!boat.trim() && !boatId.trim()) {
+    return NextResponse.json({ error: 'boat or boat_id required' }, { status: 400 })
+  }
 
-  const { error, boat: row } = await findBoat(supabase, boat)
+  const { error, boat: row } = await findBoat(supabase, boat, boatId || null)
   if (error) return NextResponse.json({ error }, { status: 500 })
   if (!row) return NextResponse.json({ boat, boatId: null, rigModel: null, canEdit: false })
 
@@ -67,12 +87,12 @@ export async function PUT(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
-  const body = await req.json().catch(() => null) as { boat?: string; model?: unknown } | null
-  if (!body?.boat || !body.model || typeof body.model !== 'object') {
-    return NextResponse.json({ error: 'boat and model required' }, { status: 400 })
+  const body = await req.json().catch(() => null) as { boat?: string; boat_id?: string; model?: unknown } | null
+  if ((!body?.boat && !body?.boat_id) || !body.model || typeof body.model !== 'object') {
+    return NextResponse.json({ error: 'boat (or boat_id) and model required' }, { status: 400 })
   }
 
-  const { error, boat: row } = await findBoat(supabase, body.boat)
+  const { error, boat: row } = await findBoat(supabase, body.boat || '', body.boat_id || null)
   if (error) return NextResponse.json({ error }, { status: 500 })
   if (!row) return NextResponse.json({ error: 'no such boat, or no access to it' }, { status: 404 })
 

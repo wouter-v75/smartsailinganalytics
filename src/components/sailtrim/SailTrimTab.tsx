@@ -178,10 +178,15 @@ export interface SailTrimSave {
 
 export default function SailTrimTab(
   {
-    boatName = '', initialFileUrl = '', initialFileName = '', initialResult = null,
+    boatName = '', boatId = null, initialFileUrl = '', initialFileName = '', initialResult = null,
     onSaveToPhoto, photoLabel = '', twaDeg = null,
   }: {
     boatName?: string;
+    /** The boat's id, when the caller has one and no name. Two of the three
+     *  call sites are like that, and without it the tab silently falls back to
+     *  generic estimates — no measured scale reference and no sail widths, so
+     *  no twist, with nothing on screen tying that to the missing boat. */
+    boatId?: string | null;
     initialFileUrl?: string;
     /** TWA from the log at this photo's instant. It fixes the TACK, which is
      *  what makes the sign of a measurement mean something about the boat
@@ -257,20 +262,35 @@ export default function SailTrimTab(
   // in any browser where localStorage is blocked and the save silently did
   // nothing.
   useEffect(() => {
-    const stored = loadRigModel(boat);
-    setRig((cur) => stored ?? (cur.boat === boat ? cur : { ...cur, boat }));
+    if (boat) {
+      const stored = loadRigModel(boat);
+      setRig((cur) => stored ?? (cur.boat === boat ? cur : { ...cur, boat }));
+    }
     // Then the boat record, which outranks both: it is the copy the whole team
     // shares, so a dimension a teammate measured arrives here without anyone
     // re-typing it. Local stays the cache and the offline fallback.
+    //
+    // By ID when we have one, and the reply carries the NAME — which is how the
+    // Tools tab and the timeline, neither of which knows what the boat is
+    // called, end up with a named boat and its real dimensions.
     let alive = true;
     setRigCloud(null); setRigCloudNote('');
-    void fetchRigModel(boat).then((c) => {
+    void fetchRigModel(boat, boatId).then((c) => {
       if (!alive || !c) return;
       setRigCloud({ canEdit: c.canEdit, loaded: c.rigModel != null });
+      if (c.boat && c.boat !== boat) setBoat(c.boat);
       if (c.rigModel) { setRig(c.rigModel); saveRigModel(c.rigModel); }
     });
     return () => { alive = false; };
-  }, [boat]);
+  }, [boat, boatId]);
+
+  // The name can also arrive AFTER mount — PhotosTab resolves the photo's boat
+  // asynchronously, and `useState(boatName)` only ever reads its first value. So
+  // follow the prop until the operator types something of their own.
+  const typedBoat = useRef(false);
+  useEffect(() => {
+    if (!typedBoat.current && boatName && boatName !== boat) setBoat(boatName);
+  }, [boatName]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── canvas / view ─────────────────────────────────────────────────────────
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1371,14 +1391,14 @@ export default function SailTrimTab(
     saveRigModel(next);
     if (cloudTimer.current) clearTimeout(cloudTimer.current);
     cloudTimer.current = setTimeout(() => {
-      void putRigModel(next.boat || boat, next).then((err) => {
+      void putRigModel(next.boat || boat, next, boatId).then((err) => {
         // 403 is the ordinary case for anyone who is not a coach, and it must
         // say so: an edit that lives only on this laptop looks identical to a
         // shared one until somebody else opens the tab and finds it missing.
         setRigCloudNote(err ? `saved on this device only — ${err}` : '');
       });
     }, 1200);
-  }, [boat]);
+  }, [boat, boatId]);
   useEffect(() => () => { if (cloudTimer.current) clearTimeout(cloudTimer.current); }, []);
 
   type Patch = Partial<{ mm: number; sigmaMm: number; source: Provenance; depthMm: number }>;
@@ -1496,7 +1516,9 @@ export default function SailTrimTab(
           )}
           <div style={{ marginTop: 8 }}>
             <label style={lbl}>Boat</label>
-            <input style={inp} value={boat} onChange={(e) => setBoat(e.target.value)} placeholder="Northstar 76" />
+            <input style={inp} value={boat}
+              onChange={(e) => { typedBoat.current = true; setBoat(e.target.value); }}
+              placeholder="Northstar 76" />
           </div>
         </div>
 

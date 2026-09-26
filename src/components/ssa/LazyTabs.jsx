@@ -51,7 +51,7 @@ function ToolsTabs({ teamId, boatId }) {
           <ErrorBoundary label="SailScan"><SailScanTab teamId={teamId} boatId={boatId}/></ErrorBoundary>
         </div>
         <div style={{ position: "absolute", inset: 0, display: sub === 'sailtrim' ? 'block' : 'none' }}>
-          <ErrorBoundary label="SailTrim"><SailTrimTab/></ErrorBoundary>
+          <ErrorBoundary label="SailTrim"><SailTrimTab boatId={boatId}/></ErrorBoundary>
         </div>
       </div>
     </div>
