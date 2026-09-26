@@ -37,8 +37,13 @@ describe('SailGeometryCard — the Twist box', () => {
     render(<SailGeometryCard annotation={base()} />)
     const box = screen.getByTestId('sailgeom-twist')
     expect(box).toBeTruthy()
-    expect(within(box).getByText('Twist')).toBeTruthy()
-    expect(within(box).getAllByText('—').length).toBeGreaterThan(0)
+    // Same table as the SailTrim panel: 5 stations x (2 sails + 2 accuracies).
+    expect(within(box).getByText('Accuracy Main')).toBeTruthy()
+    expect(within(box).getByText('Accuracy jib')).toBeTruthy()
+    for (const station of ['25 %', '50 %', '75 %', '87.5 %', 'clew']) {
+      expect(within(box).getByText(station)).toBeTruthy()
+    }
+    expect(within(box).getAllByText('—').length).toBe(20)
   })
 
   it('says why, and what to do about it', () => {
@@ -57,10 +62,33 @@ describe('SailGeometryCard — the Twist box', () => {
     })
     render(<SailGeometryCard annotation={withTwist} />)
     const box = screen.getByTestId('sailgeom-twist')
-    expect(within(box).getByText('+6.14° ±0.30')).toBeTruthy()
-    expect(within(box).getByText('+7.26° ±0.50')).toBeTruthy()
+    // The between-station twist, under the table.
+    expect(within(box).getByText(/25\u219250 \+6\.14°/)).toBeTruthy()
+    expect(within(box).getByText(/50\u219275 \+7\.26°/)).toBeTruthy()
     expect(within(box).queryByText(/Reopen it in SailTrim/)).toBeNull()
-    // The main still has no rows, so it keeps its dash rather than vanishing.
-    expect(within(box).getAllByText('—').length).toBe(1)
+    // No chords in this fixture, so the table itself is still all dashes — the
+    // twist rows and the chord table come from two different arrays.
+    expect(within(box).getAllByText('—').length).toBe(20)
+  })
+
+  it('fills the table from the saved chord angles', () => {
+    const withChords = base({
+      chords: [
+        { sail: 'jib', tag: 'stripe25', fraction: 0.25, leechMm: 1221, angleDeg: 10.15, angleSigmaDeg: 0.19, widthM: 6.93, widthSource: 'interpolated' },
+        { sail: 'jib', tag: 'stripe50', fraction: 0.50, leechMm: 1373, angleDeg: 16.30, angleSigmaDeg: 0.24, widthM: 4.90, widthSource: 'certificate' },
+        { sail: 'main', tag: 'clew', fraction: 0, leechMm: -688, angleDeg: -3.82, angleSigmaDeg: 0.13, widthM: 10.33, widthSource: 'certificate' },
+      ] as never,
+    })
+    render(<SailGeometryCard annotation={withChords} />)
+    const box = screen.getByTestId('sailgeom-twist')
+    // An interpolated width is flagged where it is used, not in a footnote.
+    expect(within(box).getByText('10.2°*')).toBeTruthy()
+    expect(within(box).getByText('16.3°')).toBeTruthy()
+    // The main's clew, on the bottom row, to windward in light air.
+    expect(within(box).getByText('-3.8°')).toBeTruthy()
+    expect(within(box).getByText('± 0.13')).toBeTruthy()
+    // 5 stations x 4 cells = 20, less 6: each chord fills two cells, its angle
+    // and its accuracy.
+    expect(within(box).getAllByText('—').length).toBe(14)
   })
 })

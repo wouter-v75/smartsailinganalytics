@@ -247,7 +247,12 @@ export default function SailTrimTab(
   const [certText, setCertText] = useState('');
   const [certNote, setCertNote] = useState('');
   const [scaleKey, setScaleKey] = useState('spreader2');
-  const [baselineKey, setBaselineKey] = useState('bow-transom');
+  // Mast at deck -> transom centre by default. Both ends are unambiguous from
+  // astern and stay visible under way, and on Northstar it is the one somebody
+  // has actually put a tape on (12100 +/- 50). Forestay tack -> transom is
+  // longer, and psi's precision scales with the separation, but a longer
+  // baseline is worth nothing if one end is a guess at where the tack is.
+  const [baselineKey, setBaselineKey] = useState('mast-transom');
   const [heelDeg, setHeelDeg] = useState<string>('');
   const [focalMm, setFocalMm] = useState<string>('');
   const [defn, setDefn] = useState<'boat' | 'world'>('boat');

@@ -122,6 +122,18 @@ function click(p: Px) {
   }
 }
 
+/**
+ * Pick a centreplane baseline by key. These tests mark the forestay tack and the
+ * transom, so they need `bow-transom`; the tab now DEFAULTS to `mast-transom`,
+ * which is the pair the operator can see from astern and the one with a tape
+ * measurement behind it.
+ */
+const selectBaseline = (key: string) => {
+  const select = screen.getAllByRole('combobox').find((el) =>
+    Array.from((el as HTMLSelectElement).options).some((o) => o.value === key)) as HTMLSelectElement
+  fireEvent.change(select, { target: { value: key } })
+}
+
 /** Step names repeat in the form below, so scope to the step list. */
 const stepButton = (label: string) =>
   within(screen.getByTestId('sailtrim-steps')).getByText(label)
@@ -190,6 +202,7 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Centreplane baseline'))
     click(P(TRANSOM.x, 0, TRANSOM.z))
     click(P(TACK.x, 0, TACK.z))
+    selectBaseline('bow-transom')
     fireEvent.change(screen.getByDisplayValue('21000'), {
       target: { value: String(TACK.x - TRANSOM.x) },
     })
@@ -324,6 +337,7 @@ describe('SailTrimTab', () => {
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     fireEvent.click(stepButton('Centreplane baseline'))
     click(P(TRANSOM.x, 0, TRANSOM.z)); click(P(TACK.x, 0, TACK.z))
+    selectBaseline('bow-transom')
     fireEvent.change(screen.getByDisplayValue('21000'), { target: { value: String(TACK.x - TRANSOM.x) } })
     fireEvent.click(stepButton('Jib clew'))
     click(P(-1_100, 1_500, 2_000))
@@ -1013,5 +1027,18 @@ describe('SailTrimTab', () => {
     // the jib's 87.5 % and clew rows are dashed too, neither being marked here.
     expect(within(box).getAllByText('—').length).toBe(14)
     expect(within(box).getByText(/no stripe stations marked on this sail/)).toBeTruthy()
+  })
+
+  it('defaults the centreplane baseline to mast → transom', async () => {
+    // Both ends are unambiguous from astern and stay visible under way, and on
+    // Northstar it is the one with a tape measurement behind it (12100 +/- 50).
+    // Forestay tack → transom is longer, and psi's precision scales with the
+    // separation, but length is worth nothing if one end is a guess.
+    render(<SailTrimTab boatName="Northstar 76" />)
+    await openAFrame()
+    const select = screen.getAllByRole('combobox').find((el) =>
+      Array.from((el as HTMLSelectElement).options).some((o) => o.value === 'mast-transom')) as HTMLSelectElement
+    expect(select).toBeTruthy()
+    expect(select.value).toBe('mast-transom')
   })
 })

@@ -77,49 +77,81 @@ export default function SailGeometryCard({
               will be here; the marks are all still on the frame.
             </div>
           )}
+          {/* Same table as the SailTrim panel: station down the side, sail
+              across the top, each with its own accuracy. The two are different
+              components and drifted apart once already — the panel got the
+              table and this card kept the old per-sail list, which is why it
+              looked like the new format had not shipped. */}
+          {(() => {
+            const chords = annotation.chords || []
+            const cell = (sail: string, tag: string) =>
+              chords.find((c) => c.sail === sail && c.tag === tag) || null
+            const th: React.CSSProperties = { fontSize: 8.5, color: '#4E5D71', fontWeight: 700, textAlign: 'right', padding: '0 0 3px 7px', whiteSpace: 'nowrap' }
+            const td: React.CSSProperties = { fontSize: 11.5, fontWeight: 700, color: '#E2E8F0', fontFamily: 'monospace', textAlign: 'right', padding: '2px 0 2px 7px' }
+            const tdSig: React.CSSProperties = { ...td, fontSize: 10, fontWeight: 600, color: '#64748B' }
+            const ROWS = [
+              { key: 'stripe87', short: '87.5 %' }, { key: 'stripe75', short: '75 %' },
+              { key: 'stripe50', short: '50 %' }, { key: 'stripe25', short: '25 %' },
+              { key: 'clew', short: 'clew' },
+            ]
+            return (
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 5 }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Twist</th>
+                    <th style={th}>Main</th>
+                    <th style={th}>Jib</th>
+                    <th style={th}>Accuracy Main</th>
+                    <th style={th}>Accuracy jib</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ROWS.map((r) => {
+                    const m = cell('main', r.key), j = cell('jib', r.key)
+                    return (
+                      <tr key={r.key} style={{ borderTop: '1px solid #123253' }}>
+                        <td style={{ fontSize: 10.5, color: '#94A3B8', padding: '2px 0' }}>{r.short}</td>
+                        <td style={td}>{m ? `${m.angleDeg.toFixed(1)}°${m.widthSource === 'interpolated' ? '*' : ''}` : '—'}</td>
+                        <td style={td}>{j ? `${j.angleDeg.toFixed(1)}°${j.widthSource === 'interpolated' ? '*' : ''}` : '—'}</td>
+                        <td style={tdSig}>{m ? `± ${m.angleSigmaDeg.toFixed(2)}` : '—'}</td>
+                        <td style={tdSig}>{j ? `± ${j.angleSigmaDeg.toFixed(2)}` : '—'}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )
+          })()}
+
+          {/* The twist BETWEEN stations — what the columns are made of. */}
           {(['main', 'jib'] as const).map((sail) => {
             const rows = (annotation.twist || []).filter((w) => w.sail === sail)
+            if (!rows.length) return null
+            return (
+              <div key={`rows-${sail}`} style={{ fontSize: 10, color: '#94A3B8', fontFamily: 'monospace', marginBottom: 2 }}>
+                <span style={{ textTransform: 'capitalize' }}>{sail}</span>:{' '}
+                {rows.map((w) => `${w.from.replace('stripe', '')}→${w.to.replace('stripe', '')} ${w.twistDeg >= 0 ? '+' : ''}${w.twistDeg.toFixed(2)}°`).join(' · ')}
+              </div>
+            )
+          })}
+
+          {/* Sag, and the unmarked luff it stands in for. */}
+          {(['main', 'jib'] as const).map((sail) => {
             const chords = (annotation.chords || []).filter((c) => c.sail === sail)
             const sag = chords.filter((c) => c.luffMm != null)
+            if (!chords.length) return null
             return (
-              <div key={sail} style={{ marginBottom: 6 }}>
-                <div style={{ fontSize: 10, color: '#94A3B8', textTransform: 'capitalize', marginBottom: 2 }}>{sail}</div>
-                {chords.map((c) => (
-                  <div key={c.tag} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#64748B', fontFamily: 'monospace' }}>
-                    <span>chord @ {(c.fraction * 100).toFixed(0)} %</span>
-                    <span>
-                      {c.angleDeg.toFixed(2)}° ±{c.angleSigmaDeg.toFixed(2)}
-                      <span style={{ color: c.widthSource === 'certificate' ? '#4ADE80' : '#FCD34D', marginLeft: 5 }}>
-                        {c.widthM.toFixed(2)} m{c.widthSource === 'interpolated' ? '*' : ''}
-                      </span>
-                    </span>
-                  </div>
-                ))}
-                {rows.length > 0 ? rows.map((w) => (
-                  <div key={`${w.from}-${w.to}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 1 }}>
-                    <span>{w.from.replace('stripe', '')} % → {w.to.replace('stripe', '')} %</span>
-                    <span style={{ fontFamily: 'monospace' }}>
-                      {w.twistDeg >= 0 ? '+' : ''}{w.twistDeg.toFixed(2)}° ±{w.sigmaDeg.toFixed(2)}
-                    </span>
-                  </div>
-                )) : (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#64748B', marginTop: 1 }}>
-                    <span>twist between stripes</span>
-                    <span style={{ fontFamily: 'monospace' }}>—</span>
-                  </div>
-                )}
+              <div key={`sag-${sail}`}>
                 {sag.length > 0 && (
                   <div style={{ fontSize: 10, color: '#86EFAC', fontFamily: 'monospace', marginTop: 1 }}>
+                    <span style={{ textTransform: 'capitalize' }}>{sail}</span>{' '}
                     {sail === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
                     {sag.map((c) => `${(c.fraction * 100).toFixed(0)}% ${Math.round(Math.abs(c.luffMm as number))}${c.luffSource === 'fitted' ? '†' : ''}`).join(' · ')} mm
-                    {sag.some((c) => c.luffSource === 'fitted') && (
-                      <span style={{ color: '#64748B' }}> † fitted — the luff is hidden there</span>
-                    )}
                   </div>
                 )}
-                {chords.length > 0 && sag.length === 0 && (
+                {sag.length === 0 && (
                   <div style={{ fontSize: 9.5, color: '#FCD34D', marginTop: 1, lineHeight: 1.4 }}>
-                    luff not marked — chord taken from the centreplane
+                    <span style={{ textTransform: 'capitalize' }}>{sail}</span>: luff not marked — chord taken from the centreplane
                     {sail === 'jib' ? ', i.e. a straight forestay. ~0.29° of twist per 100 mm it is not.' : ''}
                   </div>
                 )}

@@ -10,7 +10,7 @@
 
 import React from 'react'
 import { describe, it, expect, beforeAll, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react'
 
 vi.mock('@/lib/cdnScript', () => ({ heicToJpeg: (f: File) => Promise.resolve(f) }))
 
@@ -230,16 +230,20 @@ describe('PhotoDetail — sail geometry', () => {
       ...basePhoto,
       sailtrim_data: JSON.stringify({ annotation: withShape, overlay: false }),
     })
-    expect(screen.getByText(/Twist/)).toBeTruthy()
-    expect(screen.getByText('25 % → 50 %')).toBeTruthy()
-    expect(screen.getByText(/\+6\.72°/)).toBeTruthy()
-    // the chord angles and which width they used
-    expect(screen.getByText(/8\.32°/)).toBeTruthy()
-    expect(screen.getByText(/4\.90 m/)).toBeTruthy()          // certificate
-    expect(screen.getByText(/6\.93 m\*/)).toBeTruthy()        // interpolated, starred
+    // The table: station down the side, sail across the top, accuracy beside.
+    const box = screen.getByTestId('sailgeom-twist')
+    expect(within(box).getByText('Accuracy jib')).toBeTruthy()
+    expect(within(box).getByText('25 %')).toBeTruthy()
+    // Chord angle per station. An interpolated width is starred where it is
+    // used — the metres themselves are no longer a column, by request.
+    expect(within(box).getByText('8.3°*')).toBeTruthy()       // interpolated width
+    expect(within(box).getByText('15.0°')).toBeTruthy()       // certificate width
+    expect(within(box).getByText('± 0.18')).toBeTruthy()
+    // The twist BETWEEN stations, under the table.
+    expect(within(box).getByText(/25→50 \+6\.72°/)).toBeTruthy()
     // and the sag, because the luff was marked
-    expect(screen.getByText(/forestay sag:/)).toBeTruthy()
-    expect(screen.getByText(/25% 150 · 50% 200 mm/)).toBeTruthy()
+    expect(within(box).getByText(/forestay sag/)).toBeTruthy()
+    expect(within(box).getByText(/25% 150 · 50% 200 mm/)).toBeTruthy()
   })
 
   it('says the chord came off the centreplane when no luff was marked', async () => {
