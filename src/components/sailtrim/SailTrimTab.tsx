@@ -38,7 +38,7 @@ import {
 import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
   fetchRigModel, putRigModel,
-  HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, migrateHeightMarks,
+  HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, isStripeTag, migrateHeightMarks,
   LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
@@ -122,14 +122,15 @@ const OTHER_STEPS: StepDef[] = [
     {
       key: `leech:${sl.key}`, label: sl.label, min: 2, max: 8, colour: sl.colour,
       group: 'target', optional: true,
-      hint: sl.key === 'jib'
-        ? 'Points down the JIB\u2019s leech, spanning every height you marked. CHECK WHICH SAIL YOU ARE ON \u2014 the silhouette against the sky is the MAINSAIL\u2019s leech high up and the jib\u2019s lower down, and on the 5 Sept frames the two sit within ~150 mm of each other, so a reading off the wrong one looks perfectly reasonable.'
-        : 'Points down the MAINSAIL\u2019s leech, spanning every height you marked. High up this is the outer silhouette against the sky; lower down the jib\u2019s leech crosses in front of it, so follow the roach rather than the outermost edge.',
+      hint: (sl.key === 'jib'
+        ? 'Points down the JIB\u2019s leech. CHECK WHICH SAIL YOU ARE ON \u2014 the silhouette against the sky is the MAINSAIL\u2019s leech high up and the jib\u2019s lower down, and on the 5 Sept frames the two sit within ~150 mm of each other, so a reading off the wrong one looks perfectly reasonable.'
+        : 'Points down the MAINSAIL\u2019s leech. High up this is the outer silhouette against the sky; lower down the jib\u2019s leech crosses in front of it, so follow the roach rather than the outermost edge.')
+        + ' The stripe marks below are already leech points and are counted here, so this is only for EXTRA shaping \u2014 worth it to carry the curve past a spreader that sits above or below your stripes.',
     },
     ...STRIPE_TAGS.map((t): StepDef => ({
       key: heightMarkKey(sl.key, t.key), label: `${sl.label} \u00b7 ${t.label}`,
       min: 1, max: 1, colour: sl.colour, group: 'target', optional: true,
-      hint: `Where the ${sl.key === 'jib' ? 'JIB' : 'MAINSAIL'}\u2019s ${t.label.toLowerCase()} meets the mast. This sail's own stripe \u2014 the ${sl.key === 'jib' ? 'main' : 'jib'}'s ${t.short} sits at a different height, because the two hoists differ, and reading one sail at the other's station is a wrong number rather than a missing one.`,
+      hint: `Where the ${sl.key === 'jib' ? 'JIB' : 'MAINSAIL'}\u2019s ${t.label.toLowerCase()} meets ITS OWN LEECH \u2014 on the sail\u2019s edge, not on the mast. This is a leech point as well as a station, so it counts towards the leech above and nothing needs marking twice. This sail\u2019s own stripe: the ${sl.key === 'jib' ? 'main' : 'jib'}\u2019s ${t.short} sits at a different height, because the two hoists differ.`,
     })),
   ]),
   // Optional like the rest: the tool measures whatever is marked, and asking for
@@ -726,6 +727,34 @@ export default function SailTrimTab(
    * same figure from another day, and comparing is the only thing anybody wants
    * to do with it.
    */
+  /**
+   * The points that make up one sail's leech.
+   *
+   * A draft stripe is marked ON the leech now — it is painted across the sail
+   * and its meeting with the silhouette edge is the thing you can actually see,
+   * whereas at the mast the sail has curved away behind the spar. So a stripe
+   * mark IS a leech point, and asking for the curve separately was two clicks
+   * doing one job.
+   *
+   * Ordered by HEIGHT along the mast, not by click order: intersectPolyline
+   * walks the segments in sequence, so a curve assembled out of two sources has
+   * to be sorted or it zig-zags and a spreader line crosses it in the wrong
+   * place — or not at all.
+   */
+  const leechPolyline = useCallback((sail: string): Px[] => {
+    const cal = calibration.cal;
+    const explicit = marks[`leech:${sail}`] || [];
+    const stripes = STRIPE_TAGS
+      .map((t) => (marks[heightMarkKey(sail, t.key)] || [])[0])
+      .filter((q): q is Px => !!q);
+    const all = [...explicit, ...stripes];
+    if (all.length < 2 || !cal) return all;
+    // Height = distance along the mast axis. `up` points along the spar, so this
+    // is monotonic up the leech whatever the heel.
+    const h = (q: Px) => (q.x - cal.axis.low.x) * cal.axis.up.x + (q.y - cal.axis.low.y) * cal.axis.up.y;
+    return [...all].sort((a, b) => h(a) - h(b));
+  }, [marks, calibration]);
+
   const leechCrossings = useCallback((): {
     key: string; label: string; point: Px; sail: string; tag: string; edge: 'leech' | 'luff';
   }[] => {
@@ -735,16 +764,27 @@ export default function SailTrimTab(
     for (const edge of ['leech', 'luff'] as const) {
       const sails = edge === 'leech' ? LEECH_SAILS : LUFF_SAILS;
       for (const sl of sails) {
-        const poly = marks[`${edge}:${sl.key}`] || [];
-        if (poly.length < 2) continue;
+        const poly = edge === 'leech' ? leechPolyline(sl.key) : (marks[`${edge}:${sl.key}`] || []);
         for (const t of HEIGHT_TAGS) {
           // A stripe is this sail's own; a spreader is the rig's, shared.
           const at = (marks[heightMarkKey(sl.key, t.key)] || [])[0];
           if (!at) continue;
-          // Same intersection either side: the height line is perpendicular to
-          // the mast (or horizontal), and it crosses each curve once.
-          const pts = leechTargets(poly, cal.axis, at, cal.heelDeg, cal.horizon);
-          const point = defn === 'boat' ? pts.boatFrame : pts.worldHorizontal;
+          let point: Px | null;
+          if (edge === 'leech' && isStripeTag(t.key)) {
+            // Marked on the leech, so it IS the measurement. No interpolation,
+            // and no boat-frame/world-horizontal ambiguity about WHICH crossing
+            // to take: the operator clicked the one place the stripe meets the
+            // edge, and measureTarget derives both definitions from that point.
+            point = at;
+          } else {
+            if (poly.length < 2) continue;
+            // Same intersection either side: the height line is perpendicular to
+            // the mast (or horizontal), and it crosses each curve once. For a
+            // luff at a stripe, `at` is the leech point — same stripe, same
+            // height, which is what twist needs.
+            const pts = leechTargets(poly, cal.axis, at, cal.heelDeg, cal.horizon);
+            point = defn === 'boat' ? pts.boatFrame : pts.worldHorizontal;
+          }
           // A height above or below where the curve was drawn simply does not
           // cross it. That is a gap in the marking, not an error — skip it.
           if (!point) continue;
@@ -1479,7 +1519,12 @@ export default function SailTrimTab(
           </div>
           {steps.map((s, i) => {
             const pts = marks[s.key] || [];
-            const done = pts.length >= s.min;
+            // A leech's count includes the stripe marks, because those ARE leech
+            // points now. Showing 0/2–8 next to three stripes already clicked on
+            // that very edge is what made this look like two competing steps.
+            const leechSail = s.key.startsWith('leech:') ? s.key.slice(6) : null;
+            const effective = leechSail ? leechPolyline(leechSail).length : pts.length;
+            const done = effective >= s.min;
             const active = i === activeStep;
             const firstOfGroup = i === 0 || steps[i - 1].group !== s.group;
             return (
@@ -1500,7 +1545,12 @@ export default function SailTrimTab(
                   <span style={{ width: 9, height: 9, borderRadius: 9, background: done ? s.colour : 'transparent', border: `2px solid ${s.colour}`, flexShrink: 0 }} />
                   <span style={{ fontSize: 12.5, fontWeight: active ? 800 : 600, color: done ? '#E2E8F0' : '#94A3B8' }}>{s.label}</span>
                   {s.optional && !done && <span style={{ fontSize: 10, color: '#64748B' }}>optional</span>}
-                  <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748B' }}>{pts.length}/{s.max === s.min ? s.max : `${s.min}–${s.max}`}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: '#64748B' }}>
+                    {effective}/{s.max === s.min ? s.max : `${s.min}–${s.max}`}
+                    {leechSail && effective > pts.length && (
+                      <span style={{ color: '#475569' }}> ({pts.length} here + {effective - pts.length} stripe)</span>
+                    )}
+                  </span>
                 </div>
                 {active && (
                   <div style={{ padding: '6px 7px 2px 24px' }}>
@@ -1765,7 +1815,10 @@ export default function SailTrimTab(
             ));
             const anyStation = stationKeys.some((k) => (marks[k] || []).length > 0);
             if (!anyStation) return null;
-            const counts = LEECH_SAILS.map((sl) => ({ sl, n: (marks[`leech:${sl.key}`] || []).length }));
+            // The EFFECTIVE leech: explicit points plus this sail's stripe marks,
+            // which are leech points. Counting only the explicit ones would fire
+            // this at somebody who marked three stripes and needs no curve.
+            const counts = LEECH_SAILS.map((sl) => ({ sl, n: leechPolyline(sl.key).length }));
             const started = counts.filter((c) => c.n === 1);
             const noneDrawn = counts.every((c) => c.n < 2);
             if (!started.length && !noneDrawn) return null;
@@ -1774,8 +1827,8 @@ export default function SailTrimTab(
                 <b>No leech measurements yet</b> — a leech is a CURVE, and a station only
                 becomes a number where it CROSSES one.{' '}
                 {started.length
-                  ? `${started.map((c) => c.sl.label).join(' and ')} ${started.length > 1 ? 'have' : 'has'} one point; ${started.length > 1 ? 'each needs' : 'it needs'} at least two, spanning the stations you marked.`
-                  : 'Draw a leech with at least two points, spanning the stations you marked.'}
+                  ? `${started.map((c) => c.sl.label).join(' and ')} ${started.length > 1 ? 'have' : 'has'} one point in total; ${started.length > 1 ? 'each needs' : 'it needs'} at least two. Marking that sail's stripes on its leech is usually enough — they count.`
+                  : "Mark that sail's stripes ON its leech, or draw the leech with at least two points."}
                 {' '}The clew and boom are single points, so those still read.
               </div>
             );
@@ -1793,7 +1846,7 @@ export default function SailTrimTab(
               HEIGHT_TAGS.filter((t) => (marks[heightMarkKey(sail, t.key)] || []).length > 0);
             if (!LEECH_SAILS.some((sl) => markedFor(sl.key).length)) return null;
             const gaps = LEECH_SAILS
-              .filter((sl) => (marks[`leech:${sl.key}`] || []).length >= 2)
+              .filter((sl) => leechPolyline(sl.key).length >= 2)
               .map((sl) => ({
                 sl,
                 missed: markedFor(sl.key).filter((t) => !measurements.some((m) => m.key === `${sl.key}@${t.key}`)),

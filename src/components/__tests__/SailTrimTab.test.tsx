@@ -431,18 +431,19 @@ describe('SailTrimTab', () => {
     // assumes for each sail, so the depth correction has the right lever and the
     // athwartships number can be checked against truth.
     //
-    // A STRIPE belongs to its sail, so each gets its own — and deliberately at
-    // DIFFERENT heights, because that is the whole point: half of the main's
-    // hoist is not half of the jib's. If the two were still sharing one station
-    // this test would read the main at 18 000 and get the jib's answer.
+    // A STRIPE belongs to its sail and is marked ON that sail's leech, so each
+    // gets its own — deliberately at DIFFERENT heights, because that is the
+    // point: half of the main's hoist is not half of the jib's. If the two were
+    // still sharing one station this would read the main at 18 000 and get the
+    // jib's answer.
     fireEvent.click(stepButton('Jib leech'))
     click(P(-400, 1_500, 8_000)); click(P(-400, 1_500, 22_000))
     fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
-    click(P(0, 0, 15_000))
+    click(P(-400, 1_500, 15_000))
     fireEvent.click(stepButton('Main leech'))
     click(P(-6_000, 2_500, 8_000)); click(P(-6_000, 2_500, 22_000))
     fireEvent.click(stepButton('Main leech \u00b7 50 % stripe'))
-    click(P(0, 0, 18_000))
+    click(P(-6_000, 2_500, 18_000))
 
     await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(4))
 
@@ -486,11 +487,12 @@ describe('SailTrimTab', () => {
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
-    // The jib's own 50 % stripe — a stripe belongs to its sail.
+    // The jib's own 50 % stripe, marked where it meets the jib's leech — which
+    // is 1500 mm to leeward at that height, and IS the measurement.
     fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
-    click(P(0, 0, 15_000))
+    click(P(-400, 1_500, 15_000))
 
-    // A jib leech 1500 mm to leeward at that height…
+    // …and the leech drawn through it.
     fireEvent.click(stepButton('Jib leech'))
     click(P(-400, 1_500, 9_000)); click(P(-400, 1_500, 21_000))
     await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBeGreaterThan(0))
@@ -757,9 +759,9 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Main leech'))
     click(P(-6_000, 2_500, 8_000)); click(P(-6_000, 2_500, 22_000))
 
-    // ONLY the jib's stripe.
+    // ONLY the jib's stripe, marked on the jib's leech.
     fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
-    click(P(0, 0, 15_000))
+    click(P(-400, 1_500, 15_000))
 
     await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBeGreaterThanOrEqual(3))
     fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
@@ -800,8 +802,10 @@ describe('SailTrimTab', () => {
 
     await waitFor(() => expect(screen.getByText(/No leech measurements yet/)).toBeTruthy())
     expect(screen.getByText(/a leech is a CURVE/)).toBeTruthy()
-    // It names the half-drawn one rather than nagging about both.
-    expect(screen.getByText(/Main leech has one point/)).toBeTruthy()
+    // It names what is half-drawn rather than nagging about a sail nobody
+    // touched. Both qualify here: the main has its one explicit click, and the
+    // jib has its one stripe, which is a leech point.
+    expect(screen.getByText(/Main leech and Jib leech have one point in total/)).toBeTruthy()
   })
 
   it('goes quiet once the leech is actually drawn', async () => {
@@ -829,5 +833,72 @@ describe('SailTrimTab', () => {
     await openAFrame()
     expect(screen.getByText(/No boat named/)).toBeTruthy()
     expect(screen.getByText(/no twist/)).toBeTruthy()
+  })
+
+  it('measures from stripe marks alone, with no separate leech curve drawn', async () => {
+    // What Wouter hit: three stripes clicked on each leech, and the leech step
+    // still reading 0/2–8 as though none of it counted. A stripe is marked ON
+    // the leech, so it IS a leech point — the curve and the station were two
+    // clicks doing one job. Nothing but the stripes is marked here.
+    const P = makeCamera(RIG)
+    const saves: SailTrimSave[] = []
+    render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    // Three stripes on the jib's leech, 1500 mm to leeward. No 'Jib leech' clicks.
+    for (const [tag, z] of [['25', 10_000], ['50', 15_000], ['75', 20_000]] as const) {
+      fireEvent.click(stepButton(`Jib leech \u00b7 ${tag} % stripe`))
+      click(P(-400, 1_500, z))
+    }
+
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBe(3))
+
+    // The leech counts them, so it is no longer asking for a curve.
+    expect(within(screen.getByTestId('sailtrim-steps')).getByText(/0 here \+ 3 stripe/)).toBeTruthy()
+    expect(screen.queryByText(/No leech measurements yet/)).toBeNull()
+
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(1))
+    const t = saves[0].annotation.targets
+    expect(t.map((x) => x.key).sort()).toEqual(['jib@stripe25', 'jib@stripe50', 'jib@stripe75'])
+    // Each recovers the offset it was drawn at — the mark IS the measurement,
+    // so there is no interpolation to lose it.
+    for (const k of ['jib@stripe25', 'jib@stripe50', 'jib@stripe75']) {
+      expect(Math.abs(Math.abs(t.find((x) => x.key === k)!.mm) - 1_500)).toBeLessThan(40)
+    }
+  })
+
+  it('still interpolates a SPREADER along the stripe points', async () => {
+    // A spreader has no painted line across the sail, so it stays a mast mark
+    // and has to be interpolated onto the leech. The stripe points are the
+    // curve it interpolates along — which is the other half of the merge.
+    const P = makeCamera(RIG)
+    const saves: SailTrimSave[] = []
+    render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    // Spreader 2 on the MAST, between two stripes on the jib's leech.
+    fireEvent.click(stepButton('Spreader 2'))
+    click(P(0, 0, 15_000))
+    for (const [tag, z] of [['25', 10_000], ['75', 20_000]] as const) {
+      fireEvent.click(stepButton(`Jib leech \u00b7 ${tag} % stripe`))
+      click(P(-400, 1_500, z))
+    }
+
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBe(3))
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(1))
+    const t = saves[0].annotation.targets
+    expect(t.map((x) => x.key).sort()).toEqual(['jib@spr2', 'jib@stripe25', 'jib@stripe75'])
+    // The spreader lands on the same 1500 mm edge, found by interpolation.
+    expect(Math.abs(Math.abs(t.find((x) => x.key === 'jib@spr2')!.mm) - 1_500)).toBeLessThan(40)
   })
 })
