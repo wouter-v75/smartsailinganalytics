@@ -232,6 +232,40 @@ describe('deriveBaselines — mast to stern from the two that pin it', () => {
     expect(mt(out).source).toBe('measured')
   })
 
+  it('derives the WHOLE from the two parts — the long baseline for free', () => {
+    // The direction that matters most: tack-to-transom is the longest of the
+    // three, and ψ's precision scales with the separation, so a tape at deck
+    // level buys the best baseline on the boat.
+    const out = deriveBaselines(withBaselines({
+      'tack-mast': { mm: 8860, sigmaMm: 200, source: 'measured' },
+      'mast-transom': { mm: 12100, sigmaMm: 50, source: 'measured' },
+    }))
+    const bow = out.baselines.find((b) => b.key === 'bow-transom')!
+    expect(bow.mm).toBe(8860 + 12100)
+    expect(bow.source).toBe('derived')
+    expect(bow.sigmaMm).toBe(Math.round(Math.hypot(200, 50)))   // 206, not 250
+  })
+
+  it('derives J from the whole and the after part', () => {
+    const out = deriveBaselines(withBaselines({
+      'bow-transom': { mm: 20960, sigmaMm: 20, source: 'designer' },
+      'mast-transom': { mm: 12100, sigmaMm: 50, source: 'measured' },
+    }))
+    const j = out.baselines.find((b) => b.key === 'tack-mast')!
+    expect(j.mm).toBe(20960 - 12100)
+    expect(j.source).toBe('derived')
+  })
+
+  it('fills only ONE — two unknowns are not determined by one equation', () => {
+    // One sum cannot pin two missing terms. Filling either from the single known
+    // value would be inventing a number with a provenance tag on it.
+    const out = deriveBaselines(withBaselines({
+      'mast-transom': { mm: 12100, sigmaMm: 50, source: 'measured' },
+    }))
+    expect(out.baselines.find((b) => b.key === 'bow-transom')!.source).toBe('estimate')
+    expect(out.baselines.find((b) => b.key === 'tack-mast')!.source).toBe('estimate')
+  })
+
   it('refuses a nonsense subtraction', () => {
     // J longer than the whole boat means one of them is wrong; a negative
     // baseline would make solvePsi produce a confident wrong answer.
@@ -278,5 +312,35 @@ describe('height stations — per sail for stripes, shared for spreaders', () =>
   it('leaves already-migrated marks alone', () => {
     const once = migrateHeightMarks({ 'h:stripe25': [{ x: 1, y: 1 }] })
     expect(migrateHeightMarks(once)).toEqual(once)
+  })
+})
+
+describe("Northstar 76's baselines, end to end", () => {
+  // The whole point of MEASURED: a new device opens the tab and the boat's real
+  // numbers are already there, without anyone pasting or typing anything.
+  const m = rigModelFor('Northstar 76')
+  const b = (k: string) => m.baselines.find((x) => x.key === k)!
+
+  it('has the wheel-to-wheel scale reference measured', () => {
+    const w = m.scaleRefs.find((s) => s.key === 'wheels')!
+    expect(w.mm).toBe(3375)
+    expect(w.source).toBe('measured')
+    // ~10 m abaft the mast, which is why it needs a depth at all.
+    expect(w.depthMm).toBe(-10_000)
+  })
+
+  it('has mast-to-stern and J measured, and tack-to-transom derived from them', () => {
+    expect(b('mast-transom').mm).toBe(12_100)
+    expect(b('mast-transom').source).toBe('measured')
+    expect(b('tack-mast').mm).toBe(8_860)
+    expect(b('tack-mast').source).toBe('measured')
+    expect(b('bow-transom').mm).toBe(20_960)
+    expect(b('bow-transom').source).toBe('derived')
+  })
+
+  it('no longer reports a missing baseline', () => {
+    // It used to: all three were estimates, so ψ fell back to 0 ± 1° — and a
+    // degree of ψ is ±180 mm on a boom at E.
+    expect(missingFrom(m).some((x) => x.includes('baseline'))).toBe(false)
   })
 })

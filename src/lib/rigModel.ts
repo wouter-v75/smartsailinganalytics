@@ -306,6 +306,21 @@ const MEASURED: Record<string, {
       // centres — the wheels themselves are the fuzzy part, not the tape.
       wheels: { mm: 3375, sigmaMm: 10, source: 'measured' },
     },
+    baselines: {
+      // Mast at deck → transom centre, tape, 2026-09. ±50 mm is not the tape
+      // over 12 m: it is the two ENDS. "The mast at deck" is a 300 mm section
+      // and "transom centre" is a curve, so where you hook and where you read
+      // are each worth tens of millimetres. Tighten it here if the endpoints
+      // were pinned down more carefully than that.
+      'mast-transom': { mm: 12100, sigmaMm: 50, source: 'measured' },
+      // J off Northstar III's endorsed certificate (50945, GBR76X) — the same
+      // ±200 mm the certificate reader applies, so a pasted cert and this agree
+      // rather than one quietly overriding the other.
+      //
+      // With these two, deriveBaselines fills tack-to-transom at 20 960 ± 206 —
+      // the longest baseline on the boat, and the one ψ is most precise across.
+      'tack-mast': { mm: 8860, sigmaMm: 200, source: 'measured' },
+    },
     // Off Northstar III's own endorsed certificate (50945, GBR76X), tabulated
     // in §8.2 of the doc. Here rather than behind a paste because they are
     // measured, endorsed and not going to change — and because twist divides by
@@ -320,32 +335,49 @@ const MEASURED: Record<string, {
 MEASURED['northstar iii'] = MEASURED['northstar 76']
 
 /**
- * Fill in the baselines that OTHER baselines already determine.
+ * Fill in whichever baseline the other two already determine.
  *
- * Mast-to-stern is (forestay tack → transom) − (forestay tack → mast), which is
- * J. The identity was noted in a comment beside the field and left for a human
- * to apply, so the boat carried a 13 000 ± 2200 mm guess while the two numbers
- * that pin it down to a few tens of millimetres sat two lines above. A baseline
- * this loose is worth little: solvePsi needs the separation, and ψ's error scales
- * straight into every target abaft the mast.
+ * The three are one sum: (forestay tack → transom) = J + (mast → stern). Know any
+ * two and the third is arithmetic, to a few tens of millimetres — yet the model
+ * shipped with all three as separate fields and a comment suggesting a human do
+ * the subtraction, so a boat could carry a 21 000 ± 2000 mm guess next to two
+ * numbers that pin it to ±206.
  *
- * Only ever fills an ESTIMATE. An operator who typed a tape measurement, or a
- * figure off a drawing, has better information than this arithmetic and must not
- * have it overwritten. Errors add in quadrature and the result is marked
- * `derived`, so the report keeps saying it is working rather than measurement.
+ * It is worth doing in every direction, not just for mast-to-stern, because ψ's
+ * precision scales with the SEPARATION of the two landmarks: tack-to-transom is
+ * the longest of the three and so the best baseline on the boat. Deriving it is
+ * how a tape measure at deck level buys a 21 m baseline up the rig.
+ *
+ * Only ever fills an ESTIMATE, and only from inputs that are better than one. An
+ * operator who typed a tape reading has better information than this arithmetic
+ * and must not have it silently replaced. Errors add in quadrature and the result
+ * is marked `derived`, so the report keeps saying it is working rather than
+ * measurement.
  */
 export function deriveBaselines(m: RigModel): RigModel {
+  // whole = part + part. Named so the arithmetic below cannot be read backwards.
+  const WHOLE = 'bow-transom', PARTS = ['tack-mast', 'mast-transom'] as const
   const get = (k: string) => m.baselines.find((b) => b.key === k)
-  const bow = get('bow-transom'), j = get('tack-mast'), mt = get('mast-transom')
-  if (!bow || !j || !mt) return m
-  // Nothing to do unless BOTH inputs are better than a guess and the target is not.
-  if (mt.source !== 'estimate') return m
-  if (bow.source === 'estimate' || j.source === 'estimate') return m
-  if (!(bow.mm > 0) || !(j.mm > 0) || bow.mm <= j.mm) return m
+  const real = (b: Baseline | undefined) => !!b && b.source !== 'estimate' && b.mm > 0
+
+  const whole = get(WHOLE), j = get(PARTS[0]), mt = get(PARTS[1])
+  if (!whole || !j || !mt) return m
+
+  let fill: { key: string; mm: number; sigmaMm: number } | null = null
+  if (!real(whole) && real(j) && real(mt)) {
+    fill = { key: WHOLE, mm: j.mm + mt.mm, sigmaMm: Math.hypot(j.sigmaMm, mt.sigmaMm) }
+  } else if (!real(mt) && real(whole) && real(j) && whole.mm > j.mm) {
+    fill = { key: PARTS[1], mm: whole.mm - j.mm, sigmaMm: Math.hypot(whole.sigmaMm, j.sigmaMm) }
+  } else if (!real(j) && real(whole) && real(mt) && whole.mm > mt.mm) {
+    fill = { key: PARTS[0], mm: whole.mm - mt.mm, sigmaMm: Math.hypot(whole.sigmaMm, mt.sigmaMm) }
+  }
+  if (!fill || !(fill.mm > 0)) return m
+
+  const done = fill
   return {
     ...m,
-    baselines: m.baselines.map((b) => (b.key === 'mast-transom'
-      ? { ...b, mm: bow.mm - j.mm, sigmaMm: Math.round(Math.hypot(bow.sigmaMm, j.sigmaMm)), source: 'derived' as Provenance }
+    baselines: m.baselines.map((b) => (b.key === done.key
+      ? { ...b, mm: Math.round(done.mm), sigmaMm: Math.round(done.sigmaMm), source: 'derived' as Provenance }
       : b)),
   }
 }
