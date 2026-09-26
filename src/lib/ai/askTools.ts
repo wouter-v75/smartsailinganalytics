@@ -30,7 +30,7 @@ export const GROUP_KEYS = ['mode', 'tack', 'sailCombo', 'race', 'twsBand', 'twaB
 export const MEDIA_KINDS = ['photo', 'video', 'sailscan', 'tag'] as const
 export const MANOEUVRE_KINDS = ['tack', 'gybe', 'all'] as const
 /** What can be measured about one tack or gybe. */
-export const MANOEUVRE_METRICS_ASKABLE = ['turnRate', 'maxRotation', 'turnAngle', 'timeTo95', 'distLost', 'bspBefore', 'bspAfter', 'tws'] as const
+export const MANOEUVRE_METRICS_ASKABLE = ['turnRate', 'turnRadius', 'turnSpeed', 'maxRotation', 'turnAngle', 'timeTo95', 'distLost', 'bspBefore', 'bspAfter', 'tws'] as const
 /** How a manoeuvre chart's points are split into coloured series. */
 export const MANOEUVRE_SPLITS = ['kind', 'tack', 'date', 'sails', 'none'] as const
 /** How a scatter's dots are split into coloured series. */
@@ -261,10 +261,12 @@ export const TOOLS: ToolSpec[] = [
         + 'which is what "a bell curve of the rate of turn of all tacks" asks for. '
         + 'Give "against" and it returns a scatter of the metric against that, with a trend line: "rate of turn versus TWS". '
         + 'Metrics: turnRate (degrees per second through the turn itself, measured over the 6 s centred on the moment the apparent '
-        + 'wind crosses the bow), maxRotation (the single fastest step between two samples — a peak, not an average), '
+        + 'wind crosses the bow), turnRadius (metres, the radius the boat actually turned at — speed divided by yaw rate over that same window, '
+        + 'and the operating point any steering geometry has to be right for), turnSpeed (knots through the turn), '
+        + 'maxRotation (the single fastest step between two samples — a peak, not an average), '
         + 'turnAngle, timeTo95 (seconds back to 95 % of the entry speed), distLost (metres lost against the wind), '
         + 'bspBefore, bspAfter, tws. '
-        + 'turnRate needs a log sampled at 3 s or finer and is absent on coarser days; the result says how many manoeuvres carried it. '
+        + 'turnRate, turnRadius and turnSpeed all need a log sampled at 3 s or finer and are absent on coarser days; the result says how many carried them. '
         + 'For a whole season give dateFrom and dateTo spanning the stored days in the context.',
       parameters: {
         type: 'object',

@@ -85,6 +85,11 @@ function toHtmlBody(src) {
       i++
       while (i < lines.length && !/^```/.test(lines[i])) body.push(lines[i++])
       i++
+      // ```html is emitted RAW, so a document can carry a chart. Everything else
+      // is escaped as before. Deliberately an explicit opt-in per block rather
+      // than passing stray `<` through: a doc full of TypeScript generics would
+      // otherwise start sprouting tags.
+      if (lang === 'html') { out.push(body.join('\n')); continue }
       out.push(`<pre class="code${lang ? ' lang-' + lang : ''}"><code>${esc(body.join('\n'))}</code></pre>`)
       continue
     }

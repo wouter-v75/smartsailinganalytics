@@ -375,6 +375,8 @@ type DatedManoeuvre = Manoeuvre & { date: string }
 
 const MAN_LABEL: Record<string, { label: string; unit: string; decimals: number }> = {
   turnRate: { label: 'Rate of turn', unit: '°/s', decimals: 2 },
+  turnRadius: { label: 'Turn radius', unit: 'm', decimals: 1 },
+  turnSpeed: { label: 'Speed through the turn', unit: 'kn', decimals: 2 },
   maxRotation: { label: 'Max rotation', unit: '°/s', decimals: 2 },
   turnAngle: { label: 'Turn angle', unit: '°', decimals: 1 },
   timeTo95: { label: 'Time to 95% BSP', unit: 's', decimals: 1 },
@@ -424,13 +426,13 @@ export function buildManoeuvreStats(
   const coverage = withMetric.length < kept.length
     ? ` ${ml(a.metric).label} is on ${withMetric.length} of ${kept.length} ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`}`
       + (days > 1 ? ` and ${metricDays} of ${days} days` : '')
-      + (a.metric === 'turnRate' ? ' — it needs a log sampled at 3 s or finer, and the coarser days cannot carry it' : '')
+      + (['turnRate', 'turnRadius', 'turnSpeed'].includes(a.metric) ? ' — it needs a log sampled at 3 s or finer, and the coarser days cannot carry it' : '')
       + '. Say so in the answer.'
     : ''
 
   if (!withMetric.length) {
     return emptyResult('', `None of the ${kept.length} ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`} between ${from} and ${to} has ${ml(a.metric).label}`
-      + (a.metric === 'turnRate' ? ' — every day in range is logged too coarsely for it (it needs 3 s or finer).' : '.'))
+      + (['turnRate', 'turnRadius', 'turnSpeed'].includes(a.metric) ? ' — every day in range is logged too coarsely for it (it needs 3 s or finer).' : '.'))
   }
 
   const keys: string[] = []

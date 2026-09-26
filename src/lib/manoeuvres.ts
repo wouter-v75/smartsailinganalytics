@@ -14,6 +14,9 @@
 //                   30 s before (−35…−5 s), summed −20…+60 s. Indicative — KND's own
 //                   two methods "do not match closely" (tacks ±6 m, gybes ±45 m).
 //   Max rotation    fastest heading change between samples — coarse at 6 s steps.
+//   Turn radius     v / omega over that same window — the radius the boat actually
+//                   turned at, which is the operating point a steering geometry
+//                   has to be correct for. Measured, not assumed from the hull.
 //   Turn rate       heading change over the 6 s centred on awa = 0, divided by the
 //                   span actually measured. The average through the turn, not its
 //                   peak. Null on a log coarser than ~3 s, or one whose awa is
@@ -54,6 +57,12 @@ export interface Manoeuvre {
   // the moment the apparent wind crosses the bow. Null unless the log can carry it.
   turnRate: number | null        // deg/s
   turnRateSpan: number | null    // s — the span actually measured over, ~6
+  // Mean boat speed through that same window, and the radius it implies:
+  // R = v / omega. The radius the boat ACTUALLY turns at is the operating point
+  // any steering geometry has to be right for, and unlike the geometry itself it
+  // can be measured from the log without knowing anything about the boat.
+  turnSpeed: number | null       // kn
+  turnRadius: number | null      // m
   turnAngle: number | null       // deg
   target: number                 // deg
 }
@@ -202,8 +211,11 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
     // where the boat is not turning: 13 Jul returned a median 0.61 °/s — a 3.7°
     // "tack" — from 40 of its 82.
     const MIN_SAMPLES_IN_WINDOW = 3
+    const MIN_RATE_FOR_RADIUS = 2
     let turnRate: number | null = null
     let turnRateSpan: number | null = null
+    let turnSpeed: number | null = null
+    let turnRadius: number | null = null
     {
       // The awa = 0 crossing nearest the detected moment, interpolated between the
       // two samples that straddle it. Needs SIGNED awa — some log exports carry it
@@ -236,6 +248,21 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
           if (span > 0) {
             turnRate = angleDiff(num(a.hdg)!, num(b.hdg)!) / span
             turnRateSpan = span
+            // Speed through the SAME window, not the entry speed: the boat is
+            // slowest exactly here, and a radius computed from the speed it had
+            // before the turn would be the radius of a turn it did not make.
+            const v = mean(values(between(rows, cross, -3, 3), 'bsp'))
+            // R = v / omega runs away as omega goes to zero: the records with a
+            // rate near zero — which are mis-detected manoeuvres, not slow ones —
+            // produced radii of 16 km and flattened every histogram they appeared
+            // in. A radius is only defined while the boat is actually turning, and
+            // below 2 deg/s the 6 s window spans under 12 deg and the ratio is
+            // dominated by noise in the denominator.
+            if (v != null && v > 0 && turnRate >= MIN_RATE_FOR_RADIUS) {
+              turnSpeed = v
+              // R = v / omega, in metres: knots to m/s, deg/s to rad/s.
+              turnRadius = (v * KN) / (turnRate * (Math.PI / 180))
+            }
           }
         }
       }
@@ -280,7 +307,7 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
       to: twaAfter == null ? null : twaAfter >= 0 ? 'stbd' : 'port',
       sails: sailComboLabel(activeSailsAt(xml, t0)),
       tws: mean(values(pre, 'tws')),
-      bspBefore, bspAfter, timeTo95, distLost, maxRotation, turnRate, turnRateSpan, turnAngle, target: targets[f.kind],
+      bspBefore, bspAfter, timeTo95, distLost, maxRotation, turnRate, turnRateSpan, turnSpeed, turnRadius, turnAngle, target: targets[f.kind],
     }
   })
 }
@@ -288,7 +315,7 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
 // Racing (or training-day) manoeuvres that aren't mark roundings — the ones KND judges.
 export const isJudged = (m: Manoeuvre) => (m.context === 'race' || m.context === 'training') && !m.atMark
 
-export const MANOEUVRE_METRICS = ['timeTo95', 'distLost', 'maxRotation', 'turnRate', 'bspBefore', 'bspAfter', 'turnAngle'] as const
+export const MANOEUVRE_METRICS = ['timeTo95', 'distLost', 'maxRotation', 'turnRate', 'turnRadius', 'turnSpeed', 'bspBefore', 'bspAfter', 'turnAngle'] as const
 export type ManoeuvreMetric = typeof MANOEUVRE_METRICS[number]
 
 export function manoeuvreAverages(list: Manoeuvre[]): Record<ManoeuvreMetric, number | null> {
