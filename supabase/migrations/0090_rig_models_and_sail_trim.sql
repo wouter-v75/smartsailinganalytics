@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS public.sail_trim (
     team_id            UUID NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,  -- denorm RLS
     boat_id            UUID NOT NULL REFERENCES public.boats(id) ON DELETE CASCADE,  -- denorm RLS
     session_id         UUID REFERENCES public.sessions(id) ON DELETE SET NULL,
-    run_id             UUID REFERENCES public.runs(id)     ON DELETE SET NULL,
+    -- No run_id: 0089 dropped public.runs with the rest of the campaign spine,
+    -- and this migration was written before that. Nothing in the app referenced
+    -- it. A shot locates itself by session + captured_at.
     photo_id           UUID REFERENCES public.photos(id)   ON DELETE SET NULL,
     captured_at        TIMESTAMPTZ,
 

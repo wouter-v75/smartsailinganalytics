@@ -408,9 +408,10 @@ describe('SailTrimTab', () => {
 
   it('reads every leech at every marked height, and tags each result', async () => {
     // A leech is a curve, so "the leech" is not a number until a height is
-    // named. Two sails × two tagged heights = four measurements, each carrying
-    // which sail and which height it is — without that tag a millimetre figure
-    // cannot be compared with the same figure from another day.
+    // named. Each sail is read at the shared spreader AND at its own 50 % stripe
+    // = four measurements, each carrying which sail and which height it is —
+    // without that tag a millimetre figure cannot be compared with the same
+    // figure from another day.
     const P = makeCamera(RIG)
     const saves: SailTrimSave[] = []
     render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
@@ -422,19 +423,26 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Scale reference'))
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
-    // two heights on the mast, each its own tagged step
+    // Spreader 2 is a RIG height: marked once, both leeches read across it.
     fireEvent.click(stepButton('Spreader 2'))
     click(P(0, 0, 12_000))
-    fireEvent.click(stepButton('50 % stripe'))
-    click(P(0, 0, 18_000))
 
     // The synthetic leeches are placed at the fore-and-aft depths the rig model
     // assumes for each sail, so the depth correction has the right lever and the
     // athwartships number can be checked against truth.
+    //
+    // A STRIPE belongs to its sail, so each gets its own — and deliberately at
+    // DIFFERENT heights, because that is the whole point: half of the main's
+    // hoist is not half of the jib's. If the two were still sharing one station
+    // this test would read the main at 18 000 and get the jib's answer.
     fireEvent.click(stepButton('Jib leech'))
     click(P(-400, 1_500, 8_000)); click(P(-400, 1_500, 22_000))
+    fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
+    click(P(0, 0, 15_000))
     fireEvent.click(stepButton('Main leech'))
     click(P(-6_000, 2_500, 8_000)); click(P(-6_000, 2_500, 22_000))
+    fireEvent.click(stepButton('Main leech \u00b7 50 % stripe'))
+    click(P(0, 0, 18_000))
 
     await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(4))
 
@@ -478,7 +486,8 @@ describe('SailTrimTab', () => {
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
-    fireEvent.click(stepButton('50 % stripe'))
+    // The jib's own 50 % stripe — a stripe belongs to its sail.
+    fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
     click(P(0, 0, 15_000))
 
     // A jib leech 1500 mm to leeward at that height…
@@ -716,5 +725,52 @@ describe('SailTrimTab', () => {
     click(P(0, -MAST_HALF_WIDTH, 6_000))
     await waitFor(() =>
       expect(within(screen.getByTestId('sailtrim-steps')).getByText('1/2')).toBeTruthy())
+  })
+
+  it('keeps each sail\u2019s draft stripes to itself, but shares the spreaders', async () => {
+    // The regression this guards. Both sails used to read at ONE set of stripe
+    // stations, so marking "50 % stripe" produced a main@stripe50 AND a
+    // jib@stripe50 from a single click. The main's 50 % and the jib's are at
+    // half of two different hoists — metres apart on this rig — so one of those
+    // two numbers was measured at a height that is not its own half hoist. It
+    // looked entirely correct, which is why it needs a test rather than care.
+    //
+    // Marking the JIB's stripe and NOT the main's must therefore give a jib
+    // stripe measurement and no main one. A spreader, which is a rig height and
+    // genuinely shared, must still give both from its single mark.
+    const P = makeCamera(RIG)
+    const saves: SailTrimSave[] = []
+    render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    fireEvent.click(stepButton('Spreader 2'))
+    click(P(0, 0, 12_000))
+
+    // Both leeches drawn, spanning both heights, so a missing measurement can
+    // only be a missing STATION and not a curve that failed to reach.
+    fireEvent.click(stepButton('Jib leech'))
+    click(P(-400, 1_500, 8_000)); click(P(-400, 1_500, 22_000))
+    fireEvent.click(stepButton('Main leech'))
+    click(P(-6_000, 2_500, 8_000)); click(P(-6_000, 2_500, 22_000))
+
+    // ONLY the jib's stripe.
+    fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
+    click(P(0, 0, 15_000))
+
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBeGreaterThanOrEqual(3))
+    fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
+    await waitFor(() => expect(saves).toHaveLength(1))
+    const keys = saves[0].annotation.targets.map((t) => t.key).sort()
+
+    // The shared spreader reaches both sails from one mark.
+    expect(keys).toContain('jib@spr2')
+    expect(keys).toContain('main@spr2')
+    // The jib's stripe is the jib's alone.
+    expect(keys).toContain('jib@stripe50')
+    expect(keys).not.toContain('main@stripe50')
   })
 })

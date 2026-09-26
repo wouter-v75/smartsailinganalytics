@@ -3,8 +3,10 @@ import {
   defaultRigModel, missingFrom, isComplete, scaleRelSigma,
   loadRigModel, saveRigModel, listRigModels, rigModelFor,
   exportRigModel, importRigModel,
-  luffDepthMm, rigModelFor,
-  migrateRigModel,
+  luffDepthMm,
+  migrateRigModel, deriveBaselines,
+  HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, migrateHeightMarks,
+  type RigModel, type RigValue,
 } from '../rigModel'
 
 // jsdom 25's localStorage has no clear(); the repo stubs it the same way in
@@ -184,5 +186,97 @@ describe('rigModel — handing it to someone else', () => {
     expect(m.depths.boom.source).toBe('estimate')   // untouched, still a guess
     expect(m.baselines.length).toBeGreaterThan(0)   // filled from the default
     expect(m.sensorWidthMm).toBe(36)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mast-to-stern, derived — and the per-sail station keys.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('deriveBaselines — mast to stern from the two that pin it', () => {
+  const withBaselines = (over: Record<string, Partial<RigValue>>): RigModel => {
+    const m = defaultRigModel('Test')
+    return { ...m, baselines: m.baselines.map((b) => ({ ...b, ...(over[b.key] || {}) })) }
+  }
+  const mt = (m: RigModel) => m.baselines.find((b) => b.key === 'mast-transom')!
+
+  it('derives it when both inputs are real', () => {
+    const out = deriveBaselines(withBaselines({
+      'bow-transom': { mm: 20880, sigmaMm: 20, source: 'designer' },
+      'tack-mast': { mm: 8860, sigmaMm: 10, source: 'measured' },
+    }))
+    expect(mt(out).mm).toBe(20880 - 8860)
+    expect(mt(out).source).toBe('derived')
+    // Errors in quadrature, not added: hypot(20, 10) = 22.
+    expect(mt(out).sigmaMm).toBe(22)
+  })
+
+  it('leaves it alone while either input is still a guess', () => {
+    const out = deriveBaselines(withBaselines({
+      'bow-transom': { mm: 20880, sigmaMm: 20, source: 'designer' },
+      // tack-mast stays the default estimate
+    }))
+    expect(mt(out).source).toBe('estimate')
+    expect(mt(out).mm).toBe(13000)
+  })
+
+  it('never overwrites a number somebody measured', () => {
+    // A tape beats arithmetic, and silently replacing it would be the worst kind
+    // of helpfulness: the operator would have no way to see it had happened.
+    const out = deriveBaselines(withBaselines({
+      'bow-transom': { mm: 20880, sigmaMm: 20, source: 'designer' },
+      'tack-mast': { mm: 8860, sigmaMm: 10, source: 'measured' },
+      'mast-transom': { mm: 12100, sigmaMm: 15, source: 'measured' },
+    }))
+    expect(mt(out).mm).toBe(12100)
+    expect(mt(out).source).toBe('measured')
+  })
+
+  it('refuses a nonsense subtraction', () => {
+    // J longer than the whole boat means one of them is wrong; a negative
+    // baseline would make solvePsi produce a confident wrong answer.
+    const out = deriveBaselines(withBaselines({
+      'bow-transom': { mm: 8000, sigmaMm: 20, source: 'designer' },
+      'tack-mast': { mm: 8860, sigmaMm: 10, source: 'measured' },
+    }))
+    expect(mt(out).source).toBe('estimate')
+  })
+})
+
+describe('height stations — per sail for stripes, shared for spreaders', () => {
+  it('gives each sail its own stripe key', () => {
+    expect(heightMarkKey('main', 'stripe50')).toBe('h:main:stripe50')
+    expect(heightMarkKey('jib', 'stripe50')).toBe('h:jib:stripe50')
+    expect(heightMarkKey('main', 'stripe50')).not.toBe(heightMarkKey('jib', 'stripe50'))
+  })
+
+  it('gives both sails the SAME spreader key', () => {
+    expect(heightMarkKey('main', 'spr2')).toBe('h:spr2')
+    expect(heightMarkKey('jib', 'spr2')).toBe('h:spr2')
+  })
+
+  it('splits the tags without losing any', () => {
+    expect([...STRIPE_TAGS, ...SPREADER_TAGS].map((t) => t.key).sort())
+      .toEqual(HEIGHT_TAGS.map((t) => t.key).sort())
+  })
+
+  it('migrates a pre-split shot onto the jib', () => {
+    // The jib, not the main: the shared stations were marked against the jib's
+    // leech in practice, so assigning them to the main would move every stored
+    // stripe measurement to a different height.
+    const out = migrateHeightMarks({
+      'h:stripe50': [{ x: 1, y: 2 }],
+      'h:spr2': [{ x: 3, y: 4 }],
+      'leech:jib': [{ x: 5, y: 6 }],
+    })
+    expect(Object.keys(out).sort()).toEqual(['h:jib:stripe50', 'h:spr2', 'leech:jib'])
+    expect(out['h:jib:stripe50']).toEqual([{ x: 1, y: 2 }])
+    // A spreader is shared, so its key is untouched.
+    expect(out['h:spr2']).toEqual([{ x: 3, y: 4 }])
+  })
+
+  it('leaves already-migrated marks alone', () => {
+    const once = migrateHeightMarks({ 'h:stripe25': [{ x: 1, y: 1 }] })
+    expect(migrateHeightMarks(once)).toEqual(once)
   })
 })

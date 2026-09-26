@@ -55,7 +55,15 @@ export interface Manoeuvre {
   maxRotation: number | null     // deg/s — the fastest step between two samples
   // deg/s averaged across the turn itself: heading change over the 6 s centred on
   // the moment the apparent wind crosses the bow. Null unless the log can carry it.
-  turnRate: number | null        // deg/s
+  //
+  // A MAGNITUDE — the local angleDiff takes an absolute value — so a distribution
+  // of it is one bell rather than two humps either side of zero, and the radius
+  // gate below applies equally to both directions.
+  turnRate: number | null        // deg/s, >= 0
+  // Which way the bow went. Separate from turnRate because the rate is unsigned,
+  // and because anything about the STEERING needs it: which rudder was on the
+  // inside of the turn is the whole question, and `rudder angle` alone cannot say.
+  turnDir: 'port' | 'stbd' | null
   turnRateSpan: number | null    // s — the span actually measured over, ~6
   // Mean boat speed through that same window, and the radius it implies:
   // R = v / omega. The radius the boat ACTUALLY turns at is the operating point
@@ -81,6 +89,8 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 const rad = (d: number) => (d * Math.PI) / 180
 const mean = (xs: number[]): number | null => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
 const angleDiff = (a: number, b: number) => Math.abs(((b - a + 540) % 360) - 180)
+/** a − b wrapped into (−180, 180]. The signed twin of angleDiff, for direction. */
+const signedDiff = (a: number, b: number) => ((a - b + 540) % 360) - 180
 
 function circularMean(deg: number[]): number | null {
   if (!deg.length) return null
@@ -213,6 +223,7 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
     const MIN_SAMPLES_IN_WINDOW = 3
     const MIN_RATE_FOR_RADIUS = 2
     let turnRate: number | null = null
+    let turnDir: 'port' | 'stbd' | null = null
     let turnRateSpan: number | null = null
     let turnSpeed: number | null = null
     let turnRadius: number | null = null
@@ -247,6 +258,9 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
           const span = (b.utc - a.utc) / 1000
           if (span > 0) {
             turnRate = angleDiff(num(a.hdg)!, num(b.hdg)!) / span
+            // angleDiff is unsigned, so direction needs its own signed wrap. b is
+            // the later sample: heading rising is a turn to starboard.
+            turnDir = signedDiff(num(b.hdg)!, num(a.hdg)!) >= 0 ? 'stbd' : 'port'
             turnRateSpan = span
             // Speed through the SAME window, not the entry speed: the boat is
             // slowest exactly here, and a radius computed from the speed it had
@@ -307,7 +321,7 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
       to: twaAfter == null ? null : twaAfter >= 0 ? 'stbd' : 'port',
       sails: sailComboLabel(activeSailsAt(xml, t0)),
       tws: mean(values(pre, 'tws')),
-      bspBefore, bspAfter, timeTo95, distLost, maxRotation, turnRate, turnRateSpan, turnSpeed, turnRadius, turnAngle, target: targets[f.kind],
+      bspBefore, bspAfter, timeTo95, distLost, maxRotation, turnRate, turnDir, turnRateSpan, turnSpeed, turnRadius, turnAngle, target: targets[f.kind],
     }
   })
 }

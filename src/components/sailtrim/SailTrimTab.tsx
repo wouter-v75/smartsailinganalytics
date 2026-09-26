@@ -37,7 +37,9 @@ import {
 } from '../../lib/sailTrimCv';
 import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
-  HEIGHT_TAGS, LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
+  fetchRigModel, putRigModel,
+  HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, migrateHeightMarks,
+  LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
@@ -91,10 +93,12 @@ const OTHER_STEPS: StepDef[] = [
     hint: 'The two ends of something whose true length you know AND that lies across the boat — spreader tip to tip. Never a fore-and-aft length: from astern those are foreshortened to nothing.' },
   { key: 'baseline', label: 'Centreplane baseline', min: 2, max: 2, colour: '#F472B6', group: 'calibrate', optional: true,
     hint: 'Two points on the boat’s centreline, as far apart fore-and-aft as possible — forestay tack and transom centre. Aft point first. This is what measures ψ; skipping it costs ±1° of unknown misalignment.' },
-  ...HEIGHT_TAGS.map((t): StepDef => ({
+  // The SPREADERS, shared by both sails: one place on the mast, and both
+  // leeches are read across it.
+  ...SPREADER_TAGS.map((t): StepDef => ({
     key: `h:${t.key}`, label: t.label, min: 1, max: 1, colour: '#A78BFA',
     group: 'calibrate', optional: true,
-    hint: `Where ${t.label.toLowerCase()} meets the mast. Mark as many heights as you want measured — every leech you have drawn is read at every height you have marked, and the tag is what lets today's number be compared with the same number from another day.`,
+    hint: `Where ${t.label.toLowerCase()} meets the mast. Shared by both sails — a spreader is a rig height, so every leech you have drawn is read across it. The tag is what lets today's number be compared with the same number from another day.`,
   })),
   // The LUFF, at the other end of the chord. Marking it is what turns
   // "centreplane → leech" into the real thing a sail's shape is measured on.
@@ -109,13 +113,25 @@ const OTHER_STEPS: StepDef[] = [
       ? 'Points down the FORESTAY, spanning the heights you marked. It is the jib\u2019s luff, it sags to leeward under load, and that sag is the difference between a chord and a guess. Marking it also MEASURES the sag, which is a number in its own right and one nobody has for a rival.'
       : 'Points down the mast\u2019s forward face where the mainsail\u2019s luff runs. Optional: the mast is already the tool\u2019s axis, so this only buys you the sideways bend — worth it on a bendy rig, skippable otherwise.',
   })),
-  ...LEECH_SAILS.map((sl): StepDef => ({
-    key: `leech:${sl.key}`, label: sl.label, min: 2, max: 8, colour: sl.colour,
-    group: 'target', optional: true,
-    hint: sl.key === 'jib'
-      ? 'Points down the JIB\u2019s leech, spanning every height you marked. CHECK WHICH SAIL YOU ARE ON \u2014 the silhouette against the sky is the MAINSAIL\u2019s leech high up and the jib\u2019s lower down, and on the 5 Sept frames the two sit within ~150 mm of each other, so a reading off the wrong one looks perfectly reasonable.'
-      : 'Points down the MAINSAIL\u2019s leech, spanning every height you marked. High up this is the outer silhouette against the sky; lower down the jib\u2019s leech crosses in front of it, so follow the roach rather than the outermost edge.',
-  })),
+  // Each leech, followed immediately by ITS OWN draft stripes. A sail's stripes
+  // are at fractions of that sail's hoist, so the main's 50 % and the jib's are
+  // at two different heights up the mast; they belong to the sail, not to the
+  // rig, and they are asked for here rather than in the calibrate list so it is
+  // obvious which sail you are marking them on.
+  ...LEECH_SAILS.flatMap((sl): StepDef[] => [
+    {
+      key: `leech:${sl.key}`, label: sl.label, min: 2, max: 8, colour: sl.colour,
+      group: 'target', optional: true,
+      hint: sl.key === 'jib'
+        ? 'Points down the JIB\u2019s leech, spanning every height you marked. CHECK WHICH SAIL YOU ARE ON \u2014 the silhouette against the sky is the MAINSAIL\u2019s leech high up and the jib\u2019s lower down, and on the 5 Sept frames the two sit within ~150 mm of each other, so a reading off the wrong one looks perfectly reasonable.'
+        : 'Points down the MAINSAIL\u2019s leech, spanning every height you marked. High up this is the outer silhouette against the sky; lower down the jib\u2019s leech crosses in front of it, so follow the roach rather than the outermost edge.',
+    },
+    ...STRIPE_TAGS.map((t): StepDef => ({
+      key: heightMarkKey(sl.key, t.key), label: `${sl.label} \u00b7 ${t.label}`,
+      min: 1, max: 1, colour: sl.colour, group: 'target', optional: true,
+      hint: `Where the ${sl.key === 'jib' ? 'JIB' : 'MAINSAIL'}\u2019s ${t.label.toLowerCase()} meets the mast. This sail's own stripe \u2014 the ${sl.key === 'jib' ? 'main' : 'jib'}'s ${t.short} sits at a different height, because the two hoists differ, and reading one sail at the other's station is a wrong number rather than a missing one.`,
+    })),
+  ]),
   // Optional like the rest: the tool measures whatever is marked, and asking for
   // a clew on a frame somebody opened to read two leech heights is just nagging.
   { key: 'clew', label: 'Jib clew', min: 1, max: 1, colour: '#FB923C', group: 'target', optional: true,
@@ -217,6 +233,10 @@ export default function SailTrimTab(
   const [boat, setBoat] = useState(boatName);
   const [rig, setRig] = useState<RigModel>(() => rigModelFor(boatName));
   const [rigOpen, setRigOpen] = useState(false);
+  // Whether this model came from the boat record, and whether this user may
+  // write it back. Null = not asked yet (offline, or no session).
+  const [rigCloud, setRigCloud] = useState<{ canEdit: boolean; loaded: boolean } | null>(null);
+  const [rigCloudNote, setRigCloudNote] = useState('');
   const [certText, setCertText] = useState('');
   const [certNote, setCertNote] = useState('');
   const [scaleKey, setScaleKey] = useState('spreader2');
@@ -238,6 +258,17 @@ export default function SailTrimTab(
   useEffect(() => {
     const stored = loadRigModel(boat);
     setRig((cur) => stored ?? (cur.boat === boat ? cur : { ...cur, boat }));
+    // Then the boat record, which outranks both: it is the copy the whole team
+    // shares, so a dimension a teammate measured arrives here without anyone
+    // re-typing it. Local stays the cache and the offline fallback.
+    let alive = true;
+    setRigCloud(null); setRigCloudNote('');
+    void fetchRigModel(boat).then((c) => {
+      if (!alive || !c) return;
+      setRigCloud({ canEdit: c.canEdit, loaded: c.rigModel != null });
+      if (c.rigModel) { setRig(c.rigModel); saveRigModel(c.rigModel); }
+    });
+    return () => { alive = false; };
   }, [boat]);
 
   // ── canvas / view ─────────────────────────────────────────────────────────
@@ -350,7 +381,9 @@ export default function SailTrimTab(
       heelDeg?: string; tack?: 'port' | 'stbd' | null;
     } | undefined;
     if (!m?.marks || typeof m.marks !== 'object') return;
-    setMarks(m.marks);
+    // A shot saved before stripes were per-sail carries one `h:stripe50` for
+    // both. The jib inherits it — see migrateHeightMarks for why that way round.
+    setMarks(migrateHeightMarks(m.marks));
     if (m.mastMode) setMastMode(m.mastMode);
     if (m.defn) setDefn(m.defn);
     if (typeof m.focalMm === 'string' && m.focalMm) setFocalMm(m.focalMm);
@@ -705,7 +738,8 @@ export default function SailTrimTab(
         const poly = marks[`${edge}:${sl.key}`] || [];
         if (poly.length < 2) continue;
         for (const t of HEIGHT_TAGS) {
-          const at = (marks[`h:${t.key}`] || [])[0];
+          // A stripe is this sail's own; a spreader is the rig's, shared.
+          const at = (marks[heightMarkKey(sl.key, t.key)] || [])[0];
           if (!at) continue;
           // Same intersection either side: the height line is perpendicular to
           // the mast (or horizontal), and it crosses each curve once.
@@ -1288,23 +1322,42 @@ export default function SailTrimTab(
   };
 
   // ── rig model editing ────────────────────────────────────────────────────
+  // Every edit goes to localStorage immediately and to the boat record shortly
+  // after. The cloud write is DEBOUNCED because these are number inputs: saving
+  // per keystroke would PUT the whole model a dozen times while somebody types
+  // "3375". Local is synchronous so nothing is lost if the tab closes first.
+  const cloudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistRig = useCallback((next: RigModel) => {
+    saveRigModel(next);
+    if (cloudTimer.current) clearTimeout(cloudTimer.current);
+    cloudTimer.current = setTimeout(() => {
+      void putRigModel(next.boat || boat, next).then((err) => {
+        // 403 is the ordinary case for anyone who is not a coach, and it must
+        // say so: an edit that lives only on this laptop looks identical to a
+        // shared one until somebody else opens the tab and finds it missing.
+        setRigCloudNote(err ? `saved on this device only — ${err}` : '');
+      });
+    }, 1200);
+  }, [boat]);
+  useEffect(() => () => { if (cloudTimer.current) clearTimeout(cloudTimer.current); }, []);
+
   type Patch = Partial<{ mm: number; sigmaMm: number; source: Provenance; depthMm: number }>;
   const setScaleField = (key: string, patch: Patch) => {
     setRig((m) => {
       const next = { ...m, scaleRefs: m.scaleRefs.map((s) => (s.key === key ? { ...s, ...patch } : s)) };
-      saveRigModel(next); return next;
+      persistRig(next); return next;
     });
   };
   const setBaselineField = (key: string, patch: Patch) => {
     setRig((m) => {
       const next = { ...m, baselines: m.baselines.map((b) => (b.key === key ? { ...b, ...patch } : b)) };
-      saveRigModel(next); return next;
+      persistRig(next); return next;
     });
   };
   const setDepthField = (key: keyof RigModel['depths'], patch: Patch) => {
     setRig((m) => {
       const next = { ...m, depths: { ...m.depths, [key]: { ...m.depths[key], ...patch } } };
-      saveRigModel(next); return next;
+      persistRig(next); return next;
     });
   };
 
@@ -1480,11 +1533,25 @@ export default function SailTrimTab(
         {/* what the boat contributes */}
         <div style={panel}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-            <div style={{ ...hdr, flex: 1 }}>Rig model — {boat || 'no boat'}</div>
+            <div style={{ ...hdr, flex: 1 }}>
+              Rig model — {boat || 'no boat'}
+              {/* Where these numbers live. A model that is only in this browser
+                  is the old failure mode, so say which one you are looking at. */}
+              {rigCloud && (
+                <span style={{ fontWeight: 600, letterSpacing: 0, textTransform: 'none', marginLeft: 6,
+                  color: rigCloud.loaded ? '#4ADE80' : '#94A3B8' }}>
+                  {rigCloud.loaded ? "· from the boat record" : "· this device only — nothing stored for this boat yet"}
+                  {rigCloud.loaded && !rigCloud.canEdit && ' (read-only — a coach can edit)'}
+                </span>
+              )}
+            </div>
             <button style={{ ...btn(), padding: '3px 8px', fontSize: 10.5 }} onClick={() => setRigOpen((v) => !v)}>
               {rigOpen ? 'done' : 'edit'}
             </button>
           </div>
+          {rigCloudNote && (
+            <div style={{ fontSize: 11, color: '#FCD34D', marginTop: 4, lineHeight: 1.5 }}>{rigCloudNote}</div>
+          )}
           {gaps.length > 0 && (
             <div style={{ fontSize: 11, color: '#FCD34D', lineHeight: 1.55, marginBottom: 8 }}>
               Still guesswork: {gaps.join('; ')}. Every measurement below inherits that
@@ -1612,7 +1679,7 @@ export default function SailTrimTab(
                     if (!cert) { setCertNote('That does not read as an IRC certificate — nothing changed.'); return; }
                     const m = rigModelFromIrc(cert);
                     const withBoat = { ...m, boat: m.boat || boat };
-                    setRig(withBoat); saveRigModel(withBoat);
+                    setRig(withBoat); persistRig(withBoat);
                     if (withBoat.boat && withBoat.boat !== boat) setBoat(withBoat.boat);
                     setScaleKey('P'); setBaselineKey('tack-mast');
                     setCertNote(`${cert.name || 'boat'} — P ${cert.rig.p} m, J ${cert.rig.j} m, E ${cert.rig.e} m. Scale set to P.`);
@@ -1633,7 +1700,7 @@ export default function SailTrimTab(
                     const f = e.target.files?.[0]; e.target.value = '';
                     if (!f) return;
                     const m = importRigModel(await f.text());
-                    if (m) { const withBoat = { ...m, boat: m.boat || boat }; setRig(withBoat); saveRigModel(withBoat); }
+                    if (m) { const withBoat = { ...m, boat: m.boat || boat }; setRig(withBoat); persistRig(withBoat); }
                   }} />
               </div>
             </div>
@@ -1664,13 +1731,17 @@ export default function SailTrimTab(
               heights marked and one number back, with no way to see that three
               of them missed. Say which, and why. */}
           {calibration.cal && (() => {
-            const marked = HEIGHT_TAGS.filter((t) => (marks[`h:${t.key}`] || []).length > 0);
-            if (!marked.length) return null;
+            // Per sail now: its OWN stripes plus the shared spreaders. Asking
+            // whether the main reaches the jib's 50 % stripe is meaningless —
+            // they are different heights, and the main is not marked at one.
+            const markedFor = (sail: string) =>
+              HEIGHT_TAGS.filter((t) => (marks[heightMarkKey(sail, t.key)] || []).length > 0);
+            if (!LEECH_SAILS.some((sl) => markedFor(sl.key).length)) return null;
             const gaps = LEECH_SAILS
               .filter((sl) => (marks[`leech:${sl.key}`] || []).length >= 2)
               .map((sl) => ({
                 sl,
-                missed: marked.filter((t) => !measurements.some((m) => m.key === `${sl.key}@${t.key}`)),
+                missed: markedFor(sl.key).filter((t) => !measurements.some((m) => m.key === `${sl.key}@${t.key}`)),
               }))
               .filter((g) => g.missed.length > 0);
             if (!gaps.length) return null;
@@ -1699,7 +1770,7 @@ export default function SailTrimTab(
               <b>No twist yet.</b>{' '}
               {!rig.widths?.main && !rig.widths?.jib
                 ? 'The sail WIDTHS are missing — they are the denominator a leech offset is divided by to become an angle. Paste an IRC certificate into the rig model below (MHW/MTW/MUW and HHW/HTW/HUW come off it).'
-                : !HEIGHT_TAGS.some((t) => STATION_FRACTION[t.key] != null && (marks[`h:${t.key}`] || []).length > 0)
+                : !LEECH_SAILS.some((sl) => STRIPE_TAGS.some((t) => (marks[heightMarkKey(sl.key, t.key)] || []).length > 0))
                   ? 'Only spreader heights are marked. A spreader has no fixed fraction of the hoist, so there is no width to divide by — mark a 25 / 50 / 75 % STRIPE as well.'
                   : 'The leeches do not cross a marked stripe height. Extend them past the highest and lowest stripe you marked.'}
             </div>

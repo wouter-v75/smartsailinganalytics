@@ -125,3 +125,81 @@ describe('manoeuvreAverages', () => {
     expect(avg.distLost).toBeCloseTo(a.distLost!)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rate of turn and radius, in BOTH directions.
+//
+// The reason this test exists: neither turnRate nor turnRadius had ANY coverage.
+// The scripted tack above cannot reach them — it carries `twa`, not `awa`, so the
+// apparent-wind crossing the window is centred on never happens and both come back
+// null. So the rate, the radius, and the direction were all unexercised, and the
+// question "is a turn to starboard measured the same as a turn to port" had no
+// answer in the suite at all. It matters because the steering analysis turns on
+// which rudder was on the INSIDE, which only the direction can say.
+//
+// A mirrored pair is the only shape of test that catches a sign error here: a
+// one-directional fixture passes whichever way round the difference is taken. The
+// 360-crossing case is here for the same reason — an unwrapped subtraction reads a
+// turn from 340 through north as −320°/s.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A tack through 80° at 10°/s, with SIGNED awa so the crossing is findable. */
+function turnRows(dir: 'stbd' | 'port', t0 = T0): LogRow[] {
+  const out: LogRow[] = []
+  const sign = dir === 'stbd' ? 1 : -1
+  for (let s = -120; s < 180; s++) {
+    const bsp = s < 0 ? 12 : s <= 8 ? 12 - (3 / 8) * s : s <= 30 ? 9 + (3 / 22) * (s - 8) : 12
+    const swept = s < 0 ? 0 : s <= 8 ? 10 * s : 80
+    const hdg = ((250 + sign * swept) % 360 + 360) % 360
+    // awa crosses zero at the midpoint of the turn, and carries the bow's side.
+    const awa = sign * (s < 0 ? 35 : s <= 8 ? 35 - (70 / 8) * s : -35)
+    out.push({ utc: t0 + s * 1000, bsp, awa, twa: awa, hdg, tws: 20 })
+  }
+  return out
+}
+
+describe('turnRate and turnRadius are direction-blind', () => {
+  const stbd = analyseManoeuvres(turnRows('stbd'), xmlWith())[0]
+  const port = analyseManoeuvres(turnRows('port'), xmlWith())[0]
+
+  it('measures a rate in both directions', () => {
+    expect(stbd.turnRate).not.toBeNull()
+    expect(port.turnRate).not.toBeNull()
+  })
+
+  it('reports the rate as a magnitude, never negative', () => {
+    expect(stbd.turnRate!).toBeGreaterThan(0)
+    expect(port.turnRate!).toBeGreaterThan(0)
+  })
+
+  it('gives the mirrored turns the same rate', () => {
+    expect(stbd.turnRate!).toBeCloseTo(port.turnRate!, 6)
+  })
+
+  it('records which way the bow went', () => {
+    expect(stbd.turnDir).toBe('stbd')
+    expect(port.turnDir).toBe('port')
+  })
+
+  it('gives a radius in both directions, and the same one', () => {
+    expect(stbd.turnRadius).not.toBeNull()
+    expect(port.turnRadius).not.toBeNull()
+    expect(stbd.turnRadius!).toBeCloseTo(port.turnRadius!, 6)
+  })
+
+  it('gets the radius right: R = v / omega', () => {
+    // 10°/s is 0.1745 rad/s; the mean BSP over the 6 s window is what it is, so
+    // assert the relation rather than a hardcoded metre count.
+    const v = stbd.turnSpeed! * 0.5144
+    expect(stbd.turnRadius!).toBeCloseTo(v / (stbd.turnRate! * Math.PI / 180), 3)
+  })
+
+  it('crosses 360 without inventing a turn', () => {
+    // A turn from 340 through north: before-minus-after without wrapping gives
+    // −320°/s instead of +10.
+    const rows = turnRows('stbd').map(r => ({ ...r, hdg: (((r.hdg as number) + 90) % 360) }))
+    const m = analyseManoeuvres(rows, xmlWith())[0]
+    expect(m.turnRate!).toBeCloseTo(stbd.turnRate!, 6)
+    expect(m.turnDir).toBe('stbd')
+  })
+})

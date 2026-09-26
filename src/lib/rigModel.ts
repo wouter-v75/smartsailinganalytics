@@ -95,6 +95,55 @@ export type HeightTag = (typeof HEIGHT_TAGS)[number]['key']
 export const heightShort = (k: string): string =>
   HEIGHT_TAGS.find((t) => t.key === k)?.short ?? k
 
+/**
+ * The two kinds of station, which behave differently and must not be conflated.
+ *
+ * A DRAFT STRIPE belongs to a SAIL. The main's 50 % stripe and the jib's are at
+ * half of two different hoists, so they are at two different heights up the
+ * mast — metres apart on a rig like Northstar's. Reading both leeches at one
+ * "50 %" line therefore measures the jib somewhere that is not its half height,
+ * and hands `STATION_FRACTION` a fraction that is only true for one of them.
+ * That is a wrong number rather than a missing one, which is why it is worth the
+ * extra clicks.
+ *
+ * A SPREADER belongs to the RIG. It is one place on the mast whatever sail is
+ * up, both leeches are legitimately read across it, and "mast → leech at
+ * spreader 2" is the speed team's own measurement. So spreaders stay a single
+ * shared set: marking them per sail would be the same click twice.
+ */
+export const STRIPE_TAGS = HEIGHT_TAGS.filter((t) => t.key.startsWith('stripe'))
+export const SPREADER_TAGS = HEIGHT_TAGS.filter((t) => t.key.startsWith('spr'))
+
+export const isStripeTag = (k: string): boolean => k.startsWith('stripe')
+
+/**
+ * Where a station's mark is kept. Per sail for a stripe, shared for a spreader.
+ *
+ * One function so the step that COLLECTS the mark and the code that READS it
+ * cannot drift apart — they were one shared key each before, and a mismatch here
+ * shows up as a leech that silently has no crossings rather than as an error.
+ */
+export const heightMarkKey = (sail: string, tag: string): string =>
+  isStripeTag(tag) ? `h:${sail}:${tag}` : `h:${tag}`
+
+/**
+ * Bring a saved set of marks onto the per-sail station keys.
+ *
+ * Shots saved before the split carry one `h:stripe50` for both sails. The jib
+ * keeps them, because the shared stations were in practice marked against the
+ * jib's leech — it is the lower, nearer edge and the one the speed team reads.
+ * Assigning them to the main instead would silently move every stored stripe
+ * measurement to a different height.
+ */
+export function migrateHeightMarks<T>(marks: Record<string, T>): Record<string, T> {
+  const out: Record<string, T> = {}
+  for (const [k, v] of Object.entries(marks)) {
+    const m = /^h:(stripe\d+)$/.exec(k)
+    out[m ? `h:jib:${m[1]}` : k] = v
+  }
+  return out
+}
+
 /** The two sails a leech can belong to. */
 export const LEECH_SAILS = [
   { key: 'main', label: 'Main leech', colour: '#38BDF8' },
@@ -208,7 +257,7 @@ export function defaultRigModel(boat = ''): RigModel {
       // (tack → transom) − J. A baseline with NO length is worse than no
       // baseline: solvePsi needs a separation, so selecting one silently drops
       // back to ψ = 0 ± 1° — and a degree of ψ is ±180 mm on a boom at E.
-      { key: 'mast-transom', label: 'Mast (at deck) → transom centre', ...v(13000, 2200) },
+      { key: 'mast-transom', label: 'Mast (at deck) → transom centre (stern)', ...v(13000, 2200) },
       { key: 'custom', label: 'Something else (type the separation)', ...v(0, 0) },
     ],
     // Fore-and-aft offsets from the mast, forward positive. These are the
@@ -270,16 +319,50 @@ const MEASURED: Record<string, {
 // The certificate names the boat NORTHSTAR III; the app calls it Northstar 76.
 MEASURED['northstar iii'] = MEASURED['northstar 76']
 
+/**
+ * Fill in the baselines that OTHER baselines already determine.
+ *
+ * Mast-to-stern is (forestay tack → transom) − (forestay tack → mast), which is
+ * J. The identity was noted in a comment beside the field and left for a human
+ * to apply, so the boat carried a 13 000 ± 2200 mm guess while the two numbers
+ * that pin it down to a few tens of millimetres sat two lines above. A baseline
+ * this loose is worth little: solvePsi needs the separation, and ψ's error scales
+ * straight into every target abaft the mast.
+ *
+ * Only ever fills an ESTIMATE. An operator who typed a tape measurement, or a
+ * figure off a drawing, has better information than this arithmetic and must not
+ * have it overwritten. Errors add in quadrature and the result is marked
+ * `derived`, so the report keeps saying it is working rather than measurement.
+ */
+export function deriveBaselines(m: RigModel): RigModel {
+  const get = (k: string) => m.baselines.find((b) => b.key === k)
+  const bow = get('bow-transom'), j = get('tack-mast'), mt = get('mast-transom')
+  if (!bow || !j || !mt) return m
+  // Nothing to do unless BOTH inputs are better than a guess and the target is not.
+  if (mt.source !== 'estimate') return m
+  if (bow.source === 'estimate' || j.source === 'estimate') return m
+  if (!(bow.mm > 0) || !(j.mm > 0) || bow.mm <= j.mm) return m
+  return {
+    ...m,
+    baselines: m.baselines.map((b) => (b.key === 'mast-transom'
+      ? { ...b, mm: bow.mm - j.mm, sigmaMm: Math.round(Math.hypot(bow.sigmaMm, j.sigmaMm)), source: 'derived' as Provenance }
+      : b)),
+  }
+}
+
 /** Apply the measured numbers for a boat on top of a model. */
 export function withMeasured(m: RigModel): RigModel {
   const known = MEASURED[(m.boat || '').trim().toLowerCase()]
-  if (!known) return m
-  return {
+  // deriveBaselines even with nothing measured for this boat: the inputs can
+  // also arrive from a certificate paste or from the operator typing them, and
+  // this is the one place every load path passes through.
+  if (!known) return deriveBaselines(m)
+  return deriveBaselines({
     ...m,
     scaleRefs: m.scaleRefs.map((r) => ({ ...r, ...(known.scaleRefs?.[r.key] || {}) })),
     baselines: m.baselines.map((b) => ({ ...b, ...(known.baselines?.[b.key] || {}) })),
     widths: { ...(known.widths || {}), ...(m.widths || {}) },
-  }
+  })
 }
 
 /** What still needs a real number, in the order it matters. */
@@ -343,14 +426,16 @@ export function migrateRigModel(stored: RigModel, boat = stored.boat): RigModel 
   // numbers were known should pick them up, which is the whole point of
   // migrating rather than returning it verbatim.
   const base = withMeasured(defaultRigModel(boat))
-  return {
+  // deriveBaselines AFTER the merge: a stored model may supply the two inputs
+  // that pin mast-to-stern down, and merging happens after withMeasured ran.
+  return deriveBaselines({
     ...base,
     ...stored,
     depths: { ...base.depths, ...stored.depths },
     widths: { ...(base.widths || {}), ...(stored.widths || {}) },
     scaleRefs: stored.scaleRefs?.length ? stored.scaleRefs : base.scaleRefs,
     baselines: stored.baselines?.length ? stored.baselines : base.baselines,
-  }
+  })
 }
 
 export function loadRigModel(boat: string): RigModel | null {
@@ -379,6 +464,59 @@ export function rigModelFor(boat: string): RigModel {
   // are present rather than silently missing. Otherwise the default, with
   // anything measured for this boat written over the guesses.
   return loadRigModel(boat) ?? withMeasured(defaultRigModel(boat))
+}
+
+// ── the cloud copy ──────────────────────────────────────────────────────────
+// `boats.rig_model`, reached through /api/boats/rig-model. localStorage above is
+// the CACHE and the fallback, not the record: a dimension somebody measured on
+// the dock has to reach the rest of the team, and a per-browser store cannot do
+// that. Same lesson as a photo's instrument data, which is only in the cloud if
+// it was put there at import (CLAUDE.md).
+//
+// Writes are coach-only, per `boats_update`. The route says so in `canEdit`
+// rather than letting a viewer discover it from a save that appeared to work.
+
+export interface CloudRigModel {
+  rigModel: RigModel | null
+  canEdit: boolean
+  /** Null when the boat is not found, or not reachable by this caller. */
+  boatId: string | null
+}
+
+/**
+ * The boat's model from the cloud, brought forward onto the current shape.
+ *
+ * Returns null on ANY failure — offline, unauthenticated, no such boat — because
+ * every caller's fallback is the same: use the local one. Distinguishing the
+ * reasons here would only move the decision somewhere that cannot act on it.
+ */
+export async function fetchRigModel(boat: string): Promise<CloudRigModel | null> {
+  if (!boat.trim() || typeof fetch === 'undefined') return null
+  try {
+    const r = await fetch(`/api/boats/rig-model?boat=${encodeURIComponent(boat)}`)
+    if (!r.ok) return null
+    const j = await r.json() as { rigModel: RigModel | null; canEdit?: boolean; boatId?: string | null }
+    return {
+      rigModel: j.rigModel ? migrateRigModel(j.rigModel, j.rigModel.boat || boat) : null,
+      canEdit: j.canEdit === true,
+      boatId: j.boatId ?? null,
+    }
+  } catch { return null }
+}
+
+/** Store it for the whole team. Resolves to null on success, or a reason. */
+export async function putRigModel(boat: string, m: RigModel): Promise<string | null> {
+  if (!boat.trim() || typeof fetch === 'undefined') return 'no boat'
+  try {
+    const r = await fetch('/api/boats/rig-model', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ boat, model: { ...m, updatedAt: new Date().toISOString() } }),
+    })
+    if (r.ok) return null
+    const j = await r.json().catch(() => ({})) as { error?: string }
+    return j.error || `HTTP ${r.status}`
+  } catch (e) { return e instanceof Error ? e.message : 'network' }
 }
 
 // ── serialisation, for handing a model to someone else ──────────────────────
