@@ -61,6 +61,7 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
 
   const isBar = spec.kind === 'bar'
   const isScatter = spec.kind === 'scatter'
+  const isHistogram = spec.kind === 'histogram'
   // A bar chart that does not start at zero misleads by construction — but a
   // percentage-of-polar chart that DOES start at zero shows nothing, because the
   // interesting range is 90–105. Zero-based unless every value is far from zero.
@@ -69,13 +70,15 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
   const refMin = refValues.length ? Math.max(Math.min(...refValues), dataMin - dataSpan) : dataMin
   const refMax = refValues.length ? Math.min(Math.max(...refValues), dataMax + dataSpan) : dataMax
   const spread = Math.max(dataMax, refMax) - Math.min(dataMin, refMin)
-  const zeroBased = isBar && !isScatter && dataMin >= 0 && dataMin < spread * 2
+  // A histogram counts things, and a count axis that does not start at zero makes
+  // a bar three times taller than the one beside it for a difference of one.
+  const zeroBased = (isBar && !isScatter) || isHistogram
   const lo = zeroBased ? 0 : Math.min(dataMin, refMin) - spread * 0.15 || dataMin - 1
   const hi = Math.max(dataMax, refMax) + spread * 0.15 || dataMax + 1
 
   // ~4.6 units per character at font-size 8 in this viewBox. If the longest label
   // will not sit inside its slot, the whole axis tilts rather than overlapping.
-  const catLabels = isBar ? spec.series[0].points.map(p => shortLabel(String(p.x))) : []
+  const catLabels = isBar && !isHistogram ? spec.series[0].points.map(p => shortLabel(String(p.x))) : []
   const widest = catLabels.reduce((a, t) => Math.max(a, t.length), 0) * 4.6
   const slotW = catLabels.length ? (VB_W - 54) / catLabels.length : VB_W
   // 0.9, not 1.0: "fits" has to mean visibly separated, not merely not-overlapping.
@@ -86,7 +89,7 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
   const py = v => pad.t + H - ((v - lo) / (hi - lo || 1)) * H
   const ticks = niceTicks(lo, hi)
 
-  const categories = isBar ? spec.series[0].points.map(p => String(p.x)) : []
+  const categories = isBar && !isHistogram ? spec.series[0].points.map(p => String(p.x)) : []
   const multi = spec.series.length > 1
 
   return (
@@ -94,15 +97,15 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
       <figcaption style={{ fontSize: 11, color: '#CBD5E1', fontWeight: 600, marginBottom: 2 }}>
         {spec.title}{spec.unit ? <span style={{ color: C.dim, fontWeight: 400 }}> ({spec.unit})</span> : null}
       </figcaption>
-      {(multi || isScatter) && (
+      {(multi || isScatter || isHistogram) && (
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 3 }}>
           {spec.series.map((s, i) => (
             <span key={s.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: C.text }}>
-              <span style={{ width: 8, height: 8, borderRadius: isScatter ? 8 : 2, background: colorFor(s.label, i) }} />
+              <span style={{ width: 8, height: 8, borderRadius: isScatter ? 8 : 2, background: isHistogram ? SERIES[0] : colorFor(s.label, i) }} />
               {s.label}
               {/* Never a trend without the n behind it and how much of the
                   scatter it actually explains. */}
-              {isScatter && s.n != null && <span style={{ color: C.dim }}>· {s.n}</span>}
+              {(isScatter || isHistogram) && s.n != null && <span style={{ color: C.dim }}>· {s.n}</span>}
               {isScatter && s.trend && <span style={{ color: C.dim }}>· R² {s.trend.r2.toFixed(2)}</span>}
             </span>
           ))}
@@ -124,7 +127,43 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
         ))}
         <line x1={pad.l} x2={VB_W - pad.r} y1={pad.t + H} y2={pad.t + H} stroke={C.axis} strokeWidth="1" />
 
-        {isScatter ? (() => {
+        {isHistogram ? (() => {
+          const pts = spec.series[0]?.points || []
+          const bw = spec.binWidth || 0
+          const xsH = pts.map(p => Number(p.x)).filter(Number.isFinite)
+          const refXs = (spec.refLines || []).flatMap(r => r.points.map(p => p.x)).filter(Number.isFinite)
+          const lox = Math.min(...xsH, ...refXs) - bw / 2
+          const hix = Math.max(...xsH, ...refXs) + bw / 2
+          const px = x => pad.l + ((Number(x) - lox) / ((hix - lox) || 1)) * W
+          const barW = Math.max(1, px(lox + bw) - px(lox) - 1)
+          const base = py(Math.max(lo, 0))
+          return (
+            <>
+              {pts.map((p, i) => (
+                p.y == null ? null : (
+                  <rect key={i} x={px(p.x) - barW / 2} y={py(p.y)} width={barW}
+                    height={Math.max(0, base - py(p.y))} fill={SERIES[0]} opacity="0.75" rx="1">
+                    <title>{`${(Number(p.x) - bw / 2).toFixed(2)}–${(Number(p.x) + bw / 2).toFixed(2)}${spec.xUnit ? ` ${spec.xUnit}` : ''}: ${p.y}`}</title>
+                  </rect>
+                )
+              ))}
+              {/* The fitted bell, over the bars it is fitted to — the gap between
+                  them is the point of drawing it at all. */}
+              {(spec.refLines || []).map(ref => {
+                const inside = ref.points.filter(p => p.x >= lox && p.x <= hix && p.y >= lo && p.y <= hi)
+                if (inside.length < 2) return null
+                return (
+                  <polyline key={ref.label} points={inside.map(p => `${px(p.x)},${py(p.y)}`).join(' ')}
+                    fill="none" stroke={ref.color || '#F59E0B'} strokeWidth="1.6"
+                    strokeDasharray={ref.dashed ? '4,3' : undefined} opacity="0.9" />
+                )
+              })}
+              {niceTicks(lox, hix, 4).map(t => (
+                <text key={`hx${t}`} x={px(t)} y={pad.t + H + 12} textAnchor="middle" fontSize="8" fill={C.text}>{t}</text>
+              ))}
+            </>
+          )
+        })() : isScatter ? (() => {
           const xs = spec.series.flatMap(s => s.points.map(p => Number(p.x))).filter(Number.isFinite)
           const x0 = Math.min(...xs), x1 = Math.max(...xs)
           const xpad = (x1 - x0) * 0.06 || 1

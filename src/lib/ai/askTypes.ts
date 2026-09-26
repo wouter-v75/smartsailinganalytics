@@ -48,7 +48,7 @@ export interface ChartSeries {
 }
 
 export interface ChartSpec {
-  kind: 'bar' | 'line' | 'scatter'
+  kind: 'bar' | 'line' | 'scatter' | 'histogram'
   title: string
   xType: 'category' | 'time' | 'number'
   xLabel: string
@@ -59,6 +59,8 @@ export interface ChartSpec {
   series: ChartSeries[]
   /** Set for a time axis: x values are UTC ms, to be shown at this offset. */
   tzOffsetMin?: number
+  /** Histogram only: the bin width in x units, so bars can be drawn to touch. */
+  binWidth?: number
   /**
    * Context lines drawn behind the data — the polar target, the season median.
    * They are NOT series: they have no dots, no n and no trend, because they are

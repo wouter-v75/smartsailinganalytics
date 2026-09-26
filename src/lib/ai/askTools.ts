@@ -21,14 +21,18 @@
 
 import type { ToolSpec } from './scaleway'
 
-export type ToolName = 'compare_phases' | 'rank_drivers' | 'scatter_phases' | 'day_timeseries' | 'list_manoeuvres' | 'find_media' | 'search_notes'
-export const TOOL_NAMES: ToolName[] = ['compare_phases', 'rank_drivers', 'scatter_phases', 'day_timeseries', 'list_manoeuvres', 'find_media', 'search_notes']
+export type ToolName = 'compare_phases' | 'rank_drivers' | 'scatter_phases' | 'manoeuvre_stats' | 'day_timeseries' | 'list_manoeuvres' | 'find_media' | 'search_notes'
+export const TOOL_NAMES: ToolName[] = ['compare_phases', 'rank_drivers', 'scatter_phases', 'manoeuvre_stats', 'day_timeseries', 'list_manoeuvres', 'find_media', 'search_notes']
 
 export const MODES = ['up', 'down', 'reach'] as const
 export const TACKS = ['port', 'stbd'] as const
 export const GROUP_KEYS = ['mode', 'tack', 'sailCombo', 'race', 'twsBand', 'twaBand', 'heelBand', 'date'] as const
 export const MEDIA_KINDS = ['photo', 'video', 'sailscan', 'tag'] as const
 export const MANOEUVRE_KINDS = ['tack', 'gybe', 'all'] as const
+/** What can be measured about one tack or gybe. */
+export const MANOEUVRE_METRICS_ASKABLE = ['turnRate', 'maxRotation', 'turnAngle', 'timeTo95', 'distLost', 'bspBefore', 'bspAfter', 'tws'] as const
+/** How a manoeuvre chart's points are split into coloured series. */
+export const MANOEUVRE_SPLITS = ['kind', 'tack', 'date', 'sails', 'none'] as const
 /** How a scatter's dots are split into coloured series. */
 export const SPLIT_KEYS = ['tack', 'sailCombo', 'mode', 'date', 'none'] as const
 
@@ -80,6 +84,20 @@ export interface RankDriversArgs extends PhaseFilters {
   minPerBand: number
 }
 
+export interface ManoeuvreStatsArgs {
+  metric: string
+  /** Given, the chart is a scatter of metric against this; omitted, a distribution. */
+  against?: string
+  kind: 'tack' | 'gybe' | 'all'
+  splitBy: 'kind' | 'tack' | 'date' | 'sails' | 'none'
+  dateFrom?: string
+  dateTo?: string
+  race?: number
+  twsMin?: number
+  twsMax?: number
+  bins?: number
+}
+
 export interface ScatterPhasesArgs extends PhaseFilters {
   x: string
   y: string
@@ -120,7 +138,7 @@ export interface SearchNotesArgs {
   limit: number
 }
 
-export type ToolArgs = ComparePhasesArgs | RankDriversArgs | ScatterPhasesArgs | DayTimeseriesArgs | ListManoeuvresArgs | FindMediaArgs | SearchNotesArgs
+export type ToolArgs = ComparePhasesArgs | RankDriversArgs | ManoeuvreStatsArgs | ScatterPhasesArgs | DayTimeseriesArgs | ListManoeuvresArgs | FindMediaArgs | SearchNotesArgs
 
 export type Validated =
   | { ok: true; name: ToolName; args: ToolArgs }
@@ -230,6 +248,39 @@ export const TOOLS: ToolSpec[] = [
           ...FILTER_PROPS,
         },
         required: ['x', 'y'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'manoeuvre_stats',
+      description:
+        'Everything about the TACKS AND GYBES themselves, one point per manoeuvre rather than per phase. '
+        + 'Leave "against" out and it returns the SPREAD of the metric — a histogram with a normal curve fitted over it, '
+        + 'which is what "a bell curve of the rate of turn of all tacks" asks for. '
+        + 'Give "against" and it returns a scatter of the metric against that, with a trend line: "rate of turn versus TWS". '
+        + 'Metrics: turnRate (degrees per second through the turn itself, measured over the 6 s centred on the moment the apparent '
+        + 'wind crosses the bow), maxRotation (the single fastest step between two samples — a peak, not an average), '
+        + 'turnAngle, timeTo95 (seconds back to 95 % of the entry speed), distLost (metres lost against the wind), '
+        + 'bspBefore, bspAfter, tws. '
+        + 'turnRate needs a log sampled at 3 s or finer and is absent on coarser days; the result says how many manoeuvres carried it. '
+        + 'For a whole season give dateFrom and dateTo spanning the stored days in the context.',
+      parameters: {
+        type: 'object',
+        properties: {
+          metric: { type: 'string', enum: [...MANOEUVRE_METRICS_ASKABLE], description: 'What is being measured about each tack or gybe.' },
+          against: { type: 'string', enum: [...MANOEUVRE_METRICS_ASKABLE], description: 'Omit for a distribution. Give it — usually tws — for a scatter of metric against it.' },
+          kind: { type: 'string', enum: [...MANOEUVRE_KINDS], description: 'tack, gybe, or all. Default all; say which when the question does.' },
+          splitBy: { type: 'string', enum: [...MANOEUVRE_SPLITS], description: 'What the colours mean. Default "kind" so tacks and gybes are never averaged together.' },
+          dateFrom: ISO_DATE,
+          dateTo: ISO_DATE,
+          race: { type: 'integer', description: 'Keep one race, 1-based.' },
+          twsMin: { type: 'number', description: 'Lowest true wind speed in knots at the manoeuvre.' },
+          twsMax: { type: 'number', description: 'Highest true wind speed in knots at the manoeuvre.' },
+          bins: { type: 'integer', description: 'Histogram bars. Omit to let it choose from the sample size.' },
+        },
+        required: ['metric'],
       },
     },
   },
@@ -433,6 +484,40 @@ export function validate(name: string, argumentsRaw: string): Validated {
     return { ok: true, name, args }
   }
 
+  if (name === 'manoeuvre_stats') {
+    const metric = oneOf(o.metric, MANOEUVRE_METRICS_ASKABLE)
+    if (!metric) {
+      return { ok: false, error: `manoeuvre_stats needs "metric" — one of: ${MANOEUVRE_METRICS_ASKABLE.join(', ')}.` }
+    }
+    const against = oneOf(o.against, MANOEUVRE_METRICS_ASKABLE)
+    if (against && against === metric) {
+      return { ok: false, error: 'manoeuvre_stats cannot plot a metric against itself. Leave "against" out for a distribution of it.' }
+    }
+    const args: ManoeuvreStatsArgs = {
+      metric,
+      kind: oneOf(o.kind, MANOEUVRE_KINDS) ?? 'all',
+      // Tacks and gybes are different manoeuvres; averaging them into one bell is
+      // the mistake this default exists to prevent.
+      splitBy: oneOf(o.splitBy, MANOEUVRE_SPLITS) ?? 'kind',
+    }
+    if (against) args.against = against
+    const race = int(o.race); if (race != null && race > 0) args.race = race
+    for (const k of ['twsMin', 'twsMax'] as const) {
+      const v = num(o[k]); if (v != null) args[k] = v
+    }
+    if (args.twsMin != null && args.twsMax != null && args.twsMin > args.twsMax) {
+      const t = args.twsMin; args.twsMin = args.twsMax; args.twsMax = t
+    }
+    const bins = int(o.bins); if (bins != null && bins >= 3) args.bins = clamp(bins, 3, 30)
+    const from = date(o.dateFrom), to = date(o.dateTo)
+    if (from) args.dateFrom = from
+    if (to) args.dateTo = to
+    if (args.dateFrom && args.dateTo && args.dateFrom > args.dateTo) {
+      const t = args.dateFrom; args.dateFrom = args.dateTo; args.dateTo = t
+    }
+    return { ok: true, name, args }
+  }
+
   if (name === 'scatter_phases') {
     const x = asStrings(o.x)[0] || (typeof o.x === 'string' ? o.x.trim() : '')
     const y = asStrings(o.y)[0] || (typeof o.y === 'string' ? o.y.trim() : '')
@@ -616,6 +701,39 @@ export function tokensFor(name: ToolName, args: ToolArgs, openDate?: string | nu
       { path: 'target', label: 'Optimising', text: `for ${a.target}`, kind: 'text', value: a.target, editable: true },
       { path: 'bands', label: 'Bands per channel', text: `${a.bands} bands`, kind: 'number', value: a.bands, editable: true },
       { path: 'minPerBand', label: 'Fewest phases per band', text: `at least ${a.minPerBand} per band`, kind: 'number', value: a.minPerBand, editable: true },
+    ]
+  }
+  if (name === 'manoeuvre_stats') {
+    const a = args as ManoeuvreStatsArgs
+    return [
+      ...dateTokens(a.dateFrom, a.dateTo, openDate),
+      {
+        path: 'kind', label: 'Manoeuvres', kind: 'enum', value: a.kind,
+        text: a.kind === 'all' ? 'tacks and gybes' : a.kind === 'tack' ? 'tacks' : 'gybes',
+        options: [{ value: 'tack', label: 'tacks' }, { value: 'gybe', label: 'gybes' }, { value: 'all', label: 'tacks and gybes' }],
+        editable: true,
+      },
+      {
+        path: 'metric', label: 'Measuring', kind: 'enum', value: a.metric,
+        text: a.against ? `${a.metric} against ${a.against}` : `spread of ${a.metric}`,
+        options: [...MANOEUVRE_METRICS_ASKABLE].map(m => ({ value: m, label: m })), editable: true,
+      },
+      ...(a.twsMin != null || a.twsMax != null
+        ? [{
+            path: 'tws', label: 'TWS', unit: 'kn', kind: 'number' as const,
+            text: a.twsMin != null && a.twsMax != null ? `TWS ${a.twsMin}–${a.twsMax} kn`
+              : a.twsMin != null ? `TWS over ${a.twsMin} kn` : `TWS under ${a.twsMax} kn`,
+            value: [a.twsMin == null ? '' : String(a.twsMin), a.twsMax == null ? '' : String(a.twsMax)],
+            editable: true,
+          }]
+        : []),
+      ...(a.race != null ? [{ path: 'race', label: 'Race', text: `Race ${a.race}`, kind: 'number' as const, value: a.race, editable: true }] : []),
+      {
+        path: 'splitBy', label: 'Colours', kind: 'enum', value: a.splitBy,
+        text: a.splitBy === 'none' ? 'one colour' : `coloured by ${a.splitBy}`,
+        options: [...MANOEUVRE_SPLITS].map(k => ({ value: k, label: k === 'none' ? 'one colour' : k })),
+        editable: true,
+      },
     ]
   }
   if (name === 'scatter_phases') {

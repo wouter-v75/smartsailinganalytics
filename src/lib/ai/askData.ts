@@ -28,10 +28,11 @@ import { linearTrend, polarTargetLine } from '../phasePlot'
 import { seasonCurves } from '../seasonCurves'
 import { polarFromData } from '../polarFile'
 import { rankDrivers } from './drivers'
+import { distribution, normalCurve, shapeNote } from './distribution'
 import { matchesSail, vocabularyBlock } from './vocabulary'
 import type {
   ComparePhasesArgs, DayTimeseriesArgs, FindMediaArgs, ListManoeuvresArgs,
-  PhaseFilters, RankDriversArgs, ScatterPhasesArgs, SearchNotesArgs, ToolArgs, ToolName,
+  ManoeuvreStatsArgs, PhaseFilters, RankDriversArgs, ScatterPhasesArgs, SearchNotesArgs, ToolArgs, ToolName,
 } from './askTools'
 import type { AnswerColumn, AnswerTable, ChartSeries, ChartSpec, MediaItem, ToolResult } from './askTypes'
 import { emptyResult } from './askTypes'
@@ -364,6 +365,194 @@ export function buildScatter(
   }
 }
 
+// ── manoeuvre_stats ──────────────────────────────────────────────────────────
+// One point per tack or gybe. Two shapes from one tool, because they are two
+// readings of the same list: the SPREAD of a metric (a histogram with a normal
+// curve fitted over it — "a bell curve of the rate of turn of all tacks"), or the
+// metric AGAINST another one (a scatter with a trend — "rate of turn versus TWS").
+
+type DatedManoeuvre = Manoeuvre & { date: string }
+
+const MAN_LABEL: Record<string, { label: string; unit: string; decimals: number }> = {
+  turnRate: { label: 'Rate of turn', unit: '°/s', decimals: 2 },
+  maxRotation: { label: 'Max rotation', unit: '°/s', decimals: 2 },
+  turnAngle: { label: 'Turn angle', unit: '°', decimals: 1 },
+  timeTo95: { label: 'Time to 95% BSP', unit: 's', decimals: 1 },
+  distLost: { label: 'Distance lost', unit: 'm', decimals: 1 },
+  bspBefore: { label: 'BSP before', unit: 'kn', decimals: 2 },
+  bspAfter: { label: 'BSP at +20 s', unit: 'kn', decimals: 2 },
+  tws: { label: 'TWS', unit: 'kn', decimals: 1 },
+}
+const ml = (k: string) => MAN_LABEL[k] || { label: k, unit: '', decimals: 2 }
+
+const manSeries = (m: DatedManoeuvre, splitBy: string): string => {
+  if (splitBy === 'kind') return m.kind === 'tack' ? 'Tacks' : 'Gybes'
+  if (splitBy === 'tack') return m.from === 'port' ? 'From port' : m.from === 'stbd' ? 'From stbd' : '—'
+  if (splitBy === 'date') return m.date
+  if (splitBy === 'sails') return m.sails || '—'
+  return 'All'
+}
+
+export function buildManoeuvreStats(
+  all: DatedManoeuvre[],
+  a: ManoeuvreStatsArgs,
+  from: string,
+  to: string,
+): ToolResult {
+  const kept = all.filter(m => {
+    if (a.kind !== 'all' && m.kind !== a.kind) return false
+    if (a.race != null && m.race !== a.race) return false
+    if (!within(m.tws, a.twsMin, a.twsMax)) return false
+    return true
+  })
+  if (!kept.length) {
+    return emptyResult('', `No ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`} between ${from} and ${to} match that filter.`)
+  }
+
+  const num_ = (m: DatedManoeuvre, k: string) => {
+    const v = (m as unknown as Record<string, unknown>)[k]
+    return typeof v === 'number' && Number.isFinite(v) ? v : null
+  }
+  const withMetric = kept.filter(m => num_(m, a.metric) != null)
+  const span = from === to ? from : `${from} to ${to}`
+
+  // turnRate is absent on any day logged coarser than ~3 s, and that is most of
+  // them. Saying how many carried it is the difference between "the season tacks
+  // at 6.3 °/s" and "the eighth of the season we can measure does".
+  const days = new Set(kept.map(m => m.date)).size
+  const metricDays = new Set(withMetric.map(m => m.date)).size
+  const coverage = withMetric.length < kept.length
+    ? ` ${ml(a.metric).label} is on ${withMetric.length} of ${kept.length} ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`}`
+      + (days > 1 ? ` and ${metricDays} of ${days} days` : '')
+      + (a.metric === 'turnRate' ? ' — it needs a log sampled at 3 s or finer, and the coarser days cannot carry it' : '')
+      + '. Say so in the answer.'
+    : ''
+
+  if (!withMetric.length) {
+    return emptyResult('', `None of the ${kept.length} ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`} between ${from} and ${to} has ${ml(a.metric).label}`
+      + (a.metric === 'turnRate' ? ' — every day in range is logged too coarsely for it (it needs 3 s or finer).' : '.'))
+  }
+
+  const keys: string[] = []
+  for (const m of withMetric) {
+    const k = manSeries(m, a.splitBy)
+    if (!keys.includes(k)) keys.push(k)
+  }
+  keys.sort()
+
+  // ── against: a scatter ─────────────────────────────────────────────────────
+  if (a.against) {
+    const pts = withMetric.filter(m => num_(m, a.against!) != null)
+    if (pts.length < 3) {
+      return emptyResult('', `Only ${pts.length} ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`} have both ${ml(a.metric).label} and ${ml(a.against).label}.`)
+    }
+    const series: ChartSeries[] = []
+    const rows: (string | number | null)[][] = []
+    for (const k of keys) {
+      const own = pts.filter(m => manSeries(m, a.splitBy) === k)
+      if (!own.length) continue
+      const xs = own.map(m => ({ x: num_(m, a.against!)!, y: num_(m, a.metric)! }))
+      const trend = linearTrend(xs)
+      series.push({
+        label: k, n: own.length, trend,
+        points: xs.map(q => ({ x: round(q.x, ml(a.against!).decimals), y: round(q.y, ml(a.metric).decimals) })),
+      })
+      const mean = (v: number[]) => v.reduce((s, x) => s + x, 0) / v.length
+      rows.push([
+        k, own.length,
+        round(mean(xs.map(q => q.x)), ml(a.against!).decimals),
+        round(mean(xs.map(q => q.y)), ml(a.metric).decimals),
+        trend ? round(trend.slope, 3) : null,
+        trend ? round(trend.r2, 2) : null,
+      ])
+    }
+    const table: AnswerTable = {
+      title: `${ml(a.metric).label} against ${ml(a.against).label}, ${span}`,
+      columns: [
+        { key: 'series', label: a.splitBy === 'none' ? 'All' : a.splitBy, group: true },
+        { key: 'n', label: 'n' },
+        { key: 'meanX', label: `mean ${ml(a.against).label}`, unit: ml(a.against).unit, decimals: ml(a.against).decimals },
+        { key: 'meanY', label: `mean ${ml(a.metric).label}`, unit: ml(a.metric).unit, decimals: ml(a.metric).decimals },
+        { key: 'slope', label: 'trend slope', decimals: 3 },
+        { key: 'r2', label: 'R²', decimals: 2 },
+      ],
+      rows,
+    }
+    return {
+      summary: `${pts.length} ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`} over ${span}.${coverage}`,
+      tables: [table],
+      media: [],
+      charts: [{
+        kind: 'scatter',
+        title: `${ml(a.metric).label} vs ${ml(a.against).label}`,
+        xType: 'number',
+        xLabel: ml(a.against).label, xUnit: ml(a.against).unit,
+        yLabel: ml(a.metric).label, unit: ml(a.metric).unit,
+        series,
+      }],
+    }
+  }
+
+  // ── no against: the distribution ───────────────────────────────────────────
+  // One histogram, of everything kept, with the fitted bell over it. Split only
+  // ever separates the SUMMARY rows: two overlaid histograms are unreadable, and
+  // the per-series means are what answers "are the gybes different".
+  const values = withMetric.map(m => num_(m, a.metric)!)
+  const dist = distribution(values, a.bins)
+  if (!dist) {
+    return emptyResult('', `Only ${values.length} of them have ${ml(a.metric).label} — too few to show a spread.`)
+  }
+  const dec = ml(a.metric).decimals
+
+  const binTable: AnswerTable = {
+    title: `${ml(a.metric).label} spread, ${span}`,
+    columns: [
+      { key: 'band', label: `${ml(a.metric).label} band`, unit: ml(a.metric).unit, group: true },
+      { key: 'n', label: 'n' },
+    ],
+    rows: dist.bins.map(b => [`${round(b.lo, dec)}–${round(b.hi, dec)}`, b.n]),
+  }
+  const bySeries: AnswerTable = {
+    title: `${ml(a.metric).label} by ${a.splitBy === 'none' ? 'all' : a.splitBy}`,
+    columns: [
+      { key: 'series', label: a.splitBy === 'none' ? 'All' : a.splitBy, group: true },
+      { key: 'n', label: 'n' },
+      { key: 'mean', label: 'mean', unit: ml(a.metric).unit, decimals: dec },
+      { key: 'median', label: 'median', unit: ml(a.metric).unit, decimals: dec },
+      { key: 'sd', label: 'spread (sd)', unit: ml(a.metric).unit, decimals: dec },
+    ],
+    rows: keys.map(k => {
+      const own = withMetric.filter(m => manSeries(m, a.splitBy) === k).map(m => num_(m, a.metric)!)
+      const dk = distribution(own, a.bins)
+      return [k, own.length,
+        dk ? round(dk.mean, dec) : null,
+        dk ? round(dk.median, dec) : null,
+        dk ? round(dk.sd, dec) : null]
+    }),
+  }
+
+  const shape = shapeNote(dist)
+  return {
+    summary: `${dist.n} ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`} over ${span}. `
+      + `${ml(a.metric).label}: mean ${round(dist.mean, dec)}, median ${round(dist.median, dec)}, `
+      + `spread ${round(dist.sd, dec)} ${ml(a.metric).unit}, from ${round(dist.min, dec)} to ${round(dist.max, dec)}.`
+      + (shape ? ` The curve is the normal fitted to that mean and spread — ${shape}.` : ' The curve is the normal fitted to that mean and spread.')
+      + coverage,
+    tables: [bySeries, binTable],
+    media: [],
+    charts: [{
+      kind: 'histogram',
+      title: `${ml(a.metric).label} across ${dist.n} ${a.kind === 'all' ? 'manoeuvres' : `${a.kind}s`}`,
+      xType: 'number',
+      xLabel: ml(a.metric).label, xUnit: ml(a.metric).unit,
+      yLabel: 'manoeuvres', unit: '',
+      binWidth: dist.binWidth,
+      series: [{ label: ml(a.metric).label, n: dist.n, points: dist.bins.map(b => ({ x: b.centre, y: b.n })) }],
+      refLines: [{ label: 'normal fit', color: '#F59E0B', dashed: true, points: normalCurve(dist) }],
+    }],
+  }
+}
+
 // ── rank_drivers ─────────────────────────────────────────────────────────────
 // "What is the dominant parameter to get right for optimum VMG% in 12-14 kn?"
 //
@@ -548,6 +737,15 @@ export function makeExecutor(d: AskDeps) {
         tables: [table],
         media: [],
       }
+    }
+
+    if (name === 'manoeuvre_stats') {
+      const a = args as ManoeuvreStatsArgs
+      const [from, to] = dayRange(a.dateFrom, a.dateTo)
+      const days = await loadDays(d, from, to)
+      const list = days.flatMap(day => (day.manoeuvres || []).map(m => ({ ...m, date: day.date })))
+      if (!list.length) return emptyResult('', `No stored manoeuvres between ${from} and ${to}.`)
+      return buildManoeuvreStats(list, a, from, to)
     }
 
     if (name === 'rank_drivers') {

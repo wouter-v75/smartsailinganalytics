@@ -436,6 +436,7 @@ const TOOL_TITLE = {
   compare_phases: 'Compared the boat’s steady-state phases',
   scatter_phases: 'Plotted every phase, one dot each',
   rank_drivers: 'Ranked what moves the number most',
+  manoeuvre_stats: 'Measured every tack and gybe',
   day_timeseries: 'Read the instruments through the day',
   list_manoeuvres: 'Looked at the tacks and gybes',
   find_media: 'Looked for photos, clips and scans',

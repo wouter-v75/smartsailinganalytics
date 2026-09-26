@@ -14,6 +14,10 @@
 //                   30 s before (−35…−5 s), summed −20…+60 s. Indicative — KND's own
 //                   two methods "do not match closely" (tacks ±6 m, gybes ±45 m).
 //   Max rotation    fastest heading change between samples — coarse at 6 s steps.
+//   Turn rate       heading change over the 6 s centred on awa = 0, divided by the
+//                   span actually measured. The average through the turn, not its
+//                   peak. Null on a log coarser than ~3 s, or one whose awa is
+//                   absolute rather than signed, or with no heading column.
 // "Dist lost over GPS" is not attempted: the cloud log rounds lat/lon to 0.01° (~1 km).
 //
 // Which manoeuvres are judged (reproduces KND's 13 tacks / 5 gybes on 11 Sep):
@@ -45,7 +49,11 @@ export interface Manoeuvre {
   bspAfter: number | null
   timeTo95: number | null        // s
   distLost: number | null        // m; null when the window is contaminated (hitch, mark, gap)
-  maxRotation: number | null     // deg/s
+  maxRotation: number | null     // deg/s — the fastest step between two samples
+  // deg/s averaged across the turn itself: heading change over the 6 s centred on
+  // the moment the apparent wind crosses the bow. Null unless the log can carry it.
+  turnRate: number | null        // deg/s
+  turnRateSpan: number | null    // s — the span actually measured over, ~6
   turnAngle: number | null       // deg
   target: number                 // deg
 }
@@ -170,6 +178,69 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
     const h2 = circularMean(values(between(rows, t0, 15, 30), 'hdg'))
     const turnAngle = h1 != null && h2 != null ? angleDiff(h1, h2) : null
 
+    // ── Rate of turn through the tack ────────────────────────────────────────
+    // Over the 3 s either side of the tack itself, where "the tack" is the moment
+    // the APPARENT WIND CROSSES THE BOW (awa = 0), not the moment the detector
+    // fired: on 12 Sep the crossing lands a consistent +2.7 s after it, so timing
+    // the window on the detection would measure a different part of every turn.
+    //
+    // This is the average rate across the fastest part of the turn, and it is a
+    // different number from maxRotation, which is the single fastest step between
+    // two samples and rises with the log's own noise.
+    //
+    // IT NEEDS A FINE LOG, and says nothing rather than guessing when it does not
+    // have one: a 6 s log has one sample inside a 6 s window, and half the season
+    // is logged at 6.09 s. Both ends must land within TOL of their target, so a
+    // 2 s or 3 s log qualifies and a 4 s log does not.
+    const TOL_MS = 1500
+    // The crossing must be interpolated across a gap no wider than this…
+    const MAX_GAP_MS = 3000
+    // …and the window itself must actually be sampled, not merely have a value at
+    // each end. Three headings across 8 s admits a 3 s log, which lands samples on
+    // -3 and +3 exactly, and still rejects a 6 s one. Without this gate an irregular
+    // 6 s log passes wherever it happens to be locally dense and measures a stretch
+    // where the boat is not turning: 13 Jul returned a median 0.61 °/s — a 3.7°
+    // "tack" — from 40 of its 82.
+    const MIN_SAMPLES_IN_WINDOW = 3
+    let turnRate: number | null = null
+    let turnRateSpan: number | null = null
+    {
+      // The awa = 0 crossing nearest the detected moment, interpolated between the
+      // two samples that straddle it. Needs SIGNED awa — some log exports carry it
+      // absolute, and those simply never cross.
+      const near = between(rows, t0, -20, 20).filter(r => num(r.awa) != null)
+      let cross: number | null = null
+      for (let k = 1; k < near.length; k++) {
+        const a = num(near[k - 1].awa)!, b = num(near[k].awa)!
+        if (a === 0) { cross = near[k - 1].utc; break }
+        if (a * b >= 0) continue
+        // The crossing is only as well located as the gap it is interpolated
+        // across. Straddling samples 6 s apart place it to ±3 s, which is the whole
+        // window — so that is not a measurement, it is a guess with a decimal point.
+        if (near[k].utc - near[k - 1].utc > MAX_GAP_MS) continue
+        const f = Math.abs(a) / (Math.abs(a) + Math.abs(b))
+        const tc = near[k - 1].utc + f * (near[k].utc - near[k - 1].utc)
+        if (cross == null || Math.abs(tc - t0) < Math.abs(cross - t0)) cross = tc
+      }
+      if (cross != null) {
+        const closest = (target: number) => {
+          const near2 = between(rows, target, -TOL_MS / 1000, TOL_MS / 1000).filter(r => num(r.hdg) != null)
+          if (!near2.length) return null
+          return near2.reduce((best, r) =>
+            Math.abs(r.utc - target) < Math.abs(best.utc - target) ? r : best)
+        }
+        const covering = between(rows, cross, -4, 4).filter(r => num(r.hdg) != null)
+        const a = closest(cross - 3000), b = closest(cross + 3000)
+        if (a && b && covering.length >= MIN_SAMPLES_IN_WINDOW) {
+          const span = (b.utc - a.utc) / 1000
+          if (span > 0) {
+            turnRate = angleDiff(num(a.hdg)!, num(b.hdg)!) / span
+            turnRateSpan = span
+          }
+        }
+      }
+    }
+
     let maxRotation: number | null = null
     const turn = between(rows, t0, -12, 30)
     for (let k = 1; k < turn.length; k++) {
@@ -209,7 +280,7 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
       to: twaAfter == null ? null : twaAfter >= 0 ? 'stbd' : 'port',
       sails: sailComboLabel(activeSailsAt(xml, t0)),
       tws: mean(values(pre, 'tws')),
-      bspBefore, bspAfter, timeTo95, distLost, maxRotation, turnAngle, target: targets[f.kind],
+      bspBefore, bspAfter, timeTo95, distLost, maxRotation, turnRate, turnRateSpan, turnAngle, target: targets[f.kind],
     }
   })
 }
@@ -217,7 +288,7 @@ export function analyseManoeuvres(rows: LogRow[] | null | undefined, xml: any, o
 // Racing (or training-day) manoeuvres that aren't mark roundings — the ones KND judges.
 export const isJudged = (m: Manoeuvre) => (m.context === 'race' || m.context === 'training') && !m.atMark
 
-export const MANOEUVRE_METRICS = ['timeTo95', 'distLost', 'maxRotation', 'bspBefore', 'bspAfter', 'turnAngle'] as const
+export const MANOEUVRE_METRICS = ['timeTo95', 'distLost', 'maxRotation', 'turnRate', 'bspBefore', 'bspAfter', 'turnAngle'] as const
 export type ManoeuvreMetric = typeof MANOEUVRE_METRICS[number]
 
 export function manoeuvreAverages(list: Manoeuvre[]): Record<ManoeuvreMetric, number | null> {
