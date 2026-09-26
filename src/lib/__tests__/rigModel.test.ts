@@ -5,7 +5,7 @@ import {
   exportRigModel, importRigModel,
   luffDepthMm,
   migrateRigModel, deriveBaselines,
-  HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, migrateHeightMarks,
+  HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, migrateHeightMarks, stationsFor,
   type RigModel, type RigValue,
 } from '../rigModel'
 
@@ -342,5 +342,27 @@ describe("Northstar 76's baselines, end to end", () => {
     // It used to: all three were estimates, so ψ fell back to 0 ± 1° — and a
     // degree of ψ is ±180 mm on a boom at E.
     expect(missingFrom(m).some((x) => x.includes('baseline'))).toBe(false)
+  })
+})
+
+describe('stationsFor — which stations a sail is read at', () => {
+  it('reads the main at its draft stripes only', () => {
+    // At spreader height the main's leech is far aft (E is 10.33 m) and close to
+    // the centreplane, so the reading is small and noisy — on the 26 Sep frame
+    // main@spr1 and main@spr2 came out -281 and +163 mm, two numbers straddling
+    // zero — and a spreader carries no fraction of the hoist, so it cannot give
+    // twist either.
+    expect(stationsFor('main').map((t) => t.key)).toEqual(['stripe25', 'stripe50', 'stripe75'])
+    expect(stationsFor('main').some((t) => t.key.startsWith('spr'))).toBe(false)
+  })
+
+  it('reads the jib at stripes AND spreaders', () => {
+    // On the jib a spreader height is a real distance out near the tips, and
+    // "mast to leech at spreader 2" is the speed team's own measurement.
+    expect(stationsFor('jib').map((t) => t.key)).toEqual(HEIGHT_TAGS.map((t) => t.key))
+  })
+
+  it('leaves the spreader MARKS shared — this is only about who is read', () => {
+    expect(heightMarkKey('main', 'spr2')).toBe(heightMarkKey('jib', 'spr2'))
   })
 })

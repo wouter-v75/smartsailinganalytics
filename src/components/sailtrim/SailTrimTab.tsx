@@ -39,6 +39,7 @@ import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
   fetchRigModel, putRigModel,
   HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, isStripeTag, migrateHeightMarks,
+  stationsFor,
   LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
@@ -98,7 +99,7 @@ const OTHER_STEPS: StepDef[] = [
   ...SPREADER_TAGS.map((t): StepDef => ({
     key: `h:${t.key}`, label: t.label, min: 1, max: 1, colour: '#A78BFA',
     group: 'calibrate', optional: true,
-    hint: `Where ${t.label.toLowerCase()} meets the mast. Shared by both sails — a spreader is a rig height, so every leech you have drawn is read across it. The tag is what lets today's number be compared with the same number from another day.`,
+    hint: `Where ${t.label.toLowerCase()} meets the mast. Read across the JIB\u2019s leech only: on the main, at spreader height, the leech is far aft and close to the centreplane, so the number is small, noisy and carries no fraction of the hoist \u2014 the main is read at its draft stripes instead. The tag is what lets today\u2019s number be compared with the same number from another day.`,
   })),
   // The LUFF, at the other end of the chord. Marking it is what turns
   // "centreplane → leech" into the real thing a sail's shape is measured on.
@@ -124,7 +125,7 @@ const OTHER_STEPS: StepDef[] = [
       group: 'target', optional: true,
       hint: (sl.key === 'jib'
         ? 'Points down the JIB\u2019s leech. CHECK WHICH SAIL YOU ARE ON \u2014 the silhouette against the sky is the MAINSAIL\u2019s leech high up and the jib\u2019s lower down, and on the 5 Sept frames the two sit within ~150 mm of each other, so a reading off the wrong one looks perfectly reasonable.'
-        : 'Points down the MAINSAIL\u2019s leech. High up this is the outer silhouette against the sky; lower down the jib\u2019s leech crosses in front of it, so follow the roach rather than the outermost edge.')
+        : 'Points down the MAINSAIL\u2019s leech. High up this is the outer silhouette against the sky; lower down the jib\u2019s leech crosses in front of it, so follow the roach rather than the outermost edge. The main is read at its 25 / 50 / 75 % stripes ONLY \u2014 not at the spreaders.')
         + ' The stripe marks below are already leech points and are counted here, so this is only for EXTRA shaping \u2014 worth it to carry the curve past a spreader that sits above or below your stripes.',
     },
     ...STRIPE_TAGS.map((t): StepDef => ({
@@ -785,7 +786,8 @@ export default function SailTrimTab(
       const sails = edge === 'leech' ? LEECH_SAILS : LUFF_SAILS;
       for (const sl of sails) {
         const poly = edge === 'leech' ? leechPolyline(sl.key) : (marks[`${edge}:${sl.key}`] || []);
-        for (const t of HEIGHT_TAGS) {
+        // The main is read at its stripes only — see stationsFor.
+        for (const t of stationsFor(sl.key)) {
           // A stripe is this sail's own; a spreader is the rig's, shared.
           const at = (marks[heightMarkKey(sl.key, t.key)] || [])[0];
           if (!at) continue;
@@ -1833,7 +1835,7 @@ export default function SailTrimTab(
             // A spreader key repeats across sails, so dedupe rather than spread a
             // Set — this file's tsconfig target predates downlevelIteration.
             const stationKeys = Array.from(new Set(
-              HEIGHT_TAGS.flatMap((t) => LEECH_SAILS.map((sl) => heightMarkKey(sl.key, t.key))),
+              LEECH_SAILS.flatMap((sl) => stationsFor(sl.key).map((t) => heightMarkKey(sl.key, t.key))),
             ));
             const anyStation = stationKeys.some((k) => (marks[k] || []).length > 0);
             if (!anyStation) return null;
@@ -1865,7 +1867,7 @@ export default function SailTrimTab(
             // whether the main reaches the jib's 50 % stripe is meaningless —
             // they are different heights, and the main is not marked at one.
             const markedFor = (sail: string) =>
-              HEIGHT_TAGS.filter((t) => (marks[heightMarkKey(sail, t.key)] || []).length > 0);
+              stationsFor(sail).filter((t) => (marks[heightMarkKey(sail, t.key)] || []).length > 0);
             if (!LEECH_SAILS.some((sl) => markedFor(sl.key).length)) return null;
             const gaps = LEECH_SAILS
               .filter((sl) => leechPolyline(sl.key).length >= 2)

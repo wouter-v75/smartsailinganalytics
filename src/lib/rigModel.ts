@@ -127,6 +127,25 @@ export const heightMarkKey = (sail: string, tag: string): string =>
   isStripeTag(tag) ? `h:${sail}:${tag}` : `h:${tag}`
 
 /**
+ * Which stations a sail is read at.
+ *
+ * The MAIN is read at its draft stripes only. A spreader is a useful height on
+ * the JIB's leech — it is out near the spreader tips, it is what "mast to leech
+ * at spreader 2" has always meant, and the number is a real distance. On the
+ * main it is not: at spreader height the main's leech is far aft (E is 10.33 m
+ * on Northstar) and close to the centreplane, so the reading is small, noisy,
+ * and carries no fraction of the hoist, which means it cannot give twist either.
+ * On the 26 Sep frame main@spr1 and main@spr2 came out -281 mm and +163 mm —
+ * two numbers straddling zero that say nothing about how the sail is trimmed.
+ *
+ * The spreader MARKS stay shared and are not affected; this is only about which
+ * sails get read across them.
+ */
+export function stationsFor(sail: string): typeof HEIGHT_TAGS[number][] {
+  return sail === 'main' ? [...STRIPE_TAGS] : [...HEIGHT_TAGS]
+}
+
+/**
  * Bring a saved set of marks onto the per-sail station keys.
  *
  * Shots saved before the split carry one `h:stripe50` for both sails. The jib

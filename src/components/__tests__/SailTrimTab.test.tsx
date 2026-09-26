@@ -408,10 +408,10 @@ describe('SailTrimTab', () => {
 
   it('reads every leech at every marked height, and tags each result', async () => {
     // A leech is a curve, so "the leech" is not a number until a height is
-    // named. Each sail is read at the shared spreader AND at its own 50 % stripe
-    // = four measurements, each carrying which sail and which height it is —
-    // without that tag a millimetre figure cannot be compared with the same
-    // figure from another day.
+    // named. The jib is read at the shared spreader AND at its own 50 % stripe;
+    // the main at its stripe only. Each result carries which sail and which
+    // height it is — without that tag a millimetre figure cannot be compared
+    // with the same figure from another day.
     const P = makeCamera(RIG)
     const saves: SailTrimSave[] = []
     render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
@@ -445,29 +445,32 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Main leech \u00b7 50 % stripe'))
     click(P(-6_000, 2_500, 18_000))
 
-    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(4))
+    // Three, not four: the main is read at its stripes only, so there is no
+    // main@spr2 — see stationsFor.
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/)).toHaveLength(3))
 
     fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
     await waitFor(() => expect(saves).toHaveLength(1))
     const t = saves[0].annotation.targets
 
     expect(t.map((x) => x.key).sort()).toEqual(
-      ['jib@spr2', 'jib@stripe50', 'main@spr2', 'main@stripe50'])
+      ['jib@spr2', 'jib@stripe50', 'main@stripe50'])
     expect(t.find((x) => x.key === 'jib@spr2')!.label).toBe('Jib leech @ spr 2')
     expect(t.find((x) => x.key === 'main@stripe50')!.label).toBe('Main leech @ 50 %')
+    expect(t.some((x) => x.key === 'main@spr2')).toBe(false)
 
     // Each recovers the athwartships offset it was drawn at.
     for (const k of ['jib@spr2', 'jib@stripe50']) {
       expect(Math.abs(Math.abs(t.find((x) => x.key === k)!.mm) - 1_500)).toBeLessThan(40)
     }
-    for (const k of ['main@spr2', 'main@stripe50']) {
+    for (const k of ['main@stripe50']) {
       expect(Math.abs(Math.abs(t.find((x) => x.key === k)!.mm) - 2_500)).toBeLessThan(60)
     }
 
     // The two sails are drawn in different colours, so the lines on the photo
     // say which is which without reading the labels.
-    expect(t.find((x) => x.key === 'jib@spr2')!.colour)
-      .not.toBe(t.find((x) => x.key === 'main@spr2')!.colour)
+    expect(t.find((x) => x.key === 'jib@stripe50')!.colour)
+      .not.toBe(t.find((x) => x.key === 'main@stripe50')!.colour)
 
     // And the flat fields keep the tag, which is what makes a photo list
     // filterable by "jib leech at spreader 2".
@@ -729,7 +732,7 @@ describe('SailTrimTab', () => {
       expect(within(screen.getByTestId('sailtrim-steps')).getByText('1/2')).toBeTruthy())
   })
 
-  it('keeps each sail\u2019s draft stripes to itself, but shares the spreaders', async () => {
+  it('keeps each sail\u2019s draft stripes to itself, and reads a spreader on the jib only', async () => {
     // The regression this guards. Both sails used to read at ONE set of stripe
     // stations, so marking "50 % stripe" produced a main@stripe50 AND a
     // jib@stripe50 from a single click. The main's 50 % and the jib's are at
@@ -738,8 +741,10 @@ describe('SailTrimTab', () => {
     // looked entirely correct, which is why it needs a test rather than care.
     //
     // Marking the JIB's stripe and NOT the main's must therefore give a jib
-    // stripe measurement and no main one. A spreader, which is a rig height and
-    // genuinely shared, must still give both from its single mark.
+    // stripe measurement and no main one. The shared spreader mark reaches the
+    // JIB only: on the main at spreader height the leech is far aft and near the
+    // centreplane, so the number is small, noisy and has no fraction of the
+    // hoist behind it.
     const P = makeCamera(RIG)
     const saves: SailTrimSave[] = []
     render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
@@ -763,14 +768,14 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
     click(P(-400, 1_500, 15_000))
 
-    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBeGreaterThanOrEqual(3))
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBeGreaterThanOrEqual(2))
     fireEvent.click(screen.getByTestId('sailtrim-save-to-photo'))
     await waitFor(() => expect(saves).toHaveLength(1))
     const keys = saves[0].annotation.targets.map((t) => t.key).sort()
 
-    // The shared spreader reaches both sails from one mark.
+    // The shared spreader mark reaches the jib, and deliberately not the main.
     expect(keys).toContain('jib@spr2')
-    expect(keys).toContain('main@spr2')
+    expect(keys).not.toContain('main@spr2')
     // The jib's stripe is the jib's alone.
     expect(keys).toContain('jib@stripe50')
     expect(keys).not.toContain('main@stripe50')
@@ -816,10 +821,11 @@ describe('SailTrimTab', () => {
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    // The JIB, because a spreader is read across the jib's leech only now.
     fireEvent.click(stepButton('Spreader 2'))
     click(P(0, 0, 12_000))
-    fireEvent.click(stepButton('Main leech'))
-    click(P(-6_000, 2_500, 8_000)); click(P(-6_000, 2_500, 22_000))
+    fireEvent.click(stepButton('Jib leech'))
+    click(P(-400, 1_500, 8_000)); click(P(-400, 1_500, 22_000))
     await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBeGreaterThan(0))
     expect(screen.queryByText(/No leech measurements yet/)).toBeNull()
   })
