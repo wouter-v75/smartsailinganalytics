@@ -959,11 +959,18 @@ describe('SailTrimTab', () => {
 
     const box = await screen.findByTestId('sailtrim-twist')
     expect(box).toBeTruthy()
-    // Both sails are listed, each with a dash rather than being absent.
-    expect(within(box).getByText('Main leech')).toBeTruthy()
-    expect(within(box).getByText('Jib leech')).toBeTruthy()
-    expect(within(box).getAllByText('—').length).toBe(2)
-    // And it says WHY, naming the first thing to fix.
+    // Station down the side, sail across the top, accuracy beside each.
+    expect(within(box).getByText('Main')).toBeTruthy()
+    expect(within(box).getByText('Jib')).toBeTruthy()
+    expect(within(box).getByText('Accuracy Main')).toBeTruthy()
+    expect(within(box).getByText('Accuracy jib')).toBeTruthy()
+    for (const station of ['25 %', '50 %', '75 %']) {
+      expect(within(box).getByText(station)).toBeTruthy()
+    }
+    // Every cell is a dash rather than the table being absent: 4 stations
+    // (25/50/75 % and the clew) x (2 sails + 2 accuracies).
+    expect(within(box).getAllByText('—').length).toBe(16)
+    // And it says WHY, naming the first thing to fix, per sail.
     expect(within(box).getAllByText(/no boat named/).length).toBe(2)
   })
 
@@ -998,9 +1005,13 @@ describe('SailTrimTab', () => {
       click(P(-400, 1_500, z))
     }
     const box = await screen.findByTestId('sailtrim-twist')
-    await waitFor(() => expect(within(box).getByText(/25 % \u2192 50 %/)).toBeTruthy())
-    expect(within(box).getByText(/50 % \u2192 75 %/)).toBeTruthy()
-    // The jib now has numbers; the main still shows its dash and its reason.
-    expect(within(box).getAllByText('—').length).toBe(1)
+    // The jib's column fills in, at all three stations.
+    await waitFor(() => expect(within(box).getAllByText(/^\d+\.\d°\*?$/).length).toBe(3))
+    // …and the between-station twist, which is what gets trimmed.
+    expect(within(box).getByText(/25\u219250/)).toBeTruthy()
+    // The main has no stripes marked, so its column is dashes and it says why;
+    // the jib's clew row is dashed too, because no clew was marked here.
+    expect(within(box).getAllByText('—').length).toBe(10)
+    expect(within(box).getByText(/no stripe stations marked on this sail/)).toBeTruthy()
   })
 })

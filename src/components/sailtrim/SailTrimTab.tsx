@@ -901,6 +901,12 @@ export default function SailTrimTab(
           .map((x) => ({ fraction: x.f, mm: val(x.lu) })),
       );
 
+      // The CLEW is the bottom of the leech — fraction 0, width = the foot off
+      // the certificate — so it anchors the profile instead of the lowest figure
+      // starting a quarter of the way up. Only the jib has a clew mark; the
+      // main's would be the boom's outboard end, and the `boom` mark is "the
+      // point you are measuring to", which is not necessarily that.
+      const clewMeasurement = sail === 'jib' ? measurements.find((m) => m.key === 'clew') : undefined;
       const leech = measurements
         .filter((m) => m.key.startsWith(`${sail}@`))
         .map((m) => {
@@ -926,6 +932,15 @@ export default function SailTrimTab(
           };
         })
         .filter((l) => STATION_FRACTION[l.tag] != null);
+      if (clewMeasurement) {
+        leech.push({
+          tag: 'clew' as keyof typeof STATION_FRACTION,
+          mm: val(clewMeasurement),
+          sigmaMm: sig(clewMeasurement),
+          luffMm: null,
+          luffSource: 'assumed-zero' as const,
+        });
+      }
       if (leech.length < 1) continue;
       const angles = stationAngles(sail, w, leech).map((a) => {
         const src = leech.find((l) => l.tag === a.tag);
@@ -1905,65 +1920,95 @@ export default function SailTrimTab(
               <div style={{ fontSize: 9, color: '#4ADE80', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>
                 Twist
               </div>
+              {/* Station down the side, sail across the top, each with its own
+                  accuracy — the shape the speed team already writes these in.
+                  Ordered 75 / 50 / 25 so the table reads the way the sail
+                  stands: the head at the top. */}
+              {(() => {
+                const cell = (sail: string, tag: string) =>
+                  twist.find((x) => x.sail === sail)?.angles.find((a) => a.tag === tag) ?? null;
+                const th: React.CSSProperties = { fontSize: 9.5, color: '#64748B', fontWeight: 700, textAlign: 'right', padding: '0 0 4px 8px', whiteSpace: 'nowrap' };
+                const td: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: '#E2E8F0', fontFamily: 'monospace', textAlign: 'right', padding: '3px 0 3px 8px' };
+                const tdSig: React.CSSProperties = { ...td, fontSize: 11, fontWeight: 600, color: '#64748B' };
+                return (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 6 }}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Twist</th>
+                        <th style={th}>Main</th>
+                        <th style={th}>Jib</th>
+                        <th style={th}>Accuracy Main</th>
+                        <th style={th}>Accuracy jib</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Head at the top, and the CLEW last — it is the bottom
+                          of the leech, fraction 0, so it belongs under 25 %. */}
+                      {[...[...STRIPE_TAGS].reverse().map((t) => ({ key: t.key, short: t.short })),
+                        { key: 'clew', short: 'clew' }].map((t) => {
+                        const m = cell('main', t.key), j = cell('jib', t.key);
+                        return (
+                          <tr key={t.key} style={{ borderTop: '1px solid #123253' }}>
+                            <td style={{ fontSize: 11.5, color: '#94A3B8', padding: '3px 0' }}>{t.short}</td>
+                            <td style={td}>{m ? `${m.angle.deg.toFixed(1)}°${m.width.source === 'interpolated' ? '*' : ''}` : '—'}</td>
+                            <td style={td}>{j ? `${j.angle.deg.toFixed(1)}°${j.width.source === 'interpolated' ? '*' : ''}` : '—'}</td>
+                            <td style={tdSig}>{m ? `± ${m.angle.sigmaDeg.toFixed(2)}` : '—'}</td>
+                            <td style={tdSig}>{j ? `± ${j.angle.sigmaDeg.toFixed(2)}` : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                );
+              })()}
+
+              {/* The twist BETWEEN two stations — the difference the table's
+                  column is made of, and the number that is actually trimmed. */}
+              {LEECH_SAILS.map((sl) => {
+                const t = twist.find((x) => x.sail === sl.key);
+                if (!t || !t.rows.length) return null;
+                return (
+                  <div key={`rows-${sl.key}`} style={{ fontSize: 10.5, color: '#94A3B8', fontFamily: 'monospace', marginBottom: 3 }}>
+                    {sl.label}:{' '}
+                    {t.rows.map((r) => `${r.from.replace('stripe', '')}→${r.to.replace('stripe', '')} ${r.twistDeg >= 0 ? '+' : ''}${r.twistDeg.toFixed(2)}°`).join(' · ')}
+                  </div>
+                );
+              })}
+
+              {/* Sag, the unmarked luff, and why a column is empty. */}
               {LEECH_SAILS.map((sl) => {
                 const t = twist.find((x) => x.sail === sl.key);
                 const stripesMarked = STRIPE_TAGS.filter((st) => (marks[heightMarkKey(sl.key, st.key)] || []).length > 0);
                 const haveWidths = !!rig.widths?.[sl.key as 'main' | 'jib'];
-                // Why there is no number, in the order the operator can act on.
                 const why = !boat.trim()
                   ? 'no boat named, so there are no sail widths to divide by'
                   : !haveWidths
                     ? `no widths for ${boat} — paste an IRC certificate below`
                     : stripesMarked.length === 0
-                      ? 'no stripe stations marked on this sail (a spreader has no fixed fraction of the hoist, so it cannot give twist)'
+                      ? 'no stripe stations marked on this sail'
                       : stripesMarked.length < 2
                         ? `only ${heightShort(stripesMarked[0].key)} is marked — twist is the difference BETWEEN two heights`
                         : !t || !t.angles.length
                           ? 'the stations gave no chord angle — a leech further out than the sail is wide is a mismarked point'
                           : null;
+                if (!why && !(t && t.sag.length) && !(t && !t.haveLuff && t.angles.length)) return null;
                 return (
-                  <div key={sl.key} style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 3 }}>{sl.label}</div>
-                    {t?.angles.map((a) => (
-                      <div key={a.tag} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B', fontFamily: 'monospace' }}>
-                        <span>chord @ {(a.fraction * 100).toFixed(0)} %</span>
-                        <span>
-                          {a.angle.deg.toFixed(2)}° ±{a.angle.sigmaDeg.toFixed(2)}
-                          <span style={{ color: a.width.source === 'certificate' ? '#4ADE80' : '#FCD34D', marginLeft: 6 }}>
-                            {a.width.m.toFixed(2)} m{a.width.source === 'interpolated' ? '*' : ''}
-                          </span>
-                        </span>
-                      </div>
-                    ))}
+                  <div key={`note-${sl.key}`} style={{ marginBottom: 4 }}>
                     {t && t.sag.length > 0 && (
-                      <div style={{ fontSize: 10.5, color: '#86EFAC', fontFamily: 'monospace', marginTop: 2 }}>
-                        {sl.key === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
+                      <div style={{ fontSize: 10.5, color: '#86EFAC', fontFamily: 'monospace' }}>
+                        {sl.label} {sl.key === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
                         {t.sag.map((x) => `${heightShort(x.tag)} ${Math.round(Math.abs(x.mm))}${x.source === 'fitted' ? '†' : ''}`).join(' · ')} mm
                       </div>
                     )}
                     {t && !t.haveLuff && t.angles.length > 0 && (
-                      <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 2, lineHeight: 1.4 }}>
-                        luff not marked — the chord is taken from the centreplane, which
+                      <div style={{ fontSize: 10.5, color: '#FCD34D', lineHeight: 1.4 }}>
+                        {sl.label}: luff not marked — the chord is taken from the centreplane, which
                         assumes no {sl.key === 'jib' ? 'forestay sag' : 'sideways mast bend'}.
                         {sl.key === 'jib' && ' Worth ~0.29° of twist per 100 mm.'}
                       </div>
                     )}
-                    {/* The rows, or dashes standing in for them. */}
-                    {t && t.rows.length > 0 ? t.rows.map((r) => (
-                      <div key={`${r.from}-${r.to}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 2 }}>
-                        <span>{r.from.replace('stripe', '')} % → {r.to.replace('stripe', '')} %</span>
-                        <span style={{ fontFamily: 'monospace' }}>
-                          {r.twistDeg >= 0 ? '+' : ''}{r.twistDeg.toFixed(2)}° ±{r.sigmaDeg.toFixed(2)}
-                        </span>
-                      </div>
-                    )) : (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#64748B', marginTop: 2 }}>
-                        <span>twist between stripes</span>
-                        <span style={{ fontFamily: 'monospace' }}>—</span>
-                      </div>
-                    )}
                     {why && (
-                      <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 3, lineHeight: 1.45 }}>{why}</div>
+                      <div style={{ fontSize: 10.5, color: '#FCD34D', lineHeight: 1.45 }}>{sl.label}: {why}</div>
                     )}
                   </div>
                 );

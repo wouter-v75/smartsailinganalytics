@@ -44,7 +44,20 @@ const DEG = Math.PI / 180
  * measures it there is no honest fraction to give, so twist is not offered at a
  * spreader rather than invented for one.
  */
-export const STATION_FRACTION: Record<HeightTag, number | null> = {
+/**
+ * A station can also be the CLEW — the bottom of the leech, at fraction 0.
+ *
+ * Wouter, 26 Sep: "you can use the clew position as the bottom leech point for
+ * twist calculations". It is the one station whose fraction needs no convention
+ * at all — the clew IS where the leech meets the foot — and its width is already
+ * on the certificate as the foot (HLP for the headsail, E for the main). It
+ * anchors the bottom of the profile, so a sail marked at 25/50/75 gains a fourth
+ * point and the lowest twist figure stops starting a quarter of the way up.
+ */
+export type TwistTag = HeightTag | 'clew'
+
+export const STATION_FRACTION: Record<TwistTag, number | null> = {
+  clew: 0,
   stripe25: 0.25,
   stripe50: 0.50,
   stripe75: 0.75,
@@ -96,8 +109,11 @@ export function widthAt(w: SailWidths, fraction: number): WidthAt | null {
   if (w.upper != null) pts.push([0.875, w.upper])
   if (pts.length < 2) return null
 
+  // fraction 0 included: the foot is a measured certificate width (E / HLP),
+  // not something interpolated towards. It used to be excluded here, which made
+  // the clew station report an interpolated width and an inflated sigma.
   const exact = pts.find(([f]) => Math.abs(f - fraction) < 1e-9)
-  if (exact && fraction > 0) {
+  if (exact) {
     return {
       m: exact[1],
       // A measurer's width, clicked off a certificate. 20 mm is generous.
@@ -199,8 +215,8 @@ export function chordAngle(
 export interface TwistRow {
   sail: 'main' | 'jib'
   /** The two stations, lower first. */
-  from: HeightTag
-  to: HeightTag
+  from: TwistTag
+  to: TwistTag
   fromDeg: number
   toDeg: number
   /** Positive = the sail opens (falls away to leeward) as it rises. */
@@ -212,7 +228,7 @@ export interface TwistRow {
 
 export interface StationAngle {
   sail: 'main' | 'jib'
-  tag: HeightTag
+  tag: TwistTag
   fraction: number
   leechMm: number
   width: WidthAt
@@ -230,7 +246,7 @@ export interface StationAngle {
 export function stationAngles(
   sail: 'main' | 'jib',
   widths: SailWidths,
-  leechByTag: { tag: HeightTag; mm: number; sigmaMm: number }[],
+  leechByTag: { tag: TwistTag; mm: number; sigmaMm: number }[],
 ): StationAngle[] {
   const out: StationAngle[] = []
   for (const l of leechByTag) {

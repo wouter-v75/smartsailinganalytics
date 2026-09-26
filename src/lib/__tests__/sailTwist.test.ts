@@ -244,3 +244,34 @@ describe('twist across the centreplane — light air', () => {
     expect(row.twistDeg).toBeGreaterThan(0)
   })
 })
+
+describe('the clew as the bottom leech station', () => {
+  // Wouter, 26 Sep: "you can use the clew position as the bottom leech point for
+  // twist calculations". It is the one station whose fraction needs no
+  // convention — the clew IS where the leech meets the foot — and its width is
+  // already on the certificate.
+  it('sits at fraction 0', () => {
+    expect(STATION_FRACTION.clew).toBe(0)
+  })
+
+  it('takes the FOOT width straight off the certificate, not interpolated', () => {
+    // widthAt used to exclude fraction 0 from its exact match, so the clew came
+    // back "interpolated" with the wider sigma that carries.
+    const w = widthAt(JIB, 0)!
+    expect(w.m).toBe(JIB.foot)
+    expect(w.source).toBe('certificate')
+  })
+
+  it('anchors the bottom of the profile', () => {
+    const angles = stationAngles('jib', JIB, [
+      { tag: 'clew', mm: 300, sigmaMm: 17 },
+      { tag: 'stripe25', mm: 1221, sigmaMm: 18 },
+      { tag: 'stripe50', mm: 1373, sigmaMm: 19 },
+    ])
+    expect(angles.map((a) => a.tag)).toEqual(['clew', 'stripe25', 'stripe50'])
+    const rows = twistBetween(angles)
+    // Three stations, two gaps — and the lowest now starts at the foot rather
+    // than a quarter of the way up.
+    expect(rows.map((r) => `${r.from}->${r.to}`)).toEqual(['clew->stripe25', 'stripe25->stripe50'])
+  })
+})
