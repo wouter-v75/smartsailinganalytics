@@ -169,6 +169,83 @@ export function modelSpread(dirs, speeds) {
   return { sigmaTwd: circStd(d), sigmaTws: std(s), nDir: d.length, nSpd: s.length }
 }
 
+/**
+ * Weighted mean + weighted (population) std of model values.
+ * @param {Array<{v:number, w:number}>} entries
+ * @returns {{mean:number|null, sigma:number|null, n:number, sumW:number}}
+ */
+export function weightedSpread(entries) {
+  const e = (entries || []).filter((x) => x && Number.isFinite(x.v) && Number.isFinite(x.w) && x.w > 0)
+  if (!e.length) return { mean: null, sigma: null, n: 0, sumW: 0 }
+  const sumW = e.reduce((a, x) => a + x.w, 0)
+  const m = e.reduce((a, x) => a + x.w * x.v, 0) / sumW
+  if (e.length === 1) return { mean: m, sigma: 0, n: 1, sumW }
+  const varW = e.reduce((a, x) => a + x.w * (x.v - m) ** 2, 0) / sumW
+  return { mean: m, sigma: Math.sqrt(varW), n: e.length, sumW }
+}
+
+/**
+ * TWS agreement across models, WEIGHTED by each model's skill at this venue.
+ *
+ * Why weighted: a plain std counts ARPEGE (w 0.9) the same as the SSA-Race nest and
+ * AROME (w 8.5), so one weak global wandering off dragged the day's confidence down,
+ * while the two models we actually race off agreeing bought nothing. Two terms:
+ *
+ *   sigmaKn  weighted std over every model present — the ensemble's real width, with
+ *            the heavy models setting where the centre sits.
+ *   leadKn   the spread among the LEADERS alone (the highest-weighted models present,
+ *            typically SSA-Race + AROME). This is the operational question: if those
+ *            agree the day is forecastable, and a tail of light globals disagreeing
+ *            does not change that.
+ *
+ * Leaders carry the most weight in the score for exactly that reason. The relative
+ * term stops ±1.5 kn on a 5 kn day reading as HIGH — the same absolute spread is a
+ * different race in 5 kn than in 20.
+ *
+ * @param {Array<{key?:string, label?:string, v:number, w:number}>} entries TWS in kn
+ * @param {object} [o] {leadFrac} leaders are models with w >= leadFrac * maxWeight
+ * @returns {null|{label:'HIGH'|'MODERATE'|'LOW', score10:number, sigmaKn:number,
+ *   meanKn:number, leadKn:number, leaders:Array, n:number, note:string}}
+ */
+export function twsConfidence(entries, o = {}) {
+  const e = (entries || []).filter((x) => x && Number.isFinite(x.v) && x.v >= 0 && Number.isFinite(x.w) && x.w > 0)
+  if (!e.length) return null
+  const all = weightedSpread(e)
+  const byW = [...e].sort((a, b) => b.w - a.w || a.v - b.v)
+  const wMax = byW[0].w
+  let leaders = byW.filter((x) => x.w >= (o.leadFrac ?? 0.9) * wMax)
+  if (leaders.length < 2) leaders = byW.slice(0, Math.min(2, byW.length))
+  const lv = leaders.map((x) => x.v)
+  const leadKn = lv.length > 1 ? Math.max(...lv) - Math.min(...lv) : 0
+  const nameOf = (x) => x.label || x.key || 'model'
+
+  const Mlead = clamp01(1 - leadKn / 4)                       // 4 kn apart = no agreement
+  const Mall = clamp01(1 - all.sigma / 3)
+  const Mrel = clamp01(1 - (all.sigma / Math.max(all.mean, 4)) / 0.35)
+  let score10 = clamp(10 * (0.55 * Mlead + 0.30 * Mall + 0.15 * Mrel), 0, 10)
+  // One model is not agreement, however tight it looks.
+  if (e.length < 2) score10 = Math.min(score10, 3.9)
+  const label = score10 >= 7 ? 'HIGH' : score10 >= 4 ? 'MODERATE' : 'LOW'
+
+  const kn = (x) => `${Math.round(x * 10) / 10} kn`
+  let head
+  if (e.length < 2) head = `only ${nameOf(byW[0])} has data — no cross-model check`
+  else if (leadKn <= 1) head = `${leaders.map(nameOf).join(' and ')} agree within ${kn(leadKn)}`
+  else head = `${leaders.slice(0, 2).map((x) => `${nameOf(x)} ${Math.round(x.v)}`).join(' vs ')} kn`
+  const note = `TWS confidence ${label} — ${head}; weighted spread ${kn(all.sigma)} across ${e.length} model${e.length === 1 ? '' : 's'}, mean ${Math.round(all.mean)} kn.`
+
+  return {
+    label,
+    score10: round1(score10),
+    sigmaKn: round1(all.sigma),
+    meanKn: round1(all.mean),
+    leadKn: round1(leadKn),
+    leaders: leaders.map((x) => ({ key: x.key ?? null, label: nameOf(x), v: round1(x.v), w: x.w })),
+    n: e.length,
+    note,
+  }
+}
+
 // ── stability from the low-level sounding ────────────────────────────────────
 // Primary control on sea-breeze development/depth (decision 2026-06-22). What
 // KILLS a breeze is a LOW, strong capping inversion (the over-land mixed layer
@@ -475,7 +552,13 @@ export function cloudTrend(a) {
 export function confidence(a) {
   const S = clamp01(a.seaBreezeMarginality ?? 0.5)
   const Mdir = clamp01(1 - (a.sigmaTwd ?? 20) / 40)
-  const Mspd = clamp01(1 - (a.sigmaTws ?? 2) / 4)
+  // twsScore10 (from twsConfidence) REPLACES the raw-sigma speed term when it is
+  // supplied, so the day's confidence inherits the model weighting instead of
+  // counting a weak global equal to the nest. Callers that pass only sigmaTws keep
+  // the original behaviour.
+  const Mspd = a.twsScore10 != null
+    ? clamp01(a.twsScore10 / 10)
+    : clamp01(1 - (a.sigmaTws ?? 2) / 4)
   const M = 0.6 * Mdir + 0.4 * Mspd
   const w = a.twsKn ?? 10
   let L

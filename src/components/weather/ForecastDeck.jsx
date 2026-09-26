@@ -30,7 +30,7 @@ import { getWeatherSession } from './weatherSession'
 import {
   mean as dMean, ensureHeights, stabilityFromSounding, stabilityGate,
   thermalBend, seaBreezeIndex, crossShoreComponent, quadrantModifier,
-  seaBreezeScore, typeOfDay as dTypeOfDay, cloudTrend, confidence,
+  seaBreezeScore, typeOfDay as dTypeOfDay, cloudTrend, confidence, twsConfidence,
   modelSpread, funnelDiagnostics, funnelFlag, clamp01,
 } from './forecastDiagnostics'
 import { coastNormalForPoint } from './coastline'
@@ -609,7 +609,7 @@ async function buildDiagnostics(o) {
   const tod = dTypeOfDay({ lowLevelKt, favourable: gateHealthy, thermalActive, quadFav, thermalBendDeg, sbi, funnelFlag: funnelHit })
 
   // multi-model spread + confidence over the racing window (13:00-15:00 local)
-  const dirs = []; const spds = []
+  const dirs = []; const spds = []; const twsEntries = []
   for (const m of todayModels || []) {
     const day0 = m.lt[0]?.slice(0, 10)
     const md = []; const ms = []
@@ -619,12 +619,26 @@ async function buildDiagnostics(o) {
       const s = mastKn(m.hourly, m.heights, mastH, j, m.mos, m.mosZ); if (s != null) ms.push(s)
     }
     if (md.length) dirs.push(circMean(md))
-    if (ms.length) spds.push(dMean(ms))
+    if (ms.length) {
+      const v = dMean(ms)
+      spds.push(v)
+      // Same WEIGHTS the band and the comparison page use, so one model's standing
+      // is the same number everywhere in the deck.
+      twsEntries.push({ key: m.key, label: MODELS[m.key]?.label || m.key, v, w: m.weight || WEIGHTS[m.key] || 0.5 })
+    }
   }
   const spread = modelSpread(dirs, spds)
   const twsKn = spds.length ? dMean(spds) : null
+  const twsConf = twsConfidence(twsEntries)
   const marginality = clamp01(0.4 + 0.6 * Math.abs((sbScore.score ?? 5) - 5) / 5)
-  const conf = confidence({ seaBreezeMarginality: marginality, sigmaTwd: spread.sigmaTwd, sigmaTws: spread.sigmaTws, twsKn })
+  const conf = confidence({
+    seaBreezeMarginality: marginality,
+    sigmaTwd: spread.sigmaTwd,
+    // weighted, so the leaders agreeing counts for more than the tail of globals
+    sigmaTws: twsConf?.sigmaKn ?? spread.sigmaTws,
+    twsScore10: twsConf?.score10,
+    twsKn,
+  })
 
   return {
     coast: { deg: θ != null ? Math.round(θ) : null, source: coast.source },
@@ -652,6 +666,7 @@ async function buildDiagnostics(o) {
     },
     cloud,
     confidence: conf,
+    tws: twsConf,
     funnelling: { flag: funnelHit, cores: funnel ? funnel.cores.length : 0, rMax: funnel ? Math.round((funnel.sMax / funnel.sRef) * 100) / 100 : null },
   }
 }
@@ -737,6 +752,7 @@ function diagChips(dg) {
   const ch = []
   if (dg.seaBreeze?.score != null) ch.push(`Sea-breeze ${dg.seaBreeze.score}/10${dg.seaBreeze.quadrant ? ` (${dg.seaBreeze.quadrant})` : ''}`)
   if (dg.confidence?.label) ch.push(`Confidence ${dg.confidence.label}${dg.confidence.sigmaTwd != null ? ` (σTWD ${dg.confidence.sigmaTwd}°)` : ''}`)
+  if (dg.tws?.label) ch.push(`TWS ${dg.tws.label} (±${dg.tws.sigmaKn} kn)`)
   if (dg.stability?.hMixM != null) ch.push(`BL ${dg.stability.hMixM} m`)
   ch.push(dg.stability?.hasLowCap ? 'capped' : 'no low cap')
   if (dg.funnelling?.flag) ch.push('funnelling ⚑')
@@ -1117,7 +1133,7 @@ function buildDeck(P, d) {
   const chips = diagChips(dg)
   if (chips.length) s.addText(chips.join('  ·  '), { x: M, y: 1.05, w: CW, h: 0.5, fontFace: FONT, fontSize: 13, bold: true, color: NAVY })
   s.addText('Confidence', { x: M, y: 1.75, w: CW, h: 0.32, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
-  s.addText(bulletRuns([d.ai?.confidenceNote, ...asItems(d.ai?.modelComparison)].filter(Boolean), { color: INK, size: 15, spaceAfter: 7 }),
+  s.addText(bulletRuns([dg?.tws?.note, d.ai?.confidenceNote, ...asItems(d.ai?.modelComparison)].filter(Boolean), { color: INK, size: 15, spaceAfter: 7 }),
     { x: M, y: 2.15, w: CW, h: 4.6, fontFace: FONT, valign: 'top' })
   s.addText('Notes', { x: M, y: 7.0, w: CW, h: 0.32, fontFace: FONT, fontSize: 16, bold: true, color: NAVY })
   const noteItems = asItems(d.ai?.notes).length ? asItems(d.ai.notes) : asItems(d.ai?.sideNotes)
