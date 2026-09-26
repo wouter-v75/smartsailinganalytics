@@ -1552,6 +1552,29 @@ export default function SailTrimTab(
           {rigCloudNote && (
             <div style={{ fontSize: 11, color: '#FCD34D', marginTop: 4, lineHeight: 1.5 }}>{rigCloudNote}</div>
           )}
+          {/* NO BOAT NAMED is the expensive one, because it fails by being
+              ordinary: every dimension silently stays the generic maxi guess, the
+              boat's own measured numbers are never fetched, and there is nothing
+              to check a typed value against. On the 26 Sep 12:09 frame the scale
+              reference was typed as 3755 where Northstar's tape says 3375, so
+              every millimetre on that frame came out 11 % large — and naming the
+              boat would have filled 3375 +/- 10 in by itself. */}
+          {!boat.trim() && (
+            <div style={{ fontSize: 11, color: '#FCA5A5', marginTop: 4, lineHeight: 1.5 }}>
+              <b>No boat named.</b> Every dimension below is a generic estimate, the boat&rsquo;s
+              own measured numbers are not being used, and there are no sail widths — so there
+              will be <b>no twist</b>. Name the boat and its record fills these in.
+            </div>
+          )}
+          {/* Widths are the denominator twist divides by, so their absence is
+              worth saying next to the model rather than only down in the twist
+              panel — by then the operator has already marked everything. */}
+          {!!boat.trim() && !rig.widths?.main && !rig.widths?.jib && (
+            <div style={{ fontSize: 11, color: '#FCD34D', marginTop: 4, lineHeight: 1.5 }}>
+              No sail widths for {boat}, so <b>no twist</b> — paste an IRC certificate below
+              (MHW/MTW/MUW and HHW/HTW/HUW come off it).
+            </div>
+          )}
           {gaps.length > 0 && (
             <div style={{ fontSize: 11, color: '#FCD34D', lineHeight: 1.55, marginBottom: 8 }}>
               Still guesswork: {gaps.join('; ')}. Every measurement below inherits that
@@ -1725,6 +1748,38 @@ export default function SailTrimTab(
           </div>
 
           {!calibration.cal && <div style={{ fontSize: 12, color: '#FCD34D' }}>{calibration.why}</div>}
+
+          {/* Stations marked, but no CURVE for them to cross.
+              The warning below only fires for a leech that is drawn (>= 2
+              points), so the case where somebody marks every station and draws
+              no leech — or clicks a leech once and moves on — was silent: seven
+              stations placed, two numbers back, and nothing on screen saying
+              why. That is the failure this catches. It stays quiet about a leech
+              nobody has touched, because measuring one sail and not the other is
+              a normal thing to do. */}
+          {calibration.cal && (() => {
+            // A spreader key repeats across sails, so dedupe rather than spread a
+            // Set — this file's tsconfig target predates downlevelIteration.
+            const stationKeys = Array.from(new Set(
+              HEIGHT_TAGS.flatMap((t) => LEECH_SAILS.map((sl) => heightMarkKey(sl.key, t.key))),
+            ));
+            const anyStation = stationKeys.some((k) => (marks[k] || []).length > 0);
+            if (!anyStation) return null;
+            const counts = LEECH_SAILS.map((sl) => ({ sl, n: (marks[`leech:${sl.key}`] || []).length }));
+            const started = counts.filter((c) => c.n === 1);
+            const noneDrawn = counts.every((c) => c.n < 2);
+            if (!started.length && !noneDrawn) return null;
+            return (
+              <div style={{ fontSize: 11, color: '#FCD34D', marginBottom: 9, lineHeight: 1.5 }}>
+                <b>No leech measurements yet</b> — a leech is a CURVE, and a station only
+                becomes a number where it CROSSES one.{' '}
+                {started.length
+                  ? `${started.map((c) => c.sl.label).join(' and ')} ${started.length > 1 ? 'have' : 'has'} one point; ${started.length > 1 ? 'each needs' : 'it needs'} at least two, spanning the stations you marked.`
+                  : 'Draw a leech with at least two points, spanning the stations you marked.'}
+                {' '}The clew and boom are single points, so those still read.
+              </div>
+            );
+          })()}
 
           {/* A height above or below where a leech was drawn does not cross it,
               and produces nothing. That is right, but it used to be SILENT: four

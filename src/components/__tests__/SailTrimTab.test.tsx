@@ -773,4 +773,61 @@ describe('SailTrimTab', () => {
     expect(keys).toContain('jib@stripe50')
     expect(keys).not.toContain('main@stripe50')
   })
+
+  it('says why there are no leech numbers when no leech is drawn', async () => {
+    // The 26 Sep 12:09 frame: seven stations marked, ONE point on the main leech,
+    // none on the jib, and two numbers back (clew and boom, which are single
+    // points). Nothing on screen said why the other measurements were absent —
+    // the existing warning only fires for a leech that IS drawn, so the case
+    // where the curve is missing or half-clicked was the silent one.
+    const P = makeCamera(RIG)
+    render(<SailTrimTab />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    // Stations marked...
+    fireEvent.click(stepButton('Spreader 2'))
+    click(P(0, 0, 12_000))
+    fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
+    click(P(0, 0, 15_000))
+
+    // ...and the main leech clicked ONCE, exactly as on the real frame.
+    fireEvent.click(stepButton('Main leech'))
+    click(P(-6_000, 2_500, 8_000))
+
+    await waitFor(() => expect(screen.getByText(/No leech measurements yet/)).toBeTruthy())
+    expect(screen.getByText(/a leech is a CURVE/)).toBeTruthy()
+    // It names the half-drawn one rather than nagging about both.
+    expect(screen.getByText(/Main leech has one point/)).toBeTruthy()
+  })
+
+  it('goes quiet once the leech is actually drawn', async () => {
+    const P = makeCamera(RIG)
+    render(<SailTrimTab />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    fireEvent.click(stepButton('Spreader 2'))
+    click(P(0, 0, 12_000))
+    fireEvent.click(stepButton('Main leech'))
+    click(P(-6_000, 2_500, 8_000)); click(P(-6_000, 2_500, 22_000))
+    await waitFor(() => expect(screen.getAllByText(/\u00B1 \d+ mm/).length).toBeGreaterThan(0))
+    expect(screen.queryByText(/No leech measurements yet/)).toBeNull()
+  })
+
+  it('says a nameless boat has no real dimensions and will give no twist', async () => {
+    // How the 12:09 frame came to be scaled 11 % large: with no boat named the
+    // wheels reference defaults to 0 mm, the operator typed it by hand as 3755
+    // against Northstar's measured 3375, and nothing had anything to check it
+    // against. Naming the boat fills 3375 +/- 10 in by itself.
+    render(<SailTrimTab />)
+    await openAFrame()
+    expect(screen.getByText(/No boat named/)).toBeTruthy()
+    expect(screen.getByText(/no twist/)).toBeTruthy()
+  })
 })
