@@ -1895,14 +1895,16 @@ export default function SailTrimTab(
           {/* When there is no twist, SAY WHY. An empty panel is how a missing
               certificate and a leech that only crossed a spreader looked
               identical — and identical to everything working. */}
-          {calibration.cal && twist.length === 0 && measurements.some((m) => m.key.includes('@')) && (
+          {calibration.cal && twist.every((t) => t.rows.length === 0) && measurements.some((m) => m.key.includes('@')) && (
             <div style={{ fontSize: 11, color: '#FCD34D', marginBottom: 9, lineHeight: 1.5 }}>
               <b>No twist yet.</b>{' '}
               {!rig.widths?.main && !rig.widths?.jib
                 ? 'The sail WIDTHS are missing — they are the denominator a leech offset is divided by to become an angle. Paste an IRC certificate into the rig model below (MHW/MTW/MUW and HHW/HTW/HUW come off it).'
                 : !LEECH_SAILS.some((sl) => STRIPE_TAGS.some((t) => (marks[heightMarkKey(sl.key, t.key)] || []).length > 0))
                   ? 'Only spreader heights are marked. A spreader has no fixed fraction of the hoist, so there is no width to divide by — mark a 25 / 50 / 75 % STRIPE as well.'
-                  : 'The leeches do not cross a marked stripe height. Extend them past the highest and lowest stripe you marked.'}
+                  : twist.length > 0
+                    ? `Only ONE stripe station per sail (${twist.map((t) => `${t.sail}: ${t.angles.length}`).join(', ')}). Twist is the difference BETWEEN two heights, so it needs at least two stripes on the same sail.`
+                    : `No chord angle could be formed. Widths in the model: ${rig.widths?.main ? 'main yes' : 'main NO'}, ${rig.widths?.jib ? 'jib yes' : 'jib NO'}; boat "${boat || 'unnamed'}".`}
             </div>
           )}
 
@@ -1913,7 +1915,11 @@ export default function SailTrimTab(
               </div>
               {(['main', 'jib'] as const)
                 .filter((sail) => !twist.some((t) => t.sail === sail))
-                .filter((sail) => (marks[`leech:${sail}`] || []).length >= 2)
+                // The EFFECTIVE leech: stripe marks are leech points. Counting
+                // only the explicit ones filtered this explanation away exactly
+                // when it was needed — a sail measured entirely from stripes has
+                // no explicit leech marks at all.
+                .filter((sail) => leechPolyline(sail).length >= 2)
                 .map((sail) => (
                   <div key={sail} style={{ fontSize: 10.5, color: '#FCD34D', marginBottom: 5, lineHeight: 1.45 }}>
                     <b style={{ textTransform: 'capitalize' }}>{sail}</b>: leech marked, but no twist —

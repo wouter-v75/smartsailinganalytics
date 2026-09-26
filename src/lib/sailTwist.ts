@@ -254,10 +254,27 @@ export function twistBetween(angles: StationAngle[]): TwistRow[] {
       sail: lo.sail,
       from: lo.tag, to: hi.tag,
       fromDeg: lo.angle.deg, toDeg: hi.angle.deg,
-      // Opening to leeward with height is positive, whichever tack: the
-      // measurements are already leeward-positive, so the magnitude growing
-      // means the sail is falling away.
-      twistDeg: Math.abs(hi.angle.deg) - Math.abs(lo.angle.deg),
+      // Opening away from the centreplane with height is positive, whichever
+      // tack — and whichever side the raw sign happens to use, because
+      // chordAngle is only leeward-positive when the tack was KNOWN.
+      //
+      // This took magnitudes once, which silently assumed the leech never
+      // crosses the centreplane. In light air it does — Wouter, 26 Sep: "the
+      // boom ends up to windward of the centre line, as does the 25 % leech
+      // point". A station 1.3 deg to WINDWARD under one 2.8 deg to leeward is
+      // 4.1 deg of twist; |2.8| - |1.3| calls it 1.5, understating the opening
+      // by nearly three degrees in exactly the conditions where twist is what
+      // is being trimmed.
+      //
+      // So: the SIGNED difference, flipped into the frame of whichever station
+      // is furthest from the centreplane. That one says which side the sail is
+      // on far more reliably than a station sitting near zero, it is unchanged
+      // on the opposite tack, and unlike magnitudes it adds the two sides when
+      // the leech crosses over instead of subtracting them.
+      twistDeg: (hi.angle.deg - lo.angle.deg)
+        * (Math.abs(hi.angle.deg) >= Math.abs(lo.angle.deg)
+          ? Math.sign(hi.angle.deg) || 1
+          : Math.sign(lo.angle.deg) || 1),
       sigmaDeg: Math.hypot(lo.angle.sigmaDeg, hi.angle.sigmaDeg),
       interpolated: lo.width.source === 'interpolated' || hi.width.source === 'interpolated',
     })

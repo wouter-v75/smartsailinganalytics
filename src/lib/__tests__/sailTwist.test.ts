@@ -208,3 +208,39 @@ describe('twist', () => {
     expect(twistBetween([])).toEqual([])
   })
 })
+
+describe('twist across the centreplane — light air', () => {
+  // Wouter, 26 Sep: in light winds the boom, and the 25 % leech point, end up
+  // to WINDWARD of the centreline. Taking magnitudes then understates the
+  // twist, because the two stations are on opposite sides of the centreplane
+  // and their magnitudes subtract instead of adding.
+  const widths: SailWidths = { foot: 10.33, half: 7.04, threeQuarter: 4.93, upper: 3.63 }
+
+  it('adds the two sides rather than subtracting them', () => {
+    const angles = stationAngles('main', widths, [
+      { tag: 'stripe25', mm: -158, sigmaMm: 19 },   // to windward
+      { tag: 'stripe50', mm: 349, sigmaMm: 22 },    // to leeward
+    ])
+    expect(angles).toHaveLength(2)
+    expect(angles[0].angle.deg).toBeLessThan(0)
+    expect(angles[1].angle.deg).toBeGreaterThan(0)
+
+    const [row] = twistBetween(angles)
+    // Signed: hi - lo, so the windward station's negative angle ADDS.
+    expect(row.twistDeg).toBeCloseTo(angles[1].angle.deg - angles[0].angle.deg, 10)
+    expect(row.twistDeg).toBeGreaterThan(Math.abs(angles[1].angle.deg))
+    // The magnitude version would have reported this much less.
+    const magnitudeVersion = Math.abs(angles[1].angle.deg) - Math.abs(angles[0].angle.deg)
+    expect(row.twistDeg - magnitudeVersion).toBeGreaterThan(1)
+  })
+
+  it('is unchanged when both stations are to leeward', () => {
+    const angles = stationAngles('main', widths, [
+      { tag: 'stripe25', mm: 400, sigmaMm: 19 },
+      { tag: 'stripe50', mm: 900, sigmaMm: 22 },
+    ])
+    const [row] = twistBetween(angles)
+    expect(row.twistDeg).toBeCloseTo(Math.abs(angles[1].angle.deg) - Math.abs(angles[0].angle.deg), 10)
+    expect(row.twistDeg).toBeGreaterThan(0)
+  })
+})
