@@ -936,4 +936,65 @@ describe('SailTrimTab', () => {
     await openAFrame()
     expect(screen.getByText(/No boat named/)).toBeTruthy()
   })
+
+  it('always shows a Twist box, with dashes and a reason when there is no number', async () => {
+    // The box used to appear only when it had a number, so every way of having
+    // none — no boat, no widths, one station, a stale count filtering the
+    // explanation away — looked exactly like the tab having no twist feature.
+    // Three rounds of debugging went into finding which it was. A box with
+    // dashes and a line naming the missing input is worth more than a tidy one.
+    const P = makeCamera(RIG)
+    render(<SailTrimTab />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+
+    const box = await screen.findByTestId('sailtrim-twist')
+    expect(box).toBeTruthy()
+    // Both sails are listed, each with a dash rather than being absent.
+    expect(within(box).getByText('Main leech')).toBeTruthy()
+    expect(within(box).getByText('Jib leech')).toBeTruthy()
+    expect(within(box).getAllByText('—').length).toBe(2)
+    // And it says WHY, naming the first thing to fix.
+    expect(within(box).getAllByText(/no boat named/).length).toBe(2)
+  })
+
+  it('names the missing station when only one stripe is marked', async () => {
+    const P = makeCamera(RIG)
+    render(<SailTrimTab boatName="Northstar 76" />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
+    click(P(-400, 1_500, 15_000))
+
+    const box = await screen.findByTestId('sailtrim-twist')
+    // Northstar's widths come from the measured map, so the complaint moves on
+    // from widths to the second station — which is the real next step.
+    await waitFor(() => expect(within(box).getByText(/only 50 % is marked/)).toBeTruthy())
+    expect(within(box).getByText(/difference BETWEEN two heights/)).toBeTruthy()
+  })
+
+  it('shows real twist once two stripes are on one leech', async () => {
+    const P = makeCamera(RIG)
+    render(<SailTrimTab boatName="Northstar 76" />)
+    await openAFrame()
+    fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Scale reference'))
+    click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    for (const [tag, z] of [['25', 10_000], ['50', 15_000], ['75', 20_000]] as const) {
+      fireEvent.click(stepButton(`Jib leech \u00b7 ${tag} % stripe`))
+      click(P(-400, 1_500, z))
+    }
+    const box = await screen.findByTestId('sailtrim-twist')
+    await waitFor(() => expect(within(box).getByText(/25 % \u2192 50 %/)).toBeTruthy())
+    expect(within(box).getByText(/50 % \u2192 75 %/)).toBeTruthy()
+    // The jib now has numbers; the main still shows its dash and its reason.
+    expect(within(box).getAllByText('—').length).toBe(1)
+  })
 })

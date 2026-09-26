@@ -1890,84 +1890,82 @@ export default function SailTrimTab(
 
           {/* Twist. A leech offset is a position; divided by the sail's width at
               that height it is a chord ANGLE, and the difference between two
-              heights is twist. Appears the moment a certificate is read, because
-              the widths are what it needs. */}
-          {/* When there is no twist, SAY WHY. An empty panel is how a missing
-              certificate and a leech that only crossed a spreader looked
-              identical — and identical to everything working. */}
-          {calibration.cal && twist.every((t) => t.rows.length === 0) && measurements.some((m) => m.key.includes('@')) && (
-            <div style={{ fontSize: 11, color: '#FCD34D', marginBottom: 9, lineHeight: 1.5 }}>
-              <b>No twist yet.</b>{' '}
-              {!rig.widths?.main && !rig.widths?.jib
-                ? 'The sail WIDTHS are missing — they are the denominator a leech offset is divided by to become an angle. Paste an IRC certificate into the rig model below (MHW/MTW/MUW and HHW/HTW/HUW come off it).'
-                : !LEECH_SAILS.some((sl) => STRIPE_TAGS.some((t) => (marks[heightMarkKey(sl.key, t.key)] || []).length > 0))
-                  ? 'Only spreader heights are marked. A spreader has no fixed fraction of the hoist, so there is no width to divide by — mark a 25 / 50 / 75 % STRIPE as well.'
-                  : twist.length > 0
-                    ? `Only ONE stripe station per sail (${twist.map((t) => `${t.sail}: ${t.angles.length}`).join(', ')}). Twist is the difference BETWEEN two heights, so it needs at least two stripes on the same sail.`
-                    : `No chord angle could be formed. Widths in the model: ${rig.widths?.main ? 'main yes' : 'main NO'}, ${rig.widths?.jib ? 'jib yes' : 'jib NO'}; boat "${boat || 'unnamed'}".`}
-            </div>
-          )}
-
-          {twist.length > 0 && (
-            <div style={{ marginBottom: 11, paddingBottom: 9, borderBottom: '1px solid #16304A' }}>
+              heights is twist.
+              
+              THE BOX IS ALWAYS HERE. It used to appear only when there was a
+              number, so every way of having none looked identical to the tab not
+              having a twist feature at all — and each time the reason turned out
+              to be somewhere else (no widths, no boat, a stale count filtering
+              the explanation away). A box with dashes in it and a line saying
+              which input is missing is worth more than a tidy panel. */}
+          {calibration.cal && (
+            <div style={{ marginBottom: 11, paddingBottom: 9, borderBottom: '1px solid #16304A' }} data-testid="sailtrim-twist">
               <div style={{ fontSize: 9, color: '#4ADE80', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6 }}>
                 Twist
               </div>
-              {(['main', 'jib'] as const)
-                .filter((sail) => !twist.some((t) => t.sail === sail))
-                // The EFFECTIVE leech: stripe marks are leech points. Counting
-                // only the explicit ones filtered this explanation away exactly
-                // when it was needed — a sail measured entirely from stripes has
-                // no explicit leech marks at all.
-                .filter((sail) => leechPolyline(sail).length >= 2)
-                .map((sail) => (
-                  <div key={sail} style={{ fontSize: 10.5, color: '#FCD34D', marginBottom: 5, lineHeight: 1.45 }}>
-                    <b style={{ textTransform: 'capitalize' }}>{sail}</b>: leech marked, but no twist —
-                    {!rig.widths?.[sail]
-                      ? ' its widths are not in the rig model.'
-                      : ' it does not cross a 25 / 50 / 75 % stripe height. Spreader heights alone cannot give twist.'}
-                  </div>
-                ))}
-              {twist.map((t) => (
-                <div key={t.sail} style={{ marginBottom: 7 }}>
-                  <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 3, textTransform: 'capitalize' }}>{t.sail}</div>
-                  {t.angles.map((a) => (
-                    <div key={a.tag} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B', fontFamily: 'monospace' }}>
-                      <span>chord @ {(a.fraction * 100).toFixed(0)} %</span>
-                      <span>
-                        {a.angle.deg.toFixed(2)}° ±{a.angle.sigmaDeg.toFixed(2)}
-                        <span style={{ color: a.width.source === 'certificate' ? '#4ADE80' : '#FCD34D', marginLeft: 6 }}>
-                          {a.width.m.toFixed(2)} m{a.width.source === 'interpolated' ? '*' : ''}
+              {LEECH_SAILS.map((sl) => {
+                const t = twist.find((x) => x.sail === sl.key);
+                const stripesMarked = STRIPE_TAGS.filter((st) => (marks[heightMarkKey(sl.key, st.key)] || []).length > 0);
+                const haveWidths = !!rig.widths?.[sl.key as 'main' | 'jib'];
+                // Why there is no number, in the order the operator can act on.
+                const why = !boat.trim()
+                  ? 'no boat named, so there are no sail widths to divide by'
+                  : !haveWidths
+                    ? `no widths for ${boat} — paste an IRC certificate below`
+                    : stripesMarked.length === 0
+                      ? 'no stripe stations marked on this sail (a spreader has no fixed fraction of the hoist, so it cannot give twist)'
+                      : stripesMarked.length < 2
+                        ? `only ${heightShort(stripesMarked[0].key)} is marked — twist is the difference BETWEEN two heights`
+                        : !t || !t.angles.length
+                          ? 'the stations gave no chord angle — a leech further out than the sail is wide is a mismarked point'
+                          : null;
+                return (
+                  <div key={sl.key} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#94A3B8', marginBottom: 3 }}>{sl.label}</div>
+                    {t?.angles.map((a) => (
+                      <div key={a.tag} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#64748B', fontFamily: 'monospace' }}>
+                        <span>chord @ {(a.fraction * 100).toFixed(0)} %</span>
+                        <span>
+                          {a.angle.deg.toFixed(2)}° ±{a.angle.sigmaDeg.toFixed(2)}
+                          <span style={{ color: a.width.source === 'certificate' ? '#4ADE80' : '#FCD34D', marginLeft: 6 }}>
+                            {a.width.m.toFixed(2)} m{a.width.source === 'interpolated' ? '*' : ''}
+                          </span>
                         </span>
-                      </span>
-                    </div>
-                  ))}
-                  {t.sag.length > 0 && (
-                    <div style={{ fontSize: 10.5, color: '#86EFAC', fontFamily: 'monospace', marginTop: 2 }}>
-                      {t.sail === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
-                      {t.sag.map((x) => `${heightShort(x.tag)} ${Math.round(Math.abs(x.mm))}${x.source === 'fitted' ? '†' : ''}`).join(' · ')} mm
-                      {t.sag.some((x) => x.source === 'fitted') && (
-                        <span style={{ color: '#64748B' }}> † fitted, pinned at tack and masthead</span>
-                      )}
-                    </div>
-                  )}
-                  {!t.haveLuff && (
-                    <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 2, lineHeight: 1.4 }}>
-                      luff not marked — the chord is taken from the centreplane, which
-                      assumes no {t.sail === 'jib' ? 'forestay sag' : 'sideways mast bend'}.
-                      {t.sail === 'jib' && ' Worth ~0.29° of twist per 100 mm.'}
-                    </div>
-                  )}
-                  {t.rows.map((r) => (
-                    <div key={`${r.from}-${r.to}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 2 }}>
-                      <span>{r.from.replace('stripe', '')} % → {r.to.replace('stripe', '')} %</span>
-                      <span style={{ fontFamily: 'monospace' }}>
-                        {r.twistDeg >= 0 ? '+' : ''}{r.twistDeg.toFixed(2)}° ±{r.sigmaDeg.toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ))}
+                      </div>
+                    ))}
+                    {t && t.sag.length > 0 && (
+                      <div style={{ fontSize: 10.5, color: '#86EFAC', fontFamily: 'monospace', marginTop: 2 }}>
+                        {sl.key === 'jib' ? 'forestay sag' : 'luff off centreplane'}:{' '}
+                        {t.sag.map((x) => `${heightShort(x.tag)} ${Math.round(Math.abs(x.mm))}${x.source === 'fitted' ? '†' : ''}`).join(' · ')} mm
+                      </div>
+                    )}
+                    {t && !t.haveLuff && t.angles.length > 0 && (
+                      <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 2, lineHeight: 1.4 }}>
+                        luff not marked — the chord is taken from the centreplane, which
+                        assumes no {sl.key === 'jib' ? 'forestay sag' : 'sideways mast bend'}.
+                        {sl.key === 'jib' && ' Worth ~0.29° of twist per 100 mm.'}
+                      </div>
+                    )}
+                    {/* The rows, or dashes standing in for them. */}
+                    {t && t.rows.length > 0 ? t.rows.map((r) => (
+                      <div key={`${r.from}-${r.to}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#E2E8F0', marginTop: 2 }}>
+                        <span>{r.from.replace('stripe', '')} % → {r.to.replace('stripe', '')} %</span>
+                        <span style={{ fontFamily: 'monospace' }}>
+                          {r.twistDeg >= 0 ? '+' : ''}{r.twistDeg.toFixed(2)}° ±{r.sigmaDeg.toFixed(2)}
+                        </span>
+                      </div>
+                    )) : (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700, color: '#64748B', marginTop: 2 }}>
+                        <span>twist between stripes</span>
+                        <span style={{ fontFamily: 'monospace' }}>—</span>
+                      </div>
+                    )}
+                    {why && (
+                      <div style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 3, lineHeight: 1.45 }}>{why}</div>
+                    )}
+                  </div>
+                );
+              })}
               <div style={{ fontSize: 10, color: '#64748B', lineHeight: 1.45, marginTop: 4 }}>
                 Widths off the certificate — MHW/MTW/MUW and HHW/HTW/HUW. A{' '}
                 <span style={{ color: '#FCD34D' }}>*</span> is interpolated: the certificate
