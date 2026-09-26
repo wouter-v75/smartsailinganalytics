@@ -262,7 +262,10 @@ describe('DayTimeline — photos', () => {
     // Portalled: NOT inside the component's own tree.
     expect(container.contains(modal)).toBe(false)
     expect(modal.parentElement).toBe(document.body)
-    // And above the app's own Dialog layer (z-1100).
-    expect(Number(/z-\[(\d+)\]/.exec(modal.className)?.[1] || 0)).toBeGreaterThan(1100)
+    // And above the app's own Dialog layer (z-1100). Read off the element
+    // rather than out of a class name: the dialog is shared with the Photos
+    // tab now, which is plain JSX with inline styles, and this asserts what is
+    // actually applied either way.
+    expect(Number(modal.style.zIndex || 0)).toBeGreaterThan(1100)
   })
 })

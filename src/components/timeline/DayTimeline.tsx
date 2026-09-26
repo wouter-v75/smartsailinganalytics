@@ -1,7 +1,6 @@
 'use client'
 import * as React from 'react'
 import dynamic from 'next/dynamic'
-import { createPortal } from 'react-dom'
 import { Play, Camera, ZoomIn, ZoomOut, Sailboat, MessageSquare } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
@@ -14,7 +13,7 @@ import { groupBursts } from '@/lib/burstGroup'
 
 // The digitiser is a big component with its own CDN libraries; almost nobody
 // scrolling a timeline opens it, so it arrives as its own chunk on demand.
-const SailTrimTab = dynamic(() => import('../sailtrim/SailTrimTab'), {
+const SailGeometryDialog = dynamic(() => import('../photos/SailGeometryDialog'), {
   ssr: false,
   loading: () => <div className="flex h-full items-center justify-center text-sm text-[#7DD3FC]">Loading the digitiser…</div>,
 })
@@ -159,9 +158,6 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   const [media, setMedia] = React.useState<MediaItem[] | null>(null)
   const [openPhoto, setOpenPhoto] = React.useState<MediaItem | null>(null)
   const [geomFor, setGeomFor] = React.useState<MediaItem | null>(null)
-  const [mounted, setMounted] = React.useState(false)
-  React.useEffect(() => { setMounted(true) }, [])
-
   // Measuring from the timeline writes to the SAME shared row the Photos tab
   // writes to, so a measurement made here is a measurement everybody has.
   const applyGeometry = React.useCallback(async (m: MediaItem, payload: { annotation: SailTrimAnnotation; overlay: boolean; headline?: string; result?: unknown }) => {
@@ -552,45 +548,22 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         </div>
       </div>
 
-      {geomFor && mounted && createPortal((
-        // PORTALLED to <body>, and above the app's own Dialog (z-1100).
-        // `fixed` is not enough here: the timeline's cards carry zIndex 100 and
-        // up (to ~300 when magnified) and sit inside transformed ancestors, so a
-        // z-index set within that subtree competes with the thumbnails instead of
-        // covering them — which is exactly how the digitiser came to open BEHIND
-        // them. Leaving the stacking context is the fix; raising the number is not.
-        <div role="dialog" aria-modal="true" aria-label="Sail geometry"
-             className="fixed inset-0 z-[1200] flex flex-col bg-[#030F1A]">
-          {/* The way OUT goes in the MIDDLE — see the same header in PhotosTab.
-              The user pill is fixed top-3 right-3 at z-9999, above even this
-              portalled dialog, so the top right corner is not ours to use. */}
-          <div className="flex shrink-0 items-center gap-3 border-b border-[#1E3A5A] bg-[#0F2A45] px-3 py-2">
-            <div className="flex min-w-0 flex-1 items-center gap-2.5">
-              <div className="whitespace-nowrap text-[12.5px] font-extrabold text-[#38BDF8]">📐 Sail geometry</div>
-            </div>
-            <button onClick={() => { setOpenPhoto(geomFor); setGeomFor(null) }}
-              className="shrink-0 rounded-md border border-[#1E3A5A] bg-[#0A1929] px-3 py-1.5 text-[12.5px] font-semibold text-[#E2E8F0]">
-              ← Back to photo
-            </button>
-            <div className="min-w-0 flex-1 truncate pr-[52px] text-right font-mono text-[11px] text-[#94A3B8]">{date}</div>
-          </div>
-          <div className="relative min-h-0 flex-1">
-            <SailTrimTab
-              boatId={boatId || null}
-              initialFileUrl={geomFor.original || ''}
-              initialFileName={`photo-${geomFor.id.slice(0, 8)}.jpg`}
-              photoLabel="this photo"
-              twaDeg={geomFor.twa ?? null}
-              initialResult={(geomFor.raw?.analysis_data?.sailTrim)?.result ?? null}
-              onSaveToPhoto={async (save: any) => {
-                await applyGeometry(geomFor, {
-                  annotation: save.annotation, overlay: !!save.showOverlay,
-                  headline: annotationHeadline(save.annotation), result: save.result,
-                })
-              }} />
-          </div>
-        </div>
-      ), document.body)}
+      <SailGeometryDialog
+        open={!!geomFor}
+        onClose={() => { setOpenPhoto(geomFor); setGeomFor(null) }}
+        boatId={boatId || null}
+        fileUrl={geomFor?.original || ''}
+        fileName={geomFor ? `photo-${geomFor.id.slice(0, 8)}.jpg` : 'photo.jpg'}
+        caption={date}
+        twaDeg={geomFor?.twa ?? null}
+        initialResult={(geomFor?.raw?.analysis_data?.sailTrim)?.result ?? null}
+        onSaveToPhoto={async (save: any) => {
+          if (!geomFor) return
+          await applyGeometry(geomFor, {
+            annotation: save.annotation, overlay: !!save.showOverlay,
+            headline: annotationHeadline(save.annotation), result: save.result,
+          })
+        }} />
 
       <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
         {openPhoto && (

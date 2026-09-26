@@ -17,17 +17,11 @@ import { useUiNext } from "../lib/ui-flags";
 import PhotosNext from "./photos/PhotosNext";
 import PhotoViewer from "./photos/PhotoViewer";
 import SailGeometryCard, { MeasureGeometryButton } from "./photos/SailGeometryCard";
+import SailGeometryDialog from "./photos/SailGeometryDialog";
 import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
 import { isAnnotation, annotationHeadline } from "../lib/sailTrimOverlay";
 import { venueTodayIso as TODAY } from "../lib/localStore";   // venue-local, not UTC
-
-// The digitiser is a big component with its own CDN libraries, and most visits
-// to the Photos tab never open it — so it arrives as its own chunk, on demand.
-const SailTrimTab = dynamic(() => import("./sailtrim/SailTrimTab"), {
-  ssr: false,
-  loading: () => <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",color:"#7DD3FC",fontSize:13}}>Loading the digitiser…</div>,
-});
 
 /** The sail-geometry payload on a photo, or null. Tolerates the string form. */
 function sailTrimOf(photo){
@@ -1324,39 +1318,17 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
           full-resolution ORIGINAL — never the composite, whose burned-in gauges
           and any previous annotation would then be measured as though they were
           the photograph. */}
-      {geomFor && (
-        <div style={{position:"fixed",inset:0,zIndex:80,background:"#030F1A",display:"flex",flexDirection:"column"}}
-             role="dialog" aria-modal="true" aria-label="Sail geometry">
-          {/* The way OUT goes in the MIDDLE. The user pill is `fixed top-3
-              right-3` at z-index 9999 — above this dialog, which cannot raise
-              itself past it — so anything in the top right corner is under the
-              pill, and the top left is where the eye goes last on a full-screen
-              instrument. The right-hand slot keeps a pill's width of padding so
-              the filename does not disappear under it either. */}
-          <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:12,padding:"9px 12px",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>
-            <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:10}}>
-              <div style={{fontSize:12.5,fontWeight:800,color:"#38BDF8",whiteSpace:"nowrap"}}>📐 Sail geometry</div>
-            </div>
-            <button onClick={()=>setGeomFor(null)}
-              style={{flexShrink:0,background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:7,padding:"7px 13px",color:"#E2E8F0",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>
-              ← Back to photo
-            </button>
-            <div style={{flex:1,minWidth:0,paddingRight:52,textAlign:"right",fontSize:11,color:"#94A3B8",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-              {geomFor.name||"Photo"}{geomFor.utc?` · ${fmtLocalDT(geomFor.utc,sessionTzOffset)} ${TZ_SHORT(sessionTzOffset)}`:""}
-            </div>
-          </div>
-          <div style={{flex:1,minHeight:0,position:"relative"}}>
-            <SailTrimTab
-              boatName={geomFor.boat||""}
-              initialFileUrl={geomFor.fullUrl||geomFor.objectUrl||""}
-              initialFileName={geomFor.name||"photo.jpg"}
-              photoLabel={geomFor.name||"this photo"}
-              twaDeg={geomFor.twa ?? null}
-              initialResult={sailTrimOf(geomFor)?.result ?? null}
-              onSaveToPhoto={(save)=>handleSaveSailTrim(geomFor,save)}/>
-          </div>
-        </div>
-      )}
+      <SailGeometryDialog
+        open={!!geomFor}
+        onClose={()=>setGeomFor(null)}
+        boatName={geomFor?.boat||""}
+        fileUrl={geomFor?.fullUrl||geomFor?.objectUrl||""}
+        fileName={geomFor?.name||"photo.jpg"}
+        photoLabel={geomFor?.name||"this photo"}
+        caption={!geomFor ? "" : (geomFor.name||"Photo") + (geomFor.utc ? " \u00b7 " + fmtLocalDT(geomFor.utc,sessionTzOffset) + " " + TZ_SHORT(sessionTzOffset) : "")}
+        twaDeg={geomFor?.twa ?? null}
+        initialResult={geomFor ? (sailTrimOf(geomFor)?.result ?? null) : null}
+        onSaveToPhoto={(save)=>handleSaveSailTrim(geomFor,save)}/>
     </div>
   );
 }
