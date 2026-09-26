@@ -1303,13 +1303,21 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {geomFor && (
         <div style={{position:"fixed",inset:0,zIndex:80,background:"#030F1A",display:"flex",flexDirection:"column"}}
              role="dialog" aria-modal="true" aria-label="Sail geometry">
+          {/* The way OUT goes in the MIDDLE. The user pill is `fixed top-3
+              right-3` at z-index 9999 — above this dialog, which cannot raise
+              itself past it — so anything in the top right corner is under the
+              pill, and the top left is where the eye goes last on a full-screen
+              instrument. The right-hand slot keeps a pill's width of padding so
+              the filename does not disappear under it either. */}
           <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:12,padding:"9px 12px",background:"#0F2A45",borderBottom:"1px solid #1E3A5A"}}>
+            <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:10}}>
+              <div style={{fontSize:12.5,fontWeight:800,color:"#38BDF8",whiteSpace:"nowrap"}}>📐 Sail geometry</div>
+            </div>
             <button onClick={()=>setGeomFor(null)}
-              style={{background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:7,padding:"7px 13px",color:"#E2E8F0",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>
+              style={{flexShrink:0,background:"#0A1929",border:"1px solid #1E3A5A",borderRadius:7,padding:"7px 13px",color:"#E2E8F0",fontSize:12.5,fontWeight:600,cursor:"pointer"}}>
               ← Back to photo
             </button>
-            <div style={{fontSize:12.5,fontWeight:800,color:"#38BDF8"}}>📐 Sail geometry</div>
-            <div style={{fontSize:11,color:"#94A3B8",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
+            <div style={{flex:1,minWidth:0,paddingRight:52,textAlign:"right",fontSize:11,color:"#94A3B8",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
               {geomFor.name||"Photo"}{geomFor.utc?` · ${fmtLocalDT(geomFor.utc,sessionTzOffset)} ${TZ_SHORT(sessionTzOffset)}`:""}
             </div>
           </div>

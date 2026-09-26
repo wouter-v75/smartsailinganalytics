@@ -561,13 +561,18 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         // them. Leaving the stacking context is the fix; raising the number is not.
         <div role="dialog" aria-modal="true" aria-label="Sail geometry"
              className="fixed inset-0 z-[1200] flex flex-col bg-[#030F1A]">
+          {/* The way OUT goes in the MIDDLE — see the same header in PhotosTab.
+              The user pill is fixed top-3 right-3 at z-9999, above even this
+              portalled dialog, so the top right corner is not ours to use. */}
           <div className="flex shrink-0 items-center gap-3 border-b border-[#1E3A5A] bg-[#0F2A45] px-3 py-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5">
+              <div className="whitespace-nowrap text-[12.5px] font-extrabold text-[#38BDF8]">📐 Sail geometry</div>
+            </div>
             <button onClick={() => { setOpenPhoto(geomFor); setGeomFor(null) }}
-              className="rounded-md border border-[#1E3A5A] bg-[#0A1929] px-3 py-1.5 text-[12.5px] font-semibold text-[#E2E8F0]">
+              className="shrink-0 rounded-md border border-[#1E3A5A] bg-[#0A1929] px-3 py-1.5 text-[12.5px] font-semibold text-[#E2E8F0]">
               ← Back to photo
             </button>
-            <div className="text-[12.5px] font-extrabold text-[#38BDF8]">📐 Sail geometry</div>
-            <div className="flex-1 truncate font-mono text-[11px] text-[#94A3B8]">{date}</div>
+            <div className="min-w-0 flex-1 truncate pr-[52px] text-right font-mono text-[11px] text-[#94A3B8]">{date}</div>
           </div>
           <div className="relative min-h-0 flex-1">
             <SailTrimTab
