@@ -230,79 +230,113 @@ aligned rudders and record the offsets before anything mechanical is touched.** 
 the offset proves to be calibration, what remains is the ~0.1 °/° drift, which is
 small — and the whole picture changes.
 
-### The linkage: what to actually build, for t = 4.0 m
+### The linkage, solved for the measured boat
 
-The rudder separation is fixed at **4.0 m** and the adjustable geometry is the
-tiller arm. Solving the steering trapezoid — two tiller arms joined by a tie rod —
-against the measured operating point gives a definite answer, and one correction
-to the premise.
+Two dimensions now measured rather than assumed: the rudder stocks are **2238 mm
+either side of the centreline (t = 4476 mm)** and the tiller arms are **349 mm**.
+With the operating point already measured — a **43 m** turn radius and an
+effective pivot distance of **12.6 m** — the linkage has one answer.
 
-**The tiller LENGTH is not the lever. The arm ANGLE is.** Stretching the tiller
-from 200 mm to 1000 mm — a five-fold change — moves the differential by only
-**+9 % to +42 %**, depending on how far the arms are already angled. It cannot
-carry the boat from anti-Ackermann to correct Ackermann. What sets the Ackermann
-is how far **inboard** the tie-rod ball joint sits relative to the rudder stock.
+| | |
+|---|---|
+| Rudder separation t | **4476 mm** (2 × 2238), fixed |
+| Tiller length a | **349 mm**, fixed |
+| t / L | 0.355 |
+| Ideal differential at 43 m | **+1.61°** (inner 17.18°, outer 15.56°) |
+| **Arm angle required** | **17.5° inboard** of the fore-and-aft line |
+| **Ball joint position** | **105 mm inboard, 333 mm aft** of the rudder stock |
+| **Tie rod length** | **4266 mm** — 210 mm shorter than the 4476 mm a parallel linkage needs |
 
-| tiller length | required arm angle | ball joint inboard | tie rod |
-|---|---|---|---|
-| 300 mm | 15.9° | **82 mm** | 3836 mm |
-| 400 mm | 15.7° | **108 mm** | 3784 mm |
-| 500 mm | 15.4° | **133 mm** | 3734 mm |
-| 600 mm | 15.2° | **158 mm** | 3685 mm |
+With the tiller length fixed at 349 mm, the adjustment is **where on that arm the
+tie-rod ball joint sits**: 105 mm off the fore-and-aft line, 333 mm aft. A new
+hole and a tie rod 210 mm shorter.
 
-The angle barely moves with length, which is the same fact seen from the other
-side: **put the ball joint on a line running 15.5°–16° inboard of the fore-and-aft
-line from each rudder stock**, at whatever radius the hardware allows, and shorten
-the tie rod to suit. In practice that is a new hole, not a new arm.
+Note that the textbook rule — arms pointing at the pivot, `atan((t/2)/L)` = 10.1°
+— **under-delivers here**, giving only +0.84° against the +1.61° wanted. That rule
+is exact only for large radii and small helm; this boat turns tightly enough that
+the angle has to be solved for directly, which is what the table above is.
 
 ```html
-<figure class="chart"><figure style="margin: 0px;"><figcaption style="font-size: 11px; color: rgb(30, 41, 59); font-weight: 600; margin-bottom: 2px;">Rudder differential: measured, recommended, ideal<span style="color: rgb(100, 116, 139); font-weight: 400;"> (°)</span></figcaption><div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 3px;"><span style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: rgb(100, 116, 139);"><span style="width: 8px; height: 8px; border-radius: 8px; background: rgb(14, 141, 166);"></span>Measured now (offset removed)<span style="color: rgb(100, 116, 139);">· 78149</span></span></div><svg viewBox="0 0 400 215" role="img" aria-label="Rudder differential: measured, recommended, ideal by Helm angle (outer rudder)" style="display: block; width: 100%; height: auto;"><g><line x1="44" x2="390" y1="169.35651967347644" y2="169.35651967347644" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="172.35651967347644" text-anchor="end" font-size="8" fill="#64748B">-2</text></g><g><line x1="44" x2="390" y1="95.5" y2="95.5" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="98.5" text-anchor="end" font-size="8" fill="#64748B">0</text></g><g><line x1="44" x2="390" y1="21.64348032652356" y2="21.64348032652356" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="24.64348032652356" text-anchor="end" font-size="8" fill="#64748B">2</text></g><line x1="44" x2="390" y1="181" y2="181" stroke="#94A3B8" stroke-width="1"></line><text x="150.80102040816325" y="193" text-anchor="middle" font-size="8" fill="#64748B">5</text><text x="261.13265306122446" y="193" text-anchor="middle" font-size="8" fill="#64748B">10</text><text x="371.4642857142857" y="193" text-anchor="middle" font-size="8" fill="#64748B">15</text><g opacity="0.75"><polyline points="84.60204081632654,94.68757828359178 95.63520408163265,94.20751090571416 106.66836734693878,93.61665874832634 117.7015306122449,92.95195007126507 128.73469387755102,92.13952835485681 139.76785714285717,91.2532501187751 150.80102040816325,90.25618710318318 161.8341836734694,89.14833930808102 172.8673469387755,87.89277847363194 183.90051020408163,86.56336111950934 194.93367346938777,85.12315898587656 205.96683673469386,83.57217207273355 217,81.91040038008033 228.03316326530611,80.10091564808017 239.06632653061226,78.2175743964065 250.09948979591837,76.22344836522264 261.13265306122446,74.08160929469182 272.1658163265306,71.86591370448753 283.19897959183675,69.50250507493631 294.2321428571429,67.02831166587482 305.265306122449,64.4802617371399 316.2984693877551,61.78449876905799 327.3316326530612,58.97795102146591 338.36479591836735,56.06061849436358 349.3979591836735,53.03250118775104 360.4311224489796,49.8935991016283 371.4642857142857,46.643912235995316 382.49744897959187,43.283440590852166" fill="none" stroke="#B45309" stroke-width="1.2" stroke-dasharray="2,3"></polyline><text x="380.49744897959187" y="39.283440590852166" text-anchor="end" font-size="8" fill="#B45309">ideal for R 43 m</text></g><g opacity="0.75"><polyline points="84.60204081632654,94.7245065434285 95.63520408163265,94.28136742538764 106.66836734693878,93.7643717876733 117.7015306122449,93.09966311061201 128.73469387755102,92.36109791387724 139.76785714285717,91.51174793763228 150.80102040816325,90.58854144171382 161.8341836734694,89.51762190644843 172.8673469387755,88.37284585150952 183.90051020408163,87.08035675722368 194.93367346938777,85.71401114326437 205.96683673469386,84.23688074979484 217,82.61203731697834 228.03316326530611,80.9133373644884 239.06632653061226,79.0669243726515 250.09948979591837,77.10972660130436 261.13265306122446,75.04174405044701 272.1658163265306,72.82604846024273 283.19897959183675,70.49956809052823 294.2321428571429,68.02537468146677 305.265306122449,65.44039649289508 316.2984693877551,62.70770526497647 327.3316326530612,59.86422925754762 338.36479591836735,56.83611195093509 349.3979591836735,53.69720986481235 360.4311224489796,50.41059473934263 371.4642857142857,46.976266574525965 382.49744897959187,43.35729711052565" fill="none" stroke="#15803D" stroke-width="1.2"></polyline><text x="380.49744897959187" y="21.35729711052565" text-anchor="end" font-size="8" fill="#15803D">recommended linkage</text></g><g><circle cx="62.535714285714285" cy="95.5" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 1 °, Inner − outer 0 °</title></circle><circle cx="106.66836734693878" cy="95.6846412991837" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 3 °, Inner − outer -0.005 °</title></circle><circle cx="150.80102040816325" cy="101.88858895175571" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 5 °, Inner − outer -0.173 °</title></circle><circle cx="194.93367346938777" cy="113.74256035934869" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 7 °, Inner − outer -0.494 °</title></circle><circle cx="239.06632653061226" cy="115.55204509134886" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 9 °, Inner − outer -0.543 °</title></circle><circle cx="283.19897959183675" cy="132.9083272146158" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 11 °, Inner − outer -1.013 °</title></circle><circle cx="327.3316326530612" cy="145.0577247009027" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 13 °, Inner − outer -1.342 °</title></circle><circle cx="371.4642857142857" cy="161.26923076923077" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 15 °, Inner − outer -1.781 °</title></circle></g></svg><div style="font-size: 9px; color: rgb(100, 116, 139); text-align: center; margin-top: -4px;">Helm angle (outer rudder) (°)</div></figure><figcaption>What the recommended linkage delivers across the steering range, against the ideal for a 43 m turn, with the measured behaviour (constant offset removed) for comparison. The solid line is the linkage; it tracks the ideal to within 0.1° out to 15° of helm.</figcaption></figure>
+<figure class="chart"><figure style="margin: 0px;"><figcaption style="font-size: 11px; color: rgb(30, 41, 59); font-weight: 600; margin-bottom: 2px;">Rudder differential — measured now, and with the 349 mm tiller re-drilled<span style="color: rgb(100, 116, 139); font-weight: 400;"> (°)</span></figcaption><div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 3px;"><span style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: rgb(100, 116, 139);"><span style="width: 8px; height: 8px; border-radius: 8px; background: rgb(14, 141, 166);"></span>Measured now (offset removed)<span style="color: rgb(100, 116, 139);">· 78149</span></span></div><svg viewBox="0 0 400 215" role="img" aria-label="Rudder differential — measured now, and with the 349 mm tiller re-drilled by Helm angle (outer rudder)" style="display: block; width: 100%; height: auto;"><g><line x1="44" x2="390" y1="169.35651967347644" y2="169.35651967347644" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="172.35651967347644" text-anchor="end" font-size="8" fill="#64748B">-2</text></g><g><line x1="44" x2="390" y1="95.5" y2="95.5" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="98.5" text-anchor="end" font-size="8" fill="#64748B">0</text></g><g><line x1="44" x2="390" y1="21.64348032652356" y2="21.64348032652356" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="24.64348032652356" text-anchor="end" font-size="8" fill="#64748B">2</text></g><line x1="44" x2="390" y1="181" y2="181" stroke="#94A3B8" stroke-width="1"></line><text x="150.80102040816325" y="193" text-anchor="middle" font-size="8" fill="#64748B">5</text><text x="261.13265306122446" y="193" text-anchor="middle" font-size="8" fill="#64748B">10</text><text x="371.4642857142857" y="193" text-anchor="middle" font-size="8" fill="#64748B">15</text><g opacity="0.75"><polyline points="84.60204081632654,94.57679350408155 95.63520408163265,94.0597978663672 106.66836734693878,93.39508918930592 117.7015306122449,92.61959573273442 128.73469387755102,91.73331749665272 139.76785714285717,90.73625448106078 150.80102040816325,89.59147842612188 161.8341836734694,88.3359175916728 172.8673469387755,86.96957197771347 183.90051020408163,85.45551332440719 194.93367346938777,83.83066989159072 205.96683673469386,82.09504167926403 217,80.17477216775363 228.03316326530611,78.18064613656978 239.06632653061226,76.03880706603894 250.09948979591837,73.78618321599792 261.13265306122446,71.38584632660994 272.1658163265306,68.83779639787501 283.19897959183675,66.17896168962984 294.2321428571429,63.409342201874495 305.265306122449,60.49200967477216 316.2984693877551,57.426964108322906 327.3316326530612,54.251133762363395 338.36479591836735,50.9645186368937 349.3979591836735,47.53019047207707 360.4311224489796,43.948149267913436 371.4642857142857,40.25532328423961 382.49744897959187,36.41478426121884" fill="none" stroke="#B45309" stroke-width="1.2" stroke-dasharray="2,3"></polyline><text x="380.49744897959187" y="32.41478426121884" text-anchor="end" font-size="8" fill="#B45309">ideal for R 43 m</text></g><g opacity="0.75"><polyline points="84.60204081632654,94.65065002375502 95.63520408163265,94.13365438604067 106.66836734693878,93.54280222865287 117.7015306122449,92.84116529175485 128.73469387755102,91.99181531550987 139.76785714285717,91.03168055975468 150.80102040816325,89.997689284326 161.8341836734694,88.77905670971364 172.8673469387755,87.4865676154278 183.90051020408163,86.046365481795 194.93367346938777,84.495378568652 205.96683673469386,82.83360687599878 217,81.02412214399862 228.03316326530611,79.0669243726515 239.06632653061226,76.99894182179415 250.09948979591837,74.78324623158986 261.13265306122446,72.41983760203861 272.1658163265306,69.94564419297716 283.19897959183675,67.28680948473199 294.2321428571429,64.51718999697663 305.265306122449,61.56292921003757 316.2984693877551,58.49788364358831 327.3316326530612,55.24819677795533 338.36479591836735,51.81386861313868 349.3979591836735,48.23182740897508 360.4311224489796,44.50207316546451 371.4642857142857,40.58767762277026 382.49744897959187,36.488640780892325" fill="none" stroke="#15803D" stroke-width="1.2"></polyline><text x="380.49744897959187" y="14.488640780892325" text-anchor="end" font-size="8" fill="#15803D">ball joint 105 mm inboard</text></g><g><circle cx="62.535714285714285" cy="95.5" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 1 °, Inner − outer 0 °</title></circle><circle cx="106.66836734693878" cy="95.6846412991837" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 3 °, Inner − outer -0.005 °</title></circle><circle cx="150.80102040816325" cy="101.88858895175571" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 5 °, Inner − outer -0.173 °</title></circle><circle cx="194.93367346938777" cy="113.74256035934869" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 7 °, Inner − outer -0.494 °</title></circle><circle cx="239.06632653061226" cy="115.55204509134886" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 9 °, Inner − outer -0.543 °</title></circle><circle cx="283.19897959183675" cy="132.9083272146158" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 11 °, Inner − outer -1.013 °</title></circle><circle cx="327.3316326530612" cy="145.0577247009027" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 13 °, Inner − outer -1.342 °</title></circle><circle cx="371.4642857142857" cy="161.26923076923077" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 15 °, Inner − outer -1.781 °</title></circle></g></svg><div style="font-size: 9px; color: rgb(100, 116, 139); text-align: center; margin-top: -4px;">Helm angle (outer rudder) (°)</div></figure><figcaption>What the re-drilled 349 mm tiller delivers across the steering range, against the ideal for a 43 m turn, with the measured behaviour (constant offset removed). The solid line sits on the ideal.</figcaption></figure>
 ```
 
-Across the working range that geometry tracks true Ackermann closely:
+| helm | delivered | ideal | error |
+|---|---|---|---|
+| 5° | +0.15° | +0.16° | −0.01° |
+| 10° | +0.62° | +0.65° | −0.03° |
+| 15° | +1.49° | +1.50° | −0.01° |
+| 20° | +2.85° | +2.69° | +0.16° |
 
-| helm | recommended | ideal |
-|---|---|---|
-| 5° | +0.13° | +0.14° |
-| 10° | +0.55° | +0.58° |
-| 15° | +1.31° | +1.32° |
-| 20° | +2.50° | +2.37° |
+### How it holds across the turns the boat actually makes
 
-It runs slightly *over* Ackermann past 20°, which is normal for a trapezoid
-linkage and harmless — the boat does not sail there.
+The geometry is exact at one radius and approximate either side of it. Across the
+18–82 m the boat really sails:
 
-### One number that does not add up, and what it means
+| turn radius | helm | delivered | ideal | error |
+|---|---|---|---|---|
+| 18 m | 31.9° | +9.79° | +6.73° | **+3.06°** |
+| 25 m | 24.8° | +4.81° | +4.14° | +0.67° |
+| 30 m | 21.3° | +3.32° | +3.06° | +0.26° |
+| **43 m** | 15.6° | +1.61° | +1.61° | **0.00°** |
+| 55 m | 12.4° | +0.99° | +1.02° | −0.03° |
+| 70 m | 9.9° | +0.61° | +0.64° | −0.03° |
+| 82 m | 8.5° | +0.45° | +0.47° | −0.02° |
+
+It is within a third of a degree everywhere from 30 m out, and over-delivers only
+in the tightest turns — which is the normal behaviour of a steering trapezoid and
+harmless. **Tuning it to the median 43 m rather than to the extremes is the right
+choice**, and the reason the radius had to be measured before any of this could be
+specified.
+
+### The one input still to confirm — and it matters
+
+**L**, the effective pivot distance, is the 12.6 m the boat *behaves* as though it
+has, derived from R·tan δ. It is not a tape measurement, and the answer moves with
+it:
+
+| if L is | helm at 43 m | target | arm angle | ball joint inboard | tie rod |
+|---|---|---|---|---|---|
+| 9.0 m | 11.3° | +1.20° | 24.1° | 143 mm | 4191 mm |
+| 10.5 m | 13.1° | +1.38° | 20.9° | 125 mm | 4227 mm |
+| **12.6 m** | 15.6° | +1.61° | **17.5°** | **105 mm** | **4266 mm** |
+| 14.0 m | 17.2° | +1.76° | 15.7° | 95 mm | 4287 mm |
+| 16.0 m | 19.5° | +1.95° | 13.6° | 82 mm | 4312 mm |
+
+From 9 m to 16 m the ball joint moves **143 mm to 82 mm** — a 60 mm span on a
+349 mm arm, which is the difference between right and visibly wrong. The tie rod
+is far less sensitive, 4191 to 4312 mm.
+
+So: measure the distance from the rudder stock to the centre of lateral
+resistance, and if it lands near 12.6 m, build the 105 mm. If it does not, the
+table above has the answer, and the reason for the disagreement is itself worth
+knowing.
+
+### One number that still does not fit
 
 Working backwards from the measured behaviour, a symmetric tie-rod linkage would
-need its arms splayed **about 28° outboard** to produce the drift seen. That is a
-great deal of splay — enough to doubt the premise rather than the measurement.
+need its arms splayed **about 28° outboard** to produce the drift seen. That is
+enough splay to doubt the premise rather than the measurement.
 
-Taken with the constant −1.2° offset, which is indistinguishable from one rudder
-sensor being zeroed differently, the likeliest reading is that **part of what
-looks like anti-Ackermann is not geometry at all**: sensor zero, sensor
-non-linearity, or flex in the loaded rudder under helm. The R² of 0.05–0.14 on
-that drift says the same thing.
-
-So the table above is what to build **once the linkage has been looked at**, not
-before.
+Taken with the constant **−1.2°** offset — indistinguishable from one rudder
+sensor being zeroed differently — and an R² of only 0.05–0.14 on that drift, the
+likeliest reading is that **part of what looks like anti-Ackermann is
+instrumentation, not geometry**.
 
 ### In order
 
-1. **Zero both rudder sensors** dockside against physically aligned rudders, and
+1. **Zero both rudder sensors** dockside against physically aligned rudders and
    record the offsets. This alone may account for the −1.2°.
-2. **Measure the tiller arms as they are** — length, and how far inboard or
-   outboard the tie-rod ball joint sits from the stock. If they are near parallel,
-   the drift is instrumentation and the linkage is simply zero-Ackermann. If they
-   really are splayed outboard, that is the fault and the table above is the fix.
-3. **Confirm L.** The 12.6 m is what the boat behaves as though it has; compare it
-   against the tape measurement from the rudder stock to the centre of lateral
-   resistance. If the tape says something very different, the target differential
-   moves and the table should be recomputed.
-4. **Get more days onto a 1–2 s log.** Rate of turn and radius exist on 8 days of
-   23 only because the rest are logged at 6.09 s — and it is the radius that sets
-   the whole geometry.
-5. **Then** move the ball joint to the line above, shorten the tie rod, and
-   re-measure the differential against this same chart.
+2. **Measure the tiller arms as they stand** — specifically how far inboard or
+   outboard the ball joint currently sits from the stock. That single number says
+   whether the linkage is the problem or the sensors are.
+3. **Measure L**, stock to centre of lateral resistance, and check it against the
+   12.6 m the boat behaves as though it has.
+4. **Then** move the ball joint to **105 mm inboard, 333 mm aft** and shorten the
+   tie rod to **4266 mm** — adjusting per the L table if the tape disagrees.
+5. **Re-measure.** A day on a 1–2 s log after the change, plotted against this
+   same chart, either shows the differential has crossed to positive or it does
+   not. Rate of turn and radius exist on only 8 days of 23 because the rest are
+   logged at 6.09 s, so log the validation day finely.
 
 ---
 
