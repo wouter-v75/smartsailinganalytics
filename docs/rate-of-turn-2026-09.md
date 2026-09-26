@@ -230,113 +230,190 @@ aligned rudders and record the offsets before anything mechanical is touched.** 
 the offset proves to be calibration, what remains is the ~0.1 °/° drift, which is
 small — and the whole picture changes.
 
-### The linkage, solved for the measured boat
+### The linkage is not a tie rod — and that changes the answer
 
-Two dimensions now measured rather than assumed: the rudder stocks are **2238 mm
-either side of the centreline (t = 4476 mm)** and the tiller arms are **349 mm**.
-With the operating point already measured — a **43 m** turn radius and an
-effective pivot distance of **12.6 m** — the linkage has one answer.
+The first version of this section solved a **steering trapezoid**: one tie rod
+running directly between the two tillers. That is the wrong mechanism, and its
+answer (a ball joint 105 mm inboard on the tiller) does not apply. **Disregard it.**
+
+What the boat actually has is **two rods to a central slider**: each tiller is
+joined by its own rod to a single slider on the centreline, low in the hull, and
+the slider travels athwartships. The Ackermann in that arrangement comes from
+somewhere else entirely — not from the tiller's angle, but from **how far
+fore-and-aft the slider sits from the rudder stocks**.
+
+It is also, usefully, a much better mechanism for this: it can be made to track
+true Ackermann almost exactly, where the trapezoid could not.
+
+### The geometry as built, from the CAD
 
 | | |
 |---|---|
-| Rudder separation t | **4476 mm** (2 × 2238), fixed |
-| Tiller length a | **349 mm**, fixed |
-| t / L | 0.355 |
-| Ideal differential at 43 m | **+1.61°** (inner 17.18°, outer 15.56°) |
-| **Arm angle required** | **17.5° inboard** of the fore-and-aft line |
-| **Ball joint position** | **105 mm inboard, 333 mm aft** of the rudder stock |
-| **Tie rod length** | **4266 mm** — 210 mm shorter than the 4476 mm a parallel linkage needs |
+| Stock axis at tiller height | x 22382.83, y 1727.84, z 548.31 |
+| Tiller ball joint | x 22041.45, y 1665.90, z 502.19 |
+| Tiller vector | −341.4, −61.9, −46.1 → **350.0 mm** |
+| In plan | **346.95 mm**, angled **10.3° inboard** of the fore-and-aft line |
+| Out of plane | 46.1 mm down, 7.6° below horizontal |
 
-With the tiller length fixed at 349 mm, the adjustment is **where on that arm the
-tie-rod ball joint sits**: 105 mm off the fore-and-aft line, 333 mm aft. A new
-hole and a tie rod 210 mm shorter.
+**Two separations, and they are not interchangeable.** At the tiller the stocks
+are 2 × 1727.8 = **3456 mm** apart — that is the number the *linkage* works with.
+The 2 × 2238 = **4476 mm** quoted earlier is presumably at the blade, and that is
+the number the *Ackermann target* is set by, because that is where the rudders
+make their side force. The 1020 mm difference is consistent with a raked stock,
+and using either one for both jobs would give the wrong answer. Both are used
+below, each in its place.
 
-Note that the textbook rule — arms pointing at the pivot, `atan((t/2)/L)` = 10.1°
-— **under-delivers here**, giving only +0.84° against the +1.61° wanted. That rule
-is exact only for large radii and small helm; this boat turns tightly enough that
-the angle has to be solved for directly, which is what the table above is.
+### The slider position is the control
 
 ```html
-<figure class="chart"><figure style="margin: 0px;"><figcaption style="font-size: 11px; color: rgb(30, 41, 59); font-weight: 600; margin-bottom: 2px;">Rudder differential — measured now, and with the 349 mm tiller re-drilled<span style="color: rgb(100, 116, 139); font-weight: 400;"> (°)</span></figcaption><div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 3px;"><span style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: rgb(100, 116, 139);"><span style="width: 8px; height: 8px; border-radius: 8px; background: rgb(14, 141, 166);"></span>Measured now (offset removed)<span style="color: rgb(100, 116, 139);">· 78149</span></span></div><svg viewBox="0 0 400 215" role="img" aria-label="Rudder differential — measured now, and with the 349 mm tiller re-drilled by Helm angle (outer rudder)" style="display: block; width: 100%; height: auto;"><g><line x1="44" x2="390" y1="169.35651967347644" y2="169.35651967347644" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="172.35651967347644" text-anchor="end" font-size="8" fill="#64748B">-2</text></g><g><line x1="44" x2="390" y1="95.5" y2="95.5" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="98.5" text-anchor="end" font-size="8" fill="#64748B">0</text></g><g><line x1="44" x2="390" y1="21.64348032652356" y2="21.64348032652356" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="24.64348032652356" text-anchor="end" font-size="8" fill="#64748B">2</text></g><line x1="44" x2="390" y1="181" y2="181" stroke="#94A3B8" stroke-width="1"></line><text x="150.80102040816325" y="193" text-anchor="middle" font-size="8" fill="#64748B">5</text><text x="261.13265306122446" y="193" text-anchor="middle" font-size="8" fill="#64748B">10</text><text x="371.4642857142857" y="193" text-anchor="middle" font-size="8" fill="#64748B">15</text><g opacity="0.75"><polyline points="84.60204081632654,94.57679350408155 95.63520408163265,94.0597978663672 106.66836734693878,93.39508918930592 117.7015306122449,92.61959573273442 128.73469387755102,91.73331749665272 139.76785714285717,90.73625448106078 150.80102040816325,89.59147842612188 161.8341836734694,88.3359175916728 172.8673469387755,86.96957197771347 183.90051020408163,85.45551332440719 194.93367346938777,83.83066989159072 205.96683673469386,82.09504167926403 217,80.17477216775363 228.03316326530611,78.18064613656978 239.06632653061226,76.03880706603894 250.09948979591837,73.78618321599792 261.13265306122446,71.38584632660994 272.1658163265306,68.83779639787501 283.19897959183675,66.17896168962984 294.2321428571429,63.409342201874495 305.265306122449,60.49200967477216 316.2984693877551,57.426964108322906 327.3316326530612,54.251133762363395 338.36479591836735,50.9645186368937 349.3979591836735,47.53019047207707 360.4311224489796,43.948149267913436 371.4642857142857,40.25532328423961 382.49744897959187,36.41478426121884" fill="none" stroke="#B45309" stroke-width="1.2" stroke-dasharray="2,3"></polyline><text x="380.49744897959187" y="32.41478426121884" text-anchor="end" font-size="8" fill="#B45309">ideal for R 43 m</text></g><g opacity="0.75"><polyline points="84.60204081632654,94.65065002375502 95.63520408163265,94.13365438604067 106.66836734693878,93.54280222865287 117.7015306122449,92.84116529175485 128.73469387755102,91.99181531550987 139.76785714285717,91.03168055975468 150.80102040816325,89.997689284326 161.8341836734694,88.77905670971364 172.8673469387755,87.4865676154278 183.90051020408163,86.046365481795 194.93367346938777,84.495378568652 205.96683673469386,82.83360687599878 217,81.02412214399862 228.03316326530611,79.0669243726515 239.06632653061226,76.99894182179415 250.09948979591837,74.78324623158986 261.13265306122446,72.41983760203861 272.1658163265306,69.94564419297716 283.19897959183675,67.28680948473199 294.2321428571429,64.51718999697663 305.265306122449,61.56292921003757 316.2984693877551,58.49788364358831 327.3316326530612,55.24819677795533 338.36479591836735,51.81386861313868 349.3979591836735,48.23182740897508 360.4311224489796,44.50207316546451 371.4642857142857,40.58767762277026 382.49744897959187,36.488640780892325" fill="none" stroke="#15803D" stroke-width="1.2"></polyline><text x="380.49744897959187" y="14.488640780892325" text-anchor="end" font-size="8" fill="#15803D">ball joint 105 mm inboard</text></g><g><circle cx="62.535714285714285" cy="95.5" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 1 °, Inner − outer 0 °</title></circle><circle cx="106.66836734693878" cy="95.6846412991837" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 3 °, Inner − outer -0.005 °</title></circle><circle cx="150.80102040816325" cy="101.88858895175571" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 5 °, Inner − outer -0.173 °</title></circle><circle cx="194.93367346938777" cy="113.74256035934869" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 7 °, Inner − outer -0.494 °</title></circle><circle cx="239.06632653061226" cy="115.55204509134886" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 9 °, Inner − outer -0.543 °</title></circle><circle cx="283.19897959183675" cy="132.9083272146158" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 11 °, Inner − outer -1.013 °</title></circle><circle cx="327.3316326530612" cy="145.0577247009027" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 13 °, Inner − outer -1.342 °</title></circle><circle cx="371.4642857142857" cy="161.26923076923077" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Measured now (offset removed): Helm angle (outer rudder) 15 °, Inner − outer -1.781 °</title></circle></g></svg><div style="font-size: 9px; color: rgb(100, 116, 139); text-align: center; margin-top: -4px;">Helm angle (outer rudder) (°)</div></figure><figcaption>What the re-drilled 349 mm tiller delivers across the steering range, against the ideal for a 43 m turn, with the measured behaviour (constant offset removed). The solid line sits on the ideal.</figcaption></figure>
+<figure class="chart"><figure style="margin: 0px;"><figcaption style="font-size: 11px; color: rgb(30, 41, 59); font-weight: 600; margin-bottom: 2px;">Ackermann against slider fore-and-aft position<span style="color: rgb(100, 116, 139); font-weight: 400;"> (°)</span></figcaption><div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 3px;"><span style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: rgb(100, 116, 139);"><span style="width: 8px; height: 8px; border-radius: 8px; background: rgb(14, 141, 166);"></span>Delivered<span style="color: rgb(100, 116, 139);">· 75</span></span></div><svg viewBox="0 0 400 210" role="img" aria-label="Ackermann against slider fore-and-aft position by Slider offset from the stock line" style="display: block; width: 100%; height: auto;"><g><line x1="44" x2="390" y1="124.28312712928097" y2="124.28312712928097" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="127.28312712928097" text-anchor="end" font-size="8" fill="#64748B">0</text></g><g><line x1="44" x2="390" y1="64.75291375291376" y2="64.75291375291376" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="67.75291375291376" text-anchor="end" font-size="8" fill="#64748B">2</text></g><line x1="44" x2="390" y1="176" y2="176" stroke="#94A3B8" stroke-width="1"></line><text x="155.21428571428572" y="188" text-anchor="middle" font-size="8" fill="#64748B">-1000</text><text x="309.67857142857144" y="188" text-anchor="middle" font-size="8" fill="#64748B">0</text><g opacity="0.75"><polyline points="62.535714285714285,76.27122556905621 371.4642857142857,76.27122556905621" fill="none" stroke="#B45309" stroke-width="1.2" stroke-dasharray="2,3"></polyline><text x="369.4642857142857" y="72.27122556905621" text-anchor="end" font-size="8" fill="#B45309">target +1.61°</text></g><g><circle cx="62.535714285714285" cy="113.27003765465304" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1600 mm, Inner − outer at 15.6° helm 0.37 °</title></circle><circle cx="89.56696428571428" cy="60.556033709879856" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1425 mm, Inner − outer at 15.6° helm 2.141 °</title></circle><circle cx="93.42857142857142" cy="50.22754168908014" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1400 mm, Inner − outer at 15.6° helm 2.488 °</title></circle><circle cx="97.29017857142858" cy="39.30374753451676" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1375 mm, Inner − outer at 15.6° helm 2.855 °</title></circle><circle cx="101.15178571428572" cy="29.153846153846132" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1350 mm, Inner − outer at 15.6° helm 3.196 °</title></circle><circle cx="105.01339285714286" cy="30.8802223417608" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1325 mm, Inner − outer at 15.6° helm 3.138 °</title></circle><circle cx="108.875" cy="32.636363636363626" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1300 mm, Inner − outer at 15.6° helm 3.079 °</title></circle><circle cx="112.73660714285714" cy="34.39250493096645" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1275 mm, Inner − outer at 15.6° helm 3.02 °</title></circle><circle cx="116.59821428571429" cy="36.11888111888112" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1250 mm, Inner − outer at 15.6° helm 2.962 °</title></circle><circle cx="120.45982142857143" cy="37.87502241348395" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1225 mm, Inner − outer at 15.6° helm 2.903 °</title></circle><circle cx="124.32142857142857" cy="39.601398601398586" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1200 mm, Inner − outer at 15.6° helm 2.845 °</title></circle><circle cx="128.18303571428572" cy="41.35753989600144" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1175 mm, Inner − outer at 15.6° helm 2.786 °</title></circle><circle cx="132.04464285714283" cy="43.11368119060427" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1150 mm, Inner − outer at 15.6° helm 2.727 °</title></circle><circle cx="135.90625" cy="44.84005737851891" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1125 mm, Inner − outer at 15.6° helm 2.669 °</title></circle><circle cx="139.76785714285717" cy="46.596198673121734" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1100 mm, Inner − outer at 15.6° helm 2.61 °</title></circle><circle cx="143.62946428571428" cy="48.35233996772459" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1075 mm, Inner − outer at 15.6° helm 2.551 °</title></circle><circle cx="147.49107142857144" cy="50.108481262327416" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1050 mm, Inner − outer at 15.6° helm 2.492 °</title></circle><circle cx="151.35267857142856" cy="51.86462255693027" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1025 mm, Inner − outer at 15.6° helm 2.433 °</title></circle><circle cx="155.21428571428572" cy="53.620763851533084" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -1000 mm, Inner − outer at 15.6° helm 2.374 °</title></circle><circle cx="159.07589285714283" cy="55.37690514613591" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -975 mm, Inner − outer at 15.6° helm 2.315 °</title></circle><circle cx="162.9375" cy="57.13304644073874" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -950 mm, Inner − outer at 15.6° helm 2.256 °</title></circle><circle cx="166.79910714285717" cy="58.889187735341594" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -925 mm, Inner − outer at 15.6° helm 2.197 °</title></circle><circle cx="170.66071428571428" cy="60.64532902994442" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -900 mm, Inner − outer at 15.6° helm 2.138 °</title></circle><circle cx="174.52232142857142" cy="62.40147032454723" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -875 mm, Inner − outer at 15.6° helm 2.079 °</title></circle><circle cx="178.38392857142858" cy="64.15761161915007" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -850 mm, Inner − outer at 15.6° helm 2.02 °</title></circle><circle cx="182.24553571428572" cy="65.91375291375292" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -825 mm, Inner − outer at 15.6° helm 1.961 °</title></circle><circle cx="186.10714285714286" cy="67.69965931504393" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -800 mm, Inner − outer at 15.6° helm 1.901 °</title></circle><circle cx="189.96875" cy="69.45580060964676" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -775 mm, Inner − outer at 15.6° helm 1.842 °</title></circle><circle cx="193.83035714285714" cy="71.24170701093779" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -750 mm, Inner − outer at 15.6° helm 1.782 °</title></circle><circle cx="197.69196428571428" cy="72.9978483055406" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -725 mm, Inner − outer at 15.6° helm 1.723 °</title></circle><circle cx="201.55357142857142" cy="74.78375470683163" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -700 mm, Inner − outer at 15.6° helm 1.663 °</title></circle><circle cx="205.41517857142858" cy="76.56966110812265" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -675 mm, Inner − outer at 15.6° helm 1.603 °</title></circle><circle cx="209.27678571428572" cy="78.35556750941366" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -650 mm, Inner − outer at 15.6° helm 1.543 °</title></circle><circle cx="213.13839285714286" cy="80.14147391070466" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -625 mm, Inner − outer at 15.6° helm 1.483 °</title></circle><circle cx="217" cy="81.9273803119957" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -600 mm, Inner − outer at 15.6° helm 1.423 °</title></circle><circle cx="220.86160714285714" cy="83.71328671328669" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -575 mm, Inner − outer at 15.6° helm 1.363 °</title></circle><circle cx="224.7232142857143" cy="85.49919311457774" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -550 mm, Inner − outer at 15.6° helm 1.303 °</title></circle><circle cx="228.58482142857144" cy="87.28509951586875" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -525 mm, Inner − outer at 15.6° helm 1.243 °</title></circle><circle cx="232.44642857142856" cy="89.10077102384794" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -500 mm, Inner − outer at 15.6° helm 1.182 °</title></circle><circle cx="236.3080357142857" cy="90.88667742513897" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -475 mm, Inner − outer at 15.6° helm 1.122 °</title></circle><circle cx="240.16964285714286" cy="92.70234893311816" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -450 mm, Inner − outer at 15.6° helm 1.061 °</title></circle><circle cx="244.03125" cy="94.51802044109736" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -425 mm, Inner − outer at 15.6° helm 1 °</title></circle><circle cx="247.89285714285714" cy="96.33369194907657" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -400 mm, Inner − outer at 15.6° helm 0.939 °</title></circle><circle cx="251.7544642857143" cy="98.14936345705577" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -375 mm, Inner − outer at 15.6° helm 0.878 °</title></circle><circle cx="255.61607142857144" cy="99.96503496503497" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -350 mm, Inner − outer at 15.6° helm 0.817 °</title></circle><circle cx="259.47767857142856" cy="101.78070647301416" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -325 mm, Inner − outer at 15.6° helm 0.756 °</title></circle><circle cx="263.33928571428567" cy="103.59637798099337" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -300 mm, Inner − outer at 15.6° helm 0.695 °</title></circle><circle cx="267.2008928571429" cy="105.44181459566076" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -275 mm, Inner − outer at 15.6° helm 0.633 °</title></circle><circle cx="271.0625" cy="107.28725121032814" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -250 mm, Inner − outer at 15.6° helm 0.571 °</title></circle><circle cx="274.9241071428571" cy="109.10292271830733" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -225 mm, Inner − outer at 15.6° helm 0.51 °</title></circle><circle cx="278.78571428571433" cy="110.94835933297472" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -200 mm, Inner − outer at 15.6° helm 0.448 °</title></circle><circle cx="282.64732142857144" cy="112.79379594764211" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -175 mm, Inner − outer at 15.6° helm 0.386 °</title></circle><circle cx="286.50892857142856" cy="114.66899766899766" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -150 mm, Inner − outer at 15.6° helm 0.323 °</title></circle><circle cx="290.37053571428567" cy="116.51443428366505" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -125 mm, Inner − outer at 15.6° helm 0.261 °</title></circle><circle cx="294.2321428571429" cy="118.38963600502062" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -100 mm, Inner − outer at 15.6° helm 0.198 °</title></circle><circle cx="298.09375" cy="120.23507261968801" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -75 mm, Inner − outer at 15.6° helm 0.136 °</title></circle><circle cx="301.95535714285717" cy="122.11027434104358" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -50 mm, Inner − outer at 15.6° helm 0.073 °</title></circle><circle cx="305.8169642857143" cy="123.98547606239913" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line -25 mm, Inner − outer at 15.6° helm 0.01 °</title></circle><circle cx="309.67857142857144" cy="125.8904428904429" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 0 mm, Inner − outer at 15.6° helm -0.054 °</title></circle><circle cx="313.54017857142856" cy="127.76564461179845" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 25 mm, Inner − outer at 15.6° helm -0.117 °</title></circle><circle cx="317.4017857142857" cy="129.67061143984222" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 50 mm, Inner − outer at 15.6° helm -0.181 °</title></circle><circle cx="321.26339285714283" cy="131.57557826788596" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 75 mm, Inner − outer at 15.6° helm -0.245 °</title></circle><circle cx="325.125" cy="133.4805450959297" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 100 mm, Inner − outer at 15.6° helm -0.309 °</title></circle><circle cx="328.98660714285717" cy="135.38551192397347" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 125 mm, Inner − outer at 15.6° helm -0.373 °</title></circle><circle cx="332.8482142857143" cy="137.2904787520172" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 150 mm, Inner − outer at 15.6° helm -0.437 °</title></circle><circle cx="336.70982142857144" cy="139.22521068674916" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 175 mm, Inner − outer at 15.6° helm -0.502 °</title></circle><circle cx="340.57142857142856" cy="141.1599426214811" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 200 mm, Inner − outer at 15.6° helm -0.567 °</title></circle><circle cx="344.4330357142857" cy="143.09467455621302" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 225 mm, Inner − outer at 15.6° helm -0.632 °</title></circle><circle cx="348.29464285714283" cy="145.02940649094495" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 250 mm, Inner − outer at 15.6° helm -0.697 °</title></circle><circle cx="352.15625" cy="146.99390353236507" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 275 mm, Inner − outer at 15.6° helm -0.763 °</title></circle><circle cx="356.01785714285717" cy="148.95840057378518" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 300 mm, Inner − outer at 15.6° helm -0.829 °</title></circle><circle cx="359.8794642857143" cy="150.9228976152053" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 325 mm, Inner − outer at 15.6° helm -0.895 °</title></circle><circle cx="363.74107142857144" cy="152.88739465662542" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 350 mm, Inner − outer at 15.6° helm -0.961 °</title></circle><circle cx="367.60267857142856" cy="154.85189169804553" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 375 mm, Inner − outer at 15.6° helm -1.027 °</title></circle><circle cx="371.4642857142857" cy="156.84615384615384" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered: Slider offset from the stock line 400 mm, Inner − outer at 15.6° helm -1.094 °</title></circle></g></svg><div style="font-size: 9px; color: rgb(100, 116, 139); text-align: center; margin-top: -4px;">Slider offset from the stock line (mm)</div></figure><figcaption>What the linkage delivers as the slider is moved fore and aft, measured at the 15.6° of helm the boat carries in a 43 m turn. Negative is toward the tiller ends.</figcaption></figure>
+```
+
+The differential swings from **+3.6° to −4.4°** across the slider's plausible
+range, passing through zero when the slider is level with the stocks. There is
+therefore exactly one position that gives the +1.61° the measured turn radius
+calls for:
+
+| | |
+|---|---|
+| **Slider ball joint** | **CAD x = 21704 mm, y = 0** |
+| relative to the stock line | **679 mm** toward the tiller ends |
+| relative to the tiller ends | **338 mm beyond** them, same direction |
+| **Rod length in plan** | **1761 mm** |
+| True rod length | √(1761² + drop²) — set by how far the slider sits below the tillers |
+
+The rod's vertical drop does **not** affect the steering at all: the tiller sweeps
+a circle in one plane and the slider travels in another, so the vertical
+separation is constant and only the horizontal projection does any work. The drop
+sets the rod's true length and nothing else.
+
+```html
+<figure class="chart"><figure style="margin: 0px;"><figcaption style="font-size: 11px; color: rgb(30, 41, 59); font-weight: 600; margin-bottom: 2px;">With the slider at −679 mm: delivered vs ideal<span style="color: rgb(100, 116, 139); font-weight: 400;"> (°)</span></figcaption><div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 3px;"><span style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: rgb(100, 116, 139);"><span style="width: 8px; height: 8px; border-radius: 8px; background: rgb(14, 141, 166);"></span>Delivered by the linkage<span style="color: rgb(100, 116, 139);">· 47</span></span></div><svg viewBox="0 0 400 200" role="img" aria-label="With the slider at −679 mm: delivered vs ideal by Helm angle (outer rudder)" style="display: block; width: 100%; height: auto;"><g><line x1="44" x2="390" y1="148.7185628742515" y2="148.7185628742515" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="151.7185628742515" text-anchor="end" font-size="8" fill="#64748B">0</text></g><g><line x1="44" x2="390" y1="91.23353293413174" y2="91.23353293413174" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="94.23353293413174" text-anchor="end" font-size="8" fill="#64748B">2</text></g><g><line x1="44" x2="390" y1="33.74850299401197" y2="33.74850299401197" stroke="#DFE6EC" stroke-width="1"></line><text x="39" y="36.74850299401197" text-anchor="end" font-size="8" fill="#64748B">4</text></g><line x1="44" x2="390" y1="166" y2="166" stroke="#94A3B8" stroke-width="1"></line><text x="169.98913043478262" y="178" text-anchor="middle" font-size="8" fill="#64748B">10</text><text x="304.30590062111804" y="178" text-anchor="middle" font-size="8" fill="#64748B">20</text><g opacity="0.75"><polyline points="62.535714285714285,148 69.25155279503106,147.59760479041915 75.96739130434783,147.0802395209581 82.6832298136646,146.47664670658682 89.39906832298138,145.7868263473054 96.11490683229815,145.01077844311376 102.83074534161491,144.11976047904193 109.54658385093168,143.1425149700599 116.26242236024845,142.07904191616768 122.97826086956522,140.90059880239522 129.694099378882,139.6359281437126 136.40993788819875,138.28502994011976 143.12577639751555,136.79041916167665 149.8416149068323,135.23832335329342 156.55745341614906,133.57125748502995 163.27329192546583,131.8179640718563 169.98913043478262,129.9497005988024 176.70496894409936,127.96646706586827 183.42080745341616,125.89700598802395 190.13664596273293,123.74131736526945 196.8524844720497,121.47065868263473 203.56832298136646,119.08502994011977 210.28416149068323,116.61317365269461 217,114.05508982035929 223.71583850931677,111.38203592814372 230.43167701863356,108.59401197604791 237.1475155279503,105.71976047904192 243.86335403726707,102.73053892215569 250.57919254658384,99.65508982035928 257.2950310559006,96.4934131736527 264.0108695652174,93.21676646706588 270.72670807453414,89.85389221556886 277.4425465838509,86.37604790419164 284.1583850931677,82.8119760479042 290.87422360248445,79.13293413173655 297.5900621118013,75.36766467065868 304.30590062111804,71.51616766467068 311.02173913043475,67.57844311377247 317.7375776397516,63.52574850299402 324.45341614906835,59.38682634730539 331.1692546583851,55.16167664670661 337.8850931677019,50.85029940119762 344.60093167701865,46.45269461077845 351.3167701863354,41.96886227544911 358.0326086956522,37.39880239520957 364.74844720496895,32.74251497005989 371.4642857142857,28" fill="none" stroke="#B45309" stroke-width="1.2" stroke-dasharray="2,3"></polyline><text x="369.4642857142857" y="24" text-anchor="end" font-size="8" fill="#B45309">ideal</text></g><g><circle cx="62.535714285714285" cy="147.91377245508983" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 2 °, Inner − outer 0.028 °</title></circle><circle cx="69.25155279503106" cy="147.45389221556886" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 2.5 °, Inner − outer 0.044 °</title></circle><circle cx="75.96739130434783" cy="146.9077844311377" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 3 °, Inner − outer 0.063 °</title></circle><circle cx="82.6832298136646" cy="146.2754491017964" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 3.5 °, Inner − outer 0.085 °</title></circle><circle cx="89.39906832298138" cy="145.52814371257486" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 4 °, Inner − outer 0.111 °</title></circle><circle cx="96.11490683229815" cy="144.69461077844312" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 4.5 °, Inner − outer 0.14 °</title></circle><circle cx="102.83074534161491" cy="143.7748502994012" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 5 °, Inner − outer 0.172 °</title></circle><circle cx="109.54658385093168" cy="142.74011976047905" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 5.5 °, Inner − outer 0.208 °</title></circle><circle cx="116.26242236024845" cy="141.64790419161676" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 6 °, Inner − outer 0.246 °</title></circle><circle cx="122.97826086956522" cy="140.4119760479042" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 6.5 °, Inner − outer 0.289 °</title></circle><circle cx="129.694099378882" cy="139.1185628742515" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 7 °, Inner − outer 0.334 °</title></circle><circle cx="136.40993788819875" cy="137.71017964071856" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 7.5 °, Inner − outer 0.383 °</title></circle><circle cx="143.12577639751555" cy="136.2443113772455" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 8 °, Inner − outer 0.434 °</title></circle><circle cx="149.8416149068323" cy="134.63473053892216" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 8.5 °, Inner − outer 0.49 °</title></circle><circle cx="156.55745341614906" cy="132.96766467065868" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 9 °, Inner − outer 0.548 °</title></circle><circle cx="163.27329192546583" cy="131.21437125748503" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 9.5 °, Inner − outer 0.609 °</title></circle><circle cx="169.98913043478262" cy="129.34610778443113" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 10 °, Inner − outer 0.674 °</title></circle><circle cx="176.70496894409936" cy="127.39161676646708" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 10.5 °, Inner − outer 0.742 °</title></circle><circle cx="183.42080745341616" cy="125.3508982035928" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 11 °, Inner − outer 0.813 °</title></circle><circle cx="190.13664596273293" cy="123.19520958083832" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 11.5 °, Inner − outer 0.888 °</title></circle><circle cx="196.8524844720497" cy="120.98203592814372" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 12 °, Inner − outer 0.965 °</title></circle><circle cx="203.56832298136646" cy="118.65389221556886" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 12.5 °, Inner − outer 1.046 °</title></circle><circle cx="210.28416149068323" cy="116.23952095808384" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 13 °, Inner − outer 1.13 °</title></circle><circle cx="217" cy="113.71017964071856" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 13.5 °, Inner − outer 1.218 °</title></circle><circle cx="223.71583850931677" cy="111.12335329341317" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 14 °, Inner − outer 1.308 °</title></circle><circle cx="230.43167701863356" cy="108.42155688622753" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 14.5 °, Inner − outer 1.402 °</title></circle><circle cx="237.1475155279503" cy="105.63353293413175" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 15 °, Inner − outer 1.499 °</title></circle><circle cx="243.86335403726707" cy="102.73053892215569" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 15.5 °, Inner − outer 1.6 °</title></circle><circle cx="250.57919254658384" cy="99.77005988023951" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 16 °, Inner − outer 1.703 °</title></circle><circle cx="257.2950310559006" cy="96.69461077844312" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 16.5 °, Inner − outer 1.81 °</title></circle><circle cx="264.0108695652174" cy="93.50419161676646" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 17 °, Inner − outer 1.921 °</title></circle><circle cx="270.72670807453414" cy="90.25628742514971" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 17.5 °, Inner − outer 2.034 °</title></circle><circle cx="277.4425465838509" cy="86.8934131736527" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 18 °, Inner − outer 2.151 °</title></circle><circle cx="284.1583850931677" cy="83.41556886227546" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 18.5 °, Inner − outer 2.272 °</title></circle><circle cx="290.87422360248445" cy="79.88023952095809" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 19 °, Inner − outer 2.395 °</title></circle><circle cx="297.5900621118013" cy="76.2299401197605" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 19.5 °, Inner − outer 2.522 °</title></circle><circle cx="304.30590062111804" cy="72.46467065868264" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 20 °, Inner − outer 2.653 °</title></circle><circle cx="311.02173913043475" cy="68.61317365269463" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 20.5 °, Inner − outer 2.787 °</title></circle><circle cx="317.7375776397516" cy="64.67544910179642" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 21 °, Inner − outer 2.924 °</title></circle><circle cx="324.45341614906835" cy="60.62275449101797" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 21.5 °, Inner − outer 3.065 °</title></circle><circle cx="331.1692546583851" cy="56.455089820359305" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 22 °, Inner − outer 3.21 °</title></circle><circle cx="337.8850931677019" cy="52.20119760479044" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 22.5 °, Inner − outer 3.358 °</title></circle><circle cx="344.60093167701865" cy="47.861077844311396" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 23 °, Inner − outer 3.509 °</title></circle><circle cx="351.3167701863354" cy="43.405988023952105" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 23.5 °, Inner − outer 3.664 °</title></circle><circle cx="358.0326086956522" cy="38.83592814371259" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 24 °, Inner − outer 3.823 °</title></circle><circle cx="364.74844720496895" cy="34.179640718562894" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 24.5 °, Inner − outer 3.985 °</title></circle><circle cx="371.4642857142857" cy="29.40838323353293" r="2.6" fill="#0E8DA6" opacity="0.7"><title>Delivered by the linkage: Helm angle (outer rudder) 25 °, Inner − outer 4.151 °</title></circle></g></svg><div style="font-size: 9px; color: rgb(100, 116, 139); text-align: center; margin-top: -4px;">Helm angle (outer rudder) (°)</div></figure><figcaption>With the slider at that position, delivered against ideal across the whole helm range.</figcaption></figure>
 ```
 
 | helm | delivered | ideal | error |
 |---|---|---|---|
-| 5° | +0.15° | +0.16° | −0.01° |
-| 10° | +0.62° | +0.65° | −0.03° |
-| 15° | +1.49° | +1.50° | −0.01° |
-| 20° | +2.85° | +2.69° | +0.16° |
+| 5° | +0.17° | +0.16° | +0.01° |
+| 10° | +0.67° | +0.65° | +0.02° |
+| **15.6°** | **+1.61°** | **+1.61°** | **0.00°** |
+| 20° | +2.65° | +2.69° | −0.03° |
+| 25° | +4.15° | +4.20° | −0.05° |
 
-### How it holds across the turns the boat actually makes
+Within **0.05° everywhere from 5° to 25°** — it does not just hit the design point,
+it follows the curve. That is the two-rod slider earning its keep.
 
-The geometry is exact at one radius and approximate either side of it. Across the
-18–82 m the boat really sails:
+### How precisely it has to be placed
 
-| turn radius | helm | delivered | ideal | error |
-|---|---|---|---|---|
-| 18 m | 31.9° | +9.79° | +6.73° | **+3.06°** |
-| 25 m | 24.8° | +4.81° | +4.14° | +0.67° |
-| 30 m | 21.3° | +3.32° | +3.06° | +0.26° |
-| **43 m** | 15.6° | +1.61° | +1.61° | **0.00°** |
-| 55 m | 12.4° | +0.99° | +1.02° | −0.03° |
-| 70 m | 9.9° | +0.61° | +0.64° | −0.03° |
-| 82 m | 8.5° | +0.45° | +0.47° | −0.02° |
+| slider offset from ideal | differential | off target |
+|---|---|---|
+| −200 mm | +2.09° | +0.48° |
+| −100 mm | +1.85° | +0.24° |
+| −50 mm | +1.73° | +0.12° |
+| **0** | **+1.61°** | **0.00°** |
+| +50 mm | +1.49° | −0.12° |
+| +100 mm | +1.37° | −0.24° |
+| +200 mm | +1.13° | −0.48° |
 
-It is within a third of a degree everywhere from 30 m out, and over-delivers only
-in the tightest turns — which is the normal behaviour of a steering trapezoid and
-harmless. **Tuning it to the median 43 m rather than to the extremes is the right
-choice**, and the reason the radius had to be measured before any of this could be
-specified.
+**±50 mm is worth getting right; ±10 mm is not worth chasing.**
 
-### The one input still to confirm — and it matters
+### Do the two rudders match what the turns required?
 
-**L**, the effective pivot distance, is the 12.6 m the boat *behaves* as though it
-has, derived from R·tan δ. It is not a tape measurement, and the answer moves with
-it:
+The most direct test available, and it does not depend on any model of the
+linkage: take the rudder angles actually recorded through each manoeuvre, and
+compare them with what that manoeuvre's own measured radius required.
 
-| if L is | helm at 43 m | target | arm angle | ball joint inboard | tie rod |
-|---|---|---|---|---|---|
-| 9.0 m | 11.3° | +1.20° | 24.1° | 143 mm | 4191 mm |
-| 10.5 m | 13.1° | +1.38° | 20.9° | 125 mm | 4227 mm |
-| **12.6 m** | 15.6° | +1.61° | **17.5°** | **105 mm** | **4266 mm** |
-| 14.0 m | 17.2° | +1.76° | 15.7° | 95 mm | 4287 mm |
-| 16.0 m | 19.5° | +1.95° | 13.6° | 82 mm | 4312 mm |
+**Tacks** — 72 manoeuvres, median radius 42.1 m:
 
-From 9 m to 16 m the ball joint moves **143 mm to 82 mm** — a 60 mm span on a
-349 mm arm, which is the difference between right and visibly wrong. The tie rod
-is far less sensitive, 4191 to 4312 mm.
+| | now | required | change |
+|---|---|---|---|
+| inner rudder | 15.31° | **17.54°** | **+2.24°** |
+| outer rudder | 18.26° | **15.86°** | **−2.39°** |
+| mean of the two | 16.78° | 16.70° | −0.08° |
+| **differential** | **−2.95°** | **+1.68°** | **+4.63°** |
 
-So: measure the distance from the rudder stock to the centre of lateral
-resistance, and if it lands near 12.6 m, build the 105 mm. If it does not, the
-table above has the answer, and the reason for the disagreement is itself worth
-knowing.
+**Gybes** — 38 manoeuvres, median radius 46.4 m: measured differential **−1.75°**
+against a required **+1.40°**, an error of **−3.15°**.
 
-### One number that still does not fit
+Two separate findings, and they point in opposite directions.
 
-Working backwards from the measured behaviour, a symmetric tie-rod linkage would
-need its arms splayed **about 28° outboard** to produce the drift seen. That is
-enough splay to doubt the premise rather than the measurement.
+**The pair is right.** The mean of the two rudders — 16.78° — is within a tenth of
+a degree of the 16.70° that a 42 m turn asks for. The boat is carrying the correct
+amount of helm. (Some of that agreement is built in: L was derived from R·tan δ in
+the first place, so the mean *had* to come out close. It is the differential that
+is an independent measurement.)
 
-Taken with the constant **−1.2°** offset — indistinguishable from one rudder
-sensor being zeroed differently — and an R² of only 0.05–0.14 on that drift, the
-likeliest reading is that **part of what looks like anti-Ackermann is
-instrumentation, not geometry**.
+**The split between them is wrong, and by more than the correction is.** The outer
+rudder is turning **3 degrees more** than the inner, where it should be turning
+1.7 degrees **less**. The inner rudder is under-turned by **4.6° on a tack** and
+**3.2° on a gybe** — and since the rudders sum correctly, every degree the inner
+is short is a degree the outer is carrying in excess, dragging.
+
+### That also corrects something said earlier in this document
+
+An earlier draft concluded that no plausible linkage could produce the measured
+anti-Ackermann — that arms would need splaying 28° outboard — and inferred the
+drift was therefore probably sensor error. **That was the wrong mechanism being
+modelled.** Against the two-rod slider the boat actually has, the measurement is
+entirely ordinary: a slider at **679 mm the wrong side of the stocks** produces
+exactly what was recorded.
+
+Working backwards from the measured −2.95° at 16.8° of helm, the slider that
+reproduces it sits at **stock_x +1091 mm — CAD x ≈ 23474 mm** — on the *opposite*
+side of the rudder stocks from the tiller ends.
+
+**That is a checkable prediction, and it is the next thing to look at.** If the
+slider really is about 1.1 m the far side of the stock line, the geometry explains
+the whole measurement, nothing is wrong with the sensors' gain, and the fix is
+purely mechanical:
+
+> **Move the slider from x ≈ 23474 to x = 21704 — about 1770 mm, to the other side
+> of the rudder stocks.**
+
+If it is somewhere else, the model is wrong somewhere and that is worth knowing
+before anything is moved.
+
+A 1770 mm move is a large one and may not be practical as drawn. The same
+differential can be reached by changing the tiller geometry instead — the arm
+angle and the ball joint position — and once the slider's real position is known
+the alternatives can be costed against each other. What is not in doubt is the
+size of the error: **4.6° of differential at the radius this boat actually tacks
+at.**
+
+### What is still needed
+
+1. **The slider's position as built** — CAD x, y, z of its ball joint, and its
+   travel axis. Without it there is no way to say how far it needs to move, only
+   where it should end up. This is the one number that turns this into a work
+   order.
+2. **Confirm 2238 mm is the blade separation**, not something else. The Ackermann
+   target scales with it.
+3. **L, the pivot distance.** Still the 12.6 m the boat behaves as though it has.
+   From 9 m to 16 m the slider position moves by roughly ±250 mm, so this is worth
+   the tape measurement.
+4. **The stock rake.** The tiller arm sits 7.6° below horizontal, which is what a
+   tiller perpendicular to a raked stock looks like. The model above treats the
+   tiller as sweeping a horizontal circle; with real rake it sweeps a tilted one,
+   which is a second-order correction to the numbers above — small, but worth
+   redoing once the rake angle is known.
+
+### And still, before anything is cut
+
+The **−1.2° constant offset** — the differential still present at zero helm — is
+the part that remains indistinguishable from one rudder sensor being zeroed
+differently from the other. The *drift* with helm angle is now fully explained by
+the linkage, but a constant offset at zero helm is not, and it is worth an hour to
+settle: **zero both sensors dockside against physically aligned rudders.** It also
+decides whether the −2.95° above should be read as −2.95° or −1.8°.
 
 ### In order
 
-1. **Zero both rudder sensors** dockside against physically aligned rudders and
-   record the offsets. This alone may account for the −1.2°.
-2. **Measure the tiller arms as they stand** — specifically how far inboard or
-   outboard the ball joint currently sits from the stock. That single number says
-   whether the linkage is the problem or the sensors are.
-3. **Measure L**, stock to centre of lateral resistance, and check it against the
-   12.6 m the boat behaves as though it has.
-4. **Then** move the ball joint to **105 mm inboard, 333 mm aft** and shorten the
-   tie rod to **4266 mm** — adjusting per the L table if the tape disagrees.
-5. **Re-measure.** A day on a 1–2 s log after the change, plotted against this
-   same chart, either shows the differential has crossed to positive or it does
-   not. Rate of turn and radius exist on only 8 days of 23 because the rest are
-   logged at 6.09 s, so log the validation day finely.
+1. **Zero both rudder sensors** dockside. This alone may account for the −1.2°.
+2. **Read off the slider ball joint's x, y, z** and its travel axis from the CAD.
+3. **Confirm the blade separation and measure L.**
+4. **Then** move the slider to **x = 21704 mm** on the centreline — adjusted for
+   whatever L turns out to be — and set the rod length to suit its height.
+5. **Re-measure on a 1–2 s log.** Plotted against the second chart above, the
+   differential either crosses to positive and follows the ideal, or it does not.
 
 ---
 
