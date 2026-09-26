@@ -179,25 +179,36 @@ export default function AskChart({ spec, height = 170, highlight = null }) {
               {/* Behind the dots, and labelled at the end of the line rather than in
                   the legend: the polar and the season are what the cloud is being
                   judged against, not more of the same measurement. */}
-              {(spec.refLines || []).map(ref => {
-                const inside = ref.points.filter(p => p.x >= lox && p.x <= hix)
-                if (inside.length < 2) return null
-                // A reference that misses the y-range entirely would be clamped
-                // into a flat line along the edge of the chart — which reads as
-                // data and is not. Better absent than drawn somewhere it is not.
-                if (!inside.some(p => p.y >= lo && p.y <= hi)) return null
-                const last = inside[inside.length - 1]
-                return (
-                  <g key={ref.label} opacity="0.6">
-                    <polyline points={inside.map(p => `${px(p.x)},${clampY(p.y)}`).join(' ')}
-                      fill="none" stroke={ref.color || '#E2E8F0'} strokeWidth="1.2"
-                      strokeDasharray={ref.dashed ? '2,3' : undefined} />
-                    <text x={px(last.x) - 2} y={clampY(last.y) - 4} textAnchor="end" fontSize="8" fill={ref.color || '#CBD5E1'}>
-                      {ref.label}
-                    </text>
-                  </g>
-                )
-              })}
+              {(() => {
+                // Labels sit at each line's right-hand end. Two references that
+                // finish in the same place — a polar and a season median, or an
+                // ideal and the linkage built to match it — print their names on
+                // top of each other and both become unreadable. Stack them.
+                const placed = []
+                return (spec.refLines || []).map(ref => {
+                  const inside = ref.points.filter(p => p.x >= lox && p.x <= hix)
+                  if (inside.length < 2) return null
+                  // A reference that misses the y-range entirely would be clamped
+                  // into a flat line along the edge of the chart — which reads as
+                  // data and is not. Better absent than drawn somewhere it is not.
+                  if (!inside.some(p => p.y >= lo && p.y <= hi)) return null
+                  const last = inside[inside.length - 1]
+                  const lx = px(last.x) - 2
+                  let ly = clampY(last.y) - 4
+                  while (placed.some(q => Math.abs(q.y - ly) < 9 && Math.abs(q.x - lx) < 70)) ly -= 9
+                  placed.push({ x: lx, y: ly })
+                  return (
+                    <g key={ref.label} opacity="0.75">
+                      <polyline points={inside.map(p => `${px(p.x)},${clampY(p.y)}`).join(' ')}
+                        fill="none" stroke={ref.color || '#E2E8F0'} strokeWidth="1.2"
+                        strokeDasharray={ref.dashed ? '2,3' : undefined} />
+                      <text x={lx} y={ly} textAnchor="end" fontSize="8" fill={ref.color || '#CBD5E1'}>
+                        {ref.label}
+                      </text>
+                    </g>
+                  )
+                })
+              })()}
               {spec.series.map((s, si) => (
                 <g key={s.label}>
                   {s.points.map((p, i) => (

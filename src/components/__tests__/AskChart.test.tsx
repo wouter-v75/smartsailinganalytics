@@ -56,3 +56,25 @@ describe('AskChart — the reference lines', () => {
     expect(Number(line.getAttribute('x1'))).toBeLessThan(Number(line.getAttribute('x2')))
   })
 })
+
+// A polar and a season median, or an ideal and the linkage built to match it,
+// finish in the same place and printed their names on top of each other.
+describe('AskChart — two references ending together', () => {
+  const twoRefs = {
+    kind: 'scatter' as const, title: 'x', xType: 'number' as const,
+    xLabel: 'helm', yLabel: 'diff', unit: '°', xUnit: '°',
+    series: [{ label: 'measured', n: 8, points: [{ x: 1, y: 0 }, { x: 15, y: -1.8 }] }],
+    refLines: [
+      { label: 'ideal', color: '#F59E0B', dashed: true, points: [{ x: 1, y: 0 }, { x: 15, y: 1.32 }] },
+      { label: 'recommended', color: '#22C55E', points: [{ x: 1, y: 0 }, { x: 15, y: 1.31 }] },
+    ],
+  }
+  it('separates the labels instead of overprinting them', () => {
+    const s = render(<AskChart spec={twoRefs as never} />).container.querySelector('svg')!
+    const ys = Array.from(s.querySelectorAll('text'))
+      .filter(t => ['ideal', 'recommended'].includes(t.textContent || ''))
+      .map(t => Number(t.getAttribute('y')))
+    expect(ys).toHaveLength(2)
+    expect(Math.abs(ys[0] - ys[1])).toBeGreaterThanOrEqual(9)
+  })
+})
