@@ -114,6 +114,32 @@ export function fitCamber(input: CamberInput): CamberFit | null {
   const projection = Math.cos(chordAngleDeg * Math.PI / 180)
   if (!(projection > 0.2)) return null      // edge-on: nothing to measure
 
+  // WHY THIS SOMETIMES REFUSES.
+  //
+  // Everything below resolves a mark along the luff-to-leech line and calls its
+  // distance from that line the depth. The arc itself is smooth — nothing you
+  // would see in the photograph — but the MAPPING is not always one-to-one. On
+  // Capricorno's main at half hoist the leech sits 879 mm to leeward of the luff
+  // while an 11 % camber puts the deepest part of the stripe about 1210 mm out,
+  // so the stripe reaches further to leeward in the middle than at its own end
+  // and two positions along it share one offset. The chord has stopped being an
+  // axis.
+  //
+  // The signature is marks resolving OUTSIDE the chord: on that geometry a point
+  // 30 % along came back as 117 %. Discarding them silently is what produced
+  // 1.0 % where the truth was 11 %, so count them instead, and say nothing when
+  // too many land out there. A wrong camber reads exactly like a right one.
+  //
+  // The fix is to project the section through the camera and fit the marks to
+  // that curve, using their order along the stripe to resolve the ambiguity —
+  // which needs the real marks to build against, not a model of them.
+  let outside = 0
+  for (const m of marks) {
+    const a = alongAndOff(m, luff, leech)
+    if (!a || a.s < -0.05 || a.s > 1.05) outside++
+  }
+  if (outside > marks.length * 0.25) return null
+
   const obs: { s: number; y: number }[] = []
   for (const m of marks) {
     const a = alongAndOff(m, luff, leech)

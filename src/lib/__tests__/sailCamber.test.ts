@@ -112,3 +112,42 @@ describe('fitCamber', () => {
     expect(camberNote(f)).toMatch(/off the fitted section/)
   })
 })
+
+describe('when the chord stops being an axis', () => {
+  // Capricorno's main at half hoist, built the way the CAMERA sees it rather
+  // than by hand: the arc is smooth — nothing you would notice in the photo —
+  // but the leech sits 879 mm to leeward of the luff while an 11 % camber puts
+  // the deepest part about 1210 mm out. Two positions along the stripe then
+  // share one offset from the luff-leech line, and marks resolve outside the
+  // chord: a point 30 % along came back as 117 %. Discarding those silently
+  // returned 1.0 % against a truth of 11 %.
+  const CHORD = 7440, LEECH_MM = 879, MMPX = 6.2
+  const ANG = Math.asin(LEECH_MM / CHORD) * 180 / Math.PI
+
+  /** Athwartships millimetres of the section at s, as the camera resolves it. */
+  const athwart = (s: number, camber: number, draft: number) => {
+    const dev = sectionDeviation(s, camber, draft) * CHORD
+    const a = ANG * Math.PI / 180
+    return s * LEECH_MM + dev * Math.cos(a)
+  }
+  const imageMarks = (camber: number, draft: number, ss: number[]) => {
+    const luff: Px = { x: 1000, y: 3000 }
+    const at = (s: number) => ({ x: 1000 + athwart(s, camber, draft) / MMPX, y: 3000 })
+    return { luff, leech: at(1), marks: ss.map(at) }
+  }
+
+  it('refuses rather than answering, when marks resolve past the chord', () => {
+    const { luff, leech, marks } = imageMarks(0.11, 0.45, [0.10, 0.20, 0.30, 0.62, 0.78, 0.90])
+    // The leech is 138 px out; the stripe reaches past 195 px in the middle.
+    expect(Math.hypot(leech.x - luff.x, leech.y - luff.y)).toBeCloseTo(LEECH_MM / MMPX, 0)
+    expect(Math.max(...marks.map((m) => m.x - luff.x))).toBeGreaterThan(leech.x - luff.x)
+    expect(fitCamber({ marks, luff, leech, chordMm: CHORD, mmPerPx: MMPX, chordAngleDeg: ANG })).toBeNull()
+  })
+
+  it('still answers a flat sail, where the chord IS the larger extent', () => {
+    // 4 % camber on the same station: the bulge no longer overruns the chord.
+    const { luff, leech, marks } = imageMarks(0.04, 0.45, [0.15, 0.35, 0.55, 0.75])
+    expect(Math.max(...marks.map((m) => m.x - luff.x))).toBeLessThan(leech.x - luff.x)
+    expect(fitCamber({ marks, luff, leech, chordMm: CHORD, mmPerPx: MMPX, chordAngleDeg: ANG })).not.toBeNull()
+  })
+})
