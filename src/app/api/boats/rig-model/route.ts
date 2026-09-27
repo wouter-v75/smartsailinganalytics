@@ -28,7 +28,7 @@ import { getServerSupabase } from '../../../../lib/supabase/server'
 
 const norm = (s: string) => s.trim().toLowerCase()
 
-type BoatRow = { id: string; team_id: string; name: string; rig_model: unknown }
+type BoatRow = { id: string; team_id: string; name: string; rig_model: unknown; is_competitor?: boolean }
 
 /**
  * The caller's accessible boats, by id when there is one and by name otherwise.
@@ -39,7 +39,7 @@ type BoatRow = { id: string; team_id: string; name: string; rig_model: unknown }
  * boats this caller may see, so neither a name nor an id can be used to fish.
  */
 async function findBoat(supabase: ReturnType<typeof getServerSupabase>, boat: string, boatId?: string | null) {
-  const { data, error } = await supabase.from('boats').select('id, team_id, name, rig_model')
+  const { data, error } = await supabase.from('boats').select('id, team_id, name, rig_model, is_competitor')
   if (error) return { error: error.message, boat: null as null | BoatRow }
   if (boatId) {
     const byId = (data || []).find((b) => b.id === boatId)
@@ -79,7 +79,10 @@ export async function GET(req: NextRequest) {
   }).then((r) => r, () => ({ data: null }))
 
   const model = row.rig_model && Object.keys(row.rig_model as object).length ? row.rig_model : null
-  return NextResponse.json({ boat: row.name, boatId: row.id, rigModel: model, canEdit: canEdit === true })
+  return NextResponse.json({
+    boat: row.name, boatId: row.id, rigModel: model, canEdit: canEdit === true,
+    isCompetitor: row.is_competitor === true,
+  })
 }
 
 export async function PUT(req: NextRequest) {

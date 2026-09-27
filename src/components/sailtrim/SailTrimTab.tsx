@@ -28,7 +28,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
   mmPerPxFromReference, mmPerPxAtMastFromRef, unbiasAthwartshipsScale,
-  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa,
+  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -243,6 +243,9 @@ export default function SailTrimTab(
   // Whether this model came from the boat record, and whether this user may
   // write it back. Null = not asked yet (offline, or no session).
   const [rigCloud, setRigCloud] = useState<{ canEdit: boolean; loaded: boolean } | null>(null);
+  // A rival measured from the coach boat. None of our instrument data describes
+  // it — the logged heel is OUR boat's — so its heel must come from the horizon.
+  const [isCompetitor, setIsCompetitor] = useState(false);
   // A boat chosen in the picker outranks whatever the caller passed: the
   // operator is looking at the photograph and the caller is guessing from context.
   const [pickedBoatId, setPickedBoatId] = useState<string | null>(null);
@@ -294,6 +297,7 @@ export default function SailTrimTab(
     void fetchRigModel(boat, pickedBoatId ?? boatId).then((c) => {
       if (!alive || !c) return;
       setRigCloud({ canEdit: c.canEdit, loaded: c.rigModel != null });
+      setIsCompetitor(c.isCompetitor);
       if (c.boat && c.boat !== boat) setBoat(c.boat);
       if (c.rigModel) { setRig(c.rigModel); saveRigModel(c.rigModel); }
     });
@@ -740,7 +744,7 @@ export default function SailTrimTab(
         // supplies a focal length. depth/range with a 150 m guess at the range.
         scaleRelSigma: scaleRelSigma(scaleRef)
           + (scaleDepthUncorrected ? Math.abs(refDepthMm) / 150_000 : 0),
-        rangeMm, psi, tack, scaleDepthUncorrected, scaleRefDepthMm: refDepthMm,
+        rangeMm, psi, tack, scaleDepthUncorrected, scaleRefDepthMm: refDepthMm, isCompetitor,
         // Clicked, but the chosen baseline has no length in the model, so ψ
         // quietly fell back to 0 ± 1°. That is not the same as not having
         // bothered, and the checks should not pretend it is.
@@ -750,7 +754,7 @@ export default function SailTrimTab(
       },
       why: '',
     };
-  }, [mastMode, mastTrace, traceNote, marks, scaleRef, baseRef, heelDeg, focalMm, rig.sensorWidthMm, imgSize, horizon, tack]);
+  }, [mastMode, mastTrace, traceNote, marks, scaleRef, baseRef, heelDeg, focalMm, rig.sensorWidthMm, imgSize, horizon, tack, isCompetitor]);
 
   // ── the measurements ─────────────────────────────────────────────────────
   /**
@@ -1562,7 +1566,9 @@ export default function SailTrimTab(
                   if (e.target.value === '__other') { setOtherBoat(true); return; }
                   typedBoat.current = true;
                   setBoat(e.target.value);
-                  setPickedBoatId(boats.find((b) => b.name === e.target.value)?.id ?? null);
+                  const picked = boats.find((b) => b.name === e.target.value);
+                  setPickedBoatId(picked?.id ?? null);
+                  setIsCompetitor(!!picked?.isCompetitor);
                 }}>
                 <option value="">— pick a boat —</option>
                 {boats.map((b) => (
@@ -1801,8 +1807,26 @@ export default function SailTrimTab(
               </div>
             </div>
             <div>
-              <label style={lbl}>Heel (°, from the log)</label>
-              <input style={inp} type="number" step="0.1" value={heelDeg} onChange={(e) => setHeelDeg(e.target.value)} placeholder="23.5" />
+              {/* On a RIVAL the log is not an option: every instrument reading
+                  we hold is from our own boat, so the logged heel at 12:25 is
+                  Northstar's and not Capricorno's. Handing it to a rival's rig
+                  is a different boat's number, wrong by however much the two
+                  differ — most, upwind in a breeze, which is when the
+                  measurement is worth taking. The horizon is the only source. */}
+              <label style={lbl}>
+                Heel (°, {isCompetitor ? 'from the HORIZON' : 'from the log'})
+              </label>
+              <input style={inp} type="number" step="0.1" value={isCompetitor ? '' : heelDeg}
+                disabled={isCompetitor}
+                onChange={(e) => setHeelDeg(e.target.value)}
+                placeholder={isCompetitor ? 'from the horizon' : '23.5'} />
+              {isCompetitor && (
+                <div style={{ fontSize: 10.5, color: horizon ? '#4ADE80' : '#FCA5A5', marginTop: 4, lineHeight: 1.45 }}>
+                  {horizon
+                    ? `Rival — heel read off the horizon: ${(calibration.cal ? effectiveHeelDeg(calibration.cal) : null)?.toFixed(1) ?? '—'}°. Our log describes our boat, not this one.`
+                    : 'Rival, and NO HORIZON detected — so there is no heel at all. Our logged heel is our own boat\u2019s and would be a different boat\u2019s number. Trace the horizon, or treat the world-horizontal figures as unavailable.'}
+                </div>
+              )}
             </div>
             <div>
               <label style={lbl}>Focal length (mm)</label>

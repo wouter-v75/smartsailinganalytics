@@ -624,3 +624,40 @@ describe('sailTrim — effective heel', () => {
     expect(effectiveHeelDeg({ ...cal, horizon: null, heelDeg: null })).toBeNull()
   })
 })
+
+describe('a competitor’s heel cannot come from our log', () => {
+  // Every instrument reading SSA holds is from our own boat. The logged heel at
+  // 12:25 is Northstar's, not Capricorno's, and handing it to a measurement of
+  // Capricorno's rig is not an approximation — it is a different boat's number,
+  // wrong by however much the two differ. Which upwind in a breeze is plenty,
+  // and is exactly when the measurement is worth taking.
+  const axis = { low: { x: 1000, y: 5000 }, high: { x: 900, y: 500 }, up: { x: 0, y: 0 }, across: { x: 0, y: 0 }, tiltDeg: -1.3 }
+  const cal = (over: Record<string, unknown>) => ({
+    axis, mmPerPxAtMast: 6, scaleRelSigma: 0.01, rangeMm: 260_000,
+    psi: { deg: 0, sigmaDeg: 1, measured: false }, heelDeg: -5.1, horizon: null,
+    ...over,
+  } as never)
+
+  it('uses the horizon for a rival when there is one', () => {
+    const withHorizon = cal({ isCompetitor: true, horizon: { tiltDeg: -20, rmsPx: 1, columns: 120 } })
+    // mast tilt minus horizon tilt: the rival's own lean, off the photograph.
+    expect(effectiveHeelDeg(withHorizon)).toBeCloseTo(-1.3 - -20, 6)
+  })
+
+  it('returns NULL for a rival with no horizon, rather than our logged heel', () => {
+    // Null is the honest answer. A plausible wrong number is the dangerous one.
+    expect(effectiveHeelDeg(cal({ isCompetitor: true }))).toBeNull()
+  })
+
+  it('still falls back to the log on OUR own boat', () => {
+    expect(effectiveHeelDeg(cal({ isCompetitor: false }))).toBe(-5.1)
+    expect(effectiveHeelDeg(cal({}))).toBe(-5.1)
+  })
+
+  it('prefers the horizon even on our own boat', () => {
+    // The photograph beats the log either way: heel moves in waves between the
+    // logged sample and the shutter.
+    const ours = cal({ horizon: { tiltDeg: -20, rmsPx: 1, columns: 120 } })
+    expect(effectiveHeelDeg(ours)).toBeCloseTo(18.7, 6)
+  })
+})

@@ -450,13 +450,31 @@ export interface Calibration {
   /** True when that offset could NOT be corrected for — no focal length, so no
    *  range — and the scale is therefore biased by depth/range. */
   scaleDepthUncorrected?: boolean
+  /** A rival, measured from the coach boat. None of our instrument data
+   *  describes it — see effectiveHeelDeg. */
+  isCompetitor?: boolean
 }
 
-/** Heel to use for the geometry: what the image says, else what the log says. */
+/**
+ * Heel to use for the geometry: what the IMAGE says, else what the log says.
+ *
+ * …except on a COMPETITOR, where the log is not an option at all. Every
+ * instrument reading SSA holds is from our own boat, so the logged heel at
+ * 12:25 is Northstar's, not Capricorno's. Handing it to a measurement of
+ * Capricorno's rig is not an approximation, it is a different boat's number,
+ * and it is wrong by however much the two differ — which upwind in a breeze is
+ * plenty, and is exactly when the measurement is worth taking. A rival's heel
+ * can only come from the photograph: the mast against the sea horizon, which
+ * the detector reads to about 1.5°.
+ *
+ * So for a competitor this returns null rather than the log's figure, and the
+ * caller says the horizon is needed. Null is the honest answer; a plausible
+ * wrong number is the dangerous one.
+ */
 export function effectiveHeelDeg(cal: Calibration): number | null {
   const fromImage = imageHeelDeg(cal.axis, cal.horizon)
   if (fromImage != null) return fromImage
-  return cal.heelDeg
+  return cal.isCompetitor ? null : cal.heelDeg
 }
 
 export interface TargetInput {

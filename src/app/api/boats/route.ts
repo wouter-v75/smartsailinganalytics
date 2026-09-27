@@ -23,7 +23,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const [{ data: boats, error }, { data: teams }] = await Promise.all([
-    supabase.from('boats').select('id, team_id, name, sail_number, rig_model').order('name'),
+    supabase.from('boats').select('id, team_id, name, sail_number, rig_model, is_competitor').order('name'),
     supabase.from('teams').select('id, name'),
   ])
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -36,6 +36,7 @@ export async function GET() {
       sailNumber: b.sail_number ?? null,
       teamName: teamName.get(b.team_id) ?? null,
       hasRigModel: !!b.rig_model && Object.keys(b.rig_model as object).length > 0,
+      isCompetitor: b.is_competitor === true,
     })),
   })
 }

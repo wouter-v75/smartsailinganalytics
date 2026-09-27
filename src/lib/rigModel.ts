@@ -546,6 +546,8 @@ export interface CloudRigModel {
   boatId: string | null
   /** The boat's name AS STORED. The caller may only have had an id. */
   boat: string | null
+  /** A rival — see BoatChoice.isCompetitor. */
+  isCompetitor: boolean
 }
 
 /**
@@ -561,13 +563,17 @@ export async function fetchRigModel(boat: string, boatId?: string | null): Promi
   try {
     const r = await fetch(`/api/boats/rig-model?${q}`)
     if (!r.ok) return null
-    const j = await r.json() as { boat?: string | null; rigModel: RigModel | null; canEdit?: boolean; boatId?: string | null }
+    const j = await r.json() as {
+      boat?: string | null; rigModel: RigModel | null; canEdit?: boolean
+      boatId?: string | null; isCompetitor?: boolean
+    }
     const name = j.boat || boat
     return {
       rigModel: j.rigModel ? migrateRigModel(j.rigModel, j.rigModel.boat || name) : null,
       canEdit: j.canEdit === true,
       boatId: j.boatId ?? null,
       boat: j.boat ?? null,
+      isCompetitor: j.isCompetitor === true,
     }
   } catch { return null }
 }
@@ -580,6 +586,9 @@ export interface BoatChoice {
   /** False means generic maxi estimates and no twist — worth knowing BEFORE
    *  fifty points are marked on a photograph, not after. */
   hasRigModel: boolean
+  /** A rival. None of our instrument data describes it: the logged heel is OUR
+   *  boat's, so a rival's heel has to come from the horizon. */
+  isCompetitor: boolean
 }
 
 /** Every boat this caller may see, for the picker. Empty on any failure. */
