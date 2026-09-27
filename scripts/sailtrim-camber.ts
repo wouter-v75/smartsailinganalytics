@@ -56,6 +56,15 @@ async function main() {
   for (const p of (photos ?? []).filter((x) => (x.taken_utc || '').startsWith(AROUND!)).sort((a, b) => (a.taken_utc! < b.taken_utc! ? -1 : 1))) {
     const st = (p.analysis_data as { sailTrim?: { annotation?: any; result?: any } } | null)?.sailTrim
     if (!st?.annotation?.psiMeasured) { console.log(`  ${p.taken_utc!.slice(11, 19)}  psi not measured — skipped`); continue }
+    // Measured as WHICH boat? --around matches on the clock, and three 26 Sep
+    // frames of Capricorno were marked with Northstar selected: Northstar's P
+    // scaled them and Northstar's half-width set the chord, so the draft that
+    // came out was neither boat's. The frame records who it was measured as.
+    const rigBoat = (st.result?.marks?.rig?.boat || '').trim()
+    if (rigBoat && rigBoat.toLowerCase() !== boat.name.toLowerCase()) {
+      console.log(`  ${p.taken_utc!.slice(11, 19)}  measured as "${rigBoat}", not ${boat.name} — SKIPPED`)
+      continue
+    }
     const A = st.annotation, m = st.result?.marks?.marks || {}
     const front = m[`camber:${SAIL}:front`] || [], back = m[`camber:${SAIL}:back`] || []
     const dots = [...front, ...back]
