@@ -123,6 +123,18 @@ function click(p: Px) {
 }
 
 /**
+ * Pick a scale reference by key. The synthetic rig is exactly 6 m tip to tip at
+ * spreader 2, so these tests use that; the tab now DEFAULTS to the wheels,
+ * which are the one reference a tape can reach and are measured on the real
+ * boat but are zero-length on the generic model these fixtures build.
+ */
+const selectScale = (key: string) => {
+  const select = screen.getAllByRole('combobox').find((el) =>
+    Array.from((el as HTMLSelectElement).options).some((o) => o.value === key)) as HTMLSelectElement
+  fireEvent.change(select, { target: { value: key } })
+}
+
+/**
  * Pick a centreplane baseline by key. These tests mark the forestay tack and the
  * transom, so they need `bow-transom`; the tab now DEFAULTS to `mast-transom`,
  * which is the pair the operator can see from astern and the one with a tape
@@ -196,6 +208,7 @@ describe('SailTrimTab', () => {
     click(P(0, MAST_HALF_WIDTH, 30_000))
 
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z))
     click(P(0, SPREADER_HALF, SPREADER_Z))
 
@@ -255,6 +268,7 @@ describe('SailTrimTab', () => {
       expect(within(screen.getByTestId('sailtrim-steps')).getByText('2/2')).toBeTruthy())
 
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     fireEvent.click(stepButton('Jib clew'))
     click(P(-1_100, 1_500, 2_000))
@@ -301,6 +315,7 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Mast edges, high'))
     click(P(0, -MAST_HALF_WIDTH, 30_000)); click(P(0, MAST_HALF_WIDTH, 30_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     // the rig model's own defaults say where these sit fore-and-aft
@@ -334,6 +349,7 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Mast edges, high'))
     click(P(0, -MAST_HALF_WIDTH, 30_000)); click(P(0, MAST_HALF_WIDTH, 30_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     fireEvent.click(stepButton('Centreplane baseline'))
     click(P(TRANSOM.x, 0, TRANSOM.z)); click(P(TACK.x, 0, TACK.z))
@@ -393,6 +409,7 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Mast edges, high'))
     click(P(0, -MAST_HALF_WIDTH, 30_000)); click(P(0, MAST_HALF_WIDTH, 30_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     fireEvent.click(stepButton('Jib clew'))
     click(P(-1_100, 1_500, 2_000))
@@ -435,6 +452,7 @@ describe('SailTrimTab', () => {
     // mast axis, then scale
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     // Spreader 2 is a RIG height: marked once, both leeches read across it.
@@ -503,6 +521,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     // The jib's own 50 % stripe, marked where it meets the jib's leech — which
     // is 1500 mm to leeward at that height, and IS the measurement.
@@ -546,6 +565,7 @@ describe('SailTrimTab', () => {
     await openAFrame()
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     fireEvent.click(stepButton('Spreader 1'))
@@ -572,6 +592,7 @@ describe('SailTrimTab', () => {
     click(P(0, -MAST_HALF_WIDTH, 30_000))
     click(P(0, MAST_HALF_WIDTH, 30_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z))
     click(P(0, SPREADER_HALF, SPREADER_Z))
     fireEvent.click(stepButton('Jib clew'))
@@ -594,6 +615,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: '17.5' } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     fireEvent.click(stepButton('Jib clew'))
     click(P(-1_100, 1_500, 2_000))
@@ -655,6 +677,7 @@ describe('SailTrimTab', () => {
     await openAFrame()
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     // A height mark, then leech points deliberately placed right on top of it.
@@ -766,6 +789,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     fireEvent.click(stepButton('Spreader 2'))
@@ -807,6 +831,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     // Stations marked...
@@ -834,6 +859,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     // The JIB, because a spreader is read across the jib's leech only now.
     fireEvent.click(stepButton('Spreader 2'))
@@ -867,6 +893,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     // Three stripes on the jib's leech, 1500 mm to leeward. No 'Jib leech' clicks.
@@ -903,6 +930,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     // Spreader 2 on the MAST, between two stripes on the jib's leech.
@@ -969,6 +997,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
 
     const box = await screen.findByTestId('sailtrim-twist')
@@ -995,6 +1024,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     fireEvent.click(stepButton('Jib leech \u00b7 50 % stripe'))
     click(P(-400, 1_500, 15_000))
@@ -1013,6 +1043,7 @@ describe('SailTrimTab', () => {
     fireEvent.change(screen.getByPlaceholderText('23.5'), { target: { value: String(RIG.heelDeg) } })
     click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
     fireEvent.click(stepButton('Scale reference'))
+    selectScale('spreader2')
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
     for (const [tag, z] of [['25', 10_000], ['50', 15_000], ['75', 20_000]] as const) {
       fireEvent.click(stepButton(`Jib leech \u00b7 ${tag} % stripe`))
@@ -1147,5 +1178,21 @@ describe('SailTrimTab', () => {
     // Still 1 of 2 — the second click moved the first.
     await waitFor(() =>
       expect(within(screen.getByTestId('sailtrim-steps')).getAllByText('1/2').length).toBeGreaterThan(0))
+  })
+})
+
+describe('the default scale reference', () => {
+  it('is the WHEELS, not a guessed spreader', async () => {
+    // Spreader 2 was the default and it is a guess on every boat — 6000 +/- 600
+    // out of defaultRigModel. That is how the 27 Sep 11:43:30 frame came to read
+    // roughly double its neighbours taken six seconds later: same sail, same
+    // minute, a scale nobody had measured. The wheels are the one reference a
+    // tape can reach without going up the rig, and they are athwartships, which
+    // is the direction an astern camera resolves best.
+    render(<SailTrimTab boatName="Northstar 76" />)
+    await openAFrame()
+    const select = screen.getAllByRole('combobox').find((el) =>
+      Array.from((el as HTMLSelectElement).options).some((o) => o.value === 'wheels')) as HTMLSelectElement
+    expect(select.value).toBe('wheels')
   })
 })

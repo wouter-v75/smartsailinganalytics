@@ -294,7 +294,18 @@ export default function SailTrimTab(
   useEffect(() => { void fetchBoats().then(setBoats); }, []);
   const [certText, setCertText] = useState('');
   const [certNote, setCertNote] = useState('');
-  const [scaleKey, setScaleKey] = useState('spreader2');
+  // Wheels by default. Spreader 2 was the default and it is a GUESS on every
+  // boat — 6000 +/- 600 out of defaultRigModel — which is how the 27 Sep 11:43:30
+  // frame came to read roughly double its neighbours taken six seconds later.
+  // The wheels are the one reference a tape can reach without going up the rig,
+  // they are athwartships (the direction an astern camera resolves best), and on
+  // Northstar they are measured to +/-10 mm.
+  //
+  // P is better still where a certificate exists — 31 m of mast in the image
+  // plane against 3.4 m across the deck — but it is not the safer DEFAULT: it
+  // needs the certificate read first, and a boat without one would silently fall
+  // back to a zero-length reference.
+  const [scaleKey, setScaleKey] = useState('wheels');
   // Mast at deck -> transom centre by default. Both ends are unambiguous from
   // astern and stay visible under way, and on Northstar it is the one somebody
   // has actually put a tape on (12100 +/- 50). Forestay tack -> transom is
