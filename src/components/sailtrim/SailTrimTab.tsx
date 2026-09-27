@@ -41,7 +41,7 @@ import {
   depthFor,
   fetchRigModel, putRigModel, fetchBoats, type BoatChoice,
   HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, isStripeTag, migrateHeightMarks,
-  stationsFor, bestScaleKey,
+  stationsFor, bestScaleKey, bestBaselineKey,
   LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
@@ -363,6 +363,17 @@ export default function SailTrimTab(
     if (pickedScale.current) return;
     const best = bestScaleKey(rig);
     if (best && best !== scaleKey) setScaleKey(best);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rig]);
+
+  // And the same for the baseline psi is solved from. On Capricorno the
+  // hardcoded mast-transom was 12600 +/-2010 against a certificate J of
+  // 9440 +/-200, and psi's error is proportional to it.
+  const pickedBaseline = useRef(false);
+  useEffect(() => {
+    if (pickedBaseline.current) return;
+    const best = bestBaselineKey(rig);
+    if (best && best !== baselineKey) setBaselineKey(best);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rig]);
 
@@ -1967,7 +1978,7 @@ export default function SailTrimTab(
 
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={lbl}>Centreplane baseline</label>
-              <select style={inp} value={baselineKey} onChange={(e) => setBaselineKey(e.target.value)}>
+              <select style={inp} value={baselineKey} onChange={(e) => { pickedBaseline.current = true; setBaselineKey(e.target.value); }}>
                 {rig.baselines.map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
               </select>
             </div>

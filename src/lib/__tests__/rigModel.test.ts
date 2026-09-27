@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
-  bestScaleKey,
+  bestScaleKey, bestBaselineKey,
   defaultRigModel, missingFrom, isComplete, scaleRelSigma,
   loadRigModel, saveRigModel, listRigModels, rigModelFor,
   exportRigModel, importRigModel,
@@ -508,5 +508,35 @@ describe('bestScaleKey — what to scale by, before anyone chooses', () => {
       ref('wheels', 0, 0, 'estimate'), ref('spreader2', 6000, 600, 'estimate'),
     ] } as never as Parameters<typeof bestScaleKey>[0]
     expect(bestScaleKey(m)).toBeNull()
+  })
+})
+
+describe('bestBaselineKey — the separation psi is solved from', () => {
+  const base = (key: string, mm: number, sigmaMm: number, source: string) =>
+    ({ key, label: key, mm, sigmaMm, source }) as never
+
+  it('takes a certificate J over an arithmetic mast-to-transom', () => {
+    // Capricorno: 12600 +/-2010 is 16 %, and psi's error is proportional to it
+    // at 140 mm per degree on the boom. J is shorter and ten times better.
+    const m = { ...defaultRigModel('Capricorno'), baselines: [
+      base('mast-transom', 12600, 2010, 'designer'), base('tack-mast', 9440, 200, 'measured'),
+    ] } as never as Parameters<typeof bestBaselineKey>[0]
+    expect(bestBaselineKey(m)).toBe('tack-mast')
+  })
+
+  it('keeps the longer baseline when both are on a tape', () => {
+    // Northstar: 12100 +/-50 is 0.4 % against 8860 +/-200 at 2.3 %. Longer AND
+    // better attested, so nothing about preferring J in general should move it.
+    const m = { ...defaultRigModel('Northstar 76'), baselines: [
+      base('mast-transom', 12100, 50, 'measured'), base('tack-mast', 8860, 200, 'measured'),
+    ] } as never as Parameters<typeof bestBaselineKey>[0]
+    expect(bestBaselineKey(m)).toBe('mast-transom')
+  })
+
+  it('returns null rather than solving psi against a guess', () => {
+    const m = { ...defaultRigModel('stranger'), baselines: [
+      base('mast-transom', 13000, 2200, 'estimate'), base('custom', 0, 0, 'estimate'),
+    ] } as never as Parameters<typeof bestBaselineKey>[0]
+    expect(bestBaselineKey(m)).toBeNull()
   })
 })

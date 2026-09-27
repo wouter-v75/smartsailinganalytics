@@ -718,3 +718,28 @@ export function bestScaleKey(m: RigModel): string | null {
 }
 
 const RANK: Record<string, number> = { measured: 3, designer: 2, derived: 1, estimate: 0 }
+
+/**
+ * Which centreplane baseline to start on — the same argument as `bestScaleKey`,
+ * for the separation that psi is solved from.
+ *
+ * `mast-transom` was hardcoded here for the same reason the wheels were: on
+ * Northstar somebody put a tape on it (12100 +/-50, 0.4 %). On Capricorno it is
+ * arithmetic off a length estimate, 12600 +/-2010 — 16 %, and psi's uncertainty
+ * is directly proportional to it, at 140 mm per degree on the boom. Her
+ * certificate's J is 9440 +/-200: shorter, so click noise costs a little more,
+ * but 2.1 % instead of 16 %.
+ *
+ * Hence: provenance, then relative sigma, then the longer separation. A length
+ * error biases psi multiplicatively and no amount of separation dilutes it,
+ * whereas click noise falls off as 1/separation and is the smaller term on a
+ * 4000 x 6000 frame. Northstar keeps mast-transom; a certificate rival starts
+ * on J.
+ */
+export function bestBaselineKey(m: RigModel): string | null {
+  const scored = m.baselines
+    .filter((b) => b.mm > 0 && b.sigmaMm > 0 && b.source !== 'estimate')
+    .map((b) => ({ key: b.key, rank: RANK[b.source ?? 'estimate'] ?? 0, rel: b.sigmaMm / b.mm, mm: b.mm }))
+    .sort((a, b) => b.rank - a.rank || a.rel - b.rel || b.mm - a.mm)
+  return scored[0]?.key ?? null
+}
