@@ -41,7 +41,7 @@ import {
   depthFor,
   fetchRigModel, putRigModel, fetchBoats, type BoatChoice,
   HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, isStripeTag, migrateHeightMarks,
-  stationsFor,
+  stationsFor, bestScaleKey,
   LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
@@ -302,10 +302,12 @@ export default function SailTrimTab(
   // they are athwartships (the direction an astern camera resolves best), and on
   // Northstar they are measured to +/-10 mm.
   //
-  // P is better still where a certificate exists — 31 m of mast in the image
-  // plane against 3.4 m across the deck — but it is not the safer DEFAULT: it
-  // needs the certificate read first, and a boat without one would silently fall
-  // back to a zero-length reference.
+  // …but that is true of OUR boat and false of every rival. Capricorno's wheels
+  // were a number typed into the box, and the whole 26 Sep set was scaled by it.
+  // So the default follows attestation now — `bestScaleKey` lands on P for a
+  // certificate boat and stays on the wheels for Northstar. Null means nothing
+  // on this boat is attested, and the banner below says so rather than the tool
+  // quietly scaling by a guess.
   const [scaleKey, setScaleKey] = useState('wheels');
   // Mast at deck -> transom centre by default. Both ends are unambiguous from
   // astern and stay visible under way, and on Northstar it is the one somebody
@@ -350,6 +352,19 @@ export default function SailTrimTab(
     });
     return () => { alive = false; };
   }, [boat, boatId, pickedBoatId]);
+
+  // Start on the best-attested reference this boat actually has, and follow the
+  // model until the operator chooses for themselves. Switching boats switches
+  // the reference with it: Northstar arrives on her measured wheels, a rival
+  // read from a certificate arrives on P. Without this the hardcoded 'wheels'
+  // default silently scaled every rival by whatever was in that box.
+  const pickedScale = useRef(false);
+  useEffect(() => {
+    if (pickedScale.current) return;
+    const best = bestScaleKey(rig);
+    if (best && best !== scaleKey) setScaleKey(best);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rig]);
 
   // The name can also arrive AFTER mount — PhotosTab resolves the photo's boat
   // asynchronously, and `useState(boatName)` only ever reads its first value. So
@@ -1886,19 +1901,44 @@ export default function SailTrimTab(
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={lbl}>Scale reference</label>
-              <select style={inp} value={scaleKey} onChange={(e) => setScaleKey(e.target.value)}>
+              <select style={inp} value={scaleKey} onChange={(e) => { pickedScale.current = true; setScaleKey(e.target.value); }}>
                 {rig.scaleRefs.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
             </div>
             <div>
               <label style={lbl}>True length (mm)</label>
               <input style={inp} type="number" value={scaleRef?.mm ?? 0}
-                onChange={(e) => setScaleField(scaleKey, { mm: Number(e.target.value), source: 'designer' })} />
+                onChange={(e) => {
+                  // A number typed into a box is an ESTIMATE until somebody says
+                  // where it came from — the picker beside it does that. Stamping
+                  // it 'designer' is how Capricorno's guessed wheels came to
+                  // outrank her certificate, and a +/-0 alongside it claims a
+                  // certainty no measurement has, so seed a visible 2 %.
+                  const mm = Number(e.target.value);
+                  setScaleField(scaleKey, {
+                    mm,
+                    source: 'estimate',
+                    ...((scaleRef?.sigmaMm ?? 0) > 0 ? {} : { sigmaMm: Math.round(Math.abs(mm) * 0.02) }),
+                  });
+                }} />
             </div>
             <div>
               <label style={lbl}>± (mm)</label>
               <input style={inp} type="number" value={scaleRef?.sigmaMm ?? 0}
                 onChange={(e) => setScaleField(scaleKey, { sigmaMm: Number(e.target.value) })} />
+            </div>
+            {/* Where the number came from, said out loud. It drives which
+                reference the tool starts on for the next boat, and it is the
+                difference between a tape and somebody's recollection. */}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={lbl}>…and where that came from</label>
+              <select style={inp} value={scaleRef?.source ?? 'estimate'}
+                onChange={(e) => setScaleField(scaleKey, { source: e.target.value as Provenance })}>
+                <option value="measured">Measured — a tape, or a certificate</option>
+                <option value="designer">Off the rig drawing</option>
+                <option value="derived">Worked out from other numbers</option>
+                <option value="estimate">A guess</option>
+              </select>
             </div>
             {/* Only shown for a reference that is not in the mast plane — for a
                 spreader it is 0 and asking about it would be noise. The wheels

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
+  bestScaleKey,
   defaultRigModel, missingFrom, isComplete, scaleRelSigma,
   loadRigModel, saveRigModel, listRigModels, rigModelFor,
   exportRigModel, importRigModel,
@@ -462,5 +463,50 @@ describe('depthFor — one number per sail was never enough', () => {
   it('survives a round trip through the store', () => {
     const m: RigModel = { ...base, stationDepths: { 'main@stripe50': { mm: -6374, sigmaMm: 9, source: 'measured' } } }
     expect(depthFor(migrateRigModel(m, 'Northstar 76'), 'main', 'stripe50').mm).toBe(-6374)
+  })
+})
+
+describe('bestScaleKey — what to scale by, before anyone chooses', () => {
+  const ref = (key: string, mm: number, sigmaMm: number, source: string, extra = {}) =>
+    ({ key, label: key, mm, sigmaMm, source, depthMm: 0, ...extra }) as never
+
+  it('prefers a certificate P to a typed wheel-to-wheel', () => {
+    // Capricorno, as she actually was: somebody typed 4000 into the length box
+    // and the form stamped it 'designer' with no uncertainty at all. The
+    // certificate had P measured to 20 mm the whole time.
+    const m = { ...defaultRigModel('Capricorno'), scaleRefs: [
+      ref('wheels', 4000, 0, 'designer', { depthMm: -8000, orientation: 'athwartships' }),
+      ref('P', 34000, 20, 'measured', { orientation: 'vertical' }),
+    ] } as never as Parameters<typeof bestScaleKey>[0]
+    expect(bestScaleKey(m)).toBe('P')
+  })
+
+  it('keeps the wheels when they have actually been measured', () => {
+    // Northstar: a tape on the dock, +/-10 mm. It beats a certificate HLU that
+    // sags under load, and nothing about preferring P in general should move it.
+    const m = { ...defaultRigModel('Northstar 76'), scaleRefs: [
+      ref('wheels', 3375, 10, 'measured', { depthMm: -10000, orientation: 'athwartships' }),
+      ref('HLU', 31370, 150, 'measured', { orientation: 'vertical' }),
+    ] } as never as Parameters<typeof bestScaleKey>[0]
+    expect(bestScaleKey(m)).toBe('wheels')
+  })
+
+  it('treats a zero uncertainty as no attestation at all', () => {
+    // +/-0 is a claim nobody can make of a real length. It is what a form leaves
+    // behind when it writes a source and forgets the sigma, so it must not win.
+    const m = { ...defaultRigModel('x'), scaleRefs: [
+      ref('wheels', 4000, 0, 'measured', { orientation: 'athwartships' }),
+      ref('P', 30000, 20, 'derived', { orientation: 'vertical' }),
+    ] } as never as Parameters<typeof bestScaleKey>[0]
+    expect(bestScaleKey(m)).toBe('P')
+  })
+
+  it('returns null when the boat has nothing attested', () => {
+    // The caller has to say so. Silently scaling by a guess is how a boom lands
+    // 1.9 m from where the certificate puts it.
+    const m = { ...defaultRigModel('stranger'), scaleRefs: [
+      ref('wheels', 0, 0, 'estimate'), ref('spreader2', 6000, 600, 'estimate'),
+    ] } as never as Parameters<typeof bestScaleKey>[0]
+    expect(bestScaleKey(m)).toBeNull()
   })
 })

@@ -670,3 +670,51 @@ export function importRigModel(text: string): RigModel | null {
     updatedAt: new Date().toISOString(),
   }
 }
+
+/**
+ * Which scale reference to start on for a given boat.
+ *
+ * This used to be hardcoded to the wheels, on the reasoning that they are the
+ * one length a tape can reach without going up the rig. That is true of OUR
+ * boat and false of every rival: Capricorno's wheels sat in her model as
+ * "4000 mm, +/-0, designer" — a number somebody typed into the box, which the
+ * form then stamped with a drawing's authority and a certainty no measurement
+ * has. Her frames were all measured against it, and the boom came out 9283 mm
+ * abaft the mast against a certificate E of 11220: 17 % small, which is the
+ * scale error and nothing else.
+ *
+ * So pick by attestation instead, and prefer a reference that psi cannot
+ * foreshorten and depth cannot bias:
+ *
+ *   - `mm > 0` and a real `sigmaMm`. A zero sigma is a claim nobody can make;
+ *     treated here as unattested, whatever the source says.
+ *   - best provenance wins — measured over designer over derived.
+ *   - then the shortest sigma/mm, because that is the error that propagates
+ *     into every measurement on the frame. P at 20/34000 is 0.06 %; HLU at
+ *     150/31370 is 0.5 % and sags under load besides.
+ *   - `vertical` in the mast plane only breaks a remaining tie. It is a real
+ *     advantage — P and HLU run UP the rig, so cos psi does not touch them and
+ *     depthMm is 0 — but it is a smaller one than precision: Northstar's wheels
+ *     are measured to 0.3 % and should keep beating her certificate's HLU.
+ *     The off-plane risk (a depth correction that needs the focal length) is
+ *     warned about where it applies, not priced in here.
+ *
+ * On a certificate boat that lands on P — 34 m of mast measured to +/-20 mm by
+ * somebody who was standing on the deck. On Northstar it stays the wheels,
+ * which are measured to +/-10. A boat with nothing attested returns null, and
+ * the caller should say so rather than silently scaling by a guess.
+ */
+export function bestScaleKey(m: RigModel): string | null {
+  const scored = m.scaleRefs
+    .filter((s) => s.mm > 0 && s.sigmaMm > 0 && s.source !== 'estimate')
+    .map((s) => ({
+      key: s.key,
+      rank: RANK[s.source ?? 'estimate'] ?? 0,
+      planar: s.orientation === 'vertical' && (s.depthMm ?? 0) === 0 ? 1 : 0,
+      rel: s.sigmaMm / s.mm,
+    }))
+    .sort((a, b) => b.rank - a.rank || a.rel - b.rel || b.planar - a.planar)
+  return scored[0]?.key ?? null
+}
+
+const RANK: Record<string, number> = { measured: 3, designer: 2, derived: 1, estimate: 0 }
