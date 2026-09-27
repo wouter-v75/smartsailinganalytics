@@ -38,6 +38,7 @@ import {
 } from '../../lib/sailTrimCv';
 import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
+  depthFor,
   fetchRigModel, putRigModel, fetchBoats, type BoatChoice,
   HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, isStripeTag, migrateHeightMarks,
   stationsFor,
@@ -910,7 +911,10 @@ export default function SailTrimTab(
       // would put back most of the error marking it was meant to remove.
       const d = c.edge === 'luff'
         ? luffDepthMm(c.sail as 'main' | 'jib', STATION_FRACTION[c.tag as keyof typeof STATION_FRACTION], rig)
-        : (c.sail === 'main' ? rig.depths.mainLeech : rig.depths.leech);
+        // The station's MEASURED depth when a multi-view set has produced one,
+        // and the sail's single fallback until then. A leech is not at one
+        // distance aft — see stationDepths.
+        : depthFor(rig, c.sail, c.tag);
       out.push(measureTarget(cal, {
         key: c.key, label: c.label, point: c.point,
         depthMm: d.mm, depthSigmaMm: d.sigmaMm,
@@ -1519,7 +1523,12 @@ export default function SailTrimTab(
     const out: { sail: string; tag: string; fit: CamberFit }[] = [];
     if (!cal) return out;
     for (const sl of LEECH_SAILS) {
-      const frontAll = marks[`camber:${sl.key}:front`] || [];
+      // `camber:<sail>` with no face is from before the front/back split. Those
+      // marks are real and were placed on the visible face, so they count as
+      // FRONT rather than being silently dropped — a shot loses no work to a
+      // change in how the tool asks for it.
+      const legacy = marks[`camber:${sl.key}`] || [];
+      const frontAll = [...(marks[`camber:${sl.key}:front`] || []), ...legacy];
       const backAll = marks[`camber:${sl.key}:back`] || [];
       if (frontAll.length + backAll.length < 2) continue;
       const w = rig.widths?.[sl.key as 'main' | 'jib'];

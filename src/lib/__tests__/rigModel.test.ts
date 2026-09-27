@@ -4,7 +4,7 @@ import {
   loadRigModel, saveRigModel, listRigModels, rigModelFor,
   exportRigModel, importRigModel,
   luffDepthMm,
-  migrateRigModel, deriveBaselines,
+  migrateRigModel, deriveBaselines, depthFor,
   HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, migrateHeightMarks, stationsFor,
   type RigModel, type RigValue,
 } from '../rigModel'
@@ -428,5 +428,39 @@ describe('merging a certificate into a boat that has been measured', () => {
     const stored = { mm: 8860, sigmaMm: 200, source: 'measured' }
     const incoming = { mm: 8860, sigmaMm: 200, source: 'measured' }
     expect(better(stored, incoming)).toBe(stored)
+  })
+})
+
+describe('depthFor — one number per sail was never enough', () => {
+  // A leech sweeps forward as it rises. Triangulated from three frames 8° apart
+  // on 27 Sep, Northstar's main runs -8321 mm at the 25 % stripe to -3536 mm at
+  // 87.5 %, against the single -6000 ± 2500 that `depths` holds for all of them.
+  const base = defaultRigModel('Northstar 76')
+
+  it('falls back to the sail-wide number when nothing is measured', () => {
+    expect(depthFor(base, 'main', 'stripe50').mm).toBe(base.depths.mainLeech.mm)
+    expect(depthFor(base, 'jib', 'stripe50').mm).toBe(base.depths.leech.mm)
+  })
+
+  it('prefers a station that HAS been measured', () => {
+    const m: RigModel = { ...base, stationDepths: {
+      'main@stripe25': { mm: -8321, sigmaMm: 12, source: 'measured' },
+      'main@stripe87': { mm: -3536, sigmaMm: 12, source: 'measured' },
+    } }
+    expect(depthFor(m, 'main', 'stripe25').mm).toBe(-8321)
+    expect(depthFor(m, 'main', 'stripe87').mm).toBe(-3536)
+    // …and still falls back for the stations nobody has solved.
+    expect(depthFor(m, 'main', 'stripe50').mm).toBe(base.depths.mainLeech.mm)
+  })
+
+  it('keeps the sails apart', () => {
+    const m: RigModel = { ...base, stationDepths: { 'main@stripe50': { mm: -6374, sigmaMm: 9, source: 'measured' } } }
+    expect(depthFor(m, 'main', 'stripe50').mm).toBe(-6374)
+    expect(depthFor(m, 'jib', 'stripe50').mm).toBe(base.depths.leech.mm)
+  })
+
+  it('survives a round trip through the store', () => {
+    const m: RigModel = { ...base, stationDepths: { 'main@stripe50': { mm: -6374, sigmaMm: 9, source: 'measured' } } }
+    expect(depthFor(migrateRigModel(m, 'Northstar 76'), 'main', 'stripe50').mm).toBe(-6374)
   })
 })

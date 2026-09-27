@@ -218,8 +218,25 @@ export interface RigModel {
   scaleRefs: ScaleRef[]
   baselines: Baseline[]
   /** Fore-and-aft offsets from the mast for each target, forward positive.
-   *  `leech` is the JIB's; the main's leech is a very different distance aft. */
+   *  `leech` is the JIB's; the main's leech is a very different distance aft.
+   *  These are the FALLBACK now — one number per sail, which a leech does not
+   *  have. See `stationDepths`. */
   depths: Record<'leech' | 'mainLeech' | 'clew' | 'boom', RigValue>
+  /**
+   * Depth PER STATION, keyed `${sail}@${tag}` — 'main@stripe50', 'jib@stripe25'.
+   *
+   * A leech is not at one distance aft: it sweeps forward as it rises. On
+   * Northstar, triangulated from three frames 8° apart on 27 Sep, the main's
+   * runs -8321 mm at the 25 % stripe to -3536 mm at 87.5 %, against the single
+   * -6000 ± 2500 guess that `depths` holds for all of them. That guess was the
+   * largest error in the tool: a degree of ψ is worth 17 mm for every metre a
+   * target sits abaft the mast, so it went wrong most exactly where the leech is
+   * furthest aft, and it is why views disagreed more the higher you looked.
+   *
+   * Measured, not assumed — see sailTrimTriangulate. Absent until a multi-view
+   * set has been solved for that boat, and `depths` carries it until then.
+   */
+  stationDepths?: Record<string, RigValue>
   // NOT here yet, deliberately: a remembered height per tag, so a later frame
   // could draw "spreader 2 is about here" the way it already draws the boom and
   // the clew. It needs a datum that survives between frames, and the only stable
@@ -428,6 +445,19 @@ export function withMeasured(m: RigModel): RigModel {
   })
 }
 
+/**
+ * The depth to use for one target: the measured one for that station if it
+ * exists, else the sail's single fallback.
+ *
+ * One function so that the measurement, the report and the twist cannot end up
+ * disagreeing about which number is in play.
+ */
+export function depthFor(m: RigModel, sail: string, tag: string): RigValue {
+  const per = m.stationDepths?.[`${sail}@${tag}`]
+  if (per && Number.isFinite(per.mm)) return per
+  return sail === 'main' ? m.depths.mainLeech : m.depths.leech
+}
+
 /** What still needs a real number, in the order it matters. */
 export function missingFrom(m: RigModel): string[] {
   const out: string[] = []
@@ -496,6 +526,7 @@ export function migrateRigModel(stored: RigModel, boat = stored.boat): RigModel 
     ...stored,
     depths: { ...base.depths, ...stored.depths },
     widths: { ...(base.widths || {}), ...(stored.widths || {}) },
+    stationDepths: { ...(base.stationDepths || {}), ...(stored.stationDepths || {}) },
     scaleRefs: stored.scaleRefs?.length ? stored.scaleRefs : base.scaleRefs,
     baselines: stored.baselines?.length ? stored.baselines : base.baselines,
   })
