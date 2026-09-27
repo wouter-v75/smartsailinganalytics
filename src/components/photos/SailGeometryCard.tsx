@@ -105,9 +105,9 @@ export default function SailGeometryCard({
               <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 5 }}>
                 <thead>
                   <tr>
-                    <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Twist</th>
-                    <th style={th}>Main</th>
-                    <th style={th}>Jib</th>
+                    <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Stripe</th>
+                    <th style={th}>Twist Main</th>
+                    <th style={th}>Twist Jib</th>
                     <th style={th}>Draft Main</th>
                     <th style={th}>Draft jib</th>
                     <th style={th}>Accuracy Main</th>

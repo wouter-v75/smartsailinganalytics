@@ -1003,8 +1003,9 @@ describe('SailTrimTab', () => {
     const box = await screen.findByTestId('sailtrim-twist')
     expect(box).toBeTruthy()
     // Station down the side, sail across the top, accuracy beside each.
-    expect(within(box).getByText('Main')).toBeTruthy()
-    expect(within(box).getByText('Jib')).toBeTruthy()
+    expect(within(box).getByText('Stripe')).toBeTruthy()
+    expect(within(box).getByText('Twist Main')).toBeTruthy()
+    expect(within(box).getByText('Twist Jib')).toBeTruthy()
     expect(within(box).getByText('Accuracy Main')).toBeTruthy()
     expect(within(box).getByText('Accuracy jib')).toBeTruthy()
     expect(within(box).getByText('Draft Main')).toBeTruthy()
