@@ -11,6 +11,7 @@ something costs you an hour.
 | Re-upload cloud logs whose positions were rounded to 2 dp | `npx vite-node scripts/cloud-log-reupload.ts` — use `--mode patch`, never `reduce` |
 | Add lidar from Expedition lidar logs to stored phase stats | `npm run lidar:import` |
 | Put a boat's rig model (SailTrim dimensions) in `boats.rig_model` | `npx vite-node scripts/rig-model-seed.ts --boat "Northstar 76" --write` |
+| Add a RIVAL from its IRC certificate, so SailTrim can measure it | `irc-rigmodel.ts -- <cert.pdf> --out <dir>`, then `rig-model-seed.ts --boat <name> --from <dir>/<boat>.rigmodel.json --create --team <team> --write` |
 
 All of these are dry-run by default and need `--write` to do anything. They read
 `.env.local` and must run **outside** Claude Code's Bash sandbox.

@@ -383,7 +383,13 @@ export function deriveBaselines(m: RigModel): RigModel {
   // whole = part + part. Named so the arithmetic below cannot be read backwards.
   const WHOLE = 'bow-transom', PARTS = ['tack-mast', 'mast-transom'] as const
   const get = (k: string) => m.baselines.find((b) => b.key === k)
-  const real = (b: Baseline | undefined) => !!b && b.source !== 'estimate' && b.mm > 0
+  // MEASURED or off a DRAWING only. A 'derived' input would let the arithmetic
+  // feed on its own output: mast-to-stern derived from an estimated
+  // tack-to-transom, then tack-to-transom re-derived from that, and a guess
+  // comes back round labelled 'derived' with a tighter sigma and no new
+  // information behind it. Seen on Capricorno's certificate import.
+  const real = (b: Baseline | undefined) =>
+    !!b && (b.source === 'measured' || b.source === 'designer') && b.mm > 0
 
   const whole = get(WHOLE), j = get(PARTS[0]), mt = get(PARTS[1])
   if (!whole || !j || !mt) return m

@@ -358,7 +358,12 @@ export function rigModelFromIrc(cert: IrcCertificate, opts: { spreaderHeightM?: 
         ...baselines[mt],
         mm: Math.round(bt.mm - j * 1000),
         sigmaMm: Math.round(Math.hypot(bt.sigmaMm, 200)),
-        source: 'derived' as Provenance,
+        // A subtraction is only as good as what went into it. Taking J off an
+        // ESTIMATED bow-transom leaves an estimate, however exact J is, and
+        // calling it 'derived' launders a guess into something that reads as
+        // working — which then seeds further derivations. The number is still
+        // worth having: a baseline without one silently disables ψ entirely.
+        source: (bt.source === 'estimate' ? 'estimate' : 'derived') as Provenance,
       }
     }
   }

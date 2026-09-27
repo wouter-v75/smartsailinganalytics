@@ -4,6 +4,17 @@
 //   npx vite-node scripts/rig-model-seed.ts --write         store it
 //   npx vite-node scripts/rig-model-seed.ts --boat "Northstar 76" --write
 //
+// A RIVAL, from its IRC certificate — which is how a boat we do not own becomes
+// measurable at all. Parse the certificate first with irc-rigmodel.ts --out,
+// then store what it produced:
+//
+//   npx vite-node scripts/rig-model-seed.ts --boat "Capricorno" \
+//     --from /tmp/rig/capricorno.rigmodel.json \
+//     --create --team Northstar --sail-no ITA30303 --length 24.98 --write
+//
+// `--create` is required to add a boat row, and says so in the dry run: a rival
+// in a customer's boat list is a visible thing, not a side effect.
+//
 // Dry-run by default. Reads .env.local, and must run OUTSIDE Claude Code's
 // Bash sandbox.
 //
@@ -25,9 +36,15 @@ import { createClient } from '@supabase/supabase-js'
 import { defaultRigModel, withMeasured, missingFrom, type RigModel } from '../src/lib/rigModel'
 
 const args = process.argv.slice(2)
+const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
 const WRITE = args.includes('--write')
-const boatArg = args.includes('--boat') ? args[args.indexOf('--boat') + 1] : null
+const boatArg = flag('--boat')
 const FORCE = args.includes('--force')
+const FROM = flag('--from')
+const CREATE = args.includes('--create')
+const TEAM = flag('--team')
+const SAIL_NO = flag('--sail-no')
+const LENGTH = flag('--length')
 
 const env = Object.fromEntries(
   readFileSync(new URL('../.env.local', import.meta.url), 'utf8')
@@ -43,9 +60,48 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_
 const realCount = (m: RigModel) =>
   [...m.scaleRefs, ...m.baselines].filter(x => x.mm > 0 && x.source !== 'estimate').length
 
+/** A model parsed from a certificate, rather than built from the defaults. */
+function modelFromFile(path: string, boat: string): RigModel {
+  const raw = JSON.parse(readFileSync(path, 'utf8')) as RigModel
+  // The boat is named by --boat: a certificate says CAPRICORNO in capitals and
+  // the app should show it the way people write it.
+  return { ...raw, boat }
+}
+
 async function main() {
   const { data: boats, error } = await sb.from('boats').select('id, name, rig_model').order('name')
   if (error) { console.error(error.message); process.exit(1) }
+
+  // ── a boat that is not in the table yet ────────────────────────────────────
+  if (boatArg && !boats!.some((b) => b.name.toLowerCase() === boatArg.toLowerCase())) {
+    if (!CREATE) {
+      console.log(`  no boat called "${boatArg}". Pass --create --team <name> to add one.`)
+      return
+    }
+    if (!TEAM) { console.error('--create needs --team <team name>'); process.exit(1) }
+    const { data: teams } = await sb.from('teams').select('id, name')
+    const team = (teams || []).find((t) => t.name.toLowerCase() === TEAM.toLowerCase())
+    if (!team) {
+      console.error(`no team called "${TEAM}". Teams: ${(teams || []).map((t) => t.name).join(', ')}`)
+      process.exit(1)
+    }
+    const model = FROM ? modelFromFile(FROM, boatArg) : withMeasured(defaultRigModel(boatArg))
+    console.log(`  CREATE boat "${boatArg}" in team ${team.name}`
+      + `${SAIL_NO ? `, sail no ${SAIL_NO}` : ''}${LENGTH ? `, LH ${LENGTH} m` : ''}`)
+    console.log(`         ${realCount(model)} value(s) better than a guess; still guesswork: ${missingFrom(model).join(', ') || 'nothing'}`)
+    console.log(`         it will appear in ${team.name}'s boat list — that is what makes it measurable, and it is a row you can delete.`)
+    if (WRITE) {
+      const ins = await sb.from('boats').insert({
+        team_id: team.id, name: boatArg, rig_model: model,
+        sail_number: SAIL_NO || null, length_m: LENGTH ? Number(LENGTH) : null,
+      }).select('id')
+      if (ins.error) { console.error(`    ! ${ins.error.message}`); process.exit(1) }
+      console.log(`    created ${ins.data![0].id}`)
+    } else {
+      console.log('\n1 boat would be created  (dry run — pass --write to store)')
+    }
+    return
+  }
 
   let changed = 0
   for (const b of boats ?? []) {
@@ -53,7 +109,7 @@ async function main() {
     const existing = (b.rig_model ?? {}) as Partial<RigModel>
     const hasOne = existing && Object.keys(existing).length > 0 && (existing.scaleRefs?.length ?? 0) > 0
 
-    const model = withMeasured(defaultRigModel(b.name))
+    const model = FROM ? modelFromFile(FROM, b.name) : withMeasured(defaultRigModel(b.name))
     const real = realCount(model)
     const missing = missingFrom(model)
 

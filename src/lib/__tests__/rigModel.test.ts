@@ -366,3 +366,32 @@ describe('stationsFor — which stations a sail is read at', () => {
     expect(heightMarkKey('main', 'spr2')).toBe(heightMarkKey('jib', 'spr2'))
   })
 })
+
+describe('deriveBaselines — a derivation may not feed on its own output', () => {
+  const withBaselines = (over: Record<string, Partial<RigValue>>): RigModel => {
+    const m = defaultRigModel('Test')
+    return { ...m, baselines: m.baselines.map((b) => ({ ...b, ...(over[b.key] || {}) })) }
+  }
+
+  it('refuses a DERIVED input', () => {
+    // Capricorno's certificate import found this. The parser took J off an
+    // estimated tack-to-transom and called the result derived; this then
+    // re-derived tack-to-transom from it, handing a guess back with a 'derived'
+    // label and a tighter sigma and nothing new behind it.
+    const out = deriveBaselines(withBaselines({
+      'tack-mast': { mm: 9440, sigmaMm: 200, source: 'measured' },
+      'mast-transom': { mm: 11560, sigmaMm: 2010, source: 'derived' },
+    }))
+    expect(out.baselines.find((b) => b.key === 'bow-transom')!.source).toBe('estimate')
+  })
+
+  it('still derives from a drawing', () => {
+    const out = deriveBaselines(withBaselines({
+      'tack-mast': { mm: 8860, sigmaMm: 200, source: 'measured' },
+      'mast-transom': { mm: 12100, sigmaMm: 50, source: 'designer' },
+    }))
+    const bow = out.baselines.find((b) => b.key === 'bow-transom')!
+    expect(bow.mm).toBe(20960)
+    expect(bow.source).toBe('derived')
+  })
+})
