@@ -1111,4 +1111,41 @@ describe('SailTrimTab', () => {
       } finally { restore() }
     })
   })
+
+  it('takes a hand-marked horizon over the detector\u2019s', async () => {
+    // jsdom has no pixels, so the detector never finds one here — which is also
+    // the real case this exists for: the 26 Sep 12:25 frame had no horizon, and
+    // on a rival that means no heel at all, because our log describes our boat.
+    const P = makeCamera(RIG)
+    render(<SailTrimTab boatName="Northstar 76" />)
+    await openAFrame()
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+
+    fireEvent.click(stepButton('Horizon, by hand'))
+    // Two points on a level horizon, far apart across the frame.
+    click({ x: 200, y: 3_000 } as never)
+    click({ x: 3_800, y: 3_000 } as never)
+
+    await waitFor(() => expect(screen.getByText(/Horizon 0\.00° ±/)).toBeTruthy())
+    expect(screen.getByText(/of the frame.s width/)).toBeTruthy()
+  })
+
+  it('cannot be given two horizon clicks in the same place', async () => {
+    // Not a validation message but a shape of the editor: NEAR_PX is 22, so a
+    // second click within 22 px GRABS the first mark and nudges it rather than
+    // placing a new one. The degenerate span horizonFromPoints guards against is
+    // therefore unreachable by clicking, and the guard is a safety net for marks
+    // restored from an old save. Asserted here so nobody "fixes" the guard by
+    // loosening it after failing to trigger it.
+    const P = makeCamera(RIG)
+    render(<SailTrimTab boatName="Northstar 76" />)
+    await openAFrame()
+    click(P(0, 0, 3_000)); click(P(0, 0, 29_000))
+    fireEvent.click(stepButton('Horizon, by hand'))
+    click({ x: 2_000, y: 3_000 } as never)
+    click({ x: 2_006, y: 3_001 } as never)
+    // Still 1 of 2 — the second click moved the first.
+    await waitFor(() =>
+      expect(within(screen.getByTestId('sailtrim-steps')).getAllByText('1/2').length).toBeGreaterThan(0))
+  })
 })

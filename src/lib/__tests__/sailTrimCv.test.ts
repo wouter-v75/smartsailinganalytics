@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   theilSen, robustLine, detectHorizon, traceMastFromSeed, mastWidthAt,
+  horizonFromPoints, manualHorizonSigmaDeg,
   type Pixels,
 } from '../sailTrimCv'
 
@@ -183,5 +184,51 @@ describe('sailTrimCv — tracing the mast from one click', () => {
     const c = new Canvas(900, 1600)
     c.fill((x) => (x > 400 ? SAIL : null))    // one edge only, nothing beyond it
     expect(mastWidthAt(c, { x: 400, y: 800 })).toBeNull()
+  })
+})
+
+describe('horizonFromPoints — the horizon by hand', () => {
+  // The detector usually finds it; when it does not — behind land in a bay, out
+  // of frame on a tight crop, lost in haze, as on the 26 Sep 12:25 frame — two
+  // clicks beat losing the frame. On a rival it is not a fallback at all: our
+  // log describes our boat, so without a horizon there is no heel.
+  it('reads the tilt off two points', () => {
+    const h = horizonFromPoints({ x: 100, y: 1000 }, { x: 3100, y: 1000 })!
+    expect(h.tiltDeg).toBeCloseTo(0, 6)
+    expect(h.slope).toBeCloseTo(0, 6)
+    expect(h.intercept).toBeCloseTo(1000, 6)
+  })
+
+  it('gets a tilted one right, and its sign', () => {
+    // 3000 across, 300 down: atan(300/3000) = 5.71°, sloping down to the right.
+    const h = horizonFromPoints({ x: 100, y: 1000 }, { x: 3100, y: 1300 })!
+    expect(h.tiltDeg).toBeCloseTo(5.7106, 3)
+    const up = horizonFromPoints({ x: 100, y: 1300 }, { x: 3100, y: 1000 })!
+    expect(up.tiltDeg).toBeCloseTo(-5.7106, 3)
+  })
+
+  it('refuses two clicks in the same place', () => {
+    // A short baseline turns click noise into a wild tilt, so this returns
+    // nothing rather than a confident wrong angle.
+    expect(horizonFromPoints({ x: 100, y: 1000 }, { x: 108, y: 1002 })).toBeNull()
+  })
+
+  it('reports click noise rather than a fit residual', () => {
+    // Two points always fit a line exactly. Claiming rms 0 would claim a
+    // precision that is not there.
+    const h = horizonFromPoints({ x: 100, y: 1000 }, { x: 3100, y: 1000 }, 1.5)!
+    expect(h.rms).toBe(1.5)
+    expect(h.samples).toBe(2)
+  })
+
+  it('pins the tilt better the further apart the clicks are', () => {
+    const near = manualHorizonSigmaDeg({ x: 0, y: 0 }, { x: 400, y: 0 }, 1.5)
+    const far = manualHorizonSigmaDeg({ x: 0, y: 0 }, { x: 3200, y: 0 }, 1.5)
+    expect(far).toBeLessThan(near)
+    // Eight times the span, an eighth of the error — worth telling the operator.
+    expect(near / far).toBeCloseTo(8, 0)
+    // And across a full frame it is small enough not to matter beside the
+    // detector's own ~1.5° agreement with the log.
+    expect(far).toBeLessThan(0.1)
   })
 })

@@ -372,3 +372,45 @@ export function mastWidthAt(p: Pixels, leftEdge: Px, maxWidthPx = 140): number |
   if (bestD < 18 || bestX < 0) return null
   return bestX - leftEdge.x
 }
+
+/**
+ * The horizon from TWO CLICKS, when the detector cannot find it.
+ *
+ * It often cannot, and not because it is weak: the sea horizon is behind land
+ * in a bay, out of frame on a tight crop, or lost in haze. The 26 Sep 12:25
+ * frame had none. On our own boat that is survivable — the logged heel stands
+ * in. On a RIVAL it is not: our log describes our boat, so no horizon means no
+ * heel at all, and world-horizontal goes with it. Two clicks on the waterline
+ * are a better answer than losing the frame.
+ *
+ * `rms` carries the click noise rather than a fit residual — two points always
+ * fit a line exactly, and reporting 0 would claim a precision that is not
+ * there. The tilt is only as good as the two clicks over the span between
+ * them, which is why marking them FAR APART matters and why the caller is told
+ * to.
+ */
+export function horizonFromPoints(a: Px, b: Px, clickSigmaPx = 1.5): HorizonResult | null {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const span = Math.hypot(dx, dy)
+  // A horizon marked within a few pixels is two clicks in the same place, and
+  // its tilt would be noise amplified by the short baseline.
+  if (!(span > 20) || Math.abs(dx) < 1e-6) return null
+  const slope = dy / dx
+  return {
+    tiltDeg: (Math.atan2(dy, dx) * 180) / Math.PI,
+    rms: clickSigmaPx,
+    samples: 2,
+    slope,
+    intercept: a.y - slope * a.x,
+    points: [a, b],
+  }
+}
+
+/** How well a two-click horizon pins the tilt: the click noise over the span. */
+export function manualHorizonSigmaDeg(a: Px, b: Px, clickSigmaPx = 1.5): number {
+  const span = Math.hypot(b.x - a.x, b.y - a.y)
+  if (!(span > 0)) return Infinity
+  // Two independent clicks, each perpendicular-to-the-line by clickSigma.
+  return (Math.atan2(Math.SQRT2 * clickSigmaPx, span) * 180) / Math.PI
+}

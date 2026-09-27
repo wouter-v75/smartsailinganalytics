@@ -33,7 +33,8 @@ import {
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
 import {
-  detectHorizon, traceMastFromSeed, type Pixels, type HorizonResult, type MastTrace,
+  detectHorizon, traceMastFromSeed, horizonFromPoints, manualHorizonSigmaDeg,
+  type Pixels, type HorizonResult, type MastTrace,
 } from '../../lib/sailTrimCv';
 import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
@@ -90,6 +91,13 @@ const MAST_MANUAL: StepDef[] = [
     hint: 'The same two edges as high as you can still see them. The further apart the two heights, the better the axis.' },
 ];
 const OTHER_STEPS: StepDef[] = [
+  // Optional because the detector usually finds it. When it does not — behind
+  // land in a bay, out of frame on a tight crop, lost in haze, as on the 26 Sep
+  // 12:25 frame — two clicks beat losing the frame. On a RIVAL it is not even a
+  // fallback: our log describes our boat, so without a horizon there is no heel.
+  { key: 'horizonLine', label: 'Horizon, by hand', min: 2, max: 2, colour: '#38BDF8',
+    group: 'calibrate', optional: true,
+    hint: 'Two points on the sea horizon, AS FAR APART as the frame allows — the tilt is only as good as the clicks over the span between them, so the width of the picture is worth using. Only needed when the automatic one fails; it overrides the automatic one when both are there, because you can see which is the horizon and it cannot.' },
   { key: 'scale', label: 'Scale reference', min: 2, max: 2, colour: '#FACC15', group: 'calibrate',
     hint: 'The two ends of something whose true length you know AND that lies across the boat — spreader tip to tip. Never a fore-and-aft length: from astern those are foreshortened to nothing.' },
   { key: 'baseline', label: 'Centreplane baseline', min: 2, max: 2, colour: '#F472B6', group: 'calibrate', optional: true,
@@ -232,6 +240,15 @@ export default function SailTrimTab(
   // ── detection ─────────────────────────────────────────────────────────────
   const cvPixels = useRef<{ px: Pixels; scale: number } | null>(null);
   const [horizon, setHorizon] = useState<HorizonResult | null>(null);
+  // Two clicks beat the detector when the detector is wrong or empty: the
+  // operator can see which line is the horizon and it cannot.
+  const manualHorizon = useMemo(() => {
+    const p = marks.horizonLine || [];
+    return p.length >= 2 ? horizonFromPoints(p[0], p[1], CLICK_SIGMA_PX) : null;
+  }, [marks.horizonLine]);
+  /** THE horizon — hand-marked if it is there, detected otherwise. Everything
+   *  downstream uses this, so the two cannot disagree about which is in play. */
+  const horizonUsed = manualHorizon ?? horizon;
   const [horizonNote, setHorizonNote] = useState('');
   const [mastTrace, setMastTrace] = useState<MastTrace | null>(null);
   const [traceNote, setTraceNote] = useState('');
@@ -717,7 +734,8 @@ export default function SailTrimTab(
     const rangeMm = imgSize ? referred.rangeMm : null;
     const scaleDepthUncorrected = refDepthMm !== 0 && !referred.corrected;
 
-    const hz: Horizon | null = horizon ? { tiltDeg: horizon.tiltDeg, rms: horizon.rms, samples: horizon.samples } : null;
+    const hz: Horizon | null = horizonUsed
+      ? { tiltDeg: horizonUsed.tiltDeg, rms: horizonUsed.rms, samples: horizonUsed.samples } : null;
     const heelForPsi = imageHeelDeg(axis, hz) ?? (heel != null && Number.isFinite(heel) ? heel : null);
     const base = marks.baseline || [];
     const baseline = base.length >= 2 && (baseRef?.mm ?? 0) > 0
@@ -754,7 +772,7 @@ export default function SailTrimTab(
       },
       why: '',
     };
-  }, [mastMode, mastTrace, traceNote, marks, scaleRef, baseRef, heelDeg, focalMm, rig.sensorWidthMm, imgSize, horizon, tack, isCompetitor]);
+  }, [mastMode, mastTrace, traceNote, marks, scaleRef, baseRef, heelDeg, focalMm, rig.sensorWidthMm, imgSize, horizonUsed, tack, isCompetitor]);
 
   // ── the measurements ─────────────────────────────────────────────────────
   /**
@@ -1017,9 +1035,9 @@ export default function SailTrimTab(
     const px = (n: number) => n * uiScale;
     const toScreen = (p: Px): Px => ({ x: (p.x + pan.x) * zoom, y: (p.y + pan.y) * zoom });
 
-    if (horizon && imgSize) {
-      const a = toScreen({ x: 0, y: horizon.intercept });
-      const b = toScreen({ x: imgSize.w, y: horizon.slope * imgSize.w + horizon.intercept });
+    if (horizonUsed && imgSize) {
+      const a = toScreen({ x: 0, y: horizonUsed.intercept });
+      const b = toScreen({ x: imgSize.w, y: horizonUsed.slope * imgSize.w + horizonUsed.intercept });
       ctx.strokeStyle = 'rgba(250,204,21,0.45)';
       ctx.lineWidth = px(1.2);
       ctx.setLineDash([px(14), px(10)]);
@@ -1139,7 +1157,7 @@ export default function SailTrimTab(
         ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2); ctx.stroke();
       }
     }
-  }, [marks, activeStep, calibration, measurements, defn, horizon, mastTrace, mastMode, imgSize, steps, pointForKey, footOnAxis, scaleKey, rig.clewHeightMm]);
+  }, [marks, activeStep, calibration, measurements, defn, horizonUsed, mastTrace, mastMode, imgSize, steps, pointForKey, footOnAxis, scaleKey, rig.clewHeightMm]);
 
   const draw = useCallback(() => {
     const c = canvasRef.current;
@@ -1666,6 +1684,42 @@ export default function SailTrimTab(
                     {s.key === 'mastSeed' && traceNote && (
                       <div style={{ fontSize: 11, color: '#FCD34D', marginTop: 5, lineHeight: 1.5 }}>{traceNote}</div>
                     )}
+                    {/* What the two clicks actually bought, in the units that
+                        matter: how well they pin the tilt, and therefore heel. */}
+                    {s.key === 'horizonLine' && (() => {
+                      const p2 = marks.horizonLine || [];
+                      if (p2.length < 2) {
+                        return horizon ? (
+                          <div style={{ fontSize: 11, color: '#64748B', marginTop: 5, lineHeight: 1.5 }}>
+                            The detector found one at {horizon.tiltDeg.toFixed(2)}° over {horizon.samples} columns
+                            ({horizon.rms.toFixed(1)} px rms). Mark this only to override it.
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 11, color: '#FCD34D', marginTop: 5, lineHeight: 1.5 }}>
+                            No horizon was detected on this frame, so world-horizontal has nothing to
+                            stand on{isCompetitor ? ' — and on a rival, neither does heel' : ''}.
+                          </div>
+                        );
+                      }
+                      if (!manualHorizon) {
+                        return (
+                          <div style={{ fontSize: 11, color: '#FCA5A5', marginTop: 5, lineHeight: 1.5 }}>
+                            Those two points are too close together to fix a tilt. Put them near the
+                            left and right edges of the frame.
+                          </div>
+                        );
+                      }
+                      const sig = manualHorizonSigmaDeg(p2[0], p2[1], CLICK_SIGMA_PX);
+                      const spanPx = Math.hypot(p2[1].x - p2[0].x, p2[1].y - p2[0].y);
+                      return (
+                        <div style={{ fontSize: 11, color: '#4ADE80', marginTop: 5, lineHeight: 1.5 }}>
+                          Horizon {manualHorizon.tiltDeg.toFixed(2)}° ± {sig.toFixed(2)}°, over{' '}
+                          {(100 * spanPx / (imgSize?.w || 1)).toFixed(0)}% of the frame&rsquo;s width.
+                          {horizon && ` It overrides the detected ${horizon.tiltDeg.toFixed(2)}°.`}
+                          {sig > 0.3 && ' Wider apart would halve that ±.'}
+                        </div>
+                      );
+                    })()}
                     <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                       <button style={btn()} onClick={() => undoPoint(s.key)} disabled={!pts.length}>Undo</button>
                       <button style={btn()} onClick={() => clearStep(s.key)} disabled={!pts.length}>Clear</button>
@@ -1821,10 +1875,10 @@ export default function SailTrimTab(
                 onChange={(e) => setHeelDeg(e.target.value)}
                 placeholder={isCompetitor ? 'from the horizon' : '23.5'} />
               {isCompetitor && (
-                <div style={{ fontSize: 10.5, color: horizon ? '#4ADE80' : '#FCA5A5', marginTop: 4, lineHeight: 1.45 }}>
-                  {horizon
+                <div style={{ fontSize: 10.5, color: horizonUsed ? '#4ADE80' : '#FCA5A5', marginTop: 4, lineHeight: 1.45 }}>
+                  {horizonUsed
                     ? `Rival — heel read off the horizon: ${(calibration.cal ? effectiveHeelDeg(calibration.cal) : null)?.toFixed(1) ?? '—'}°. Our log describes our boat, not this one.`
-                    : 'Rival, and NO HORIZON detected — so there is no heel at all. Our logged heel is our own boat\u2019s and would be a different boat\u2019s number. Trace the horizon, or treat the world-horizontal figures as unavailable.'}
+                    : 'Rival, and NO HORIZON — so there is no heel at all. Our logged heel is our own boat\u2019s and would be a different boat\u2019s number. Mark the horizon by hand (two clicks, in the step list), or treat the world-horizontal figures as unavailable.'}
                 </div>
               )}
             </div>
