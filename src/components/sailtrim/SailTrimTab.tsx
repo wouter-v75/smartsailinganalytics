@@ -151,12 +151,12 @@ const OTHER_STEPS: StepDef[] = [
   // supply and the eye can, so the eye is asked for it.
   ...LEECH_SAILS.flatMap((sl): StepDef[] => ([
     {
-      key: `camber:${sl.key}:front`, label: `${sl.label.replace(' leech', '')} stripes \u2014 front`,
+      key: `camber:${sl.key}:front`, label: `\u25cf ${sl.label.replace(' leech', '')} DRAFT dots \u2014 front face`,
       min: 1, max: 12, colour: '#FDE047', group: 'target', optional: true,
       hint: `Points along the painted stripes of the ${sl.key === 'jib' ? 'jib' : 'mainsail'}, on the face TURNED TOWARDS YOU \u2014 any stripe, in any order; each mark is filed against the stripe it is nearest in height. Keep off the stripe's own ends, where the depth is zero by construction. Pick one edge of the painted band \u2014 top or bottom \u2014 and keep to it: telling 10.5 % from 11 % needs about half a millimetre per pixel of consistency at this range.`,
     },
     {
-      key: `camber:${sl.key}:back`, label: `${sl.label.replace(' leech', '')} stripes \u2014 back`,
+      key: `camber:${sl.key}:back`, label: `\u25cf ${sl.label.replace(' leech', '')} DRAFT dots \u2014 back face`,
       min: 1, max: 12, colour: '#FB923C', group: 'target', optional: true,
       hint: `The same stripes where the BACK of the sail shows, aft of where it turns away. These are not optional extras: without them the depth has two answers and the tool cannot choose. Same edge of the band as the front marks.`,
     },
