@@ -2158,6 +2158,10 @@ export default function SailTrimTab(
               {(() => {
                 const cell = (sail: string, tag: string) =>
                   twist.find((x) => x.sail === sail)?.angles.find((a) => a.tag === tag) ?? null;
+                const draftAt = (sail: string, tag: string) => {
+                  const c = camberFits.find((x) => x.sail === sail && x.tag === tag);
+                  return c ? `~${(c.fit.camber * 100).toFixed(1)} %${c.fit.spansDraft ? '' : '\u2193'}` : '\u2014';
+                };
                 const th: React.CSSProperties = { fontSize: 9.5, color: '#64748B', fontWeight: 700, textAlign: 'right', padding: '0 0 4px 8px', whiteSpace: 'nowrap' };
                 const td: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: '#E2E8F0', fontFamily: 'monospace', textAlign: 'right', padding: '3px 0 3px 8px' };
                 const tdSig: React.CSSProperties = { ...td, fontSize: 11, fontWeight: 600, color: '#64748B' };
@@ -2168,6 +2172,8 @@ export default function SailTrimTab(
                         <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Twist</th>
                         <th style={th}>Main</th>
                         <th style={th}>Jib</th>
+                        <th style={th}>Draft Main</th>
+                        <th style={th}>Draft jib</th>
                         <th style={th}>Accuracy Main</th>
                         <th style={th}>Accuracy jib</th>
                       </tr>
@@ -2183,6 +2189,14 @@ export default function SailTrimTab(
                             <td style={{ fontSize: 11.5, color: '#94A3B8', padding: '3px 0' }}>{t.short}</td>
                             <td style={td}>{m ? `${m.angle.deg.toFixed(1)}°${m.width.source === 'interpolated' ? '*' : ''}` : '—'}</td>
                             <td style={td}>{j ? `${j.angle.deg.toFixed(1)}°${j.width.source === 'interpolated' ? '*' : ''}` : '—'}</td>
+                            {/* DRAFT — the sail's depth as a percentage of chord.
+                                It needs SEVERAL frames: one view gives a dot's
+                                athwartships offset, which mixes how far along the
+                                stripe it sits with how deep the sail is there, and
+                                on a main the two are the same size. So this fills
+                                in from a multi-view fit, not from this frame. */}
+                            <td style={td}>{draftAt('main', t.key)}</td>
+                            <td style={td}>{draftAt('jib', t.key)}</td>
                             <td style={tdSig}>{m ? `± ${m.angle.sigmaDeg.toFixed(2)}` : '—'}</td>
                             <td style={tdSig}>{j ? `± ${j.angle.sigmaDeg.toFixed(2)}` : '—'}</td>
                           </tr>
@@ -2244,69 +2258,17 @@ export default function SailTrimTab(
                   </div>
                 );
               })}
-              {/* CAMBER, in the same shape as the twist table above — same
-                  stations down the side, same sails across. */}
-              {camberFits.length > 0 && (() => {
-                const cell = (sail: string, tag: string) => camberFits.find((c) => c.sail === sail && c.tag === tag) ?? null;
-                const th: React.CSSProperties = { fontSize: 9.5, color: '#64748B', fontWeight: 700, textAlign: 'right', padding: '0 0 4px 8px', whiteSpace: 'nowrap' };
-                const td: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: '#E2E8F0', fontFamily: 'monospace', textAlign: 'right', padding: '3px 0 3px 8px' };
-                const tdSub: React.CSSProperties = { ...td, fontSize: 11, fontWeight: 600, color: '#64748B' };
-                return (
-                  <div style={{ marginTop: 9, paddingTop: 8, borderTop: '1px solid #16304A' }} data-testid="sailtrim-camber">
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                      <thead>
-                        <tr>
-                          <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Camber</th>
-                          <th style={th}>Main</th>
-                          <th style={th}>Jib</th>
-                          <th style={th}>Draft Main</th>
-                          <th style={th}>Draft jib</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...STRIPE_TAGS].reverse().map((t) => {
-                          const m = cell('main', t.key), j = cell('jib', t.key);
-                          // Deliberately one decimal and flagged: with a pixel
-                          // of click noise the fit moves by whole points, so the
-                          // figure is indicative until the conditioning is fixed.
-                          const depth = (c: typeof m) => c ? `~${(c.fit.camber * 100).toFixed(1)} %${c.fit.spansDraft ? '' : '\u2193'}` : '\u2014';
-                          const pos = (c: typeof m) => c ? `${(c.fit.draft * 100).toFixed(0)} %` : '\u2014';
-                          return (
-                            <tr key={t.key} style={{ borderTop: '1px solid #123253' }}>
-                              <td style={{ fontSize: 11.5, color: '#94A3B8', padding: '3px 0' }}>{t.short}</td>
-                              <td style={td}>{depth(m)}</td>
-                              <td style={td}>{depth(j)}</td>
-                              <td style={tdSub}>{pos(m)}</td>
-                              <td style={tdSub}>{pos(j)}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    {camberFits.map((c) => {
-                      const note = camberNote(c.fit, CLICK_SIGMA_PX);
-                      return note ? (
-                        <div key={`${c.sail}-${c.tag}`} style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 4, lineHeight: 1.45 }}>
-                          {c.sail} {heightShort(c.tag)}: {note}
-                        </div>
-                      ) : null;
-                    })}
-                    <div style={{ fontSize: 10, color: '#64748B', lineHeight: 1.45, marginTop: 4 }}>
-                      <b style={{ color: '#FCA5A5' }}>Indicative only.</b> The fit is not yet
-                      precise enough for the 10.5&ndash;11 % targets: one pixel of click noise
-                      moves the depth by more than two points, because camber and draft
-                      position push the athwartships offset the same way and the photograph
-                      sees only their sum. Read the trend, not the number.
-                      Depth as a percentage of the chord, draft as a percentage from the luff.
-                      A <span style={{ color: '#FCD34D' }}>&darr;</span> means the marks do not
-                      straddle the draft, so that depth is extrapolated and reads LOW. Fit residuals:{' '}
-                      {camberFits.map((c) => `${heightShort(c.tag)} ${c.fit.rmsPx.toFixed(1)} px`).join(' \u00b7 ')} —
-                      they should look like clicking accuracy and nothing more.
-                    </div>
-                  </div>
-                );
-              })()}
-
+              {/* What the draft column needs, when it is empty. */}
+              {camberFits.length === 0 && (
+                <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 4, lineHeight: 1.45 }}>
+                  <b>Draft is blank because one frame cannot give it.</b> A dot&rsquo;s only
+                  observable is its distance from the mast axis, and that mixes how far along
+                  the stripe it sits with how deep the sail is there — on a main the two are
+                  the same size. Mark the draft dots on two or three frames a few degrees
+                  apart and run <code>sailtrim-camber</code>, which solves one section against
+                  all of them at once.
+                </div>
+              )}
               <div style={{ fontSize: 10, color: '#64748B', lineHeight: 1.45, marginTop: 4 }}>
                 Widths off the certificate — MHW/MTW/MUW and HHW/HTW/HUW. A{' '}
                 <span style={{ color: '#FCD34D' }}>*</span> is interpolated: the certificate
