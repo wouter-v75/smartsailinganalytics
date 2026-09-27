@@ -37,7 +37,7 @@ import {
 } from '../../lib/sailTrimCv';
 import {
   rigModelFor, loadRigModel, saveRigModel, scaleRelSigma, missingFrom, exportRigModel, importRigModel,
-  fetchRigModel, putRigModel,
+  fetchRigModel, putRigModel, fetchBoats, type BoatChoice,
   HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, isStripeTag, migrateHeightMarks,
   stationsFor,
   LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
@@ -243,7 +243,17 @@ export default function SailTrimTab(
   // Whether this model came from the boat record, and whether this user may
   // write it back. Null = not asked yet (offline, or no session).
   const [rigCloud, setRigCloud] = useState<{ canEdit: boolean; loaded: boolean } | null>(null);
+  // A boat chosen in the picker outranks whatever the caller passed: the
+  // operator is looking at the photograph and the caller is guessing from context.
+  const [pickedBoatId, setPickedBoatId] = useState<string | null>(null);
   const [rigCloudNote, setRigCloudNote] = useState('');
+  // The boats this user can see, competitors included — a rival's rig model
+  // comes off its public IRC certificate, which is the whole reason a boat we
+  // do not own can be measured. Typing the name was the only way in before, and
+  // a typo silently bought the generic maxi estimates instead.
+  const [boats, setBoats] = useState<BoatChoice[]>([]);
+  const [otherBoat, setOtherBoat] = useState(false);
+  useEffect(() => { void fetchBoats().then(setBoats); }, []);
   const [certText, setCertText] = useState('');
   const [certNote, setCertNote] = useState('');
   const [scaleKey, setScaleKey] = useState('spreader2');
@@ -281,14 +291,14 @@ export default function SailTrimTab(
     // called, end up with a named boat and its real dimensions.
     let alive = true;
     setRigCloud(null); setRigCloudNote('');
-    void fetchRigModel(boat, boatId).then((c) => {
+    void fetchRigModel(boat, pickedBoatId ?? boatId).then((c) => {
       if (!alive || !c) return;
       setRigCloud({ canEdit: c.canEdit, loaded: c.rigModel != null });
       if (c.boat && c.boat !== boat) setBoat(c.boat);
       if (c.rigModel) { setRig(c.rigModel); saveRigModel(c.rigModel); }
     });
     return () => { alive = false; };
-  }, [boat, boatId]);
+  }, [boat, boatId, pickedBoatId]);
 
   // The name can also arrive AFTER mount — PhotosTab resolves the photo's boat
   // asynchronously, and `useState(boatName)` only ever reads its first value. So
@@ -1416,14 +1426,14 @@ export default function SailTrimTab(
     saveRigModel(next);
     if (cloudTimer.current) clearTimeout(cloudTimer.current);
     cloudTimer.current = setTimeout(() => {
-      void putRigModel(next.boat || boat, next, boatId).then((err) => {
+      void putRigModel(next.boat || boat, next, pickedBoatId ?? boatId).then((err) => {
         // 403 is the ordinary case for anyone who is not a coach, and it must
         // say so: an edit that lives only on this laptop looks identical to a
         // shared one until somebody else opens the tab and finds it missing.
         setRigCloudNote(err ? `saved on this device only — ${err}` : '');
       });
     }, 1200);
-  }, [boat, boatId]);
+  }, [boat, boatId, pickedBoatId]);
   useEffect(() => () => { if (cloudTimer.current) clearTimeout(cloudTimer.current); }, []);
 
   type Patch = Partial<{ mm: number; sigmaMm: number; source: Provenance; depthMm: number }>;
@@ -1541,9 +1551,48 @@ export default function SailTrimTab(
           )}
           <div style={{ marginTop: 8 }}>
             <label style={lbl}>Boat</label>
-            <input style={inp} value={boat}
-              onChange={(e) => { typedBoat.current = true; setBoat(e.target.value); }}
-              placeholder="Northstar 76" />
+            {/* A list, not a text field. The name is what fetches the boat's
+                real dimensions, so a typo is not a typo — it is silently
+                measuring with generic maxi guesses. The free-text box is still
+                here for a boat nobody has entered yet. */}
+            {boats.length > 0 && !otherBoat ? (
+              <select style={inp}
+                value={boats.some((b) => b.name === boat) ? boat : ''}
+                onChange={(e) => {
+                  if (e.target.value === '__other') { setOtherBoat(true); return; }
+                  typedBoat.current = true;
+                  setBoat(e.target.value);
+                  setPickedBoatId(boats.find((b) => b.name === e.target.value)?.id ?? null);
+                }}>
+                <option value="">— pick a boat —</option>
+                {boats.map((b) => (
+                  <option key={b.id} value={b.name}>
+                    {b.name}{b.sailNumber ? ` · ${b.sailNumber}` : ''}{b.hasRigModel ? '' : '  (no rig model)'}
+                  </option>
+                ))}
+                <option value="__other">Something else — type it…</option>
+              </select>
+            ) : (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input style={inp} value={boat}
+                  onChange={(e) => { typedBoat.current = true; setBoat(e.target.value); setPickedBoatId(null); }}
+                  placeholder="Northstar 76" />
+                {boats.length > 0 && (
+                  <button style={{ ...btn(), flexShrink: 0 }} onClick={() => setOtherBoat(false)}>list</button>
+                )}
+              </div>
+            )}
+            {/* Say when the chosen boat has nothing to measure WITH. */}
+            {(() => {
+              const chosen = boats.find((b) => b.name === boat);
+              if (!chosen || chosen.hasRigModel) return null;
+              return (
+                <div style={{ fontSize: 10.5, color: '#FCA5A5', marginTop: 4, lineHeight: 1.45 }}>
+                  No rig model stored for {chosen.name} — every dimension below is a generic
+                  estimate and there will be no twist. An IRC certificate fills it in.
+                </div>
+              );
+            })()}
           </div>
         </div>
 

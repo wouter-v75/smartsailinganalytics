@@ -572,6 +572,27 @@ export async function fetchRigModel(boat: string, boatId?: string | null): Promi
   } catch { return null }
 }
 
+export interface BoatChoice {
+  id: string
+  name: string
+  sailNumber: string | null
+  teamName: string | null
+  /** False means generic maxi estimates and no twist — worth knowing BEFORE
+   *  fifty points are marked on a photograph, not after. */
+  hasRigModel: boolean
+}
+
+/** Every boat this caller may see, for the picker. Empty on any failure. */
+export async function fetchBoats(): Promise<BoatChoice[]> {
+  if (typeof fetch === 'undefined') return []
+  try {
+    const r = await fetch('/api/boats')
+    if (!r.ok) return []
+    const j = await r.json() as { boats?: BoatChoice[] }
+    return j.boats || []
+  } catch { return [] }
+}
+
 /** Store it for the whole team. Resolves to null on success, or a reason. */
 export async function putRigModel(boat: string, m: RigModel, boatId?: string | null): Promise<string | null> {
   if ((!boat.trim() && !boatId) || typeof fetch === 'undefined') return 'no boat'

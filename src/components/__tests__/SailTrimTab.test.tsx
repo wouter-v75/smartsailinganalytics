@@ -1041,4 +1041,74 @@ describe('SailTrimTab', () => {
     expect(select).toBeTruthy()
     expect(select.value).toBe('mast-transom')
   })
+
+  describe('the boat picker', () => {
+    // Typing the name was the only way in, and the name is what fetches the
+    // boat's real dimensions — so a typo was not a typo, it silently bought the
+    // generic maxi estimates and no twist. Competitors are in the list because a
+    // rival's rig model comes off its public IRC certificate.
+    const BOATS = [
+      { id: 'b-n76', name: 'Northstar 76', sailNumber: 'GBR76X', teamName: 'Northstar', hasRigModel: true },
+      { id: 'b-cap', name: 'Capricorno', sailNumber: 'ITA30303', teamName: 'Northstar', hasRigModel: true },
+      { id: 'b-bare', name: 'Torvar', sailNumber: null, teamName: 'Team Torvar', hasRigModel: false },
+    ]
+    const withBoats = () => {
+      const realFetch = global.fetch
+      global.fetch = (async (url: any, init?: any) => {
+        const u = String(url)
+        if (u.endsWith('/api/boats')) return { ok: true, json: async () => ({ boats: BOATS }) } as any
+        if (u.includes('/api/boats/rig-model')) {
+          return { ok: true, json: async () => ({ boat: 'Capricorno', boatId: 'b-cap', rigModel: null, canEdit: true }) } as any
+        }
+        return realFetch ? realFetch(url, init) : ({ ok: false, json: async () => ({}) } as any)
+      }) as any
+      return () => { global.fetch = realFetch }
+    }
+
+    it('lists the boats, competitors included, with their sail numbers', async () => {
+      const restore = withBoats()
+      try {
+        render(<SailTrimTab />)
+        await openAFrame()
+        const select = await waitFor(() => {
+          const el = screen.getAllByRole('combobox').find((s) =>
+            Array.from((s as HTMLSelectElement).options).some((o) => o.value === 'Capricorno'))
+          expect(el).toBeTruthy()
+          return el as HTMLSelectElement
+        })
+        const labels = Array.from(select.options).map((o) => o.textContent)
+        expect(labels.some((l) => l?.includes('Northstar 76') && l.includes('GBR76X'))).toBe(true)
+        expect(labels.some((l) => l?.includes('Capricorno') && l.includes('ITA30303'))).toBe(true)
+        // A boat with nothing to measure with says so in the list itself.
+        expect(labels.some((l) => l?.includes('Torvar') && l.includes('no rig model'))).toBe(true)
+      } finally { restore() }
+    })
+
+    it('warns when the chosen boat has no rig model', async () => {
+      const restore = withBoats()
+      try {
+        render(<SailTrimTab />)
+        await openAFrame()
+        const select = await waitFor(() => screen.getAllByRole('combobox').find((s) =>
+          Array.from((s as HTMLSelectElement).options).some((o) => o.value === 'Torvar')) as HTMLSelectElement)
+        fireEvent.change(select, { target: { value: 'Torvar' } })
+        await waitFor(() => expect(screen.getByText(/No rig model stored for Torvar/)).toBeTruthy())
+        expect(screen.getByText(/no twist/)).toBeTruthy()
+      } finally { restore() }
+    })
+
+    it('still lets a boat nobody has entered be typed', async () => {
+      const restore = withBoats()
+      try {
+        render(<SailTrimTab />)
+        await openAFrame()
+        const select = await waitFor(() => screen.getAllByRole('combobox').find((s) =>
+          Array.from((s as HTMLSelectElement).options).some((o) => o.value === '__other')) as HTMLSelectElement)
+        fireEvent.change(select, { target: { value: '__other' } })
+        const input = await waitFor(() => screen.getByPlaceholderText('Northstar 76'))
+        fireEvent.change(input, { target: { value: 'Jolt' } })
+        expect((input as HTMLInputElement).value).toBe('Jolt')
+      } finally { restore() }
+    })
+  })
 })
