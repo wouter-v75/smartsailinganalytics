@@ -92,6 +92,32 @@ const MAST_MANUAL: StepDef[] = [
   { key: 'mastHigh', label: 'Mast edges, high', min: 2, max: 2, colour: MAST_C, group: 'calibrate',
     hint: 'The same two edges as high as you can still see them. The further apart the two heights, the better the axis.' },
 ];
+
+/**
+ * What to click, for the reference that is actually selected.
+ *
+ * Both a vertical and an athwartships reference are safe from astern, for the
+ * same reason: psi rotates the boat about a vertical axis, so it foreshortens
+ * fore-and-aft lengths and leaves the other two alone. What differs is WHERE to
+ * click, and a hint naming spreader tips while the tool is scaled on P is how an
+ * operator ends up marking the wrong thing.
+ */
+function scaleHint(ref: { key: string; label: string; orientation?: string; depthMm?: number }): string {
+  const offPlane = (ref.depthMm ?? 0) !== 0
+    ? ' This reference is off the mast plane, so the focal length has to be right for it — fill it in above.'
+    : '';
+  if (ref.key === 'P') {
+    return 'The two mast BLACK BANDS: the lower one at the gooseneck, level with the boom, and the upper one near the masthead where the headboard stops. Both lie on the mast, so click the same edge of the spar at each — the axis, not the silhouette. P is a certificate figure and runs up the rig, so ψ cannot foreshorten it and there is no depth to correct.'
+  }
+  if (ref.key === 'HLU') {
+    return 'The headsail luff: the forestay tack fitting at the deck, and the halyard sheave at the top. It SAGS under load by an amount nobody knows at the shutter, so it reads long — use it when P’s masthead is out of frame, and treat it as the cross-check, not the reference.'
+  }
+  if (ref.orientation === 'vertical') {
+    return `The two ends of ${ref.label}. It runs up the rig, which ψ does not foreshorten.${offPlane}`
+  }
+  return `The two ends of ${ref.label} — a length ACROSS the boat. Never a fore-and-aft length: from astern those are foreshortened to nothing (Capricorno’s 11.2 m boom projects 41 mm at ψ = 0.2°).${offPlane}`
+}
+
 const OTHER_STEPS: StepDef[] = [
   // Optional because the detector usually finds it. When it does not — behind
   // land in a bay, out of frame on a tight crop, lost in haze, as on the 26 Sep
@@ -401,9 +427,18 @@ export default function SailTrimTab(
   const steps: StepDef[] = useMemo(
     () => [
       ...(mastMode === 'line' ? [MAST_LINE] : mastMode === 'auto' ? [MAST_AUTO] : MAST_MANUAL),
-      ...OTHER_STEPS,
+      // The scale step's hint names the reference actually selected. The static
+      // one said "spreader tip to tip, never a fore-and-aft length", which is
+      // right about fore-and-aft and unhelpful once P is the default: P runs UP
+      // the rig, which is the other direction psi cannot foreshorten, and it is
+      // the one a certificate attests to 20 mm.
+      ...OTHER_STEPS.map((st) =>
+        st.key === 'scale' && scaleRef
+          ? { ...st, hint: scaleHint(scaleRef) }
+          : st,
+      ),
     ],
-    [mastMode],
+    [mastMode, scaleRef],
   );
 
   // ── load ──────────────────────────────────────────────────────────────────
