@@ -33,8 +33,8 @@ export interface LightboxPhoto {
    *  is also the reason there is nothing to measure on. */
   original?: string | null
   inst?: Record<string, unknown> | null
-  /** Whose boat is in the frame — a rival, usually, when it is set at all. */
-  boat?: string | null
+  /** Boats IN the frame, by id — `photos.subject_boat_ids`. */
+  subjectBoatIds?: string[] | null
   sailTrim?: { annotation: SailTrimAnnotation; overlay?: boolean } | null
 }
 
@@ -68,8 +68,8 @@ export default function PhotoLightbox({
         <DialogContent title="Photo" wide>
           {/* The full-resolution original over the thumbnail, zoom, pan, and the
               sail-geometry lines — the same viewer the Photos tab uses. */}
-          {photo.boat && (
-            <div style={{ marginBottom: 7 }}><BoatBadge boat={photo.boat} /></div>
+          {!!photo.subjectBoatIds?.length && (
+            <div style={{ marginBottom: 7 }}><BoatBadge boatIds={photo.subjectBoatIds} /></div>
           )}
           <PhotoViewer
             photoId={photo.id}

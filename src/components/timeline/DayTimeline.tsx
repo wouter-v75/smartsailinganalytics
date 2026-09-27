@@ -82,7 +82,7 @@ interface MediaItem {
   original?: string | null; sailName?: string | null; raw?: any
   /** The sail-geometry payload, when the photo has been measured. */
   sailTrim?: { annotation: SailTrimAnnotation; overlay?: boolean } | null
-  boat?: string | null
+  subjectBoatIds?: string[] | null
   // Comments only: who said it (their full name, shortened on the card) and
   // what they said.
   who?: string | null; text?: string | null; kindLabel?: string | null
@@ -215,7 +215,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
         const st = a.sailTrim && isAnnotation(a.sailTrim.annotation) ? a.sailTrim : null
         // `raw` is the whole row: saving geometry has to send every column back,
         // because the route writes the row entire and nulls what it is not given.
-        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, original: p.original_url || null, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twaTarg: inst.twaTarg ?? inst.twa_targ ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails }, sailTrim: st, boat: a.boat ?? null, raw: p }
+        return { id: p.id, type: 'photo', thumb: p.thumbnail_url, original: p.original_url || null, t: Date.parse(p.taken_utc) || day.t0, tags: [], tws: inst.tws ?? null, twa: inst.twa ?? null, twaTarg: inst.twaTarg ?? inst.twa_targ ?? null, twd: inst.twd ?? null, sails, inst: { ...inst, sails }, sailTrim: st, subjectBoatIds: p.subject_boat_ids ?? [], raw: p }
       })
       // Sail scans are boat-scoped (no date filter on the API) → keep the ones
       // captured on this day.

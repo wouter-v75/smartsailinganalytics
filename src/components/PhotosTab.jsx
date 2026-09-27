@@ -268,9 +268,9 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
         {photo.lat&&photo.lon&&<div style={{position:"absolute",bottom:3,left:4,fontSize:9,color:"#22C55E"}}>📍</div>}
         {/* Whose boat this is. A rival reads amber, so the line-ups stand out of
             a grid that is mostly our own boat. */}
-        {photo.boat&&(
+        {photo.subjectBoatIds?.length>0&&(
           <div style={{position:"absolute",top:3,left:batchMode?30:4,maxWidth:"70%"}}>
-            <BoatBadge boat={photo.boat} compact/>
+            <BoatBadge boatIds={photo.subjectBoatIds} compact/>
           </div>
         )}
         {/* Time badge bottom-right */}
@@ -351,7 +351,7 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
           <div style={{fontSize:12,color:"#94A3B8",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
             {photo.name||"Photo"}
           </div>
-          <BoatBadge boat={photo.boat}/>
+          <BoatBadge boatIds={photo.subjectBoatIds}/>
           <SrcBadge source={photo.cloudSynced?"cloud":"local"}/>
         </div>
       )}

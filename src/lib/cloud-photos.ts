@@ -115,6 +115,10 @@ export function toLegacyPhotoShape(p: CloudPhotoRow): Record<string, unknown> {
     // annotation draws for everyone. PhotosTab reads `sailtrim_data` as a JSON
     // string (the shape SailScan established), so hand it one.
     sailtrim_data: a.sailTrim ? JSON.stringify(a.sailTrim) : null,
+    // WHO IS IN THE FRAME, by id. Not `boat` above, which is the boat that was
+    // SAILING — every photo carries our own there, including the pictures of
+    // other people's boats.
+    subjectBoatIds: (p as { subject_boat_ids?: string[] }).subject_boat_ids ?? [],
     sessionDate: p.sessions?.date || '',
     source: 'supabase',
   }

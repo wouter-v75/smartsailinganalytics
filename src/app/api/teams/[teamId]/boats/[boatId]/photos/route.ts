@@ -83,7 +83,7 @@ export async function GET(
   let q = supabase
     .from('photos')
     .select(
-      'id, session_id, taken_utc, exif_data, thumbnail_url, bunny_storage_path, bytes, analysis_data, created_at, created_by_user_id, sessions:sessions(date)'
+      'id, session_id, taken_utc, exif_data, thumbnail_url, bunny_storage_path, bytes, analysis_data, subject_boat_ids, created_at, created_by_user_id, sessions:sessions(date)'
     )
     .eq('team_id', params.teamId)
     .eq('boat_id', params.boatId)

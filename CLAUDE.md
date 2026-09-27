@@ -12,6 +12,7 @@ something costs you an hour.
 | Add lidar from Expedition lidar logs to stored phase stats | `npm run lidar:import` |
 | Put a boat's rig model (SailTrim dimensions) in `boats.rig_model` | `npx vite-node scripts/rig-model-seed.ts --boat "Northstar 76" --write` |
 | Add a RIVAL from its IRC certificate, so SailTrim can measure it | `irc-rigmodel.ts -- <cert.pdf> --out <dir>`, then `rig-model-seed.ts --boat <name> --from <dir>/<boat>.rigmodel.json --create --team <team> --write` |
+| Say which boats are IN a photo, so frames are searchable by rival | `npx vite-node scripts/subject-boats-backfill.ts --write` (fills `photos.subject_boat_ids` from sail-geometry measurements) |
 
 All of these are dry-run by default and need `--write` to do anything. They read
 `.env.local` and must run **outside** Claude Code's Bash sandbox.
