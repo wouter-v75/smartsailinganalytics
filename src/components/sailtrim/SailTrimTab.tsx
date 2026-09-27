@@ -143,11 +143,23 @@ const OTHER_STEPS: StepDef[] = [
       hint: `Where the ${sl.key === 'jib' ? 'JIB' : 'MAINSAIL'}\u2019s ${t.label.toLowerCase()} meets ITS OWN LEECH \u2014 on the sail\u2019s edge, not on the mast. This is a leech point as well as a station, so it counts towards the leech above and nothing needs marking twice. This sail\u2019s own stripe: the ${sl.key === 'jib' ? 'main' : 'jib'}\u2019s ${t.short} sits at a different height, because the two hoists differ.`,
     })),
   ]),
-  ...LEECH_SAILS.map((sl): StepDef => ({
-    key: `camber:${sl.key}`, label: `${sl.label.replace(' leech', '')} \u2014 draft stripes`,
-    min: 2, max: 24, colour: sl.key === 'jib' ? '#FDE047' : '#FB923C', group: 'target', optional: true,
-    hint: `Points ALONG the painted stripes of the ${sl.key === 'jib' ? 'jib' : 'mainsail'} \u2014 any stripe, in any order; each mark is filed against the stripe it is nearest in height. This is what gives CAMBER. Two things matter and the count is not one of them: mark at BOTH ENDS of whatever is visible, including the part showing through the back of the sail near the leech, and keep off the stripe's two ends themselves, where the depth is zero by construction. Marks confined to the forward third read camber about two points LOW and the tool will say so.`,
-  })),
+  // FRONT and BACK are separate steps, and not for tidiness. A mark's distance
+  // from the luff-leech line matches TWO positions along the stripe, because
+  // the offset rises to a turning point and falls back; which face a mark is on
+  // says which of the two it is. That is the one thing the photograph cannot
+  // supply and the eye can, so the eye is asked for it.
+  ...LEECH_SAILS.flatMap((sl): StepDef[] => ([
+    {
+      key: `camber:${sl.key}:front`, label: `${sl.label.replace(' leech', '')} stripes \u2014 front`,
+      min: 1, max: 12, colour: '#FDE047', group: 'target', optional: true,
+      hint: `Points along the painted stripes of the ${sl.key === 'jib' ? 'jib' : 'mainsail'}, on the face TURNED TOWARDS YOU \u2014 any stripe, in any order; each mark is filed against the stripe it is nearest in height. Keep off the stripe's own ends, where the depth is zero by construction. Pick one edge of the painted band \u2014 top or bottom \u2014 and keep to it: telling 10.5 % from 11 % needs about half a millimetre per pixel of consistency at this range.`,
+    },
+    {
+      key: `camber:${sl.key}:back`, label: `${sl.label.replace(' leech', '')} stripes \u2014 back`,
+      min: 1, max: 12, colour: '#FB923C', group: 'target', optional: true,
+      hint: `The same stripes where the BACK of the sail shows, aft of where it turns away. These are not optional extras: without them the depth has two answers and the tool cannot choose. Same edge of the band as the front marks.`,
+    },
+  ])),
   // Optional like the rest: the tool measures whatever is marked, and asking for
   // a clew on a frame somebody opened to read two leech heights is just nagging.
   { key: 'clew', label: 'Jib clew', min: 1, max: 1, colour: '#FB923C', group: 'target', optional: true,
@@ -1496,8 +1508,9 @@ export default function SailTrimTab(
     const out: { sail: string; tag: string; fit: CamberFit }[] = [];
     if (!cal) return out;
     for (const sl of LEECH_SAILS) {
-      const pts = marks[`camber:${sl.key}`] || [];
-      if (pts.length < 2) continue;
+      const frontAll = marks[`camber:${sl.key}:front`] || [];
+      const backAll = marks[`camber:${sl.key}:back`] || [];
+      if (frontAll.length + backAll.length < 2) continue;
       const w = rig.widths?.[sl.key as 'main' | 'jib'];
       if (!w) continue;
       // Each stripe's two ends: the station itself, and where the luff crosses.
@@ -1517,23 +1530,23 @@ export default function SailTrimTab(
 
       // Along the mast is height; a mark belongs to the station it sits level with.
       const height = (q: Px) => (q.x - cal.axis.low.x) * cal.axis.up.x + (q.y - cal.axis.low.y) * cal.axis.up.y;
-      const byTag = new Map<string, Px[]>();
-      for (const m of pts) {
+      const nearestTag = (m: Px) => {
         let near = stations[0], best = Infinity;
         for (const st of stations) {
           const d = Math.abs(height(m) - height(st.leech));
           if (d < best) { best = d; near = st; }
         }
-        byTag.set(near.tag, [...(byTag.get(near.tag) || []), m]);
-      }
+        return near.tag;
+      };
+      const front = new Map<string, Px[]>(), back = new Map<string, Px[]>();
+      for (const m of frontAll) { const t = nearestTag(m); front.set(t, [...(front.get(t) || []), m]); }
+      for (const m of backAll) { const t = nearestTag(m); back.set(t, [...(back.get(t) || []), m]); }
       for (const st of stations) {
-        const mine = byTag.get(st.tag);
-        if (!mine || mine.length < 2) continue;
-        const depth = sl.key === 'main' ? rig.depths.mainLeech.mm : rig.depths.leech.mm;
+        const f = front.get(st.tag) || [], b = back.get(st.tag) || [];
+        if (f.length + b.length < 2) continue;
         const fit = fitCamber({
-          marks: mine, luff: st.luff, leech: st.leech, chordMm: st.chordMm,
-          mmPerPx: mmPerPxAtDepth(cal.mmPerPxAtMast, depth, cal.rangeMm),
-          chordAngleDeg: st.angleDeg,
+          front: f, back: b, luff: st.luff, leech: st.leech,
+          chordMm: st.chordMm, chordAngleDeg: st.angleDeg,
         });
         if (fit) out.push({ sail: sl.key, tag: st.tag, fit });
       }
@@ -2233,7 +2246,10 @@ export default function SailTrimTab(
                       <tbody>
                         {[...STRIPE_TAGS].reverse().map((t) => {
                           const m = cell('main', t.key), j = cell('jib', t.key);
-                          const depth = (c: typeof m) => c ? `${(c.fit.camber * 100).toFixed(1)} %${c.fit.spansDraft ? '' : '\u2193'}` : '\u2014';
+                          // Deliberately one decimal and flagged: with a pixel
+                          // of click noise the fit moves by whole points, so the
+                          // figure is indicative until the conditioning is fixed.
+                          const depth = (c: typeof m) => c ? `~${(c.fit.camber * 100).toFixed(1)} %${c.fit.spansDraft ? '' : '\u2193'}` : '\u2014';
                           const pos = (c: typeof m) => c ? `${(c.fit.draft * 100).toFixed(0)} %` : '\u2014';
                           return (
                             <tr key={t.key} style={{ borderTop: '1px solid #123253' }}>
@@ -2256,6 +2272,11 @@ export default function SailTrimTab(
                       ) : null;
                     })}
                     <div style={{ fontSize: 10, color: '#64748B', lineHeight: 1.45, marginTop: 4 }}>
+                      <b style={{ color: '#FCA5A5' }}>Indicative only.</b> The fit is not yet
+                      precise enough for the 10.5&ndash;11 % targets: one pixel of click noise
+                      moves the depth by more than two points, because camber and draft
+                      position push the athwartships offset the same way and the photograph
+                      sees only their sum. Read the trend, not the number.
                       Depth as a percentage of the chord, draft as a percentage from the luff.
                       A <span style={{ color: '#FCD34D' }}>&darr;</span> means the marks do not
                       straddle the draft, so that depth is extrapolated and reads LOW. Fit residuals:{' '}

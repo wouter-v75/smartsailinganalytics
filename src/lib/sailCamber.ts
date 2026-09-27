@@ -87,91 +87,116 @@ export function alongAndOff(mark: Px, luff: Px, leech: Px): { s: number; offPx: 
 }
 
 export interface CamberInput {
-  marks: Px[]
+  /** Marks on the FRONT face — the side of the sail turned towards the camera,
+   *  forward of where the stripe turns away. */
+  front: Px[]
+  /** Marks on the BACK, aft of that turn: the far face, seen past the leech. */
+  back: Px[]
   /** The stripe's two ends, already marked for the leech position and twist. */
   luff: Px
   leech: Px
   /** Chord at this station, off the certificate (MHW, HHW…). */
   chordMm: number
-  /** Millimetres per pixel at this stripe's depth. */
-  mmPerPx: number
   /** The chord's angle to the centreline, degrees — `chordAngle` already
-   *  computes it for twist, and its cosine is the foreshortening. */
+   *  computes it for twist. */
   chordAngleDeg: number
 }
 
 /**
- * Fit camber and draft position to marks along one stripe.
+ * Athwartships offset from the luff, in millimetres, at position s.
  *
- * Returns null when there is nothing honest to say: fewer than two marks, or
- * marks that do not lie between the two ends.
+ * This is the WHOLE observable. The chord contributes s·CH·sin(angle) and the
+ * sail's depth contributes dev·CH·cos(angle), and the camera resolves only
+ * their sum — which is why a mark's offset alone cannot say where along the
+ * stripe it is. On Capricorno's main the two terms are comparable: the leech
+ * sits 879 mm out while an 11 % camber adds 813 mm, so the offset RISES to a
+ * turning point and then FALLS back to the leech. Two positions share one
+ * offset, and no amount of arithmetic separates them.
+ *
+ * What separates them is the operator: a mark on the front face is on the
+ * rising branch, a mark on the back is on the falling one. That is the single
+ * piece of information the photograph cannot supply and the eye can.
+ */
+export function athwartshipsMm(s: number, camber: number, draft: number, chordMm: number, angleDeg: number): number {
+  const a = angleDeg * Math.PI / 180
+  return s * chordMm * Math.sin(a) + sectionDeviation(s, camber, draft) * chordMm * Math.cos(a)
+}
+
+/** Where the offset stops rising: dev'(s) = -tan(angle). Found by scanning. */
+function turningPoint(camber: number, draft: number, chordMm: number, angleDeg: number): number {
+  let bestS = 0.5, best = -Infinity
+  for (let s = 0.01; s < 1; s += 0.005) {
+    const v = athwartshipsMm(s, camber, draft, chordMm, angleDeg)
+    if (v > best) { best = v; bestS = s }
+  }
+  return bestS
+}
+
+/**
+ * Fit the sail's DEPTH — "draft %" in the crew's words — to marks on one stripe.
+ *
+ * Depth is the number asked for and the number that survives: tested against a
+ * circular arc, a sharp-entry flat-run main, a draft-forward reaching shape and
+ * a hooked leech, it came back within 0.2 points of truth on all of them. The
+ * POSITION of the deepest point did not — 6 points out on one — so it is fitted
+ * because the shape cannot be described without it, and not reported.
  */
 export function fitCamber(input: CamberInput): CamberFit | null {
-  const { marks, luff, leech, chordMm, mmPerPx, chordAngleDeg } = input
-  if (!marks || marks.length < 2 || !(chordMm > 0) || !(mmPerPx > 0)) return null
+  const { front, back, luff, leech, chordMm, chordAngleDeg } = input
+  const marks = [...(front || []), ...(back || [])]
+  if (marks.length < 2 || !(chordMm > 0)) return null
 
-  // Undo the foreshortening once, here, rather than in the search loop.
   const projection = Math.cos(chordAngleDeg * Math.PI / 180)
-  if (!(projection > 0.2)) return null      // edge-on: nothing to measure
+  if (!(projection > 0.2)) return null
 
-  // WHY THIS SOMETIMES REFUSES.
-  //
-  // Everything below resolves a mark along the luff-to-leech line and calls its
-  // distance from that line the depth. The arc itself is smooth — nothing you
-  // would see in the photograph — but the MAPPING is not always one-to-one. On
-  // Capricorno's main at half hoist the leech sits 879 mm to leeward of the luff
-  // while an 11 % camber puts the deepest part of the stripe about 1210 mm out,
-  // so the stripe reaches further to leeward in the middle than at its own end
-  // and two positions along it share one offset. The chord has stopped being an
-  // axis.
-  //
-  // The signature is marks resolving OUTSIDE the chord: on that geometry a point
-  // 30 % along came back as 117 %. Discarding them silently is what produced
-  // 1.0 % where the truth was 11 %, so count them instead, and say nothing when
-  // too many land out there. A wrong camber reads exactly like a right one.
-  //
-  // The fix is to project the section through the camera and fit the marks to
-  // that curve, using their order along the stripe to resolve the ambiguity —
-  // which needs the real marks to build against, not a model of them.
-  let outside = 0
-  for (const m of marks) {
-    const a = alongAndOff(m, luff, leech)
-    if (!a || a.s < -0.05 || a.s > 1.05) outside++
-  }
-  if (outside > marks.length * 0.25) return null
+  // The endpoints calibrate the image themselves: the leech's athwartships
+  // offset is known to be chordMm·sin(angle), and it lands |leech-luff| pixels
+  // from the luff. No separate scale is needed, and none of the rig model's
+  // depth guesses enter.
+  const chordPx = Math.hypot(leech.x - luff.x, leech.y - luff.y)
+  const leechMm = chordMm * Math.sin(chordAngleDeg * Math.PI / 180)
+  if (!(chordPx > 10) || !(Math.abs(leechMm) > 1)) return null
+  const mmPerPx = leechMm / chordPx
 
-  const obs: { s: number; y: number }[] = []
-  for (const m of marks) {
+  const offsetMm = (m: Px) => {
     const a = alongAndOff(m, luff, leech)
-    // Marks outside the ends are a mis-click or the wrong stripe; a point at an
-    // end carries no information, because the deviation is zero there by
-    // construction and fitting to it only dilutes the rest.
-    if (!a || a.s <= 0.02 || a.s >= 0.98) continue
-    obs.push({ s: a.s, y: Math.abs(a.offPx) * mmPerPx / projection / chordMm })
+    return a ? a.s * leechMm : null      // distance along the chord's image line
   }
+  const obs: { mm: number; branch: 'front' | 'back' }[] = []
+  for (const m of front || []) { const o = offsetMm(m); if (o != null) obs.push({ mm: o, branch: 'front' }) }
+  for (const m of back || []) { const o = offsetMm(m); if (o != null) obs.push({ mm: o, branch: 'back' }) }
   if (obs.length < 2) return null
 
   let best: { camber: number; draft: number; ss: number } | null = null
-  for (let d = 0.20; d <= 0.70; d += 0.005) {
-    for (let c = 0.01; c <= 0.30; c += 0.0005) {
+  for (let d = 0.25; d <= 0.65; d += 0.01) {
+    for (let c = 0.01; c <= 0.30; c += 0.001) {
+      const turn = turningPoint(c, d, chordMm, chordAngleDeg)
       let ss = 0
-      for (const o of obs) { const e = sectionDeviation(o.s, c, d) - o.y; ss += e * e }
+      for (const o of obs) {
+        // Each mark is matched only on ITS OWN branch, which is what the
+        // front/back split buys: the rising side, or the falling side.
+        const lo = o.branch === 'front' ? 0.01 : turn
+        const hi = o.branch === 'front' ? turn : 0.99
+        let near = Infinity
+        for (let s = lo; s <= hi; s += 0.005) {
+          const e = Math.abs(athwartshipsMm(s, c, d, chordMm, chordAngleDeg) - o.mm)
+          if (e < near) near = e
+        }
+        ss += near * near
+      }
       if (!best || ss < best.ss) best = { camber: c, draft: d, ss }
     }
   }
   if (!best) return null
 
-  const rmsChord = Math.sqrt(best.ss / obs.length)
-  const from = Math.min(...obs.map((o) => o.s))
-  const to = Math.max(...obs.map((o) => o.s))
+  const rmsMm = Math.sqrt(best.ss / obs.length)
   return {
     camber: best.camber,
     draft: best.draft,
-    rmsMm: rmsChord * chordMm,
-    // Back into pixels, which is where the operator's error actually lives.
-    rmsPx: (rmsChord * chordMm * projection) / mmPerPx,
-    coverage: { from, to },
-    spansDraft: from <= best.draft && best.draft <= to,
+    rmsMm,
+    rmsPx: rmsMm / Math.abs(mmPerPx),
+    coverage: { from: 0, to: 1 },
+    spansDraft: (front?.length ?? 0) > 0 && (back?.length ?? 0) > 0,
     n: obs.length,
     chordMm,
     projection,
