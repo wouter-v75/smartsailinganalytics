@@ -5,9 +5,8 @@ import { Play, Camera, ZoomIn, ZoomOut, Sailboat, MessageSquare } from 'lucide-r
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import type { TimelineNode } from '@/lib/timeline/types'
 import { FallbackVideoPlayer } from './DayMedia'
-import PhotoViewer from '@/components/photos/PhotoViewer'
-import SailGeometryCard, { MeasureGeometryButton } from '@/components/photos/SailGeometryCard'
 import { isAnnotation, annotationHeadline, type SailTrimAnnotation } from '@/lib/sailTrimOverlay'
+import PhotoLightbox from './PhotoLightbox'
 import { savePhotoSailTrim, type PhotoRow } from '@/lib/savePhotoSailTrim'
 import { groupBursts } from '@/lib/burstGroup'
 
@@ -565,60 +564,26 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
           })
         }} />
 
-      <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
-        {openPhoto && (
-          <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3">
-            {/* The same viewer the Photos tab uses — full-resolution original
-                over the thumbnail, zoom, pan, and the sail-geometry lines. */}
-            <PhotoViewer
-              photoId={openPhoto.id}
-              thumbUrl={openPhoto.thumb}
-              fullUrl={openPhoto.original || null}
-              inst={openPhoto.inst || {}}
-              sailTrim={openPhoto.sailTrim || null}
-              height="68vh" />
-            {(() => {
-              // Stepping through the burst the card stands for. Without this the
-              // other 23 frames of 11:50 would be visible only in the Photos tab,
-              // which is hiding data rather than tidying it.
-              const b = burstOf(openPhoto)
-              if (!b || b.frames.length < 2) return null
-              const i = b.frames.findIndex((f) => f.id === openPhoto.id)
-              const go = (d: number) => setOpenPhoto(b.frames[Math.min(b.frames.length - 1, Math.max(0, i + d))])
-              return (
-                <div className="mb-2 flex items-center gap-2">
-                  <button onClick={() => go(-1)} disabled={i <= 0}
-                    className="rounded-md border border-[color:var(--border)] px-2 py-1 text-xs disabled:opacity-40">← prev</button>
-                  <span className="font-mono text-xs text-muted">
-                    frame {i + 1} of {b.frames.length} · {hmsSec(openPhoto.t, tz)}
-                  </span>
-                  <button onClick={() => go(1)} disabled={i >= b.frames.length - 1}
-                    className="rounded-md border border-[color:var(--border)] px-2 py-1 text-xs disabled:opacity-40">next →</button>
-                  <span className="ml-auto text-[11px] text-muted">
-                    a {((b.t1 - b.t0) / 1000).toFixed(0)}s burst — the timeline shows its middle frame
-                  </span>
-                </div>
-              )
-            })()}
-            {openPhoto.sailTrim
-              ? <SailGeometryCard
-                  annotation={openPhoto.sailTrim.annotation}
-                  overlayOn={!!openPhoto.sailTrim.overlay}
-                  onToggleOverlay={teamId && boatId ? () => toggleGeometryOverlay(openPhoto) : null}
-                  onRemeasure={teamId && boatId ? () => { setGeomFor(openPhoto); setOpenPhoto(null) } : null}
-                  compact />
-              : <MeasureGeometryButton
-                  onClick={teamId && boatId && openPhoto.original
-                    ? () => { setGeomFor(openPhoto); setOpenPhoto(null) } : null}
-                  compact />}
-            {!openPhoto.original && !openPhoto.sailTrim && (
-              <div className="text-xs text-muted">
-                The full-resolution original is not in the cloud for this photo, so there is nothing to measure on.
-              </div>
-            )}
-          </DialogContent>
-        )}
-      </Dialog>
+      {(() => {
+        // The burst this card stands for, if it stands for more than one frame.
+        const b = openPhoto ? burstOf(openPhoto) : null
+        const i = b && openPhoto ? b.frames.findIndex((f) => f.id === openPhoto.id) : -1
+        return (
+          <PhotoLightbox
+            photo={openPhoto as never}
+            onClose={() => setOpenPhoto(null)}
+            burst={b && b.frames.length > 1 && openPhoto ? {
+              index: i,
+              count: b.frames.length,
+              timeLabel: hmsSec(openPhoto.t, tz),
+              spanLabel: `a ${((b.t1 - b.t0) / 1000).toFixed(0)}s burst — the timeline shows its middle frame`,
+              onStep: (d: number) => setOpenPhoto(b.frames[Math.min(b.frames.length - 1, Math.max(0, i + d))]),
+            } : null}
+            onToggleOverlay={teamId && boatId && openPhoto?.sailTrim ? () => toggleGeometryOverlay(openPhoto) : null}
+            onMeasure={teamId && boatId && openPhoto ? () => { setGeomFor(openPhoto); setOpenPhoto(null) } : null} />
+        )
+      })()}
+
       <Dialog open={!!openVideo} onOpenChange={(o) => { if (!o) setOpenVideo(null) }}>
         {openVideo && (
           <DialogContent title={openVideo.title || 'Video'} className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3">

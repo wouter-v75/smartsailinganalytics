@@ -3,8 +3,7 @@ import * as React from 'react'
 import { Play, Camera } from 'lucide-react'
 import { Badge, Dialog, DialogContent, Skeleton } from '@/components/ui'
 import { renderOverlay } from '@/lib/photoOverlay'
-import PhotoViewer from '@/components/photos/PhotoViewer'
-import SailGeometryCard from '@/components/photos/SailGeometryCard'
+import PhotoLightbox from './PhotoLightbox'
 import { isAnnotation, type SailTrimAnnotation } from '@/lib/sailTrimOverlay'
 import { racingTagsOf, RACE_RED } from '@/lib/racingTags'
 
@@ -125,24 +124,8 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
         </>
       )}
 
-      <Dialog open={!!openPhoto} onOpenChange={(o) => { if (!o) setOpenPhoto(null) }}>
-        {openPhoto && (
-          <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3">
-            {/* The SAME viewer the Photos tab uses: the full-resolution original
-                over the thumbnail, zoom, pan, and the sail-geometry lines. This
-                used to be handed `openPhoto.thumb` — a second copy of the fault
-                that made every photo look grainy. */}
-            <PhotoViewer
-              photoId={openPhoto.id}
-              thumbUrl={openPhoto.thumb}
-              fullUrl={openPhoto.original}
-              inst={openPhoto.inst}
-              sailTrim={openPhoto.sailTrim}
-              height="70vh" />
-            {openPhoto.sailTrim && <SailGeometryCard annotation={openPhoto.sailTrim.annotation} compact />}
-          </DialogContent>
-        )}
-      </Dialog>
+      {/* The same lightbox the day timeline opens — see PhotoLightbox. */}
+      <PhotoLightbox photo={openPhoto as never} onClose={() => setOpenPhoto(null)} height="70vh" />
 
       <Dialog open={!!fallbackVideo} onOpenChange={(o) => { if (!o) setFallbackVideo(null) }}>
         {fallbackVideo && (
