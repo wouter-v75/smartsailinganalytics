@@ -28,7 +28,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
   mmPerPxFromReference, mmPerPxAtMastFromRef, unbiasAthwartshipsScale,
-  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg,
+  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg, mmPerPxAtDepth,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -45,7 +45,8 @@ import {
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
-import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION } from '../../lib/sailTwist';
+import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
+import { fitCamber, camberNote, type CamberFit } from '../../lib/sailCamber';
 import {
   buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
 } from '../../lib/sailTrimOverlay';
@@ -142,6 +143,11 @@ const OTHER_STEPS: StepDef[] = [
       hint: `Where the ${sl.key === 'jib' ? 'JIB' : 'MAINSAIL'}\u2019s ${t.label.toLowerCase()} meets ITS OWN LEECH \u2014 on the sail\u2019s edge, not on the mast. This is a leech point as well as a station, so it counts towards the leech above and nothing needs marking twice. This sail\u2019s own stripe: the ${sl.key === 'jib' ? 'main' : 'jib'}\u2019s ${t.short} sits at a different height, because the two hoists differ.`,
     })),
   ]),
+  ...LEECH_SAILS.map((sl): StepDef => ({
+    key: `camber:${sl.key}`, label: `${sl.label.replace(' leech', '')} \u2014 draft stripes`,
+    min: 2, max: 24, colour: sl.key === 'jib' ? '#FDE047' : '#FB923C', group: 'target', optional: true,
+    hint: `Points ALONG the painted stripes of the ${sl.key === 'jib' ? 'jib' : 'mainsail'} \u2014 any stripe, in any order; each mark is filed against the stripe it is nearest in height. This is what gives CAMBER. Two things matter and the count is not one of them: mark at BOTH ENDS of whatever is visible, including the part showing through the back of the sail near the leech, and keep off the stripe's two ends themselves, where the depth is zero by construction. Marks confined to the forward third read camber about two points LOW and the tool will say so.`,
+  })),
   // Optional like the rest: the tool measures whatever is marked, and asking for
   // a clew on a frame somebody opened to read two leech heights is just nagging.
   { key: 'clew', label: 'Jib clew', min: 1, max: 1, colour: '#FB923C', group: 'target', optional: true,
@@ -1478,6 +1484,63 @@ export default function SailTrimTab(
     });
   };
 
+  /**
+   * Camber per stripe, from marks placed anywhere along the painted stripes.
+   *
+   * Each mark is filed against the stripe it is NEAREST IN HEIGHT, because the
+   * operator marks whichever stripe is visible and should not have to say which
+   * — the stations are a thousand pixels apart, so the assignment is not close.
+   */
+  const camberFits = useMemo(() => {
+    const cal = calibration.cal;
+    const out: { sail: string; tag: string; fit: CamberFit }[] = [];
+    if (!cal) return out;
+    for (const sl of LEECH_SAILS) {
+      const pts = marks[`camber:${sl.key}`] || [];
+      if (pts.length < 2) continue;
+      const w = rig.widths?.[sl.key as 'main' | 'jib'];
+      if (!w) continue;
+      // Each stripe's two ends: the station itself, and where the luff crosses.
+      const stations = STRIPE_TAGS
+        .map((t) => {
+          const leech = (marks[heightMarkKey(sl.key, t.key)] || [])[0];
+          const f = STATION_FRACTION[t.key];
+          if (!leech || f == null) return null;
+          const luff = pointForKey(`luff-${sl.key}@${t.key}`)
+            ?? footOnAxis(leech);   // no luff marked: fall back to the centreplane
+          const width = widthAt(w, f);
+          const angle = twist.find((x) => x.sail === sl.key)?.angles.find((a) => a.tag === t.key);
+          return luff && width ? { tag: t.key, leech, luff, chordMm: width.m * 1000, angleDeg: angle?.angle.deg ?? 0 } : null;
+        })
+        .filter((x): x is NonNullable<typeof x> => !!x);
+      if (!stations.length) continue;
+
+      // Along the mast is height; a mark belongs to the station it sits level with.
+      const height = (q: Px) => (q.x - cal.axis.low.x) * cal.axis.up.x + (q.y - cal.axis.low.y) * cal.axis.up.y;
+      const byTag = new Map<string, Px[]>();
+      for (const m of pts) {
+        let near = stations[0], best = Infinity;
+        for (const st of stations) {
+          const d = Math.abs(height(m) - height(st.leech));
+          if (d < best) { best = d; near = st; }
+        }
+        byTag.set(near.tag, [...(byTag.get(near.tag) || []), m]);
+      }
+      for (const st of stations) {
+        const mine = byTag.get(st.tag);
+        if (!mine || mine.length < 2) continue;
+        const depth = sl.key === 'main' ? rig.depths.mainLeech.mm : rig.depths.leech.mm;
+        const fit = fitCamber({
+          marks: mine, luff: st.luff, leech: st.leech, chordMm: st.chordMm,
+          mmPerPx: mmPerPxAtDepth(cal.mmPerPxAtMast, depth, cal.rangeMm),
+          chordAngleDeg: st.angleDeg,
+        });
+        if (fit) out.push({ sail: sl.key, tag: st.tag, fit });
+      }
+    }
+    return out;
+  }, [marks, calibration, rig.widths, rig.depths, twist, pointForKey, footOnAxis]);
+
   // ── styles ────────────────────────────────────────────────────────────────
   const panel: React.CSSProperties = { background: '#0B2136', border: '1px solid #1E3A5A', borderRadius: 8, padding: 12, marginBottom: 10 };
   const hdr: React.CSSProperties = { fontSize: 11, fontWeight: 800, letterSpacing: 0.6, color: '#7DD3FC', textTransform: 'uppercase', marginBottom: 8 };
@@ -2148,6 +2211,61 @@ export default function SailTrimTab(
                   </div>
                 );
               })}
+              {/* CAMBER, in the same shape as the twist table above — same
+                  stations down the side, same sails across. */}
+              {camberFits.length > 0 && (() => {
+                const cell = (sail: string, tag: string) => camberFits.find((c) => c.sail === sail && c.tag === tag) ?? null;
+                const th: React.CSSProperties = { fontSize: 9.5, color: '#64748B', fontWeight: 700, textAlign: 'right', padding: '0 0 4px 8px', whiteSpace: 'nowrap' };
+                const td: React.CSSProperties = { fontSize: 12.5, fontWeight: 700, color: '#E2E8F0', fontFamily: 'monospace', textAlign: 'right', padding: '3px 0 3px 8px' };
+                const tdSub: React.CSSProperties = { ...td, fontSize: 11, fontWeight: 600, color: '#64748B' };
+                return (
+                  <div style={{ marginTop: 9, paddingTop: 8, borderTop: '1px solid #16304A' }} data-testid="sailtrim-camber">
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Camber</th>
+                          <th style={th}>Main</th>
+                          <th style={th}>Jib</th>
+                          <th style={th}>Draft Main</th>
+                          <th style={th}>Draft jib</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...STRIPE_TAGS].reverse().map((t) => {
+                          const m = cell('main', t.key), j = cell('jib', t.key);
+                          const depth = (c: typeof m) => c ? `${(c.fit.camber * 100).toFixed(1)} %${c.fit.spansDraft ? '' : '\u2193'}` : '\u2014';
+                          const pos = (c: typeof m) => c ? `${(c.fit.draft * 100).toFixed(0)} %` : '\u2014';
+                          return (
+                            <tr key={t.key} style={{ borderTop: '1px solid #123253' }}>
+                              <td style={{ fontSize: 11.5, color: '#94A3B8', padding: '3px 0' }}>{t.short}</td>
+                              <td style={td}>{depth(m)}</td>
+                              <td style={td}>{depth(j)}</td>
+                              <td style={tdSub}>{pos(m)}</td>
+                              <td style={tdSub}>{pos(j)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {camberFits.map((c) => {
+                      const note = camberNote(c.fit, CLICK_SIGMA_PX);
+                      return note ? (
+                        <div key={`${c.sail}-${c.tag}`} style={{ fontSize: 10.5, color: '#FCD34D', marginTop: 4, lineHeight: 1.45 }}>
+                          {c.sail} {heightShort(c.tag)}: {note}
+                        </div>
+                      ) : null;
+                    })}
+                    <div style={{ fontSize: 10, color: '#64748B', lineHeight: 1.45, marginTop: 4 }}>
+                      Depth as a percentage of the chord, draft as a percentage from the luff.
+                      A <span style={{ color: '#FCD34D' }}>&darr;</span> means the marks do not
+                      straddle the draft, so that depth is extrapolated and reads LOW. Fit residuals:{' '}
+                      {camberFits.map((c) => `${heightShort(c.tag)} ${c.fit.rmsPx.toFixed(1)} px`).join(' \u00b7 ')} —
+                      they should look like clicking accuracy and nothing more.
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div style={{ fontSize: 10, color: '#64748B', lineHeight: 1.45, marginTop: 4 }}>
                 Widths off the certificate — MHW/MTW/MUW and HHW/HTW/HUW. A{' '}
                 <span style={{ color: '#FCD34D' }}>*</span> is interpolated: the certificate
