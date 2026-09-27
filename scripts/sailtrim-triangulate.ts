@@ -72,12 +72,12 @@ async function main() {
   const boat = (boats ?? []).find((b) => b.name.toLowerCase() === BOAT!.toLowerCase())
   if (!boat) { console.error(`no boat called "${BOAT}"`); process.exit(1) }
 
-  const { data: photos } = await sb.from('photos').select('taken_utc, analysis_data')
+  const { data: photos } = await sb.from('photos').select('taken_utc, analysis_data, subject_boat_ids')
   const frames = (photos ?? [])
     .filter((p) => (p.taken_utc || '').startsWith(AROUND!))
     .map((p) => {
       const st = (p.analysis_data as { sailTrim?: { annotation?: Record<string, unknown>; result?: Record<string, unknown> } } | null)?.sailTrim
-      return { at: p.taken_utc as string, st }
+      return { at: p.taken_utc as string, st, subjects: (p.subject_boat_ids || []) as string[] }
     })
     .filter((f) => f.st?.annotation)
     .sort((a, b) => a.at.localeCompare(b.at))
@@ -93,18 +93,32 @@ async function main() {
   // twice without a murmur, because it matched on the timestamp and took the
   // boat's name from the command line. The frame says who it was measured as;
   // believe the frame.
-  const wrongBoat = frames.filter((f) => {
+  // TWO questions, and both have to answer this boat.
+  //
+  //   what is IN the picture — photos.subject_boat_ids, set by whoever tagged it
+  //   what it was MEASURED AS — the rig model snapshot on the frame
+  //
+  // Checking only the second is not enough: the 26 Sep 10:36 frames are of
+  // Capricorno and were measured with Northstar selected, so they claim
+  // "Northstar 76" and a Northstar run over a wider window would swallow them
+  // silently. Checking only the first is not enough either, because a correctly
+  // tagged frame can still have been scaled by the wrong boat's P.
+  const bad = frames.map((f) => {
     const rigBoat = ((f.st!.result as { marks?: { rig?: { boat?: string } } })?.marks?.rig?.boat || '').trim()
-    return rigBoat && rigBoat.toLowerCase() !== boat.name.toLowerCase()
-  })
-  if (wrongBoat.length) {
-    console.log(`  REFUSING: ${wrongBoat.length} of these frames were measured against another boat's rig model —`)
-    for (const f of wrongBoat) {
-      const rigBoat = (f.st!.result as { marks?: { rig?: { boat?: string } } })?.marks?.rig?.boat
-      console.log(`    ${f.at.slice(11, 19)}  measured as "${rigBoat}"`)
+    const measuredAs = rigBoat && rigBoat.toLowerCase() !== boat.name.toLowerCase() ? rigBoat : null
+    const subjectWrong = f.subjects.length > 0 && !f.subjects.includes(boat.id)
+    return { f, measuredAs, subjectWrong }
+  }).filter((x) => x.measuredAs || x.subjectWrong)
+  if (bad.length) {
+    console.log(`  REFUSING: ${bad.length} frame(s) do not describe ${boat.name} —`)
+    for (const { f, measuredAs, subjectWrong } of bad) {
+      const why = [
+        subjectWrong ? 'tagged as another boat' : null,
+        measuredAs ? `measured as "${measuredAs}", so its scale, widths and depths are that boat's` : null,
+      ].filter(Boolean).join('; ')
+      console.log(`    ${f.at.slice(11, 19)}  ${why}`)
     }
-    console.log(`\n  Its scale reference, sail widths and depths are that boat's, so nothing here`)
-    console.log(`  describes ${boat.name}. Reopen each frame with ${boat.name} selected and save it again.`)
+    console.log(`\n  Reopen each one with ${boat.name} selected and save it again, or narrow --around.`)
     return
   }
 

@@ -358,7 +358,25 @@ export default function SailTrimTab(
   useEffect(() => {
     if (boat) {
       const stored = loadRigModel(boat);
-      setRig((cur) => stored ?? (cur.boat === boat ? cur : { ...cur, boat }));
+      setRig((cur) => {
+        if (stored) return stored;
+        if (cur.boat === boat) return cur;
+        // A DIFFERENT boat, with nothing stored for it locally. This used to
+        // keep the previous boat's numbers and just rename them — `{ ...cur,
+        // boat }` — so switching from Northstar to a rival left Northstar's P
+        // (31440), her half-widths (7.04) and her depths in place under the new
+        // name, and the cloud model only replaced them if the fetch arrived and
+        // succeeded. That is how three 26 Sep frames of Capricorno came to be
+        // measured against Northstar's rig, and the operator saw the name they
+        // had chosen the whole time.
+        //
+        // Start from what is actually known about THIS boat instead: the
+        // defaults, with anything measured for it written over the guesses, and
+        // every remaining value flagged as the guess it is. The cloud model then
+        // fills it in, and the "Still guesswork" banner says what is missing
+        // until it does.
+        return rigModelFor(boat);
+      });
     }
     // Then the boat record, which outranks both: it is the copy the whole team
     // shares, so a dimension a teammate measured arrives here without anyone
@@ -1768,6 +1786,18 @@ export default function SailTrimTab(
                 onChange={(e) => {
                   if (e.target.value === '__other') { setOtherBoat(true); return; }
                   typedBoat.current = true;
+                  // Choosing a different boat invalidates the scale and baseline
+                  // choices, because they named THAT boat's references. Three
+                  // 26 Sep frames of Capricorno were marked with Northstar
+                  // selected, and correcting them means switching the boat here
+                  // — at which point 'P' has to mean Capricorno's 34000, not the
+                  // 31440 it meant a moment ago. Releasing these lets the
+                  // attestation defaults re-pick for the boat now chosen. A
+                  // RESTORE does not come through here, so a reopened frame
+                  // still keeps the references it was measured with.
+                  pickedScale.current = false;
+                  pickedBaseline.current = false;
+                  setScaleNote('');
                   setBoat(e.target.value);
                   const picked = boats.find((b) => b.name === e.target.value);
                   setPickedBoatId(picked?.id ?? null);
