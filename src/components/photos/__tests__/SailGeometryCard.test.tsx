@@ -39,7 +39,7 @@ describe('SailGeometryCard — the Twist box', () => {
     expect(box).toBeTruthy()
     // Same table as the SailTrim panel: 5 stations x (2 sails + 2 accuracies).
     expect(within(box).getByText('Accuracy Main')).toBeTruthy()
-    expect(within(box).getByText('Accuracy jib')).toBeTruthy()
+    expect(within(box).getByText('Accuracy Jib')).toBeTruthy()
     for (const station of ['25 %', '50 %', '75 %', '87.5 %', 'clew']) {
       expect(within(box).getByText(station)).toBeTruthy()
     }

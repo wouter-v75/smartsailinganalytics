@@ -1007,9 +1007,9 @@ describe('SailTrimTab', () => {
     expect(within(box).getByText('Twist Main')).toBeTruthy()
     expect(within(box).getByText('Twist Jib')).toBeTruthy()
     expect(within(box).getByText('Accuracy Main')).toBeTruthy()
-    expect(within(box).getByText('Accuracy jib')).toBeTruthy()
+    expect(within(box).getByText('Accuracy Jib')).toBeTruthy()
     expect(within(box).getByText('Draft Main')).toBeTruthy()
-    expect(within(box).getByText('Draft jib')).toBeTruthy()
+    expect(within(box).getByText('Draft Jib')).toBeTruthy()
     for (const station of ['25 %', '50 %', '75 %', '87.5 %']) {
       expect(within(box).getByText(station)).toBeTruthy()
     }

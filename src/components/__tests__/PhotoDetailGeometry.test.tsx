@@ -232,7 +232,7 @@ describe('PhotoDetail — sail geometry', () => {
     })
     // The table: station down the side, sail across the top, accuracy beside.
     const box = screen.getByTestId('sailgeom-twist')
-    expect(within(box).getByText('Accuracy jib')).toBeTruthy()
+    expect(within(box).getByText('Accuracy Jib')).toBeTruthy()
     expect(within(box).getByText('25 %')).toBeTruthy()
     // Chord angle per station. An interpolated width is starred where it is
     // used — the metres themselves are no longer a column, by request.

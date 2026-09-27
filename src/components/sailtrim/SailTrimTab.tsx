@@ -2173,9 +2173,9 @@ export default function SailTrimTab(
                         <th style={th}>Twist Main</th>
                         <th style={th}>Twist Jib</th>
                         <th style={th}>Draft Main</th>
-                        <th style={th}>Draft jib</th>
+                        <th style={th}>Draft Jib</th>
                         <th style={th}>Accuracy Main</th>
-                        <th style={th}>Accuracy jib</th>
+                        <th style={th}>Accuracy Jib</th>
                       </tr>
                     </thead>
                     <tbody>
