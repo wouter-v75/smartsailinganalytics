@@ -118,6 +118,36 @@ function scaleHint(ref: { key: string; label: string; orientation?: string; dept
   return `The two ends of ${ref.label} — a length ACROSS the boat. Never a fore-and-aft length: from astern those are foreshortened to nothing (Capricorno’s 11.2 m boom projects 41 mm at ψ = 0.2°).${offPlane}`
 }
 
+/**
+ * What the baseline's two clicks are ON, for the baseline actually selected.
+ *
+ * psi is asin(offset / separation), so the separation must be the distance
+ * between the two points that were clicked — not merely a well-attested number.
+ * The static hint named "forestay tack and transom centre" whatever was in the
+ * dropdown, and three Capricorno frames were marked mast-to-transom while the
+ * selected baseline was the certificate's J: 12600 of geometry divided by 9440,
+ * psi inflated by a third, every depth short by the same.
+ */
+function baselineHint(ref: { key: string; label: string; mm: number }): string {
+  const tail = ' Aft point FIRST. Mark the pair the dropdown names — psi is the'
+    + ' offset divided by THIS separation, so clicking one pair and selecting'
+    + ' another is a straight scale error on every depth.'
+  if (ref.key === 'mast-transom') {
+    return 'The mast where it meets the DECK, and the centre of the TRANSOM.'
+      + ' Both stay visible from astern under way, and both are unambiguous.' + tail
+  }
+  if (ref.key === 'tack-mast') {
+    return 'The FORESTAY TACK fitting at the bow, and the mast at the deck — the'
+      + ' certificate\u2019s J. Shorter than mast-to-transom, so click noise costs'
+      + ' more, but on a rival it is the only one a measurer has endorsed.' + tail
+  }
+  if (ref.key === 'bow-transom') {
+    return 'The FORESTAY TACK fitting and the centre of the TRANSOM — the longest'
+      + ' baseline on the boat, and psi\u2019s precision scales with it.' + tail
+  }
+  return `The two ends of ${ref.label}, ${(ref.mm / 1000).toFixed(2)} m apart.` + tail
+}
+
 const OTHER_STEPS: StepDef[] = [
   // Optional because the detector usually finds it. When it does not — behind
   // land in a bay, out of frame on a tight crop, lost in haze, as on the 26 Sep
@@ -405,10 +435,16 @@ export default function SailTrimTab(
   const pickedScale = useRef(false);
   useEffect(() => {
     if (pickedScale.current) return;
+    // NOT once the points exist. A reference's key is not a free choice — it says
+    // what the two clicks are ON, the mast's black bands or the wheel centres.
+    // Switching it under marks that were made for something else divides one
+    // feature's pixel span by another feature's length, which is the same class
+    // of error as measuring a rival with our own boat's model.
+    if ((marks.scale || []).length > 0) return;
     const best = bestScaleKey(rig);
     if (best && best !== scaleKey) setScaleKey(best);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rig]);
+  }, [rig, marks.scale]);
 
   // And the same for the baseline psi is solved from. On Capricorno the
   // hardcoded mast-transom was 12600 +/-2010 against a certificate J of
@@ -416,10 +452,18 @@ export default function SailTrimTab(
   const pickedBaseline = useRef(false);
   useEffect(() => {
     if (pickedBaseline.current) return;
+    // Same, and this one has already bitten. Switching the boat released the
+    // choice, `bestBaselineKey` picked Capricorno's certificate J (9440, well
+    // attested) and applied it to three frames whose two clicks were on the MAST
+    // and the TRANSOM, 12600 apart. psi is solved as asin(offset / separation),
+    // so a separation 1.34x too short inflated psi by the same factor — 4.96 deg
+    // became 7.86 deg — and every depth shrank with it: Capricorno's main leech
+    // came out 27 % NEARER the mast than Northstar's, on the bigger boat.
+    if ((marks.baseline || []).length > 0) return;
     const best = bestBaselineKey(rig);
     if (best && best !== baselineKey) setBaselineKey(best);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rig]);
+  }, [rig, marks.baseline]);
 
   // The name can also arrive AFTER mount — PhotosTab resolves the photo's boat
   // asynchronously, and `useState(boatName)` only ever reads its first value. So
@@ -453,10 +497,12 @@ export default function SailTrimTab(
       ...OTHER_STEPS.map((st) =>
         st.key === 'scale' && scaleRef
           ? { ...st, hint: scaleHint(scaleRef) }
-          : st,
+          : st.key === 'baseline' && baseRef
+            ? { ...st, hint: baselineHint(baseRef) }
+            : st,
       ),
     ],
-    [mastMode, scaleRef],
+    [mastMode, scaleRef, baseRef],
   );
 
   // ── load ──────────────────────────────────────────────────────────────────
