@@ -536,13 +536,41 @@ export default function SailTrimTab(
     if (m.mastMode) setMastMode(m.mastMode);
     if (m.defn) setDefn(m.defn);
     if (typeof m.focalMm === 'string' && m.focalMm) setFocalMm(m.focalMm);
-    if (m.scaleKey) setScaleKey(m.scaleKey);
-    if (m.baselineKey) setBaselineKey(m.baselineKey);
+    // The saved reference is what the stored numbers were computed against, so
+    // it wins over the attested default — silently re-scaling a reopened frame
+    // would leave the marks and the millimetres describing different boats.
+    //
+    // Unless it has since been DISOWNED. Capricorno's wheels held a typed 4000
+    // mm until it was cleared to 0, and every 26 Sep frame was saved against it:
+    // restoring that key gives a zero-length reference, which measures nothing.
+    // So fall back, and say why, because the stored numbers are wrong by however
+    // much the guess was wrong.
+    if (m.scaleKey) {
+      pickedScale.current = true;
+      const saved = rig.scaleRefs.find((x) => x.key === m.scaleKey);
+      if (saved && saved.mm > 0) { setScaleKey(m.scaleKey); setScaleNote(''); }
+      else {
+        const best = bestScaleKey(rig);
+        setScaleKey(best ?? m.scaleKey);
+        setScaleNote(
+          `This frame was measured against ${saved?.label ?? m.scaleKey}, which no longer has a length on this boat — so every number saved on it is wrong by however much that guess was wrong.`
+          + (best
+            ? ` Switched to ${rig.scaleRefs.find((x) => x.key === best)?.label}. Re-mark the scale step and save to correct them.`
+            : ' Nothing on this boat is attested, so there is no scale to fall back to.'),
+        );
+      }
+    }
+    if (m.baselineKey) {
+      pickedBaseline.current = true;
+      const savedB = rig.baselines.find((x) => x.key === m.baselineKey);
+      setBaselineKey(savedB && savedB.mm > 0 ? m.baselineKey : (bestBaselineKey(rig) ?? m.baselineKey));
+    }
     if (typeof m.heelDeg === 'string' && m.heelDeg) setHeelDeg(m.heelDeg);
     if (m.tack !== undefined) setTack(m.tack);
     setRestored(true);
   };
   const [restored, setRestored] = useState(false);
+  const [scaleNote, setScaleNote] = useState('');
 
   /** One downscaled copy serves both detectors. */
   const decodeForCv = useCallback((img: HTMLImageElement) => {
@@ -1945,6 +1973,12 @@ export default function SailTrimTab(
             </div>
           )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {scaleNote && (
+              <div style={{ gridColumn: '1 / -1', fontSize: 11, lineHeight: 1.55, color: '#FCA5A5',
+                background: 'rgba(127,29,29,0.28)', border: '1px solid #7F1D1D', borderRadius: 7, padding: '7px 9px' }}>
+                {scaleNote}
+              </div>
+            )}
             <div style={{ gridColumn: '1 / -1' }}>
               <label style={lbl}>Scale reference</label>
               <select style={inp} value={scaleKey} onChange={(e) => { pickedScale.current = true; setScaleKey(e.target.value); }}>
