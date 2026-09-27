@@ -1,8 +1,14 @@
 // The sail's DEPTH — "draft %" — from several stern shots of one stripe.
 //
 //   npx vite-node scripts/sailtrim-camber.ts --boat "Northstar 76" --around 2026-09-27T11:43 --sail main --station stripe50
+//   …                                         --write
 //
-// Read-only. Reads .env.local; run OUTSIDE Claude Code's Bash sandbox.
+// `--write` puts the answer on EVERY frame in the set, not just one, because
+// none of them produced it alone — a single view cannot separate depth from
+// position along the stripe. So each frame carries the number and names the
+// others it was solved with, and the photo card shows it wherever you open it.
+//
+// Dry-run by default. Reads .env.local; run OUTSIDE Claude Code's Bash sandbox.
 //
 // Needs, on each frame: the stripe's station marked, a measured psi, and draft
 // dots in the front/back steps. Needs the station's DEPTH, which comes from
@@ -17,6 +23,7 @@ import { widthAt, STATION_FRACTION } from '../src/lib/sailTwist'
 const args = process.argv.slice(2)
 const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
 const BOAT = flag('--boat'), AROUND = flag('--around')
+const WRITE = args.includes('--write')
 const SAIL = flag('--sail') || 'main', STATION = flag('--station') || 'stripe50'
 if (!BOAT || !AROUND) { console.error('usage: --boat NAME --around ISO_PREFIX [--sail main] [--station stripe50]'); process.exit(1) }
 
@@ -42,8 +49,9 @@ async function main() {
   const chordMm = width.m * 1000
   const depth = depthFor(rig, SAIL, STATION)
 
-  const { data: photos } = await sb.from('photos').select('taken_utc, analysis_data')
+  const { data: photos } = await sb.from('photos').select('id, taken_utc, analysis_data')
   const frames: MultiViewFrame[] = []
+  const used: { id: string; at: string; data: Record<string, unknown> }[] = []
   let leechY = 0, nLeech = 0
   for (const p of (photos ?? []).filter((x) => (x.taken_utc || '').startsWith(AROUND!)).sort((a, b) => (a.taken_utc! < b.taken_utc! ? -1 : 1))) {
     const st = (p.analysis_data as { sailTrim?: { annotation?: any; result?: any } } | null)?.sailTrim
@@ -69,6 +77,7 @@ async function main() {
     // Order along the stripe: outward from the mast.
     const ordered = dots.map(raw).sort((a, b) => Math.abs(a) - Math.abs(b))
     frames.push({ psiDeg: A.psiDeg, dots: ordered.map((r) => ({ rawMm: r })) })
+    used.push({ id: p.id as string, at: p.taken_utc as string, data: p.analysis_data as Record<string, unknown> })
     const t = A.targets.find((x: any) => x.key === `${SAIL}@${STATION}`)
     if (t) { leechY += t.mm; nLeech++ }
     console.log(`  ${p.taken_utc!.slice(11, 19)}  psi ${A.psiDeg.toFixed(2).padStart(6)}°  ${dots.length} dots  (${front.length} front, ${back.length} back)`)
@@ -84,5 +93,26 @@ async function main() {
   console.log(`  from ${f.dots} dots over ${f.frames} frames spanning ${f.baselineDeg.toFixed(1)}°, residual ${f.rmsMm.toFixed(0)} mm`)
   const note = multiViewNote(f)
   if (note) console.log(`\n  ${note}`)
+
+  if (!WRITE) { console.log('\n  (dry run — pass --write to put this on the frames)'); return }
+  const entry = {
+    sail: SAIL, tag: STATION,
+    camberPct: Number((f.camber * 100).toFixed(2)),
+    draftPct: Number((f.draft * 100).toFixed(1)),
+    rmsMm: Number(f.rmsMm.toFixed(1)),
+    frames: f.frames, baselineDeg: Number(f.baselineDeg.toFixed(2)),
+    reachedPeak: f.reachedPeak,
+    fromFrames: used.map((u) => u.at),
+  }
+  for (const u of used) {
+    const ad = (u.data || {}) as { sailTrim?: { annotation?: { camber?: unknown[] } } }
+    const ann = ad.sailTrim?.annotation
+    if (!ann) continue
+    // Replace any earlier answer for the same sail and station; keep the rest.
+    const kept = ((ann.camber as typeof entry[] | undefined) || []).filter((c) => !(c.sail === SAIL && c.tag === STATION))
+    ann.camber = [...kept, entry]
+    const up = await sb.from('photos').update({ analysis_data: ad }).eq('id', u.id)
+    console.log(up.error ? `  ! ${u.at}: ${up.error.message}` : `  stored on ${u.at.slice(11, 19)}`)
+  }
 }
 main()

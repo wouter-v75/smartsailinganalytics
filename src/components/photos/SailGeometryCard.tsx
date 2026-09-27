@@ -86,6 +86,13 @@ export default function SailGeometryCard({
             const chords = annotation.chords || []
             const cell = (sail: string, tag: string) =>
               chords.find((c) => c.sail === sail && c.tag === tag) || null
+            // Depth, solved across SEVERAL frames and stored on each of them —
+            // no single frame can produce it. An arrow means the dots never
+            // reached the deepest part, so it is extrapolated and reads low.
+            const draft = (sail: string, tag: string) => {
+              const c = (annotation.camber || []).find((x) => x.sail === sail && x.tag === tag)
+              return c ? `${c.camberPct.toFixed(1)} %${c.reachedPeak ? '' : '\u2193'}` : '\u2014'
+            }
             const th: React.CSSProperties = { fontSize: 8.5, color: '#4E5D71', fontWeight: 700, textAlign: 'right', padding: '0 0 3px 7px', whiteSpace: 'nowrap' }
             const td: React.CSSProperties = { fontSize: 11.5, fontWeight: 700, color: '#E2E8F0', fontFamily: 'monospace', textAlign: 'right', padding: '2px 0 2px 7px' }
             const tdSig: React.CSSProperties = { ...td, fontSize: 10, fontWeight: 600, color: '#64748B' }
@@ -101,6 +108,8 @@ export default function SailGeometryCard({
                     <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Twist</th>
                     <th style={th}>Main</th>
                     <th style={th}>Jib</th>
+                    <th style={th}>Draft Main</th>
+                    <th style={th}>Draft jib</th>
                     <th style={th}>Accuracy Main</th>
                     <th style={th}>Accuracy jib</th>
                   </tr>
@@ -113,6 +122,8 @@ export default function SailGeometryCard({
                         <td style={{ fontSize: 10.5, color: '#94A3B8', padding: '2px 0' }}>{r.short}</td>
                         <td style={td}>{m ? `${m.angleDeg.toFixed(1)}°${m.widthSource === 'interpolated' ? '*' : ''}` : '—'}</td>
                         <td style={td}>{j ? `${j.angleDeg.toFixed(1)}°${j.widthSource === 'interpolated' ? '*' : ''}` : '—'}</td>
+                        <td style={td}>{draft('main', r.key)}</td>
+                        <td style={td}>{draft('jib', r.key)}</td>
                         <td style={tdSig}>{m ? `± ${m.angleSigmaDeg.toFixed(2)}` : '—'}</td>
                         <td style={tdSig}>{j ? `± ${j.angleSigmaDeg.toFixed(2)}` : '—'}</td>
                       </tr>
@@ -122,6 +133,14 @@ export default function SailGeometryCard({
               </table>
             )
           })()}
+
+          {(annotation.camber || []).length > 0 && (
+            <div style={{ fontSize: 10, color: '#86EFAC', marginBottom: 3, lineHeight: 1.45 }}>
+              Draft solved across {annotation.camber![0].frames} frames spanning{' '}
+              {annotation.camber![0].baselineDeg.toFixed(1)}°, residual{' '}
+              {annotation.camber![0].rmsMm.toFixed(0)} mm — this frame is one of them.
+            </div>
+          )}
 
           {/* The twist BETWEEN stations — what the columns are made of. */}
           {(['main', 'jib'] as const).map((sail) => {

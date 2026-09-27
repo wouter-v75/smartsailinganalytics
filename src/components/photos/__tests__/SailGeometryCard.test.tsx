@@ -43,7 +43,8 @@ describe('SailGeometryCard — the Twist box', () => {
     for (const station of ['25 %', '50 %', '75 %', '87.5 %', 'clew']) {
       expect(within(box).getByText(station)).toBeTruthy()
     }
-    expect(within(box).getAllByText('—').length).toBe(20)
+    // 5 stations x (2 angles + 2 drafts + 2 accuracies).
+    expect(within(box).getAllByText('—').length).toBe(30)
   })
 
   it('says why, and what to do about it', () => {
@@ -68,7 +69,8 @@ describe('SailGeometryCard — the Twist box', () => {
     expect(within(box).queryByText(/Reopen it in SailTrim/)).toBeNull()
     // No chords in this fixture, so the table itself is still all dashes — the
     // twist rows and the chord table come from two different arrays.
-    expect(within(box).getAllByText('—').length).toBe(20)
+    // 5 stations x (2 angles + 2 drafts + 2 accuracies).
+    expect(within(box).getAllByText('—').length).toBe(30)
   })
 
   it('fills the table from the saved chord angles', () => {
@@ -87,8 +89,36 @@ describe('SailGeometryCard — the Twist box', () => {
     // The main's clew, on the bottom row, to windward in light air.
     expect(within(box).getByText('-3.8°')).toBeTruthy()
     expect(within(box).getByText('± 0.13')).toBeTruthy()
-    // 5 stations x 4 cells = 20, less 6: each chord fills two cells, its angle
-    // and its accuracy.
-    expect(within(box).getAllByText('—').length).toBe(14)
+    // 5 stations x 6 cells = 30, less 6: each chord fills its angle and its
+    // accuracy. The two DRAFT columns stay dashed — depth needs several frames.
+    expect(within(box).getAllByText('—').length).toBe(24)
+  })
+
+  it('shows the DRAFT once a multi-view solve has been stored on the frame', () => {
+    // The number is written onto every frame that went into it, because none of
+    // them produced it alone: one view cannot separate depth from position
+    // along the stripe.
+    const withCamber = base({
+      camber: [{
+        sail: 'main', tag: 'stripe50', camberPct: 9.4, draftPct: 49, rmsMm: 51,
+        frames: 3, baselineDeg: 8.01, reachedPeak: true,
+        fromFrames: ['2026-09-27T11:43:30+00:00', '2026-09-27T11:43:33+00:00', '2026-09-27T11:43:36+00:00'],
+      }] as never,
+    })
+    render(<SailGeometryCard annotation={withCamber} />)
+    const box = screen.getByTestId('sailgeom-twist')
+    expect(within(box).getByText('9.4 %')).toBeTruthy()
+    expect(within(box).getByText(/solved across 3 frames spanning 8.0°/)).toBeTruthy()
+  })
+
+  it('marks a draft that never reached the deepest part', () => {
+    const withCamber = base({
+      camber: [{
+        sail: 'jib', tag: 'stripe50', camberPct: 7.1, draftPct: 44, rmsMm: 30,
+        frames: 2, baselineDeg: 5.2, reachedPeak: false, fromFrames: [],
+      }] as never,
+    })
+    render(<SailGeometryCard annotation={withCamber} />)
+    expect(within(screen.getByTestId('sailgeom-twist')).getByText('7.1 %↓')).toBeTruthy()
   })
 })

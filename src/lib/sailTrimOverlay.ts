@@ -63,6 +63,32 @@ export interface AnnotationChord {
   luffSource?: 'measured' | 'fitted' | 'assumed-zero'
 }
 
+/**
+ * The sail's DEPTH at one station, solved from SEVERAL frames at once.
+ *
+ * It sits on EVERY frame that went into it, not just one, because none of them
+ * produced it alone: a single view's dot offsets mix how far along the stripe a
+ * dot sits with how deep the sail is there, and only the disagreement between
+ * views at different ψ separates the two. So each frame carries the answer and
+ * names the set it came from.
+ */
+export interface AnnotationCamber {
+  sail: 'main' | 'jib'
+  tag: string
+  /** Depth as a percentage of chord — the crew's "draft %". */
+  camberPct: number
+  /** Where it peaks, percent of chord from the luff. Fitted, not trusted: it is
+   *  the parameter that goes first when the dots are poorly spread. */
+  draftPct: number
+  rmsMm: number
+  frames: number
+  baselineDeg: number
+  /** False when no dot got past the deepest part: extrapolated, and reads LOW. */
+  reachedPeak: boolean
+  /** The frames it was solved from, so the set can be found again. */
+  fromFrames: string[]
+}
+
 export interface AnnotationTwist {
   sail: 'main' | 'jib'
   from: string
@@ -94,6 +120,8 @@ export interface SailTrimAnnotation {
    *  certificate's sail widths are known — they are the denominator. */
   chords?: AnnotationChord[]
   twist?: AnnotationTwist[]
+  /** Depth per station, solved from SEVERAL frames. See AnnotationCamber. */
+  camber?: AnnotationCamber[]
   /**
    * True when `mm` is LEEWARD POSITIVE — so a boom or main leech above the
    * centreline is negative, and the same trim reads the same on either tack.
@@ -232,6 +260,9 @@ export function annotationFields(a: SailTrimAnnotation): Record<string, string> 
   // question the whole thing exists to answer.
   for (const w of a.twist || []) {
     out[`sailtrim_twist_${w.sail}_${w.from}_${w.to}_deg`] = w.twistDeg.toFixed(2)
+  }
+  for (const c of a.camber || []) {
+    out[`sailtrim_draft_${c.sail}_${c.tag}_pct`] = c.camberPct.toFixed(1)
   }
   for (const c of a.chords || []) {
     if (c.luffMm != null) out[`sailtrim_sag_${c.sail}_${c.tag}_mm`] = Math.round(Math.abs(c.luffMm)).toString()
