@@ -586,7 +586,7 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
 
       <Dialog open={!!openVideo} onOpenChange={(o) => { if (!o) setOpenVideo(null) }}>
         {openVideo && (
-          <DialogContent title={openVideo.title || 'Video'} className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3">
+          <DialogContent title={openVideo.title || 'Video'} wide>
             <FallbackVideoPlayer videoId={openVideo.id} />
             {openVideo.tags.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{openVideo.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>}
           </DialogContent>

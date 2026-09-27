@@ -66,3 +66,17 @@ describe('PhotoLightbox', () => {
     expect(screen.queryByText(/frame 1 of 1/)).toBeNull()
   })
 })
+
+describe('the close button and the user pill', () => {
+  // The pill is `fixed top-3 right-3` at z-index 9999. A dialog sits at z-1101
+  // and cannot raise itself past it, so a WIDE panel's top right corner is under
+  // the pill and its X is unclickable — which happened to the photo viewer and
+  // the video dialog independently. `wide` moves the close to the top middle, so
+  // the next wide dialog cannot forget.
+  it('puts the close in the middle on a wide panel', () => {
+    render(<PhotoLightbox photo={photo()} onClose={() => {}} />)
+    const close = screen.getByLabelText('Close')
+    expect(close.className).toMatch(/left-1\/2/)
+    expect(close.className).not.toMatch(/right-3/)
+  })
+})

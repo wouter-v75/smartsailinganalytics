@@ -62,7 +62,7 @@ export default function PhotoLightbox({
   return (
     <Dialog open={!!photo} onOpenChange={(o) => { if (!o) onClose() }}>
       {photo && (
-        <DialogContent title="Photo" className="w-[min(1300px,calc(100vw-16px))] max-w-none max-h-[96vh] overflow-auto p-3">
+        <DialogContent title="Photo" wide>
           {/* The full-resolution original over the thumbnail, zoom, pan, and the
               sail-geometry lines — the same viewer the Photos tab uses. */}
           <PhotoViewer
