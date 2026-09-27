@@ -23,6 +23,7 @@ import React from 'react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import PhotoViewer from '@/components/photos/PhotoViewer'
 import SailGeometryCard, { MeasureGeometryButton } from '@/components/photos/SailGeometryCard'
+import BoatBadge from '@/components/photos/BoatBadge'
 import type { SailTrimAnnotation } from '@/lib/sailTrimOverlay'
 
 export interface LightboxPhoto {
@@ -32,6 +33,8 @@ export interface LightboxPhoto {
    *  is also the reason there is nothing to measure on. */
   original?: string | null
   inst?: Record<string, unknown> | null
+  /** Whose boat is in the frame — a rival, usually, when it is set at all. */
+  boat?: string | null
   sailTrim?: { annotation: SailTrimAnnotation; overlay?: boolean } | null
 }
 
@@ -65,6 +68,9 @@ export default function PhotoLightbox({
         <DialogContent title="Photo" wide>
           {/* The full-resolution original over the thumbnail, zoom, pan, and the
               sail-geometry lines — the same viewer the Photos tab uses. */}
+          {photo.boat && (
+            <div style={{ marginBottom: 7 }}><BoatBadge boat={photo.boat} /></div>
+          )}
           <PhotoViewer
             photoId={photo.id}
             thumbUrl={photo.thumb}

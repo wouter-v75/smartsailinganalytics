@@ -21,6 +21,7 @@ interface PhotoItem {
   sails: string[]; inst: Record<string, any>
   /** The sail-geometry payload, if the photo has been measured. */
   sailTrim: { annotation: SailTrimAnnotation; overlay?: boolean } | null
+  boat: string | null
 }
 interface VideoItem { id: string; thumb: string | null; title: string | null; tags: string[] }
 
@@ -50,7 +51,7 @@ export default function DayMedia({ teamId, boatId, date, onPlayVideo, showEmpty 
           return {
             id: p.id, thumb: p.thumbnail_url, original: p.original_url || null,
             tws: inst.tws ?? null, twd: inst.twd ?? null, twa: inst.twa ?? null,
-            sails, inst: { ...inst, sails }, sailTrim: st,
+            sails, inst: { ...inst, sails }, sailTrim: st, boat: a.boat ?? null,
           }
         }))
       })

@@ -18,6 +18,7 @@ import PhotosNext from "./photos/PhotosNext";
 import PhotoViewer from "./photos/PhotoViewer";
 import SailGeometryCard, { MeasureGeometryButton } from "./photos/SailGeometryCard";
 import SailGeometryDialog from "./photos/SailGeometryDialog";
+import BoatBadge from "./photos/BoatBadge";
 import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
 import { isAnnotation, annotationHeadline } from "../lib/sailTrimOverlay";
@@ -265,6 +266,13 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
         )}
         {/* GPS pin */}
         {photo.lat&&photo.lon&&<div style={{position:"absolute",bottom:3,left:4,fontSize:9,color:"#22C55E"}}>📍</div>}
+        {/* Whose boat this is. A rival reads amber, so the line-ups stand out of
+            a grid that is mostly our own boat. */}
+        {photo.boat&&(
+          <div style={{position:"absolute",top:3,left:batchMode?30:4,maxWidth:"70%"}}>
+            <BoatBadge boat={photo.boat} compact/>
+          </div>
+        )}
         {/* Time badge bottom-right */}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#8A97A9",fontFamily:"monospace"}}>{photo.utc?fmtLocalHM(photo.utc,tzOffset)+" "+TZ_SHORT(tzOffset):"--:--"}</div>
       </div>
@@ -343,6 +351,7 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
           <div style={{fontSize:12,color:"#94A3B8",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
             {photo.name||"Photo"}
           </div>
+          <BoatBadge boat={photo.boat}/>
           <SrcBadge source={photo.cloudSynced?"cloud":"local"}/>
         </div>
       )}
