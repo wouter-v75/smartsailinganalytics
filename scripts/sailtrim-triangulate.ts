@@ -135,15 +135,26 @@ async function main() {
   for (const f of usable) for (const t of (f.st!.annotation as { targets: { key: string }[] }).targets) keys.add(t.key)
 
   const solved: Record<string, RigValue> = {}
+  const legacyDepth = new Set<string>()
   console.log('\n  target           athwartships        DEPTH    residual   note')
   for (const key of Array.from(keys).sort()) {
     const views: TriangulateView[] = []
     for (const f of usable) {
-      const ann = f.st!.annotation as { psiDeg: number; targets: { key: string; mm: number }[] }
+      const ann = f.st!.annotation as {
+        psiDeg: number; targets: { key: string; mm: number; depthMm?: number }[]
+      }
       const t = ann.targets.find((x) => x.key === key)
       const rig = (f.st!.result as { marks?: { rig?: RigModel } })?.marks?.rig
       if (!t || !rig) continue
-      views.push({ psiDeg: ann.psiDeg, measuredMm: t.mm, assumedDepthMm: depthAssumedFor(key, rig) })
+      // The depth the frame RECORDS, when it has one. Inferring it from the rig
+      // model is a fallback for frames saved before 2026-09-27, and an unsound
+      // one: the model moves, and a d that is wrong by a per-station constant
+      // disappears into D while the residuals stay small.
+      const assumedDepthMm = Number.isFinite(t.depthMm as number)
+        ? (t.depthMm as number)
+        : depthAssumedFor(key, rig)
+      if (!Number.isFinite(t.depthMm as number)) legacyDepth.add(f.at.slice(11, 19))
+      views.push({ psiDeg: ann.psiDeg, measuredMm: t.mm, assumedDepthMm })
     }
     const r = triangulate(views)
     if (!r) continue
@@ -155,6 +166,12 @@ async function main() {
     if (/^(main|jib)@stripe/.test(key) && !note) {
       solved[key] = { mm: Math.round(r.depthMm), sigmaMm: Math.max(10, Math.round(r.rmsMm)), source: 'measured' }
     }
+  }
+
+  if (legacyDepth.size) {
+    console.log(`\n  NOTE: ${legacyDepth.size} frame(s) record no per-target depth (${Array.from(legacyDepth).join(', ')}).`)
+    console.log('  Their depth was inferred from the rig model AS IT STANDS NOW, which is not')
+    console.log('  necessarily what corrected them. Re-save those frames to pin it down.')
   }
 
   const n = Object.keys(solved).length

@@ -1400,6 +1400,22 @@ export default function SailTrimTab(
       psiMeasured: cal.psi.measured,
       heelDeg: imageHeelDeg(cal.axis, cal.horizon) ?? cal.heelDeg,
       tack,
+      // What turned pixels into millimetres, INCLUDING whose boat supplied it.
+      // Every number above is meaningless without this and it used to be
+      // unrecoverable from the annotation: the 26 Sep Capricorno frames were
+      // scaled by Northstar's P and only the rig snapshot on the save said so.
+      ...(scaleRef ? {
+        scale: {
+          key: scaleRef.key,
+          mm: scaleRef.mm,
+          sigmaMm: scaleRef.sigmaMm,
+          source: scaleRef.source ?? 'estimate',
+          depthMm: scaleRef.depthMm ?? 0,
+          mmPerPxAtMast: cal.mmPerPxAtMast,
+          rangeMm: cal.rangeMm,
+          boat: rig.boat || boat || undefined,
+        },
+      } : {}),
       // The SHAPE, not just the positions. Computed here where the rig model
       // is, and carried on the record so it reaches the photo it was measured
       // on — it used to stop at this panel.

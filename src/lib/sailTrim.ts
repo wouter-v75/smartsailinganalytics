@@ -505,6 +505,20 @@ export interface Measurement {
   naiveMm: number
   /** Diagnostics. */
   mmPerPxUsed: number
+  /**
+   * The fore-and-aft depth this measurement was corrected with, mm, forward
+   * positive — `TargetInput.depthMm` as it actually arrived.
+   *
+   * It is a diagnostic in the tool and load-bearing everywhere else: the value
+   * above is `raw + d·sinψ`-corrected, so ANY later re-analysis has to subtract
+   * the same d to recover the raw offset. Without it recorded, a script has to
+   * infer d from the rig model as it stands now — and the rig model moves, which
+   * is how the triangulation script came to un-correct with the -6000 fallback
+   * while the app had used per-station depths. The mismatch is a per-station
+   * constant, so it vanishes into D and leaves the residuals small.
+   */
+  depthMm: number
+  depthSigmaMm: number
   depthScaleApplied: boolean
   rollApplied: boolean
   /**
@@ -632,6 +646,8 @@ export function measureTarget(cal: Calibration, t: TargetInput): Measurement {
     worldHorizontalSigmaMm,
     naiveMm: naiveMm * flip,
     mmPerPxUsed: mmPerPx,
+    depthMm: t.depthMm,
+    depthSigmaMm: t.depthSigmaMm,
     depthScaleApplied,
     rollApplied,
     leewardPositive: cal.tack != null,

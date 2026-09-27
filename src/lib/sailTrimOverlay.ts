@@ -30,6 +30,17 @@ export interface AnnotationTarget {
   /** The distance the label shows, mm, signed as measured. */
   mm: number
   sigmaMm: number
+  /**
+   * The fore-and-aft depth `mm` was corrected with, mm, forward positive.
+   *
+   * `mm` is a CORRECTED athwartships offset — the raw image offset with d·sinψ
+   * taken out — so recovering the raw offset means subtracting the same d. This
+   * records which d that was, at the moment of measuring. Absent on frames saved
+   * before 2026-09-27, where it has to be inferred from the rig model and the
+   * rig model has moved since.
+   */
+  depthMm?: number
+  depthSigmaMm?: number
   colour: string
 }
 
@@ -99,6 +110,36 @@ export interface AnnotationTwist {
   interpolated: boolean
 }
 
+/**
+ * The scale the frame was measured with — which reference, what length it was
+ * given, and the millimetres-per-pixel that came out.
+ *
+ * Recorded because an annotation's millimetres are meaningless without it and it
+ * was not recoverable: three 26 Sep frames of Capricorno were scaled by
+ * Northstar's P (31440 mm, not her own 34000), and nothing in the annotation
+ * said so — it had to be dug out of the rig snapshot on the save. With this
+ * present, a frame states its own scale, and a re-analysis can rescale rather
+ * than asking the operator to mark it again.
+ */
+export interface AnnotationScale {
+  /** The reference used: 'P', 'wheels', 'spreader2', … */
+  key: string
+  /** Its true length as the model gave it, mm, and how well attested. */
+  mm: number
+  sigmaMm: number
+  source: string
+  /** How far abaft the mast the reference sits, mm (0 in the mast plane). */
+  depthMm: number
+  /** Scale referred to the MAST PLANE, mm per pixel — what every target used. */
+  mmPerPxAtMast: number
+  /** Camera→mast range, mm. Null when no focal length was available, in which
+   *  case the depth correction could not be applied at all. */
+  rangeMm: number | null
+  /** The boat whose rig model supplied all of the above. The one field that
+   *  would have caught the Capricorno frames on sight. */
+  boat?: string
+}
+
 export interface SailTrimAnnotation {
   version: string
   /** The pixel frame `point`/`foot`/`axis` are expressed in. */
@@ -122,6 +163,8 @@ export interface SailTrimAnnotation {
   twist?: AnnotationTwist[]
   /** Depth per station, solved from SEVERAL frames. See AnnotationCamber. */
   camber?: AnnotationCamber[]
+  /** What turned pixels into millimetres. See AnnotationScale. */
+  scale?: AnnotationScale
   /**
    * True when `mm` is LEEWARD POSITIVE — so a boom or main leech above the
    * centreline is negative, and the same trim reads the same on either tack.
@@ -161,6 +204,7 @@ export function buildAnnotation(args: {
   tack?: 'port' | 'stbd' | null
   chords?: AnnotationChord[]
   twist?: AnnotationTwist[]
+  scale?: AnnotationScale
   measuredAt?: number
 }): SailTrimAnnotation {
   const targets: AnnotationTarget[] = []
@@ -177,6 +221,8 @@ export function buildAnnotation(args: {
       foot: m.foot ?? footOnAxis(args.axis, point),
       mm: args.defn === 'world' ? m.worldHorizontalMm : m.boatFrameMm,
       sigmaMm: args.defn === 'world' ? m.worldHorizontalSigmaMm : m.boatFrameSigmaMm,
+      depthMm: m.depthMm,
+      depthSigmaMm: m.depthSigmaMm,
       colour: args.colours[m.key] || '#38BDF8',
     })
   }
@@ -193,6 +239,7 @@ export function buildAnnotation(args: {
     leewardPositive: args.tack != null,
     chords: args.chords ?? [],
     twist: args.twist ?? [],
+    ...(args.scale ? { scale: args.scale } : {}),
     measuredAt: args.measuredAt ?? Date.now(),
   }
 }
@@ -254,6 +301,15 @@ export function annotationFields(a: SailTrimAnnotation): Record<string, string> 
   }
   if (a.tack) out.sailtrim_tack = a.tack
   out.sailtrim_leeward_positive = a.leewardPositive ? '1' : '0'
+  // The scale, flat — so "which frames were scaled by the wrong boat's mast?"
+  // is a query over the photo list rather than an archaeology exercise.
+  if (a.scale) {
+    out.sailtrim_scale_key = a.scale.key
+    out.sailtrim_scale_mm = String(Math.round(a.scale.mm))
+    out.sailtrim_scale_source = a.scale.source
+    out.sailtrim_mm_per_px = a.scale.mmPerPxAtMast.toFixed(4)
+    if (a.scale.boat) out.sailtrim_scale_boat = a.scale.boat
+  }
   for (const t of a.targets) out[`sailtrim_${t.key}_mm`] = formatMm(a, t.mm)
   // Twist and sag as their own flat fields — a photo list can only filter on
   // these, and "show me the frames where the jib twisted more than 8°" is the

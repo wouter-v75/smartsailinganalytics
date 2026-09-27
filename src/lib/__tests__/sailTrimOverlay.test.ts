@@ -5,12 +5,12 @@ import {
 } from '../sailTrimOverlay'
 import type { Measurement } from '../sailTrim'
 
-const measurement = (key: string, label: string, boat: number, world: number): Measurement => ({
+const measurement = (key: string, label: string, boat: number, world: number, depthMm = -6000): Measurement => ({
   key, label,
   boatFrameMm: boat, boatFrameSigmaMm: 14,
   worldHorizontalMm: world, worldHorizontalSigmaMm: 15,
   naiveMm: boat * 1.03,
-  mmPerPxUsed: 6.2, depthScaleApplied: true, rollApplied: true,
+  mmPerPxUsed: 6.2, depthMm, depthSigmaMm: 300, depthScaleApplied: true, rollApplied: true,
 })
 
 const axis = { low: { x: 100, y: 900 }, high: { x: 140, y: 100 } }
@@ -257,5 +257,60 @@ describe('drawSailTrimAnnotation', () => {
     const ctx = fakeCtx(1000, 1000)
     drawSailTrimAnnotation(ctx, a)
     expect(ctx.ops.some((o) => o.op === 'stroke')).toBe(true)
+  })
+})
+
+describe('the annotation records what turned pixels into millimetres', () => {
+  // Both of these were missing, and both had to be dug out of the rig snapshot
+  // on the save — or guessed. Three 26 Sep frames of Capricorno were scaled by
+  // Northstar's P (31440, not her own 34000) with nothing in the annotation
+  // saying so, and a script that re-derived the depth from the rig model as it
+  // then stood collapsed four leech stations onto one number with 5-41 mm
+  // residuals. A frame has to state its own scale and its own depths.
+  it('carries the depth each target was corrected with', () => {
+    const a = buildAnnotation({
+      version: 'v', imageSize: { w: 1000, h: 1000 }, defn: 'boat', axis,
+      measurements: [
+        measurement('main@stripe25', 'Main leech @ 25 %', 189, 200, -8221),
+        measurement('main@stripe87', 'Main leech @ 87 %', 843, 900, -3546),
+      ],
+      points: { 'main@stripe25': { x: 300, y: 700 }, 'main@stripe87': { x: 340, y: 300 } },
+      colours: {}, psiDeg: -5.45, psiMeasured: true, heelDeg: 11,
+    })
+    // Per STATION, not one number for the sail — that distinction is the whole
+    // point: `mm` is raw + d·sinψ corrected, so recovering raw needs THIS d.
+    expect(a.targets.find((t) => t.key === 'main@stripe25')!.depthMm).toBe(-8221)
+    expect(a.targets.find((t) => t.key === 'main@stripe87')!.depthMm).toBe(-3546)
+  })
+
+  it('carries the scale, including whose boat supplied it', () => {
+    const a = buildAnnotation({
+      version: 'v', imageSize: { w: 1000, h: 1000 }, defn: 'boat', axis,
+      measurements: [measurement('clew', 'Jib clew', -1103, -1200)],
+      points: { clew: { x: 300, y: 700 } }, colours: {},
+      psiDeg: 0.4, psiMeasured: true, heelDeg: 11,
+      scale: {
+        key: 'P', mm: 34000, sigmaMm: 20, source: 'measured', depthMm: 0,
+        mmPerPxAtMast: 7.31, rangeMm: 258_000, boat: 'Capricorno',
+      },
+    })
+    expect(a.scale).toEqual({
+      key: 'P', mm: 34000, sigmaMm: 20, source: 'measured', depthMm: 0,
+      mmPerPxAtMast: 7.31, rangeMm: 258_000, boat: 'Capricorno',
+    })
+    // …and flat, so "which frames were scaled by the wrong boat's mast?" is a
+    // query over the photo list rather than an archaeology exercise.
+    const f = annotationFields(a)
+    expect(f.sailtrim_scale_key).toBe('P')
+    expect(f.sailtrim_scale_mm).toBe('34000')
+    expect(f.sailtrim_scale_boat).toBe('Capricorno')
+    expect(f.sailtrim_scale_source).toBe('measured')
+  })
+
+  it('leaves the scale out rather than inventing one', () => {
+    // A frame with no scale reference selected must not claim a default. An
+    // absent field is legible as "unknown"; a made-up one is not.
+    expect(build().scale).toBeUndefined()
+    expect(annotationFields(build()).sailtrim_scale_key).toBeUndefined()
   })
 })

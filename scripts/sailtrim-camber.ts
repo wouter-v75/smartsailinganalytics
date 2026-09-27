@@ -52,7 +52,7 @@ async function main() {
   const { data: photos } = await sb.from('photos').select('id, taken_utc, analysis_data')
   const frames: MultiViewFrame[] = []
   const used: { id: string; at: string; data: Record<string, unknown> }[] = []
-  let leechY = 0, nLeech = 0
+  let leechY = 0, nLeech = 0, leechD = 0, nLeechD = 0
   for (const p of (photos ?? []).filter((x) => (x.taken_utc || '').startsWith(AROUND!)).sort((a, b) => (a.taken_utc! < b.taken_utc! ? -1 : 1))) {
     const st = (p.analysis_data as { sailTrim?: { annotation?: any; result?: any } } | null)?.sailTrim
     if (!st?.annotation?.psiMeasured) { console.log(`  ${p.taken_utc!.slice(11, 19)}  psi not measured — skipped`); continue }
@@ -88,15 +88,26 @@ async function main() {
     frames.push({ psiDeg: A.psiDeg, dots: ordered.map((r) => ({ rawMm: r })) })
     used.push({ id: p.id as string, at: p.taken_utc as string, data: p.analysis_data as Record<string, unknown> })
     const t = A.targets.find((x: any) => x.key === `${SAIL}@${STATION}`)
-    if (t) { leechY += t.mm; nLeech++ }
+    // `t.mm` is a CORRECTED athwartships offset, and the geometry below has to
+    // use the same depth that corrected it — not whatever the rig model says
+    // today. The frame records it from 2026-09-27; before that it has to be
+    // inferred, and then `t.mm` and the depth can silently disagree.
+    if (t) {
+      leechY += t.mm; nLeech++
+      if (Number.isFinite(t.depthMm)) { leechD += t.depthMm; nLeechD++ }
+    }
     console.log(`  ${p.taken_utc!.slice(11, 19)}  psi ${A.psiDeg.toFixed(2).padStart(6)}°  ${dots.length} dots  (${front.length} front, ${back.length} back)`)
   }
   if (!nLeech) { console.error('no leech station on any frame'); process.exit(1) }
   const LY = leechY / nLeech
+  // The frames' own depth when they all record one; the rig model otherwise.
+  const usedRecorded = nLeechD === nLeech
+  const LD = usedRecorded ? leechD / nLeechD : depth.mm
+  const depthWhere = usedRecorded ? 'recorded on the frames' : `${depth.source}, inferred — re-save the frames to pin it`
 
   console.log(`\n  ${SAIL} @ ${STATION}: chord ${Math.round(chordMm)} mm (${width.source}), leech ${Math.round(LY)} mm out,`
-    + ` depth ${Math.round(depth.mm)} mm (${depth.source})`)
-  const f = fitCamberMultiView({ frames, chordMm, leechAthwartshipsMm: LY, leechDepthMm: depth.mm })
+    + ` depth ${Math.round(LD)} mm (${depthWhere})`)
+  const f = fitCamberMultiView({ frames, chordMm, leechAthwartshipsMm: LY, leechDepthMm: LD })
   if (!f) { console.log('\n  not enough to fit — two frames with a real angle between them, and six dots'); return }
   console.log(`\n  DRAFT  ${(f.camber * 100).toFixed(1)} %   (peak at ${(f.draft * 100).toFixed(0)} % of chord)`)
   console.log(`  from ${f.dots} dots over ${f.frames} frames spanning ${f.baselineDeg.toFixed(1)}°, residual ${f.rmsMm.toFixed(0)} mm`)
