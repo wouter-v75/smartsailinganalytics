@@ -395,3 +395,38 @@ describe('deriveBaselines — a derivation may not feed on its own output', () =
     expect(bow.source).toBe('derived')
   })
 })
+
+describe('merging a certificate into a boat that has been measured', () => {
+  // The case: Northstar 76 carried a tape-measured wheel base and mast-to-stern
+  // and NO P — the 31 m scale reference that beats a 6 m spreader by an order of
+  // magnitude — because its model came from the defaults, never from its own
+  // certificate. The certificate has P and J to the centimetre and cannot see
+  // the wheels at all. Neither source wins outright; the better-attested value
+  // for each dimension does.
+  const RANK: Record<string, number> = { measured: 3, designer: 2, derived: 1, estimate: 0 }
+  const better = <T extends { mm: number; source: string }>(a: T | undefined, b: T | undefined) => {
+    if (!a || !(a.mm > 0)) return b
+    if (!b || !(b.mm > 0)) return a
+    return (RANK[b.source] ?? 0) > (RANK[a.source] ?? 0) ? b : a
+  }
+
+  it('prefers a tape over a derivation', () => {
+    const tape = { mm: 12100, sigmaMm: 50, source: 'measured' }
+    const derived = { mm: 11560, sigmaMm: 2010, source: 'derived' }
+    expect(better(tape, derived)).toBe(tape)
+    expect(better(derived, tape)).toBe(tape)
+  })
+
+  it('takes a certificate value where there was only a guess', () => {
+    const guess = { mm: 0, sigmaMm: 0, source: 'estimate' }
+    const cert = { mm: 31440, sigmaMm: 20, source: 'measured' }
+    expect(better(guess, cert)).toBe(cert)
+  })
+
+  it('keeps what is already stored when the two are equally attested', () => {
+    // Somebody put the stored one there on purpose; an import should not churn it.
+    const stored = { mm: 8860, sigmaMm: 200, source: 'measured' }
+    const incoming = { mm: 8860, sigmaMm: 200, source: 'measured' }
+    expect(better(stored, incoming)).toBe(stored)
+  })
+})

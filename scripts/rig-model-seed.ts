@@ -33,7 +33,9 @@
 
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
-import { defaultRigModel, withMeasured, missingFrom, type RigModel } from '../src/lib/rigModel'
+import {
+  defaultRigModel, withMeasured, missingFrom, migrateRigModel, deriveBaselines, type RigModel,
+} from '../src/lib/rigModel'
 
 const args = process.argv.slice(2)
 const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
@@ -43,6 +45,7 @@ const FORCE = args.includes('--force')
 const FROM = flag('--from')
 const CREATE = args.includes('--create')
 const TEAM = flag('--team')
+const MERGE = args.includes('--merge')
 const SAIL_NO = flag('--sail-no')
 const LENGTH = flag('--length')
 
@@ -59,6 +62,40 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_
 /** Only the values somebody has actually measured or taken off a drawing. */
 const realCount = (m: RigModel) =>
   [...m.scaleRefs, ...m.baselines].filter(x => x.mm > 0 && x.source !== 'estimate').length
+
+/**
+ * Which of two numbers for the same dimension to believe.
+ *
+ * A tape on the boat beats a drawing beats arithmetic beats a guess. It matters
+ * because a certificate and a dockside measurement each know things the other
+ * does not: the certificate has P and J to the centimetre and cannot see the
+ * wheels at all, while the tape has the wheels and mast-to-stern and says
+ * nothing about the rig. Merging has to keep the better of each rather than
+ * letting whichever arrived last win.
+ */
+const RANK: Record<string, number> = { measured: 3, designer: 2, derived: 1, estimate: 0 }
+const better = <T extends { mm: number; source: string }>(a: T | undefined, b: T | undefined): T | undefined => {
+  if (!a || !(a.mm > 0)) return b
+  if (!b || !(b.mm > 0)) return a
+  // Ties go to what is already stored: somebody put it there on purpose.
+  return (RANK[b.source] ?? 0) > (RANK[a.source] ?? 0) ? b : a
+}
+
+/** Keep the better-attested value for every dimension, field by field. */
+function mergeModels(current: RigModel, incoming: RigModel): RigModel {
+  const out: RigModel = { ...current, ...incoming }
+  out.scaleRefs = incoming.scaleRefs.map((r) => better(current.scaleRefs.find((x) => x.key === r.key), r)!)
+  for (const r of current.scaleRefs) if (!out.scaleRefs.some((x) => x.key === r.key)) out.scaleRefs.push(r)
+  out.baselines = incoming.baselines.map((b) => better(current.baselines.find((x) => x.key === b.key), b)!)
+  for (const b of current.baselines) if (!out.baselines.some((x) => x.key === b.key)) out.baselines.push(b)
+  out.depths = { ...current.depths }
+  for (const k of Object.keys(incoming.depths) as (keyof RigModel['depths'])[]) {
+    out.depths[k] = better(current.depths[k], incoming.depths[k])!
+  }
+  out.widths = { ...(incoming.widths || {}), ...(current.widths || {}) }
+  out.notes = [current.notes, incoming.notes].filter(Boolean).join(' · ')
+  return deriveBaselines(out)
+}
 
 /** A model parsed from a certificate, rather than built from the defaults. */
 function modelFromFile(path: string, boat: string): RigModel {
@@ -109,11 +146,14 @@ async function main() {
     const existing = (b.rig_model ?? {}) as Partial<RigModel>
     const hasOne = existing && Object.keys(existing).length > 0 && (existing.scaleRefs?.length ?? 0) > 0
 
-    const model = FROM ? modelFromFile(FROM, b.name) : withMeasured(defaultRigModel(b.name))
+    const incoming = FROM ? modelFromFile(FROM, b.name) : withMeasured(defaultRigModel(b.name))
+    const model = MERGE && hasOne
+      ? mergeModels(migrateRigModel(existing as RigModel, b.name), incoming)
+      : incoming
     const real = realCount(model)
     const missing = missingFrom(model)
 
-    if (hasOne && !FORCE) {
+    if (hasOne && !FORCE && !MERGE) {
       console.log(`  ${b.name.padEnd(16)} already has a stored model — left alone (--force to overwrite)`)
       continue
     }
@@ -124,7 +164,10 @@ async function main() {
       + `\n  ${''.padEnd(16)} still guesswork: ${missing.length ? missing.join(', ') : 'nothing'}`)
     changed++
     if (WRITE) {
-      const up = await sb.from('boats').update({ rig_model: model }).eq('id', b.id)
+      const patch: Record<string, unknown> = { rig_model: model }
+      if (SAIL_NO) patch.sail_number = SAIL_NO
+      if (LENGTH) patch.length_m = Number(LENGTH)
+      const up = await sb.from('boats').update(patch).eq('id', b.id)
       if (up.error) console.error(`    ! ${b.name}: ${up.error.message}`)
       else console.log(`    stored.`)
     }
