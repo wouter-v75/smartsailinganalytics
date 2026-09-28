@@ -156,6 +156,37 @@ const DAY: BaseTag[] = [
   mk('dock-out', 'Dock out', DAY_C, { sort: 70 }),
   mk('dock-in', 'Dock in', DAY_C, { sort: 71 }),
   mk('warning-signal', 'Warning signal', DAY_C, { sort: 72 }),
+  // THE 5 MINUTE GUN — the one fixed point of a race day the log cannot find.
+  //
+  // Every other racing moment here is detectable: the detector sees the start
+  // line crossed, the mark rounded, the tack. A gun is a sound. Nothing in a
+  // GPS trace marks it, so if the crew does not press it, it is not there —
+  // which is exactly why it earns a place in the Racing group rather than
+  // being left to the detector like its neighbours.
+  //
+  // It is worth having because it anchors the five minutes BEFORE a start,
+  // where the interesting sailing is: the line sight, the timed run, the
+  // committee-boat end. race-start's own 60 s lead-in begins long after that.
+  // So the window runs forward, not back — lagSec covers the first minute of
+  // the sequence and the rest is reachable by dragging.
+  //
+  // WHAT THE DESCRIPTOR IS FOR: a practise start and a real one look identical
+  // in the data and mean completely different things in a debrief. Three
+  // options, not five — see the note on QUALITY above about rare codes.
+  //
+  // Sorted 9 so it lands immediately BEFORE race-start (sort 10), which is
+  // where it happens.
+  //
+  // Deliberately NOT added to racingTags.ts, for the same reason as the finish
+  // below: that is the whitelist deciding what shows on a media card, and
+  // widening it would change every thumbnail in the app.
+  mk('five-minute-gun', '5 min gun', RACE_RED, {
+    sort: 9, leadSec: 20, lagSec: 60,
+    labelGroups: [{
+      group: 'Start type',
+      options: ['practise start', 'practise race', 'race'],
+    }],
+  }),
   // The finish. Deliberately NOT added to racingTags.ts, which is the whitelist
   // deciding what shows on a media card — widening that would change every
   // thumbnail in the app. This is a tag definition, nothing more.

@@ -19,9 +19,20 @@ describe('the racing group', () => {
   it('names the day’s fixed points, in the order the day happens', () => {
     // The day opens, the racing happens, the day closes. A picker ordered by
     // when things occur is one people can use without reading it.
+    //
+    // The 5 minute gun sits immediately before the start, because that is when
+    // it goes off.
     expect(RACING.slugs).toEqual([
-      'day-start', 'race-start', 'topmark', 'gate', 'mark', 'race-finish', 'day-end',
+      'day-start', 'five-minute-gun', 'race-start', 'topmark', 'gate', 'mark',
+      'race-finish', 'day-end',
     ])
+  })
+
+  it('has the 5 minute gun BEFORE the start it belongs to', () => {
+    // Ordering is the whole usability claim of this group; asserting the pair
+    // directly means a future insert cannot quietly put the gun after the gun.
+    expect(RACING.slugs.indexOf('five-minute-gun'))
+      .toBeLessThan(RACING.slugs.indexOf('race-start'))
   })
 
   it('has the finish in it', () => {

@@ -180,3 +180,61 @@ describe('the day’s own two ends', () => {
     expect(BASE_TAGS.some((t) => t.slug === 'dock-in')).toBe(true)
   })
 })
+
+describe('the 5 minute gun', () => {
+  const gun = BASE_TAGS.find((t) => t.slug === 'five-minute-gun')!
+
+  it('exists, as a general racing point tag', () => {
+    expect(gun).toBeTruthy()
+    expect(gun.scope).toBe('general')
+    expect(gun.kind).toBe('point')
+  })
+
+  it('offers exactly the three start types, and no quality', () => {
+    // A practise start and a real one look identical in the data and mean
+    // completely different things in a debrief — that distinction IS the tag.
+    // Quality is deliberately absent: a gun is not textbook or scrappy.
+    expect(gun.labelGroups).toHaveLength(1)
+    expect(gun.labelGroups[0].group).toBe('Start type')
+    expect(gun.labelGroups[0].options).toEqual([
+      'practise start', 'practise race', 'race',
+    ])
+  })
+
+  it('sorts before the start it precedes', () => {
+    const start = BASE_TAGS.find((t) => t.slug === 'race-start')!
+    expect(gun.sort).toBeLessThan(start.sort)
+  })
+
+  it('runs FORWARD from the press, not back', () => {
+    // The interesting sailing is the five minutes AFTER the gun — the line
+    // sight, the timed run — not before it. race-start's own lead-in begins
+    // long after this.
+    expect(gun.lagSec).toBeGreaterThan(gun.leadSec)
+  })
+
+  it('is NOT in racingTags.ts, which is the media-card whitelist', async () => {
+    // Widening that whitelist changes every thumbnail in the app. This is a
+    // tag definition and nothing more — the same rule the finish follows.
+    const { RACING_TAGS } = await import('../../racingTags')
+    expect(Object.keys(RACING_TAGS)).not.toContain('five-minute-gun')
+  })
+})
+
+describe('race_tag_slugs() and the racing group agree', () => {
+  it('lists the gun as a race tag in the migration', async () => {
+    // "Share race tags only" is decided by race_tag_slugs() in SQL, while the
+    // picker is decided by BAR_GROUPS. They answer the same question and a
+    // policy and a picker must never disagree — but they are kept in step BY
+    // HAND, so the drift is worth a test rather than a comment.
+    const fs = await import('node:fs')
+    const sql = fs.readFileSync(
+      'supabase/migrations/0093_five_minute_gun_race_tag.sql', 'utf8')
+    const { BAR_GROUPS } = await import('../barGroups')
+    const racing = BAR_GROUPS.find((g) => g.key === 'racing')!
+    for (const slug of racing.slugs) {
+      expect(sql, `${slug} is in the Racing picker but not in race_tag_slugs()`)
+        .toContain(`'${slug}'`)
+    }
+  })
+})

@@ -39,7 +39,7 @@ export const BAR_GROUPS: BarGroup[] = [
     // Chronological, which is how a day reads: the day opens, the racing
     // happens, the day closes. A picker ordered by when things occur is one
     // people can use without reading it.
-    slugs: ['day-start', 'race-start', 'topmark', 'gate', 'mark', 'race-finish', 'day-end'],
+    slugs: ['day-start', 'five-minute-gun', 'race-start', 'topmark', 'gate', 'mark', 'race-finish', 'day-end'],
   },
 ]
 
