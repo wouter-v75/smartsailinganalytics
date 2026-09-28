@@ -300,13 +300,29 @@ async function captureLongRange(globals, mastH) {
   try { window.Plotly.purge(div) } catch { /* */ } div.remove(); return png
 }
 
+// hpbl at point 1, from the FINEST SSA-Race domain that carries it, else GFS.
+// Order matters: the 1 km resolves a coastal mixed layer the 2 km smooths away —
+// St Tropez, 28 Sept 00z, point 1: the 1 km peaks 821 m at 11z, the 2 km 581 m at
+// 12z — and hpbl drives the stability gate and the sea-breeze score, so it is not
+// a cosmetic difference. Both readers go through here so the preference cannot
+// drift apart again (it had: both lists tried the 2 km first).
+const HPBL_SOURCES = ['ICONRACE_1KM', 'ICONRACE']
+export function hpblSeriesAt(point1) {
+  for (const k of HPBL_SOURCES) {
+    const hh = point1?.surfaceByModel?.[k]?.hourly
+    if (hh?.boundary_layer_height?.some((v) => v != null)) return { hourly: hh, label: MODELS[k]?.label || k, key: k }
+  }
+  const hh = point1?.gfs?.hourly
+  if (hh?.boundary_layer_height?.some((v) => v != null)) return { hourly: hh, label: 'GFS', key: 'GFS' }
+  return null
+}
+
 // boundary-layer-height development (point 1): SSA hpbl if present, else GFS; today 08-20
 async function captureHpbl(point1, tz) {
   if (!window.Plotly || !point1) return null
-  let h = null; let label = ''
-  for (const k of ['ICONRACE', 'ICONRACE_1KM']) { const hh = point1.surfaceByModel?.[k]?.hourly; if (hh?.boundary_layer_height?.some((v) => v != null)) { h = hh; label = MODELS[k]?.label || k; break } }
-  if (!h) { const hh = point1.gfs?.hourly; if (hh?.boundary_layer_height?.some((v) => v != null)) { h = hh; label = 'GFS' } }
-  if (!h) return null
+  const src = hpblSeriesAt(point1)
+  if (!src) return null
+  const h = src.hourly; const label = src.label
   const lt = localTimes(h, tz); const today = lt[0]?.slice(0, 10)
   const xs = lt.map((t) => new Date(`${t.slice(0, 16)}`)); const ys = h.boundary_layer_height
   const div = offDiv()
@@ -559,13 +575,21 @@ async function buildDiagnostics(o) {
     lowLevelKt = lowKts.length ? dMean(lowKts) : null
   }
 
-  // hpbl (mixed-layer depth) — peak over the racing window for the gate
-  let hMix = null
-  for (const k of ['ICONRACE', 'ICONRACE_1KM']) {
-    const hh = o.point1?.surfaceByModel?.[k]?.hourly?.boundary_layer_height
-    if (Array.isArray(hh)) { const m = Math.max(...hh.filter((v) => v != null)); if (Number.isFinite(m)) { hMix = m; break } }
+  // hpbl (mixed-layer depth): TODAY's peak at point 1, from the finest domain that
+  // has it. The day filter is load-bearing, not tidying — the 2 km series runs +42 h
+  // and so spans TOMORROW (28 Sept: 06z today through 18z tomorrow). An unfiltered
+  // max therefore hands today's stability gate and sea-breeze score tomorrow's
+  // mixed layer whenever tomorrow is the more unstable day.
+  let hMix = null; let hMixSrc = null
+  const hpblSrc = hpblSeriesAt(o.point1)
+  if (hpblSrc) {
+    const lt = localTimes(hpblSrc.hourly, tz)
+    const dayL = (todayModels || [])[0]?.lt?.[0]?.slice(0, 10) || lt[0]?.slice(0, 10)
+    const series = hpblSrc.hourly.boundary_layer_height
+    const today = series.filter((v, i) => v != null && Number.isFinite(v) && lt[i]?.slice(0, 10) === dayL)
+    const use = today.length ? today : series.filter((v) => v != null && Number.isFinite(v))
+    if (use.length) { hMix = Math.max(...use); hMixSrc = hpblSrc.label }
   }
-  if (hMix == null) { const hh = o.point1?.gfs?.hourly?.boundary_layer_height; if (Array.isArray(hh)) { const m = Math.max(...hh.filter((v) => v != null)); if (Number.isFinite(m)) hMix = m } }
 
   // coast-relative wind primitives
   const thermalBendDeg = (surfDir != null && gradDir != null) ? thermalBend(surfDir, gradDir) : null
@@ -658,6 +682,7 @@ async function buildDiagnostics(o) {
     },
     stability: {
       hMixM: hMix != null ? Math.round(hMix) : null,
+      hMixSrc,
       capBaseM: stab.capBaseM != null ? Math.round(stab.capBaseM) : null,
       capStrengthC: stab.capStrengthC != null ? Math.round(stab.capStrengthC * 10) / 10 : null,
       lapseRateCkm: stab.lapseRateCkm != null ? Math.round(stab.lapseRateCkm * 10) / 10 : null,
@@ -753,7 +778,7 @@ function diagChips(dg) {
   if (dg.seaBreeze?.score != null) ch.push(`Sea-breeze ${dg.seaBreeze.score}/10${dg.seaBreeze.quadrant ? ` (${dg.seaBreeze.quadrant})` : ''}`)
   if (dg.confidence?.label) ch.push(`Confidence ${dg.confidence.label}${dg.confidence.sigmaTwd != null ? ` (σTWD ${dg.confidence.sigmaTwd}°)` : ''}`)
   if (dg.tws?.label) ch.push(`TWS ${dg.tws.label} (±${dg.tws.sigmaKn} kn)`)
-  if (dg.stability?.hMixM != null) ch.push(`BL ${dg.stability.hMixM} m`)
+  if (dg.stability?.hMixM != null) ch.push(`BL ${dg.stability.hMixM} m${dg.stability.hMixSrc ? ` (${dg.stability.hMixSrc})` : ''}`)
   ch.push(dg.stability?.hasLowCap ? 'capped' : 'no low cap')
   if (dg.funnelling?.flag) ch.push('funnelling ⚑')
   return ch
@@ -1083,7 +1108,7 @@ function buildDeck(P, d) {
   if (dg) {
     const st = dg.stability || {}; const sbb = dg.seaBreeze || {}
     const cap = st.hasLowCap ? `low cap +${st.capStrengthC}°C @ ${st.capBaseM} m` : (st.capBaseM != null ? `cap aloft @ ${st.capBaseM} m` : 'no cap')
-    const line = `${cap} · lapse ${st.lapseRateCkm ?? '—'} °C/km · h_mix ${st.hMixM ?? '—'} m · gate ${st.gate ?? '—'}\n`
+    const line = `${cap} · lapse ${st.lapseRateCkm ?? '—'} °C/km · h_mix ${st.hMixM ?? '—'} m${st.hMixSrc ? ` (${st.hMixSrc})` : ''} · gate ${st.gate ?? '—'}\n`
       + `Sea-breeze ${sbb.score ?? '—'}/10${sbb.quadrant ? ` (${sbb.quadrant})` : ''}: SBI ${sbb.sbi ?? '—'}, cross-shore ${sbb.crossShoreKt ?? '—'} kt, bend ${sbb.thermalBendDeg ?? '—'}°${sbb.deltaT != null ? `, ΔT ${sbb.deltaT} °C` : ''}`
     s.addText(line, { x: M, y: 0.98, w: CW, h: 0.5, fontFace: FONT, fontSize: 12, color: NAVY })
   }
