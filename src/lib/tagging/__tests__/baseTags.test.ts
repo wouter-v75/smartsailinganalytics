@@ -228,8 +228,14 @@ describe('race_tag_slugs() and the racing group agree', () => {
     // policy and a picker must never disagree — but they are kept in step BY
     // HAND, so the drift is worth a test rather than a comment.
     const fs = await import('node:fs')
-    const sql = fs.readFileSync(
-      'supabase/migrations/0093_five_minute_gun_race_tag.sql', 'utf8')
+    // The LATEST migration that redefines it — an older one would pass while
+    // the live function had moved on.
+    const dir = 'supabase/migrations'
+    const latest = fs.readdirSync(dir)
+      .filter((f) => fs.readFileSync(`${dir}/${f}`, 'utf8').includes('FUNCTION public.race_tag_slugs'))
+      .sort()
+      .pop()!
+    const sql = fs.readFileSync(`${dir}/${latest}`, 'utf8')
     const { BAR_GROUPS } = await import('../barGroups')
     const racing = BAR_GROUPS.find((g) => g.key === 'racing')!
     for (const slug of racing.slugs) {

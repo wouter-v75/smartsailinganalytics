@@ -257,10 +257,38 @@ export default function TaggerTab({
   const open = t.items.find((i) => i.tag.id === openId) || null
   const openDef = open ? t.defs.find((d) => d.slug === open.tag.slug) : null
 
-  if (!teamId || !boatId || !date) {
+  // WHAT IS ACTUALLY MISSING, rather than all three at once.
+  //
+  // This used to read "Pick a boat and a day to start tagging" whichever of the
+  // three was absent, and — worse — it returned BEFORE the DayPicker below, so
+  // the one case that is trivially fixable from here offered no way to fix it.
+  // On mobile, where the day is often not yet chosen, that was a dead end:
+  // told to pick a boat that was already picked, with no picker for the thing
+  // that was really missing.
+  if (!teamId || !boatId) {
     return (
       <div className="px-6 py-12 text-center text-sm text-muted">
-        Pick a boat and a day to start tagging.
+        Pick a boat in the workspace switcher to start tagging.
+        <span className="mt-1 block text-xs opacity-70">
+          {teamId ? 'Your workspace has a team but no boat.' : 'No workspace is active.'}
+        </span>
+      </div>
+    )
+  }
+
+  // Team and boat are fine and only the DAY is missing — so show the picker
+  // rather than a sentence about it.
+  if (!date) {
+    return (
+      <div className="flex flex-col">
+        {onSelectDate && (
+          <DayPicker date={date} sessions={sessions} onSelect={onSelectDate} disabled={t.busy} />
+        )}
+        <div className="px-6 py-12 text-center text-sm text-muted">
+          {sessions?.length
+            ? 'Pick a day to start tagging.'
+            : 'No days on this boat yet — upload a log first.'}
+        </div>
       </div>
     )
   }

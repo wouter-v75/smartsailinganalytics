@@ -39,7 +39,14 @@ export const BAR_GROUPS: BarGroup[] = [
     // Chronological, which is how a day reads: the day opens, the racing
     // happens, the day closes. A picker ordered by when things occur is one
     // people can use without reading it.
-    slugs: ['day-start', 'five-minute-gun', 'race-start', 'topmark', 'gate', 'mark', 'race-finish', 'day-end'],
+    // The warning signal and the 5 minute gun are the SAME instant in the
+    // standard sequence — warning at −5, preparatory at −4, start at 0. Both
+    // are here because crews say both, and a picker that refuses the word
+    // somebody actually uses is a picker they stop reaching for.
+    slugs: [
+      'day-start', 'warning-signal', 'five-minute-gun', 'race-start',
+      'topmark', 'gate', 'mark', 'race-finish', 'day-end',
+    ],
   },
 ]
 
