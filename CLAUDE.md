@@ -3,6 +3,20 @@
 Short, load-bearing things that are expensive to rediscover. Add to it when
 something costs you an hour.
 
+## Where things are
+
+| | |
+|---|---|
+| the repo | `/Users/wouterverbraak/Code/ssa` — `cd` there before any runbook below |
+| a day's footage | `/Volumes/SSK SSD/<YYYYMMDD>/Drone` (the card; quote it, the volume name has a space) |
+| event + log files | `~/Downloads`, named `Northstar 76_<yymmdd>_<n>.ev.xml` — **a space, not an underscore** |
+| clips out | `~/clips/<YYYYMMDD>` |
+
+None of this is reachable from Claude Code's sandbox: no `/Volumes`, no
+`~/Downloads`, no `ffmpeg`, no database. Anything touching them is handed over
+to run on the laptop, and a migration is handed over as a file to paste into the
+Supabase SQL editor. Asking where a path is wastes a round trip — it is here.
+
 ## Runbooks
 
 | task | how |
@@ -15,7 +29,8 @@ something costs you an hour.
 | Say which boats are IN a photo, so frames are searchable by rival | `npx vite-node scripts/subject-boats-backfill.ts --write` (fills `photos.subject_boat_ids` from sail-geometry measurements) |
 | Measure a boat's target DEPTHS from several stern shots (kills the ±2500 mm guess) | `npx vite-node scripts/sailtrim-triangulate.ts --boat "Northstar 76" --around 2026-09-27T11:43 --write` — needs 3+ frames seconds apart spanning 8°+, each with a measured ψ |
 | Put a sailmaker's batten sheet on a mainsail's card | `npx vite-node scripts/batten-card-import.ts --sheet northstar76-im2-2026 --write` — the sheet is transcribed IN the script, so v6 is a diff |
-| Trim + compress a day's drone/RIB footage against the event file | `node scripts/select-race-clips.mjs -e <day>.ev.xml "<card>/<day>/Drone" --racing --finish HH:MM:SS --trim --tag <day> -o ~/clips/<day> -n` — drop `-n` to encode, then upload from SSA → Videos. Needs `exiftool` + `ffmpeg`. |
+| Trim + compress a day's drone/RIB footage into clips | `npm run clips:day -- YYYY-MM-DD` — finds the card, the event file, the venue offset, the Grab video times and the finish tag itself. `--write` to encode, `--turns` to add the race manoeuvres. Falls back to `scripts/select-race-clips.mjs` directly when something needs overriding. |
+| Watch an encode | `node scripts/clip-progress.mjs ~/clips/<YYYYMMDD> --watch` — only after `--write`; it needs the `manifest.json` the encode writes. |
 | Read a sail's DRAFT % from the same set (run the triangulation first) | `npx vite-node scripts/sailtrim-camber.ts --boat "Northstar 76" --around 2026-09-27T11:43 --sail main --station stripe50 --write` — `--write` puts the answer on every frame in the set |
 
 All of these are dry-run by default and need `--write` to do anything. They read
