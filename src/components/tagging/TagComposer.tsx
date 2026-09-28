@@ -83,6 +83,21 @@ export default function TagComposer<D>({
   const detailBlocks = !!detail?.isIncomplete && detailValue !== undefined
     && detail.isIncomplete(detailValue)
 
+  // Descriptors the DEFINITION asks for up front — see TagLabelGroup.askOnAdd.
+  // Most wait for the sheet; these are the ones that say what the tag means
+  // rather than how it went, and are unreconstructable a week later.
+  const askGroups = (def.labelGroups || []).filter((g) => g.askOnAdd)
+  const [picked, setPicked] = React.useState<TagLabel[]>([])
+  const toggle = (group: string, text: string, multi?: boolean) =>
+    setPicked((prev) => {
+      const on = prev.some((l) => l.group === group && l.text === text)
+      if (on) return prev.filter((l) => !(l.group === group && l.text === text))
+      // Single-choice groups replace rather than accumulate: a start is a
+      // practice or a race, never both.
+      const kept = multi ? prev : prev.filter((l) => l.group !== group)
+      return [...kept, { group, text }]
+    })
+
   // What the field SHOWS. Kept separate from `t` while the crew is typing, so a
   // half-typed "13:0" does not get parsed, rejected, and snapped back under
   // their fingers mid-keystroke.
@@ -104,7 +119,10 @@ export default function TagComposer<D>({
     if (wantsNote && !note.trim()) return
     setSaving(true)
     const extra = detail && detailValue !== undefined ? detail.toPayload(detailValue, t) : {}
-    await onSave(t, { ...extra, note: note.trim() || extra.note })
+    // A ComposerDetail's own labels win: it knows the tag's specifics, this is
+    // the generic path. Nothing is lost — the two are never both in use.
+    const labels = extra.labels?.length ? extra.labels : (picked.length ? picked : undefined)
+    await onSave(t, { ...extra, labels, note: note.trim() || extra.note })
   }
 
   return (
@@ -179,6 +197,38 @@ export default function TagComposer<D>({
             </button>
           ))}
         </div>
+
+        {/* ── Descriptors the tag asks for up front ──────────────────────────── */}
+        {/* Deliberately NOT blocking Save: a crew pressing the gun as it goes
+            off must never be stopped by a form, and the sheet offers the same
+            choice afterwards for anyone who was busy sailing. */}
+        {askGroups.map((g) => (
+          <div key={g.group} className="mb-3">
+            <p className="pb-1 text-[11px] uppercase tracking-wide text-muted">{g.group}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {g.options.map((opt) => {
+                const on = picked.some((l) => l.group === g.group && l.text === opt)
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => toggle(g.group, opt, g.multi)}
+                    aria-pressed={on}
+                    className={cn(
+                      'min-h-[40px] rounded-full border px-3 text-xs font-medium',
+                      on
+                        ? 'border-transparent text-white'
+                        : 'border-[color:var(--border)] bg-surface-2 text-secondary'
+                    )}
+                    style={{ background: on ? def.color : undefined }}
+                  >
+                    {opt}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))}
 
         {/* ── Whatever this particular tag needs ─────────────────────────────── */}
         {detail && detailValue !== undefined &&

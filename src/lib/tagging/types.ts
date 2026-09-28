@@ -43,6 +43,24 @@ export interface TagLabelGroup {
   options: string[]
   /** More than one option may be picked from this group. */
   multi?: boolean
+  /**
+   * Ask for this while the tag is being ADDED, not only afterwards in the sheet.
+   *
+   * The default is afterwards, and that default is right for most descriptors:
+   * "press now, describe later" is how people tag on the water, and a composer
+   * that asks five questions is one they stop using. Quality is the type case —
+   * whether a tack was scrappy is worth recording and can wait.
+   *
+   * Some descriptors are not colour, though: they are what the tag MEANS. A
+   * 5 minute gun without its start type does not say whether the next twenty
+   * minutes were a practice or a race, and nobody reconstructs that a week
+   * later. Those groups set this.
+   *
+   * It does NOT block saving. A crew pressing the gun as it goes off should
+   * never be stopped by a form, and the sheet still offers the same choice
+   * afterwards.
+   */
+  askOnAdd?: boolean
 }
 
 export interface TagDef {

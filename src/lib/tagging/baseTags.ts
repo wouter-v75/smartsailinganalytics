@@ -182,9 +182,13 @@ const DAY: BaseTag[] = [
   // widening it would change every thumbnail in the app.
   mk('five-minute-gun', '5 min gun', RACE_RED, {
     sort: 9, leadSec: 20, lagSec: 60,
+    // askOnAdd: the start type is not colour on this tag, it is what the tag
+    // MEANS — a gun that does not say whether the next twenty minutes were a
+    // practice or a race is a gun nobody can use a week later.
     labelGroups: [{
       group: 'Start type',
       options: ['practise start', 'practise race', 'race'],
+      askOnAdd: true,
     }],
   }),
   // The finish. Deliberately NOT added to racingTags.ts, which is the whitelist

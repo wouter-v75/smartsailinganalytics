@@ -244,3 +244,33 @@ describe('race_tag_slugs() and the racing group agree', () => {
     }
   })
 })
+
+describe('askOnAdd — which descriptors are asked up front', () => {
+  it('the gun asks for its start type while being added', () => {
+    // It is what the tag MEANS, not how it went. A gun that does not say
+    // whether the next twenty minutes were a practice or a race is a gun
+    // nobody can use a week later.
+    const gun = BASE_TAGS.find((t) => t.slug === 'five-minute-gun')!
+    expect(gun.labelGroups[0].askOnAdd).toBe(true)
+  })
+
+  it('is the EXCEPTION — nothing else asks up front', () => {
+    // "Press now, describe later" is how people tag on the water, and a
+    // composer that asks five questions is one they stop using. Each new
+    // askOnAdd is a tax on every press of that tag, so it should be a
+    // decision rather than a habit — hence this guardrail.
+    const asking = BASE_TAGS
+      .filter((t) => (t.labelGroups || []).some((g) => g.askOnAdd))
+      .map((t) => t.slug)
+    expect(asking).toEqual(['five-minute-gun'])
+  })
+
+  it('never asks for Quality up front, on any tag', () => {
+    // Whether a tack was scrappy is worth recording and can always wait.
+    for (const t of BASE_TAGS) {
+      for (const g of t.labelGroups || []) {
+        if (g.group === 'Quality') expect(g.askOnAdd).toBeFalsy()
+      }
+    }
+  })
+})
