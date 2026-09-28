@@ -14,6 +14,7 @@ something costs you an hour.
 | Add a RIVAL from its IRC certificate, so SailTrim can measure it | `irc-rigmodel.ts -- <cert.pdf> --out <dir>`, then `rig-model-seed.ts --boat <name> --from <dir>/<boat>.rigmodel.json --create --team <team> --write` |
 | Say which boats are IN a photo, so frames are searchable by rival | `npx vite-node scripts/subject-boats-backfill.ts --write` (fills `photos.subject_boat_ids` from sail-geometry measurements) |
 | Measure a boat's target DEPTHS from several stern shots (kills the ±2500 mm guess) | `npx vite-node scripts/sailtrim-triangulate.ts --boat "Northstar 76" --around 2026-09-27T11:43 --write` — needs 3+ frames seconds apart spanning 8°+, each with a measured ψ |
+| Put a sailmaker's batten sheet on a mainsail's card | `npx vite-node scripts/batten-card-import.ts --sheet northstar76-im2-2026 --write` — the sheet is transcribed IN the script, so v6 is a diff |
 | Read a sail's DRAFT % from the same set (run the triangulation first) | `npx vite-node scripts/sailtrim-camber.ts --boat "Northstar 76" --around 2026-09-27T11:43 --sail main --station stripe50 --write` — `--write` puts the answer on every frame in the set |
 
 All of these are dry-run by default and need `--write` to do anything. They read

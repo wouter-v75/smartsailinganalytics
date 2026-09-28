@@ -97,6 +97,9 @@ export interface BattenSetting {
   ref?: string
   /** "Batt. El" off the sheet — the batten's measured elongation figure, mm. */
   elMm?: number
+  /** The sheet's per-cell Notes row, verbatim — e.g. "Soften(900)", which is an
+   *  instruction to take that batten down to an El of 900 in this band. */
+  note?: string
 }
 
 /** The card: one row per batten, one cell per wind band. */
@@ -145,9 +148,21 @@ export function normaliseBattenCard(raw: unknown): BattenCard {
       if (!cell || typeof cell !== 'object') continue
       const tension = isTension(cell.tension) ? cell.tension : null
       const turns = isNum(cell.turns) ? cell.turns : 0
-      // A cell with neither a stiffness nor a number is a blank cell.
-      if (tension == null && turns === 0) continue
-      row[band.key] = { tension, turns }
+      // The sailmaker's fields, carried through rather than dropped. A sheet
+      // imported from NorthStar fills `ref` and `elMm` on every cell and leaves
+      // Turns blank — so a normaliser that only knew tension and turns would
+      // silently empty the card it had just been given.
+      const ref = typeof cell.ref === 'string' && cell.ref.trim() ? cell.ref.trim() : undefined
+      const elMm = isNum(cell.elMm) ? cell.elMm : undefined
+      const note = typeof cell.note === 'string' && cell.note.trim() ? cell.note.trim() : undefined
+      // A cell with nothing in it at all is a blank cell.
+      if (tension == null && turns === 0 && !ref && elMm === undefined && !note) continue
+      row[band.key] = {
+        tension, turns,
+        ...(ref ? { ref } : {}),
+        ...(elMm !== undefined ? { elMm } : {}),
+        ...(note ? { note } : {}),
+      }
     }
     rows.push(row)
   }
@@ -222,7 +237,14 @@ export const unassignedCard = (
 
 /** True when a cell holds nothing worth storing. */
 export const isBlankSetting = (s: BattenSetting | null | undefined): boolean =>
-  !s || (s.tension == null && (!isNum(s.turns) || s.turns === 0))
+  !s || (
+    s.tension == null
+    && (!isNum(s.turns) || s.turns === 0)
+    // A cell carrying only a part reference is NOT blank — an imported sheet
+    // leaves Turns empty throughout, so counting turns alone would report a
+    // fully populated card as one nobody had filled in.
+    && !s.ref && s.elMm === undefined && !s.note
+  )
 
 /** Does this card say anything at all? An empty one should prompt, not display. */
 export const cardIsEmpty = (card: BattenCard): boolean =>

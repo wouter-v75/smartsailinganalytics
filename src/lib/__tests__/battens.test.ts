@@ -240,3 +240,45 @@ describe('cards per mainsail', () => {
     expect(unassignedCard(undefined)).toBeNull()
   })
 })
+
+describe('the sailmaker’s fields', () => {
+  // NorthStar's sheet carries a part reference and an "El" figure in every cell
+  // and leaves the Turns row blank throughout. A normaliser that knew only
+  // tension and turns emptied the card it had just been handed.
+  it('carries ref, elMm and note through a round trip', () => {
+    const card = normaliseBattenCard({
+      count: 1,
+      rows: [{ '0-8': { tension: 'soft', turns: 0, ref: 'M1-S', elMm: 925, note: 'Soften(900)' } }],
+    })
+    expect(card.rows[0]['0-8']).toEqual({
+      tension: 'soft', turns: 0, ref: 'M1-S', elMm: 925, note: 'Soften(900)',
+    })
+  })
+
+  it('does not call a cell blank just because Turns is empty', () => {
+    // The whole imported sheet has turns 0. Counting turns alone reported 40
+    // filled cells as a card nobody had touched, so the panel offered to create
+    // one over the top.
+    const card = normaliseBattenCard({
+      count: 1, rows: [{ '0-8': { tension: null, turns: 0, ref: 'M2-H', elMm: 474 } }],
+    })
+    expect(card.rows[0]['0-8']).toBeDefined()
+    expect(isBlankSetting(card.rows[0]['0-8'])).toBe(false)
+    expect(cardIsEmpty(card)).toBe(false)
+  })
+
+  it('still treats a cell with genuinely nothing in it as blank', () => {
+    const card = normaliseBattenCard({ count: 1, rows: [{ '0-8': { tension: null, turns: 0, ref: '  ' } }] })
+    expect(card.rows[0]['0-8']).toBeUndefined()
+  })
+
+  it('keeps the part reference independent of the tension', () => {
+    // At 10-12 knots B5 is an M1-S part printed in black, i.e. medium. The model
+    // and the stiffness are separate axes and neither implies the other.
+    const card = normaliseBattenCard({
+      count: 1, rows: [{ '10-12': { tension: 'medium', turns: 0, ref: 'M1-S', elMm: 267 } }],
+    })
+    expect(card.rows[0]['10-12'].tension).toBe('medium')
+    expect(card.rows[0]['10-12'].ref).toBe('M1-S')
+  })
+})
