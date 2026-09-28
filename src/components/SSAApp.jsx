@@ -656,7 +656,17 @@ function SSAApp(){
               // day someone filmed after boot correctly opened a log-only day.
               // A cloud row carries no hasLog flag, so treat any cloud session as
               // having data (it would not exist otherwise).
-              const newestCloudDate = cloudSessions.map(s => s.date).sort().reverse()[0];
+              // NOT INTO THE FUTURE — the same bound the local path above uses.
+              // A campaign's days are created before the regatta, so sessions
+              // for days nobody has sailed are normal and this list carries
+              // them. Unbounded, the cloud step opened the LAST of them: on
+              // 28 September the app settled on 3 October, and every tag the
+              // crew pressed on the water was filed there, correctly timed,
+              // onto a day that had not happened. The tagger now files by the
+              // tag's own instant so the data is safe either way, but the view
+              // should not be sitting on a day nobody has sailed.
+              const today = TODAY();
+              const newestCloudDate = cloudSessions.map(s => s.date).filter(d => d && d <= today).sort().reverse()[0];
               const bestDate = [latestDate, newestCloudDate].filter(Boolean).sort().reverse()[0];
               if (bestDate && bestDate !== latestDate) {
                 await loadDate(bestDate);
