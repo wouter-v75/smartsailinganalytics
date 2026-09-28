@@ -443,8 +443,17 @@ function segmentsFor(c) {
   // Sail photos are anchors too, in their own group: two photos of the same sail
   // a few seconds apart should merge into one clip, but a photo must not stretch
   // a start or a rounding, nor they it.
-  const photos = c.hits.filter((w) => w.kind === 'photo').map(clip).filter(usable).sort(byTime)
-  const anchors = [...starts, ...marks, ...photos]
+  //
+  // A photo INSIDE a start or a rounding is dropped, for the same reason a tack
+  // inside one is. Its own group kept it from stretching the anchor but not from
+  // emitting a second clip of the same water alongside it — and a crew who marked
+  // a moment from the boat (--at) that turns out to be the top mark wants the
+  // rounding clip, not that clip twice.
+  const hard = [...starts, ...marks]
+  const photos = c.hits.filter((w) => w.kind === 'photo').map(clip).filter(usable)
+    .filter((x) => !hard.some((a) => x.from <= a.to && x.to >= a.from))
+    .sort(byTime)
+  const anchors = [...hard, ...photos]
 
   // A tack or gybe falling inside ANY anchor window is already filmed. Dropping it
   // beats the alternatives: stretching the anchor (the bug), or emitting a second
