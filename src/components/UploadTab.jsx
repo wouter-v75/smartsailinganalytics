@@ -23,7 +23,8 @@ import { sortForUpload } from '../lib/uploadOrder';
 import { uploadOriginalStorageFirst } from '../lib/video-rendition-sync';
 import { enrichVideo } from '../lib/videoEnrich';
 import { clipTimestampSettled, extractVideoCreationTime, probeVideo, resolveStartUtc } from '../lib/videoProbe';
-import { canWatchFolders, collectNewClips } from '../lib/watchFolder';
+import { canWatchFolders, collectNewClips, ensureFolderPermission } from '../lib/watchFolder';
+import { getPref, setPref, WATCH_FOLDER_PREF } from '../lib/localStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { SrcBadge } from './ssa/SrcBadge';
 import { DEFAULT_TZ, ROLES, TZ_OPTIONS } from './ssa/constants';
@@ -305,13 +306,37 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   const watchFnsRef = useRef({ addLog, handleVids });
   watchFnsRef.current = { addLog, handleVids };
 
+  // The folder we were pointed at last time, re-offered by name. Loaded on
+  // mount but never USED there: re-granting its permission has to happen inside
+  // a click, so the button does it.
+  const [savedDir, setSavedDir] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    getPref(WATCH_FOLDER_PREF).then((h) => { if (alive && h) setSavedDir(h); });
+    return () => { alive = false; };
+  }, []);
+
   const startWatching = useCallback(async () => {
     if (!canWatchFolders()) {
       addLog('✕ This browser cannot watch a folder — needs Chrome, Edge or Vivaldi.');
       return;
     }
     try {
-      const dir = await window.showDirectoryPicker({ id: 'ssa-encode-out', mode: 'read' });
+      // Last night's folder first. The encoder writes every day's clips under
+      // ~/clips/<date>, so the answer is nearly always the same one, and
+      // hunting for it in a file dialog was the last manual step of the night.
+      let dir = null;
+      if (savedDir && await ensureFolderPermission(savedDir)) dir = savedDir;
+      if (!dir) {
+        dir = await window.showDirectoryPicker({
+          id: 'ssa-encode-out',
+          mode: 'read',
+          // Open where we were, even when the grant has gone.
+          ...(savedDir ? { startIn: savedDir } : {}),
+        });
+        setSavedDir(dir);
+        setPref(WATCH_FOLDER_PREF, dir);
+      }
       watchDirRef.current = dir;
       watchSeenRef.current = new Set();
       watchImportedRef.current = new Set();
@@ -325,7 +350,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     } catch {
       // The user dismissed the picker. Not an error worth logging.
     }
-  }, [addLog]);
+  }, [addLog, savedDir]);
 
   const stopWatching = useCallback(() => {
     setWatchOn(false);
@@ -1107,7 +1132,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         upload as they arrive
       </label>
       <button onClick={watchOn ? stopWatching : startWatching} style={{background:watchOn?"#7F1D1D":"#0E7490",border:"none",borderRadius:5,color:"#fff",fontSize:10,fontWeight:700,padding:"5px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
-        {watchOn ? "Stop" : "Watch folder…"}
+        {watchOn ? "Stop" : savedDir ? `Watch ${savedDir.name}` : "Watch folder…"}
       </button>
     </div>
   );

@@ -24,7 +24,7 @@ import { venueToday } from "./today";
 import { objectUrlFor, releaseObjectUrl } from "./objectUrls";
 
 const DB_NAME = "ssa-db";
-const DB_VER  = 5;
+const DB_VER  = 6;
 
 // ── IndexedDB bootstrap ──────────────────────────────────────────────────────
 function openDb() {
@@ -49,6 +49,13 @@ function openDb() {
       }
       if (!db.objectStoreNames.contains("photos")) {
         db.createObjectStore("photos", { keyPath: "id" });
+      }
+      // Small, long-lived choices that are a property of THIS MACHINE rather
+      // than of a day or a team: which folder the encoder writes to, say. A
+      // FileSystemDirectoryHandle is structured-cloneable, so the handle itself
+      // lives here and survives a reload — localStorage could not hold one.
+      if (!db.objectStoreNames.contains("prefs")) {
+        db.createObjectStore("prefs", { keyPath: "key" });
       }
     };
     req.onsuccess = e => resolve(e.target.result);
@@ -900,3 +907,28 @@ export async function deleteSsaPhases(date) {
     return true;
   } catch { return false; }
 }
+
+// ── prefs: this machine's long-lived choices ─────────────────────────────────
+// The encode folder is the one that matters: the watcher asked for it through a
+// directory picker every single time, so "upload tonight's clips" began with
+// finding ~/clips/<date> in a file dialog. A directory HANDLE survives here,
+// which localStorage cannot hold, so the folder is chosen once and re-offered
+// by name afterwards.
+
+export async function getPref(key) {
+  try {
+    const db = await openDb();
+    const row = await idbGet(db, "prefs", key);
+    return row ? row.value : null;
+  } catch { return null; }
+}
+
+export async function setPref(key, value) {
+  try {
+    const db = await openDb();
+    await idbPut(db, "prefs", { key, value });
+    return true;
+  } catch { return false; }
+}
+
+export const WATCH_FOLDER_PREF = "watchFolder";

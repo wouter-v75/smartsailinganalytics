@@ -100,3 +100,38 @@ export function canWatchFolders(): boolean {
     showDirectoryPicker?: unknown
   }).showDirectoryPicker === 'function'
 }
+
+// ── the folder we were pointed at last time ──────────────────────────────────
+/**
+ * Still allowed to read this folder?
+ *
+ * A directory handle stored in IndexedDB outlives the permission that came with
+ * it: Chrome drops the grant when the tab closes, so a remembered folder is a
+ * handle that needs asking about again. Asking is one click, and it must happen
+ * inside a user gesture — which is why this is called from the Watch button and
+ * not on mount.
+ *
+ * Returns false rather than throwing on a handle whose folder has been deleted
+ * or whose drive has been unmounted, because "the card is not plugged in" is an
+ * ordinary Tuesday and should re-open the picker, not break the tab.
+ */
+export async function ensureFolderPermission(
+  handle: { queryPermission?: (d: { mode: string }) => Promise<string>;
+            requestPermission?: (d: { mode: string }) => Promise<string> } | null
+): Promise<boolean> {
+  if (!handle) return false
+  const want = { mode: 'read' }
+  try {
+    if (typeof handle.queryPermission === 'function') {
+      if (await handle.queryPermission(want) === 'granted') return true
+    }
+    if (typeof handle.requestPermission === 'function') {
+      return await handle.requestPermission(want) === 'granted'
+    }
+    // No permission API at all (older implementations): the handle works or it
+    // does not, and the caller finds out when it reads.
+    return true
+  } catch {
+    return false
+  }
+}

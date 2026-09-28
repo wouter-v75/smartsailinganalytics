@@ -31,6 +31,7 @@ Supabase SQL editor. Asking where a path is wastes a round trip — it is here.
 | Put a sailmaker's batten sheet on a mainsail's card | `npx vite-node scripts/batten-card-import.ts --sheet northstar76-im2-2026 --write` — the sheet is transcribed IN the script, so v6 is a diff |
 | Trim + compress a day's drone/RIB footage into clips | `npm run clips:day -- YYYY-MM-DD` then `--write`. Finds the card, the event file, the venue offset, the Grab video presses and the finish. Drop to `scripts/select-race-clips.mjs` only to override something. |
 | Add the race's tacks and gybes afterwards | the same `clips:day` line plus `--turns` — identical windows, so finished clips are skipped and only the manoeuvres encode |
+| Upload the clips | Upload tab → **Watch <folder>**. The folder is remembered, so after the first time it is one click and no file dialog; clips go up as the encoder finishes each one, overlapping the encode. Point it at `~/clips/<YYYYMMDD>`. |
 | Watch an encode | `node scripts/clip-progress.mjs ~/clips/<YYYYMMDD> --watch` — only after `--write`; it needs the `manifest.json` the encode writes. |
 | Read a sail's DRAFT % from the same set (run the triangulation first) | `npx vite-node scripts/sailtrim-camber.ts --boat "Northstar 76" --around 2026-09-27T11:43 --sail main --station stripe50 --write` — `--write` puts the answer on every frame in the set |
 

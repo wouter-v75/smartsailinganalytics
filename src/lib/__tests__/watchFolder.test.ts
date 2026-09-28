@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isCompleteClip, newClipNames, collectNewClips } from '../watchFolder'
+import { isCompleteClip, newClipNames, collectNewClips, ensureFolderPermission } from '../watchFolder'
 
 describe('isCompleteClip — what may be picked up mid-encode', () => {
   it('takes a finished segment', () => {
@@ -122,5 +122,42 @@ describe('the handle must not be detached from its method', () => {
       (name) => errs.push(name))
     expect(out).toEqual([])
     expect(errs).toEqual(['x.mp4'])
+  })
+})
+
+describe('ensureFolderPermission', () => {
+  it('does not ask again when the grant is still live', async () => {
+    let asked = 0
+    const ok = await ensureFolderPermission({
+      queryPermission: async () => 'granted',
+      requestPermission: async () => { asked++; return 'granted' },
+    })
+    expect(ok).toBe(true)
+    expect(asked).toBe(0)
+  })
+
+  it('asks when the grant has lapsed, which is every new tab', async () => {
+    const ok = await ensureFolderPermission({
+      queryPermission: async () => 'prompt',
+      requestPermission: async () => 'granted',
+    })
+    expect(ok).toBe(true)
+  })
+
+  it('reports a refusal rather than watching a folder it cannot read', async () => {
+    expect(await ensureFolderPermission({
+      queryPermission: async () => 'prompt',
+      requestPermission: async () => 'denied',
+    })).toBe(false)
+  })
+
+  it('treats an unplugged drive as "pick again", not as a crash', async () => {
+    expect(await ensureFolderPermission({
+      queryPermission: async () => { throw new Error('NotFoundError') },
+    })).toBe(false)
+  })
+
+  it('says no to nothing at all', async () => {
+    expect(await ensureFolderPermission(null)).toBe(false)
   })
 })
