@@ -24,7 +24,13 @@ import { venueToday } from "./today";
 import { objectUrlFor, releaseObjectUrl } from "./objectUrls";
 
 const DB_NAME = "ssa-db";
-const DB_VER  = 5;
+// 6, and it can never go back down. A browser that has already opened ssa-db at
+// 6 will REFUSE a request for 5 with a VersionError — indexedDB versions only
+// move forward — so reverting a bump breaks exactly the people who ran the
+// version being reverted. The `prefs` store below is vestigial: nothing reads
+// it (preferences live in their own database, see prefsStore.js), but it is
+// created so a fresh browser's v6 matches the v6 already out there.
+const DB_VER  = 6;
 
 // ── IndexedDB bootstrap ──────────────────────────────────────────────────────
 function openDb() {
@@ -50,8 +56,27 @@ function openDb() {
       if (!db.objectStoreNames.contains("photos")) {
         db.createObjectStore("photos", { keyPath: "id" });
       }
+      // Vestigial — created at v6 and never read. Preferences live in
+      // ssa-prefs; this exists only so a browser upgrading to 6 now has the
+      // same shape as one that upgraded to 6 last night.
+      if (!db.objectStoreNames.contains("prefs")) {
+        db.createObjectStore("prefs", { keyPath: "key" });
+      }
     };
-    req.onsuccess = e => resolve(e.target.result);
+    // Half a dozen files open this database versionless and hold the connection
+    // open. Without this, the next upgrade waits for them for ever: onblocked
+    // fires, nothing rejects, and every read behind openDb() hangs — which on
+    // screen is an app that loads and then does nothing at all.
+    req.onblocked = () => reject(new Error(
+      'ssa-db upgrade blocked by another tab or view — close other SSA tabs and reload'
+    ));
+    req.onsuccess = e => {
+      const db = e.target.result;
+      // And get out of the way of the NEXT one rather than being the connection
+      // that blocks it.
+      db.onversionchange = () => { try { db.close(); } catch { /* already gone */ } };
+      resolve(db);
+    };
     req.onerror   = e => reject(e.target.error);
   });
 }
