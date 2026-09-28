@@ -29,7 +29,8 @@ Supabase SQL editor. Asking where a path is wastes a round trip — it is here.
 | Say which boats are IN a photo, so frames are searchable by rival | `npx vite-node scripts/subject-boats-backfill.ts --write` (fills `photos.subject_boat_ids` from sail-geometry measurements) |
 | Measure a boat's target DEPTHS from several stern shots (kills the ±2500 mm guess) | `npx vite-node scripts/sailtrim-triangulate.ts --boat "Northstar 76" --around 2026-09-27T11:43 --write` — needs 3+ frames seconds apart spanning 8°+, each with a measured ψ |
 | Put a sailmaker's batten sheet on a mainsail's card | `npx vite-node scripts/batten-card-import.ts --sheet northstar76-im2-2026 --write` — the sheet is transcribed IN the script, so v6 is a diff |
-| Trim + compress a day's drone/RIB footage into clips | `npm run clips:day -- YYYY-MM-DD` — finds the card, the event file, the venue offset, the Grab video times and the finish tag itself. `--write` to encode, `--turns` to add the race manoeuvres. Falls back to `scripts/select-race-clips.mjs` directly when something needs overriding. |
+| Trim + compress a day's drone/RIB footage into clips | `npm run clips:day -- YYYY-MM-DD` then `--write`. Finds the card, the event file, the venue offset, the Grab video presses and the finish. Drop to `scripts/select-race-clips.mjs` only to override something. |
+| Add the race's tacks and gybes afterwards | the same `clips:day` line plus `--turns` — identical windows, so finished clips are skipped and only the manoeuvres encode |
 | Watch an encode | `node scripts/clip-progress.mjs ~/clips/<YYYYMMDD> --watch` — only after `--write`; it needs the `manifest.json` the encode writes. |
 | Read a sail's DRAFT % from the same set (run the triangulation first) | `npx vite-node scripts/sailtrim-camber.ts --boat "Northstar 76" --around 2026-09-27T11:43 --sail main --station stripe50 --write` — `--write` puts the answer on every frame in the set |
 

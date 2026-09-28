@@ -27,6 +27,10 @@ import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 import { spawnSync } from 'child_process'
 import { createClient } from '@supabase/supabase-js'
+// Plain JS, shared with the app, so the guns and roundings are read exactly
+// as the tagger reads them.
+import { parseXmlEvents } from '../src/lib/xmlEventParse.js'
+import { inferFinish } from '../src/lib/tagging/raceWindow'
 
 const USAGE = `Cut a day's footage into the clips worth watching.
 
@@ -103,9 +107,27 @@ function findEvents(): string | null {
   return hits.sort().reverse()[0] || null
 }
 
+// ── the windows ──────────────────────────────────────────────────────────────
+// Set HERE, not left to the cutter's defaults, for one reason: the output
+// filename starts with the segment's start time, so a lead that changes between
+// two runs renames every clip and the second run encodes the whole day again
+// beside the first. Owning them is what makes "run it again with the tacks" a
+// seven-clip job instead of a twenty-clip one.
+//
+// 30/60 on a rounding and 30/30 on a marked moment are the crew's numbers, not
+// the cutter's 60/90 and 45/75 — a rounding wants the exit more than the
+// approach, and somebody presses Grab video just after they see the thing.
+const WINDOWS = [
+  '--top-lead', '30', '--top-lag', '60',
+  '--gate-lead', '60', '--gate-lag', '60',
+  '--photo-lead', '30', '--photo-lag', '30',
+]
+
 // ── the moments SSA knows about and the event file does not ──────────────────
-/** Grab video presses, as local HH:MM:SS. t0 sits leadSec before the press, so
- *  the press itself is what goes to --at. */
+/** Grab video presses, as local HH:MM:SS. Two shifts, both deliberate: t0 sits
+ *  leadSec before the press, so the press itself is what goes to --at; and the
+ *  database stores a true UTC instant, so it has to be brought into the event
+ *  file's local frame, which is the one the cutter works in. */
 async function grabVideoTimes(offsetMin: number): Promise<string[]> {
   const { data, error } = await sb
     .from('ssa_tag_events')
@@ -117,17 +139,31 @@ async function grabVideoTimes(offsetMin: number): Promise<string[]> {
   return (data || []).map((r) => clock(Date.parse(r.t0 as string) + LEAD_MS + offsetMin * 60_000))
 }
 
-/** When the race ended. Expedition does not record it; SSA's finish tag does. */
-async function finishTime(offsetMin: number): Promise<string | null> {
+/** When the race ended. The inference lives in lib/tagging/raceWindow, under
+ *  test, because a wrong finish silently throws away the end of the race. */
+async function finishTime(offsetMin: number, ev: any): Promise<{ time: string | null; how: string }> {
   const given = val('--finish')
-  if (given) return given
+  if (given) return { time: given, how: 'given on the command line' }
+
   const { data } = await sb
     .from('ssa_tag_events')
     .select('t0')
     .eq('session_date', date).eq('slug', 'race-finish').eq('rejected', false)
     .order('t0', { ascending: false }).limit(1)
-  const row = (data || [])[0]
-  return row ? clock(Date.parse(row.t0 as string) + offsetMin * 60_000) : null
+  const tagged = (data || [])[0]
+
+  // TWO CLOCKS, and they are not the same one. parseXmlEvents returns the
+  // event file's LOCAL wall clock labelled as UTC — which is what the whole
+  // cutter works in, so that no offset has to be supplied and none can be
+  // applied twice. The database returns a true UTC instant. So the tag is
+  // brought INTO the file's frame on the way in, and nothing is shifted on the
+  // way out. Getting this wrong put the finish at 17:17 and threw away the
+  // last two hours of the race.
+  const r = inferFinish(ev.raceGuns || [], ev.markRoundings || [], {
+    taggedUtc: tagged ? Date.parse(tagged.t0 as string) + offsetMin * 60_000 : null,
+    dayStopUtc: ev.dayStopUtc ?? null,
+  })
+  return { time: r.utc == null ? null : clock(r.utc), how: r.how }
 }
 
 // ── go ───────────────────────────────────────────────────────────────────────
@@ -142,30 +178,44 @@ const main = async () => {
   const xml = readFileSync(events!, 'utf8')
   const offsetMin = Number(/<event_file hours="(-?\d+(?:\.\d+)?)"/.exec(xml)?.[1] ?? 0) * 60
 
+  const ev = parseXmlEvents(xml)
   const at = await grabVideoTimes(offsetMin)
-  const finish = await finishTime(offsetMin)
+  const finish = await finishTime(offsetMin, ev)
   const out = val('--out') || join(homedir(), 'clips', compact)
 
-  console.log(`\n${date}  (venue UTC${offsetMin >= 0 ? '+' : ''}${offsetMin / 60})`)
+  console.log(`\n${date}  ${ev.meta?.boat || ''} ${ev.meta?.location || ''} (venue UTC${offsetMin >= 0 ? '+' : ''}${offsetMin / 60})`)
   console.log(`  events   ${events}`)
   console.log(`  footage  ${card}`)
   console.log(`  clips    ${out}`)
-  console.log(`  marked   ${at.length ? at.join(', ') : '(no Grab video tags)'}`)
-  console.log(`  finish   ${finish || '(no finish tag — the race runs to the end of the day)'}`)
+  console.log(`  marked   ${at.length ? at.join(', ') : '(no Grab video tags on this day)'}`)
+  console.log(`  finish   ${finish.time || '—'}  · ${finish.how}`)
+  if (!has('--turns')) {
+    const gun = Math.min(...(ev.raceGuns || []).map((g: any) => g.utc))
+    const end = finish.time
+      ? Date.parse(`${date}T${finish.time}Z`) - offsetMin * 60_000
+      : (ev.dayStopUtc ?? Infinity)
+    const n = (ev.tackJibes || []).filter((t: any) => t.utc >= gun && t.utc < end).length
+    if (n) console.log(`  (${n} tacks/gybes in the race, left out — add --turns for those too)`)
+  }
 
-  const argv = ['-e', events!, card!, '--trim', '--tag', compact, '-o', out]
+  const argv = ['-e', events!, card!, '--trim', '--tag', compact, '-o', out, ...WINDOWS]
   if (!has('--all')) argv.push('--racing')
-  if (finish) argv.push('--finish', finish)
-  if (at.length) argv.push('--at', at.join(','), '--photo-lead', '45', '--photo-lag', '75')
+  if (finish.time) argv.push('--finish', finish.time)
+  if (at.length) argv.push('--at', at.join(','))
   if (!has('--turns')) argv.push('--no-turns')
   if (!write) argv.push('-n')
 
   console.log('')
   const cutter = fileURLToPath(new URL('./select-race-clips.mjs', import.meta.url))
   const r = spawnSync('node', [cutter, ...argv], { stdio: 'inherit' })
-  if (!write && r.status === 0) {
-    console.log('\nThat was a dry run. Add --write to encode.')
-    console.log(`Progress, in another terminal:  node scripts/clip-progress.mjs ${out} --watch`)
+  if (r.status === 0) {
+    const progress = fileURLToPath(new URL('./clip-progress.mjs', import.meta.url))
+    if (!write) {
+      console.log('\nThat was a dry run. Same command with --write to encode.')
+    } else {
+      console.log(`\nUpload from SSA → Videos. Each clip carries its own start time in the name.`)
+    }
+    console.log(`Progress, in another terminal:\n  node ${progress} ${out} --watch`)
   }
   process.exit(r.status ?? 1)
 }
