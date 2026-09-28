@@ -258,6 +258,8 @@ const SAIL_CTX: SailContext = {
   weights: Object.fromEntries(INVENTORY.map((s) => [s.id, SAIL_KG[s.id]])),
   dayList: ON_BOARD,
   battenCards: [{ sailId: 'i1', card: BATTEN_CARD, updatedAt: null }],
+  carriedBattens: [],
+  battensStatedOn: null,
   mainsailIds: ['i1'],
   loading: false,
   reload: () => {},

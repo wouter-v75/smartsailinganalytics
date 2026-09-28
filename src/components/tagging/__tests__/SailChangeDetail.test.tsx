@@ -101,3 +101,58 @@ describe('SailChangeDetail · On board', () => {
     expect(screen.getByText(/showing the whole inventory/i)).toBeTruthy()
   })
 })
+
+describe('SailChangeDetail · copy the battens from the last day', () => {
+  // Every day starts blank, so that a setting is never asserted on a day nobody
+  // checked it. Most days the battens have not been touched since the last one,
+  // and re-entering eight of them to say so is how a crew stops recording them.
+  const CARD = { count: 8, rows: Array.from({ length: 8 }, () => ({})) }
+  const YESTERDAY = [
+    { no: 1, tension: 'soft' as const, turns: 0 },
+    { no: 2, tension: 'medium' as const, turns: 2 },
+  ]
+  const battenOpts = {
+    startPane: 'battens' as const,
+    battenCard: CARD,
+    carriedBattens: YESTERDAY,
+    battensStatedOn: '2026-09-27',
+  }
+
+  it('offers the day it is copying from, not just "yesterday"', () => {
+    // A gap of a week is normal between sailing days, so "yesterday" would be a
+    // lie on most of them.
+    show(EMPTY_SAIL_STATE, battenOpts)
+    expect(screen.getByRole('button', { name: /Copy the battens from 27 Sep/i })).toBeTruthy()
+  })
+
+  it('copies them in on one press', () => {
+    const { onChange } = show(EMPTY_SAIL_STATE, battenOpts)
+    fireEvent.click(screen.getByRole('button', { name: /Copy the battens/i }))
+    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onChange.mock.calls[0][0].battens).toEqual(YESTERDAY)
+  })
+
+  it('does not offer once this day says something of its own', () => {
+    // It would otherwise sit there inviting a press that silently discards what
+    // the crew just entered.
+    show({ ...EMPTY_SAIL_STATE, battens: [{ no: 1, tension: 'hard', turns: 1 }] }, battenOpts)
+    expect(screen.queryByRole('button', { name: /Copy the battens/i })).toBeNull()
+  })
+
+  it('does not offer when there is nothing to copy', () => {
+    show(EMPTY_SAIL_STATE, { ...battenOpts, carriedBattens: [], battensStatedOn: null })
+    expect(screen.queryByRole('button', { name: /Copy the battens/i })).toBeNull()
+  })
+
+  it('drops a batten the current main does not have', () => {
+    // The card shrank from ten battens to eight; copying in a ninth would leave
+    // a row nobody can see or clear.
+    const { onChange } = show(EMPTY_SAIL_STATE, {
+      ...battenOpts,
+      battenCard: { count: 2, rows: [{}, {}] },
+      carriedBattens: [...YESTERDAY, { no: 9, tension: 'hard' as const, turns: 0 }],
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Copy the battens/i }))
+    expect(onChange.mock.calls[0][0].battens.map((b: { no: number }) => b.no)).toEqual([1, 2])
+  })
+})

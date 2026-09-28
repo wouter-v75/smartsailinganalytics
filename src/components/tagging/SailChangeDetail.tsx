@@ -1,11 +1,13 @@
 'use client'
 import * as React from 'react'
-import { ExternalLink, Check } from 'lucide-react'
+import { ExternalLink, Check, Copy } from 'lucide-react'
 import { cn } from '@/lib/ui'
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 import {
   toggleUp, isUp, toggleOnBoard, isOnBoard, weightAboard,
-  setBatten, withBattenCount, describeState, sameSail, sameSailAcrossSources, sailKey,
-  type SailState, type SailRef,
+  setBatten, withBattenCount, statesBattens, describeState, sameSail, sameSailAcrossSources, sailKey,
+  type SailState, type SailRef, type BattenRecord,
 } from '@/lib/tagging/sailState'
 import {
   TENSIONS, TENSION_SHORT, cardSetting, formatSetting, bandForTws,
@@ -50,6 +52,11 @@ export interface SailChangeDetailProps {
   battenCard?: BattenCard | null
   /** That mainsail's name, so the tab can say whose card it is showing. */
   battenCardSail?: string | null
+  /** What the battens were left at on the last day anybody stated them — for the
+   *  "copy from <date>" button. Days start blank on purpose, so this is only
+   *  ever applied by a deliberate press. */
+  carriedBattens?: BattenRecord[]
+  battensStatedOn?: string | null
   /** True wind speed at the tag's time, for which band to recommend. */
   twsKn?: number | null
   tzOffsetMin?: number
@@ -102,7 +109,7 @@ function alignTo(state: SailState, base: SailRef[]): SailState {
 
 export default function SailChangeDetail({
   value, onChange, inventory, dayList, weightOf, previous, battenCard, battenCardSail,
-  twsKn, tzOffsetMin = 0, onEditSailList, startPane,
+  carriedBattens, battensStatedOn, twsKn, tzOffsetMin = 0, onEditSailList, startPane,
 }: SailChangeDetailProps) {
   // Opens on UP, because that is what changes most. The day-start prompt opens
   // it on ON BOARD instead: it is asking a different question, and landing on
@@ -117,6 +124,21 @@ export default function SailChangeDetail({
   const state = React.useMemo(() => alignTo(value, base), [value, base])
 
   const battenCount = battenCard?.count ?? 3
+  // Trimmed to this main's batten count: a card that shrank from ten battens to
+  // eight must not copy in a ninth nobody can see or clear.
+  const carriedBattenRows = React.useMemo(
+    () => (carriedBattens || []).filter((b) => b.no >= 1 && b.no <= battenCount),
+    [carriedBattens, battenCount]
+  )
+  // "27 Sep", spelled the same for everybody. toLocaleDateString would render
+  // this as "Sep 27" for a crew member whose phone is set to US English, and a
+  // shared boat tool that shows two people different strings for the same day is
+  // how a date gets read back wrong in a debrief.
+  const carriedLabel = React.useMemo(() => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(battensStatedOn || '')
+    if (!m) return battensStatedOn || 'the last day'
+    return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}`
+  }, [battensStatedOn])
   // Make sure there is a row per batten to edit, without writing anything into
   // the tag until the crew actually sets something.
   const battens = React.useMemo(
@@ -301,6 +323,20 @@ export default function SailChangeDetail({
                 being suggested, or a right-looking number is worse than none. */}
             {battenCard && battenCardSail && <> · <span className="font-semibold text-secondary">{battenCardSail}</span></>}
           </p>
+          {/* Every day starts blank, so that a setting is never asserted on a
+              day nobody checked it — and most days the battens have not been
+              touched since the last one. One press rather than eight, and it
+              only offers while this day still says nothing, so it cannot
+              quietly overwrite what the crew has already entered. */}
+          {carriedBattenRows.length > 0 && !statesBattens(state) && (
+            <button
+              onClick={() => onChange({ ...withBattenCount(state, battenCount), battens: carriedBattenRows })}
+              className="mb-3 flex min-h-[44px] w-full items-center justify-center gap-2 rounded-lg border border-[color:var(--border-strong)] bg-surface-2 text-xs font-semibold"
+            >
+              <Copy size={14} aria-hidden />
+              Copy the battens from {carriedLabel}
+            </button>
+          )}
           <div className="flex flex-col gap-2">
             {battens.map((b) => {
               const target = battenCard ? cardSetting(battenCard, b.no, twsKn) : null

@@ -6,7 +6,7 @@ import type { SheetDetail } from './TagSheet'
 import {
   SAIL_CHANGE_SLUG, sailStateAt, lastChangeBefore, describeState, describeChange,
   stateIsEmpty, stateOf, inferDeck, sameDeck, EMPTY_SAIL_STATE,
-  type SailState, type SailRef,
+  type SailState, type SailRef, type BattenRecord,
 } from '@/lib/tagging/sailState'
 import { cardForSail, cardIsEmpty, type BattenCard, type SailBattenCard } from '@/lib/battens'
 import type { LinkableSail } from '@/lib/tagging/sailLink'
@@ -29,6 +29,15 @@ export interface SailContext {
   dayList: SailRef[]
   /** Every batten card the boat has, one per mainsail. */
   battenCards: SailBattenCard[]
+  /**
+   * What the battens were left at on the last day anybody stated them, and when.
+   *
+   * NOT applied automatically. Every day starts blank so that a setting is never
+   * asserted on a day nobody checked it; this is what the batten tab's "copy
+   * from <date>" button copies from, on one deliberate press.
+   */
+  carriedBattens: BattenRecord[]
+  battensStatedOn: string | null
   /** Which inventory ids are mainsails, so the batten tab knows whose card to
    *  show when the crew changes what is up. */
   mainsailIds: string[]
@@ -48,6 +57,8 @@ export function useSailContext(
   const [dayList, setDayList] = React.useState<SailRef[]>([])
   const [weights, setWeights] = React.useState<Record<string, number>>({})
   const [battenCards, setBattenCards] = React.useState<SailBattenCard[]>([])
+  const [carriedBattens, setCarriedBattens] = React.useState<BattenRecord[]>([])
+  const [battensStatedOn, setBattensStatedOn] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
   // Bumped to re-read the boat's inventory without changing boat or day.
   const [gen, setGen] = React.useState(0)
@@ -61,7 +72,7 @@ export function useSailContext(
       fetch(`/api/teams/${teamId}/sails?boat_id=${boatId}`)
         .then((r) => (r.ok ? r.json() : { sails: [] }))
         .catch(() => ({ sails: [] })),
-      fetch(`/api/teams/${teamId}/boats/${boatId}/battens`)
+      fetch(`/api/teams/${teamId}/boats/${boatId}/battens${date ? `?date=${date}` : ''}`)
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
     ]).then(([sails, battens]) => {
@@ -90,9 +101,12 @@ export function useSailContext(
       }
       setWeights(w)
       setBattenCards((battens?.cards || []) as SailBattenCard[])
+      const carried = (battens?.carried || null) as { battens?: unknown; statedOn?: string } | null
+      setCarriedBattens(Array.isArray(carried?.battens) ? (carried!.battens as BattenRecord[]) : [])
+      setBattensStatedOn(carried?.statedOn ?? null)
     })
     return () => { live = false }
-  }, [teamId, boatId, gen])
+  }, [teamId, boatId, date, gen])
 
   React.useEffect(() => {
     if (!teamId || !boatId || !date) { setDayList([]); return }
@@ -116,7 +130,7 @@ export function useSailContext(
   }, [teamId, boatId, date])
 
   return {
-    inventory, mainsailIds, weights, dayList, battenCards, loading,
+    inventory, mainsailIds, weights, dayList, battenCards, carriedBattens, battensStatedOn, loading,
     reload: React.useCallback(() => setGen((n) => n + 1), []),
   }
 }
@@ -236,6 +250,8 @@ export function sailDetail(args: {
           previous={prev ? { state: prev.state, utc: prev.tag.t0 } : null}
           battenCard={battenCardFor(ctx, value).card}
           battenCardSail={battenCardFor(ctx, value).sailName}
+          carriedBattens={ctx.carriedBattens}
+          battensStatedOn={ctx.battensStatedOn}
           twsKn={twsAt(logRows, at)}
           tzOffsetMin={tzOffsetMin}
           onEditSailList={onEditSailList}

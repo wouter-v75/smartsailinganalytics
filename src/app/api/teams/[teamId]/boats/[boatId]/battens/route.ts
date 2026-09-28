@@ -22,7 +22,7 @@ import { getServerSupabase } from '@/lib/supabase/server'
 import { normaliseBattenCard, type SailBattenCard } from '@/lib/battens'
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { teamId: string; boatId: string } }
 ) {
   const supabase = getServerSupabase()
@@ -43,7 +43,40 @@ export async function GET(
     updatedAt: (r.updated_at as string | null) ?? null,
   }))
 
-  return NextResponse.json({ cards })
+  // ── what the battens were left at, for "copy from yesterday" ─────────────
+  // With ?date=, also return the last batten setting anybody stated BEFORE that
+  // day. It is NOT applied automatically: every day starts blank on purpose, so
+  // that a setting is never asserted on a day nobody checked it. This is what
+  // the button in the batten tab copies FROM, and it carries the date it was
+  // stated on so the button can say which day it is offering.
+  const date = new URL(req.url).searchParams.get('date')
+  if (!date) return NextResponse.json({ cards })
+
+  const { data: prior } = await supabase
+    .from('ssa_tag_events')
+    .select('session_date, t0, meta')
+    .eq('team_id', params.teamId)
+    .eq('boat_id', params.boatId)
+    .eq('slug', 'sail-change')
+    .lt('session_date', date)
+    .order('session_date', { ascending: false })
+    .order('t0', { ascending: false })
+    .limit(200)
+
+  // The most recent one that actually SAYS something. A sail change that never
+  // opened the batten tab carries a blank grid, and a blank grid is not a
+  // statement that the battens were stripped.
+  for (const row of prior || []) {
+    const list = (row.meta as { sail?: { battens?: unknown } } | null)?.sail?.battens
+    if (!Array.isArray(list)) continue
+    const states = list.some((b) =>
+      !!b && typeof b === 'object'
+      && ((b as { tension?: unknown }).tension != null || !!(b as { turns?: unknown }).turns))
+    if (!states) continue
+    return NextResponse.json({ cards, carried: { battens: list, statedOn: row.session_date as string } })
+  }
+
+  return NextResponse.json({ cards, carried: null })
 }
 
 export async function PUT(
