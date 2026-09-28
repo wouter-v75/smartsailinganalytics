@@ -691,7 +691,7 @@ describe('a day that has one deliberate statement', () => {
   })
 })
 
-describe('battens carry forward, like the deck', () => {
+describe('battens carry forward WITHIN a day, and start blank each morning', () => {
   // A batten setting persists until somebody winds it. Nobody re-states eight
   // battens on every kite change, so without this the second tag of the day
   // reported the main as having no battens set — and the tab opened blank,
@@ -730,5 +730,33 @@ describe('battens carry forward, like the deck', () => {
 
   it('carries nothing when nothing was ever stated', () => {
     expect(sailStateAt([tag(1_000, { up: [{ name: 'Main' }], battens: [] })], 1_500).battens).toEqual([])
+  })
+})
+
+describe('every day starts with blank battens', () => {
+  // Deliberate, not incidental. The tagger fetches one session_date at a time,
+  // so nothing crosses the boundary — and it must stay that way: a setting that
+  // appeared pre-filled every morning would be asserted on days nobody checked
+  // it, and an unverified setting that looks recorded is worse than a blank one.
+  const tag = (t0: number, sail: unknown) =>
+    ({ id: `t${t0}`, slug: 'sail-change', t0, meta: { sail } }) as never
+
+  it('shows nothing when the day has no batten statement of its own', () => {
+    // Yesterday's tags are simply not in this list, because they were never
+    // fetched. The state the composer opens on is blank.
+    const today = [tag(1_000, { up: [{ name: 'Main' }], onBoard: [{ name: 'Main' }], battens: [] })]
+    expect(sailStateAt(today, 1_500).battens).toEqual([])
+  })
+
+  it('shows nothing on a day with no tags at all', () => {
+    expect(sailStateAt([], 1_500).battens).toEqual([])
+  })
+
+  it('and once the day states them, the rest of the day inherits', () => {
+    const today = [
+      tag(1_000, { up: [{ name: 'Main' }], battens: [{ no: 1, tension: 'soft', turns: 2 }] }),
+      tag(2_000, { up: [{ name: 'Main' }, { name: 'A2' }], battens: [] }),
+    ]
+    expect(sailStateAt(today, 2_500).battens).toEqual([{ no: 1, tension: 'soft', turns: 2 }])
   })
 })

@@ -313,15 +313,21 @@ function foldTo(
         if (!aboard.some((x) => sameSailAcrossSources(x, s))) aboard = [...aboard, ref(s)]
       }
     }
-    // CARRY THE BATTENS, for exactly the reason the deck is carried: a batten
-    // setting persists until somebody winds it. Nobody re-states eight battens
-    // on every kite change, and without this the second tag of the day reported
-    // the main as having no battens set — so the tab opened blank and the crew
-    // had to re-enter yesterday's settings to say nothing had changed.
+    // CARRY THE BATTENS WITHIN THE DAY, for the reason the deck is carried just
+    // above: nobody re-states eight battens on every kite change, and without
+    // this the second tag of the day reported the main as having none set.
     //
     // A change only OVERWRITES them when it says something: a tag whose batten
     // rows are all blank is the composer's empty grid, not a statement that the
     // battens were stripped.
+    //
+    // WITHIN THE DAY is the whole of it. Every day starts blank — nothing is
+    // carried in from yesterday, by Wouter's instruction, and it falls out for
+    // free because the tagger fetches tags one session_date at a time. That is
+    // deliberate rather than incidental: a batten setting that showed up
+    // pre-filled every morning would be asserted on days nobody checked it, and
+    // an unverified setting that looks recorded is worse than a blank one. The
+    // crew states them once a day, and the rest of that day inherits.
     if (statesBattens(c.state)) battens = c.state.battens
     state = { ...c.state, onBoard: aboard, battens }
     change = { ...c, state }
