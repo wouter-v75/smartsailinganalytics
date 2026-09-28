@@ -87,6 +87,7 @@ const opt = {
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
+  racing: false, finish: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -104,6 +105,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--photo-lead') opt.photoLead = Number(next())
   else if (a === '--photo-lag') opt.photoLag = Number(next())
   else if (a === '--only-at') opt.onlyAt = true
+  else if (a === '--racing') opt.racing = true
+  else if (a === '--finish') opt.finish.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--at') opt.at.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--no-photos') opt.noPhotos = true
   else if (a === '--no-turns') opt.noTurns = true
@@ -163,6 +166,13 @@ function usage() {
                       For moments the navigator did not mark in the event file.
       --only-at       cut ONLY the --at moments — ignore the guns, roundings,
                       manoeuvres and sail photos in the event file.
+      --racing        keep only what happened between a start gun and its
+                      finish. A training day's tacks are not a race.
+      --finish HH:MM:SS  when the race ended, in LOCAL time. Repeatable, one per
+                      gun, or comma-separated. Expedition does not record a
+                      finish, so SSA's finish tag is where this comes from.
+                      Without it --racing runs each race to the next gun, or to
+                      the end of the day.
       --archive       slower, smaller compression
   -n, --dry-run       report the selection, compress nothing`)
 }
@@ -364,7 +374,7 @@ const KINDS = {
   gybe:    { lead: () => opt.turnLead,  lag: () => opt.turnLag,  tag: 'gybe',       name: 'gybe' },
   photo:   { lead: () => opt.photoLead, lag: () => opt.photoLag, tag: 'photo',      name: 'sail photo' },
 }
-const windows = []
+let windows = []
 const addWindow = (utc, kind, label, valid = true) => {
   if (!Number.isFinite(utc)) return
   // isvalid="false" means Expedition rejected the moment for PERFORMANCE stats
@@ -372,7 +382,10 @@ const addWindow = (utc, kind, label, valid = true) => {
   // footage worth having — so keep it by default and just mark it with a "?".
   if (!valid && opt.validOnly) return
   const k = KINDS[kind]
-  windows.push({ from: utc - k.lead() * 1000, to: utc + k.lag() * 1000, kind, label: valid ? label : `${label}?` })
+  // `at` is the moment itself, kept apart from the padded window: --racing asks
+  // whether the MANOEUVRE happened in the race, not whether its run-in did. A
+  // start's lead reaches 90 s back over the line and must not disqualify it.
+  windows.push({ at: utc, from: utc - k.lead() * 1000, to: utc + k.lag() * 1000, kind, label: valid ? label : `${label}?` })
 }
 // --only-at: the caller has named the moments they want, so nothing from the
 // event file competes with them.
@@ -405,6 +418,53 @@ if (opt.at.length) {
     addWindow(utc, 'photo', `Photo ${t}`)
   }
 }
+// --racing: keep only what happened inside a race.
+//
+// A day like 28 September is four hours of training and then one race, and its
+// 98 tacks are mostly drill. The crew asked for the race ones, so the rest are
+// not "footage to get to later" — they are noise that would bury the race clips
+// in the upload.
+//
+// Expedition writes no finish, so the end of a race comes from SSA's finish tag,
+// passed in with --finish. Without one a race runs to the next gun, or to the
+// end of the day — which is right for the last race of a day and wrong for a day
+// that kept sailing afterwards, so the report says which it used.
+if (opt.racing) {
+  const clock = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(11, 19) : 'end of day')
+  const races = []
+  const guns = [...ev.raceGuns].sort((a, b) => a.utc - b.utc)
+  const finishes = opt.finish.map((t) => {
+    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t)
+    if (!m) die(`--finish: "${t}" is not HH:MM or HH:MM:SS`)
+    const d0 = new Date(ev.dayStartUtc ?? Date.now())
+    return Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate(), +m[1], +m[2], +(m[3] || 0))
+  }).sort((a, b) => a - b)
+
+  if (!guns.length) die('--racing needs a start gun in the event file')
+  for (let i = 0; i < guns.length; i++) {
+    const from = guns[i].utc
+    const nextGun = guns[i + 1]?.utc ?? Infinity
+    // The first finish after this gun that is not already past the next one.
+    const fin = finishes.find((f) => f > from && f < nextGun)
+    const to = fin ?? Math.min(nextGun, ev.dayStopUtc ?? Infinity)
+    races.push({ from, to, num: guns[i].raceNum ?? i + 1, assumed: fin == null })
+  }
+  const before = windows.length
+  // On the anchor, not the padded window: a start's 90 s of run-in sits before
+  // the gun by design.
+  // Half-open: [gun, finish). Whatever Expedition recorded AT the finish is the
+  // finish — a windward finish comes through as one more top-mark rounding, and
+  // cutting it as a third top mark gives the crew a lap that never happened.
+  windows = windows.filter((w) => races.some((r) => w.at >= r.from && w.at < r.to))
+  console.log(`\nracing only: ${races.length} race(s)`)
+  for (const r of races) {
+    console.log(`  R${r.num} ${clock(r.from)} → ${clock(r.to)}` +
+      (r.assumed ? '  (no --finish given: ran to the next gun / end of day)' : ''))
+  }
+  console.log(`  dropped ${before - windows.length} of ${before} windows outside a race`)
+  if (!windows.length) die('nothing happened inside a race — check --finish, or drop --racing')
+}
+
 if (!windows.length) die('the event file has no starts, roundings, tacks, gybes or sail photos')
 
 for (const c of clips) {
