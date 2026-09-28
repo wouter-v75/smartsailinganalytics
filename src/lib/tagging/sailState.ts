@@ -297,6 +297,7 @@ function foldTo(
   utc: number
 ): { state: SailState; change: SailChange | null } {
   let aboard: SailRef[] = []
+  let battens: BattenRecord[] = []
   let state = EMPTY_SAIL_STATE
   let change: SailChange | null = null
 
@@ -312,7 +313,17 @@ function foldTo(
         if (!aboard.some((x) => sameSailAcrossSources(x, s))) aboard = [...aboard, ref(s)]
       }
     }
-    state = { ...c.state, onBoard: aboard }
+    // CARRY THE BATTENS, for exactly the reason the deck is carried: a batten
+    // setting persists until somebody winds it. Nobody re-states eight battens
+    // on every kite change, and without this the second tag of the day reported
+    // the main as having no battens set — so the tab opened blank and the crew
+    // had to re-enter yesterday's settings to say nothing had changed.
+    //
+    // A change only OVERWRITES them when it says something: a tag whose batten
+    // rows are all blank is the composer's empty grid, not a statement that the
+    // battens were stripped.
+    if (statesBattens(c.state)) battens = c.state.battens
+    state = { ...c.state, onBoard: aboard, battens }
     change = { ...c, state }
   }
   return { state, change }
@@ -438,6 +449,16 @@ export function withBattenCount(state: SailState, count: number): SailState {
     battens: Array.from({ length: n }, (_, i) => byNo.get(i + 1) || { no: i + 1, tension: null, turns: 0 }),
   }
 }
+
+/**
+ * Does this change actually SAY anything about the battens?
+ *
+ * A row per batten with nothing in it is what the composer shows before the crew
+ * touches the tab, and it must not read as "the battens are now all blank" — see
+ * the carry-forward in foldTo.
+ */
+export const statesBattens = (s: SailState): boolean =>
+  s.battens.some((b) => b.tension != null || !!b.turns)
 
 /** True when nothing has been recorded — used to keep empty state out of the row. */
 export const stateIsEmpty = (s: SailState): boolean =>

@@ -8,7 +8,7 @@ import {
   stateIsEmpty, stateOf, inferDeck, sameDeck, EMPTY_SAIL_STATE,
   type SailState, type SailRef,
 } from '@/lib/tagging/sailState'
-import { cardForSail, type BattenCard, type SailBattenCard } from '@/lib/battens'
+import { cardForSail, cardIsEmpty, type BattenCard, type SailBattenCard } from '@/lib/battens'
 import type { LinkableSail } from '@/lib/tagging/sailLink'
 import type { TagDef, TagEvent } from '@/lib/tagging/types'
 
@@ -166,7 +166,14 @@ export function battenCardFor(
   // No main up, or the one that is has no card of its own. A boat with exactly
   // one card has only one possible answer; with two, a plausible-looking wrong
   // number is worse than none at all.
-  const assigned = ctx.battenCards.filter((c) => c.sailId != null)
+  //
+  // An EMPTY card is not one of the two. Northstar 76 carries a blank
+  // ten-batten card on MAIN_A alongside MAIN_B's filled eight, and counting the
+  // blank one as a rival answer made the pair ambiguous — so the tag fell back
+  // to the three-batten default on a boat whose main has eight, which is the
+  // opposite of no answer: it is a wrong one, offered confidently, on the tab
+  // where the crew is about to record what they set.
+  const assigned = ctx.battenCards.filter((c) => c.sailId != null && !cardIsEmpty(c.card))
   if (assigned.length !== 1) return { card: null, sailName: null }
   const name = ctx.inventory.find((s) => s.id === assigned[0].sailId)?.name ?? null
   return { card: assigned[0].card, sailName: name }

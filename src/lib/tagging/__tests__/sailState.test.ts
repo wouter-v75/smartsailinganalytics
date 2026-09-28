@@ -690,3 +690,45 @@ describe('a day that has one deliberate statement', () => {
     expect(sailStateAt([older, pinned], T2(13, 0)).onBoard).toHaveLength(3)
   })
 })
+
+describe('battens carry forward, like the deck', () => {
+  // A batten setting persists until somebody winds it. Nobody re-states eight
+  // battens on every kite change, so without this the second tag of the day
+  // reported the main as having no battens set — and the tab opened blank,
+  // asking the crew to re-enter yesterday's settings to say nothing had changed.
+  const tag = (t0: number, sail: unknown) =>
+    ({ id: `t${t0}`, slug: 'sail-change', t0, meta: { sail } }) as never
+
+  it('keeps the last stated battens through a change that says nothing', () => {
+    const tags = [
+      tag(1_000, { up: [{ name: 'Main' }], battens: [{ no: 1, tension: 'soft', turns: 2 }] }),
+      tag(2_000, { up: [{ name: 'Main' }, { name: 'A2' }], battens: [] }),
+    ]
+    expect(sailStateAt(tags, 2_500).battens).toEqual([{ no: 1, tension: 'soft', turns: 2 }])
+  })
+
+  it('does not treat a blank grid as "the battens were stripped"', () => {
+    // The composer shows a row per batten before anybody touches the tab. Those
+    // rows reaching the tag must not wipe what was set an hour earlier.
+    const tags = [
+      tag(1_000, { up: [{ name: 'Main' }], battens: [{ no: 1, tension: 'hard', turns: -1 }] }),
+      tag(2_000, {
+        up: [{ name: 'Main' }],
+        battens: [{ no: 1, tension: null, turns: 0 }, { no: 2, tension: null, turns: 0 }],
+      }),
+    ]
+    expect(sailStateAt(tags, 2_500).battens).toEqual([{ no: 1, tension: 'hard', turns: -1 }])
+  })
+
+  it('a later statement wins', () => {
+    const tags = [
+      tag(1_000, { up: [{ name: 'Main' }], battens: [{ no: 1, tension: 'soft', turns: 0 }] }),
+      tag(2_000, { up: [{ name: 'Main' }], battens: [{ no: 1, tension: 'hard', turns: 3 }] }),
+    ]
+    expect(sailStateAt(tags, 2_500).battens).toEqual([{ no: 1, tension: 'hard', turns: 3 }])
+  })
+
+  it('carries nothing when nothing was ever stated', () => {
+    expect(sailStateAt([tag(1_000, { up: [{ name: 'Main' }], battens: [] })], 1_500).battens).toEqual([])
+  })
+})
