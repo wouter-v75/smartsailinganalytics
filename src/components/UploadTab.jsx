@@ -24,7 +24,7 @@ import { uploadOriginalStorageFirst } from '../lib/video-rendition-sync';
 import { enrichVideo } from '../lib/videoEnrich';
 import { clipTimestampSettled, extractVideoCreationTime, probeVideo, resolveStartUtc } from '../lib/videoProbe';
 import { canWatchFolders, collectNewClips, ensureFolderPermission } from '../lib/watchFolder';
-import { getPref, setPref, WATCH_FOLDER_PREF } from '../lib/localStore';
+import { getPref, setPref, WATCH_FOLDER_PREF } from '../lib/prefsStore';
 import { parseXmlEvents } from '../lib/xmlEventParse';
 import { SrcBadge } from './ssa/SrcBadge';
 import { DEFAULT_TZ, ROLES, TZ_OPTIONS } from './ssa/constants';
