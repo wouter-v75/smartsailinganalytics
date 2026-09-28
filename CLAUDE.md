@@ -106,6 +106,23 @@ hardcoded version elsewhere dies the moment `DB_VER` is bumped — that is how
 photo import, SailScan and SquashShots were all silently dead for a day
 (fixed in `b12a7c6`).
 
+**And `DB_VER` must not MOVE for anything that is not a day's data.** The rule
+above is not the whole rule, and reading it as "just don't name a version
+elsewhere" cost an evening: `DB_VER` went 5 → 6 to add a `prefs` store, nothing
+named a version anywhere, and after a reload no video played at all. Those
+versionless opens — SailScanTab, PhotosTab, AdminTab, photoStore, the admin
+backfill panel — never listen for `versionchange`, so none of them CLOSES when
+an upgrade is needed. IndexedDB then blocks the upgrade until every other
+connection goes away, and `openDb()` never resolves: no error, no rejection, a
+promise that hangs, and every read behind it waiting for ever. The failure is
+not the new feature not working; it is everything else silently stopping.
+
+So a bump is only ever for the day's own stores, and only worth its risk for
+them. Anything else — a remembered folder, a UI preference — gets its OWN
+database (`ssa-prefs`, `src/lib/prefsStore.js`): separate version, separate
+upgrade, nothing else connected to block it, and it closes itself on
+`versionchange` rather than becoming the same trap one level down.
+
 **A photo's instrument data only reaches the cloud at import.** Enrichment reads
 the day's log from IndexedDB, which only exists on the machine that imported
 that day's CSV. `PhotosTab` re-derives the overlay on screen for the viewer, so
