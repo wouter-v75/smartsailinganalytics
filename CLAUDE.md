@@ -10,7 +10,7 @@ something costs you an hour.
 | the repo | `/Users/wouterverbraak/Code/ssa` — `cd` there before any runbook below |
 | a day's footage | `/Volumes/SSK SSD/<YYYYMMDD>/Drone` (the card; quote it, the volume name has a space) |
 | event + log files | `~/Downloads`, named `Northstar 76_<yymmdd>_<n>.ev.xml` — **a space, not an underscore** |
-| clips out | `~/clips/<YYYYMMDD>` |
+| clips out | `~/clips` — ONE outbox, not one folder per day. The Upload tab's watcher is pointed at it once; `clips:day` clears whatever the cloud already holds before each encode |
 
 None of this is reachable from Claude Code's sandbox: no `/Volumes`, no
 `~/Downloads`, no `ffmpeg`, no database. Anything touching them is handed over
@@ -31,8 +31,8 @@ Supabase SQL editor. Asking where a path is wastes a round trip — it is here.
 | Put a sailmaker's batten sheet on a mainsail's card | `npx vite-node scripts/batten-card-import.ts --sheet northstar76-im2-2026 --write` — the sheet is transcribed IN the script, so v6 is a diff |
 | Trim + compress a day's drone/RIB footage into clips | `npm run clips:day -- YYYY-MM-DD` then `--write`. Finds the card, the event file, the venue offset, the Grab video presses and the finish. Drop to `scripts/select-race-clips.mjs` only to override something. |
 | Add the race's tacks and gybes afterwards | the same `clips:day` line plus `--turns` — identical windows, so finished clips are skipped and only the manoeuvres encode |
-| Upload the clips | Upload tab → **Watch <folder>**. The folder is remembered, so after the first time it is one click and no file dialog; clips go up as the encoder finishes each one, overlapping the encode. Point it at `~/clips/<YYYYMMDD>`. |
-| Watch an encode | `node scripts/clip-progress.mjs ~/clips/<YYYYMMDD> --watch` — only after `--write`; it needs the `manifest.json` the encode writes. |
+| Upload the clips | Upload tab → **Watch clips**. Point it at `~/clips` once; the folder is remembered, so afterwards it is one click and no file dialog. Clips go up as the encoder finishes each one, overlapping the encode — start it while `clips:day --write` is still running. |
+| Watch an encode | `node scripts/clip-progress.mjs ~/clips --watch` — only after `--write`; it needs the `manifest.json` the encode writes. A finished run renames that to `<YYYYMMDD>.manifest.json`, which is what `--full-res` replays. |
 | Read a sail's DRAFT % from the same set (run the triangulation first) | `npx vite-node scripts/sailtrim-camber.ts --boat "Northstar 76" --around 2026-09-27T11:43 --sail main --station stripe50 --write` — `--write` puts the answer on every frame in the set |
 
 All of these are dry-run by default and need `--write` to do anything. They read

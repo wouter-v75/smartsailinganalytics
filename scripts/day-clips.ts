@@ -21,7 +21,7 @@
 // and the card mounted. In Claude Code's sandbox, run it outside the sandbox —
 // /Volumes does not exist in there and neither does ffmpeg.
 
-import { readFileSync, existsSync, readdirSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, unlinkSync, mkdirSync, renameSync } from 'fs'
 import { join, resolve } from 'path'
 import { homedir } from 'os'
 import { fileURLToPath } from 'url'
@@ -31,6 +31,7 @@ import { createClient } from '@supabase/supabase-js'
 // as the tagger reads them.
 import { parseXmlEvents } from '../src/lib/xmlEventParse.js'
 import { inferFinish } from '../src/lib/tagging/raceWindow'
+import { planOutbox } from '../src/lib/clipOutbox'
 
 const USAGE = `Cut a day's footage into the clips worth watching.
 
@@ -43,7 +44,9 @@ Usage:
   --card PATH   the footage folder, if it is not found under /Volumes
   --events PATH the .ev.xml, if it is not in ~/Downloads
   --finish TIME local HH:MM:SS, if SSA has no finish tag for the day
-  --out DIR     where clips go (default: ~/clips/<YYYYMMDD>)
+  --out DIR     the outbox (default: ~/clips — ONE folder, so the Upload tab's
+                watcher is pointed at it once and never again)
+  --keep        do not clear clips the cloud already has
   --boat ID     boat id, when more than one boat matches
   --all         do not restrict to the race — cut the training too
   --help        this text
@@ -166,6 +169,53 @@ async function finishTime(offsetMin: number, ev: any): Promise<{ time: string | 
   return { time: r.utc == null ? null : clock(r.utc), how: r.how }
 }
 
+/**
+ * Clear out clips the cloud already holds.
+ *
+ * One outbox, pointed at once by the watcher, means last night's clips are
+ * still sitting in it tonight — and the watcher would cheerfully send them up a
+ * second time. So they go, but only the ones the cloud demonstrably has: a
+ * video row with nothing behind it in storage is not an upload, and deleting
+ * against one throws away the only copy of that footage there is.
+ *
+ * Matching is by NAME (lib/clipOutbox), not by timestamp: a clip's start_utc
+ * has been through the app's video-timezone setting on the way in, and a wrong
+ * guess there would delete footage that was never uploaded.
+ */
+async function tidyOutbox(dir: string) {
+  const files = existsSync(dir) ? readdirSync(dir) : []
+  if (!files.length) return
+
+  const { data, error } = await sb
+    .from('videos')
+    .select('title, bunny_storage_path, bunny_stream_id')
+    .order('created_at', { ascending: false })
+    .limit(2000)
+  if (error) {
+    console.log(`  outbox   could not check the cloud (${error.message}) — nothing removed`)
+    return
+  }
+  const cloud = (data || []).map((v) => ({
+    title: v.title as string | null,
+    stored: !!(v.bunny_storage_path || v.bunny_stream_id),
+  }))
+
+  const plan = planOutbox(files, cloud)
+  if (!plan.uploaded.length && !plan.pending.length) return
+
+  if (!write) {
+    console.log(`  outbox   ${plan.uploaded.length} clip(s) already uploaded would be removed` +
+      (plan.pending.length ? `, ${plan.pending.length} kept (not up yet)` : ''))
+    return
+  }
+  let gone = 0
+  for (const f of plan.uploaded) {
+    try { unlinkSync(join(dir, f)); gone++ } catch { /* already gone is fine */ }
+  }
+  console.log(`  outbox   removed ${gone} clip(s) the cloud already has` +
+    (plan.pending.length ? `, kept ${plan.pending.length} not yet uploaded` : ''))
+}
+
 // ── go ───────────────────────────────────────────────────────────────────────
 const main = async () => {
   const events = findEvents()
@@ -181,7 +231,8 @@ const main = async () => {
   const ev = parseXmlEvents(xml)
   const at = await grabVideoTimes(offsetMin)
   const finish = await finishTime(offsetMin, ev)
-  const out = val('--out') || join(homedir(), 'clips', compact)
+  const out = val('--out') || join(homedir(), 'clips')
+  mkdirSync(out, { recursive: true })
 
   console.log(`\n${date}  ${ev.meta?.boat || ''} ${ev.meta?.location || ''} (venue UTC${offsetMin >= 0 ? '+' : ''}${offsetMin / 60})`)
   console.log(`  events   ${events}`)
@@ -205,6 +256,8 @@ const main = async () => {
   if (!has('--turns')) argv.push('--no-turns')
   if (!write) argv.push('-n')
 
+  if (!has('--keep')) await tidyOutbox(out)
+
   console.log('')
   const cutter = fileURLToPath(new URL('./select-race-clips.mjs', import.meta.url))
   const r = spawnSync('node', [cutter, ...argv], { stdio: 'inherit' })
@@ -213,7 +266,13 @@ const main = async () => {
     if (!write) {
       console.log('\nThat was a dry run. Same command with --write to encode.')
     } else {
-      console.log(`\nUpload from SSA → Videos. Each clip carries its own start time in the name.`)
+      // One outbox means one manifest.json, overwritten by the next day's run.
+      // --full-res replays a manifest, so the day's own is kept beside it.
+      const m = join(out, 'manifest.json')
+      if (existsSync(m)) {
+        try { renameSync(m, join(out, `${compact}.manifest.json`)) } catch { /* not fatal */ }
+      }
+      console.log(`\nIn the Upload tab, hit Watch — it is pointed at ${out} and will take them as they land.`)
     }
     console.log(`Progress, in another terminal:\n  node ${progress} ${out} --watch`)
   }

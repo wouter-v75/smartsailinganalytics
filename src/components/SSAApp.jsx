@@ -497,13 +497,17 @@ function SSAApp(){
       // video anywhere, which meant a day with just a logfile was never opened:
       // upload a log to a boat that already has clips and the app still landed on
       // the last day someone filmed. Empty sessions are still skipped.
-      const videoDates=vids.map(v=>v.sessionDate).filter(Boolean).sort();
+      // NEVER INTO THE FUTURE, on any of the three paths. A campaign's days are
+      // created before a regatta, so sessions for days nobody has sailed are
+      // normal — and opening one silently made it the day everything was filed
+      // against. That is how 28 September's tags ended up on 3 October.
+      const videoDates=vids.map(v=>v.sessionDate).filter(Boolean).filter(d=>d<=today).sort();
       const latestVideoDate=videoDates.length?videoDates[videoDates.length-1]:null;
       const latestDataDate=localSessions
         .filter(s=>hasOpenableData(s) && s.date<=today)
         .map(s=>s.date).sort().reverse()[0] || null;
       const latestDate=[latestDataDate,latestVideoDate].filter(Boolean).sort().reverse()[0]
-        ||localSessions[0]?.date||today;
+        ||localSessions.filter(s=>s.date<=today)[0]?.date||today;
       const isRecent=(date)=>date===today||date===latestDate;
       // On mobile: skip expensive enrichVideo (requires full log read) for old sessions.
       // Clips share dates (e.g. 10 sessions ⇒ ~10 unique days but ~100 clips), so read

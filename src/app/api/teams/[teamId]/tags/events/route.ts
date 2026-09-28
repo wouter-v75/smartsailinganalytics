@@ -21,6 +21,7 @@ import {
   toTagEventInsert, windowForPress,
 } from '@/lib/tagging/rowMap'
 import { identityFor } from '@/lib/tagging/identity'
+import { sessionDateFor } from '@/lib/tagging/sessionDate'
 
 export async function GET(req: NextRequest, { params }: { params: { teamId: string } }) {
   const supabase = getServerSupabase()
@@ -111,11 +112,25 @@ export async function POST(req: NextRequest, { params }: { params: { teamId: str
       : null
   if (!win) return NextResponse.json({ error: 'at or t0 required' }, { status: 400 })
 
+  // The day this tag belongs to is decided HERE, from the instant it records,
+  // not from the day the client happened to be showing. A crew tagging on the
+  // water with another day loaded — a campaign day a week out, say — filed
+  // perfectly-timed tags onto a day nobody had sailed, where nothing could find
+  // them again. The claim is still believed when it is anywhere near the
+  // instant, because a venue's calendar day and a session through local
+  // midnight both disagree with UTC on purpose. See lib/tagging/sessionDate.
+  const day = sessionDateFor(Math.min(win.t0, win.t1), sessionDate)
+  if (day.corrected) {
+    console.warn(
+      `[tags] ${def.slug} claimed ${sessionDate} but its t0 is ${new Date(win.t0).toISOString()} — filed on ${day.date}`
+    )
+  }
+
   const row = toTagEventInsert({
     teamId: params.teamId,
     boatId,
     sessionId: body?.session_id ?? null,
-    sessionDate,
+    sessionDate: day.date,
     tagDefId: def.id,
     slug: def.slug,
     label: typeof body?.label === 'string' && body.label.trim()
