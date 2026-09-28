@@ -10,9 +10,9 @@ import type { SailState } from '@/lib/tagging/sailState'
 // confident "→ stiff +2", and nothing on screen looks broken.
 
 const card = (tension: string, turns: number) =>
-  normaliseBattenCard({ count: 3, rows: [{ '10-15': { tension, turns } }, {}, {}] })
+  normaliseBattenCard({ count: 3, rows: [{ '10-12': { tension, turns } }, {}, {}] })
 
-const RACE = card('stiff', 2)
+const RACE = card('hard', 2)
 const DELIVERY = card('soft', -1)
 
 const ctx = (over: Partial<SailContext> = {}): SailContext => ({
@@ -41,8 +41,8 @@ describe('battenCardFor', () => {
       { sailId: 'm1', card: RACE, updatedAt: null },
       { sailId: 'm2', card: DELIVERY, updatedAt: null },
     ) })
-    expect(battenCardFor(c, up('m1', 'j1')).card?.rows[0]['10-15'].tension).toBe('stiff')
-    expect(battenCardFor(c, up('m2', 'j1')).card?.rows[0]['10-15'].tension).toBe('soft')
+    expect(battenCardFor(c, up('m1', 'j1')).card?.rows[0]['10-12'].tension).toBe('hard')
+    expect(battenCardFor(c, up('m2', 'j1')).card?.rows[0]['10-12'].tension).toBe('soft')
   })
 
   it('names the sail, so the crew can see whose card it is', () => {

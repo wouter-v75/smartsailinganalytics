@@ -70,7 +70,7 @@ export interface SailState {
 export const EMPTY_SAIL_STATE: SailState = { up: [], onBoard: [], battens: [] }
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
-const TENSIONS = new Set(['soft', 'medium', 'stiff'])
+const TENSIONS = new Set(['soft', 'medium', 'hard'])
 
 /** A stable identity for a sail: its inventory id, else its lower-cased name. */
 export const sailKey = (s: SailRef | null | undefined): string =>

@@ -48,7 +48,7 @@ describe('normaliseSailState', () => {
 
   it('sorts battens from the top and keeps negative turns', () => {
     const s = normaliseSailState({
-      battens: [{ no: 3, tension: 'stiff', turns: -2 }, { no: 1, tension: 'soft', turns: 1 }],
+      battens: [{ no: 3, tension: 'hard', turns: -2 }, { no: 1, tension: 'soft', turns: 1 }],
     })
     expect(s.battens.map((b) => b.no)).toEqual([1, 3])
     expect(s.battens[1].turns).toBe(-2)
@@ -173,10 +173,10 @@ describe('toggleUp / isUp', () => {
 describe('setBatten / withBattenCount', () => {
   it('sets one batten and leaves the others', () => {
     let s: SailState = { up: [], onBoard: [], battens: [{ no: 1, tension: 'soft', turns: 1 }] }
-    s = setBatten(s, 2, { tension: 'stiff', turns: -3 })
+    s = setBatten(s, 2, { tension: 'hard', turns: -3 })
     expect(s.battens).toEqual([
       { no: 1, tension: 'soft', turns: 1 },
-      { no: 2, tension: 'stiff', turns: -3 },
+      { no: 2, tension: 'hard', turns: -3 },
     ])
   })
 
@@ -184,8 +184,8 @@ describe('setBatten / withBattenCount', () => {
     let s: SailState = { up: [], onBoard: [], battens: [{ no: 1, tension: 'soft', turns: 4 }] }
     s = setBatten(s, 1, { turns: 6 })
     expect(s.battens[0]).toEqual({ no: 1, tension: 'soft', turns: 6 })
-    s = setBatten(s, 1, { tension: 'stiff' })
-    expect(s.battens[0]).toEqual({ no: 1, tension: 'stiff', turns: 6 })
+    s = setBatten(s, 1, { tension: 'hard' })
+    expect(s.battens[0]).toEqual({ no: 1, tension: 'hard', turns: 6 })
   })
 
   it('can clear a stiffness explicitly', () => {
@@ -201,7 +201,7 @@ describe('setBatten / withBattenCount', () => {
   })
 
   it('trims when a main loses a batten', () => {
-    const s = withBattenCount({ up: [], onBoard: [], battens: [{ no: 1, tension: 'soft', turns: 1 }, { no: 2, tension: 'stiff', turns: 2 }] }, 1)
+    const s = withBattenCount({ up: [], onBoard: [], battens: [{ no: 1, tension: 'soft', turns: 1 }, { no: 2, tension: 'hard', turns: 2 }] }, 1)
     expect(s.battens.map((b) => b.no)).toEqual([1])
   })
 })
@@ -246,7 +246,7 @@ describe('describeChange', () => {
   })
 
   it('falls back to the full state when the sails did not actually change', () => {
-    expect(describeChange(before, { ...before, battens: [{ no: 1, tension: 'stiff', turns: 2 }] }))
+    expect(describeChange(before, { ...before, battens: [{ no: 1, tension: 'hard', turns: 2 }] }))
       .toBe('Main + J2')
   })
 })

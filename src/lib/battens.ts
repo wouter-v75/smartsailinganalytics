@@ -28,22 +28,28 @@
 // Pure — no React, no I/O.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type Tension = 'soft' | 'medium' | 'stiff'
-
-export const TENSIONS: Tension[] = ['soft', 'medium', 'stiff']
-
 /**
- * Short labels for the three buttons.
- *
- * NOT first letters: "soft" and "stiff" both start with S, so a first-letter
- * abbreviation renders the card as S / M / S and makes the two ends of the range
- * indistinguishable. This is reference data a trimmer reads in a hurry with the
- * boat moving; it has to be unambiguous at a glance.
+ * HARD, not "stiff" — the word the sailmaker's sheet uses and the word the crew
+ * says. NorthStar's batten sheet colours every cell green / black / red for
+ * soft / medium / hard, and a tool that calls the top of the range something
+ * else makes the trimmer translate while the boat is moving.
  */
+export type Tension = 'soft' | 'medium' | 'hard'
+
+export const TENSIONS: Tension[] = ['soft', 'medium', 'hard']
+
+/** Short labels for the three buttons. */
 export const TENSION_SHORT: Record<Tension, string> = {
   soft: 'Soft',
   medium: 'Med',
-  stiff: 'Stiff',
+  hard: 'Hard',
+}
+
+/** The sheet's colours, so the card reads the way the laminated card does. */
+export const TENSION_COLOUR: Record<Tension, string> = {
+  soft: '#22C55E',
+  medium: '#E2E8F0',
+  hard: '#EF4444',
 }
 
 export interface WindBand {
@@ -56,13 +62,23 @@ export interface WindBand {
   maxKn: number | null
 }
 
+/**
+ * The bands the SAILMAKER uses, because the card has to be read against the
+ * sheet in the sail locker. NorthStar's sheet for Northstar 76 is 0-8, 8-10,
+ * 10-12, 12-16 and 18+; the last two are recorded here as 12-17 and 17+ on
+ * Wouter's instruction, since the printed sheet leaves 16-18 undefined and a
+ * band with a hole in it sends a trimmer to no row at all in 17 knots.
+ *
+ * They are DELIBERATELY uneven. The interesting transitions on this boat are all
+ * in the single digits — three of the five bands are under 12 knots — and even
+ * 5-knot bands spent their resolution where nothing changes.
+ */
 export const WIND_BANDS: WindBand[] = [
-  { key: '0-5', label: '0–5', minKn: 0, maxKn: 5 },
-  { key: '5-10', label: '5–10', minKn: 5, maxKn: 10 },
-  { key: '10-15', label: '10–15', minKn: 10, maxKn: 15 },
-  { key: '15-20', label: '15–20', minKn: 15, maxKn: 20 },
-  { key: '20-25', label: '20–25', minKn: 20, maxKn: 25 },
-  { key: '25+', label: '25+', minKn: 25, maxKn: null },
+  { key: '0-8', label: '0–8', minKn: 0, maxKn: 8 },
+  { key: '8-10', label: '8–10', minKn: 8, maxKn: 10 },
+  { key: '10-12', label: '10–12', minKn: 10, maxKn: 12 },
+  { key: '12-17', label: '12–17', minKn: 12, maxKn: 17 },
+  { key: '17+', label: '17+', minKn: 17, maxKn: null },
 ]
 
 export interface BattenSetting {
@@ -70,6 +86,17 @@ export interface BattenSetting {
   /** Turns on from the reference mark. Negative is off — it is a real setting,
    *  not a data-entry slip, so nothing here clamps it at zero. */
   turns: number
+  /**
+   * The sailmaker's batten part reference for this cell, e.g. "M1-S", "M2-H".
+   *
+   * Not derivable from `tension`: the sheet runs M1-S, M1-H, M2-S and M2-H, so
+   * the model (M1/M2) is an independent axis and a cell can be black "medium"
+   * while carrying an -H part. This is what somebody reads out to the bosun when
+   * a batten is actually being swapped, so it is stored verbatim.
+   */
+  ref?: string
+  /** "Batt. El" off the sheet — the batten's measured elongation figure, mm. */
+  elMm?: number
 }
 
 /** The card: one row per batten, one cell per wind band. */

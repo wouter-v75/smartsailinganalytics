@@ -98,7 +98,7 @@ const events: TagEvent[] = [
           // rest of the day carries, so the On board tab has to be able to draw
           // a sail the list has never heard of.
           onBoard: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }, { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }, { id: 'i7', name: 'Storm jib' }],
-          battens: [{ no: 1, tension: 'soft', turns: 5 }, { no: 2, tension: 'medium', turns: 0 }, { no: 3, tension: 'stiff', turns: -2 }],
+          battens: [{ no: 1, tension: 'soft', turns: 5 }, { no: 2, tension: 'medium', turns: 0 }, { no: 3, tension: 'hard', turns: -2 }],
         } } }),
   tag({ slug: 'race-start', label: 'Race 1 start', color: '#EF4444', producer: 'eventfile',
         confidence: 0.98, verifiedAt: T(16, 0), verifiedByUserId: 'me',
@@ -119,7 +119,7 @@ const events: TagEvent[] = [
         meta: { sail: {
           up: [{ id: 'i1', name: 'Main' }, { id: 'i5', name: 'A2' }],
           onBoard: [{ id: 'i1', name: 'Main' }, { id: 'i3', name: 'J2' }, { id: 'i4', name: 'J4' }, { id: 'i5', name: 'A2' }],
-          battens: [{ no: 1, tension: 'soft', turns: 5 }, { no: 2, tension: 'medium', turns: 0 }, { no: 3, tension: 'stiff', turns: -2 }],
+          battens: [{ no: 1, tension: 'soft', turns: 5 }, { no: 2, tension: 'medium', turns: 0 }, { no: 3, tension: 'hard', turns: -2 }],
         } } }),
   tag({ slug: 'team-note', label: 'Team comment', color: '#7F77DD', source: 'human', producer: 'user',
         detectionKey: null, autoT0: null, confidence: null,
@@ -219,9 +219,9 @@ const SAIL_KG: Record<string, number> = {
 const BATTEN_CARD = normaliseBattenCard({
   count: 3,
   rows: [
-    { '0-5': { tension: 'soft', turns: 5 }, '10-15': { tension: 'medium', turns: 2 }, '20-25': { tension: 'stiff', turns: -1 } },
+    { '0-5': { tension: 'soft', turns: 5 }, '10-15': { tension: 'medium', turns: 2 }, '20-25': { tension: 'hard', turns: -1 } },
     { '0-5': { tension: 'soft', turns: 3 }, '10-15': { tension: 'medium', turns: 0 } },
-    { '10-15': { tension: 'stiff', turns: -2 } },
+    { '10-15': { tension: 'hard', turns: -2 } },
   ],
 })
 // The day's media, drawn on the track in the timeline's deck colours: two

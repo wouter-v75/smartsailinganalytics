@@ -1,7 +1,7 @@
 'use client'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  WIND_BANDS, TENSIONS, TENSION_SHORT, MAX_BATTEN_COUNT,
+  WIND_BANDS, TENSIONS, TENSION_SHORT, TENSION_COLOUR, MAX_BATTEN_COUNT,
   defaultBattenCard, normaliseBattenCard, setBattenCount, formatSetting,
   cardForSail, unassignedCard, cardIsEmpty,
   type BattenCard, type BattenSetting, type Tension, type SailBattenCard,
@@ -32,11 +32,9 @@ const C = {
   text: '#cbd5e1', dim: '#8A97A9', head: '#e2e8f0', warn: '#F59E0B', ok: '#10B981',
 }
 
-const TENSION_COLOR: Record<Tension, string> = {
-  soft: '#38BDF8',
-  medium: '#2DD4BF',
-  stiff: '#F59E0B',
-}
+// Green / white / red, matching the sailmaker's own sheet — the card on screen
+// and the laminated one in the locker should not need translating between them.
+const TENSION_COLOR = TENSION_COLOUR
 
 interface Mainsail { id: string; name: string; retired?: boolean }
 

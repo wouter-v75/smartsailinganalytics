@@ -8,7 +8,10 @@ import {
 
 describe('the bands', () => {
   it('are the six the card uses, in order', () => {
-    expect(WIND_BANDS.map((b) => b.label)).toEqual(['0–5', '5–10', '10–15', '15–20', '20–25', '25+'])
+    // The SAILMAKER's bands, so the card reads against the sheet in the locker.
+    // Deliberately uneven: three of the five are under 12 knots, because that is
+    // where this boat's transitions are.
+    expect(WIND_BANDS.map((b) => b.label)).toEqual(['0–8', '8–10', '10–12', '12–17', '17+'])
   })
 
   it('leave no gap and no overlap', () => {
@@ -21,16 +24,16 @@ describe('the bands', () => {
 
 describe('bandForTws', () => {
   it('puts a boundary reading in the band it opens', () => {
-    expect(bandForTws(5)?.key).toBe('5-10')
-    expect(bandForTws(4.99)?.key).toBe('0-5')
-    expect(bandForTws(25)?.key).toBe('25+')
+    expect(bandForTws(8)?.key).toBe('8-10')
+    expect(bandForTws(7.99)?.key).toBe('0-8')
+    expect(bandForTws(17)?.key).toBe('17+')
   })
 
   it('has somewhere to put a gale', () => {
-    expect(bandForTws(48)?.key).toBe('25+')
+    expect(bandForTws(48)?.key).toBe('17+')
   })
 
-  it('returns nothing when there is no wind reading, rather than guessing 0–5', () => {
+  it('returns nothing when there is no wind reading, rather than guessing 0–8', () => {
     for (const bad of [null, undefined, NaN, -1, 'twelve' as unknown as number]) {
       expect(bandForTws(bad)).toBeNull()
     }
@@ -54,30 +57,30 @@ describe('normaliseBattenCard', () => {
   it('reads a stored card back', () => {
     const card = normaliseBattenCard({
       count: 2,
-      rows: [{ '0-5': { tension: 'soft', turns: 5 } }, { '25+': { tension: 'stiff', turns: -2 } }],
+      rows: [{ '0-8': { tension: 'soft', turns: 5 } }, { '17+': { tension: 'hard', turns: -2 } }],
     })
     expect(card.count).toBe(2)
-    expect(card.rows[0]['0-5']).toEqual({ tension: 'soft', turns: 5 })
-    expect(card.rows[1]['25+']).toEqual({ tension: 'stiff', turns: -2 })
+    expect(card.rows[0]['0-8']).toEqual({ tension: 'soft', turns: 5 })
+    expect(card.rows[1]['17+']).toEqual({ tension: 'hard', turns: -2 })
   })
 
   it('keeps negative turns — winding a batten OFF is a real setting', () => {
-    const card = normaliseBattenCard({ count: 1, rows: [{ '10-15': { tension: 'medium', turns: -3 } }] })
-    expect(card.rows[0]['10-15'].turns).toBe(-3)
+    const card = normaliseBattenCard({ count: 1, rows: [{ '10-12': { tension: 'medium', turns: -3 } }] })
+    expect(card.rows[0]['10-12'].turns).toBe(-3)
   })
 
   it('never drops a batten because the stored count went stale', () => {
     const card = normaliseBattenCard({
       count: 3,
-      rows: [{}, {}, {}, { '0-5': { tension: 'soft', turns: 1 } }],
+      rows: [{}, {}, {}, { '0-8': { tension: 'soft', turns: 1 } }],
     })
     expect(card.count).toBe(4)
-    expect(card.rows[3]['0-5']).toEqual({ tension: 'soft', turns: 1 })
+    expect(card.rows[3]['0-8']).toEqual({ tension: 'soft', turns: 1 })
   })
 
   it('throws away a stiffness it does not recognise but keeps the turns', () => {
-    const card = normaliseBattenCard({ count: 1, rows: [{ '0-5': { tension: 'springy', turns: 4 } }] })
-    expect(card.rows[0]['0-5']).toEqual({ tension: null, turns: 4 })
+    const card = normaliseBattenCard({ count: 1, rows: [{ '0-8': { tension: 'springy', turns: 4 } }] })
+    expect(card.rows[0]['0-8']).toEqual({ tension: null, turns: 4 })
   })
 
   it('drops a band key that is not one of ours', () => {
@@ -86,8 +89,8 @@ describe('normaliseBattenCard', () => {
   })
 
   it('treats an empty cell as absent rather than as "medium 0"', () => {
-    const card = normaliseBattenCard({ count: 1, rows: [{ '0-5': { tension: null, turns: 0 } }] })
-    expect(card.rows[0]['0-5']).toBeUndefined()
+    const card = normaliseBattenCard({ count: 1, rows: [{ '0-8': { tension: null, turns: 0 } }] })
+    expect(card.rows[0]['0-8']).toBeUndefined()
   })
 
   it('gives a blank card for nothing at all, rather than throwing', () => {
@@ -103,22 +106,22 @@ describe('setBattenCount', () => {
   const card = normaliseBattenCard({
     count: 3,
     rows: [
-      { '0-5': { tension: 'soft', turns: 1 } },
-      { '0-5': { tension: 'medium', turns: 2 } },
-      { '0-5': { tension: 'stiff', turns: 3 } },
+      { '0-8': { tension: 'soft', turns: 1 } },
+      { '0-8': { tension: 'medium', turns: 2 } },
+      { '0-8': { tension: 'hard', turns: 3 } },
     ],
   })
 
   it('keeps the battens that survive a shrink', () => {
     const smaller = setBattenCount(card, 2)
     expect(smaller.rows).toHaveLength(2)
-    expect(smaller.rows[1]['0-5'].tension).toBe('medium')
+    expect(smaller.rows[1]['0-8'].tension).toBe('medium')
   })
 
   it('adds blank rows on a grow, leaving the old ones alone', () => {
     const bigger = setBattenCount(card, 5)
     expect(bigger.rows).toHaveLength(5)
-    expect(bigger.rows[2]['0-5'].tension).toBe('stiff')
+    expect(bigger.rows[2]['0-8'].tension).toBe('hard')
     expect(bigger.rows[4]).toEqual({})
   })
 
@@ -132,16 +135,16 @@ describe('cardSetting', () => {
   const card = normaliseBattenCard({
     count: 3,
     rows: [
-      { '0-5': { tension: 'soft', turns: 5 }, '15-20': { tension: 'stiff', turns: -1 } },
+      { '0-8': { tension: 'soft', turns: 5 }, '12-17': { tension: 'hard', turns: -1 } },
       {},
-      { '25+': { tension: 'stiff', turns: 2 } },
+      { '17+': { tension: 'hard', turns: 2 } },
     ],
   })
 
   it('reads the cell for that batten in that breeze', () => {
     expect(cardSetting(card, 1, 3)).toEqual({ tension: 'soft', turns: 5 })
-    expect(cardSetting(card, 1, 17)).toEqual({ tension: 'stiff', turns: -1 })
-    expect(cardSetting(card, 3, 30)).toEqual({ tension: 'stiff', turns: 2 })
+    expect(cardSetting(card, 1, 14)).toEqual({ tension: 'hard', turns: -1 })
+    expect(cardSetting(card, 3, 30)).toEqual({ tension: 'hard', turns: 2 })
   })
 
   it('counts battens from the TOP, one-based', () => {
@@ -150,7 +153,7 @@ describe('cardSetting', () => {
   })
 
   it('is null for a blank cell, a missing batten, or no wind reading', () => {
-    expect(cardSetting(card, 1, 12)).toBeNull()
+    expect(cardSetting(card, 1, 9)).toBeNull()
     expect(cardSetting(card, 9, 3)).toBeNull()
     expect(cardSetting(card, 1, null)).toBeNull()
   })
@@ -159,7 +162,7 @@ describe('cardSetting', () => {
 describe('formatSetting', () => {
   it('reads the way a crew says it', () => {
     expect(formatSetting({ tension: 'soft', turns: 5 })).toBe('soft +5')
-    expect(formatSetting({ tension: 'stiff', turns: -2 })).toBe('stiff −2')
+    expect(formatSetting({ tension: 'hard', turns: -2 })).toBe('hard −2')
     expect(formatSetting({ tension: 'medium', turns: 0 })).toBe('medium')
     expect(formatSetting({ tension: null, turns: 3 })).toBe('+3')
   })
@@ -185,21 +188,21 @@ describe('isBlankSetting / cardIsEmpty', () => {
 
   it('knows a card nobody has filled in', () => {
     expect(cardIsEmpty(defaultBattenCard())).toBe(true)
-    expect(cardIsEmpty(normaliseBattenCard({ count: 1, rows: [{ '0-5': { tension: 'soft', turns: 0 } }] })))
+    expect(cardIsEmpty(normaliseBattenCard({ count: 1, rows: [{ '0-8': { tension: 'soft', turns: 0 } }] })))
       .toBe(false)
   })
 })
 
 describe('the stiffnesses', () => {
   it('are the three the brief named', () => {
-    expect(TENSIONS).toEqual(['soft', 'medium', 'stiff'])
+    expect(TENSIONS).toEqual(['soft', 'medium', 'hard'])
   })
 })
 
 describe('cards per mainsail', () => {
-  const raceMain = normaliseBattenCard({ count: 3, rows: [{ '0-5': { tension: 'stiff', turns: 2 } }, {}, {}] })
-  const deliveryMain = normaliseBattenCard({ count: 3, rows: [{ '0-5': { tension: 'soft', turns: -1 } }, {}, {}] })
-  const legacy = normaliseBattenCard({ count: 3, rows: [{ '0-5': { tension: 'medium', turns: 9 } }, {}, {}] })
+  const raceMain = normaliseBattenCard({ count: 3, rows: [{ '0-8': { tension: 'hard', turns: 2 } }, {}, {}] })
+  const deliveryMain = normaliseBattenCard({ count: 3, rows: [{ '0-8': { tension: 'soft', turns: -1 } }, {}, {}] })
+  const legacy = normaliseBattenCard({ count: 3, rows: [{ '0-8': { tension: 'medium', turns: 9 } }, {}, {}] })
 
   const cards: SailBattenCard[] = [
     { sailId: 'm1', card: raceMain, updatedAt: null },
@@ -208,8 +211,8 @@ describe('cards per mainsail', () => {
   ]
 
   it('gives each main its own card', () => {
-    expect(cardForSail(cards, 'm1')?.rows[0]['0-5'].tension).toBe('stiff')
-    expect(cardForSail(cards, 'm2')?.rows[0]['0-5'].tension).toBe('soft')
+    expect(cardForSail(cards, 'm1')?.rows[0]['0-8'].tension).toBe('hard')
+    expect(cardForSail(cards, 'm2')?.rows[0]['0-8'].tension).toBe('soft')
   })
 
   it('never falls back to the unassigned card for a main that has none', () => {
@@ -224,7 +227,7 @@ describe('cards per mainsail', () => {
   })
 
   it('finds the unassigned card so it can be offered', () => {
-    expect(unassignedCard(cards)?.rows[0]['0-5'].turns).toBe(9)
+    expect(unassignedCard(cards)?.rows[0]['0-8'].turns).toBe(9)
   })
 
   it('has no unassigned card once every card belongs to a sail', () => {
