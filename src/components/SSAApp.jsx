@@ -9,7 +9,7 @@ import { fetchTagList as cloudFetchTagList, saveTagListCloud } from '../lib/clou
 import { ensureCloudVideoId, listVideosCloud, makeVideoMirrorCallback, toLegacyVideoShape } from '../lib/cloud-videos';
 import { onWifi } from '../lib/connection';
 import { hasOpenableData } from '../lib/hasOpenableData';
-import { computeAutoTags, dedupeVideos, getAllVideos, getAllVideosForMembership, getLogData, getSessions, getSessionsForMembership, getSyncOffsets, getTagList, getUnsyncedCount, getVideoBlob, getVideosForDate, getXmlData, markCloudSynced, pruneInertVideos, saveSyncOffset, saveTagList, updateVideoBlobAndDuration, updateVideoStartUtc, updateVideoTags, venueTodayIso as TODAY } from '../lib/localStore';
+import { computeAutoTags, dedupeVideos, getAllVideos, getAllVideosForMembership, getLogData, getSessions, getSessionsForMembership, getSyncOffsets, getTagList, getUnsyncedCount, getVideoBlob, getVideosForDate, getXmlData, markCloudSynced, markVideoOriginalUploaded, pruneInertVideos, saveSyncOffset, saveTagList, updateVideoBlobAndDuration, updateVideoStartUtc, updateVideoTags, venueTodayIso as TODAY } from '../lib/localStore';
 import { nearestRow } from '../lib/logRowLookup';
 import { clearPendingOrigStream, getPendingOrigStream, setPendingOrigStream } from '../lib/pendingOrigStreams';
 import { startAutoFlush as startPhotoAutoFlush, syncPending as syncPendingPhotos } from '../lib/photoStore';
@@ -341,15 +341,32 @@ function SSAApp(){
     if (date && date !== activeDate) {
       await loadDate(date);
     } else {
-      setSelectedVideo(prev => {
-        const m = allVideos.find(v => v.id === clipId || v.cloudId === clipId || v.externalId === clipId);
-        // Keeping `prev` on a miss is what made this look like "the player is
-        // stuck on the start": every timeline card opened whatever was already
-        // selected, which is the day's first clip. Say so — a clip that cannot
-        // be resolved is a broken link, not a preference.
-        if (!m && clipId) console.warn(`[video] no local clip for ${clipId} — showing the previous selection`);
-        return m || prev;
-      });
+      const m = allVideos.find(v => v.id === clipId || v.cloudId === clipId || v.externalId === clipId);
+      if (m) {
+        setSelectedVideo(m);
+      } else if (clipId) {
+        // The library cannot answer to this id, so ask the CLOUD directly.
+        //
+        // NOT a broken link: external_id and bunny_stream_id match on every
+        // row. It is a RACE — the timeline has moved to the new day while
+        // allVideos still holds the previous one, so the lookup runs against
+        // the wrong library. Keeping `prev` then opens whatever was selected
+        // before, which is the day's first clip, and on 28 September that made
+        // every card in the timeline appear to open the race start until the
+        // page was refreshed.
+        //
+        // The timeline named a clip that demonstrably exists. A row we can
+        // fetch is a row we can play.
+        try {
+          const user = await getUserCached();
+          const rows = user ? await listVideosCloud({ userId: user.id, date: date || activeDate }) : [];
+          const row = rows.find(r => r.id === clipId);
+          if (row) setSelectedVideo(toLegacyVideoShape(row));
+          else console.warn(`[video] no clip ${clipId} on ${date || activeDate}`);
+        } catch (e) {
+          console.warn(`[video] could not resolve ${clipId} from the cloud`, e);
+        }
+      }
       campaignPendingClipRef.current = null;
     }
     setVideoModalOpen(true);
@@ -750,6 +767,23 @@ function SSAApp(){
                 local.hasOriginal=shaped.hasOriginal;
                 local.originalStreamId=shaped.originalStreamId;
                 if(shaped.streamId && !local.streamId) local.streamId=shaped.streamId;
+                // And write the upload back to IDB, for the same reason startUtc
+                // is written back above: the two stores should converge rather
+                // than argue. The cloud holds the original for all nine of
+                // 28 September's clips while this device had stamped none of
+                // them, so anything reading only the local flag — the badge, a
+                // Push to Cloud on a load where the merge has not run yet —
+                // sees an upload that has already happened as still to do.
+                // alreadyInCloud() covers it in memory; this makes it true on
+                // disk too, once.
+                if(shaped.hasOriginal && !local.originalUploadedAt){
+                  local.originalUploadedAt=Date.now();
+                  markVideoOriginalUploaded(local.id,{
+                    originalPath:shaped.originalPath||null,
+                    originalStreamId:shaped.originalStreamId||null,
+                    cloudId:shaped.id,
+                  }).catch(()=>{});
+                }
               }
             } else {
               vids.push(shaped); // cloud-only clip (uploaded from another device)
