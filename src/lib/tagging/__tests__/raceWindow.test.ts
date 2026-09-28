@@ -47,3 +47,22 @@ describe('inferFinish', () => {
     expect(inferFinish([], ROUNDINGS, { dayStopUtc: DAY_STOP }).utc).toBeNull()
   })
 })
+
+describe('a finish that cannot be true', () => {
+  it('ignores one that lands after the boat came in', () => {
+    // 2026-09-28 read 17:17:40 for a day that stopped at 15:24 — the venue
+    // offset applied twice. It looks like an ordinary time and quietly throws
+    // away whatever falls outside it.
+    const r = inferFinish(GUNS, ROUNDINGS, { taggedUtc: T(17, 17, 40), dayStopUtc: DAY_STOP })
+    expect(r.utc).toBe(DAY_STOP)
+    expect(r.how).toMatch(/outside the sailing day/)
+  })
+
+  it('ignores one before the gun', () => {
+    expect(inferFinish(GUNS, ROUNDINGS, { taggedUtc: T(13, 0), dayStopUtc: DAY_STOP }).utc).toBe(DAY_STOP)
+  })
+
+  it('still takes a good tag', () => {
+    expect(inferFinish(GUNS, ROUNDINGS, { taggedUtc: T(15, 18), dayStopUtc: DAY_STOP }).utc).toBe(T(15, 18))
+  })
+})

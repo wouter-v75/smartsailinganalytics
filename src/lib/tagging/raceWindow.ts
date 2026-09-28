@@ -33,14 +33,30 @@ export function inferFinish(
   roundings: readonly RoundingLike[],
   opts: { taggedUtc?: number | null; dayStopUtc?: number | null } = {}
 ): InferredFinish {
-  if (opts.taggedUtc != null) return { utc: opts.taggedUtc, how: "SSA's finish tag" }
-
   const gun = guns.length ? Math.min(...guns.map((g) => g.utc)) : null
+
+  // A race cannot end before it started or after the boat came in. The check is
+  // here because it is CHEAP and the failure it catches is not: a finish two
+  // hours past the end of the day — which is what a venue offset applied twice
+  // produces — reads as a perfectly ordinary time and silently throws away
+  // however much of the race falls outside it. Loud beats subtly wrong.
+  const sane = (utc: number): boolean =>
+    (gun == null || utc > gun) &&
+    (opts.dayStopUtc == null || utc <= opts.dayStopUtc)
+
+  if (opts.taggedUtc != null) {
+    if (sane(opts.taggedUtc)) return { utc: opts.taggedUtc, how: "SSA's finish tag" }
+    return {
+      utc: opts.dayStopUtc ?? null,
+      how: "SSA's finish tag falls outside the sailing day and was ignored — check the venue offset",
+    }
+  }
+
   if (gun == null) return { utc: null, how: 'no start gun — nothing to bound' }
 
   const after = roundings.filter((r) => r.utc > gun).sort((a, b) => a.utc - b.utc)
   const last = after[after.length - 1]
-  if (last?.isTop) {
+  if (last?.isTop && sane(last.utc)) {
     return { utc: last.utc, how: 'the last top-mark rounding, read as the finish — no finish tag' }
   }
   return {
