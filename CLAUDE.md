@@ -15,10 +15,23 @@ something costs you an hour.
 | Say which boats are IN a photo, so frames are searchable by rival | `npx vite-node scripts/subject-boats-backfill.ts --write` (fills `photos.subject_boat_ids` from sail-geometry measurements) |
 | Measure a boat's target DEPTHS from several stern shots (kills the ±2500 mm guess) | `npx vite-node scripts/sailtrim-triangulate.ts --boat "Northstar 76" --around 2026-09-27T11:43 --write` — needs 3+ frames seconds apart spanning 8°+, each with a measured ψ |
 | Put a sailmaker's batten sheet on a mainsail's card | `npx vite-node scripts/batten-card-import.ts --sheet northstar76-im2-2026 --write` — the sheet is transcribed IN the script, so v6 is a diff |
+| Trim + compress a day's drone/RIB footage against the event file | `node scripts/select-race-clips.mjs -e <day>.ev.xml "<card>/<day>/Drone" --racing --finish HH:MM:SS --trim --tag <day> -o ~/clips/<day> -n` — drop `-n` to encode, then upload from SSA → Videos. Needs `exiftool` + `ffmpeg`. |
 | Read a sail's DRAFT % from the same set (run the triangulation first) | `npx vite-node scripts/sailtrim-camber.ts --boat "Northstar 76" --around 2026-09-27T11:43 --sail main --station stripe50 --write` — `--write` puts the answer on every frame in the set |
 
 All of these are dry-run by default and need `--write` to do anything. They read
 `.env.local` and must run **outside** Claude Code's Bash sandbox.
+
+The clip script is the same: it wants the card mounted and `ffmpeg` on the path,
+so it only ever runs on the laptop. Neither the footage nor `/Volumes` exists
+inside the sandbox, and nor does the database — a migration is always handed
+over to be pasted into the Supabase SQL editor.
+
+Its selection is worth knowing before you wait on an encode. A start is never
+merged with anything; roundings merge with each other; a `--at` moment or a
+tack inside one of those is DROPPED rather than cut twice. `--racing` keeps only
+what falls between a gun and its `--finish`, and the window is half-open, so a
+windward finish — which Expedition records as one more top-mark rounding — does
+not come out as a lap that never happened.
 
 ## Docs are delivered as PDF, never as `.md`
 
