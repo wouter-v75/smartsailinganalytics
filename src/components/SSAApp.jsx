@@ -343,6 +343,11 @@ function SSAApp(){
     } else {
       setSelectedVideo(prev => {
         const m = allVideos.find(v => v.id === clipId || v.cloudId === clipId || v.externalId === clipId);
+        // Keeping `prev` on a miss is what made this look like "the player is
+        // stuck on the start": every timeline card opened whatever was already
+        // selected, which is the day's first clip. Say so — a clip that cannot
+        // be resolved is a broken link, not a preference.
+        if (!m && clipId) console.warn(`[video] no local clip for ${clipId} — showing the previous selection`);
         return m || prev;
       });
       campaignPendingClipRef.current = null;

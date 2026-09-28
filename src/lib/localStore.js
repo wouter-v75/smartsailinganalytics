@@ -410,7 +410,12 @@ export async function updateVideoBlobAndDuration(id, blob, durationSec, newStart
 // ladder may still be encoding (or never queued). Push to Cloud skips anything
 // marked here, so a clip the watch folder or the Videos tab already sent can
 // never be sent a second time.
-export async function markVideoOriginalUploaded(id, { originalPath = null, originalStreamId = null } = {}) {
+// cloudId is kept here too, and it is not bookkeeping: everything that hands
+// the player a clip from OUTSIDE the library — the timeline, the campaign
+// notes, the debrief reel — names it by its Supabase id, while this store is
+// keyed by the id this device gave it. Lose the link and the lookup misses, and
+// the player quietly shows whatever was selected before.
+export async function markVideoOriginalUploaded(id, { originalPath = null, originalStreamId = null, cloudId = null } = {}) {
   try {
     const db    = await openDb();
     const entry = await idbGet(db, "videos", id);
@@ -418,6 +423,8 @@ export async function markVideoOriginalUploaded(id, { originalPath = null, origi
     entry.originalUploadedAt = Date.now();
     entry.originalPath       = originalPath;
     entry.originalStreamId   = originalStreamId;
+    // Never cleared by a later call that does not know it.
+    if (cloudId) entry.cloudId = cloudId;
     await idbPut(db, "videos", entry);
     return true;
   } catch { return false; }

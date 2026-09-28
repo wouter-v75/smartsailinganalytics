@@ -480,7 +480,19 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         // Record the upload on this device AND in the saved list: Push to Cloud
         // re-sends anything not marked, so without this it uploaded every
         // watched clip a second time.
-        const mark = { originalUploadedAt: Date.now(), originalPath: res.originalPath || null, originalStreamId: res.streamId || null };
+        // cloudId is load-bearing, not bookkeeping: the timeline, the campaign
+        // notes and the debrief reel all hand the player a SUPABASE id, and the
+        // library is keyed by this device's IndexedDB id. Without the link the
+        // lookup misses and the player falls back to the day's first clip — so
+        // every card in the timeline opened the race start, while the
+        // thumbnails (drawn from the cloud rows) looked right. The batch upload
+        // path has always recorded it; this one did not.
+        const mark = {
+          cloudId,
+          originalUploadedAt: Date.now(),
+          originalPath: res.originalPath || null,
+          originalStreamId: res.streamId || null,
+        };
         await markVideoOriginalUploaded(next.id, mark);
         setSavedVids(p => p.map(v => v.id === next.id ? { ...v, ...mark } : v));
         addLog(`✓ ${label} uploaded — watchable now`);
