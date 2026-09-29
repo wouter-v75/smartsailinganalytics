@@ -4,6 +4,18 @@
 //   npm run clips:day -- 2026-09-28 --write          cut it
 //   npm run clips:day -- 2026-09-28 --turns --write  add the race manoeuvres
 //
+// WHERE THE MOMENTS COME FROM.
+//
+// SSA's tags, when the day has any. The workflow is: upload the event file to
+// SSA, correct the tags there — Expedition detects a rounding off the track and
+// gets it wrong often enough that the crew, who were on the boat, are the better
+// authority — then cut from those. The event file is still read, for the venue
+// offset and the day's bounds, but its guns and roundings step aside the moment
+// the crew have tagged their own.
+//
+// A day with no racing tags in SSA falls back to the file, which is what a day
+// nobody has been through yet looks like. The report says which it used.
+//
 // WHY THIS EXISTS.
 //
 // select-race-clips.mjs does the work, but on 28 September getting to the point
@@ -163,12 +175,38 @@ async function grabVideoTimes(offsetMin: number): Promise<string[]> {
   return (data || []).map((r) => clock(Date.parse(r.t0 as string) + LEAD_MS + offsetMin * 60_000))
 }
 
+/**
+ * The racing moments the crew tagged, as local HH:MM:SS.
+ *
+ * Expedition detects a rounding from the track and gets it wrong often enough
+ * that the crew end up fixing them in SSA — which is the better answer, since
+ * they were there. When they have, those are what the cutter should use.
+ *
+ * t0 sits leadSec before the moment (20 s for a rounding, see baseTags), so the
+ * moment itself is what goes back, or every corrected mark would be cut 20 s
+ * early. The database stores true UTC; the cutter works in the event file's
+ * local wall clock, so the venue offset is applied here and nowhere after.
+ */
+async function taggedTimes(slug: string, leadSec: number, offsetMin: number): Promise<string[]> {
+  const { data, error } = await sb
+    .from('ssa_tag_events')
+    .select('t0')
+    .eq('session_date', date).eq('slug', slug).eq('rejected', false)
+    .order('t0')
+  if (error) { console.log(`  (could not read ${slug} tags: ${error.message})`); return [] }
+  return (data || []).map((r) => clock(Date.parse(r.t0 as string) + leadSec * 1000 + offsetMin * 60_000))
+}
+
 /** When the race ended. The inference lives in lib/tagging/raceWindow, under
  *  test, because a wrong finish silently throws away the end of the race. */
 async function finishTime(offsetMin: number, ev: any): Promise<{ time: string | null; how: string }> {
   const given = val('--finish')
   if (given) return { time: given, how: 'given on the command line' }
 
+  // EVERY finish the crew tagged, not just the last — a two-race day has two,
+  // and bounding only the last one leaves race 1 running to race 2's gun.
+  const tags = await taggedTimes('race-finish', 20, offsetMin)
+  if (tags.length > 1) return { time: tags.join(','), how: `${tags.length} finish tags from SSA` }
   const { data } = await sb
     .from('ssa_tag_events')
     .select('t0')
@@ -253,6 +291,11 @@ const main = async () => {
   const ev = parseXmlEvents(xml)
   const at = await grabVideoTimes(offsetMin)
   const finish = await finishTime(offsetMin, ev)
+  // A rounding's lead is 20 s (baseTags), so t0 + 20 s is the moment itself.
+  const marks = await taggedTimes('topmark', 20, offsetMin)
+  const gates = await taggedTimes('gate', 20, offsetMin)
+  // race-start's lead is 60 s, not 20 — see baseTags.
+  const starts = await taggedTimes('race-start', 60, offsetMin)
   const out = val('--out') || join(homedir(), 'clips')
   mkdirSync(out, { recursive: true })
 
@@ -262,6 +305,11 @@ const main = async () => {
   console.log(`  clips    ${out}`)
   console.log(`  marked   ${at.length ? at.join(', ') : '(no Grab video tags on this day)'}`)
   console.log(`  finish   ${finish.time || '—'}  · ${finish.how}`)
+  const tagged = starts.length || marks.length || gates.length
+  console.log(`  moments  ${tagged ? 'SSA tags' : 'the event file (no racing tags in SSA for this day)'}`)
+  if (starts.length) console.log(`  starts   ${starts.join(', ')}`)
+  if (marks.length) console.log(`  marks    ${marks.join(', ')}`)
+  if (gates.length) console.log(`  gates    ${gates.join(', ')}`)
   if (!has('--turns')) {
     const gun = Math.min(...(ev.raceGuns || []).map((g: any) => g.utc))
     const end = finish.time
@@ -269,6 +317,9 @@ const main = async () => {
       : (ev.dayStopUtc ?? Infinity)
     const n = (ev.tackJibes || []).filter((t: any) => t.utc >= gun && t.utc < end).length
     if (n) console.log(`  (${n} tacks/gybes in the race, left out — add --turns for those too)`)
+    // Manoeuvres always come from the event file: nobody tags 51 tacks by hand,
+    // and the detector is good at them. Only the moments a crew argues about —
+    // starts, roundings, finishes — move to SSA.
   }
 
   const argv = ['-e', events!, card!, '--trim', '--tag', compact, '-o', out, ...WINDOWS]
@@ -279,6 +330,9 @@ const main = async () => {
   if (practice) argv.push('--practice', practice)
   if (finish.time) argv.push('--finish', finish.time)
   if (at.length) argv.push('--at', at.join(','))
+  if (starts.length) argv.push('--gun', starts.join(','))
+  if (marks.length) argv.push('--mark', marks.join(','))
+  if (gates.length) argv.push('--gate', gates.join(','))
   if (!has('--turns')) argv.push('--no-turns')
   if (!write) argv.push('-n')
 

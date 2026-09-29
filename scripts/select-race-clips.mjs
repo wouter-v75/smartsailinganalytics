@@ -87,7 +87,7 @@ const opt = {
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
-  racing: false, finish: [], guns: [], practice: [],
+  racing: false, finish: [], guns: [], practice: [], marks: [], gates: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -106,6 +106,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--photo-lag') opt.photoLag = Number(next())
   else if (a === '--only-at') opt.onlyAt = true
   else if (a === '--racing') opt.racing = true
+  else if (a === '--mark') opt.marks.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
+  else if (a === '--gate') opt.gates.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--practice') opt.practice.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--gun') opt.guns.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--finish') opt.finish.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
@@ -170,6 +172,12 @@ function usage() {
                       manoeuvres and sail photos in the event file.
       --racing        keep only what happened between a start gun and its
                       finish. A training day's tacks are not a race.
+      --mark HH:MM:SS  a TOP MARK rounding, replacing the event file's top marks
+                      entirely. --gate does the same for gates. Expedition
+                      detects a rounding from the track and gets it wrong often
+                      enough that a crew correcting them in SSA is the better
+                      answer — these are how those corrections get here.
+      --gate HH:MM:SS  as --mark, for gates and spinnaker drops.
       --practice HH:MM:SS  this gun is a PRACTICE start: cut the start itself,
                       but nothing else between it and the next gun. A practice
                       start is followed by milling about, and its roundings are
@@ -441,7 +449,24 @@ for (const g of guns) {
   const practice = practiceAt.has(g.utc)
   addWindow(g.utc, 'start', practice ? 'Practice start' : `R${++raceNo} start`)
 }
-for (const r of ev.markRoundings) addWindow(r.utc, r.isTop ? 'topmark' : 'gate', r.isTop ? 'Top mark' : 'Leeward gate', r.isValid !== false)
+// Roundings: the crew's, where they have corrected them, otherwise the file's.
+// REPLACED PER KIND, not wholesale — a crew who fixed the top marks and left
+// the gates alone should not lose the gates.
+const givenMarks = opt.marks.map((t) => atLocal(t, '--mark'))
+const givenGates = opt.gates.map((t) => atLocal(t, '--gate'))
+if (givenMarks.length) {
+  console.log(`top marks: ${givenMarks.length} given, replacing the event file's ${ev.markRoundings.filter((r) => r.isTop).length}`)
+  for (const u of givenMarks) addWindow(u, 'topmark', 'Top mark')
+}
+if (givenGates.length) {
+  console.log(`gates: ${givenGates.length} given, replacing the event file's ${ev.markRoundings.filter((r) => !r.isTop).length}`)
+  for (const u of givenGates) addWindow(u, 'gate', 'Leeward gate')
+}
+for (const r of ev.markRoundings) {
+  if (r.isTop && givenMarks.length) continue
+  if (!r.isTop && givenGates.length) continue
+  addWindow(r.utc, r.isTop ? 'topmark' : 'gate', r.isTop ? 'Top mark' : 'Leeward gate', r.isValid !== false)
+}
 }
 if (!opt.onlyAt && !opt.noTurns) {
   for (const t of ev.tackJibes) addWindow(t.utc, t.isTack ? 'tack' : 'gybe', t.isTack ? 'Tack' : 'Gybe', t.isValid !== false)
