@@ -128,7 +128,13 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
       ['Vasco', 'tactician of Django (rival boat)'], ['Pepsi', 'tactician of Proteus (rival boat)'],
       ['Brad', 'tactician of Jethou (rival boat)'], ['Cameron', 'tactician of Balthasar (rival boat)'],
     ],
-    aliases: [['triple S', 'SSS'], ['Campo', 'Christian (Campo)']],
+    aliases: [
+      ['triple S', 'SSS'], ['Campo', 'Christian (Campo)'],
+      // What the crew call the 100 ft yachts the squad races against. Heard
+      // correctly, so it belongs here rather than in fixups — the summariser
+      // just has to know it names a class of boat and not a number.
+      ['the hundreds', 'the 100-footers (the 100 ft yachts raced against)'],
+    ],
     fixups: [
       ['tiller', 'wheel (Northstar steers with a wheel)'],
       ['Dole', 'Doyle (sailmaker)'],
@@ -141,6 +147,11 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
       ['jungle', 'Django (boat name)'],
       ['Beramente', 'Bella Mente (boat name)'],
       ['Belamente', 'Bella Mente (boat name)'],
+      // Observed in the 28 Sept debrief. "Jesu" put a rival boat in the summary
+      // under a name that is not a boat; "the 10s" turned the 100-footers into
+      // a number, and the same sentence then read as a wind speed.
+      ['Jesu', 'Jethou (boat name)'],
+      ['the 10s', 'the hundreds (the 100-footers) — not a wind speed or a count'],
     ],
   },
   warp: {
