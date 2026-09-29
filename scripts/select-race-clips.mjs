@@ -87,7 +87,7 @@ const opt = {
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
-  racing: false, finish: [], guns: [], practice: [], marks: [], gates: [],
+  racing: false, finish: [], guns: [], practice: [], marks: [], gates: [], have: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -106,6 +106,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--photo-lag') opt.photoLag = Number(next())
   else if (a === '--only-at') opt.onlyAt = true
   else if (a === '--racing') opt.racing = true
+  else if (a === '--have') opt.have.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--mark') opt.marks.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--gate') opt.gates.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--practice') opt.practice.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
@@ -172,6 +173,10 @@ function usage() {
                       manoeuvres and sail photos in the event file.
       --racing        keep only what happened between a start gun and its
                       finish. A training day's tacks are not a race.
+      --have NAME     a segment the CLOUD already holds, so skip it even though
+                      it is not on disk. Repeatable or comma-separated. The
+                      outbox is cleared of uploaded clips before each run, so
+                      "is it on disk" stops meaning "has it been made".
       --mark HH:MM:SS  a TOP MARK rounding, replacing the event file's top marks
                       entirely. --gate does the same for gates. Expedition
                       detects a rounding from the track and gets it wrong often
@@ -794,9 +799,19 @@ writeFileSync(manifest, JSON.stringify({
 // encoding, and it can be interrupted for entirely ordinary reasons — a lid
 // closing, a drive being unplugged. Segments already written are left alone, so
 // picking up again costs only what is actually missing. --force re-encodes.
-const todo = opt.force ? jobs : jobs.filter((j) => !existsSync(join(opt.out, `${j.name}.mp4`)))
+// Made already? Two ways, and both are needed.
+//
+// On disk is the obvious one. But the outbox is a single folder that gets
+// cleared of everything the cloud already holds before each run, so a clip made
+// last night and uploaded is GONE from disk — and "not on disk" would mean
+// "never made", re-encoding it and sending a second copy up. --have carries the
+// cloud's side of the answer.
+const haveKey = (n) => String(n).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+const inCloud = new Set(opt.have.map(haveKey))
+const todo = opt.force ? jobs : jobs.filter((j) =>
+  !existsSync(join(opt.out, `${j.name}.mp4`)) && !inCloud.has(haveKey(j.name)))
 const already = jobs.length - todo.length
-if (already) console.log(`\n↷ ${already} segment(s) already present — skipping (use --force to redo)`)
+if (already) console.log(`\n↷ ${already} segment(s) already made — skipping (use --force to redo)`)
 console.log(`\n● Compressing ${todo.length} file(s) from ${picked.length} clip(s) → ${opt.out}/\n`)
 let i = 0, bad = 0
 for (const j of todo) {

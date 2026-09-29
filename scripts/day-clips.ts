@@ -241,6 +241,19 @@ async function finishTime(offsetMin: number, ev: any): Promise<{ time: string | 
  * has been through the app's video-timezone setting on the way in, and a wrong
  * guess there would delete footage that was never uploaded.
  */
+/** Titles of every clip the cloud holds, for the cutter's "already made" test. */
+async function cloudClipNames(): Promise<string[]> {
+  const { data } = await sb
+    .from('videos')
+    .select('title, bunny_storage_path, bunny_stream_id')
+    .order('created_at', { ascending: false })
+    .limit(2000)
+  return (data || [])
+    .filter((v) => v.bunny_storage_path || v.bunny_stream_id)
+    .map((v) => String(v.title || '').trim())
+    .filter(Boolean)
+}
+
 async function tidyOutbox(dir: string) {
   const files = existsSync(dir) ? readdirSync(dir) : []
   if (!files.length) return
@@ -343,6 +356,10 @@ const main = async () => {
   if (marks.length) argv.push('--mark', marks.join(','))
   if (gates.length) argv.push('--gate', gates.join(','))
   if (!has('--turns')) argv.push('--no-turns')
+  // What the cloud already holds, so a clip made on an earlier run and since
+  // swept out of the outbox is not made and uploaded a second time.
+  const uploaded = await cloudClipNames()
+  if (uploaded.length) argv.push('--have', uploaded.join(','))
   if (!write) argv.push('-n')
 
   if (!has('--keep')) await tidyOutbox(out)
