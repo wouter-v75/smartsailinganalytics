@@ -85,17 +85,36 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_
 // ── the card ─────────────────────────────────────────────────────────────────
 // Every camera and every trip names its folders differently, so look for the
 // day's number anywhere under a mounted volume rather than insisting on a shape.
-function findCard(): string | null {
+function findCard(): { path: string; raw: boolean } | null {
   const given = val('--card')
-  if (given) return existsSync(given) ? given : fail(`--card: ${given} does not exist`)
+  if (given) {
+    if (!existsSync(given)) fail(`--card: ${given} does not exist`)
+    return { path: given, raw: /dcim/i.test(given) }
+  }
   const vols = existsSync('/Volumes') ? readdirSync('/Volumes') : []
-  const tries: string[] = []
+
+  // A card someone has already filed by day. Preferred, because it holds only
+  // this day and the exiftool pass is over in seconds.
   for (const v of vols) {
     for (const sub of [`${compact}/Drone`, `${compact}/drone`, compact, `${date}/Drone`, date]) {
-      tries.push(join('/Volumes', v, sub))
+      const p = join('/Volumes', v, sub)
+      if (existsSync(p)) return { path: p, raw: false }
     }
   }
-  return tries.find((p) => existsSync(p)) || null
+
+  // A card straight out of the drone: DCIM/DJI_001, DCIM/100MEDIA, and the
+  // volume itself is usually called "Untitled". The cutter recurses, so DCIM
+  // covers every folder under it.
+  //
+  // Such a card holds EVERY day it has recorded, not just this one. That is
+  // safe — a clip only becomes a segment if it overlaps a window from this
+  // day's event file — but the timestamp pass reads all of them, so it is
+  // slower and worth saying so rather than leaving it to look like a hang.
+  for (const v of vols) {
+    const dcim = join('/Volumes', v, 'DCIM')
+    if (existsSync(dcim)) return { path: dcim, raw: true }
+  }
+  return null
 }
 
 // ── the event file ───────────────────────────────────────────────────────────
@@ -220,8 +239,9 @@ async function tidyOutbox(dir: string) {
 const main = async () => {
   const events = findEvents()
   if (!events) fail(`no .ev.xml for ${date} in ~/Downloads — pass --events`)
-  const card = findCard()
-  if (!card) fail(`no footage folder for ${date} under /Volumes — is the card mounted? pass --card`)
+  const found = findCard()
+  if (!found) fail(`no footage folder for ${date} under /Volumes — is the card mounted? pass --card`)
+  const card = found!.path
 
   // The venue offset the event file itself declares, so nothing has to be typed
   // and nothing can be applied twice.
@@ -236,7 +256,7 @@ const main = async () => {
 
   console.log(`\n${date}  ${ev.meta?.boat || ''} ${ev.meta?.location || ''} (venue UTC${offsetMin >= 0 ? '+' : ''}${offsetMin / 60})`)
   console.log(`  events   ${events}`)
-  console.log(`  footage  ${card}`)
+  console.log(`  footage  ${card}${found!.raw ? '  (card as the drone wrote it — every day on it is scanned, so the timestamp pass is slower)' : ''}`)
   console.log(`  clips    ${out}`)
   console.log(`  marked   ${at.length ? at.join(', ') : '(no Grab video tags on this day)'}`)
   console.log(`  finish   ${finish.time || '—'}  · ${finish.how}`)

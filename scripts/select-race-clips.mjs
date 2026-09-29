@@ -87,7 +87,7 @@ const opt = {
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
-  racing: false, finish: [],
+  racing: false, finish: [], guns: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -106,6 +106,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--photo-lag') opt.photoLag = Number(next())
   else if (a === '--only-at') opt.onlyAt = true
   else if (a === '--racing') opt.racing = true
+  else if (a === '--gun') opt.guns.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--finish') opt.finish.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--at') opt.at.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--no-photos') opt.noPhotos = true
@@ -168,6 +169,11 @@ function usage() {
                       manoeuvres and sail photos in the event file.
       --racing        keep only what happened between a start gun and its
                       finish. A training day's tacks are not a race.
+      --gun HH:MM:SS  the race started HERE, overriding the event file's guns.
+                      Repeatable or comma-separated. For a file that logged a
+                      general recall, a postponed start or the class next door
+                      as a gun of ours — a spurious gun splits a race in two
+                      and truncates the real one at it.
       --finish HH:MM:SS  when the race ended, in LOCAL time. Repeatable, one per
                       gun, or comma-separated. Expedition does not record a
                       finish, so SSA's finish tag is where this comes from.
@@ -390,7 +396,24 @@ const addWindow = (utc, kind, label, valid = true) => {
 // --only-at: the caller has named the moments they want, so nothing from the
 // event file competes with them.
 if (!opt.onlyAt) {
-for (const g of ev.raceGuns) addWindow(g.utc, 'start', `R${g.raceNum || '?'} start`)
+// The guns this run works from: the event file's, unless --gun overrides them.
+// A gun the file invented (a recall, a postponement, the class next door) does
+// two kinds of damage — it cuts a start clip of water where no start happened,
+// and under --racing it ends the real race early, because a race is bounded by
+// the next gun.
+const dayAnchor = new Date(ev.dayStartUtc ?? Date.now())
+const atLocal = (t, what) => {
+  const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t)
+  if (!m) die(`${what}: "${t}" is not HH:MM or HH:MM:SS`)
+  return Date.UTC(dayAnchor.getUTCFullYear(), dayAnchor.getUTCMonth(), dayAnchor.getUTCDate(), +m[1], +m[2], +(m[3] || 0))
+}
+const guns = opt.guns.length
+  ? opt.guns.map((t) => ({ utc: atLocal(t, '--gun'), raceNum: null })).sort((a, b) => a.utc - b.utc)
+  : [...ev.raceGuns].sort((a, b) => a.utc - b.utc)
+if (opt.guns.length) {
+  console.log(`\nguns: ${guns.length} given on the command line, replacing the event file's ${ev.raceGuns.length}`)
+}
+for (const [i, g] of guns.entries()) addWindow(g.utc, 'start', `R${g.raceNum || i + 1} start`)
 for (const r of ev.markRoundings) addWindow(r.utc, r.isTop ? 'topmark' : 'gate', r.isTop ? 'Top mark' : 'Leeward gate', r.isValid !== false)
 }
 if (!opt.onlyAt && !opt.noTurns) {
@@ -432,13 +455,7 @@ if (opt.at.length) {
 if (opt.racing) {
   const clock = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString().slice(11, 19) : 'end of day')
   const races = []
-  const guns = [...ev.raceGuns].sort((a, b) => a.utc - b.utc)
-  const finishes = opt.finish.map((t) => {
-    const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t)
-    if (!m) die(`--finish: "${t}" is not HH:MM or HH:MM:SS`)
-    const d0 = new Date(ev.dayStartUtc ?? Date.now())
-    return Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate(), +m[1], +m[2], +(m[3] || 0))
-  }).sort((a, b) => a - b)
+  const finishes = opt.finish.map((t) => atLocal(t, '--finish')).sort((a, b) => a - b)
 
   if (!guns.length) die('--racing needs a start gun in the event file')
   for (let i = 0; i < guns.length; i++) {
