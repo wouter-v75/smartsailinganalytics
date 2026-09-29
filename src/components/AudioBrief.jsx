@@ -30,6 +30,11 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
   const [showTx, setShowTx] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
+  // The summary stopped because the model ran out of room, not because the
+  // debrief ended. It reads as a finished summary — the route repairs the
+  // unclosed JSON — so the only thing standing between that and a note saved
+  // with its last point missing is saying so here.
+  const [cutShort, setCutShort] = useState(false)
   const [glossaryExtra, setGlossaryExtra] = useState(null)
   // null = not yet known. Until it is known the button is allowed to be pressed;
   // the check runs again on press, so nothing slips through a slow fetch.
@@ -74,13 +79,13 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
     const file = e.target.files && e.target.files[0]
     e.target.value = ''
     if (!file) return
-    setErr(null); setResult(null); setBusy(true); setStage('compress'); setPct(0)
+    setErr(null); setResult(null); setCutShort(false); setBusy(true); setStage('compress'); setPct(0)
     try {
-      const { fields: out, transcript: tx } = await runAudioBrief(file, mode, {
+      const { fields: out, transcript: tx, truncated } = await runAudioBrief(file, mode, {
         onStage: (s, p) => { setStage(s); setPct(p || 0) },
         glossaryExtra,
       })
-      setResult(out); setTranscript(tx)
+      setResult(out); setTranscript(tx); setCutShort(!!truncated)
     } catch (ex) {
       setErr((ex && ex.message) || String(ex))
     } finally { setBusy(false); setStage(null) }
@@ -126,6 +131,13 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
         </div>
       )}
 
+      {cutShort && (
+        <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8 }}>
+          ⚠ The summary was cut short — the model ran out of room before the end of
+          the debrief. The transcript below is complete; check the last section
+          before saving, and re-run if something is missing.
+        </div>
+      )}
       {err && <div style={{ color: '#EF4444', fontSize: 12, marginTop: 8 }}>✕ {err}</div>}
 
       {result && (

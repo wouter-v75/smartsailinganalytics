@@ -231,8 +231,12 @@ export async function runAudioBrief(file, mode, { onStage, glossaryExtra } = {})
     if (!transcript.trim()) throw new Error('transcript came back empty — was anything recorded?')
     stage('summarise', 0)
     const fields = await summarise(transcript, mode, glossaryExtra)
+    // Not a field — the route's flag that the model stopped because it ran out
+    // of room. It has to travel separately or it would be saved as a note.
+    const truncated = !!fields._truncated
+    delete fields._truncated
     stage('done', 1)
-    return { fields, transcript }
+    return { fields, transcript, truncated }
   } finally { releaseWakeLock() }
 }
 

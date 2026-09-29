@@ -106,7 +106,12 @@ export async function POST(req: NextRequest) {
       headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY}` },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 4000,
+        // 4000 silently truncated a real debrief at about 80%: the model hit the
+        // ceiling mid-string, extractJson's repair below closed the JSON, and
+        // what came back LOOKED like a complete summary with the last note cut
+        // off. A 128k-context model has the room; the ceiling only ever has to
+        // be larger than the longest summary a debrief can justify.
+        max_tokens: 16000,
         temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: buildMessages(data?.mode, transcript, data?.glossary),
@@ -119,7 +124,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `scaleway ${res.status}: ${raw.slice(0, 200)}`, ms: Date.now() - t0 }, { status: 502 })
     }
     let content = ''
-    try { content = (JSON.parse(raw) as { choices?: { message?: { content?: string } }[] }).choices?.[0]?.message?.content || '' } catch { /* */ }
+    // `length` means the model stopped because it ran out of room, not because
+    // it had finished. That is the ONE thing the caller must not have to guess
+    // at: a truncated summary reads as a complete one — the repair in
+    // extractJson makes sure of it — so it has to say so out loud.
+    let truncated = false
+    try {
+      const body = JSON.parse(raw) as { choices?: { message?: { content?: string }; finish_reason?: string }[] }
+      content = body.choices?.[0]?.message?.content || ''
+      truncated = body.choices?.[0]?.finish_reason === 'length'
+    } catch { /* */ }
+    if (truncated) log('TRUNCATED — the model hit max_tokens; the summary is incomplete')
     const debug = !!req.nextUrl.searchParams.get('debug')
     const parsed = extractJson(content)
     if (!parsed) {
@@ -136,7 +151,12 @@ export async function POST(req: NextRequest) {
       result[k] = coerce(raw)
     }
     log('ok', Date.now() - t0, 'ms', 'filled:', mode.keys.filter((k) => result[k]).length)
-    return NextResponse.json({ ...result, ...(debug ? { _raw: content } : {}), _ms: Date.now() - t0 })
+    return NextResponse.json({
+      ...result,
+      ...(truncated ? { _truncated: true } : {}),
+      ...(debug ? { _raw: content } : {}),
+      _ms: Date.now() - t0,
+    })
   } catch (e: unknown) {
     const aborted = e instanceof Error && e.name === 'AbortError'
     log('exception', aborted ? `aborted (>${ABORT_MS / 1000}s)` : String(e))
