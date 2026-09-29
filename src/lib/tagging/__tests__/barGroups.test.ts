@@ -23,7 +23,7 @@ describe('the racing group', () => {
     // The 5 minute gun sits immediately before the start, because that is when
     // it goes off.
     expect(RACING.slugs).toEqual([
-      'day-start', 'warning-signal', 'five-minute-gun', 'race-start',
+      'day-start', 'warning-signal', 'five-minute-gun', 'practice-start', 'race-start',
       'topmark', 'gate', 'mark', 'race-finish', 'day-end',
     ])
   })

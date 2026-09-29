@@ -21,7 +21,7 @@ describe('base vocabulary', () => {
     // detected from the event file on any day that has one — most crews will
     // never press them.
     expect(BASE_GENERAL_TAGS.length).toBeGreaterThanOrEqual(20)
-    expect(BASE_GENERAL_TAGS.length).toBeLessThanOrEqual(32)
+    expect(BASE_GENERAL_TAGS.length).toBeLessThanOrEqual(33)
   })
 
   it('keeps the button bar to roughly eight', () => {

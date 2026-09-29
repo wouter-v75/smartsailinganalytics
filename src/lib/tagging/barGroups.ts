@@ -44,7 +44,7 @@ export const BAR_GROUPS: BarGroup[] = [
     // are here because crews say both, and a picker that refuses the word
     // somebody actually uses is a picker they stop reaching for.
     slugs: [
-      'day-start', 'warning-signal', 'five-minute-gun', 'race-start',
+      'day-start', 'warning-signal', 'five-minute-gun', 'practice-start', 'race-start',
       'topmark', 'gate', 'mark', 'race-finish', 'day-end',
     ],
   },

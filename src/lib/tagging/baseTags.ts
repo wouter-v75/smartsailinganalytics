@@ -180,6 +180,17 @@ const DAY: BaseTag[] = [
   // Deliberately NOT added to racingTags.ts, for the same reason as the finish
   // below: that is the whitelist deciding what shows on a media card, and
   // widening it would change every thumbnail in the app.
+  // A practice start is a start: the crew want the clip, and it is the one
+  // moment of a training day that looks exactly like racing. What follows it is
+  // NOT a race — it is a crew milling about until the real gun — and that is
+  // the whole reason it needs a tag of its own rather than a label on
+  // race-start: the clip cutter bounds a race by the next gun, so a practice
+  // start logged as a race swallowed half an hour of nothing on 29 September.
+  //
+  // Same windows as race-start: a start is worth its run-in either way.
+  mk('practice-start', 'Practice start', RACE_RED, {
+    sort: 8, leadSec: 60, lagSec: 30, labelGroups: [QUALITY],
+  }),
   mk('five-minute-gun', '5 min gun', RACE_RED, {
     sort: 9, leadSec: 20, lagSec: 60,
     // askOnAdd: the start type is not colour on this tag, it is what the tag
