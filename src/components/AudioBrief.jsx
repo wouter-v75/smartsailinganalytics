@@ -106,7 +106,11 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
       {!result && (
         <button onClick={guardedOpen} disabled={busy}
           style={{ ...btn, background: busy ? '#0F2030' : '#06253044', borderColor: '#06B6D4', color: busy ? '#8a97a9' : '#06B6D4', fontWeight: 700 }}>
-          {busy ? `${STAGE[stage] || 'Working'}… ${Math.round(pct * 100)}%` : '🎙 Summarise from a recording'}
+          {busy
+            ? (stage === 'summarise'
+                ? 'Summarising… (a long debrief takes a few minutes)'
+                : `${STAGE[stage] || 'Working'}… ${Math.round(pct * 100)}%`)
+            : '🎙 Summarise from a recording'}
         </button>
       )}
 

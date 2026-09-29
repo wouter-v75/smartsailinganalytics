@@ -109,9 +109,17 @@ export async function POST(req: NextRequest) {
         // 4000 silently truncated a real debrief at about 80%: the model hit the
         // ceiling mid-string, extractJson's repair below closed the JSON, and
         // what came back LOOKED like a complete summary with the last note cut
-        // off. A 128k-context model has the room; the ceiling only ever has to
-        // be larger than the longest summary a debrief can justify.
-        max_tokens: 16000,
+        // off.
+        //
+        // The ceiling is NOT simply "as large as the context allows". It is a
+        // time budget: the model generates at a few tens of tokens a second, so
+        // 16000 could run past ABORT_MS and turn a truncated summary into a
+        // five-minute wait ending in a 504 — which is worse, because at least
+        // the truncated one arrived. 8000 is double the length that was cut and
+        // still finishes comfortably inside the budget; anything longer than
+        // that is a debrief summary nobody will read anyway, and _truncated
+        // below now says so out loud rather than hiding it.
+        max_tokens: 8000,
         temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: buildMessages(data?.mode, transcript, data?.glossary),
