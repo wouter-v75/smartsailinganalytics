@@ -393,26 +393,37 @@ const addWindow = (utc, kind, label, valid = true) => {
   // start's lead reaches 90 s back over the line and must not disqualify it.
   windows.push({ at: utc, from: utc - k.lead() * 1000, to: utc + k.lag() * 1000, kind, label: valid ? label : `${label}?` })
 }
-// --only-at: the caller has named the moments they want, so nothing from the
-// event file competes with them.
-if (!opt.onlyAt) {
-// The guns this run works from: the event file's, unless --gun overrides them.
-// A gun the file invented (a recall, a postponement, the class next door) does
-// two kinds of damage — it cuts a start clip of water where no start happened,
-// and under --racing it ends the real race early, because a race is bounded by
-// the next gun.
+// Resolve an HH:MM(:SS) the caller typed against the day the event file
+// describes. MODULE SCOPE, not inside the block below: --racing and --at both
+// need it, and hiding it in the `if (!opt.onlyAt)` branch threw
+// "atLocal is not defined" the first time anyone combined --racing with a
+// --finish. `node --check` and `--help` both pass without ever reaching it.
 const dayAnchor = new Date(ev.dayStartUtc ?? Date.now())
 const atLocal = (t, what) => {
   const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t)
   if (!m) die(`${what}: "${t}" is not HH:MM or HH:MM:SS`)
   return Date.UTC(dayAnchor.getUTCFullYear(), dayAnchor.getUTCMonth(), dayAnchor.getUTCDate(), +m[1], +m[2], +(m[3] || 0))
 }
+
+// The guns this run works from: the event file's, unless --gun overrides them.
+// A gun the file invented (a recall, a postponement, the class next door) does
+// two kinds of damage — it cuts a start clip of water where no start happened,
+// and under --racing it ends the real race early, because a race is bounded by
+// the next gun.
+//
+// MODULE SCOPE, like atLocal above and for the same reason: --racing reads it
+// to bound each race, and declaring it inside the block below meant --racing
+// threw "guns is not defined" the moment anyone used it.
 const guns = opt.guns.length
   ? opt.guns.map((t) => ({ utc: atLocal(t, '--gun'), raceNum: null })).sort((a, b) => a.utc - b.utc)
   : [...ev.raceGuns].sort((a, b) => a.utc - b.utc)
 if (opt.guns.length) {
   console.log(`\nguns: ${guns.length} given on the command line, replacing the event file's ${ev.raceGuns.length}`)
 }
+
+// --only-at: the caller has named the moments they want, so nothing from the
+// event file competes with them.
+if (!opt.onlyAt) {
 for (const [i, g] of guns.entries()) addWindow(g.utc, 'start', `R${g.raceNum || i + 1} start`)
 for (const r of ev.markRoundings) addWindow(r.utc, r.isTop ? 'topmark' : 'gate', r.isTop ? 'Top mark' : 'Leeward gate', r.isValid !== false)
 }
@@ -457,7 +468,7 @@ if (opt.racing) {
   const races = []
   const finishes = opt.finish.map((t) => atLocal(t, '--finish')).sort((a, b) => a - b)
 
-  if (!guns.length) die('--racing needs a start gun in the event file')
+  if (!guns.length) die('--racing needs a start gun — none in the event file, and none given with --gun')
   for (let i = 0; i < guns.length; i++) {
     const from = guns[i].utc
     const nextGun = guns[i + 1]?.utc ?? Infinity
