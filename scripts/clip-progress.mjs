@@ -17,14 +17,35 @@ const watch = args.includes('--watch')
 const dir = args.find((a) => !a.startsWith('-'))
 if (!dir) { console.error('usage: clip-progress.mjs <output-dir> [--watch]'); process.exit(1) }
 const manifestPath = join(dir, 'manifest.json')
-if (!existsSync(manifestPath)) { console.error(`no manifest.json in ${dir}`); process.exit(1) }
+// In --watch, being early is the normal case: you start this in a second
+// terminal while the encode is still working out what to cut. Only a one-shot
+// read has nothing to wait for.
+if (!watch && !existsSync(manifestPath)) {
+  console.error(`no manifest.json in ${dir} — the encode writes it when it starts`)
+  process.exit(1)
+}
 
+// Has this watcher ever seen the manifest? Decides whether a missing one means
+// "not started yet" or "finished and filed away".
+let done = false
 const sizeOf = (p) => { try { return statSync(p).size } catch { return 0 } }
 const fmtMB = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)}G` : `${Math.round(b / 1048576)}M`)
 const mmss = (s) => `${Math.floor(s / 60)}m${String(Math.round(s % 60)).padStart(2, '0')}s`
 
 function render() {
-  const man = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  // The manifest can go AWAY mid-watch. A finished run renames it to
+  // <date>.manifest.json — one outbox holds every day, so each day's manifest
+  // has to keep its own name — and this used to read it every ten seconds and
+  // die on ENOENT at the exact moment the encode succeeded. The last thing a
+  // watcher should do is throw a stack trace when the job it is watching
+  // finishes.
+  let man
+  try { man = JSON.parse(readFileSync(manifestPath, 'utf8')) } catch {
+    return done
+      ? 'The encode has finished — its manifest is filed under the day’s name.'
+      : `Waiting for ${manifestPath} — the encode writes it when it starts.`
+  }
+  done = true
   const items = man.items || []
   const started = statSync(manifestPath).mtimeMs
 
