@@ -87,7 +87,7 @@ const opt = {
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
-  racing: false, finish: [], guns: [],
+  racing: false, finish: [], guns: [], practice: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -106,6 +106,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--photo-lag') opt.photoLag = Number(next())
   else if (a === '--only-at') opt.onlyAt = true
   else if (a === '--racing') opt.racing = true
+  else if (a === '--practice') opt.practice.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--gun') opt.guns.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--finish') opt.finish.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--at') opt.at.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
@@ -169,6 +170,11 @@ function usage() {
                       manoeuvres and sail photos in the event file.
       --racing        keep only what happened between a start gun and its
                       finish. A training day's tacks are not a race.
+      --practice HH:MM:SS  this gun is a PRACTICE start: cut the start itself,
+                      but nothing else between it and the next gun. A practice
+                      start is followed by milling about, and its roundings are
+                      not a race — they filled a training day with clips of
+                      water nobody asked for.
       --gun HH:MM:SS  the race started HERE, overriding the event file's guns.
                       Repeatable or comma-separated. For a file that logged a
                       general recall, a postponed start or the class next door
@@ -420,11 +426,21 @@ const guns = opt.guns.length
 if (opt.guns.length) {
   console.log(`\nguns: ${guns.length} given on the command line, replacing the event file's ${ev.raceGuns.length}`)
 }
+// Which of those guns are PRACTICE starts. Module scope, beside `guns` and
+// `atLocal`, because --racing reads it as well — the third thing in this file
+// to be declared inside the window-building block and read outside it.
+const practiceAt = new Set(opt.practice.map((t) => atLocal(t, '--practice')))
 
 // --only-at: the caller has named the moments they want, so nothing from the
 // event file competes with them.
 if (!opt.onlyAt) {
-for (const [i, g] of guns.entries()) addWindow(g.utc, 'start', `R${g.raceNum || i + 1} start`)
+// Numbered over the RACES, not the guns: with a practice start first, the
+// event file's own raceNum makes race 1's clip come out called "R2 start".
+let raceNo = 0
+for (const g of guns) {
+  const practice = practiceAt.has(g.utc)
+  addWindow(g.utc, 'start', practice ? 'Practice start' : `R${++raceNo} start`)
+}
 for (const r of ev.markRoundings) addWindow(r.utc, r.isTop ? 'topmark' : 'gate', r.isTop ? 'Top mark' : 'Leeward gate', r.isValid !== false)
 }
 if (!opt.onlyAt && !opt.noTurns) {
@@ -468,6 +484,7 @@ if (opt.racing) {
   const races = []
   const finishes = opt.finish.map((t) => atLocal(t, '--finish')).sort((a, b) => a - b)
 
+  let seen = 0
   if (!guns.length) die('--racing needs a start gun — none in the event file, and none given with --gun')
   for (let i = 0; i < guns.length; i++) {
     const from = guns[i].utc
@@ -475,7 +492,9 @@ if (opt.racing) {
     // The first finish after this gun that is not already past the next one.
     const fin = finishes.find((f) => f > from && f < nextGun)
     const to = fin ?? Math.min(nextGun, ev.dayStopUtc ?? Infinity)
-    races.push({ from, to, num: guns[i].raceNum ?? i + 1, assumed: fin == null })
+    const practice = practiceAt.has(from)
+    if (!practice) seen++
+    races.push({ from, to, num: seen, assumed: fin == null, practice })
   }
   const before = windows.length
   // On the anchor, not the padded window: a start's 90 s of run-in sits before
@@ -483,10 +502,18 @@ if (opt.racing) {
   // Half-open: [gun, finish). Whatever Expedition recorded AT the finish is the
   // finish — a windward finish comes through as one more top-mark rounding, and
   // cutting it as a third top mark gives the crew a lap that never happened.
-  windows = windows.filter((w) => races.some((r) => w.at >= r.from && w.at < r.to))
+  //
+  // A PRACTICE race keeps its start and nothing else. What follows a practice
+  // gun is a crew milling about before the real one, and its roundings are
+  // roundings of nothing — on 29 September six of them sat between the practice
+  // gun and race 1.
+  windows = windows.filter((w) => races.some((r) =>
+    w.at >= r.from && w.at < r.to && (!r.practice || w.kind === 'start')
+  ))
   console.log(`\nracing only: ${races.length} race(s)`)
   for (const r of races) {
-    console.log(`  R${r.num} ${clock(r.from)} → ${clock(r.to)}` +
+    console.log(`  ${r.practice ? 'practice' : `R${r.num}`} ${clock(r.from)} → ${clock(r.to)}` +
+      (r.practice ? '  (the start only — roundings after a practice gun are not a race)' : '') +
       (r.assumed ? '  (no --finish given: ran to the next gun / end of day)' : ''))
   }
   console.log(`  dropped ${before - windows.length} of ${before} windows outside a race`)

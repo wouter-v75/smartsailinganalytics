@@ -44,6 +44,8 @@ Usage:
   --card PATH   the footage folder, if it is not found under /Volumes
   --events PATH the .ev.xml, if it is not in ~/Downloads
   --finish TIME local HH:MM:SS, if SSA has no finish tag for the day
+  --practice TIME  a gun that was a PRACTICE start: its start is cut, the
+                milling about after it is not. Repeatable or comma-separated.
   --out DIR     the outbox (default: ~/clips — ONE folder, so the Upload tab's
                 watcher is pointed at it once and never again)
   --keep        do not clear clips the cloud already has
@@ -271,6 +273,10 @@ const main = async () => {
 
   const argv = ['-e', events!, card!, '--trim', '--tag', compact, '-o', out, ...WINDOWS]
   if (!has('--all')) argv.push('--racing')
+  // Only the crew know which gun was a practice start; nothing in the event
+  // file distinguishes it.
+  const practice = val('--practice')
+  if (practice) argv.push('--practice', practice)
   if (finish.time) argv.push('--finish', finish.time)
   if (at.length) argv.push('--at', at.join(','))
   if (!has('--turns')) argv.push('--no-turns')
