@@ -32,11 +32,19 @@ import { SAIL_CHANGE_SLUG, sailChanges, sailStateAt, type SailRef } from './tagg
 import { nameKey, sailLinks, type LinkableSail } from './tagging/sailLink'
 import type { TagEvent } from './tagging/types'
 
-export type SailMediaKind = 'scan' | 'trim' | 'video360' | 'photo' | 'video'
+export type SailMediaKind = 'scan' | 'lidar' | 'trim' | 'video360' | 'photo' | 'video'
+
+/** Which lidar the sail is measured by. Mains are `mn`, headsails `jib`. */
+export type LidarKind = 'mn' | 'jib' | 'spi'
 
 /** Column order in the grid. */
 export const SAIL_MEDIA_KINDS: { kind: SailMediaKind; label: string }[] = [
   { kind: 'scan', label: 'SailScans' },
+  // Beside the scans, and for the same reason: both are measurements of THIS
+  // sail's shape rather than pictures of it, and the pair is what a trimmer
+  // compares. Lidar is not one item per phase — thirty seconds is not a thing
+  // anyone opens — but one button per day and wind band.
+  { kind: 'lidar', label: 'Lidar' },
   { kind: 'trim', label: 'SailTrim' },
   { kind: 'video360', label: '360 video' },
   { kind: 'photo', label: 'Photos' },
@@ -55,6 +63,8 @@ export interface SailMediaItem {
   /** Marked not relevant to THIS sail (sails.specs.media_hidden). Kept, not
    *  dropped, so the grid can show it again and a mark can be undone. */
   hidden?: boolean
+  /** Lidar only: how many 30 s phases this button stands for. */
+  phases?: number
   /** Video only: seconds into the clip where this sail/band begins, and for how long. */
   startSec?: number
   durSec?: number
@@ -99,7 +109,18 @@ export function isVideo360(v: { title?: string | null; tags?: unknown }): boolea
 }
 
 // ── inputs ───────────────────────────────────────────────────────────────────
-export interface PhaseLite { utc: number; endUtc: number; sails: string[]; tws: number | null }
+export interface PhaseLite {
+  utc: number
+  endUtc: number
+  sails: string[]
+  tws: number | null
+  /**
+   * Which sails this phase carries LIDAR for — precomputed by the loader from
+   * the stored channel names, so this module stays free of the lidar tables and
+   * their dependencies.
+   */
+  lidar?: readonly LidarKind[]
+}
 
 export interface DayContext {
   event: string | null
@@ -131,6 +152,12 @@ export interface SailMediaInput {
    *   'several'  one of two or more — the phases cannot say which.
    */
   main?: 'only' | 'several'
+  /**
+   * Which lidar measures THIS sail — `mn` for a main, `jib` for a headsail.
+   * Null or absent means no lidar column for it: a sail the instrument does not
+   * describe should show nothing rather than somebody else's numbers.
+   */
+  lidarSail?: LidarKind | null
   /**
    * Photo and video ids somebody marked not relevant to this sail. Per SAIL:
    * a frame that says nothing about the J2 can still be the best shot of the
@@ -209,6 +236,33 @@ export function sailMedia(input: SailMediaInput): SailMediaItem[] {
       date: s.date ?? (s.captured_at ? s.captured_at.slice(0, 10) : null),
       event: s.event ?? eventOf(s.date), tws: s.tws_kn ?? null, thumb: s.photo_url ?? null,
     })
+  }
+
+  // LIDAR. One button per day per wind band, not one per phase: a phase is 30 s
+  // and nobody opens thirty seconds. The button says what it stands for — the
+  // event, the date, how many phases — and opening it shows the numbers.
+  //
+  // A phase counts when the instrument measured THIS sail's kind and this sail
+  // was up, decided by exactly the same `upAt` the photos use. A day whose tags
+  // say the sail was down contributes nothing, however much lidar it holds.
+  if (input.lidarSail) {
+    for (const [date, d] of Object.entries(input.days)) {
+      const byBand = new Map<string, { t: number; n: number; tws: number | null }>()
+      for (const p of d.phases || []) {
+        if (!p.lidar?.includes(input.lidarSail)) continue
+        if (!upAt(date, p.utc)) continue
+        const key = twsBand(p.tws).key
+        const cur = byBand.get(key)
+        if (cur) { cur.n += 1; if (p.utc < cur.t) { cur.t = p.utc; cur.tws = p.tws } }
+        else byBand.set(key, { t: p.utc, n: 1, tws: p.tws })
+      }
+      for (const [key, v] of Array.from(byBand)) {
+        out.push({
+          kind: 'lidar', id: `lidar:${date}:${input.lidarSail}:${key}`,
+          t: v.t, date, event: eventOf(date), tws: v.tws, thumb: null, phases: v.n,
+        })
+      }
+    }
   }
 
   // Photos, and the ones measured with SailTrim.
@@ -302,15 +356,20 @@ export function toggleHidden(list: readonly string[], id: string, hide: boolean)
  * and video clips (360 included). A clip counts once however many wind bands it
  * spans — the grid shows it once per band, but it is one clip.
  */
-export interface SailMediaCount { photos: number; scans: number; videos: number }
+export interface SailMediaCount { photos: number; scans: number; videos: number; lidar: number }
 
 export function countSailMedia(items: readonly SailMediaItem[]): SailMediaCount {
   const photos = new Set<string>(), scans = new Set<string>(), videos = new Set<string>()
+  // PHASES, not buttons. "3 lidar" reading as three days when it is three half
+  // minutes would be worse than not saying it, and the phase is the unit every
+  // other lidar figure in the app is quoted in.
+  let lidar = 0
   for (const i of items) {
     if (i.hidden) continue
     if (i.kind === 'scan') scans.add(i.id)
+    else if (i.kind === 'lidar') lidar += i.phases ?? 0
     else if (i.kind === 'photo' || i.kind === 'trim') photos.add(i.id)
     else videos.add(i.id)
   }
-  return { photos: photos.size, scans: scans.size, videos: videos.size }
+  return { photos: photos.size, scans: scans.size, videos: videos.size, lidar }
 }

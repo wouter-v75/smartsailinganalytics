@@ -17,7 +17,8 @@ import { SAIL_CHANGE_SLUG } from './tagging/sailState'
 import type { LinkableSail } from './tagging/sailLink'
 import type { TagEvent } from './tagging/types'
 import type { StoredPhase } from './seasonCurves'
-import { hiddenMediaOf, type DayContext, type PhotoIn, type ScanIn, type SailMediaInput, type VideoIn } from './sailMedia'
+import { hiddenMediaOf, type DayContext, type LidarKind, type PhotoIn, type ScanIn, type SailMediaInput, type VideoIn } from './sailMedia'
+import { lidarKindsIn } from './lidarTables'
 
 const PAGE = 1000
 const MAX_PHOTOS = 20_000
@@ -110,7 +111,14 @@ export async function loadBoatMedia(
     if (error) throw new Error(error.message)
     for (const row of ps || []) {
       day(row.date).phases = ((row.phases || []) as StoredPhase[])
-        .map((p) => ({ utc: p.u, endUtc: p.e, sails: String(p.s || '').split('/').map((x) => x.trim()).filter(Boolean), tws: num(p.v?.tws) }))
+        .map((p) => ({
+          utc: p.u, endUtc: p.e,
+          sails: String(p.s || '').split('/').map((x) => x.trim()).filter(Boolean),
+          tws: num(p.v?.tws),
+          // Off the channel names, here rather than in sailMedia, which stays
+          // free of the lidar tables and everything they pull in.
+          lidar: lidarKindsIn(p.v),
+        }))
         .sort((a, b) => a.utc - b.utc)
     }
   }
@@ -153,9 +161,27 @@ export async function loadBoatMedia(
  * carry headsails only: the boat's one active main was up whenever it sailed;
  * with several, the phases cannot say which.
  */
+/**
+ * Which lidar measures a sail. The instrument has three heads — main, jib and
+ * spinnaker — and a sail it does not describe gets no column at all, which is
+ * better than a column of somebody else's numbers.
+ *
+ * Genoa and staysail are headsails and read on the JIB head: KND has one
+ * forward channel set, and calling it `jib` is its name for it, not a claim
+ * about which headsail is up.
+ */
+export function lidarSailOf(kind: string | null | undefined): LidarKind | null {
+  switch ((kind || '').toLowerCase()) {
+    case 'mainsail': return 'mn'
+    case 'jib': case 'genoa': case 'staysail': case 'headsail': return 'jib'
+    case 'spinnaker': case 'gennaker': case 'code': case 'kite': return 'spi'
+    default: return null
+  }
+}
+
 export function inputFor(media: BoatMedia, sail: { id: string; kind?: string | null }): SailMediaInput {
   const activeMains = media.inventoryRows.filter((s) => s.kind === 'mainsail' && !s.retired)
   const main = sail.kind === 'mainsail' ? (activeMains.length <= 1 ? 'only' as const : 'several' as const) : undefined
   const hidden = hiddenMediaOf(media.inventoryRows.find((s) => s.id === sail.id)?.specs)
-  return { ...media.base, sailId: sail.id, main, hidden }
+  return { ...media.base, sailId: sail.id, main, hidden, lidarSail: lidarSailOf(sail.kind) }
 }

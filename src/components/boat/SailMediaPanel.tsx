@@ -22,6 +22,8 @@ import SailScanDetail from '@/components/SailScanDetail'
 import { isAnnotation, annotationHeadline } from '@/lib/sailTrimOverlay'
 import { savePhotoSailTrim, type PhotoRow, type SailTrimPayload } from '@/lib/savePhotoSailTrim'
 import { SAIL_MEDIA_KINDS, allTwsBands, twsBand, type SailMediaItem, type SailMediaKind } from '@/lib/sailMedia'
+import { lidarSailOf } from '@/lib/sailMediaLoad'
+import LidarPhaseCard from './LidarPhaseCard'
 
 const C = {
   bg: '#04101c', card: '#071624', border: '#1E3A5A', accent: '#06B6D4',
@@ -63,7 +65,12 @@ function fromRow(p: any, date: string | null): OpenPhoto {
 }
 
 type Item = SailMediaItem & { scan?: any; photo?: LightboxPhoto & { inst?: any } }
-interface Payload { items: Item[]; events: string[]; taggedDays: number; days: number }
+interface Payload {
+  items: Item[]; events: string[]; taggedDays: number; days: number
+  /** The sail as the SERVER sees it. The picker's option carries no `kind`, and
+   *  kind is what says which lidar head measures this sail. */
+  sail?: { id: string; name: string; category?: string | null; kind?: string | null }
+}
 interface SailOpt { id: string; name: string; category?: string | null; retired?: boolean }
 
 const sailLabel = (s: SailOpt) => (s.category ? `${s.category} · ${s.name}` : s.name)
@@ -127,6 +134,7 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   const dayRows = useRef(new Map<string, Promise<any[]>>())
   const [video, setVideo] = useState<Item | null>(null)
   const [scan, setScan] = useState<Item | null>(null)
+  const [lidar, setLidar] = useState<Item | null>(null)
 
   useEffect(() => {
     if (!sailId) return
@@ -244,7 +252,8 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   }, [applyGeometry])
 
   const openItem = (i: Item) => {
-    if (i.kind === 'scan') setScan(i)
+    if (i.kind === 'lidar') setLidar(i)
+    else if (i.kind === 'scan') setScan(i)
     else if (i.kind === 'photo' || i.kind === 'trim') openPhoto(i)
     else if (onOpenVideo && i.date) onOpenVideo(i.date, i.id)
     else setVideo(i)
@@ -262,6 +271,31 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   // A render function, not a component: defined in here, a component would be a
   // new type every render and every thumbnail would remount (and refetch).
   const thumb = (i: Item) => {
+    // Lidar has no picture and is not one moment: it is every 30 s phase on a
+    // day that the instrument measured THIS sail in THIS band. So it reads as a
+    // button saying what it stands for, not as an empty thumbnail.
+    if (i.kind === 'lidar') {
+      return (
+        <button
+          key={`lidar:${i.id}`}
+          data-testid="sailmedia-lidar"
+          onClick={() => setLidar(i)}
+          title={`${i.event || 'lidar'} — ${i.phases ?? 0} phase${(i.phases ?? 0) === 1 ? '' : 's'} measured on this sail in this band`}
+          style={{
+            width: thumbW * 2 + 4, boxSizing: 'border-box', textAlign: 'left',
+            border: `1px solid ${C.border}`, borderLeft: `3px solid #C084FC`, borderRadius: 6,
+            background: '#0a1c2e', cursor: 'pointer', padding: '5px 7px',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#C084FC', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {i.event || 'Lidar'}
+          </div>
+          <div style={{ fontSize: 9.5, color: C.dim }}>
+            {shortDate(i.date)} · {i.phases ?? 0} phase{(i.phases ?? 0) === 1 ? '' : 's'}
+          </div>
+        </button>
+      )
+    }
     const isVideo = i.kind === 'video' || i.kind === 'video360'
     const caption = [shortDate(i.date), i.tws != null ? `${i.tws.toFixed(1)} kn` : null].filter(Boolean).join(' · ')
     // Scans are filed to a sail and refiled in their detail view — not hidden.
@@ -472,6 +506,19 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
           sailName={sail ? sailLabel(sail) : null}
           sessionTzOffset={sessionTzOffset}
           onClose={() => setScan(null)}
+        />
+      )}
+
+      {lidar?.date && boatId && lidarSailOf(data?.sail?.kind) && (
+        <LidarPhaseCard
+          teamId={teamId}
+          boatId={boatId}
+          date={lidar.date}
+          sail={lidarSailOf(data?.sail?.kind)!}
+          bandKey={twsBand(lidar.tws).key}
+          event={lidar.event}
+          expected={lidar.phases}
+          onClose={() => setLidar(null)}
         />
       )}
     </div>

@@ -208,7 +208,7 @@ describe('countSailMedia', () => {
       },
     }))
     expect(items.filter((i) => i.kind === 'video')).toHaveLength(2)  // two bands…
-    expect(countSailMedia(items)).toEqual({ photos: 2, scans: 1, videos: 1 })  // …one clip
+    expect(countSailMedia(items)).toEqual({ photos: 2, scans: 1, videos: 1, lidar: 0 })  // …one clip
   })
 
   it('finds the phase at a time among many (binary search), edges included', () => {
@@ -239,7 +239,7 @@ describe('not relevant to this sail', () => {
   it('marks, rather than drops, what was hidden — and leaves it out of the counts', () => {
     const items = sailMedia(input(['p1', 'v']))
     expect(items.filter((i) => i.hidden).map((i) => i.id).sort()).toEqual(['p1', 'v'])
-    expect(countSailMedia(items)).toEqual({ photos: 1, scans: 1, videos: 0 })
+    expect(countSailMedia(items)).toEqual({ photos: 1, scans: 1, videos: 0, lidar: 0 })
   })
 
   it('does not hide a scan — a scan is refiled, not hidden', () => {
@@ -253,5 +253,98 @@ describe('not relevant to this sail', () => {
     expect(toggleHidden(['a', 'b'], 'a', false)).toEqual(['b'])
     expect(toggleHidden(['a'], 'a', true)).toBeNull()   // nothing to save
     expect(toggleHidden(['a'], 'b', false)).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lidar. Not one item per phase — thirty seconds is not a thing anyone opens —
+// but one button per day and wind band, beside the SailScans it is compared to.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Phases carrying lidar for the given sail kinds. */
+const lidarPhases = (a: number, b: number, sails: string[], tws: number, kinds: ('mn'|'jib'|'spi')[]): PhaseLite[] =>
+  phases(a, b, sails, tws).map((p) => ({ ...p, lidar: kinds }))
+
+const day = (ph: PhaseLite[], tags: TagEvent[] = []) => ({ [D]: { event: 'Maxi Worlds', tags, phases: ph } })
+
+describe('lidar in the sail media grid', () => {
+  it('gives one button per wind band, counting the phases behind it', () => {
+    const items = sailMedia(base({
+      sailId: 'j2', lidarSail: 'jib',
+      days: day([
+        ...lidarPhases(T(11, 0), T(11, 5), ['J2'], 12, ['jib']),   // 10 phases at 12 kn
+        ...lidarPhases(T(11, 5), T(11, 7), ['J2'], 18, ['jib']),   //  4 phases at 18 kn
+      ]),
+    })).filter((i) => i.kind === 'lidar')
+
+    expect(items).toHaveLength(2)
+    expect(items.map((i) => [twsBand(i.tws).label, i.phases])).toEqual(
+      expect.arrayContaining([['12 kn', 10], ['18 kn', 4]]),
+    )
+    // …and it says which day and event it stands for.
+    expect(items[0].date).toBe(D)
+    expect(items[0].event).toBe('Maxi Worlds')
+  })
+
+  it('reads the MAIN off the main channels and the jib off the jib ones', () => {
+    // The phases cannot say which main was up, but they can say the instrument
+    // measured one — so a boat's only main takes them.
+    const both = day(lidarPhases(T(11, 0), T(11, 2), ['J2'], 12, ['mn', 'jib']))
+    const asJib = sailMedia(base({ sailId: 'j2', lidarSail: 'jib', days: both })).filter((i) => i.kind === 'lidar')
+    const asMain = sailMedia(base({ sailId: 'main', lidarSail: 'mn', main: 'only', days: both })).filter((i) => i.kind === 'lidar')
+    expect(asJib[0].phases).toBe(4)
+    expect(asMain[0].phases).toBe(4)
+  })
+
+  it('ignores phases whose lidar is of the OTHER sail', () => {
+    // A day the main's unit ran and the jib's did not says nothing about the jib.
+    const items = sailMedia(base({
+      sailId: 'j2', lidarSail: 'jib',
+      days: day(lidarPhases(T(11, 0), T(11, 2), ['J2'], 12, ['mn'])),
+    })).filter((i) => i.kind === 'lidar')
+    expect(items).toHaveLength(0)
+  })
+
+  it('shows nothing at all for a sail no lidar measures', () => {
+    // Without a kind there is no column — better than somebody else's numbers.
+    const items = sailMedia(base({
+      sailId: 'j2', days: day(lidarPhases(T(11, 0), T(11, 2), ['J2'], 12, ['jib'])),
+    })).filter((i) => i.kind === 'lidar')
+    expect(items).toHaveLength(0)
+  })
+
+  it('counts only the phases this sail was UP for', () => {
+    // The same rule the photos use: a J3 phase is not the J2's lidar.
+    const items = sailMedia(base({
+      sailId: 'j2', lidarSail: 'jib',
+      days: day([
+        ...lidarPhases(T(11, 0), T(11, 2), ['J2'], 12, ['jib']),
+        ...lidarPhases(T(11, 2), T(11, 6), ['J3'], 12, ['jib']),
+      ]),
+    })).filter((i) => i.kind === 'lidar')
+    expect(items).toHaveLength(1)
+    expect(items[0].phases).toBe(4)
+  })
+
+  it('obeys the day\'s TAGS over the event file, like everything else here', () => {
+    // Tags are the crew's own state and win outright; the phases still say J2.
+    const items = sailMedia(base({
+      sailId: 'j2', lidarSail: 'jib',
+      days: day(lidarPhases(T(11, 0), T(11, 4), ['J2'], 12, ['jib']), [change(T(10, 0), [{ id: 'j3', name: 'J3' }])]),
+    })).filter((i) => i.kind === 'lidar')
+    expect(items).toHaveLength(0)
+  })
+
+  it('counts PHASES in the sail-media total, not buttons', () => {
+    // "3 lidar" reading as three days when it is three half-minutes would be
+    // worse than not saying it.
+    const items = sailMedia(base({
+      sailId: 'j2', lidarSail: 'jib',
+      days: day([
+        ...lidarPhases(T(11, 0), T(11, 5), ['J2'], 12, ['jib']),
+        ...lidarPhases(T(11, 5), T(11, 7), ['J2'], 18, ['jib']),
+      ]),
+    }))
+    expect(countSailMedia(items).lidar).toBe(14)
   })
 })

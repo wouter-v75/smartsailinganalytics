@@ -39,6 +39,26 @@ export const LIDAR_HEIGHTS = [25, 50, 75] as const
 
 const up1 = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 export const measKey = (sail: LidarSail, v: string, h: number) => `${sail}${v}${h}`
+
+/**
+ * Which sails a phase's stored values actually carry lidar for.
+ *
+ * Read off the CHANNEL NAMES rather than from the boat's equipment list,
+ * because that is what is true of the day: a unit that was off, a mast that
+ * came out mid-regatta, a phase before the system woke up. A sail with no
+ * channel should show no lidar rather than an empty promise of some.
+ */
+export function lidarKindsIn(values: Record<string, unknown> | null | undefined): LidarSail[] {
+  const out: LidarSail[] = []
+  for (const { sail } of LIDAR_SAILS) {
+    const has = LIDAR_VARS.some((v) => LIDAR_HEIGHTS.some((h) => {
+      const x = values?.[measKey(sail, v.v, h)]
+      return typeof x === 'number' && Number.isFinite(x)
+    }))
+    if (has) out.push(sail)
+  }
+  return out
+}
 export const targKey = (sail: LidarSail, v: string, h: number) => `t${up1(sail)}${v}${h}`
 
 const phaseHasLidar = (p: PhaseStat, sail: LidarSail) =>

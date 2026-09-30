@@ -2581,14 +2581,23 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
       </td>
       <td style={td}>
         {onShowMedia && (
-          <button onClick={onShowMedia} title={`SailScans, SailTrim, 360 video, photos and video of ${sail.name}, by wind band`}
+          <button onClick={onShowMedia} title={`SailScans, lidar, SailTrim, 360 video, photos and video of ${sail.name}, by wind band`}
             style={{ background: '#0F2A45', border: `1px solid ${C.border}`, color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-flex', gap: 8, alignItems: 'baseline' }}>
             {/* The counts are the reason to press it: a sail with nothing
                 behind the button says so before anyone opens it. */}
             {mediaCount ? (
-              ([['scans', mediaCount.scans], ['photos', mediaCount.photos], ['videos', mediaCount.videos]] as [string, number][]).map(([label, n]) => (
-                <span key={label} style={{ color: n ? '#06B6D4' : '#8A97A9', fontWeight: n ? 700 : 400 }}>
-                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>{n}</span> {n === 1 ? label.slice(0, -1) : label}
+              // Lidar last and in its own colour: it is PHASES, not files, and
+              // the unit differs from everything beside it. Shown only when the
+              // instrument measured this sail at all — a zero beside a rival's
+              // headsail would read as a measurement that failed.
+              ([
+                ['scans', mediaCount.scans, '#06B6D4'],
+                ['photos', mediaCount.photos, '#06B6D4'],
+                ['videos', mediaCount.videos, '#06B6D4'],
+                ...(mediaCount.lidar ? [['lidar phases', mediaCount.lidar, '#C084FC'] as const] : []),
+              ] as [string, number, string][]).map(([label, n, colour]) => (
+                <span key={label} style={{ color: n ? colour : '#8A97A9', fontWeight: n ? 700 : 400 }}>
+                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>{n}</span> {n === 1 ? label.replace(/s$/, '') : label}
                 </span>
               ))
             ) : <span style={{ color: '#8A97A9', fontWeight: 400 }}>counting…</span>}
