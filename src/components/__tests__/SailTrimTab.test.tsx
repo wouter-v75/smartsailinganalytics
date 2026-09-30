@@ -1312,6 +1312,49 @@ describe('SailTrimTab — the focal length', () => {
     expect(screen.getByTestId('sailtrim-focal')).toBeTruthy()
   })
 
+  it('remembers the lens EXIF named, so the list builds itself', async () => {
+    // This fixture's frame carries a Canon and its lens. Every frame that HAS a
+    // focal length teaches the list one, which is what makes a stripped export
+    // pickable later without anyone having configured anything.
+    render(<SailTrimTab />)
+    await openAFrame()
+    await settle()
+    expect((screen.getByTestId('sailtrim-focal') as HTMLInputElement).value).toBe('254')
+    expect(screen.getByTestId('sailtrim-lens-known').textContent).toMatch(/Canon EOS R6m2/)
+  })
+
+  it('offers to NAME and remember a length typed by hand', async () => {
+    // Without this the list only ever learns from EXIF — and a boat whose
+    // frames are all re-exported would never build one at all.
+    render(<SailTrimTab />)
+    await openAFrame()
+    await settle()
+    fireEvent.change(screen.getByTestId('sailtrim-focal'), { target: { value: '999' } })
+
+    const remember = screen.getByTestId('sailtrim-lens-remember') as HTMLButtonElement
+    expect(remember.disabled).toBe(true)                      // it needs a name
+    fireEvent.change(screen.getByTestId('sailtrim-lens-name'), { target: { value: 'iPhone 15 Pro' } })
+    expect(remember.disabled).toBe(false)
+    fireEvent.click(remember)
+
+    await waitFor(() => expect(screen.getByTestId('sailtrim-lens-known')).toBeTruthy())
+    expect(screen.getByTestId('sailtrim-lens-known').textContent).toMatch(/iPhone 15 Pro · 999 mm/)
+  })
+
+  it('lets a lens be forgotten again', async () => {
+    // A length remembered in error is worse than none: it is then easy to pick
+    // again without thinking about it.
+    render(<SailTrimTab />)
+    await openAFrame()
+    await settle()
+    await waitFor(() => expect(screen.getByTestId('sailtrim-lens-known')).toBeTruthy())
+
+    fireEvent.click(screen.getByText('forget it'))
+    await waitFor(() => expect(screen.queryByTestId('sailtrim-lens-known')).toBeNull())
+    // …and it is offered for naming again rather than vanishing silently.
+    expect(screen.getByTestId('sailtrim-lens-remember')).toBeTruthy()
+  })
+
   it('takes a focal length typed by hand', async () => {
     render(<SailTrimTab />)
     await openAFrame()

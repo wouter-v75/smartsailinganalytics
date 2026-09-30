@@ -48,7 +48,7 @@ import {
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
 import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
 import { fitCamber, type CamberFit } from '../../lib/sailCamber';
-import { loadLenses, rememberLens, lensLabel, type Lens } from '../../lib/lensPrefs';
+import { loadLenses, rememberLens, forgetLens, lensLabel, type Lens } from '../../lib/lensPrefs';
 import {
   buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
 } from '../../lib/sailTrimOverlay';
@@ -393,8 +393,10 @@ export default function SailTrimTab(
   const [baselineKey, setBaselineKey] = useState('mast-transom');
   const [heelDeg, setHeelDeg] = useState<string>('');
   const [focalMm, setFocalMm] = useState<string>('');
-  /** Lenses this browser has seen, newest first. Builds itself from EXIF. */
+  /** Lenses this browser has seen, newest first. Builds itself from EXIF, and
+   *  takes the ones typed by hand when they are given a name. */
   const [lenses, setLenses] = useState<Lens[]>([]);
+  const [lensName, setLensName] = useState('');
   const [defn, setDefn] = useState<'boat' | 'world'>('boat');
   const [kept, setKept] = useState<Kept[]>([]);
 
@@ -1962,6 +1964,47 @@ export default function SailTrimTab(
               </div>
             )}
           </div>
+          {(() => {
+            const f = Number(focalMm);
+            if (!focalMm.trim() || !Number.isFinite(f) || f <= 0) return null;
+            const known = lenses.find((l) => Math.round(l.focalMm) === Math.round(f));
+            // Already on the list: offer to drop it instead. A length typed in
+            // error is worse remembered than forgotten, because it is then easy
+            // to pick again without thinking.
+            if (known) {
+              return (
+                <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 5 }} data-testid="sailtrim-lens-known">
+                  Remembered as <b style={{ color: '#94A3B8' }}>{known.label}</b>
+                  <button
+                    onClick={() => { void forgetLens(known.label, known.focalMm).then(setLenses); }}
+                    style={{ background: 'none', border: 'none', padding: '0 0 0 6px', color: '#FCA5A5', font: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>
+                    forget it
+                  </button>
+                </div>
+              );
+            }
+            // Typed by hand and not seen before. The list only grows itself from
+            // EXIF, so without this a boat whose photos are all re-exported never
+            // builds one at all.
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                <input style={{ ...inp, flex: 1, minWidth: 150 }} data-testid="sailtrim-lens-name"
+                  value={lensName} onChange={(e) => setLensName(e.target.value)}
+                  placeholder="Name this lens — iPhone 15 Pro, Canon 100-500…" />
+                <button data-testid="sailtrim-lens-remember" style={btn()}
+                  disabled={!lensName.trim()}
+                  onClick={() => {
+                    void rememberLens({
+                      label: lensLabel(lensName.trim(), null, f),
+                      focalMm: Math.round(f),
+                      lastUsed: Date.now(),
+                    }).then((next) => { if (next.length) setLenses(next); setLensName(''); });
+                  }}>
+                  Remember this lens
+                </button>
+              </div>
+            );
+          })()}
           {!focalMm.trim() && (
             <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 5, lineHeight: 1.45 }}>
               Without it the measurements still compute, but the depth correction cannot be

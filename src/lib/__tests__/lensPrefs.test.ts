@@ -1,6 +1,6 @@
 // src/lib/__tests__/lensPrefs.test.ts
 import { describe, it, expect } from 'vitest'
-import { lensLabel, rememberIn, coerceLenses, MAX_LENSES, type Lens } from '../lensPrefs'
+import { lensLabel, rememberIn, forgetIn, coerceLenses, MAX_LENSES, type Lens } from '../lensPrefs'
 
 const lens = (label: string, focalMm: number, lastUsed = 1): Lens => ({ label, focalMm, lastUsed })
 
@@ -93,5 +93,23 @@ describe('coerceLenses — a stored preference is not a promise', () => {
   it('treats a missing lastUsed as oldest rather than dropping the lens', () => {
     const out = coerceLenses([{ label: 'A', focalMm: 254 }, { label: 'B', focalMm: 100, lastUsed: 9 }])
     expect(out.map((l) => l.label)).toEqual(['B', 'A'])
+  })
+})
+
+
+describe('forgetIn — a mistyped lens must not be permanent', () => {
+  const list = [lens('Canon EOS R5 · 254 mm', 254, 2), lens('iPhone', 7, 1)]
+
+  it('removes the one named, and only that one', () => {
+    expect(forgetIn(list, 'Canon EOS R5 · 254 mm', 254).map((l) => l.label)).toEqual(['iPhone'])
+  })
+
+  it('matches the way remembering does — case and spaces', () => {
+    expect(forgetIn(list, '  canon eos r5 · 254 MM  ', 254)).toHaveLength(1)
+  })
+
+  it('leaves the list alone when nothing matches', () => {
+    expect(forgetIn(list, 'Canon EOS R5 · 254 mm', 400)).toHaveLength(2)
+    expect(forgetIn(list, 'Nikon', 254)).toHaveLength(2)
   })
 })

@@ -76,6 +76,14 @@ export function coerceLenses(raw: unknown): Lens[] {
     .slice(0, MAX_LENSES)
 }
 
+/** Drop one, by the same identity `rememberIn` uses. A lens typed in error
+ *  would otherwise sit in the list for ever, and a wrong focal length that is
+ *  easy to pick is worse than none. */
+export function forgetIn(list: Lens[], label: string, focalMm: number): Lens[] {
+  const k = `${label.trim().toLowerCase()}|${Math.round(focalMm)}`
+  return list.filter((l) => `${l.label.trim().toLowerCase()}|${Math.round(l.focalMm)}` !== k)
+}
+
 export async function loadLenses(): Promise<Lens[]> {
   try { return coerceLenses(await getPref(LENS_PREF)) } catch { return [] }
 }
@@ -85,6 +93,16 @@ export async function loadLenses(): Promise<Lens[]> {
 export async function rememberLens(lens: Lens): Promise<Lens[]> {
   try {
     const next = rememberIn(await loadLenses(), lens)
+    await setPref(LENS_PREF, next)
+    return next
+  } catch {
+    return []
+  }
+}
+
+export async function forgetLens(label: string, focalMm: number): Promise<Lens[]> {
+  try {
+    const next = forgetIn(await loadLenses(), label, focalMm)
     await setPref(LENS_PREF, next)
     return next
   } catch {
