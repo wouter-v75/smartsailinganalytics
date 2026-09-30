@@ -32,9 +32,26 @@ const inputStyle: React.CSSProperties = {
 
 type Draft = { [K in VocabList]: K extends 'roles' | 'aliases' | 'fixups' ? VocabPair[] : string[] }
 
-/** Rows on screen, finished or not — what the person believes they typed. */
-const rawCount = (d: Draft): number =>
-  VOCAB_LISTS.reduce((n, k) => n + (d[k] as unknown[]).length, 0)
+const filled = (v: unknown): boolean => String(v ?? '').trim().length > 0
+
+/**
+ * Rows that have SOMETHING in them but will not survive: a pair with one half
+ * filled and the other blank.
+ *
+ * Counting rows instead — "what I typed" minus "what came back" — reported a
+ * row that was never typed in at all. Pressing + Add and then thinking better
+ * of it leaves an empty row, which is discarded in silence and rightly so; the
+ * first save through this editor said "1 unfinished row was dropped" over
+ * exactly that, and sent somebody looking for work they had not lost.
+ *
+ * A duplicate is not counted either. It is dropped, but nothing is lost by it —
+ * the entry is already in the list.
+ */
+const unfinishedRows = (d: Draft): number =>
+  VOCAB_LISTS.filter(isPairList).reduce((n, k) => {
+    const rows = d[k] as VocabPair[]
+    return n + rows.filter(([a, b]) => filled(a) !== filled(b)).length
+  }, 0)
 
 const toDraft = (v: DebriefVocab): Draft => ({
   crew: [...v.crew], boats: [...v.boats], manoeuvres: [...v.manoeuvres],
@@ -66,6 +83,11 @@ export default function DebriefVocabPanel({
   React.useEffect(() => { load() }, [load])
 
   const dirty = !!draft && JSON.stringify(normaliseDebriefVocab(draft)) !== JSON.stringify(saved)
+  // A half-filled pair normalises to nothing, so a draft containing ONLY one is
+  // not dirty: Save greys out and says "Saved", with no hint that the row on
+  // screen is the reason. Counted here so the bar can say what is missing
+  // instead of looking inert.
+  const unfinished = draft ? unfinishedRows(draft) : 0
 
   const save = async () => {
     if (!draft) return
@@ -80,14 +102,12 @@ export default function DebriefVocabPanel({
       if (!res.ok) throw new Error(j?.error || `HTTP ${res.status}`)
       const v = normaliseDebriefVocab(j?.vocab)
       setSaved(v); setDraft(toDraft(v)); setUpdatedAt(j?.updatedAt ?? null)
-      // Half-typed rows are dropped on the way in. Count against what was TYPED,
-      // not against the normalised body we sent — those are equal by
-      // construction, so comparing them reports nothing and the row just
-      // disappears from the editor as though the typing had never happened.
-      const lost = rawCount(draft) - countVocab(v)
+      // Say something only about work that was actually lost: a half-typed pair.
+      // An empty row is not lost work, and neither is a duplicate.
+      const lost = unfinishedRows(draft)
       setMsg(lost > 0
-        ? `Saved. ${lost} unfinished ${lost === 1 ? 'row was' : 'rows were'} dropped — both halves are needed.`
-        : 'Saved. The next recording uses these.')
+        ? `Saved — but ${lost} half-filled ${lost === 1 ? 'row was' : 'rows were'} dropped. Both sides are needed.`
+        : `Saved. ${countVocab(v)} ${countVocab(v) === 1 ? 'entry' : 'entries'} — the next recording uses these.`)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally { setBusy(false) }
@@ -130,14 +150,36 @@ export default function DebriefVocabPanel({
       </div>
 
       {canEdit && (
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 16, flexWrap: 'wrap' }}>
+        // STICKY. Typing a word into a box and moving on is the obvious thing to
+        // do, and it stores nothing — so the reminder has to stay on screen
+        // rather than sit under six cards where a phone will never show it.
+        <div style={{
+          position: 'sticky', bottom: 0, marginTop: 16, padding: '10px 12px',
+          background: dirty ? '#0d2436' : 'transparent',
+          borderTop: dirty ? `1px solid ${C.accent}55` : '1px solid transparent',
+          borderRadius: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+        }}>
           <button onClick={save} disabled={busy || !dirty} style={{
             background: dirty ? C.accent : '#0F2A45', border: 'none', borderRadius: 6,
             color: dirty ? '#001018' : C.dim, fontWeight: 700, fontSize: 12,
             padding: '7px 14px', cursor: dirty && !busy ? 'pointer' : 'default',
           }}>{busy ? 'Saving…' : dirty ? 'Save' : 'Saved'}</button>
-          {dirty && <button onClick={() => setDraft(toDraft(saved))} style={linkBtn}>Discard changes</button>}
-          {msg && <span style={{ color: C.dim, fontSize: 11 }}>{msg}</span>}
+          {dirty ? (
+            <>
+              <span style={{ color: C.warn, fontSize: 11 }}>
+                Not stored yet — nothing here reaches a debrief until you save.
+              </span>
+              <button onClick={() => setDraft(toDraft(saved))} style={linkBtn}>Discard changes</button>
+            </>
+          ) : (
+            msg && <span style={{ color: C.dim, fontSize: 11 }}>{msg}</span>
+          )}
+          {unfinished > 0 && (
+            <span style={{ color: C.warn, fontSize: 11 }}>
+              {unfinished === 1 ? 'One row needs' : `${unfinished} rows need`} both sides filled in
+              {dirty ? ' — the rest will still save.' : ' before there is anything to save.'}
+            </span>
+          )}
           {err && <span style={{ color: C.bad, fontSize: 11 }}>{err}</span>}
         </div>
       )}
@@ -209,7 +251,10 @@ function ListCard({
         </div>
       ))}
 
-      {canEdit && <button onClick={add} style={linkBtn}>+ Add</button>}
+      {/* "+ Add" read as "add this entry", so the first person to use this
+          pressed it expecting the word to be stored, and left an empty row
+          behind. It makes a ROW; the Save bar stores them. */}
+      {canEdit && <button onClick={add} style={linkBtn}>+ Add a row</button>}
     </div>
   )
 }
