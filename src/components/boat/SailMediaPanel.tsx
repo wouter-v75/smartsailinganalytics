@@ -31,8 +31,12 @@ const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.round(sec %
 const shortDate = (d: string | null) =>
   d ? new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : '—'
 
-export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, onBack, sessionTzOffset = 0, isMobile }: {
+export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, onBack, onOpenVideo, sessionTzOffset = 0, isMobile }: {
   teamId: string
+  /** The app's own player — the one the timeline opens, with the instrument
+   *  overlay. Absent only outside the app shell (the /dev preview), where the
+   *  bare fallback player stands in. */
+  onOpenVideo?: (date: string, videoId: string) => void
   sails: SailOpt[]
   sailId: string
   onSailChange: (id: string) => void
@@ -93,6 +97,7 @@ export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, on
   const openItem = (i: Item) => {
     if (i.kind === 'scan') setScan(i)
     else if (i.kind === 'photo' || i.kind === 'trim') setPhoto(i)
+    else if (onOpenVideo && i.date) onOpenVideo(i.date, i.id)
     else setVideo(i)
   }
 
@@ -114,7 +119,7 @@ export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, on
       <button
         key={`${i.kind}:${i.id}:${i.startSec ?? ''}`}
         onClick={() => openItem(i)}
-        title={[i.title, i.event, caption, isVideo && i.startSec != null ? `from ${mmss(i.startSec)} for ${mmss(i.durSec || 0)}` : null].filter(Boolean).join(' — ')}
+        title={[i.title, i.event, caption, isVideo && i.durSec ? `${mmss(i.durSec)} on this sail in this band` : null].filter(Boolean).join(' — ')}
         style={{ width: thumbW, boxSizing: 'border-box', padding: 0, border: `1px solid ${C.border}`, borderRadius: 6, background: '#0a1c2e', cursor: 'pointer', overflow: 'hidden', textAlign: 'left' }}
       >
         <div style={{ position: 'relative', width: '100%', aspectRatio: isVideo && i.kind === 'video360' ? '2 / 1' : '4 / 3', background: '#000' }}>
@@ -123,7 +128,7 @@ export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, on
             : <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: C.dim, fontSize: 10 }}>no image</div>}
           {isVideo && (
             <span style={{ position: 'absolute', left: 3, bottom: 3, fontSize: 9, fontWeight: 700, color: '#fff', background: 'rgba(0,0,0,0.65)', borderRadius: 3, padding: '0 4px' }}>
-              ▶ {mmss(i.startSec || 0)}
+              ▶{i.durSec ? ` ${mmss(i.durSec)}` : ''}
             </span>
           )}
         </div>
@@ -220,7 +225,7 @@ export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, on
           </table>
           <p style={{ fontSize: 10, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
             Matched by time: the crew’s sail-change tags where the day has them ({data.taggedDays} of {data.days} days), otherwise the event file’s sails.
-            A video appears once per wind band it spends on this sail and opens at that point. 360 = a clip tagged “360”, or an Insta360 file name.
+            A video appears once per wind band it spends on this sail. 360 = a clip tagged “360”, or an Insta360 file name.
           </p>
         </div>
       )}
@@ -231,10 +236,9 @@ export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, on
         {video && (
           <DialogContent
             title={`${video.title || 'Video'} · ${shortDate(video.date)}${video.tws != null ? ` · ${video.tws.toFixed(1)} kn` : ''}`}
-            description={`From ${mmss(video.startSec || 0)} — ${mmss(video.durSec || 0)} on ${sail ? sailLabel(sail) : 'this sail'} in this band.`}
             wide
           >
-            <FallbackVideoPlayer videoId={video.id} startSec={video.startSec || 0} />
+            <FallbackVideoPlayer videoId={video.id} />
           </DialogContent>
         )}
       </Dialog>

@@ -184,7 +184,7 @@ export function MobileShell(props){
         {/* Boat config (read-only viewer) */}
         {activeTab==="boatconfig"&&props.campaignOn&&props.campaignCfg&&props.canSeeBoatConfig&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Boat config"><BoatConfigTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} sessionTzOffset={props.sessionTzOffset}/></ErrorBoundary>
+            <ErrorBoundary label="Boat config"><BoatConfigTab teamId={props.campaignCfg.teamId} boatId={props.campaignCfg.boatId} role={props.effectiveRole} config={props.campaignCfg} isMobile={true} sessionTzOffset={props.sessionTzOffset} onOpenVideo={props.openVideoModal}/></ErrorBoundary>
           </div>
         )}
 

@@ -1897,7 +1897,7 @@ function SSAApp(){
         )}
         {activeTab==="boatconfig"&&campaignOn&&canSeeBoatConfig&&(
           <div style={{position:"absolute",inset:0,overflow:"hidden",zIndex:2}}>
-            <ErrorBoundary label="Boat config"><BoatConfigTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} sessionTzOffset={sessionTzOffset}/></ErrorBoundary>
+            <ErrorBoundary label="Boat config"><BoatConfigTab teamId={campaignCfg.teamId} boatId={campaignCfg.boatId} role={effectiveRole} config={campaignCfg} isMobile={false} sessionTzOffset={sessionTzOffset} onOpenVideo={openVideoModal}/></ErrorBoundary>
           </div>
         )}
         {/* Weather — wind-analysis tool, available to all roles (sub-features gated by role inside). */}

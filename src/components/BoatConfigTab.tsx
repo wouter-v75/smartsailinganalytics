@@ -69,8 +69,10 @@ const fmtClock = (ms?: number | null) =>
   ms ? new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—'
 
 export default function BoatConfigTab({
-  teamId, boatId, role, isMobile, config, sessionTzOffset = 0,
-}: { teamId: string; boatId: string; role?: string; config?: any; isMobile?: boolean; sessionTzOffset?: number }) {
+  teamId, boatId, role, isMobile, config, sessionTzOffset = 0, onOpenVideo,
+}: { teamId: string; boatId: string; role?: string; config?: any; isMobile?: boolean; sessionTzOffset?: number
+  /** The app's video player (SSAApp.openVideoModal) — the one the timeline uses. */
+  onOpenVideo?: (date: string, videoId: string) => void }) {
   const boatName: string | null = config?.boatName || null
   const canEdit = EDIT_ROLES.includes(role || '')
   const isAdmin = role === 'admin'
@@ -728,7 +730,7 @@ export default function BoatConfigTab({
       {/* ── SAIL MEDIA — one sail's scans, trim frames, 360, photos, video by TWS ── */}
       {view === 'media' && mediaSailId && (
         <SailMediaPanel teamId={teamId} sails={sails} sailId={mediaSailId} onSailChange={setMediaSailId}
-          onBack={() => setView('inventory')} sessionTzOffset={sessionTzOffset} isMobile={isMobile} />
+          onBack={() => setView('inventory')} onOpenVideo={onOpenVideo} sessionTzOffset={sessionTzOffset} isMobile={isMobile} />
       )}
 
       {/* ── SAIL SHAPES (scans) ────────────────────────────────────── */}

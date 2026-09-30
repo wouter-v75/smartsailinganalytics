@@ -174,18 +174,9 @@ export function PhotoOverlayImage({ src, inst }: { src: string | null; inst: Rec
 
 // Fallback only (standalone timeline page, no app player). The main app routes
 // clicks to the Videos-tab player which carries the instrument data overlay.
-// `startSec` opens the clip part-way in — the sail-media grid links to the
-// stretch of a clip where that sail was up, not to its first frame.
-export function FallbackVideoPlayer({ videoId, startSec = 0 }: { videoId: string; startSec?: number }) {
+export function FallbackVideoPlayer({ videoId }: { videoId: string }) {
   const ref = React.useRef<HTMLVideoElement>(null)
   const [err, setErr] = React.useState<string | null>(null)
-  React.useEffect(() => {
-    const el = ref.current
-    if (!el || !(startSec > 0)) return
-    const seek = () => { try { el.currentTime = startSec } catch { /* not seekable yet */ } }
-    el.addEventListener('loadedmetadata', seek, { once: true })
-    return () => el.removeEventListener('loadedmetadata', seek)
-  }, [videoId, startSec])
   React.useEffect(() => {
     let alive = true
     let hls: any = null
