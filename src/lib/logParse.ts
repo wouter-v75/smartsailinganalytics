@@ -18,6 +18,7 @@ import { isLogV3, expandLogV3 } from './logV3Parse'
 import { parseCsvLog, isFlatNmeaLog } from './csvLogParse'
 import { effectiveAliases, type BoatLogProfile } from './logProfile'
 import { isVakarosCsv, parseVakarosCsv } from './vakarosCsvParse'
+import { isExpeditionExport, parseExpeditionExport } from './expeditionExportParse'
 import { isGpx, parseGpx } from './gpxParse'
 
 // 'raw' (the Expedition sparse !-log, expLogParse) is RETIRED 2026-06-29 — the
@@ -26,6 +27,7 @@ import { isGpx, parseGpx } from './gpxParse'
 // produced by detectLogFormat anymore. (expLogParse.ts can be deleted.)
 export type LogFormat =
   | 'raw' | 'flat-ole' | 'flat-nmea' | 'log-v3' | 'flat-local'
+  | 'exp-export'    // Expedition's log-viewer export: SI units, magnetic bearings
   | 'vakaros-csv'   // GPS-only (dinghy) — see vakarosCsvParse.ts
   | 'gpx'           // the universal fallback — see gpxParse.ts
   | 'unknown'       // nothing recognised it — say so, do not guess
@@ -56,6 +58,10 @@ export function detectLogFormat(text: string): LogFormat {
   // yielding zero rows, silently.
   // GPS-only tracker exports first: their header is unambiguous and they share
   // no shape with the instrument formats below.
+  // Expedition's log-viewer export. Keyed on `Date/Time (UTC)`, a column no
+  // other format here has, so this is purely additive — the boat's normal flat
+  // CSV is untouched and still goes to flatLogParse below.
+  if (isExpeditionExport(text)) return 'exp-export'
   if (isVakarosCsv(text)) return 'vakaros-csv'
   if (isGpx(text)) return 'gpx'
   if (isLogV3(text)) return 'log-v3'
@@ -84,6 +90,16 @@ export function parseLog(text: string, opts: ParseLogOpts = {}): ParseLogResult 
     return {
       format, rows: p.rows, startUtc: p.startUtc, endUtc: p.endUtc,
       tzOffsetMin: p.tzOffsetMin, rateHz: p.rateHz,
+    }
+  }
+  if (format === 'exp-export') {
+    // Already true UTC (confirmed by the navigator, 2026-09-30), already knots
+    // and true bearings by the time it leaves the parser — so no shift here, in
+    // deliberate contrast to flat-local below.
+    const p = parseExpeditionExport(text)
+    return {
+      format, rows: p.rows, startUtc: p.startUtc, endUtc: p.endUtc,
+      tzOffsetMin: null, rateHz: p.rateHz,
     }
   }
   if (format === 'unknown') {
