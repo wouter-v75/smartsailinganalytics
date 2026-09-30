@@ -67,6 +67,10 @@ Usage:
   --out DIR     the outbox (default: ~/clips — ONE folder, so the Upload tab's
                 watcher is pointed at it once and never again)
   --keep        do not clear clips the cloud already has
+  --force       re-encode segments that are already in the outbox. Without it a
+                segment whose file is already there is skipped, which is what
+                makes a second run cheap — and what to reach for when a clip in
+                the outbox is truncated by an interrupted encode.
   --boat ID     boat id, when more than one boat matches
   --all         do not restrict to the race — cut the training too
   --help        this text
@@ -369,6 +373,7 @@ const main = async () => {
   if (gates.length) argv.push('--gate', gates.join(','))
   if (!has('--turns')) argv.push('--no-turns')
   if (has('--no-starts')) argv.push('--no-starts')
+  if (has('--force')) argv.push('--force')
   // What the cloud already holds, so a clip made on an earlier run and since
   // swept out of the outbox is not made and uploaded a second time.
   const uploaded = await cloudClipNames()
