@@ -799,7 +799,17 @@ writeFileSync(manifest, JSON.stringify({
   mode: opt.rest ? 'rest' : 'selected',
   trimmed: !!opt.trim,
   tag: opt.tag || null,
-  windows: { startLead: opt.startLead, startLag: opt.startLag, markLead: opt.markLead, markLag: opt.markLag, gap: opt.gap, minSeg: opt.minSeg },
+  // The windows the cuts were actually made with. Named after the options that
+  // set them: markLead/markLag were fields that never existed, so a manifest has
+  // been recording `undefined` — dropped by JSON.stringify — for the one number
+  // somebody re-reading a day's manifest most wants.
+  windows: {
+    startLead: opt.startLead, startLag: opt.startLag,
+    topLead: opt.topLead, topLag: opt.topLag,
+    gateLead: opt.gateLead, gateLag: opt.gateLag,
+    photoLead: opt.photoLead, photoLag: opt.photoLag,
+    gap: opt.gap, minSeg: opt.minSeg,
+  },
   items: jobs,
 }, null, 2))
 
