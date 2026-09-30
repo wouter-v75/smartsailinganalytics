@@ -729,7 +729,7 @@ export default function BoatConfigTab({
 
       {/* ── SAIL MEDIA — one sail's scans, trim frames, 360, photos, video by TWS ── */}
       {view === 'media' && mediaSailId && (
-        <SailMediaPanel teamId={teamId} sails={sails} sailId={mediaSailId} onSailChange={setMediaSailId}
+        <SailMediaPanel teamId={teamId} boatId={boatId} sails={sails} sailId={mediaSailId} onSailChange={setMediaSailId}
           onBack={() => setView('inventory')} onOpenVideo={onOpenVideo} sessionTzOffset={sessionTzOffset} isMobile={isMobile} />
       )}
 

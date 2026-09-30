@@ -9,11 +9,14 @@
 // many more there are. The count is the point; the whole pile is one click away.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { FallbackVideoPlayer } from '@/components/timeline/DayMedia'
 import PhotoLightbox, { type LightboxPhoto } from '@/components/timeline/PhotoLightbox'
 import SailScanDetail from '@/components/SailScanDetail'
+import { isAnnotation, annotationHeadline } from '@/lib/sailTrimOverlay'
+import { savePhotoSailTrim, type PhotoRow, type SailTrimPayload } from '@/lib/savePhotoSailTrim'
 import { SAIL_MEDIA_KINDS, allTwsBands, twsBand, type SailMediaItem, type SailMediaKind } from '@/lib/sailMedia'
 
 const C = {
@@ -21,6 +24,35 @@ const C = {
   text: '#cbd5e1', dim: '#8A97A9', head: '#e2e8f0', warn: '#F59E0B',
 }
 const PER_CELL = 4
+
+// The same digitiser the timeline opens, on demand — it is big and brings its
+// own CDN libraries, and most people looking at a sail never measure one.
+const SailGeometryDialog = dynamic(() => import('@/components/photos/SailGeometryDialog'), {
+  ssr: false,
+  loading: () => <div className="flex h-full items-center justify-center text-sm text-[#7DD3FC]">Loading the digitiser…</div>,
+})
+
+/**
+ * A photo as the timeline's lightbox and digitiser take it — built from the
+ * FULL row, exactly as DayTimeline builds its MediaItem. The grid only carries
+ * a few keys of each photo; measuring has to write the whole row back
+ * (lib/savePhotoSailTrim), so the row is fetched when a photo is opened.
+ */
+interface OpenPhoto extends LightboxPhoto {
+  date: string | null
+  twa: number | null
+  raw: PhotoRow | null
+}
+
+function fromRow(p: any, date: string | null): OpenPhoto {
+  const a = p.analysis_data || {}, inst = a.inst || {}
+  const sails = a.sails ?? inst.sails ?? []
+  const st = a.sailTrim && isAnnotation(a.sailTrim.annotation) ? a.sailTrim : null
+  return {
+    id: p.id, thumb: p.thumbnail_url, original: p.original_url || null, inst: { ...inst, sails },
+    sailTrim: st, subjectBoatIds: p.subject_boat_ids ?? [], twa: inst.twa ?? null, date, raw: p,
+  }
+}
 
 type Item = SailMediaItem & { scan?: any; photo?: LightboxPhoto & { inst?: any } }
 interface Payload { items: Item[]; events: string[]; taggedDays: number; days: number }
@@ -31,8 +63,10 @@ const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.round(sec %
 const shortDate = (d: string | null) =>
   d ? new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : '—'
 
-export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, onBack, onOpenVideo, sessionTzOffset = 0, isMobile }: {
+export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailChange, onBack, onOpenVideo, sessionTzOffset = 0, isMobile }: {
   teamId: string
+  /** The boat the photo rows belong to — needed to read and save them. */
+  boatId: string
   /** The app's own player — the one the timeline opens, with the instrument
    *  overlay. Absent only outside the app shell (the /dev preview), where the
    *  bare fallback player stands in. */
@@ -49,7 +83,10 @@ export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, on
   const [event, setEvent] = useState<string>('')          // '' = every event
   const [showEmpty, setShowEmpty] = useState(false)
   const [open, setOpen] = useState<Set<string>>(new Set()) // expanded cells
-  const [photo, setPhoto] = useState<Item | null>(null)
+  const [photo, setPhoto] = useState<OpenPhoto | null>(null)
+  const [geomFor, setGeomFor] = useState<OpenPhoto | null>(null)
+  // date → that day's full photo rows, as the photos route returns them.
+  const dayRows = useRef(new Map<string, Promise<any[]>>())
   const [video, setVideo] = useState<Item | null>(null)
   const [scan, setScan] = useState<Item | null>(null)
 
@@ -94,9 +131,53 @@ export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, on
     return t
   }, [shown])
 
+  // Open at once on what the grid has, then swap in the full row: the original,
+  // the whole instrument overlay and the measurement, as the timeline shows it.
+  const openPhoto = (i: Item) => {
+    const lite: OpenPhoto = { ...(i.photo || {}), id: i.id, date: i.date, twa: null, raw: null }
+    setPhoto(lite)
+    if (!i.date || !boatId) return
+    const date = i.date
+    let rows = dayRows.current.get(date)
+    if (!rows) {
+      rows = fetch(`/api/teams/${teamId}/boats/${boatId}/photos?date=${date}`)
+        .then((r) => r.json()).then((j) => (Array.isArray(j?.photos) ? j.photos : []))
+        .catch(() => { dayRows.current.delete(date); return [] })
+      dayRows.current.set(date, rows)
+    }
+    rows.then((list) => {
+      const row = list.find((p: any) => p.id === i.id)
+      if (row) setPhoto((cur) => (cur && cur.id === i.id ? fromRow(row, date) : cur))
+    })
+  }
+
+  // Measuring writes to the SAME shared row the timeline and the Photos tab
+  // write to. A photo measured here moves to the SailTrim column.
+  const applyGeometry = useCallback(async (m: OpenPhoto, payload: SailTrimPayload) => {
+    if (!m.raw) throw new Error('This photo is still loading — try again in a moment.')
+    await savePhotoSailTrim({ teamId, boatId, row: m.raw, payload, sessionDate: m.date })
+    const raw = { ...m.raw, analysis_data: { ...(m.raw.analysis_data || {}), sailTrim: payload } }
+    const next: OpenPhoto = { ...m, sailTrim: payload, raw }
+    setPhoto((p) => (p && p.id === m.id ? next : p))
+    setGeomFor((g) => (g && g.id === m.id ? next : g))
+    const r = dayRows.current.get(m.date || '')
+    if (r) dayRows.current.set(m.date || '', r.then((list) => list.map((p: any) => (p.id === m.id ? raw : p))))
+    setData((d) => d && ({
+      ...d,
+      items: d.items.map((it) => (it.id === m.id && (it.kind === 'photo' || it.kind === 'trim')
+        ? { ...it, kind: 'trim' as const, photo: { ...(it.photo || {}), sailTrim: payload } as Item['photo'] }
+        : it)),
+    }))
+  }, [teamId, boatId])
+
+  const toggleGeometryOverlay = useCallback((m: OpenPhoto) => {
+    if (!m.sailTrim) return
+    applyGeometry(m, { ...m.sailTrim, overlay: !m.sailTrim.overlay } as SailTrimPayload).catch(() => { /* the row keeps what it had */ })
+  }, [applyGeometry])
+
   const openItem = (i: Item) => {
     if (i.kind === 'scan') setScan(i)
-    else if (i.kind === 'photo' || i.kind === 'trim') setPhoto(i)
+    else if (i.kind === 'photo' || i.kind === 'trim') openPhoto(i)
     else if (onOpenVideo && i.date) onOpenVideo(i.date, i.id)
     else setVideo(i)
   }
@@ -230,7 +311,28 @@ export default function SailMediaPanel({ teamId, sails, sailId, onSailChange, on
         </div>
       )}
 
-      <PhotoLightbox photo={photo?.photo ? { ...photo.photo, id: photo.id } : null} onClose={() => setPhoto(null)} />
+      <SailGeometryDialog
+        open={!!geomFor}
+        onClose={() => { setPhoto(geomFor); setGeomFor(null) }}
+        boatId={boatId || null}
+        fileUrl={geomFor?.original || ''}
+        fileName={geomFor ? `photo-${geomFor.id.slice(0, 8)}.jpg` : 'photo.jpg'}
+        caption={geomFor?.date || ''}
+        twaDeg={geomFor?.twa ?? null}
+        initialResult={(geomFor?.raw?.analysis_data as any)?.sailTrim?.result ?? null}
+        onSaveToPhoto={async (save: any) => {
+          if (!geomFor) return
+          await applyGeometry(geomFor, {
+            annotation: save.annotation, overlay: !!save.showOverlay,
+            headline: annotationHeadline(save.annotation), result: save.result,
+          })
+        }} />
+
+      <PhotoLightbox
+        photo={photo}
+        onClose={() => setPhoto(null)}
+        onToggleOverlay={photo?.raw && photo.sailTrim ? () => toggleGeometryOverlay(photo) : null}
+        onMeasure={photo?.raw ? () => { setGeomFor(photo); setPhoto(null) } : null} />
 
       <Dialog open={!!video} onOpenChange={(o) => { if (!o) setVideo(null) }}>
         {video && (

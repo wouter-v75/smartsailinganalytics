@@ -28,7 +28,12 @@ function fixture(sailId: string) {
     for (let i = 0; i < count; i++) {
       const [date, event] = days[(n + i) % days.length]
       n++
-      items.push({ kind, id: `${kind}${n}`, t: t - n * 60_000, date, event, tws: tws == null ? null : tws + (i % 3) * 0.3, thumb: img(n, kind === 'video360' ? 400 : 320, 200), ...extra })
+      const thumb = img(n, kind === 'video360' ? 400 : 320, 200)
+      const isPhoto = kind === 'photo' || kind === 'trim'
+      items.push({
+        kind, id: `${kind}${n}`, t: t - n * 60_000, date, event, tws: tws == null ? null : tws + (i % 3) * 0.3, thumb,
+        ...(isPhoto ? { photo: { thumb, original: img(n, 1600, 1200), inst: { tws } } } : {}), ...extra,
+      })
     }
   }
   if (sailId === 'j3') return { items: [], events: [], taggedDays: 0, days: 0 }
@@ -53,6 +58,17 @@ export default function SailMediaPreview() {
       const url = String(typeof input === 'string' || input instanceof URL ? input : input.url)
       const m = url.match(/\/sails\/([^/]+)\/media$/)
       if (m) return new Response(JSON.stringify(fixture(m[1])), { headers: { 'content-type': 'application/json' } })
+      // The day's full photo rows, which the viewer loads to make Measure work.
+      const d = url.match(/\/photos\?date=([\d-]+)/)
+      if (d) {
+        const photos = fixture('j2').items
+          .filter((i: any) => (i.kind === 'photo' || i.kind === 'trim') && i.date === d[1])
+          .map((i: any) => ({
+            id: i.id, taken_utc: new Date(i.t).toISOString(), thumbnail_url: i.thumb, original_url: i.photo.original,
+            bunny_storage_path: `p/${i.id}.jpg`, analysis_data: { inst: { tws: i.tws, twa: 42, bsp: 9.1 } }, sessions: { date: i.date },
+          }))
+        return new Response(JSON.stringify({ photos }), { headers: { 'content-type': 'application/json' } })
+      }
       return real(input, init)
     }) as typeof fetch
     setReady(true)
@@ -64,7 +80,7 @@ export default function SailMediaPreview() {
         Sail media preview · fixture data · players and viewers need a real session
       </div>
       {ready && (
-        <SailMediaPanel teamId="t" sails={SAILS} sailId={sailId} onSailChange={setSailId} onBack={() => {}} />
+        <SailMediaPanel teamId="t" boatId="b" sails={SAILS} sailId={sailId} onSailChange={setSailId} onBack={() => {}} />
       )}
     </div>
   )
