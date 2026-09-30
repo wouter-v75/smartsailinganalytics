@@ -201,4 +201,37 @@ describe('rival boats survive the prompt budget', () => {
     const p = whisperPrompt(g)
     for (const part of ['halyard', 'tackline', 'constrictor']) expect(p).toContain(part)
   })
+
+  // Manoeuvres are last in the priority order and mostly ordinary words, so only
+  // the head of that list ever reaches Whisper. These two are the exception —
+  // "Sandukan" is a proper noun it cannot guess, and getting it wrong loses the
+  // one word that says the spinnaker went up in the gybe.
+  it('reaches the spinnaker-set names, which are not ordinary words', () => {
+    const p = whisperPrompt(g)
+    for (const term of ['Sandukan', 'straight set']) expect(p).toContain(term)
+  })
+})
+
+// The glossary is only half the job: Whisper hearing a term right does nothing
+// for a summary that does not know what it means.
+describe('the summariser is told what the set names mean', () => {
+  const g = withOverride(vocabForBoat('Northstar 76'))
+  const block = glossaryBlock(g)
+
+  it('explains both spinnaker sets', () => {
+    expect(block).toContain('Sandukan→gybe set')
+    expect(block).toMatch(/straight set→bear-away set/)
+  })
+
+  it('does not file the set names as mishearings — the crew really say them', () => {
+    // Slang under `fixups` tells the model the speaker was misheard, which is a
+    // different and wrong instruction.
+    const slang = g.aliases.map(([a]) => a)
+    expect(slang).toContain('Sandukan')
+    expect(slang).toContain('straight set')
+  })
+
+  it('knows Tilakkhana II is a boat', () => {
+    expect(block).toMatch(/Boats \(this team's and rivals'\):.*Tilakkhana II/)
+  })
 })

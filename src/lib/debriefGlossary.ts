@@ -33,7 +33,11 @@ export type Glossary = {
 // Starter set — refine `sails` and `crew` with the team's actual inventory + names.
 export const DEFAULT_GLOSSARY: Glossary = {
   sails: ['BRO', 'MH0', 'mo', 'A-sail', 'A2', 'A3', 'A1.5', 'S2', 'S4', 'Code 0', 'C0', 'No.1', 'No.3', 'jib top', 'masthead zero', 'staysail', 'mainsail', 'main', 'jib', 'genoa', 'spinnaker', 'kite'],
-  manoeuvres: ['inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'layline', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
+  // Sandukan leads for the same reason the parts list is ordered: manoeuvres get
+  // whatever budget is left over, so only the head of this list reaches Whisper —
+  // and "Sandukan" is the one term here it has no chance of guessing. The rest are
+  // ordinary words it already gets right.
+  manoeuvres: ['Sandukan', 'straight set', 'inline peel', 'peel curve', 'Vanderbilt start', 'double tack', 'windward-leeward', 'layline', 'tack', 'gybe', 'inside gybe', 'outside gybe', 'bear-away set', 'gybe set', 'hoist', 'set', 'drop', 'leeward drop', 'windward drop', 'Mexican drop', 'letterbox drop', 'peel', 'inside peel', 'outside peel', 'square', 'round-up', 'takedown', 'windward mark', 'leeward mark', 'offset', 'penalty turn', 'yellow flag'],
   // High-value / most-mangled terms first — whisperPrompt() only takes the leading
   // slice, so keep the ones Whisper fumbles (halyard, tackline, constrictor, luff…) up top.
   parts: ['halyard', 'tackline', 'constrictor', 'self-tailer', 'winch', 'pit winch', 'primary', 'AWA', 'guy', 'sheet', 'lead', 'pole', 'bowsprit', 'luff', 'draft', 'leech', 'dodger', 'pit', 'foredeck', 'main halyard', 'jib halyard', 'spinnaker halyard', 'top halyard', 'second halyard', 'afterguy', 'lazy guy', 'spinnaker sheet', 'lazy sheet', 'genoa lead', 'jib car', 'prod', 'mast', 'rig', 'backstay', 'runners', 'cunningham', 'outhaul', 'vang', 'kicker', 'foot', 'clew', 'batten', 'forestay', 'cap shrouds', 'shim', 'wheel'],
@@ -60,6 +64,13 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['mo', 'MH0'], ['the mo', 'MH0'], ['MHO', 'MH0'],
     ['bro', 'BRO'],
     ['kite', 'spinnaker'],
+    // The two spinnaker sets by the names the crew use for them. Both are heard
+    // correctly — they are not errors — but neither says what it means, and a
+    // summary that repeats "Sandukan" without knowing it is a gybe at the mark
+    // cannot tell whether the rounding went well.
+    ['straight set', 'bear-away set (hoist the spinnaker and carry on — no gybe at the mark)'],
+    ['bare-away set', 'bear-away set (hoist the spinnaker and carry on — no gybe at the mark)'],
+    ['Sandukan', 'gybe set (gybe immediately at the top mark and set the spinnaker in the gybe)'],
   ],
   // Recogniser MISHEARINGS observed in this team's debriefs. These go to the
   // SUMMARISER as context, never as a blind find-and-replace, which is why
@@ -86,6 +97,10 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['tuck', 'tack (the manoeuvre)'], ['tucks', 'tacks'],
     ['mode zero', 'MH0'], ['mower', 'MH0'],
     ['Brault', 'BRO'], ['raw', 'BRO (when the sense is a sail being peeled to)'],
+    // Spelling, not mishearing: "bare" and "bear" are homophones, and Sandokan is
+    // the usual spelling of the name, so the recogniser will favour both forms.
+    ['bare away', 'bear away'], ['bare-away set', 'bear-away set'],
+    ['Sandokan', 'Sandukan (the gybe-set manoeuvre)'],
   ],
 }
 
@@ -112,7 +127,7 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
     // noun Whisper cannot guess, and a rival's name landing wrong turns into a fact
     // in the summary — "Jolt was called over" became "John was called over", which
     // reads as a crew member being OCS.
-    boats: ['Django', 'Bella Mente', 'Jolt', 'Jethou', 'Proteus', 'Balthasar'],
+    boats: ['Django', 'Bella Mente', 'Jolt', 'Jethou', 'Proteus', 'Balthasar', 'Tilakkhana II'],
     // Sail codes the crew say out loud, marks and places of the Sardinia racing area,
     // and the sailmaker — all proper nouns the recogniser cannot spell.
     sails: ['MN_B', 'MH0', 'BRO', 'SSS', 'SS', 'J1', 'J1.5', 'J2', 'A1', 'A1.5', 'A2'],
@@ -258,7 +273,12 @@ export function whisperPrompt(g: Glossary = DEFAULT_GLOSSARY, maxChars: number =
   // Balthasar never reached Whisper at all. Boats lead the weave because they are
   // the less guessable half: "Peter" and "Max" it already spells right, "Jethou"
   // and "Balthasar" it has no chance at.
-  take(weave(g.boats, g.crew), head.length + 1 + Math.round(body * 0.50))
+  // 0.54, not 0.50: the names share was tuned against six rival boats, and a
+  // seventh (Tilakkhana II) pushed Dougie off the end — a name dropped here is a
+  // name transcribed wrong, which is the whole reason the share exists. The room
+  // comes out of the sails' ceiling, where the tail is generic codes Whisper
+  // already spells (S2, S4, C0) rather than proper nouns it cannot guess.
+  take(weave(g.boats, g.crew), head.length + 1 + Math.round(body * 0.54))
   take(g.sails, head.length + 1 + Math.round(body * 0.72))
   take(g.parts, head.length + 1 + Math.round(body * 0.90))
   take(g.manoeuvres, maxChars)
