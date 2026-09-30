@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   photoInstantMs, phaseAt, angleRows, twistRows, agrees, LIDAR_SIGMA_DEG,
-  lidarCell, phaseHasLidar, lidarAppliesTo, LIDAR_CHANNEL,
+  lidarCell, phaseHasLidar, lidarAppliesTo, LIDAR_CHANNEL, toLogClockMs,
 } from '../sailTrimLidar'
 import type { PhaseStat } from '../phaseStats'
 import type { SailTrimAnnotation } from '../sailTrimOverlay'
@@ -210,5 +210,29 @@ describe('lidarAppliesTo — our lidar describes OUR rig', () => {
     expect(lidarAppliesTo(null, 'Northstar 76')).toBe(false)
     expect(lidarAppliesTo('Northstar 76', null)).toBe(false)
     expect(lidarAppliesTo('', '')).toBe(false)
+  })
+})
+
+
+describe('toLogClockMs — the two clocks', () => {
+  it('moves a true instant onto the log\'s venue-local epoch', () => {
+    // flatLogParse builds phase timestamps with Date.UTC() from the log's WALL
+    // CLOCK, so a phase at "10:53:41" is 10:53:41 in Porto Cervo, not in UTC.
+    const shutter = Date.parse('2026-09-26T10:09:40Z')      // 12:09:40 CEST
+    expect(toLogClockMs(shutter, 120)).toBe(Date.parse('2026-09-26T12:09:40Z'))
+  })
+
+  it('is the difference between inside the day and 44 minutes before it', () => {
+    // The 26 Sep symptom: raw, every photo landed before the first phase.
+    const firstPhase = Date.parse('2026-09-26T10:53:41Z')   // 10:53:41 LOCAL
+    const shutter = Date.parse('2026-09-26T10:09:40Z')
+    expect(shutter).toBeLessThan(firstPhase)                       // "before the sailing"
+    expect(toLogClockMs(shutter, 120)).toBeGreaterThan(firstPhase) // …actually an hour into it
+  })
+
+  it('leaves a zero offset alone, and handles west of UTC', () => {
+    const t = Date.parse('2026-09-26T10:00:00Z')
+    expect(toLogClockMs(t, 0)).toBe(t)
+    expect(toLogClockMs(t, -240)).toBe(Date.parse('2026-09-26T06:00:00Z'))
   })
 })

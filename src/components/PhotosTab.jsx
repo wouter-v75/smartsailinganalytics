@@ -27,15 +27,34 @@ import { FavouriteHeart, FavouritesFilterButton } from "./FavouriteHeart";
 import SailTrimRecompute from "./photos/SailTrimRecompute";
 import { useFavourites, photoFavId } from "../lib/favourites";
 
-/** The sail-geometry payload on a photo, or null. Tolerates the string form. */
-function sailTrimOf(photo){
+/** Whatever is stored, annotation or not. Tolerates the string form. */
+function sailTrimRawOf(photo){
   const raw = photo?.sailtrim_data;
   if(!raw) return null;
-  let parsed;
-  try { parsed = typeof raw === "string" ? JSON.parse(raw) : raw; }
+  try { return typeof raw === "string" ? JSON.parse(raw) : raw; }
   catch { return null; }
+}
+
+/** The sail-geometry payload on a photo, or null — only when it MEASURED something. */
+function sailTrimOf(photo){
+  const parsed = sailTrimRawOf(photo);
   if(!parsed || !isAnnotation(parsed.annotation)) return null;
   return parsed;
+}
+
+/**
+ * Marks saved with no finished measurement.
+ *
+ * The clicks are the expensive part, so SailTrim saves them even when the
+ * calibration is short — a missing scale reference, no focal length. Without
+ * this the payload parses, fails isAnnotation, and the photo looks untouched:
+ * the marks are on the row and nothing offers them back.
+ */
+function unfinishedSailTrimOf(photo){
+  const parsed = sailTrimRawOf(photo);
+  if(!parsed || isAnnotation(parsed.annotation)) return null;
+  const marks = parsed.result?.marks?.marks;
+  return marks && Object.keys(marks).length ? parsed : null;
 }
 
 const DB_NAME = "ssa-db";
@@ -324,6 +343,7 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
     // does not.
     extraGauges.map(k=>photo[k]).join(',')].join('|');
   const geom = sailTrimOf(photo);
+  const unfinishedGeom = !geom && !!unfinishedSailTrimOf(photo);
   // The picture itself — loading, both overlays and the viewport — is
   // PhotoViewer's job now, and the timeline uses the same one. What is left here
   // is the instrument VALUES it draws, which only this tab knows how to build.
@@ -484,9 +504,10 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
              it AND the frame is of our own boat. Absent otherwise — no columns
              rather than a column of dashes. */
           sessionDate={sessionDate}
-          takenUtc={photo.utc ?? null}/>
+          takenUtc={photo.utc ?? null}
+          tzOffsetMin={tzOffset}/>
       )}
-      {!geom && <MeasureGeometryButton onClick={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}/>}
+      {!geom && <MeasureGeometryButton unfinished={unfinishedGeom} onClick={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}/>}
 
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button onClick={handleExport} disabled={!rendered} style={{flex:1,background:rendered?"#8B5CF6":"#1E3A5A",border:"none",borderRadius:7,padding:"9px 0",color:rendered?"#fff":"#475569",fontWeight:700,cursor:rendered?"pointer":"default",fontSize:12}}>⬇ Export JPEG</button>
@@ -966,7 +987,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
     const payload = {
       annotation: save.annotation,
       overlay: !!save.showOverlay,
-      headline: annotationHeadline(save.annotation),
+      headline: save.annotation ? annotationHeadline(save.annotation) : null,
       result: save.result,
     };
     const patch = {
@@ -1357,7 +1378,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         photoLabel={geomFor?.name||"this photo"}
         caption={!geomFor ? "" : (geomFor.name||"Photo") + (geomFor.utc ? " \u00b7 " + fmtLocalDT(geomFor.utc,sessionTzOffset) + " " + TZ_SHORT(sessionTzOffset) : "")}
         twaDeg={geomFor?.twa ?? null}
-        initialResult={geomFor ? (sailTrimOf(geomFor)?.result ?? null) : null}
+        initialResult={geomFor ? (sailTrimRawOf(geomFor)?.result ?? null) : null}
         onSaveToPhoto={(save)=>handleSaveSailTrim(geomFor,save)}/>
     </div>
   );

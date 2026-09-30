@@ -31,6 +31,7 @@ export default function SailGeometryCard({
   compact = false,
   sessionDate = null,
   takenUtc = null,
+  tzOffsetMin = null,
 }: {
   annotation: SailTrimAnnotation
   overlayOn?: boolean
@@ -42,10 +43,13 @@ export default function SailGeometryCard({
    *  appear — every caller works unchanged. */
   sessionDate?: string | null
   takenUtc?: string | number | null
+  /** The VENUE's offset. Without it there are no lidar columns: the log's clock
+   *  is local and a photo's is UTC, and guessing zero matches the wrong phase. */
+  tzOffsetMin?: number | null
 }) {
   // Before the early return: a hook may not sit behind one.
   const lidar = useLidarForPhoto({
-    sessionDate, takenUtc,
+    sessionDate, takenUtc, tzOffsetMin,
     measuredAs: annotation?.scale?.boat ?? null,
   })
   if (!annotation?.targets?.length) return null
@@ -241,15 +245,28 @@ export default function SailGeometryCard({
 }
 
 /** The offer to measure a photo nobody has measured yet. */
-export function MeasureGeometryButton({ onClick, compact = false }: {
+export function MeasureGeometryButton({ onClick, compact = false, unfinished = false }: {
   onClick?: (() => void) | null
   compact?: boolean
+  /** Marks were saved but nothing was measured — a scale reference missing, or
+   *  a focal length. Without saying so the photo looks untouched and the work
+   *  already done is invisible, which is how it gets done twice. */
+  unfinished?: boolean
 }) {
   if (!onClick) return null
   return (
-    <button onClick={onClick}
-      style={{ width: '100%', background: '#0A1929', border: '1px solid #38BDF840', borderRadius: 8, padding: compact ? '8px 0' : '10px 0', color: '#38BDF8', fontWeight: 700, cursor: 'pointer', fontSize: 12, marginBottom: 10 }}>
-      📐 Analyse sail geometry
-    </button>
+    <>
+      {unfinished && (
+        <div data-testid="sailgeom-unfinished" style={{ background: '#2A1F05', border: '1px solid #FCD34D40', borderRadius: 8, padding: '8px 11px', marginBottom: 8, fontSize: 11, color: '#FCD34D', lineHeight: 1.45 }}>
+          <b>Unfinished measurement.</b> The marks on this frame were saved, but something
+          was still missing — most often the scale reference or the focal length — so no
+          numbers were computed. Open it and the clicks are all still there.
+        </div>
+      )}
+      <button onClick={onClick}
+        style={{ width: '100%', background: '#0A1929', border: `1px solid ${unfinished ? '#FCD34D40' : '#38BDF840'}`, borderRadius: 8, padding: compact ? '8px 0' : '10px 0', color: unfinished ? '#FCD34D' : '#38BDF8', fontWeight: 700, cursor: 'pointer', fontSize: 12, marginBottom: 10 }}>
+        📐 {unfinished ? 'Finish the measurement' : 'Analyse sail geometry'}
+      </button>
+    </>
   )
 }

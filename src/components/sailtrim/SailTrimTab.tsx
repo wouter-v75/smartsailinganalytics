@@ -48,6 +48,7 @@ import {
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
 import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
 import { fitCamber, type CamberFit } from '../../lib/sailCamber';
+import { loadLenses, rememberLens, lensLabel, type Lens } from '../../lib/lensPrefs';
 import {
   buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
 } from '../../lib/sailTrimOverlay';
@@ -253,7 +254,13 @@ interface Kept {
 /** What a host (the photo viewer) gets back when the operator saves onto a photo. */
 export interface SailTrimSave {
   result: SailTrimResult;
-  annotation: SailTrimAnnotation;
+  /**
+   * NULL when the work is not finished — no scale reference yet, no focal
+   * length, a boat with no attested dimensions. The clicks are still worth
+   * keeping: they are the expensive part, and losing an afternoon's marking
+   * because one number was missing is how a tool teaches people not to use it.
+   */
+  annotation: SailTrimAnnotation | null;
   /** Flat, filterable headline fields to hang on the photo beside the JSON. */
   fields: Record<string, string>;
   /** Whether the operator asked for the lines to be burned into the picture. */
@@ -361,6 +368,7 @@ export default function SailTrimTab(
   const [boats, setBoats] = useState<BoatChoice[]>([]);
   const [otherBoat, setOtherBoat] = useState(false);
   useEffect(() => { void fetchBoats().then(setBoats); }, []);
+  useEffect(() => { void loadLenses().then(setLenses); }, []);
   const [certText, setCertText] = useState('');
   const [certNote, setCertNote] = useState('');
   // Wheels by default. Spreader 2 was the default and it is a GUESS on every
@@ -385,6 +393,8 @@ export default function SailTrimTab(
   const [baselineKey, setBaselineKey] = useState('mast-transom');
   const [heelDeg, setHeelDeg] = useState<string>('');
   const [focalMm, setFocalMm] = useState<string>('');
+  /** Lenses this browser has seen, newest first. Builds itself from EXIF. */
+  const [lenses, setLenses] = useState<Lens[]>([]);
   const [defn, setDefn] = useState<'boat' | 'world'>('boat');
   const [kept, setKept] = useState<Kept[]>([]);
 
@@ -542,6 +552,14 @@ export default function SailTrimTab(
       if (d?.FocalLength) {
         setFocalMm(String(Math.round(d.FocalLength)));
         setExifNote(`${d.Model || 'camera'} · ${Math.round(d.FocalLength)} mm${d.LensModel ? ` · ${d.LensModel}` : ''}`);
+        // Every frame that HAS a focal length teaches the list one, so by the
+        // time a stripped export turns up the kit it was shot on is already
+        // there to pick. Nothing to configure, and nothing to keep up to date.
+        void rememberLens({
+          label: lensLabel(d.Model, d.LensModel, d.FocalLength),
+          focalMm: Math.round(d.FocalLength),
+          lastUsed: Date.now(),
+        }).then((next) => { if (next.length) setLenses(next); });
       } else {
         setExifNote('No focal length in this file — it has been re-exported and the EXIF stripped. Enter it by hand, or the depth correction cannot be applied.');
       }
@@ -1502,17 +1520,54 @@ export default function SailTrimTab(
   const [saveMsg, setSaveMsg] = useState('');
   const [saveWarn, setSaveWarn] = useState('');
 
+  /** Anything clicked at all — the thing worth not losing. */
+  const anyMarks = Object.values(marks).some((a) => (a || []).length > 0);
+
+  /**
+   * WHICH steps are still short, not just that something is.
+   *
+   * `calibration.why` reports the FIRST thing that failed and stops — "Mark a
+   * scale reference." on a frame where the mast was done and three targets were
+   * clicked, which reads as a tool refusing rather than as one item outstanding.
+   * Worse, it cannot say what else is also missing, so a second attempt hits the
+   * next wall. This lists every one of them, each a button to that step.
+   *
+   * Completeness is computed the same way the step list draws its dots — a
+   * leech's count includes the stripe marks, because those ARE leech points —
+   * so the checklist and the dots can never disagree.
+   */
+  const outstanding = useMemo(() => {
+    const short: { i: number; label: string; have: number; min: number; group: StepDef['group'] }[] = [];
+    steps.forEach((s, i) => {
+      if (s.optional) return;
+      const leechSail = s.key.startsWith('leech:') ? s.key.slice(6) : null;
+      const have = leechSail ? leechPolyline(leechSail).length : (marks[s.key] || []).length;
+      if (have < s.min) short.push({ i, label: s.label, have, min: s.min, group: s.group });
+    });
+    return {
+      calibrate: short.filter((x) => x.group === 'calibrate'),
+      anyTarget: steps.some((s) => s.group === 'target' && (marks[s.key] || []).length > 0),
+    };
+  }, [steps, marks, leechPolyline]);
+
   const saveToPhoto = async () => {
     if (!onSaveToPhoto) return;
     const ann = annotation();
-    if (!ann) return;
+    // Marks with no finished measurement still save. `result()` carries the
+    // clicks and every choice around them, so reopening puts the tool back
+    // exactly as it was and the missing piece can be supplied then.
+    if (!ann && !anyMarks) return;
     setSaveState('saving'); setSaveMsg(''); setSaveWarn('');
     try {
       const r = await onSaveToPhoto({
-        result: result(), annotation: ann, fields: annotationFields(ann), showOverlay,
+        result: result(),
+        annotation: ann,
+        fields: ann ? annotationFields(ann) : {},
+        // Nothing to draw, so nothing to ask for.
+        showOverlay: ann ? showOverlay : false,
       });
       setSaveState('saved');
-      setSaveMsg(annotationHeadline(ann));
+      setSaveMsg(ann ? annotationHeadline(ann) : 'marks saved — no measurements yet');
       setSaveWarn(r && typeof r === 'object' && r.warning ? r.warning : '');
     } catch (e) {
       setSaveState('error');
@@ -1881,6 +1936,39 @@ export default function SailTrimTab(
             </div>
           )}
           {exifNote && <div style={{ fontSize: 11, color: focalMm ? '#64748B' : '#FCD34D', marginTop: 5, lineHeight: 1.45 }}>{exifNote}</div>}
+          {/* HERE, not in the rig panel where it used to live. A focal length is
+              a property of the CAMERA, not of the boat, and the message telling
+              you it is missing was three panels above the only box that fixes
+              it — which reads as "enter it by hand" with nowhere to do so. */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginTop: 7, flexWrap: 'wrap' }}>
+            <div style={{ width: 118 }}>
+              <label style={lbl}>Focal length (mm)</label>
+              <input style={inp} type="number" inputMode="decimal" data-testid="sailtrim-focal"
+                value={focalMm} onChange={(e) => setFocalMm(e.target.value)} placeholder="254" />
+            </div>
+            {lenses.length > 0 && (
+              <div style={{ flex: 1, minWidth: 190 }}>
+                <label style={lbl}>…or a lens used before</label>
+                <select style={inp} data-testid="sailtrim-lens-picker" value=""
+                  onChange={(e) => {
+                    const pick = lenses.find((l) => `${l.label}|${l.focalMm}` === e.target.value);
+                    if (pick) setFocalMm(String(pick.focalMm));
+                  }}>
+                  <option value="">Pick a lens…</option>
+                  {lenses.map((l) => (
+                    <option key={`${l.label}|${l.focalMm}`} value={`${l.label}|${l.focalMm}`}>{l.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          {!focalMm.trim() && (
+            <div style={{ fontSize: 10.5, color: '#94A3B8', marginTop: 5, lineHeight: 1.45 }}>
+              Without it the measurements still compute, but the depth correction cannot be
+              applied — so anything measured against a reference that is not in the mast plane
+              reads low. The marks can be saved either way and finished later.
+            </div>
+          )}
           {imgSize && (
             <div style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5, color: horizon ? '#4ADE80' : '#FCD34D' }}>
               {horizon
@@ -2242,10 +2330,6 @@ export default function SailTrimTab(
                     : 'Rival, and NO HORIZON — so there is no heel at all. Our logged heel is our own boat\u2019s and would be a different boat\u2019s number. Mark the horizon by hand (two clicks, in the step list), or treat the world-horizontal figures as unavailable.'}
                 </div>
               )}
-            </div>
-            <div>
-              <label style={lbl}>Focal length (mm)</label>
-              <input style={inp} type="number" value={focalMm} onChange={(e) => setFocalMm(e.target.value)} placeholder="254" />
             </div>
           </div>
 
@@ -2672,9 +2756,35 @@ export default function SailTrimTab(
               </span>
             </label>
             <button data-testid="sailtrim-save-to-photo" style={btn(true)}
-              disabled={!measurements.length || saveState === 'saving'} onClick={saveToPhoto}>
-              {saveState === 'saving' ? 'Saving…' : 'Save to photo'}
+              disabled={(!measurements.length && !anyMarks) || saveState === 'saving'} onClick={saveToPhoto}>
+              {saveState === 'saving' ? 'Saving…' : measurements.length ? 'Save to photo' : 'Save marks only'}
             </button>
+            {!measurements.length && anyMarks && (
+              <div style={{ fontSize: 11, color: '#FCD34D', marginTop: 7, lineHeight: 1.45 }} data-testid="sailtrim-outstanding">
+                <b>No finished measurement yet.</b> Still to mark:
+                <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                  {outstanding.calibrate.map((o) => (
+                    <li key={o.i} style={{ marginBottom: 2 }}>
+                      <button onClick={() => setActiveStep(o.i)}
+                        style={{ background: 'none', border: 'none', padding: 0, color: '#FCD34D', font: 'inherit', textDecoration: 'underline', cursor: 'pointer' }}>
+                        {o.label}
+                      </button>
+                      <span style={{ color: '#94A3B8' }}> — {o.have} of {o.min}</span>
+                    </li>
+                  ))}
+                  {!outstanding.anyTarget && (
+                    <li style={{ color: '#94A3B8' }}>at least one target to measure</li>
+                  )}
+                  {!outstanding.calibrate.length && outstanding.anyTarget && (
+                    <li style={{ color: '#94A3B8' }}>{calibration.why || 'something in the calibration'}</li>
+                  )}
+                </ul>
+                <div style={{ marginTop: 5, color: '#94A3B8' }}>
+                  Saving now keeps the marks and every choice around them, so reopening puts the tool
+                  back exactly as it is. The photo will say it is unfinished.
+                </div>
+              </div>
+            )}
             {saveState === 'saved' && (
               <div style={{ fontSize: 11, color: '#4ADE80', marginTop: 7, lineHeight: 1.45 }}>Saved · {saveMsg}</div>
             )}
@@ -2684,7 +2794,7 @@ export default function SailTrimTab(
             {saveState === 'error' && (
               <div style={{ fontSize: 11, color: '#FCA5A5', marginTop: 7, lineHeight: 1.45 }}>{saveMsg}</div>
             )}
-            {!measurements.length && (
+            {!measurements.length && !anyMarks && (
               <div style={{ fontSize: 11, color: '#64748B', marginTop: 7 }}>
                 Nothing to save yet — mark the mast, a scale reference and at least one target.
               </div>

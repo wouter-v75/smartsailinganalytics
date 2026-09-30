@@ -1212,3 +1212,112 @@ describe('the default scale reference', () => {
     expect(select.value).toBe('wheels')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Getting stuck, and not losing the afternoon to it.
+//
+// A real frame (2026-09-05 10:46:30) had the mast and the targets marked and no
+// scale reference. The tool said "Mark a scale reference." three panels below a
+// warning about a missing focal length, the save button was dead, and there was
+// no way to keep any of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('SailTrimTab — an unfinished frame', () => {
+  const P = makeCamera(RIG)
+  const disabled = (el: HTMLElement) => (el as HTMLButtonElement).disabled
+
+  const markMastOnly = () => {
+    // The edge flow, inlined: calling useManualMast() from a named function
+    // trips react-hooks/rules-of-hooks on its `use` prefix, and `next build` is
+    // the only check in `npm run verify` that runs that rule.
+    fireEvent.click(screen.getByText('edges'))
+    click(P(0, -MAST_HALF_WIDTH, 5_000)); click(P(0, MAST_HALF_WIDTH, 5_000))
+    fireEvent.click(stepButton('Mast edges, high'))
+    click(P(0, -MAST_HALF_WIDTH, 30_000)); click(P(0, MAST_HALF_WIDTH, 30_000))
+  }
+
+  it('names WHICH steps are outstanding, not merely the first', async () => {
+    // calibration.why stops at the first failure, so a frame short of two things
+    // sends you round twice.
+    const saves: unknown[] = []
+    render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v) }} />)
+    await openAFrame()
+    markMastOnly()
+    await settle()
+
+    const box = screen.getByTestId('sailtrim-outstanding')
+    expect(within(box).getByText('Scale reference')).toBeTruthy()
+    expect(box.textContent).toMatch(/0 of 2/)
+    expect(box.textContent).toMatch(/at least one target/)
+  })
+
+  it('offers each outstanding step as a way to GET to it', async () => {
+    render(<SailTrimTab onSaveToPhoto={() => {}} />)
+    await openAFrame()
+    markMastOnly()
+    await settle()
+
+    // Clicking the outstanding item makes that step active, so the next two
+    // clicks on the picture land on it — which is the whole use of the list.
+    fireEvent.click(within(screen.getByTestId('sailtrim-outstanding')).getByText('Scale reference'))
+    selectScale('spreader2')
+    click(P(0, -SPREADER_HALF, SPREADER_Z))
+    click(P(0, SPREADER_HALF, SPREADER_Z))
+    await settle()
+
+    const box = screen.getByTestId('sailtrim-outstanding')
+    expect(within(box).queryByText('Scale reference')).toBeNull()
+    // …and what is still missing is still named.
+    expect(box.textContent).toMatch(/at least one target/)
+  })
+
+  it('SAVES the marks with no finished measurement, rather than refusing', async () => {
+    const saves: { annotation: unknown; result: { marks?: unknown } }[] = []
+    render(<SailTrimTab onSaveToPhoto={(v) => { saves.push(v as never) }} />)
+    await openAFrame()
+    markMastOnly()
+    await settle()
+
+    const btn = screen.getByTestId('sailtrim-save-to-photo')
+    expect(disabled(btn)).toBe(false)
+    expect(btn.textContent).toMatch(/Save marks only/)
+    fireEvent.click(btn)
+    await waitFor(() => expect(saves).toHaveLength(1))
+
+    // No annotation — nothing was measured — but every click is on the payload,
+    // which is what makes reopening put the tool back as it was.
+    expect(saves[0].annotation).toBeNull()
+    const bundle = saves[0].result.marks as { marks?: Record<string, unknown> }
+    expect(Object.keys(bundle.marks || {}).length).toBeGreaterThan(0)
+  })
+
+  it('still refuses when there is genuinely nothing to keep', async () => {
+    render(<SailTrimTab onSaveToPhoto={() => {}} />)
+    await openAFrame()
+    await settle()
+    expect(disabled(screen.getByTestId('sailtrim-save-to-photo'))).toBe(true)
+    expect(screen.getByText(/Nothing to save yet/)).toBeTruthy()
+  })
+})
+
+describe('SailTrimTab — the focal length', () => {
+  it('has its box in the PHOTO panel, beside the warning about it', async () => {
+    // It used to live in the rig panel, three panels below the message telling
+    // you to enter it — "enter it by hand" with nowhere to do so.
+    render(<SailTrimTab />)
+    await openAFrame()
+    await settle()
+    const photoPanel = screen.getByTestId('sailtrim-focal').closest('div[style]')!
+    expect(photoPanel).toBeTruthy()
+    expect(screen.getByTestId('sailtrim-focal')).toBeTruthy()
+  })
+
+  it('takes a focal length typed by hand', async () => {
+    render(<SailTrimTab />)
+    await openAFrame()
+    await settle()
+    const box = screen.getByTestId('sailtrim-focal') as HTMLInputElement
+    fireEvent.change(box, { target: { value: '254' } })
+    expect(box.value).toBe('254')
+  })
+})

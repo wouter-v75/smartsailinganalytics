@@ -16,7 +16,7 @@ import { getActiveMembership } from '../../lib/active-membership'
 import { expandPhases, type StoredPhase } from '../../lib/seasonCurves'
 import type { PhaseStat } from '../../lib/phaseStats'
 import {
-  photoInstantMs, phaseAt, phaseHasLidar, lidarAppliesTo,
+  photoInstantMs, phaseAt, phaseHasLidar, lidarAppliesTo, toLogClockMs,
 } from '../../lib/sailTrimLidar'
 
 /**
@@ -76,6 +76,7 @@ export function useLidarForPhoto({
   sessionDate,
   takenUtc,
   measuredAs,
+  tzOffsetMin = null,
 }: {
   /** The session's own date. Passed in rather than derived from the timestamp:
    *  a session date is the VENUE's day and an instant is UTC, and deriving one
@@ -84,6 +85,17 @@ export function useLidarForPhoto({
   takenUtc?: string | number | null
   /** The boat the frame was MEASURED as. */
   measuredAs?: string | null
+  /**
+   * The VENUE's offset, minutes east of UTC — the session's own
+   * tz_offset_minutes, which PhotosTab already holds as sessionTzOffset.
+   *
+   * Required, and null means no columns rather than a guess of zero. A phase's
+   * timestamp is venue-local wall time in epoch clothing (flatLogParse builds it
+   * with Date.UTC) and a photo's is a true instant; assuming they agree does not
+   * show up as an error, it shows up as the WRONG phase quietly printed beside
+   * the photograph.
+   */
+  tzOffsetMin?: number | null
 }): PhaseStat | null {
   const [phase, setPhase] = useState<PhaseStat | null>(null)
 
@@ -91,7 +103,8 @@ export function useLidarForPhoto({
     let dead = false
     setPhase(null)
     const at = photoInstantMs(takenUtc)
-    if (!sessionDate || at == null) return
+    if (!sessionDate || at == null || tzOffsetMin == null) return
+    const atLogClock = toLogClockMs(at, tzOffsetMin)
 
     void (async () => {
       const userId = await currentUserId()
@@ -103,13 +116,13 @@ export function useLidarForPhoto({
 
       const phases = await loadDay(m.team_id, m.boat_id, sessionDate)
       if (dead || !phases.length) return
-      const hit = phaseAt(phases, at)
+      const hit = phaseAt(phases, atLogClock)
       if (!hit || hit.gapMs > MAX_GAP_MS) return
       if (!phaseHasLidar(hit.phase)) return
       setPhase(hit.phase)
     })()
     return () => { dead = true }
-  }, [sessionDate, takenUtc, measuredAs])
+  }, [sessionDate, takenUtc, measuredAs, tzOffsetMin])
 
   return phase
 }

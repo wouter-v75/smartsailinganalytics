@@ -27,7 +27,7 @@ import { createClient } from '@supabase/supabase-js'
 import { expandPhases, type StoredPhase } from '../src/lib/seasonCurves'
 import { isAnnotation, type SailTrimAnnotation } from '../src/lib/sailTrimOverlay'
 import {
-  photoInstantMs, phaseAt, angleRows, twistRows, agrees, LIDAR_SIGMA_DEG,
+  photoInstantMs, phaseAt, angleRows, twistRows, agrees, LIDAR_SIGMA_DEG, toLogClockMs,
 } from '../src/lib/sailTrimLidar'
 
 const args = process.argv.slice(2)
@@ -35,6 +35,10 @@ const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null
 const DATE = flag('--date')
 const BOAT = flag('--boat')
 const MAX_GAP_S = Number(flag('--max-gap') || 45)
+// The venue offset, minutes east of UTC. Read from the session unless given:
+// phase timestamps are venue-LOCAL wall time in epoch clothing (flatLogParse
+// builds them with Date.UTC), while photos.taken_utc is a true instant.
+const TZ_ARG = flag('--tz-offset-min')
 if (!DATE) {
   console.error('usage: --date 2026-09-26 [--boat "Northstar 76"] [--max-gap 45]')
   process.exit(1)
@@ -58,6 +62,22 @@ async function main() {
     .from('session_phase_stats').select('date, phases').eq('date', DATE)
   if (sErr) { console.error(`session_phase_stats: ${sErr.message}`); process.exit(1) }
 
+  let tzOffsetMin = TZ_ARG == null ? null : Number(TZ_ARG)
+  let tzFrom = 'the --tz-offset-min flag'
+  if (tzOffsetMin == null) {
+    const { data: sess } = await sb
+      .from('sessions').select('date, tz_offset_minutes').eq('date', DATE).limit(1)
+    const v = sess?.[0]?.tz_offset_minutes
+    if (typeof v === 'number') { tzOffsetMin = v; tzFrom = 'sessions.tz_offset_minutes' }
+  }
+  if (tzOffsetMin == null) {
+    console.error(`No venue offset for ${DATE}: sessions.tz_offset_minutes is not set and --tz-offset-min was not given.`)
+    console.error('Refusing to guess. The log\'s clock is venue-local and a photo\'s is UTC, so without it every')
+    console.error('frame either falls outside the day or matches the WRONG phase and prints numbers anyway.')
+    process.exit(1)
+  }
+  console.log(`venue offset ${tzOffsetMin >= 0 ? '+' : ''}${tzOffsetMin} min, from ${tzFrom}`)
+
   const phases = expandPhases((statRows?.[0]?.phases ?? []) as StoredPhase[])
   if (!phases.length) {
     console.log(`no stored phase stats for ${DATE} — nothing to compare against.`)
@@ -79,6 +99,19 @@ async function main() {
 
   if (!frames.length) { console.log('no measured frames on that day'); return }
 
+  // Both windows, in the log's clock, so a systematic miss is visible as one.
+  const hhmm = (ms: number) => new Date(ms).toISOString().slice(11, 19)
+  const first = Math.min(...phases.map((p) => p.utc)), last = Math.max(...phases.map((p) => p.endUtc))
+  const shutters = frames.map((f) => photoInstantMs(f.at)).filter((x): x is number => x != null)
+    .map((x) => toLogClockMs(x, tzOffsetMin!))
+  console.log(`phases   ${hhmm(first)} → ${hhmm(last)}   (log clock)`)
+  console.log(`shutters ${hhmm(Math.min(...shutters))} → ${hhmm(Math.max(...shutters))}   (log clock)\n`)
+  if (shutters.every((t) => t < first || t > last)) {
+    const shift = Math.round((first - Math.max(...shutters)) / 60_000)
+    console.log(`EVERY frame falls outside the phases. If that is not simply when the sailing was,`)
+    console.log(`the clocks still disagree: ${shift} more minutes of offset would reach the first phase.\n`)
+  }
+
   let checked = 0, consistent = 0
   for (const f of frames) {
     const a = f.a as SailTrimAnnotation
@@ -86,7 +119,8 @@ async function main() {
     const clock = f.at.slice(11, 19)
     if (ms == null) { console.log(`  ${clock}  unreadable timestamp — skipped`); continue }
 
-    const m = phaseAt(phases, ms)
+    // Onto the log's clock before anything is compared.
+    const m = phaseAt(phases, toLogClockMs(ms, tzOffsetMin!))
     const gapS = m ? Math.round(m.gapMs / 1000) : null
     const usable = !!m && m.gapMs <= MAX_GAP_S * 1000
     const phase = usable ? m!.phase : null

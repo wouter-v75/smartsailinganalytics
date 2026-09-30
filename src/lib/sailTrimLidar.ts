@@ -54,6 +54,27 @@ export function photoInstantMs(takenUtc: string | number | null | undefined): nu
   return Number.isFinite(t) ? t : null
 }
 
+/**
+ * A photo's instant moved onto the LOG's clock, which is not UTC.
+ *
+ * flatLogParse turns the log's wall-clock column into an epoch with Date.UTC(),
+ * on purpose — parsing it with Date() would apply the viewer's timezone and move
+ * every row by whatever the laptop is set to. The consequence is that a
+ * PhaseStat's `utc` is venue-LOCAL wall time wearing an epoch's clothes, while
+ * `photos.taken_utc` is a true instant.
+ *
+ * Comparing them raw is the clocks trap in CLAUDE.md, and it does not fail
+ * loudly: on 26 Sep it put every photo 28 to 44 minutes before the first phase,
+ * which reads as "the sailing started after the photographs" rather than as two
+ * clocks. Worse, with a smaller offset it would not fall outside the day at all
+ * — it would match a phase, the wrong one, and print numbers.
+ *
+ * @param venueOffsetMin minutes EAST of UTC (CEST = +120).
+ */
+export function toLogClockMs(trueUtcMs: number, venueOffsetMin: number): number {
+  return trueUtcMs + venueOffsetMin * 60_000
+}
+
 export interface PhaseMatch { phase: PhaseStat; gapMs: number }
 
 /**
