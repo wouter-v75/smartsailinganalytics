@@ -17,7 +17,7 @@ import { SAIL_CHANGE_SLUG } from './tagging/sailState'
 import type { LinkableSail } from './tagging/sailLink'
 import type { TagEvent } from './tagging/types'
 import type { StoredPhase } from './seasonCurves'
-import type { DayContext, PhotoIn, ScanIn, SailMediaInput, VideoIn } from './sailMedia'
+import { hiddenMediaOf, type DayContext, type PhotoIn, type ScanIn, type SailMediaInput, type VideoIn } from './sailMedia'
 
 const PAGE = 1000
 const MAX_PHOTOS = 20_000
@@ -148,12 +148,14 @@ export async function loadBoatMedia(
 }
 
 /**
- * The input for one sail. A MAINSAIL needs saying so, because the phases
+ * The input for one sail, with what has been marked not relevant to it.
+ * A MAINSAIL needs saying so, because the phases
  * carry headsails only: the boat's one active main was up whenever it sailed;
  * with several, the phases cannot say which.
  */
 export function inputFor(media: BoatMedia, sail: { id: string; kind?: string | null }): SailMediaInput {
   const activeMains = media.inventoryRows.filter((s) => s.kind === 'mainsail' && !s.retired)
   const main = sail.kind === 'mainsail' ? (activeMains.length <= 1 ? 'only' as const : 'several' as const) : undefined
-  return { ...media.base, sailId: sail.id, main }
+  const hidden = hiddenMediaOf(media.inventoryRows.find((s) => s.id === sail.id)?.specs)
+  return { ...media.base, sailId: sail.id, main, hidden }
 }

@@ -63,7 +63,7 @@ const mmss = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.round(sec %
 const shortDate = (d: string | null) =>
   d ? new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, { day: '2-digit', month: 'short' }) : '—'
 
-export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailChange, onBack, onOpenVideo, sessionTzOffset = 0, isMobile }: {
+export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailChange, onBack, onOpenVideo, canEdit = false, onMediaChanged, sessionTzOffset = 0, isMobile }: {
   teamId: string
   /** The boat the photo rows belong to — needed to read and save them. */
   boatId: string
@@ -75,6 +75,10 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   sailId: string
   onSailChange: (id: string) => void
   onBack: () => void
+  /** May mark photos and videos not relevant to the sail (the sails RLS: TL3+). */
+  canEdit?: boolean
+  /** A mark changed the sail's counts — the inventory's Media button re-counts. */
+  onMediaChanged?: () => void
   sessionTzOffset?: number
   isMobile?: boolean
 }) {
@@ -82,6 +86,8 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   const [err, setErr] = useState('')
   const [event, setEvent] = useState<string>('')          // '' = every event
   const [showEmpty, setShowEmpty] = useState(false)
+  const [showHidden, setShowHidden] = useState(false)       // bring back what was marked not relevant
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   const [open, setOpen] = useState<Set<string>>(new Set()) // expanded cells
   const [photo, setPhoto] = useState<OpenPhoto | null>(null)
   const [geomFor, setGeomFor] = useState<OpenPhoto | null>(null)
@@ -93,7 +99,7 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   useEffect(() => {
     if (!sailId) return
     let alive = true
-    setData(null); setErr(''); setOpen(new Set()); setEvent('')
+    setData(null); setErr(''); setOpen(new Set()); setEvent(''); setShowHidden(false)
     fetch(`/api/teams/${teamId}/sails/${sailId}/media`)
       .then((r) => r.json())
       .then((j) => { if (!alive) return; if (j.error) setErr(j.error); else setData(j) })
@@ -101,10 +107,34 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
     return () => { alive = false }
   }, [teamId, sailId])
 
-  const shown = useMemo(
+  const inEvent = useMemo(
     () => (data?.items || []).filter((i) => !event || (event === '(none)' ? !i.event : i.event === event)),
     [data, event]
   )
+  const shown = useMemo(() => inEvent.filter((i) => showHidden || !i.hidden), [inEvent, showHidden])
+  // Distinct photos/clips marked not relevant — a clip spans several bands but is one mark.
+  const hiddenCount = useMemo(() => new Set(inEvent.filter((i) => i.hidden).map((i) => i.id)).size, [inEvent])
+
+  // Mark one photo or clip not relevant to this sail, or bring it back. Every
+  // entry of a clip goes together: the mark is on the clip, not on one band.
+  const setHidden = async (i: Item, hidden: boolean) => {
+    const flip = (h: boolean) => setData((d) => d && ({ ...d, items: d.items.map((it) => (it.id === i.id && it.kind !== 'scan' ? { ...it, hidden: h } : it)) }))
+    setBusyIds((b) => new Set(b).add(i.id))
+    flip(hidden)
+    try {
+      const r = await fetch(`/api/teams/${teamId}/sails/${sailId}/media/hidden`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: i.id, hidden }),
+      })
+      const j = await r.json().catch(() => null)
+      if (!r.ok) throw new Error(j?.error || `HTTP ${r.status}`)
+      onMediaChanged?.()
+    } catch (e) {
+      flip(!hidden)
+      setErr(`Could not ${hidden ? 'hide' : 'restore'} that — ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusyIds((b) => { const n = new Set(b); n.delete(i.id); return n })
+    }
+  }
 
   // band key → kind → items (newest first, as the server sends them)
   const grid = useMemo(() => {
@@ -127,7 +157,9 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
 
   const totals = useMemo(() => {
     const t: Record<string, number> = {}
-    for (const i of shown) t[i.kind] = (t[i.kind] || 0) + 1
+    // Relevant ones only, whether or not the hidden are on show — the same
+    // number the inventory's Media button gives.
+    for (const i of shown) if (!i.hidden) t[i.kind] = (t[i.kind] || 0) + 1
     return t
   }, [shown])
 
@@ -196,9 +228,12 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   const thumb = (i: Item) => {
     const isVideo = i.kind === 'video' || i.kind === 'video360'
     const caption = [shortDate(i.date), i.tws != null ? `${i.tws.toFixed(1)} kn` : null].filter(Boolean).join(' · ')
+    // Scans are filed to a sail and refiled in their detail view — not hidden.
+    const canHide = canEdit && i.kind !== 'scan'
+    const busy = busyIds.has(i.id)
     return (
+      <div key={`${i.kind}:${i.id}:${i.startSec ?? ''}`} style={{ position: 'relative', opacity: i.hidden ? 0.45 : 1 }}>
       <button
-        key={`${i.kind}:${i.id}:${i.startSec ?? ''}`}
         onClick={() => openItem(i)}
         title={[i.title, i.event, caption, isVideo && i.durSec ? `${mmss(i.durSec)} on this sail in this band` : null].filter(Boolean).join(' — ')}
         style={{ width: thumbW, boxSizing: 'border-box', padding: 0, border: `1px solid ${C.border}`, borderRadius: 6, background: '#0a1c2e', cursor: 'pointer', overflow: 'hidden', textAlign: 'left' }}
@@ -213,8 +248,25 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
             </span>
           )}
         </div>
-        <div style={{ fontSize: 9, color: C.dim, padding: '2px 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{caption}</div>
+        <div style={{ fontSize: 9, color: C.dim, padding: '2px 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.hidden ? 'not relevant' : caption}</div>
       </button>
+      {/* A sibling of the thumbnail, not inside it: a button in a button is
+          invalid, and the click would open the photo as well. */}
+      {canHide && (
+        <button
+          onClick={() => setHidden(i, !i.hidden)}
+          disabled={busy}
+          title={i.hidden ? `Show this ${isVideo ? 'clip' : 'photo'} for ${sail ? sailLabel(sail) : 'this sail'} again` : `Not relevant to ${sail ? sailLabel(sail) : 'this sail'} — hide it here`}
+          aria-label={i.hidden ? 'Restore' : 'Not relevant'}
+          style={{
+            position: 'absolute', top: 2, right: 2, width: 20, height: 20, padding: 0, lineHeight: '18px',
+            borderRadius: 10, border: `1px solid ${i.hidden ? C.accent : 'rgba(255,255,255,0.35)'}`,
+            background: 'rgba(3,15,26,0.8)', color: i.hidden ? C.accent : '#e2e8f0',
+            fontSize: 11, fontWeight: 700, cursor: busy ? 'progress' : 'pointer', opacity: 1,
+          }}
+        >{i.hidden ? '↺' : '✕'}</button>
+      )}
+      </div>
     )
   }
 
@@ -229,7 +281,7 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
         </select>
         {data && (
           <span style={{ fontSize: 11, color: C.dim }}>
-            {shown.length} item{shown.length === 1 ? '' : 's'}
+            {shown.filter((i) => !i.hidden).length} item{shown.filter((i) => !i.hidden).length === 1 ? '' : 's'}
           </span>
         )}
       </div>
@@ -240,7 +292,13 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
           <button onClick={() => setEvent('')} style={chip(event === '')}>All</button>
           {data.events.map((e) => <button key={e} onClick={() => setEvent(e)} style={chip(event === e)}>{e}</button>)}
           {data.items.some((i) => !i.event) && <button onClick={() => setEvent('(none)')} style={chip(event === '(none)')}>Training / no event</button>}
-          <label style={{ marginLeft: 'auto', fontSize: 11, color: C.dim, display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
+          {hiddenCount > 0 && (
+            <button onClick={() => setShowHidden((v) => !v)} style={{ ...chip(showHidden), marginLeft: 'auto' }}
+              title="Photos and clips marked not relevant to this sail — shown dimmed, with ↺ to bring them back">
+              {showHidden ? 'Hide' : 'Show'} not relevant ({hiddenCount})
+            </button>
+          )}
+          <label style={{ marginLeft: hiddenCount > 0 ? 8 : 'auto', fontSize: 11, color: C.dim, display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
             <input type="checkbox" checked={showEmpty} onChange={(e) => setShowEmpty(e.target.checked)} /> show empty bands
           </label>
         </div>
@@ -307,6 +365,7 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
           <p style={{ fontSize: 10, color: C.dim, marginTop: 8, lineHeight: 1.5 }}>
             Matched by time: the crew’s sail-change tags where the day has them ({data.taggedDays} of {data.days} days), otherwise the event file’s sails.
             A video appears once per wind band it spends on this sail. 360 = a clip tagged “360”, or an Insta360 file name.
+            {canEdit && ' ✕ on a photo or clip marks it not relevant to this sail only; it can be brought back.'}
           </p>
         </div>
       )}

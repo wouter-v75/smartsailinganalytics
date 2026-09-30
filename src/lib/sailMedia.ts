@@ -52,6 +52,9 @@ export interface SailMediaItem {
   event: string | null
   tws: number | null
   thumb: string | null
+  /** Marked not relevant to THIS sail (sails.specs.media_hidden). Kept, not
+   *  dropped, so the grid can show it again and a mark can be undone. */
+  hidden?: boolean
   /** Video only: seconds into the clip where this sail/band begins, and for how long. */
   startSec?: number
   durSec?: number
@@ -128,6 +131,13 @@ export interface SailMediaInput {
    *   'several'  one of two or more — the phases cannot say which.
    */
   main?: 'only' | 'several'
+  /**
+   * Photo and video ids somebody marked not relevant to this sail. Per SAIL:
+   * a frame that says nothing about the J2 can still be the best shot of the
+   * main. Scans are not hidden this way — a scan is filed to a sail, and the
+   * fix for a wrong one is to refile it.
+   */
+  hidden?: readonly string[]
   /** The whole boat inventory — aliases resolve against it, first-wins. */
   inventory: LinkableSail[]
   scans: ScanIn[]
@@ -269,7 +279,22 @@ export function sailMedia(input: SailMediaInput): SailMediaItem[] {
     }
   }
 
+  const hidden = new Set(input.hidden || [])
+  if (hidden.size) for (const i of out) if (i.kind !== 'scan' && hidden.has(i.id)) i.hidden = true
   return out.sort((a, b) => b.t - a.t)
+}
+
+/** The ids a sail's specs mark not relevant. Forgiving: specs is free-form JSON. */
+export function hiddenMediaOf(specs: unknown): string[] {
+  const list = (specs as { media_hidden?: unknown } | null)?.media_hidden
+  return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string' && !!x) : []
+}
+
+/** The list with `id` marked (hide) or unmarked. Returns null when nothing changes. */
+export function toggleHidden(list: readonly string[], id: string, hide: boolean): string[] | null {
+  const has = list.includes(id)
+  if (hide === has || !id) return null
+  return hide ? [...list, id] : list.filter((x) => x !== id)
 }
 
 /**
@@ -282,6 +307,7 @@ export interface SailMediaCount { photos: number; scans: number; videos: number 
 export function countSailMedia(items: readonly SailMediaItem[]): SailMediaCount {
   const photos = new Set<string>(), scans = new Set<string>(), videos = new Set<string>()
   for (const i of items) {
+    if (i.hidden) continue
     if (i.kind === 'scan') scans.add(i.id)
     else if (i.kind === 'photo' || i.kind === 'trim') photos.add(i.id)
     else videos.add(i.id)

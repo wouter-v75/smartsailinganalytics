@@ -56,6 +56,8 @@ export default function SailMediaPreview() {
     const real = window.fetch
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(typeof input === 'string' || input instanceof URL ? input : input.url)
+      // Marking not relevant: answer as the route would.
+      if (/\/media\/hidden$/.test(url)) return new Response(JSON.stringify({ hidden: [] }), { headers: { 'content-type': 'application/json' } })
       const m = url.match(/\/sails\/([^/]+)\/media$/)
       if (m) return new Response(JSON.stringify(fixture(m[1])), { headers: { 'content-type': 'application/json' } })
       // The day's full photo rows, which the viewer loads to make Measure work.
@@ -80,7 +82,7 @@ export default function SailMediaPreview() {
         Sail media preview · fixture data · players and viewers need a real session
       </div>
       {ready && (
-        <SailMediaPanel teamId="t" boatId="b" sails={SAILS} sailId={sailId} onSailChange={setSailId} onBack={() => {}} />
+        <SailMediaPanel teamId="t" boatId="b" sails={SAILS} sailId={sailId} onSailChange={setSailId} onBack={() => {}} canEdit />
       )}
     </div>
   )

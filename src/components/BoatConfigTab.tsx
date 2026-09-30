@@ -137,16 +137,17 @@ export default function BoatConfigTab({
 
   // How much media each sail has. Its own request, after the inventory: it reads
   // the boat's whole season of photos, and the table should not wait for that.
+  const [countsRev, setCountsRev] = useState(0) // bumped when a sail's media marks change
   useEffect(() => {
     if (!teamId || !boatId) return
     let alive = true
-    setMediaCounts(null)
+    setMediaCounts((c) => (countsRev ? c : null)) // a re-count keeps the old numbers up meanwhile
     fetch(`/api/teams/${teamId}/sails/media-counts?boat_id=${boatId}`)
       .then((r) => r.json())
       .then((j) => { if (alive) setMediaCounts(j?.counts || {}) })
       .catch(() => { if (alive) setMediaCounts({}) })
     return () => { alive = false }
-  }, [teamId, boatId])
+  }, [teamId, boatId, countsRev])
 
   // All versions for this boat (active first); the active one drives the tab. A failed
   // read used to fall back to an empty list, which looks exactly like "no polar on file"
@@ -746,7 +747,8 @@ export default function BoatConfigTab({
       {/* ── SAIL MEDIA — one sail's scans, trim frames, 360, photos, video by TWS ── */}
       {view === 'media' && mediaSailId && (
         <SailMediaPanel teamId={teamId} boatId={boatId} sails={sails} sailId={mediaSailId} onSailChange={setMediaSailId}
-          onBack={() => setView('inventory')} onOpenVideo={onOpenVideo} sessionTzOffset={sessionTzOffset} isMobile={isMobile} />
+          onBack={() => setView('inventory')} onOpenVideo={onOpenVideo}
+          canEdit={canEdit} onMediaChanged={() => setCountsRev((n) => n + 1)} sessionTzOffset={sessionTzOffset} isMobile={isMobile} />
       )}
 
       {/* ── SAIL SHAPES (scans) ────────────────────────────────────── */}

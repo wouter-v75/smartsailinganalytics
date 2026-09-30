@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sailMedia, countSailMedia, twsBand, allTwsBands, isVideo360, type SailMediaInput, type PhaseLite } from '../sailMedia'
+import { sailMedia, countSailMedia, hiddenMediaOf, toggleHidden, twsBand, allTwsBands, isVideo360, type SailMediaInput, type PhaseLite } from '../sailMedia'
 import { SAIL_CHANGE_SLUG } from '../tagging/sailState'
 import type { TagEvent } from '../tagging/types'
 
@@ -223,5 +223,35 @@ describe('countSailMedia', () => {
       days: { [D]: { event: null, tags: [], phases: many } },
     }))
     expect(items.map((i) => i.id).sort()).toEqual(['first', 'last', 'mid'])
+  })
+})
+
+describe('not relevant to this sail', () => {
+  const day = { [D]: { event: null, tags: [], phases: phases(T(11, 0), T(11, 6), ['J2'], 12) } }
+  const input = (hidden: string[]) => base({
+    hidden,
+    photos: [{ id: 'p1', taken_utc: iso(T(11, 1)), date: D }, { id: 'p2', taken_utc: iso(T(11, 2)), date: D }],
+    scans: [{ id: 's1', sail_id: 'j2', captured_at: iso(T(11, 0)) }],
+    videos: [{ id: 'v', start_utc: iso(T(11, 0)), duration_ms: 60_000, date: D }],
+    days: day,
+  })
+
+  it('marks, rather than drops, what was hidden — and leaves it out of the counts', () => {
+    const items = sailMedia(input(['p1', 'v']))
+    expect(items.filter((i) => i.hidden).map((i) => i.id).sort()).toEqual(['p1', 'v'])
+    expect(countSailMedia(items)).toEqual({ photos: 1, scans: 1, videos: 0 })
+  })
+
+  it('does not hide a scan — a scan is refiled, not hidden', () => {
+    expect(sailMedia(input(['s1'])).find((i) => i.id === 's1')?.hidden).toBeFalsy()
+  })
+
+  it('reads the list forgivingly and toggles it', () => {
+    expect(hiddenMediaOf({ media_hidden: ['a', 3, '', 'b'] })).toEqual(['a', 'b'])
+    expect(hiddenMediaOf(null)).toEqual([])
+    expect(toggleHidden(['a'], 'b', true)).toEqual(['a', 'b'])
+    expect(toggleHidden(['a', 'b'], 'a', false)).toEqual(['b'])
+    expect(toggleHidden(['a'], 'a', true)).toBeNull()   // nothing to save
+    expect(toggleHidden(['a'], 'b', false)).toBeNull()
   })
 })
