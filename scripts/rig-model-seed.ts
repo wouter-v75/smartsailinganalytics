@@ -34,8 +34,11 @@
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import {
-  defaultRigModel, withMeasured, missingFrom, migrateRigModel, deriveBaselines, type RigModel,
+  defaultRigModel, withMeasured, missingFrom, migrateRigModel, deriveBaselines,
+  type RigModel, type ScaleRef,
 } from '../src/lib/rigModel'
+// Tested, and out of this script on purpose: see the header of rigModelMerge.
+import { mergeModels } from '../src/lib/rigModelMerge'
 
 const args = process.argv.slice(2)
 const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
@@ -46,6 +49,9 @@ const FROM = flag('--from')
 const CREATE = args.includes('--create')
 const TEAM = flag('--team')
 const MERGE = args.includes('--merge')
+// Ties go to the CODE's model rather than to what is stored. For when a stored
+// value claims a provenance it does not have — a typed depth stamped 'designer'.
+const SUPERSEDE = args.includes('--supersede')
 const SAIL_NO = flag('--sail-no')
 const LENGTH = flag('--length')
 
@@ -62,40 +68,6 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_
 /** Only the values somebody has actually measured or taken off a drawing. */
 const realCount = (m: RigModel) =>
   [...m.scaleRefs, ...m.baselines].filter(x => x.mm > 0 && x.source !== 'estimate').length
-
-/**
- * Which of two numbers for the same dimension to believe.
- *
- * A tape on the boat beats a drawing beats arithmetic beats a guess. It matters
- * because a certificate and a dockside measurement each know things the other
- * does not: the certificate has P and J to the centimetre and cannot see the
- * wheels at all, while the tape has the wheels and mast-to-stern and says
- * nothing about the rig. Merging has to keep the better of each rather than
- * letting whichever arrived last win.
- */
-const RANK: Record<string, number> = { measured: 3, designer: 2, derived: 1, estimate: 0 }
-const better = <T extends { mm: number; source: string }>(a: T | undefined, b: T | undefined): T | undefined => {
-  if (!a || !(a.mm > 0)) return b
-  if (!b || !(b.mm > 0)) return a
-  // Ties go to what is already stored: somebody put it there on purpose.
-  return (RANK[b.source] ?? 0) > (RANK[a.source] ?? 0) ? b : a
-}
-
-/** Keep the better-attested value for every dimension, field by field. */
-function mergeModels(current: RigModel, incoming: RigModel): RigModel {
-  const out: RigModel = { ...current, ...incoming }
-  out.scaleRefs = incoming.scaleRefs.map((r) => better(current.scaleRefs.find((x) => x.key === r.key), r)!)
-  for (const r of current.scaleRefs) if (!out.scaleRefs.some((x) => x.key === r.key)) out.scaleRefs.push(r)
-  out.baselines = incoming.baselines.map((b) => better(current.baselines.find((x) => x.key === b.key), b)!)
-  for (const b of current.baselines) if (!out.baselines.some((x) => x.key === b.key)) out.baselines.push(b)
-  out.depths = { ...current.depths }
-  for (const k of Object.keys(incoming.depths) as (keyof RigModel['depths'])[]) {
-    out.depths[k] = better(current.depths[k], incoming.depths[k])!
-  }
-  out.widths = { ...(incoming.widths || {}), ...(current.widths || {}) }
-  out.notes = [current.notes, incoming.notes].filter(Boolean).join(' · ')
-  return deriveBaselines(out)
-}
 
 /** A model parsed from a certificate, rather than built from the defaults. */
 function modelFromFile(path: string, boat: string): RigModel {
@@ -148,7 +120,7 @@ async function main() {
 
     const incoming = FROM ? modelFromFile(FROM, b.name) : withMeasured(defaultRigModel(b.name))
     const model = MERGE && hasOne
-      ? mergeModels(migrateRigModel(existing as RigModel, b.name), incoming)
+      ? mergeModels(migrateRigModel(existing as RigModel, b.name), incoming, SUPERSEDE)
       : incoming
     const real = realCount(model)
     const missing = missingFrom(model)
@@ -160,7 +132,12 @@ async function main() {
     console.log(`  ${b.name.padEnd(16)} ${real} value(s) better than a guess`
       + (real ? ': ' + [...model.scaleRefs, ...model.baselines]
         .filter(x => x.mm > 0 && x.source !== 'estimate')
-        .map(x => `${x.key} ${x.mm}mm ±${x.sigmaMm} (${x.source})`).join(', ') : '')
+        .map(x => `${x.key} ${x.mm}mm ±${x.sigmaMm} (${x.source})`
+          // The depth is the other half of a scale reference and was not shown,
+          // so a depth-only change printed identically to no change at all.
+          + ('depthMm' in x && (x as ScaleRef).depthMm
+            ? ` depth ${(x as ScaleRef).depthMm} (${(x as ScaleRef).depthSource ?? x.source})` : ''))
+        .join(', ') : '')
       + `\n  ${''.padEnd(16)} still guesswork: ${missing.length ? missing.join(', ') : 'nothing'}`)
     changed++
     if (WRITE) {

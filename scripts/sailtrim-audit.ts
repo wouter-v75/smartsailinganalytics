@@ -3,8 +3,16 @@
 // Which stored sail-geometry frames were measured against a datum that has since
 // moved — and therefore which ones to reopen and save again.
 //
-//   npx vite-node scripts/sailtrim-audit.ts
-//   npx vite-node scripts/sailtrim-audit.ts --boat "Northstar 76" --stale
+//   npx vite-node scripts/sailtrim-audit.ts               every frame, verdict each
+//   npx vite-node scripts/sailtrim-audit.ts --todo        only the ones needing action
+//   npx vite-node scripts/sailtrim-audit.ts --boat "Northstar 76"
+//
+// THREE VERDICTS, and the third is the point: redo / ok / CANNOT TELL. The first
+// version of this script folded "cannot tell" into "ok" — a frame whose boat was
+// not recorded has no rig model to compare against, `scaleDrift` returned
+// `stale: false`, and ten frames reported clean when nothing had been checked at
+// all. Unknown is not a pass. It is printed whatever the filter, and counted
+// apart.
 //
 // READ-ONLY. There is no --write and there should not be: it does not recompute
 // anything. Reopening a frame in SailTrim and saving it runs the app's own
@@ -28,7 +36,7 @@ import {
 const args = process.argv.slice(2)
 const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
 const BOAT = flag('--boat')
-const STALE_ONLY = args.includes('--stale')
+const TODO_ONLY = args.includes('--todo') || args.includes('--stale')
 
 const env = Object.fromEntries(
   readFileSync(new URL('../.env.local', import.meta.url), 'utf8')
@@ -45,7 +53,11 @@ interface StoredSailTrim {
     targets?: unknown[]
     measuredAt?: number
   }
-  result?: { marks?: MarksBundle & { marks?: Record<string, unknown> }; calibration?: ResultCalibration }
+  result?: {
+    boat?: string
+    marks?: MarksBundle & { marks?: Record<string, unknown>; rig?: { boat?: string } }
+    calibration?: ResultCalibration
+  }
 }
 
 async function main() {
@@ -59,7 +71,11 @@ async function main() {
   if (pErr) { console.error(`photos: ${pErr.message}`); process.exit(1) }
 
   const rigFor = new Map<string, RigModel>()
-  for (const b of boats ?? []) rigFor.set(b.name.toLowerCase(), migrateRigModel((b.rig_model || {}) as RigModel, b.name))
+  const nameById = new Map<string, string>()
+  for (const b of boats ?? []) {
+    rigFor.set(b.name.toLowerCase(), migrateRigModel((b.rig_model || {}) as RigModel, b.name))
+    nameById.set(b.id as string, b.name as string)
+  }
 
   const rows = (photos ?? [])
     .map((p) => ({ p, st: (p.analysis_data as { sailTrim?: StoredSailTrim } | null)?.sailTrim }))
@@ -68,62 +84,78 @@ async function main() {
 
   if (!rows.length) { console.log('no photos carry sail geometry yet'); return }
 
-  let stale = 0, unredoable = 0, noScale = 0, fromSnapshot = 0
+  let redo = 0, ok = 0, unknown = 0, unredoable = 0, fromSnapshot = 0
   const byDay = new Map<string, string[]>()
+  const push = (day: string, line: string) => byDay.set(day, [...(byDay.get(day) ?? []), line])
 
   for (const { p, st } of rows) {
     const a = st.annotation!
-    const boatName = a.scale?.boat || null
+    const bundle = st.result?.marks
+
+    // FOUR places name the boat, and the older the frame the further down the
+    // list it is. Without one there is no rig model to compare against — which
+    // is "cannot tell", never "fine".
+    const subjects = ((p.subject_boat_ids || []) as string[]).map((id) => nameById.get(id)).filter(Boolean) as string[]
+    const boatName = a.scale?.boat
+      || st.result?.boat
+      || bundle?.rig?.boat
+      // Two subjects in the frame cannot say which one it was MEASURED as, and
+      // that is the question — three Capricorno frames were marked as Northstar.
+      || (subjects.length === 1 ? subjects[0] : null)
+      || null
+
     if (BOAT && (boatName || '').toLowerCase() !== BOAT.toLowerCase()) continue
 
     const at = String(p.taken_utc || '')
     const day = at.slice(0, 10) || 'undated'
     const clock = at.slice(11, 19) || '--:--:--'
+    const who = (boatName ?? '(boat not recorded)').padEnd(16)
 
-    // No scale block only means the frame predates provenance being stored. The
-    // rig snapshot in result.marks says the same thing, so it is still checkable.
-    const bundle = st.result?.marks
-    const resolved = resolveStoredScale(a.scale, bundle, st.result?.calibration, boatName ?? undefined)
-    if (!resolved) {
-      noScale++
-      byDay.set(day, [...(byDay.get(day) ?? []), `  ${clock}  ${(boatName ?? '(boat not recorded)').padEnd(16)}  neither a scale block nor a rig snapshot — nothing records what this was measured against. Reopen and save.`])
-      continue
-    }
-
-    const rig = boatName ? rigFor.get(boatName.toLowerCase()) : undefined
-    const ref = rig?.scaleRefs.find((s2) => s2.key === resolved.scale.key)
-    const drift = scaleDrift(resolved.scale, ref ? { mm: ref.mm, depthMm: ref.depthMm ?? 0 } : null)
-    const base = baselineDrift(bundle, rig?.baselines)
-
-    const stale_ = drift.stale || base.stale
-    if (STALE_ONLY && !stale_) continue
-
-    // Reopening replays the stored clicks; without them it is a re-mark.
     const clicks = bundle?.marks
     const redoable = !!clicks && Object.keys(clicks as object).length > 0
-    if (stale_) stale++
-    if (stale_ && !redoable) unredoable++
+    const marksNote = redoable ? '' : '  [NO MARKS — needs re-marking, not just reopening]'
+
+    const cannot = (why: string) => {
+      unknown++
+      if (!redoable) unredoable++
+      push(day, `  ${clock}  ${who}  CANNOT TELL — ${why}${marksNote}`)
+    }
+
+    const resolved = resolveStoredScale(a.scale, bundle, st.result?.calibration, boatName ?? undefined)
+    if (!resolved) { cannot('neither a scale block nor a rig snapshot records what it was measured against'); continue }
     if (resolved.from === 'rig-snapshot') fromSnapshot++
+
+    const rig = boatName ? rigFor.get(boatName.toLowerCase()) : undefined
+    if (!rig) {
+      cannot(boatName ? `no rig model stored for "${boatName}"` : 'the boat is not recorded, so there is no rig model to compare against')
+      continue
+    }
+    const ref = rig.scaleRefs.find((s) => s.key === resolved.scale.key)
+    if (!ref) { cannot(`"${resolved.scale.key}" is not a scale reference on this boat any more`); continue }
+
+    const drift = scaleDrift(resolved.scale, { mm: ref.mm, depthMm: ref.depthMm ?? 0 })
+    const base = baselineDrift(bundle, rig.baselines)
+    const stale = drift.stale || base.stale
+
+    if (stale) { redo++; if (!redoable) unredoable++ } else ok++
+    if (TODO_ONLY && !stale) continue
 
     const detail: string[] = []
     if (drift.stale) detail.push(`scale: ${drift.reasons.join('; ')} → ${driftNote(drift.ratio)}`)
-    if (base.stale) detail.push(`baseline ${base.key}: ${base.storedMm} → ${base.currentMm} mm (${(base.fraction! * 100).toFixed(1)} %) — ψ was solved across it, so ψ moves too`)
+    if (base.stale) {
+      detail.push(`baseline ${base.key}: ${base.storedMm} → ${base.currentMm} mm (${(base.fraction! * 100).toFixed(1)} %)`
+        + ' — ψ was solved across it, so ψ moves too, and ψ is worth 17 mm per metre a target sits abaft the mast')
+    }
 
-    const line = [
-      `  ${clock}`,
-      (boatName ?? '(boat not recorded)').padEnd(16),
+    push(day, [
+      `  ${clock}`, who,
       `${resolved.scale.key}`.padEnd(10),
       `ψ ${a.psiMeasured ? `${(a.psiDeg ?? 0).toFixed(2)}°` : 'not measured'}`.padEnd(18),
-      `${(a.targets?.length ?? 0)} targets`,
-      resolved.from === 'rig-snapshot' ? '  (from rig snapshot)' : '',
-      stale_ ? '  ← REDO' : '  ok',
-      stale_ && !redoable ? '  [NO MARKS — needs re-marking]' : '',
-    ].join('  ')
-    const lines = byDay.get(day) ?? []
-    lines.push(line + (detail.length ? detail.map((d) => `\n${' '.repeat(6)}${d}`).join('') : ''))
-    byDay.set(day, lines)
-    continue
-
+      `${a.targets?.length ?? 0} targets`,
+      resolved.from === 'rig-snapshot' ? '  (rig snapshot)' : '',
+      stale ? '  ← REDO' : '  ok',
+      marksNote,
+    ].join('  ') + detail.map((d) => `\n${' '.repeat(6)}${d}`).join(''))
   }
 
   for (const [day, lines] of Array.from(byDay)) {
@@ -131,15 +163,15 @@ async function main() {
     for (const l of lines) console.log(l)
   }
 
-  console.log(`\n${rows.length} frames with geometry · ${stale} measured against a datum that has since moved`)
+  console.log(`\n${rows.length} frames with geometry · ${redo} to redo · ${ok} ok · ${unknown} CANNOT TELL`)
   if (fromSnapshot) console.log(`${fromSnapshot} were checked against the rig snapshot in result.marks — they predate the scale block`)
-  if (noScale) console.log(`${noScale} record nothing at all about what they were measured against`)
-  if (unredoable) console.log(`${unredoable} of the stale ones have no stored marks, so they need re-marking rather than reopening`)
-  if (stale) {
+  if (unredoable) console.log(`${unredoable} of those needing attention have no stored clicks, so they need re-marking rather than reopening`)
+  if (unknown) console.log('A frame that cannot be told about has NOT been checked. Reopening and saving it settles both questions at once: it gets the current datums, and it stores the provenance so this is answerable next time.')
+  if (redo || unknown) {
     console.log('\nTo redo one: Photos → the frame → Analyse sail geometry → Edit points → Save.')
-    console.log('That reruns the app\'s own pipeline, which is the only implementation of the maths.')
-    console.log('The per-frame percentage above is the size to expect, not the answer — twist and')
-    console.log('camber are not linear in the scale, so they move by their own amounts.')
+    console.log("That reruns the app's own pipeline, which is the only implementation of the maths.")
+    console.log('The percentages above are the size to expect, not the answer — twist and camber')
+    console.log('are not linear in the scale, so they move by their own amounts.')
   }
 }
 main()

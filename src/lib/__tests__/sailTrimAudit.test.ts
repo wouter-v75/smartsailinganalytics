@@ -1,6 +1,9 @@
 // src/lib/__tests__/sailTrimAudit.test.ts
 import { describe, it, expect } from 'vitest'
-import { scaleDrift, rangeToRefMm, driftNote, type StoredScale } from '../sailTrimAudit'
+import {
+  scaleDrift, rangeToRefMm, driftNote, resolveStoredScale, baselineDrift,
+  type StoredScale, type MarksBundle,
+} from '../sailTrimAudit'
 
 /** A Northstar 76 frame as it was stored before the designer's datums: wheels
  *  guessed at -10 000 mm abaft the mast, camera 83 m from the mast. */
@@ -74,5 +77,63 @@ describe('driftNote', () => {
     expect(driftNote(1.004)).toBe('stored numbers are 0.4 % small')
     expect(driftNote(1)).toBe('no material change')
     expect(driftNote(null)).toBe('unknown')
+  })
+})
+
+// The 11 frames on this boat predate annotation.scale entirely — but SailTrim has
+// always bundled the rig model it used into result.marks, so they are checkable.
+const snapshot: MarksBundle = {
+  scaleKey: 'wheels',
+  baselineKey: 'mast-transom',
+  rig: {
+    scaleRefs: [{ key: 'wheels', mm: 3375, depthMm: -10_000 }],
+    baselines: [{ key: 'mast-transom', mm: 12_100 }],
+  },
+}
+
+describe('resolveStoredScale — frames saved before provenance was stored', () => {
+  it('prefers the scale block when there is one', () => {
+    const r = resolveStoredScale(stored, snapshot, { mmPerPxAtMast: 1, rangeMm: 1 })!
+    expect(r.from).toBe('scale-block')
+    expect(r.scale).toBe(stored)
+  })
+
+  it('recovers the scale from the rig snapshot when there is not', () => {
+    const r = resolveStoredScale(null, snapshot, { mmPerPxAtMast: 12.5, rangeMm: 83_000 }, 'Northstar 76')!
+    expect(r.from).toBe('rig-snapshot')
+    expect(r.scale).toEqual({
+      key: 'wheels', mm: 3375, depthMm: -10_000,
+      mmPerPxAtMast: 12.5, rangeMm: 83_000, boat: 'Northstar 76',
+    })
+    // …and it then drifts exactly as a scale block would have.
+    expect(scaleDrift(r.scale, { mm: 3375, depthMm: -7392 }).ratio!).toBeCloseTo(80_392 / 83_000, 6)
+  })
+
+  it('gives up only when neither records anything', () => {
+    expect(resolveStoredScale(null, undefined, undefined)).toBeNull()
+    expect(resolveStoredScale(null, { scaleKey: 'wheels' }, undefined)).toBeNull()  // named, but no snapshot to price it
+  })
+})
+
+describe('baselineDrift — ψ was solved across it', () => {
+  it('catches the tape the designer superseded', () => {
+    const d = baselineDrift(snapshot, [{ key: 'mast-transom', mm: 12_650 }, { key: 'tack-mast', mm: 8_860 }])
+    expect(d.stale).toBe(true)
+    expect(d.storedMm).toBe(12_100)
+    expect(d.currentMm).toBe(12_650)
+    expect(d.fraction!).toBeCloseTo(550 / 12_100, 9)   // +4.5%
+  })
+
+  it('is quiet when the baseline has not moved', () => {
+    const d = baselineDrift(snapshot, [{ key: 'mast-transom', mm: 12_100 }])
+    expect(d.stale).toBe(false)
+    expect(d.fraction).toBe(0)
+  })
+
+  it('says nothing rather than guessing when the frame names no baseline', () => {
+    const d = baselineDrift({ scaleKey: 'wheels' }, [{ key: 'mast-transom', mm: 12_650 }])
+    expect(d.stale).toBe(false)
+    expect(d.key).toBeNull()
+    expect(d.fraction).toBeNull()
   })
 })

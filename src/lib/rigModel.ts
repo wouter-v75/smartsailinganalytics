@@ -57,6 +57,17 @@ export interface ScaleRef extends RigValue {
    *  positive. Spreaders are at the mast, so 0. */
   depthMm: number
   /**
+   * Where `depthMm` came from, when that is NOT where `mm` came from.
+   *
+   * A ScaleRef bundles two independent facts and one stamp was covering both.
+   * The wheels are the case: 3375 mm rim to rim is a tape on the boat, genuinely
+   * `measured`, while the -10 000 that sat beside it was a pure guess wearing
+   * the same word. So the designer's -7392 lost every merge as a TIE against a
+   * provenance the depth had never earned, and the correction silently did not
+   * land. Absent, it falls back to `source`, which is the old behaviour.
+   */
+  depthSource?: Provenance
+  /**
    * Which way the reference LIES, which decides whether ψ foreshortens it.
    *
    * A vertical length — P between the black bands, anything up the mast — is
@@ -338,7 +349,7 @@ export function defaultRigModel(boat = ''): RigModel {
  * two-minute job with a tape and need no access to the rig.
  */
 const MEASURED: Record<string, {
-  scaleRefs?: Record<string, Partial<Pick<ScaleRef, 'mm' | 'sigmaMm' | 'depthMm' | 'source'>>>
+  scaleRefs?: Record<string, Partial<Pick<ScaleRef, 'mm' | 'sigmaMm' | 'depthMm' | 'source' | 'depthSource'>>>
   baselines?: Record<string, Partial<RigValue>>
   widths?: { main?: SailWidths; jib?: SailWidths }
 }> = {
@@ -352,7 +363,11 @@ const MEASURED: Record<string, {
       // abaft the mast. It had been guessed at 10 000 — 26 % out, and since it
       // refers the scale back to the mast plane that guess was worth −3.1 % on
       // EVERY measurement taken with the wheels as the reference.
-      wheels: { mm: 3375, sigmaMm: 10, depthMm: -7392, source: 'measured' },
+      // Two facts, two provenances: 3375 rim to rim is a tape on the boat, the
+      // depth is the designer's (wheel centre 17941.7 − mast LE 10550). Stamping
+      // the depth 'measured' because the LENGTH was is what made the designer's
+      // figure lose a merge it should have won.
+      wheels: { mm: 3375, sigmaMm: 10, depthMm: -7392, source: 'measured', depthSource: 'designer' },
     },
     // ── the designer's datums, 2026-09-30 ────────────────────────────────
     // From the DESIGNER, which is what these are measured against; x from the
@@ -377,7 +392,7 @@ const MEASURED: Record<string, {
     // the designer agree to the millimetre. Against the tape's 12 100 they were
     // 550 mm apart and nothing said so.
     baselines: {
-      'mast-transom': { mm: 12650, sigmaMm: 150, source: 'measured' },
+      'mast-transom': { mm: 12650, sigmaMm: 150, source: 'designer' },
       // Northstar III's endorsed certificate (50945, GBR76X), to the mast's
       // front face, at the same ±200 mm the certificate reader applies — so a
       // pasted cert and this agree rather than one quietly overriding the other.
@@ -742,7 +757,31 @@ export function bestScaleKey(m: RigModel): string | null {
   return scored[0]?.key ?? null
 }
 
-const RANK: Record<string, number> = { measured: 3, designer: 2, derived: 1, estimate: 0 }
+/**
+ * Two rankings, because "which do I believe?" and "which is most precise?" are
+ * different questions and one table was answering both.
+ *
+ * MERGE_RANK settles a disagreement about the SAME dimension, and the designer
+ * outranks a tape there. Northstar 76 is why: the tape said mast-to-transom
+ * 12 100 +/-50, the designer's datum sheet says 12 650, and the 550 mm between
+ * them is a whole mast section — the tape was hooked somewhere other than the
+ * leading edge. A tape over 12 m of a moving deck has two ends that are each a
+ * judgement call; a datum sheet has neither. And the designer's figure is
+ * CORROBORATED where the tape's is not: IRC's J is to the mast's front face, the
+ * same leading edge, so tack->transom derives to 21 510 — exactly
+ * 23200 - (10550 - 8860) off the sheet. Certificate and designer agree to the
+ * millimetre; against 12 100 they were 550 mm apart and nothing said so.
+ *
+ * SELECTION_RANK chooses which reference to MEASURE with, and there designer and
+ * measured are level, leaving relative sigma to decide — because precision is
+ * the question, and provenance only says whether a number is attested at all. A
+ * rank that separated them would hand Capricorno a mast-to-transom of 12 600
+ * +/-2010 (16 %) over a certificate J at 2.1 %, purely for being off a drawing,
+ * and psi's error is directly proportional to it.
+ */
+export const MERGE_RANK: Record<string, number> = { designer: 4, measured: 3, derived: 1, estimate: 0 }
+export const SELECTION_RANK: Record<string, number> = { designer: 3, measured: 3, derived: 1, estimate: 0 }
+const RANK = SELECTION_RANK
 
 /**
  * Which centreplane baseline to start on — the same argument as `bestScaleKey`,

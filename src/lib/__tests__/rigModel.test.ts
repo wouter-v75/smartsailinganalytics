@@ -345,7 +345,12 @@ describe("Northstar 76's baselines, end to end", () => {
     // the millimetre. With the tape's 12 100 they were 550 mm apart and nothing
     // in the model said so.
     expect(b('mast-transom').mm).toBe(12_650)
-    expect(b('mast-transom').source).toBe('measured')
+    // 'designer', not 'measured' — and the distinction is load-bearing. A tape
+    // had this at 12 100 stamped 'measured', so as a TIE it won every merge and
+    // the designer's figure silently never landed. MERGE_RANK puts the designer
+    // on top; SELECTION_RANK leaves them level so sigma still picks the
+    // reference.
+    expect(b('mast-transom').source).toBe('designer')
     expect(b('tack-mast').mm).toBe(8_860)
     expect(b('tack-mast').source).toBe('measured')
     expect(b('bow-transom').mm).toBe(21_510)
