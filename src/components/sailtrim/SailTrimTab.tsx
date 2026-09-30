@@ -263,7 +263,7 @@ export interface SailTrimSave {
 export default function SailTrimTab(
   {
     boatName = '', boatId = null, initialFileUrl = '', initialFileName = '', initialResult = null,
-    onSaveToPhoto, photoLabel = '', twaDeg = null,
+    onSaveToPhoto, photoLabel = '', twaDeg = null, autoSaveWhenReady = false,
   }: {
     boatName?: string;
     /** The boat's id, when the caller has one and no name. Two of the three
@@ -288,6 +288,18 @@ export default function SailTrimTab(
      *  saying, because "saved" that only reached this browser is the failure
      *  mode this whole feature exists to avoid. */
     onSaveToPhoto?: (save: SailTrimSave) => void | Promise<void | { warning?: string }>;
+    /**
+     * Restore, recompute, save — once, without anyone clicking.
+     *
+     * This is how a frame is REDONE after a rig datum improves, and it matters
+     * that it is this component doing it: `restoreFrom` puts the clicks and the
+     * choices back but deliberately NOT the rig model, which comes from the
+     * cloud, so the same marks are re-measured against the current datums. Any
+     * other implementation of that would be a second implementation of the
+     * maths, and the last time this repo had one the two agreed until they
+     * silently didn't.
+     */
+    autoSaveWhenReady?: boolean;
     photoLabel?: string;
   } = {},
 ) {
@@ -634,6 +646,7 @@ export default function SailTrimTab(
     setRestored(true);
   };
   const [restored, setRestored] = useState(false);
+  const [settleTick, setSettleTick] = useState(0);
   const [scaleNote, setScaleNote] = useState('');
 
   /** One downscaled copy serves both detectors. */
@@ -1506,6 +1519,40 @@ export default function SailTrimTab(
       setSaveMsg((e as Error)?.message || 'Save failed');
     }
   };
+
+  /**
+   * Fire `saveToPhoto` once, when the answer has stopped moving.
+   *
+   * "Ready" is not just "the image loaded". The horizon detector runs inside the
+   * image's onload and the mast trace can follow it, and both move psi — so
+   * saving on first sight of a measurement would store a number the operator
+   * would never have seen. Instead the headline is compared with the previous
+   * tick and only an UNCHANGED one is saved. One redundant tick is nothing;
+   * saving a half-settled frame would be another silently wrong number.
+   */
+  const autoSaved = useRef(false);
+  const lastSig = useRef<string | null>(null);
+  const signature = measurements.length && calibration.cal
+    ? JSON.stringify([
+      calibration.cal.mmPerPxAtMast, calibration.cal.psi.deg, calibration.cal.rangeMm,
+      // Both definitions, since either moving means the answer moved.
+      measurements.map((m) => [m.key, m.boatFrameMm, m.worldHorizontalMm]),
+    ])
+    : null;
+  useEffect(() => {
+    if (!autoSaveWhenReady || autoSaved.current || !onSaveToPhoto) return;
+    if (!restored || !signature) { lastSig.current = signature; return; }
+    if (lastSig.current !== signature) {
+      lastSig.current = signature;
+      // Look again shortly; a state change would re-run this effect anyway, and
+      // the timer covers the case where nothing further changes at all.
+      const t = setTimeout(() => { lastSig.current = signature; setSettleTick((n) => n + 1); }, 250);
+      return () => clearTimeout(t);
+    }
+    autoSaved.current = true;
+    void saveToPhoto();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSaveWhenReady, restored, signature, settleTick]);
 
   const download = (text: string, name: string, type: string) => {
     const blob = new Blob([text], { type });

@@ -108,6 +108,9 @@ export function scaleDrift(stored: StoredScale, current: CurrentRef | null): Sca
 // come off `result.calibration`.
 
 export interface MarksBundle {
+  /** The operator's clicks. Present means a frame can be REDONE by replaying
+   *  them; absent means it has to be marked again by hand. */
+  marks?: Record<string, unknown>
   scaleKey?: string
   baselineKey?: string
   rig?: { scaleRefs?: { key: string; mm: number; depthMm?: number }[]; baselines?: { key: string; mm: number }[] }

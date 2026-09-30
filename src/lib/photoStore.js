@@ -76,6 +76,11 @@ export const cloudImageUrl = (key) => `/api/bunny/image?key=${encodeURIComponent
  * So: the path the row RECORDS beats any path we can derive. Derivation is the
  * fallback for a record old enough not to carry one.
  */
+/**
+ * @param {Record<string, unknown> | null | undefined} photo
+ * @param {string | null} [fallbackDate] the day, for reconstructing an old key
+ * @returns {string | null}
+ */
 export const photoOriginalUrl = (photo, fallbackDate = null) => {
   if (!photo) return null
   const recorded = photo.bunnyPath || photo.url || null

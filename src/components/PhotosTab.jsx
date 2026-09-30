@@ -24,6 +24,7 @@ import { currentStorageScope } from "../lib/storageScope";
 import { isAnnotation, annotationHeadline } from "../lib/sailTrimOverlay";
 import { venueTodayIso as TODAY } from "../lib/localStore";   // venue-local, not UTC
 import { FavouriteHeart, FavouritesFilterButton } from "./FavouriteHeart";
+import SailTrimRecompute from "./photos/SailTrimRecompute";
 import { useFavourites, photoFavId } from "../lib/favourites";
 
 /** The sail-geometry payload on a photo, or null. Tolerates the string form. */
@@ -1282,6 +1283,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             )}
           </div>
         )}
+        {/* Shows itself only when a frame on this day was measured against a rig
+            dimension that has since been corrected. It drives the geometry tool
+            itself, so the numbers come from the same pipeline as a hand redo. */}
+        <SailTrimRecompute photos={photos} activeDate={activeDate} onSave={handleSaveSailTrim}/>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
           <FavouritesFilterButton on={favOnly} onToggle={()=>setFavOnly(v=>!v)}/>
           <div style={{fontSize:9,color:"#4E5D71"}}>{displayed.length} of {photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
