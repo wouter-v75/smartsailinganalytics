@@ -18,7 +18,7 @@
 
 import React from 'react'
 import { expandPhases, type StoredPhase } from '@/lib/seasonCurves'
-import type { PhaseStat } from '@/lib/phaseStats'
+import type { Mode, PhaseStat } from '@/lib/phaseStats'
 import { LIDAR_VARS, LIDAR_HEIGHTS, measKey, targKey, type LidarSail } from '@/lib/lidarTables'
 import { twsBand } from '@/lib/sailMedia'
 
@@ -28,6 +28,29 @@ const C = { bg: '#071726', border: '#12324f', head: '#E2E8F0', dim: '#7c8ca0', l
 export function meanOf(values: (number | null | undefined)[]): number | null {
   const ns = values.filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
   return ns.length ? ns.reduce((s, v) => s + v, 0) / ns.length : null
+}
+
+/**
+ * Split by point of sail, because one average across a day is three different
+ * sails averaged together.
+ *
+ * A main is a different shape upwind and downwind — more twist, more depth, the
+ * traveller somewhere else entirely — so a single camber for the day is a
+ * number describing nothing that happened. The lidar reports the same channels
+ * in all three, which is precisely why they have to be kept apart.
+ */
+export const MODES: { mode: Mode; label: string }[] = [
+  { mode: 'up', label: 'Upwind' },
+  { mode: 'reach', label: 'Reaching' },
+  { mode: 'down', label: 'Downwind' },
+]
+
+export function byMode(phases: PhaseStat[]): { mode: Mode; label: string; phases: PhaseStat[] }[] {
+  return MODES
+    .map((m) => ({ ...m, phases: phases.filter((p) => p.mode === m.mode) }))
+    // A mode nobody sailed is left out rather than shown as three dashes, which
+    // reads as an instrument that failed instead of a leg that did not happen.
+    .filter((g) => g.phases.length > 0)
 }
 
 /** The phases this button stands for: same day, same band, carrying this sail. */
@@ -97,8 +120,9 @@ export default function LidarPhaseCard({
         {phases && (
           <>
             <div style={{ fontSize: 11, color: C.dim, marginBottom: 8, lineHeight: 1.5 }}>
-              Averaged across <b style={{ color: C.head }}>{phases.length}</b> phase{phases.length === 1 ? '' : 's'}
-              {' '}of 30 s, with the target logged beside each.
+              <b style={{ color: C.head }}>{phases.length}</b> phase{phases.length === 1 ? '' : 's'} of 30 s,
+              {' '}split by point of sail — one average across a day would be three different sails
+              averaged together. Targets as logged beside each.
               {expected != null && expected !== phases.length && (
                 <span style={{ color: '#FCD34D' }}>
                   {' '}The grid counted {expected} — it also requires the sail to have been UP, which this
@@ -106,28 +130,36 @@ export default function LidarPhaseCard({
                 </span>
               )}
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  <th style={thS}>Height</th>
-                  {LIDAR_VARS.map((v) => <th key={v.v} style={thS}>{v.label}</th>)}
-                  {LIDAR_VARS.map((v) => <th key={`t${v.v}`} style={{ ...thS, color: C.dim }}>{v.short} target</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {LIDAR_HEIGHTS.map((h) => (
-                  <tr key={h} style={{ borderTop: `1px solid ${C.border}` }}>
-                    <td style={{ ...tdS, color: C.dim }}>{h} %</td>
-                    {LIDAR_VARS.map((v) => (
-                      <td key={v.v} style={{ ...tdS, color: C.lidar }}>{fmt(meanOf(phases.map((p) => p.mean[measKey(sail, v.v, h)])), v.v)}</td>
+            {byMode(phases).map((g) => (
+              <div key={g.mode} style={{ marginBottom: 12 }} data-testid={`lidar-mode-${g.mode}`}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 3 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.6, color: C.head, textTransform: 'uppercase' }}>{g.label}</div>
+                  <div style={{ fontSize: 10.5, color: C.dim }}>{g.phases.length} phase{g.phases.length === 1 ? '' : 's'}</div>
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={thS}>Height</th>
+                      {LIDAR_VARS.map((v) => <th key={v.v} style={thS}>{v.label}</th>)}
+                      {LIDAR_VARS.map((v) => <th key={`t${v.v}`} style={{ ...thS, color: C.dim }}>{v.short} target</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {LIDAR_HEIGHTS.map((h) => (
+                      <tr key={h} style={{ borderTop: `1px solid ${C.border}` }}>
+                        <td style={{ ...tdS, color: C.dim }}>{h} %</td>
+                        {LIDAR_VARS.map((v) => (
+                          <td key={v.v} style={{ ...tdS, color: C.lidar }}>{fmt(meanOf(g.phases.map((p) => p.mean[measKey(sail, v.v, h)])), v.v)}</td>
+                        ))}
+                        {LIDAR_VARS.map((v) => (
+                          <td key={`t${v.v}`} style={{ ...tdS, color: C.dim }}>{fmt(meanOf(g.phases.map((p) => p.mean[targKey(sail, v.v, h)])), v.v)}</td>
+                        ))}
+                      </tr>
                     ))}
-                    {LIDAR_VARS.map((v) => (
-                      <td key={`t${v.v}`} style={{ ...tdS, color: C.dim }}>{fmt(meanOf(phases.map((p) => p.mean[targKey(sail, v.v, h)])), v.v)}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  </tbody>
+                </table>
+              </div>
+            ))}
             {!phases.length && (
               <div style={{ fontSize: 11.5, color: '#FCD34D', marginTop: 8, lineHeight: 1.5 }}>
                 Nothing in this band on that day. The day&rsquo;s phases may have been rebuilt since the

@@ -5,12 +5,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from 'vitest'
-import { meanOf, phasesFor } from '../LidarPhaseCard'
+import { meanOf, phasesFor, byMode, MODES } from '../LidarPhaseCard'
 import { twsBand } from '@/lib/sailMedia'
 import type { PhaseStat } from '@/lib/phaseStats'
 
-const phase = (tws: number | null, mean: Record<string, number> = {}): PhaseStat => ({
-  utc: 0, endUtc: 30_000, mode: 'up', tack: 'stbd', sails: [], sailCombo: 'J2',
+const phase = (tws: number | null, mean: Record<string, number> = {}, mode: PhaseStat['mode'] = 'up'): PhaseStat => ({
+  utc: 0, endUtc: 30_000, mode, tack: 'stbd', sails: [], sailCombo: 'J2',
   race: 1, n: 30, mean: { ...(tws == null ? {} : { tws }), ...mean }, max: {},
 })
 
@@ -64,5 +64,47 @@ describe('phasesFor — what one button stands for', () => {
   it('is not fooled by a TARGET channel with no measurement behind it', () => {
     // tJibTw50 is what the trimmer was aiming at, not what the sail did.
     expect(phasesFor([phase(12, { tJibTw50: 6.0 })], 'jib', band12)).toHaveLength(0)
+  })
+})
+
+
+describe('byMode — one average across a day is three sails averaged together', () => {
+  it('splits upwind, reaching and downwind, in that order', () => {
+    const all = [
+      phase(12, { jibTw50: 6 }, 'down'),
+      phase(12, { jibTw50: 5 }, 'up'),
+      phase(12, { jibTw50: 8 }, 'reach'),
+      phase(12, { jibTw50: 7 }, 'up'),
+    ]
+    const out = byMode(all)
+    expect(out.map((g) => g.mode)).toEqual(['up', 'reach', 'down'])
+    expect(out[0].phases).toHaveLength(2)
+  })
+
+  it('leaves out a leg nobody sailed rather than showing it empty', () => {
+    // Three dashes read as an instrument that failed; an absent heading reads
+    // as a leg that did not happen, which is what it is.
+    const out = byMode([phase(12, { jibTw50: 6 }, 'up')])
+    expect(out.map((g) => g.mode)).toEqual(['up'])
+  })
+
+  it('averages within a mode, not across them', () => {
+    // The whole point: 5 and 7 upwind is 6, and the 20 downwind must not touch it.
+    const all = [
+      phase(12, { jibTw50: 5 }, 'up'),
+      phase(12, { jibTw50: 7 }, 'up'),
+      phase(12, { jibTw50: 20 }, 'down'),
+    ]
+    const up = byMode(all).find((g) => g.mode === 'up')!
+    expect(meanOf(up.phases.map((p) => p.mean.jibTw50))).toBe(6)
+  })
+
+  it('covers every mode the phase stats can produce', () => {
+    // A mode missing here would silently drop its phases out of the card.
+    expect(MODES.map((m) => m.mode).sort()).toEqual(['down', 'reach', 'up'])
+  })
+
+  it('has nothing to say about an empty set', () => {
+    expect(byMode([])).toEqual([])
   })
 })
