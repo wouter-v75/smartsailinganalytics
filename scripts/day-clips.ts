@@ -58,6 +58,8 @@ Usage:
   --finish TIME local HH:MM:SS, if SSA has no finish tag for the day
   --practice TIME  a gun that was a PRACTICE start: its start is cut, the
                 milling about after it is not. Repeatable or comma-separated.
+  --no-starts   cut no starts — for a day whose starts are already uploaded and
+                only the roundings need redoing. The guns still bound the races.
   --no-practice do not cut the practice start at all. It stops being a gun, so
                 nothing between it and the first real start is a race either —
                 a practice start on a crowded line makes a dozen short clips of
@@ -366,6 +368,7 @@ const main = async () => {
   if (marks.length) argv.push('--mark', marks.join(','))
   if (gates.length) argv.push('--gate', gates.join(','))
   if (!has('--turns')) argv.push('--no-turns')
+  if (has('--no-starts')) argv.push('--no-starts')
   // What the cloud already holds, so a clip made on an earlier run and since
   // swept out of the outbox is not made and uploaded a second time.
   const uploaded = await cloudClipNames()

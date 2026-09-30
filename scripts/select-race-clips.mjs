@@ -85,7 +85,7 @@ const opt = {
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
   photoLead: 30, photoLag: 30,      // 0:30 either side of a sail PhotoEvent — the
                                     // photo is one frame; this is the shape moving
-  shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false,
+  shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false, noStarts: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
   racing: false, finish: [], guns: [], practice: [], marks: [], gates: [], have: [],
 }
@@ -115,6 +115,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--at') opt.at.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--no-photos') opt.noPhotos = true
   else if (a === '--no-turns') opt.noTurns = true
+  else if (a === '--no-starts') opt.noStarts = true
   else if (a === '--turns') opt.noTurns = false
   else if (a === '--force') opt.force = true
   else if (a === '--no-srt') opt.noSrt = true
@@ -149,6 +150,10 @@ function usage() {
       --turn-lead N   seconds before a tack or gybe              (default: 30)
       --turn-lag N    seconds after a tack or gybe               (default: 60)
       --no-turns      leave tacks and gybes out entirely
+      --no-starts     cut no start clips. The guns still BOUND each race under
+                      --racing — they just stop being moments of their own, for
+                      a day whose starts are already uploaded and only the
+                      roundings need redoing.
       --turns         include them (the default)
       --shift N       shift every clip by N minutes (wrong camera clock)
       --rest          select the clips that match NOTHING (the later pass)
@@ -452,7 +457,10 @@ if (!opt.onlyAt) {
 let raceNo = 0
 for (const g of guns) {
   const practice = practiceAt.has(g.utc)
-  addWindow(g.utc, 'start', practice ? 'Practice start' : `R${++raceNo} start`)
+  const label = practice ? 'Practice start' : `R${++raceNo} start`
+  // --no-starts drops the WINDOW, never the gun: --racing still needs it to say
+  // where each race begins and ends.
+  if (!opt.noStarts) addWindow(g.utc, 'start', label)
 }
 // Roundings: the crew's, where they have corrected them, otherwise the file's.
 // REPLACED PER KIND, not wholesale — a crew who fixed the top marks and left
