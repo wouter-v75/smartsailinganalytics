@@ -58,6 +58,10 @@ Usage:
   --finish TIME local HH:MM:SS, if SSA has no finish tag for the day
   --practice TIME  a gun that was a PRACTICE start: its start is cut, the
                 milling about after it is not. Repeatable or comma-separated.
+  --no-practice do not cut the practice start at all. It stops being a gun, so
+                nothing between it and the first real start is a race either —
+                a practice start on a crowded line makes a dozen short clips of
+                a boat circling, and some days nobody wants them.
   --out DIR     the outbox (default: ~/clips — ONE folder, so the Upload tab's
                 watcher is pointed at it once and never again)
   --keep        do not clear clips the cloud already has
@@ -324,7 +328,9 @@ const main = async () => {
   const tagged = starts.length || practiceTags.length || marks.length || gates.length
   console.log(`  moments  ${tagged ? 'SSA tags' : 'the event file (no racing tags in SSA for this day)'}`)
   if (starts.length) console.log(`  starts   ${starts.join(', ')}`)
-  if (practiceTags.length) console.log(`  practice ${practiceTags.join(', ')}  · start cut, the milling about after it is not`)
+  if (practiceTags.length) {
+    console.log(`  practice ${practiceTags.join(', ')}  · ${has('--no-practice') ? 'NOT cut (--no-practice)' : 'start cut, the milling about after it is not'}`)
+  }
   if (marks.length) console.log(`  marks    ${marks.join(', ')}`)
   if (gates.length) console.log(`  gates    ${gates.join(', ')}`)
   if (!has('--turns')) {
@@ -344,14 +350,18 @@ const main = async () => {
   // Only the crew know which gun was a practice start; nothing in the event
   // file distinguishes it.
   // Tagged in SSA, or named on the command line for a day nobody has tagged.
-  const practice = val('--practice') || (practiceTags.length ? practiceTags.join(',') : '')
+  const practice = has('--no-practice')
+    ? ''
+    : val('--practice') || (practiceTags.length ? practiceTags.join(',') : '')
   if (practice) argv.push('--practice', practice)
   if (finish.time) argv.push('--finish', finish.time)
   if (at.length) argv.push('--at', at.join(','))
   // The guns --racing works from are the starts AND the practice starts: a
   // practice start bounds the run-up to the first race, and leaving it out
   // would put its own clip outside every race and drop it.
-  const allGuns = [...starts, ...practiceTags].sort()
+  // --no-practice takes the practice gun out of the guns entirely: no start
+  // clip, and nothing before the first real gun falls inside a race.
+  const allGuns = (has('--no-practice') ? starts : [...starts, ...practiceTags]).sort()
   if (allGuns.length) argv.push('--gun', allGuns.join(','))
   if (marks.length) argv.push('--mark', marks.join(','))
   if (gates.length) argv.push('--gate', gates.join(','))
