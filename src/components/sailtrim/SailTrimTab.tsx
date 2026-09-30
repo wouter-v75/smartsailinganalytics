@@ -28,7 +28,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
   mmPerPxFromReference, mmPerPxAtMastFromRef, unbiasAthwartshipsScale,
-  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg, mmPerPxAtDepth,
+  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -47,7 +47,7 @@ import {
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
 import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
-import { fitCamber, camberNote, type CamberFit } from '../../lib/sailCamber';
+import { fitCamber, type CamberFit } from '../../lib/sailCamber';
 import {
   buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
 } from '../../lib/sailTrimOverlay';
@@ -1039,7 +1039,7 @@ export default function SailTrimTab(
       }
     }
     return out;
-  }, [calibration, marks, defn]);
+  }, [calibration, marks, defn, leechPolyline]);
 
   /** Where a measurement's target sits on the picture, by its key. */
   const pointForKey = useCallback((key: string): Px | null => {
@@ -1741,6 +1741,12 @@ export default function SailTrimTab(
       }
     }
     return out;
+    // rig.depths is KEPT although the body never names it: the depths reach this
+    // through `twist`, and `calibration` — which is the other way a station's
+    // millimetres could move — does not list them either. An extra dependency
+    // only ever costs a recompute; dropping one risks a camber figure that is
+    // silently stale, which is the expensive direction.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marks, calibration, rig.widths, rig.depths, twist, pointForKey, footOnAxis]);
 
   // ── styles ────────────────────────────────────────────────────────────────

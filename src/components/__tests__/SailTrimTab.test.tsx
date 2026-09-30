@@ -19,7 +19,7 @@
 
 import React from 'react'
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import {
   makeCamera, RIG, MAST_HALF_WIDTH, SPREADER_HALF, SPREADER_Z, TACK, TRANSOM,
 } from '../../lib/__tests__/support/rigCamera'
@@ -104,6 +104,15 @@ beforeEach(() => { vi.clearAllMocks() })
 const mainCanvas = (): HTMLCanvasElement =>
   document.querySelectorAll('canvas')[0] as HTMLCanvasElement
 
+/**
+ * Let the two fetches the tab fires on mount — the boat list and the rig model —
+ * settle INSIDE act(). A test that awaits nothing else finishes first and React
+ * then reports their setState as an update outside act(), which reads as a fault
+ * in whatever ran next rather than in the test that caused it. Choosing a boat
+ * starts a fresh rig-model fetch, so a test that ends on one needs this too.
+ */
+const settle = () => act(async () => { await Promise.resolve() })
+
 /** Backing store = rect = the image, so the view transform is the identity. */
 function sizeCanvas() {
   const c = mainCanvas()
@@ -172,8 +181,9 @@ async function openAFrame() {
 }
 
 describe('SailTrimTab', () => {
-  it('opens on the prompt to use an original frame, not a compilation', () => {
+  it('opens on the prompt to use an original frame, not a compilation', async () => {
     render(<SailTrimTab />)
+    await settle()
     expect(screen.getByText(/Open an astern frame/)).toBeTruthy()
     expect(screen.getByText(/rotated to stand the/)).toBeTruthy()
     // the workflow is visible before anything is loaded, and the mast starts as
@@ -1143,6 +1153,8 @@ describe('SailTrimTab', () => {
         const input = await waitFor(() => screen.getByPlaceholderText('Northstar 76'))
         fireEvent.change(input, { target: { value: 'Jolt' } })
         expect((input as HTMLInputElement).value).toBe('Jolt')
+        // Naming a boat starts a rig-model fetch; let it land before the test ends.
+        await settle()
       } finally { restore() }
     })
   })
