@@ -1,6 +1,7 @@
 'use client'
 import * as React from 'react'
 import PhotoCanvas from '@/components/photos/PhotoCanvas'
+import PhotoViewer from '@/components/photos/PhotoViewer'
 import { drawSailTrimAnnotation, type SailTrimAnnotation } from '@/lib/sailTrimOverlay'
 
 // Preview harness for the photo viewer's zoom/drag (Photos → a photo), without
@@ -8,6 +9,22 @@ import { drawSailTrimAnnotation, type SailTrimAnnotation } from '@/lib/sailTrimO
 //
 //   /dev/photo-viewer?src=/some-photo.jpg
 //   /dev/photo-viewer?src=/some-photo.jpg&geom=1    ← with sail-geometry lines
+//   /dev/photo-viewer?src=/some-photo.jpg&viewer=1  ← the real PhotoViewer
+//
+// `viewer=1` is the one that exercises what the Photos tab and both timeline
+// lightboxes actually render — loading, composing, the full-res notice and the
+// fallback when no 2d context is to be had. Everything else here drives
+// PhotoCanvas directly, which never loads anything. The difference matters: the
+// fallback lives in PhotoViewer, so without this the only way to see it was to
+// sign in and open a real photograph. To force it:
+//
+//   const real = HTMLCanvasElement.prototype.getContext
+//   HTMLCanvasElement.prototype.getContext = function (...a) {
+//     return this.isConnected ? real.apply(this, a) : null }
+//
+// pasted in the console BEFORE loading the page — the offscreen compose canvas
+// then fails exactly as it does on an iPhone at its canvas-memory cap, while
+// the attached viewport canvas carries on.
 //
 // It composes the image onto a canvas the same way PhotosTab does — which is
 // the point: PhotoCanvas never loads anything, it only looks at a canvas
@@ -51,33 +68,52 @@ export default function PhotoViewerHarness() {
   const [size, setSize] = React.useState<{ w: number; h: number } | null>(null)
   const [note, setNote] = React.useState('loading…')
   const [geom, setGeom] = React.useState(false)
+  const [viewer, setViewer] = React.useState(false)
+  const [src, setSrc] = React.useState<string | null>(null)
 
   React.useEffect(() => {
     const q = new URLSearchParams(window.location.search)
-    const src = q.get('src')
+    const s = q.get('src')
     const withGeom = q.get('geom') === '1'
-    setGeom(withGeom)
-    if (!src) { setNote('pass ?src=/some-photo.jpg'); return }
+    const asViewer = q.get('viewer') === '1'
+    setGeom(withGeom); setViewer(asViewer); setSrc(s)
+    if (!s) { setNote('pass ?src=/some-photo.jpg'); return }
     const img = new Image()
     img.onload = () => {
+      setSize({ w: img.naturalWidth, h: img.naturalHeight })
+      setNote(`${img.naturalWidth}×${img.naturalHeight}`)
+      // In viewer mode PhotoViewer does its own loading and compositing; this
+      // pass only learns the size, so the sample annotation can be placed.
+      if (asViewer) return
       const c = document.createElement('canvas')
       c.width = img.naturalWidth; c.height = img.naturalHeight
       const ctx = c.getContext('2d')
       ctx?.drawImage(img, 0, 0)
       if (withGeom && ctx) drawSailTrimAnnotation(ctx, sampleAnnotation(c.width, c.height))
-      setSource(c); setSize({ w: c.width, h: c.height })
-      setNote(`${c.width}×${c.height}`)
+      setSource(c)
     }
-    img.onerror = () => setNote(`could not load ${src}`)
-    img.src = src
+    img.onerror = () => setNote(`could not load ${s}`)
+    img.src = s
   }, [])
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#030F1A', color: '#E2E8F0', padding: 16, fontFamily: 'system-ui, sans-serif' }}>
       <div style={{ fontSize: 12, color: '#94A3B8', marginBottom: 10 }}>
-        photo viewer · {note}{geom ? ' · sail-geometry sample burned in' : ''} · wheel to zoom, drag to pan, double-click to toggle
+        photo viewer · {note}{geom ? ' · sail-geometry sample burned in' : ''}
+        {viewer ? ' · PhotoViewer' : ' · PhotoCanvas only'} · wheel to zoom, drag to pan, double-click to toggle
       </div>
-      <PhotoCanvas source={source} sourceSize={size} resetKey="harness" height="78vh" />
+      {viewer ? (
+        <PhotoViewer
+          photoId="harness"
+          thumbUrl={src}
+          fullUrl={src}
+          inst={{ tws: 11.4, twa: 42, awa: 28, bsp: 9.7, heel: 22.7, vmg: 7.2 }}
+          sailTrim={geom && size ? { annotation: sampleAnnotation(size.w, size.h), overlay: true } : null}
+          height="78vh"
+        />
+      ) : (
+        <PhotoCanvas source={source} sourceSize={size} resetKey="harness" height="78vh" />
+      )}
     </div>
   )
 }

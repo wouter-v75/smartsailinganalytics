@@ -10,8 +10,27 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
+
+import { installCanvasStub } from '../../__tests__/support/canvasStub'
+
+// Without a 2d context the compose step bails out and the lightbox shows the
+// bare image, so these tests were asserting on the chrome around a picture that
+// never drew — and jsdom logged six "Not implemented: getContext" lines saying
+// so, which read as errors. With the stub the photo actually composes.
+let undoCanvas: (() => void) | null = null
+beforeAll(() => { undoCanvas = installCanvasStub() })
+afterAll(() => { undoCanvas?.(); undoCanvas = null })
+
+// The heart is its own component with its own tests; here it would only load the
+// favourites store over the network after the test had finished, which React
+// reports as an update outside act(). `available: false` is what a signed-out
+// or unsupported client sees, and it renders no heart at all.
+vi.mock('@/lib/favourites', async (orig) => {
+  const real = await orig<typeof import('@/lib/favourites')>()
+  return { ...real, useFavourites: () => ({ available: false, loaded: true, has: () => false, count: 0 }) }
+})
 
 vi.mock('@/lib/cdnScript', () => ({
   heicToJpeg: (f: File) => Promise.resolve(f),

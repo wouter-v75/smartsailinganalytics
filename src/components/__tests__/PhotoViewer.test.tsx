@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react'
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 
 import PhotoViewer from '../photos/PhotoViewer'
@@ -180,6 +180,61 @@ describe('PhotoViewer', () => {
     await act(async () => { images.find((i) => i.src.includes('full'))!.fire() })
     expect(onComposed).toHaveBeenCalled()
     expect(onComposed.mock.calls.at(-1)![0]).toBeInstanceOf(HTMLCanvasElement)
+  })
+
+  describe('when the device will not give a 2d context', () => {
+    // iOS Safari caps total canvas memory and this app allocates one canvas per
+    // photo at FULL resolution, so getContext returning null is a real state, not
+    // a theoretical one. The offscreen compose canvas is the one that loses:
+    // PhotoCanvas's is only viewport-sized. Detached-vs-connected stands in for
+    // that here, which is exactly which canvas is which.
+    //
+    // It is put back after each case. It has to be: patching the PROTOTYPE and
+    // leaving it patched broke the next test in this file the first time round,
+    // and a leak like that reads as a fault in whatever runs next.
+    let restore: (() => void) | null = null
+    afterEach(() => { restore?.(); restore = null })
+
+    const onlyAttachedCanvasesWork = () => {
+      const real = HTMLCanvasElement.prototype.getContext as unknown as (this: HTMLCanvasElement, k: string) => unknown
+      restore = () => { HTMLCanvasElement.prototype.getContext = real as never }
+      HTMLCanvasElement.prototype.getContext = vi.fn(function (this: HTMLCanvasElement, k: string) {
+        return this.isConnected ? real.call(this, k) : null
+      }) as never
+    }
+
+    it('shows the photo without its overlay instead of hanging on it', async () => {
+      // Before the guard this threw inside Image.onload — uncaught, so the state
+      // never advanced and the viewer waited for ever on an original that had
+      // already arrived.
+      onlyAttachedCanvasesWork()
+      view()
+      await settle()
+      await act(async () => { images.find((i) => i.src.includes('full'))!.fire() })
+
+      // The full image IS loaded, so none of the "still arriving" notices stand.
+      expect(screen.queryByText(/loading full resolution/i)).toBeNull()
+      expect(screen.queryByText(/Thumbnail only/i)).toBeNull()
+      expect(screen.getByText(/Overlay unavailable on this device/i)).toBeTruthy()
+    })
+
+    it('does not hand a caller a composite it never drew', async () => {
+      // An empty canvas exported as "the photo with its data burned in" would be
+      // worse than nothing.
+      onlyAttachedCanvasesWork()
+      const onComposed = vi.fn()
+      view({ onComposed })
+      await settle()
+      await act(async () => { images.find((i) => i.src.includes('full'))!.fire() })
+      expect(onComposed).not.toHaveBeenCalled()
+    })
+
+    it('says nothing of the sort when the canvas works', async () => {
+      view()
+      await settle()
+      await act(async () => { images.find((i) => i.src.includes('full'))!.fire() })
+      expect(screen.queryByText(/Overlay unavailable/i)).toBeNull()
+    })
   })
 
   it('says nothing about loading when there is only one image to show', async () => {

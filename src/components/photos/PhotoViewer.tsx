@@ -73,12 +73,15 @@ export default function PhotoViewer({
   const composeRef = useRef<HTMLCanvasElement | null>(null)
   const haveFull = useRef(false)
   const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [compose, setCompose] = useState<HTMLCanvasElement | null>(null)
+  // A canvas when the overlay drew, the bare <img> when no 2d context was to be
+  // had. PhotoCanvas's own drawImage takes either.
+  const [compose, setCompose] = useState<HTMLCanvasElement | HTMLImageElement | null>(null)
   const [composed, setComposed] = useState<{ w: number; h: number } | null>(null)
   const [fullLoaded, setFullLoaded] = useState(false)
   const [fullMissing, setFullMissing] = useState(false)
   const [fullSlow, setFullSlow] = useState(false)
   const [retry, setRetry] = useState(0)
+  const [noCanvas, setNoCanvas] = useState(false)
 
   // Every value that is DRAWN, so a change to any of them redraws. Cheap: a
   // couple of dozen numbers and one small annotation record.
@@ -89,7 +92,7 @@ export default function PhotoViewer({
     if (!thumbUrl && !fullUrl) { setCompose(null); setComposed(null); return }
     let dead = false
     haveFull.current = false
-    setFullLoaded(false); setFullMissing(false); setFullSlow(false)
+    setFullLoaded(false); setFullMissing(false); setFullSlow(false); setNoCanvas(false)
     if (slowTimer.current) clearTimeout(slowTimer.current)
 
     const draw = (img: HTMLImageElement, isFull: boolean) => {
@@ -97,13 +100,30 @@ export default function PhotoViewer({
       if (dead || (!isFull && haveFull.current)) return
       if (isFull) haveFull.current = true
       const c = composeRef.current || (composeRef.current = document.createElement('canvas'))
-      renderOverlay(c, img, inst || {})
-      if (sailTrim?.overlay && isAnnotation(sailTrim.annotation)) {
+      // Compositing can fail outright: a full-resolution canvas per photo is the
+      // first thing iOS Safari refuses when it hits its canvas-memory cap, and
+      // then getContext returns null. Show the PICTURE without its overlay
+      // rather than throwing in here — an exception in an Image.onload handler
+      // goes nowhere, and the viewer would wait for an original that had in fact
+      // already arrived. PhotoCanvas draws an <img> as happily as a canvas, and
+      // its own viewport canvas is viewport-sized, so it usually survives when
+      // this one does not.
+      let drawn = false
+      try { drawn = renderOverlay(c, img, inst || {}) !== false } catch { drawn = false }
+      if (drawn && sailTrim?.overlay && isAnnotation(sailTrim.annotation)) {
         const ctx = c.getContext('2d')
         if (ctx) drawSailTrimAnnotation(ctx, sailTrim.annotation)
       }
-      setCompose(c); setComposed({ w: c.width, h: c.height })
-      onComposed?.(c)
+      setNoCanvas(!drawn)
+      if (drawn) {
+        setCompose(c); setComposed({ w: c.width, h: c.height })
+        // Only a canvas can be exported, so a caller waiting to save a composite
+        // is told nothing rather than handed an empty one.
+        onComposed?.(c)
+      } else {
+        setCompose(img)
+        setComposed({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height })
+      }
       if (isFull) {
         setFullLoaded(true); setFullSlow(false)
         if (slowTimer.current) clearTimeout(slowTimer.current)
@@ -147,6 +167,18 @@ export default function PhotoViewer({
       source={compose} sourceSize={composed} resetKey={photoId}
       height={height} fullStatus={status} onRetryFull={() => setRetry((n) => n + 1)}>
       {children}
+      {/* Silence here would be the bug: the photo looks right, the instrument
+          numbers and sail-geometry lines are simply absent, and only on the
+          device that could not allocate the canvas. */}
+      {noCanvas && (
+        <div style={{
+          position: 'absolute', bottom: 10, left: 10, zIndex: 3, maxWidth: '80%',
+          padding: '4px 8px', borderRadius: 6, fontSize: 11, lineHeight: 1.35,
+          background: 'rgba(3,15,26,0.82)', border: '1px solid #F9731640', color: '#F97316',
+        }}>
+          Overlay unavailable on this device — showing the photo only.
+        </div>
+      )}
       {/* Under the zoom controls (top right); top left is the full-res notice. */}
       <FavouriteHeart kind="photo" id={favouriteId} size={16}
         style={{ position: 'absolute', top: 46, right: 10, zIndex: 3 }} />

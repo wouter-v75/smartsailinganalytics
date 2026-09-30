@@ -7,8 +7,17 @@
 
 export const R = (n, d = 1) => (n == null || isNaN(n) ? '--' : Number(n).toFixed(d))
 
+/** Draws `img` plus the overlays onto `canvas`.
+ *  Returns FALSE when the canvas gave no 2d context and nothing was drawn, so a
+ *  caller can fall back to the bare image. It is not hypothetical: iOS Safari
+ *  caps total canvas memory, and this one is allocated at the photo's FULL
+ *  resolution, one per picture. Before the guard, `ctx.drawImage` on a null
+ *  context threw inside an Image.onload handler — nothing caught it, so the
+ *  viewer sat on "the original has not reached the cloud yet" for ever with no
+ *  error anywhere. Silent, and only on other people's phones. */
 export function renderOverlay(canvas, img, inst) {
   const ctx = canvas.getContext('2d')
+  if (!ctx) return false
   canvas.width = img.naturalWidth || img.width
   canvas.height = img.naturalHeight || img.height
   ctx.drawImage(img, 0, 0)
@@ -77,4 +86,5 @@ export function renderOverlay(canvas, img, inst) {
     if (ctx.roundRect) ctx.roundRect(pad, my, mtw, mth, 5); else ctx.rect(pad, my, mtw, mth); ctx.stroke()
     ctx.fillStyle = '#F97316'; ctx.textAlign = 'left'; ctx.fillText(mastTxt, pad * 1.5, my + Math.round(mth * 0.72))
   }
+  return true
 }
