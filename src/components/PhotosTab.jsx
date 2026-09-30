@@ -23,6 +23,8 @@ import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
 import { isAnnotation, annotationHeadline } from "../lib/sailTrimOverlay";
 import { venueTodayIso as TODAY } from "../lib/localStore";   // venue-local, not UTC
+import { FavouriteHeart, FavouritesFilterButton } from "./FavouriteHeart";
+import { useFavourites, photoFavId } from "../lib/favourites";
 
 /** The sail-geometry payload on a photo, or null. Tolerates the string form. */
 function sailTrimOf(photo){
@@ -254,6 +256,8 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
           :!photo.lqip&&<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:"#1E3A5A",fontSize:22}}>📷</div>}
         {/* Source badge top-right */}
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={photo.cloudSynced?"cloud":"local"}/></div>
+        {/* My favourite. Bottom left: the batch checkbox owns the top left. */}
+        {!batchMode&&<FavouriteHeart kind="photo" id={photoFavId(photo)} size={11} style={{position:"absolute",bottom:3,left:4}}/>}
         {/* Batch checkbox */}
         {batchMode&&(
           <div style={{position:"absolute",top:4,left:4,width:22,height:22,borderRadius:4,
@@ -357,7 +361,7 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
       )}
       <PhotoViewer
         photoId={photo.id} thumbUrl={photo.objectUrl} fullUrl={photo.fullUrl}
-        inst={inst} sailTrim={geom}
+        inst={inst} sailTrim={geom} favouriteId={photoFavId(photo)}
         onComposed={(c)=>{composeRef.current=c;setRendered(true);}}>
         {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5,pointerEvents:"none"}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
       </PhotoViewer>
@@ -686,7 +690,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
               cloudExtras.set(k, shape);
               continue;
             }
-            cloudOnly.push({ ...shape, name: 'Photo', cloudSynced: true, hasLocalOriginal: false });
+            cloudOnly.push({ ...shape, cloudId: shape.id, name: 'Photo', cloudSynced: true, hasLocalOriginal: false });
           }
         }
       } catch { /* cloud optional */ }
@@ -1041,6 +1045,9 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
 
   // ── Sidebar filtering state ──────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = React.useState("");
+  // ♥ — only my favourite photos (lib/favourites; personal, per user).
+  const [favOnly, setFavOnly] = React.useState(false);
+  const favs = useFavourites();
   const [selectedTags, setSelectedTags] = React.useState([]);
   const [sortBy, setSortBy] = React.useState("date");
   const [showSessionsMobile, setShowSessionsMobile] = React.useState(false);
@@ -1059,6 +1066,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
   const displayed = photos
     .filter(p => {
       if (!canSeeSailScanPhotos && p.analysis) return false;
+      if (favOnly && !favs.has("photo", photoFavId(p))) return false;
       const q = searchQuery.toLowerCase();
       const matchQ = !q || p.name?.toLowerCase().includes(q) || (p.sails||[]).some(s=>s.toLowerCase().includes(q));
       const matchT = selectedTags.length===0 || selectedTags.every(t=>(p.sails||[]).includes(t));
@@ -1274,7 +1282,10 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             )}
           </div>
         )}
-        <div style={{fontSize:9,color:"#4E5D71",marginBottom:8}}>{displayed.length} of {photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          <FavouritesFilterButton on={favOnly} onToggle={()=>setFavOnly(v=>!v)}/>
+          <div style={{fontSize:9,color:"#4E5D71"}}>{displayed.length} of {photos.length} photo{photos.length!==1?"s":""} · {photos.filter(p=>p.cloudSynced).length} in cloud</div>
+        </div>
         {photos.length===0?(
           <div style={{textAlign:"center",padding:"40px 20px",color:"#4E5D71"}}>
             <div style={{fontSize:28,marginBottom:8,opacity:0.3}}>📷</div>

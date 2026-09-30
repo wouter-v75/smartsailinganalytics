@@ -17,6 +17,8 @@ const SailGeometryDialog = dynamic(() => import('../photos/SailGeometryDialog'),
   loading: () => <div className="flex h-full items-center justify-center text-sm text-[#7DD3FC]">Loading the digitiser…</div>,
 })
 import SailScanDetail from '@/components/SailScanDetail'
+import { FavouriteHeart, FavouritesOnlyContext } from '@/components/FavouriteHeart'
+import { useFavourites } from '@/lib/favourites'
 import { racingTagsOf, isMainsailTag, RACE_RED } from '@/lib/racingTags'
 import { teamComments, firstName, clip, type Comment } from '@/lib/tagging/comments'
 import { MEDIA_COLOURS, isDroneClip } from '@/lib/mediaDecks'
@@ -250,7 +252,15 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
     return best && bd <= 12 * 60000 ? best : null
   }, [markers])
 
-  const videos = React.useMemo(() => (media || []).filter((m) => m.type === 'video'), [media])
+  // ♥ Favourites only: photos and videos that are not mine drop out of every
+  // lane below. Scans and comments are not favourites, so they stay.
+  const favOnly = React.useContext(FavouritesOnlyContext)
+  const favs = useFavourites()
+  const lanes = React.useMemo(
+    () => (!favOnly ? media || [] : (media || []).filter((m) => (m.type !== 'photo' && m.type !== 'video') || favs.has(m.type, m.id))),
+    [media, favOnly, favs]
+  )
+  const videos = React.useMemo(() => lanes.filter((m) => m.type === 'video'), [lanes])
   const droneVideos = React.useMemo(() => videos.filter(isDroneClip), [videos])
   const onboardVideos = React.useMemo(() => videos.filter((m) => !isDroneClip(m)), [videos])
   // Photographs come off a motor drive: 2026-09-04 has 41 of its 61 frames in
@@ -258,8 +268,8 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
   // another and read as the same picture repeated. One card per burst, showing
   // the middle frame, with the rest reachable from it.
   const photoBursts = React.useMemo(
-    () => groupBursts((media || []).filter((m) => m.type === 'photo'), (m) => m.t, BURST_GAP_MS),
-    [media],
+    () => groupBursts(lanes.filter((m) => m.type === 'photo'), (m) => m.t, BURST_GAP_MS),
+    [lanes],
   )
   const photos = React.useMemo(() => photoBursts.map((b) => b.lead), [photoBursts])
   /** Every frame of the burst a given lead stands for. */
@@ -643,12 +653,17 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
         {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="tl-parallax-img h-full w-full object-cover" />
           : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : m.type === 'sailscan' ? <Sailboat size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
         <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{showSeconds ? hmsSec(m.t, tz) : hms(m.t, tz)}</span>
-        {burstCount > 1 && (
-          // Says the card stands for more than it shows, so the other frames are
-          // hidden rather than lost.
-          <span className="absolute right-1 top-1 rounded bg-black/70 px-1 py-px font-mono text-[9px] font-semibold text-white/90"
-                title={`${burstCount} frames in this burst`}>⧉{burstCount}</span>
-        )}
+        <div className="absolute right-1 top-1 flex items-center gap-1">
+          {burstCount > 1 && (
+            // Says the card stands for more than it shows, so the other frames are
+            // hidden rather than lost.
+            <span className="rounded bg-black/70 px-1 py-px font-mono text-[9px] font-semibold text-white/90"
+                  title={`${burstCount} frames in this burst`}>⧉{burstCount}</span>
+          )}
+          {/* My favourite — a span, not a button: this card IS a button. For a
+              burst it is the frame the card shows. */}
+          {(m.type === 'photo' || m.type === 'video') && <FavouriteHeart kind={m.type} id={m.id} size={10} />}
+        </div>
         {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${focused ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}
 
         {/* Racing tags — ALWAYS on the card (not hover-only), so the manoeuvres are

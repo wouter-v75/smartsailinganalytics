@@ -14,6 +14,8 @@ import dynamic from 'next/dynamic'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { getPref, setPref } from '@/lib/prefsStore'
+import { FavouriteHeart, FavouritesFilterButton } from '@/components/FavouriteHeart'
+import { useFavourites } from '@/lib/favourites'
 import { FallbackVideoPlayer } from '@/components/timeline/DayMedia'
 import PhotoLightbox, { type LightboxPhoto } from '@/components/timeline/PhotoLightbox'
 import SailScanDetail from '@/components/SailScanDetail'
@@ -93,6 +95,8 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   const [event, setEvent] = useState<string>('')          // '' = every event
   const [showEmpty, setShowEmpty] = useState(false)
   const [showHidden, setShowHidden] = useState(false)       // bring back what was marked not relevant
+  const [favOnly, setFavOnly] = useState(false)             // ♥ — only my favourites
+  const favs = useFavourites()
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   const [confirmFor, setConfirmFor] = useState<Item | null>(null) // the ✕ waiting on "are you sure?"
   const [dontAsk, setDontAsk] = useState(false)                   // the dialog's tick box
@@ -139,7 +143,11 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
     () => (data?.items || []).filter((i) => !event || (event === '(none)' ? !i.event : i.event === event)),
     [data, event]
   )
-  const shown = useMemo(() => inEvent.filter((i) => showHidden || !i.hidden), [inEvent, showHidden])
+  const favKind = (i: Item) => (i.kind === 'photo' || i.kind === 'trim' ? 'photo' : i.kind === 'scan' ? null : 'video')
+  const shown = useMemo(
+    () => inEvent.filter((i) => (showHidden || !i.hidden) && (!favOnly || (favKind(i) != null && favs.has(favKind(i)!, i.id)))),
+    [inEvent, showHidden, favOnly, favs] // eslint-disable-line react-hooks/exhaustive-deps
+  )
   // Distinct photos/clips marked not relevant — a clip spans several bands but is one mark.
   const hiddenCount = useMemo(() => new Set(inEvent.filter((i) => i.hidden).map((i) => i.id)).size, [inEvent])
 
@@ -278,6 +286,8 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
         </div>
         <div style={{ fontSize: 9, color: C.dim, padding: '2px 4px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{i.hidden ? 'not relevant' : caption}</div>
       </button>
+      {/* My favourite, top left over the picture. Not on scans. */}
+      {favKind(i) && <FavouriteHeart kind={favKind(i)!} id={i.id} size={10} style={{ position: 'absolute', top: 2, left: 2 }} />}
       {/* A sibling of the thumbnail, not inside it: a button in a button is
           invalid, and the click would open the photo as well. */}
       {canHide && (
@@ -320,13 +330,14 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
           <button onClick={() => setEvent('')} style={chip(event === '')}>All</button>
           {data.events.map((e) => <button key={e} onClick={() => setEvent(e)} style={chip(event === e)}>{e}</button>)}
           {data.items.some((i) => !i.event) && <button onClick={() => setEvent('(none)')} style={chip(event === '(none)')}>Training / no event</button>}
+          <FavouritesFilterButton on={favOnly} onToggle={() => setFavOnly((v) => !v)} style={{ marginLeft: 'auto' }} />
           {hiddenCount > 0 && (
-            <button onClick={() => setShowHidden((v) => !v)} style={{ ...chip(showHidden), marginLeft: 'auto' }}
+            <button onClick={() => setShowHidden((v) => !v)} style={chip(showHidden)}
               title="Photos and clips marked not relevant to this sail — shown dimmed, with ↺ to bring them back">
               {showHidden ? 'Hide' : 'Show'} not relevant ({hiddenCount})
             </button>
           )}
-          <label style={{ marginLeft: hiddenCount > 0 ? 8 : 'auto', fontSize: 11, color: C.dim, display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
+          <label style={{ marginLeft: 8, fontSize: 11, color: C.dim, display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}>
             <input type="checkbox" checked={showEmpty} onChange={(e) => setShowEmpty(e.target.checked)} /> show empty bands
           </label>
         </div>

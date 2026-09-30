@@ -158,6 +158,10 @@ export function mergeCloudIntoLocal<T extends Record<string, unknown>>(
   if (!cloud) return local
   const out: Record<string, unknown> = { ...local }
 
+  // The cloud row's id, which a local record has no other way to know. It is
+  // what anything shared keys on — a favourite, above all (lib/favourites).
+  if (typeof cloud.id === 'string' && cloud.id) out.cloudId = cloud.id
+
   // Absent means null, undefined, or an empty list — `??` alone would let an
   // empty `sails: []` from an import that read no tags block the cloud's.
   const absent = (v: unknown) => v == null || (Array.isArray(v) && v.length === 0)

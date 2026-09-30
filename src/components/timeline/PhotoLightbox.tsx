@@ -77,6 +77,7 @@ export default function PhotoLightbox({
             fullUrl={photo.original || null}
             inst={photo.inst || {}}
             sailTrim={photo.sailTrim || null}
+            favouriteId={photo.id}
             height={height} />
 
           {burst && burst.count > 1 && (

@@ -56,6 +56,11 @@ export default function SailMediaPreview() {
     const real = window.fetch
     window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(typeof input === 'string' || input instanceof URL ? input : input.url)
+      // Favourites: two already hearted; a heart press is accepted.
+      if (/\/api\/favourites$/.test(url)) {
+        const body = init?.method === 'POST' ? { ok: true } : { available: true, photo: ['photo25', 'trim8'], video: ['video60'] }
+        return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+      }
       // Marking not relevant: answer as the route would.
       if (/\/media\/hidden$/.test(url)) return new Response(JSON.stringify({ hidden: [] }), { headers: { 'content-type': 'application/json' } })
       const m = url.match(/\/sails\/([^/]+)\/media$/)

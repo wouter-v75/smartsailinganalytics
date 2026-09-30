@@ -13,6 +13,8 @@ import { R, fmtT } from '../ssa/format';
 import { useIsMobile } from '../ssa/useIsMobile';
 import { ShareSheet } from './ShareSheet';
 import { rotStyle } from '../ssa/format';
+import { FavouriteHeart } from '../FavouriteHeart';
+import { videoFavId } from '../../lib/favourites';
 
 // Log variables the user can ADD to the video overlay from the dropdown (on top
 // of each mode's fixed default gauges). key = the canonical row field.
@@ -759,6 +761,9 @@ function VideoPlayer({video,logData,xmlData,syncOffset,sessionTzOffset=0,onPlayU
             ↗
           </button>
         )}
+        {/* My favourite — the same heart as on the clip's card, next in the row. */}
+        <FavouriteHeart kind="video" id={videoFavId(video)} size={15}
+          style={{position:"absolute",top:8,right:8+(onRotate?36:0)+(canShare?36:0),zIndex:4,width:32,height:32,borderRadius:8,border:"1px solid #1E3A5A"}}/>
         {shareOpen&&<ShareSheet video={video} onClose={()=>setShareOpen(false)}/>}
         <div style={{position:"absolute",bottom:8,left:8,display:"flex",alignItems:"center",gap:6}}>
           {vidQuality&&<div style={{background:"rgba(0,0,0,0.7)",borderRadius:4,padding:"2px 6px",fontSize:9,color:"#7DD3FC",fontFamily:"monospace",letterSpacing:0.3}}>▾ {vidQuality}</div>}

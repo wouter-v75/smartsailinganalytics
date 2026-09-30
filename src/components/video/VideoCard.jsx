@@ -5,6 +5,8 @@ import { videoBadgeSrc } from '../../lib/videoBadge';
 import { SrcBadge } from '../ssa/SrcBadge';
 import { R, fmtT } from '../ssa/format';
 import { rotStyle } from '../ssa/format';
+import { FavouriteHeart } from '../FavouriteHeart';
+import { videoFavId } from '../../lib/favourites';
 
 function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,onBatchToggle,sessionTzOffset=0}){
   const handleLoaded = () => onThumbLoad?.(video.id);
@@ -51,6 +53,8 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
          <div style={{color:"#1E3A5A",fontSize:9}}>📹</div>}
         <div style={{position:"absolute",bottom:3,right:4,background:"rgba(0,0,0,0.8)",borderRadius:2,padding:"0 3px",fontSize:8,color:"#64748B",fontFamily:"monospace"}}>{video.duration?fmtT(video.duration):"--:--"}</div>
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={videoBadgeSrc(video)}/></div>
+        {/* My favourite. Bottom left: the batch checkbox owns the top left. */}
+        {!batchMode&&<FavouriteHeart kind="video" id={videoFavId(video)} size={11} style={{position:"absolute",bottom:3,left:4}}/>}
         {/* Batch checkbox */}
         {batchMode&&(
           <div style={{position:"absolute",top:4,left:4,width:22,height:22,borderRadius:4,

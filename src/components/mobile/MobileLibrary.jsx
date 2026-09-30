@@ -6,6 +6,8 @@ import { canShareVideos } from '../../lib/shareRoles';
 import { getBrowserSupabase } from '../../lib/supabase/browser';
 import { thumbSrc } from '../../lib/thumbSrc';
 import { SrcBadge } from '../ssa/SrcBadge';
+import { FavouriteHeart, FavouritesFilterButton } from '../FavouriteHeart';
+import { videoFavId } from '../../lib/favourites';
 import { fmtT } from '../ssa/format';
 import { BatchSyncPanel } from '../sync/BatchSyncPanel';
 import { SyncControl } from '../sync/SyncControl';
@@ -16,7 +18,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         onRecheckStream,
                         logData,xmlData,loadDate,syncOffsets,setSyncOffsets,
                         saveSyncForVideos,saveTagsForVideo,
-                        sessionTzOffset,searchQuery,setSearchQuery,
+                        sessionTzOffset,searchQuery,setSearchQuery,favOnly,setFavOnly,
                         selectedTags,setSelectedTags,toggleTag,allTags,isManTag,displayed,perms,
                         onSyncProxies,onUploadOriginals,mobileSyncState,syncErrors,onRotateVideo,
                         cloudStatus,sessionTagList,setSessionTagList,tagSuggestionList,
@@ -117,6 +119,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
             padding:"6px 12px",color:"#06B6D4",fontSize:12,cursor:"pointer",fontWeight:600}}>
           {activeDate===TODAY()?"Today":fmtDate_(activeDate)} ▾
         </button>
+        {setFavOnly&&<FavouritesFilterButton compact on={!!favOnly} onToggle={()=>setFavOnly(v=>!v)} style={{padding:"8px 9px"}}/>}
         <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)}
           placeholder="Search…"
           style={{flex:1,background:"#071624",border:"1px solid #1E3A5A",borderRadius:6,
@@ -208,6 +211,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         mobile browsers and left thumbnails blank in portrait.
                         Explicit width+height removes every such dependency. */}
                     <div style={{width:96,height:64,flexShrink:0,alignSelf:"center",background:"#071624",position:"relative",overflow:"hidden"}}>
+                      <FavouriteHeart kind="video" id={videoFavId(v)} size={11} style={{position:"absolute",bottom:3,left:3,zIndex:2}}/>
                       {v.thumbnailUrl
                         ? <img src={thumbSrc(v.thumbnailUrl,256)} alt=""
                             /* loading=eager + fetchPriority=high stop the

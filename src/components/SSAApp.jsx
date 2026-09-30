@@ -52,6 +52,8 @@ import { useClipMetadata } from './ssa/useClipMetadata';
 import { useClipPlayback } from './ssa/useClipPlayback';
 import { useWorkspaceIdentity } from './ssa/useWorkspaceIdentity';
 import { landingDate } from '../lib/landingDate';
+import { FavouritesFilterButton } from './FavouriteHeart';
+import { useFavourites, videoFavId } from '../lib/favourites';
 
 function SSAApp(){
   const isMobile = useIsMobile();
@@ -89,6 +91,9 @@ function SSAApp(){
   const[selectedTags,setSelectedTags]=useState([]);
   const[searchQuery,setSearchQuery]=useState("");
   const[sortBy,setSortBy]=useState("date");
+  // ♥ — only my favourite clips (lib/favourites; personal, per user).
+  const[favOnly,setFavOnly]=useState(false);
+  const favs=useFavourites();
   // Sail inventory (BoatConfig) → sail-name filter dropdown in Videos + Photos.
   const[sailInventory,setSailInventory]=useState([]);
   const[sailFilter,setSailFilter]=useState(""); // selected sail id, "" = all
@@ -1018,6 +1023,7 @@ function SSAApp(){
   const sailTokens=selectedSail?[selectedSail.name,selectedSail.category,selectedSail.design_code,...(Array.isArray(selectedSail.specs?.aliases)?selectedSail.specs.aliases:[])].filter(Boolean).map(s=>String(s).trim().toLowerCase()):null;
   const matchesSail=tags=>!sailTokens||(tags||[]).some(t=>sailTokens.includes(String(t).trim().toLowerCase()));
   const displayed=allVideos
+    .filter(v=>!favOnly||favs.has("video",videoFavId(v)))
     .filter(v=>{const ok=selectedTags.length===0||selectedTags.every(t=>(v.tags||[]).includes(t));const q=searchQuery.toLowerCase();return ok&&matchesSail(v.tags)&&(!q||v.title?.toLowerCase().includes(q)||(v.tags||[]).some(t=>t.includes(q)));})
     // "Date" means WHEN THE CLIP WAS SHOT, not when it was imported. It used to sort by
     // addedAt, so uploading a day's footage in three batches interleaved them and the
@@ -1103,6 +1109,7 @@ function SSAApp(){
       tagSuggestionList={tagSuggestionList}
       cloudStatus={cloudStatus} unsyncedCount={unsyncedCount}
       searchQuery={searchQuery} setSearchQuery={setSearchQuery}
+      favOnly={favOnly} setFavOnly={setFavOnly}
       sortBy={sortBy} setSortBy={setSortBy}
       selectedTags={selectedTags} setSelectedTags={setSelectedTags}
       allTags={allTags} isManTag={isManTag} toggleTag={toggleTag}
@@ -1208,6 +1215,7 @@ function SSAApp(){
             </div>
             <div style={{height:1,background:"#0F2030",margin:"4px 11px 6px"}}/>
             <div style={{padding:"0 11px 8px"}}>
+              <FavouritesFilterButton on={favOnly} onToggle={()=>setFavOnly(v=>!v)} style={{width:"100%",justifyContent:"center",marginBottom:6}}/>
               <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Search clips…" style={{width:"100%",background:"#071624",border:"1px solid #1E3A5A",borderRadius:5,padding:"5px 8px",color:"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7}}/>
               {sailInventory.length>0&&<select value={sailFilter} onChange={e=>setSailFilter(e.target.value)} style={{width:"100%",background:"#071624",border:`1px solid ${sailFilter?"#06B6D4":"#1E3A5A"}`,borderRadius:5,padding:"5px 8px",color:sailFilter?"#06B6D4":"#E2E8F0",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:7,cursor:"pointer"}}>
                 <option value="">All sails</option>

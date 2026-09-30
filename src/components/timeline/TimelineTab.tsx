@@ -6,6 +6,7 @@ import { useSessions } from '@/lib/timeline/useSessions'
 import { buildCampaignTree } from '@/lib/timeline/buildCampaignTree'
 import { pickFocusDay } from '@/lib/timeline/focusDay'
 import TimelineVertical from './TimelineVertical'
+import { FavouritesFilterButton, FavouritesOnlyContext } from '@/components/FavouriteHeart'
 
 // The timeline as the app's main view (embedded — the app supplies the header).
 // Spine from the session list + event-file detail; lands expanded on the last
@@ -23,11 +24,15 @@ export default function TimelineTab({ teamId, boatId, tzOffset = 0, onOpenVideo 
   // detail), photos or video — and open its Sailing axis.
   const lastDayId = React.useMemo(() => pickFocusDay(tree, tzOffset), [tree, tzOffset])
   const loading = sessions === null || detail === null
+  const [favOnly, setFavOnly] = React.useState(false) // ♥ — only my favourite photos and videos
 
   return (
     <div className="h-full overflow-auto bg-bg text-fg" style={{ padding: 16 }}>
       <div className="w-full">
-        <h2 className="mb-3 text-[15px] font-medium">Timeline</h2>
+        <div className="mb-3 flex items-center gap-3">
+          <h2 className="text-[15px] font-medium">Timeline</h2>
+          <FavouritesFilterButton on={favOnly} onToggle={() => setFavOnly((v) => !v)} />
+        </div>
         {!boatId ? (
           <Card><EmptyState title="No active boat" description="Select a boat workspace to see its campaign timeline." /></Card>
         ) : error ? (
@@ -37,7 +42,9 @@ export default function TimelineTab({ teamId, boatId, tzOffset = 0, onOpenVideo 
         ) : !tree || tree.length === 0 ? (
           <Card><EmptyState title="No campaign entries yet" description="Sync your sessions, or upload a day's data — training days and events will appear here." /></Card>
         ) : (
-          <TimelineVertical nodes={tree} initialFocusId={lastDayId} tzOffset={tzOffset} teamId={teamId} boatId={boatId} onPlayVideo={onOpenVideo} />
+          <FavouritesOnlyContext.Provider value={favOnly}>
+            <TimelineVertical nodes={tree} initialFocusId={lastDayId} tzOffset={tzOffset} teamId={teamId} boatId={boatId} onPlayVideo={onOpenVideo} />
+          </FavouritesOnlyContext.Provider>
         )}
       </div>
     </div>

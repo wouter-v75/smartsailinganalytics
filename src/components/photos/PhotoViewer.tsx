@@ -22,6 +22,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import PhotoCanvasJs from './PhotoCanvas'
 import { renderOverlay } from '../../lib/photoOverlay'
 import { drawSailTrimAnnotation, isAnnotation, type SailTrimAnnotation } from '../../lib/sailTrimOverlay'
+import { FavouriteHeart } from '../FavouriteHeart'
 
 // PhotoCanvas is .jsx, so TypeScript infers its props from their default values
 // and a canvas would not be assignable to a `null` default. The shape is stated
@@ -53,6 +54,7 @@ export default function PhotoViewer({
   height = '62vh',
   children = null,
   onComposed = null,
+  favouriteId = null,
 }: {
   photoId?: string
   thumbUrl?: string | null
@@ -64,6 +66,9 @@ export default function PhotoViewer({
   children?: React.ReactNode
   /** Called with the composed canvas whenever it is redrawn, for exporting. */
   onComposed?: ((c: HTMLCanvasElement) => void) | null
+  /** The photo's CLOUD id — shows the favourite heart. Every viewer in SSA is
+   *  this one, so the heart is here once rather than in each caller. */
+  favouriteId?: string | null
 }) {
   const composeRef = useRef<HTMLCanvasElement | null>(null)
   const haveFull = useRef(false)
@@ -142,6 +147,9 @@ export default function PhotoViewer({
       source={compose} sourceSize={composed} resetKey={photoId}
       height={height} fullStatus={status} onRetryFull={() => setRetry((n) => n + 1)}>
       {children}
+      {/* Under the zoom controls (top right); top left is the full-res notice. */}
+      <FavouriteHeart kind="photo" id={favouriteId} size={16}
+        style={{ position: 'absolute', top: 46, right: 10, zIndex: 3 }} />
     </PhotoCanvas>
   )
 }
