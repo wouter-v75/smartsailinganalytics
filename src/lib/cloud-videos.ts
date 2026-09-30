@@ -64,31 +64,80 @@ export async function listVideosCloud({
   }
 }
 
+export interface DeleteVideosResult {
+  deleted: number
+  videos: CloudVideoRow[]
+  /** What happened to the Bunny objects behind the deleted rows. The server
+   *  purges them, because only the server holds the write key. */
+  purged?: { ok: string[]; failed: string[]; skipped: string[] }
+  /** Why nothing was deleted, when nothing was. Null on success. A caller that
+   *  cannot tell a refusal from a success tells the USER a clip is gone while
+   *  the row lives on — which is the whole bug this function exists for. */
+  error: string | null
+}
+
+/** A clip's cloud row can be named three ways, in falling order of certainty:
+ *  its UUID, the local IDB key it was mirrored from, or the day it belongs to. */
+export interface DeleteVideosArgs {
+  userId: string
+  /** The Supabase row UUID. Anything else is rejected by the server. */
+  id?: string | null
+  /** The local IDB key (`v_1779…`), for a clip whose merge has not run and so
+   *  has no UUID on it yet. `(boat_id, external_id)` is uniquely indexed. */
+  externalId?: string | null
+  /** Every clip of one session day. */
+  date?: string | null
+}
+
 // Delete the Supabase row(s) for a clip, or for a whole day. WITHOUT this the
 // local/Bunny delete leaves an orphan `videos` row that merges straight back in
 // on the next load as a phantom cloud-only clip — which is how the library kept
 // resurrecting clips that had already been deleted.
-// Returns the removed rows' bunny ids so the caller can purge the blobs as well.
+//
+// It used to swallow every failure into `{deleted: 0}`: a 403 from RLS, a 500
+// from an IDB key sent where a UUID belongs, no active membership, and a genuine
+// "there was no row" all looked identical, and the button said "✓ Deleted" to
+// all four. Now the reason comes back, so the caller can refuse to pretend.
 export async function deleteVideosCloud({
   userId,
   id,
+  externalId,
   date,
-}: {
-  userId: string
-  id?: string | null
-  date?: string | null
-}): Promise<{ deleted: number; videos: CloudVideoRow[] }> {
+}: DeleteVideosArgs): Promise<DeleteVideosResult> {
   const m = getActiveMembership(userId)
-  if (!m || !m.boat_id || (!id && !date)) return { deleted: 0, videos: [] }
-  const qs = id ? `id=${encodeURIComponent(id)}` : `date=${encodeURIComponent(date as string)}`
+  if (!m || !m.boat_id) {
+    return { deleted: 0, videos: [], error: 'no active boat — pick one in Boat Config' }
+  }
+  if (!id && !externalId && !date) {
+    return { deleted: 0, videos: [], error: 'nothing to delete: no id, external id or date' }
+  }
+  const qs = id
+    ? `id=${encodeURIComponent(id)}`
+    : externalId
+      ? `external_id=${encodeURIComponent(externalId)}`
+      : `date=${encodeURIComponent(date as string)}`
   try {
     const res = await fetch(`/api/teams/${m.team_id}/boats/${m.boat_id}/videos?${qs}`, {
       method: 'DELETE',
     })
-    if (!res.ok) return { deleted: 0, videos: [] }
-    return (await res.json()) as { deleted: number; videos: CloudVideoRow[] }
-  } catch {
-    return { deleted: 0, videos: [] }
+    const body = (await res.json().catch(() => null)) as
+      | (Omit<DeleteVideosResult, 'error'> & { error?: string })
+      | null
+    if (!res.ok) {
+      return {
+        deleted: 0,
+        videos: [],
+        error: body?.error || `the server refused the delete (HTTP ${res.status})`,
+      }
+    }
+    return {
+      deleted: body?.deleted || 0,
+      videos: body?.videos || [],
+      purged: body?.purged,
+      error: null,
+    }
+  } catch (e) {
+    return { deleted: 0, videos: [], error: e instanceof Error ? e.message : String(e) }
   }
 }
 

@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSupabase } from '../../../../../../../lib/supabase/server'
 import { getQuota, addToQuota } from '../../../../../../../lib/quota'
+import { PURGE_COLUMNS, planPurge, type DeletedVideoRow } from '../../../../../../../lib/videoPurge'
 
 // Bunny Stream auto-generates a poster thumbnail for every uploaded video.
 // We hand it back inline in the list response (derived from the original's
@@ -279,16 +280,88 @@ export async function POST(
   return NextResponse.json({ video: data, session_id: session.id, action: 'created' })
 }
 
-// DELETE ?id=<uuid>        → remove ONE video row
-//        ?date=YYYY-MM-DD  → remove EVERY video row for that session day
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+// ── purging the blobs a deleted row leaves in Bunny ──────────────────────────
+// Storage is written with BUNNY_STORAGE_WRITE_KEY; the read-only key returns 401
+// on a DELETE, so a deployment without the write key must SAY it skipped rather
+// than report a purge it did not do. See the note in CLAUDE.md: leaving the
+// write key out is a deliberate read-only posture, not a misconfiguration.
+const STORAGE_WRITE_KEY = process.env.BUNNY_STORAGE_WRITE_KEY
+const STORAGE_ZONE = process.env.BUNNY_STORAGE_ZONE
+const STORAGE_REGION = process.env.BUNNY_STORAGE_REGION || 'de'
+const STREAM_KEY = process.env.BUNNY_STREAM_API_KEY
+const STREAM_LIBRARY = process.env.BUNNY_STREAM_LIBRARY_ID
+
+const storageBase = () =>
+  STORAGE_REGION === 'de'
+    ? 'https://storage.bunnycdn.com'
+    : `https://${STORAGE_REGION}.storage.bunnycdn.com`
+
+interface PurgeReport {
+  /** Objects and stream videos actually removed. */
+  ok: string[]
+  /** Things we tried and could not remove — named, so the row being gone while
+   *  the file survives is visible instead of silent. */
+  failed: string[]
+  /** Not attempted, because Bunny is not configured for writes here. */
+  skipped: string[]
+}
+
+const emptyPurge = (): PurgeReport => ({ ok: [], failed: [], skipped: [] })
+
+// A 404 counts as purged: the object is not there, which is the state we wanted.
+const gone = (status: number) => status === 404 || (status >= 200 && status < 300)
+
+async function purgeBunny(rows: readonly DeletedVideoRow[]): Promise<PurgeReport> {
+  const plan = planPurge(rows)
+  const report = emptyPurge()
+
+  for (const key of plan.storageKeys) {
+    if (!STORAGE_WRITE_KEY || !STORAGE_ZONE) { report.skipped.push(key); continue }
+    try {
+      const res = await fetch(`${storageBase()}/${STORAGE_ZONE}/${key}`, {
+        method: 'DELETE',
+        headers: { AccessKey: STORAGE_WRITE_KEY },
+      })
+      ;(gone(res.status) ? report.ok : report.failed).push(key)
+    } catch { report.failed.push(key) }
+  }
+
+  for (const streamId of plan.streamIds) {
+    if (!STREAM_KEY || !STREAM_LIBRARY) { report.skipped.push(streamId); continue }
+    try {
+      const res = await fetch(
+        `https://video.bunnycdn.com/library/${STREAM_LIBRARY}/videos/${streamId}`,
+        { method: 'DELETE', headers: { AccessKey: STREAM_KEY } }
+      )
+      ;(gone(res.status) ? report.ok : report.failed).push(streamId)
+    } catch { report.failed.push(streamId) }
+  }
+
+  return report
+}
+
+// DELETE ?id=<uuid>            → remove ONE video row
+//        ?external_id=<local id> → the same row, found by the IDB key it was
+//                                  mirrored from, for a client whose merge has
+//                                  not run and so has no UUID to send. Without
+//                                  it the client sent `v_1779…` as `id`, the
+//                                  UUID comparison errored, and the 500 came
+//                                  back through deleteVideosCloud as a silent
+//                                  `{deleted: 0}` that looked like success.
+//        ?date=YYYY-MM-DD        → every video row for that session day
 //
 // Why this exists: the client's DeleteButton removed the clip from IndexedDB and
 // from Bunny Stream but never deleted the Supabase row, so every delete left an
 // orphan that merged back in on the next load as a phantom cloud-only clip. A
 // delete has to hit all three stores or the row resurrects.
 //
-// Returns the deleted rows' bunny ids so the caller can purge the blobs too —
-// they're gone from the DB after this, so it's the last chance to read them.
+// The Bunny objects go HERE, not in the caller. They used to be handed back for
+// the caller to purge and no caller ever did, which left two things behind: paid
+// storage for files nothing points at, and — the part that bites — objects that
+// `backfill-from-bunny` turns back into rows. Purging needs the write key, which
+// only the server has, so the caller could not have done it anyway.
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { teamId: string; boatId: string } }
@@ -298,12 +371,22 @@ export async function DELETE(
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
   const id = req.nextUrl.searchParams.get('id')
+  const externalId = req.nextUrl.searchParams.get('external_id')
   const date = req.nextUrl.searchParams.get('date')
-  if (!id && !date) {
-    return NextResponse.json({ error: 'id or date required' }, { status: 400 })
+  if (!id && !externalId && !date) {
+    return NextResponse.json({ error: 'id, external_id or date required' }, { status: 400 })
   }
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'date must be YYYY-MM-DD' }, { status: 400 })
+  }
+  // A non-UUID `id` is the caller sending an IDB key where a row id belongs.
+  // Postgres rejects it and the 500 used to reach the user as a tick. Say what
+  // it should have sent instead.
+  if (id && !UUID_RE.test(id)) {
+    return NextResponse.json(
+      { error: `id must be a UUID — pass a local IDB key as external_id instead (got ${id})` },
+      { status: 400 }
+    )
   }
 
   // Scope every delete to (team, boat) as well as the id/date, so a stray id from
@@ -316,6 +399,10 @@ export async function DELETE(
 
   if (id) {
     q = q.eq('id', id)
+  } else if (externalId) {
+    // (boat_id, external_id) is uniquely indexed, and boat_id is already pinned
+    // above, so this names exactly one row.
+    q = q.eq('external_id', externalId)
   } else {
     const { data: session } = await supabase
       .from('sessions')
@@ -324,12 +411,14 @@ export async function DELETE(
       .eq('boat_id', params.boatId)
       .eq('date', date as string)
       .maybeSingle()
-    if (!session) return NextResponse.json({ deleted: 0, videos: [] })
+    if (!session) return NextResponse.json({ deleted: 0, videos: [], purged: emptyPurge() })
     q = q.eq('session_id', session.id)
   }
 
-  const { data, error } = await q.select('id,bunny_stream_id,bunny_storage_path')
+  const { data, error } = await q.select(PURGE_COLUMNS)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ deleted: (data || []).length, videos: data || [] })
+  const rows = (data || []) as DeletedVideoRow[]
+  const purged = await purgeBunny(rows)
+  return NextResponse.json({ deleted: rows.length, videos: rows, purged })
 }

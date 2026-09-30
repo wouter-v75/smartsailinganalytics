@@ -2,6 +2,7 @@
 import { useState, useCallback } from "react";
 import { deleteStreamVideo } from '../../lib/bunny';
 import { deleteVideosCloud, ensureCloudVideoId } from '../../lib/cloud-videos';
+import { cloudRowExternalId, cloudRowId } from '../video/DeleteButton';
 import { deleteVideo, getVideoBlob, getVideosForDate, markVideoOriginalUploaded } from '../../lib/localStore';
 import { clearPendingOrigStream } from '../../lib/pendingOrigStreams';
 import { currentStorageScope } from '../../lib/storageScope';
@@ -35,15 +36,31 @@ export function useBatchActions({
       const {data:{user}}=await supabase.auth.getUser();
       supabaseUser=user;
     }catch{}
+    // The cloud row goes FIRST for each clip, and a clip whose row refuses to go
+    // is LEFT ALONE — deleting it locally over a surviving row is exactly how a
+    // clip comes back on the next sync, and worse, comes back cloud-only.
+    // `id` used to be `v.cloudId||v.id`, which sent an IDB key where a UUID
+    // belongs whenever the merge had not run; the server has an external_id
+    // route for that now.
+    const gone=new Set(); const kept=[];
     for(const v of targets){
-      if(v.streamId){try{await deleteStreamVideo(v.streamId);}catch{}}
-      if(supabaseUser){try{await deleteVideosCloud({userId:supabaseUser.id,id:v.cloudId||v.id});}catch{}}
+      if(supabaseUser){
+        const res=await deleteVideosCloud({
+          userId:supabaseUser.id, id:cloudRowId(v), externalId:cloudRowExternalId(v),
+        });
+        if(res.error){ kept.push(`${v.title||v.id}: ${res.error}`); continue; }
+        // No row to purge from, but a stream id here: an upload whose row has
+        // already gone. Nothing server-side knows about it.
+        if(!res.deleted&&v.streamId){try{await deleteStreamVideo(v.streamId);}catch{}}
+      }
+      gone.add(v.id);
     }
-    for(const id of ids){try{await deleteVideo(id);}catch{}}
-    setAllVideos(p=>p.filter(v=>!batchSelected.has(v.id)));
-    if(selectedVideo&&batchSelected.has(selectedVideo.id))setSelectedVideo(null);
+    for(const id of ids){ if(gone.has(id)){try{await deleteVideo(id);}catch{}} }
+    setAllVideos(p=>p.filter(v=>!gone.has(v.id)));
+    if(selectedVideo&&gone.has(selectedVideo.id))setSelectedVideo(null);
     clearBatch();
-    addLog(`🗑 Deleted ${ids.length} clip${ids.length>1?"s":""} — local + Bunny + cloud row`);
+    addLog(`🗑 Deleted ${gone.size} clip${gone.size===1?"":"s"} — cloud row + Bunny + local`);
+    for(const k of kept) addLog(`⚠ Kept — ${k}`);
   },[batchSelected, selectedVideo, clearBatch, allVideos, addLog, setAllVideos, setSelectedVideo]);
 
   // Nuke every clip for the active day across all three stores. Unlike batch
