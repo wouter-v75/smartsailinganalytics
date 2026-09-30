@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sailMedia, twsBand, allTwsBands, isVideo360, type SailMediaInput, type PhaseLite } from '../sailMedia'
+import { sailMedia, countSailMedia, twsBand, allTwsBands, isVideo360, type SailMediaInput, type PhaseLite } from '../sailMedia'
 import { SAIL_CHANGE_SLUG } from '../tagging/sailState'
 import type { TagEvent } from '../tagging/types'
 
@@ -191,5 +191,37 @@ describe('sailMedia', () => {
     }))
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({ tws: null, event: 'Worlds', startSec: 0 })
+  })
+})
+
+describe('countSailMedia', () => {
+  it('counts a clip once however many bands it spans, and trim frames as photos', () => {
+    const items = sailMedia(base({
+      photos: [
+        { id: 'p1', taken_utc: iso(T(11, 1)), date: D },
+        { id: 'p2', taken_utc: iso(T(11, 4)), date: D, trim: true },
+      ],
+      scans: [{ id: 's1', sail_id: 'j2', captured_at: iso(T(11, 0)) }],
+      videos: [{ id: 'v', start_utc: iso(T(11, 0)), duration_ms: 6 * 60_000, date: D }],
+      days: {
+        [D]: { event: null, tags: [], phases: [...phases(T(11, 0), T(11, 3), ['J2'], 10), ...phases(T(11, 3), T(11, 6), ['J2'], 14)] },
+      },
+    }))
+    expect(items.filter((i) => i.kind === 'video')).toHaveLength(2)  // two bands…
+    expect(countSailMedia(items)).toEqual({ photos: 2, scans: 1, videos: 1 })  // …one clip
+  })
+
+  it('finds the phase at a time among many (binary search), edges included', () => {
+    const many = phases(T(8, 0), T(18, 0), ['J2'], 12)
+    const items = sailMedia(base({
+      photos: [
+        { id: 'first', taken_utc: iso(T(8, 0)), date: D },
+        { id: 'mid', taken_utc: iso(T(13, 17, 29)), date: D },
+        { id: 'last', taken_utc: iso(T(17, 59, 59)), date: D },
+        { id: 'after', taken_utc: iso(T(18, 0)), date: D },
+      ],
+      days: { [D]: { event: null, tags: [], phases: many } },
+    }))
+    expect(items.map((i) => i.id).sort()).toEqual(['first', 'last', 'mid'])
   })
 })

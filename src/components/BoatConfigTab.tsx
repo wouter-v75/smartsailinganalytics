@@ -85,6 +85,8 @@ export default function BoatConfigTab({
   const pf = getPrefetchedBoatConfig(teamId, boatId)
   const [view, setView] = useState<'inventory' | 'media' | 'shapes' | 'rig' | 'polar' | 'log' | 'battens' | 'vocab'>('inventory')
   const [mediaSailId, setMediaSailId] = useState<string>('') // the sail the Sail media tab shows
+  // sail id → { photos, scans, videos }, for the Media buttons. null = still counting.
+  const [mediaCounts, setMediaCounts] = useState<Record<string, { photos: number; scans: number; videos: number }> | null>(null)
   const uiNext = useUiNext() // ?ui=next → redesigned reference screen (Phase 1)
   const [sails, setSails] = useState<Sail[]>(() => (pf?.sails as Sail[]) || [])
   const [scans, setScans] = useState<Scan[]>(() => (pf?.scans as Scan[]) || [])
@@ -132,6 +134,19 @@ export default function BoatConfigTab({
       .finally(() => alive && setLoading(false))
     return () => { alive = false }
   }, [teamId, boatId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // How much media each sail has. Its own request, after the inventory: it reads
+  // the boat's whole season of photos, and the table should not wait for that.
+  useEffect(() => {
+    if (!teamId || !boatId) return
+    let alive = true
+    setMediaCounts(null)
+    fetch(`/api/teams/${teamId}/sails/media-counts?boat_id=${boatId}`)
+      .then((r) => r.json())
+      .then((j) => { if (alive) setMediaCounts(j?.counts || {}) })
+      .catch(() => { if (alive) setMediaCounts({}) })
+    return () => { alive = false }
+  }, [teamId, boatId])
 
   // All versions for this boat (active first); the active one drives the tab. A failed
   // read used to fall back to an empty list, which looks exactly like "no polar on file"
@@ -718,6 +733,7 @@ export default function BoatConfigTab({
                       td={td} input={input} btn={btn}
                       onPatch={(f: any) => patchSail(s.id, f)} onCert={(f: File) => uploadCert(s, f)} onDelete={() => deleteSail(s)}
                       onShowDesign={() => setDesignSail(s)}
+                      mediaCount={mediaCounts ? (mediaCounts[s.id] || { photos: 0, scans: 0, videos: 0 }) : null}
                       onShowMedia={() => { setMediaSailId(s.id); setView('media') }} />
                   ))}
                 </tbody>
@@ -2364,7 +2380,7 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
 }
 
 // ── One inventory row (view + inline edit) ───────────────────────────────────
-export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete, onShowDesign, onShowMedia }: any) {
+export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete, onShowDesign, onShowMedia, mediaCount }: any) {
   const spec = sail.specs || {}
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(sail.name)
@@ -2564,7 +2580,18 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
       <td style={td}>
         {onShowMedia && (
           <button onClick={onShowMedia} title={`SailScans, SailTrim, 360 video, photos and video of ${sail.name}, by wind band`}
-            style={{ background: '#0F2A45', border: `1px solid ${C.border}`, color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}>Media ›</button>
+            style={{ background: '#0F2A45', border: `1px solid ${C.border}`, color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer', whiteSpace: 'nowrap', display: 'inline-flex', gap: 8, alignItems: 'baseline' }}>
+            {/* The counts are the reason to press it: a sail with nothing
+                behind the button says so before anyone opens it. */}
+            {mediaCount ? (
+              ([['scans', mediaCount.scans], ['photos', mediaCount.photos], ['videos', mediaCount.videos]] as [string, number][]).map(([label, n]) => (
+                <span key={label} style={{ color: n ? '#06B6D4' : '#8A97A9', fontWeight: n ? 700 : 400 }}>
+                  <span style={{ fontVariantNumeric: 'tabular-nums' }}>{n}</span> {n === 1 ? label.slice(0, -1) : label}
+                </span>
+              ))
+            ) : <span style={{ color: '#8A97A9', fontWeight: 400 }}>counting…</span>}
+            <span>›</span>
+          </button>
         )}
       </td>
       {canEdit && (

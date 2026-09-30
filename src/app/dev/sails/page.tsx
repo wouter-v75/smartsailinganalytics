@@ -39,6 +39,13 @@ const SAILS = [
   },
 ]
 
+// Media counts per sail; s2 is still counting, s4 has nothing.
+const COUNTS: Record<string, { photos: number; scans: number; videos: number }> = {
+  s1: { photos: 142, scans: 6, videos: 11 },
+  s3: { photos: 38, scans: 0, videos: 1 },
+  s4: { photos: 0, scans: 0, videos: 0 },
+}
+
 export default function SailRowPreview() {
   const [patch, setPatch] = React.useState<unknown>(null)
   return (
@@ -61,6 +68,7 @@ export default function SailRowPreview() {
               key={s.id} sail={s} canEdit busy={false}
               td={td} input={input} btn={btn}
               onPatch={setPatch} onCert={() => {}} onDelete={() => {}} onShowDesign={() => {}} onShowMedia={() => {}}
+              mediaCount={COUNTS[s.id] ?? null}
             />
           ))}
         </tbody>

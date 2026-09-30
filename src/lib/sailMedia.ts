@@ -102,7 +102,7 @@ export interface DayContext {
   event: string | null
   /** Sail-change tags for the day (any others are ignored). */
   tags: TagEvent[]
-  /** The day's 30 s phases, oldest first. Empty when the day has no log. */
+  /** The day's 30 s phases, oldest first (phaseAt binary-searches them). Empty when the day has no log. */
   phases: PhaseLite[]
 }
 
@@ -162,7 +162,15 @@ export function sailMedia(input: SailMediaInput): SailMediaItem[] {
   const phaseAt = (date: string | null, t: number): PhaseLite | null => {
     const ph = date ? input.days[date]?.phases : null
     if (!ph?.length) return null
-    for (const p of ph) if (t >= p.utc && t < p.endUtc) return p
+    // Binary search: phases are sorted, and the counts run this for every
+    // photo of the season once per sail.
+    let lo = 0, hi = ph.length - 1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (t < ph[mid].utc) hi = mid - 1
+      else if (t >= ph[mid].endUtc) lo = mid + 1
+      else return ph[mid]
+    }
     return null
   }
 
@@ -262,4 +270,21 @@ export function sailMedia(input: SailMediaInput): SailMediaItem[] {
   }
 
   return out.sort((a, b) => b.t - a.t)
+}
+
+/**
+ * How much there is of each sail: photos (SailTrim frames included), SailScans
+ * and video clips (360 included). A clip counts once however many wind bands it
+ * spans — the grid shows it once per band, but it is one clip.
+ */
+export interface SailMediaCount { photos: number; scans: number; videos: number }
+
+export function countSailMedia(items: readonly SailMediaItem[]): SailMediaCount {
+  const photos = new Set<string>(), scans = new Set<string>(), videos = new Set<string>()
+  for (const i of items) {
+    if (i.kind === 'scan') scans.add(i.id)
+    else if (i.kind === 'photo' || i.kind === 'trim') photos.add(i.id)
+    else videos.add(i.id)
+  }
+  return { photos: photos.size, scans: scans.size, videos: videos.size }
 }
