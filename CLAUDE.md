@@ -50,6 +50,22 @@ what falls between a gun and its `--finish`, and the window is half-open, so a
 windward finish — which Expedition records as one more top-mark rounding — does
 not come out as a lap that never happened.
 
+## Hand over the CLI, every time
+
+Nothing in this project runs inside Claude Code's sandbox — no card, no
+`ffmpeg`, no database, no browser with the real session in it. So the deliverable
+of almost every piece of work is a COMMAND Wouter pastes, not a description of
+one. Give it complete and copy-pasteable, with the `cd` in it, whether or not he
+asked: "pull and redeploy", "run the dry run", "check the clips" all mean the
+same thing — the exact line.
+
+| | |
+|---|---|
+| pull | `cd /Users/wouterverbraak/Code/ssa && git pull` |
+| local dev, after a pull that adds a route | `rm -rf .next && npm run dev` — a running dev server has already built its route manifest and serves stale chunks for a new one |
+| production | nothing to run. `vercel.json` has no deploy hook; Vercel builds from `main` on push. Then hard-reload the tab (Cmd-Shift-R) — a warm tab keeps the old client bundle and the fix looks unshipped |
+| before pushing | `npm run verify` (tsc → next lint → lint:undef → vitest → next build) |
+
 ## Docs are delivered as PDF, never as `.md`
 
 The Markdown in `docs/` is the editable **source**. What gets handed over — to
