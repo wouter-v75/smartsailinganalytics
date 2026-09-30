@@ -308,7 +308,7 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
 
 // Exported for its own test: it is the whole right-hand pane, it composes the
 // canvas, and a throw in here takes the Photos tab with it.
-export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime,onMeasureGeometry,onToggleGeometryOverlay}){
+export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime,onMeasureGeometry,onToggleGeometryOverlay,sessionDate=null}){
   const [editTime,setEditTime]=useState(false);
   const [timeVal,setTimeVal]=useState('');
   const [extraGauges,setExtraGauges]=useState([]); // session-only overlay vars
@@ -479,7 +479,12 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
           annotation={geom.annotation}
           overlayOn={!!geom.overlay}
           onToggleOverlay={onToggleGeometryOverlay ? () => onToggleGeometryOverlay(photo) : null}
-          onRemeasure={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}/>
+          onRemeasure={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}
+          /* The boat's own lidar beside the photographed shape, when the day has
+             it AND the frame is of our own boat. Absent otherwise — no columns
+             rather than a column of dashes. */
+          sessionDate={sessionDate}
+          takenUtc={photo.utc ?? null}/>
       )}
       {!geom && <MeasureGeometryButton onClick={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}/>}
 
@@ -1319,7 +1324,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {!isNarrow && (selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
            canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}
-           onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null}/>
+           onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null} sessionDate={activeDate}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#4E5D71"}}>
           <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#64748B"}}>Select a photo to view</div></div>
         </div>)}
@@ -1332,7 +1337,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             onUpload={handleUpload} uploading={uploading}
             canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}
             onClose={()=>setMobileDetailOpen(false)} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}
-            onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null}/>
+            onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null} sessionDate={activeDate}/>
         </div>
       )}
 

@@ -17,6 +17,8 @@
 
 import React from 'react'
 import { formatMm, type SailTrimAnnotation, type AnnotationTarget } from '../../lib/sailTrimOverlay'
+import { lidarCell } from '../../lib/sailTrimLidar'
+import { useLidarForPhoto } from './useLidarForPhoto'
 
 const label = (t: AnnotationTarget) =>
   t.label.replace(/^Jib /, '').replace(/ @ reference height$/, ' @ ref')
@@ -27,13 +29,25 @@ export default function SailGeometryCard({
   onToggleOverlay = null,
   onRemeasure = null,
   compact = false,
+  sessionDate = null,
+  takenUtc = null,
 }: {
   annotation: SailTrimAnnotation
   overlayOn?: boolean
   onToggleOverlay?: (() => void) | null
   onRemeasure?: (() => void) | null
   compact?: boolean
+  /** The three together let the card put the boat's OWN lidar beside the
+   *  photographed shape. Leave them off and the lidar columns simply do not
+   *  appear — every caller works unchanged. */
+  sessionDate?: string | null
+  takenUtc?: string | number | null
 }) {
+  // Before the early return: a hook may not sit behind one.
+  const lidar = useLidarForPhoto({
+    sessionDate, takenUtc,
+    measuredAs: annotation?.scale?.boat ?? null,
+  })
   if (!annotation?.targets?.length) return null
   const cols = Math.max(1, Math.min(3, annotation.targets.length))
   return (
@@ -96,6 +110,13 @@ export default function SailGeometryCard({
             const th: React.CSSProperties = { fontSize: 8.5, color: '#4E5D71', fontWeight: 700, textAlign: 'right', padding: '0 0 3px 7px', whiteSpace: 'nowrap' }
             const td: React.CSSProperties = { fontSize: 11.5, fontWeight: 700, color: '#E2E8F0', fontFamily: 'monospace', textAlign: 'right', padding: '2px 0 2px 7px' }
             const tdSig: React.CSSProperties = { ...td, fontSize: 10, fontWeight: 600, color: '#64748B' }
+            // The lidar's own colour, so a glance tells you which instrument
+            // said what. They are not the same measurement and should not read
+            // as one column continued.
+            const thL: React.CSSProperties = { ...th, color: '#C084FC' }
+            const tdL: React.CSSProperties = { ...td, color: '#C084FC', fontWeight: 600 }
+            const deg = (v: number | null) => (v == null ? '—' : `${v.toFixed(1)}°`)
+            const pct = (v: number | null) => (v == null ? '—' : `${v.toFixed(1)} %`)
             const ROWS = [
               { key: 'stripe87', short: '87.5 %' }, { key: 'stripe75', short: '75 %' },
               { key: 'stripe50', short: '50 %' }, { key: 'stripe25', short: '25 %' },
@@ -108,8 +129,12 @@ export default function SailGeometryCard({
                     <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Stripe</th>
                     <th style={th}>Twist Main</th>
                     <th style={th}>Twist Jib</th>
+                    {lidar && <th style={thL}>Lidar Twist Main</th>}
+                    {lidar && <th style={thL}>Lidar Twist Jib</th>}
                     <th style={th}>Draft Main</th>
                     <th style={th}>Draft Jib</th>
+                    {lidar && <th style={thL}>Lidar Draft Main</th>}
+                    {lidar && <th style={thL}>Lidar Draft Jib</th>}
                     <th style={th}>Accuracy Main</th>
                     <th style={th}>Accuracy Jib</th>
                   </tr>
@@ -122,8 +147,12 @@ export default function SailGeometryCard({
                         <td style={{ fontSize: 10.5, color: '#94A3B8', padding: '2px 0' }}>{r.short}</td>
                         <td style={td}>{m ? `${m.angleDeg.toFixed(1)}°${m.widthSource === 'interpolated' ? '*' : ''}` : '—'}</td>
                         <td style={td}>{j ? `${j.angleDeg.toFixed(1)}°${j.widthSource === 'interpolated' ? '*' : ''}` : '—'}</td>
+                        {lidar && <td style={tdL}>{deg(lidarCell(lidar, 'main', r.key, 'twist'))}</td>}
+                        {lidar && <td style={tdL}>{deg(lidarCell(lidar, 'jib', r.key, 'twist'))}</td>}
                         <td style={td}>{draft('main', r.key)}</td>
                         <td style={td}>{draft('jib', r.key)}</td>
+                        {lidar && <td style={tdL}>{pct(lidarCell(lidar, 'main', r.key, 'depth'))}</td>}
+                        {lidar && <td style={tdL}>{pct(lidarCell(lidar, 'jib', r.key, 'depth'))}</td>}
                         <td style={tdSig}>{m ? `± ${m.angleSigmaDeg.toFixed(2)}` : '—'}</td>
                         <td style={tdSig}>{j ? `± ${j.angleSigmaDeg.toFixed(2)}` : '—'}</td>
                       </tr>

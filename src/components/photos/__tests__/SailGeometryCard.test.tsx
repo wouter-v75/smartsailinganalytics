@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import React from 'react'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import SailGeometryCard from '../SailGeometryCard'
 import type { SailTrimAnnotation } from '../../../lib/sailTrimOverlay'
@@ -120,5 +120,61 @@ describe('SailGeometryCard — the Twist box', () => {
     })
     render(<SailGeometryCard annotation={withCamber} />)
     expect(within(screen.getByTestId('sailgeom-twist')).getByText('7.1 %↓')).toBeTruthy()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The lidar columns. They appear only when the boat HAS a lidar and the frame is
+// of that boat, so the hook is mocked at its edge — what is under test here is
+// the table, not the fetch.
+// ─────────────────────────────────────────────────────────────────────────────
+
+vi.mock('../useLidarForPhoto', () => ({
+  useLidarForPhoto: () => mockPhase,
+  MAX_GAP_MS: 45_000,
+}))
+
+let mockPhase: { mean: Record<string, number> } | null = null
+
+const withChordsAndCamber = () => base({
+  chords: [
+    { sail: 'main', tag: 'stripe50', fraction: 0.5, chordMm: 1000, widthM: 7.04, widthSource: 'certificate', angleDeg: 9.9, angleSigmaDeg: 0.3, luffMm: null },
+  ] as never,
+  camber: [
+    { sail: 'main', tag: 'stripe50', camberPct: 10.4, draftPct: 49, rmsMm: 12, frames: 3, baselineDeg: 8, reachedPeak: true, fromFrames: [] },
+  ] as never,
+})
+
+describe('SailGeometryCard — lidar columns', () => {
+  beforeEach(() => { mockPhase = null })
+
+  it('shows no lidar columns at all when there is no lidar', () => {
+    // A rival, or a day the unit was off. Dashes would read as a measurement
+    // that failed rather than as equipment that was never there.
+    render(<SailGeometryCard annotation={withChordsAndCamber()} />)
+    expect(screen.queryByText(/Lidar Twist Main/)).toBeNull()
+    expect(screen.queryByText(/Lidar Draft Main/)).toBeNull()
+  })
+
+  it('adds them beside the photographed numbers when the lidar is there', () => {
+    mockPhase = { mean: { mnTw50: 9.4, mnCa50: 11.2, mnDr50: 47.5 } }
+    render(<SailGeometryCard annotation={withChordsAndCamber()} sessionDate="2026-09-26" takenUtc="2026-09-26T10:25:28Z" />)
+    expect(screen.getByText(/Lidar Twist Main/)).toBeTruthy()
+    const row = screen.getByText('50 %').closest('tr')!
+    // Photo beside lidar: 9.9° against 9.4°, and 10.4 % against 11.2 %.
+    expect(within(row).getByText('9.9°')).toBeTruthy()
+    expect(within(row).getByText('9.4°')).toBeTruthy()
+    expect(within(row).getByText('10.4 %')).toBeTruthy()
+    expect(within(row).getByText('11.2 %')).toBeTruthy()
+    // DR is the position of the peak, not the depth — it must not be here.
+    expect(within(row).queryByText('47.5 %')).toBeNull()
+  })
+
+  it('dashes a stripe the lidar does not reach, without losing the column', () => {
+    mockPhase = { mean: { mnTw25: 3.0 } }
+    render(<SailGeometryCard annotation={withChordsAndCamber()} sessionDate="2026-09-26" takenUtc="2026-09-26T10:25:28Z" />)
+    const row = screen.getByText('50 %').closest('tr')!
+    expect(within(row).getByText('9.9°')).toBeTruthy()      // the photo is still there
+    expect(screen.getByText(/Lidar Twist Main/)).toBeTruthy()
   })
 })
