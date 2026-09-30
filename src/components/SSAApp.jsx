@@ -51,6 +51,7 @@ import { useBatchActions } from './ssa/useBatchActions';
 import { useClipMetadata } from './ssa/useClipMetadata';
 import { useClipPlayback } from './ssa/useClipPlayback';
 import { useWorkspaceIdentity } from './ssa/useWorkspaceIdentity';
+import { landingDate } from '../lib/landingDate';
 
 function SSAApp(){
   const isMobile = useIsMobile();
@@ -256,6 +257,27 @@ function SSAApp(){
     if((activeTab==="analytics"||activeTab==="tagger") && !logData && activeDate){
       loadDate(activeDate);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[activeTab]);
+
+  // The tagger opens on TODAY, once.
+  //
+  // Every other tab wants the newest day that HAS something: a library with no
+  // clips on it is an empty screen. The tagger is the opposite — it is used on
+  // the water, on a day that by definition has nothing in it yet, and landing it
+  // on the last day with data means the first tags of the morning are pressed
+  // onto yesterday. The date is right on the tag either way (the server files by
+  // the tag's own instant), but the crew is looking at the wrong day.
+  //
+  // ONCE, and only on the way in. Going back to fix a previous day's tags is a
+  // real thing to do — it is how 29 September's gates and top marks were
+  // corrected — so after this first landing the day stays wherever it is put.
+  const taggerOpenedRef=useRef(false);
+  useEffect(()=>{
+    if(activeTab!=="tagger"||taggerOpenedRef.current) return;
+    taggerOpenedRef.current=true;
+    const today=TODAY();
+    if(activeDate!==today) loadDate(today);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[activeTab]);
 
@@ -523,13 +545,11 @@ function SSAApp(){
       // created before a regatta, so sessions for days nobody has sailed are
       // normal — and opening one silently made it the day everything was filed
       // against. That is how 28 September's tags ended up on 3 October.
-      const videoDates=vids.map(v=>v.sessionDate).filter(Boolean).filter(d=>d<=today).sort();
-      const latestVideoDate=videoDates.length?videoDates[videoDates.length-1]:null;
-      const latestDataDate=localSessions
-        .filter(s=>hasOpenableData(s) && s.date<=today)
-        .map(s=>s.date).sort().reverse()[0] || null;
-      const latestDate=[latestDataDate,latestVideoDate].filter(Boolean).sort().reverse()[0]
-        ||localSessions.filter(s=>s.date<=today)[0]?.date||today;
+      const latestDate=landingDate(
+        [...vids.map(v=>v.sessionDate), ...localSessions.filter(hasOpenableData).map(s=>s.date)],
+        localSessions.map(s=>s.date),
+        today
+      );
       const isRecent=(date)=>date===today||date===latestDate;
       // On mobile: skip expensive enrichVideo (requires full log read) for old sessions.
       // Clips share dates (e.g. 10 sessions ⇒ ~10 unique days but ~100 clips), so read
@@ -665,9 +685,9 @@ function SSAApp(){
               // onto a day that had not happened. The tagger now files by the
               // tag's own instant so the data is safe either way, but the view
               // should not be sitting on a day nobody has sailed.
-              const today = TODAY();
-              const newestCloudDate = cloudSessions.map(s => s.date).filter(d => d && d <= today).sort().reverse()[0];
-              const bestDate = [latestDate, newestCloudDate].filter(Boolean).sort().reverse()[0];
+              const bestDate = landingDate(
+                [latestDate, ...cloudSessions.map(s => s.date)], [], TODAY()
+              );
               if (bestDate && bestDate !== latestDate) {
                 await loadDate(bestDate);
                 _pm(`cloud: loadDate(${bestDate})`);

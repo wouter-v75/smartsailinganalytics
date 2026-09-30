@@ -6,6 +6,7 @@ import { listSessionsCloud } from '../../lib/cloud-sessions';
 import { hasOpenableData } from '../../lib/hasOpenableData';
 import { getAllVideosForMembership, getSessionsForMembership, venueTodayIso as TODAY } from '../../lib/localStore';
 import { getBrowserSupabase, getUidFast } from '../../lib/supabase/browser';
+import { landingDate } from '../../lib/landingDate'
 
 export function useWorkspaceIdentity({
   setAllVideos, setLogData, setXmlData, setSelectedVideo, setSessions,
@@ -135,13 +136,18 @@ export function useWorkspaceIdentity({
         // Open the most recent day that has VIDEO data for the NEW boat, and load
         // it — so the switch lands on a populated folder with thumbnails already
         // loading, instead of a blank date the user has to click into.
-        const today2=TODAY();
-        const bestDate=[
-          ...localSessions.filter(s=>hasOpenableData(s) && s.date<=today2).map(s=>s.date),
-          ...cloudSessions.map(s=>s.date),
-        ].sort().reverse()[0]
-          || [...localSessions.map(s=>s.date),...cloudSessions.map(s=>s.date)].sort().reverse()[0]
-          || null;
+        // This is the path that was landing on 3 October: it bounded its local
+        // sessions to today and left the cloud ones unbounded, and the cloud
+        // list carries the whole regatta including the days still to come.
+        // landingDate() holds the bound now, for every path.
+        const bestDate=landingDate(
+          [
+            ...localSessions.filter(hasOpenableData).map(s=>s.date),
+            ...cloudSessions.map(s=>s.date),
+          ],
+          [...localSessions.map(s=>s.date),...cloudSessions.map(s=>s.date)],
+          TODAY()
+        );
         if(bestDate) await loadDateRef.current?.(bestDate);
         // Warm the new boat's Boat Config tab too.
         if(m?.team_id&&m?.boat_id) prefetchBoatConfig(m.team_id,m.boat_id);
