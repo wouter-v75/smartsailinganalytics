@@ -12,6 +12,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { getPref, setPref } from '@/lib/prefsStore'
 import { FallbackVideoPlayer } from '@/components/timeline/DayMedia'
 import PhotoLightbox, { type LightboxPhoto } from '@/components/timeline/PhotoLightbox'
 import SailScanDetail from '@/components/SailScanDetail'
@@ -24,6 +26,10 @@ const C = {
   text: '#cbd5e1', dim: '#8A97A9', head: '#e2e8f0', warn: '#F59E0B',
 }
 const PER_CELL = 4
+
+/** This machine's "don't ask again" for the ✕ — a UI preference, so it lives in
+ *  ssa-prefs (lib/prefsStore), never in ssa-db: see CLAUDE.md on DB_VER. */
+const SKIP_HIDE_CONFIRM_PREF = 'sailMedia.skipHideConfirm'
 
 // The same digitiser the timeline opens, on demand — it is big and brings its
 // own CDN libraries, and most people looking at a sail never measure one.
@@ -88,6 +94,28 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
   const [showEmpty, setShowEmpty] = useState(false)
   const [showHidden, setShowHidden] = useState(false)       // bring back what was marked not relevant
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
+  const [confirmFor, setConfirmFor] = useState<Item | null>(null) // the ✕ waiting on "are you sure?"
+  const [dontAsk, setDontAsk] = useState(false)                   // the dialog's tick box
+  const [skipConfirm, setSkipConfirm] = useState(false)           // ticked once, remembered here
+  useEffect(() => {
+    let alive = true
+    getPref(SKIP_HIDE_CONFIRM_PREF).then((v: unknown) => { if (alive && v === true) setSkipConfirm(true) })
+    return () => { alive = false }
+  }, [])
+
+  // ✕ asks first, unless this machine said not to. ↺ (bringing one back) never asks.
+  const askHide = (i: Item) => {
+    if (skipConfirm) { setHidden(i, true); return }
+    setDontAsk(false)
+    setConfirmFor(i)
+  }
+  const confirmHide = () => {
+    const i = confirmFor
+    setConfirmFor(null)
+    if (!i) return
+    if (dontAsk) { setSkipConfirm(true); setPref(SKIP_HIDE_CONFIRM_PREF, true) }
+    setHidden(i, true)
+  }
   const [open, setOpen] = useState<Set<string>>(new Set()) // expanded cells
   const [photo, setPhoto] = useState<OpenPhoto | null>(null)
   const [geomFor, setGeomFor] = useState<OpenPhoto | null>(null)
@@ -254,7 +282,7 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
           invalid, and the click would open the photo as well. */}
       {canHide && (
         <button
-          onClick={() => setHidden(i, !i.hidden)}
+          onClick={() => (i.hidden ? setHidden(i, false) : askHide(i))}
           disabled={busy}
           title={i.hidden ? `Show this ${isVideo ? 'clip' : 'photo'} for ${sail ? sailLabel(sail) : 'this sail'} again` : `Not relevant to ${sail ? sailLabel(sail) : 'this sail'} — hide it here`}
           aria-label={i.hidden ? 'Restore' : 'Not relevant'}
@@ -369,6 +397,26 @@ export default function SailMediaPanel({ teamId, boatId, sails, sailId, onSailCh
           </p>
         </div>
       )}
+
+      <Dialog open={!!confirmFor} onOpenChange={(o) => { if (!o) setConfirmFor(null) }}>
+        {confirmFor && (
+          <DialogContent title={`Remove from ${sail ? sailLabel(sail) : 'this sail'}?`}>
+            <p className="text-sm">This will remove this media from this selection. Are you sure?</p>
+            <p className="mt-1 text-xs text-muted">
+              Only from {sail ? sailLabel(sail) : 'this sail'}{confirmFor.kind === 'video' || confirmFor.kind === 'video360' ? ', in every wind band the clip appears in' : ''}.
+              Nothing is deleted — “Show not relevant” brings it back.
+            </p>
+            <label className="mt-4 flex cursor-pointer items-center gap-2 text-xs text-muted">
+              <input type="checkbox" checked={dontAsk} onChange={(e) => setDontAsk(e.target.checked)} />
+              Don’t show this message in the future
+            </label>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="secondary" size="sm" onClick={() => setConfirmFor(null)}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={confirmHide} autoFocus>Yes</Button>
+            </div>
+          </DialogContent>
+        )}
+      </Dialog>
 
       <SailGeometryDialog
         open={!!geomFor}
