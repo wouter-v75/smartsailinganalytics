@@ -5,7 +5,7 @@ import { createStreamUpload, listR2Sessions, syncSessionToCloud, uploadFileToStr
 import { listSessionsCloud } from '../../lib/cloud-sessions';
 import { ensureCloudVideoId, makeVideoMirrorCallback } from '../../lib/cloud-videos';
 import { connInfo, onWifi } from '../../lib/connection';
-import { getLogData, getSessionsForMembership, getUnsyncedCount, getVideoBlob, getVideosForDate, getXmlData, markCloudSynced } from '../../lib/localStore';
+import { getLogData, getSessions, getSessionsForMembership, getUnsyncedCount, getVideoBlob, getVideosForDate, getXmlData, markCloudSynced } from '../../lib/localStore';
 import { clearPendingOrigStream, getPendingOrigStream, setPendingOrigStream } from '../../lib/pendingOrigStreams';
 import { currentStorageScope, scopeOfMembership } from '../../lib/storageScope';
 import { getBrowserSupabase } from '../../lib/supabase/browser';
@@ -492,7 +492,7 @@ export function useCloudSync({
         // desktop library sync, which used to push without it.
         const syncMem = supaUser ? getActiveMembership(supaUser.id) : null;
         const syncScope = scopeOfMembership(syncMem);
-        const refusal = daySyncRefusal(activeDate, getSessionsForMembership(syncMem), syncMem, fmtDate);
+        const refusal = daySyncRefusal(activeDate, getSessions(), syncMem, fmtDate);
         if(refusal){
           addLog(refusal);
           setMobileSyncState({phase:"error",message:`${fmtDate(activeDate)} is another boat's session — skipped`,progress:0});

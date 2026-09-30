@@ -1272,7 +1272,7 @@ function SSAApp(){
                     // activeDate may belong to another boat, and the push would
                     // file it under this one. See src/lib/syncBoatGuard.ts.
                     const libScope = scopeOfMembership(activeMem);
-                    const libRefusal = daySyncRefusal(activeDate, getSessionsForMembership(activeMem), activeMem, fmtDate);
+                    const libRefusal = daySyncRefusal(activeDate, getSessions(), activeMem, fmtDate);
                     if(libRefusal){
                       addLog(libRefusal);
                       setLibSyncProgress({items:[],overall:0,elapsed:0,error:libRefusal});

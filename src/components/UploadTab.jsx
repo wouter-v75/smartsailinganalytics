@@ -7,7 +7,7 @@ import { saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
 import { mergeTagListCloud } from '../lib/cloud-tag-list';
 import { ensureCloudVideoId, makeVideoMirrorCallback } from '../lib/cloud-videos';
 import { reduceLogForCloud } from '../lib/cloudLogReduce';
-import { computeAutoTags, deleteSsaPhases, getLogData, getSessionsForMembership, getVideoBlob, getVideoCloudFlags, getXmlData, loadSsaPhases, markVideoOriginalUploaded, mergeTagList, saveLogData, saveSsaPhases, saveVideo, saveXmlData, venueTodayIso as TODAY } from '../lib/localStore';
+import { computeAutoTags, deleteSsaPhases, getLogData, getSessions, getSessionsForMembership, getVideoBlob, getVideoCloudFlags, getXmlData, loadSsaPhases, markVideoOriginalUploaded, mergeTagList, saveLogData, saveSsaPhases, saveVideo, saveXmlData, venueTodayIso as TODAY } from '../lib/localStore';
 import { parseLog } from '../lib/logParse';
 import { isSubSecondLog, lidarSailsIn, logRateHz, thinToOneHz } from '../lib/logResolution';
 import { uploadSessionStats } from '../lib/phaseStatsUpload';
@@ -978,7 +978,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         const guardUser = await (async()=>{ try{ const {data:{user}} = await getBrowserSupabase().auth.getUser(); return user||null; }catch{ return null; } })();
         const guardMem = guardUser ? getActiveMembership(guardUser.id) : null;
         uploadScope = scopeOfMembership(guardMem);
-        const refusal = daySyncRefusal(savedDate, getSessionsForMembership(guardMem), guardMem, fmtDate);
+        const refusal = daySyncRefusal(savedDate, getSessions(), guardMem, fmtDate);
         if(refusal){
           addLog(refusal);
           setItem("log",{state:"error",pct:0});
