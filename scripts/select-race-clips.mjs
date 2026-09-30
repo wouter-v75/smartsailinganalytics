@@ -85,7 +85,7 @@ const opt = {
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
   photoLead: 30, photoLag: 30,      // 0:30 either side of a sail PhotoEvent — the
                                     // photo is one frame; this is the shape moving
-  shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false, noStarts: false,
+  shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false, noStarts: false, noTacks: false, noGybes: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
   racing: false, finish: [], guns: [], practice: [], marks: [], gates: [], have: [],
 }
@@ -115,6 +115,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--at') opt.at.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--no-photos') opt.noPhotos = true
   else if (a === '--no-turns') opt.noTurns = true
+  else if (a === '--no-tacks') { opt.noTacks = true; opt.noTurns = false }
+  else if (a === '--no-gybes') { opt.noGybes = true; opt.noTurns = false }
   else if (a === '--no-starts') opt.noStarts = true
   else if (a === '--turns') opt.noTurns = false
   else if (a === '--force') opt.force = true
@@ -150,6 +152,10 @@ function usage() {
       --turn-lead N   seconds before a tack or gybe              (default: 30)
       --turn-lag N    seconds after a tack or gybe               (default: 60)
       --no-turns      leave tacks and gybes out entirely
+      --no-tacks      keep the GYBES and drop the tacks. A day's tacks are
+                      mostly lane-keeping; its gybes are the ones with a kite up
+                      and something to see. Implies --turns.
+      --no-gybes      the other way round, for the same reason in reverse.
       --no-starts     cut no start clips. The guns still BOUND each race under
                       --racing — they just stop being moments of their own, for
                       a day whose starts are already uploaded and only the
@@ -405,7 +411,7 @@ const KINDS = {
   photo:   { lead: () => opt.photoLead, lag: () => opt.photoLag, tag: 'photo',      name: 'sail photo' },
 }
 let windows = []
-const addWindow = (utc, kind, label, valid = true) => {
+const addWindow = (utc, kind, label, valid = true, asked = false) => {
   if (!Number.isFinite(utc)) return
   // isvalid="false" means Expedition rejected the moment for PERFORMANCE stats
   // ("No sails up before", "BSP_trg below 60%"). It still happened, and it is still
@@ -415,7 +421,8 @@ const addWindow = (utc, kind, label, valid = true) => {
   // `at` is the moment itself, kept apart from the padded window: --racing asks
   // whether the MANOEUVRE happened in the race, not whether its run-in did. A
   // start's lead reaches 90 s back over the line and must not disqualify it.
-  windows.push({ at: utc, from: utc - k.lead() * 1000, to: utc + k.lag() * 1000, kind, label: valid ? label : `${label}?` })
+  // `asked` — somebody pressed a button for this one. See the --racing filter.
+  windows.push({ at: utc, from: utc - k.lead() * 1000, to: utc + k.lag() * 1000, kind, asked, label: valid ? label : `${label}?` })
 }
 // Resolve an HH:MM(:SS) the caller typed against the day the event file
 // describes. MODULE SCOPE, not inside the block below: --racing and --at both
@@ -482,7 +489,13 @@ for (const r of ev.markRoundings) {
 }
 }
 if (!opt.onlyAt && !opt.noTurns) {
-  for (const t of ev.tackJibes) addWindow(t.utc, t.isTack ? 'tack' : 'gybe', t.isTack ? 'Tack' : 'Gybe', t.isValid !== false)
+  for (const t of ev.tackJibes) {
+    // One kind without the other: --no-tacks keeps the gybes. Asked for on
+    // 30 September, and it is the common case — a race's tacks are mostly
+    // lane-keeping, its gybes all have a kite up.
+    if (t.isTack ? opt.noTacks : opt.noGybes) continue
+    addWindow(t.utc, t.isTack ? 'tack' : 'gybe', t.isTack ? 'Tack' : 'Gybe', t.isValid !== false)
+  }
 }
 // Sail photos. On a training day these may be the ONLY windows in the file —
 // there is no gun and often no roundings — so they are what makes such a day
@@ -503,7 +516,7 @@ if (opt.at.length) {
     const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t)
     if (!m) die(`--at: "${t}" is not HH:MM or HH:MM:SS`)
     const utc = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate(), +m[1], +m[2], +(m[3] || 0))
-    addWindow(utc, 'photo', `Photo ${t}`)
+    addWindow(utc, 'photo', `Photo ${t}`, true, true)
   }
 }
 // --racing: keep only what happened inside a race.
@@ -545,7 +558,14 @@ if (opt.racing) {
   // gun is a crew milling about before the real one, and its roundings are
   // roundings of nothing — on 29 September six of them sat between the practice
   // gun and race 1.
-  windows = windows.filter((w) => races.some((r) =>
+  //
+  // A window somebody ASKED for is never dropped. --racing exists to throw away
+  // what was DETECTED and is mostly noise — a training day's 98 tacks — not to
+  // overrule a person who pressed Grab video. A press between races, or after
+  // the finish, is still the thing they wanted filmed; silently discarding it
+  // because it fell outside a gun-to-finish window is the tool disagreeing with
+  // the crew about what they saw.
+  windows = windows.filter((w) => w.asked || races.some((r) =>
     w.at >= r.from && w.at < r.to && (!r.practice || w.kind === 'start')
   ))
   console.log(`\nracing only: ${races.length} race(s)`)
@@ -554,7 +574,9 @@ if (opt.racing) {
       (r.practice ? '  (the start only — roundings after a practice gun are not a race)' : '') +
       (r.assumed ? '  (no --finish given: ran to the next gun / end of day)' : ''))
   }
-  console.log(`  dropped ${before - windows.length} of ${before} windows outside a race`)
+  const askedKept = windows.filter((w) => w.asked).length
+  console.log(`  dropped ${before - windows.length} of ${before} windows outside a race` +
+    (askedKept ? ` · kept ${askedKept} marked moment(s) wherever they fell` : ''))
   if (!windows.length) die('nothing happened inside a race — check --finish, or drop --racing')
 }
 
@@ -657,10 +679,11 @@ const picked = opt.rest
 console.log(`\n● ${basename(opt.events)} — ${ev.meta.boat || '?'} · ${ev.meta.location || '?'} · ${ev.meta.date || '?'}`)
 const nOf = (k) => windows.filter((w) => w.kind === k).length
 console.log('  ' + Object.keys(KINDS).map((k) => `${nOf(k)} ${KINDS[k].name}${nOf(k) === 1 ? '' : 's'}`).join(' · ') +
-  (opt.noTurns ? '   (turns excluded)' : ''))
+  (opt.noTurns ? '   (turns excluded)' : opt.noTacks ? '   (tacks excluded)' : opt.noGybes ? '   (gybes excluded)' : ''))
 console.log(`  windows: start −${opt.startLead}/+${opt.startLag}s · top −${opt.topLead}/+${opt.topLag}s` +
   ` · gate ±${opt.gateLead}/${opt.gateLag}s · photo ±${opt.photoLead}/${opt.photoLag}s · ` +
-  (opt.noTurns ? 'turns off (--turns to include)' : `turn −${opt.turnLead}/+${opt.turnLag}s`))
+  (opt.noTurns ? 'turns off (--turns to include)'
+    : `${opt.noTacks ? 'gybes' : opt.noGybes ? 'tacks' : 'turn'} −${opt.turnLead}/+${opt.turnLag}s`))
 if (ev.dayStartUtc) console.log(`  sailing ${hhmm(ev.dayStartUtc)} → ${hhmm(ev.dayStopUtc)} (local)`)
 console.log()
 

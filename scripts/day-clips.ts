@@ -53,6 +53,9 @@ Usage:
   --write       encode (without this: report the plan and stop)
   --turns       include the race's tacks and gybes (default: starts, roundings
                 and the moments the crew marked with Grab video)
+  --gybes       the gybes but NOT the tacks. A race's tacks are mostly
+                lane-keeping; its gybes all have a kite up and something to see.
+  --tacks       the tacks but not the gybes, for the same reason in reverse.
   --card PATH   the footage folder, if it is not found under /Volumes
   --events PATH the .ev.xml, if it is not in ~/Downloads
   --finish TIME local HH:MM:SS, if SSA has no finish tag for the day
@@ -371,7 +374,11 @@ const main = async () => {
   if (allGuns.length) argv.push('--gun', allGuns.join(','))
   if (marks.length) argv.push('--mark', marks.join(','))
   if (gates.length) argv.push('--gate', gates.join(','))
-  if (!has('--turns')) argv.push('--no-turns')
+  // --gybes / --tacks are --turns with one kind dropped, so either implies it.
+  const oneKind = has('--gybes') || has('--tacks')
+  if (!has('--turns') && !oneKind) argv.push('--no-turns')
+  if (has('--gybes')) argv.push('--no-tacks')
+  if (has('--tacks')) argv.push('--no-gybes')
   if (has('--no-starts')) argv.push('--no-starts')
   if (has('--force')) argv.push('--force')
   // What the cloud already holds, so a clip made on an earlier run and since
