@@ -87,7 +87,7 @@ const opt = {
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false, noStarts: false, noTacks: false, noGybes: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
-  racing: false, finish: [], guns: [], practice: [], marks: [], gates: [], have: [],
+  racing: false, finish: [], guns: [], practice: [], marks: [], gates: [], turns: { tack: [], gybe: [] }, have: [],
 }
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i]
@@ -109,6 +109,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--have') opt.have.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--mark') opt.marks.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--gate') opt.gates.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
+  else if (a === '--tack') opt.turns.tack.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
+  else if (a === '--gybe') opt.turns.gybe.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--practice') opt.practice.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--gun') opt.guns.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
   else if (a === '--finish') opt.finish.push(...String(next()).split(',').map((x) => x.trim()).filter(Boolean))
@@ -141,7 +143,9 @@ for (let i = 0; i < argv.length; i++) {
 function usage() {
   console.log(`usage: select-race-clips.mjs --events <file.ev.xml> <folder|files…> [options]
 
-  -e, --events <f>    Expedition event file (.ev.xml)              [required]
+  -e, --events <f>    Expedition event file (.ev.xml). OPTIONAL: without one,
+                      every moment comes from --gun/--mark/--gate/--tack/--gybe
+                      /--at, which is how a day tagged only in SSA is cut.
   -o, --out <dir>     where compressed clips go        (default: ./selected)
       --start-lead N  seconds before a start gun                 (default: 90)
       --start-lag N   seconds after a start gun                  (default: 90)
@@ -194,6 +198,9 @@ function usage() {
                       enough that a crew correcting them in SSA is the better
                       answer — these are how those corrections get here.
       --gate HH:MM:SS  as --mark, for gates and spinnaker drops.
+      --tack HH:MM:SS  as --mark, for tacks. --gybe likewise. Both REPLACE the
+                      event file's own, per kind, and are the only source of
+                      manoeuvres when there is no event file.
       --practice HH:MM:SS  this gun is a PRACTICE start: cut the start itself,
                       but nothing else between it and the next gun. A practice
                       start is followed by milling about, and its roundings are
@@ -272,8 +279,10 @@ if (opt.fullRes) {
   process.exit(bad || missing ? 1 : 0)
 }
 
-if (!opt.events) { usage(); die('--events is required') }
-if (!existsSync(opt.events)) die(`event file not found: ${opt.events}`)
+// No event file is a legitimate day, not a mistake: 30 September was tagged
+// entirely in SSA and never got one. Everything the file would have supplied
+// then comes from the flags, and what nobody supplies simply is not cut.
+if (opt.events && !existsSync(opt.events)) die(`event file not found: ${opt.events}`)
 if (!opt.sources.length) { usage(); die('give a folder of clips (or the files)') }
 if (!have('exiftool')) die('exiftool not found — brew install exiftool')
 if (!have('ffmpeg')) die('ffmpeg not found — brew install ffmpeg')
@@ -398,7 +407,11 @@ for (const f of files) {
 
 // ── event windows ────────────────────────────────────────────────────────────
 // offset 0 keeps parseXmlEvents in the file's own wall clock, matching the clips.
-const ev = parseXmlEvents(readFileSync(opt.events, 'utf8'), 0)
+const EMPTY_EV = {
+  raceGuns: [], markRoundings: [], tackJibes: [], photoEvents: [],
+  dayStartUtc: null, dayStopUtc: null, meta: {},
+}
+const ev = opt.events ? parseXmlEvents(readFileSync(opt.events, 'utf8'), 0) : EMPTY_EV
 // kind -> [lead, lag] seconds, and the tag SSA itself computes for that moment
 // (computeAutoTags in localStore.js). Keeping the same vocabulary means the
 // filename and the tag the app derives from the same event file agree.
@@ -429,7 +442,14 @@ const addWindow = (utc, kind, label, valid = true, asked = false) => {
 // need it, and hiding it in the `if (!opt.onlyAt)` branch threw
 // "atLocal is not defined" the first time anyone combined --racing with a
 // --finish. `node --check` and `--help` both pass without ever reaching it.
-const dayAnchor = new Date(ev.dayStartUtc ?? Date.now())
+// The DAY an HH:MM:SS belongs to. The event file when there is one; otherwise
+// the footage's own first timestamp, which is on the card and is right for any
+// day. Date.now() would be right only for a day being cut on the day it
+// happened, and silently wrong — every window on the wrong date — for one cut
+// the morning after.
+const dayAnchor = new Date(
+  ev.dayStartUtc ?? clips.find((c) => c.start != null)?.start ?? Date.now()
+)
 const atLocal = (t, what) => {
   const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(t)
   if (!m) die(`${what}: "${t}" is not HH:MM or HH:MM:SS`)
@@ -458,9 +478,23 @@ const practiceAt = new Set(opt.practice.map((t) => atLocal(t, '--practice')))
 
 // --only-at: the caller has named the moments they want, so nothing from the
 // event file competes with them.
+// Manoeuvres given by hand REPLACE the file's, per kind — the same rule the
+// roundings follow, so a crew who corrected the gybes in SSA and left the tacks
+// alone keeps both.
+//
+// MODULE SCOPE, like atLocal, guns and practiceAt above, and for the fourth time
+// the same reason: the turns block sits outside the `if (!opt.onlyAt)` branch,
+// so a const declared inside it is a ReferenceError the moment anybody passes
+// --gybe. `node --check` and `--help` both pass without reaching it.
+const givenTurns = {
+  tack: opt.turns.tack.map((t) => atLocal(t, '--tack')),
+  gybe: opt.turns.gybe.map((t) => atLocal(t, '--gybe')),
+}
+
 if (!opt.onlyAt) {
 // Numbered over the RACES, not the guns: with a practice start first, the
 // event file's own raceNum makes race 1's clip come out called "R2 start".
+
 let raceNo = 0
 for (const g of guns) {
   const practice = practiceAt.has(g.utc)
@@ -489,7 +523,14 @@ for (const r of ev.markRoundings) {
 }
 }
 if (!opt.onlyAt && !opt.noTurns) {
+  for (const kind of ['tack', 'gybe']) {
+    if (!givenTurns[kind].length) continue
+    if (kind === 'tack' ? opt.noTacks : opt.noGybes) continue
+    console.log(`${kind}s: ${givenTurns[kind].length} given, replacing the event file's ${ev.tackJibes.filter((t) => (t.isTack ? 'tack' : 'gybe') === kind).length}`)
+    for (const u of givenTurns[kind]) addWindow(u, kind, kind === 'tack' ? 'Tack' : 'Gybe')
+  }
   for (const t of ev.tackJibes) {
+    if (givenTurns[t.isTack ? 'tack' : 'gybe'].length) continue
     // One kind without the other: --no-tacks keeps the gybes. Asked for on
     // 30 September, and it is the common case — a race's tacks are mostly
     // lane-keeping, its gybes all have a kite up.
@@ -676,7 +717,7 @@ const picked = opt.rest
   ? clips.filter((c) => c.covers.length === 0 && c.start != null)
   : clips.filter((c) => c.covers.length > 0)
 
-console.log(`\n● ${basename(opt.events)} — ${ev.meta.boat || '?'} · ${ev.meta.location || '?'} · ${ev.meta.date || '?'}`)
+console.log(`\n● ${opt.events ? `${basename(opt.events)} — ${ev.meta.boat || '?'} · ${ev.meta.location || '?'} · ${ev.meta.date || '?'}` : 'no event file — every moment given on the command line'}`)
 const nOf = (k) => windows.filter((w) => w.kind === k).length
 console.log('  ' + Object.keys(KINDS).map((k) => `${nOf(k)} ${KINDS[k].name}${nOf(k) === 1 ? '' : 's'}`).join(' · ') +
   (opt.noTurns ? '   (turns excluded)' : opt.noTacks ? '   (tacks excluded)' : opt.noGybes ? '   (gybes excluded)' : ''))
@@ -818,7 +859,7 @@ const arch = [...(opt.archive ? ['--archive'] : []), ...(opt.crf ? ['--crf', Str
 const manifest = join(opt.out, 'manifest.json')
 writeFileSync(manifest, JSON.stringify({
   generated: new Date().toISOString(),
-  events: resolve(opt.events),
+  events: opt.events ? resolve(opt.events) : null,
   mode: opt.rest ? 'rest' : 'selected',
   trimmed: !!opt.trim,
   tag: opt.tag || null,

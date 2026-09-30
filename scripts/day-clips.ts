@@ -87,7 +87,9 @@ const has = (f: string) => args.includes(f)
 const val = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined }
 if (has('--help') || !args.length) { console.log(USAGE); process.exit(0) }
 
-const fail = (m: string): never => { console.error(`✕ ${m}`); process.exit(1) }
+// Annotated on the VARIABLE, not just the arrow: TypeScript only narrows past a
+// never-returning call when the declaration carries the type.
+const fail: (m: string) => never = (m) => { console.error(`✕ ${m}`); process.exit(1) }
 const date = args.find((a) => /^\d{4}-\d{2}-\d{2}$/.test(a)) || fail('give a date: YYYY-MM-DD')
 const compact = date.replace(/-/g, '')          // 20260928
 const short = compact.slice(2)                  // 260928
@@ -303,59 +305,98 @@ async function tidyOutbox(dir: string) {
 
 // ── go ───────────────────────────────────────────────────────────────────────
 const main = async () => {
+  // The event file is OPTIONAL. 30 September was tagged entirely in SSA and
+  // never got one — no start, no finish, no export — and a day like that is
+  // still a day with footage worth cutting. Without it, every moment comes from
+  // the tags and the manoeuvres come from SSA's own tack/gybe tags.
   const events = findEvents()
-  if (!events) fail(`no .ev.xml for ${date} in ~/Downloads — pass --events`)
   const found = findCard()
   if (!found) fail(`no footage folder for ${date} under /Volumes — is the card mounted? pass --card`)
   const card = found!.path
 
-  // The venue offset the event file itself declares, so nothing has to be typed
-  // and nothing can be applied twice.
-  const xml = readFileSync(events!, 'utf8')
-  const offsetMin = Number(/<event_file hours="(-?\d+(?:\.\d+)?)"/.exec(xml)?.[1] ?? 0) * 60
+  // The venue offset, in order of how much it can be trusted: the event file
+  // declares it, so nothing has to be typed and nothing can be applied twice;
+  // failing that the session row carries it; failing that --tz, in hours.
+  // Getting this wrong moves every window by the offset, so it is never
+  // guessed — with no source at all the run stops and says so.
+  const xml = events ? readFileSync(events, 'utf8') : null
+  let offsetMin: number | null = xml
+    ? Number(/<event_file hours="(-?\d+(?:\.\d+)?)"/.exec(xml)?.[1] ?? 0) * 60
+    : null
+  let offsetFrom = 'the event file'
+  if (offsetMin == null && has('--tz')) {
+    offsetMin = Math.round(Number(val('--tz') ?? 0) * 60); offsetFrom = '--tz'
+  }
+  if (offsetMin == null) {
+    const { data } = await sb.from('sessions').select('tz_offset_minutes').eq('date', date).limit(1)
+    const m = data?.[0]?.tz_offset_minutes
+    if (m != null) { offsetMin = Number(m); offsetFrom = "the session's stored offset" }
+  }
+  if (offsetMin == null) {
+    fail(`no venue offset for ${date}: no event file, and the session has none stored. Pass --tz 2 for UTC+2.`)
+  }
+  const tz: number = offsetMin
 
-  const ev = parseXmlEvents(xml)
-  const at = await grabVideoTimes(offsetMin)
-  const finish = await finishTime(offsetMin, ev)
+  const ev = xml ? parseXmlEvents(xml) : null
+  const at = await grabVideoTimes(tz)
+  const finish = await finishTime(tz, ev)
   // A rounding's lead is 20 s (baseTags), so t0 + 20 s is the moment itself.
-  const marks = await taggedTimes('topmark', 20, offsetMin)
-  const gates = await taggedTimes('gate', 20, offsetMin)
+  const marks = await taggedTimes('topmark', 20, tz)
+  const gates = await taggedTimes('gate', 20, tz)
   // race-start's lead is 60 s, not 20 — see baseTags. A practice start carries
   // the same window and the same need for a clip; what it does NOT do is open a
   // race, so it goes to --practice and the milling about after it is dropped.
-  const starts = await taggedTimes('race-start', 60, offsetMin)
-  const practiceTags = await taggedTimes('practice-start', 60, offsetMin)
+  const starts = await taggedTimes('race-start', 60, tz)
+  const practiceTags = await taggedTimes('practice-start', 60, tz)
+  // Manoeuvres from SSA's OWN tags. The event file was the only source of these
+  // until 30 September, which had no event file — and the tagger has carried
+  // `tack` and `gybe` slugs all along (markers.ts, MANOEUVRE_SLUGS). Same 20 s
+  // lead as a rounding.
+  const tacks = await taggedTimes('tack', 20, tz)
+  const gybes = await taggedTimes('gybe', 20, tz)
   const out = val('--out') || join(homedir(), 'clips')
   mkdirSync(out, { recursive: true })
 
-  console.log(`\n${date}  ${ev.meta?.boat || ''} ${ev.meta?.location || ''} (venue UTC${offsetMin >= 0 ? '+' : ''}${offsetMin / 60})`)
-  console.log(`  events   ${events}`)
+  console.log(`\n${date}  ${ev?.meta?.boat || ''} ${ev?.meta?.location || ''} (venue UTC${tz >= 0 ? '+' : ''}${tz / 60}, from ${offsetFrom})`)
+  console.log(`  events   ${events || '(none — SSA tags only)'}`)
   console.log(`  footage  ${card}${found!.raw ? '  (card as the drone wrote it — every day on it is scanned, so the timestamp pass is slower)' : ''}`)
   console.log(`  clips    ${out}`)
   console.log(`  marked   ${at.length ? at.join(', ') : '(no Grab video tags on this day)'}`)
   console.log(`  finish   ${finish.time || '—'}  · ${finish.how}`)
   const tagged = starts.length || practiceTags.length || marks.length || gates.length
-  console.log(`  moments  ${tagged ? 'SSA tags' : 'the event file (no racing tags in SSA for this day)'}`)
+    || tacks.length || gybes.length
+  console.log(`  moments  ${tagged ? 'SSA tags' : events ? 'the event file (no racing tags in SSA for this day)' : 'NONE — no SSA tags and no event file'}`)
+  if (gybes.length) console.log(`  gybes    ${gybes.length}`)
+  if (tacks.length) console.log(`  tacks    ${tacks.length}`)
   if (starts.length) console.log(`  starts   ${starts.join(', ')}`)
   if (practiceTags.length) {
     console.log(`  practice ${practiceTags.join(', ')}  · ${has('--no-practice') ? 'NOT cut (--no-practice)' : 'start cut, the milling about after it is not'}`)
   }
   if (marks.length) console.log(`  marks    ${marks.join(', ')}`)
   if (gates.length) console.log(`  gates    ${gates.join(', ')}`)
-  if (!has('--turns')) {
+  // --gybes / --tacks are --turns with one kind dropped, so either implies it.
+  // Declared HERE, above its first use: as a const further down it was in the
+  // temporal dead zone and threw before printing anything.
+  const oneKind = has('--gybes') || has('--tacks')
+  if (!has('--turns') && !oneKind && ev) {
     const gun = Math.min(...(ev.raceGuns || []).map((g: any) => g.utc))
     const end = finish.time
-      ? Date.parse(`${date}T${finish.time}Z`) - offsetMin * 60_000
+      ? Date.parse(`${date}T${finish.time}Z`) - tz * 60_000
       : (ev.dayStopUtc ?? Infinity)
     const n = (ev.tackJibes || []).filter((t: any) => t.utc >= gun && t.utc < end).length
     if (n) console.log(`  (${n} tacks/gybes in the race, left out — add --turns for those too)`)
-    // Manoeuvres always come from the event file: nobody tags 51 tacks by hand,
-    // and the detector is good at them. Only the moments a crew argues about —
-    // starts, roundings, finishes — move to SSA.
+    // Manoeuvres come from the event file when there is one: nobody tags 51
+    // tacks by hand and the detector is good at them. SSA's own tack/gybe tags
+    // are the source when there is not.
   }
 
-  const argv = ['-e', events!, card!, '--trim', '--tag', compact, '-o', out, ...WINDOWS]
-  if (!has('--all')) argv.push('--racing')
+  const argv = [...(events ? ['-e', events] : []), card!, '--trim', '--tag', compact, '-o', out, ...WINDOWS]
+  // --racing needs a gun to bound a race. A day tagged with no start — 30
+  // September had gybes and Grab video and nothing else — has no race to be
+  // inside, and asking for one would drop every window there is.
+  const canRace = starts.length > 0 || practiceTags.length > 0 || (ev?.raceGuns?.length ?? 0) > 0
+  if (!has('--all') && canRace) argv.push('--racing')
+  else if (!canRace) console.log(`  racing   no start tagged — cutting everything, not just what is inside a race`)
   // Only the crew know which gun was a practice start; nothing in the event
   // file distinguishes it.
   // Tagged in SSA, or named on the command line for a day nobody has tagged.
@@ -374,8 +415,8 @@ const main = async () => {
   if (allGuns.length) argv.push('--gun', allGuns.join(','))
   if (marks.length) argv.push('--mark', marks.join(','))
   if (gates.length) argv.push('--gate', gates.join(','))
-  // --gybes / --tacks are --turns with one kind dropped, so either implies it.
-  const oneKind = has('--gybes') || has('--tacks')
+  if (tacks.length) argv.push('--tack', tacks.join(','))
+  if (gybes.length) argv.push('--gybe', gybes.join(','))
   if (!has('--turns') && !oneKind) argv.push('--no-turns')
   if (has('--gybes')) argv.push('--no-tacks')
   if (has('--tacks')) argv.push('--no-gybes')
