@@ -32,6 +32,7 @@ import { sailPatchFrom } from '../lib/sailEdit'
 import { useUiNext } from '../lib/ui-flags'
 import BoatConfigNext from './boat/BoatConfigNext'
 import BattenCardPanel from './boat/BattenCardPanel'
+import DebriefVocabPanel from './boat/DebriefVocabPanel'
 import { loadJsPdf } from '@/lib/cdnScript'
 
 interface Sail {
@@ -79,7 +80,7 @@ export default function BoatConfigTab({
   // instantly with the team's sails/scans/polar/rig; the effects below still
   // revalidate in the background.
   const pf = getPrefetchedBoatConfig(teamId, boatId)
-  const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar' | 'log' | 'battens'>('inventory')
+  const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar' | 'log' | 'battens' | 'vocab'>('inventory')
   const uiNext = useUiNext() // ?ui=next → redesigned reference screen (Phase 1)
   const [sails, setSails] = useState<Sail[]>(() => (pf?.sails as Sail[]) || [])
   const [scans, setScans] = useState<Scan[]>(() => (pf?.scans as Scan[]) || [])
@@ -665,6 +666,7 @@ export default function BoatConfigTab({
         {canSeeTuning && subBtn('polar', 'Targets')}
         {canSeeTuning && subBtn('battens', 'Battens')}
         {canSeeTuning && subBtn('log', 'Log profile')}
+        {canSeeTuning && subBtn('vocab', 'Debrief words')}
       </div>
 
       {err && <div style={{ color: C.warn, fontSize: 12, marginBottom: 12 }}>Error: {err}</div>}
@@ -673,6 +675,11 @@ export default function BoatConfigTab({
       {/* ── BATTENS ────────────────────────────────────────────────── */}
       {view === 'battens' && canSeeTuning && (
         <BattenCardPanel teamId={teamId} boatId={boatId} canEdit={canEdit} isMobile={isMobile} />
+      )}
+
+      {/* ── DEBRIEF WORDS ──────────────────────────────────────────── */}
+      {view === 'vocab' && canSeeTuning && (
+        <DebriefVocabPanel teamId={teamId} boatId={boatId} canEdit={canEdit} isMobile={isMobile} />
       )}
 
       {/* ── SAIL INVENTORY ─────────────────────────────────────────── */}
