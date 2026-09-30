@@ -14,6 +14,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { runAudioBrief } from '../lib/debriefAudio'
 import { loadBoatVocab } from '../lib/boatVocab'
+import { AutoTextarea } from './ui/auto-textarea'
 
 const STAGE = { compress: 'Compressing audio', transcribe: 'Transcribing', summarise: 'Summarising', done: 'Done' }
 
@@ -152,7 +153,7 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
           {fields.map((f) => (
             <div key={f.key} style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{f.label}</div>
-              <textarea value={result[f.key] || ''} rows={5} style={ta}
+              <AutoTextarea value={result[f.key] || ''} minRows={5} style={ta}
                 onChange={(e) => setResult((p) => ({ ...p, [f.key]: e.target.value }))} />
             </div>
           ))}
@@ -163,7 +164,7 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
             <button onClick={() => { setResult(null); setTranscript(''); setShowTx(false) }} style={btn}>Discard</button>
             <button onClick={() => setShowTx((s) => !s)} style={{ ...btn, background: 'transparent' }}>{showTx ? 'Hide' : 'Show'} transcript</button>
           </div>
-          {showTx && <textarea readOnly value={transcript} rows={8} style={{ ...ta, marginTop: 8, fontFamily: 'monospace', fontSize: 11, color: '#8a97a9' }} />}
+          {showTx && <AutoTextarea readOnly value={transcript} minRows={8} style={{ ...ta, marginTop: 8, fontFamily: 'monospace', fontSize: 11, color: '#8a97a9' }} />}
         </div>
       )}
     </div>

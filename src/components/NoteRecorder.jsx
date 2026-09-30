@@ -17,6 +17,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { runAudioNote } from '../lib/debriefAudio'
 import { startRecording, isRecordingSupported, MAX_MS } from '../lib/micRecord'
 import { loadBoatVocab } from '../lib/boatVocab'
+import { AutoTextarea } from './ui/auto-textarea'
 
 const STAGE = { compress: 'Processing', transcribe: 'Transcribing', summarise: 'Tidying up', done: 'Done' }
 
@@ -150,7 +151,7 @@ export default function NoteRecorder({ value, onCommit, canEdit, label, teamId, 
       <div style={{ fontSize: 11, color: '#8a97a9', marginBottom: 8 }}>
         From your recording — <b style={{ color: '#a6b2c4' }}>read it against what you said</b>. Edit it here first.
       </div>
-      <textarea value={draft} rows={5} style={ta} onChange={(e) => setDraft(e.target.value)} />
+      <AutoTextarea value={draft} minRows={5} style={ta} onChange={(e) => setDraft(e.target.value)} />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
         <button onClick={() => commit('append')} disabled={saving}
           style={{ ...btn, background: '#10B981', border: 'none', color: '#03251a', fontWeight: 700, fontSize: 12, padding: '5px 10px' }}>
@@ -163,7 +164,7 @@ export default function NoteRecorder({ value, onCommit, canEdit, label, teamId, 
         <button onClick={() => setShowTx((s) => !s)} style={btn}>{showTx ? 'Hide' : 'Show'} transcript</button>
       </div>
       {err && <div style={{ color: '#EF4444', fontSize: 11, marginTop: 6 }}>✕ {err}</div>}
-      {showTx && <textarea readOnly value={transcript} rows={6} style={{ ...ta, marginTop: 8, fontFamily: 'monospace', fontSize: 11, color: '#8a97a9' }} />}
+      {showTx && <AutoTextarea readOnly value={transcript} minRows={6} style={{ ...ta, marginTop: 8, fontFamily: 'monospace', fontSize: 11, color: '#8a97a9' }} />}
     </div>
   )
 }

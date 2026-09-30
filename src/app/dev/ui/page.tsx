@@ -3,8 +3,20 @@ import * as React from 'react'
 import { Sailboat, Wind, Moon, Sun } from 'lucide-react'
 import {
   Button, Card, CardHeader, CardTitle, CardContent, Badge, Skeleton,
-  EmptyState, ErrorState, Dialog, DialogTrigger, DialogContent,
+  EmptyState, ErrorState, Dialog, DialogTrigger, DialogContent, AutoTextarea,
 } from '@/components/ui'
+
+// A debrief section of the length that made the AI summary look cut short in a
+// rows={5} box: the text was all there, five lines of it were visible.
+const LONG = [
+  'Starts — we were early to the pin twice and had to burn time, which put us',
+  'behind the hundreds off the line in both races. The second start was better:',
+  'we held the bow up and had a lane by the first cross.',
+  'Upwind — the main was too flat for the pressure in race one. We went two turns',
+  'on the backstay and the boat came alive.',
+  'Mark roundings — the top mark in race two was slow; the kite was not ready.',
+  'Downwind — good pace against Jethou, we gained twice on the gybes.',
+].join(' ')
 
 // Component gallery — the living reference for the SSA design system.
 // Toggle light/dark to verify tokens flip and glass surfaces read in both.
@@ -72,6 +84,21 @@ export default function UiGallery() {
             <Skeleton style={{ height: 12, width: '60%', marginBottom: 8 }} />
             <Skeleton style={{ height: 12, width: '90%', marginBottom: 8 }} />
             <Skeleton style={{ height: 12, width: '75%' }} />
+          </div>
+        </Section>
+
+        <Section title="AutoTextarea">
+          {/* Side by side, because the point is only visible as a comparison:
+              the fixed box stops mid-sentence and reads as truncated text. */}
+          <div style={{ width: 340 }}>
+            <div className="text-secondary" style={{ fontSize: 11, marginBottom: 4 }}>rows={5} — what it looked like</div>
+            <textarea readOnly value={LONG} rows={5} data-testid="fixed-ta"
+              style={{ width: '100%', fontSize: 13, fontFamily: 'inherit', padding: 8, borderRadius: 8 }} />
+          </div>
+          <div style={{ width: 340 }}>
+            <div className="text-secondary" style={{ fontSize: 11, marginBottom: 4 }}>AutoTextarea — grows to its content</div>
+            <AutoTextarea readOnly value={LONG} minRows={5} data-testid="auto-ta"
+              style={{ width: '100%', fontSize: 13, fontFamily: 'inherit', padding: 8, borderRadius: 8 }} />
           </div>
         </Section>
 
