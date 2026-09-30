@@ -265,6 +265,35 @@ export function rangeMmFrom(sensor: SensorSpec, mmPerPxAtMast: number): number |
  * @param sensor        camera, for the range. Without a focal length there is
  *                      no range, and no correction is possible.
  */
+/**
+ * How much a WRONG focal length costs, as a fraction of every measurement per
+ * fraction of focal-length error.
+ *
+ * It matters because a zoom cannot be recovered from a stripped frame: a
+ * RF100-500 could have been anywhere across a 5:1 range, and picking 254 mm
+ * when it was 400 moves every millimetre by 3.3 % at 120 m — more than the
+ * wheel-depth correction that this rig model was just rebuilt for.
+ *
+ * And it is ZERO when the scale reference sits in the mast plane. Focal length
+ * enters only through the range, and the range only through the depth
+ * correction (R − d)/R: with d = 0 that is 1 whatever the range, so a frame
+ * scaled off P does not care what lens took it. Worth saying out loud, because
+ * it turns "I cannot remember the zoom setting" from a dead end into a reason
+ * to pick a different reference.
+ *
+ * Derivation: k = 1 − d/R and R ∝ f, so dk/k = (d/R)/(1 − d/R) · df/f.
+ *
+ * @returns the magnitude, or null when there is no range to reason about.
+ */
+export function focalSensitivity(refDepthMm: number, rangeToRefMm: number | null): number | null {
+  if (!refDepthMm) return 0
+  if (rangeToRefMm == null || !(rangeToRefMm > 0)) return null
+  const dOverR = refDepthMm / rangeToRefMm
+  const k = 1 - dOverR
+  if (!(k > 0)) return null
+  return Math.abs(dOverR / k)
+}
+
 export function mmPerPxAtMastFromRef(
   mmPerPxAtRef: number,
   refDepthMm: number,

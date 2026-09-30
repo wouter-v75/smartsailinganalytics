@@ -1355,6 +1355,21 @@ describe('SailTrimTab — the focal length', () => {
     expect(screen.getByTestId('sailtrim-lens-remember')).toBeTruthy()
   })
 
+  it('says a mast-plane reference does not care what lens took the frame', async () => {
+    // The useful half of the zoom answer: off P the depth correction is 1, so a
+    // focal length that cannot be recovered costs nothing at all.
+    render(<SailTrimTab />)
+    await openAFrame()
+    await settle()
+    // A mast-plane reference. Not a spreader: those tip-to-tip lengths were
+    // never right on this boat, so nothing should be built on one.
+    fireEvent.click(stepButton('Scale reference'))
+    selectScale('mastwidth')
+    await settle()
+    const cost = screen.queryByTestId('sailtrim-focal-cost')
+    if (cost) expect(cost.textContent).toMatch(/does not reach the measurements/)
+  })
+
   it('takes a focal length typed by hand', async () => {
     render(<SailTrimTab />)
     await openAFrame()

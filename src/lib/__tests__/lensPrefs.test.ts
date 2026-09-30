@@ -1,6 +1,6 @@
 // src/lib/__tests__/lensPrefs.test.ts
 import { describe, it, expect } from 'vitest'
-import { lensLabel, rememberIn, forgetIn, coerceLenses, MAX_LENSES, type Lens } from '../lensPrefs'
+import { lensLabel, rememberIn, forgetIn, coerceLenses, isZoomLabel, MAX_LENSES, type Lens } from '../lensPrefs'
 
 const lens = (label: string, focalMm: number, lastUsed = 1): Lens => ({ label, focalMm, lastUsed })
 
@@ -111,5 +111,23 @@ describe('forgetIn — a mistyped lens must not be permanent', () => {
   it('leaves the list alone when nothing matches', () => {
     expect(forgetIn(list, 'Canon EOS R5 · 254 mm', 400)).toHaveLength(2)
     expect(forgetIn(list, 'Nikon', 254)).toHaveLength(2)
+  })
+})
+
+describe('isZoomLabel — a remembered zoom length is a setting, not a lens', () => {
+  it('spots the usual ways a zoom names itself', () => {
+    expect(isZoomLabel('RF100-500mm F4.5-7.1 L IS USM')).toBe(true)
+    expect(isZoomLabel('EF 24-70 mm f/2.8')).toBe(true)
+    expect(isZoomLabel('70‑200mm')).toBe(true)            // non-breaking hyphen
+  })
+
+  it('leaves a prime alone', () => {
+    expect(isZoomLabel('RF35mm F1.8 MACRO IS STM')).toBe(false)
+    expect(isZoomLabel('iPhone 15 Pro back camera 6.86mm f/1.78')).toBe(false)
+  })
+
+  it('is not fooled by the length this module appends', () => {
+    // "Canon EOS R5 · 254 mm" is one number, not a range.
+    expect(isZoomLabel('Canon EOS R5 · 254 mm')).toBe(false)
   })
 })

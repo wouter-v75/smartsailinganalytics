@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   mastAxisFromEdges, mastAxisFromPoints, cameraRollDeg, horizontalDir,
-  mmPerPxFromReference, rangeMmFrom, mmPerPxAtDepth, solvePsi,
+  mmPerPxFromReference, rangeMmFrom, mmPerPxAtDepth, solvePsi, focalSensitivity,
   measureTarget, intersectPolyline, leechTargets, runChecks,
   imageHeelDeg, effectiveHeelDeg, psiFromHeelShortening,
   type Px, type Calibration,
@@ -659,5 +659,33 @@ describe('a competitor’s heel cannot come from our log', () => {
     // logged sample and the shutter.
     const ours = cal({ horizon: { tiltDeg: -20, rmsPx: 1, columns: 120 } })
     expect(effectiveHeelDeg(ours)).toBeCloseTo(18.7, 6)
+  })
+})
+
+describe('focalSensitivity — what a wrong focal length costs', () => {
+  it('is ZERO for a reference in the mast plane, whatever the range', () => {
+    // P runs up the rig at depth 0, so the depth correction is 1 and the focal
+    // length cannot reach the answer at all. This turns "I cannot remember the
+    // zoom setting" into a reason to scale off P instead of a dead end.
+    expect(focalSensitivity(0, 120_000)).toBe(0)
+    expect(focalSensitivity(0, null)).toBe(0)
+  })
+
+  it('prices the wheels at a realistic range', () => {
+    // d = -7392, R = 120 m: a focal length 20 % out moves every millimetre by
+    // about 1.2 %.
+    const s = focalSensitivity(-7392, 120_000)!
+    expect(s * 0.2).toBeCloseTo(0.0116, 3)
+  })
+
+  it('costs more the closer the camera is', () => {
+    // The correction itself is larger up close, so an error in it is too.
+    expect(focalSensitivity(-7392, 60_000)!).toBeGreaterThan(focalSensitivity(-7392, 120_000)!)
+  })
+
+  it('says nothing rather than guessing when there is no range', () => {
+    // No focal length means no range, which is exactly when this is asked.
+    expect(focalSensitivity(-7392, null)).toBeNull()
+    expect(focalSensitivity(-7392, 0)).toBeNull()
   })
 })

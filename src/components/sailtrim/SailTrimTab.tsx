@@ -28,7 +28,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
   mmPerPxFromReference, mmPerPxAtMastFromRef, unbiasAthwartshipsScale,
-  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg,
+  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg, focalSensitivity,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -48,7 +48,7 @@ import {
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
 import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
 import { fitCamber, type CamberFit } from '../../lib/sailCamber';
-import { loadLenses, rememberLens, forgetLens, lensLabel, type Lens } from '../../lib/lensPrefs';
+import { loadLenses, rememberLens, forgetLens, lensLabel, isZoomLabel, type Lens } from '../../lib/lensPrefs';
 import {
   buildAnnotation, annotationHeadline, annotationFields, type SailTrimAnnotation,
 } from '../../lib/sailTrimOverlay';
@@ -2012,6 +2012,37 @@ export default function SailTrimTab(
               reads low. The marks can be saved either way and finished later.
             </div>
           )}
+          {/* What a WRONG focal length would cost, priced against this frame.
+              It is the question a zoom raises and nothing else answers: a
+              RF100-500 on a stripped export could have been anywhere across a
+              5:1 range, and picking 254 when it was 400 is 3.3 % on every
+              millimetre — more than the wheel depth this rig model was just
+              rebuilt for. And it is ZERO off a mast-plane reference, which
+              turns "I cannot remember the zoom setting" into a reason to scale
+              off P rather than a dead end. */}
+          {(() => {
+            const depth = scaleRef?.depthMm ?? 0;
+            const toRef = calibration.cal?.rangeMm != null ? calibration.cal.rangeMm + depth : null;
+            const sens = focalSensitivity(depth, toRef);
+            if (sens == null) return null;
+            const zoom = lenses.some((l) => Math.round(l.focalMm) === Math.round(Number(focalMm)) && isZoomLabel(l.label));
+            if (sens === 0) {
+              return (
+                <div style={{ fontSize: 10.5, color: '#4ADE80', marginTop: 5, lineHeight: 1.45 }} data-testid="sailtrim-focal-cost">
+                  {scaleRef?.label ?? 'This reference'} is in the mast plane, so the focal length does not
+                  reach the measurements at all — a wrong one costs nothing here.
+                </div>
+              );
+            }
+            return (
+              <div style={{ fontSize: 10.5, color: zoom ? '#FCD34D' : '#94A3B8', marginTop: 5, lineHeight: 1.45 }} data-testid="sailtrim-focal-cost">
+                {scaleRef?.label ?? 'This reference'} is {Math.abs(Math.round(depth / 100) / 10)} m out of the mast
+                plane, so the focal length feeds the depth correction: one 20 % out moves every
+                measurement by {(sens * 0.2 * 100).toFixed(1)} %.
+                {zoom && ' This is a ZOOM — the remembered length is a setting that was used once, not a property of the lens. Scale off a mast-plane reference if the setting is not certain.'}
+              </div>
+            );
+          })()}
           {imgSize && (
             <div style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5, color: horizon ? '#4ADE80' : '#FCD34D' }}>
               {horizon

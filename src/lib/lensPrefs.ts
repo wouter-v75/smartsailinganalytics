@@ -109,3 +109,17 @@ export async function forgetLens(label: string, focalMm: number): Promise<Lens[]
     return []
   }
 }
+
+/**
+ * Does this lens name describe a ZOOM?
+ *
+ * A remembered zoom length is a SETTING that was used once, not a property of
+ * the glass — so offering "RF100-500mm · 254 mm" to a stripped frame is offering
+ * one of five hundred possibilities. A prime's remembered length is the lens
+ * itself and can be picked without further thought.
+ */
+export function isZoomLabel(label: string): boolean {
+  // "100-500mm", "24-70 mm", "70‑200mm" (non-breaking hyphen) — but not a name
+  // like "RF35mm F1.8" and not the "· 254 mm" this module appends itself.
+  return /\d{1,4}\s*[-\u2010-\u2015]\s*\d{1,4}\s*mm/i.test(label)
+}
