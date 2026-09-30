@@ -42,6 +42,19 @@ import { createClient } from '@supabase/supabase-js'
 // Plain JS, shared with the app, so the guns and roundings are read exactly
 // as the tagger reads them.
 import { parseXmlEvents } from '../src/lib/xmlEventParse.js'
+
+/** Only the parts of the parsed event file this script touches. Typed, rather
+ *  than `any`, because making it OPTIONAL turned every `ev.` into a crash the
+ *  compiler could not see: `ev.raceGuns` on a day with no event file threw on
+ *  the laptop with tsc green. */
+interface EventFile {
+  raceGuns?: { utc: number }[]
+  markRoundings?: { utc: number; isTop?: boolean }[]
+  tackJibes?: { utc: number; isTack?: boolean }[]
+  dayStartUtc?: number | null
+  dayStopUtc?: number | null
+  meta?: { boat?: string; location?: string; date?: string }
+}
 import { inferFinish } from '../src/lib/tagging/raceWindow'
 import { planOutbox } from '../src/lib/clipOutbox'
 
@@ -214,7 +227,7 @@ async function taggedTimes(slug: string, leadSec: number, offsetMin: number): Pr
 
 /** When the race ended. The inference lives in lib/tagging/raceWindow, under
  *  test, because a wrong finish silently throws away the end of the race. */
-async function finishTime(offsetMin: number, ev: any): Promise<{ time: string | null; how: string }> {
+async function finishTime(offsetMin: number, ev: EventFile | null): Promise<{ time: string | null; how: string }> {
   const given = val('--finish')
   if (given) return { time: given, how: 'given on the command line' }
 
@@ -236,6 +249,14 @@ async function finishTime(offsetMin: number, ev: any): Promise<{ time: string | 
   // brought INTO the file's frame on the way in, and nothing is shifted on the
   // way out. Getting this wrong put the finish at 17:17 and threw away the
   // last two hours of the race.
+  // With no event file there are no guns and no roundings to infer FROM, so a
+  // finish can only be one the crew tagged. None of either is not an error: a
+  // day with no start has no race to end, and --racing is skipped for it.
+  if (!ev) {
+    return tagged
+      ? { time: clock(Date.parse(tagged.t0 as string) + offsetMin * 60_000), how: 'the finish tag in SSA' }
+      : { time: null, how: 'no event file and no finish tag — nothing to bound a race with' }
+  }
   const r = inferFinish(ev.raceGuns || [], ev.markRoundings || [], {
     taggedUtc: tagged ? Date.parse(tagged.t0 as string) + offsetMin * 60_000 : null,
     dayStopUtc: ev.dayStopUtc ?? null,
@@ -337,7 +358,7 @@ const main = async () => {
   }
   const tz: number = offsetMin
 
-  const ev = xml ? parseXmlEvents(xml) : null
+  const ev: EventFile | null = xml ? (parseXmlEvents(xml) as EventFile) : null
   const at = await grabVideoTimes(tz)
   const finish = await finishTime(tz, ev)
   // A rounding's lead is 20 s (baseTags), so t0 + 20 s is the moment itself.

@@ -621,7 +621,12 @@ if (opt.racing) {
   if (!windows.length) die('nothing happened inside a race — check --finish, or drop --racing')
 }
 
-if (!windows.length) die('the event file has no starts, roundings, tacks, gybes or sail photos')
+if (!windows.length) {
+  die(opt.events
+    ? 'the event file has no starts, roundings, tacks, gybes or sail photos'
+    : 'nothing to cut: no event file, and no moments given. SSA has no tags for this day —\n' +
+      '  check the day in the Tagging tab, or pass --mark/--gate/--gybe/--at by hand.')
+}
 
 for (const c of clips) {
   if (c.start == null) continue
