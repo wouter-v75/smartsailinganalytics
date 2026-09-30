@@ -362,7 +362,11 @@ const main = async () => {
   const at = await grabVideoTimes(tz)
   const finish = await finishTime(tz, ev)
   // A rounding's lead is 20 s (baseTags), so t0 + 20 s is the moment itself.
-  const marks = await taggedTimes('topmark', 20, tz)
+  // `topmark` AND the generic `mark`. The tagger offers both — a Racing group
+  // button for the top mark, and a plain "Mark" in the general set — and a crew
+  // pressing the one nearest to hand is not making a statement about which
+  // rounding it was. Reading only `topmark` silently dropped those clips.
+  const marks = [...await taggedTimes('topmark', 20, tz), ...await taggedTimes('mark', 20, tz)].sort()
   const gates = await taggedTimes('gate', 20, tz)
   // race-start's lead is 60 s, not 20 — see baseTags. A practice start carries
   // the same window and the same need for a clip; what it does NOT do is open a
