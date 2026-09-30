@@ -32,6 +32,7 @@ import { sailPatchFrom } from '../lib/sailEdit'
 import { useUiNext } from '../lib/ui-flags'
 import BoatConfigNext from './boat/BoatConfigNext'
 import BattenCardPanel from './boat/BattenCardPanel'
+import SailMediaPanel from './boat/SailMediaPanel'
 import DebriefVocabPanel from './boat/DebriefVocabPanel'
 import { loadJsPdf } from '@/lib/cdnScript'
 
@@ -80,7 +81,8 @@ export default function BoatConfigTab({
   // instantly with the team's sails/scans/polar/rig; the effects below still
   // revalidate in the background.
   const pf = getPrefetchedBoatConfig(teamId, boatId)
-  const [view, setView] = useState<'inventory' | 'shapes' | 'rig' | 'polar' | 'log' | 'battens' | 'vocab'>('inventory')
+  const [view, setView] = useState<'inventory' | 'media' | 'shapes' | 'rig' | 'polar' | 'log' | 'battens' | 'vocab'>('inventory')
+  const [mediaSailId, setMediaSailId] = useState<string>('') // the sail the Sail media tab shows
   const uiNext = useUiNext() // ?ui=next → redesigned reference screen (Phase 1)
   const [sails, setSails] = useState<Sail[]>(() => (pf?.sails as Sail[]) || [])
   const [scans, setScans] = useState<Scan[]>(() => (pf?.scans as Scan[]) || [])
@@ -661,6 +663,7 @@ export default function BoatConfigTab({
       </div>
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
         {subBtn('inventory', 'Sail inventory')}
+        {mediaSailId && subBtn('media', 'Sail media')}
         {subBtn('shapes', 'Sail data')}
         {canSeeTuning && subBtn('rig', 'Rig settings')}
         {canSeeTuning && subBtn('polar', 'Targets')}
@@ -703,6 +706,7 @@ export default function BoatConfigTab({
                     <th style={th}>Sail type</th><th style={th}>Grp</th><th style={th}>Wt (kg)</th>
                     <th style={th}>Build date</th><th style={th}>Status</th><th style={th}>Certificate</th>
                     <th style={th}>Sailshape design</th>
+                    <th style={th}>Scans, photos &amp; videos</th>
                     {canEdit && <th style={th}></th>}
                   </tr>
                 </thead>
@@ -711,13 +715,20 @@ export default function BoatConfigTab({
                     <SailRow key={s.id} sail={s} canEdit={canEdit} busy={busy === s.id}
                       td={td} input={input} btn={btn}
                       onPatch={(f: any) => patchSail(s.id, f)} onCert={(f: File) => uploadCert(s, f)} onDelete={() => deleteSail(s)}
-                      onShowDesign={() => setDesignSail(s)} />
+                      onShowDesign={() => setDesignSail(s)}
+                      onShowMedia={() => { setMediaSailId(s.id); setView('media') }} />
                   ))}
                 </tbody>
               </table>
             </div>
           )}
         </div>
+      )}
+
+      {/* ── SAIL MEDIA — one sail's scans, trim frames, 360, photos, video by TWS ── */}
+      {view === 'media' && mediaSailId && (
+        <SailMediaPanel teamId={teamId} sails={sails} sailId={mediaSailId} onSailChange={setMediaSailId}
+          onBack={() => setView('inventory')} sessionTzOffset={sessionTzOffset} isMobile={isMobile} />
       )}
 
       {/* ── SAIL SHAPES (scans) ────────────────────────────────────── */}
@@ -2351,7 +2362,7 @@ function ImportScanForm({ sails, onImport, onCreateSail, input, btn }: any) {
 }
 
 // ── One inventory row (view + inline edit) ───────────────────────────────────
-export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete, onShowDesign }: any) {
+export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, onDelete, onShowDesign, onShowMedia }: any) {
   const spec = sail.specs || {}
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(sail.name)
@@ -2454,7 +2465,7 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
             <option value="retired">Retired</option>
           </select>
         </td>
-        <td style={td} colSpan={2}>
+        <td style={td} colSpan={3}>
           <button onClick={save} disabled={busy} style={btn('#10B981')}>Save</button>{' '}
           <button onClick={() => setEditing(false)} style={{ ...btn('#334155'), color: '#cbd5e1' }}>Cancel</button>
         </td>
@@ -2547,6 +2558,12 @@ export function SailRow({ sail, canEdit, busy, td, input, btn, onPatch, onCert, 
         {nDesign > 0 ? (
           <button onClick={onShowDesign} style={{ background: '#0F2A45', border: `1px solid ${C.border}`, color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer' }}>Details ({nDesign})</button>
         ) : <span style={{ color: '#8A97A9' }}>—</span>}
+      </td>
+      <td style={td}>
+        {onShowMedia && (
+          <button onClick={onShowMedia} title={`SailScans, SailTrim, 360 video, photos and video of ${sail.name}, by wind band`}
+            style={{ background: '#0F2A45', border: `1px solid ${C.border}`, color: '#06B6D4', borderRadius: 6, fontSize: 11, fontWeight: 700, padding: '3px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}>Media ›</button>
+        )}
       </td>
       {canEdit && (
         <td style={td}>

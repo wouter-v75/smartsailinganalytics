@@ -52,7 +52,7 @@ export default function SailRowPreview() {
             <th style={td}>Cat</th><th style={td}>Sail name</th><th style={td}>Kind</th>
             <th style={td}>Sail type</th><th style={td}>Grp</th><th style={td}>Wt (kg)</th>
             <th style={td}>Build date</th><th style={td}>Status</th><th style={td}>Certificate</th>
-            <th style={td}>Sailshape design</th><th style={td} />
+            <th style={td}>Sailshape design</th><th style={td}>Scans, photos &amp; videos</th><th style={td} />
           </tr>
         </thead>
         <tbody>
@@ -60,7 +60,7 @@ export default function SailRowPreview() {
             <SailRow
               key={s.id} sail={s} canEdit busy={false}
               td={td} input={input} btn={btn}
-              onPatch={setPatch} onCert={() => {}} onDelete={() => {}} onShowDesign={() => {}}
+              onPatch={setPatch} onCert={() => {}} onDelete={() => {}} onShowDesign={() => {}} onShowMedia={() => {}}
             />
           ))}
         </tbody>
