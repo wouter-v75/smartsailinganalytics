@@ -826,9 +826,46 @@ writeFileSync(manifest, JSON.stringify({
 // cloud's side of the answer.
 const haveKey = (n) => String(n).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 const inCloud = new Set(opt.have.map(haveKey))
-const todo = opt.force ? jobs : jobs.filter((j) =>
-  !existsSync(join(opt.out, `${j.name}.mp4`)) && !inCloud.has(haveKey(j.name)))
+
+// And made already is not the same as made RIGHT. A segment's filename carries
+// its start, never its end, so anything that moves only the tail leaves a file
+// whose name still matches: a changed --top-lag, or — how this was found — a
+// second tag deleted in SSA. 29 September had a top mark tagged at both 15:36:23
+// and 15:36:33, ten seconds apart, so --gap merged them into one 100 s segment.
+// Deleting the second tag made the cut 90 s and changed nothing about its name,
+// and "already made" kept the merged clip for ever.
+//
+// The proxy is a re-encode with -ss before -i and -t after, so its duration is
+// accurate to the frame; a couple of seconds of slack covers container rounding
+// and still catches the nine that mattered. Only on-disk files can be checked —
+// a stale copy already in the cloud has to be deleted in SSA, which is why this
+// says so out loud rather than silently skipping.
+const RESIZE_TOL_S = 2
+const durationOf = (file) => {
+  const r = spawnSync('ffprobe',
+    ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file],
+    { encoding: 'utf8' })
+  const d = Number(String(r.stdout || '').trim())
+  return Number.isFinite(d) && d > 0 ? d : null
+}
+const wrongLength = []
+const staleOnDisk = (j) => {
+  if (!j.durSec) return false          // a whole clip: there is no length to be wrong
+  const d = durationOf(join(opt.out, `${j.name}.mp4`))
+  if (d == null || Math.abs(d - j.durSec) <= RESIZE_TOL_S) return false
+  wrongLength.push(`${j.name} — ${d.toFixed(0)}s on disk, ${Math.round(j.durSec)}s now`)
+  return true
+}
+const todo = opt.force ? jobs : jobs.filter((j) => {
+  if (existsSync(join(opt.out, `${j.name}.mp4`))) return staleOnDisk(j)
+  return !inCloud.has(haveKey(j.name))
+})
 const already = jobs.length - todo.length
+if (wrongLength.length) {
+  console.log(`\n⟳ ${wrongLength.length} segment(s) on disk are the wrong length now — re-cutting:`)
+  for (const w of wrongLength) console.log(`    ${w}`)
+  console.log('    (a copy already UPLOADED cannot be checked — delete it in SSA to have it redone)')
+}
 if (already) console.log(`\n↷ ${already} segment(s) already made — skipping (use --force to redo)`)
 console.log(`\n● Compressing ${todo.length} file(s) from ${picked.length} clip(s) → ${opt.out}/\n`)
 let i = 0, bad = 0
