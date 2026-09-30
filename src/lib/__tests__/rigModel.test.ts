@@ -326,16 +326,29 @@ describe("Northstar 76's baselines, end to end", () => {
     const w = m.scaleRefs.find((s) => s.key === 'wheels')!
     expect(w.mm).toBe(3375)
     expect(w.source).toBe('measured')
-    // ~10 m abaft the mast, which is why it needs a depth at all.
-    expect(w.depthMm).toBe(-10_000)
+    // Abaft the mast, which is why it needs a depth at all. It was guessed at
+    // -10 000 until the designer's datums gave the wheel centre at x 17941.7 and
+    // the mast at 10550: 7392, not 10 000, so the guess was 26% out. That is
+    // -3.1% on every wheels-referenced measurement at the range these are shot
+    // from, all of it one way, which is exactly the kind of error a scale
+    // reference hides.
+    expect(w.depthMm).toBe(-7392)
   })
 
   it('has mast-to-stern and J measured, and tack-to-transom derived from them', () => {
-    expect(b('mast-transom').mm).toBe(12_100)
+    // 12 650 is the DESIGNER's: transom 23200 - mast LE 10550, both off the
+    // datum sheet. A tape had said 12 100 +-50, and the 550 mm between them is a
+    // whole mast section, so the tape was hooked somewhere other than the
+    // leading edge. The designer wins, and the check below is why: IRC's J is to
+    // the same front face, so tack->transom derives to 21 510, which is exactly
+    // 23200 - (10550 - 8860) off the sheet. Certificate and designer agree to
+    // the millimetre. With the tape's 12 100 they were 550 mm apart and nothing
+    // in the model said so.
+    expect(b('mast-transom').mm).toBe(12_650)
     expect(b('mast-transom').source).toBe('measured')
     expect(b('tack-mast').mm).toBe(8_860)
     expect(b('tack-mast').source).toBe('measured')
-    expect(b('bow-transom').mm).toBe(20_960)
+    expect(b('bow-transom').mm).toBe(21_510)
     expect(b('bow-transom').source).toBe('derived')
   })
 

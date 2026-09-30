@@ -346,21 +346,46 @@ const MEASURED: Record<string, {
     scaleRefs: {
       // Measured on the dock, 2026-09. ±10 mm is a tape across two wheel
       // centres — the wheels themselves are the fuzzy part, not the tape.
-      wheels: { mm: 3375, sigmaMm: 10, source: 'measured' },
-    },
-    baselines: {
-      // Mast at deck → transom centre, tape, 2026-09. ±50 mm is not the tape
-      // over 12 m: it is the two ENDS. "The mast at deck" is a 300 mm section
-      // and "transom centre" is a curve, so where you hook and where you read
-      // are each worth tens of millimetres. Tighten it here if the endpoints
-      // were pinned down more carefully than that.
-      'mast-transom': { mm: 12100, sigmaMm: 50, source: 'measured' },
-      // J off Northstar III's endorsed certificate (50945, GBR76X) — the same
-      // ±200 mm the certificate reader applies, so a pasted cert and this agree
-      // rather than one quietly overriding the other.
       //
-      // With these two, deriveBaselines fills tack-to-transom at 20 960 ± 206 —
-      // the longest baseline on the boat, and the one ψ is most precise across.
+      // The DEPTH is off the boat's own datums (2026-09-30): wheel centre at
+      // x 17941.7 from the bow, mast leading edge at x 10550, so 7391.7 mm
+      // abaft the mast. It had been guessed at 10 000 — 26 % out, and since it
+      // refers the scale back to the mast plane that guess was worth −3.1 % on
+      // EVERY measurement taken with the wheels as the reference.
+      wheels: { mm: 3375, sigmaMm: 10, depthMm: -7392, source: 'measured' },
+    },
+    // ── the designer's datums, 2026-09-30 ────────────────────────────────
+    // From the DESIGNER, which is what these are measured against; x from the
+    // BOW, z above the waterline, on the centreplane:
+    //   wheel centre  x 17941.7  z 1582.5
+    //   mast LE       x 10550    z 1550
+    //   transom cl    x 23200    z  729.9
+    // The transom confirms the datum is the bow: 23 200 is exactly the
+    // certificate's LH.
+    //
+    // A tape had previously put "mast at deck → transom centre" at 12 100 ± 50.
+    // The designer says 12 650, and 550 mm apart is a whole mast section: the
+    // tape was hooked somewhere other than the leading edge. The designer's
+    // figure is the one to use, and the sigma below is the drawing's, not a
+    // tape's.
+    //
+    // Two things fall out of it, and both are reasons to trust it. IRC's J is to
+    // the mast's FRONT face — the same leading edge — so the two compose without
+    // a correction: the forestay tack lands at 10550 − 8860 = 1690 mm from the
+    // bow, and tack→transom is therefore 23200 − 1690 = 21 510. That is exactly
+    // what deriveBaselines computes from the pair below, so the certificate and
+    // the designer agree to the millimetre. Against the tape's 12 100 they were
+    // 550 mm apart and nothing said so.
+    baselines: {
+      'mast-transom': { mm: 12650, sigmaMm: 150, source: 'measured' },
+      // Northstar III's endorsed certificate (50945, GBR76X), to the mast's
+      // front face, at the same ±200 mm the certificate reader applies — so a
+      // pasted cert and this agree rather than one quietly overriding the other.
+      //
+      // deriveBaselines turns the two into tack→transom at 21 510 ± 250: the
+      // longest baseline on the boat, and the one ψ is most precise across. It
+      // is left derived rather than written out, so it cannot drift from its
+      // own parts.
       'tack-mast': { mm: 8860, sigmaMm: 200, source: 'measured' },
     },
     // Off Northstar III's own endorsed certificate (50945, GBR76X), tabulated
