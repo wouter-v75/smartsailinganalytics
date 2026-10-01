@@ -165,8 +165,18 @@ export async function firstLoginLink(
     })
     const hashed = res?.data?.properties?.hashed_token
     if (hashed) {
-      const next = encodeURIComponent('/auth/reset-password')
-      return `${origin}/auth/callback?token_hash=${encodeURIComponent(hashed)}&type=recovery&next=${next}`
+      // `next` is the APP, not /auth/reset-password: the callback's own page is
+      // the password form now, so there is no second screen to send them to.
+      // The address rides along so that form can fill itself in — display only,
+      // never trusted; the account that gets the password is whichever one the
+      // token resolves to.
+      const qs = new URLSearchParams({
+        token_hash: hashed,
+        type: 'recovery',
+        next: '/',
+        email: normaliseEmail(email),
+      })
+      return `${origin}/auth/callback?${qs.toString()}`
     }
     // No hashed token on the response: fall back to Supabase's own link rather
     // than sending nothing. It is the flow that was broken, but a link that
