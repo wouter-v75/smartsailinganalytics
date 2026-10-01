@@ -19,6 +19,8 @@ const SailGeometryDialog = dynamic(() => import('../photos/SailGeometryDialog'),
 import SailScanDetail from '@/components/SailScanDetail'
 import { FavouriteHeart, FavouritesOnlyContext } from '@/components/FavouriteHeart'
 import { useFavourites } from '@/lib/favourites'
+import { isVideo360 } from '@/lib/sailMedia'
+import { Badge360 } from '@/components/Badge360'
 import { racingTagsOf, isMainsailTag, RACE_RED } from '@/lib/racingTags'
 import { teamComments, firstName, clip, type Comment } from '@/lib/tagging/comments'
 import { MEDIA_COLOURS, isDroneClip } from '@/lib/mediaDecks'
@@ -662,6 +664,7 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
           )}
           {/* My favourite — a span, not a button: this card IS a button. For a
               burst it is the frame the card shows. */}
+          {m.type === 'video' && isVideo360(m) && <Badge360 />}
           {(m.type === 'photo' || m.type === 'video') && <FavouriteHeart kind={m.type} id={m.id} size={10} />}
         </div>
         {m.type === 'video' && <span className={`absolute left-1/2 top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white ${focused ? 'opacity-0' : ''}`}><Play size={15} aria-hidden /></span>}

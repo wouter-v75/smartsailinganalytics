@@ -62,6 +62,10 @@ describe('isVideo360', () => {
     expect(isVideo360({ title: 'VID_20260911_114300_00_012.insv' })).toBe(true)
     expect(isVideo360({ title: 'Insta360 masthead' })).toBe(true)
     expect(isVideo360({ title: 'drone start 1', tags: ['360p'] })).toBe(false)
+    expect(isVideo360({ tags: ['360 video'] })).toBe(true)
+    expect(isVideo360({ tags: ['360cam'] })).toBe(true)
+    expect(isVideo360({ tags: ['Insta360'] })).toBe(true)
+    expect(isVideo360({ tags: ['tack', '1360'] })).toBe(false)
   })
 })
 

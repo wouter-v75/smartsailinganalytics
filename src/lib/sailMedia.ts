@@ -100,11 +100,15 @@ export function allTwsBands(): TwsBand[] {
 }
 
 // ── 360 ──────────────────────────────────────────────────────────────────────
-// There is no projection column. A clip is 360 when somebody tagged it "360",
-// or its title says so (Insta360 exports keep .insv / "360" in the name).
+// A clip is 360 when it carries the Videos tab's 360 tag — however it is
+// spelled: "360", "360 video", "360cam", "Insta360" — or its title says so
+// (Insta360 exports keep .insv / "360" in the name). Not "360p": that is a
+// rendition, and "1360" is a number. Shared by the thumbnails' 360 badge and
+// Sail media's 360 column, so the two always agree.
+const TAG_360 = /(?<![0-9])360(?![0-9]|p\b)/i
 export function isVideo360(v: { title?: string | null; tags?: unknown }): boolean {
   const tags = Array.isArray(v.tags) ? v.tags : []
-  if (tags.some((t) => /^\s*360\s*°?\s*$/i.test(String(t)) || /\b360\b/i.test(String(t)))) return true
+  if (tags.some((t) => TAG_360.test(String(t)))) return true
   return /\b360\b|\.insv\b|insta ?360|equirect/i.test(String(v.title || ''))
 }
 

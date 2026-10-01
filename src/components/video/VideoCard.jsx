@@ -7,6 +7,8 @@ import { R, fmtT } from '../ssa/format';
 import { rotStyle } from '../ssa/format';
 import { FavouriteHeart } from '../FavouriteHeart';
 import { videoFavId } from '../../lib/favourites';
+import { isVideo360 } from '../../lib/sailMedia';
+import { Badge360 } from '../Badge360';
 
 function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,onBatchToggle,sessionTzOffset=0}){
   const handleLoaded = () => onThumbLoad?.(video.id);
@@ -55,6 +57,8 @@ function VideoCard({video,selected,onClick,onThumbLoad,batchMode,batchSelected,o
         <div style={{position:"absolute",top:3,right:4}}><SrcBadge source={videoBadgeSrc(video)}/></div>
         {/* My favourite. Bottom left: the batch checkbox owns the top left. */}
         {!batchMode&&<FavouriteHeart kind="video" id={videoFavId(video)} size={11} style={{position:"absolute",bottom:3,left:4}}/>}
+        {/* 360 — from the clip's 360 tag. Top left: the batch checkbox's place in batch mode. */}
+        {!batchMode&&isVideo360(video)&&<Badge360 style={{position:"absolute",top:3,left:4}}/>}
         {/* Batch checkbox */}
         {batchMode&&(
           <div style={{position:"absolute",top:4,left:4,width:22,height:22,borderRadius:4,

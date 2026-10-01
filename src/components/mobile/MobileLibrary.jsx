@@ -8,6 +8,8 @@ import { thumbSrc } from '../../lib/thumbSrc';
 import { SrcBadge } from '../ssa/SrcBadge';
 import { FavouriteHeart, FavouritesFilterButton } from '../FavouriteHeart';
 import { videoFavId } from '../../lib/favourites';
+import { isVideo360 } from '../../lib/sailMedia';
+import { Badge360 } from '../Badge360';
 import { fmtT } from '../ssa/format';
 import { BatchSyncPanel } from '../sync/BatchSyncPanel';
 import { SyncControl } from '../sync/SyncControl';
@@ -212,6 +214,7 @@ function MobileLibrary({allVideos,sessions,activeDate,selectedVideo,setSelectedV
                         Explicit width+height removes every such dependency. */}
                     <div style={{width:96,height:64,flexShrink:0,alignSelf:"center",background:"#071624",position:"relative",overflow:"hidden"}}>
                       <FavouriteHeart kind="video" id={videoFavId(v)} size={11} style={{position:"absolute",bottom:3,left:3,zIndex:2}}/>
+                      {isVideo360(v)&&<Badge360 style={{position:"absolute",top:3,left:3,zIndex:2}}/>}
                       {v.thumbnailUrl
                         ? <img src={thumbSrc(v.thumbnailUrl,256)} alt=""
                             /* loading=eager + fetchPriority=high stop the
