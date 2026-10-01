@@ -86,7 +86,7 @@ const opt = {
   photoLead: 30, photoLag: 30,      // 0:30 either side of a sail PhotoEvent — the
                                     // photo is one frame; this is the shape moving
   shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false, noStarts: false, noTacks: false, noGybes: false,
-  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [],
+  tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [], coverage: '',
   racing: false, finish: [], guns: [], practice: [], marks: [], gates: [], turns: { tack: [], gybe: [] }, have: [],
 }
 for (let i = 0; i < argv.length; i++) {
@@ -133,6 +133,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--keep-names') opt.keepNames = true
   else if (a === '--full-res') opt.fullRes = next()
   else if (a === '--from') opt.from = next()
+  else if (a === '--coverage') opt.coverage = next()
   else if (a === '--archive') opt.archive = true
   else if (a === '--dry-run' || a === '-n') opt.dry = true
   else if (a === '--help' || a === '-h') { usage(); process.exit(0) }
@@ -174,6 +175,9 @@ function usage() {
       --keep-names    keep original stems instead of tagged names
       --full-res M    re-cut the segments in manifest M at source resolution
       --from DIR      where the source clips live now, if the card moved
+      --coverage F    also write F: when the card was FILMING and which parts
+                      this run would cut, in the card's own wall clock. For
+                      drawing on the track — see scripts/drone-coverage.ts.
       --force         re-encode segments that are already present (default: skip)
       --crf N         quality/size of the proxy        (default: 26; lower = bigger)
       --no-srt        ignore DJI .SRT sidecars and time clips from the filename
@@ -447,6 +451,33 @@ const addWindow = (utc, kind, label, valid = true, asked = false) => {
 // day. Date.now() would be right only for a day being cut on the day it
 // happened, and silently wrong — every window on the wrong date — for one cut
 // the morning after.
+// ── coverage ─────────────────────────────────────────────────────────────────
+// Every clip's span, and every segment this run would cut. Written HERE because
+// this is the only place that knows both: the scan above has each file's real
+// start (SRT sidecar where there is one, exiftool otherwise) and the selection
+// below has the windows. A second implementation of "when was this filmed"
+// would be a second thing to get wrong.
+//
+// In the CARD'S OWN WALL CLOCK, the frame everything in this file works in. The
+// caller converts to UTC, because the caller is the one that knows the venue
+// offset. Writing a half-converted number here is how a band ends up two hours
+// off the track.
+//
+// Written TWICE, deliberately: once as soon as the card is scanned, and again
+// with the cut segments once they exist. The first write is what makes this
+// usable as a pure scan — "nothing to cut" is a perfectly ordinary answer for a
+// day whose tags have not been entered yet, and it dies before the second.
+const writeCoverage = (cut = []) => {
+  if (!opt.coverage) return
+  const footage = clips
+    .filter((c) => c.start != null && c.dur > 0)
+    .map((c) => ({ from: c.start, to: c.start + c.dur * 1000 }))
+  writeFileSync(opt.coverage, JSON.stringify({
+    wallClock: true, fileCount: clips.length, footage, clips: cut,
+  }, null, 2))
+  return footage.length
+}
+
 const dayAnchor = new Date(
   ev.dayStartUtc ?? clips.find((c) => c.start != null)?.start ?? Date.now()
 )
@@ -619,6 +650,13 @@ if (opt.racing) {
   console.log(`  dropped ${before - windows.length} of ${before} windows outside a race` +
     (askedKept ? ` · kept ${askedKept} marked moment(s) wherever they fell` : ''))
   if (!windows.length) die('nothing happened inside a race — check --finish, or drop --racing')
+}
+
+// The card has been read by now, so the coverage is known whatever happens to
+// the selection below — including the die on the next line.
+if (opt.coverage) {
+  const n = writeCoverage()
+  console.log(`coverage: ${n} recording(s) from the card → ${opt.coverage}`)
 }
 
 if (!windows.length) {
@@ -847,6 +885,18 @@ for (const c of picked) {
 }
 
 jobs.sort((a, b) => rankOf(a.kinds || []) - rankOf(b.kinds || []) || String(a.name).localeCompare(String(b.name)))
+
+if (opt.coverage) {
+  const cut = jobs
+    .filter((j) => j.startWall)
+    .map((j) => {
+      const from = Date.parse(`${j.startWall}Z`)
+      return { from, to: from + (j.durSec || 0) * 1000 }
+    })
+    .filter((x) => Number.isFinite(x.from) && x.to > x.from)
+  const n = writeCoverage(cut)
+  console.log(`\ncoverage: ${n} recording(s), ${cut.length} cut → ${opt.coverage}`)
+}
 
 if (opt.dry) {
   console.log(`\nEncode order — starts first, so the debrief's opening clips can go up while the rest are still encoding:`)

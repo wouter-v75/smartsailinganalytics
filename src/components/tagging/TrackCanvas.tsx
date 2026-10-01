@@ -11,6 +11,7 @@ import { sessionClock } from '@/lib/tagging/clock'
 import { markerStyle, markerTip, markerLabel, isRetimable } from '@/lib/tagging/markers'
 import { MEDIA_COLOURS, MEDIA_LABELS, isSpan, type MediaMark } from '@/lib/mediaDecks'
 import type { TagEvent, TagWithRequests } from '@/lib/tagging/types'
+import { type DroneCoverage, type Span } from '@/lib/droneCoverage'
 
 // The day's track, with a thumb on it.
 //
@@ -74,6 +75,9 @@ export interface TrackCanvasProps {
   /** The day's videos, drone clips, photos and sail scans, drawn where they
    *  were taken. Same colours as the timeline's decks — see lib/mediaDecks.ts. */
   media?: MediaMark[]
+  /** Where the drone was FILMING, and which of it is already cut. Two bands
+   *  under the track: light green for footage, dark green for the clips. */
+  coverage?: DroneCoverage
   tzOffsetMin?: number
   /** Shortest the track box may get. It grows to fill whatever it is given. */
   minHeightPx?: number
@@ -88,7 +92,7 @@ const MOVE_CANCEL_PX = 10
 
 export default function TrackCanvas({
   rows, items, t0, t1, selectedUtc, onSelect, onOpenTag, canEditTag, onMoveTag,
-  media, tzOffsetMin = 0, minHeightPx = 240,
+  media, coverage, tzOffsetMin = 0, minHeightPx = 240,
 }: TrackCanvasProps) {
   const boxRef = React.useRef<HTMLDivElement>(null)
   // The box fills the column, so both dimensions are measured rather than
@@ -175,6 +179,25 @@ export default function TrackCanvas({
       }))
       .filter((x): x is { m: MediaMark; path: string; pt: TrackPoint } => !!x.pt)
   }, [media, points])
+
+  // ── Drone coverage ────────────────────────────────────────────────────────
+  // Where the drone was recording, and which of that is already a clip. Two
+  // bands, drawn UNDER the track line so the course still reads as the course.
+  //
+  // This answers a question the track could not answer before: on 30 September
+  // a tagged top mark and a tagged gate both produced no clip, and "the drone
+  // was not up" looked exactly like "nobody has cut it yet". Now the first is a
+  // hole in the light band and the second is light with no dark on it.
+  const coverageBands = React.useMemo(() => {
+    if (!points.length || !coverage) return { footage: [] as string[], clips: [] as string[] }
+    const from = points[0].utc
+    const to = points[points.length - 1].utc
+    const paths = (spans: readonly Span[]) => spans
+      .filter((s) => s.to >= from && s.from <= to)
+      .map((s) => segmentPath(points, s.from, s.to))
+      .filter(Boolean)
+    return { footage: paths(coverage.footage), clips: paths(coverage.clips) }
+  }, [coverage, points])
 
   // Both halves have to say yes: the KIND of tag must be one a person placed
   // (a tack is where the boat tacked), and the person must be one the database
@@ -476,6 +499,27 @@ export default function TrackCanvas({
               track but their RADII do not — a 6px dot at 8× would be a blob
               covering half a beat — so stroke and radius are divided back out. */}
           <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
+          {/* Footage first, clips over it, both under the track line. Dark is
+              always inside light — a clip is cut FROM footage — so the two can
+              never disagree about what exists. */}
+          {coverageBands.footage.map((d, i) => (
+            <path
+              key={`cov-f-${i}`} d={d} fill="none"
+              stroke="#86EFAC" strokeOpacity={0.3}
+              strokeWidth={16 / view.scale}
+              strokeLinecap="round" strokeLinejoin="round"
+              role="img" aria-label="Drone footage available here"
+            />
+          ))}
+          {coverageBands.clips.map((d, i) => (
+            <path
+              key={`cov-c-${i}`} d={d} fill="none"
+              stroke="#16A34A" strokeOpacity={0.85}
+              strokeWidth={10 / view.scale}
+              strokeLinecap="round" strokeLinejoin="round"
+              role="img" aria-label="Already cut into a clip"
+            />
+          ))}
           <path
             d={path}
             fill="none"

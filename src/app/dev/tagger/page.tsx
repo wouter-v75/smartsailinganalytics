@@ -227,6 +227,25 @@ const BATTEN_CARD = normaliseBattenCard({
 // The day's media, drawn on the track in the timeline's deck colours: two
 // onboard clips and a drone one as stretches of water, photos and a sail scan
 // as points.
+// Where the drone was filming, and which of it is cut — the two green bands.
+// Shaped like 30 September: a long first recording, a REAL gap with the drone on
+// the deck, a second recording, and a clip inside each. The gap is the point:
+// a tag that falls in it got no clip because there was no footage, and the track
+// should say so without anybody reading a cutter's table.
+const DRONE_COVERAGE = {
+  footage: [
+    { from: T(11, 25), to: T(11, 52) },
+    { from: T(12, 6), to: T(12, 34) },
+  ],
+  clips: [
+    { from: T(11, 30), to: T(11, 32) },
+    { from: T(12, 18), to: T(12, 21) },
+  ],
+  scannedAt: '2026-09-11T18:00:00.000Z',
+  tzOffsetMin: 120,
+  fileCount: 7,
+}
+
 const DAY_MEDIA = mediaMarks({
   // duration_ms, as the videos API actually returns it — the fixture used to
   // say `duration` and so hid the bug that drew every real clip as a dot.
@@ -402,6 +421,7 @@ export default function TaggerPreview() {
           <TrackView
             rows={TRACK_ROWS} items={items} segments={segments}
             media={DAY_MEDIA}
+            coverage={DRONE_COVERAGE}
             canEditTag={(tag) => canEditTagEvent(tag, me)}
             onMoveTag={(id, utc) => setEvts((prev) => prev.map((e) => (
               e.id === id ? { ...e, t0: utc, t1: utc + (e.t1 - e.t0) } : e

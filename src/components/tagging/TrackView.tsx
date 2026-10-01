@@ -7,6 +7,7 @@ import TrackCanvas from './TrackCanvas'
 import type { GeoRow } from '@/lib/tagging/trackGeom'
 import type { TagEvent, TagWithRequests } from '@/lib/tagging/types'
 import type { MediaMark } from '@/lib/mediaDecks'
+import type { DroneCoverage } from '@/lib/droneCoverage'
 
 // The track view: where the day happened, rather than when.
 //
@@ -33,12 +34,14 @@ export interface TrackViewProps {
   onMoveTag?: (tagId: string, utc: number) => void | Promise<unknown>
   /** The day's media, drawn on the water in the timeline's deck colours. */
   media?: MediaMark[]
+  /** Where the drone was filming, and which of it is already cut. */
+  coverage?: DroneCoverage
   tzOffsetMin?: number
 }
 
 export default function TrackView({
   rows, items, segments, selectedUtc, onSelect, onOpenTag, canEditTag, onMoveTag,
-  media, tzOffsetMin = 0,
+  media, coverage, tzOffsetMin = 0,
 }: TrackViewProps) {
   const races = React.useMemo(() => racesOf(segments), [segments])
   const [key, setKey] = React.useState<string>('all')
@@ -89,6 +92,7 @@ export default function TrackView({
         canEditTag={canEditTag}
         onMoveTag={onMoveTag}
         media={media}
+        coverage={coverage}
         tzOffsetMin={tzOffsetMin}
       />
 

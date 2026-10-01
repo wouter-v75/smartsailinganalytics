@@ -136,7 +136,7 @@ export default function TaggerTab({
   // What was filmed and photographed, drawn on the track in the timeline's own
   // deck colours. Context rather than content: it answers "was that gybe
   // filmed" without leaving the tagger.
-  const dayMedia = useDayMedia(teamId, boatId, date, tzOffsetMin)
+  const { marks: dayMedia, coverage: droneCoverage } = useDayMedia(teamId, boatId, date, tzOffsetMin)
 
   // The day's tags with every sail resolved to its inventory row. A DERIVED
   // view — nothing is written back — because the identity problem is felt in
@@ -396,6 +396,7 @@ export default function TaggerTab({
               t.patch(id, { op: 'move', delta_ms: utc - tag.t0 })
             }}
             media={dayMedia}
+            coverage={droneCoverage}
             tzOffsetMin={tzOffsetMin}
           />
         ) : view === 'check' ? (
