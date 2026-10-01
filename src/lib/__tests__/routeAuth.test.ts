@@ -24,6 +24,13 @@ const PUBLIC_ROUTES: Record<string, string> = {
   'invitations/[token]/stash': 'same invitation token, carried through signup',
   'hls/[guid]/[file]': 'the signed link minted by /api/videos/[id]/url — AVPlayer does not send our cookie',
   'stream/webhook': "Bunny's HMAC signature (verifyBunnySignature) — the caller is Bunny, not a user",
+  'auth/forgot-password':
+    'nobody who needs it can authenticate — that is what being locked out means. ' +
+    'It reads nothing and returns nothing about anybody: every outcome, including ' +
+    'an unknown address, a malformed one and a server with no credentials, returns ' +
+    'the same 200 and the same sentence, so it cannot be used to enumerate a team. ' +
+    'Its only effect is to send a recovery link TO THE ADDRESS GIVEN, throttled to ' +
+    'one per address per minute.',
   'access-request':
     'the public "Request access" form — the sender has no account and that is the point. ' +
     'It only ever INSERTS into access_requests and never reads anything back, and it is ' +

@@ -159,3 +159,46 @@ function escape(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
+
+interface PasswordResetArgs {
+  to: string
+  /** The /auth/callback link, already minted. */
+  reset_url: string
+  site_url: string
+}
+
+/**
+ * Password reset — sent by US, through Resend, not by Supabase.
+ *
+ * Supabase's own resetPasswordForEmail goes out over its built-in SMTP, which is
+ * rate-limited to a handful of messages an hour and documented as unsuitable for
+ * production. Two people lost a day to it: a confirmation that never arrived on
+ * 29 September and a reset that never arrived on 1 October. Everything else this
+ * app sends already goes through Resend, so the reset does too — one provider,
+ * one place to look when something does not land.
+ */
+export async function sendPasswordResetEmail(args: PasswordResetArgs) {
+  const html = `
+    <div style="font-family:-apple-system,system-ui,sans-serif;max-width:540px;margin:0 auto;padding:24px;color:#1e293b">
+      <h2 style="color:#0f172a;margin:0 0 16px">Choose a new password</h2>
+      <p style="line-height:1.5">
+        Somebody asked to reset the password for this address on SSA. Press the button
+        to choose a new one — you will be signed in straight afterwards.
+      </p>
+      <p style="margin:24px 0">
+        <a href="${args.reset_url}"
+           style="display:inline-block;background:#2563eb;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600">
+          Choose a new password &rarr;
+        </a>
+      </p>
+      <p style="font-size:13px;color:#64748b;line-height:1.5">
+        The link works once and expires after about an hour. If you did not ask for
+        this, ignore this message — nothing has changed, and your current password
+        still works.
+      </p>
+      <p style="font-size:13px;color:#64748b;line-height:1.5">
+        <a href="${args.site_url}" style="color:#2563eb">${escape(args.site_url.replace(/^https?:\/\//, ''))}</a>
+      </p>
+    </div>`
+  return sendEmail({ to: args.to, subject: 'Choose a new password for SSA', html })
+}

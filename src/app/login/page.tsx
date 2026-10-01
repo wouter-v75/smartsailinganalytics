@@ -66,18 +66,21 @@ function LoginForm() {
     }
     setBusy(true)
     try {
-      const supabase = getBrowserSupabase()
-      // Route the recovery link through /auth/callback so the code is
-      // exchanged for a session before landing on /auth/reset-password.
-      const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent('/auth/reset-password')}`
-      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(
-        email.trim(),
-        { redirectTo }
-      )
-      if (resetErr) {
-        setError(resetErr.message)
+      // OUR endpoint, not supabase.auth.resetPasswordForEmail — that one sends
+      // over Supabase's built-in SMTP, which is rate-limited to a few messages
+      // an hour and silently delivered nothing twice in three days. This goes
+      // through Resend like the rest of the app's mail.
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      })
+      if (!res.ok) {
+        setError('Could not send the link just now. Try again in a moment.')
         return
       }
+      // Deliberately the same outcome whether or not that address has an
+      // account: the reply does not say, so neither does this screen.
       setMode('forgot-sent')
     } finally {
       setBusy(false)
