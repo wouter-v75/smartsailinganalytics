@@ -212,40 +212,56 @@ export interface ProfileWW {
 // the two lowest levels, so the near-surface fill reproduces the shear the model
 // actually has instead of assuming open-sea z0. A power law extrapolated to the
 // deck starves the bottom of the rig and biases f_profile low.
+// Below the lowest MODEL level the model has no information at all: 10 m is the
+// 1 km nest's lowest mass level and nothing was ever computed underneath it. What
+// ICON itself assumes down there is a Monin-Obukhov surface layer over a Charnock
+// sea — that is how turbdiff gets its surface stress in the first place — so the
+// fill uses the same thing, anchored on the model's own lowest value.
+//
+// This replaces a log law whose roughness was FITTED to the two lowest levels.
+// That fit read the shear of the layer ABOVE the surface layer, which carries
+// mixed-layer processes too, and it was unstable at both ends: on a well-mixed
+// hour it implied a sea smoother than any sea (z0 pinned to a 1e-5 floor), on a
+// sheared one a surface rougher than a forest. It also had to be clamped, and the
+// clamp broke continuity at the anchor. A Charnock fill passes through (zLo, vLo)
+// by construction — u*/kappa * ln(zLo/z0) IS vLo — so there is nothing to clamp.
+//
+// The departure-from-standard signal is NOT lost with the fit: the fill is
+// anchored at the model's own V(zLo), so a fuller column carries a higher V(zLo)
+// down through the bottom of the rig. Only the SHAPE below zLo is prescribed, and
+// that shape was never model output.
+//
+// Neutral for now. The stability correction (psiM) needs the Obukhov length, i.e.
+// the surface heat fluxes, which the box does not publish yet.
+//
+// It uses Z0_REF — the SAME roughness the standard-day reference uses — and that
+// is deliberate. A wind-dependent Charnock roughness here is more honest in
+// isolation, but the reference stays at Z0_REF, so the two disagree below zLo even
+// for a column that IS the standard day: measured, that scored 101.2% at 3 m/s,
+// 100.3% at 8 and 99.1% at 16. A speed-dependent zero point is exactly the fault
+// just removed from f_gust. Below zLo nothing is model output, so the fill must
+// contribute NOTHING to the departure — only the anchor V(zLo) should carry it,
+// and it does. Going Charnock means making the reference Charnock too, which
+// redefines "standard day" as wind-dependent; a bigger change than this one.
+export function seaSurfaceFill(zLo: number, vLo: number): (z: number) => number {
+  if (!(zLo > 0) || !(vLo > 0)) return () => 0
+  const ustarOverK = vLo / Math.log(zLo / Z0_REF)
+  return (z: number) => (z <= Z0_REF ? 0 : ustarOverK * Math.log(z / Z0_REF))
+}
+
 export function profileReader(heightsM: number[], speedsMs: number[]): ((z: number) => number) | null {
   const pts = heightsM
     .map((h, i) => ({ h, v: speedsMs[i] }))
     .filter((p) => p.h > 0 && p.v != null && isFinite(p.v) && p.v >= 0)
     .sort((a, b) => a.h - b.h)
   if (!pts.length) return null
-  if (pts.length === 1) return () => pts[0].v
 
   const lo = pts[0]
-  const nx = pts[1]
-  // u*/kappa and z0 from the two lowest levels; clamped to a sane band so a
-  // near-uniform or inverted pair cannot produce a nonsense roughness.
-  let slope = (nx.v - lo.v) / (Math.log(nx.h) - Math.log(lo.h))
-  let z0eff = Number.NaN
-  if (slope > 1e-6) z0eff = Math.exp(Math.log(lo.h) - lo.v / slope)
-  if (!isFinite(z0eff) || z0eff <= 0) z0eff = Z0_REF
-  // z0eff must stay BELOW the lowest level, or ln(lo.h/z0eff) flips sign.
-  z0eff = Math.min(Math.max(z0eff, 1e-5), Math.min(5, lo.h * 0.9))
-  // The fill has to pass through the lowest level. slope and z0eff are a matched
-  // pair — slope === lo.v / ln(lo.h/z0eff) is exactly how z0eff was derived — so
-  // clamping z0eff WITHOUT re-deriving slope broke that identity and left a step at
-  // lo.h. A near-uniform pair (v10 4.0, v20 4.05, the well-mixed sea-breeze case)
-  // drove z0eff far below the floor, and the whole rig below 10 m then read ~1 m/s
-  // against 4 m/s above it — visible as a kink in the deck's rig profile, but it
-  // also fed shearIntegral, so f_profile and WW% were wrong, not just the picture.
-  // Re-deriving is a no-op whenever the clamp did not bite.
-  slope = lo.v > 0 ? lo.v / Math.log(lo.h / z0eff) : 0
+  const below = seaSurfaceFill(lo.h, lo.v)
 
   return (z: number) => {
     const zz = Math.max(z, 1e-3)
-    if (zz <= lo.h) {
-      if (zz <= z0eff) return 0
-      return Math.max(0, slope * Math.log(zz / z0eff))
-    }
+    if (zz <= lo.h) return below(zz)
     for (let i = 0; i < pts.length - 1; i++) {
       if (zz <= pts[i + 1].h) {
         const a = pts[i]; const b = pts[i + 1]

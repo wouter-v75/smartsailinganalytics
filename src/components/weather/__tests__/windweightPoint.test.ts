@@ -75,7 +75,9 @@ describe('pointWindweightByHour', () => {
       ...base,
       boxByHour: { 13: { factors: { rho: 0.974, gust: 1.032, funnel: 1 } } },
     })[13]
-    expect(withF.ww).toBeCloseTo(plain.ww * 0.974 * 1.032, 4)
+    // 3 dp, not 4: ww is rounded to 4 dp before it is returned, so asserting the
+    // product to within 5e-5 is testing that rounding, not the pass-through.
+    expect(withF.ww).toBeCloseTo(plain.ww * 0.974 * 1.032, 3)
     expect(withF.hasBoxFactors).toBe(true)
   })
 
@@ -146,13 +148,18 @@ describe('native-level shape fit', () => {
     expect(r.onNative).toBe(false)
   })
 
-  it('reads a sheared morning LIGHTER once the shear is taken from a real level', () => {
-    // The 10/20 m pair says "no shear" and the fill is too full; 10/37 m says
-    // +2.14 km/h and the bottom of the rig empties out as it should.
+  it('stops the degenerate 20 m level flattening the rig band', () => {
+    // Below 10 m both cases now share the surface-layer fill, so the difference is
+    // purely the SHAPE through the rig. The ladder carries V(20) = V(10), which
+    // makes 10-30 m read flatter — and so emptier — than the model is: at 20 m the
+    // ladder says 9.23 km/h where the real 10/37 m pair interpolates to 10.33. The
+    // rig band is therefore fuller on native levels, and WW a little heavier.
     const ladder = pointWindweightByHour(stBase(stHourly()))[6]
     const native = pointWindweightByHour(stBase(withNative))[6]
-    expect(native.fProfile).toBeLessThan(ladder.fProfile)
-    expect(native.ww).toBeLessThan(ladder.ww)
+    expect(native.fProfile).toBeGreaterThan(ladder.fProfile)
+    // small and bounded — this is a shape correction, not a re-scaling
+    expect(native.ww - ladder.ww).toBeGreaterThan(0)
+    expect(native.ww - ladder.ww).toBeLessThan(5)
   })
 
   it('ignores the degenerate 20 m level entirely when on native levels', () => {

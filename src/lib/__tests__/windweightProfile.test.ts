@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { windweightFromProfile, profileReader } from '../windweight'
+import { windweightFromProfile, profileReader, seaSurfaceFill } from '../windweight'
 
 const KN = 1.94384
 // Point 1, Porto Cervo, 2026-08-31 11:00Z (13:00 local) straight off the venue grid.
@@ -151,5 +151,42 @@ describe('windweightFromProfile', () => {
     expect(windweightFromProfile({ heightsM: hs, speedsMs: logCol, H, fGust: 1.15 })!.cls).toBe('Heavy')
     expect(windweightFromProfile(base)!.cls).toBe('Light')   // today's sheared column
     expect(windweightFromProfile({ heightsM: [10, 30], speedsMs: [0, 0], H: 34 })).toBeNull()
+  })
+})
+
+describe('seaSurfaceFill — below the lowest MODEL level', () => {
+  const Z0 = 2e-4, H = 34
+
+  it('meets the anchor exactly, so there is nothing to clamp', () => {
+    for (const [z, v] of [[10, 4.0], [10, 0.5], [5, 9.0], [10, 1e-3]] as Array<[number, number]>) {
+      expect(seaSurfaceFill(z, v)(z)).toBeCloseTo(v, 12)
+    }
+  })
+
+  it('is a log law to the surface, not an extrapolated gradient', () => {
+    const f = seaSurfaceFill(10, 4)
+    expect(f(1)).toBeCloseTo((4 * Math.log(1 / Z0)) / Math.log(10 / Z0), 12)
+    expect(f(Z0)).toBe(0)                    // zero AT the roughness length
+    expect(f(1)).toBeLessThan(f(5))          // monotonic
+    expect(f(5)).toBeLessThan(f(10))
+  })
+
+  it('leaves a standard column scoring exactly 100 at ANY wind speed', () => {
+    // The zero point must not move with wind speed. A Charnock (wind-dependent)
+    // roughness here against a Z0_REF reference scored 101.2 / 100.3 / 99.1 at
+    // 3 / 8 / 16 m/s — a speed-dependent zero, the same fault as the old f_gust
+    // offset. Below the lowest level nothing is model output, so the fill must
+    // contribute nothing to the departure.
+    const hs = [10, 37, 75, 121]
+    for (const vH of [3, 8, 16]) {
+      const ss = hs.map((z) => (vH * Math.log(z / Z0)) / Math.log(H / Z0))
+      expect(windweightFromProfile({ heightsM: hs, speedsMs: ss, H })!.fProfile).toBeCloseTo(1, 6)
+    }
+  })
+
+  it('refuses to invent wind from a calm or broken anchor', () => {
+    expect(seaSurfaceFill(10, 0)(5)).toBe(0)
+    expect(seaSurfaceFill(0, 4)(5)).toBe(0)
+    expect(seaSurfaceFill(10, -1)(5)).toBe(0)
   })
 })
