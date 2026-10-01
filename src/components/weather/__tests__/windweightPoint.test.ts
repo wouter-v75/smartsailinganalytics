@@ -110,3 +110,55 @@ describe('asBoxHour', () => {
     expect(asBoxHour(null, null)).toBeNull()
   })
 })
+
+// ── the shape fit runs on the model's OWN levels ────────────────────────────
+// St Tropez, point 1, cycle 2026100100 04:00Z. The published 20 m is an ICON
+// interpolate that carries NO shear (dV(10→20) = +0.04 km/h, and it does not
+// scale with wind speed); 37 m is a real mass level and shows +2.14 over the
+// same step. profileReader takes its sub-10 m roughness from the two lowest
+// levels it is handed, so which pair it gets decides the bottom of the rig.
+const ST = { latitude: 43.275, longitude: 6.678 }
+const stHourly = (extra: Record<string, number[]> = {}) => ({
+  time: ['2026-10-01T04:00:00Z'],
+  wind_speed_10m: [9.19], wind_speed_20m: [9.23], wind_speed_30m: [10.11],
+  wind_speed_50m: [13.56], wind_speed_75m: [15.32], wind_speed_100m: [16.4],
+  wind_direction_10m: [310], wind_direction_20m: [309], wind_direction_30m: [307],
+  wind_direction_50m: [305], wind_direction_75m: [303], wind_direction_100m: [301],
+  ...extra,
+})
+const stBase = (hourly: Record<string, unknown>) => ({
+  windData: { '1': { surfaceByModel: { ICONRACE_1KM: { hourly } } } },
+  locKey: '1', coords: ST, domain: 'st_tropez_1km', mastHeight: 34,
+  localHour, localDate, todayLocal: '2026-10-01',
+})
+
+describe('native-level shape fit', () => {
+  const withNative = stHourly({ wind_speed_37m: [11.33], wind_speed_121m: [17.0], wind_direction_37m: [306], wind_direction_121m: [299] })
+
+  it('uses the model levels once 37 and 121 m are published', () => {
+    const r = pointWindweightByHour(stBase(withNative))[6]
+    expect(r.onNative).toBe(true)
+  })
+
+  it('falls back to the ladder on a cycle published before 37 m existed', () => {
+    // Fitting 10→75 m instead would land on z0 ~ 0.08 m — a forest, at sea.
+    const r = pointWindweightByHour(stBase(stHourly()))[6]
+    expect(r.onNative).toBe(false)
+  })
+
+  it('reads a sheared morning LIGHTER once the shear is taken from a real level', () => {
+    // The 10/20 m pair says "no shear" and the fill is too full; 10/37 m says
+    // +2.14 km/h and the bottom of the rig empties out as it should.
+    const ladder = pointWindweightByHour(stBase(stHourly()))[6]
+    const native = pointWindweightByHour(stBase(withNative))[6]
+    expect(native.fProfile).toBeLessThan(ladder.fProfile)
+    expect(native.ww).toBeLessThan(ladder.ww)
+  })
+
+  it('ignores the degenerate 20 m level entirely when on native levels', () => {
+    // Perturbing 20 m must not move the answer — it is not in the fit any more.
+    const moved = pointWindweightByHour(stBase({ ...withNative, wind_speed_20m: [25] }))[6]
+    const orig = pointWindweightByHour(stBase(withNative))[6]
+    expect(moved.ww).toBeCloseTo(orig.ww, 10)
+  })
+})

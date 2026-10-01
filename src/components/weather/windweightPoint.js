@@ -49,6 +49,8 @@ export function pointWindweightByHour({
   const modelKey = modelKeyForDomain(domain)
   const hourly = hourlyFor(windData, locKey, modelKey)
   const heights = MODELS[modelKey]?.heights
+  // The model's own mass levels, where it publishes them (lib note in openMeteo).
+  const native = MODELS[modelKey]?.nativeHeights
   const times = hourly?.time
   if (!hourly || !heights || !times || !coords) return out
 
@@ -71,8 +73,19 @@ export function pointWindweightByHour({
     const box = boxByHour[hr]
 
     // payload speeds are km/h; the integral wants m/s
-    const speeds = heights.map((h) => { const v = hourly[`wind_speed_${h}m`]?.[i]; return v == null ? null : v / 3.6 })
-    const hs = heights.filter((_, k) => speeds[k] != null)
+    const speedAt = (h) => { const v = hourly[`wind_speed_${h}m`]?.[i]; return v == null ? null : v / 3.6 }
+    // Fit the shape on the model's OWN levels when they are there. profileReader
+    // takes its sub-10 m roughness from the TWO LOWEST levels it is handed, and on
+    // the published ladder that pair is 10/20 m — where 20 m is an interpolate
+    // carrying no shear, so the roughness was fitted to noise and flipped between
+    // two surfaces on its sign. 10/37 m are both real levels.
+    // Gated on the two lowest natives BOTH having data, so a cycle published
+    // before the box added 37/121 m (2026-09-30) silently keeps the old ladder
+    // rather than fitting 10→75 m, which lands on z0 ≈ 0.08 m — a forest, at sea.
+    const onNative = native?.length >= 2 && native.slice(0, 2).every((h) => speedAt(h) != null)
+    const fitHeights = onNative ? native : heights
+    const speeds = fitHeights.map(speedAt)
+    const hs = fitHeights.filter((_, k) => speeds[k] != null)
     const ss = speeds.filter((v) => v != null)
     if (hs.length < 2) continue
 
@@ -96,7 +109,7 @@ export function pointWindweightByHour({
     if (!r) continue
 
     const sh = rigDirectionShearDeg(hourly, heights, mastHeight, i)
-    out[hr] = { ...r, shearDeg: sh == null ? null : Math.round(sh), mosOn, hasBoxFactors: !!box?.factors }
+    out[hr] = { ...r, shearDeg: sh == null ? null : Math.round(sh), mosOn, onNative, hasBoxFactors: !!box?.factors }
   }
   return out
 }

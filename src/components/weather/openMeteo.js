@@ -230,9 +230,19 @@ export const MODELS = {
     // levels 500/750/1000 m that publish (grid_tab_to_json UPPER_FROM_PBL) folds in
     // from the _pbl profile stream. The 3D viewer's level buttons are data-driven
     // from grid.heights so they stay in sync; this mirrors it for the 2D selector.
-    heights: [10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 750, 1000],
+    heights: [10, 20, 30, 37, 50, 75, 100, 121, 150, 200, 300, 500, 750, 1000],
+    // The model's OWN mass levels (z_mc = 10,37,75,121,173,232 on the validated
+    // 76-level SLEVE grid). Every other height above is ICON interpolating BETWEEN
+    // these, and the 20 m one does not survive it: measured at point 1 over four
+    // days, dV(10→20) is −0.03…+0.04 km/h and does NOT scale with wind speed,
+    // while dV(10→37) runs +0.05…+2.21 and scales exactly as a surface layer
+    // should. The windweight fits its sub-10 m roughness to the two lowest levels
+    // it is given, so on the published ladder it was fitting that to noise.
+    // Published since the 2026-09-30 cycle (box: _hl h_levels). The 2 km has no
+    // entry here — it does not publish its native levels, so it keeps the ladder.
+    nativeHeights: [10, 37, 75, 121],
     // Table stays rig-focused (the 1 km's whole value is the resolved low levels);
-    // the full 9-level stack is available in the 3D view + interpolation.
+    // the full stack is available in the 3D view + interpolation.
     tableCols: [10, 20, 30, 50, 100],
     upperHeight: 100,
     mosModel: 'icon_eu', mosApprox: true,
