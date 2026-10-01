@@ -68,3 +68,9 @@ export async function setPref(key, value) {
 }
 
 export const WATCH_FOLDER_PREF = 'watchFolder'
+
+// The day's drone footage, for reviewing off the card. A SEPARATE key from the
+// watch folder on purpose: one is the encoder's outbox (~/clips) and the other
+// is the SSD, and the two are never the same folder — sharing a key would make
+// pointing at one silently re-point the other.
+export const FOOTAGE_FOLDER_PREF = 'footageFolder'

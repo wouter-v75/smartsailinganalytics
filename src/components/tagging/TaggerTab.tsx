@@ -23,6 +23,7 @@ import DayPicker from './DayPicker'
 import ReviewQueue, { REVIEW_THRESHOLD } from './ReviewQueue'
 import DuplicateList from './DuplicateList'
 import DebriefReel from './DebriefReel'
+import FootageReview from './FootageReview'
 
 // The tagging tab. Built for a phone first, because that is where it gets used:
 // on the boat, or standing on the dock ten minutes after it. Everything that
@@ -79,6 +80,10 @@ export default function TaggerTab({
   // A moment picked by holding the track. While one is held the button bar tags
   // THERE rather than now — which is the entire point of the track view.
   const [pickedUtc, setPickedUtc] = React.useState<number | null>(null)
+  // The frame being watched in the footage review, off the card. Separate from
+  // pickedUtc: a held point on the track is a deliberate choice and must not be
+  // overwritten thirty times a second by a playing video.
+  const [reviewUtc, setReviewUtc] = React.useState<number | null>(null)
 
   // The pick belongs to the track. Carrying it into the list view would leave
   // the bar quietly tagging 12:18 with the only thing that said so two screens
@@ -241,10 +246,13 @@ export default function TaggerTab({
   const now = React.useCallback(
     () => {
       if (pickedUtc != null && Number.isFinite(pickedUtc)) return pickedUtc
+      // The card being reviewed beats the uploaded clip being played: if both
+      // are open, the one you are looking at is the one on the card.
+      if (reviewUtc != null && Number.isFinite(reviewUtc)) return reviewUtc
       if (playheadUtc != null && Number.isFinite(playheadUtc)) return playheadUtc
       return Date.now()
     },
-    [pickedUtc, playheadUtc]
+    [pickedUtc, reviewUtc, playheadUtc]
   )
 
   // "Race 2" under the composer's clock, so a corrected time can be seen to
@@ -379,6 +387,7 @@ export default function TaggerTab({
             />
           </>
         ) : view === 'track' ? (
+          <>
           <TrackView
             rows={logRows || []}
             items={t.items}
@@ -399,6 +408,21 @@ export default function TaggerTab({
             coverage={droneCoverage}
             tzOffsetMin={tzOffsetMin}
           />
+          {/* Under the track, because the track is what you press to get here:
+              a green band is footage, and pressing it plays that second off the
+              card. The player's frame then becomes what a tag means by "now",
+              so Grab video lands where you are looking. */}
+          <FootageReview
+            date={date}
+            tzOffsetMin={tzOffsetMin}
+            seekToUtc={pickedUtc}
+            onPlayhead={setReviewUtc}
+            onGrab={async (utc) => {
+              const made = await t.apply(GRAB_VIDEO_SLUG, utc)
+              if (made) await t.request(made.id, 'video', { mediaKind: grabMediaKind(made.labels) })
+            }}
+          />
+          </>
         ) : view === 'check' ? (
           <>
             {/* Above the queue: the queue asks whether a detection is real,

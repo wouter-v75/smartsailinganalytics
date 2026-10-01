@@ -21,6 +21,7 @@ import { sailSheetDetail, type SailContext } from '@/components/tagging/sailChan
 import { BASE_TAGS } from '@/lib/tagging/baseTags'
 import { mediaMarks } from '@/lib/mediaDecks'
 import type { TagDef, TagEvent, TagRequest } from '@/lib/tagging/types'
+import FootageReview from '@/components/tagging/FootageReview'
 
 // Preview harness for the tagging tab — the three views with fixture data and no
 // network, so they can be looked at (and screenshotted at phone width) without a
@@ -418,6 +419,7 @@ export default function TaggerPreview() {
           </>
         )}
         {view === 'track' && (
+          <>
           <TrackView
             rows={TRACK_ROWS} items={items} segments={segments}
             media={DAY_MEDIA}
@@ -428,6 +430,15 @@ export default function TaggerPreview() {
             )))}
             selectedUtc={picked} onSelect={setPicked} onOpenTag={setOpenId}
           />
+          <div className="mt-3">
+            <FootageReview
+              date={day}
+              tzOffsetMin={120}
+              seekToUtc={picked}
+              onGrab={(utc) => console.info('[dev] grab video at', new Date(utc).toISOString())}
+            />
+          </div>
+          </>
         )}
         {view === 'check' && (
           <>
