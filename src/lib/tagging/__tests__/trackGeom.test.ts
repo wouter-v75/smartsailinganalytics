@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  geoRows, thin, projectTrack, nearestPoint, pointAtUtc, rowsBetween, segmentPath, nearestPointWithin,
+  geoRows, thin, projectTrack, nearestPoint, pointAtUtc, poseAtUtc, rowsBetween,
+  segmentPath, nearestPointWithin,
 } from '../trackGeom'
 
 const T = (s: number) => Date.parse('2026-09-11T11:00:00Z') + s * 1000
@@ -234,5 +235,60 @@ describe('nearestPointWithin — dragging along a track that crosses itself', ()
   it('survives a window that is not a window', () => {
     expect(nearestPointWithin(pts, 0, 0, NaN, 1000)).toBeNull()
     expect(nearestPointWithin(pts, 0, 0, 0, NaN)).toBeNull()
+  })
+})
+
+// ── poseAtUtc ────────────────────────────────────────────────────────────────
+// The boat symbol that runs along the track while a video plays. A position is
+// not enough: a dot has no bow, and a boat pointing the wrong way down a beat
+// is worse than no boat at all.
+describe('poseAtUtc', () => {
+  const T0 = Date.UTC(2026, 8, 30, 12, 0, 0)
+  /** A straight run, one sample a second, heading in a given screen direction. */
+  const line = (dx: number, dy: number, n = 40) =>
+    Array.from({ length: n }, (_, i) => ({ utc: T0 + i * 1000, x: 100 + i * dx, y: 100 + i * dy }))
+
+  it('points up the screen when the boat is going up the screen', () => {
+    // SVG y grows DOWNWARD, so "up" is -y. Getting this backwards sails the
+    // boat stern-first for the whole video.
+    expect(poseAtUtc(line(0, -1), T0 + 20_000)!.headingDeg).toBeCloseTo(0, 6)
+  })
+
+  it('points right at 90, down at 180, left at -90', () => {
+    expect(poseAtUtc(line(1, 0), T0 + 20_000)!.headingDeg).toBeCloseTo(90, 6)
+    expect(poseAtUtc(line(0, 1), T0 + 20_000)!.headingDeg).toBeCloseTo(180, 6)
+    expect(poseAtUtc(line(-1, 0), T0 + 20_000)!.headingDeg).toBeCloseTo(-90, 6)
+  })
+
+  it('carries the position straight through', () => {
+    const pts = line(1, 0)
+    const pose = poseAtUtc(pts, T0 + 10_000)!
+    expect(pose.x).toBe(110)
+    expect(pose.y).toBe(100)
+  })
+
+  it('does not spin on GPS noise while the boat sits still', () => {
+    // Two adjacent fixes a metre apart are a metre of noise, and a metre of
+    // noise is 180 degrees of heading. Spanning several samples is what stops
+    // the symbol pirouetting in the start box.
+    const jitter = Array.from({ length: 40 }, (_, i) => ({
+      utc: T0 + i * 1000,
+      x: 100 + (i % 2 === 0 ? 0.2 : -0.2),
+      y: 100 + (i % 3 === 0 ? 0.2 : -0.2),
+    }))
+    const a = poseAtUtc(jitter, T0 + 10_000)!.headingDeg
+    const b = poseAtUtc(jitter, T0 + 11_000)!.headingDeg
+    expect(Math.abs(a - b)).toBeLessThan(90)
+  })
+
+  it('still answers at the very start and the very end', () => {
+    const pts = line(1, 0)
+    expect(poseAtUtc(pts, T0 - 60_000)).not.toBeNull()
+    expect(poseAtUtc(pts, T0 + 999_000)).not.toBeNull()
+  })
+
+  it('is null when there is no track', () => {
+    expect(poseAtUtc([], T0)).toBeNull()
+    expect(poseAtUtc(line(1, 0), NaN)).toBeNull()
   })
 })

@@ -36,12 +36,14 @@ export interface TrackViewProps {
   media?: MediaMark[]
   /** Where the drone was filming, and which of it is already cut. */
   coverage?: DroneCoverage
+  /** The frame being watched — a boat runs along the track at this instant. */
+  playheadUtc?: number | null
   tzOffsetMin?: number
 }
 
 export default function TrackView({
   rows, items, segments, selectedUtc, onSelect, onOpenTag, canEditTag, onMoveTag,
-  media, coverage, tzOffsetMin = 0,
+  media, coverage, playheadUtc, tzOffsetMin = 0,
 }: TrackViewProps) {
   const races = React.useMemo(() => racesOf(segments), [segments])
   const [key, setKey] = React.useState<string>('all')
@@ -93,6 +95,7 @@ export default function TrackView({
         onMoveTag={onMoveTag}
         media={media}
         coverage={coverage}
+        playheadUtc={playheadUtc}
         tzOffsetMin={tzOffsetMin}
       />
 

@@ -406,6 +406,10 @@ export default function TaggerTab({
             }}
             media={dayMedia}
             coverage={droneCoverage}
+            // The card being reviewed first, the uploaded clip second — the
+            // same order `now()` uses, so the boat is always on the frame a tag
+            // would land on.
+            playheadUtc={reviewUtc ?? playheadUtc}
             tzOffsetMin={tzOffsetMin}
           />
           {/* Under the track, because the track is what you press to get here:

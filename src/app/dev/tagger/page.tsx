@@ -290,6 +290,9 @@ type View = 'tagger' | 'track' | 'check' | 'debrief'
 export default function TaggerPreview() {
   const [view, setView] = React.useState<View>('tagger')
   const [picked, setPicked] = React.useState<number | null>(null)
+  // Where the proxy being reviewed is up to. Same wiring as TaggerTab: the
+  // player reports it, the track draws the boat there.
+  const [reviewUtc, setReviewUtc] = React.useState<number | null>(null)
   const [day, setDay] = React.useState(DAY)
   const [sail, setSail] = React.useState<SailState>(() => sailStateAt(events, T(12, 34)))
   const [showSail, setShowSail] = React.useState(false)
@@ -429,12 +432,14 @@ export default function TaggerPreview() {
               e.id === id ? { ...e, t0: utc, t1: utc + (e.t1 - e.t0) } : e
             )))}
             selectedUtc={picked} onSelect={setPicked} onOpenTag={setOpenId}
+            playheadUtc={reviewUtc}
           />
           <div className="mt-3">
             <FootageReview
               date={day}
               tzOffsetMin={120}
               seekToUtc={picked}
+              onPlayhead={setReviewUtc}
               onGrab={(utc) => console.info('[dev] grab video at', new Date(utc).toISOString())}
             />
           </div>

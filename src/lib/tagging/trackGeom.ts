@@ -175,6 +175,54 @@ export function pointAtUtc(points: readonly TrackPoint[], utc: number): TrackPoi
   return utc - points[lo].utc <= points[hi].utc - utc ? points[lo] : points[hi]
 }
 
+export interface TrackPose extends TrackPoint {
+  /** SVG rotation: 0 points up the screen, clockwise positive. */
+  headingDeg: number
+}
+
+/**
+ * Where the boat is AND which way it is going, for drawing a boat rather than a
+ * dot while a video plays.
+ *
+ * The heading comes from the samples either side, not from the pair nearest the
+ * instant: at 1 Hz on a thinned track two adjacent fixes can be a metre apart
+ * and a metre of GPS noise is a hundred and eighty degrees of heading. Spanning
+ * a few samples costs nothing in accuracy at this scale — the symbol is ten
+ * pixels — and stops the boat spinning on the spot while the boat is drifting.
+ *
+ * Keeps the LAST heading when the span has no movement in it: a boat sitting
+ * still still points somewhere, and snapping it to north would be a lie that
+ * moves.
+ */
+export function poseAtUtc(
+  points: readonly TrackPoint[],
+  utc: number,
+  spanSamples = 3
+): TrackPose | null {
+  const here = pointAtUtc(points, utc)
+  if (!here) return null
+  const i = points.indexOf(here)
+  const span = Math.max(1, spanSamples)
+
+  // Walk out until the two samples are far enough apart to mean something.
+  let a = points[Math.max(0, i - span)]
+  let b = points[Math.min(points.length - 1, i + span)]
+  let reach = span
+  while (Math.hypot(b.x - a.x, b.y - a.y) < 1 && reach < points.length) {
+    reach *= 2
+    a = points[Math.max(0, i - reach)]
+    b = points[Math.min(points.length - 1, i + reach)]
+    if (a === points[0] && b === points[points.length - 1]) break
+  }
+
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  // SVG y grows DOWNWARD, so "up the screen" is -y. atan2(dx, -dy) puts 0 at up
+  // and turns clockwise, which is what an SVG rotate() wants.
+  const headingDeg = (dx === 0 && dy === 0) ? 0 : (Math.atan2(dx, -dy) * 180) / Math.PI
+  return { ...here, headingDeg }
+}
+
 /** Samples inside [t0, t1]. Used by the race filter. */
 export function rowsBetween<T extends GeoRow>(
   rows: readonly T[],

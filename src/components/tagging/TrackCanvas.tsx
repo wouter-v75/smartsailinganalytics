@@ -1,7 +1,7 @@
 'use client'
 import * as React from 'react'
 import { ZoomIn, Maximize2, Move, Pencil } from 'lucide-react'
-import { projectTrack, thin, geoRows, nearestPoint, nearestPointWithin, pointAtUtc, segmentPath, type GeoRow, type TrackPoint } from '@/lib/tagging/trackGeom'
+import { projectTrack, thin, geoRows, nearestPoint, nearestPointWithin, pointAtUtc, poseAtUtc, segmentPath, type GeoRow, type TrackPoint } from '@/lib/tagging/trackGeom'
 import {
   FIT, MAX_SCALE, toTrack, toScreen, zoomAt, zoomTo, panBy, isFitted, spread, midpoint,
   type Viewport,
@@ -78,6 +78,10 @@ export interface TrackCanvasProps {
   /** Where the drone was FILMING, and which of it is already cut. Two bands
    *  under the track: light green for footage, dark green for the clips. */
   coverage?: DroneCoverage
+  /** The frame being watched, anywhere. A boat runs along the track at this
+   *  instant, pointing the way it was going, so the video and the course are
+   *  the same picture. */
+  playheadUtc?: number | null
   tzOffsetMin?: number
   /** Shortest the track box may get. It grows to fill whatever it is given. */
   minHeightPx?: number
@@ -92,7 +96,7 @@ const MOVE_CANCEL_PX = 10
 
 export default function TrackCanvas({
   rows, items, t0, t1, selectedUtc, onSelect, onOpenTag, canEditTag, onMoveTag,
-  media, coverage, tzOffsetMin = 0, minHeightPx = 240,
+  media, coverage, playheadUtc, tzOffsetMin = 0, minHeightPx = 240,
 }: TrackCanvasProps) {
   const boxRef = React.useRef<HTMLDivElement>(null)
   // The box fills the column, so both dimensions are measured rather than
@@ -146,6 +150,10 @@ export default function TrackCanvas({
 
   const { points, path } = projection
   const selected = selectedUtc == null ? null : pointAtUtc(points, selectedUtc)
+  // Where the boat was when the frame on screen was shot, and which way it was
+  // pointing. Recomputed on every timeupdate — a binary search over ~1200
+  // thinned samples, which is nothing next to decoding the frame itself.
+  const boat = playheadUtc == null ? null : poseAtUtc(points, playheadUtc)
 
   // Tags that fall inside the window AND have a position to be drawn at.
   const marks = React.useMemo(() => {
@@ -665,6 +673,32 @@ export default function TrackCanvas({
               </g>
             )
           })}
+
+          {/* ── The boat ──────────────────────────────────────────────────
+              Where she was when the frame on screen was shot. Drawn LAST of the
+              track furniture so she is never hidden under a tag, and as a hull
+              rather than a dot: a dot has no bow, and on a beat the thing you
+              want to see is which way she is pointing.
+
+              The whole symbol is scaled back by the zoom, like every other
+              marker here — a 20px boat at 8x would be a barge covering the
+              mark she is rounding. */}
+          {boat && (
+            <g transform={`translate(${boat.x} ${boat.y}) rotate(${boat.headingDeg}) scale(${1 / view.scale})`}>
+              {/* A wake behind her, so the direction reads at a glance even
+                  when she is barely moving. */}
+              <path d="M 0 2 L 0 13" stroke="var(--accent)" strokeOpacity={0.35} strokeWidth={3} strokeLinecap="round" />
+              {/* Hull: pointed bow, transom aft. */}
+              <path
+                d="M 0 -9 C 4.2 -3 5 3 3.6 8 L -3.6 8 C -5 3 -4.2 -3 0 -9 Z"
+                fill="var(--accent)"
+                stroke="#04101c"
+                strokeWidth={1.2}
+                strokeLinejoin="round"
+              />
+              <title>The frame being played</title>
+            </g>
+          )}
 
           {selected && (
             <g>
