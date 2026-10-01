@@ -486,18 +486,45 @@ export async function fetchModelMeta(metaModel) {
       const init = j.last_run_initialisation_time ?? null // unix seconds, UTC
       const available = j.last_run_availability_time ?? j.last_run_modification_time ?? null
       const interval = j.update_interval_seconds ?? null   // seconds between runs
-      return {
-        initSec: init,
-        availableSec: available,
-        intervalSec: interval,
-        nextSec: (init != null && interval != null) ? init + interval : null,
-      }
+      return { initSec: init, availableSec: available, intervalSec: interval }
     } catch {
       return null
     }
   })()
   _metaCache.set(metaModel, { at: Date.now(), promise })
   return promise
+}
+
+// When the NEXT run should actually land, and whether the one we hold is late.
+//
+// A cycle's nominal hour is not its arrival: meta.json gives both the
+// INITIALISATION time and when that run became AVAILABLE, and the gap between
+// them is the model's publication lag — measured 1 Oct: AROME 2h49m, ICON 3h43m,
+// ECMWF 6h21m, ARPEGE 4h05m, MET Norway 42m. Using the nominal hour as the ETA
+// put it in the PAST the moment the cycle struck, so the table read
+// "03z · 2h 23m ago" — an ETA that had already happened.
+//
+// Two corrections, and both are needed:
+//   lag          03z does not arrive at 03:00Z, it arrives at 03:00Z + lag.
+//   roll-forward ICON's 3h43m lag EXCEEDS its 3 h cadence, so more than one cycle
+//                is always in flight and "init + interval" can be behind us even
+//                with the lag applied. Advance to the first cycle still ahead.
+//
+// `dueSec` deliberately does NOT roll forward: it is when the cycle after the one
+// we hold should have landed, which is the only sound basis for "update due".
+// Rolling it would push the deadline away every time the model got later, and the
+// row could never go amber.
+export function modelCadence(meta, now = Date.now() / 1000) {
+  const init = meta?.initSec
+  const interval = meta?.intervalSec
+  if (init == null || !(interval > 0)) return { lagSec: null, nextSec: null, nextEtaSec: null, dueSec: null }
+  const avail = meta?.availableSec
+  const lagSec = avail != null && avail > init ? avail - init : 0
+  const dueSec = init + interval + lagSec
+  let nextSec = init + interval
+  // bounded: a stale meta.json must not spin. 64 cycles is >2 days at a 1 h cadence.
+  for (let i = 0; i < 64 && nextSec + lagSec <= now; i++) nextSec += interval
+  return { lagSec, nextSec, nextEtaSec: nextSec + lagSec, dueSec }
 }
 
 // Live Icon-Race pipeline status, published once a minute by the box

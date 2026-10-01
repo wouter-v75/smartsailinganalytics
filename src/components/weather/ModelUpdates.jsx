@@ -9,7 +9,7 @@
 // The whole table refreshes every 60 s.
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { MODELS, fetchModelMeta, fetchIconRaceStatus } from './openMeteo'
+import { MODELS, fetchModelMeta, fetchIconRaceStatus, modelCadence } from './openMeteo'
 
 // Order: the self-hosted model first (the headline), then the global/regional
 // models we pull from Open-Meteo.
@@ -169,8 +169,15 @@ function OpenMeteoRow({ modelKey, meta, loading }) {
       </tr>
     )
   }
-  // "update due" if a newer run should already exist (cadence elapsed + 2 h grace).
-  const overdue = meta.nextSec != null && nowSec() > meta.nextSec + 7200
+  // Derived at RENDER, not at fetch: the meta is cached for 60 s but "in 26m" has
+  // to count down against the clock, not against when we last fetched.
+  const { nextSec, nextEtaSec, dueSec } = modelCadence(meta)
+  // "update due" once the next cycle is past the hour it should have LANDED
+  // (init + cadence + this model's publication lag), plus a short grace. The old
+  // test used the nominal cycle hour and a 2 h grace to absorb the missing lag,
+  // which flagged AROME/ICON/ECMWF/DMI as late at 05:23Z when none of them was:
+  // their 03z/00z runs were not due until 05:49/06:43/06:21/06:07Z.
+  const overdue = dueSec != null && nowSec() > dueSec + 2700
   const statusColor = overdue ? '#FBBF24' : '#34D399'
   return (
     <tr>
@@ -182,8 +189,8 @@ function OpenMeteoRow({ modelKey, meta, loading }) {
       </td>
       <td style={td}><Pill text={overdue ? 'update due' : 'current'} color={statusColor} /></td>
       <td style={td}>
-        {meta.nextSec != null
-          ? <>{hourZ(meta.nextSec)}<span style={muted}> · {relFromSec(meta.nextSec)}</span></>
+        {nextSec != null
+          ? <>{hourZ(nextSec)}<span style={muted}> · {relFromSec(nextEtaSec)}</span></>
           : '–'}
       </td>
     </tr>
