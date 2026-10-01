@@ -10,13 +10,29 @@
 //
 // We just collect a new password and call supabase.auth.updateUser.
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { getBrowserSupabase } from '../../../lib/supabase/browser'
 
+// useSearchParams() forces this subtree to render on the client, and Next
+// refuses to BUILD a page that uses it without a Suspense boundary. Nothing but
+// `next build` catches that — tsc, vitest and lint are all green either way, the
+// same lesson as the route tree in CLAUDE.md.
 export default function ResetPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordForm />
+    </Suspense>
+  )
+}
+
+function ResetPasswordForm() {
   const router = useRouter()
+  // Why the sign-in failed, carried here by /auth/callback. Without it this
+  // page could only guess, and it guessed "expired" at a link that was a minute
+  // old — see the note in the callback.
+  const authError = useSearchParams().get('authError')
   const [signedIn, setSignedIn] = useState<boolean | null>(null)
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -72,12 +88,18 @@ export default function ResetPasswordPage() {
       <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
         <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-6 sm:p-8">
           <h1 className="text-xl font-semibold text-slate-900 mb-2">
-            Reset link invalid
+            That link didn&apos;t sign you in
           </h1>
           <p className="text-slate-600 mb-4">
-            The recovery link has expired or already been used. Try the
-            forgot-password flow again from the sign-in page.
+            Password links can only be used once, and they expire. Ask for a
+            fresh one with <strong>Forgot password?</strong> on the sign-in page
+            — it works whether or not you have set a password before.
           </p>
+          {authError && (
+            // The actual reason, not a guess. Small, but it is the difference
+            // between "try again" and a support thread.
+            <p className="text-xs text-slate-400 mb-4">Reason: {authError}</p>
+          )}
           <Link
             href="/login"
             className="text-blue-600 hover:underline"

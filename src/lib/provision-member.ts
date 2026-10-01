@@ -133,10 +133,24 @@ export async function provisionTeamMember(
 }
 
 /**
- * A one-click link for someone who has no password yet: Supabase verifies it,
- * /auth/callback exchanges it for a session and sends them to /auth/reset-password
- * to choose one. Null when Supabase will not mint it — the email then just points
- * at the site, where "Forgot password?" does the same job.
+ * A one-click link for someone who has no password yet: /auth/callback verifies
+ * it, signs them in and sends them to /auth/reset-password to choose one. Null
+ * when Supabase will not mint it — the email then just points at the site, where
+ * "Forgot password?" does the same job.
+ *
+ * BUILT FROM hashed_token, NOT action_link. Supabase's own action_link goes to
+ * its /verify endpoint, which signs the person in and bounces to our callback
+ * with a PKCE `?code=`. That code can only be exchanged by a browser holding the
+ * code_verifier cookie from when the flow began — and this flow begins HERE, on
+ * the server, for somebody who has never had a session in any browser. There is
+ * no verifier to hold. Every invited person got "the recovery link has expired
+ * or already been used", instantly, on a link less than a minute old
+ * (gwenael.leguen@gmail.com, 1 October 2026).
+ *
+ * The hashed token goes through verifyOtp instead, which needs nothing from the
+ * browser: the proof is in the link. So it also survives the ordinary thing
+ * people do — read mail on the phone, open the link there — which the code
+ * exchange never could.
  */
 export async function firstLoginLink(
   service: Service,
@@ -149,6 +163,14 @@ export async function firstLoginLink(
       email: normaliseEmail(email),
       options: { redirectTo: `${origin}/auth/callback?next=%2Fauth%2Freset-password` },
     })
+    const hashed = res?.data?.properties?.hashed_token
+    if (hashed) {
+      const next = encodeURIComponent('/auth/reset-password')
+      return `${origin}/auth/callback?token_hash=${encodeURIComponent(hashed)}&type=recovery&next=${next}`
+    }
+    // No hashed token on the response: fall back to Supabase's own link rather
+    // than sending nothing. It is the flow that was broken, but a link that
+    // might work beats an email with none.
     return res?.data?.properties?.action_link || null
   } catch {
     return null
