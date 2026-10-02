@@ -71,6 +71,10 @@ Usage:
   --tacks       the tacks but not the gybes, for the same reason in reverse.
   --card PATH   the footage folder, if it is not found under /Volumes
   --events PATH the .ev.xml, if it is not in ~/Downloads
+  --at TIME     cut one more moment, local HH:MM:SS, as though somebody had
+                pressed Grab video there. Repeatable or comma-separated. Use it
+                for the clip spotted after the day was cut — everything else is
+                already made, so only this one encodes.
   --finish TIME local HH:MM:SS, if SSA has no finish tag for the day
   --practice TIME  a gun that was a PRACTICE start: its start is cut, the
                 milling about after it is not. Repeatable or comma-separated.
@@ -363,7 +367,17 @@ const main = async () => {
   const tz: number = offsetMin
 
   const ev: EventFile | null = xml ? (parseXmlEvents(xml) as EventFile) : null
-  const at = await grabVideoTimes(tz)
+  // A moment nobody tagged — "cut one more at 12:39:10", after the day is
+  // already cut. Treated exactly as a Grab video press: the same ±30 s window,
+  // and like any asked-for moment it survives --racing wherever it fell. Given
+  // in VENUE-LOCAL time, like every other time on the command line.
+  const given: string[] = []
+  args.forEach((a, i) => { if (a === '--at' && args[i + 1]) given.push(...args[i + 1].split(',')) })
+  const extraAt = given.map((t) => t.trim()).filter(Boolean)
+  for (const t of extraAt) {
+    if (!/^\d{1,2}:\d{2}:\d{2}$/.test(t)) fail(`--at: ${t} is not a local HH:MM:SS`)
+  }
+  const at = [...await grabVideoTimes(tz), ...extraAt].sort()
   const finish = await finishTime(tz, ev)
   // A rounding's lead is 20 s (baseTags), so t0 + 20 s is the moment itself.
   // `topmark` AND the generic `mark`. The tagger offers both — a Racing group
@@ -390,7 +404,8 @@ const main = async () => {
   console.log(`  events   ${events || '(none — SSA tags only)'}`)
   console.log(`  footage  ${card}${found!.raw ? '  (card as the drone wrote it — every day on it is scanned, so the timestamp pass is slower)' : ''}`)
   console.log(`  clips    ${out}`)
-  console.log(`  marked   ${at.length ? at.join(', ') : '(no Grab video tags on this day)'}`)
+  console.log(`  marked   ${at.length ? at.join(', ') : '(no Grab video tags on this day)'}` +
+    (extraAt.length ? `   (${extraAt.join(', ')} given on the command line)` : ''))
   console.log(`  finish   ${finish.time || '—'}  · ${finish.how}`)
   const tagged = starts.length || practiceTags.length || marks.length || gates.length
     || tacks.length || gybes.length
