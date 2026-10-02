@@ -184,6 +184,18 @@ async function finish(args: {
   /** Shared with the caller, so a password can be set on the session this
    *  creates. A second client would not have the cookies. */
   supabase?: ReturnType<typeof getServerSupabase>
+  /**
+   * 303 when this redirect ends a POST, 307 otherwise.
+   *
+   * NextResponse.redirect defaults to 307, which PRESERVES THE METHOD. Out of a
+   * POST handler that means the browser re-POSTs to the destination — so
+   * submitting the password form sent the browser to POST "/", the middleware
+   * bounced that to POST /login, and the person got a bare 400/405 from a page
+   * that only answers GET. They had set their password successfully and were
+   * looking at an error. 303 is the one redirect that says "now go and GET
+   * this instead", which is exactly what a form submission needs.
+   */
+  status?: 303 | 307
 }): Promise<{ response: NextResponse; redirectedWithError: boolean }> {
   const supabase = args.supabase ?? getServerSupabase()
   let user: { id: string; email?: string | null } | null = null
@@ -214,7 +226,10 @@ async function finish(args: {
 
   const to = new URL(`${args.origin}${args.next}`)
   if (!user && authError) to.searchParams.set('authError', authError)
-  return { response: NextResponse.redirect(to.toString()), redirectedWithError: !user }
+  return {
+    response: NextResponse.redirect(to.toString(), args.status ?? 307),
+    redirectedWithError: !user,
+  }
 }
 
 const htmlResponse = (body: string) =>
@@ -286,7 +301,7 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = getServerSupabase()
-  const done = await finish({ origin, tokenHash, type, code: null, invite, next, supabase })
+  const done = await finish({ origin, tokenHash, type, code: null, invite, next, supabase, status: 303 })
 
   // Only now, with a session on this response, can the password be set. If the
   // token turned out to be spent or expired, `finish` has already redirected

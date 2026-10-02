@@ -181,3 +181,38 @@ describe('GET with ?code= — PKCE, which was never exposed to this', () => {
     expect(res.headers.get('location')).toContain('authError=')
   })
 })
+
+describe('the redirect out of a POST must be a 303', () => {
+  // NextResponse.redirect defaults to 307, which PRESERVES THE METHOD. Out of a
+  // POST handler the browser therefore re-POSTs to the destination: submitting
+  // the password form sent it to POST "/", the middleware bounced that to POST
+  // /login, and the person got a bare 400 from a page that only answers GET.
+  // Their password had been set correctly and they were looking at an error —
+  // which is why the next thing they tried was the sign-in page, concluding the
+  // password had not taken. Observed on gwenael.leguen@gmail.com, 2 Oct 2026.
+  it('sends 303 so the browser GETs the destination', async () => {
+    const res = await post({
+      token_hash: 'abc123', type: 'recovery', next: '/',
+      password: 'correcthorse', confirm: 'correcthorse',
+    })
+    expect(res.status).toBe(303)
+  })
+
+  it('sends 303 even when the token turned out to be spent', async () => {
+    // The error path lands on a page too, and re-POSTing to it fails the same
+    // way — with an error message nobody can read because the page 400s.
+    verifyOtp.mockResolvedValue({ data: null, error: { message: 'expired' } })
+    const res = await post({
+      token_hash: 'abc123', type: 'recovery', next: '/',
+      password: 'correcthorse', confirm: 'correcthorse',
+    })
+    expect(res.status).toBe(303)
+    expect(res.headers.get('location')).toContain('authError=')
+  })
+
+  it('leaves the GET paths on 307', async () => {
+    // A GET redirect preserving GET is harmless, and ?code= has always worked.
+    const res = await get(`${ORIGIN}/auth/callback?code=xyz&next=%2F`)
+    expect(res.status).toBe(307)
+  })
+})
