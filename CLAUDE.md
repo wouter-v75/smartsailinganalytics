@@ -51,8 +51,11 @@ over to be pasted into the Supabase SQL editor.
 
 Its selection is worth knowing before you wait on an encode. A start is never
 merged with anything; roundings merge with each other; a `--at` moment or a
-tack inside one of those is DROPPED rather than cut twice. `--racing` keeps only
-what falls between a gun and its `--finish`, and the window is half-open, so a
+tack inside one of those is DROPPED rather than cut twice. A window the drone
+split a recording through comes out as ONE clip: the pieces are cut per file, as
+they must be, then concatenated (`--no-join` keeps them apart, `--join SEC` sets
+the seam). `--racing` keeps only what falls between a gun and its `--finish`, and
+the window is half-open, so a
 windward finish — which Expedition records as one more top-mark rounding — does
 not come out as a lap that never happened.
 

@@ -83,6 +83,10 @@ Usage:
   --out DIR     the outbox (default: ~/clips — ONE folder, so the Upload tab's
                 watcher is pointed at it once and never again)
   --keep        do not clear clips the cloud already has
+  --no-join     keep each piece of a window the drone split across files as its
+                own clip. By default they are joined into one, since a rounding
+                listed three times in the Videos tab is three things to open and
+                two of them wrong. --join SEC widens or narrows the seam.
   --force       re-encode segments that are already in the outbox. Without it a
                 segment whose file is already there is skipped, which is what
                 makes a second run cheap — and what to reach for when a clip in
@@ -447,6 +451,10 @@ const main = async () => {
   if (has('--tacks')) argv.push('--no-gybes')
   if (has('--no-starts')) argv.push('--no-starts')
   if (has('--force')) argv.push('--force')
+  // A window the drone split a recording through comes out as one clip, not
+  // three. Passed through so a day where the join is wrong can turn it off.
+  if (has('--no-join')) argv.push('--no-join')
+  if (has('--join')) argv.push('--join', String(val('--join')))
   // What the cloud already holds, so a clip made on an earlier run and since
   // swept out of the outbox is not made and uploaded a second time.
   const uploaded = await cloudClipNames()

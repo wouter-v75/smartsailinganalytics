@@ -41,10 +41,12 @@
 //      duration late. Used only as a last resort and flagged in the report.
 // Use --shift to correct a camera whose clock was wrong.
 
-import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from 'fs'
 import { join, basename, extname, resolve, dirname } from 'path'
+import { tmpdir } from 'os'
 import { spawnSync } from 'child_process'
 import { fileURLToPath } from 'url'
+import { joinAcrossFiles, joinSummary, concatArgs, listFileBody, DEFAULT_JOIN_MS } from './lib/joinSegments.mjs'
 import { parseXmlEvents } from '../src/lib/xmlEventParse.js'
 import { parseDjiSrt, srtCandidates } from '../src/lib/djiSrt.js'
 
@@ -85,7 +87,7 @@ const opt = {
   turnLead: 30, turnLag: 60,        // 0:30 before a tack or gybe → 1:00 after
   photoLead: 30, photoLag: 30,      // 0:30 either side of a sail PhotoEvent — the
                                     // photo is one frame; this is the shape moving
-  shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, noTurns: false, noStarts: false, noTacks: false, noGybes: false,
+  shift: 0, rest: false, archive: false, dry: false, validOnly: false, trim: false, gap: 20, minSeg: 15, join: DEFAULT_JOIN_MS / 1000, noJoin: false, noTurns: false, noStarts: false, noTacks: false, noGybes: false,
   tag: '', keepNames: false, fullRes: '', from: '', force: false, crf: '', noSrt: false, noPhotos: false, at: [], onlyAt: false, sources: [], coverage: '',
   racing: false, finish: [], guns: [], practice: [], marks: [], gates: [], turns: { tack: [], gybe: [] }, have: [],
 }
@@ -134,6 +136,8 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--full-res') opt.fullRes = next()
   else if (a === '--from') opt.from = next()
   else if (a === '--coverage') opt.coverage = next()
+  else if (a === '--join') opt.join = Number(next())
+  else if (a === '--no-join') opt.noJoin = true
   else if (a === '--archive') opt.archive = true
   else if (a === '--dry-run' || a === '-n') opt.dry = true
   else if (a === '--help' || a === '-h') { usage(); process.exit(0) }
@@ -175,6 +179,11 @@ function usage() {
       --keep-names    keep original stems instead of tagged names
       --full-res M    re-cut the segments in manifest M at source resolution
       --from DIR      where the source clips live now, if the card moved
+      --join SEC      the seam a drone leaves when it splits a recording: pieces
+                      of ONE window from consecutive files are joined into one
+                      clip if they are this close (default 15). The join never
+                      crosses tags, so a start cannot absorb the mark after it.
+      --no-join       leave each piece as its own file, as before
       --coverage F    also write F: when the card was FILMING and which parts
                       this run would cut, in the card's own wall clock. For
                       drawing on the track — see scripts/drone-coverage.ts.
@@ -226,6 +235,61 @@ function usage() {
 function die(msg) { console.error(`✕ ${msg}`); process.exit(1) }
 function have(bin) { return spawnSync('command', ['-v', bin], { shell: true }).status === 0 }
 
+// ── cutting a job, in one or several pieces ──────────────────────────────────
+// A job is normally one cut from one file. A JOINED job — a window the drone
+// split a recording through — is several, and they have to come out as one file
+// or the crew sees the same rounding listed three times.
+//
+// Each piece is cut by compress-videos.sh exactly as before, into a temp folder,
+// and the pieces are then concatenated with a stream copy: no second encode, no
+// quality lost at the seam. They come from one flight with one camera, so the
+// streams match and the copy is clean.
+//
+// If the copy refuses — two files that really do differ, a format the demuxer
+// will not take — the pieces are written out individually instead. That is the
+// old behaviour, which is imperfect but never loses footage; the alternative,
+// failing the job, would lose the moment altogether.
+//
+// Declared as a hoisted function, not a const: --full-res runs long before this
+// point in the file and calls it too.
+function cutJob(j, outDir, extraArgs) {
+  const enc = join(HERE, 'compress-videos.sh')
+  const one = (src, name, ssSec, durSec, dir) => {
+    const args = [...extraArgs, '--out', dir, '--name', name]
+    if (ssSec > 0) args.push('--ss', String(ssSec))
+    if (durSec > 0) args.push('--t', String(durSec))
+    args.push(src)
+    return spawnSync(enc, args, { stdio: 'inherit' }).status === 0
+  }
+
+  if (!j.parts || j.parts.length < 2) return one(j.src, j.name, j.ssSec, j.durSec, outDir)
+
+  const tmp = mkdtempSync(join(tmpdir(), 'ssa-join-'))
+  try {
+    const made = []
+    for (const [n, p] of j.parts.entries()) {
+      const name = `${j.name}__p${n + 1}`
+      if (!one(p.src, name, p.ssSec, p.durSec, tmp)) return false
+      made.push(join(tmp, `${name}.mp4`))
+    }
+    const list = join(tmp, 'list.txt')
+    writeFileSync(list, listFileBody(made))
+    const r = spawnSync('ffmpeg', concatArgs(list, join(outDir, `${j.name}.mp4`)), { stdio: 'inherit' })
+    if (r.status === 0) return true
+
+    console.log(`  ! ${j.name}: the pieces would not join — writing them separately`)
+    let ok = true
+    for (const [n, p] of j.parts.entries()) {
+      if (!one(p.src, `${j.name}__p${n + 1}`, p.ssSec, p.durSec, outDir)) ok = false
+    }
+    return ok
+  } finally {
+    try { rmSync(tmp, { recursive: true, force: true }) } catch { /* a temp dir left behind is not a failure */ }
+  }
+}
+
+
+
 // ── full-res pass ────────────────────────────────────────────────────────────
 // Stage 2 of the day: the proxies are already up and the team is watching them,
 // and now the same moments are wanted at full resolution on the laptop for the
@@ -272,11 +336,15 @@ if (opt.fullRes) {
       missing++; continue
     }
     process.stdout.write(`[${n}/${items.length}] `)
-    const args = ['--copy', '--out', opt.out, '--name', it.name, src]
-    if (it.ssSec > 0) args.splice(1, 0, '--ss', String(it.ssSec))
-    if (it.durSec > 0) args.splice(1, 0, '--t', String(it.durSec))
-    const r = spawnSync(join(HERE, 'compress-videos.sh'), args, { stdio: 'inherit' })
-    if (r.status !== 0) bad++
+    // A joined item carries its parts; --from may have re-found the first one,
+    // so apply the same re-find to each.
+    const item = it.parts
+      ? { ...it, src, parts: it.parts.map((p) => ({
+          ...p,
+          src: existsSync(p.src) ? p.src : (index?.get(basename(p.src)) || p.src),
+        })) }
+      : { ...it, src }
+    if (!cutJob(item, opt.out, ['--copy'])) bad++
   }
   console.log(`\n✓ ${n - bad - missing - skippedExisting}/${items.length} segments cut${skippedExisting ? `, ${skippedExisting} already there` : ''} → ${opt.out}`)
   if (missing) console.log(`⚠ ${missing} source clip(s) not found — pass --from <folder> if the card is mounted elsewhere.`)
@@ -884,6 +952,27 @@ for (const c of picked) {
   }
 }
 
+// ONE MOMENT, ONE CLIP. A window is trimmed to the file it came from, so a drone
+// splitting its recording through a rounding leaves two or three consecutive
+// clips of it — 2 October's start was 118 s + 28 s. Join them before anything
+// downstream counts, names or encodes them; the parts are concatenated at the
+// end, and the two seconds the drone dropped at the seam are simply not there.
+const beforeJoin = jobs.slice()
+const joinedJobs = opt.noJoin ? jobs : joinAcrossFiles(jobs, Math.max(0, opt.join) * 1000)
+{
+  const { joins, pieces, saved } = joinSummary(beforeJoin, joinedJobs)
+  if (saved > 0) {
+    console.log(`\njoined: ${pieces} piece(s) across file boundaries → ${joins} clip(s)` +
+      ` (the drone split the recording mid-window; --no-join to keep them apart)`)
+    for (const j of joinedJobs.filter((x) => x.parts)) {
+      console.log(`  ${j.name}  ${Math.round(j.durSec)}s from ${j.parts.length} files` +
+        `: ${j.parts.map((p) => basename(p.src)).join(' + ')}`)
+    }
+  }
+}
+jobs.length = 0
+jobs.push(...joinedJobs)
+
 jobs.sort((a, b) => rankOf(a.kinds || []) - rankOf(b.kinds || []) || String(a.name).localeCompare(String(b.name)))
 
 if (opt.coverage) {
@@ -900,14 +989,15 @@ if (opt.coverage) {
 
 if (opt.dry) {
   console.log(`\nEncode order — starts first, so the debrief's opening clips can go up while the rest are still encoding:`)
-  jobs.forEach((j, i) => console.log(`  ${String(i + 1).padStart(2)}. ${j.name}${j.durSec ? `  ${Math.round(j.durSec)}s` : ''}`))
+  jobs.forEach((j, i) => console.log(`  ${String(i + 1).padStart(2)}. ${j.name}${j.durSec ? `  ${Math.round(j.durSec)}s` : ''}${j.parts ? `  (joined from ${j.parts.length} files)` : ''}`))
   console.log(`\n(dry run — nothing compressed. Drop -n to compress into ${opt.out}/)`)
   process.exit(0)
 }
 
 // ── compress, via the one script that owns the encoder settings ──────────────
 mkdirSync(opt.out, { recursive: true })
-const enc = join(HERE, 'compress-videos.sh')
+// The encoder itself is reached through cutJob, which is also what joins a
+// window the drone split across files.
 const arch = [...(opt.archive ? ['--archive'] : []), ...(opt.crf ? ['--crf', String(opt.crf)] : [])]
 
 // Written BEFORE encoding, so an interrupted run still leaves a replayable record.
@@ -990,13 +1080,8 @@ console.log(`\n● Compressing ${todo.length} file(s) from ${picked.length} clip
 let i = 0, bad = 0
 for (const j of todo) {
   i++
-  const args = [...arch, '--out', opt.out, '--name', j.name]
-  if (j.ssSec > 0) args.push('--ss', String(j.ssSec))
-  if (j.durSec > 0) args.push('--t', String(j.durSec))
-  args.push(j.src)
   process.stdout.write(`[${i}/${todo.length}] `)
-  const r = spawnSync(enc, args, { stdio: 'inherit' })
-  if (r.status !== 0) bad++
+  if (!cutJob(j, opt.out, arch)) bad++
 }
 console.log(`\n✓ ${todo.length - bad}/${todo.length} encoded${already ? ` (+${already} already there)` : ''} → ${opt.out}`)
 console.log(`  manifest: ${manifest}`)
