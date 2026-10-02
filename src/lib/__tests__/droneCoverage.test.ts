@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   EMPTY_COVERAGE, clampToFootage, covers, gapsBetween, isEmptyCoverage,
-  mergeSpans, normaliseCoverage, spanTotal,
+  mergeSpans, normaliseCoverage, spanTotal, spansOnDay,
 } from '../droneCoverage'
 
 const T = (h: number, m: number, s = 0) => Date.UTC(2026, 8, 30, h, m, s)
@@ -136,5 +136,39 @@ describe('normaliseCoverage', () => {
   it('knows an unscanned day from one with no footage', () => {
     expect(isEmptyCoverage(normaliseCoverage(null))).toBe(true)
     expect(isEmptyCoverage(normaliseCoverage({ footage: [{ from: 1, to: 2 }] }))).toBe(false)
+  })
+})
+
+describe('spansOnDay', () => {
+  // The card's own wall clock, which is the frame the scan arrives in.
+  const W = (d: number, h: number, m = 0) => Date.UTC(2026, 9, d, h, m)
+
+  it('keeps the day asked for and drops the rest of the card', () => {
+    // A card straight out of the drone holds every day it has recorded.
+    const scan = [
+      { from: W(1, 11, 0), to: W(1, 11, 5) },
+      { from: W(2, 14, 0), to: W(2, 14, 6) },
+      { from: W(3, 9, 0), to: W(3, 9, 4) },
+    ]
+    expect(spansOnDay(scan, '2026-10-02')).toEqual([{ from: W(2, 14, 0), to: W(2, 14, 6) }])
+  })
+
+  it('cuts a recording that crosses midnight rather than dropping it', () => {
+    const over = [{ from: W(2, 23, 50), to: W(3, 0, 10) }]
+    expect(spansOnDay(over, '2026-10-02')).toEqual([{ from: W(2, 23, 50), to: W(3, 0, 0) }])
+    expect(spansOnDay(over, '2026-10-03')).toEqual([{ from: W(3, 0, 0), to: W(3, 0, 10) }])
+  })
+
+  it('is empty for a day the card never filmed, and for a bad date', () => {
+    const scan = [{ from: W(2, 14, 0), to: W(2, 14, 6) }]
+    expect(spansOnDay(scan, '2026-10-05')).toEqual([])
+    expect(spansOnDay(scan, 'not-a-date')).toEqual([])
+  })
+
+  it('ignores a span with no length or no numbers', () => {
+    expect(spansOnDay([
+      { from: W(2, 14, 0), to: W(2, 14, 0) },
+      { from: NaN, to: W(2, 14, 6) },
+    ], '2026-10-02')).toEqual([])
   })
 })

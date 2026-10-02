@@ -145,3 +145,31 @@ export function clampToFootage(clips: readonly Span[], footage: readonly Span[])
   }
   return mergeSpans(out, 0)
 }
+
+/**
+ * The part of a scan that falls on ONE calendar day.
+ *
+ * A card someone has filed by day holds only that day. A card straight out of
+ * the drone — `/Volumes/<card>/DCIM/DJI001` — holds every day it has ever
+ * recorded, and storing that whole scan against one session paints bands over a
+ * track that was sailed a week earlier. The cutter is safe against this because
+ * a clip only becomes a segment if it overlaps a window from the day being cut;
+ * the coverage scan has no windows at all, so the day has to be applied here.
+ *
+ * The bounds are read in the SAME clock as the spans, which is the only way to
+ * use this without thinking about it: pass the card's wall-clock spans and you
+ * get wall-clock spans back, pass UTC and you get UTC. A recording that crosses
+ * midnight is cut at it rather than dropped — it is footage of both days.
+ */
+export function spansOnDay(spans: readonly Span[], date: string): Span[] {
+  const from = Date.parse(`${date}T00:00:00Z`)
+  if (!Number.isFinite(from)) return []
+  const to = from + 86_400_000
+  const out: Span[] = []
+  for (const s of spans || []) {
+    if (!s || !finite(s.from) || !finite(s.to) || s.to <= s.from) continue
+    if (s.to <= from || s.from >= to) continue
+    out.push({ from: Math.max(s.from, from), to: Math.min(s.to, to) })
+  }
+  return out
+}

@@ -30,7 +30,7 @@ import { join, resolve } from 'path'
 import { homedir, tmpdir } from 'os'
 import { fileURLToPath } from 'url'
 import { createClient } from '@supabase/supabase-js'
-import { mergeSpans, clampToFootage, spanTotal, type Span } from '../src/lib/droneCoverage'
+import { mergeSpans, clampToFootage, spanTotal, spansOnDay, type Span } from '../src/lib/droneCoverage'
 
 const USAGE = `Where the drone was filming, drawn on the track.
 
@@ -165,14 +165,25 @@ async function doDate(date: string, write: boolean): Promise<void> {
   const scan = scanCard(card, date)
   const manifestCut = cutFromManifest(date)
 
+  // A card filed by day holds only that day; a card straight out of the drone
+  // — DCIM/DJI001 — holds every day it has recorded. Keep this day's part of
+  // the scan, in the card's own wall clock, BEFORE anything is converted or
+  // stored: the alternative is last week's filming drawn over today's track.
+  const onDay = spansOnDay(scan.footage, date)
+
   // WALL CLOCK → TRUE UTC, once, here. The card is venue-local; everything in
   // SSA is UTC. See CLAUDE.md's first trap.
   const toUtc = (s: Span): Span => ({ from: s.from - tzMin * 60_000, to: s.to - tzMin * 60_000 })
-  const footage = mergeSpans(scan.footage.map(toUtc))
-  const cut = clampToFootage(mergeSpans([...scan.clips, ...manifestCut].map(toUtc)), footage)
+  const footage = mergeSpans(onDay.map(toUtc))
+  const cut = clampToFootage(
+    mergeSpans(spansOnDay([...scan.clips, ...manifestCut], date).map(toUtc)),
+    footage
+  )
 
   console.log(`\n${date}  ${card}`)
-  console.log(`  ${scan.fileCount} file(s) · venue UTC${tzMin >= 0 ? '+' : ''}${tzMin / 60} (from ${tzFrom})`)
+  console.log(`  ${scan.fileCount} file(s) on the card` +
+    (onDay.length === scan.fileCount ? '' : `, ${onDay.length} on ${date}`) +
+    ` · venue UTC${tzMin >= 0 ? '+' : ''}${tzMin / 60} (from ${tzFrom})`)
   if (!footage.length) { console.log('  no timed footage on the card for this day'); return }
   console.log(`  filming  ${mins(spanTotal(footage))} across ${footage.length} recording(s)`)
   for (const s of footage) {
@@ -192,7 +203,7 @@ async function doDate(date: string, write: boolean): Promise<void> {
       footage, clips: cut,
       scannedAt: new Date().toISOString(),
       tzOffsetMin: tzMin,
-      fileCount: scan.fileCount,
+      fileCount: onDay.length,
     },
   }).eq('id', id)
   if (error) { console.log(`  ✕ ${error.message}`); return }
