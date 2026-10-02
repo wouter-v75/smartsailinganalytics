@@ -21,6 +21,9 @@ import { RichText, FormatHint } from './RichText'
 import AudioBrief from './AudioBrief'
 import NoteRecorder from './NoteRecorder'
 import { myComments } from '../lib/tagging/comments'
+// A debrief box that scrolls inside itself reads as a note that stops
+// mid-sentence — see ui/auto-textarea.
+import { AutoTextarea, useAutoGrow } from './ui/auto-textarea'
 
 const BLOCK_META = {
   'technical-testing': { label: 'Technical testing', c: '#F59E0B', testing: true },
@@ -492,7 +495,7 @@ function EditableTextBlock({ label, value, canEdit, placeholder, onSave, accent 
       </div>
       {editing ? (
         <>
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} placeholder={placeholder}
+          <AutoTextarea value={draft} onChange={(e) => setDraft(e.target.value)} minRows={4} maxHeight="none" placeholder={placeholder}
             autoFocus
             style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }} />
           <FormatHint />
@@ -918,6 +921,10 @@ function noteClipTags(tags) {
 // (clips / backlog items, only when allowLinks). Plus a click-to-insert palette.
 function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTag, links = [], allowLinks = false, rows = 4 }) {
   const ref = useRef(null)
+  // `rows` is the FLOOR now, not the height: four lines is nothing for a
+  // debrief section, and text scrolling inside the box is indistinguishable
+  // from a section that was cut short.
+  useAutoGrow(ref, value)
   const [menu, setMenu] = useState(null) // { mode:'tag'|'link', token, start, caret, items }
   const [active, setActive] = useState(0)
 
@@ -1007,7 +1014,7 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
         onBlur={() => setTimeout(() => setMenu(null), 150)}
         rows={rows}
         placeholder={placeholder}
-        style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4 }}
+        style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4, overflowY: 'hidden' }}
       />
       {menu && (menu.items.length > 0 || showCreate) && (
         <div style={{ position: 'absolute', zIndex: 30, left: 0, right: 0, background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, marginTop: 2, maxHeight: 200, overflowY: 'auto', boxShadow: '0 6px 16px rgba(0,0,0,0.45)' }}>
@@ -1548,11 +1555,13 @@ export function MyDebriefNotesCard({ teamId, boatId, date, wrapperStyle }) {
         {!dirty && loaded && saved && <div style={{ marginLeft: 'auto', fontSize: 11, color: '#1D9E75' }}>saved</div>}
       </div>
 
-      <textarea
+      <AutoTextarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         disabled={!loaded}
-        rows={6}
+        minRows={6}
+        maxHeight="none"
+
         placeholder="What you want raised tonight — the jib lead, the second start, the peel that nearly went wrong."
         style={{
           width: '100%', boxSizing: 'border-box', background: '#071624',

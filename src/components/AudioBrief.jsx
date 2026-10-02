@@ -153,7 +153,7 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
           {fields.map((f) => (
             <div key={f.key} style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#7DD3FC', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{f.label}</div>
-              <AutoTextarea value={result[f.key] || ''} minRows={5} style={ta}
+              <AutoTextarea value={result[f.key] || ''} minRows={5} maxHeight="none" style={ta}
                 onChange={(e) => setResult((p) => ({ ...p, [f.key]: e.target.value }))} />
             </div>
           ))}

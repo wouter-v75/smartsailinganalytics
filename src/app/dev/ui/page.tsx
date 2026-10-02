@@ -22,6 +22,7 @@ const LONG = [
 // Toggle light/dark to verify tokens flip and glass surfaces read in both.
 export default function UiGallery() {
   const [theme, setTheme] = React.useState<'dark' | 'light'>('dark')
+  const [note, setNote] = React.useState(LONG)
   React.useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
     return () => document.documentElement.setAttribute('data-theme', 'dark')
@@ -98,6 +99,15 @@ export default function UiGallery() {
           <div style={{ width: 340 }}>
             <div className="text-secondary" style={{ fontSize: 11, marginBottom: 4 }}>AutoTextarea — grows to its content</div>
             <AutoTextarea readOnly value={LONG} minRows={5} data-testid="auto-ta"
+              style={{ width: '100%', fontSize: 13, fontFamily: 'inherit', padding: 8, borderRadius: 8 }} />
+          </div>
+          {/* Editable, because growing is only half of it: a box that cannot
+              SHRINK again leaves a hole after a long note is cut down, and that
+              only shows up against real state. */}
+          <div style={{ width: 340 }}>
+            <div className="text-secondary" style={{ fontSize: 11, marginBottom: 4 }}>AutoTextarea — editable, uncapped (what a debrief note uses)</div>
+            <AutoTextarea value={note} minRows={3} maxHeight="none" data-testid="edit-ta"
+              onChange={(e) => setNote(e.target.value)}
               style={{ width: '100%', fontSize: 13, fontFamily: 'inherit', padding: 8, borderRadius: 8 }} />
           </div>
         </Section>

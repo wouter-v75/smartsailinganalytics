@@ -26,6 +26,28 @@ export interface AutoTextareaProps
   maxHeight?: string
 }
 
+/**
+ * Make a textarea as tall as its content, and keep it that way.
+ *
+ * The hook, not the component, is what a textarea that already owns its own ref
+ * reaches for — CampaignTab's TagTextArea holds one for the #tag autocomplete's
+ * caret, so it cannot simply swap in <AutoTextarea>. Same two lines either way,
+ * in one place.
+ */
+export function useAutoGrow(
+  ref: React.RefObject<HTMLTextAreaElement | null>,
+  value: unknown
+): void {
+  React.useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    // Collapse first: scrollHeight only ever grows against a fixed height, so
+    // without this the box can get taller but never shorter.
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [ref, value])
+}
+
 export function AutoTextarea({
   minRows = 3,
   maxHeight = '60vh',
@@ -34,15 +56,7 @@ export function AutoTextarea({
   ...props
 }: AutoTextareaProps) {
   const ref = React.useRef<HTMLTextAreaElement | null>(null)
-
-  React.useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    // Collapse first: scrollHeight only ever grows against a fixed height, so
-    // without this the box can get taller but never shorter.
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }, [value])
+  useAutoGrow(ref, value)
 
   return (
     <textarea

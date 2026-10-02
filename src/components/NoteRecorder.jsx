@@ -151,7 +151,7 @@ export default function NoteRecorder({ value, onCommit, canEdit, label, teamId, 
       <div style={{ fontSize: 11, color: '#8a97a9', marginBottom: 8 }}>
         From your recording — <b style={{ color: '#a6b2c4' }}>read it against what you said</b>. Edit it here first.
       </div>
-      <AutoTextarea value={draft} minRows={5} style={ta} onChange={(e) => setDraft(e.target.value)} />
+      <AutoTextarea value={draft} minRows={5} maxHeight="none" style={ta} onChange={(e) => setDraft(e.target.value)} />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
         <button onClick={() => commit('append')} disabled={saving}
           style={{ ...btn, background: '#10B981', border: 'none', color: '#03251a', fontWeight: 700, fontSize: 12, padding: '5px 10px' }}>
