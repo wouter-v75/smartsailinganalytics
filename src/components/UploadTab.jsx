@@ -448,8 +448,23 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
       return;
     }
 
-    const next = watchQueueRef.current.find(v => !watchHandledRef.current.has(v.id));
-    if (!next) return;
+    const queued = watchQueueRef.current.find(v => !watchHandledRef.current.has(v.id));
+    if (!queued) return;
+
+    // The queued entry is a SNAPSHOT taken the moment the clip was saved, and
+    // the timestamp probe may still have been running then. ensureCloudVideoId
+    // writes start_utc ONCE, from whatever it is handed, and the row is never
+    // rewritten — so a stale snapshot leaves the cloud row with no start time
+    // for ever, while the local record settles and the Videos tab looks right.
+    // The timeline then parks the clip at the start of the day: on 2 October
+    // four RIB clips sat at 11:00 that way. Take the current record instead.
+    const fresh = savedVids.find(v => v.id === queued.id);
+    const next = fresh ? { ...fresh, sessionDate: fresh.sessionDate || queued.sessionDate } : queued;
+    // Belt and braces: the auto-save above already waits for the probe, so this
+    // only guards a clip that reached savedVids some other way. A clip that
+    // settles as undecodable has no start time to wait for and passes — those
+    // have to be given one by hand in the Videos tab, which pushes the row.
+    if (!clipTimestampSettled(next)) return;
 
     watchUploadingRef.current = true;
     (async () => {
@@ -509,7 +524,7 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
     // next render picks up the following clip.
     // watchQueueTick wakes this when clips are queued; addLog changes every
     // render, which is what drives it on to the NEXT clip after one finishes.
-  }, [watchOn, watchAutoUpload, watchQueueTick, cloudStatus?.available, perms.canSync, addLog]);
+  }, [watchOn, watchAutoUpload, watchQueueTick, savedVids, cloudStatus?.available, perms.canSync, addLog]);
 
   const handleMixedDrop=useCallback(fileList=>{
     const files=Array.from(fileList);

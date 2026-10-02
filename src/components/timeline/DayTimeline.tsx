@@ -90,6 +90,9 @@ interface MediaItem {
   // Comments only: who said it (their full name, shortened on the card) and
   // what they said.
   who?: string | null; text?: string | null; kindLabel?: string | null
+  /** The row carries no start time, so `t` is the day's start and means nothing.
+   *  Said out loud on the card rather than left as a clip that looks placed. */
+  noTime?: boolean
 }
 
 // Leg mode from TWA vs target TWA (per Wouter's rule):
@@ -209,10 +212,19 @@ export default function DayTimeline({ day, events, tz, teamId, boatId, onPlayVid
       fetch(`/api/teams/${teamId}/tags/comments?boat_id=${boatId}&date=${date}`).then((res) => res.json()).catch(() => ({})),
     ]).then(([vj, pj, sj, cj]: [any, any, any, any]) => {
       if (!alive) return
-      const vids: MediaItem[] = (vj?.videos || []).map((v: any) => ({
-        id: v.id, type: 'video', thumb: v.thumbnail || v.thumbnail_url,
-        t: Date.parse(v.start_utc) || day.t0, title: v.title, tags: v.tags || [], sails: [],
-      }))
+      // A row with NO start_utc used to land at `day.t0` and look like a clip
+      // filmed at the start of the day — `Date.parse(null)` is NaN, which is
+      // falsy, so `|| day.t0` swallowed it. On 2 October four RIB clips sat at
+      // 11:00 that way, and nothing on screen said they were unplaced. They are
+      // still shown (a clip nobody can find is worse) but they say so.
+      const vids: MediaItem[] = (vj?.videos || []).map((v: any) => {
+        const t = Date.parse(v.start_utc)
+        return {
+          id: v.id, type: 'video' as const, thumb: v.thumbnail || v.thumbnail_url,
+          t: Number.isFinite(t) ? t : day.t0, noTime: !Number.isFinite(t),
+          title: v.title, tags: v.tags || [], sails: [],
+        }
+      })
       const phs: MediaItem[] = (pj?.photos || []).map((p: any) => {
         const a = p.analysis_data || {}, inst = a.inst || {}
         const sails = a.sails ?? inst.sails ?? []
@@ -647,14 +659,16 @@ function MediaCard({ m, x, y, w, h, color, tz, index, mag, push, focused, ev, on
   return (
     <button
       onClick={onClick}
-      title={m.type === 'video' ? (m.title || 'Play video') : hmsSec(m.t, tz)}
+      title={m.noTime
+        ? `${m.title || 'Clip'} — no start time stored, so it is parked at the start of the day. Set it in the Videos tab.`
+        : m.type === 'video' ? (m.title || 'Play video') : hmsSec(m.t, tz)}
       className="tl-card-in absolute overflow-visible rounded-lg text-left shadow-md transition-[transform,box-shadow] duration-[110ms] ease-out will-change-transform motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2"
       style={{ left: x, top: y, width: w, height: h, transformOrigin: 'center', ['--i' as any]: index, zIndex: 100 + Math.round((mag - 1) * 200), boxShadow: focused ? '0 8px 26px rgba(0,0,0,0.45)' : undefined, transform: `translateY(${push.toFixed(1)}px) scale(${mag.toFixed(3)})` }}
     >
       <div className="relative h-full w-full overflow-hidden rounded-lg" style={{ border: `2px solid ${color}`, background: 'var(--surface-2)' }}>
         {m.thumb ? <img src={m.thumb} alt="" loading="lazy" className="tl-parallax-img h-full w-full object-cover" />
           : <div className="flex h-full w-full items-center justify-center text-muted">{m.type === 'video' ? <Play size={18} aria-hidden /> : m.type === 'sailscan' ? <Sailboat size={18} aria-hidden /> : <Camera size={16} aria-hidden />}</div>}
-        <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: color }}>{showSeconds ? hmsSec(m.t, tz) : hms(m.t, tz)}</span>
+        <span className="absolute left-1 top-1 rounded px-1 py-px font-mono text-[9px] font-semibold text-white" style={{ background: m.noTime ? '#B45309' : color }}>{m.noTime ? 'no time' : showSeconds ? hmsSec(m.t, tz) : hms(m.t, tz)}</span>
         <div className="absolute right-1 top-1 flex items-center gap-1">
           {burstCount > 1 && (
             // Says the card stands for more than it shows, so the other frames are

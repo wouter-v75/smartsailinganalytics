@@ -74,3 +74,16 @@ describe('planRowFixes', () => {
     expect(utcVenue[0].startUtc).toBe(iso('2026-10-02T12:03:30Z'))
   })
 })
+
+describe('a row with no start time at all', () => {
+  // What the four RIB clips of 2 October look like: the cloud row was created
+  // before anything could say when the clip was filmed. The timeline used to
+  // park these at the day's own start — Date.parse(null) is NaN, which is
+  // falsy, so `|| day.t0` swallowed it and they all showed 11:00.
+  it('is reported, and left for the Videos tab when the name says nothing', () => {
+    const noName = planRowFixes([{ id: 'r9', title: 'GX010041', start_utc: null, tags: [] }], TZ)
+    expect(noName).toEqual([])            // nothing here can place it
+    const named = planRowFixes([row({ start_utc: null })], TZ)
+    expect(named[0].startUtc).toBe(iso('2026-10-02T10:03:30Z'))
+  })
+})
