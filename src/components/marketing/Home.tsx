@@ -82,12 +82,13 @@ export default function Home() {
       {/* ── Why it is built this way ──────────────────────────────────────── */}
       <section className="ssa-reveal border-b border-border py-12 sm:py-16">
         <h2 className="ssa-rule text-[20px] font-bold tracking-tight sm:text-[24px]">
-          Built so the crew turns up with something to say
+          Come prepared to the debrief
         </h2>
         <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-secondary">
-          The usual debrief is one person presenting and everyone else receiving. That wastes
-          the people who were actually sailing the boat. Everything here follows from wanting
-          the opposite.
+          Turn the debrief from watching videos together into digging deeper into the stuff
+          that really matters. The usual meeting is one person presenting and everyone else
+          receiving, which wastes the people who actually sailed the boat. Everything here
+          follows from wanting the opposite.
         </p>
         <div className="mt-7 grid gap-4 sm:grid-cols-3">
           {[
@@ -210,9 +211,10 @@ export default function Home() {
       {/* ── Close ─────────────────────────────────────────────────────────── */}
       <section className="ssa-reveal py-16 sm:py-20">
         <h2 className="max-w-2xl text-[22px] font-bold leading-snug tracking-tight sm:text-[28px]">
-          If someone on your programme sent you this, they have already done the hard part.
+          Cut through the clutter, go faster.
         </h2>
         <p className="mt-4 max-w-2xl text-[15px] leading-relaxed text-secondary">
+          If someone on your programme sent you this, they have already done the hard part.
           Tell us what you sail and we will show you a real day from a real season — yours, if
           you can send us a log and a few clips.
         </p>
