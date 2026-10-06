@@ -2,6 +2,8 @@
 //
 //   npm run auth:selftest2                  (refusals only — creates nothing, emails nobody)
 //   npm run auth:selftest2 -- --full        (also creates a real pending account, then deletes it)
+//   npm run auth:selftest2 -- --full --keep (leaves it, so you can press Approve)
+//   npm run auth:selftest2 -- --delete <email>        (removes a kept one)
 //   npm run auth:selftest2 -- --base https://ssa.wvsailing.co.uk
 //
 // TWO MODES, because the honest version of this test has a side effect.
@@ -22,6 +24,15 @@
 //
 // The address used is @example.invalid, reserved by RFC 2606 and deliverable
 // nowhere, so a mistake here cannot mail a stranger.
+//
+// --keep EXISTS FOR THE ONE STEP A SCRIPT CANNOT TAKE. Approving goes through a
+// route that needs a signed-in manager, so nothing here can press the button —
+// which means sendApprovedEmail is the last thing in either road that has never
+// run outside production. With --keep the pending account is left in place, you
+// press Approve in SSA, and you see whether that email arrives. Then
+// --delete <email> removes it. It is the only part of this script that leaves
+// something behind, so it says so loudly and tells you the line to clean up
+// with.
 
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
@@ -32,6 +43,8 @@ const has = (f: string) => args.includes(f)
 const val = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined }
 const base = (val('--base') || 'http://localhost:3000').replace(/\/$/, '')
 const full = has('--full')
+const keep = has('--keep')
+const deleteWho = val('--delete')
 const fail: (m: string) => never = (m) => { console.error(`✕ ${m}`); process.exit(1) }
 
 const envPath = resolve(process.cwd(), '.env.local')
@@ -82,7 +95,34 @@ async function makeCode(teamId: string, over: Record<string, unknown> = {}) {
   return { id: data.id as string, token }
 }
 
+/**
+ * Remove an account --keep left behind.
+ *
+ * Guarded hard. This script holds the service key, which can delete anybody, so
+ * it will only touch an address that this script itself could have made: the
+ * selftest- prefix AND the @example.invalid domain, which is reserved by RFC
+ * 2606 and belongs to no one. A typo here must bounce off, not take a crew
+ * member's account with it.
+ */
+async function removeKept(email: string): Promise<never> {
+  const addr = email.trim().toLowerCase()
+  if (!/^selftest-[a-z0-9-]+@example\.invalid$/.test(addr)) {
+    fail(`refusing to delete ${addr} — this only ever removes its own selftest-…@example.invalid accounts`)
+  }
+  const { data: person } = await sb.from('users').select('id, status').ilike('email', addr).maybeSingle()
+  if (!person?.id) {
+    console.log(`\n  nothing to delete — no account for ${addr}\n`)
+    process.exit(0)
+  }
+  const { error } = await sb.auth.admin.deleteUser(person.id as string)
+  if (error) fail(`could not delete ${addr}: ${error.message}`)
+  console.log(`\n  ✓ removed ${addr}${person.status === 'active' ? ' (it had been approved — its membership goes with it)' : ''}\n`)
+  process.exit(0)
+}
+
 const main = async () => {
+  if (deleteWho) await removeKept(deleteWho)
+  if (keep && !full) fail('--keep only means something with --full — there is nothing to keep otherwise')
   console.log(`\nRoad 2 self-test against ${base}${full ? '  (--full: WILL create an account and email the managers)' : ''}\n`)
 
   const { data: team } = await sb.from('teams').select('id, name').limit(1).maybeSingle()
@@ -90,6 +130,7 @@ const main = async () => {
 
   const made: string[] = []
   const users: string[] = []
+  let keptEmail = ''
   try {
     // ── the refusals ────────────────────────────────────────────────────────
     console.log('  Refusals (nothing is created):')
@@ -153,6 +194,7 @@ const main = async () => {
     console.log('\n  Happy path (creates an account, emails the managers):')
     const code = await makeCode(team.id); made.push(code.id)
     const email = freshEmail()
+    keptEmail = email
     const res = await post(code.token, { ...ok, name: 'SSA self-test', email })
     check('the request is accepted', res.status === 200 && res.ok === true, `${res.status} ${res.error || ''}`)
     check('and says what happens next', /team manager/i.test(res.message || ''))
@@ -186,6 +228,18 @@ const main = async () => {
   } finally {
     console.log('')
     for (const id of users) {
+      if (keep) {
+        // Deliberately left. Say exactly what to do with it, because an account
+        // nobody remembers making is worse than no test at all.
+        console.log(`  ⚠ KEPT: ${keptEmail} is pending in ${team.name}.`)
+        console.log(`      Approve it in SSA → ${base}/admin/teams/${team.id}`)
+        console.log('      That is the last step in either road that no script can take:')
+        console.log('      watch for the "You are in" email, and check the panel for a')
+        console.log('      warning if it did not send.')
+        console.log('      Then remove it:')
+        console.log(`      npm run auth:selftest2 -- --delete ${keptEmail}`)
+        continue
+      }
       // Deleting the auth user cascades to public.users.
       const { error } = await sb.auth.admin.deleteUser(id)
       console.log(`  ${error ? `✕ TEST ACCOUNT ${id} LEFT BEHIND — delete it by hand (${error.message})` : '✓ test account removed'}`)
@@ -199,7 +253,9 @@ const main = async () => {
 
   console.log(failures
     ? `\n✕ ${failures} check(s) failed — Road 2 is not safe to put on a boat.\n`
-    : `\n✓ Road 2 is sound${full ? '' : ' as far as the refusals go — run --full for the rest'}.\n`)
+    : keep
+      ? '\n✓ Road 2 is sound up to the approval — that part is yours to press, above.\n'
+      : `\n✓ Road 2 is sound${full ? '' : ' as far as the refusals go — run --full for the rest'}.\n`)
   process.exit(failures ? 1 : 0)
 }
 main()
