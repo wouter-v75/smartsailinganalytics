@@ -49,10 +49,19 @@ export default function PendingRequestsPanel({
           body: JSON.stringify({ user_id: userId }),
         }
       )
+      const j = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
         setErr(j.error || `failed (${res.status})`)
         return
+      }
+      // The membership is made either way — rolling it back because a mail
+      // server hiccuped would be the worse answer — but they are waiting for an
+      // email that says so, and only you can tell them it did not come.
+      if (j.email_sent === false) {
+        setErr(
+          `Approved — but the email telling them did not send: ${j.email_error || 'unknown error'}. ` +
+          `Let them know another way; they sign in with the password they chose when they scanned the code.`
+        )
       }
       router.refresh()
     } finally {

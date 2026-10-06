@@ -133,12 +133,18 @@ export default function InvitationsPanel({
       //
       //   not provisioned — no account was made, the invite link is live, and
       //     copying it is exactly right.
+      // Surface email-delivery problems, with advice that matches what is
+      // actually true of the link now. The invitation is no longer consumed at
+      // send time, so for a provisioned invite the /welcome link below IS live
+      // — which is the only way in when the mail did not land.
       if (j.email_sent && !j.email_sent.ok) {
         setErr(
           j.provisioned
             ? `Set up and active — but the email failed: ${j.email_sent.error}. ` +
-              `Tell them to sign in and use "Forgot password?"; it goes to their address. ` +
-              `The invite link below is already used and will not work.`
+              `Copy the link below and give it to them yourself; it sets their ` +
+              `password, so treat it like one and send it to them directly. ` +
+              `"Forgot password?" on the sign-in page does the same job if you ` +
+              `would rather it went to their address.`
             : `Invite created, but email failed: ${j.email_sent.error}. Copy the URL below.`
         )
       }
@@ -226,8 +232,15 @@ export default function InvitationsPanel({
     return `${inv.used_count}/${inv.max_uses} used`
   }
 
+  // TWO ROADS, two links, and handing over the wrong one wastes somebody's
+  // evening. An email-targeted invitation (Road 1) points at /welcome/<token>:
+  // the account already exists and that page sets its password. An open link
+  // (Road 2, the QR code) points at /join/<token>, where a stranger signs
+  // themselves up and waits for approval.
   function urlFor(inv: Invitation): string {
-    return `${origin}/join/${inv.token}`
+    return inv.email
+      ? `${origin}/welcome/${inv.token}`
+      : `${origin}/join/${inv.token}`
   }
 
   function copy(text: string) {

@@ -10,6 +10,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../lib/supabase/admin-guard'
+import { sendApprovedEmail } from '../../../../../../lib/email'
+import { recordAuthEvent } from '../../../../../../lib/authEvents'
 
 export async function POST(
   req: NextRequest,
@@ -29,7 +31,7 @@ export async function POST(
   const { data: target } = await service
     .from('users')
     .select(
-      'id, status, requested_team_id, requested_role, requested_boat_id'
+      'id, email, name, status, requested_team_id, requested_role, requested_boat_id'
     )
     .eq('id', body.user_id)
     .maybeSingle()
@@ -78,17 +80,49 @@ export async function POST(
     return NextResponse.json({ error: usrErr.message }, { status: 500 })
   }
 
-  // Audit
-  await service.from('events').insert({
-    user_id: guard.userId,
-    action: 'user.approve.team_scoped',
+  // Step 3 — TELL THEM. An approval nobody hears about is the same as no
+  // approval: they chose a password when they scanned the code and are now
+  // waiting for permission to use it, with no way to tell whether it came.
+  const siteUrl = process.env.SSA_SITE_URL || req.nextUrl.origin
+  const [{ data: team }, { data: boat }, { data: approver }] = await Promise.all([
+    service.from('teams').select('name').eq('id', params.teamId).maybeSingle(),
+    boatId
+      ? service.from('boats').select('name').eq('id', boatId).maybeSingle()
+      : Promise.resolve({ data: null as { name: string } | null }),
+    service.from('users').select('name').eq('id', guard.userId).maybeSingle(),
+  ])
+
+  let emailed: { ok: boolean; error?: string } = { ok: true }
+  if (target.email) {
+    const sent = await sendApprovedEmail({
+      to: target.email as string,
+      team_name: (team?.name as string) || 'the team',
+      role,
+      boat_name: (boat?.name as string) || null,
+      site_url: siteUrl,
+      approver_name: (approver?.name as string) || null,
+    })
+    emailed = sent.ok ? { ok: true } : { ok: false, error: sent.error }
+  } else {
+    emailed = { ok: false, error: 'that account has no email address on it' }
+  }
+
+  await recordAuthEvent(service, {
+    action: emailed.ok ? 'user.approved' : 'user.approve_email_failed',
+    actorUserId: guard.userId,
     details: {
-      target_user_id: target.id,
+      to: (target.email as string) || null,
+      member_user_id: target.id,
       team_id: params.teamId,
       role,
       boat_id: boatId,
+      error: emailed.ok ? null : emailed.error,
     },
   })
 
-  return NextResponse.json({ ok: true })
+  // The approval itself SUCCEEDED even if the email did not, so this is a 200
+  // with a warning rather than an error — rolling back a membership because a
+  // mail server hiccuped would be the worse answer. The panel shows the
+  // warning so the manager can tell them another way.
+  return NextResponse.json({ ok: true, email_sent: emailed.ok, email_error: emailed.error ?? null })
 }

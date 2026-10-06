@@ -1,8 +1,18 @@
-// /join/<token> — invite-redemption landing page.
+// /join/<token> — where the team's QR code lands. Road 2.
 //
-// Renders details about the invite (team, role, boat). If the visitor isn't
-// logged in, sends them to /signup?invite=<token>. If they are, the
-// "Join team" button POSTs to the redeem endpoint and routes them to /.
+// Somebody standing on the dock scans the code and arrives here with no
+// account. They give a name, an address and a password, and then WAIT: the
+// account is created `pending` with no membership, and a team manager has to
+// approve it before it can do anything. The approval mail then says "you're
+// in" and they sign in with the password they chose here.
+//
+// It used to send them to /signup?invite=<token> instead. That road went
+// through supabase.auth.signUp, whose confirmation email Supabase REFUSES to
+// deliver to anybody outside the project's own team unless custom SMTP is
+// configured — so the person was told to check an inbox nothing was ever sent
+// to. One form here, no confirmation email, nothing to click.
+//
+// A visitor who is already signed in still gets the old one-button redeem.
 
 'use client'
 
@@ -31,6 +41,12 @@ export default function JoinPage({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [signedIn, setSignedIn] = useState<boolean | null>(null)
+  // The sign-up form, for the scanner who has no account.
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [requested, setRequested] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -79,8 +95,30 @@ export default function JoinPage({
     }
   }
 
-  function goSignup() {
-    router.push(`/signup?invite=${encodeURIComponent(params.token)}`)
+  async function requestAccess(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await fetch(`/api/join/${params.token}/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, confirm }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // The server's words, not ours: it knows whether the code is expired,
+        // the address is taken, or the account could not be made, and each one
+        // has a different way out.
+        setErr(j.error || `Could not send the request (${res.status}).`)
+        return
+      }
+      setRequested(j.message || 'Your request has gone to the team manager.')
+    } catch {
+      setErr('Could not reach SSA. Check your signal and try again.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   if (loading) {
@@ -113,6 +151,21 @@ export default function JoinPage({
           </h1>
           <p className="text-slate-600">
             Ask the team for a new invite link.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (requested) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
+        <div className="w-full max-w-md bg-white rounded-2xl shadow-md p-6 sm:p-8 text-center">
+          <h1 className="text-xl font-semibold text-slate-900 mb-2">Request sent</h1>
+          <p className="text-slate-600 mb-4">{requested}</p>
+          <p className="text-sm text-slate-500">
+            Nothing else to do — no email to confirm. Sign in with the password you
+            just chose once the approval arrives.
           </p>
         </div>
       </div>
@@ -156,12 +209,44 @@ export default function JoinPage({
             {busy ? 'Joining…' : 'Accept invite'}
           </button>
         ) : (
-          <button
-            onClick={goSignup}
-            className="w-full rounded-lg bg-blue-600 hover:bg-blue-700 text-white py-2 font-medium"
-          >
-            Sign up to accept
-          </button>
+          <form onSubmit={requestAccess} className="text-left">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Your name</label>
+            <input
+              value={name} onChange={(e) => setName(e.target.value)}
+              autoComplete="name" required
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 mb-3 text-slate-900"
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Email</label>
+            <input
+              value={email} onChange={(e) => setEmail(e.target.value)}
+              type="email" autoComplete="email" required inputMode="email"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 mb-3 text-slate-900"
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Password</label>
+            <input
+              value={password} onChange={(e) => setPassword(e.target.value)}
+              type="password" autoComplete="new-password" required minLength={8}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 mb-3 text-slate-900"
+            />
+            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Confirm password</label>
+            <input
+              value={confirm} onChange={(e) => setConfirm(e.target.value)}
+              type="password" autoComplete="new-password" required minLength={8}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 mb-2 text-slate-900"
+            />
+            <p className="text-xs text-slate-500 mb-4">
+              At least 8 characters. You will use this to sign in once the manager approves you.
+            </p>
+            {err && (
+              <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p>
+            )}
+            <button
+              type="submit" disabled={busy}
+              className="w-full rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white py-2 font-medium"
+            >
+              {busy ? 'Sending…' : 'Ask to join'}
+            </button>
+          </form>
         )}
       </div>
     </div>

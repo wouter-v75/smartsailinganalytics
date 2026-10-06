@@ -22,6 +22,14 @@ const PUBLIC_ROUTES: Record<string, string> = {
   'share/[token]': 'the share token itself — looked up, checked for revoke + expiry, grants one clip',
   'invitations/[token]': 'the invitation token — the recipient has no account yet, that is the point',
   'invitations/[token]/stash': 'same invitation token, carried through signup',
+  'join/[token]/request':
+    'the team\'s join code — Road 2, the QR code on the boat. Whoever scans it has no ' +
+    'account and that is the point. Holding the token buys exactly one thing: a PENDING ' +
+    'account with no membership, which can sign in to nothing until a team manager ' +
+    'presses Approve. It refuses an address that already has an account (so it cannot ' +
+    'reset anybody\'s password), and it spends one of the invitation\'s uses under the ' +
+    'same lt() guard as the redeem path, so a code photographed by twenty people cannot ' +
+    'go past the limit the manager set.',
   'hls/[guid]/[file]': 'the signed link minted by /api/videos/[id]/url — AVPlayer does not send our cookie',
   'stream/webhook': "Bunny's HMAC signature (verifyBunnySignature) — the caller is Bunny, not a user",
   'auth/forgot-password':

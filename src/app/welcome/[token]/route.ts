@@ -83,9 +83,27 @@ function deadEnd(state: InviteState, origin: string): string {
   })
 }
 
+/** Thrown shape rather than a state: the server is broken, not the link. */
+class NotConfigured extends Error {}
+
+/** The one failure that is ours, not theirs. */
+function misconfigured(origin: string): NextResponse {
+  console.error('[welcome] SUPABASE_SERVICE_ROLE_KEY is not set — no invitation can be read')
+  return html(messagePage({
+    heading: 'SSA cannot check this link',
+    body: 'Something is missing on our side, so your invitation cannot be read. It is not your link and nothing is wrong with your account. Try again shortly, and tell your team manager if it keeps happening.',
+    linkHref: `${origin}/login`,
+    linkText: 'Go to the sign-in page',
+  }), 503)
+}
+
 async function load(token: string): Promise<{ invite: Invite | null; state: InviteState }> {
   const sb = service()
-  if (!sb) return { invite: null, state: 'missing' }
+  // Without the service key every lookup returns nothing, which would read on
+  // screen as "that link does not match an invitation" — blaming the person for
+  // a server that was deployed without its credentials. Say what is actually
+  // wrong instead; they can stop retyping the link and tell somebody.
+  if (!sb) throw new NotConfigured('SUPABASE_SERVICE_ROLE_KEY is not set')
   const { data } = await sb
     .from('invitations')
     .select('id, email, team_id, used_count, max_uses, expires_at, revoked_at')
@@ -107,7 +125,14 @@ export async function GET(
   { params }: { params: { token: string } }
 ) {
   const origin = new URL(_req.url).origin
-  const { invite, state } = await load(params.token)
+  let invite: Invite | null = null
+  let state: InviteState = 'missing'
+  try {
+    ({ invite, state } = await load(params.token))
+  } catch (e) {
+    if (e instanceof NotConfigured) return misconfigured(origin)
+    throw e
+  }
   if (!invite || state !== 'valid') {
     // Somebody is standing in front of a link that does not work. The manager
     // who sent it cannot see that unless it is written down here.
@@ -142,7 +167,14 @@ export async function POST(
     return typeof v === 'string' && v ? v : null
   }
 
-  const { invite, state } = await load(params.token)
+  let invite: Invite | null = null
+  let state: InviteState = 'missing'
+  try {
+    ({ invite, state } = await load(params.token))
+  } catch (e) {
+    if (e instanceof NotConfigured) return misconfigured(origin)
+    throw e
+  }
   if (!invite || state !== 'valid') return html(deadEnd(state, origin), state === 'missing' ? 404 : 410)
 
   // The password is checked BEFORE the token is spent. A mistyped confirmation

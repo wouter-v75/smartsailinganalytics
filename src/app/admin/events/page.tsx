@@ -11,6 +11,10 @@ import {
   getServerSupabase,
   getServiceSupabase,
 } from '../../../lib/supabase/server'
+import {
+  authEventLevel, describeAuthEvent, isAuthProblem,
+  type AuthEventDetails,
+} from '../../../lib/authEvents'
 
 export const dynamic = 'force-dynamic'
 
@@ -94,6 +98,50 @@ export default async function AdminEventsPage({
     .sort(([, a], [, b]) => b - a)
     .slice(0, 8)
 
+  // WHO GOT STUCK, at the top, in sentences.
+  //
+  // The log below is complete and unreadable at a glance — which is how an
+  // invite that never sent sat in it for three days looking like every other
+  // row. Anything in the sign-up roads that a person is still waiting on comes
+  // up here first, worded for a human, newest first. One bounced address is a
+  // typo; six in a row is a sender domain that has stopped working, and that is
+  // the pattern only this view can show.
+  const problems = list
+    .filter((e) => isAuthProblem(e.action))
+    .slice(0, 25)
+    .map((e) => ({
+      id: e.id,
+      ts: e.ts,
+      action: e.action,
+      level: authEventLevel(e.action),
+      says: describeAuthEvent(e.action, (e.details || {}) as AuthEventDetails),
+    }))
+
+  const problemBox = problems.length ? (
+    <section className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-amber-900">
+        Getting in — {problems.length} thing{problems.length === 1 ? '' : 's'} to look at
+      </h2>
+      <ul className="space-y-1.5">
+        {problems.map((p) => (
+          <li key={p.id} className="flex gap-2 text-sm text-slate-800">
+            <span
+              className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                p.level === 'error' ? 'bg-red-500' : 'bg-amber-500'
+              }`}
+            />
+            <span>
+              {p.says}{' '}
+              <span className="text-xs text-slate-500">
+                {new Date(p.ts).toISOString().slice(0, 16).replace('T', ' ')}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ) : null
+
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-8">
       <div className="max-w-5xl mx-auto">
@@ -125,6 +173,8 @@ export default async function AdminEventsPage({
             </a>
           </div>
         </div>
+
+        {problemBox}
 
         <form method="GET" className="mb-6 flex flex-wrap gap-2 items-end">
           <label className="text-xs text-slate-600">

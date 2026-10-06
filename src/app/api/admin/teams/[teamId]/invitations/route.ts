@@ -10,6 +10,7 @@ import { requireTeamManager } from '../../../../../../lib/supabase/admin-guard'
 import { generateInviteToken } from '../../../../../../lib/invitation-token'
 import { sendInviteEmail, sendMembershipReadyEmail } from '../../../../../../lib/email'
 import { provisionTeamMember } from '../../../../../../lib/provision-member'
+import { recordAuthEvent } from '../../../../../../lib/authEvents'
 
 const ROLES = ['team_manager', 'coach', 'tl3', 'tl1', 'owner', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
@@ -194,6 +195,17 @@ export async function POST(
       })
       emailSent = result.ok ? { ok: true } : { ok: false, error: result.error }
       provisioned = { user_id: prov.userId, created: prov.created }
+      // A failed send gets its OWN row, at error level, so it rises to the top
+      // of the admin's list. `invitation.provisioned` is routine by definition
+      // and would bury it among the successes.
+      if (!result.ok) {
+        await recordAuthEvent(service, {
+          action: 'invitation.email_failed',
+          actorUserId: guard.userId,
+          details: { to: email, team_id: params.teamId, invitation_id: data.id,
+                     member_user_id: prov.userId, error: result.error },
+        })
+      }
       await service.from('events').insert({
         user_id: guard.userId,
         action: 'invitation.provisioned',

@@ -211,3 +211,100 @@ export async function sendPasswordResetEmail(args: PasswordResetArgs) {
     </div>`
   return sendEmail({ to: args.to, subject: 'Choose a new password for SSA', html })
 }
+
+// ─── Road 2: the QR code ──────────────────────────────────────────────────
+
+interface AccessRequestArgs {
+  /** Every manager of the team — they share the job, so they share the mail. */
+  to: string[]
+  team_name: string
+  applicant_name: string
+  applicant_email: string
+  role: string
+  approve_url: string
+}
+
+/**
+ * Somebody scanned the team's QR code and is waiting.
+ *
+ * Sent to the managers, not to an admin: the person who can tell whether this
+ * is really their bowman is the one who put the code on the boat. It carries
+ * the address they typed, because a typo there is the single likeliest reason
+ * the approval email never arrives, and it is easier to spot now than later.
+ */
+export async function sendAccessRequestEmail(args: AccessRequestArgs) {
+  const subject = `${args.applicant_name} wants to join ${args.team_name} on SSA`
+  const html = `
+    <div style="font-family:-apple-system,system-ui,sans-serif;max-width:540px;margin:0 auto;padding:24px;color:#1e293b">
+      <h2 style="color:#0f172a;margin:0 0 16px">Somebody is waiting to join ${escape(args.team_name)}</h2>
+      <p style="line-height:1.5">
+        <strong>${escape(args.applicant_name)}</strong> (${escape(args.applicant_email)})
+        used your team's join code and asked for <strong>${escape(args.role)}</strong> access.
+        They have chosen a password already and can do nothing at all until you approve them.
+      </p>
+      <p style="margin:24px 0">
+        <a href="${args.approve_url}"
+           style="display:inline-block;background:#2563eb;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600">
+          Review the request &rarr;
+        </a>
+      </p>
+      <p style="font-size:13px;color:#64748b;line-height:1.5">
+        Pending requests are on your team page. Approving sets up their membership and
+        emails them; declining clears the request and tells them nothing, so say so
+        yourself if they are expecting an answer.
+      </p>
+      <p style="font-size:13px;color:#64748b;line-height:1.5">
+        Check the address above reads correctly. If it is mistyped, decline and have
+        them scan again &mdash; the approval email goes to that address.
+      </p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
+      <p style="font-size:12px;color:#94a3b8">
+        Shared Sailing Analytics &middot; If you did not share a join code, revoke it on
+        your team page &mdash; anybody holding it can ask to join.
+      </p>
+    </div>`
+  return sendEmail({ to: args.to, subject, html })
+}
+
+interface ApprovedArgs {
+  to: string
+  team_name: string
+  role: string
+  boat_name?: string | null
+  site_url: string
+  approver_name?: string | null
+}
+
+/**
+ * Approved — go and log in.
+ *
+ * No link to click that does anything: they chose their password when they
+ * scanned, so this is the one email in SSA that only needs to say "you're in".
+ * Nothing in it can expire, be prefetched, or be spent by a scanner.
+ */
+export async function sendApprovedEmail(args: ApprovedArgs) {
+  const where = args.boat_name ? ` on <strong>${escape(args.boat_name)}</strong>` : ''
+  const subject = `You are in: ${args.team_name} on SSA`
+  const html = `
+    <div style="font-family:-apple-system,system-ui,sans-serif;max-width:540px;margin:0 auto;padding:24px;color:#1e293b">
+      <h2 style="color:#0f172a;margin:0 0 16px">You have been approved</h2>
+      <p style="line-height:1.5">
+        ${args.approver_name ? `<strong>${escape(args.approver_name)}</strong> has approved` : 'Your team manager has approved'}
+        your request to join <strong>${escape(args.team_name)}</strong>
+        as <strong>${escape(args.role)}</strong>${where}.
+      </p>
+      <p style="margin:24px 0">
+        <a href="${args.site_url}/login"
+           style="display:inline-block;background:#2563eb;color:white;text-decoration:none;padding:12px 24px;border-radius:8px;font-weight:600">
+          Sign in to SSA &rarr;
+        </a>
+      </p>
+      <p style="font-size:13px;color:#64748b;line-height:1.5">
+        Use the password you chose when you scanned the code. Forgotten it already?
+        &ldquo;Forgot password?&rdquo; on the sign-in page will sort you out.
+      </p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
+      <p style="font-size:12px;color:#94a3b8">Shared Sailing Analytics</p>
+    </div>`
+  return sendEmail({ to: args.to, subject, html })
+}
