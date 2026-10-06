@@ -1,5 +1,13 @@
 # Sign-up and sign-in: what the manuals say, and what SSA does
 
+> **Acted on, 6 October 2026.** Both recommendations below were taken: `/signup`
+> is now a redirect to `/request-access`, and the two roads in are the manager's
+> emailed invite and the team's QR code. The current design is in
+> [`auth/spec.md`](./auth/spec.md); this document is kept for the evidence that
+> led there — chiefly the Supabase restriction in §1, which is the single fact
+> that explains the missing mail.
+
+
 A read of Supabase's own auth documentation against SSA's code, written because
 the process has cost several days and is harder to follow than it needs to be.
 

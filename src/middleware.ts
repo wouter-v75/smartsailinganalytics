@@ -6,6 +6,7 @@
 //   2. Redirect based on auth + app-level status:
 //        - unauthenticated + protected route → /login
 //        - authenticated + status='active'   + on /login or /signup → /
+//          (/signup is now only a redirect to /request-access — see that file)
 //        - authenticated + status='pending'  → /login?reason=pending
 //        - authenticated + status='disabled' → /login?reason=disabled
 //        - authenticated + missing public.users row → /login?reason=missing-profile
@@ -114,7 +115,8 @@ export async function middleware(request: NextRequest) {
   const isPublic = PUBLIC_PATHS.has(pathname) || isAlwaysPublic(pathname)
 
   // /join/* is reachable regardless of auth state — the page itself decides
-  // what to do (redirect unauth to /signup?invite=, redeem for auth users).
+  // what to do: a visitor with no account gets the sign-up form (Road 2), a
+  // signed-in one gets the one-button redeem.
   if (isAlwaysPublic(pathname)) return response
 
   // Unauthenticated and visiting a protected page → /login.

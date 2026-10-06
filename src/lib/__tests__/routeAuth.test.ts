@@ -21,7 +21,6 @@ const API_ROOT = join(process.cwd(), 'src/app/api')
 const PUBLIC_ROUTES: Record<string, string> = {
   'share/[token]': 'the share token itself — looked up, checked for revoke + expiry, grants one clip',
   'invitations/[token]': 'the invitation token — the recipient has no account yet, that is the point',
-  'invitations/[token]/stash': 'same invitation token, carried through signup',
   'join/[token]/request':
     'the team\'s join code — Road 2, the QR code on the boat. Whoever scans it has no ' +
     'account and that is the point. Holding the token buys exactly one thing: a PENDING ' +

@@ -51,10 +51,13 @@ The schema starts every user as `pending`. The admin must be flipped manually si
 
 **Authentication → Providers** in the dashboard.
 
-### Email/password (fallback)
+### Email/password
 
 - **Enable Email provider**: ON.
-- **Confirm email**: ON (recommended). New users must click the link before they can sign in. Combined with `status='pending'`, this gives us double-defence.
+- **Confirm email**: ON. It no longer governs anything SSA does — both roads create accounts through the admin
+  API with `email_confirm: true`, so no confirmation is ever asked for — but leaving it ON means that if
+  somebody reintroduces `supabase.auth.signUp` one day, the account cannot be used until the address is
+  proved. Belt-and-braces against a road we deleted.
 - **Secure email change**: ON.
 - **Secure password change**: ON.
 
@@ -74,14 +77,34 @@ OAuth providers (Google, GitHub, etc.) — leave OFF. We're not federating ident
 
 Leave ON as another fallback for lost passkeys; the email template can be customised in the next step.
 
+## 4b. Custom SMTP — do this even though nothing needs it
+
+**Authentication → Emails → SMTP Settings**, credentials from Resend's dashboard, sender on the domain already
+verified there (the one `RESEND_FROM` uses). Then **Authentication → Rate Limits**: Supabase drops a new custom
+SMTP setup to 30 messages/hour until you raise it.
+
+Why bother, when SSA sends everything through Resend itself? Because of what the default does when it is left
+alone. From Supabase's own guide:
+
+> Unless you configure a custom SMTP server for your project, Supabase Auth will refuse to deliver messages to
+> addresses that are not part of the project's team. … All other addresses will fail with the error message
+> *Email address not authorized.*
+
+That is a refusal, not a queue, and it is silent: the call returns ok and no mail is sent. It cost 29 September
+and 1 October. Today no SSA code path can hit it — but the next person to add a flow will not know that, and
+this setting is the difference between their mistake failing loudly and failing invisibly.
+
 ## 5. Customise email templates
 
-**Authentication → Email Templates** in the dashboard. Tweak each template to use SSA branding and the right URL.
+**Authentication → Email Templates** in the dashboard. SSA does not use any of them: both roads in, and the
+password reset, are sent by us through Resend (`src/lib/email.ts`). They are worth a minute anyway, so that
+anything that ever does fall through to Supabase does not arrive unbranded.
 
-- **Confirm signup**: Subject "Confirm your SSA account". Body: short note, mention the admin will review the application after they confirm.
-- **Magic link**: Subject "SSA sign-in link". Body: short note, link expires in 1 hour.
-- **Reset password**: Default is fine.
-- **Invite user**: Not used (we don't invite, admin approves).
+- **Confirm signup**: unused — accounts are created pre-confirmed.
+- **Magic link**: unused.
+- **Reset password**: unused — `/api/auth/forgot-password` mints the link with `generateLink` (which does not
+  send) and Resend delivers it.
+- **Invite user**: unused — see Road 1 in [`spec.md`](./spec.md).
 
 The `{{ .SiteURL }}` template variable should resolve to the deployed URL. Set this under **Authentication → URL Configuration**:
 
