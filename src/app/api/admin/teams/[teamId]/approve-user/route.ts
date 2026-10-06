@@ -92,7 +92,7 @@ export async function POST(
     service.from('users').select('name').eq('id', guard.userId).maybeSingle(),
   ])
 
-  let emailed: { ok: boolean; error?: string } = { ok: true }
+  let emailed: { ok: boolean; error?: string; notConfigured?: boolean } = { ok: true }
   if (target.email) {
     const sent = await sendApprovedEmail({
       to: target.email as string,
@@ -102,7 +102,7 @@ export async function POST(
       site_url: siteUrl,
       approver_name: (approver?.name as string) || null,
     })
-    emailed = sent.ok ? { ok: true } : { ok: false, error: sent.error }
+    emailed = sent.ok ? { ok: true } : { ok: false, error: sent.error, notConfigured: sent.notConfigured }
   } else {
     emailed = { ok: false, error: 'that account has no email address on it' }
   }
@@ -117,6 +117,7 @@ export async function POST(
       role,
       boat_id: boatId,
       error: emailed.ok ? null : emailed.error,
+      not_configured: emailed.notConfigured || false,
     },
   })
 
@@ -124,5 +125,10 @@ export async function POST(
   // with a warning rather than an error — rolling back a membership because a
   // mail server hiccuped would be the worse answer. The panel shows the
   // warning so the manager can tell them another way.
-  return NextResponse.json({ ok: true, email_sent: emailed.ok, email_error: emailed.error ?? null })
+  return NextResponse.json({
+    ok: true,
+    email_sent: emailed.ok,
+    email_error: emailed.error ?? null,
+    email_not_configured: emailed.notConfigured || false,
+  })
 }

@@ -33,6 +33,9 @@ export interface AuthEventDetails {
   to?: string | null
   /** What went wrong, verbatim from whatever refused. */
   error?: string | null
+  /** The environment has no mail credentials at all, so this is not about this
+   *  person — nothing will send until somebody sets them. */
+  not_configured?: boolean
   team_id?: string | null
   invitation_id?: string | null
   member_user_id?: string | null
@@ -71,6 +74,12 @@ export const isAuthProblem = (action: string): boolean => authEventLevel(action)
 
 const who = (d: AuthEventDetails): string => String(d.to || d.member_user_id || 'somebody')
 
+/** A missing key is one problem, not one per person. Say which it is. */
+const mail = (d: AuthEventDetails): string =>
+  d.not_configured
+    ? ' — NO EMAIL CAN BE SENT from this environment (RESEND_API_KEY / RESEND_FROM unset); every message is affected, not just this one'
+    : d.error ? ` — ${d.error}` : ''
+
 /**
  * One sentence, for a human, in the past tense.
  *
@@ -84,10 +93,10 @@ export function describeAuthEvent(action: string, details: AuthEventDetails = {}
       return `Invitation created for ${who(details)}.`
     case 'invitation.provisioned':
       return details.email_sent === false
-        ? `${who(details)} was set up, but the email did not send${e}`
+        ? `${who(details)} was set up, but the email did not send${mail(details)}`
         : `${who(details)} was set up and emailed.`
     case 'invitation.email_failed':
-      return `The invitation email to ${who(details)} was refused${e}`
+      return `The invitation email to ${who(details)} did not send${mail(details)}`
     case 'invitation.provision_refused':
       return `Refused to invite ${who(details)}${e}`
     case 'invitation.provision_failed':
@@ -107,11 +116,11 @@ export function describeAuthEvent(action: string, details: AuthEventDetails = {}
     case 'join.failed':
       return `${who(details)} could not sign up from the QR code${e}`
     case 'join.notify_failed':
-      return `${who(details)} asked to join, but the manager could not be told${e}`
+      return `${who(details)} asked to join, but the manager could not be told${mail(details)}`
     case 'user.approved':
       return `${who(details)} was approved.`
     case 'user.approve_email_failed':
-      return `${who(details)} was approved, but the email telling them did not send${e}`
+      return `${who(details)} was approved, but the email telling them did not send${mail(details)}`
     case 'user.declined':
       return `${who(details)} was declined.`
     default:

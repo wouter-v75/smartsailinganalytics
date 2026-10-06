@@ -42,6 +42,23 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_
   auth: { persistSession: false },
 })
 
+/**
+ * Can the thing under test send email at all?
+ *
+ * Only answerable for localhost, where .env.local IS the server's environment.
+ * Worth saying out loud because of how 6 October went: every check passed, the
+ * approval was pressed, and only then did "RESEND_API_KEY / RESEND_FROM not
+ * set" appear — a dev server cannot email anybody, which is fine, but it is
+ * better known before the test than after it.
+ */
+function mailWarning(): string | null {
+  if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:|$|\/)/.test(base)) return null
+  if (env.RESEND_API_KEY && env.RESEND_FROM) return null
+  return '  ⚠ This dev server cannot send email: RESEND_API_KEY / RESEND_FROM are not in .env.local.\n'
+       + '    Everything below still works; the messages simply go nowhere. Production is configured\n'
+       + '    separately (Vercel → Settings → Environment Variables), so this says nothing about it.'
+}
+
 let failures = 0
 const check = (name: string, ok: boolean, detail = '') => {
   console.log(`  ${ok ? '✓' : '✕'} ${name}${detail ? `  ${detail}` : ''}`)
@@ -50,6 +67,9 @@ const check = (name: string, ok: boolean, detail = '') => {
 
 const main = async () => {
   console.log(`\nRoad 1 self-test against ${base}\n`)
+
+  const warn = mailWarning()
+  if (warn) console.log(`${warn}\n`)
 
   const { data: team } = await sb.from('teams').select('id, name').limit(1).maybeSingle()
   if (!team) fail('no teams in the database to attach a test invitation to')

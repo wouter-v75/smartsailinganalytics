@@ -53,7 +53,7 @@ describe('auth events', () => {
 
   it('says what happened in one sentence, with the reason when there is one', () => {
     expect(describeAuthEvent('invitation.email_failed', { to: 'gwen@example.com', error: 'domain not verified' }))
-      .toBe('The invitation email to gwen@example.com was refused — domain not verified')
+      .toBe('The invitation email to gwen@example.com did not send — domain not verified')
     expect(describeAuthEvent('welcome.link_dead', { to: 'gwen@example.com', state: 'expired' }))
       .toBe('gwen@example.com opened an invitation link that was expired.')
     expect(describeAuthEvent('join.requested', { to: 'new@example.com' }))
@@ -69,5 +69,36 @@ describe('auth events', () => {
 
   it('falls back to the action name rather than dropping an event it has no words for', () => {
     expect(describeAuthEvent('something.new', { error: 'boom' })).toBe('something.new — boom')
+  })
+})
+
+describe('a missing key is not a bounced address', () => {
+  // One refusal is about one person. No credentials is about everybody, and
+  // saying "let them know another way" once per approval is advice for the
+  // wrong problem — which is exactly what 6 October looked like on a dev
+  // server.
+  it('says that nothing can send, not that this one failed', () => {
+    const says = describeAuthEvent('user.approve_email_failed', {
+      to: 'gwen@example.com',
+      not_configured: true,
+      error: 'no email can be sent from this environment: RESEND_API_KEY / RESEND_FROM are not set',
+    })
+    expect(says).toContain('NO EMAIL CAN BE SENT')
+    expect(says).toContain('every message is affected')
+  })
+
+  it('still gives the reason when it IS one message', () => {
+    const says = describeAuthEvent('user.approve_email_failed', {
+      to: 'gwen@example.com', error: 'recipient bounced',
+    })
+    expect(says).toContain('recipient bounced')
+    expect(says).not.toContain('NO EMAIL CAN BE SENT')
+  })
+
+  it('covers the invite and the manager notification too', () => {
+    for (const action of ['invitation.email_failed', 'join.notify_failed', 'invitation.provisioned']) {
+      const d = { to: 'a@b.c', not_configured: true, email_sent: false }
+      expect(describeAuthEvent(action, d)).toContain('NO EMAIL CAN BE SENT')
+    }
   })
 })

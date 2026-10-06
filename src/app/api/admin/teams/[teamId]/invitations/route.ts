@@ -150,7 +150,7 @@ export async function POST(
   // sign up, confirm an address the invite was already sent to, and wait for an
   // approval that the invite said was automatic. Open links keep the old flow —
   // they are posted in WhatsApp and have no address to provision.
-  let emailSent: { ok: boolean; error?: string } = { ok: true }
+  let emailSent: { ok: boolean; error?: string; notConfigured?: boolean } = { ok: true }
   let provisioned: { user_id?: string; created?: boolean } | null = null
   if (!isOpen && row.email) {
     const [{ data: team }, { data: boat }, { data: inviter }] = await Promise.all([
@@ -193,7 +193,9 @@ export async function POST(
         set_password_url: setPasswordUrl,
         inviter_name: inviter?.name || null,
       })
-      emailSent = result.ok ? { ok: true } : { ok: false, error: result.error }
+      emailSent = result.ok
+        ? { ok: true }
+        : { ok: false, error: result.error, notConfigured: result.notConfigured }
       provisioned = { user_id: prov.userId, created: prov.created }
       // A failed send gets its OWN row, at error level, so it rises to the top
       // of the admin's list. `invitation.provisioned` is routine by definition
@@ -203,7 +205,8 @@ export async function POST(
           action: 'invitation.email_failed',
           actorUserId: guard.userId,
           details: { to: email, team_id: params.teamId, invitation_id: data.id,
-                     member_user_id: prov.userId, error: result.error },
+                     member_user_id: prov.userId, error: result.error,
+                     not_configured: result.notConfigured || false },
         })
       }
       await service.from('events').insert({
@@ -238,7 +241,9 @@ export async function POST(
         invite_url: `${origin}/join/${row.token}`,
         inviter_name: inviter?.name || null,
       })
-      emailSent = result.ok ? { ok: true } : { ok: false, error: result.error }
+      emailSent = result.ok
+        ? { ok: true }
+        : { ok: false, error: result.error, notConfigured: result.notConfigured }
       await service.from('events').insert({
         user_id: guard.userId,
         action: 'invitation.provision_failed',

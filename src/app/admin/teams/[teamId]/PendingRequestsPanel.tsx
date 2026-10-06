@@ -58,9 +58,18 @@ export default function PendingRequestsPanel({
       // server hiccuped would be the worse answer — but they are waiting for an
       // email that says so, and only you can tell them it did not come.
       if (j.email_sent === false) {
+        // Two different problems, two different things to do. A missing key is
+        // not about this person — NOTHING will send until it is set, so
+        // "tell them another way" would be advice for the wrong problem,
+        // repeated once per approval.
         setErr(
-          `Approved — but the email telling them did not send: ${j.email_error || 'unknown error'}. ` +
-          `Let them know another way; they sign in with the password they chose when they scanned the code.`
+          j.email_not_configured
+            ? `Approved — but this environment cannot send email at all: RESEND_API_KEY and RESEND_FROM ` +
+              `are not set, so no invite, approval or password reset will reach anybody from here. ` +
+              `On a dev server that is usually expected; in production it needs fixing before anybody ` +
+              `is invited. They can still sign in with the password they chose.`
+            : `Approved — but the email telling them did not send: ${j.email_error || 'unknown error'}. ` +
+              `Let them know another way; they sign in with the password they chose when they scanned the code.`
         )
       }
       router.refresh()

@@ -11,18 +11,34 @@ interface SendArgs {
   text?: string
 }
 
+export type SendResult =
+  | { ok: true; id: string }
+  | { ok: false; error: string; notConfigured?: true }
+
+/**
+ * `notConfigured` is kept apart from every other failure on purpose.
+ *
+ * A refusal from Resend is about ONE message: an address bounced, a domain is
+ * not verified, a rate limit was hit. A missing key is about EVERY message —
+ * nothing will leave this environment until somebody sets it, and telling the
+ * manager to "let them know another way" would be advice for the wrong problem
+ * repeated once per person. The callers say so differently because it is a
+ * different thing.
+ */
 export async function sendEmail({
   to,
   subject,
   html,
   text,
-}: SendArgs): Promise<
-  { ok: true; id: string } | { ok: false; error: string }
-> {
+}: SendArgs): Promise<SendResult> {
   const apiKey = process.env.RESEND_API_KEY
   const from = process.env.RESEND_FROM
   if (!apiKey || !from) {
-    return { ok: false, error: 'RESEND_API_KEY / RESEND_FROM not set' }
+    return {
+      ok: false,
+      notConfigured: true,
+      error: 'no email can be sent from this environment: RESEND_API_KEY / RESEND_FROM are not set',
+    }
   }
   try {
     const res = await fetch('https://api.resend.com/emails', {

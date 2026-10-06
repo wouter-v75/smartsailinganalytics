@@ -137,7 +137,14 @@ export default function InvitationsPanel({
       // actually true of the link now. The invitation is no longer consumed at
       // send time, so for a provisioned invite the /welcome link below IS live
       // — which is the only way in when the mail did not land.
-      if (j.email_sent && !j.email_sent.ok) {
+      if (j.email_sent && !j.email_sent.ok && j.email_sent.notConfigured) {
+        setErr(
+          `${j.provisioned ? 'Set up and active' : 'Invitation created'} — but this environment cannot ` +
+          `send email at all: RESEND_API_KEY and RESEND_FROM are not set, so nothing will reach anybody ` +
+          `from here. Expected on a dev server; in production, fix that before inviting anyone. ` +
+          `Meanwhile the link below works — give it to them yourself.`
+        )
+      } else if (j.email_sent && !j.email_sent.ok) {
         setErr(
           j.provisioned
             ? `Set up and active — but the email failed: ${j.email_sent.error}. ` +
