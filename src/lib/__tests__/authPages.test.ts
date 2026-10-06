@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkPassword, esc, messagePage, passwordFormPage, MIN_PASSWORD } from '../auth-pages'
+import { checkConsent, checkPassword, esc, messagePage, passwordFormPage, MIN_PASSWORD } from '../auth-pages'
 
 describe('passwordFormPage', () => {
   const page = passwordFormPage({
@@ -80,5 +80,52 @@ describe('checkPassword', () => {
 describe('esc', () => {
   it('covers the four characters that break an attribute', () => {
     expect(esc('<&">')).toBe('&lt;&amp;&quot;&gt;')
+  })
+})
+
+describe('consent', () => {
+  const page = passwordFormPage({ hidden: { token: 't' }, consent: true, privacyHref: '/privacy' })
+
+  it('asks for both, separately, and requires both', () => {
+    // One "I agree to everything" tick would record a consent nobody gave.
+    expect(page).toContain('name="privacy"')
+    expect(page).toContain('name="recording"')
+    expect(page.match(/type="checkbox"[^>]*required/g)).toHaveLength(2)
+  })
+
+  it('links the data clause so it can be read before it is agreed to', () => {
+    expect(page).toContain('href="/privacy"')
+  })
+
+  it('says recording consent can be withdrawn, because it can', () => {
+    expect(page).toMatch(/withdraw this later/i)
+  })
+
+  it('is absent when the page is not a sign-up', () => {
+    const reset = passwordFormPage({ hidden: { token: 't' } })
+    expect(reset).not.toContain('name="recording"')
+  })
+})
+
+describe('checkConsent', () => {
+  it('passes only when both are given', () => {
+    expect(checkConsent('yes', 'yes')).toBeNull()
+    expect(checkConsent(true, true)).toBeNull()
+    expect(checkConsent('on', 'on')).toBeNull()
+  })
+
+  it('names which one is missing, so the person knows what to tick', () => {
+    expect(checkConsent(undefined, 'yes')).toContain('how SSA handles your data')
+    expect(checkConsent('yes', undefined)).toContain('voice-recorded')
+    expect(checkConsent(undefined, undefined)).toContain('both')
+  })
+
+  it('does not accept anything that merely looks agreeable', () => {
+    // An unchecked box sends nothing at all; these are what a hand-rolled POST
+    // might carry instead.
+    expect(checkConsent('no', 'no')).not.toBeNull()
+    expect(checkConsent('false', 'false')).not.toBeNull()
+    expect(checkConsent(1, 1)).not.toBeNull()
+    expect(checkConsent('YES', 'YES')).not.toBeNull()
   })
 })

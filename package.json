@@ -20,6 +20,7 @@
     "drone:coverage": "vite-node scripts/drone-coverage.ts",
     "clips:check": "vite-node scripts/clip-row-check.ts",
     "auth:selftest": "vite-node scripts/auth-selftest.ts",
+    "auth:selftest2": "vite-node scripts/road2-selftest.ts",
     "lidar:import": "vite-node scripts/lidar-import.ts",
     "headlines:backfill": "vite-node scripts/headlines-backfill.ts",
     "docs:pdf": "node scripts/md2pdf.mjs",

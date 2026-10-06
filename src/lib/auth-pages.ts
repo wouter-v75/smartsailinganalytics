@@ -44,6 +44,15 @@ const SHELL = `
           padding:0 12px; border:1px solid #1E3A5A; border-radius:9px;
           background:#0A1929; color:#E2E8F0; font-size:16px }
   input[readonly] { color:#94A3B8; background:#0C2136 }
+  /* A consent is a sentence to READ, not a field label. Without these three
+     resets it inherits the uppercase, letter-spaced, bold label styling above
+     and becomes a wall of shouting that nobody reads before ticking, which is
+     the opposite of what a consent is for. (No backticks in here: this comment
+     lives inside a template literal, and one closed the string.) */
+  .consent { display:flex; gap:9px; align-items:flex-start; margin:0 0 13px;
+             text-transform:none; letter-spacing:normal; font-weight:400 }
+  .consent input { width:20px; min-height:20px; height:20px; margin:2px 0 0; flex:0 0 auto }
+  .consent span { font-size:12.5px; color:#B6C2D2; line-height:1.45 }
   .hint { margin:0 0 18px; font-size:12px; color:#64748B }
   .err { margin:0 0 16px; padding:9px 11px; border:1px solid #7F1D1D; border-radius:8px;
          background:rgba(127,29,29,.28); color:#FCA5A5; font-size:12.5px }
@@ -72,6 +81,10 @@ export interface PasswordFormArgs {
   intro?: string | null
   submit?: string
   error?: string | null
+  /** Show the two consents, required, with the privacy page linked. */
+  consent?: boolean
+  /** Where the data clause lives, so it can be read before it is agreed to. */
+  privacyHref?: string
 }
 
 /**
@@ -108,9 +121,40 @@ export function passwordFormPage(args: PasswordFormArgs): string {
     <input id="pw2" name="confirm" type="password" required minlength="${MIN_PASSWORD}"
            autocomplete="new-password">
     <p class="hint">At least ${MIN_PASSWORD} characters. You will be signed in straight away.</p>
+    ${args.consent ? consentBlock(args.privacyHref) : ''}
     <button type="submit">${esc(args.submit || 'Set password and sign in')}</button>
   </form>
 </body></html>`
+}
+
+/**
+ * The two things somebody has to agree to before there is an account.
+ *
+ * `required` on the inputs stops the ordinary case in the browser; the server
+ * checks both again, because a form is not a contract and `required` is one
+ * devtools click away. They are separate boxes rather than one: agreeing to how
+ * data is handled is not the same as agreeing to be recorded, and a single
+ * "I agree to everything" tick would record a consent nobody actually gave.
+ *
+ * The debrief recorder also reads this per team at run time — one crew member
+ * who has not agreed blocks the recording for everybody — so a box ticked here
+ * is doing real work, not decorating a sign-up page.
+ */
+function consentBlock(privacyHref?: string): string {
+  const privacy = privacyHref
+    ? `<a href="${esc(privacyHref)}" target="_blank" rel="noopener">how SSA handles your data</a>`
+    : 'how SSA handles your data'
+  return `
+    <label class="consent">
+      <input type="checkbox" name="privacy" value="yes" required>
+      <span>I have read ${privacy}, and agree to it.</span>
+    </label>
+    <label class="consent">
+      <input type="checkbox" name="recording" value="yes" required>
+      <span>I agree to debriefs being <strong>voice-recorded</strong> and transcribed for
+      the team, and to my voice appearing in them. You can withdraw this later in your
+      profile &mdash; the team's recorder stops for everybody if anybody aboard has.</span>
+    </label>`
 }
 
 /** A dead end that says what to do next, rather than only what went wrong. */
@@ -142,5 +186,19 @@ export function checkPassword(password: string | null, confirm: string | null): 
     return `Password must be at least ${MIN_PASSWORD} characters.`
   }
   if (password !== confirm) return 'The two passwords do not match.'
+  return null
+}
+
+/** Both consents, or the sentence saying which is missing. Server-side, because
+ *  a `required` attribute is one devtools click away from not being there. */
+export function checkConsent(privacy: unknown, recording: unknown): string | null {
+  const yes = (v: unknown) => v === 'yes' || v === true || v === 'true' || v === 'on'
+  if (!yes(privacy) && !yes(recording)) {
+    return 'Please agree to both the data clause and the debrief recording to continue.'
+  }
+  if (!yes(privacy)) return 'Please confirm you have read how SSA handles your data.'
+  if (!yes(recording)) {
+    return 'Debriefs are voice-recorded, so agreeing to that is part of joining. You can withdraw it later in your profile.'
+  }
   return null
 }

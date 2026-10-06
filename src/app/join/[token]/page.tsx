@@ -47,6 +47,8 @@ export default function JoinPage({
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [requested, setRequested] = useState<string | null>(null)
+  const [privacyOk, setPrivacyOk] = useState(false)
+  const [recordingOk, setRecordingOk] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -103,7 +105,10 @@ export default function JoinPage({
       const res = await fetch(`/api/join/${params.token}/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password, confirm }),
+        body: JSON.stringify({
+          name, email, password, confirm,
+          privacy_accepted: privacyOk, recording_consent: recordingOk,
+        }),
       })
       const j = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -237,6 +242,35 @@ export default function JoinPage({
             <p className="text-xs text-slate-500 mb-4">
               At least 8 characters. You will use this to sign in once the manager approves you.
             </p>
+            {/* Two boxes, not one. Agreeing to how data is handled is not the
+                same as agreeing to be recorded, and a single "I agree to
+                everything" would record a consent nobody actually gave. */}
+            <label className="mb-3 flex items-start gap-2">
+              <input
+                type="checkbox" required checked={privacyOk}
+                onChange={(e) => setPrivacyOk(e.target.checked)}
+                className="mt-1 h-4 w-4 shrink-0"
+              />
+              <span className="text-xs leading-relaxed text-slate-600">
+                I have read{' '}
+                <a href="/privacy" target="_blank" rel="noopener" className="text-blue-600 underline">
+                  how SSA handles your data
+                </a>
+                , and agree to it.
+              </span>
+            </label>
+            <label className="mb-4 flex items-start gap-2">
+              <input
+                type="checkbox" required checked={recordingOk}
+                onChange={(e) => setRecordingOk(e.target.checked)}
+                className="mt-1 h-4 w-4 shrink-0"
+              />
+              <span className="text-xs leading-relaxed text-slate-600">
+                I agree to debriefs being <strong>voice-recorded</strong> and transcribed for
+                the team, and to my voice appearing in them. You can withdraw this later in
+                your profile — the team&apos;s recorder stops for everybody if anybody aboard has.
+              </span>
+            </label>
             {err && (
               <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p>
             )}

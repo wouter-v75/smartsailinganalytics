@@ -41,7 +41,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { getServerSupabase } from '../../../lib/supabase/server'
 import {
-  PAGE_HEADERS, checkPassword, messagePage, passwordFormPage,
+  PAGE_HEADERS, checkConsent, checkPassword, messagePage, passwordFormPage,
 } from '../../../lib/auth-pages'
 import { classifyInvite, type InviteState } from '../../../lib/welcome-invite'
 import { recordAuthEvent } from '../../../lib/authEvents'
@@ -153,6 +153,8 @@ export async function GET(
     email: invite.email,
     heading: 'Welcome to SSA',
     intro: team ? `Choose a password and you are in — ${team} is already set up for you.` : null,
+    consent: true,
+    privacyHref: `${origin}/privacy`,
   }))
 }
 
@@ -177,13 +179,16 @@ export async function POST(
   }
   if (!invite || state !== 'valid') return html(deadEnd(state, origin), state === 'missing' ? 404 : 410)
 
-  // The password is checked BEFORE the token is spent. A mistyped confirmation
-  // must cost a retype, not the invitation.
+  // The password AND the consents are checked BEFORE the token is spent. A
+  // mistyped confirmation or an unticked box must cost a retype, not the
+  // invitation — that is how somebody ends up locked out with no way back.
   const bad = checkPassword(str('password'), str('confirm'))
+    || checkConsent(str('privacy'), str('recording'))
   if (bad) {
     return html(passwordFormPage({
       hidden: { token: params.token },
       email: invite.email, heading: 'Welcome to SSA', error: bad,
+      consent: true, privacyHref: `${origin}/privacy`,
     }))
   }
   const password = str('password') as string
@@ -220,6 +225,24 @@ export async function POST(
     return html(passwordFormPage({
       hidden: { token: params.token },
       email: invite.email, heading: 'Welcome to SSA', error: pwErr.message,
+    }))
+  }
+
+  // The consents belong to the PERSON, so they are written here, not when the
+  // manager created the account — nobody can agree on somebody else's behalf,
+  // and until this submit there was nothing to agree to. The database stamps
+  // recording_consent_at itself (0078's trigger) so the date cannot be forged
+  // or forgotten; privacy_accepted_at is set-once and never cleared.
+  const { error: consentErr } = await sb.from('users').update({
+    recording_consent: true,
+    privacy_accepted_at: new Date().toISOString(),
+  }).eq('id', person.id as string)
+  if (consentErr) {
+    return html(passwordFormPage({
+      hidden: { token: params.token },
+      email: invite.email, heading: 'Welcome to SSA',
+      error: `Could not record your consent (${consentErr.message}). Nothing has been changed — try again.`,
+      consent: true, privacyHref: `${origin}/privacy`,
     }))
   }
 

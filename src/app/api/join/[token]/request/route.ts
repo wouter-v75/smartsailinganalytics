@@ -20,12 +20,15 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { getServiceSupabase } from '../../../../../lib/supabase/server'
 import { classifyInvite } from '../../../../../lib/welcome-invite'
-import { checkPassword } from '../../../../../lib/auth-pages'
+import { checkConsent, checkPassword } from '../../../../../lib/auth-pages'
 import { normaliseEmail, nameFromEmail } from '../../../../../lib/provision-member'
 import { recordAuthEvent } from '../../../../../lib/authEvents'
 import { sendAccessRequestEmail } from '../../../../../lib/email'
 
-interface Body { name?: string; email?: string; password?: string; confirm?: string }
+interface Body {
+  name?: string; email?: string; password?: string; confirm?: string
+  privacy_accepted?: boolean; recording_consent?: boolean
+}
 
 export async function POST(
   req: NextRequest,
@@ -41,6 +44,9 @@ export async function POST(
     return NextResponse.json({ error: 'Enter a valid email address.' }, { status: 400 })
   }
   const bad = checkPassword(body?.password ?? null, body?.confirm ?? null)
+    // Checked here, not only in the form: a tick box is advice to a browser,
+    // and this is the last point before an account exists.
+    || checkConsent(body?.privacy_accepted, body?.recording_consent)
   if (bad) return NextResponse.json({ error: bad }, { status: 400 })
 
   const { data: inv } = await service
@@ -80,7 +86,11 @@ export async function POST(
     email,
     password: body!.password as string,
     email_confirm: true,
-    user_metadata: { name },
+    // handle_new_user() (migration 0078) reads these off the metadata and
+    // stamps the timestamps server-side. Anything missing or malformed reads as
+    // NO — the COALESCE defaults are deliberately the refusing ones — so the
+    // check above is what makes these true, not the other way round.
+    user_metadata: { name, privacy_accepted: true, recording_consent: true },
   })
   const userId = created?.data?.user?.id as string | undefined
   if (created?.error || !userId) {
