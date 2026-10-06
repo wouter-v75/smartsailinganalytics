@@ -178,10 +178,15 @@ export async function firstLoginLink(
       })
       return `${origin}/auth/callback?${qs.toString()}`
     }
-    // No hashed token on the response: fall back to Supabase's own link rather
-    // than sending nothing. It is the flow that was broken, but a link that
-    // might work beats an email with none.
-    return res?.data?.properties?.action_link || null
+    // No hashed token: send NOTHING rather than Supabase's own action_link.
+    // That link goes to its /verify endpoint, which bounces back with a PKCE
+    // `?code=` that only a browser holding the matching code_verifier can
+    // exchange — and this flow began on a server, for somebody who has never
+    // had a session anywhere. It is not a link that might work; it is the exact
+    // link that failed on 1 October, and sending it costs the person a second
+    // dead end instead of the working "Forgot password?" the email already
+    // points at.
+    return null
   } catch {
     return null
   }

@@ -9,7 +9,7 @@ import { getServiceSupabase } from '../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../lib/supabase/admin-guard'
 import { generateInviteToken } from '../../../../../../lib/invitation-token'
 import { sendInviteEmail, sendMembershipReadyEmail } from '../../../../../../lib/email'
-import { provisionTeamMember, firstLoginLink } from '../../../../../../lib/provision-member'
+import { provisionTeamMember } from '../../../../../../lib/provision-member'
 
 const ROLES = ['team_manager', 'coach', 'tl3', 'tl1', 'owner', 'consultant', 'guest'] as const
 type Role = (typeof ROLES)[number]
@@ -176,14 +176,13 @@ export async function POST(
     })
 
     if (prov.ok) {
-      // The membership exists, so the /join link has nothing left to do: consume
-      // the invite row (kept for the audit trail).
-      await service
-        .from('invitations')
-        .update({ used_count: row.max_uses as number })
-        .eq('id', data.id)
-      // Only a brand-new account needs a way in; an existing user has a password.
-      const setPasswordUrl = prov.created ? await firstLoginLink(service, email, origin) : null
+      // The invitation row is NOT consumed here any more. It is what /welcome/
+      // <token> verifies, and it is spent when the password is actually set —
+      // consuming it now would kill the link in the same breath as sending it.
+      //
+      // Only a brand-new account needs a way in; an existing user has a password
+      // already and is told to log in with it.
+      const setPasswordUrl = prov.created ? `${origin}/welcome/${row.token as string}` : null
       const result = await sendMembershipReadyEmail({
         to: email,
         team_name: team?.name || 'the team',

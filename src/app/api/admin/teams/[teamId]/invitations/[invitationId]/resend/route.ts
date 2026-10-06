@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../../../lib/supabase/server'
 import { requireTeamManager } from '../../../../../../../../lib/supabase/admin-guard'
 import { sendMembershipReadyEmail } from '../../../../../../../../lib/email'
-import { provisionTeamMember, firstLoginLink } from '../../../../../../../../lib/provision-member'
+import { provisionTeamMember } from '../../../../../../../../lib/provision-member'
 
 export async function POST(
   req: NextRequest,
@@ -69,6 +69,19 @@ export async function POST(
     return NextResponse.json({ error: prov.error || 'could not set up the member' }, { status: 500 })
   }
 
+  // A resend is somebody saying "that link did not work for me", so give them
+  // one that does: unspend the invitation and push its expiry out again. The
+  // link itself is the same token — the mail they already have starts working
+  // too, which is one fewer thing to explain on the phone.
+  const DAYS = 14
+  await service
+    .from('invitations')
+    .update({
+      used_count: 0,
+      expires_at: new Date(Date.now() + DAYS * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    .eq('id', inv.id)
+
   const result = await sendMembershipReadyEmail({
     to: inv.email,
     team_name: team?.name || 'the team',
@@ -77,7 +90,7 @@ export async function POST(
     site_url: siteUrl,
     // Always offer the password link on a resend — they are asking again because
     // they could not get in.
-    set_password_url: await firstLoginLink(service, inv.email, origin),
+    set_password_url: `${origin}/welcome/${inv.token as string}`,
     inviter_name: inviter?.name || null,
   })
 

@@ -25,7 +25,6 @@ const PUBLIC_PATHS = new Set<string>([
   '/login',
   '/signup',
   '/auth/callback',
-  '/auth/confirm',
   '/auth/reset-password',
   // The public marketing site. '/' is BOTH: signed out it renders the front
   // page, signed in it renders the app — src/app/page.tsx decides, on the
@@ -64,7 +63,10 @@ function isAlwaysPublic(pathname: string): boolean {
   // behind the auth gate exactly as before.
   if (process.env.NODE_ENV !== 'production' && pathname.startsWith('/dev/')) return true
 
+  // /welcome/<token> — Road 1's set-a-password page. The person has an account
+  // but has never had a session, which is the entire point of the link.
   return pathname.startsWith('/join/') || pathname.startsWith('/share/')
+    || pathname.startsWith('/welcome/')
 }
 
 function clearAuthCookies(request: NextRequest, redirectTo: URL) {

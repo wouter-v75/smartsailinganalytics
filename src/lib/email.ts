@@ -105,10 +105,16 @@ interface MembershipReadyArgs {
   inviter_name?: string | null
 }
 
-// Sent when a manager invites by email. By the time this lands, the account
-// exists, the address is confirmed and the membership is in place — so it says
-// "you are set up, log in", not "accept this invite". Someone who has never had
-// an account still needs a password, hence the button.
+// Sent when a manager invites by email — Road 1. By the time this lands, the
+// account exists, the address is confirmed and the membership is in place, so
+// it says "you are set up", not "accept this invite".
+//
+// `set_password_url` is /welcome/<token>: OUR invitation token, not a Supabase
+// recovery OTP. It lives as long as the invitation does rather than an hour, it
+// cannot be spent by a link preview (the page is a form; only the POST counts),
+// and the person is signed in on submit with the password they just chose.
+// Somebody who already has an account gets no button at all — they have a
+// password, and the mail says to use it.
 export async function sendMembershipReadyEmail(args: MembershipReadyArgs) {
   const where = args.boat_name ? ` on <strong>${escape(args.boat_name)}</strong>` : ''
   const subject = `Your SSA membership for ${args.team_name} is set up`
@@ -120,8 +126,11 @@ export async function sendMembershipReadyEmail(args: MembershipReadyArgs) {
          </a>
        </p>
        <p style="font-size:13px;color:#64748b;line-height:1.5">
-         That link signs you in once so you can choose a password. If it has expired,
-         use &ldquo;Forgot password?&rdquo; on the login page — your membership is already set up.
+         One screen: choose a password, confirm it, and you are in. Nothing to
+         confirm afterwards and nobody to wait for. The link is yours alone and
+         works once &mdash; if it has already been used, or you leave it a
+         fortnight, &ldquo;Forgot password?&rdquo; on the sign-in page does the
+         same job, because your membership is already set up either way.
        </p>`
     : `<p style="margin:24px 0">
          <a href="${args.site_url}"
