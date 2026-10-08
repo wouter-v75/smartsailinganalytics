@@ -86,9 +86,24 @@ export default function UserActions({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, action, membership }),
       })
+      const j = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
         setErr(j.error || `failed (${res.status})`)
+        return
+      }
+      // The approval stands either way — undoing it because a mail server
+      // hiccuped would be worse — but they are waiting to be told, and only
+      // you can tell them it did not arrive.
+      if (j.email_sent === false) {
+        setErr(
+          j.email_not_configured
+            ? 'Approved — but this environment cannot send email at all: RESEND_API_KEY and '
+              + 'RESEND_FROM are not set, so nothing reaches anybody from here. Expected on a dev '
+              + 'server; in production, fix that. They can still sign in.'
+            : `Approved — but the email telling them did not send: ${j.email_error || 'unknown error'}. `
+              + 'Let them know another way; they sign in with the password they already chose.'
+        )
+        router.refresh()
         return
       }
       setExpanded(false)

@@ -284,8 +284,9 @@ export async function sendAccessRequestEmail(args: AccessRequestArgs) {
 
 interface ApprovedArgs {
   to: string
-  team_name: string
-  role: string
+  /** Null when an admin approved the account without giving it a team yet. */
+  team_name?: string | null
+  role?: string | null
   boat_name?: string | null
   site_url: string
   approver_name?: string | null
@@ -300,14 +301,22 @@ interface ApprovedArgs {
  */
 export async function sendApprovedEmail(args: ApprovedArgs) {
   const where = args.boat_name ? ` on <strong>${escape(args.boat_name)}</strong>` : ''
-  const subject = `You are in: ${args.team_name} on SSA`
+  const subject = args.team_name ? `You are in: ${args.team_name} on SSA` : 'Your SSA account is approved'
+  // An admin can approve an account WITHOUT a team — the Users page offers it
+  // deliberately, for somebody being set up before their crew is decided. They
+  // can sign in and will see nothing, so the mail says that rather than
+  // promising a team they do not have.
+  const what = args.team_name
+    ? `your request to join <strong>${escape(args.team_name)}</strong>`
+      + (args.role ? ` as <strong>${escape(args.role)}</strong>` : '') + where
+    : 'your SSA account'
   const html = `
     <div style="font-family:-apple-system,system-ui,sans-serif;max-width:540px;margin:0 auto;padding:24px;color:#1e293b">
       <h2 style="color:#0f172a;margin:0 0 16px">You have been approved</h2>
       <p style="line-height:1.5">
         ${args.approver_name ? `<strong>${escape(args.approver_name)}</strong> has approved` : 'Your team manager has approved'}
-        your request to join <strong>${escape(args.team_name)}</strong>
-        as <strong>${escape(args.role)}</strong>${where}.
+        ${what}.
+        ${args.team_name ? '' : 'You can sign in; a team manager will add you to a boat, and until they do there will not be much to see.'}
       </p>
       <p style="margin:24px 0">
         <a href="${args.site_url}/login"

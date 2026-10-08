@@ -13,6 +13,8 @@ import {
   getServerSupabase,
   getServiceSupabase,
 } from '../../../../lib/supabase/server'
+import { sendApprovedEmail } from '../../../../lib/email'
+import { recordAuthEvent } from '../../../../lib/authEvents'
 
 type Action = 'approve' | 'disable' | 'reactivate'
 type Role = 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'owner' | 'consultant' | 'guest'
@@ -140,9 +142,68 @@ export async function POST(req: NextRequest) {
     },
   })
 
+  // Step 3 — TELL THEM, on approve. There are two Approve buttons in SSA: the
+  // team page's pending queue and this one, and until now only the team page
+  // emailed. Which button an admin happened to press decided whether the
+  // person ever heard — and the person cannot tell the difference between
+  // "waiting" and "approved, nobody said".
+  let emailed: { ok: boolean; error?: string; notConfigured?: boolean } = { ok: true }
+  if (body.action === 'approve') {
+    const [{ data: target }, { data: approver }] = await Promise.all([
+      service.from('users').select('email, name').eq('id', body.userId).maybeSingle(),
+      service.from('users').select('name').eq('id', user.id).maybeSingle(),
+    ])
+    const m = body.membership
+    const [{ data: team }, { data: boat }] = await Promise.all([
+      m?.team_id
+        ? service.from('teams').select('name').eq('id', m.team_id).maybeSingle()
+        : Promise.resolve({ data: null as { name: string } | null }),
+      m?.boat_id
+        ? service.from('boats').select('name').eq('id', m.boat_id).maybeSingle()
+        : Promise.resolve({ data: null as { name: string } | null }),
+    ])
+
+    if (target?.email) {
+      const sent = await sendApprovedEmail({
+        to: target.email as string,
+        // Null when approved without a membership — the mail says so rather
+        // than promising a team they have not got.
+        team_name: (team?.name as string) || null,
+        role: m?.role || null,
+        boat_name: (boat?.name as string) || null,
+        site_url: process.env.SSA_SITE_URL || req.nextUrl.origin,
+        approver_name: (approver?.name as string) || null,
+      })
+      emailed = sent.ok
+        ? { ok: true }
+        : { ok: false, error: sent.error, notConfigured: sent.notConfigured }
+    } else {
+      emailed = { ok: false, error: 'that account has no email address on it' }
+    }
+
+    await recordAuthEvent(service, {
+      action: emailed.ok ? 'user.approved' : 'user.approve_email_failed',
+      actorUserId: user.id,
+      details: {
+        to: (target?.email as string) || null,
+        member_user_id: body.userId,
+        team_id: m?.team_id || null,
+        role: m?.role || null,
+        error: emailed.ok ? null : emailed.error,
+        not_configured: emailed.notConfigured || false,
+      },
+    })
+  }
+
   return NextResponse.json({
     ok: true,
     status: newStatus,
     membership_id: membershipId,
+    // The approval SUCCEEDED either way — undoing it because a mail server
+    // hiccuped would be the worse answer — so this is a warning the caller
+    // shows, not an error.
+    email_sent: body.action === 'approve' ? emailed.ok : undefined,
+    email_error: body.action === 'approve' ? emailed.error ?? null : undefined,
+    email_not_configured: body.action === 'approve' ? emailed.notConfigured || false : undefined,
   })
 }
