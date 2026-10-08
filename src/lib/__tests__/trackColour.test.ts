@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { trackPct, toMode, modeLabel, TRACK_COLOUR_MODES } from '../trackColour'
+import { trackPct, toMode, modeLabel, TRACK_COLOUR_MODES, scaleForRows, colourFor, legendStops } from '../trackColour'
+import { pctColour } from '../pctScale'
 import { preparePolar } from '../polarCalc'
 
 // A small, symmetric, entirely synthetic polar: fastest on a beam reach, slower
@@ -163,3 +164,54 @@ function polarDown(tws: number): number {
   const f = (tws - e[0].tws) / (e[1].tws - e[0].tws)
   return e[0].downTwa + f * (e[1].downTwa - e[0].downTwa)
 }
+
+describe('a % of target is absolute, a channel is fitted to the day', () => {
+  // The track used to fit its ramp to whatever range the day covered, for every
+  // mode. On a percentage that made red mean "the fastest you went today" on one
+  // track and "a hundred per cent" on the next — while red on every TABLE in the
+  // Analysis tab meant slow. One colour now means one thing across the tab.
+  const rows = Array.from({ length: 60 }, (_, i) => ({
+    utc: i * 1000, bsp: 8 + (i % 7) * 0.3, twa: 42, tws: 12, awa: 28, heel: 18,
+  })) as never
+
+  it('pins a percentage scale to the stops, not to the rows', () => {
+    const s = scaleForRows(null, rows, 'vmg')
+    // null polar still yields a scale for a pct mode: the stops do not depend on
+    // the data at all, which is the point.
+    expect(s?.absolute).toBe(true)
+    expect(s?.lo).toBe(85)
+    expect(s?.hi).toBe(110)
+  })
+
+  it('gives the same percentage the same colour on any day', () => {
+    const quiet = scaleForRows(null, rows, 'target')
+    const wild = scaleForRows(null, rows.slice(0, 5), 'target')
+    expect(colourFor(100, quiet)).toBe(colourFor(100, wild))
+    expect(colourFor(88, quiet)).toBe(colourFor(88, wild))
+  })
+
+  it('agrees with the table scale exactly', () => {
+    const s = scaleForRows(null, rows, 'polbsp')
+    for (const v of [80, 85, 90, 95, 100, 105, 110, 130]) {
+      expect(colourFor(v, s), `${v}`).toBe(pctColour(v))
+    }
+  })
+
+  it('labels the legend with the numbers that mean something', () => {
+    // 85, 95, 100-ish, 105 — not five evenly-spaced samples of a fitted range,
+    // which is how a legend came to read "4% 41% 77% 114% 150%".
+    const labels = legendStops(scaleForRows(null, rows, 'vmg')).map(l => l.label)
+    expect(labels).toContain('85%')
+    expect(labels).toContain('95%')
+    expect(labels).toContain('105%')
+    expect(labels).not.toContain('41%')
+  })
+
+  it('leaves a CHANNEL fitted to the day, where that is the right answer', () => {
+    // A whole afternoon of boat speed inside one colour tells you nothing.
+    const s = scaleForRows(null, rows, 'bsp')
+    expect(s?.absolute).toBeFalsy()
+    expect(s!.lo).toBeGreaterThan(7)
+    expect(s!.hi).toBeLessThan(11)
+  })
+})

@@ -3,6 +3,7 @@ import React from "react";
 import { EVENT_FILE_SLUG, isTagged, trackTags } from '../lib/dayTags';
 import { MEDIA_COLOURS, isDroneClip } from '../lib/mediaDecks';
 import { loadPolarFromLS } from '../lib/polarCalc';
+import { polarFromData } from '../lib/polarFile';
 import { racesOf, segmentDay } from '../lib/tagging/segments';
 import { TRACK_COLOUR_MODES, colourFor, legendStops, modeDef, needsPolar, scaleForRows, toMode, trackValue } from '../lib/trackColour';
 import { sectionLabel, selectButtonLabel } from '../lib/trackSections';
@@ -30,7 +31,7 @@ const selectStyle = {
 // harness, and anything else omitting it) put the map in an endless
 // render → effect → setState → render loop, rebuilding Leaflet each time.
 export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syncOffset=0, playUtc=null, visible=true, allVideos=EMPTY, onSelectVideo=null, onSwitchTab=null, onPlayClip=null, photos=EMPTY, sections=EMPTY, onSelection=null, onRemoveSection=null, onClearSections=null,
-  dayTags=EMPTY, onRaceChosen=null, squadTracks=EMPTY,
+  dayTags=EMPTY, onRaceChosen=null, squadTracks=EMPTY, boat=null,
   finishDraft=null, onFinishDraft=null, onSaveFinish=null, finishNote=null, finishMsg=null, canTagFinish=false}){
   const tz=useTz();
   const containerRef = React.useRef(null);
@@ -120,7 +121,36 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     winStart ? filteredRows.filter(r=>r.utc>=winStart&&r.utc<=winEnd) : []
   ,[filteredRows, winStart, winEnd]);
 
-  const polar = React.useMemo(()=>loadPolarFromLS(),[]);
+  // THE BOAT'S polar, not the browser's.
+  //
+  // This was `loadPolarFromLS()` alone: one polar per BROWSER, loaded from a
+  // file, applied to whatever track happened to be on screen. Upload Baraka's
+  // polar while looking at Northstar and Northstar's track is coloured against
+  // Baraka — and stays that way, for every boat and every day, until somebody
+  // loads another file. The legend said "Baraka Polar 190727.txt" over a
+  // Northstar track and was telling the exact truth; nothing in the UI made it
+  // wrong-looking (reported 8 Oct 2026).
+  //
+  // So the boat's ACTIVE polar out of `polars` wins when the map is told which
+  // boat it is showing. The local file stays as the fallback — it is the only
+  // thing a laptop with no session has — and the legend says which is in use,
+  // because "whose polar is this" turned out to be unanswerable from the screen.
+  const [cloudPolar,setCloudPolar] = React.useState(null);
+  React.useEffect(()=>{
+    if(!boat?.teamId||!boat?.boatId){ setCloudPolar(null); return; }
+    let alive=true;
+    fetch(`/api/teams/${boat.teamId}/polars?boat_id=${boat.boatId}&active=1`)
+      .then(r=>(r.ok?r.json():{polars:[]}))
+      .then(j=>{
+        const row=(j.polars||[])[0];
+        const p=row?polarFromData(row.data):null;
+        if(alive) setCloudPolar(p?{...p,filename:row.name,fromBoat:true}:null);
+      })
+      .catch(()=>{ if(alive) setCloudPolar(null); });
+    return ()=>{ alive=false; };
+  },[boat?.teamId,boat?.boatId]);
+  const localPolar = React.useMemo(()=>loadPolarFromLS(),[]);
+  const polar = cloudPolar || localPolar;
   // The colour scale comes from the day being shown, not from a fixed band: a whole
   // afternoon inside one colour tells you nothing, which is what a fixed band does to
   // a steady day.
@@ -379,7 +409,12 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       if(colourScale){
         const stops=legendStops(colourScale);
         const def=modeDef(colourMode);
-        const head=def.kind==='pct' ? `⬡ ${polar?.filename||'Polar'} · ${def.label}` : def.label;
+        // Say WHOSE polar. A filename alone read as authoritative over any
+        // track, which is how a Baraka polar coloured a Northstar beat without
+        // a thing on screen looking wrong.
+        const head=def.kind==='pct'
+          ? `⬡ ${polar?.filename||'Polar'}${polar?.fromBoat?'':' · this browser'} · ${def.label}`
+          : def.label;
         const leg=L.control({position:'bottomright'});
         leg.onAdd=()=>{
           const d=L.DomUtil.create('div','');
@@ -851,8 +886,12 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
           </span>
         )}
         {polar&&(
-          <span style={{marginLeft:"auto",background:"#F59E0B12",border:"1px solid #F59E0B30",borderRadius:3,padding:"2px 7px",fontWeight:600,fontSize:9,color:"#F59E0B"}}>
+          <span title={polar.fromBoat
+            ? "This boat's active polar, from the team's library."
+            : "A polar FILE loaded into this browser. It is not tied to a boat, so it colours whatever track is on screen — including another boat's."}
+            style={{marginLeft:"auto",background:polar.fromBoat?"#F59E0B12":"#DC262618",border:`1px solid ${polar.fromBoat?"#F59E0B30":"#DC262655"}`,borderRadius:3,padding:"2px 7px",fontWeight:600,fontSize:9,color:polar.fromBoat?"#F59E0B":"#FCA5A5"}}>
             ⬡ {polar.filename} · TWS {polar.tws?.[0]}–{polar.tws?.[polar.tws.length-1]} kn
+            {!polar.fromBoat&&" · this browser, not this boat"}
           </span>
         )}
       </div>

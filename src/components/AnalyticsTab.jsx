@@ -502,7 +502,7 @@ function AnalyticsTab({logData,xmlData,allVideos,sessions,selectedVideo,onSelect
             )}
             {section("GPS track",(
               rows.length > 0 ? (
-                <GPSTrackMap rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlForRaces} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} sections={sections} onSelection={selectSection} onRemoveSection={dropSection} onClearSections={clearSections}
+                <GPSTrackMap boat={tagBoat} rows={rows} videoStartUtc={selectedVideo?.startUtc||null} videoDurationSec={selectedVideo?.duration||0} xmlData={xmlForRaces} syncOffset={0} playUtc={playUtc} visible={visible} allVideos={allVideos} onSelectVideo={onSelectVideo} onSwitchTab={setActiveTab} onPlayClip={onPlayClip} photos={photos} sections={sections} onSelection={selectSection} onRemoveSection={dropSection} onClearSections={clearSections}
                   dayTags={dayTagEvents} onRaceChosen={pickRace} squadTracks={squadTracks}
                   finishDraft={finishDraft} onFinishDraft={setFinishDraft} onSaveFinish={saveFinish}
                   finishNote={finishNote(race)} finishMsg={finishMsg} canTagFinish={!!tagBoat}/>

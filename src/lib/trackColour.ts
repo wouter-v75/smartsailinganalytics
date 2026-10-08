@@ -30,6 +30,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { polarInterp, polarVMGTarget, polarPerf } from './polarCalc'
+import { pctColour, PCT_STOPS } from './pctScale'
 
 export type TrackColourMode =
   | 'auto' | 'vmg' | 'polbsp' | 'target'                    // against the polar
@@ -248,6 +249,8 @@ export interface ColourScale {
   cyclic: boolean
   unit: string
   kind: TrackColourModeDef['kind']
+  /** True for a % of target: fixed stops, not a ramp fitted to the day. */
+  absolute?: boolean
 }
 
 const quantile = (sorted: number[], q: number): number =>
@@ -267,6 +270,20 @@ export function scaleForRows(
   const base: ColourScale = { mode, lo: 0, hi: 1, cyclic: !!def.cyclic, unit: def.unit || '', kind: def.kind }
   if (def.kind === 'category') return { ...base, lo: 0, hi: 2 }
   if (def.cyclic) return { ...base, lo: 0, hi: 360 }
+  // A PERCENTAGE OF TARGET IS ABSOLUTE, so it does not get a scale fitted to the
+  // day. 100 means on the polar whichever afternoon it was, and a colour that
+  // moved with the day's spread made red mean "the fastest you went today" on
+  // one track and "a hundred per cent" on the next — while red on every table in
+  // the Analysis tab meant SLOW. Same stops as lib/pctScale now, so one colour
+  // means one thing across the whole tab.
+  //
+  // The cost, and it is real: a steady day is one band instead of a spectrum.
+  // That IS the finding — the boat held target — but the within-day contrast
+  // that the fitted ramp gave is gone, and a channel mode (BSP, TWS) is the
+  // place to look for it. Channels keep the fitted ramp below.
+  if (def.kind === 'pct') {
+    return { ...base, lo: PCT_STOPS[0].pct, hi: PCT_STOPS[PCT_STOPS.length - 1].pct, absolute: true }
+  }
   const vals: number[] = []
   for (const r of rows || []) {
     const v = trackValue(polar, r, mode)
@@ -288,6 +305,7 @@ export function colourFor(value: number | null | undefined, scale: ColourScale |
     return SAIL_MODE_COLOR[m]
   }
   if (scale.cyclic) return cyclicColor(value)
+  if (scale.absolute) return pctColour(value) || NO_DATA
   return rampColor((value - scale.lo) / ((scale.hi - scale.lo) || 1))
 }
 
@@ -296,6 +314,15 @@ export interface LegendStop { color: string; label: string }
 /** What the legend under the map shows: the ends and the middle, or the states. */
 export function legendStops(scale: ColourScale | null): LegendStop[] {
   if (!scale) return []
+  // An absolute scale's legend is the STOPS, not five evenly-spaced samples of
+  // a fitted range: the numbers that mean something are 85, 95, 100, 105, and
+  // printing 41 % and 114 % instead hid every one of them.
+  if (scale.absolute) {
+    return PCT_STOPS.filter(st => st.label).map(st => ({
+      color: st.hex,
+      label: `${st.pct}%`,
+    }))
+  }
   if (scale.kind === 'category') {
     return (['up', 'reach', 'down'] as SailMode[]).map(m => ({ color: SAIL_MODE_COLOR[m], label: SAIL_MODE_LABEL[m] }))
   }
