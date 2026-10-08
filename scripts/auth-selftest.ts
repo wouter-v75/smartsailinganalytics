@@ -22,6 +22,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { retryingFetch, why } from './lib/netFetch'
 
 const args = process.argv.slice(2)
 const val = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined }
@@ -40,6 +41,7 @@ for (const k of ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
 }
 const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
+  global: { fetch: retryingFetch },
 })
 
 /**
@@ -85,7 +87,7 @@ const main = async () => {
     used_count: 0,
     expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   }).select('id').single()
-  if (error || !row) fail(`could not create the test invitation: ${error?.message}`)
+  if (error || !row) fail(`could not create the test invitation: ${error ? why(error) : 'no row came back'}`)
 
   try {
     const res = await fetch(`${base}/welcome/${token}`)
@@ -133,4 +135,5 @@ const main = async () => {
     : '\n✓ Road 1 is sound: the form serves, the link survives being fetched, and a dead one says why.\n')
   process.exit(failures ? 1 : 0)
 }
-main()
+// Any throw still ends in a sentence rather than a promise-rejection trace.
+main().catch((e) => fail(why(e)))

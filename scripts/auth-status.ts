@@ -18,6 +18,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { retryingFetch, why } from './lib/netFetch'
 import { classifyInvite, type InviteState } from '../src/lib/welcome-invite'
 import { describeAuthEvent, isAuthProblem, type AuthEventDetails } from '../src/lib/authEvents'
 import { normaliseEmail } from '../src/lib/provision-member'
@@ -42,6 +43,7 @@ for (const k of ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
 }
 const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
+  global: { fetch: retryingFetch },
 })
 const site = process.env.SSA_SITE_URL || env.SSA_SITE_URL || 'https://ssa.wvsailing.co.uk'
 
@@ -194,4 +196,5 @@ const main = async () => {
   }
   console.log('')
 }
-main()
+// A throw ends in a sentence, with undici's real reason dug out of `cause`.
+main().catch((e) => fail(why(e)))

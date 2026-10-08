@@ -37,6 +37,7 @@
 import { existsSync, readFileSync } from 'fs'
 import { resolve } from 'path'
 import { createClient } from '@supabase/supabase-js'
+import { retryingFetch, why } from './lib/netFetch'
 
 const args = process.argv.slice(2)
 const has = (f: string) => args.includes(f)
@@ -59,6 +60,7 @@ for (const k of ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY']) {
 }
 const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
+  global: { fetch: retryingFetch },
 })
 
 let failures = 0
@@ -100,11 +102,11 @@ async function unreachable(): Promise<string | null> {
     await fetch(`${base}/login`, { redirect: 'manual' })
     return null
   } catch (e) {
-    return (e as { cause?: { code?: string } })?.cause?.code === 'ECONNREFUSED'
+    return /ECONNREFUSED/.test(why(e))
       ? `nothing is listening on ${base}.`
         + `\n    Start it in another terminal:  cd ${process.cwd()} && npm run dev`
         + '\n    Or test the deployed one:       npm run auth:selftest2 -- --base https://ssa.wvsailing.co.uk'
-      : `could not reach ${base}: ${(e as Error).message}`
+      : `could not reach ${base}: ${why(e)}`
   }
 }
 
@@ -119,7 +121,7 @@ async function post(token: string, body: Record<string, unknown>): Promise<Reply
   } catch (e) {
     // A server that dies halfway through — a dev server restarting on a file
     // save is the usual way — must not read as a code defect.
-    fail(`${base} stopped answering (${(e as Error).message}). Is the server still up?`)
+    fail(`${base} stopped answering (${why(e)}). Is the server still up?`)
   }
   const j = (await r.json().catch(() => ({}))) as { error?: string; ok?: boolean; message?: string }
   return { status: r.status, ...j }
@@ -136,7 +138,10 @@ async function makeCode(teamId: string, over: Record<string, unknown> = {}) {
     expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     ...over,
   }).select('id').single()
-  if (error || !data) fail(`could not create a test join code: ${error?.message}`)
+  // why(), not error.message: a transport failure says only "TypeError: fetch
+  // failed", which has sent me looking at the invitations table for a problem
+  // that was a closed socket.
+  if (error || !data) fail(`could not create a test join code: ${error ? why(error) : 'no row came back'}`)
   return { id: data.id as string, token }
 }
 
@@ -370,6 +375,7 @@ const main = async () => {
     if (env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
       const anon = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
         auth: { persistSession: false },
+        global: { fetch: retryingFetch },
       })
       const { error: pwErr } = await anon.auth.signInWithPassword({ email: email2, password: GOOD_PW })
       check('their password is still their password — the QR code reset nothing',
@@ -429,4 +435,4 @@ const main = async () => {
 }
 // Anything that got past the guards above still ends in a sentence, not in a
 // promise rejection trace.
-main().catch((e) => fail((e as Error)?.message || String(e)))
+main().catch((e) => fail(why(e)))
