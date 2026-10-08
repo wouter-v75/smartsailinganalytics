@@ -9,6 +9,7 @@
 import React from 'react'
 import { startAnalyses, distLnBand } from '../../lib/startAnalysis'
 import { inRange } from '../../lib/trackSelection'
+import { pctBg } from '../../lib/pctScale'
 
 const COLS = [
   { key: 'distLn', label: 'DistLn (BL)', d: 1 },
@@ -27,7 +28,8 @@ const WINDOWS = [[-120, '−2:00'], [-180, '−3:00'], [-300, '−5:00']]
 const fmtT = t => `${t < 0 ? '−' : '+'}${String(Math.floor(Math.abs(t) / 60)).padStart(2, '0')}:${String(Math.abs(t) % 60).padStart(2, '0')}`
 const hms = (utc, tz) => new Date(utc + (tz || 0) * 60000).toISOString().slice(11, 19)
 const fmt = (v, d) => (v == null ? '' : v.toFixed(d).replace(/^-(0(\.0+)?)$/, '$1'))
-const pctBg = v => (v == null ? 'transparent' : v >= 95 ? '#15803D40' : v >= 85 ? '#CA8A0440' : '#B91C1C40')
+// Was three hard steps here. It is one shared scale now, so a colour means the
+// same thing in this table as it does on a report row — see lib/pctScale.
 // Distance to line: green under 0.5 BL, yellow 0.5–1, orange 1–2, red 2+, dark red over the line.
 const DIST_BG = { green: '#16A34A55', yellow: '#EAB30855', orange: '#EA580C66', red: '#DC262666', over: '#7F1D1DE6' }
 const distStyle = v => {

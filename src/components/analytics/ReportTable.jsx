@@ -8,6 +8,7 @@
 
 import React from 'react'
 import { GROUP_LABELS, groupCellText, formatCell, tableToTsv } from '../../lib/reportTables'
+import { pctBg, isPctScaleKey } from '../../lib/pctScale'
 
 const TACK_MARK = { port: { mark: '▲', color: '#7DD3FC' }, stbd: { mark: '●', color: '#10B981' } }
 
@@ -59,7 +60,17 @@ export default function ReportTable({ table }) {
                   )
                 })}
                 <td style={{ ...td, color: '#94A3B8' }}>{r.n}</td>
-                {r.values.map((v, j) => <td key={j} style={td}>{formatCell(v, table.columns[j].decimals)}</td>)}
+                {r.values.map((v, j) => {
+                  // Only the target family is painted — see isPctScaleKey. The
+                  // deflection and BSP/SOG columns are percentages of something
+                  // that is not a target and must not borrow this meaning.
+                  const paint = isPctScaleKey(table.columns[j].key)
+                  return (
+                    <td key={j} style={paint ? { ...td, background: pctBg(v) } : td}>
+                      {formatCell(v, table.columns[j].decimals)}
+                    </td>
+                  )
+                })}
               </tr>
             ))}
           </tbody>
