@@ -160,7 +160,7 @@ export default async function TeamDetailPage({
           }
         />
 
-        <InvitationsPanel teamId={team.id} boats={boats || []} />
+        <InvitationsPanel teamId={team.id} teamName={team.name} boats={boats || []} />
 
         <BackfillPanel teamId={team.id} boats={boats || []} />
 

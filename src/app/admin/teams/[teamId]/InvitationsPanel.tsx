@@ -1,13 +1,27 @@
 'use client'
 
-// Team invitations: list + create (email-targeted or open-link) + revoke.
-// Open-link invitations have a QR display modal for screenshotting into
-// WhatsApp.
+// Team invitations: list + create (email-targeted or open-link) + revoke +
+// SHARE.
+//
+// The panel has promised "Share in WhatsApp" for as long as it has existed and
+// offered Copy URL, which on a phone means reading a token off a screen and
+// typing it. Share… opens the code with the ways people actually send things:
+// WhatsApp, a mail draft, the phone's own share sheet (carrying the QR as a
+// PNG where that is allowed), the message on the clipboard, and the QR as a
+// file to attach.
+//
+// It knows the difference between the two links. An open /join code is made to
+// be posted in a group — the worst a stranger can do is join a queue. An
+// email-targeted /welcome link SETS THAT PERSON'S PASSWORD, so it gets a
+// warning, an addressed mail draft, and no WhatsApp button at all.
 
 import { useEffect, useMemo, useState } from 'react'
 import { roleLabel } from '../../../../lib/roleLabels'
 import { useRouter } from 'next/navigation'
 import QRCodeSVG from '../../../../components/QRCodeSVG'
+import {
+  inviteMessage, inviteSubject, mailtoHref, qrFileName, whatsappHref,
+} from '../../../../lib/shareInvite'
 
 type Role = 'team_manager' | 'coach' | 'tl3' | 'tl1' | 'owner' | 'consultant' | 'guest'
 const ROLES: Role[] = ['team_manager', 'coach', 'tl3', 'tl1', 'owner', 'consultant', 'guest']
@@ -38,9 +52,12 @@ interface Boat {
 
 export default function InvitationsPanel({
   teamId,
+  teamName,
   boats,
 }: {
   teamId: string
+  /** Named in the message that goes to WhatsApp, and in the QR's filename. */
+  teamName: string
   boats: Boat[]
 }) {
   const router = useRouter()
@@ -248,6 +265,64 @@ export default function InvitationsPanel({
     return inv.email
       ? `${origin}/welcome/${inv.token}`
       : `${origin}/join/${inv.token}`
+  }
+
+  /** Everything the share buttons need, for whichever invitation is open. */
+  function shareFor(inv: Invitation) {
+    const url = urlFor(inv)
+    // An email-targeted invitation points at /welcome, which SETS THAT
+    // PERSON'S PASSWORD. It is not a thing to post in a group chat, and the
+    // message, the warning and the missing WhatsApp button all say so.
+    const personal = !!inv.email
+    const share = { teamName, url, personal }
+    return { url, personal, message: inviteMessage(share), subject: inviteSubject(share) }
+  }
+
+  /** The QR as a PNG — for saving, and for a native share that carries the
+   *  image rather than a bare link. Rendered here rather than scraped out of
+   *  the <img>, so it is full size whatever the dialog is showing. */
+  async function qrPng(url: string): Promise<Blob | null> {
+    try {
+      const QRCode = (await import('qrcode')).default
+      const dataUrl = await QRCode.toDataURL(url, { errorCorrectionLevel: 'M', margin: 2, width: 1024 })
+      return await (await fetch(dataUrl)).blob()
+    } catch {
+      return null
+    }
+  }
+
+  async function saveQr(inv: Invitation) {
+    const blob = await qrPng(urlFor(inv))
+    if (!blob) { setErr('Could not draw the QR to save.'); return }
+    const href = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = href
+    a.download = qrFileName(teamName)
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(href), 60_000)
+  }
+
+  /** The phone's own share sheet, with the QR attached where that is allowed. */
+  async function shareNative(inv: Invitation) {
+    const { url, message } = shareFor(inv)
+    const nav = navigator as Navigator & {
+      share?: (d: ShareData) => Promise<void>
+      canShare?: (d: ShareData) => boolean
+    }
+    if (!nav.share) return
+    try {
+      const blob = await qrPng(url)
+      const file = blob ? new File([blob], qrFileName(teamName), { type: 'image/png' }) : null
+      if (file && nav.canShare?.({ files: [file] })) {
+        await nav.share({ text: message, files: [file] })
+        return
+      }
+      await nav.share({ text: message, url })
+    } catch {
+      // The sheet was dismissed. Not an error worth saying anything about.
+    }
   }
 
   function copy(text: string) {
@@ -482,9 +557,9 @@ export default function InvitationsPanel({
                 {!inv.email && (
                   <button
                     onClick={() => setQrFor(inv)}
-                    className="text-sm text-blue-600 hover:underline"
+                    className="text-sm font-medium text-blue-600 hover:underline"
                   >
-                    Show QR
+                    Share…
                   </button>
                 )}
                 {inv.email && !inv.revoked_at && inv.used_count < inv.max_uses && (
@@ -518,29 +593,66 @@ export default function InvitationsPanel({
             className="bg-white rounded-2xl shadow-xl p-6 max-w-sm w-full text-center"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-semibold text-slate-900 mb-1">
-              Team join QR
-            </h3>
-            <p className="text-xs text-slate-500 mb-3 break-all">
-              {urlFor(qrFor)}
-            </p>
-            <div className="flex justify-center mb-3">
-              <QRCodeSVG text={urlFor(qrFor)} size={240} />
-            </div>
-            <div className="flex justify-center gap-2">
-              <button
-                onClick={() => copy(urlFor(qrFor))}
-                className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm font-medium"
-              >
-                Copy URL
-              </button>
-              <button
-                onClick={() => setQrFor(null)}
-                className="rounded-lg border border-slate-300 text-slate-700 px-4 py-2 text-sm"
-              >
-                Close
-              </button>
-            </div>
+            {(() => {
+              const { url, personal, message, subject } = shareFor(qrFor)
+              const canNative = typeof navigator !== 'undefined' && 'share' in navigator
+              const act = 'rounded-lg border border-slate-300 text-slate-700 px-3 py-2 text-sm hover:bg-slate-50'
+              return (
+                <>
+                  <h3 className="text-lg font-semibold text-slate-900 mb-1">
+                    {personal ? `Set-up link for ${qrFor.email}` : `Join ${teamName}`}
+                  </h3>
+                  {personal ? (
+                    // The one case where the cheerful share row would be a
+                    // mistake: this link sets that person's password, so
+                    // anybody holding it can become them.
+                    <p className="mb-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left text-xs text-amber-900">
+                      <b>Send this to {qrFor.email} and nobody else.</b> It sets their password,
+                      so treat it like one — not the group chat.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500 mb-3">
+                      Anyone who opens this signs themselves up and lands in your pending queue
+                      for approval. They can do nothing until you approve them.
+                    </p>
+                  )}
+                  <div className="flex justify-center mb-3">
+                    <QRCodeSVG text={url} size={240} />
+                  </div>
+                  <p className="text-xs text-slate-400 mb-4 break-all">{url}</p>
+
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    {!personal && (
+                      <a
+                        href={whatsappHref(message)}
+                        target="_blank" rel="noopener noreferrer"
+                        className="rounded-lg bg-[#25D366] hover:bg-[#1FBE5A] text-white px-3 py-2 text-sm font-medium"
+                      >
+                        WhatsApp
+                      </a>
+                    )}
+                    <a
+                      href={mailtoHref(subject, message, personal ? qrFor.email || '' : '')}
+                      className={`${act} ${personal ? 'col-span-2' : ''}`}
+                    >
+                      Email
+                    </a>
+                    <button onClick={() => copy(url)} className={act}>Copy link</button>
+                    <button onClick={() => copy(message)} className={act}>Copy message</button>
+                    <button onClick={() => void saveQr(qrFor)} className={act}>Save QR</button>
+                    {canNative && (
+                      <button onClick={() => void shareNative(qrFor)} className={act}>Share…</button>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setQrFor(null)}
+                    className="w-full rounded-lg border border-slate-300 text-slate-700 px-4 py-2 text-sm"
+                  >
+                    Close
+                  </button>
+                </>
+              )
+            })()}
           </div>
         </div>
       )}
