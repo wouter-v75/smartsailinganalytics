@@ -232,7 +232,19 @@ export function parseIrcCertificate(text: string): IrcCertificate | null {
 
 export interface JibGeometry {
   /** Forestay angle from vertical, degrees. */
-  forestayRakeDeg: number
+  /**
+   * The FORESTAY's angle from vertical, degrees — asin(J / HLU).
+   *
+   * NOT mast rake, which is 1-3° and is not on an IRC certificate at all. This
+   * is the foretriangle's base over its luff, so it is 16-18° on everything:
+   * 16.8° on Northstar (J 8.86 / HLU 30.60) and 17.0° on Baraka GP (5.00 /
+   * 17.06). It was called forestayRakeDeg and printed under a column headed
+   * `rake°`, which reads as a mast raked seventeen degrees aft — absurd, and
+   * the first thing a sailor looking at the table queried.
+   *
+   * Used only as cos() here, to project HLP along the luff.
+   */
+  forestayAngleDeg: number
   /** Clew, fore-and-aft from the mast, mm, FORWARD positive. */
   clewDepthMm: number
   clewDepthSigmaMm: number
@@ -248,7 +260,8 @@ export interface JibGeometry {
  * luff and the luff perpendicular.
  *
  * The luff runs from the tack — J forward of the mast at deck — up to the head
- * at the masthead, so its horizontal run IS J and sin(rake) = J / HLU. Walk a
+ * at the masthead, so its horizontal run IS J and sin(θ) = J / HLU, where θ is
+ * the FORESTAY's angle from vertical and has nothing to do with mast rake. Walk a
  * fraction `clewFrac` of the luff up from the tack, then HLP perpendicular to
  * it in the sail's plane, and that is the clew:
  *
@@ -285,13 +298,27 @@ export function jibGeometry(
   const xHead = 0                                        // masthead, over the mast
 
   // The leech is the clew-to-head line; the roach on a jib is small and lives
-  // in the sigma. Spreader 2 on a maxi 72 is around 20 m.
-  const zSpr = opts.spreaderHeightM ?? 20
+  // in the sigma. What is needed is the height of SPREADER 2, which no
+  // certificate carries.
+  //
+  // It used to be a flat 20 m — right for the maxi 72s this was written for and
+  // wrong for everything else, silently. Baraka GP is a 13.3 m boat with P
+  // 19.00, so 20 m is ABOVE her masthead: t clamped to 1, the leech point
+  // became the head, and the jib leech depth came out as 0.00 mm. Not an
+  // approximation — no leech at all, on every boat smaller than a maxi, with
+  // nothing on screen to say so.
+  //
+  // So scale it with the rig instead. 0.64 P puts spreader 2 at 20.1 m on a
+  // maxi 72 (P 31.44), which is where it actually is, and at 12.2 m on Baraka
+  // GP, which is the right order for her. Still a guess — hence the 300 mm in
+  // the sigma below — but a guess that moves with the boat.
+  const SPREADER_2_OVER_P = 0.64
+  const zSpr = opts.spreaderHeightM ?? (rig.p ? SPREADER_2_OVER_P * rig.p : 20)
   const t = Math.min(1, Math.max(0, (zSpr - zClew) / (zHead - zClew)))
   const xLeech = xClew + t * (xHead - xClew)
 
   return {
-    forestayRakeDeg: (rake * 180) / Math.PI,
+    forestayAngleDeg: (rake * 180) / Math.PI,
     clewDepthMm: xClew * 1000,
     clewDepthSigmaMm: xClewSigma * 1000,
     leechDepthMm: xLeech * 1000,
@@ -398,7 +425,7 @@ export function rigModelFromIrc(cert: IrcCertificate, opts: { spreaderHeightM?: 
     notes: [
       `IRC cert ${cert.certNo}${cert.endorsed ? ' (endorsed)' : ''}, ${cert.sailNumber}, ${cert.design}`,
       cert.expires ? `expires ${cert.expires}` : '',
-      geom ? `clew and leech derived from J ${j}, HLU ${hlu}, HLP ${cert.rig.hlp} — forestay rake ${geom.forestayRakeDeg.toFixed(1)}°` : '',
+      geom ? `clew and leech derived from J ${j}, HLU ${hlu}, HLP ${cert.rig.hlp} — forestay ${geom.forestayAngleDeg.toFixed(1)}° from vertical` : '',
     ].filter(Boolean).join(' · '),
   }
 }

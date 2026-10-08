@@ -371,6 +371,8 @@ export default function SailTrimTab(
   useEffect(() => { void loadLenses().then(setLenses); }, []);
   const [certText, setCertText] = useState('');
   const [certNote, setCertNote] = useState('');
+  const [certBusy, setCertBusy] = useState(false);
+  const certFileRef = useRef<HTMLInputElement>(null);
   // Wheels by default. Spreader 2 was the default and it is a GUESS on every
   // boat — 6000 +/- 600 out of defaultRigModel — which is how the 27 Sep 11:43:30
   // frame came to read roughly double its neighbours taken six seconds later.
@@ -1750,6 +1752,52 @@ export default function SailTrimTab(
   // per keystroke would PUT the whole model a dozen times while somebody types
   // "3375". Local is synchronous so nothing is lost if the tab closes first.
   const cloudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * What a read certificate does to the tab — one path for the PDF and the
+   * paste, so the two cannot drift.
+   *
+   * Scale goes to P and the baseline to tack-mast because that is the whole
+   * point of having the certificate: the mast lies in the image plane seen
+   * from astern, so the mainsail hoist is a 19-31 m ruler where a spreader is
+   * a 6 m one.
+   */
+  const applyCertModel = useCallback((m: RigModel, note: string) => {
+    const withBoat = { ...m, boat: m.boat || boat };
+    setRig(withBoat); persistRigRef.current?.(withBoat);
+    if (withBoat.boat && withBoat.boat !== boat) setBoat(withBoat.boat);
+    setScaleKey('P'); setBaselineKey('tack-mast');
+    setCertNote(note);
+  }, [boat]);
+
+  /** Upload the PDF; the server reads it with the same parser the script uses. */
+  const readCertificatePdf = useCallback(async (file: File) => {
+    setCertBusy(true);
+    setCertNote('');
+    try {
+      const res = await fetch('/api/boats/rig-model/certificate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/pdf' },
+        body: file,
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // The server's words: it knows whether the file is not a PDF, is a
+        // scan with no text layer, or is simply not a certificate, and those
+        // send somebody looking in three different places.
+        setCertNote(j.error || `That did not read (${res.status}).`);
+        return;
+      }
+      const s = j.summary || {};
+      applyCertModel(j.rigModel as RigModel,
+        `${j.boat || 'boat'} — P ${s.p} m, J ${s.j} m, E ${s.e} m. Scale set to P.`);
+    } catch (e) {
+      setCertNote(`Could not reach SSA to read that PDF (${(e as Error)?.message || e}).`);
+    } finally {
+      setCertBusy(false);
+    }
+  }, [applyCertModel]);
+
+  const persistRigRef = useRef<((next: RigModel) => void) | null>(null);
   const persistRig = useCallback((next: RigModel) => {
     saveRigModel(next);
     if (cloudTimer.current) clearTimeout(cloudTimer.current);
@@ -1762,6 +1810,10 @@ export default function SailTrimTab(
       });
     }, 1200);
   }, [boat, boatId, pickedBoatId]);
+  // applyCertModel is declared above persistRig (it is used by the upload
+  // handler, which is declared earlier still), so it reaches it through a ref
+  // rather than being moved and shuffling half the file.
+  persistRigRef.current = persistRig;
   useEffect(() => () => { if (cloudTimer.current) clearTimeout(cloudTimer.current); }, []);
 
   type Patch = Partial<{ mm: number; sigmaMm: number; source: Provenance; depthMm: number }>;
@@ -2432,7 +2484,25 @@ export default function SailTrimTab(
                   astern, so the mainsail hoist sets the scale over a 31 m
                   baseline instead of a spreader's 6 m. */}
               <div style={{ marginBottom: 9 }}>
-                <label style={lbl}>Paste an IRC certificate (select all in the PDF, copy, paste here)</label>
+                <label style={lbl}>IRC certificate</label>
+                {/* The PDF first, because that is what people actually have.
+                    Pasting the text still works and is the fallback when the
+                    upload cannot read a file. */}
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 7 }}>
+                  <button style={btn(true)} disabled={certBusy}
+                    onClick={() => certFileRef.current?.click()}>
+                    {certBusy ? 'Reading…' : 'Upload certificate (PDF)'}
+                  </button>
+                  <input ref={certFileRef} type="file" accept="application/pdf,.pdf" style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0]; e.target.value = '';
+                      if (f) await readCertificatePdf(f);
+                    }} />
+                  <span style={{ fontSize: 10.5, color: '#64748B', lineHeight: 1.4 }}>
+                    the PDF the rating office issued
+                  </span>
+                </div>
+                <label style={lbl}>…or paste its text (select all in the PDF, copy, paste here)</label>
                 <textarea
                   style={{ ...inp, height: 62, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}
                   value={certText}
@@ -2440,22 +2510,27 @@ export default function SailTrimTab(
                   placeholder="IRC Boat Data … J 8.86 … E 10.33 … P 31.44"
                 />
                 <div style={{ display: 'flex', gap: 6, marginTop: 5, alignItems: 'center' }}>
-                  <button style={btn(true)} disabled={!certText.trim()} onClick={() => {
+                  <button style={btn()} disabled={!certText.trim()} onClick={() => {
                     const cert = parseIrcCertificate(certText);
                     if (!cert) { setCertNote('That does not read as an IRC certificate — nothing changed.'); return; }
-                    const m = rigModelFromIrc(cert);
-                    const withBoat = { ...m, boat: m.boat || boat };
-                    setRig(withBoat); persistRig(withBoat);
-                    if (withBoat.boat && withBoat.boat !== boat) setBoat(withBoat.boat);
-                    setScaleKey('P'); setBaselineKey('tack-mast');
-                    setCertNote(`${cert.name || 'boat'} — P ${cert.rig.p} m, J ${cert.rig.j} m, E ${cert.rig.e} m. Scale set to P.`);
+                    applyCertModel(rigModelFromIrc(cert),
+                      `${cert.name || 'boat'} — P ${cert.rig.p} m, J ${cert.rig.j} m, E ${cert.rig.e} m. Scale set to P.`);
                     setCertText('');
-                  }}>Read certificate</button>
-                  {certNote && <span style={{ fontSize: 10.5, color: certNote.startsWith('That does not') ? '#FCD34D' : '#4ADE80', lineHeight: 1.4 }}>{certNote}</span>}
+                  }}>Read pasted text</button>
+                  {certNote && (
+                    <span style={{
+                      fontSize: 10.5, lineHeight: 1.4,
+                      // Success is the one shape we can recognise: it names the
+                      // boat and the three dimensions. Everything else is a
+                      // problem, including the server's own wording, which this
+                      // used to colour green for lack of a matching prefix.
+                      color: /Scale set to P/.test(certNote) ? '#4ADE80' : '#FCD34D',
+                    }}>{certNote}</span>
+                  )}
                 </div>
                 <div style={{ fontSize: 10.5, color: '#64748B', marginTop: 5, lineHeight: 1.5 }}>
-                  Or run <code>npm run irc:rigmodel -- &lt;folder of PDFs&gt; --out models</code> and
-                  import the JSON below — that also does the whole fleet at once.
+                  For a whole fleet at once, <code>npm run irc:rigmodel -- &lt;folder of PDFs&gt; --out models</code>
+                  writes one JSON per certificate, which <b>Import…</b> below loads.
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6 }}>

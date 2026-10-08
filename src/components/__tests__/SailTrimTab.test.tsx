@@ -723,6 +723,18 @@ describe('SailTrimTab', () => {
       expect(within(screen.getByTestId('sailtrim-steps')).getByText('2/2')).toBeTruthy())
   })
 
+  it('offers the PDF first, because that is what people have', async () => {
+    // The paste path asks somebody holding a PDF on a phone to do the one
+    // thing a phone makes hardest. Both are here; the upload leads.
+    render(<SailTrimTab />)
+    await openAFrame()
+    fireEvent.click(screen.getByText('edit'))
+    expect(screen.getByText('Upload certificate (PDF)')).toBeTruthy()
+    expect(screen.getByText('Read pasted text')).toBeTruthy()
+    const picker = document.querySelector('input[type="file"][accept*="pdf"]')
+    expect(picker).toBeTruthy()
+  })
+
   it('takes its dimensions from a pasted IRC certificate', async () => {
     render(<SailTrimTab />)
     await openAFrame()
@@ -733,7 +745,7 @@ describe('SailTrimTab', () => {
 
     const box = screen.getByPlaceholderText(/IRC Boat Data/)
     fireEvent.change(box, { target: { value: IRC_CERT } })
-    fireEvent.click(screen.getByText('Read certificate'))
+    fireEvent.click(screen.getByText('Read pasted text'))
 
     await waitFor(() => expect(screen.getByText(/P 31.44 m, J 8.86 m, E 10.33 m/)).toBeTruthy())
     // …and after: the boat named itself, the scale is P rather than a guessed
@@ -761,7 +773,7 @@ describe('SailTrimTab', () => {
     await openAFrame()
     fireEvent.click(screen.getByText('edit'))
     fireEvent.change(screen.getByPlaceholderText(/IRC Boat Data/), { target: { value: 'IRC rating is great' } })
-    fireEvent.click(screen.getByText('Read certificate'))
+    fireEvent.click(screen.getByText('Read pasted text'))
     await waitFor(() => expect(screen.getByText(/does not read as an IRC certificate/)).toBeTruthy())
     expect(screen.getByText(/Still guesswork/)).toBeTruthy()
   })

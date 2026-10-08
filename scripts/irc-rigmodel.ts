@@ -25,7 +25,11 @@ import { exportRigModel } from '../src/lib/rigModel'
 const argv = process.argv.slice(2)
 const flag = (n: string) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : null }
 const outDir = flag('--out')
-const spreaderHeightM = Number(flag('--spreader') || 20)
+// Unset by default, NOT 20. A flat 20 m is spreader 2 on a maxi 72 and above
+// the masthead on a 13 m boat, where it silently produced a jib leech depth of
+// zero. Left undefined, the library scales it with P; --spreader still wins.
+const spreaderFlag = flag('--spreader')
+const spreaderHeightM = spreaderFlag ? Number(spreaderFlag) : undefined
 const inputs = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--out' && argv[i - 1] !== '--spreader')
 
 const files: string[] = []
@@ -38,7 +42,10 @@ for (const p of inputs) {
 if (!files.length) { console.error('pass IRC certificate PDFs, or a folder of them'); process.exit(1) }
 
 const rows: string[][] = []
-const head = ['boat', 'sail no', 'LH', 'wt kg', 'P', 'E', 'J', 'HLU', 'HLP', 'rake°', 'clew', 'leech', 'boom']
+// 'fstay°' not 'rake°': the column is the FORESTAY's angle from vertical,
+// asin(J/HLU), which is 16-18° on everything. Headed 'rake' it read as a mast
+// raked seventeen degrees aft.
+const head = ['boat', 'sail no', 'LH', 'wt kg', 'P', 'E', 'J', 'HLU', 'HLP', 'fstay°', 'clew', 'leech', 'boom']
 
 async function main() {
 for (const f of files) {
@@ -55,7 +62,7 @@ for (const f of files) {
     cert.rig.j?.toFixed(2) ?? '—',
     cert.rig.hlu?.toFixed(2) ?? '—',
     cert.rig.hlp?.toFixed(2) ?? '—',
-    g ? g.forestayRakeDeg.toFixed(1) : '—',
+    g ? g.forestayAngleDeg.toFixed(1) : '—',
     g ? `${(g.clewDepthMm / 1000).toFixed(2)}±${(g.clewDepthSigmaMm / 1000).toFixed(2)}` : '—',
     g ? `${(g.leechDepthMm / 1000).toFixed(2)}` : '—',
     cert.rig.e ? (-cert.rig.e).toFixed(2) : '—',
@@ -78,9 +85,12 @@ console.log(fmt(head))
 console.log(w.map((n) => '─'.repeat(n)).join('  '))
 for (const r of rows) console.log(fmt(r))
 console.log(`
-metres, forward of the mast positive. clew/leech/boom are the fore-and-aft
+metres, forward of the mast positive. fstay° is the FORESTAY from vertical
+(asin J/HLU) — not mast rake, which no certificate carries. clew/leech/boom are the fore-and-aft
 offsets SailTrim needs; clew and leech are DERIVED from J/HLU/HLP with the clew
-at ${(0.15 * 100).toFixed(0)}% of the luff (±6%), spreader 2 at ${spreaderHeightM} m.`)
+at ${(0.15 * 100).toFixed(0)}% of the luff (±6%), spreader 2 ${
+  spreaderHeightM ? `at ${spreaderHeightM} m (--spreader)` : 'taken as 0.64 P — pass --spreader <m> if you know it'
+}.`)
 }
 
 main().then(report).catch((e) => { console.error(e); process.exit(1) })

@@ -119,7 +119,10 @@ describe('ircCertificate — where the jib actually is', () => {
 
   it('puts a 100 %-LP jib clew ABAFT the mast, not metres forward', () => {
     const g = jibGeometry(cert.rig)!
-    expect(g.forestayRakeDeg).toBeCloseTo(16.8, 0)
+    // The FORESTAY from vertical, asin(J/HLU) — not mast rake, which is 1-3°
+    // and is not on a certificate. 16-18° is what a foretriangle gives on any
+    // boat, which is why calling it "rake" had somebody querying the number.
+    expect(g.forestayAngleDeg).toBeCloseTo(16.8, 0)
     // HLP 8.96 against J 8.86 is a ~101 % jib, and a 100 % jib's clew lands on
     // the mast. The tool's first guess was +8 m forward — out by nine metres,
     // which is the difference between ψ costing 140 mm a degree and 18.
@@ -193,5 +196,51 @@ describe('ircCertificate — building a rig model', () => {
   it('keeps the spreader options around, still marked as estimates', () => {
     const spr = model.scaleRefs.find((s) => s.key === 'spreader2')!
     expect(spr.source).toBe('estimate')
+  })
+})
+
+describe('the forestay angle is not mast rake', () => {
+  // Baraka GP's own certificate: a 13.3 m boat, where the maxi-shaped defaults
+  // were wrong in two ways at once.
+  const BARAKA_RIG = { p: 19.0, e: 5.7, j: 5.0, hlu: 17.06, hlp: 5.21 }
+
+  it('is 16-18° on a 13 m boat and on a 76-footer alike', () => {
+    const small = jibGeometry(BARAKA_RIG)!
+    expect(small.forestayAngleDeg).toBeCloseTo(17.0, 0)
+    const big = jibGeometry(parseIrcCertificate(NORTHSTAR)!.rig)!
+    expect(big.forestayAngleDeg).toBeCloseTo(16.8, 0)
+    // Two boats a quarter the length apart agree to a fifth of a degree —
+    // which is the tell that this is a foretriangle's shape, not a mast's.
+    expect(Math.abs(small.forestayAngleDeg - big.forestayAngleDeg)).toBeLessThan(0.5)
+  })
+
+  it('puts spreader 2 under the masthead on a small rig, so the leech is real', () => {
+    // The old flat 20 m was ABOVE Baraka GP's masthead (P 19.00): t clamped to
+    // 1, the leech point became the head, and the depth came out as exactly
+    // zero — no leech at all, silently, on every boat smaller than a maxi.
+    const g = jibGeometry(BARAKA_RIG)!
+    expect(g.leechDepthMm).not.toBe(0)
+    expect(g.leechDepthMm).toBeLessThan(0)
+    // Still between the clew and the head, where a leech has to be.
+    expect(g.leechDepthMm).toBeGreaterThan(g.clewDepthMm)
+  })
+
+  it('leaves the maxi where it was — 0.64 P is 20.1 m on P 31.44', () => {
+    // Not bit-identical, and it should not be: 0.64 × 31.44 = 20.12 m, 120 mm
+    // higher up the mast than the flat 20. That moves the leech by 4.6 mm on a
+    // number whose own sigma is 300 mm, so the maxi fleet measured before this
+    // change and after it are the same measurements.
+    const big = parseIrcCertificate(NORTHSTAR)!.rig
+    const scaled = jibGeometry(big)!
+    const flat20 = jibGeometry(big, { spreaderHeightM: 20 })!
+    expect(Math.abs(scaled.leechDepthMm - flat20.leechDepthMm)).toBeLessThan(10)
+    expect(Math.abs(scaled.leechDepthMm - flat20.leechDepthMm))
+      .toBeLessThan(scaled.leechDepthSigmaMm / 10)
+  })
+
+  it('still takes a measured spreader height over the guess', () => {
+    const guessed = jibGeometry(BARAKA_RIG)!
+    const known = jibGeometry(BARAKA_RIG, { spreaderHeightM: 9 })!
+    expect(known.leechDepthMm).not.toBeCloseTo(guessed.leechDepthMm, 1)
   })
 })
