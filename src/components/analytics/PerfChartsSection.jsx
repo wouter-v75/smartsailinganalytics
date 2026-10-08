@@ -13,6 +13,7 @@
 import React from 'react'
 import PhaseXYPlot from './PhaseXYPlot'
 import ReportTable from './ReportTable'
+import PctLegend from './PctLegend'
 import ManoeuvreTable from './ManoeuvreTable'
 import LidarTables from './LidarTables'
 import StartSection from './StartSection'
@@ -721,6 +722,8 @@ export default function PerfChartsSection({
         })()
       ) : mode === 'tables' ? (
         <div>
+          {/* Once, above every group — the scale is the same in all of them. */}
+          <PctLegend />
           {[['up', 'Upwind report'], ['down', 'Downwind report'], ['reach', 'Reaching report'], ['loads', 'Loads']].map(([k, title]) => {
             const tables = REPORTS[k].map(spec => buildTable(shown, spec, { hasPolar: !!polar })).filter(t => t.rows.length)
             if (!tables.length) return null

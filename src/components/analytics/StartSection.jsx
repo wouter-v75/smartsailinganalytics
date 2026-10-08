@@ -10,6 +10,7 @@ import React from 'react'
 import { startAnalyses, distLnBand } from '../../lib/startAnalysis'
 import { inRange } from '../../lib/trackSelection'
 import { pctBg } from '../../lib/pctScale'
+import PctLegend from './PctLegend'
 
 const COLS = [
   { key: 'distLn', label: 'DistLn (BL)', d: 1 },
@@ -190,6 +191,9 @@ export default function StartSection({ rows, xmlData, polar = null, tzOffsetMin 
           {copied ? '✓ Copied' : 'Copy for Excel'}
         </button>
       </div>
+      {/* Only two of this table's columns are on the scale, so the key names
+          them rather than the whole family. */}
+      <PctLegend label="BSP_trg% · VMG%" />
       <div style={{ overflow: 'auto', maxHeight: 380, border: '1px solid #1E3A5A', borderRadius: 8 }}>
         <table data-start-table style={{ borderCollapse: 'collapse', width: '100%' }}>
           <thead>
