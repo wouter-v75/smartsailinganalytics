@@ -81,3 +81,39 @@ describe('qrFileName', () => {
     expect(qrFileName('')).toBe('team-ssa-join.png')
   })
 })
+
+describe('the team name is the team you are on', () => {
+  // Asked directly: switching teams must change the message, not leave the
+  // one that happened to be open when the feature was built.
+  const baraka = {
+    teamName: 'Baraka GP',
+    url: 'https://ssa.wvsailing.co.uk/join/zzz999',
+    inviterName: 'Wouter',
+  }
+
+  it('names the team it was given, and only that one', () => {
+    const m = inviteMessage(baraka)
+    expect(m).toContain('join Baraka GP on SSA')
+    expect(m).not.toContain('Northstar')
+    expect(inviteSubject(baraka)).toBe('Join Baraka GP on SSA')
+  })
+
+  it('carries through to the subject, the QR filename and the links', () => {
+    expect(qrFileName(baraka.teamName)).toBe('baraka-gp-ssa-join.png')
+    expect(whatsappHref(inviteMessage(baraka))).toContain('Baraka%20GP')
+    expect(mailtoHref(inviteSubject(baraka), inviteMessage(baraka))).toContain('Baraka%20GP')
+  })
+
+  it('does the same for a personal link', () => {
+    const m = inviteMessage({ ...baraka, personal: true })
+    expect(m).toContain('to Baraka GP on SSA')
+    expect(inviteSubject({ ...baraka, personal: true })).toBe('Your SSA access to Baraka GP')
+  })
+
+  it('does not fall back to anything when the name is empty', () => {
+    // Better a gap somebody notices than another team's name.
+    const m = inviteMessage({ ...baraka, teamName: '' })
+    expect(m).not.toContain('Northstar')
+    expect(qrFileName('')).toBe('team-ssa-join.png')
+  })
+})
