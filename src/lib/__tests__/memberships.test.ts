@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { collapseWorkspaces, strongestRole, workspaceLabel, ROLE_RANK } from '../memberships'
+import {
+  collapseWorkspaces, expandWorkspaces, strongestRole, workspaceLabel, ROLE_RANK,
+} from '../memberships'
 
 const row = (o: Partial<Parameters<typeof collapseWorkspaces>[0][0]> = {}) => ({
   id: 'm1', team_id: 't1', boat_id: 'b1', role: 'tl1',
@@ -95,5 +97,73 @@ describe('workspaceLabel', () => {
   it('falls back to a single role, and to no role at all', () => {
     expect(workspaceLabel({ team_name: 'Dragon', boat_name: null, role: 'coach' })).toBe('Dragon (coach)')
     expect(workspaceLabel({ team_name: 'Dragon', boat_name: null })).toBe('Dragon')
+  })
+})
+
+describe('expandWorkspaces', () => {
+  const TEAM = 'team-northstar'
+  const names: Record<string, string> = {
+    [TEAM]: 'Northstar Racing',
+    'b-n76': 'Northstar 76',
+    'b-bella': 'Bella Mente',
+    'b-jolt': 'Jolt',
+  }
+  const nameOf = (id: string) => names[id] || '(removed)'
+  const boats = [
+    { id: 'b-n76', name: 'Northstar 76', team_id: TEAM },
+    { id: 'b-bella', name: 'Bella Mente', team_id: TEAM, is_competitor: true },
+    { id: 'b-jolt', name: 'Jolt', team_id: TEAM, is_competitor: true },
+  ]
+  const allBoats = [{ id: 'm1', team_id: TEAM, boat_id: null, role: 'team_manager' }]
+
+  it('leaves competitors out of an "all boats" expansion', () => {
+    // 0091 files a rival under the team that photographs it so a coach can
+    // MEASURE it. That is not the same as a workspace: a rival has no session,
+    // no log and no upload, so picking one scoped the app to nothing.
+    const out = expandWorkspaces(allBoats, boats, nameOf, nameOf)
+    expect(out).toHaveLength(1)
+    expect(out[0].boat_name).toBe('Northstar 76')
+    expect(out.map((w) => w.boat_name)).not.toContain('Bella Mente')
+  })
+
+  it('still gives each of our own boats its own workspace', () => {
+    const two = [...boats, { id: 'b-n44', name: 'Northstar 44', team_id: TEAM }]
+    names['b-n44'] = 'Northstar 44'
+    const out = expandWorkspaces(allBoats, two, nameOf, nameOf)
+    expect(out.map((w) => w.boat_name).sort()).toEqual(['Northstar 44', 'Northstar 76'])
+    // The synthetic id is what lets the switcher tell expansions apart.
+    expect(out.every((w) => w.id.startsWith('m1::'))).toBe(true)
+  })
+
+  it('keeps a membership that names a competitor ON PURPOSE', () => {
+    // Somebody chose that; the expansion rule is not the place to overrule it.
+    const out = expandWorkspaces(
+      [{ id: 'm2', team_id: TEAM, boat_id: 'b-bella', role: 'coach' }], boats, nameOf, nameOf
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0].boat_name).toBe('Bella Mente')
+    expect(out[0].id).toBe('m2')
+  })
+
+  it('does not make a team vanish when every boat in it is a rival', () => {
+    // Losing a team from the menu is worse than showing one with no boat.
+    const rivalsOnly = boats.filter((b) => b.is_competitor)
+    const out = expandWorkspaces(allBoats, rivalsOnly, nameOf, nameOf)
+    expect(out).toHaveLength(1)
+    expect(out[0].boat_name).toBeNull()
+    expect(out[0].team_name).toBe('Northstar Racing')
+  })
+
+  it('handles a team with no boats at all', () => {
+    const out = expandWorkspaces(allBoats, [], nameOf, nameOf)
+    expect(out).toHaveLength(1)
+    expect(out[0].boat_id).toBeNull()
+  })
+
+  it('names a boat that has gone rather than dropping the row', () => {
+    const out = expandWorkspaces(
+      [{ id: 'm3', team_id: TEAM, boat_id: 'b-deleted', role: 'tl1' }], boats, nameOf, nameOf
+    )
+    expect(out[0].boat_name).toBe('(removed)')
   })
 })

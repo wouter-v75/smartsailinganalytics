@@ -31,7 +31,7 @@ import {
 import {
   squadStanding, sharedSummary, type SquadStanding,
 } from '../lib/squadShare'
-import { collapseWorkspaces, workspaceLabel } from '../lib/memberships'
+import { collapseWorkspaces, expandWorkspaces, workspaceLabel } from '../lib/memberships'
 
 function toActiveMembership(m: MembershipRow): ActiveMembership {
   return {
@@ -71,8 +71,10 @@ interface MembershipRow {
 // "All boats" memberships: a membership row with boat_id NULL grants access
 // to *every* boat in the team (RLS: has_boat_access treats NULL as a
 // wildcard). The rest of the app is boat-scoped — one boat's data at a time —
-// so here we EXPAND such a membership into one selectable workspace per boat.
-// The user picks a boat and every downstream call has a concrete boat_id.
+// so such a membership EXPANDS into one selectable workspace per boat, in
+// lib/memberships.expandWorkspaces. The user picks a boat and every downstream
+// call has a concrete boat_id. Competitors are left out of that expansion;
+// the reasoning is on the function.
 async function loadMemberships(userId: string): Promise<MembershipRow[]> {
   const supabase = getBrowserSupabase()
 
@@ -90,47 +92,20 @@ async function loadMemberships(userId: string): Promise<MembershipRow[]> {
   // their boat and an "all boats" member sees the whole team's boats.
   const [{ data: teams }, { data: boats }] = await Promise.all([
     supabase.from('teams').select('id, name').in('id', teamIds),
-    supabase.from('boats').select('id, name, team_id').in('team_id', teamIds),
+    // is_competitor decides whether a boat is a WORKSPACE or only a subject to
+    // be measured. Without it the switcher offered a rival's empty workspace.
+    supabase.from('boats').select('id, name, team_id, is_competitor').in('team_id', teamIds),
   ])
 
   const teamMap = new Map((teams || []).map((t) => [t.id, t.name]))
   const boatMap = new Map((boats || []).map((b) => [b.id, b.name]))
-  const boatsByTeam = new Map<string, { id: string; name: string }[]>()
-  for (const b of boats || []) {
-    const arr = boatsByTeam.get(b.team_id) || []
-    arr.push({ id: b.id, name: b.name })
-    boatsByTeam.set(b.team_id, arr)
-  }
 
-  const rows: MembershipRow[] = []
-  for (const m of memberships) {
-    const team_name = teamMap.get(m.team_id) || '(team removed)'
-    if (m.boat_id) {
-      rows.push({
-        ...m,
-        team_name,
-        boat_name: boatMap.get(m.boat_id) || '(boat removed)',
-      })
-    } else {
-      // "All boats" — expand to one workspace per boat. Each expanded row
-      // gets a synthetic id (`<membershipId>::<boatId>`) so the switcher can
-      // tell them apart; that id is only ever read inside this component.
-      const teamBoats = boatsByTeam.get(m.team_id) || []
-      if (teamBoats.length === 0) {
-        rows.push({ ...m, team_name, boat_name: null })
-      } else {
-        for (const b of teamBoats) {
-          rows.push({
-            ...m,
-            id: `${m.id}::${b.id}`,
-            boat_id: b.id,
-            team_name,
-            boat_name: b.name,
-          })
-        }
-      }
-    }
-  }
+  const rows = expandWorkspaces(
+    memberships,
+    boats || [],
+    (id) => teamMap.get(id) || '(team removed)',
+    (id) => boatMap.get(id) || '(boat removed)'
+  ) as MembershipRow[]
 
   // One entry per team+BOAT, not per membership. A person who is both
   // team_manager and coach of a team holds two rows there; without this the

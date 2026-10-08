@@ -96,3 +96,83 @@ export function workspaceLabel(m: { team_name: string; boat_name: string | null;
   const roles = m.roles?.length ? m.roles : (m.role ? [m.role] : [])
   return roles.length ? `${scope} (${roles.join(', ')})` : scope
 }
+
+// ─── Which boats are a WORKSPACE, and which are only subjects ───────────────
+
+export interface BoatForWorkspace {
+  id: string
+  name: string
+  team_id: string
+  /** 0091: a rival, filed under the team that photographs it. */
+  is_competitor?: boolean | null
+}
+
+export interface MembershipForExpand {
+  id: string
+  team_id: string
+  boat_id: string | null
+  role: string
+  valid_from?: string | null
+  valid_to?: string | null
+}
+
+/**
+ * An "all boats" membership (boat_id NULL) → one workspace per boat.
+ *
+ * COMPETITORS ARE LEFT OUT, and that is the whole reason this is a function
+ * rather than a loop in the switcher.
+ *
+ * Migration 0091 files a rival under the team that photographs it, because
+ * "they have to be somewhere a coach can see, and a team is the only scope
+ * there is". That is right for measuring them: /api/boats offers every boat
+ * the caller can see, flagged, and SailTrim reads a rival's rig model off its
+ * public IRC certificate. But the workspace switcher is asking a different
+ * question — whose data am I looking at — and a rival has none. There is no
+ * session, no log, no upload, no debrief; 0091 is explicit that NONE of our
+ * instrument data describes them. Picking "Bella Mente" scoped the whole app
+ * to a boat with nothing in it.
+ *
+ * So six rivals sat in the menu above the one workspace that does anything,
+ * and the switcher could not tell the difference because it never asked for
+ * the flag.
+ *
+ * A membership named a competitor EXPLICITLY (boat_id set) is kept: somebody
+ * chose that, and this is not the place to overrule them. And if a team is
+ * nothing but competitors, the team-level row survives with no boat rather
+ * than the workspace vanishing — losing a team from the menu is worse than
+ * showing one with no boat chosen.
+ */
+export function expandWorkspaces(
+  memberships: readonly MembershipForExpand[],
+  boats: readonly BoatForWorkspace[],
+  teamName: (teamId: string) => string,
+  boatName: (boatId: string) => string
+): WorkspaceRowIn[] {
+  const ours = new Map<string, BoatForWorkspace[]>()
+  for (const b of boats) {
+    if (b.is_competitor) continue
+    const arr = ours.get(b.team_id) || []
+    arr.push(b)
+    ours.set(b.team_id, arr)
+  }
+
+  const out: WorkspaceRowIn[] = []
+  for (const m of memberships) {
+    const team_name = teamName(m.team_id)
+    if (m.boat_id) {
+      out.push({ ...m, team_name, boat_name: boatName(m.boat_id) })
+      continue
+    }
+    const teamBoats = ours.get(m.team_id) || []
+    if (!teamBoats.length) {
+      out.push({ ...m, team_name, boat_name: null })
+      continue
+    }
+    for (const b of teamBoats) {
+      // A synthetic id (`<membershipId>::<boatId>`) so the switcher can tell
+      // the expansions apart; only ever read inside the switcher.
+      out.push({ ...m, id: `${m.id}::${b.id}`, boat_id: b.id, team_name, boat_name: b.name })
+    }
+  }
+  return out
+}
