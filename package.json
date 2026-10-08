@@ -19,6 +19,7 @@
     "log:merge": "vite-node scripts/log-merge.ts",
     "drone:coverage": "vite-node scripts/drone-coverage.ts",
     "clips:check": "vite-node scripts/clip-row-check.ts",
+    "auth:status": "vite-node scripts/auth-status.ts",
     "auth:selftest": "vite-node scripts/auth-selftest.ts",
     "auth:selftest2": "vite-node scripts/road2-selftest.ts",
     "lidar:import": "vite-node scripts/lidar-import.ts",
