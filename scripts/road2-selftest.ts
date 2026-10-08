@@ -87,12 +87,40 @@ function mailWarning(): string | null {
 const GOOD_PW = 'a-long-enough-one'
 interface Reply { status: number; error?: string; ok?: boolean; message?: string }
 
+/**
+ * Is anything actually listening?
+ *
+ * Asked BEFORE a single test row is written, because the alternative is what
+ * happened on 8 October: the first POST threw ECONNREFUSED, the cleanup ran,
+ * and the whole thing ended in a Node stack trace — a page of `internalConnect`
+ * frames whose message is really "start the dev server".
+ */
+async function unreachable(): Promise<string | null> {
+  try {
+    await fetch(`${base}/login`, { redirect: 'manual' })
+    return null
+  } catch (e) {
+    return (e as { cause?: { code?: string } })?.cause?.code === 'ECONNREFUSED'
+      ? `nothing is listening on ${base}.`
+        + `\n    Start it in another terminal:  cd ${process.cwd()} && npm run dev`
+        + '\n    Or test the deployed one:       npm run auth:selftest2 -- --base https://ssa.wvsailing.co.uk'
+      : `could not reach ${base}: ${(e as Error).message}`
+  }
+}
+
 async function post(token: string, body: Record<string, unknown>): Promise<Reply> {
-  const r = await fetch(`${base}/api/join/${token}/request`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  let r: Response
+  try {
+    r = await fetch(`${base}/api/join/${token}/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch (e) {
+    // A server that dies halfway through — a dev server restarting on a file
+    // save is the usual way — must not read as a code defect.
+    fail(`${base} stopped answering (${(e as Error).message}). Is the server still up?`)
+  }
   const j = (await r.json().catch(() => ({}))) as { error?: string; ok?: boolean; message?: string }
   return { status: r.status, ...j }
 }
@@ -144,6 +172,9 @@ const main = async () => {
 
   const warn = mailWarning()
   if (warn) console.log(`${warn}\n`)
+
+  const down = await unreachable()
+  if (down) fail(down)
 
   const { data: teams } = await sb.from('teams').select('id, name').order('name').limit(2)
   const team = (teams || [])[0]
@@ -396,4 +427,6 @@ const main = async () => {
       : `\n✓ Road 2 is sound${full ? '' : ' as far as the refusals go — run --full for the rest'}.\n`)
   process.exit(failures ? 1 : 0)
 }
-main()
+// Anything that got past the guards above still ends in a sentence, not in a
+// promise rejection trace.
+main().catch((e) => fail((e as Error)?.message || String(e)))
