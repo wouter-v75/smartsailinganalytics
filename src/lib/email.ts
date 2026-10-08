@@ -290,6 +290,12 @@ interface ApprovedArgs {
   boat_name?: string | null
   site_url: string
   approver_name?: string | null
+  /**
+   * True when the address already had an SSA account and this approval joins
+   * it to a FURTHER team. They have no new password to be told about, and the
+   * team arrives in the workspace menu of the login they already use.
+   */
+  existing_account?: boolean
 }
 
 /**
@@ -302,6 +308,11 @@ interface ApprovedArgs {
 export async function sendApprovedEmail(args: ApprovedArgs) {
   const where = args.boat_name ? ` on <strong>${escape(args.boat_name)}</strong>` : ''
   const subject = args.team_name ? `You are in: ${args.team_name} on SSA` : 'Your SSA account is approved'
+  // "approved" reads oddly to somebody who has been using SSA for months with
+  // another team; what happened to them is being added.
+  const headline = args.existing_account && args.team_name
+    ? 'You have been added'
+    : 'You have been approved'
   // An admin can approve an account WITHOUT a team — the Users page offers it
   // deliberately, for somebody being set up before their crew is decided. They
   // can sign in and will see nothing, so the mail says that rather than
@@ -312,10 +323,12 @@ export async function sendApprovedEmail(args: ApprovedArgs) {
     : 'your SSA account'
   const html = `
     <div style="font-family:-apple-system,system-ui,sans-serif;max-width:540px;margin:0 auto;padding:24px;color:#1e293b">
-      <h2 style="color:#0f172a;margin:0 0 16px">You have been approved</h2>
+      <h2 style="color:#0f172a;margin:0 0 16px">${headline}</h2>
       <p style="line-height:1.5">
         ${args.approver_name ? `<strong>${escape(args.approver_name)}</strong> has approved` : 'Your team manager has approved'}
-        ${what}.
+        ${what}.${args.existing_account && args.team_name
+          ? ' It is on the SSA account you already have, so you now have both.'
+          : ''}
         ${args.team_name ? '' : 'You can sign in; a team manager will add you to a boat, and until they do there will not be much to see.'}
       </p>
       <p style="margin:24px 0">
@@ -325,8 +338,13 @@ export async function sendApprovedEmail(args: ApprovedArgs) {
         </a>
       </p>
       <p style="font-size:13px;color:#64748b;line-height:1.5">
-        Use the password you chose when you scanned the code. Forgotten it already?
-        &ldquo;Forgot password?&rdquo; on the sign-in page will sort you out.
+        ${args.existing_account
+          ? 'Sign in exactly as you always do &mdash; your password has not changed. '
+            + (args.team_name
+                ? 'The new team appears in the menu behind your name, alongside the ones you already had.'
+                : '')
+          : 'Use the password you chose when you scanned the code. Forgotten it already? '
+            + '&ldquo;Forgot password?&rdquo; on the sign-in page will sort you out.'}
       </p>
       <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
       <p style="font-size:12px;color:#94a3b8">Shared Sailing Analytics</p>

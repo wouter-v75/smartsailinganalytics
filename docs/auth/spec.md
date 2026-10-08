@@ -52,6 +52,19 @@ The address is not verified, and does not need to be: nothing is granted until a
 approves, and the approval email goes to that address, so a typo surfaces as "I never got it" rather than as
 access.
 
+**An address that already has an SSA account takes the same form.** A user may hold several memberships, so a
+coach in one team scanning another team's code is an ordinary request, not a mistake. They type the password
+they already use; the route checks it, files the request against the account they have, and signs them in. The
+only things it refuses are a password that is not theirs (401, with a link to the sign-in page that comes back
+here), a team they are in already (409), and an account somebody switched off (403). It never writes a password
+for an account it did not just create — that, not "one account per person", was what the old refusal was
+protecting, and the refusal itself was a loop: it told them to sign in and open the link again, which no page
+in SSA has ever helped anybody do.
+
+Their request shows in the team's pending queue like any other, badged *already on SSA*, and approving it adds
+the membership and nothing else: `status`, `approved_at` and `approved_by` belong to whoever admitted them the
+first time. The approval email says they have been **added**, and that their password has not changed.
+
 ### Errors have an audience
 
 Every step is recorded through `lib/authEvents.ts` with a severity and a human sentence, because the failure
@@ -60,7 +73,9 @@ The person gets a sentence on the page with the way out; the manager sees it in 
 concerns; the admin gets "Getting in — N things to look at" at the top of the audit log.
 
 `npm run auth:selftest` drives Road 1 against a real invitation row and deletes it again, including the check
-that a GET spends nothing.
+that a GET spends nothing. `npm run auth:selftest2` does Road 2: the refusals by default, and with `--full`
+the happy path plus the second-team case — an account that already exists, a wrong password refused, its own
+password accepted, and (with the anon key present) proof that the password still works afterwards.
 
 ## Roles
 
@@ -84,6 +99,10 @@ Permission matrix lives in `docs/auth/permissions.md`.
 - A user can have **many memberships**: e.g. (Team A, Boat 1, tl2), (Team A, Boat 2, tl2), (Team B, Boat 5, coach).
 - Membership row carries the role and (for consultants) `valid_from / valid_to`.
 - A user **picks an active membership** in the app. UI scoped to that team/boat.
+- **One login, however many teams.** Joining a second team is a second membership on the same account, through
+  either road; it never means a second account, and it does not touch the password or the status of the first.
+  The only single-slot part is the *request*: `users.requested_team_id / _role / _boat_id` hold one outstanding
+  request at a time, so asking to join team C while team B has not answered replaces the earlier ask.
 
 ## Quotas
 

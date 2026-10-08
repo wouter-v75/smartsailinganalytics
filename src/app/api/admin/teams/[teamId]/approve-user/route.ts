@@ -6,6 +6,14 @@
 // Pulls the user's requested_role / requested_boat_id (set on redeem),
 // flips status='active', creates the membership, clears the requested_*
 // hints. Refuses if the user isn't actually requesting this team.
+//
+// TWO KINDS OF APPLICANT, one button. A brand-new account is `pending` and
+// this is what makes it real. An account that is already `active` in ANOTHER
+// team is joining a second one — the schema has always allowed several
+// memberships per user — and for them the only write that matters is the
+// membership: their status, approved_at and approved_by belong to whoever
+// admitted them the first time and are left exactly as they are. Refusing
+// anything that was not `pending` is what blocked the second team.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getServiceSupabase } from '../../../../../../lib/supabase/server'
@@ -39,9 +47,21 @@ export async function POST(
   if (!target) {
     return NextResponse.json({ error: 'user not found' }, { status: 404 })
   }
-  if (target.status !== 'pending') {
-    return NextResponse.json({ error: 'user is not pending' }, { status: 400 })
+  // 'disabled' (or anything else unexpected) is not admitted: an account that
+  // was switched off is switched back on by whoever did it, not joined to a new
+  // team around the side.
+  if (target.status !== 'pending' && target.status !== 'active') {
+    return NextResponse.json(
+      {
+        error:
+          target.status === 'disabled'
+            ? 'That account has been switched off. Switch it back on before joining it to this team.'
+            : `That account cannot be approved from here (status: ${target.status}).`,
+      },
+      { status: 400 }
+    )
   }
+  const existingAccount = target.status === 'active'
   if (target.requested_team_id !== params.teamId) {
     return NextResponse.json(
       { error: 'user did not request this team' },
@@ -64,13 +84,20 @@ export async function POST(
     return NextResponse.json({ error: memErr.message }, { status: 500 })
   }
 
-  // Step 2 — flip user to active, clear hints.
+  // Step 2 — clear the hints, and for a new account flip it to active. An
+  // account that was already active keeps its original approved_at /
+  // approved_by: that is the record of who let them into SSA, and a second
+  // team does not rewrite it.
   const { error: usrErr } = await service
     .from('users')
     .update({
-      status: 'active',
-      approved_at: new Date().toISOString(),
-      approved_by: guard.userId,
+      ...(existingAccount
+        ? {}
+        : {
+            status: 'active',
+            approved_at: new Date().toISOString(),
+            approved_by: guard.userId,
+          }),
       requested_team_id: null,
       requested_role: null,
       requested_boat_id: null,
@@ -101,6 +128,9 @@ export async function POST(
       boat_name: (boat?.name as string) || null,
       site_url: siteUrl,
       approver_name: (approver?.name as string) || null,
+      // Changes the last line of the mail: somebody joining a second team has
+      // no "password you chose when you scanned the code" to be told about.
+      existing_account: existingAccount,
     })
     emailed = sent.ok ? { ok: true } : { ok: false, error: sent.error, notConfigured: sent.notConfigured }
   } else {
@@ -116,6 +146,7 @@ export async function POST(
       team_id: params.teamId,
       role,
       boat_id: boatId,
+      existing_account: existingAccount,
       error: emailed.ok ? null : emailed.error,
       not_configured: emailed.notConfigured || false,
     },
@@ -127,6 +158,7 @@ export async function POST(
   // warning so the manager can tell them another way.
   return NextResponse.json({
     ok: true,
+    existing_account: existingAccount,
     email_sent: emailed.ok,
     email_error: emailed.error ?? null,
     email_not_configured: emailed.notConfigured || false,

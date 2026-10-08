@@ -1,8 +1,13 @@
 'use client'
 
-// Pending users who redeemed an open-link invite for this team. Two
-// actions per row: Approve (one-click; uses the requested role/boat) or
-// Decline (clears the request; user stays pending globally).
+// People who redeemed an open-link invite for this team. Two actions per row:
+// Approve (one-click; uses the requested role/boat) or Decline (clears the
+// request; the account itself is untouched).
+//
+// A row is one of two things, and the badge says which. A NEW account exists
+// only as this request. An EXISTING one is already in another team and is
+// asking for a second membership — approving adds the team and leaves
+// everything else about them alone.
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -11,6 +16,7 @@ interface PendingUser {
   id: string
   email: string
   name: string
+  status?: string | null
   created_at: string
   requested_role: string | null
   requested_boat_id: string | null
@@ -58,6 +64,9 @@ export default function PendingRequestsPanel({
       // server hiccuped would be the worse answer — but they are waiting for an
       // email that says so, and only you can tell them it did not come.
       if (j.email_sent === false) {
+        const theirPassword = j.existing_account
+          ? 'they sign in with the password they already use for SSA'
+          : 'they sign in with the password they chose when they scanned the code'
         // Two different problems, two different things to do. A missing key is
         // not about this person — NOTHING will send until it is set, so
         // "tell them another way" would be advice for the wrong problem,
@@ -67,9 +76,9 @@ export default function PendingRequestsPanel({
             ? `Approved — but this environment cannot send email at all: RESEND_API_KEY and RESEND_FROM ` +
               `are not set, so no invite, approval or password reset will reach anybody from here. ` +
               `On a dev server that is usually expected; in production it needs fixing before anybody ` +
-              `is invited. They can still sign in with the password they chose.`
+              `is invited. They can still sign in — ${theirPassword}.`
             : `Approved — but the email telling them did not send: ${j.email_error || 'unknown error'}. ` +
-              `Let them know another way; they sign in with the password they chose when they scanned the code.`
+              `Let them know another way; ${theirPassword}.`
         )
       }
       router.refresh()
@@ -81,7 +90,7 @@ export default function PendingRequestsPanel({
   async function decline(userId: string) {
     if (
       !confirm(
-        'Decline this request? They stay registered but no longer appear in this team\'s queue.'
+        'Decline this request? Their account is not touched — it just leaves this team\'s queue.'
       )
     ) {
       return
@@ -133,6 +142,11 @@ export default function PendingRequestsPanel({
                   <span className="ml-2 text-xs text-slate-500">
                     {u.requested_role || 'tl1'}
                   </span>
+                  {u.status === 'active' && (
+                    <span className="ml-2 rounded bg-sky-100 px-1.5 py-0.5 text-[11px] font-medium text-sky-800 align-middle">
+                      already on SSA
+                    </span>
+                  )}
                 </div>
                 <div className="text-sm text-slate-500 truncate">
                   {u.email}
@@ -140,6 +154,8 @@ export default function PendingRequestsPanel({
                 <div className="text-xs text-slate-400 mt-0.5">
                   Joining as {u.requested_role || 'tl1'} ·{' '}
                   {boatName(u.requested_boat_id)}
+                  {u.status === 'active' &&
+                    ' · in another team already, so this adds a second membership'}
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">

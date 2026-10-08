@@ -145,11 +145,20 @@ const main = async () => {
   const warn = mailWarning()
   if (warn) console.log(`${warn}\n`)
 
-  const { data: team } = await sb.from('teams').select('id, name').limit(1).maybeSingle()
+  const { data: teams } = await sb.from('teams').select('id, name').order('name').limit(2)
+  const team = (teams || [])[0]
   if (!team) fail('no teams in the database to attach a test join code to')
+  // A SECOND team, for the multi-team case. With only one team in the database
+  // the same team stands in: the account still has no membership in it, which
+  // is the condition the route actually turns on, so the check still means
+  // something — it just stops being a story about two boats.
+  const otherTeam = (teams || [])[1] || team
 
   const made: string[] = []
   const users: string[] = []
+  // Accounts this script makes for a single check and always removes, --keep or
+  // not: --keep is for the one pending account a human has to press Approve on.
+  const tempUsers: string[] = []
   let keptEmail = ''
   try {
     // ── the refusals ────────────────────────────────────────────────────────
@@ -195,14 +204,24 @@ const main = async () => {
     const bogus = await post('ssa-selftest2-no-such-code', { ...ok, email: freshEmail() })
     check('an unknown code does not leak that it is unknown', bogus.status === 410 && /Ask your team manager/.test(bogus.error || ''))
 
-    // An address that already has an account must not be touched — holding the
-    // QR code must never be a way to reset somebody's password.
+    // An address that already has an account IS allowed to join another team —
+    // that is the point of the second block below — but only with its own
+    // password. Holding the QR code must never be a way into, or a way to
+    // reset, somebody else's account. Whichever way the route says no (401 for
+    // a password that is not theirs, 409 for a team they are in already), what
+    // must never happen is a 200.
     const { data: someone } = await sb.from('users').select('email').not('email', 'is', null).limit(1).maybeSingle()
     if (someone?.email) {
       const dup = await post(live.token, { ...ok, email: someone.email as string })
-      check('an existing address is refused, not reset', dup.status === 409 && /already has an SSA account/.test(dup.error || ''))
+      check(
+        'somebody else\'s address, with a password that is not theirs, gets nowhere',
+        dup.status !== 200 && (dup.status === 401 || dup.status === 409 || dup.status === 403),
+        `${dup.status} ${dup.error || ''}`
+      )
+      const { data: stillUnspent } = await sb.from('invitations').select('used_count').eq('id', live.id).single()
+      check('and did not spend a use either', stillUnspent?.used_count === 0, `used_count=${stillUnspent?.used_count}`)
     } else {
-      check('an existing address is refused, not reset', true, '(skipped — no users to try)')
+      check('somebody else\'s address, with a password that is not theirs, gets nowhere', true, '(skipped — no users to try)')
     }
 
     if (!full) {
@@ -245,8 +264,107 @@ const main = async () => {
       .order('ts', { ascending: false }).limit(5)
     const mine = (ev || []).find((e) => (e.details as { to?: string })?.to === email)
     check('the manager and admin can see it happened', !!mine)
+
+    // ── a second team, for an account that already exists ───────────────────
+    //
+    // Wijbren's case, 8 October: a coach in one team scans another team's QR
+    // code. The route used to refuse him with "sign in first, then open this
+    // link again", which was a loop — the sign-in page has never sent anybody
+    // back to a join link. A user may hold several memberships, so this is an
+    // ordinary request; what it must NOT do is make a second account, change
+    // the password of the first, or grant anything before a manager presses
+    // Approve.
+    console.log(`\n  A second team for an account that already exists${otherTeam.id === team.id ? ' (one team in the database, so: a team they are not in)' : ''}:`)
+    const email2 = freshEmail()
+    const madeUser = await sb.auth.admin.createUser({
+      email: email2, password: GOOD_PW, email_confirm: true,
+      user_metadata: { name: 'SSA self-test, already a member', privacy_accepted: true, recording_consent: true },
+    })
+    const id2 = madeUser.data?.user?.id as string | undefined
+    if (madeUser.error || !id2) fail(`could not set up the existing-account case: ${madeUser.error?.message}`)
+    tempUsers.push(id2)
+    // As if a manager had admitted them once already: active, and — when there
+    // are two teams — a membership in the OTHER one.
+    await sb.from('users').update({ status: 'active' }).eq('id', id2)
+    let firstMembership: string | null = null
+    if (otherTeam.id !== team.id) {
+      const { data: m } = await sb.from('memberships')
+        .insert({ user_id: id2, team_id: team.id, boat_id: null, role: 'tl1' })
+        .select('id').maybeSingle()
+      firstMembership = (m?.id as string) || null
+    }
+
+    const code2 = await makeCode(otherTeam.id); made.push(code2.id)
+
+    const wrongPw = await post(code2.token, {
+      ...ok, email: email2, password: 'definitely-not-the-password', confirm: 'definitely-not-the-password',
+    })
+    check('the wrong password for an existing account is refused',
+      wrongPw.status === 401 && /not its password/i.test(wrongPw.error || ''),
+      `${wrongPw.status} ${wrongPw.error || ''}`)
+    const { data: unspent2 } = await sb.from('invitations').select('used_count').eq('id', code2.id).single()
+    check('a wrong password spends no use of the code', unspent2?.used_count === 0, `used_count=${unspent2?.used_count}`)
+
+    const second = await post(code2.token, { ...ok, email: email2 })
+    check('their own password files a second-team request',
+      second.status === 200 && second.ok === true, `${second.status} ${second.error || ''}`)
+    check('and says it is on the account they already have',
+      /already have/i.test(second.message || ''), second.message || '')
+
+    const { data: dupRows } = await sb.from('users').select('id').ilike('email', email2)
+    check('no second account was made', (dupRows || []).length === 1, `${(dupRows || []).length} row(s)`)
+
+    const { data: after2 } = await sb.from('users')
+      .select('id, status, requested_team_id, requested_role').eq('id', id2).maybeSingle()
+    check('they are still ACTIVE — joining a second team does not demote them',
+      after2?.status === 'active', `status=${after2?.status}`)
+    check('the new team is on the request, where the manager\'s queue looks',
+      after2?.requested_team_id === otherTeam.id)
+    check('with the code\'s role', after2?.requested_role === 'tl1', `role=${after2?.requested_role}`)
+
+    const { data: mems2 } = await sb.from('memberships').select('id, team_id').eq('user_id', id2)
+    check('NO membership in the new team until a manager approves',
+      !(mems2 || []).some((m) => m.team_id === otherTeam.id), `${(mems2 || []).length} membership(s)`)
+    if (firstMembership) {
+      check('and the team they were already in is untouched',
+        (mems2 || []).some((m) => m.id === firstMembership))
+    }
+
+    const { data: spent2 } = await sb.from('invitations').select('used_count').eq('id', code2.id).single()
+    check('one use of the code was spent', spent2?.used_count === 1, `used_count=${spent2?.used_count}`)
+
+    // The guard that was always the real point of refusing an existing address:
+    // their password must still be their password. Needs the anon key, because
+    // the service key can sign in as anybody and so proves nothing.
+    if (env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      const anon = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
+        auth: { persistSession: false },
+      })
+      const { error: pwErr } = await anon.auth.signInWithPassword({ email: email2, password: GOOD_PW })
+      check('their password is still their password — the QR code reset nothing',
+        !pwErr, pwErr?.message || '')
+      await anon.auth.signOut()
+    } else {
+      check('their password is still their password — the QR code reset nothing',
+        true, '(skipped — NEXT_PUBLIC_SUPABASE_ANON_KEY not in .env.local)')
+    }
+
+    const { data: ev2 } = await sb.from('events')
+      .select('action, details').eq('action', 'join.requested')
+      .order('ts', { ascending: false }).limit(10)
+    const mine2 = (ev2 || []).find((e) => (e.details as { to?: string })?.to === email2)
+    check('the audit trail says it was an existing account',
+      (mine2?.details as { existing_account?: boolean })?.existing_account === true)
   } finally {
     console.log('')
+    for (const id of tempUsers) {
+      // Memberships first: this one was given one on purpose, and a leftover
+      // membership is somebody in a team nobody put there.
+      await sb.from('memberships').delete().eq('user_id', id)
+      const { error } = await sb.auth.admin.deleteUser(id)
+      console.log(`  ${error ? `✕ EXISTING-ACCOUNT TEST USER ${id} LEFT BEHIND — delete it by hand (${error.message})` : '✓ existing-account test user removed'}`)
+      if (error) failures++
+    }
     for (const id of users) {
       if (keep) {
         // Deliberately left. Say exactly what to do with it, because an account

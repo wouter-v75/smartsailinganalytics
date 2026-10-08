@@ -94,13 +94,23 @@ export default async function TeamDetailPage({
         .order('name', { ascending: true }),
     ])
 
-  // Pending users requesting THIS team via an open invite.
+  // People requesting THIS team via an open invite.
+  //
+  // NOT filtered to status='pending' any more, and that is the whole fix for
+  // "I already have an account with another team". A user may be in several
+  // teams at once, so somebody already ACTIVE in Warp who scans Baraka GP's
+  // code is a perfectly ordinary request — but their status is 'active', so a
+  // status='pending' filter hid them here while the request sat recorded in
+  // the database. The manager saw an empty queue and the person waited for
+  // ever. 'disabled' is the one status left out: an account somebody switched
+  // off is not joined to a new team by a team manager, it is switched back on
+  // first by whoever switched it off.
   const { data: pendingForTeam } = await service
     .from('users')
     .select(
-      'id, email, name, created_at, requested_role, requested_boat_id'
+      'id, email, name, status, created_at, requested_role, requested_boat_id'
     )
-    .eq('status', 'pending')
+    .in('status', ['pending', 'active'])
     .eq('requested_team_id', params.teamId)
     .order('created_at', { ascending: false })
 
