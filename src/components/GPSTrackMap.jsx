@@ -16,6 +16,16 @@ import { hmLocal } from './ssa/format';
 // itself: it is a way of looking, not a property of the day.
 const TRACK_COLOUR_KEY = 'ssa:trackColour';
 
+// Whether the grey phase bands are drawn. Remembered the same way and for the
+// same reason as the colour mode — a way of looking, not a property of the day.
+//
+// DEFAULT OFF. The bands are 11 px of grey at 0.22 over the track, which is
+// enough to wash out the performance colour underneath; and the colour is the
+// finding, while the bands are only the sample it was taken from. So the map
+// opens showing the finding, and the sample is one press away when the question
+// is "which water did these numbers come from".
+const TRACK_PHASES_KEY = 'ssa:trackPhases';
+
 // 16px on the control itself would be right for a phone (smaller text makes iOS
 // zoom the page on focus), but this sits in a dense analytics header; the map
 // below is the thing being read, so the control stays quiet.
@@ -48,6 +58,10 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     try{ return toMode(localStorage.getItem(TRACK_COLOUR_KEY)); }catch{ return 'auto'; }
   });
   React.useEffect(()=>{ try{ localStorage.setItem(TRACK_COLOUR_KEY, colourMode); }catch{} },[colourMode]);
+  const [showPhases,setShowPhases] = React.useState(()=>{
+    try{ return localStorage.getItem(TRACK_PHASES_KEY)==='1'; }catch{ return false; }
+  });
+  React.useEffect(()=>{ try{ localStorage.setItem(TRACK_PHASES_KEY, showPhases?'1':'0'); }catch{} },[showPhases]);
   // Which race, or the whole day. A day zoomed to fit is a scribble and the two
   // beats worth comparing are on top of each other; one race is a course. Same
   // helper the tagger's track filter uses, so the two screens cut the day at the
@@ -310,7 +324,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
       // white. They answered "was this filmed", which is a question the tagger's
       // own track now answers in the video deck's own colour — and in white,
       // over a coloured performance track, they mostly just washed it out.
-      for(const ph of (xmlData?.phases||[])){
+      for(const ph of (showPhases?(xmlData?.phases||[]):[])){
         const phRows=filteredRows.filter(r=>r.utc>=ph.utc&&r.utc<=ph.endUtc);
         if(phRows.length<2) continue;
         const phStep=Math.max(1,Math.floor(phRows.length/200));
@@ -512,7 +526,7 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
     // `tz` is read when labelling markers; winStart reaches this through hlRows,
     // which is memoised on it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, photoMarkerSig, colourMode, colourScale, dayTags, tz, squadSig]);
+  },[filteredRows, hlRows, xmlData, polar, videoMarkerSig, photoMarkerSig, colourMode, colourScale, showPhases, dayTags, tz, squadSig]);
 
   // ── Resize when tab becomes visible ──────────────────────────────────────────
   React.useEffect(()=>{
@@ -807,6 +821,42 @@ export function GPSTrackMap({rows, videoStartUtc, videoDurationSec, xmlData, syn
             </select>
           </label>
         )}
+
+        {/* The bands wash out the performance colour underneath, so this is off
+            until somebody asks "which water did these numbers come from".
+            ALWAYS RENDERED, disabled when the day has no phases — the same
+            lesson as the colour dropdown a few lines down: hiding a control
+            when its input is missing is how it stops being findable at all,
+            and an absence explains nothing where a disabled control names
+            exactly what is missing. */}
+        {(()=>{ const nPhases=(xmlData?.phases||[]).length; return (
+          <button
+            type="button"
+            onClick={()=>setShowPhases(v=>!v)}
+            aria-pressed={showPhases}
+            disabled={!nPhases}
+            title={!nPhases
+              ? 'No steady-state phases in this day’s event file — nothing to shade'
+              : showPhases
+                ? `Hide the grey bands over the ${nPhases} steady-state phases — they wash out the track colour`
+                : `Shade the ${nPhases} steady-state phases the charts below are built from`}
+            style={{
+              background:showPhases?'#0B2136':'#071624',
+              color:showPhases?'#E2E8F0':'#64748B',
+              border:`1px solid ${showPhases?'#94A3B8':'#1E3A5A'}`,
+              borderRadius:5,padding:'3px 8px',fontSize:11,fontWeight:600,
+              minHeight:30,cursor:nPhases?'pointer':'not-allowed',opacity:nPhases?1:0.45,
+              display:'flex',alignItems:'center',gap:5,
+            }}
+          >
+            <span style={{
+              width:9,height:9,borderRadius:2,flex:'0 0 auto',
+              background:showPhases?'#94A3B8':'transparent',
+              border:'1.5px solid #94A3B8',opacity:showPhases?1:0.5,
+            }}/>
+            Highlight phases{!nPhases&&' · none'}
+          </button>
+        ); })()}
 
         {squadTracks.length>0&&(
           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
