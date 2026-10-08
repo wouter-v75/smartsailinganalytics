@@ -26,10 +26,21 @@ yarn-error.log*
 build.log
 *.log
 
-# Local env
-.env
-.env.local
-.env*.local
+# Local env — EVERYTHING but the example.
+#
+# The old list was `.env`, `.env.local`, `.env*.local`, and `.env.local.bak`
+# matched none of them: `.env*.local` needs the name to END in `.local`. So a
+# backup of the real file — fifteen live keys, service role among them — sat
+# untracked-but-not-ignored, one `git add -A` from any of the parallel sessions
+# away from being committed. Deny by default and name the one exception.
+.env*
+!.env.example
+
+# Parsed IRC certificates on their way into boats.rig_model. `irc-rigmodel.ts
+# --out models/` writes them, `rig-model-seed.ts --from` reads them once, and
+# the durable copy is the DATABASE row — so these are a staging post, not a
+# source. None has ever been tracked.
+models/
 
 # Vercel
 .vercel
