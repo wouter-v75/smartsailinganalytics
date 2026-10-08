@@ -11,8 +11,12 @@ function fakeService({ existingUser = null as null | { id: string; status?: stri
     if (createError) return { data: { user: null }, error: { message: createError } }
     return { data: { user: { id: 'new-user-id' } }, error: null }
   })
+  const updateUserById = vi.fn(async (id: string, body: Record<string, unknown>) => {
+    calls.push({ table: 'auth', op: 'updateUserById', payload: body, match: id })
+    return { data: { user: { id } }, error: null }
+  })
   const service = {
-    auth: { admin: { createUser } },
+    auth: { admin: { createUser, updateUserById } },
     from(table: string) {
       return {
         select() {
@@ -37,7 +41,7 @@ function fakeService({ existingUser = null as null | { id: string; status?: stri
       }
     },
   }
-  return { service, calls, createUser }
+  return { service, calls, createUser, updateUserById }
 }
 
 const args = {
@@ -111,5 +115,40 @@ describe('email helpers', () => {
   it('normalises and derives a display name', () => {
     expect(normaliseEmail('  Foo@Bar.COM ')).toBe('foo@bar.com')
     expect(nameFromEmail('Jan.Smit@example.com')).toBe('jan.smit')
+  })
+})
+
+describe('an account that already existed', () => {
+  it('gets its address CONFIRMED, or it can never sign in', async () => {
+    // Gwenael, 1 October: the account came from the old self-signup, whose
+    // confirmation went over Supabase's mailer and was refused for being
+    // outside the project's team. Unconfirmed, signInWithPassword answers
+    // "Email not confirmed" for ever — password set, membership in place,
+    // welcome link working, and still locked out.
+    const { service, updateUserById, createUser } = fakeService({
+      existingUser: { id: 'existing-id', status: 'active' },
+    })
+    const res = await provisionTeamMember(service, args)
+    expect(res).toMatchObject({ ok: true, userId: 'existing-id', created: false })
+    expect(createUser).not.toHaveBeenCalled()
+    expect(updateUserById).toHaveBeenCalledWith('existing-id', { email_confirm: true })
+  })
+
+  it('does not confirm twice when it just created the account', async () => {
+    // The create path already passes email_confirm; a second call would be a
+    // round trip for nothing.
+    const { service, updateUserById } = fakeService()
+    await provisionTeamMember(service, args)
+    expect(updateUserById).not.toHaveBeenCalled()
+  })
+
+  it('stops rather than reporting success it did not achieve', async () => {
+    const { service } = fakeService({ existingUser: { id: 'existing-id' } })
+    service.auth.admin.updateUserById = vi.fn(async () => ({
+      data: { user: null }, error: { message: 'user not found' },
+    })) as never
+    const res = await provisionTeamMember(service, args)
+    expect(res.ok).toBe(false)
+    expect(res.error).toContain('could not confirm the address')
   })
 })

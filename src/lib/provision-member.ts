@@ -98,6 +98,30 @@ export async function provisionTeamMember(
     if (!userId) return { ok: false, error: 'account exists but could not be found' }
   }
 
+  // 2b. AN ACCOUNT THAT ALREADY EXISTED MAY NEVER HAVE BEEN CONFIRMED, and an
+  //     unconfirmed address cannot sign in at all — the password is set, the
+  //     membership is there, and signInWithPassword answers "Email not
+  //     confirmed" for ever.
+  //
+  //     That is not hypothetical. Gwenael's account was made by the old
+  //     self-signup on 1 October, whose confirmation went out over SUPABASE's
+  //     mailer — the one that refuses to deliver to anybody outside the
+  //     project's team. The mail never arrived, so it was never clicked. Every
+  //     invite since has found that account, marked it active, given it a
+  //     membership and a working welcome link, and left it unable to sign in.
+  //
+  //     Confirming it here is the same argument as `email_confirm: true` on the
+  //     create path, and a stronger one: a manager typed this address and the
+  //     invitation went to it, which is better evidence than a link anybody
+  //     holding the inbox could have clicked. Idempotent, so a repeat invite
+  //     costs one no-op call.
+  if (!created) {
+    const conf = await service.auth.admin.updateUserById(userId, { email_confirm: true })
+    if (conf?.error) {
+      return { ok: false, error: `could not confirm the address: ${conf.error.message}` }
+    }
+  }
+
   // 3. Active, approved, with no leftover "requested" hints — nothing for an
   //    admin to approve.
   const upd = await service
