@@ -35,6 +35,10 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
   // debrief ended. It reads as a finished summary — the route repairs the
   // unclosed JSON — so the only thing standing between that and a note saved
   // with its last point missing is saying so here.
+  //
+  // It now fires far more rarely, and means far more when it does: the route
+  // asks the model for the rest up to three times before giving up, so reaching
+  // here means a debrief that is long even by those standards.
   const [cutShort, setCutShort] = useState(false)
   const [glossaryExtra, setGlossaryExtra] = useState(null)
   // null = not yet known. Until it is known the button is allowed to be pressed;
@@ -138,9 +142,9 @@ export default function AudioBrief({ mode, fields, onSaved, canEdit, isMobile, t
 
       {cutShort && (
         <div style={{ color: '#F59E0B', fontSize: 12, marginTop: 8 }}>
-          ⚠ The summary was cut short — the model ran out of room before the end of
-          the debrief. The transcript below is complete; check the last section
-          before saving, and re-run if something is missing.
+          ⚠ The summary is still short — the model ran out of room, and asking it for
+          the rest did not finish the job either. The transcript below is complete;
+          check the last section before saving, and re-run if something is missing.
         </div>
       )}
       {err && <div style={{ color: '#EF4444', fontSize: 12, marginTop: 8 }}>✕ {err}</div>}

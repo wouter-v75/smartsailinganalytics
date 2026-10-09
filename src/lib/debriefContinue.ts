@@ -73,10 +73,14 @@ export function mergeContinuation(
     if (!more) continue
     if (k === cutKey) {
       const head = out[k] || ''
-      const tail = trimOverlap(head, more)
-      // A continuation that was ENTIRELY a repeat leaves nothing to add; say
-      // nothing rather than appending a blank line.
-      out[k] = tail ? `${head}${head.endsWith('\n') || tail.startsWith('\n') ? '' : '\n'}${tail}` : head
+      // NOT trimmed, and no newline inserted. The cut is usually mid-SENTENCE —
+      // "…clothing/gear (e.g., with" — so a line break here would break the
+      // sentence it is meant to repair. The model decides its own paragraphs; a
+      // single space is added only when neither side left one.
+      const tail = trimOverlap(head, cont[k] || '')
+      if (!tail.trim()) continue
+      const joined = /\s$/.test(head) || /^\s/.test(tail) ? '' : ' '
+      out[k] = head ? `${head}${joined}${tail}` : tail
     } else if (!(out[k] || '').trim()) {
       out[k] = more
     }
