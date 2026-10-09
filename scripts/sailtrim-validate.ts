@@ -31,7 +31,12 @@ const flag = (name: string): string | null => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : null
 }
 const width = Number(flag('--width') || 1600)
-const heels = (flag('--heel') || '').split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n))
+// `.filter(Boolean)` BEFORE Number: ''.split(',') is [''], and Number('') is 0,
+// so without --heel this list became [0] and the first frame was quietly
+// compared against a logged heel of zero — printing a disagreement that was
+// nothing but the absence of a number to disagree with.
+const heels = (flag('--heel') || '').split(',').map((s) => s.trim()).filter(Boolean)
+  .map(Number).filter((n) => Number.isFinite(n))
 const inputs = argv.filter((a) => !a.startsWith('--') && !heels.includes(Number(a)) && a !== String(width) && a !== flag('--heel'))
 
 const IMG = /\.(jpe?g|png|tiff?|webp)$/i

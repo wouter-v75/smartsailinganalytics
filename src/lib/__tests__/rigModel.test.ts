@@ -558,3 +558,41 @@ describe('bestBaselineKey — the separation psi is solved from', () => {
     expect(bestBaselineKey(m)).toBeNull()
   })
 })
+
+describe('the tape-reachable scale references', () => {
+  const refs = defaultRigModel('whoever').scaleRefs
+  const ref = (k: string) => refs.find((r) => r.key === k)!
+
+  it('offers a granny bar and a stern rail, beside the wheels', () => {
+    // A certificate has P and J to the centimetre and cannot see any of these;
+    // a tape has all three and says nothing about the rig.
+    expect(ref('grannyBar')).toBeTruthy()
+    expect(ref('sternStanchions')).toBeTruthy()
+  })
+
+  it('starts both at zero length, so neither is chosen before it is measured', () => {
+    for (const k of ['grannyBar', 'sternStanchions']) {
+      expect(ref(k).mm).toBe(0)
+      expect(ref(k).source).toBe('estimate')
+    }
+    expect(bestScaleKey(defaultRigModel('whoever'))).not.toBe('grannyBar')
+  })
+
+  it('marks both ATHWARTSHIPS, which is what gets them unbiased for psi', () => {
+    // An athwartships length images at cos psi, so a scale off one is too big by
+    // sec psi and drags psi along with it. The orientation is what lets
+    // unbiasAthwartshipsScale undo that; without it they would read high.
+    expect(ref('grannyBar').orientation).toBe('athwartships')
+    expect(ref('sternStanchions').orientation).toBe('athwartships')
+  })
+
+  it('leaves their DEPTHS at zero as a placeholder, not as a claim', () => {
+    // Zero is right for nothing here — a granny bar sits abaft the mast and a
+    // stern rail is metres further. 800 mm of unrecorded depth at 40 m is 2% on
+    // every millimetre, which is how the wheels carried -10000 for a year.
+    for (const k of ['grannyBar', 'sternStanchions']) {
+      expect(ref(k).depthMm).toBe(0)
+      expect(ref(k).source).toBe('estimate')      // so missingFrom still asks
+    }
+  })
+})

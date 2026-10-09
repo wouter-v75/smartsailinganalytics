@@ -300,6 +300,26 @@ export function defaultRigModel(boat = ''): RigModel {
       // mast plane. Left uncorrected that biases every measurement on the frame
       // by depth/range — ~4 % at 260 m. `depthMm` must be real for this one.
       { key: 'wheels', label: 'Steering wheels, centre to centre', ...v(0, 0), depthMm: -10000, orientation: 'athwartships' },
+      // Two more a tape can reach, in the same class as the wheels and for the
+      // same reason: athwartships, at waist height, measurable on a rival at the
+      // dock. They start at zero length, which keeps them out of bestScaleKey
+      // until somebody has actually measured one.
+      //
+      // THE GRANNY BAR IS THE BEST OF THESE when its depth is known, because it
+      // is the only tape-reachable reference near the MAST PLANE. The focal
+      // length reaches a measurement solely through the depth correction
+      // (R − d)/R, so at d ≈ 0 a wrong focal length — a stripped EXIF, a zoom
+      // whose setting nobody recorded — costs nothing at all. On Baraka at 40 m:
+      // a focal length 20 % out is 3.26 % on every millimetre off the stern
+      // stanchions and 0.00 % off the granny bar. It is less than half as long,
+      // so two clicks cost ~0.43 % against ~0.19 %; that is a good trade.
+      //
+      // Its depth is NOT safely zero and must not be assumed so. A granny bar
+      // sits a little abaft the mast, and 800 mm of it at 40 m is 2 % on every
+      // measurement — which is the whole advantage thrown away, and the same
+      // mistake as the -10 000 mm the wheels carried for a year.
+      { key: 'grannyBar', label: 'Granny bar, end to end', ...v(0, 0), depthMm: 0, orientation: 'athwartships' },
+      { key: 'sternStanchions', label: 'Stern stanchions, port to starboard', ...v(0, 0), depthMm: 0, orientation: 'athwartships' },
       { key: 'custom', label: 'Something else (type the length)', ...v(0, 0), depthMm: 0 },
     ],
     baselines: [
