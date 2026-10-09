@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { type Glossary } from '../../../../lib/debriefGlossary'
 import { MODES, buildMessages } from '../../../../lib/debriefPrompt'
 import { collapseRepeats } from '../../../../lib/transcriptClean'
+import { extractJson, stoppedCleanly } from '../../../../lib/debriefJson'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 
 // A 75-minute debrief took 45 s on mistral-medium (Maxi Worlds 2026, 10 Sept) — too close
@@ -33,29 +34,6 @@ export async function GET() {
   if (!gate.ok) return gate.response
 
   return NextResponse.json({ configured: !!(KEY && BASE), model: MODEL, modes: Object.keys(MODES) })
-}
-
-function extractJson(text: string): Record<string, unknown> | null {
-  const cleaned = text.replace(/```json|```/g, '').trim()
-  const tryParse = (s: string): Record<string, unknown> | null => {
-    try { return JSON.parse(s) as Record<string, unknown> } catch { return null }
-  }
-  let r = tryParse(cleaned)
-  if (r) return r
-  const a = cleaned.indexOf('{'), b = cleaned.lastIndexOf('}')
-  if (a >= 0 && b > a) { r = tryParse(cleaned.slice(a, b + 1)); if (r) return r }
-  // Repair a truncated object: the model ran out of output tokens mid-string, so the
-  // JSON never closed. From the first '{', close an open string + any unbalanced
-  // braces and parse — salvages the (cut-off) note instead of failing outright.
-  if (a >= 0) {
-    let s = cleaned.slice(a).replace(/\\+$/, '')
-    const quotes = (s.match(/(?<!\\)"/g) || []).length
-    if (quotes % 2 === 1) s += '"'
-    const opens = (s.match(/{/g) || []).length, closes = (s.match(/}/g) || []).length
-    if (opens > closes) s += '}'.repeat(opens - closes)
-    r = tryParse(s); if (r) return r
-  }
-  return null
 }
 
 // Render whatever the model chose (string / array of bullets / nested object)
@@ -136,15 +114,24 @@ export async function POST(req: NextRequest) {
     // it had finished. That is the ONE thing the caller must not have to guess
     // at: a truncated summary reads as a complete one — the repair in
     // extractJson makes sure of it — so it has to say so out loud.
-    let truncated = false
+    let finishReason: string | undefined
     try {
       const body = JSON.parse(raw) as { choices?: { message?: { content?: string }; finish_reason?: string }[] }
       content = body.choices?.[0]?.message?.content || ''
-      truncated = body.choices?.[0]?.finish_reason === 'length'
+      finishReason = body.choices?.[0]?.finish_reason
     } catch { /* */ }
-    if (truncated) log('TRUNCATED — the model hit max_tokens; the summary is incomplete')
     const debug = !!req.nextUrl.searchParams.get('debug')
-    const parsed = extractJson(content)
+    const { data: parsed, repaired } = extractJson(content)
+    // TWO signals, because one was not enough. finish_reason is what the
+    // provider SAYS; `repaired` is what the payload SHOWS — a JSON object that
+    // never closed was cut, whatever the metadata claims. Baraka's Admiral's Cup
+    // debrief stopped mid-sentence with finish_reason reporting something other
+    // than 'length', so the repair rescued it and nobody was told.
+    const truncated = repaired || !stoppedCleanly(finishReason)
+    // ALWAYS logged, not only when truncated: this is the field whose real value
+    // we could not establish from the published docs, so let the logs say.
+    log('finish_reason:', finishReason ?? '(none)', repaired ? '· JSON REPAIRED' : '')
+    if (truncated) log('TRUNCATED — the summary is incomplete')
     if (!parsed) {
       log('parse failed, head:', content.slice(0, 120))
       return NextResponse.json({ error: 'could not parse model JSON', ...(debug ? { _raw: content } : {}), ms: Date.now() - t0 }, { status: 502 })
