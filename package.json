@@ -17,6 +17,7 @@
     "media:upload": "vite-node scripts/day-media-upload.ts",
     "clips:day": "vite-node scripts/day-clips.ts",
     "log:merge": "vite-node scripts/log-merge.ts",
+    "log:profile": "vite-node scripts/log-profile-seed.ts",
     "drone:coverage": "vite-node scripts/drone-coverage.ts",
     "clips:check": "vite-node scripts/clip-row-check.ts",
     "auth:status": "vite-node scripts/auth-status.ts",

@@ -55,6 +55,29 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // Ref mirror — handleVids (deps [vidTz]) needs the log's true-UTC window to
   // decide whether a clip's mvhd clock is UTC or local, without a stale closure.
   const csvParsedRef=useRef(csvParsed); useEffect(()=>{csvParsedRef.current=csvParsed;},[csvParsed]);
+  // ── The ACTIVE BOAT's log profile (channel-label aliases) ─────────────────
+  // Fetched with the boat rather than read from this browser. The panel in Boat
+  // Config saves to one device-wide localStorage key, which meant a boat whose
+  // Expedition labels a channel differently had to be set up on every laptop,
+  // and the setting then applied to every other boat that laptop uploaded. The
+  // stored one wins when it has aliases; otherwise the local one still does,
+  // so nothing that works today stops working.
+  const[boatLogProfile,setBoatLogProfile]=useState(null);
+  useEffect(()=>{
+    const id=campaignCfg?.boatId; if(!id){ setBoatLogProfile(null); return; }
+    let dead=false;
+    (async()=>{
+      try{
+        const r=await fetch('/api/boats'); if(!r.ok) return;
+        const j=await r.json();
+        const me=(j?.boats||[]).find(b=>b.id===id);
+        if(!dead) setBoatLogProfile(me?.logProfile||null);
+      }catch{ /* offline: the local profile below still applies */ }
+    })();
+    return()=>{dead=true;};
+  },[campaignCfg?.boatId]);
+  const logProfileRef=useRef(null);
+  useEffect(()=>{logProfileRef.current=boatLogProfile;},[boatLogProfile]);
   const[xmlParsed,setXmlParsed]=useState(null);
   const[csvFile,setCsvFile]=useState(null);
   // Several logfiles can be chosen at once — a day split across exports, or a
@@ -554,12 +577,15 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         // to share a format, a rate, or even a clock convention.
         const multi=Array.isArray(e.target.result);
         const text=multi?e.target.result[0].text:e.target.result;
-        // Format is auto-detected from the file (raw / flat-OLE / log-v3 / flat-NMEA);
-        // the active boat's stored log profile (channel-label aliases) is applied
-        // on top. raw + flat-OLE are already UTC → the tz offset only affects the
-        // legacy flat-NMEA CSV.
-        let boatProfile=null;
-        try{ boatProfile=JSON.parse(localStorage.getItem('ssa:log-profile:active')||'null'); }catch{}
+        // Format is auto-detected from the file (flat-OLE / log-v3 / flat-local /
+        // flat-NMEA / exp-export / vakaros / gpx); the ACTIVE BOAT's stored log
+        // profile (channel-label aliases) is applied on top, falling back to this
+        // device's saved one. flat-OLE and log-v3 are already UTC → the tz offset
+        // only affects flat-local and the legacy flat-NMEA CSV.
+        let boatProfile=logProfileRef.current;
+        if(!boatProfile||!Object.keys(boatProfile.aliases||{}).length){
+          try{ boatProfile=JSON.parse(localStorage.getItem('ssa:log-profile:active')||'null'); }catch{}
+        }
         let effTz=tz;
         let p=parseLog(text,{boatProfile,tzOffsetMin:effTz});
         const mergeIn=()=>{

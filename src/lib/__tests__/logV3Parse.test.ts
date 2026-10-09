@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import { isLogV3, parseLogV3Header, expandLogV3 } from '../logV3Parse'
 import { detectLogFormat, parseLog } from '../logParse'
 import { isFlatOleLog } from '../flatLogParse'
@@ -51,10 +53,150 @@ describe('header', () => {
     expect(h.labels.length).toBe(h.channels.length)
   })
 
-  it('refuses a mismatched pair rather than mapping onto the wrong fields', () => {
-    const bad = '!Boat,Utc,BSP,AWA\n!boat,0,1\n!log=v3\n0,123,1,4.5\n'
-    expect(parseLogV3Header(bad)).toBeNull()
-    expect(isLogV3(bad)).toBe(false)
+  // ── What a mismatched pair means, and what it does not ──────────────────
+  //
+  // This used to refuse ANY file whose two header lines were different lengths,
+  // on the grounds that the alignment could not be trusted. Baraka GP's export
+  // is exactly that file — 352 labels, 194 numbers, the number line ending in a
+  // dangling comma — and refusing it meant the whole log read as 'unknown'.
+  //
+  // Length was never the real question. Alignment runs from the LEFT, so a
+  // short number line costs the tail and cannot disturb the head. The danger is
+  // a line that lost an entry in the MIDDLE: that stays well-formed, stays
+  // strictly increasing, and shifts every field after the gap onto its
+  // neighbour's values. A length check never caught that one — equal lengths
+  // were waved straight through. Known channel numbers do catch it, and they
+  // are what decides now.
+
+  it('reads the verified prefix when the number line is short, and says what it could not map', () => {
+    const short = '!Boat,Utc,BSP,AWA\n!boat,0,1\n!log=v3\n0,123,1,4.5\n'
+    const h = parseLogV3Header(short)!
+    expect(h).not.toBeNull()
+    expect(h.labels).toEqual(['Utc', 'BSP'])
+    expect(h.channels).toEqual([0, 1])
+    // Not dropped silently: AWA has no number, so a sparse row cannot say which
+    // cell is AWA, and whoever is missing it can be told why.
+    expect(h.unmapped).toEqual(['AWA'])
+    expect(h.allLabels).toEqual(['Utc', 'BSP', 'AWA'])
+  })
+
+  it('REFUSES a map shifted by a missing entry, which is the case that matters', () => {
+    // Channel 1 gone from the middle: BSP now sits against 2, AWA against 3 —
+    // every instrument reading its neighbour's values. Both lines are the same
+    // length, so the old length check passed this through.
+    const shifted = '!Boat,Utc,BSP,AWA,AWS\n!boat,0,2,3,4\n!log=v3\n0,123,2,4.5\n'
+    expect(parseLogV3Header(shifted)).toBeNull()
+    expect(isLogV3(shifted)).toBe(false)
+    expect(parseLog(shifted).format).toBe('unknown')
+  })
+
+  it('refuses a channel list that does not increase — not a channel list at all', () => {
+    expect(parseLogV3Header('!Boat,Utc,BSP,AWA\n!boat,0,2,2\n!log=v3\n0,1\n')).toBeNull()
+  })
+
+  it('needs two known channels before it believes the alignment', () => {
+    // Nothing recognisable to check against: no claim is made on the file.
+    const unknown = '!Boat,Foo,Bar,Baz\n!boat,3,7,9\n!log=v3\n3,1\n'
+    expect(parseLogV3Header(unknown)).toBeNull()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Baraka GP, 2026-10-08. The two header lines verbatim, from the fixture.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Baraka GP', () => {
+  const HEADER = readFileSync(
+    resolve(__dirname, 'fixtures/baraka-gp-header.csv'), 'utf8'
+  ).replace(/\n$/, '')
+  const BARAKA = `${HEADER}\n!v12.9.2\n!log=v3\n`
+
+  it('is recognised, trailing comma and all', () => {
+    expect(isLogV3(BARAKA)).toBe(true)
+    expect(detectLogFormat(BARAKA)).toBe('log-v3')
+  })
+
+  it('pairs its labels onto the channel numbers two other files agree on', () => {
+    const h = parseLogV3Header(BARAKA)!
+    expect(h.labels[0]).toBe('Utc')
+    expect(h.channels[0]).toBe(0)
+    expect(h.labels[h.channels.indexOf(48)]).toBe('Lat')
+    expect(h.labels[h.channels.indexOf(49)]).toBe('Lon')
+    expect(h.labels[h.channels.indexOf(50)]).toBe('COG')
+    expect(h.labels[h.channels.indexOf(51)]).toBe('SOG')
+    // It logs 7 and 8, which the N76 does not — the lists are per-boat, which
+    // is the whole reason they have to be checked rather than assumed.
+    expect(h.labels[h.channels.indexOf(7)]).toBe('RudderFwd')
+  })
+
+  it('reports the 158 channels its truncated number line cannot reach', () => {
+    const h = parseLogV3Header(BARAKA)!
+    expect(h.channels.length).toBe(194)
+    expect(h.allLabels.length).toBe(352)
+    expect(h.unmapped.length).toBe(158)
+    // The ones worth knowing about: targets, start burns, batten positions.
+    expect(h.unmapped).toContain('Targ Bsp')
+    expect(h.unmapped).toContain('StBsToP')
+    expect(h.unmapped).toContain('V0 P')
+    // And the ones that still arrive, which is most of what the app reads.
+    expect(h.labels).toContain('Heel')
+    expect(h.labels).toContain('TWS')
+    expect(h.labels).toContain('RH')
+  })
+
+  it('carries its sparse rows through to real instrument values', () => {
+    const h = parseLogV3Header(BARAKA)!
+    const ch = (name: string) => h.channels[h.labels.indexOf(name)]
+    // 2026-10-08 09:05 UTC, as a Windows FILETIME.
+    const t = (Date.UTC(2026, 9, 8, 9, 5) + 11644473600000) * 10000
+    const row = [
+      `${ch('Utc')},${t}`, `${ch('BSP')},9.42`, `${ch('TWS')},14.80`,
+      `${ch('TWA')},-42.10`, `${ch('Heel')},22.40`, `${ch('Lat')},43.169903`,
+      `${ch('Lon')},5.643753`, `${ch('RH')},61.0`,
+    ].join(',')
+    const r = parseLog(`${BARAKA}${row}\n`)
+    expect(r.format).toBe('log-v3')
+    expect(r.rows.length).toBe(1)
+    expect(r.rows[0].bsp).toBeCloseTo(9.42, 2)
+    expect(r.rows[0].tws).toBeCloseTo(14.8, 2)
+    expect(r.rows[0].heel).toBeCloseTo(22.4, 2)
+    expect(r.rows[0].lat).toBeCloseTo(43.169903, 5)
+    expect(r.rows[0].rh).toBeCloseTo(61, 1)
+    expect(new Date(r.rows[0].utc).toISOString().slice(0, 16)).toBe('2026-10-08T09:05')
+  })
+
+  it('reads a DENSE row too — one value per label, map or no map', () => {
+    // If the export writes a value per column instead of channel/value pairs,
+    // the channel numbers stop mattering: the labels are the column order, so
+    // all 352 are readable, truncated number line and all.
+    const h = parseLogV3Header(BARAKA)!
+    const t = (Date.UTC(2026, 9, 8, 9, 5) + 11644473600000) * 10000
+    const cells = h.allLabels.map((l) =>
+      l === 'Utc' ? String(t)
+      : l === 'BSP' ? '9.42'
+      : l === 'TWS' ? '14.80'
+      : l === 'Targ Bsp' ? '9.80'          // beyond the number line; dense reaches it
+      : l === 'Lat' ? '43.169903'
+      : l === 'Lon' ? '5.643753'
+      : '0'
+    )
+    const r = parseLog(`${BARAKA}${cells.join(',')}\n`)
+    expect(r.rows.length).toBe(1)
+    expect(r.rows[0].bsp).toBeCloseTo(9.42, 2)
+    expect(r.rows[0].tws).toBeCloseTo(14.8, 2)
+    expect(r.rows[0].vsTarget).toBeCloseTo(9.8, 2)
+    expect(r.rows[0].lat).toBeCloseTo(43.169903, 5)
+  })
+
+  it('does not read a dense file as pairs, or a sparse one as dense', () => {
+    const h = parseLogV3Header(BARAKA)!
+    const t = (Date.UTC(2026, 9, 8, 9, 5) + 11644473600000) * 10000
+    // A decimal in an even cell is what gives a dense row away: 9.42 is not a
+    // channel number, so the pairs reading cannot survive it.
+    const dense = h.allLabels.map((l) => (l === 'Utc' ? String(t) : l === 'BSP' ? '9.42' : '0'))
+    const out = expandLogV3(`${BARAKA}${dense.join(',')}\n`).split('\n')
+    expect(out[0].split(',').length).toBe(352)
+    const sparse = expandLogV3(`${BARAKA}0,${t},1,9.42\n`).split('\n')
+    expect(sparse[0].split(',').length).toBe(194)
   })
 })
 
