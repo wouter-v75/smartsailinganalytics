@@ -1,6 +1,6 @@
 -- 0099_love_this_setup_tag.sql
 -- ---------------------------------------------------------------------------
--- "Love this setup 👌🏼" — one press that marks something GOOD.
+-- "I love this setup 👌🏼" — one press that marks something GOOD.
 --
 -- The button bar was eight buttons and every one of them recorded a problem: a
 -- note, a technical, something to come back to. So a day came out tagged only
@@ -32,7 +32,7 @@ INSERT INTO public.ssa_tag_defs
      min_role, kind, lead_sec, lag_sec, label_groups, on_button_bar, builtin, sort)
 SELECT DISTINCT
     d.team_id, d.boat_id, 'general', NULL::text, NULL::uuid,
-    'love-setup', 'Love this setup 👌🏼', '#A3E635',
+    'love-setup', 'I love this setup 👌🏼', '#A3E635',
     'tl1', 'point', 30, 30,
     '[{"group":"What","options":["whole boat","main","jib","kite","rig","mode"]}]'::jsonb,
     TRUE, TRUE, 91
@@ -46,3 +46,15 @@ SELECT DISTINCT
           AND g.boat_id IS NOT DISTINCT FROM d.boat_id
           AND g.scope = 'general'
    );
+
+-- The label, for anyone who ran an earlier copy of this file. The INSERT above
+-- is NOT EXISTS-guarded, so on a second run it adds nothing and would leave the
+-- first wording in place for ever. Only `builtin` rows and only the label —
+-- which is the same rule the seed route follows for a base-vocabulary change,
+-- so a team that has renamed the tag themselves keeps their name.
+UPDATE public.ssa_tag_defs
+   SET label = 'I love this setup 👌🏼'
+ WHERE slug = 'love-setup'
+   AND builtin
+   AND scope = 'general'
+   AND label <> 'I love this setup 👌🏼';

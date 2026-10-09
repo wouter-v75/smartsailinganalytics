@@ -292,7 +292,7 @@ const DAY: BaseTag[] = [
   //
   // Lime because nothing else in the tagger is, so it is findable without
   // reading — and because it is the only button here that is good news.
-  mk('love-setup', 'Love this setup 👌🏼', '#A3E635', {
+  mk('love-setup', 'I love this setup 👌🏼', '#A3E635', {
     sort: 91, onButtonBar: true, leadSec: 30, lagSec: 30,
     labelGroups: [{
       group: 'What',
@@ -337,8 +337,8 @@ const SECTIONS: BaseTag[] = CREW_SECTIONS.flatMap((s, si) =>
 //                   a training day there is no event file to detect it from
 //   Rig             two turns on the caps at 11:40, which the log cannot see
 //   Line-up         the start and end of a two-boat test run
-//   Love this setup this is right, remember it — the only GOOD news on the bar,
-//                   and the one press that makes a fast setup findable again
+//   I love this     this is right, remember it — the only GOOD news on the bar,
+//   setup           and the one press that makes a fast setup findable again
 //
 // Plus ONE group button, "Racing", standing for start / top mark / gate / mark
 // / finish — see barGroups.ts. Those are the detector's job on a race day, so

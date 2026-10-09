@@ -21,7 +21,7 @@ describe('base vocabulary', () => {
     // detected from the event file on any day that has one — most crews will
     // never press them.
     //
-    // 33 → 34 for "Love this setup". Nothing was traded away for it, which is
+    // 33 → 34 for "I love this setup". Nothing was traded away for it, which is
     // the expensive kind of change, so the reason has to be worth it: every
     // other one-press path on the bar records a problem, and a vocabulary that
     // can only say what went wrong produces a season with no record of what the
@@ -35,7 +35,7 @@ describe('base vocabulary', () => {
     // Rare codes depress coding consistency even when coders agree on nearly
     // every actual occurrence, so the bar is curated, not the whole list. (§25)
     //
-    // 8 → 9 for "Love this setup", and this ceiling is the one that matters
+    // 8 → 9 for "I love this setup", and this ceiling is the one that matters
     // most: the bar is twelve square centimetres of thumb reach, and at ten
     // tags plus the Racing group it runs to two rows of five. A third row would
     // take a third of the screen off the thing being tagged, so the next
