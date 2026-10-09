@@ -273,6 +273,32 @@ const DAY: BaseTag[] = [
     sort: 90, onButtonBar: true, leadSec: 20, lagSec: 20,
     labelGroups: [{ group: 'For', options: ['debrief', 'coach', 'design', 'me'] }],
   }),
+  // "This is right — remember it." The one press on the bar that marks
+  // something GOOD.
+  //
+  // Everything else a crew can reach with one thumb is a problem: a note, a
+  // technical, a review, something to come back to. A day tagged only where it
+  // went wrong gives a debrief with no reference point and a season with no
+  // record of what the boat felt like when it was fast — and the setup that
+  // produced it is the thing nobody can reconstruct afterwards. The numbers are
+  // all there in the log at that second (rig loads, trim, targets, the whole
+  // state), so what is missing is never the data; it is somebody saying THIS
+  // one. That is a press, and it has to be as cheap as the complaint.
+  //
+  // 30 s either side rather than review's 20: a setup is a state, not an event,
+  // so the window is there to average the instruments over — a minute of log is
+  // what the SailScan window wants. No askOnAdd, deliberately: a reflex button
+  // that opens a question is a reflex button people stop pressing.
+  //
+  // Lime because nothing else in the tagger is, so it is findable without
+  // reading — and because it is the only button here that is good news.
+  mk('love-setup', 'Love this setup 👌🏼', '#A3E635', {
+    sort: 91, onButtonBar: true, leadSec: 30, lagSec: 30,
+    labelGroups: [{
+      group: 'What',
+      options: ['whole boat', 'main', 'jib', 'kite', 'rig', 'mode'],
+    }],
+  }),
 ]
 
 // ── Section starters: one short list per crew section ────────────────────────
@@ -300,7 +326,7 @@ const SECTIONS: BaseTag[] = CREW_SECTIONS.flatMap((s, si) =>
 )
 
 // ── What earns a place on the button bar ────────────────────────────────────
-// Eight buttons, and every one of them marks something no algorithm can infer:
+// Nine buttons, and every one of them marks something no algorithm can infer:
 //
 //   Personal note   how it felt, privately
 //   Team comment    how it felt, to the crew  (TL2+)
@@ -311,6 +337,8 @@ const SECTIONS: BaseTag[] = CREW_SECTIONS.flatMap((s, si) =>
 //                   a training day there is no event file to detect it from
 //   Rig             two turns on the caps at 11:40, which the log cannot see
 //   Line-up         the start and end of a two-boat test run
+//   Love this setup this is right, remember it — the only GOOD news on the bar,
+//                   and the one press that makes a fast setup findable again
 //
 // Plus ONE group button, "Racing", standing for start / top mark / gate / mark
 // / finish — see barGroups.ts. Those are the detector's job on a race day, so

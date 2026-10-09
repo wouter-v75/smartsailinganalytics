@@ -107,9 +107,11 @@ export default function TagButtonBar({
           className="grid gap-1.5 px-2 pt-2"
           // Five across on a phone, more as the screen allows — without a media
           // query, so it also does the right thing in a narrow desktop panel.
-          // Five rather than four because the bar is nine buttons now: at four
-          // it ran to three rows and took a third of the screen off the view
-          // above it, which on the track view is the thing being tagged.
+          // Five rather than four because the bar is ten buttons now (nine tags
+          // and the Racing group): at four it ran to three rows and took a third
+          // of the screen off the view above it, which on the track view is the
+          // thing being tagged. Ten is two clean rows of five; an eleventh
+          // starts a third row, so the next button has to displace one.
           style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(68px, 1fr))' }}
         >
           {items.map((item) =>

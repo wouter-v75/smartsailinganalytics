@@ -20,16 +20,58 @@ describe('base vocabulary', () => {
     // moving it is a decision rather than a reflex. These two earn it by being
     // detected from the event file on any day that has one — most crews will
     // never press them.
+    //
+    // 33 → 34 for "Love this setup". Nothing was traded away for it, which is
+    // the expensive kind of change, so the reason has to be worth it: every
+    // other one-press path on the bar records a problem, and a vocabulary that
+    // can only say what went wrong produces a season with no record of what the
+    // boat felt like when it was fast. It is also a tag no detector can ever
+    // supply — there is no signal in a GPS trace for "this is right".
     expect(BASE_GENERAL_TAGS.length).toBeGreaterThanOrEqual(20)
-    expect(BASE_GENERAL_TAGS.length).toBeLessThanOrEqual(33)
+    expect(BASE_GENERAL_TAGS.length).toBeLessThanOrEqual(34)
   })
 
-  it('keeps the button bar to roughly eight', () => {
+  it('keeps the button bar to roughly nine', () => {
     // Rare codes depress coding consistency even when coders agree on nearly
     // every actual occurrence, so the bar is curated, not the whole list. (§25)
+    //
+    // 8 → 9 for "Love this setup", and this ceiling is the one that matters
+    // most: the bar is twelve square centimetres of thumb reach, and at ten
+    // tags plus the Racing group it runs to two rows of five. A third row would
+    // take a third of the screen off the thing being tagged, so the next
+    // addition has to displace something rather than join it.
     const bar = BASE_TAGS.filter((t) => t.onButtonBar)
-    expect(bar.length).toBeLessThanOrEqual(8)
+    expect(bar.length).toBeLessThanOrEqual(9)
     expect(bar.length).toBeGreaterThanOrEqual(6)
+  })
+
+  it('gives the crew somewhere to say it was GOOD', () => {
+    // The bar was eight buttons and every one of them recorded a problem — a
+    // note, a technical, something to review. The setup that made the boat fast
+    // is the one thing nobody can reconstruct from the log a week later, not
+    // because the numbers are missing but because nothing says which second to
+    // look at.
+    const love = BASE_TAGS.find((t) => t.slug === 'love-setup')!
+    expect(love).toBeTruthy()
+    expect(love.onButtonBar).toBe(true)
+    expect(love.scope).toBe('general')
+    // Anyone aboard. An opinion about the setup is not a curator's privilege.
+    expect(love.minRole).toBe('tl1')
+    // Shared, not private: the point is that the crew and the coach can find it.
+    expect(love.privateByDefault ?? false).toBe(false)
+    // A state, not an event — a minute of log to average over.
+    expect(love.leadSec).toBe(30)
+    expect(love.lagSec).toBe(30)
+  })
+
+  it('does not make the good-news button ask a question first', () => {
+    // askOnAdd on a reflex button is how a reflex button stops being pressed.
+    const love = BASE_TAGS.find((t) => t.slug === 'love-setup')!
+    for (const g of love.labelGroups) expect(g.askOnAdd ?? false).toBe(false)
+    // It still has a descriptor, for afterwards: "the whole boat" and "the jib"
+    // are different findings.
+    expect(love.labelGroups.length).toBe(1)
+    expect(love.labelGroups[0].options).toContain('whole boat')
   })
 
   it('puts nothing on the bar that the detector already finds', () => {
@@ -272,5 +314,96 @@ describe('askOnAdd — which descriptors are asked up front', () => {
         if (g.group === 'Quality') expect(g.askOnAdd).toBeFalsy()
       }
     }
+  })
+})
+
+describe('a new base tag reaches teams that already seeded', () => {
+  // THE FAILURE THIS GUARDS. The seed route only runs for a boat with an EMPTY
+  // vocabulary (TaggerTab seeds when defs.length === 0), so adding a tag to
+  // baseTags.ts reaches new teams and nobody else: it is in the code, on the
+  // dev page, in these tests, and on no existing crew's button bar. 0093, 0094,
+  // 0096 and 0099 each exist because of that.
+  //
+  // Driven from THIS list rather than by scanning the migrations, because the
+  // migrations also include the tagger's original seed and a rename, whose rows
+  // are history and are allowed to differ from today's code. Adding a base tag
+  // to an app teams are already using means two things: a migration, and a line
+  // here. The list is the bookkeeping that makes forgetting the first one fail.
+  const ADDED_BY_MIGRATION = [
+    'five-minute-gun',
+    'warning-signal',
+    'practice-start',
+    'love-setup',
+  ]
+
+  const migrations = () => {
+    const dir = 'supabase/migrations'
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require('node:fs') as typeof import('node:fs')
+    return fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .map((f) => ({ file: f, sql: fs.readFileSync(`${dir}/${f}`, 'utf8') }))
+      .filter((m) => /INSERT INTO public\.ssa_tag_defs/.test(m.sql))
+  }
+
+  /**
+   * The INSERT BLOCK that defines this slug, not just the file holding it.
+   *
+   * Per block because one migration may define several tags, and a file-wide
+   * match reads the first block's values whichever slug it was asked about —
+   * which is how this test first reported a drift that belonged to its
+   * neighbour.
+   */
+  const insertFor = (slug: string) => {
+    for (const { file, sql } of migrations()) {
+      for (const block of sql.split(/INSERT INTO public\.ssa_tag_defs/).slice(1)) {
+        if (new RegExp(`'${slug}', '`).test(block)) return { file, block }
+      }
+    }
+    return null
+  }
+
+  it('ships a migration for each tag added since teams started using the tagger', () => {
+    for (const slug of ADDED_BY_MIGRATION) {
+      expect(BASE_TAGS.find((t) => t.slug === slug), `${slug} is not in baseTags.ts`).toBeTruthy()
+      expect(insertFor(slug), `no migration inserts ${slug} — existing teams will never see it`)
+        .toBeTruthy()
+    }
+  })
+
+  it('and the migration row still matches the code definition', () => {
+    for (const slug of ADDED_BY_MIGRATION) {
+      const def = BASE_TAGS.find((t) => t.slug === slug)!
+      const { file, block } = insertFor(slug)!
+      expect(block, `${file}: label`).toContain(`'${def.label}'`)
+      expect(block, `${file}: colour`).toContain(`'${def.color}'`)
+      expect(block, `${file}: kind + lead/lag`).toMatch(
+        new RegExp(`'${def.kind}',\\s*${def.leadSec},\\s*${def.lagSec}`)
+      )
+      expect(block, `${file}: on_button_bar + sort`).toMatch(
+        new RegExp(`${def.onButtonBar ? 'TRUE' : 'FALSE'},\\s*TRUE,\\s*${def.sort}`)
+      )
+    }
+  })
+
+  it("names the one migration whose descriptors have drifted from the code", () => {
+    // 0096 gave practice-start Quality ["good","ok","poor"]; the code's QUALITY
+    // is ["textbook","good","scrappy","slow","bad"]. So a team seeded before
+    // 0096 offers three options on that tag and a team seeded today offers
+    // five — the same tag, two vocabularies, which is the thing a shared coding
+    // scheme exists to prevent.
+    //
+    // Recorded rather than fixed: correcting it is a migration of its own and a
+    // decision about a team's existing data, not a side effect of adding a
+    // button. This fails the moment the list is wrong in EITHER direction, so
+    // fixing 0096 means deleting a line here.
+    const drifted: string[] = []
+    for (const slug of ADDED_BY_MIGRATION) {
+      const def = BASE_TAGS.find((t) => t.slug === slug)!
+      const { block } = insertFor(slug)!
+      const groups = block.match(/'(\[.*?\])'::jsonb/s)?.[1]
+      if (groups !== JSON.stringify(def.labelGroups)) drifted.push(slug)
+    }
+    expect(drifted).toEqual(['practice-start'])
   })
 })
