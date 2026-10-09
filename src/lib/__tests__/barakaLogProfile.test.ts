@@ -35,12 +35,38 @@ describe('Baraka GP log profile', () => {
     expect(Object.keys(base).length).toBeGreaterThanOrEqual(44)
   })
 
-  it('adds exactly the three its labels would otherwise lose', () => {
+  it('adds exactly the four its labels would otherwise lose', () => {
     const gained = (Object.keys(withProfile) as LogField[]).filter((f) => base[f] == null)
-    expect(gained.sort()).toEqual(['fstyJibTk', 'toeIn', 'vsTargPct'])
+    expect(gained.sort()).toEqual(['fstyJibTk', 'fstyPin', 'toeIn', 'vsTargPct'])
     expect(LABELS[withProfile.toeIn as number]).toBe('RudderToe')
     expect(LABELS[withProfile.fstyJibTk as number]).toBe('FStay+Tack')
     expect(LABELS[withProfile.vsTargPct as number]).toBe('TargBsp%')
+  })
+
+  it('puts the forestay LOAD under the load and the LENGTH under the rake', () => {
+    // On Baraka, `Forestay` is the pin load and `FStayLen` the length (Wouter,
+    // 9 Oct 2026). SSA's `forestay` is the length/rake reading, so on the
+    // defaults alone it matched the column named `Forestay` and quietly took
+    // the load — a plausible number of the wrong quantity, with `fstyPin`
+    // empty. This is the one alias on Baraka that CORRECTS a mapping rather
+    // than adding one, so it is pinned from both ends.
+    expect(LABELS[base.forestay as number]).toBe('Forestay')   // what it used to do
+    expect(base.fstyPin).toBeUndefined()
+
+    expect(LABELS[withProfile.forestay as number]).toBe('FStayLen')
+    expect(LABELS[withProfile.fstyPin as number]).toBe('Forestay')
+    // Two fields, two different columns — never the same one twice.
+    expect(withProfile.forestay).not.toBe(withProfile.fstyPin)
+  })
+
+  it('maps no deflector channels, because there are no deflector sensors', () => {
+    // `D0 P/S` and `D1 P/S` read like the upper and lower deflector
+    // percentages. Baraka has neither sensor, so a mapping here would put a
+    // number on screen for something nobody measures.
+    expect(LABELS).toContain('D0 P')
+    expect(LABELS).toContain('D1 P')
+    expect(withProfile.upDflctPct).toBeUndefined()
+    expect(withProfile.lwDflctPct).toBeUndefined()
   })
 
   it('every alias it claims is really in that header', () => {
