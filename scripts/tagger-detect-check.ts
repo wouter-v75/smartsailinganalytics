@@ -38,6 +38,8 @@ import { detectFromLog } from '../src/lib/manoeuvres'
 const arg = (n: string) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i + 1] : undefined }
 const BOAT = arg('boat')
 const DATE = arg('date')
+/** A log file on disk, read with the CURRENT parser and no database at all. */
+const FILE = arg('file')
 const fail: (m: string) => never = (m) => { console.error(`✕ ${m}`); process.exit(1) }
 
 const env = Object.fromEntries(
@@ -53,8 +55,79 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 const pct = (n: number, of: number) => (of ? `${Math.round((n / of) * 100)}%` : '—')
 
+/**
+ * The file itself, parsed here and now.
+ *
+ * `--date` reads the STORED rows, which were parsed by whatever version of the
+ * app did the import — so "tmGun on 0 %" there is two different answers: the
+ * column is not in the data, or it is and the import predates the parser
+ * carrying it. A browser tab holds the bundle it loaded, so an import after a
+ * `git pull` can easily have run the old one.
+ *
+ * This mode takes the database out of it. Same parser the app calls, run
+ * against the file on disk.
+ */
+const fromFile = async (path: string): Promise<never> => {
+  const { parseLog } = await import('../src/lib/logParse')
+  const { getBoatLogProfile } = await import('../src/lib/logProfile')
+  const { BOAT_LOG_PROFILES } = await import('../src/lib/boatLogProfiles')
+  const { basename } = await import('path')
+
+  const text = readFileSync(path, 'utf8')
+  const head = text.replace(/\r/g, '').split('\n').slice(0, 2)
+  const profile = BOAT && BOAT_LOG_PROFILES[BOAT] ? BOAT_LOG_PROFILES[BOAT] : getBoatLogProfile(null)
+  const p = parseLog(text, { boatProfile: profile })
+
+  console.log(`\n${basename(path)}`)
+  console.log(`  format: ${p.format}   rows: ${p.rows.length.toLocaleString()}`)
+  if (BOAT) console.log(`  profile: "${BOAT}"${BOAT_LOG_PROFILES[BOAT] ? '' : ' (none transcribed — defaults only)'}`)
+  if (!p.rows.length) {
+    console.log('\n  ✕ ZERO ROWS. The parser did not recognise this file, so nothing downstream can.')
+    console.log(`     first line: ${head[0]?.slice(0, 120) || '(empty)'}`)
+    process.exit(1)
+  }
+
+  // Is the column in the HEADER at all, whatever the rows say? The two are
+  // different failures: a header without it means the boat does not log it; a
+  // header with it and no values means the timer was never running.
+  const cols = head[0].replace(/^!/, '').split(',').map((c) => c.trim())
+  const named = cols.filter((c) => /tm.*gun|time.*gun/i.test(c))
+  console.log(`  header names: ${named.length ? named.join(', ') : 'nothing matching *gun*'}`)
+
+  const rows = p.rows as Array<Record<string, unknown>>
+  const have = (k: string) => rows.filter((r) => typeof r[k] === 'number' && Number.isFinite(r[k] as number)).length
+  for (const k of ['tmGun', 'tmLine', 'twa', 'bsp']) {
+    console.log(`  ${k.padEnd(7)} on ${pct(have(k), rows.length)} of rows`)
+  }
+
+  const vals = rows.map((r) => r.tmGun).filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+  if (vals.length) {
+    console.log(`  tmGun range ${Math.min(...vals).toFixed(1)}…${Math.max(...vals).toFixed(1)} s`)
+    const { gunsFromLog } = await import('../src/lib/tagging/gunFromLog')
+    const guns = gunsFromLog(rows as never)
+    console.log(`\n  guns read: ${guns.length || 'none — the rows do not agree on an instant'}`)
+    for (const g of guns) {
+      console.log(`    race ${g.raceNum}  ${new Date(g.utc).toISOString().slice(11, 19)} UTC   `
+        + `${g.rows} rows over ${g.spanSec}s, spread ${(g.spreadMs / 1000).toFixed(1)}s, confidence ${g.confidence}`)
+    }
+    console.log('\n  So the FILE has it. If the stored day says 0 %, the import ran an older')
+    console.log('  parser: restart the dev server, hard-reload the tab, and re-import.')
+  } else {
+    console.log('\n  ✕ The parser finds NO tmGun value on any row of this file.')
+    console.log(named.length
+      ? '    The column is in the header, so the cells are empty — Expedition writes the\n'
+        + '    countdown only while a start timer is actually running. Nothing can read a\n'
+        + '    gun that was never counted to.'
+      : '    And nothing in the header looks like a countdown, so this boat does not log it.')
+  }
+  console.log('')
+  process.exit(0)
+}
+
 const main = async () => {
-  if (!DATE) fail('--date YYYY-MM-DD is required (and --boat "<name>" when two boats share the day)')
+  if (FILE) await fromFile(FILE)
+  if (!DATE) fail('--date YYYY-MM-DD is required (and --boat "<name>" when two boats share the day), '
+    + 'or --file <logfile> to parse a file on disk with no database at all')
 
   let q = sb.from('sessions')
     .select('id, date, boat_id, tz_offset_minutes, log_data, xml_data, boats(name)')
