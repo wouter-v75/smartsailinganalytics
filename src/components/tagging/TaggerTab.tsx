@@ -5,6 +5,7 @@ import { cn } from '@/lib/ui'
 import { useTagger } from '@/lib/tagging/useTagger'
 import { detectDayFull, type Detection } from '@/lib/tagging/detect'
 import { segmentAt, type DaySegment } from '@/lib/tagging/segments'
+import { pressAt } from '@/lib/tagging/pressAt'
 import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder, GRAB_VIDEO_SLUG, grabMediaKind } from '@/lib/tagging/requests'
 import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
@@ -249,20 +250,33 @@ export default function TaggerTab({
     return { min: rows[0]?.utc ?? null, max: rows[rows.length - 1]?.utc ?? null }
   }, [logRows])
 
-  // What a press means, most specific first: a moment held on the track, then
-  // the video playhead, then the wall clock. Tagging the track and having the
-  // tag land at "now" would make the whole view decorative.
+  // What a press means — see pressAt.ts, which also explains why the wall clock
+  // is clamped to the day's own data window rather than taken at face value.
   const now = React.useCallback(
-    () => {
-      if (pickedUtc != null && Number.isFinite(pickedUtc)) return pickedUtc
-      // The card being reviewed beats the uploaded clip being played: if both
-      // are open, the one you are looking at is the one on the card.
-      if (reviewUtc != null && Number.isFinite(reviewUtc)) return reviewUtc
-      if (playheadUtc != null && Number.isFinite(playheadUtc)) return playheadUtc
-      return Date.now()
-    },
-    [pickedUtc, reviewUtc, playheadUtc]
+    () => pressAt({
+      picked: pickedUtc, review: reviewUtc, playhead: playheadUtc,
+      now: Date.now(), bounds,
+    }).at,
+    [pickedUtc, reviewUtc, playheadUtc, bounds]
   )
+
+  // A day with nothing to place a tag against: no log, no video, no card. A
+  // press still records the moment it was pressed, which is exactly right while
+  // the boat is sailing and meaningless the morning after. Nothing downstream
+  // can tell the two apart — t0 and session_date agree with each other and both
+  // are simply the wrong day — so it is said here, before the press, which is
+  // the only place it can still be acted on.
+  const blindDay = !bounds && playheadUtc == null
+
+  const blindDayBar = blindDay ? (
+    <div className="m-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-200">
+      <strong className="font-semibold">This day has no log and no video.</strong>{' '}
+      A tag pressed now will be recorded at <em>the moment you press it</em>, on{' '}
+      {date}, and nothing will be able to say whether that was the right moment.
+      {' '}If you are tagging a day you have already sailed, pick that day first —
+      then press on the track, where a press means the moment you are pointing at.
+    </div>
+  ) : null
 
   // "Race 2" under the composer's clock, so a corrected time can be seen to
   // have moved out of the race it was meant for.
@@ -360,6 +374,7 @@ export default function TaggerTab({
           </div>
         ) : view === 'tagger' ? (
           <>
+            {blindDayBar}
             {syncBar}
             <UnknownSails
               names={unknownSails}
@@ -397,6 +412,7 @@ export default function TaggerTab({
               Somebody who opens the Tags tab on the track (which is where you
               go to look at a day) saw an empty track and concluded the detector
               had not run. */}
+          {blindDayBar}
           {syncBar}
           <TrackView
             rows={logRows || []}

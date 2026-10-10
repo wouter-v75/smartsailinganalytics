@@ -71,29 +71,69 @@ const main = async () => {
     return
   }
 
-  // Each boat's sessions, for the venue offset its own day was recorded with.
+  // Each boat's sessions, for the venue offset its own day was recorded with —
+  // and for the day's LOG WINDOW, which is the thing that decides whether a tag
+  // can be drawn at all. The track plots a tag by finding the row at its t0; a
+  // tag outside the rows' span has no position, so it is in the list, in the
+  // database, and nowhere on the track. Selecting the two JSON members rather
+  // than log_data, which is up to 4 MB a day.
   const dates = Array.from(new Set(rows.map((r) => r.session_date)))
   const { data: sessions } = await sb.from('sessions')
-    .select('boat_id, date, tz_offset_minutes').in('date', dates)
+    .select('boat_id, date, tz_offset_minutes, log_data->startUtc, log_data->endUtc')
+    .in('date', dates)
+  const sessionOf = (boatId: string, date: string) =>
+    (sessions || []).find((s: any) => s.boat_id === boatId && s.date === date) || null
   const tzOf = (boatId: string, date: string) =>
-    (sessions || []).find((s: any) => s.boat_id === boatId && s.date === date)?.tz_offset_minutes ?? null
+    (sessionOf(boatId, date) as any)?.tz_offset_minutes ?? null
 
   console.log(`\n  ${rows.length} tag(s)${SLUG ? ` of "${SLUG}"` : ''}, newest first\n`)
-  console.log(`  ${pad('filed under', 12)}${pad('t0 (local)', 18)}${pad('slug', 14)}`
-            + `${pad('boat', 14)}${pad('by', 10)}where t0 says it belongs`)
+  console.log(`  ${pad('filed under', 12)}${pad('t0 (local)', 18)}${pad('slug', 12)}`
+            + `${pad('boat', 13)}${pad('by', 8)}verdict`)
 
   let mismatched = 0
+  let offTrack = 0
+  const windows = new Set<string>()
   for (const r of rows) {
-    const tz = tzOf(r.boat_id, r.session_date)
+    const sess = sessionOf(r.boat_id, r.session_date) as any
+    const tz = sess?.tz_offset_minutes ?? null
     const off = (tz ?? 120) * 60_000          // 120 = CEST, the usual venue
     const t0 = new Date(r.t0).getTime()
     const localIso = new Date(t0 + off).toISOString()
     const belongs = localIso.slice(0, 10)
-    const bad = belongs !== r.session_date
-    if (bad) mismatched++
-    console.log(`  ${pad(r.session_date, 12)}${pad(localIso.slice(0, 16).replace('T', ' '), 18)}`
-      + `${pad(r.slug, 14)}${pad(r.boats?.name, 14)}${pad(r.source, 10)}`
-      + `${bad ? `⚠ ${belongs}${tz == null ? '  (no session row: assumed +2 h)' : ''}` : 'same day ✓'}`)
+    const hhmm = (u: number) => new Date(u + off).toISOString().slice(11, 19)
+
+    const lo = Number(sess?.startUtc), hi = Number(sess?.endUtc)
+    const haveWindow = Number.isFinite(lo) && Number.isFinite(hi)
+    if (haveWindow) windows.add(`${r.session_date} ${r.boats?.name || r.boat_id}: ${hhmm(lo)}–${hhmm(hi)}`)
+
+    let verdict = 'on the day, on the track ✓'
+    if (belongs !== r.session_date) { mismatched++; verdict = `⚠ filed wrong — t0 is ${belongs}` }
+    else if (!haveWindow) verdict = '— that day has no log, so nothing to draw it on'
+    else if (t0 < lo || t0 > hi) {
+      offTrack++
+      const byMin = Math.round((t0 < lo ? lo - t0 : t0 - hi) / 60000)
+      verdict = `⚠ OUTSIDE the log by ${byMin} min — in the list, nowhere on the track`
+    }
+
+    console.log(`  ${pad(r.session_date, 12)}${pad(localIso.slice(0, 19).replace('T', ' '), 18)}`
+      + `${pad(r.slug, 12)}${pad(r.boats?.name, 13)}${pad(r.source, 8)}${verdict}`)
+  }
+
+  if (windows.size) {
+    console.log('\n  that day\'s log runs (local):')
+    for (const w of Array.from(windows).sort()) console.log(`    ${w}`)
+  }
+
+  if (offTrack) {
+    console.log(`\n  ⚠ ${offTrack} tag(s) sit OUTSIDE their day's log. The list draws a tag from the tag;`)
+    console.log('    the TRACK draws it by finding the row at its t0, so a tag the log does not')
+    console.log('    reach has no position and cannot appear — which looks exactly like a tag')
+    console.log('    that was never saved. Two things do this, and they are worth telling apart:')
+    console.log('      • the log is SHORTER than the sailing (imported from a part file, or')
+    console.log('        trimmed to the on-water window and the tag is from the dock);')
+    console.log('      • the log\'s clock is OFF by a whole venue offset — a 2 h gap, with the')
+    console.log('        tags all on the same side, is that and not a coincidence. See the first')
+    console.log('        trap in CLAUDE.md: an Expedition column called Utc is sometimes local.')
   }
 
   if (mismatched) {
