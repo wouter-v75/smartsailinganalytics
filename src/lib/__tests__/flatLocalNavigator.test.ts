@@ -126,6 +126,19 @@ describe('start burns come from the BURN columns, not the time-to-end ones', () 
     expect(r.tmLine).toBe(at('Burn'))
   })
 
+  it('carries the countdown to the gun onto the row', () => {
+    // It used to be read and thrown away — consumed as an input to
+    // tmLine (= TmToLn − TmToGun) and never stored — so the one channel that
+    // knows when the gun goes could not tell anything downstream. `utc + tmGun`
+    // is what gives a boat with no event file its starts (gunFromLog.ts).
+    const { rows } = parseLog(text, { tzOffsetMin: 120 })
+    const r = rows[0] as unknown as Record<string, number | null>
+    expect(r.tmGun).toBe(at('TimeToGun'))
+    // Not the START-line burn beside it, and not the line timer.
+    expect(r.tmGun).not.toBe(at('StTmToGun'))
+    expect(r.tmGun).not.toBe(at('TimeToLine'))
+  })
+
   it('does NOT let TmPort/TmStbd reach a burn field', () => {
     const { rows } = parseLog(text, { tzOffsetMin: 120 })
     const r = rows[0] as unknown as Record<string, number | null>

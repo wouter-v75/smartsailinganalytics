@@ -39,7 +39,7 @@ export type LogField =
   // labels onto THESE keys via the alias table; the keys never change.
   | 'vsTarget' | 'vsTargPct' | 'vsPerf' | 'twaTarg'
   // start-line instruments (canonical names from the legacy parser)
-  | 'dstLine' | 'tmLine' | 'ttbPort' | 'ttbStbd' | 'ttbOnStb' | 'ttbPin' | 'ttbCB' | 'timer1' | 'yawR' | 'magvar'
+  | 'dstLine' | 'tmLine' | 'tmGun' | 'ttbPort' | 'ttbStbd' | 'ttbOnStb' | 'ttbPin' | 'ttbCB' | 'timer1' | 'yawR' | 'magvar'
   | 'targHeel' | 'targFsty' | 'targBsty' | 'targKeel'
   | 'targToe' | 'targTrim' | 'targVmg' | 'targAwa'
   // On-board environment sensors — feed the OBSERVED windweight (air-sea ΔT,
@@ -122,6 +122,14 @@ export const DEFAULT_ALIASES: Record<LogField, string[]> = {
   // Expedition export instead has 'TmToLn' + 'TmToGun', and flatLogParse computes
   // tmLine = TmToLn - TmToGun when no direct column is present.
   tmLine: ['tmline', 'burn'],
+  // Seconds remaining until the start gun, on the navigator's own clock. Read
+  // before only as an input to tmLine (tmLine = TmToLn − TmToGun) and then
+  // thrown away — so the one channel that knows when the gun goes reached
+  // nothing downstream. It is a field now because `utc + tmGun` IS the gun,
+  // which is how a boat with no event file gets its starts: see
+  // src/lib/tagging/gunFromLog.ts. 'sttmtogun' is the 4 Hz export's name for
+  // the same countdown.
+  tmGun: ['tmtogun', 'timetogun', 'sttmtogun'],
   // TTB·P / TTB·S — 'StBsToP' / 'StBsToS' are the Expedition start-burn channels
   // for the port / starboard line ends (shown directly as a burn: +early / -late).
   ttbPort: ['ttbport', 'stbstop'],

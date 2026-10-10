@@ -44,6 +44,8 @@ export interface FlatLogRow {
   vsPerfPct: number | null; twaTarg: number | null
   // start-line instruments (canonical)
   dstLine: number | null; tmLine: number | null; pBurn: number | null; sBurn: number | null
+  /** Seconds to the start gun. `utc + tmGun` is the gun — see gunFromLog.ts. */
+  tmGun: number | null
   ttbPort: number | null; ttbStbd: number | null; ttbOnStb: number | null; ttbPin: number | null; ttbCB: number | null
   timer1: number | null; yawR: number | null; magvar: number | null; rudder: number | null
   // rig loads/settings + targets (2026-06 N76 flat-CSV): so the 2-min SailScan
@@ -238,6 +240,15 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
   // direct 'TmLine' column, which wins when present.
   const tmToLnIdx = headerCols.findIndex((h) => norm(h) === 'tmtoln')
   const tmToGunIdx = headerCols.findIndex((h) => norm(h) === 'tmtogun')
+  // The countdown itself, kept rather than consumed. It was read only as an
+  // input to tmLine above and discarded, which left the one channel that knows
+  // when the gun goes unable to say so to anything downstream.
+  const tmGunOf = (c: string[]): number | null => {
+    const viaAlias = num(c, M.tmGun)
+    if (viaAlias != null) return viaAlias
+    return num(c, tmToGunIdx >= 0 ? tmToGunIdx : undefined)
+  }
+
   const tmLineOf = (c: string[]): number | null => {
     const direct = num(c, M.tmLine)
     if (direct != null) return direct
@@ -328,7 +339,11 @@ export function parseFlatOleLog(text: string, aliases?: Record<LogField, string[
       upDflctPct: num(c, M.upDflctPct), lwDflctPct: num(c, M.lwDflctPct),
       vsTarget: num(c, M.vsTarget), vsTargPct: vsTargPctOf(c), vsPerf: num(c, M.vsPerf),
       vsPerfPct: num(c, M.vsPerfPct), twaTarg: num(c, M.twaTarg),
-      dstLine: num(c, M.dstLine), tmLine: toBurnSec(tmLineOf(c)), pBurn: pBurnIdx < 0 ? null : toBurnSec(num(c, pBurnIdx)), sBurn: sBurnIdx < 0 ? null : toBurnSec(num(c, sBurnIdx)),
+      dstLine: num(c, M.dstLine), tmLine: toBurnSec(tmLineOf(c)),
+      // toBurnSec because Expedition writes these as 100-ns ticks on some
+      // exports: a 5-minute countdown arrives as 3e9, and read as seconds it
+      // would put the gun ninety-five years out.
+      tmGun: toBurnSec(tmGunOf(c)), pBurn: pBurnIdx < 0 ? null : toBurnSec(num(c, pBurnIdx)), sBurn: sBurnIdx < 0 ? null : toBurnSec(num(c, sBurnIdx)),
       ttbPort: toBurnSec(num(c, M.ttbPort)), ttbStbd: toBurnSec(num(c, M.ttbStbd)), ttbOnStb: toBurnSec(num(c, M.ttbOnStb)), ttbPin: toBurnSec(num(c, M.ttbPin)), ttbCB: toBurnSec(num(c, M.ttbCB)),
       timer1: num(c, M.timer1), yawR: num(c, M.yawR), magvar: num(c, M.magvar), rudder: num(c, M.rudder),
       rake: num(c, M.rake), mastAng: num(c, M.mastAng), shims: num(c, M.shims),

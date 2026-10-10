@@ -3,8 +3,8 @@ import * as React from 'react'
 import { ListChecks, Film, Tags, Map, RefreshCw, AlertCircle, Sailboat, Plus } from 'lucide-react'
 import { cn } from '@/lib/ui'
 import { useTagger } from '@/lib/tagging/useTagger'
-import { detectDay, type Detection } from '@/lib/tagging/detect'
-import { segmentDay, segmentAt, type DaySegment } from '@/lib/tagging/segments'
+import { detectDayFull, type Detection } from '@/lib/tagging/detect'
+import { segmentAt, type DaySegment } from '@/lib/tagging/segments'
 import { snapTag } from '@/lib/tagging/snap'
 import { nextReelOrder, GRAB_VIDEO_SLUG, grabMediaKind } from '@/lib/tagging/requests'
 import { findDuplicates, acceptedWith } from '@/lib/tagging/duplicates'
@@ -93,9 +93,18 @@ export default function TaggerTab({
   // Detection is pure and the day's data is already here, so it runs locally.
   // The server decides what the result MEANS for the rows that exist — see the
   // sync route.
-  const detections: Detection[] = React.useMemo(() => {
-    if (!boatId || !date) return []
-    return detectDay({ boatId, date, rows: logRows || [], xml })
+  // ONE derivation for both, which is the point of detectDayFull. The two used
+  // to be computed separately — detectDay for the tags, a second segmentDay
+  // call here for the stripes — and the second one only ever knew about the
+  // event file's guns. So on a boat with no event file the detector could read
+  // the start off the log's own countdown and the day on screen was still one
+  // undivided "Session", with the race it had just found nowhere in it.
+  const { detections, segments } = React.useMemo((): {
+    detections: Detection[]; segments: DaySegment[]
+  } => {
+    if (!boatId || !date) return { detections: [], segments: [] }
+    const r = detectDayFull({ boatId, date, rows: logRows || [], xml })
+    return { detections: r.detections, segments: r.segments }
   }, [boatId, date, logRows, xml])
 
   // Declared once and rendered in BOTH views: see the comment at its second
@@ -109,18 +118,6 @@ export default function TaggerTab({
       onSync={() => t.sync(detections)}
     />
   ) : null
-
-  const segments: DaySegment[] = React.useMemo(() => {
-    const rows = logRows || []
-    return segmentDay({
-      guns: xml?.raceGuns,
-      markRoundings: xml?.markRoundings,
-      dayStartUtc: xml?.dayStartUtc ?? null,
-      dayStopUtc: xml?.dayStopUtc ?? null,
-      dataT0: rows.length ? rows[0].utc : null,
-      dataT1: rows.length ? rows[rows.length - 1].utc : null,
-    })
-  }, [logRows, xml])
 
   // Seed the vocabulary the first time a team opens the tagger, so nobody has to
   // know a seeding step exists.

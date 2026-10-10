@@ -32,6 +32,7 @@ import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { retryingFetch, why } from './lib/netFetch'
 import { detectDay } from '../src/lib/tagging/detect'
+import { gunsFromLog } from '../src/lib/tagging/gunFromLog'
 import { detectFromLog } from '../src/lib/manoeuvres'
 
 const arg = (n: string) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i + 1] : undefined }
@@ -121,6 +122,31 @@ const main = async () => {
   const xml = s.xml_data || null
   console.log(`  event file: ${xml ? 'stored' : 'NONE'}`)
 
+  // The gun, read off the log's own countdown. Reported before detectDay
+  // because it decides the day's SHAPE as well as its starts: no guns means one
+  // undivided "Session" and every tag in it filed under nothing.
+  const tmGun = rows.map((r) => num(r.tmGun)).filter((v): v is number => v != null)
+  console.log(`  tmGun (countdown to the gun) on ${pct(tmGun.length, rows.length)}`)
+  if (!tmGun.length) {
+    problems.push('NO tmGun ON ANY ROW — so no start can be read. Either this boat\'s Expedition '
+      + 'does not log TmToGun, the log predates the parser carrying it (re-import to fix), or the '
+      + 'column is named something the profile does not know.')
+  } else {
+    const guns = gunsFromLog(rows as never)
+    if (!guns.length) {
+      problems.push(`tmGun is present on ${tmGun.length} rows but NO GUN agrees. The rows have to name `
+        + 'one instant between them: a frozen timer, or a countdown that runs the other way, names a '
+        + 'different instant every row and is refused rather than guessed at.')
+    } else {
+      console.log(`\n  guns read from the countdown:`)
+      for (const g of guns) {
+        console.log(`    race ${g.raceNum}  ${hhmm(g.utc)} local   `
+          + `${g.rows} rows agreeing over ${g.spanSec}s, spread ${(g.spreadMs / 1000).toFixed(1)}s, `
+          + `confidence ${g.confidence}`)
+      }
+    }
+  }
+
   // What the app itself would produce, with and without the event file.
   const got = detectDay({ boatId: s.boat_id, date: DATE, rows: rows as never, xml })
   const bySlug = new Map<string, number>()
@@ -141,10 +167,10 @@ const main = async () => {
 
   if (!xml) {
     console.log('\n  WITHOUT AN EVENT FILE, these are not a fault — nothing can detect them:')
-    console.log('    race-start   the gun is a sound; no track records it')
     console.log('    day-start / day-end   recorded facts in the file')
     console.log('    sail-change  the file names the sails that went up')
     console.log('  Press them in the tagger: the Racing group button holds the day\'s fixed points.')
+    console.log('  A race START is the exception: it is read off the log\'s own countdown, above.')
   }
 
   if (problems.length) {

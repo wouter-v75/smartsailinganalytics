@@ -8,6 +8,8 @@
 //   manoeuvres.ts      tacks and gybes (event file first, TWA sign flips as the
 //                      fallback) with KND-validated metrics
 //   xmlEventParse.js   race guns, mark roundings, sail changes
+//   gunFromLog.ts      the start gun READ OFF the log's own countdown, for a
+//                      boat with no event file
 //   segments.ts        the day cut into pre-race / race N / between / post
 //
 // Two things make a Detection more than a timestamp:
@@ -30,6 +32,7 @@ import { analyseManoeuvres, type Manoeuvre } from '../manoeuvres'
 import type { LogRow } from '../phaseStats'
 import { detectLegsAndRoundings, type Leg } from './detectLegs'
 import { segmentDay, segmentAt, racingRoundingFilter, type DaySegment, type SegmentInput } from './segments'
+import { gunsFromLog, type DerivedGun, type GunFromLogOpts, type GunRow } from './gunFromLog'
 import type { TagProducer } from './types'
 
 /** The vocabulary slugs a detector can emit. Each one exists in baseTags.ts, so
@@ -74,6 +77,10 @@ export interface DetectInput {
   minBsp?: number
   /** Skip the log-based mark-rounding fallback (it costs a pass over the log). */
   skipLegDetection?: boolean
+  /** Skip reading the gun off the log's own start timer. */
+  skipGunDetection?: boolean
+  /** Passed through to gunsFromLog. */
+  gunOptions?: GunFromLogOpts
   /** How long before a start gun a rounding stops being believable on a day
    *  whose race ends are inferred. Default 30 min — see racingRoundingFilter. */
   preGunBlackoutSec?: number
@@ -159,6 +166,31 @@ function withOrdinalKeys(
 }
 
 /**
+ * The day's guns, and where they came from.
+ *
+ * The event file wins when it has any: it records the gun the navigator marked,
+ * which is the gun. With no file, the log's own countdown is read instead — see
+ * gunFromLog.ts, which only answers when the rows agree with each other.
+ *
+ * This is what makes a start more than a tag. The guns decide the day's SHAPE:
+ * segmentDay cuts it into pre-race / race 1 / between / race 2, and
+ * racingRoundingFilter uses them to tell a top mark from a warm-up rounding. So
+ * a boat with no event file was not merely missing its starts — the whole day
+ * was one undivided "Session", and every tag in it belonged to nothing.
+ */
+function gunsFor(input: DetectInput, rows: LogRow[]): {
+  guns: { utc: number; raceNum?: number }[]
+  derived: DerivedGun[]
+} {
+  const fromFile = (input.xml?.raceGuns || []).filter((g: { utc?: unknown }) => isNum(g?.utc))
+  if (fromFile.length || !rows.length || input.skipGunDetection) {
+    return { guns: fromFile, derived: [] }
+  }
+  const derived = gunsFromLog(rows as unknown as GunRow[], input.gunOptions)
+  return { guns: derived.map((g) => ({ utc: g.utc, raceNum: g.raceNum })), derived }
+}
+
+/**
  * Everything the data can infer about a day.
  *
  * Returns detections sorted by time, each with an ordinal key, a confidence and
@@ -169,8 +201,10 @@ export function detectDay(input: DetectInput): Detection[] {
   const { boatId, date, xml } = input
   const rows = input.rows || []
 
+  const { guns, derived: derivedGuns } = gunsFor(input, rows)
+
   const segments = input.segments ?? segmentDay({
-    guns: xml?.raceGuns,
+    guns,
     markRoundings: xml?.markRoundings,
     dayStartUtc: xml?.dayStartUtc ?? null,
     dayStopUtc: xml?.dayStopUtc ?? null,
@@ -187,7 +221,7 @@ export function detectDay(input: DetectInput): Detection[] {
   // something the crew has to go and delete either way.
   const racing = racingRoundingFilter({
     segments,
-    gunUtcs: (xml?.raceGuns || []).map((g: { utc?: unknown }) => Number(g?.utc)),
+    gunUtcs: guns.map((g) => Number(g.utc)),
     preGunBlackoutSec: input.preGunBlackoutSec,
   })
 
@@ -233,6 +267,31 @@ export function detectDay(input: DetectInput): Detection[] {
       confidence: EVENT_CONFIDENCE,
       producer: 'eventfile',
       meta: { gunUtc: g.utc, raceNum: g.raceNum ?? null },
+    })
+  }
+
+  // ── Race starts, read off the log's own countdown ─────────────────────────
+  // Only when the event file has none: the file is the better source and
+  // mixing the two would double-count. The window matches the event path, so a
+  // start is a start whichever way it was found.
+  //
+  // `practice-start` is NOT guessed at here. A practice sequence and a real one
+  // are identical in the data — the same timer, counted the same way — so this
+  // emits `race-start` and the crew corrects the few that were practices. The
+  // alternative is a detector that quietly calls half of them wrong.
+  for (const g of derivedGuns) {
+    const s = seg(g.utc)
+    found.push({
+      slug: 'race-start',
+      label: derivedGuns.length > 1 ? `Race ${g.raceNum} start` : 'Race start',
+      t0: g.utc - 60_000,
+      t1: g.utc + 30_000,
+      segmentKey: s?.key || 'day',
+      raceNum: s?.raceNum ?? g.raceNum,
+      confidence: g.confidence,
+      producer: 'log',
+      metrics: { rowsAgreeing: g.rows, spreadSec: Math.round(g.spreadMs / 100) / 10, spanSec: g.spanSec },
+      meta: { gunUtc: g.utc, raceNum: g.raceNum, derived: true, fromTimer: true },
     })
   }
 
@@ -342,8 +401,12 @@ export function detectDay(input: DetectInput): Detection[] {
 /** detectDay, plus the segments and legs it worked out on the way. */
 export function detectDayFull(input: DetectInput): DetectResult {
   const rows = input.rows || []
+  // The same resolution detectDay makes, so the segments a caller RENDERS are
+  // the ones the detections were filed under. One extra linear pass over the
+  // log rather than a second copy of the rule.
+  const { guns } = gunsFor(input, rows)
   const segments = input.segments ?? segmentDay({
-    guns: input.xml?.raceGuns,
+    guns,
     markRoundings: input.xml?.markRoundings,
     dayStartUtc: input.xml?.dayStartUtc ?? null,
     dayStopUtc: input.xml?.dayStopUtc ?? null,
