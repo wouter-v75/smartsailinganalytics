@@ -20,6 +20,7 @@
 
 import { generateProxy, type ProxyProgress } from './video-proxy'
 import { uploadBlobToStorage, storageObjectSize, type UploadProgress } from './bunny-storage-upload'
+import { awaitUplink, uplinkBusy } from './uplinkPriority'
 import { writeKey, proxyLeaf, originalLeaf, type StorageScope } from './storageKeys'
 
 /**
@@ -201,6 +202,15 @@ async function putAndFetch({
     if (have === blob.size) {
       emit({ phase: 'uploading', pct: 1, message: 'Already uploaded — skipping' })
     } else {
+      // Yield to a log upload before taking the uplink. Between FILES, not
+      // mid-file: Bunny Storage cannot resume a PUT, so stopping one already in
+      // flight would throw away everything it had sent. On a queue of twenty
+      // clips this is the difference between the log landing after one and
+      // after twenty — see uplinkPriority.ts.
+      if (uplinkBusy()) {
+        emit({ phase: 'uploading', pct: 0, message: 'Waiting — the day\'s log goes first' })
+        await awaitUplink()
+      }
       emit({ phase: 'uploading', pct: 0, message: 'Uploading…' })
       const up = await uploadBlobToStorage({
         key: path, blob, contentType: blob.type || 'video/mp4', signal,

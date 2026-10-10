@@ -7,6 +7,7 @@
 // behaviour keeps working.
 
 import { getActiveMembership } from './active-membership'
+import { withUplink } from './uplinkPriority'
 
 interface Args { userId: string }
 
@@ -78,22 +79,63 @@ export async function getSessionCloud({
   }
 }
 
+/**
+ * Why a cloud write cannot work, in a sentence, or null when it can.
+ *
+ * This exists because of how 10 October went. The log imported, the track drew
+ * locally, and the cloud row got nothing — so the phone, which has no other
+ * source, showed a day with no track, no detections and no starts, while the
+ * desktop that imported it looked perfect. The upload tab's own message said
+ * "saved on this device only · check the console for the HTTP status", and the
+ * console was EMPTY: there had been no HTTP status, because the write never
+ * reached the network. `if (!m || !m.boat_id) return false` is three different
+ * answers — not signed into a workspace, signed into a TEAM-level one with no
+ * boat, or a boat the device cannot resolve — and it gave all three as a bare
+ * `false` with nothing written anywhere.
+ *
+ * A failure whose only symptom is on somebody else's device has to say what it
+ * was, where the person who caused it is looking.
+ */
+export function sessionSyncBlocker(userId: string): string | null {
+  const m = getActiveMembership(userId)
+  if (!m) {
+    return 'no active workspace on this device — pick one from the menu behind your name, '
+         + 'then import again'
+  }
+  if (!m.boat_id) {
+    return 'the active workspace is the TEAM, not a boat. A session belongs to a boat, so '
+         + 'nothing can be written for it — switch to a boat workspace and import again'
+  }
+  if (!endpoint(m.team_id, m.boat_id, '1970-01-01')) {
+    return `the active workspace (team ${m.team_id}) resolves to no session URL`
+  }
+  return null
+}
+
 async function upsertSession(
   userId: string,
   date: string,
   body: Record<string, unknown>
 ): Promise<boolean> {
-  const m = getActiveMembership(userId)
-  if (!m || !m.boat_id) return false
+  const blocked = sessionSyncBlocker(userId)
+  if (blocked) {
+    // eslint-disable-next-line no-console
+    console.error(`[cloud-sessions] session PUT not attempted: ${blocked}`)
+    return false
+  }
+  const m = getActiveMembership(userId)!
   const url = endpoint(m.team_id, m.boat_id, date)
   if (!url) return false
   try {
     const payload = JSON.stringify(body)
-    const res = await fetch(url, {
+    // The log takes the uplink: see uplinkPriority.ts. Four MB that every other
+    // device needs before it can show anything, against gigabytes of video that
+    // people watch one at a time afterwards.
+    const res = await withUplink(() => fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
-    })
+    }))
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
       // eslint-disable-next-line no-console

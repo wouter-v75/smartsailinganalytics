@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getActiveMembership } from '../lib/active-membership';
 import { setSessionShared, shareLabel, squadsForTeam } from '../lib/squadShare';
 import { syncSessionToCloud, waitForStreamReady } from '../lib/bunny';
-import { saveLogDataCloud, saveXmlDataCloud } from '../lib/cloud-sessions';
+import { saveLogDataCloud, saveXmlDataCloud, sessionSyncBlocker } from '../lib/cloud-sessions';
 import { mergeTagListCloud } from '../lib/cloud-tag-list';
 import { ensureCloudVideoId, makeVideoMirrorCallback } from '../lib/cloud-videos';
 import { reduceLogForCloud } from '../lib/cloudLogReduce';
@@ -49,6 +49,12 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
   // the files there were no rows at all, so the status just flashed and vanished with
   // no explanation. These persist until dismissed.
   const[photoErrors,setPhotoErrors]=useState([]);
+  // A log that did not reach the cloud, kept ON SCREEN. This is the most
+  // consequential failure the tab has and it used to be one line in a scrolling
+  // console: the importing device shows a perfect day, and every OTHER device —
+  // the phone on the dock especially — gets no track, no detections and no
+  // starts, with nothing to say why.
+  const[syncWarning,setSyncWarning]=useState(null);
   const[photosDone,setPhotosDone]=useState(0);
   const[photoBusy,setPhotoBusy]=useState(false);
   const[csvParsed,setCsvParsed]=useState(null);
@@ -792,9 +798,25 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
           }
           const mb = (JSON.stringify(cloudLog).length / 1048576).toFixed(2);
           if (ok) addLog(`☁ Log synced to cloud → ${d} · ${cloudLog.rows.length.toLocaleString()} of ${csvParsed.rows.length.toLocaleString()} rows · ${mb} MB`);
-          else addLog(`⚠ Log NOT synced (${mb} MB payload) — saved on this device only. Check the console for the HTTP status; an active boat workspace must be selected.`);
+          else {
+            // Say WHY, not "check the console". The three refusals that never
+            // reach the network wrote nothing anywhere, so that advice pointed
+            // at an empty console — and a log that stays on this device looks
+            // perfect HERE while leaving the phone with no track, no detections
+            // and no starts.
+            const why = sessionSyncBlocker(user.id);
+            addLog(why
+              ? `⚠ Log NOT synced — on this device only: ${why}`
+              : `⚠ Log NOT synced (${mb} MB payload) — on this device only. The PUT was attempted and refused; the console has the HTTP status.`);
+            setSyncWarning(why
+              ? `This day's log is on this device only — ${why}. Until it syncs, the phone and everybody else see this day with NO track, no detections and no starts.`
+              : `This day's log is on this device only: the upload was refused (${mb} MB payload). The console has the HTTP status. Until it syncs, the phone and everybody else see this day with NO track.`);
+          }
         }
-      } catch (e) { addLog(`⚠ Log cloud sync failed — saved on this device only`); }
+      } catch (e) {
+        addLog(`⚠ Log cloud sync failed — on this device only (${e?.message||e})`);
+        setSyncWarning(`This day's log is on this device only — the upload threw: ${e?.message||e}`);
+      }
       addLog(`✓ Log saved (${logRows.length.toLocaleString()} rows${thinned?` · 1 Hz copy of ${csvParsed.rows.length.toLocaleString()}`:''}) → ${d}`);
     }
     if (xmlParsed) {
@@ -1259,6 +1281,16 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
               {/* WHY a photo import failed. Stays until dismissed — the status line
                   above auto-clears, and when the import drops every file there are no
                   rows at all, so this was previously invisible on a phone. */}
+              {syncWarning&&(
+                <div style={{margin:'8px 0',padding:'8px 10px',borderRadius:8,
+                  border:'1px solid rgba(245,158,11,.45)',background:'rgba(245,158,11,.10)',
+                  color:'#FCD34D',fontSize:12,lineHeight:1.5}}>
+                  <strong>The log is on this device only.</strong> {syncWarning}
+                  <button onClick={()=>setSyncWarning(null)}
+                    style={{marginLeft:8,background:'none',border:'none',color:'#FCD34D',
+                      textDecoration:'underline',cursor:'pointer',fontSize:12}}>dismiss</button>
+                </div>
+              )}
               {photoErrors.length>0&&(
                 <div style={{background:"#EF444412",border:"1px solid #EF444440",borderRadius:8,padding:"8px 10px",margin:"8px 0"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
