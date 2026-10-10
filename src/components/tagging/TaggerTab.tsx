@@ -98,6 +98,18 @@ export default function TaggerTab({
     return detectDay({ boatId, date, rows: logRows || [], xml })
   }, [boatId, date, logRows, xml])
 
+  // Declared once and rendered in BOTH views: see the comment at its second
+  // use. Null when there is nothing waiting, so neither view gets a bar that
+  // says "0".
+  const syncBar = detections.length > 0 ? (
+    <SyncBar
+      detections={detections.length}
+      tagged={t.events.filter((e) => e.source === 'auto').length}
+      busy={t.busy}
+      onSync={() => t.sync(detections)}
+    />
+  ) : null
+
   const segments: DaySegment[] = React.useMemo(() => {
     const rows = logRows || []
     return segmentDay({
@@ -351,14 +363,7 @@ export default function TaggerTab({
           </div>
         ) : view === 'tagger' ? (
           <>
-            {detections.length > 0 && (
-              <SyncBar
-                detections={detections.length}
-                tagged={t.events.filter((e) => e.source === 'auto').length}
-                busy={t.busy}
-                onSync={() => t.sync(detections)}
-              />
-            )}
+            {syncBar}
             <UnknownSails
               names={unknownSails}
               inventory={sailCtx.inventory}
@@ -388,6 +393,14 @@ export default function TaggerTab({
           </>
         ) : view === 'track' ? (
           <>
+          {/* On the track too, and that is the fix for "the detector found
+              nothing". The track and the list draw STORED tags, so until the
+              detections are synced they are invisible — and this bar, the only
+              thing that says they exist, used to render on the list view alone.
+              Somebody who opens the Tags tab on the track (which is where you
+              go to look at a day) saw an empty track and concluded the detector
+              had not run. */}
+          {syncBar}
           <TrackView
             rows={logRows || []}
             items={t.items}
