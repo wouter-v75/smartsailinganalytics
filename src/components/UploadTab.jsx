@@ -817,7 +817,24 @@ function UploadTab({role,cloudStatus,onImported,sailInventory=[],campaignCfg=nul
         addLog(`⚠ Log cloud sync failed — on this device only (${e?.message||e})`);
         setSyncWarning(`This day's log is on this device only — the upload threw: ${e?.message||e}`);
       }
-      addLog(`✓ Log saved (${logRows.length.toLocaleString()} rows${thinned?` · 1 Hz copy of ${csvParsed.rows.length.toLocaleString()}`:''}) → ${d}`);
+      // The COUNTDOWN coverage, on the line that says the log saved.
+      //
+      // Two rounds were spent on 10 October asking whether a re-import had
+      // actually picked up `tmGun`: the file had it on 66 % of rows, the stored
+      // day had it on none, and the only way to tell a stale browser bundle
+      // from a loss further down was to go and look in the database. A tab
+      // keeps the bundle it loaded, so after a `git pull` an import can quietly
+      // run the old parser — and nothing anywhere said so.
+      //
+      // This line is also the bundle marker: if it does not mention the
+      // countdown at all, the tab is running code from before this comment.
+      const gunRows = logRows.filter(r => typeof r.tmGun === 'number' && isFinite(r.tmGun)).length;
+      const gunPart = logRows.length
+        ? (gunRows
+            ? ` · countdown to the gun on ${Math.round((gunRows / logRows.length) * 100)}% of rows`
+            : ' · NO countdown to the gun — starts cannot be read from this log')
+        : '';
+      addLog(`✓ Log saved (${logRows.length.toLocaleString()} rows${thinned?` · 1 Hz copy of ${csvParsed.rows.length.toLocaleString()}`:''}${gunPart}) → ${d}`);
     }
     if (xmlParsed) {
       const d = xmlDate || csvDate || fallbackDate;
