@@ -44,6 +44,13 @@ export interface DerivedGun {
   utc: number
   /** 1-based, in time order. */
   raceNum: number
+  /**
+   * Countdowns that pointed at an earlier instant and were then re-armed for
+   * this one — a postponement, or a general recall. Kept rather than discarded:
+   * the sequence happened, the crew sailed it, and a navigator looking at
+   * "Race 1 started 10:40" deserves to see that it was going to be 10:30.
+   */
+  restarts?: number[]
   /** How many rows named this instant. */
   rows: number
   /** How far apart their claims were, in ms — the tightness of the agreement. */
@@ -68,6 +75,12 @@ export interface GunFromLogOpts {
   minSpanSec?: number
   /** Two guns closer than this are one gun seen either side of a log gap (s). */
   mergeSec?: number
+  /**
+   * The shortest a race can be. Two guns closer together than this are not two
+   * races: the first sequence was abandoned and re-armed, so the LATER one is
+   * the start. Default 15 min.
+   */
+  minRaceSec?: number
 }
 
 const DEFAULTS = {
@@ -77,6 +90,7 @@ const DEFAULTS = {
   minRows: 6,
   minSpanSec: 20,
   mergeSec: 120,
+  minRaceSec: 15 * 60,
 }
 
 const median = (xs: number[]): number => {
@@ -157,10 +171,38 @@ export function gunsFromLog(
     merged.push(g)
   }
 
-  return merged.map((g, i) => ({
-    ...g,
+  // ── Postponements and recalls ────────────────────────────────────────────
+  // Two guns ten minutes apart are not two races. Baraka's 10 October log reads
+  // four countdowns for a three-race day: 09:30 and 09:40 are one start, hoisted
+  // AP or recalled and re-armed. The later arming is the one that fired — a
+  // committee that abandons a sequence does it again, it does not un-start a
+  // race — so the earlier instant is carried on the gun it was replaced by
+  // rather than counted as a race of its own.
+  //
+  // This is the one judgement in the file. Everything else here refuses what it
+  // cannot verify; this chooses, on the grounds that no fleet sails a race in a
+  // quarter of an hour. `minRaceSec` is the dial.
+  const out: (typeof merged[number] & { restarts: number[] })[] = []
+  for (const g of merged) {
+    const prev = out[out.length - 1]
+    if (prev && g.utc - prev.utc < o.minRaceSec * 1000) {
+      out[out.length - 1] = {
+        ...g,
+        restarts: [...prev.restarts, prev.utc],
+      }
+      continue
+    }
+    out.push({ ...g, restarts: [] })
+  }
+
+  return out.map((g, i) => ({
+    utc: g.utc,
+    rows: g.rows,
+    spreadMs: g.spreadMs,
+    spanSec: g.spanSec,
     raceNum: i + 1,
     confidence: gunConfidence(g.rows, g.spreadMs, g.spanSec),
+    ...(g.restarts.length ? { restarts: g.restarts } : {}),
   }))
 }
 

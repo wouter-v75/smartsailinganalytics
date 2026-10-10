@@ -212,3 +212,53 @@ describe('from the file, in the units Expedition actually writes', () => {
     })
   )
 })
+
+describe('postponements and recalls', () => {
+  // Baraka's 10 October log reads four countdowns for a three-race day: 09:30
+  // and 09:40 are one start, abandoned and re-armed. No fleet sails a race in
+  // ten minutes.
+  const second = GUN + 10 * 60_000
+
+  it('counts a re-armed countdown as ONE start, at the later instant', () => {
+    const rows = [...countdown(GUN, 300, 0), ...countdown(second, 300, 0)]
+    const guns = gunsFromLog(rows)
+    expect(guns).toHaveLength(1)
+    expect(guns[0].utc).toBe(second)
+    expect(guns[0].raceNum).toBe(1)
+  })
+
+  it('keeps the abandoned instant on the gun that replaced it', () => {
+    // Not discarded: the crew sailed that sequence, and somebody reading
+    // "Race 1 started 10:40" should be able to see it was going to be 10:30.
+    const rows = [...countdown(GUN, 300, 0), ...countdown(second, 300, 0)]
+    expect(gunsFromLog(rows)[0].restarts).toEqual([GUN])
+  })
+
+  it('carries a chain of them — two postponements before the start', () => {
+    const third = GUN + 20 * 60_000
+    const rows = [
+      ...countdown(GUN, 300, 0),
+      ...countdown(second, 300, 0),
+      ...countdown(third, 300, 0),
+    ]
+    const guns = gunsFromLog(rows)
+    expect(guns).toHaveLength(1)
+    expect(guns[0].utc).toBe(third)
+    expect(guns[0].restarts).toEqual([GUN, second])
+  })
+
+  it('leaves two REAL races alone, and numbers them 1 and 2', () => {
+    const later = GUN + 95 * 60_000
+    const guns = gunsFromLog([...countdown(GUN, 300, 0), ...countdown(later, 300, 0)])
+    expect(guns.map((g) => g.utc)).toEqual([GUN, later])
+    expect(guns.map((g) => g.raceNum)).toEqual([1, 2])
+    expect(guns[0].restarts).toBeUndefined()
+  })
+
+  it('takes the shortest race as a dial, for a fleet that races short', () => {
+    const later = GUN + 10 * 60_000
+    const guns = gunsFromLog([...countdown(GUN, 300, 0), ...countdown(later, 300, 0)],
+      { minRaceSec: 5 * 60 })
+    expect(guns).toHaveLength(2)
+  })
+})

@@ -78,8 +78,20 @@ const fromFile = async (path: string): Promise<never> => {
   const profile = BOAT && BOAT_LOG_PROFILES[BOAT] ? BOAT_LOG_PROFILES[BOAT] : getBoatLogProfile(null)
   const p = parseLog(text, { boatProfile: profile })
 
+  // Minutes east of UTC, for printing. The file's own clock is UTC; this is
+  // only so the window can be read against when somebody actually sailed.
+  const tz = Number(arg('tz') ?? 60)
+  const hhmm = (u: number) => new Date(u + tz * 60_000).toISOString().slice(11, 19)
+
   console.log(`\n${basename(path)}`)
   console.log(`  format: ${p.format}   rows: ${p.rows.length.toLocaleString()}`)
+  if (p.rows.length) {
+    const t0 = (p.rows[0] as { utc: number }).utc
+    const t1 = (p.rows[p.rows.length - 1] as { utc: number }).utc
+    console.log(`  the FILE runs ${hhmm(t0)}–${hhmm(t1)} at UTC+${tz / 60}`)
+    console.log('  Compare that against the stored day: a shorter stored window means the')
+    console.log('  import trimmed it, and anything tagged past its end cannot be drawn.')
+  }
   if (BOAT) console.log(`  profile: "${BOAT}"${BOAT_LOG_PROFILES[BOAT] ? '' : ' (none transcribed — defaults only)'}`)
   if (!p.rows.length) {
     console.log('\n  ✕ ZERO ROWS. The parser did not recognise this file, so nothing downstream can.')
@@ -107,8 +119,12 @@ const fromFile = async (path: string): Promise<never> => {
     const guns = gunsFromLog(rows as never)
     console.log(`\n  guns read: ${guns.length || 'none — the rows do not agree on an instant'}`)
     for (const g of guns) {
-      console.log(`    race ${g.raceNum}  ${new Date(g.utc).toISOString().slice(11, 19)} UTC   `
+      console.log(`    race ${g.raceNum}  ${hhmm(g.utc)} local   `
         + `${g.rows} rows over ${g.spanSec}s, spread ${(g.spreadMs / 1000).toFixed(1)}s, confidence ${g.confidence}`)
+      // A sequence that was abandoned and re-armed is one start, not two races.
+      for (const r of g.restarts || []) {
+        console.log(`              ↳ a countdown to ${hhmm(r)} was abandoned and re-armed for this`)
+      }
     }
     console.log('\n  So the FILE has it. If the stored day says 0 %, the import ran an older')
     console.log('  parser: restart the dev server, hard-reload the tab, and re-import.')
