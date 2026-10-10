@@ -96,7 +96,12 @@ const main = async () => {
   for (const r of rows) {
     const sess = sessionOf(r.boat_id, r.session_date) as any
     const tz = sess?.tz_offset_minutes ?? null
-    const off = (tz ?? 120) * 60_000          // 120 = CEST, the usual venue
+    // The DAY'S OWN stored offset. No Mediterranean default: the fleet sails in
+    // the UK too (+1 BST, 0 GMT), and a +2 guess there moves every time printed
+    // below by an hour — which is exactly the size of the error being hunted.
+    const off = (tz ?? 0) * 60_000
+    const zone = tz == null ? 'UTC (no offset stored for this day)'
+      : `UTC${tz >= 0 ? '+' : ''}${tz / 60}`
     const t0 = new Date(r.t0).getTime()
     const localIso = new Date(t0 + off).toISOString()
     const belongs = localIso.slice(0, 10)
@@ -104,7 +109,11 @@ const main = async () => {
 
     const lo = Number(sess?.startUtc), hi = Number(sess?.endUtc)
     const haveWindow = Number.isFinite(lo) && Number.isFinite(hi)
-    if (haveWindow) windows.add(`${r.session_date} ${r.boats?.name || r.boat_id}: ${hhmm(lo)}–${hhmm(hi)}`)
+    if (haveWindow) {
+      windows.add(`${r.session_date} ${r.boats?.name || r.boat_id}: ${hhmm(lo)}–${hhmm(hi)}  (${zone})`)
+    } else {
+      windows.add(`${r.session_date} ${r.boats?.name || r.boat_id}: NO LOG  (${zone})`)
+    }
 
     let verdict = 'on the day, on the track ✓'
     if (belongs !== r.session_date) { mismatched++; verdict = `⚠ filed wrong — t0 is ${belongs}` }
@@ -120,8 +129,10 @@ const main = async () => {
   }
 
   if (windows.size) {
-    console.log('\n  that day\'s log runs (local):')
+    console.log('\n  that day\'s log runs, in the day\'s own stored offset:')
     for (const w of Array.from(windows).sort()) console.log(`    ${w}`)
+    console.log('    Compare that against when you actually sailed. An hour out, with every')
+    console.log('    tag on the same side of it, is a clock error and not a coincidence.')
   }
 
   if (offTrack) {
