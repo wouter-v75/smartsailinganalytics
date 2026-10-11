@@ -177,10 +177,12 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
   // summariser has nothing to anchor to, and RULES says state a role "only from
   // the glossary's Roles list". Left empty, it invented a whole afterguard —
   // "helm (Merle)", "Wallie (Pit)", "Olivier (Tactician)" — and put the day's
-  // conclusions under the wrong people's names. None of those three is right.
+  // conclusions under the wrong people's names. All three are real crew; none
+  // was in the seat the summary gave them, which is the subtler half of this
+  // failure: the names were not invented, the STATIONS were.
   baraka: {
     crew: [
-      'Olivier', 'Oliver', 'Wouter', 'Svea', 'Becca', 'Floris', 'Dirk',
+      'Olivier', 'Oliver', 'Merle', 'Wouter', 'Svea', 'Becca', 'Floris', 'Dirk',
       'Thomas', 'Jurn', 'Wallie', 'Wijbren',
     ],
     // The sail codes this boat argues about. The J3.5 is the gap in the range
@@ -190,6 +192,12 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
     boats: [],
     roles: [
       ['Olivier', 'helm'],
+      // Merle steers too, which is why the 10 October summary put the day's
+      // driving under his name: not an invented person — a real one, given the
+      // wrong seat for that day. A roster with both in it is what tells the
+      // summariser that "the helm" on any given day is a fact from the
+      // transcript rather than a lookup.
+      ['Merle', 'second helm'],
       ['Wouter', 'navigator'],
       ['Svea', 'tactician'],
       ['Dirk', 'mainsail trim'],
@@ -211,7 +219,6 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
       // round. Nothing else in this list can cost a reader more.
       ['Oliver', 'Oliver (jib trim) or Olivier (helm) — TWO different people, one letter apart; '
         + 'use the one the sailing sense demands and leave it unnamed if the transcript cannot settle it'],
-      ['Merle', 'Olivier (helm) — "Merle" is not aboard; it is how the helm\'s name comes out'],
       // Jargon the recogniser mangled on 10 October, with what it should be.
       ['Cows Week', 'Cowes Week'], ['Cows week', 'Cowes Week'],
       ['sea clips', 'C-clips (plastic clips on the spinnaker luff that pull the kite forward of the jib)'],
