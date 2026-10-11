@@ -169,6 +169,62 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
       ['the 10s', 'the hundreds (the 100-footers) — not a wind speed or a count'],
     ],
   },
+  // Baraka GP. Taken from Wouter's CORRECTION of the 10 October 2026 summary,
+  // line by line against what the model produced — so every role here is one a
+  // human fixed, not one inferred from the transcript.
+  //
+  // Why it matters more than the fixups below: with no `roles` list the
+  // summariser has nothing to anchor to, and RULES says state a role "only from
+  // the glossary's Roles list". Left empty, it invented a whole afterguard —
+  // "helm (Merle)", "Wallie (Pit)", "Olivier (Tactician)" — and put the day's
+  // conclusions under the wrong people's names. None of those three is right.
+  baraka: {
+    crew: [
+      'Olivier', 'Oliver', 'Wouter', 'Svea', 'Becca', 'Floris', 'Dirk',
+      'Thomas', 'Jurn', 'Wallie', 'Wijbren',
+    ],
+    // The sail codes this boat argues about. The J3.5 is the gap in the range
+    // the team is asking whether to fill, so it gets said out loud a lot while
+    // not existing yet.
+    sails: ['J1.5', 'J2.5', 'J3', 'J3.5', 'J4', 'A2', 'MH0'],
+    boats: [],
+    roles: [
+      ['Olivier', 'helm'],
+      ['Wouter', 'navigator'],
+      ['Svea', 'tactician'],
+      ['Dirk', 'mainsail trim'],
+      ['Oliver', 'jib trim'],
+      ['Becca', 'pit'],
+      ['Floris', 'bow'],
+      ['Thomas', 'grinder'],
+      ['Jurn', 'grinder'],
+      // Wallie and Wijbren are aboard and spoken about — Wallie as the relay
+      // point the comms discussion wants to move to — but the correction does
+      // not give either a station, and the file's rule is that an unlisted
+      // person gets no role rather than a guessed one.
+    ],
+    aliases: [],
+    fixups: [
+      // OLIVIER AND OLIVER ARE TWO PEOPLE, one on the wheel and one on the jib.
+      // One letter apart, and the recogniser cannot hear the difference — so the
+      // helm's calls arrive attributed to the jib trimmer and the other way
+      // round. Nothing else in this list can cost a reader more.
+      ['Oliver', 'Oliver (jib trim) or Olivier (helm) — TWO different people, one letter apart; '
+        + 'use the one the sailing sense demands and leave it unnamed if the transcript cannot settle it'],
+      ['Merle', 'Olivier (helm) — "Merle" is not aboard; it is how the helm\'s name comes out'],
+      // Jargon the recogniser mangled on 10 October, with what it should be.
+      ['Cows Week', 'Cowes Week'], ['Cows week', 'Cowes Week'],
+      ['sea clips', 'C-clips (plastic clips on the spinnaker luff that pull the kite forward of the jib)'],
+      ['sea clip', 'C-clip (plastic clip on the spinnaker luff)'],
+      ['Mongol drop', 'Mongrol drop'], ['Mongolian drop', 'Mongrol drop'],
+      // "JIP" is not a thing; the pre-start call being timed is the JIB call.
+      ['JIP', 'JIB'], ['JIP call', 'JIB call'], ['jip call', 'JIB call'],
+      ['no mages', 'no major incidents'],
+      // The clutch the spinnaker sheet slipped in, which came out as a bare
+      // "slip" and read as crew error rather than hardware.
+      ['spinnaker clutch', 'spinnaker clutch'],
+    ],
+  },
   warp: {
     crew: ['Marc', 'Jan'],
     boats: [],
