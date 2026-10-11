@@ -202,13 +202,16 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
       ['Svea', 'tactician'],
       ['Dirk', 'mainsail trim'],
       ['Oliver', 'jib trim'],
-      // BOTH are pit, as the two helms are both helms. The 10 October
-      // correction put Becca in the pit that day; Wouter named Wallie as pit on
-      // 11 October, and the same correction has the comms discussion wanting
-      // the relay to go "directly to Wallie". So which of them is in it on a
-      // given day is a fact from the transcript, not a lookup — and the pit is
-      // the crew's agreed comms relay to the bow, which is why getting the
-      // name right matters here more than it would elsewhere.
+      // BOTH are pit, as Olivier and Merle are both helms: a station on this
+      // boat is a job two people hold, and who sails a given weekend rotates.
+      // Becca was aboard on 10 October (Wouter, 11 Oct), which is why the
+      // summary naming Wallie in the pit that day was wrong about the DAY and
+      // not about the crew.
+      //
+      // So neither can be looked up: who was in the pit comes from the
+      // transcript. It matters more here than elsewhere because the pit is the
+      // crew's agreed comms relay to the bow, so the name attaches to every
+      // comms conclusion in the note.
       ['Becca', 'pit'],
       ['Wallie', 'pit'],
       ['Floris', 'bow'],
