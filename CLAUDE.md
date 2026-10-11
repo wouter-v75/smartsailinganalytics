@@ -112,6 +112,24 @@ is literally suffixed `Z`) are all venue-local. Read any of them as UTC and the
 day is shifted by the venue offset — wrong calendar day, wrong log rows, wrong
 overlay. Convert explicitly, and say which offset you used.
 
+**ψ was inflated on CLOSE shots, and the test suite could not see it.**
+`solvePsi` reads ψ off the image displacement between two centreplane landmarks
+and used to convert that displacement with ONE scale — the mast's. The two
+landmarks are at different depths and therefore at different scales: a transom
+7.8 m abaft the mast images LARGER, so its share of the displacement is worth
+fewer millimetres per pixel. The inflation is exactly the product of the two
+ends' depth factors, `R²/((R+d_f)(R+d_a))` — **1.45 at a 25 m range, 1.31 at
+33 m, 1.013 at 260 m**. Every ψ test in `sailTrim.test.ts` used `RIG`, which
+shoots from **260 m**, where the error is 1.3 % and invisible; Baraka's frames
+are at 25–34 m. Because the factor depends on the RANGE, two frames of the same
+trim shot from different distances got ψ wrong by different amounts — which is
+how a port-tack measurement comes to disagree with a starboard-tack one with the
+trim identical on both. Fixed by dividing by `effectiveSeparationMm` instead,
+which needs each landmark's own depth (`baselineLandmarkDepths` in
+`rigModel.ts`) and falls back to the old answer when they are not supplied.
+**Frames measured before this carry the old ψ** and must be re-saved to pick up
+the correction — Photos → frame → Analyse sail geometry → Save.
+
 **`tsc` does not check a single `.jsx` file here** — `allowJs` without
 `checkJs`. A clean typecheck says nothing about the components. What bites for
 those: `npm run lint:undef` (scope-aware `no-undef`) and `next build` (module

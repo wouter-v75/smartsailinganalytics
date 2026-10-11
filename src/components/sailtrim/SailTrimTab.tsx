@@ -41,7 +41,7 @@ import {
   depthFor,
   fetchRigModel, putRigModel, fetchBoats, type BoatChoice,
   HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, isStripeTag, migrateHeightMarks,
-  stationsFor, bestScaleKey, bestBaselineKey,
+  stationsFor, bestScaleKey, bestBaselineKey, baselineLandmarkDepths,
   LEECH_SAILS, LUFF_SAILS, luffDepthMm, heightShort,
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
@@ -1003,10 +1003,17 @@ export default function SailTrimTab(
       ? { tiltDeg: horizonUsed.tiltDeg, rms: horizonUsed.rms, samples: horizonUsed.samples } : null;
     const heelForPsi = imageHeelDeg(axis, hz) ?? (heel != null && Number.isFinite(heel) ? heel : null);
     const base = marks.baseline || [];
+    // The landmarks' own depths, so ψ is divided by the EFFECTIVE separation
+    // rather than the true one. Without them ψ comes out inflated by the product
+    // of the two ends' depth-scale factors — 45 % on a mast→transom baseline at
+    // 25 m, 31 % at 33 m — and, because that factor depends on the RANGE, two
+    // frames of the same trim shot from different distances disagree.
+    const baseDepths = baseRef ? baselineLandmarkDepths(rig, baseRef.key) : null;
     const baseline = base.length >= 2 && (baseRef?.mm ?? 0) > 0
-      ? { aft: base[0], fwd: base[1], separationMm: baseRef.mm }
+      ? { aft: base[0], fwd: base[1], separationMm: baseRef.mm, ...(baseDepths ?? {}) }
       : null;
-    let psi = solvePsi(baseline, axis.across, mmPerPxAtMast, heelForPsi, { clickSigmaPx: CLICK_SIGMA_PX });
+    const psiOpts = { clickSigmaPx: CLICK_SIGMA_PX, rangeMm };
+    let psi = solvePsi(baseline, axis.across, mmPerPxAtMast, heelForPsi, psiOpts);
 
     // An ATHWARTSHIPS reference images at cos ψ of its true extent, so both the
     // scale AND the ψ that came out of it are biased by sec ψ. Undo it — exactly,
@@ -1016,7 +1023,7 @@ export default function SailTrimTab(
     if (scaleRef?.orientation !== 'vertical' && psi.measured) {
       const fixed = unbiasAthwartshipsScale(mmPerPxAtMast, psi.deg);
       mmPerPxAtMast = fixed.mmPerPxAtMast;
-      psi = solvePsi(baseline, axis.across, mmPerPxAtMast, heelForPsi, { clickSigmaPx: CLICK_SIGMA_PX });
+      psi = solvePsi(baseline, axis.across, mmPerPxAtMast, heelForPsi, psiOpts);
     }
 
     return {

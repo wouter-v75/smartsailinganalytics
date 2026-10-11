@@ -8,6 +8,7 @@ import {
   tackFromTwa, leewardSign,
   centreplaneFoot,
   unbiasAthwartshipsScale,
+  effectiveSeparationMm,
 } from '../sailTrim'
 import {
   makeCamera, RIG, MAST_HALF_WIDTH, SPREADER_HALF, SPREADER_Z, TACK, TRANSOM,
@@ -739,5 +740,99 @@ describe('focalForSensor — the focal length and the sensor width are a PAIR', 
     const out = focalForSensor({ focalMm: null, focal35Mm: null, sensorWidthMm: FULL })
     expect(out.mm).toBeNull()
     expect(out.from).toBe('none')
+  })
+})
+
+describe('sailTrim — the baseline\'s two ends are at different scales', () => {
+  // THE BUG. psi is read off the image displacement between two centreplane
+  // landmarks, and that displacement used to be converted with ONE scale — the
+  // mast's. The landmarks are at different depths, so they are at different
+  // scales, and using the mast's for both inflates the displacement and psi
+  // with it. The inflation is the product of the two ends' depth-scale factors,
+  // so it is 1 at infinity and grows as the camera closes.
+  //
+  // Every existing psi test here shoots from 260 m, where it is 1.3 % and
+  // invisible. The frames that exposed it were taken at 25-34 m, where it is
+  // 45 % and 30 %.
+
+  it('is the true separation at infinity, and when both ends are at the mast', () => {
+    const base = { separationMm: 21_000, depthFwdMm: 9_000, depthAftMm: -12_000 }
+    expect(effectiveSeparationMm(base, null)).toBe(21_000)
+    expect(effectiveSeparationMm({ separationMm: 1_000, depthFwdMm: 0, depthAftMm: 0 }, 30_000))
+      .toBeCloseTo(1_000, 6)
+    // 300 m is nearly infinity for a 21 m baseline: just over 1 %.
+    expect(effectiveSeparationMm(base, 300_000) / 21_000).toBeCloseTo(1.0113, 3)
+  })
+
+  it('divides by the PRODUCT of the two ends\' depth factors', () => {
+    // mast -> transom on Baraka: 7.8 m, at the two ranges her frames were shot
+    // from. R^2/((R+0)(R-7800)) = 1.453 at 25 m and 1.310 at 33 m.
+    //
+    // The effective separation is BIGGER than the true one, and that is the
+    // whole correction: psi = asin(du / sep), so dividing by a larger number
+    // returns a smaller angle. 7.8 m of transom behaves like 11.3 m of baseline
+    // at 25 m, because the transom images larger than the mast does.
+    const base = { separationMm: 7_800, depthFwdMm: 0, depthAftMm: -7_800 }
+    expect(effectiveSeparationMm(base, 25_000)).toBeCloseTo(11_337, 0)
+    expect(effectiveSeparationMm(base, 25_000) / 7_800).toBeCloseTo(1.4535, 3)
+    expect(effectiveSeparationMm(base, 33_000) / 7_800).toBeCloseTo(1.3095, 3)
+  })
+
+  it('falls back to the true separation when the depths are not supplied', () => {
+    // Behaviour-preserving for any caller not yet taught to pass them: wrong,
+    // but no more wrong than before, and never a crash or a NaN.
+    expect(effectiveSeparationMm({ separationMm: 7_800 }, 25_000)).toBe(7_800)
+    expect(effectiveSeparationMm({ separationMm: 7_800, depthFwdMm: 0 }, 25_000)).toBe(7_800)
+  })
+
+  /** psi as solvePsi reads it off a synthetic frame, with and without the fix. */
+  function psiAt(rangeMm: number, psiDeg: number) {
+    const rig: Rig = { ...RIG, psiDeg, rangeMm, focalMm: 100 }
+    const P = makeCamera(rig)
+    const axis = mastAxisFromPoints(P(0, 0, 3_000), P(0, 0, 30_000))!
+    // A VERTICAL reference, so the athwartships sec-psi bias is not also in play.
+    const mmPerPx = mmPerPxFromReference(P(0, 0, 2_000), P(0, 0, 29_000), 27_000)!
+    const ends = { aft: P(TRANSOM.x, 0, TRANSOM.z), fwd: P(TACK.x, 0, TACK.z) }
+    const sep = TACK.x - TRANSOM.x
+    return {
+      before: solvePsi({ ...ends, separationMm: sep }, axis.across, mmPerPx, rig.heelDeg,
+        { clickSigmaPx: 0 }).deg,
+      after: solvePsi(
+        { ...ends, separationMm: sep, depthFwdMm: TACK.x, depthAftMm: TRANSOM.x },
+        axis.across, mmPerPx, rig.heelDeg, { clickSigmaPx: 0, rangeMm },
+      ).deg,
+    }
+  }
+
+  it('recovers psi at 60 m, where the old solve is half a degree out', () => {
+    const { before, after } = psiAt(60_000, 5)
+    // A degree of psi is ~180 mm on a boom at E, so half a degree is not noise.
+    expect(Math.abs(before - 5)).toBeGreaterThan(0.3)
+    // 0.15 deg, not 0.05: the scaled-orthographic model has its own residual
+    // against a full perspective camera, and at 60 m it is about 0.08 deg. That
+    // is the floor this correction can reach, and it is 6x smaller than the
+    // error it removes.
+    expect(Math.abs(after - 5)).toBeLessThan(0.15)
+  })
+
+  it('still recovers psi at 260 m, where the old solve was already fine', () => {
+    // The guard that this is a correction and not a rewrite: where the bug was
+    // invisible, the fix must be invisible too.
+    const { before, after } = psiAt(260_000, 5)
+    expect(Math.abs(before - 5)).toBeLessThan(0.15)
+    expect(Math.abs(after - 5)).toBeLessThan(0.15)
+  })
+
+  it('gets WORSE with range, which is why two frames of one trim disagreed', () => {
+    // The whole reason this mattered: the error is range-dependent, so a frame
+    // at 25 m and a frame at 33 m are biased by different amounts — and a port
+    // tack shot from one distance then disagrees with a starboard tack shot from
+    // another, with the trim identical on both.
+    const near = Math.abs(psiAt(40_000, 4).before - 4)
+    const far = Math.abs(psiAt(150_000, 4).before - 4)
+    expect(near).toBeGreaterThan(far * 2)
+    // Corrected, both come back to the truth, so they no longer disagree.
+    expect(Math.abs(psiAt(40_000, 4).after - 4)).toBeLessThan(0.15)
+    expect(Math.abs(psiAt(150_000, 4).after - 4)).toBeLessThan(0.15)
   })
 })

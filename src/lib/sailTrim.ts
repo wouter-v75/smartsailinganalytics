@@ -381,6 +381,63 @@ export interface CentreplaneBaseline {
   /** Their fore-and-aft separation in mm, from the rig model. Forward point
    *  minus aft point, so always positive. */
   separationMm: number
+  /**
+   * Where each landmark sits fore-and-aft, mm, forward positive — the same
+   * convention as every depth in the rig model.
+   *
+   * Needed because the two landmarks are at DIFFERENT depths and therefore at
+   * different image scales: see `effectiveSeparationMm`. Optional, and when
+   * absent ψ is solved the old way, which is right only for a camera at
+   * infinity. Both must be given or neither.
+   */
+  depthFwdMm?: number
+  depthAftMm?: number
+}
+
+/**
+ * The separation ψ is actually divided by, once the two landmarks' own image
+ * scales are accounted for.
+ *
+ * THE BUG THIS FIXES. ψ is read off the image displacement between two
+ * centreplane landmarks, and that displacement was converted to millimetres
+ * with ONE scale — the mast's. But the landmarks are at different depths: a
+ * transom 7.8 m abaft the mast is nearer the camera and images LARGER, so its
+ * share of the displacement is worth fewer millimetres per pixel than the
+ * mast's. Using the mast's scale for both inflates the displacement, and ψ with
+ * it.
+ *
+ * The algebra collapses to something simple. A centreplane point at depth d is
+ * displaced −d·sinψ mm, which at that point's own scale k·(R+d)/R is
+ * −d·sinψ·R / (k·(R+d)) pixels. Differencing the two landmarks and multiplying
+ * by k gives −sinψ·R·[d_f/(R+d_f) − d_a/(R+d_a)], and that bracket times R is
+ *
+ *     separation · R² / ((R + d_f)(R + d_a))
+ *
+ * — the true separation divided by the PRODUCT of the two landmarks' depth
+ * scale factors. So the inflation is exactly that product's reciprocal, it is
+ * 1 when both landmarks sit in the mast plane, and it tends to 1 as R grows.
+ *
+ * It is not small and it is not constant. On a mast→transom baseline of 7.8 m
+ * it is 1.45 at a 25 m range and 1.31 at 33 m — so two frames of the SAME trim
+ * shot from different distances get ψ wrong by different amounts, which is the
+ * one kind of error that makes a port-tack measurement disagree with a
+ * starboard-tack one. On a clew at E that was worth 33 mm on the near frame and
+ * 110 mm on a frame at ψ = 5°.
+ */
+export function effectiveSeparationMm(
+  base: Pick<CentreplaneBaseline, 'separationMm' | 'depthFwdMm' | 'depthAftMm'>,
+  rangeMm: number | null | undefined,
+): number {
+  const { separationMm: sep, depthFwdMm: df, depthAftMm: da } = base
+  // No range means no depth correction anywhere in this file; no depths means
+  // the caller has not been taught to supply them. Either way: the old answer.
+  if (rangeMm == null || !(rangeMm > 0)) return sep
+  if (df == null || da == null || !Number.isFinite(df) || !Number.isFinite(da)) return sep
+  const sf = (rangeMm + df) / rangeMm
+  const sa = (rangeMm + da) / rangeMm
+  // A landmark at or behind the camera is not a photograph of a boat.
+  if (!(sf > 0) || !(sa > 0)) return sep
+  return sep / (sf * sa)
 }
 
 export interface Psi {
@@ -403,7 +460,7 @@ export function solvePsi(
   across: Px,
   mmPerPxAtMast: number,
   heelDeg: number | null,
-  opts: { clickSigmaPx?: number; assumedSigmaDeg?: number } = {},
+  opts: { clickSigmaPx?: number; assumedSigmaDeg?: number; rangeMm?: number | null } = {},
 ): Psi {
   const assumed = opts.assumedSigmaDeg ?? 1.0
   if (!base || !(base.separationMm > 0)) {
@@ -420,11 +477,17 @@ export function solvePsi(
   // The price is a cos(heel): ψ displaces the camera HORIZONTALLY, and the
   // across-the-mast axis is tilted out of horizontal by the heel.
   const duMm = (dot(sub(base.fwd, base.aft), across) * mmPerPxAtMast) / cosHeel(heelDeg)
-  const s = Math.max(-1, Math.min(1, -duMm / base.separationMm))
+  // NOT base.separationMm: the two landmarks are at different depths and so at
+  // different image scales. See `effectiveSeparationMm` — dividing by the true
+  // separation inflates ψ by up to 45 % on a close shot.
+  const sepMm = effectiveSeparationMm(base, opts.rangeMm)
+  if (!(sepMm > 0)) return { deg: 0, sigmaDeg: assumed, measured: false }
+  const s = Math.max(-1, Math.min(1, -duMm / sepMm))
   const deg = Math.asin(s) / DEG
-  // Two clicks, each ±clickSigma, over the baseline.
+  // Two clicks, each ±clickSigma, over the baseline — over the EFFECTIVE one,
+  // for the same reason the angle is.
   const clickPx = opts.clickSigmaPx ?? 1.5
-  const sigmaDeg = ((Math.SQRT2 * clickPx * mmPerPxAtMast) / base.separationMm) / DEG
+  const sigmaDeg = ((Math.SQRT2 * clickPx * mmPerPxAtMast) / sepMm) / DEG
   return { deg, sigmaDeg, measured: true }
 }
 

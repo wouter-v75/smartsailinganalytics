@@ -498,6 +498,51 @@ MEASURED['northstar iii'] = MEASURED['northstar 76']
  * is marked `derived`, so the report keeps saying it is working rather than
  * measurement.
  */
+/**
+ * Where a baseline's TWO landmarks sit fore-and-aft, mm, forward positive.
+ *
+ * ψ is solved from the image displacement between two centreplane landmarks,
+ * and that needs each landmark's own depth — not just their separation —
+ * because they are at different image scales (see `effectiveSeparationMm` in
+ * sailTrim.ts). Only the model knows where a NAMED landmark is, so the mapping
+ * lives here rather than in the geometry.
+ *
+ * Three landmarks between them, all on the centreplane, with the mast as datum:
+ *
+ *   mast          0
+ *   transom       −(mast → transom)
+ *   forestay tack +(tack → mast), i.e. J, which is FORWARD of the mast
+ *
+ * `aft`/`fwd` match the click order the tool records. `custom` returns null: a
+ * baseline somebody typed a separation for says nothing about where its ends
+ * are, and guessing would put a silent error into ψ — which is the very thing
+ * this is here to remove.
+ */
+export function baselineLandmarkDepths(
+  m: RigModel,
+  key: string,
+): { depthFwdMm: number; depthAftMm: number } | null {
+  const mm = (k: string) => {
+    const b = m.baselines.find((x) => x.key === k)
+    return b && b.mm > 0 ? b.mm : null
+  }
+  const transom = mm('mast-transom')
+  const J = mm('tack-mast')
+  switch (key) {
+    // fwd = mast (0), aft = transom.
+    case 'mast-transom':
+      return transom == null ? null : { depthFwdMm: 0, depthAftMm: -transom }
+    // fwd = forestay tack (+J), aft = mast (0).
+    case 'tack-mast':
+      return J == null ? null : { depthFwdMm: J, depthAftMm: 0 }
+    // The long one: tack to transom, so both ends are off the mast plane.
+    case 'bow-transom':
+      return transom == null || J == null ? null : { depthFwdMm: J, depthAftMm: -transom }
+    default:
+      return null
+  }
+}
+
 export function deriveBaselines(m: RigModel): RigModel {
   // whole = part + part. Named so the arithmetic below cannot be read backwards.
   const WHOLE = 'bow-transom', PARTS = ['tack-mast', 'mast-transom'] as const

@@ -5,7 +5,7 @@ import {
   loadRigModel, saveRigModel, listRigModels, rigModelFor,
   exportRigModel, importRigModel,
   luffDepthMm,
-  migrateRigModel, deriveBaselines, depthFor,
+  migrateRigModel, deriveBaselines, depthFor, baselineLandmarkDepths,
   HEIGHT_TAGS, STRIPE_TAGS, SPREADER_TAGS, heightMarkKey, migrateHeightMarks, stationsFor,
   type RigModel, type RigValue,
 } from '../rigModel'
@@ -594,5 +594,91 @@ describe('the tape-reachable scale references', () => {
       expect(ref(k).depthMm).toBe(0)
       expect(ref(k).source).toBe('estimate')      // so missingFrom still asks
     }
+  })
+})
+
+describe('baselineLandmarkDepths', () => {
+  // solvePsi needs each landmark's own depth, not just the pair's separation,
+  // because the two ends are at different image scales. Only the model knows
+  // where a named landmark is, so the mapping lives here.
+  const model = (): RigModel => {
+    const m = defaultRigModel()
+    return {
+      ...m,
+      baselines: m.baselines.map((b) =>
+        b.key === 'mast-transom' ? { ...b, mm: 7_800, source: 'measured' as const }
+        : b.key === 'tack-mast' ? { ...b, mm: 8_900, source: 'measured' as const }
+        : b),
+    }
+  }
+
+  it('puts the mast at the datum and the transom abaft it', () => {
+    expect(baselineLandmarkDepths(model(), 'mast-transom'))
+      .toEqual({ depthFwdMm: 0, depthAftMm: -7_800 })
+  })
+
+  it('puts the forestay tack FORWARD of the mast, which is J', () => {
+    // Positive. The first cut of the depths table in this file guessed the clew
+    // forward of the mast and it cost nine metres of error; the tack genuinely
+    // is forward, and the sign has to say so.
+    expect(baselineLandmarkDepths(model(), 'tack-mast'))
+      .toEqual({ depthFwdMm: 8_900, depthAftMm: 0 })
+  })
+
+  it('spans both ends for the longest baseline, where NEITHER end is at the mast', () => {
+    expect(baselineLandmarkDepths(model(), 'bow-transom'))
+      .toEqual({ depthFwdMm: 8_900, depthAftMm: -7_800 })
+  })
+
+  it('returns null for custom, rather than guessing where its ends are', () => {
+    // A typed separation says nothing about where the landmarks sit, and a guess
+    // would put a silent error straight into psi — the thing this removes.
+    expect(baselineLandmarkDepths(model(), 'custom')).toBeNull()
+    expect(baselineLandmarkDepths(model(), 'not-a-baseline')).toBeNull()
+  })
+
+  it('returns null when the baseline it needs has no length yet', () => {
+    // The default model carries estimates, not measurements, and an estimate of
+    // 0 is no number at all. Better to leave psi uncorrected than to correct it
+    // with a fiction.
+    const bare = defaultRigModel()
+    const zeroed = { ...bare, baselines: bare.baselines.map((b) => ({ ...b, mm: 0 })) }
+    expect(baselineLandmarkDepths(zeroed, 'mast-transom')).toBeNull()
+    expect(baselineLandmarkDepths(zeroed, 'bow-transom')).toBeNull()
+  })
+})
+
+describe('Baraka GP — the dock measurements', () => {
+  it('gives her two ATHWARTSHIPS references with real lengths', () => {
+    // They have been in the picker since 30e2b4d but with mm 0, so selecting one
+    // gave a scale of zero — which looks exactly like the option not existing.
+    const m = rigModelFor('Baraka GP')
+    const granny = m.scaleRefs.find((r) => r.key === 'grannyBar')!
+    const rail = m.scaleRefs.find((r) => r.key === 'sternStanchions')!
+    expect(granny.mm).toBe(1_960)
+    expect(rail.mm).toBe(4_400)
+    expect(granny.source).toBe('measured')
+    expect(rail.source).toBe('measured')
+  })
+
+  it("keeps the granny bar's DEPTH an estimate, because nobody has measured it", () => {
+    // Two facts under one stamp is what made Northstar's designer wheel-depth
+    // lose a merge it should have won. The length is a tape; the depth is not.
+    // 800 mm of unmeasured depth at 40 m is 2 % on every millimetre.
+    const granny = rigModelFor('Baraka GP').scaleRefs.find((r) => r.key === 'grannyBar')!
+    expect(granny.depthSource).toBe('estimate')
+    const rail = rigModelFor('Baraka GP').scaleRefs.find((r) => r.key === 'sternStanchions')!
+    expect(rail.depthSource).toBe('measured')
+    expect(rail.depthMm).toBeLessThan(0)
+  })
+
+  it('carries mast-to-stern, so psi has a baseline and the depths resolve', () => {
+    const m = rigModelFor('Baraka GP')
+    const mt = m.baselines.find((b) => b.key === 'mast-transom')!
+    expect(mt.mm).toBe(7_800)
+    expect(mt.source).toBe('measured')
+    // And with it, the landmark depths psi needs are now available on this boat.
+    expect(baselineLandmarkDepths(m, 'mast-transom'))
+      .toEqual({ depthFwdMm: 0, depthAftMm: -7_800 })
   })
 })
