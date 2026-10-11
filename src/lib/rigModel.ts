@@ -432,6 +432,48 @@ const MEASURED: Record<string, {
       jib: { foot: 8.96, half: 4.90, threeQuarter: 2.66, upper: 1.48 },    // HLP, HHW, HTW, HUW
     },
   },
+  // ── Baraka GP, tape on the dock, 2026-10-09 ──────────────────────────────
+  // Two ATHWARTSHIPS references, which is what this boat was missing: her
+  // certificate gives P (vertical, and the right scale for a boom at E), but a
+  // frame where the mast's bands are not both visible had nothing else to use.
+  //
+  // Both are a tape between two hard, unambiguous ends, so the length is the
+  // precise half. The DEPTH is the loose half, and they are loose in opposite
+  // ways — hence a depthSource of its own on each rather than one stamp over
+  // both. Getting that wrong on Northstar's wheels is what made a designer's
+  // figure lose a merge it should have won.
+  'baraka gp': {
+    scaleRefs: {
+      // 1.96 m end to end. Short, so two clicks cost ~0.43 % against the stern
+      // stanchions' ~0.19 % — but it sits almost in the mast plane, so a focal
+      // length 20 % out costs it nothing at all. That is the trade the default
+      // model's comment describes, and on this boat it is worth taking.
+      //
+      // Its depth is NOT known and must not be read as zero: a granny bar sits a
+      // little abaft the mast, and 800 mm of that at 40 m is 2 % on every
+      // millimetre measured with it — the whole advantage thrown away, and the
+      // same mistake as the -10 000 the wheels carried for a year. So the length
+      // is `measured` and the depth is explicitly an `estimate`, which keeps the
+      // report saying so and lets a real measurement win the merge later.
+      grannyBar: { mm: 1960, sigmaMm: 20, depthMm: 0, source: 'measured', depthSource: 'estimate' },
+      // 4.40 m port to starboard. The long one, and the better scale of the two
+      // on any frame where the stern quarter is sharp.
+      //
+      // Depth from the mast-to-stern tape below: 7800 to the mast's AFT face,
+      // plus roughly half a mast section to reach the mast plane the scale is
+      // referred to. -7900 is that, and it is the measured number ±a chord.
+      sternStanchions: { mm: 4400, sigmaMm: 30, depthMm: -7900, source: 'measured', depthSource: 'measured' },
+    },
+    baselines: {
+      // 7800 mm, tape, 2026-10-09 — and taken to the mast's AFT FACE, which is
+      // NOT the datum the other baseline uses. IRC's J is to the FRONT face, so
+      // composing the two (deriveBaselines does) is short by the mast's chord.
+      // That chord has not been measured yet, so the sigma carries it: 200 mm
+      // covers any section this boat could have, and the moment the chord is
+      // taped this becomes 7800 + chord at a tape's own ±50.
+      'mast-transom': { mm: 7800, sigmaMm: 200, source: 'measured' },
+    },
+  },
 }
 // The certificate names the boat NORTHSTAR III; the app calls it Northstar 76.
 MEASURED['northstar iii'] = MEASURED['northstar 76']

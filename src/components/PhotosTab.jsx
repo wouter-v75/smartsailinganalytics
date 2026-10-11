@@ -1378,6 +1378,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         photoLabel={geomFor?.name||"this photo"}
         caption={!geomFor ? "" : (geomFor.name||"Photo") + (geomFor.utc ? " \u00b7 " + fmtLocalDT(geomFor.utc,sessionTzOffset) + " " + TZ_SHORT(sessionTzOffset) : "")}
         twaDeg={geomFor?.twa ?? null}
+        loggedHeelDeg={geomFor?.heel ?? null}
         initialResult={geomFor ? (sailTrimRawOf(geomFor)?.result ?? null) : null}
         onSaveToPhoto={(save)=>handleSaveSailTrim(geomFor,save)}/>
     </div>

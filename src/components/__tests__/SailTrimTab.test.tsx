@@ -1312,6 +1312,44 @@ describe('SailTrimTab — an unfinished frame', () => {
   })
 })
 
+describe('SailTrimTab — the heel from the log', () => {
+  it('seeds the heel box, so it is not blank without a horizon', async () => {
+    // The number was on the photo the whole time: the TWA beside it was already
+    // being passed and the heel was not, so heel read "--" on every frame where
+    // the horizon detector found nothing.
+    render(<SailTrimTab loggedHeelDeg={21.4} />)
+    await openAFrame()
+    await settle()
+    expect((screen.getByPlaceholderText('23.5') as HTMLInputElement).value).toBe('21.4')
+  })
+
+  it('takes the MAGNITUDE, because a log sign convention is not the image one', async () => {
+    // cameraRollDeg uses Math.abs and reads the side off the mast's own lean —
+    // port/starboard differs between exports, so a signed heel would be a guess.
+    render(<SailTrimTab loggedHeelDeg={-21.4} />)
+    await openAFrame()
+    await settle()
+    expect((screen.getByPlaceholderText('23.5') as HTMLInputElement).value).toBe('21.4')
+  })
+
+  it('does not overwrite a heel the operator typed', async () => {
+    render(<SailTrimTab loggedHeelDeg={21.4} />)
+    await openAFrame()
+    await settle()
+    const box = screen.getByPlaceholderText('23.5')
+    fireEvent.change(box, { target: { value: '18' } })
+    await settle()
+    expect((box as HTMLInputElement).value).toBe('18')
+  })
+
+  it('leaves the box alone when the log has nothing', async () => {
+    render(<SailTrimTab />)
+    await openAFrame()
+    await settle()
+    expect((screen.getByPlaceholderText('23.5') as HTMLInputElement).value).toBe('')
+  })
+})
+
 describe('SailTrimTab — the focal length', () => {
   it('has its box in the PHOTO panel, beside the warning about it', async () => {
     // It used to live in the rig panel, three panels below the message telling

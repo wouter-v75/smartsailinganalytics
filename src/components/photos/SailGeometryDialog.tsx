@@ -59,6 +59,8 @@ export interface SailGeometryDialogProps {
   /** TWA from the log at this instant; it fixes the tack, which is what makes
    *  the sign of a measurement mean something about the boat. */
   twaDeg?: number | null
+  /** The heel the log recorded, so the box is not blank without a horizon. */
+  loggedHeelDeg?: number | null
   /** A previously saved measurement, to put the marks back on the picture. */
   initialResult?: unknown
   onSaveToPhoto?: (save: unknown) => void | Promise<unknown>
@@ -66,7 +68,7 @@ export interface SailGeometryDialogProps {
 
 export default function SailGeometryDialog({
   open, onClose, fileUrl, fileName = 'photo.jpg', photoLabel = 'this photo',
-  caption = '', boatName, boatId = null, twaDeg = null, initialResult = null,
+  caption = '', boatName, boatId = null, twaDeg = null, loggedHeelDeg = null, initialResult = null,
   onSaveToPhoto,
 }: SailGeometryDialogProps) {
   // createPortal needs a document, which the server render does not have.
@@ -103,6 +105,7 @@ export default function SailGeometryDialog({
           initialFileName={fileName}
           photoLabel={photoLabel}
           twaDeg={twaDeg}
+          loggedHeelDeg={loggedHeelDeg}
           initialResult={initialResult as never}
           onSaveToPhoto={onSaveToPhoto as never} />
       </div>

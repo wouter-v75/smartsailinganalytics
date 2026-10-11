@@ -270,7 +270,7 @@ export interface SailTrimSave {
 export default function SailTrimTab(
   {
     boatName = '', boatId = null, initialFileUrl = '', initialFileName = '', initialResult = null,
-    onSaveToPhoto, photoLabel = '', twaDeg = null, autoSaveWhenReady = false,
+    onSaveToPhoto, photoLabel = '', twaDeg = null, loggedHeelDeg = null, autoSaveWhenReady = false,
   }: {
     boatName?: string;
     /** The boat's id, when the caller has one and no name. Two of the three
@@ -307,6 +307,20 @@ export default function SailTrimTab(
      * silently didn't.
      */
     autoSaveWhenReady?: boolean;
+    /**
+     * The heel the LOG recorded at this instant — the same `inst` block the TWA
+     * beside it already comes from.
+     *
+     * Without it the heel box is blank unless the horizon detector finds a
+     * horizon or somebody types one, and a blank heel means no world-horizontal
+     * and no camera-roll correction. The number was sitting on the photo the
+     * whole time; only the TWA was being passed.
+     *
+     * A MAGNITUDE is what the box wants — cameraRollDeg takes the absolute value
+     * and reads the side off the mast's observed lean, because the port/starboard
+     * sign convention differs between log exports.
+     */
+    loggedHeelDeg?: number | null;
     photoLabel?: string;
   } = {},
 ) {
@@ -357,6 +371,16 @@ export default function SailTrimTab(
   // A rival measured from the coach boat. None of our instrument data describes
   // it — the logged heel is OUR boat's — so its heel must come from the horizon.
   const [isCompetitor, setIsCompetitor] = useState(false);
+  // Seed the heel from the log, and only seed: never overwrite what the operator
+  // typed, nor what a reopened measurement restored.
+  //
+  // NOT for a rival. Our log describes OUR boat, and the panel already says so
+  // where the heel is shown — putting our heel in the box for somebody else's
+  // boat would make that warning a lie.
+  useEffect(() => {
+    if (loggedHeelDeg == null || !Number.isFinite(loggedHeelDeg) || isCompetitor) return;
+    setHeelDeg((cur) => (cur.trim() ? cur : String(Math.round(Math.abs(loggedHeelDeg) * 10) / 10)));
+  }, [loggedHeelDeg, isCompetitor]);
   // A boat chosen in the picker outranks whatever the caller passed: the
   // operator is looking at the photograph and the caller is guessing from context.
   const [pickedBoatId, setPickedBoatId] = useState<string | null>(null);
