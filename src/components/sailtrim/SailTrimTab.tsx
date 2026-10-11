@@ -28,7 +28,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
   mmPerPxFromReference, mmPerPxAtMastFromRef, unbiasAthwartshipsScale,
-  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg, focalSensitivity,
+  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg, focalSensitivity, focalForSensor,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -553,15 +553,38 @@ export default function SailTrimTab(
       // EXIF stamps carry no zone and are venue-LOCAL wall clock — shown as
       // written, never converted here.
       setCapturedAt(dt instanceof Date ? dt.toISOString().slice(0, 19).replace('T', ' ') : null);
-      if (d?.FocalLength) {
-        setFocalMm(String(Math.round(d.FocalLength)));
-        setExifNote(`${d.Model || 'camera'} · ${Math.round(d.FocalLength)} mm${d.LensModel ? ` · ${d.LensModel}` : ''}`);
+      // The focal length must MATCH the sensor width the rig model carries, and
+      // EXIF offers both halves of two different pairs. See focalForSensor.
+      const pick = focalForSensor({
+        focalMm: d?.FocalLength,
+        focal35Mm: d?.FocalLengthIn35mmFormat,
+        sensorWidthMm: rig.sensorWidthMm,
+      });
+      if (pick.suspect) {
+        // A phone that writes no 35 mm equivalent — the Fairphone 6 writes 5.6 mm
+        // and nothing else. Paired with a 36 mm sensor that is a range ~4.6x too
+        // short and a depth correction badly inflated, on every measurement.
+        // Leaving the box EMPTY is the safe direction: an operator who has to
+        // type a number thinks about it, and a number quietly 4x wrong does not
+        // announce itself anywhere downstream.
+        setExifNote(`${d.Model || 'This camera'} reports ${d.FocalLength} mm and no 35 mm equivalent. `
+          + `That is the lens's own length, which only pairs with this camera's own sensor width — `
+          + `against the ${rig.sensorWidthMm} mm this rig model uses it would make the range several times too short. `
+          + `Enter the 35 MM EQUIVALENT instead (a phone's main camera is usually 24–28 mm), `
+          + `or scale off a mast-plane reference, where the focal length cannot affect the answer at all.`);
+      } else if (pick.mm) {
+        setFocalMm(String(Math.round(pick.mm)));
+        setExifNote(`${d.Model || 'camera'} · ${Math.round(pick.mm)} mm`
+          + (pick.from === '35mm-equivalent' ? ' (35 mm equivalent)' : '')
+          + `${d.LensModel ? ` · ${d.LensModel}` : ''}`);
         // Every frame that HAS a focal length teaches the list one, so by the
         // time a stripped export turns up the kit it was shot on is already
         // there to pick. Nothing to configure, and nothing to keep up to date.
+        // Remember what was USED, not what EXIF said: an actual focal length
+        // picked later against a 36 mm sensor would be wrong all over again.
         void rememberLens({
-          label: lensLabel(d.Model, d.LensModel, d.FocalLength),
-          focalMm: Math.round(d.FocalLength),
+          label: lensLabel(d.Model, d.LensModel, pick.mm),
+          focalMm: Math.round(pick.mm),
           lastUsed: Date.now(),
         }).then((next) => { if (next.length) setLenses(next); });
       } else {

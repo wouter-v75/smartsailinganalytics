@@ -1014,7 +1014,15 @@ function TagTextArea({ value, onChange, placeholder, availableTags = [], onAddTa
         onBlur={() => setTimeout(() => setMenu(null), 150)}
         rows={rows}
         placeholder={placeholder}
-        style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4, overflowY: 'hidden' }}
+        /* 'auto', not 'hidden', and it matters. useAutoGrow sets the height from
+           scrollHeight, so normally nothing overflows and no bar appears. But a
+           measurement taken while the box is hidden, or before a webfont lands,
+           comes back short — and with overflow HIDDEN the surplus text then
+           disappears with no scrollbar to hint that it is there. That is the
+           exact failure ui/auto-textarea was written to end, and it uses
+           'auto'; this hand-rolled twin kept 'hidden'. A visible scrollbar is a
+           bug you can see. */
+        style={{ ...inputStyle, width: '100%', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.4, overflowY: 'auto' }}
       />
       {menu && (menu.items.length > 0 || showCreate) && (
         <div style={{ position: 'absolute', zIndex: 30, left: 0, right: 0, background: '#0A1929', border: '1px solid #1E3A5A', borderRadius: 8, marginTop: 2, maxHeight: 200, overflowY: 'auto', boxShadow: '0 6px 16px rgba(0,0,0,0.45)' }}>
@@ -1261,12 +1269,22 @@ function NotesCard({ title, aiMode, fields, showDocuments, documentsScope = 'deb
           canEdit={canEdit}
           isMobile={isMobile}
           onSaved={async (vals) => {
+            // THROW on failure, do not swallow it. AudioBrief clears the draft
+            // the moment this returns, so a save that quietly failed did not
+            // merely fail — it threw the summary away and then re-read the
+            // older, shorter note over the top of it, which reads exactly like
+            // a summary that was cut short on saving. The manual save beside
+            // this one has always checked; this one never did.
             for (const k of Object.keys(vals)) {
-              await fetch(`${base}/debrief`, {
+              const res = await fetch(`${base}/debrief`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ date, [k]: vals[k] }),
               })
+              if (!res.ok) {
+                const msg = (await res.json().catch(() => ({}))).error || `save failed (${res.status})`
+                throw new Error(`${k}: ${msg}`)
+              }
             }
             load()
           }}

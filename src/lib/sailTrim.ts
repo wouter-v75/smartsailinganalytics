@@ -234,6 +234,48 @@ export interface SensorSpec {
   imageLongEdgePx: number
 }
 
+/**
+ * Which focal length goes with the sensor width the rig model is carrying.
+ *
+ * `range` is proportional to focal ÷ sensorWidth, so the two are a PAIR and
+ * mixing them is not a small error. EXIF offers both halves of two different
+ * pairs and they look alike:
+ *
+ *   FocalLength            the glass's actual length, which belongs with the
+ *                          camera's actual sensor width;
+ *   FocalLengthIn35mmFormat the same view expressed on a 36 mm sensor.
+ *
+ * `sensorWidthMm` defaults to 36, so the 35 mm equivalent is the half that
+ * matches. On a full-frame body the two are equal and nothing turns on it —
+ * which is why this went unnoticed: the Canon R6m2 is full frame.
+ *
+ * On a phone they are wildly different, and the equivalent is the ONLY one that
+ * works, for two reasons. An iPhone 13's wide lens is 5.1 mm against a sensor
+ * about 7 mm across, so 5.1 with 36 understates the range by a factor of ~18.
+ * And the equivalent also absorbs DIGITAL ZOOM: three frames off the same 5.1 mm
+ * lens on 10 Oct reported 46, 55 and 93 mm equivalent, because the camera had
+ * cropped. The actual focal length cannot express that at all — it is 5.1 for
+ * every one of them.
+ */
+export function focalForSensor(
+  { focalMm, focal35Mm, sensorWidthMm }: { focalMm?: number | null; focal35Mm?: number | null; sensorWidthMm: number },
+): { mm: number | null; from: '35mm-equivalent' | 'actual' | 'none'; suspect: boolean } {
+  const fullFrame = Math.abs(sensorWidthMm - 36) < 1
+  const f35 = Number.isFinite(focal35Mm) && (focal35Mm as number) > 0 ? (focal35Mm as number) : null
+  const f = Number.isFinite(focalMm) && (focalMm as number) > 0 ? (focalMm as number) : null
+
+  if (fullFrame && f35) return { mm: f35, from: '35mm-equivalent', suspect: false }
+  if (!fullFrame && f) return { mm: f, from: 'actual', suspect: false }
+  if (f) {
+    // Only the actual, against a 36 mm sensor. Fine for a full-frame body, where
+    // the two agree. Anything under ~15 mm is not a full-frame lens anyone points
+    // at a boat a hundred metres away — it is a phone or a compact whose
+    // equivalent is missing, and the range will come out far too short.
+    return { mm: f, from: 'actual', suspect: fullFrame && f < 15 }
+  }
+  return { mm: f35 ?? null, from: f35 ? '35mm-equivalent' : 'none', suspect: false }
+}
+
 /** Camera→mast range in mm. Needed only for the depth correction. */
 export function rangeMmFrom(sensor: SensorSpec, mmPerPxAtMast: number): number | null {
   const { widthMm, focalLengthMm, imageLongEdgePx } = sensor

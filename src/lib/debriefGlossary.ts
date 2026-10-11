@@ -97,6 +97,12 @@ export const DEFAULT_GLOSSARY: Glossary = {
     ['tuck', 'tack (the manoeuvre)'], ['tucks', 'tacks'],
     ['mode zero', 'MH0'], ['mower', 'MH0'],
     ['Brault', 'BRO'], ['raw', 'BRO (when the sense is a sail being peeled to)'],
+    // Baraka GP, 9 Oct 2026 speed-team meeting: "capture flower TWS shape data".
+    // It survived the AI note AND the hand correction, which is the argument for
+    // putting it here rather than relying on either pass to catch it. Scoped to
+    // wind strength so an actual flower, however unlikely afloat, is left alone.
+    ['flower', 'lower (when the sense is wind strength — "flower TWS" is "lower TWS")'],
+    ['flower TWS', 'lower TWS'],
     // Spelling, not mishearing: "bare" and "bear" are homophones, and Sandokan is
     // the usual spelling of the name, so the recogniser will favour both forms.
     ['bare away', 'bear away'], ['bare-away set', 'bear-away set'],

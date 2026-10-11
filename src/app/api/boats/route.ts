@@ -31,10 +31,31 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'unauth' }, { status: 401 })
 
-  const [{ data: boats, error }, { data: teams }] = await Promise.all([
-    supabase.from('boats').select('id, team_id, name, sail_number, rig_model, is_competitor, specs').order('name'),
+  // `specs` is OPTIONAL here, and that is load-bearing. It was selected before
+  // the column existed (it lives on `sails`, not `boats`), and PostgREST refuses
+  // the whole SELECT over one unknown column — so this route answered 500,
+  // fetchBoats() returned [], and every boat vanished from SailTrim's picker and
+  // the Upload tab. The symptom reads as "my boat is missing", not as an outage,
+  // which is why it took a 500 in the console to find.
+  //
+  // So: ask for it, and if the column is not there, ask again without it. A log
+  // profile nobody has set is worth exactly nothing next to a boat list that
+  // works.
+  const COLS = 'id, team_id, name, sail_number, rig_model, is_competitor'
+  const [full, { data: teams }] = await Promise.all([
+    supabase.from('boats').select(`${COLS}, specs`).order('name'),
     supabase.from('teams').select('id, name'),
   ])
+
+  let boats = full.data as Record<string, unknown>[] | null
+  let error = full.error
+  // 42703 = undefined column (Postgres), PGRST204 = not in PostgREST's cache.
+  if (error && ['42703', 'PGRST204'].includes(error.code || '')) {
+    console.warn('[api/boats] boats.specs is missing — serving the list without log profiles. Run migration 0099.')
+    const retry = await supabase.from('boats').select(COLS).order('name')
+    boats = retry.data as Record<string, unknown>[] | null
+    error = retry.error
+  }
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const teamName = new Map((teams || []).map((t) => [t.id, t.name as string]))
@@ -48,7 +69,7 @@ export async function GET() {
       isCompetitor: b.is_competitor === true,
       // Only the log profile, not the whole specs blob: the rest of specs is
       // nobody's business on a list of fifty boats.
-      logProfile: getBoatLogProfile(b.specs),
+      logProfile: getBoatLogProfile((b as { specs?: unknown }).specs),
     })),
   })
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   mastAxisFromEdges, mastAxisFromPoints, cameraRollDeg, horizontalDir,
-  mmPerPxFromReference, rangeMmFrom, mmPerPxAtDepth, solvePsi, focalSensitivity,
+  mmPerPxFromReference, rangeMmFrom, mmPerPxAtDepth, solvePsi, focalSensitivity, focalForSensor,
   measureTarget, intersectPolyline, leechTargets, runChecks,
   imageHeelDeg, effectiveHeelDeg, psiFromHeelShortening,
   type Px, type Calibration,
@@ -687,5 +687,57 @@ describe('focalSensitivity — what a wrong focal length costs', () => {
     // No focal length means no range, which is exactly when this is asked.
     expect(focalSensitivity(-7392, null)).toBeNull()
     expect(focalSensitivity(-7392, 0)).toBeNull()
+  })
+})
+
+describe('focalForSensor — the focal length and the sensor width are a PAIR', () => {
+  const FULL = 36
+
+  it('takes the 35 mm equivalent against a full-frame sensor width', () => {
+    // range ∝ focal ÷ sensorWidth, and the equivalent is DEFINED against 36 mm.
+    const out = focalForSensor({ focalMm: 5.1, focal35Mm: 93, sensorWidthMm: FULL })
+    expect(out.mm).toBe(93)
+    expect(out.from).toBe('35mm-equivalent')
+  })
+
+  it('is a no-op on a full-frame camera, where the two agree', () => {
+    // Why this went unnoticed: the Canon R6m2 is full frame and reports 254 for
+    // both, so every frame shot so far was right by luck of the equipment.
+    expect(focalForSensor({ focalMm: 254, focal35Mm: 254, sensorWidthMm: FULL }).mm).toBe(254)
+  })
+
+  it('would have been 18x out on the iPhone frame', () => {
+    // 5.1 ÷ 36 against the true 93 ÷ 36. Range is proportional to that ratio, so
+    // the depth correction goes from 1.19 to about 4.4 and every millimetre with
+    // it. This is the number the test exists for.
+    const wrong = 5.1 / FULL, right = 93 / FULL
+    expect(right / wrong).toBeCloseTo(18.2, 1)
+    expect(focalForSensor({ focalMm: 5.1, focal35Mm: 93, sensorWidthMm: FULL }).mm).toBe(93)
+  })
+
+  it('uses the ACTUAL focal when the sensor width is the real one', () => {
+    // Someone who has entered their phone's true sensor width wants the actual
+    // focal length beside it — the other consistent pair.
+    const out = focalForSensor({ focalMm: 5.1, focal35Mm: 93, sensorWidthMm: 7.0 })
+    expect(out.mm).toBe(5.1)
+    expect(out.from).toBe('actual')
+  })
+
+  it('flags a focal length that cannot belong to a full-frame lens', () => {
+    // No equivalent in the EXIF and 5.1 mm against 36: physically absurd for a
+    // boat at a hundred metres, and silently makes the range far too short.
+    const out = focalForSensor({ focalMm: 5.1, focal35Mm: null, sensorWidthMm: FULL })
+    expect(out.suspect).toBe(true)
+  })
+
+  it('does not flag a plausible full-frame lens', () => {
+    expect(focalForSensor({ focalMm: 254, focal35Mm: null, sensorWidthMm: FULL }).suspect).toBe(false)
+    expect(focalForSensor({ focalMm: 24, focal35Mm: null, sensorWidthMm: FULL }).suspect).toBe(false)
+  })
+
+  it('says it has nothing rather than guessing', () => {
+    const out = focalForSensor({ focalMm: null, focal35Mm: null, sensorWidthMm: FULL })
+    expect(out.mm).toBeNull()
+    expect(out.from).toBe('none')
   })
 })
