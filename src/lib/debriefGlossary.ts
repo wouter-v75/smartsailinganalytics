@@ -202,14 +202,19 @@ export const TEAM_VOCAB: Record<string, Partial<Glossary>> = {
       ['Svea', 'tactician'],
       ['Dirk', 'mainsail trim'],
       ['Oliver', 'jib trim'],
+      // BOTH are pit, as the two helms are both helms. The 10 October
+      // correction put Becca in the pit that day; Wouter named Wallie as pit on
+      // 11 October, and the same correction has the comms discussion wanting
+      // the relay to go "directly to Wallie". So which of them is in it on a
+      // given day is a fact from the transcript, not a lookup — and the pit is
+      // the crew's agreed comms relay to the bow, which is why getting the
+      // name right matters here more than it would elsewhere.
       ['Becca', 'pit'],
+      ['Wallie', 'pit'],
       ['Floris', 'bow'],
+      ['Wijbren', 'spinnaker trim'],
       ['Thomas', 'grinder'],
       ['Jurn', 'grinder'],
-      // Wallie and Wijbren are aboard and spoken about — Wallie as the relay
-      // point the comms discussion wants to move to — but the correction does
-      // not give either a station, and the file's rule is that an unlisted
-      // person gets no role rather than a guessed one.
     ],
     aliases: [],
     fixups: [
