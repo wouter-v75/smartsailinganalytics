@@ -1,41 +1,43 @@
 // scripts/photo-lens-backfill.ts
 // ─────────────────────────────────────────────────────────────────────────────
-// Put the LENS on photos that are already in SSA, read from the originals on
-// this machine.
+// Put the LENS on photos already in SSA, read from the originals on this
+// machine.
 //
-//   npx vite-node scripts/photo-lens-backfill.ts -- "~/Pictures/2026-09-05"
-//   …then the same line with --write
+//   npx vite-node scripts/photo-lens-backfill.ts -- \
+//     "/Users/wouterverbraak/Downloads/NS_MaxiWorlds/Sternshots/stern_20260905" \
+//     --date 2026-09-05
+//
+// With no --tz it MEASURES the venue offset (see "which venue offset?" below)
+// and tells you which one to re-run with. --write then needs that --tz, so the
+// offset is always a decision rather than a default nobody checked.
 //
 // DRY RUN by default. Reads .env.local; needs exiftool; run OUTSIDE Claude
 // Code's Bash sandbox.
 //
-// WHY THIS EXISTS. SailTrim turns a scale into a RANGE with the focal length,
-// and the range is what corrects every target's depth and ψ's effective
-// separation. Without it both corrections are skipped silently — not applied
-// badly, skipped — and the frame still produces numbers that sit happily beside
-// corrected ones. Northstar's 5 Sept set is five frames out of six like that,
-// and its boom agrees to 73 mm across all six, which reads as precision and is
-// agreement between different maths.
+// WHY. SailTrim turns a scale into a RANGE with the focal length, and the range
+// corrects every target's depth and ψ's effective separation. Without one both
+// are SKIPPED — not applied badly, skipped — and the frame still produces
+// numbers that sit beside corrected ones without complaint. Northstar's 5 Sept
+// set is five frames out of six like that, and its boom agrees to 73 mm across
+// all six, which reads as precision and is agreement between different maths.
 //
-// It cannot be recovered from the cloud copy. Those originals were re-exported
-// with the overlay burned in and the EXIF stripped, so the file the tab fetches
-// has no lens at all and the box is left empty or filled from whatever the last
-// frame used. That is how 100 and 114 mm ended up on two frames a second apart.
+// It cannot come from the cloud copy: those are re-exports with the overlay
+// burned in and the EXIF stripped. The camera original is the only place it
+// still exists.
 //
-// MATCHING IS BY THE MOMENT OF CAPTURE, which took three attempts to get right
-// and the first two are worth recording.
+// HOW THE JOIN WORKS, after three attempts:
 //
-// NOT by filename: the upload stores `sessions/<date>/photos/<id>.jpg` and
-// discards the photographer's name, so there is nothing there to compare.
+//   by filename   — no. The upload stores `sessions/<date>/photos/<id>.jpg`
+//                   and discards the photographer's name.
+//   by byte count — no. The copy in SSA is a re-export; it shares no bytes
+//                   with the original. 648 files, 0 matched.
+//   by CAPTURE TIME — yes, and it is the only thing both still carry.
 //
-// NOT by byte count either, which was the obvious second answer and also wrong:
-// the copies in SSA are RE-EXPORTS with the overlay burned in, so they share no
-// bytes with the camera original sitting on disk. 648 files matched nothing.
-//
-// EXIF DateTimeOriginal is what survives both. It is a venue-LOCAL wall clock
-// with no zone — the trap this whole project is built around — so --tz converts
-// it the same way the upload did. A 5 Sept frame shot at 12:37:46 in Porto
-// Cervo is taken_utc 10:37:46, and CEST is +120.
+// EXIF DateTimeOriginal is a venue-LOCAL wall clock with no zone, so something
+// has to supply the shift to a stored taken_utc. The script measures it rather
+// than defaulting, because a wrong offset matches NOTHING and reads as "these
+// are not the right originals" — which is a different and much more alarming
+// conclusion than "try +1".
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { readFileSync, readdirSync, statSync } from 'fs'
@@ -46,13 +48,15 @@ import { createClient } from '@supabase/supabase-js'
 const args = process.argv.slice(2)
 const WRITE = args.includes('--write')
 const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
-/** Venue offset in MINUTES. EXIF carries no zone; the upload used the same. */
-const TZ_MIN = Number(flag('--tz') ?? 120)
-/** Seconds of slop allowed between the original's stamp and the stored row. */
+const DATE = flag('--date')
+const TZ_RAW = flag('--tz')
+const TZ_MIN = Number(TZ_RAW ?? 0)   // the sweep re-offsets; 0 keeps stamps as read
+const SWEEP = TZ_RAW == null
 const TOL_S = Number(flag('--tol') ?? 2)
-const DIRS = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--tz' && args[i - 1] !== '--tol')
+const FLAGGED = new Set(['--date', '--tz', '--tol'])
+const DIRS = args.filter((a, i) => !a.startsWith('--') && !FLAGGED.has(args[i - 1] ?? ''))
 if (!DIRS.length) {
-  console.error('usage: <folder of originals> [more folders] [--write]')
+  console.error('usage: photo-lens-backfill.ts -- /path/to/originals [--date 2026-09-05] [--tz 120] [--write]')
   process.exit(1)
 }
 
@@ -64,136 +68,161 @@ const env = Object.fromEntries(
 const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
 
 const IMG = /\.(jpe?g|png|heic|tiff?)$/i
-const num = (v: string) => {
-  const x = parseFloat(String(v).replace(/[^\d.]/g, ''))
+const num = (v: string | undefined) => {
+  const x = parseFloat(String(v ?? '').replace(/[^\d.]/g, ''))
   return Number.isFinite(x) && x > 0 ? x : null
 }
 
-/**
- * DateTimeOriginal as true UTC ms, using the venue offset.
- *
- * The stamp is a LOCAL wall clock with no zone — read it as UTC and the whole
- * set lands hours from its rows. Converted the same way the upload converted
- * it, which is why --tz has to match what media:upload used for that day.
- */
-function exifUtcMs(file: string): number | null {
-  try {
-    const out = execFileSync('exiftool', ['-s3', '-DateTimeOriginal', '-CreateDate', file],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-    const first = out.split('\n').map((x) => x.trim()).filter(Boolean)[0] || ''
-    const m = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(first)
-    if (!m) return null
-    return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) - TZ_MIN * 60_000
-  } catch { return null }
+interface Shot {
+  path: string; ms: number
+  camera: string | null; lensModel: string | null
+  focalMm: number | null; focal35Mm: number | null
 }
 
-/** BOTH focal lengths: they pair with different sensor widths. See focalForSensor. */
-function lensOf(file: string) {
+/** One exiftool call for the whole folder — 648 separate ones takes minutes.
+ *
+ *  `-T` is tab-separated, not CSV, deliberately: exiftool quotes CSV fields that
+ *  contain a comma and lens names do ("RF100-500mm F4.5-7.1 L IS USM" does not,
+ *  but plenty do), and a hand-rolled CSV splitter is exactly the kind of thing
+ *  that works on every file until it doesn't. A tab cannot occur in any of these
+ *  fields. Missing values come back as a bare `-`. */
+const FIELDS = ['DateTimeOriginal', 'Model', 'LensModel', 'FocalLength', 'FocalLengthIn35mmFormat'] as const
+
+function readFolder(dir: string): Shot[] {
+  let files: string[]
+  try { files = readdirSync(dir).filter((f) => IMG.test(f)) }
+  catch { console.error(`no such folder: ${dir}`); return [] }
+  const paths = files.map((f) => join(dir, f)).filter((p) => statSync(p).isFile())
+  if (!paths.length) return []
   const out = execFileSync('exiftool',
-    ['-s3', '-Model', '-LensModel', '-FocalLength', '-FocalLengthIn35mmFormat', file],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-  const [model, lens, focal, focal35] = out.split('\n').map((x) => x.trim())
-  return {
-    camera: model || null,
-    lensModel: lens || null,
-    focalMm: focal ? num(focal) : null,
-    focal35Mm: focal35 ? num(focal35) : null,
+    ['-T', ...FIELDS.map((f) => `-${f}`), '-FileName', ...paths],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 })
+  const shots: Shot[] = []
+  for (const line of out.trim().split('\n')) {
+    const c = line.split('\t').map((x) => (x === '-' ? '' : x.trim()))
+    if (c.length < FIELDS.length + 1) continue
+    const m = /^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(c[0])
+    if (!m) continue
+    shots.push({
+      path: join(dir, c[FIELDS.length]),
+      ms: Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]),
+      camera: c[1] || null,
+      lensModel: c[2] || null,
+      focalMm: num(c[3]),
+      focal35Mm: num(c[4]),
+    })
   }
+  return shots
 }
 
 async function main() {
   try { execFileSync('exiftool', ['-ver'], { stdio: 'ignore' }) }
   catch { console.error('exiftool not on PATH — brew install exiftool'); process.exit(1) }
 
-  // capture instant (ms, true UTC) → every local file taken then.
-  const byTime = new Map<number, string[]>()
-  const noStamp: string[] = []
-  for (const dir of DIRS) {
-    // A folder that is not there is a typo or a placeholder somebody pasted,
-    // and a stack trace from node:fs says neither. Name it and carry on with
-    // the folders that do exist.
-    let entries: string[]
-    try { entries = readdirSync(dir) }
-    catch { console.error(`no such folder: ${dir}`); continue }
-    for (const f of entries) {
-      if (!IMG.test(f)) continue
-      const p = join(dir, f)
-      if (!statSync(p).isFile()) continue
-      const t = exifUtcMs(p)
-      if (t == null) { noStamp.push(basename(p)); continue }
-      if (!byTime.has(t)) byTime.set(t, [])
-      byTime.get(t)!.push(p)
-    }
-  }
-  const locals = new Map<number, string>()
-  for (const [t, paths] of Array.from(byTime)) {
-    if (paths.length === 1) locals.set(t, paths[0])
-  }
-  const ambiguous = Array.from(byTime).filter(([, ps]) => ps.length > 1)
-  if (!locals.size) {
-    console.error('no images found in any of those folders — nothing to read a lens from')
-    process.exit(1)
-  }
-  console.log(`${locals.size} original(s) on disk with a readable stamp, read as UTC${TZ_MIN >= 0 ? '+' : ''}${TZ_MIN / 60}`
-    + (ambiguous.length ? ` · ${ambiguous.length} instant(s) shared by more than one file, skipped` : '')
-    + (noStamp.length ? ` · ${noStamp.length} with no DateTimeOriginal` : '') + '\n')
+  const shots = DIRS.flatMap(readFolder)
+  if (!shots.length) { console.error('no originals with a readable DateTimeOriginal'); process.exit(1) }
+  console.log(`${shots.length} original(s) with a readable DateTimeOriginal`)
 
-  const { data: photos, error } = await sb.from('photos')
-    .select('id, taken_utc, bunny_storage_path, bytes, exif_data')
+  let q = sb.from('photos').select('id, taken_utc, exif_data')
+  // Range, not `like`: taken_utc is a timestamptz and Postgres refuses ~~ on one.
+  // Deliberately a wide day in UTC — the rows and the stamps are being matched on
+  // the instant anyway, so a day's edge only has to be loose enough not to clip.
+  if (DATE) {
+    q = q.gte('taken_utc', `${DATE}T00:00:00Z`)
+      .lt('taken_utc', new Date(Date.parse(`${DATE}T00:00:00Z`) + 36 * 3600_000).toISOString())
+  }
+  const { data: photos, error } = await q
   if (error) { console.error(`photos: ${error.message}`); process.exit(1) }
+  console.log(`${(photos ?? []).length} photo(s) in SSA${DATE ? ` on ${DATE}` : ''}\n`)
 
-  let done = 0, already = 0, noLens = 0, noMatch = 0
-  const unmatched: string[] = []
-  const rowsUnmatched: string[] = []
-  for (const row of photos ?? []) {
-    const rowMs = Date.parse(String(row.taken_utc ?? ''))
-    if (!Number.isFinite(rowMs)) continue
-    // Nearest local capture within the tolerance. The stamps agree to the
-    // second when the zone is right, and not at all when it is not — which is
-    // the loudest symptom of a wrong --tz.
-    let key: number | null = null
-    for (const t of Array.from(locals.keys())) {
-      if (Math.abs(t - rowMs) <= TOL_S * 1000) { key = t; break }
+  // ── which venue offset? ────────────────────────────────────────────────────
+  //
+  // DateTimeOriginal is a venue-LOCAL wall clock carrying no zone (CLAUDE.md,
+  // "Clocks are local wall-time even when something calls them UTC"), so the
+  // shift from it to a stored taken_utc has to come from somewhere. Guessing it
+  // has been wrong twice in one evening — and worse, a wrong guess does not fail
+  // loudly: it just matches nothing, which reads as "these are not the right
+  // originals". So with no --tz the script MEASURES it, by asking which whole
+  // offset aligns the most rows, and refuses to write until told which to use.
+  //
+  // One day's folder here starts at 11:50 local against an 11:50 row, and the
+  // next starts at 11:53 local against a 10:37 row. They cannot both be right,
+  // and the answer is a property of the data, not of my recollection.
+  const CANDIDATES = SWEEP ? [0, 60, 120, 180, -60] : [TZ_MIN]
+  const rows = (photos ?? []).filter((r) => Number.isFinite(Date.parse(String(r.taken_utc ?? ''))))
+
+  interface Hit { row: typeof rows[number]; when: string; shot: Shot; burst: number }
+  function tryOffset(tzMin: number): { hits: Hit[]; disagree: string[]; missed: string[] } {
+    const hits: Hit[] = []; const disagree: string[] = []; const missed: string[] = []
+    for (const row of rows) {
+      const rowMs = Date.parse(String(row.taken_utc))
+      const when = String(row.taken_utc).slice(11, 19)
+      const near = shots.filter((s) => Math.abs(s.ms - tzMin * 60_000 - rowMs) <= TOL_S * 1000)
+      if (!near.length) { missed.push(when); continue }
+      // A BURST IS NOT A PROBLEM. 114 of these instants hold more than one frame,
+      // so a second does not identify a file — and it does not need to. This is
+      // after the LENS, and you cannot zoom between frames 40 ms apart, so
+      // several candidates are fine as long as they AGREE. When they disagree it
+      // says so rather than picking one.
+      const distinct = new Set(near.map((s) => `${s.focalMm}|${s.focal35Mm}`))
+      if (distinct.size > 1) {
+        disagree.push(`${when}  ${near.length} originals within ${TOL_S}s disagree: `
+          + near.map((s) => `${basename(s.path)} ${s.focalMm}mm`).join(', '))
+        continue
+      }
+      hits.push({ row, when, shot: near[0], burst: near.length })
     }
-    if (key == null) { rowsUnmatched.push(String(row.taken_utc)); continue }
-    const local = locals.get(key)!
-    locals.delete(key)
-    const exif = (row.exif_data || {}) as Record<string, unknown>
+    return { hits, disagree, missed }
+  }
+
+  let tz = TZ_MIN
+  if (SWEEP) {
+    console.log('no --tz given, so measuring the offset rather than assuming one:')
+    let best = -1
+    for (const c of CANDIDATES) {
+      const { hits, disagree } = tryOffset(c)
+      console.log(`  UTC${c >= 0 ? '+' : ''}${c / 60}  ${String(hits.length).padStart(4)} of ${rows.length} rows matched`
+        + (disagree.length ? ` · ${disagree.length} with disagreeing candidates` : ''))
+      if (hits.length > best) { best = hits.length; tz = c }
+    }
+    if (best <= 0) {
+      const local = shots.map((s) => s.ms).sort((a, b) => a - b).slice(0, 3)
+        .map((t) => new Date(t).toISOString().replace('T', ' ').slice(0, 19))
+      console.log(`\nNo offset matches anything. First local stamps: ${local.join(', ')}`)
+      console.log(`First stored taken_utc:  ${rows.slice(0, 3).map((r) => String(r.taken_utc).slice(0, 19)).join(', ')}`)
+      console.log('Not an offset problem then — these originals are not the files that were uploaded.')
+      return
+    }
+    console.log(`\nBest: UTC${tz >= 0 ? '+' : ''}${tz / 60}. Re-run with --tz ${tz} --write to apply it.\n`)
+  }
+
+  const { hits, disagree, missed } = tryOffset(tz)
+  for (const d of disagree) console.log(d)
+
+  let done = 0, already = 0
+  for (const h of hits) {
+    const exif = (h.row.exif_data || {}) as Record<string, unknown>
     if (exif.focalMm || exif.focal35Mm) { already++; continue }
-    const lens = lensOf(local)
-    if (!lens.focalMm && !lens.focal35Mm) {
-      noLens++
-      console.log(`${basename(local).padEnd(28)} the ORIGINAL has no focal length either`)
-      continue
-    }
-    console.log(`${basename(local).padEnd(28)} ${lens.camera ?? '—'}`
-      + `  ${lens.focalMm ?? '—'} mm actual · ${lens.focal35Mm ?? '—'} mm at 36 mm`)
-    if (WRITE) {
-      const { error: uErr } = await sb.from('photos')
-        .update({ exif_data: { ...exif, ...lens } }).eq('id', row.id)
+    const s = h.shot
+    console.log(`${h.when}  ${basename(s.path)}${h.burst > 1 ? ` (+${h.burst - 1} in the burst)` : ''}`
+      + `  ${s.camera ?? '—'}  ${s.focalMm ?? '—'} mm`
+      + `${s.focal35Mm ? ` · ${s.focal35Mm} mm at 36 mm` : ' · no 35 mm equivalent, so full frame or unknown'}`)
+    if (WRITE && !SWEEP) {
+      const { error: uErr } = await sb.from('photos').update({
+        exif_data: {
+          ...exif, camera: s.camera, lensModel: s.lensModel,
+          focalMm: s.focalMm, focal35Mm: s.focal35Mm, focalFrom: 'original-exif',
+        },
+      }).eq('id', h.row.id)
       if (uErr) { console.error(`  ! ${uErr.message}`); process.exit(1) }
     }
     done++
   }
-  for (const path of Array.from(locals.values())) { unmatched.push(basename(path)); noMatch++ }
 
-  console.log(`\n${done} ${WRITE ? 'written' : 'to write'}`
+  console.log(`\n${done} ${WRITE && !SWEEP ? 'written' : 'to write'}`
     + (already ? ` · ${already} already had a lens` : '')
-    + (noLens ? ` · ${noLens} originals with no EXIF lens` : '')
-    + (noMatch ? ` · ${noMatch} on disk matched no photo` : ''))
-  if (unmatched.length) {
-    console.log(`  on disk, no row within ${TOL_S}s: ${unmatched.slice(0, 6).join(', ')}${unmatched.length > 6 ? ' …' : ''}`)
-  }
-  // Nothing matched at all is a WRONG ZONE far more often than a missing photo,
-  // and the two look identical from a count. Show both clocks side by side.
-  if (!done && !already) {
-    const sampleLocal = Array.from(locals.keys()).sort().slice(0, 3)
-      .map((t) => new Date(t).toISOString().slice(11, 19))
-    console.log(`\n  Nothing matched. First local stamps as UTC: ${sampleLocal.join(', ') || '(none)'}`)
-    console.log(`  First stored taken_utc:              ${rowsUnmatched.slice(0, 3).map((t) => t.slice(11, 19)).join(', ') || '(none)'}`)
-    console.log('  A constant whole-hour gap between those two rows is the venue offset —')
-    console.log('  pass it as --tz <minutes> (120 = CEST, 60 = BST, 0 = GMT).')
-  }
-  if (!WRITE && done) console.log('\nDry run. Add --write to store.')
+    + (disagree.length ? ` · ${disagree.length} with disagreeing candidates` : '')
+    + (missed.length ? ` · ${missed.length} rows with no original within ${TOL_S}s` : ''))
+  if (WRITE && SWEEP) console.log('Nothing written: --write needs an explicit --tz, so the offset is a decision and not a guess.')
 }
 main()
