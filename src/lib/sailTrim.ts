@@ -584,6 +584,21 @@ export interface Calibration {
   /** True when that offset could NOT be corrected for — no focal length, so no
    *  range — and the scale is therefore biased by depth/range. */
   scaleDepthUncorrected?: boolean
+  /**
+   * True when the reference's DEPTH is a guess rather than a measurement.
+   *
+   * Separate from `scaleDepthUncorrected`, which is about not having a focal
+   * length to correct a KNOWN depth with. This is not knowing the depth at all.
+   *
+   * It matters most where it is least visible: a reference carrying depth 0
+   * because nobody has measured it looks exactly like one carrying depth 0
+   * because it genuinely sits in the mast plane, and the old check keyed off the
+   * depth being non-zero — so the guess produced no warning whatsoever. Baraka's
+   * granny bar is the case: it sits a little abaft the mast, nobody has taped
+   * how far, and 800 mm of that at 40 m is 2 % on every millimetre measured
+   * with it.
+   */
+  scaleRefDepthEstimated?: boolean
   /** A rival, measured from the coach boat. None of our instrument data
    *  describes it — see effectiveHeelDeg. */
   isCompetitor?: boolean
@@ -867,14 +882,21 @@ export function runChecks(cal: Calibration): Check[] {
         : 'no centreplane baseline marked — ψ assumed 0 ± 1°, and a degree of ψ is ±17 mm for every metre a target sits from the mast',
   })
 
-  if (cal.scaleRefDepthMm) {
+  // An unmeasured depth is a reason to warn even when it is being treated as
+  // zero — otherwise the one reference whose depth nobody knows is the only one
+  // that says nothing.
+  if (cal.scaleRefDepthMm || cal.scaleRefDepthEstimated) {
+    const d = cal.scaleRefDepthMm ?? 0
+    const where = `${Math.abs(d / 1000).toFixed(1)} m ${d < 0 ? 'abaft' : 'forward of'} the mast`
     out.push({
       key: 'scale-depth',
       label: 'Scale reference off the mast plane',
-      ok: !cal.scaleDepthUncorrected,
-      detail: cal.scaleDepthUncorrected
-        ? `the reference sits ${Math.abs(cal.scaleRefDepthMm / 1000).toFixed(1)} m ${cal.scaleRefDepthMm < 0 ? 'abaft' : 'forward of'} the mast and there is no focal length, so its scale CANNOT be referred to the mast plane. Every measurement on this frame is biased by depth/range — a few per cent. Enter the focal length, or use a reference at the mast.`
-        : `${Math.abs(cal.scaleRefDepthMm / 1000).toFixed(1)} m ${cal.scaleRefDepthMm < 0 ? 'abaft' : 'forward of'} the mast, referred back to the mast plane`,
+      ok: !cal.scaleDepthUncorrected && !cal.scaleRefDepthEstimated,
+      detail: cal.scaleRefDepthEstimated
+        ? `this reference's DEPTH has never been measured — it is being treated as ${d ? where : 'sitting in the mast plane'}, which is a guess, not a number. The scale is referred back to the mast plane by depth/range, so being wrong by 800 mm at 40 m is 2 % on every millimetre on this frame. Tape it to the mast and put it in the rig model.`
+        : cal.scaleDepthUncorrected
+          ? `the reference sits ${where} and there is no focal length, so its scale CANNOT be referred to the mast plane. Every measurement on this frame is biased by depth/range — a few per cent. Enter the focal length, or use a reference at the mast.`
+          : `${where}, referred back to the mast plane`,
     })
   }
 

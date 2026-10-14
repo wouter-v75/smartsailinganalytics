@@ -836,3 +836,52 @@ describe('sailTrim — the baseline\'s two ends are at different scales', () => 
     expect(Math.abs(psiAt(150_000, 4).after - 4)).toBeLessThan(0.15)
   })
 })
+
+describe("sailTrim — a scale reference whose DEPTH nobody has measured", () => {
+  // runChecks only needs the calibration fields the scale-depth check reads.
+  const cal = (over: Partial<Calibration>): Calibration => ({
+    axis: mastAxisFromPoints({ x: 100, y: 900 }, { x: 100, y: 100 })!,
+    mmPerPxAtMast: 10, scaleRelSigma: 0.002, rangeMm: 40_000,
+    psi: { deg: 0, sigmaDeg: 1, measured: false },
+    heelDeg: 12, heelSigmaDeg: 0.5, clickSigmaPx: 1.5, tack: 'port',
+    ...over,
+  })
+  const scaleDepth = (c: Calibration) => runChecks(c, []).find((x) => x.key === 'scale-depth')
+
+  it('WARNS even when the depth is being treated as zero', () => {
+    // The bug. The check keyed off the depth being non-zero, so a reference
+    // carrying 0 because nobody measured it looked identical to one carrying 0
+    // because it genuinely sits in the mast plane — and the guess was the one
+    // that said nothing at all.
+    const c = scaleDepth(cal({ scaleRefDepthMm: 0, scaleRefDepthEstimated: true }))
+    expect(c).toBeDefined()
+    expect(c!.ok).toBe(false)
+    expect(c!.detail).toMatch(/never been measured/i)
+  })
+
+  it('says nothing for a reference that really is in the mast plane', () => {
+    // P runs up the rig at depth 0, measured. No warning, no noise.
+    expect(scaleDepth(cal({ scaleRefDepthMm: 0, scaleRefDepthEstimated: false }))).toBeUndefined()
+  })
+
+  it('is content with a MEASURED depth that has a focal length behind it', () => {
+    const c = scaleDepth(cal({ scaleRefDepthMm: -7900, scaleDepthUncorrected: false }))
+    expect(c!.ok).toBe(true)
+    expect(c!.detail).toMatch(/referred back to the mast plane/i)
+  })
+
+  it('still reports a known depth that could NOT be corrected', () => {
+    // Different failure, different fix: here the depth is known and the focal
+    // length is missing, so the message asks for the focal length.
+    const c = scaleDepth(cal({ scaleRefDepthMm: -7900, scaleDepthUncorrected: true }))
+    expect(c!.ok).toBe(false)
+    expect(c!.detail).toMatch(/no focal length/i)
+  })
+
+  it('leads with the UNMEASURED depth when both are wrong at once', () => {
+    // Entering a focal length would not help: there is no depth to correct.
+    const c = scaleDepth(cal({ scaleRefDepthMm: 0, scaleRefDepthEstimated: true, scaleDepthUncorrected: true }))
+    expect(c!.ok).toBe(false)
+    expect(c!.detail).toMatch(/never been measured/i)
+  })
+})

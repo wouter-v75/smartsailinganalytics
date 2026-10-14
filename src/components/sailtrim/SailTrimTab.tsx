@@ -1035,6 +1035,11 @@ export default function SailTrimTab(
         scaleRelSigma: scaleRelSigma(scaleRef)
           + (scaleDepthUncorrected ? Math.abs(refDepthMm) / 150_000 : 0),
         rangeMm, psi, tack, scaleDepthUncorrected, scaleRefDepthMm: refDepthMm, isCompetitor,
+        // A ScaleRef carries two facts under two stamps: how long it is, and
+        // how far abaft the mast it sits. depthSource is the one that matters
+        // here, and it falls back to source for a reference that never split
+        // them — the old behaviour.
+        scaleRefDepthEstimated: (scaleRef?.depthSource ?? scaleRef?.source) === 'estimate',
         // Clicked, but the chosen baseline has no length in the model, so ψ
         // quietly fell back to 0 ± 1°. That is not the same as not having
         // bothered, and the checks should not pretend it is.
