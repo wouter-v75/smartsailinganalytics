@@ -179,6 +179,20 @@ async function main() {
     // When one frame is carrying the disagreement, say which and what the set
     // becomes without it. On Baraka's 08:22 boom that was 94 mm -> 12 mm, and
     // the depth went from 79 % of her certificate E to 89 %.
+    // THE EXTERNAL CHECK. boom and clew have a depth in the rig model that this
+    // solve was never told — the boom's comes straight off the certificate's E.
+    // Comparing them is the only way to catch a ψ error COMMON to every frame,
+    // which no residual can see: on Baraka the same clicks gave 88 % of E when
+    // scaled off the stern rail and 101 % off P, with residuals of 12 and 7 mm.
+    // The rail's depth was wrong and only this said so.
+    const expected = depthAssumedFor(key, migrateRigModel((boat.rig_model || {}) as RigModel, boat.name))
+    if ((key === 'boom' || key === 'clew') && Math.abs(expected) > 500) {
+      const pct = (100 * Math.abs(r.depthMm)) / Math.abs(expected)
+      const off = Math.abs(pct - 100) > 10
+      console.log(`${' '.repeat(19)}${off ? '⚠ ' : ''}${pct.toFixed(0)}% of the model's ${Math.round(expected)} mm`
+        + (off ? ' — a ψ error common to every frame looks exactly like this, and no residual can see it' : ''))
+    }
+
     const bad = worstView(views)
     if (bad) {
       console.log(`${' '.repeat(19)}↳ ${viewAt[bad.index]} is carrying it: drop that frame and this`

@@ -695,8 +695,14 @@ describe('Baraka GP — the dock measurements', () => {
     // 800 mm of unmeasured depth at 40 m is 2 % on every millimetre.
     const granny = rigModelFor('Baraka GP').scaleRefs.find((r) => r.key === 'grannyBar')!
     expect(granny.depthSource).toBe('estimate')
+    // The rail's depth is an estimate too, and for the same reason: 4400 is a
+    // tape, -7900 was derived on the assumption the stanchions stand at the
+    // transom. Triangulating the same frames off it gives 88 % of her
+    // certificate E against 101 % off P — so the number is wrong and the stamp
+    // has to say so.
     const rail = rigModelFor('Baraka GP').scaleRefs.find((r) => r.key === 'sternStanchions')!
-    expect(rail.depthSource).toBe('measured')
+    expect(rail.depthSource).toBe('estimate')
+    expect(rail.mm).toBe(4_400)
     expect(rail.depthMm).toBeLessThan(0)
   })
 

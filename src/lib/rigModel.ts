@@ -460,7 +460,19 @@ const MEASURED: Record<string, {
       // Depth from the mast-to-stern tape below: 7800 to the mast's AFT face,
       // plus roughly half a mast section to reach the mast plane the scale is
       // referred to. -7900 is that, and it is the measured number ±a chord.
-      sternStanchions: { mm: 4400, sigmaMm: 30, depthMm: -7900, source: 'measured', depthSource: 'measured' },
+      // DEPTH NOT MEASURED, and it is the half that matters. 4400 is a tape;
+      // -7900 was DERIVED here from the mast-to-stern reading on the assumption
+      // that the stanchions stand at the transom, and they do not.
+      //
+      // The scale is referred back to the mast plane by R/(R+depth) — a factor
+      // of 1.56 at 25 m — and ψ is solved from that scale, so a wrong depth
+      // scales ψ and every depth solved from it. Measured, not argued: the same
+      // port frames triangulate the boom to 88 % of her certificate E off this
+      // reference and 101 % off P, with residuals of 12 and 7 mm. Nothing but
+      // the certificate could say which was right.
+      //
+      // `estimate` so the tool says so until somebody tapes mast → stanchions.
+      sternStanchions: { mm: 4400, sigmaMm: 30, depthMm: -7900, source: 'measured', depthSource: 'estimate' },
     },
     // ── the boom, from her certificate ───────────────────────────────────────
     // E = 5.7 m. ircCertificate already derives this when a certificate is
