@@ -49,7 +49,8 @@ const args = process.argv.slice(2)
 const WRITE = args.includes('--write')
 const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
 const DATE = flag('--date')
-const TZ_RAW = flag('--tz')
+const SHIFT_RAW = flag('--shift')   // seconds, as measureShift() reports it
+const TZ_RAW = flag('--tz') ?? (SHIFT_RAW == null ? null : String(Number(SHIFT_RAW) / 60))
 const TZ_MIN = Number(TZ_RAW ?? 0)   // the sweep re-offsets; 0 keeps stamps as read
 const SWEEP = TZ_RAW == null
 // EXACT second by default. Both sides of this join came out of the SAME EXIF
@@ -61,7 +62,7 @@ const SWEEP = TZ_RAW == null
 // have been stored from a different clock.
 const TOL_S = Number(flag('--tol') ?? 0)
 const ANALYSED = args.includes('--analysed')
-const FLAGGED = new Set(['--date', '--tz', '--tol'])
+const FLAGGED = new Set(['--date', '--tz', '--tol', '--shift'])
 const DIRS = args.filter((a, i) => !a.startsWith('--') && !FLAGGED.has(args[i - 1] ?? ''))
 if (!DIRS.length) {
   console.error('usage: photo-lens-backfill.ts -- /path/to/originals [--date 2026-09-05] [--tz 120] [--write]')
@@ -133,11 +134,16 @@ async function main() {
 
   let q = sb.from('photos').select('id, taken_utc, exif_data, analysis_data')
   // Range, not `like`: taken_utc is a timestamptz and Postgres refuses ~~ on one.
-  // Deliberately a wide day in UTC — the rows and the stamps are being matched on
-  // the instant anyway, so a day's edge only has to be loose enough not to clip.
+  // The day plus THREE HOURS either side, not more. It was 36 hours on the first
+  // pass, justified as "loose enough not to clip", and that pulled the next
+  // morning's rows into a query for the day before — so "69 photos on 4 Sept"
+  // counted 5 Sept's as well and the offset measurement below was fed rows that
+  // could never match. Three hours covers a venue-local day whose edges fall
+  // outside the UTC one, which is the only reason for any slack at all.
   if (DATE) {
-    q = q.gte('taken_utc', `${DATE}T00:00:00Z`)
-      .lt('taken_utc', new Date(Date.parse(`${DATE}T00:00:00Z`) + 36 * 3600_000).toISOString())
+    const t0 = Date.parse(`${DATE}T00:00:00Z`)
+    q = q.gte('taken_utc', new Date(t0 - 3 * 3600_000).toISOString())
+      .lt('taken_utc', new Date(t0 + 27 * 3600_000).toISOString())
   }
   const { data: photos, error } = await q
   if (error) { console.error(`photos: ${error.message}`); process.exit(1) }
@@ -156,7 +162,8 @@ async function main() {
   // One day's folder here starts at 11:50 local against an 11:50 row, and the
   // next starts at 11:53 local against a 10:37 row. They cannot both be right,
   // and the answer is a property of the data, not of my recollection.
-  const CANDIDATES = SWEEP ? [0, 60, 120, 180, -60] : [TZ_MIN]
+  const rowsAll = (photos ?? []).filter((r) => Number.isFinite(Date.parse(String(r.taken_utc ?? ''))))
+
   // ── only the frames that NEED a focal ──────────────────────────────────────
   //
   // A focal length does one job here: it turns a scale into a RANGE, and the
@@ -169,7 +176,7 @@ async function main() {
   const annOf = (r: { analysis_data?: unknown }): Ann | null =>
     (r.analysis_data as { sailTrim?: { annotation?: Ann } } | null)?.sailTrim?.annotation ?? null
 
-  let rows = (photos ?? []).filter((r) => Number.isFinite(Date.parse(String(r.taken_utc ?? ''))))
+  let rows = rowsAll
   if (ANALYSED) {
     const before = rows.length
     rows = rows.filter((r) => !!annOf(r))
@@ -190,13 +197,13 @@ async function main() {
   }
 
   interface Hit { row: typeof rows[number]; when: string; shot: Shot; burst: number }
-  function tryOffset(tzMin: number): { hits: Hit[]; disagree: string[]; missed: string[] } {
+  function tryOffset(shift: number): { hits: Hit[]; disagree: string[]; missed: string[] } {
     const hits: Hit[] = []; const disagree: string[] = []; const missed: string[] = []
     for (const row of rows) {
       const rowMs = Date.parse(String(row.taken_utc))
       const when = String(row.taken_utc).slice(11, 19)
-      const near = shots.filter((s) => Math.abs(s.ms - tzMin * 60_000 - rowMs) <= TOL_S * 1000)
-        .sort((a, b) => Math.abs(a.ms - tzMin * 60_000 - rowMs) - Math.abs(b.ms - tzMin * 60_000 - rowMs))
+      const near = shots.filter((s) => Math.abs(s.ms - shift - rowMs) <= TOL_S * 1000)
+        .sort((a, b) => Math.abs(a.ms - shift - rowMs) - Math.abs(b.ms - shift - rowMs))
       if (!near.length) { missed.push(when); continue }
       // A BURST IS NOT A PROBLEM. 114 of these instants hold more than one frame,
       // so a second does not identify a file — and it does not need to. This is
@@ -215,28 +222,60 @@ async function main() {
     return { hits, disagree, missed }
   }
 
-  let tz = TZ_MIN
-  if (SWEEP) {
-    console.log('no --tz given, so measuring the offset rather than assuming one:')
-    let best = -1
-    for (const c of CANDIDATES) {
-      const { hits, disagree } = tryOffset(c)
-      console.log(`  UTC${c >= 0 ? '+' : ''}${c / 60}  ${String(hits.length).padStart(4)} of ${rows.length} rows matched`
-        + (disagree.length ? ` · ${disagree.length} with disagreeing candidates` : ''))
-      if (hits.length > best) { best = hits.length; tz = c }
+  // ── MEASURE the shift, don't sweep a list of guesses ───────────────────────
+  //
+  // The first version tried whole hours — 0, ±1, +2, +3 — which found +2 on
+  // 5 Sept and nothing at all on 4 Sept, reporting "these are not the files that
+  // were uploaded". They are: local 11:50:27 against a stored 11:50:17 is TEN
+  // SECONDS, and no list of whole hours can see that. A camera clock set by hand
+  // is not on the hour, and two bodies on the same boat are not on each other.
+  //
+  // So take every row's NEAREST original and look at the deltas. A real shift
+  // shows up as one value shared by most rows; noise scatters. That measures
+  // hours and seconds together and needs no candidate list.
+  function measureShift(): { ms: number; n: number; table: string[] } | null {
+    const tally = new Map<number, number>()
+    for (const row of rows) {
+      const rowMs = Date.parse(String(row.taken_utc))
+      let best: number | null = null
+      for (const sh of shots) {
+        const d = sh.ms - rowMs
+        if (best == null || Math.abs(d) < Math.abs(best)) best = d
+      }
+      if (best == null) continue
+      const sec = Math.round(best / 1000)
+      tally.set(sec, (tally.get(sec) ?? 0) + 1)
     }
-    if (best <= 0) {
-      const local = shots.map((s) => s.ms).sort((a, b) => a - b).slice(0, 3)
-        .map((t) => new Date(t).toISOString().replace('T', ' ').slice(0, 19))
-      console.log(`\nNo offset matches anything. First local stamps: ${local.join(', ')}`)
-      console.log(`First stored taken_utc:  ${rows.slice(0, 3).map((r) => String(r.taken_utc).slice(0, 19)).join(', ')}`)
-      console.log('Not an offset problem then — these originals are not the files that were uploaded.')
-      return
+    const ranked = Array.from(tally.entries()).sort((a, b) => b[1] - a[1] || Math.abs(a[0]) - Math.abs(b[0]))
+    if (!ranked.length) return null
+    const fmt = (sec: number) => {
+      const a = Math.abs(sec), sign = sec < 0 ? '-' : '+'
+      return `${sign}${Math.floor(a / 3600)}h ${String(Math.floor((a % 3600) / 60)).padStart(2, '0')}m `
+        + `${String(a % 60).padStart(2, '0')}s`
     }
-    console.log(`\nBest: UTC${tz >= 0 ? '+' : ''}${tz / 60}. Re-run with --tz ${tz} --write to apply it.\n`)
+    return {
+      ms: ranked[0][0] * 1000,
+      n: ranked[0][1],
+      table: ranked.slice(0, 5).map(([sec, n]) => `  ${fmt(sec)}  ${n} of ${rows.length} rows`),
+    }
   }
 
-  const { hits, disagree, missed } = tryOffset(tz)
+  let shiftMs = SWEEP ? 0 : TZ_MIN * 60_000
+  if (SWEEP) {
+    const m = measureShift()
+    if (!m) { console.log('no rows to measure against'); return }
+    console.log('no --tz given, so measuring the shift from the data:')
+    for (const line of m.table) console.log(line)
+    if (m.n < 2) {
+      console.log('\nNo shift is shared by even two rows, so there is no systematic offset')
+      console.log('to find — these originals are not the files that were uploaded.')
+      return
+    }
+    shiftMs = m.ms
+    console.log(`\nTaking ${m.n} of ${rows.length} rows agreeing. Re-run with --shift ${m.ms / 1000} --write.\n`)
+  }
+
+  const { hits, disagree, missed } = tryOffset(shiftMs)
   for (const d of disagree) console.log(d)
 
   let done = 0, already = 0
@@ -270,8 +309,8 @@ async function main() {
     + (missed.length ? ` · ${missed.length} rows with no original within ${TOL_S}s` : ''))
   if (missed.length) {
     const span = shots.length
-      ? `${new Date(Math.min(...shots.map((s) => s.ms)) - tz * 60_000).toISOString().slice(11, 19)}`
-        + `-${new Date(Math.max(...shots.map((s) => s.ms)) - tz * 60_000).toISOString().slice(11, 19)}`
+      ? `${new Date(Math.min(...shots.map((s) => s.ms)) - shiftMs).toISOString().slice(11, 19)}`
+        + `-${new Date(Math.max(...shots.map((s) => s.ms)) - shiftMs).toISOString().slice(11, 19)}`
       : '(none)'
     console.log(`\nNo original for: ${missed.join(', ')}`)
     console.log(`This folder covers ${span} UTC. A row outside that is another camera`)
