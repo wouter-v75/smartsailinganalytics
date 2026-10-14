@@ -367,6 +367,8 @@ export function defaultRigModel(boat = ''): RigModel {
 const MEASURED: Record<string, {
   scaleRefs?: Record<string, Partial<Pick<ScaleRef, 'mm' | 'sigmaMm' | 'depthMm' | 'source' | 'depthSource'>>>
   baselines?: Record<string, Partial<RigValue>>
+  /** Fore-and-aft offsets this boat's own paperwork pins down. */
+  depths?: Partial<Record<keyof RigModel['depths'], RigValue>>
   widths?: { main?: SailWidths; jib?: SailWidths }
 }> = {
   'northstar 76': {
@@ -459,6 +461,17 @@ const MEASURED: Record<string, {
       // plus roughly half a mast section to reach the mast plane the scale is
       // referred to. -7900 is that, and it is the measured number ±a chord.
       sternStanchions: { mm: 4400, sigmaMm: 30, depthMm: -7900, source: 'measured', depthSource: 'measured' },
+    },
+    // ── the boom, from her certificate ───────────────────────────────────────
+    // E = 5.7 m. ircCertificate already derives this when a certificate is
+    // PASTED, but Baraka's stored rig_model came from an import that never
+    // carried it, so every frame measured against the cloud model used the
+    // generic maxi guess of -10 000 instead — and that number multiplies the
+    // whole ψ correction. On her 09:26 pair it was worth 97 mm of disagreement
+    // between two frames two seconds apart; at -5700 they agree to 4 mm, which
+    // is the depth measuring itself and landing on the certificate.
+    depths: {
+      boom: { mm: -5700, sigmaMm: 150, source: 'measured' },
     },
     baselines: {
       // 7800 mm, tape, 2026-10-09 — and taken to the mast's AFT FACE, which is
@@ -584,6 +597,7 @@ export function withMeasured(m: RigModel): RigModel {
     ...m,
     scaleRefs: m.scaleRefs.map((r) => ({ ...r, ...(known.scaleRefs?.[r.key] || {}) })),
     baselines: m.baselines.map((b) => ({ ...b, ...(known.baselines?.[b.key] || {}) })),
+    depths: { ...m.depths, ...(known.depths || {}) },
     widths: { ...(known.widths || {}), ...(m.widths || {}) },
   })
 }

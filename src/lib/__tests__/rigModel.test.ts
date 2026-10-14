@@ -741,3 +741,26 @@ describe('scale references — retired, and reaching a stored model', () => {
     expect(migrateRigModel(stored, 'Baraka GP').scaleRefs.find((r) => r.key === 'sternStanchions')!.mm).toBe(4455)
   })
 })
+
+describe("Baraka GP — the boom's depth comes off her certificate", () => {
+  it('is E, not the generic maxi guess', () => {
+    // -10000 is the shipped shape for a boat nobody has measured. Baraka's E is
+    // 5.7 m, and that number multiplies every ψ correction on the frame: her
+    // 09:26 pair disagreed by 97 mm at -10000 and by 4 mm at -5700.
+    const m = rigModelFor('Baraka GP')
+    expect(m.depths.boom.mm).toBe(-5700)
+    expect(m.depths.boom.source).toBe('measured')
+  })
+
+  it('leaves the depths nobody has pinned down as guesses', () => {
+    // Only the boom is determined by E. Saying more than the certificate says
+    // would be the same mistake wearing a better badge.
+    const m = rigModelFor('Baraka GP')
+    expect(m.depths.mainLeech.source).toBe('estimate')
+    expect(m.depths.leech.source).toBe('estimate')
+  })
+
+  it('does not give another boat Baraka\'s boom', () => {
+    expect(rigModelFor('Northstar 76').depths.boom.mm).not.toBe(-5700)
+  })
+})
