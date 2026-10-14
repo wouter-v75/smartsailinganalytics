@@ -67,8 +67,16 @@ async function main() {
   const frames = (photos ?? [])
     .filter((p) => String(p.taken_utc || '').startsWith(DATE!))
     .map((p) => {
-      const a = p.analysis_data as { inst?: { heel?: number; twa?: number }; sailTrim?: { annotation?: SailTrimAnnotation } } | null
-      return { at: String(p.taken_utc), inst: a?.inst, ann: a?.sailTrim?.annotation }
+      const a = p.analysis_data as {
+        inst?: { heel?: number; twa?: number }
+        sailTrim?: { annotation?: SailTrimAnnotation; result?: { marks?: { baselineKey?: string } } }
+      } | null
+      // The baseline is the one input the annotation does not carry, and psi is
+      // divided by its EFFECTIVE separation — which depends on where its two
+      // landmarks sit. Two frames solved against different baselines are not
+      // directly comparable, and nothing else here would say so.
+      return { at: String(p.taken_utc), inst: a?.inst, ann: a?.sailTrim?.annotation,
+               baseline: a?.sailTrim?.result?.marks?.baselineKey ?? null }
     })
     .filter((f) => isAnnotation(f.ann))
     .sort((a, b) => a.at.localeCompare(b.at))
@@ -83,7 +91,7 @@ async function main() {
   // "not for correcting anything" — yet it still multiplies the depth, so on a
   // clew at E it moves the answer by 107 mm at 1.1 deg and 482 mm at 5 deg, with
   // a sign nothing in the photograph has pinned down.
-  console.log('time      tack  psi    from      heel(log/img)  defn   scale        mm/px@mast  range m')
+  console.log('time      tack  psi    from      heel(log/img)  defn   scale        mm/px@mast  range m  baseline')
   for (const f of frames) {
     const a = f.ann!
     const s = a.scale
@@ -92,7 +100,8 @@ async function main() {
       + `${f1(f.inst?.heel).padStart(5)} / ${f1(a.heelDeg).padStart(5)}   `
       + `${(a.defn ?? '—').padEnd(6)} `
       + `${(s?.key ?? '—').padEnd(12)} ${f1(s?.mmPerPxAtMast).padStart(10)}  `
-      + `${s?.rangeMm != null ? (s.rangeMm / 1000).toFixed(0).padStart(6) : '     —'}`)
+      + `${s?.rangeMm != null ? (s.rangeMm / 1000).toFixed(0).padStart(6) : '     —'}`
+      + `  ${f.baseline ?? '—'}`)
   }
 
   // Then the targets, grouped so the within-tack spread is visible.
