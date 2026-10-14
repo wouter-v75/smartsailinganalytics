@@ -157,7 +157,24 @@ async function main() {
   // apart) with focals of 100 and 114 typed. One of them is wrong, and it is
   // worth 13 % on the range, which on an off-mast reference like the wheels
   // moves every millimetre on the frame.
-  const usable = kit.filter((k) => Number.isFinite(k.focal) && Number.isFinite(k.mmPerPx))
+  // NO FOCAL AT ALL is the loudest thing this set has, and it is not the same
+  // as a wrong one. Number('') is 0, which is finite, so the pair check below
+  // reported "114 vs 0 mm — one of those was typed wrong" about a frame whose
+  // focal was never entered.
+  //
+  // Without a focal there is no range, and without a range there is NO depth
+  // correction and NO ψ effective-separation correction. The frame is not
+  // slightly off; it has skipped two corrections the others applied, so it
+  // cannot be compared with them at all.
+  const noFocal = kit.filter((k) => !(k.focal > 0))
+  if (noFocal.length) {
+    console.log(`\n⚠ ${noFocal.length} frame(s) carry NO focal length: ${noFocal.map((k) => k.at).join(', ')}`)
+    console.log('  No focal ⇒ no range ⇒ no depth correction and no ψ correction. Those frames')
+    console.log('  skipped two corrections the others applied, so the set is not internally')
+    console.log('  comparable — and a tight spread across it is agreement about different maths.')
+  }
+
+  const usable = kit.filter((k) => k.focal > 0 && Number.isFinite(k.mmPerPx))
   for (let i = 0; i < usable.length; i++) {
     for (let j = i + 1; j < usable.length; j++) {
       const a = usable[i], b2 = usable[j]
