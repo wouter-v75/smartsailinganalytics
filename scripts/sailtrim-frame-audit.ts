@@ -64,6 +64,7 @@ async function main() {
 
   if (!frames.length) { console.log(`no measured frames on ${DATE}`); return }
   console.log(`${DATE}: ${frames.length} measured frame(s) — FULL PRECISION\n`)
+  const kit: { at: string; focal: number; mmPerPx: number }[] = []
 
   for (const f of frames) {
     const a = f.ann!
@@ -83,15 +84,18 @@ async function main() {
       console.log(`              range / mmPerPx = ${(s.rangeMm / s.mmPerPxAtMast).toFixed(1)}`
         + '  ← = focal/pitch; constant only at a FIXED focal length, not on a zoom')
     }
-    // The focal length is what turns a scale into a RANGE, and the range drives
-    // the depth correction and ψ's effective separation. On a zoom it changes
-    // every frame, so it cannot be inferred from the others — and it is the one
-    // input nothing else prints.
+    // The focal turns a scale into a RANGE, and the range drives the depth
+    // correction and ψ's effective separation. It is TYPED, and nothing stored
+    // can check it: rangeMm is computed FROM it, so "the focal implied by the
+    // range" is the number you started with. I printed that comparison as a
+    // check and it was a tautology — it agreed to 0.1 mm on a frame whose focal
+    // was plainly wrong.
+    //
+    // What DOES check it is the next frame. Two shots seconds apart with the
+    // same mm/px were taken at the same focal, whatever was typed on each.
     if (s?.rangeMm && s.mmPerPxAtMast) {
-      const pitch = 36 / (a.imageSize?.w && a.imageSize?.h ? Math.max(a.imageSize.w, a.imageSize.h) : 6000)
-      console.log(`   focal      typed ${b.focalMm ?? '—'} mm`
-        + `   implied by range+scale ${(s.rangeMm * pitch / s.mmPerPxAtMast).toFixed(1)} mm`
-        + ' (at a 36 mm sensor)')
+      console.log(`   focal      ${b.focalMm ?? '—'} mm (typed; nothing stored can verify it)`
+        + `  → range ${(s.rangeMm / 1000).toFixed(1)} m`)
     }
     console.log(`   heel       geometry used ${a.heelDeg}   log ${f.inst?.heel ?? '—'}`)
     console.log(`   psi        stored ${a.psiDeg}  (${a.psiMeasured ? 'measured' : 'ASSUMED'})   baseline ${b.baselineKey ?? '—'}`)
@@ -115,9 +119,21 @@ async function main() {
       console.log(`              baseline marks ${bl.length} · separation ${sep} mm`
         + ` · effective ${effSep.toFixed(0)} mm (x${sep ? (effSep / sep).toFixed(3) : '—'})`)
       console.log(`              landmark depths ${depths ? `fwd ${depths.depthFwdMm} / aft ${depths.depthAftMm}` : 'NOT RESOLVED — ψ uncorrected for them'}`)
-      console.log(`              re-solved ψ ${again.deg.toFixed(4)}° ±${again.sigmaDeg.toFixed(3)}`
-        + `   Δ vs stored ${(again.deg - a.psiDeg).toFixed(4)}°`
-        + (Math.abs(again.deg - a.psiDeg) > 0.05 ? '   ← FRAME PREDATES A FIX' : ''))
+      // Without a scale there is no mm/px, so the re-solve returns 0 and the
+      // Δ is the stored value itself — which read as "predates a fix" on a
+      // frame whose only problem is that it predates the scale block.
+      if (!(s?.mmPerPxAtMast)) {
+        console.log('              cannot re-solve ψ: no scale block, so there is no mm/px to solve with')
+      } else {
+        console.log(`              re-solved ψ ${again.deg.toFixed(4)}° ±${again.sigmaDeg.toFixed(3)}`
+          + `   Δ vs stored ${(again.deg - a.psiDeg).toFixed(4)}°`
+          + (Math.abs(again.deg - a.psiDeg) > 0.05
+            // Δψ costs 17.45 mm per DEGREE per metre of depth — stated that way
+            // because it is the boat-agnostic form, and the boom is the target
+            // it hurts most: 10 m abaft the mast, so 175 mm per degree.
+            ? `   ← STALE: carries the old ψ, worth ${(Math.abs(again.deg - a.psiDeg) * Math.PI / 180 * 1000).toFixed(1)} mm per metre of target depth`
+            : ''))
+      }
       console.log(`              clicks  aft (${bl[0].x.toFixed(1)}, ${bl[0].y.toFixed(1)})  fwd (${bl[1].x.toFixed(1)}, ${bl[1].y.toFixed(1)})`
         + `   apart ${len(sub(bl[1], bl[0])).toFixed(1)} px`)
     } else {
@@ -130,6 +146,29 @@ async function main() {
         + `   point (${t.point.x.toFixed(1)}, ${t.point.y.toFixed(1)})`)
     }
     console.log()
+    kit.push({ at: f.at.slice(11, 19), focal: Number(b.focalMm ?? NaN), mmPerPx: s?.mmPerPxAtMast ?? NaN })
+  }
+
+  // THE ONLY NON-CIRCULAR CHECK ON A TYPED FOCAL: the frame beside it. Two
+  // shots whose mm/px agree were taken at the same focal length, whatever was
+  // typed on each — if the lens had zoomed, the scale would have moved with it.
+  //
+  // Northstar's 4 Sept pair, one second apart: mm/px 3.925 and 3.913 (0.3 %
+  // apart) with focals of 100 and 114 typed. One of them is wrong, and it is
+  // worth 13 % on the range, which on an off-mast reference like the wheels
+  // moves every millimetre on the frame.
+  const usable = kit.filter((k) => Number.isFinite(k.focal) && Number.isFinite(k.mmPerPx))
+  for (let i = 0; i < usable.length; i++) {
+    for (let j = i + 1; j < usable.length; j++) {
+      const a = usable[i], b2 = usable[j]
+      const scaleGap = Math.abs(a.mmPerPx - b2.mmPerPx) / Math.max(a.mmPerPx, b2.mmPerPx)
+      const focalGap = Math.abs(a.focal - b2.focal) / Math.max(a.focal, b2.focal)
+      if (scaleGap < 0.05 && focalGap > 0.05) {
+        console.log(`⚠ ${a.at} and ${b2.at} have the same scale (${a.mmPerPx.toFixed(2)} vs ${b2.mmPerPx.toFixed(2)} mm/px)`)
+        console.log(`  but different focals (${a.focal} vs ${b2.focal} mm). A zoom would have moved the scale too,`)
+        console.log('  so one of those was typed wrong — and the range, which every depth correction uses, follows it.')
+      }
+    }
   }
 }
 main()
