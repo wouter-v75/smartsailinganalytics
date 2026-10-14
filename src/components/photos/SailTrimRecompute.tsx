@@ -81,34 +81,58 @@ export function boatOf(photo: Record<string, unknown>, stored: StoredPayload): s
     || String(photo.boat || '')
 }
 
-/** Which of a day's frames were measured against a datum that has since moved. */
-export function staleFrames(
+/** A frame the panel cannot judge, and the reason — never silently dropped. */
+export interface UnassessedPhoto { id: string; name: string; reason: string }
+
+/**
+ * Which of a day's frames need redoing, and which CANNOT BE JUDGED.
+ *
+ * The second list exists because the first was a lie by omission. This walked
+ * four `continue`s — no boat, no rig model, no marks, no resolvable scale — and
+ * a frame tripping any of them vanished. Northstar's three 27 Sep frames are
+ * exactly that case: they predate the annotation.scale block, so
+ * resolveStoredScale finds nothing to fall back on, and they were dropped
+ * without a word. The panel showed nothing, Wouter redid them, and the stored
+ * data came back byte-identical because there had never been anything to click.
+ *
+ * It is the same mistake the audit script made earlier in its life, where
+ * "cannot tell" was counted as "ok" — and the fix is the same. A frame the tool
+ * cannot assess is a finding, not an absence.
+ */
+export function assessFrames(
   photos: Record<string, unknown>[],
   rigs: Map<string, RigModel>,
   activeDate: string | null,
-): StalePhoto[] {
+): { stale: StalePhoto[]; unassessed: UnassessedPhoto[] } {
   const out: StalePhoto[] = []
+  const unassessed: UnassessedPhoto[] = []
+  const cannot = (photo: Record<string, unknown>, reason: string) => {
+    unassessed.push({ id: String(photo.id ?? ''), name: String(photo.name ?? 'photo.jpg'), reason })
+  }
   for (const photo of photos || []) {
     const stored = parseStored(photo)
-    if (!stored?.annotation) continue
+    if (!stored?.annotation) continue   // not a measured frame at all
     const boat = boatOf(photo, stored)
     const rig = rigs.get(boat.toLowerCase())
     // No boat, or no model for it, is "cannot tell" — and a redo that guessed
-    // the boat would be worse than leaving it alone. The audit script names
-    // these; this panel simply does not offer to touch them.
-    if (!boat || !rig) continue
+    // the boat would be worse than leaving it alone.
+    if (!boat) { cannot(photo, 'no boat recorded on the frame, so there is no rig model to check it against'); continue }
+    if (!rig) { cannot(photo, `measured as "${boat}", which has no rig model loaded`); continue }
     const bundle = stored.result?.marks
-    // No clicks, no redo — that one needs re-marking by hand, and saying so is
-    // better than appearing to fix it.
-    if (!bundle?.marks || !Object.keys(bundle.marks as object).length) continue
+    // No clicks, no redo — that one needs re-marking by hand.
+    if (!bundle?.marks || !Object.keys(bundle.marks as object).length) {
+      cannot(photo, 'the clicks were not saved with it — it has to be marked again by hand'); continue
+    }
 
     const resolved = resolveStoredScale(
       stored.annotation.scale as StoredScale | undefined,
       bundle, stored.result?.calibration, boat,
     )
-    if (!resolved) continue
+    if (!resolved) {
+      cannot(photo, 'no scale block and no rig snapshot — nothing records what it was measured against'); continue
+    }
     const ref = rig.scaleRefs.find((r) => r.key === resolved.scale.key)
-    if (!ref) continue
+    if (!ref) { cannot(photo, `measured against "${resolved.scale.key}", which this boat no longer has`); continue }
 
     const drift = scaleDrift(resolved.scale, { mm: ref.mm, depthMm: ref.depthMm ?? 0 })
     const base = baselineDrift(bundle, rig.baselines)
@@ -141,7 +165,16 @@ export function staleFrames(
       before: (stored.annotation.targets || []).map((t) => ({ key: t.key, mm: t.mm })),
     })
   }
-  return out
+  return { stale: out, unassessed }
+}
+
+/** The frames needing a redo. See assessFrames for the ones it cannot judge. */
+export function staleFrames(
+  photos: Record<string, unknown>[],
+  rigs: Map<string, RigModel>,
+  activeDate: string | null,
+): StalePhoto[] {
+  return assessFrames(photos, rigs, activeDate).stale
 }
 
 type Outcome = { id: string; name: string; note: string; ok: boolean }
@@ -185,10 +218,12 @@ export default function SailTrimRecompute({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boatsKey])
 
-  const stale = React.useMemo(
-    () => staleFrames(photos, rigs, activeDate),
+  const assessed = React.useMemo(
+    () => assessFrames(photos, rigs, activeDate),
     [photos, rigs, activeDate],
   )
+  const stale = assessed.stale
+  const unassessed = assessed.unassessed
 
   const current = queue && at < queue.length ? queue[at] : null
 
@@ -231,7 +266,7 @@ export default function SailTrimRecompute({
     setAt((n) => n + 1)
   }
 
-  if (!stale.length && !queue) return null
+  if (!stale.length && !unassessed.length && !queue) return null
 
   const running = !!current
   const finished = !!queue && at >= queue.length
@@ -245,7 +280,26 @@ export default function SailTrimRecompute({
         Sail geometry — measured on older datums
       </div>
 
-      {!queue && (
+      {!queue && unassessed.length > 0 && (
+        <div style={{ marginBottom: 10, padding: '8px 10px', background: '#2A1F05',
+          border: '1px solid #FCD34D40', borderRadius: 8, color: '#FCD34D', lineHeight: 1.45 }}>
+          <b>{unassessed.length} frame{unassessed.length === 1 ? '' : 's'} cannot be judged</b>
+          {' '}— and so cannot be offered for a redo. This is not the same as being up to date.
+          <ul style={{ margin: '6px 0 0 16px', padding: 0 }}>
+            {unassessed.map((u) => (
+              <li key={u.id} style={{ marginBottom: 3 }}>
+                <span style={{ fontFamily: 'monospace' }}>{u.name}</span> — {u.reason}
+              </li>
+            ))}
+          </ul>
+          <div style={{ marginTop: 6, color: '#CBD5E1', fontSize: 10 }}>
+            Open each one, press <b>Edit points…</b> and save: the clicks come back, and the save
+            writes the scale, range, tack and depths that were never recorded.
+          </div>
+        </div>
+      )}
+
+      {!queue && stale.length > 0 && (
         <>
           <div style={{ marginBottom: 8, lineHeight: 1.45 }}>
             {stale.length} frame{stale.length === 1 ? '' : 's'} on this day {stale.length === 1 ? 'was' : 'were'} measured

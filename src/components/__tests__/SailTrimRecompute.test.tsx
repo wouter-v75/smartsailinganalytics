@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { SAILTRIM_VERSION } from '../../lib/sailTrim'
-import { staleFrames, parseStored, boatOf } from '../photos/SailTrimRecompute'
+import { staleFrames, assessFrames, parseStored, boatOf } from '../photos/SailTrimRecompute'
 import { migrateRigModel, type RigModel } from '../../lib/rigModel'
 
 /**
@@ -231,5 +231,50 @@ describe('staleFrames — a TARGET depth can move, not just a datum', () => {
     // The point is to catch a datum being REPLACED, not to chase the last
     // millimetre and turn the panel into something people dismiss.
     expect(staleFrames([withBoomDepth(northstar.depths.boom.mm - 40)], rigs, '2026-09-27')).toHaveLength(0)
+  })
+})
+
+describe('assessFrames — a frame it cannot judge is a finding, not an absence', () => {
+  it('names a frame with no scale block AND no rig snapshot', () => {
+    // Northstar's three 27 Sep frames. They predate annotation.scale, so
+    // resolveStoredScale has nothing to fall back on — and staleFrames used to
+    // `continue` past them in silence. The panel showed nothing, they were
+    // "redone", and the stored data came back byte-identical because there had
+    // never been anything to click.
+    const f = frame({ id: 'old', depthMm: -7392 })
+    const d = JSON.parse(f.sailtrim_data as string)
+    delete d.annotation.scale
+    delete d.result.marks.rig
+    f.sailtrim_data = JSON.stringify(d)
+    const { stale, unassessed } = assessFrames([f], rigs, '2026-09-27')
+    expect(stale).toHaveLength(0)
+    expect(unassessed).toHaveLength(1)
+    expect(unassessed[0].reason).toMatch(/nothing records what it was measured against/)
+  })
+
+  it('names a frame whose clicks were never saved', () => {
+    const { unassessed } = assessFrames([frame({ id: 'nomarks', noMarks: true })], rigs, '2026-09-27')
+    expect(unassessed[0].reason).toMatch(/marked again by hand/)
+  })
+
+  it('names a frame measured as a boat with no rig model', () => {
+    const { unassessed } = assessFrames([frame({ id: 'bella', boat: 'Bella' })], rigs, '2026-09-27')
+    expect(unassessed[0].reason).toMatch(/no rig model loaded/)
+  })
+
+  it('says nothing about a frame it CAN judge, stale or not', () => {
+    const a = assessFrames([frame({ id: 'ok', depthMm: -7392 })], rigs, '2026-09-27')
+    expect(a.unassessed).toHaveLength(0)
+    expect(a.stale).toHaveLength(0)
+    const b = assessFrames([frame({ id: 'drifted', depthMm: -10_000 })], rigs, '2026-09-27')
+    expect(b.unassessed).toHaveLength(0)
+    expect(b.stale).toHaveLength(1)
+  })
+
+  it('staleFrames stays the same list, from the same walk', () => {
+    // One implementation, two entry points: two walks would drift, which is the
+    // failure this repo already has a scar from.
+    const fs = [frame({ id: 'a', depthMm: -10_000 }), frame({ id: 'b', noMarks: true })]
+    expect(staleFrames(fs, rigs, '2026-09-27')).toEqual(assessFrames(fs, rigs, '2026-09-27').stale)
   })
 })
