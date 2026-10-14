@@ -7,6 +7,9 @@
 //     --boat "Baraka GP" --tz Europe/London
 //   …then the same line with --write
 //
+//   …and to put photos on scans that are already in the table, add
+//   --backfill-photos (dry run first, as ever).
+//
 // DRY RUN by default. Reads .env.local; run OUTSIDE Claude Code's Bash sandbox.
 //
 // WHY A SCRIPT. The app route (/api/teams/[teamId]/sail-scans) does this from
@@ -22,6 +25,19 @@
 // log fills them; see the note in sailScanParse.ts. What comes in is the SHAPE:
 // draft, camber, entry, exit and twist per stripe, plus the trimmer's notes.
 //
+// THE PHOTOS. The report embeds one picture per page, and they come in with the
+// scans — image i onto scan i, which holds because a Sail Vision report is one
+// scan per page and the images decode in document order. If the counts do not
+// match, photos are skipped rather than guessed at. Uploading needs
+// BUNNY_STORAGE_WRITE_KEY in .env.local (the read/write zone password;
+// BUNNY_STORAGE_API_KEY is read-only and will 401); without it the script SAYS
+// SO and imports the shapes anyway, rather than leaving somebody to wonder why
+// there are no pictures — which is what happened the first time round.
+//
+// --backfill-photos attaches them to scans that are ALREADY in the table,
+// matched on the image name and capture time, so a set that went in before the
+// photos could be read does not have to be deleted and imported again.
+//
 // THE CLOCK. "Captured 2026-10-11 09:51" is VENUE-LOCAL wall time with no zone,
 // like every other stamp in this project. --tz says which zone that is and the
 // script prints the offset it used. Baraka's October days are UK, so
@@ -34,10 +50,15 @@ import { createClient } from '@supabase/supabase-js'
 import { extractPdfText } from '../src/lib/pdfText'
 import { parseSailScanReport, sailVisionTwistCheck, type ParsedScan } from '../src/lib/sailScanParse'
 import { matchSailToInventory } from '../src/lib/sailCodeMatch'
+import { extractJpegBytesList } from '../src/lib/pdfImageExtract'
 
 const args = process.argv.slice(2)
 const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null)
 const WRITE = args.includes('--write')
+// Attach the report's photos to scans that are ALREADY in the table, instead of
+// importing. For when the scans went in before the photos could be read — which
+// is exactly what happened to the first Baraka import.
+const BACKFILL = args.includes('--backfill-photos')
 const PDF = args.find((a) => /\.pdf$/i.test(a))
 const BOAT = flag('--boat')
 const TZ = flag('--tz') || 'Europe/London'
@@ -51,7 +72,8 @@ const MAPS = args.reduce<Record<string, string>>((acc, a, i) => {
 }, {})
 
 if (!PDF || !BOAT) {
-  console.error('usage: <report.pdf> --boat "Baraka GP" [--tz Europe/London] [--map "Main 2=MN 4"] [--write]')
+  console.error('usage: <report.pdf> --boat "Baraka GP" [--tz Europe/London] [--map "Main 2=MN 4"]'
+    + ' [--backfill-photos] [--write]')
   process.exit(1)
 }
 
@@ -71,8 +93,59 @@ const env = Object.fromEntries(
 )
 const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false } })
 
+/**
+ * PUT one object into Bunny Storage.
+ *
+ * The browser helper (bunny-storage-upload.ts) is XHR + /api/storage/credentials
+ * and cannot run here, so this is the same PUT with the key read from
+ * .env.local. BUNNY_STORAGE_WRITE_KEY is the read/write zone password;
+ * BUNNY_STORAGE_API_KEY is READ-ONLY and will 401 — a laptop that is not meant
+ * to upload simply does not have the write key, which is the intended default.
+ */
+async function putToStorage(key: string, body: Uint8Array, contentType: string): Promise<void> {
+  const zone = env.BUNNY_STORAGE_ZONE
+  const accessKey = env.BUNNY_STORAGE_WRITE_KEY
+  const region = env.BUNNY_STORAGE_REGION || 'de'
+  const host = region === 'de' ? 'https://storage.bunnycdn.com' : `https://${region}.storage.bunnycdn.com`
+  const res = await fetch(`${host}/${zone}/${key}`, {
+    method: 'PUT',
+    headers: { AccessKey: accessKey, 'Content-Type': contentType },
+    body: Buffer.from(body),
+  })
+  if (!res.ok) throw new Error(`storage PUT ${key}: HTTP ${res.status} ${await res.text().catch(() => '')}`)
+}
+
+const canUpload = () => !!(env.BUNNY_STORAGE_ZONE && env.BUNNY_STORAGE_WRITE_KEY)
+
+/**
+ * The report's photos, one per scan, in page order — or null when that cannot
+ * be said safely.
+ *
+ * The mapping is positional: image i belongs to scan i, because a Sail Vision
+ * report is one scan per page and the images come out in document order. That
+ * holds ONLY while the counts match. If they do not, something is embedded that
+ * is not a scan photo (or a page has none), and a positional mapping would hang
+ * the wrong picture on every scan after it — so it refuses rather than guesses.
+ */
+function photosFor(pdf: Uint8Array, scanCount: number): Uint8Array[] | null {
+  const imgs = extractJpegBytesList(pdf)
+  if (!imgs.length) {
+    console.log('  no photos found in the PDF')
+    return null
+  }
+  if (imgs.length !== scanCount) {
+    console.log(`  ⚠ ${imgs.length} photo(s) for ${scanCount} scan(s) — not a 1:1 mapping, so photos are SKIPPED.`)
+    console.log('    Positional matching only holds when every page carries exactly one picture.')
+    return null
+  }
+  console.log(`  ${imgs.length} photo(s), one per page `
+    + `(${Math.round(Math.min(...imgs.map((i) => i.length)) / 1024)}-${Math.round(Math.max(...imgs.map((i) => i.length)) / 1024)} kB)`)
+  return imgs
+}
+
 async function main() {
-  const text = await extractPdfText(readFileSync(PDF!))
+  const pdfBytes = new Uint8Array(readFileSync(PDF!))
+  const text = await extractPdfText(Buffer.from(pdfBytes))
   const report = parseSailScanReport(text, { tz: TZ })
   if (report.format === 'unknown' || !report.scans.length) {
     console.error(`could not read ${PDF} — format ${report.format}, ${report.scans.length} scan(s)`)
@@ -96,6 +169,15 @@ async function main() {
     ? `  ${report.scans.length - bad.length}/${report.scans.length} pages pass the twist check — a mismatch means a stripe row was dropped\n`
     : `  twist check: all ${report.scans.length} pages agree with their own total\n`)
 
+  const photos = photosFor(pdfBytes, report.scans.length)
+  if (photos && !canUpload()) {
+    // Say it, loudly, rather than importing without pictures and leaving
+    // somebody to wonder. BUNNY_STORAGE_API_KEY is read-only and is NOT this.
+    console.log('  ⚠ BUNNY_STORAGE_WRITE_KEY (or _ZONE) is not in .env.local, so the photos')
+    console.log('    CANNOT be uploaded. The scans will import without pictures.')
+  }
+  console.log()
+
   const { data: boats, error: bErr } = await sb.from('boats').select('id, name, team_id')
   if (bErr) { console.error(`boats: ${bErr.message}`); process.exit(1) }
   const boat = (boats ?? []).find((b) => String(b.name).toLowerCase() === BOAT!.toLowerCase())
@@ -107,9 +189,10 @@ async function main() {
 
   const [{ data: sails }, { data: existing }] = await Promise.all([
     sb.from('sails').select('id, name, category, kind, retired').eq('boat_id', boat.id),
-    sb.from('sail_scans').select('id, report_ref, captured_at').eq('boat_id', boat.id),
+    sb.from('sail_scans').select('id, report_ref, captured_at, conditions').eq('boat_id', boat.id),
   ])
-  const byRef = new Set((existing ?? []).map((r) => `${r.report_ref}|${r.captured_at}`))
+  const keyOf = (ref: unknown, at: unknown) => `${ref}|${at}`
+  const byRef = new Map((existing ?? []).map((r) => [keyOf(r.report_ref, r.captured_at), r]))
   const sailName = new Map((sails ?? []).map((s) => [s.id as string, s.name as string]))
   const maps = { ...(DEFAULT_MAPS[String(boat.name).toLowerCase()] || {}), ...MAPS }
 
@@ -120,12 +203,46 @@ async function main() {
   console.log()
   console.log('captured (local)     sail in report   → inventory sail        stripes  twist°   notes  status')
 
+  // ── backfill: attach photos to scans that are already in the table ────────
+  if (BACKFILL) {
+    if (!photos) { console.error('\nNothing to attach — see above.'); process.exit(1) }
+    if (!canUpload()) { console.error('\nCannot upload without the storage write key.'); process.exit(1) }
+    let done = 0, missing = 0, already = 0
+    for (let i = 0; i < report.scans.length; i++) {
+      const sc = report.scans[i]
+      const row = byRef.get(keyOf(sc.imageName, sc.capturedAt))
+      if (!row) {
+        missing++
+        console.log(`${String(sc.imageName).padEnd(52)} no matching scan in the table`)
+        continue
+      }
+      const cond = (row.conditions || {}) as Record<string, unknown>
+      if (cond.photo_key) { already++; console.log(`${String(sc.imageName).padEnd(52)} already has a photo`); continue }
+      const key = `teams/${boat.team_id}/boats/${boat.id}/sail-scans/${Date.now()}-${i}-photo.jpg`
+      if (WRITE) {
+        await putToStorage(key, photos[i], 'image/jpeg')
+        const { error } = await sb.from('sail_scans')
+          .update({ conditions: { ...cond, photo_key: key } }).eq('id', row.id)
+        if (error) { console.error(`  update ${row.id}: ${error.message}`); process.exit(1) }
+      }
+      done++
+      console.log(`${String(sc.imageName).padEnd(52)} ${WRITE ? 'attached' : 'would attach'} `
+        + `${Math.round(photos[i].length / 1024)} kB`)
+    }
+    console.log(`\n${done} ${WRITE ? 'attached' : 'to attach'}`
+      + (already ? ` · ${already} already had one` : '') + (missing ? ` · ${missing} not found` : ''))
+    if (!WRITE) console.log('\nDry run. Add --write to upload and attach.')
+    return
+  }
+
   const rows: Record<string, unknown>[] = []
+  const rowPhoto: number[] = [] // row index → photo index, kept in step
   let skipped = 0
-  for (const s of report.scans) {
+  for (let i = 0; i < report.scans.length; i++) {
+    const s = report.scans[i]
     const alias = maps[String(s.sailName || '').toLowerCase()] || null
     const sailId = matchSailToInventory(sails ?? [], alias, alias || s.sailName, s.sailType)
-    const dup = byRef.has(`${s.imageName}|${s.capturedAt}`)
+    const dup = byRef.has(keyOf(s.imageName, s.capturedAt))
     const status = dup ? 'already in' : !sailId ? 'NO SAIL MATCH' : WRITE ? 'insert' : 'would insert'
     console.log(
       `${(s.capturedLocal || '—').replace('T', ' ').padEnd(20)} `
@@ -135,6 +252,7 @@ async function main() {
     )
     if (dup) { skipped++; continue }
     rows.push(rowFor(s, boat, sailId))
+    rowPhoto.push(i)
   }
 
   const unmatched = rows.filter((r) => !r.sail_id).length
@@ -143,6 +261,21 @@ async function main() {
 
   if (!WRITE) { console.log('\nDry run. Add --write to insert.'); return }
   if (!rows.length) { console.log('\nNothing to do.'); return }
+
+  // Photos first: a scan row with a key pointing at nothing is worse than a scan
+  // row with no key, because the detail view then shows a broken image instead
+  // of saying there is no picture.
+  if (photos && canUpload()) {
+    process.stdout.write(`uploading ${rows.length} photo(s)… `)
+    for (let r = 0; r < rows.length; r++) {
+      const i = rowPhoto[r]
+      const key = `teams/${boat.team_id}/boats/${boat.id}/sail-scans/${Date.now()}-${i}-photo.jpg`
+      await putToStorage(key, photos[i], 'image/jpeg')
+      const cond = rows[r].conditions as Record<string, unknown>
+      cond.photo_key = key
+    }
+    console.log('done')
+  }
 
   const { data, error } = await sb.from('sail_scans').insert(rows).select('id')
   if (error) {
