@@ -791,3 +791,24 @@ describe("Baraka GP — the boom's depth comes off her certificate", () => {
     expect(rigModelFor('Northstar 76').depths.boom.mm).not.toBe(-5700)
   })
 })
+
+describe("Northstar 76 — the boom's depth is her certificate's E too", () => {
+  it('is E, not the generic -10000', () => {
+    // 10.33 m has been in widths.main.foot all along without ever reaching the
+    // depth that corrects her boom. -10000 was close by luck.
+    const m = rigModelFor('Northstar 76')
+    expect(m.depths.boom.mm).toBe(-10_330)
+    expect(m.depths.boom.source).toBe('measured')
+    expect(m.widths!.main!.foot).toBe(10.33)
+  })
+
+  it('agrees with the width it came from, to the millimetre', () => {
+    const m = rigModelFor('Northstar 76')
+    expect(m.depths.boom.mm).toBe(-Math.round(m.widths!.main!.foot * 1000))
+  })
+
+  it('keeps the two boats apart', () => {
+    expect(rigModelFor('Baraka GP').depths.boom.mm).toBe(-5_700)
+    expect(rigModelFor('Northstar 76').depths.boom.mm).toBe(-10_330)
+  })
+})

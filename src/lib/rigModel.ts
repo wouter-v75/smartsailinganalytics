@@ -421,6 +421,24 @@ const MEASURED: Record<string, {
       // own parts.
       'tack-mast': { mm: 8860, sigmaMm: 200, source: 'measured' },
     },
+    // ── the boom, from the same certificate ──────────────────────────────────
+    // E = 10.33 m, and it has been sitting in `widths.main.foot` below the whole
+    // time without ever reaching the DEPTH that corrects her boom. She carried
+    // the generic -10000, which is the shape a boat nobody has measured gets.
+    //
+    // Her 27 Sep set triangulates the boom to -9849, so -10000 was close by
+    // luck; the number still has no business being a guess when the certificate
+    // is right there. It is also what makes the solve's only external check
+    // mean anything — without an attested depth the run prints "no attested
+    // depth to check against" and the one thing that can catch a ψ error common
+    // to every frame is unavailable.
+    //
+    // E is the spar's LIMIT MARK, so the clew sits at or inboard of it by
+    // however much outhaul is eased. A solved depth slightly short of E is the
+    // expected result, not a discrepancy.
+    depths: {
+      boom: { mm: -10_330, sigmaMm: 150, source: 'measured' },
+    },
     // Off Northstar III's own endorsed certificate (50945, GBR76X), tabulated
     // in §8.2 of the doc. Here rather than behind a paste because they are
     // measured, endorsed and not going to change — and because twist divides by
