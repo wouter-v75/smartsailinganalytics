@@ -904,7 +904,8 @@ describe('sailTrim — the frame has to be big enough to hold the boat', () => {
     // Nothing else sees this; the frame stays entirely self-consistent.
     const c = fit(cal({ mmPerPxAtMast: 1.3 }))!
     expect(c.ok).toBe(false)
-    expect(c.detail).toMatch(/only 7\.8 m across/)
+    expect(c.detail).toMatch(/7\.8 m across/)
+    expect(c.detail).toMatch(/too small to contain it/)
     expect(c.detail).toMatch(/REFERENCE in the picker/)
   })
 
@@ -930,5 +931,56 @@ describe('sailTrim — the frame has to be big enough to hold the boat', () => {
   it('says nothing without an image size or a boat length', () => {
     expect(fit(cal({ imageLongEdgePx: undefined }))).toBeUndefined()
     expect(fit(cal({ boatLengthMm: undefined }))).toBeUndefined()
+  })
+})
+
+describe('sailTrim — ψ that is not a photograph from astern', () => {
+  const cal = (over: Partial<Calibration>): Calibration => ({
+    axis: mastAxisFromPoints({ x: 100, y: 900 }, { x: 100, y: 100 })!,
+    mmPerPxAtMast: 7.8, scaleRelSigma: 0.002, rangeMm: 130_000,
+    psi: { deg: 2, sigmaDeg: 0.1, measured: true },
+    heelDeg: 11, heelSigmaDeg: 0.5, clickSigmaPx: 1.5, tack: 'port',
+    boatLengthMm: 21_510, imageLongEdgePx: 6000,
+    ...over,
+  })
+  const psiBad = (c: Calibration) => runChecks(c, []).find((x) => x.key === 'psi-impossible')
+  const fit = (c: Calibration) => runChecks(c, []).find((x) => x.key === 'frame-extent')
+
+  it('refuses a ψ that only exists because the asin saturated', () => {
+    // Northstar, 4 Sept: P (31440 mm) declared over marks on the WHEELS (3375),
+    // nine times shorter. mm/px came out 32.6 against a true 3.9, and solvePsi
+    // — which clamps at ±90 — handed back 77.2° and 57.7°.
+    const c = psiBad(cal({ psi: { deg: 77.2, sigmaDeg: 1, measured: true } }))!
+    expect(c.ok).toBe(false)
+    expect(c.detail).toMatch(/not a photograph taken from astern/)
+    expect(c.detail).toMatch(/REFERENCE in the picker/)
+  })
+
+  it('says nothing at the angles these shots are actually taken from', () => {
+    for (const deg of [0, 2, -6.4, 15, 25]) {
+      expect(psiBad(cal({ psi: { deg, sigmaDeg: 0.1, measured: true } })), `${deg}°`).toBeUndefined()
+    }
+  })
+
+  it('does not fire on an ASSUMED ψ, which is 0 and means nothing', () => {
+    expect(psiBad(cal({ psi: { deg: 77, sigmaDeg: 1, measured: false } }))).toBeUndefined()
+  })
+
+  it('catches a frame extent that is far too LARGE as well as too small', () => {
+    // The same mistake has now been made in both directions in one week: the
+    // reference shorter than what was clicked (7.8 m across on 27 Sep) and
+    // longer (196 m across on 4 Sept), on a boat of 23 m.
+    const big = fit(cal({ mmPerPxAtMast: 32.6 }))!
+    expect(big.ok).toBe(false)
+    expect(big.detail).toMatch(/far wider than any frame/)
+    const small = fit(cal({ mmPerPxAtMast: 1.3 }))!
+    expect(small.ok).toBe(false)
+    expect(small.detail).toMatch(/too small to contain it/)
+  })
+
+  it('still passes the frames that are right', () => {
+    // 27 Sep on P: 46 m across. 4 Sept on the wheels: 23 m across.
+    expect(fit(cal({ mmPerPxAtMast: 7.7 }))!.ok).toBe(true)
+    expect(fit(cal({ mmPerPxAtMast: 3.9 }))!.ok).toBe(true)
   })
 })

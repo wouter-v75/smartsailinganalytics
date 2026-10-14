@@ -934,9 +934,31 @@ export function runChecks(cal: Calibration): Check[] {
   // It beats checking the RANGE, which only rules out a camera inside the boat
   // and missed two of those three at 22 m; and it beats range/mmPerPx, which is
   // focal/pitch and constant only at a FIXED focal length — these were a zoom.
+  // ψ THAT IS NOT A STERN SHOT. solvePsi clamps its asin at ±90°, so a scale
+  // that is wildly wrong does not fail — it saturates, and hands back an angle.
+  // Northstar's 4 Sept frames came back at 77.2° and 57.7° because P (31440 mm)
+  // had been declared over marks on the WHEELS (3375), nine times shorter. The
+  // geometry here is a small-angle model checked against a perspective camera
+  // from 5 to 25°; past ~30° it is not describing a photograph taken from
+  // astern, whatever the arithmetic says.
+  if (cal.psi.measured && Math.abs(cal.psi.deg) > 30) {
+    out.push({
+      key: 'psi-impossible',
+      label: 'Misalignment',
+      ok: false,
+      detail: `ψ = ${cal.psi.deg.toFixed(0)}°, which is not a photograph taken from astern. `
+        + 'ψ is solved from the scale, so this almost always means the two scale marks and '
+        + 'the REFERENCE in the picker describe different things — check the picker says what '
+        + 'you clicked. Nothing on this frame means anything until it does.',
+    })
+  }
+
   if (cal.boatLengthMm && cal.boatLengthMm > 0 && cal.imageLongEdgePx && cal.mmPerPxAtMast > 0) {
     const extentMm = cal.mmPerPxAtMast * cal.imageLongEdgePx
-    const ok = extentMm > cal.boatLengthMm
+    // Too SMALL means the declared reference is shorter than what was clicked;
+    // too LARGE means it is longer. Northstar managed both in a week: 7.8 m
+    // across on 27 Sep, and 196 m across on 4 Sept, on a 23 m boat.
+    const ok = extentMm > cal.boatLengthMm && extentMm < cal.boatLengthMm * 8
     out.push({
       key: 'frame-extent',
       label: 'Does the frame fit the boat',
@@ -944,8 +966,9 @@ export function runChecks(cal: Calibration): Check[] {
       detail: ok
         ? `the picture is ${(extentMm / 1000).toFixed(0)} m across at the mast, and the boat is `
           + `${(cal.boatLengthMm / 1000).toFixed(0)} m`
-        : `this scale makes the picture only ${(extentMm / 1000).toFixed(1)} m across at the mast, `
-          + `and the boat in it is at least ${(cal.boatLengthMm / 1000).toFixed(1)} m long. `
+        : `this scale makes the picture ${(extentMm / 1000).toFixed(1)} m across at the mast, `
+          + `and the boat in it is about ${(cal.boatLengthMm / 1000).toFixed(1)} m long — `
+          + `${extentMm < cal.boatLengthMm ? 'too small to contain it' : 'far wider than any frame you would measure a sail on'}. `
           + 'The two scale marks and the REFERENCE in the picker are describing different '
           + 'things — every millimetre on this frame is out by the ratio between them.',
     })
