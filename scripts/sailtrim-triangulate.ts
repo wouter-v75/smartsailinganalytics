@@ -141,7 +141,9 @@ async function main() {
     const views: TriangulateView[] = []
     for (const f of usable) {
       const ann = f.st!.annotation as {
-        psiDeg: number; targets: { key: string; mm: number; depthMm?: number }[]
+        psiDeg: number; heelDeg?: number | null
+        scale?: { rangeMm?: number | null }
+        targets: { key: string; mm: number; depthMm?: number }[]
       }
       const t = ann.targets.find((x) => x.key === key)
       const rig = (f.st!.result as { marks?: { rig?: RigModel } })?.marks?.rig
@@ -154,7 +156,16 @@ async function main() {
         ? (t.depthMm as number)
         : depthAssumedFor(key, rig)
       if (!Number.isFinite(t.depthMm as number)) legacyDepth.add(f.at.slice(11, 19))
-      views.push({ psiDeg: ann.psiDeg, measuredMm: t.mm, assumedDepthMm })
+      // Range and heel turn the solve from a long-range approximation into the
+      // real thing: a target images at k(R+D)/R, so the millimetres a frame
+      // reports depend on the depth it assumed. 4 % at 260 m, 45 % at 22 m.
+      views.push({
+        psiDeg: ann.psiDeg,
+        measuredMm: t.mm,
+        assumedDepthMm,
+        rangeMm: ann.scale?.rangeMm ?? null,
+        heelDeg: ann.heelDeg ?? null,
+      })
     }
     const r = triangulate(views)
     if (!r) continue

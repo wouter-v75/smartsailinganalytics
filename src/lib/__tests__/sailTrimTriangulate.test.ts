@@ -67,3 +67,82 @@ describe('triangulate', () => {
     expect(Math.abs(r.depthMm)).toBeLessThan(11000)
   })
 })
+
+describe('triangulate — the image scale depends on the depth being solved for', () => {
+  const D2R = Math.PI / 180
+  /**
+   * A frame, built FORWARDS from a known truth with the same maths measureTarget
+   * uses, then reported the way a stored annotation reports it.
+   */
+  const frameFor = (truthY: number, truthD: number, psiDeg: number, rangeMm: number,
+                    assumedDepthMm: number, heelDeg = 12) => {
+    const p = psiDeg * D2R
+    const ch = Math.cos(heelDeg * D2R)
+    // The clicked pixel offset times the MAST-PLANE scale — the one quantity
+    // that does not depend on any depth assumption. The projection says
+    // pxK·(R+D)/R = Y·cos ψ − D·sin ψ·cos φ, so invert that.
+    const pxK = (truthY * Math.cos(p) - truthD * Math.sin(p) * ch) * (rangeMm / (rangeMm + truthD))
+    // What the tool then reports, having converted at the depth it ASSUMED and
+    // corrected with that same depth.
+    const measuredMm = (pxK * ((rangeMm + assumedDepthMm) / rangeMm)
+      + assumedDepthMm * Math.sin(p) * ch) / Math.cos(p)
+    return { psiDeg, measuredMm, assumedDepthMm, rangeMm, heelDeg }
+  }
+
+  it('recovers a boom at E from a CLOSE set, where the old model halved it', () => {
+    // Baraka: E = 5700, shot at 22-29 m with the rig model still assuming the
+    // generic -10000. D/R is 45 % here, so the depth-dependent scale is not a
+    // rounding error — it is the answer.
+    const truthY = -620, truthD = -5700
+    const views = [
+      frameFor(truthY, truthD, 4.72, 23_000, -10_000),
+      frameFor(truthY, truthD, 0.67, 22_000, -10_000),
+      frameFor(truthY, truthD, -1.66, 22_000, -10_000),
+      frameFor(truthY, truthD, -5.66, 25_000, -10_000),
+    ]
+    const r = triangulate(views)!
+    expect(r.depthMm).toBeGreaterThan(-6100)
+    expect(r.depthMm).toBeLessThan(-5300)
+    expect(r.athwartshipsMm).toBeCloseTo(truthY, -1)
+    expect(r.rmsMm).toBeLessThan(5)
+
+    // …and the old long-range model, handed the same frames, comes back short.
+    // About 20 % here, with this error ISOLATED. Baraka's real set solved to
+    // 51 % of her E, so this is part of that gap and not demonstrably all of
+    // it — the rest is whatever else those frames carry.
+    const flat = triangulate(views.map(({ psiDeg, measuredMm, assumedDepthMm }) =>
+      ({ psiDeg, measuredMm, assumedDepthMm })))!
+    expect(Math.abs(flat.depthMm)).toBeLessThan(0.85 * Math.abs(truthD))
+    expect(Math.abs(flat.depthMm)).toBeGreaterThan(0.6 * Math.abs(truthD))
+    // And it does NOT announce itself: the residual stays small while the
+    // answer is half. That is why the boom-against-E check exists.
+    expect(flat.rmsMm).toBeLessThan(60)
+  })
+
+  it('agrees with the old model at LONG range, where it was never wrong', () => {
+    // Northstar, 260 m: D/R is 4 %, the approximation holds, and the fix must
+    // not move an answer that was already right.
+    const truthY = -2210, truthD = -10_330
+    const views = [
+      frameFor(truthY, truthD, 4.0, 260_000, -6_000),
+      frameFor(truthY, truthD, 0.0, 260_000, -6_000),
+      frameFor(truthY, truthD, -4.0, 260_000, -6_000),
+    ]
+    const withScale = triangulate(views)!
+    const flat = triangulate(views.map(({ psiDeg, measuredMm, assumedDepthMm }) =>
+      ({ psiDeg, measuredMm, assumedDepthMm })))!
+    expect(withScale.depthMm).toBeGreaterThan(-10_900)
+    expect(withScale.depthMm).toBeLessThan(-9_800)
+    expect(Math.abs(withScale.depthMm - flat.depthMm)).toBeLessThan(900)
+  })
+
+  it('falls back to the old model when a frame has no range', () => {
+    // No focal length, no range, no depth correction anywhere in the tool —
+    // behaviour unchanged rather than refused.
+    const views = [
+      { psiDeg: 4, measuredMm: -2000, assumedDepthMm: -6000 },
+      { psiDeg: -4, measuredMm: -2400, assumedDepthMm: -6000 },
+    ]
+    expect(triangulate(views)).not.toBeNull()
+  })
+})

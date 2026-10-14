@@ -33,6 +33,27 @@ export interface TriangulateView {
   measuredMm: number
   /** The depth that correction ASSUMED, mm — needed to undo it. */
   assumedDepthMm: number
+  /**
+   * Camera→mast range, mm, when the frame knows it (it needs a focal length).
+   *
+   * With it the solve stops being a LONG-RANGE approximation. A target at depth
+   * D images at k·(R+D)/R, so the millimetres a frame reports depend on the
+   * depth it assumed — and the linear model below silently keeps the ASSUMED
+   * depth's scale on the left while solving for a different depth on the right.
+   *
+   * At Northstar's 260 m that is a 4 % effect and the boom still came back at
+   * 95 % of its certificate E. At Baraka's 22 m, D/R is 45 %: her boom solved
+   * to −2900 mm against an E of 5700. Same shape as the ψ inflation — invisible
+   * down a long lens, dominant up close.
+   */
+  rangeMm?: number | null
+  /**
+   * The heel the frame's geometry used, degrees. Taken as a magnitude.
+   *
+   * The forward model multiplies the ψ term by cos(heel); the undo never did,
+   * which left a small term behind in every frame.
+   */
+  heelDeg?: number | null
 }
 
 export interface TriangulateResult {
@@ -63,6 +84,11 @@ export function triangulate(views: TriangulateView[], minBaselineDeg = 1.5): Tri
   const baseline = Math.max(...psis) - Math.min(...psis)
   if (!(baseline >= minBaselineDeg)) return null
 
+  // Every frame knows its range ⇒ solve the real model, scale and all.
+  if (views.every((v) => Number.isFinite(v.rangeMm as number) && (v.rangeMm as number) > 0)) {
+    return solveWithScale(views, baseline)
+  }
+
   // Undo each frame's own depth assumption to recover what it actually saw.
   const obs = views.map((v) => {
     const p = v.psiDeg * D2R
@@ -91,6 +117,72 @@ export function triangulate(views: TriangulateView[], minBaselineDeg = 1.5): Tri
     rmsMm: Math.sqrt(ss / obs.length),
     views: obs.length,
     baselineDeg: baseline,
+  }
+}
+
+const cosHeel = (deg: number | null | undefined): number =>
+  deg == null || !Number.isFinite(deg) ? 1 : Math.cos(Math.abs(deg) * D2R)
+
+/**
+ * The same solve, without pretending the image scale is independent of depth.
+ *
+ * A frame's reported millimetres came from `(Δu + d·sinψ·cos φ)/cos ψ`, where Δu
+ * is the clicked pixel offset converted at THAT target's depth — `k·(R+d)/R`.
+ * So the first thing to recover is the depth-free quantity, the clicked offset
+ * times the mast-plane scale:
+ *
+ *     pxK = (m·cos ψ − d_a·sin ψ·cos φ) · R / (R + d_a)
+ *
+ * which is what the frame actually saw. Then for a candidate depth D the frame
+ * predicts `pxK·(R+D)/R = Y·cos ψ − D·sin ψ·cos φ`, and Y falls out in closed
+ * form once D is fixed. D is one unknown over a bounded range, so it is swept
+ * rather than linearised — the relation is not linear in D and the whole point
+ * of this is to stop treating it as though it were.
+ */
+function solveWithScale(views: TriangulateView[], baselineDeg: number): TriangulateResult | null {
+  const obs = views.map((v) => {
+    const p = v.psiDeg * D2R
+    const R = v.rangeMm as number
+    const ch = cosHeel(v.heelDeg)
+    const pxK = (v.measuredMm * Math.cos(p) - v.assumedDepthMm * Math.sin(p) * ch) * (R / (R + v.assumedDepthMm))
+    return { p, R, ch, pxK }
+  })
+  if (obs.some((o) => !Number.isFinite(o.pxK))) return null
+
+  // A depth nearer the camera than the camera itself is not a photograph.
+  const limit = Math.min(...obs.map((o) => o.R)) * 0.9
+  const fit = (D: number) => {
+    let num = 0, den = 0
+    for (const o of obs) {
+      const lhs = o.pxK * ((o.R + D) / o.R) + D * Math.sin(o.p) * o.ch
+      num += lhs * Math.cos(o.p); den += Math.cos(o.p) ** 2
+    }
+    const Y = den > 0 ? num / den : 0
+    let ss = 0
+    for (const o of obs) {
+      const pred = Y * Math.cos(o.p) - D * Math.sin(o.p) * o.ch
+      ss += (pred - o.pxK * ((o.R + D) / o.R)) ** 2
+    }
+    return { Y, rms: Math.sqrt(ss / obs.length) }
+  }
+
+  // Coarse sweep then refine — the residual is smooth and single-minimumed over
+  // any depth a boat has, so there is nothing to be gained by anything cleverer.
+  let bestD = 0, best = fit(0)
+  for (let D = -limit; D <= limit; D += 25) {
+    const f = fit(D)
+    if (f.rms < best.rms) { best = f; bestD = D }
+  }
+  for (let D = bestD - 25; D <= bestD + 25; D += 1) {
+    const f = fit(D)
+    if (f.rms < best.rms) { best = f; bestD = D }
+  }
+  return {
+    athwartshipsMm: best.Y,
+    depthMm: bestD,
+    rmsMm: best.rms,
+    views: obs.length,
+    baselineDeg,
   }
 }
 
