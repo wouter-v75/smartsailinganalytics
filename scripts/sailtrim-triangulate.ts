@@ -183,21 +183,6 @@ async function main() {
         : a.psiMeasured ? 'measured' : 'ASSUMED — skipped, mark a centreplane baseline on it'))
   }
   if (usable.length < 2) { console.log('\n  fewer than two frames with a measured ψ'); return }
-  {
-    const ps = usable.map((f) => (f.st!.annotation as { psiDeg: number }).psiDeg)
-    const span = Math.max(...ps) - Math.min(...ps)
-    console.log(`\n  solving from ${usable.length} frame(s), ψ spanning ${span.toFixed(1)}°`)
-    // A bare "0 station depth(s)" with no targets listed is what this used to
-    // print when the span fell under triangulate's floor, and it reads like
-    // "nothing to measure" rather than "not enough angle to measure it with".
-    if (span < 1.5) {
-      console.log('  ⚠ under the 1.5° floor — two frames from nearly the same spot say')
-      console.log('    nothing about depth, so every target will be refused. --around matches')
-      console.log('    the CLOCK as a PREFIX, so widen it (…T08:2 covers 08:20–08:29) to reach')
-      console.log('    frames in the neighbouring minute, and exclude what you do not want.')
-    }
-  }
-
   // ψ PAST 30° IS NOT A STERN SHOT, and it must come out BEFORE anything is
   // solved — not merely be warned about.
   //
@@ -308,6 +293,22 @@ async function main() {
     console.log('    will not show it. Re-measure the odd ones out onto one reference, then re-run.')
   }
 
+  // The set as it ACTUALLY stands, after every filter. Printed before the drops
+  // it described a set that no longer existed by the time anything was solved —
+  // "solving from 4 frame(s), ψ spanning 74.8°" above a table computed from two
+  // frames at 3.6°.
+  {
+    const ps = usable.map((f) => (f.st!.annotation as { psiDeg: number }).psiDeg)
+    const span = Math.max(...ps) - Math.min(...ps)
+    console.log(`\n  solving from ${usable.length} frame(s), ψ spanning ${span.toFixed(1)}°`)
+    if (span < 1.5) {
+      console.log('  ⚠ under the 1.5° floor — two frames from nearly the same spot say')
+      console.log('    nothing about depth, so every target will be refused. --around matches')
+      console.log('    the CLOCK as a PREFIX, so widen it (…T08:2 covers 08:20–08:29) to reach')
+      console.log('    frames in the neighbouring minute, and exclude what you do not want.')
+    }
+  }
+
   const keys = new Set<string>()
   for (const f of usable) for (const t of (f.st!.annotation as { targets: { key: string }[] }).targets) keys.add(t.key)
 
@@ -400,8 +401,15 @@ async function main() {
     // the best measurement in the table.
     const sigma = Math.round(r.depthSigmaMm)
     const storable = /^(main|jib)@stripe/.test(key) && r.views >= 3 && sigma <= MAX_SIGMA
-    console.log(`${' '.repeat(19)}depth ±${sigma} mm`
-      + ` (${r.rmsMm.toFixed(0)} mm residual x ${r.baselineDeg ? (1 / Math.sin(r.baselineDeg * Math.PI / 180)).toFixed(0) : '—'})`
+    // With two views the residual is zero BY CONSTRUCTION, so the sigma is the
+    // 5 mm floor times the leverage and nothing else — ±79 mm read like a tight
+    // measurement off a set that had measured nothing at all. A sigma needs a
+    // residual behind it or it is arithmetic wearing an error bar.
+    console.log(`${' '.repeat(19)}`
+      + (r.views < 3
+        ? 'depth uncertainty unknown — two views leave no residual, so there is nothing to scale'
+        : `depth ±${sigma} mm`
+          + ` (${r.rmsMm.toFixed(0)} mm residual x ${r.baselineDeg ? (1 / Math.sin(r.baselineDeg * Math.PI / 180)).toFixed(0) : '—'})`)
       + (/^(main|jib)@stripe/.test(key)
         ? storable ? '  → storing'
           // Name the ACTUAL reason. This said "over ±250" on a ±63 mm depth
