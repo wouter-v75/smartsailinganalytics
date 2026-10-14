@@ -250,3 +250,33 @@ describe('triangulate — the leeward flip must come out before the solve', () =
       .toBeCloseTo(triangulate([w, { ...w, psiDeg: -2 }])!.depthMm, 6)
   })
 })
+
+describe('triangulateNote — the gap between 4° and 8°', () => {
+  const at = (deg: number) => triangulateNote({
+    athwartshipsMm: -600, depthMm: -5000, rmsMm: 3, views: 3,
+    baselineDeg: deg, residualsMm: [1, -2, 1],
+  })
+
+  it('warns in the band the message always called insufficient', () => {
+    // The sub-4° text has always ended "8° or more is what makes it a
+    // measurement", and nothing covered 4-8. Baraka's two sets span 5.3° and
+    // 4.2°, both fitted to 1-6 mm, and their station depths disagree across
+    // tacks by up to 1100 mm on points that cannot have moved.
+    expect(at(5.3)).toMatch(/under the 8°/)
+    expect(at(4.2)).toMatch(/under the 8°/)
+  })
+
+  it('says which number survives a narrow span and which does not', () => {
+    // The useful half: a narrow span costs the DEPTH, not the athwartships
+    // figure, which every view pins. Saying only "not enough angle" would throw
+    // away a good measurement along with a bad one.
+    expect(at(5)).toMatch(/ATHWARTSHIPS/)
+    expect(at(5)).toMatch(/DEPTH does not/)
+  })
+
+  it('keeps the harder warning below 4°, and stays quiet past 8°', () => {
+    expect(at(3)).toMatch(/nearly the same photograph/)
+    expect(at(3)).not.toMatch(/under the 8°/)
+    expect(at(9)).toBe('')
+  })
+})
