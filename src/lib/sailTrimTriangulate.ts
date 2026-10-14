@@ -66,6 +66,16 @@ export interface TriangulateResult {
   /** How many views went in, and the angle they spanned. */
   views: number
   baselineDeg: number
+  /**
+   * Each view's own disagreement with the fit, mm, in the order given.
+   *
+   * An rms is an average, and an average hides the thing worth finding: ONE
+   * frame being wrong. Baraka's 08:22 set solved her boom to 79 % of E with an
+   * rms of 94 mm; dropping the single frame that had solved ψ against a
+   * different baseline took the rms to 12 mm and the depth to 89 %. The set was
+   * never bad — one frame in it was, and only the per-view numbers say which.
+   */
+  residualsMm: number[]
 }
 
 const D2R = Math.PI / 180
@@ -106,17 +116,15 @@ export function triangulate(views: TriangulateView[], minBaselineDeg = 1.5): Tri
   const Y = (d * e - b * g) / det
   const D = (-b * e + a * g) / det
 
-  let ss = 0
-  for (const o of obs) {
-    const pred = Y * Math.cos(o.p) - D * Math.sin(o.p)
-    ss += (pred - o.raw) ** 2
-  }
+  const residualsMm = obs.map((o) => Y * Math.cos(o.p) - D * Math.sin(o.p) - o.raw)
+  const ss = residualsMm.reduce((t, v) => t + v * v, 0)
   return {
     athwartshipsMm: Y,
     depthMm: D,
     rmsMm: Math.sqrt(ss / obs.length),
     views: obs.length,
     baselineDeg: baseline,
+    residualsMm,
   }
 }
 
@@ -177,13 +185,38 @@ function solveWithScale(views: TriangulateView[], baselineDeg: number): Triangul
     const f = fit(D)
     if (f.rms < best.rms) { best = f; bestD = D }
   }
+  const residualsMm = obs.map((o) =>
+    best.Y * Math.cos(o.p) - bestD * Math.sin(o.p) * o.ch - o.pxK * ((o.R + bestD) / o.R))
   return {
     athwartshipsMm: best.Y,
     depthMm: bestD,
     rmsMm: best.rms,
     views: obs.length,
     baselineDeg,
+    residualsMm,
   }
+}
+
+/**
+ * The view that disagrees most, when one of them plainly does.
+ *
+ * Returns its index and what the fit would become without it — but only when
+ * dropping it is a real improvement and enough views remain to still be a
+ * measurement. Three views minus one is two, which solves exactly and has no
+ * residual left to judge it by, so that is not an improvement, it is a way of
+ * making the number look better.
+ */
+export function worstView(
+  views: TriangulateView[], minBaselineDeg = 1.5,
+): { index: number; without: TriangulateResult } | null {
+  const all = triangulate(views, minBaselineDeg)
+  if (!all || views.length < 4 || !all.residualsMm.length) return null
+  let worst = 0
+  all.residualsMm.forEach((v, i) => { if (Math.abs(v) > Math.abs(all.residualsMm[worst])) worst = i })
+  const without = triangulate(views.filter((_, i) => i !== worst), minBaselineDeg)
+  if (!without) return null
+  // Worth naming only if it more than halves the disagreement.
+  return without.rmsMm * 2 < all.rmsMm ? { index: worst, without } : null
 }
 
 /**

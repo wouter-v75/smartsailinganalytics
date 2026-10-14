@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { triangulate, triangulateNote, type TriangulateView } from '../sailTrimTriangulate'
+import { triangulate, triangulateNote, worstView, type TriangulateView } from '../sailTrimTriangulate'
 
 const D2R = Math.PI / 180
 /** What a frame at this psi would report for a target at (Y, D). */
@@ -144,5 +144,43 @@ describe('triangulate — the image scale depends on the depth being solved for'
       { psiDeg: -4, measuredMm: -2400, assumedDepthMm: -6000 },
     ]
     expect(triangulate(views)).not.toBeNull()
+  })
+})
+
+describe('worstView — which frame is carrying the disagreement', () => {
+  const clean = [
+    view(5.5, -560, -5050, -10_000),
+    view(0.7, -560, -5050, -10_000),
+    view(-1.7, -560, -5050, -10_000),
+    view(-5.7, -560, -5050, -10_000),
+  ]
+
+  it('names the one frame that is wrong, and what the set becomes without it', () => {
+    // Baraka's 08:22 boom: one frame had solved ψ against a different, shorter
+    // baseline. The rms was 94 mm over five views and 12 mm over four, and the
+    // depth went from 79 % of her certificate E to 89 %. An average cannot say
+    // that; only the per-view residuals can.
+    const spoiled = [...clean]
+    spoiled[1] = view(0.7, -560, -5050, -10_000, 300) // 300 mm out
+    const w = worstView(spoiled)!
+    expect(w.index).toBe(1)
+    expect(w.without.rmsMm).toBeLessThan(triangulate(spoiled)!.rmsMm / 2)
+  })
+
+  it('says nothing when every frame agrees', () => {
+    expect(worstView(clean)).toBeNull()
+  })
+
+  it('refuses to drop one when only three views are left to judge by', () => {
+    // Three minus one is two, which solves exactly and has no residual at all.
+    // "Improving" a fit by removing the evidence is not an improvement.
+    const three = [clean[0], view(0.7, -560, -5050, -10_000, 300), clean[3]]
+    expect(worstView(three)).toBeNull()
+  })
+
+  it('reports a residual per view, in the order given', () => {
+    const r = triangulate(clean)!
+    expect(r.residualsMm).toHaveLength(4)
+    for (const v of r.residualsMm) expect(Math.abs(v)).toBeLessThan(1)
   })
 })

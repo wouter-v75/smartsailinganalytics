@@ -24,7 +24,7 @@
 
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
-import { triangulate, triangulateNote, type TriangulateView } from '../src/lib/sailTrimTriangulate'
+import { triangulate, triangulateNote, worstView, type TriangulateView } from '../src/lib/sailTrimTriangulate'
 import { migrateRigModel, depthFor, type RigModel, type RigValue } from '../src/lib/rigModel'
 
 const args = process.argv.slice(2)
@@ -139,6 +139,9 @@ async function main() {
   console.log('\n  target           athwartships        DEPTH    residual   note')
   for (const key of Array.from(keys).sort()) {
     const views: TriangulateView[] = []
+    // Which frame each view came from, so a disagreement can be NAMED. An rms
+    // is an average and an average hides one bad frame among good ones.
+    const viewAt: string[] = []
     for (const f of usable) {
       const ann = f.st!.annotation as {
         psiDeg: number; heelDeg?: number | null
@@ -166,12 +169,22 @@ async function main() {
         rangeMm: ann.scale?.rangeMm ?? null,
         heelDeg: ann.heelDeg ?? null,
       })
+      viewAt.push(f.at.slice(11, 19))
     }
     const r = triangulate(views)
     if (!r) continue
     const note = triangulateNote(r)
     console.log(`  ${key.padEnd(15)} ${String(Math.round(r.athwartshipsMm)).padStart(9)} mm ${String(Math.round(r.depthMm)).padStart(9)} mm`
       + ` ${r.rmsMm.toFixed(0).padStart(6)} mm   ${note || 'ok'}`)
+    // When one frame is carrying the disagreement, say which and what the set
+    // becomes without it. On Baraka's 08:22 boom that was 94 mm -> 12 mm, and
+    // the depth went from 79 % of her certificate E to 89 %.
+    const bad = worstView(views)
+    if (bad) {
+      console.log(`${' '.repeat(19)}↳ ${viewAt[bad.index]} is carrying it: drop that frame and this`
+        + ` becomes ${Math.round(bad.without.depthMm)} mm at ${bad.without.rmsMm.toFixed(0)} mm rms`
+        + ` over ${bad.without.views} views`)
+    }
     // Only a leech station belongs in stationDepths; the clew and boom already
     // have their own fields, and they are checks rather than inputs.
     if (/^(main|jib)@stripe/.test(key) && !note) {
