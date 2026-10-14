@@ -47,7 +47,7 @@ Supabase SQL editor. Asking where a path is wastes a round trip — it is here.
 | Re-run a debrief SUMMARY without re-recording or re-transcribing | `npx vite-node scripts/debrief-resummarise.ts -- <transcript.txt> --mode debrief` — the transcript is the expensive part and is usually already complete; only the summary stops short. Calls the same `summariseWithContinuation` the route does, so the two cannot drift |
 | See what the sail-media **Lidar column** will show for a day, and why a cell is empty | `npx vite-node scripts/sailmedia-lidar-check.ts --date 2026-09-26` — read-only. A cell needs three things at once (a head reported, the sail was up, the phase fell in a band); this says which one is missing without opening every sail |
 | Check a day's photographed sail shape against the LIDAR at the same second | `npx vite-node scripts/sailtrim-vs-lidar.ts --date 2026-09-26` — read-only. The twist DIFFERENCE between two stripes is the check (a common zero cancels); a constant offset down the absolute angles with the twists agreeing is a different zero-point, not a different shape |
-| Find which stored frames were measured on a datum that has since MOVED | `npx vite-node scripts/sailtrim-audit.ts --stale` — read-only, no `--write`. It names the frames and the size of the shift; the redo itself is Photos → frame → Analyse sail geometry → **Edit points** → Save, because the app is the only implementation of the maths |
+| Find which stored frames were measured on a datum that has since MOVED | `npx vite-node scripts/sailtrim-audit.ts --stale` — read-only, no `--write`. It names the frames and the size of the shift; the redo itself is the **Redo N frames** panel the Photos tab offers on that day, which drives SailTrimTab offscreen — the app is the only implementation of the maths. By hand it is Photos → frame → **Edit points…** → Save to photo; note "📐 Analyse sail geometry" is shown only on a frame with NO geometry, so on the very frames that need redoing it is replaced by the card's `Edit points…`. Re-saving needs no re-clicking: `restoreFrom` puts the marks and the choices back and every number is recomputed from them |
 | Read a sail's DRAFT % from the same set (run the triangulation first) | `npx vite-node scripts/sailtrim-camber.ts --boat "Northstar 76" --around 2026-09-27T11:43 --sail main --station stripe50 --write` — `--write` puts the answer on every frame in the set |
 
 All of these are dry-run by default and need `--write` to do anything. They read
@@ -129,7 +129,10 @@ trim identical on both. Fixed by dividing by `effectiveSeparationMm` instead,
 which needs each landmark's own depth (`baselineLandmarkDepths` in
 `rigModel.ts`) and falls back to the old answer when they are not supplied.
 **Frames measured before this carry the old ψ** and must be re-saved to pick up
-the correction — Photos → frame → Analyse sail geometry → Save.
+the correction. `SAILTRIM_VERSION` is bumped for exactly this reason: it is
+stamped on every annotation, and `staleFrames` compares it, so the Photos tab's
+redo panel offers the affected frames by itself. It used to look only for a
+moved DATUM, so a maths change left it reporting that everything was current.
 
 **A PDF's JPEGs are not always in the file as JPEGs.** `pdfImageExtract`
 scans the raw bytes for `FF D8 FF … FF D9`, which works because North writes

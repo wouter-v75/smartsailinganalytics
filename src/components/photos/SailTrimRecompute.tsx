@@ -32,6 +32,7 @@ import {
   type MarksBundle, type ResultCalibration, type StoredScale,
 } from '../../lib/sailTrimAudit'
 import type { SailTrimSave } from '../sailtrim/SailTrimTab'
+import { SAILTRIM_VERSION } from '../../lib/sailTrim'
 
 // Loaded only when a redo is actually run: the tab is the largest component in
 // the app and every Photos tab would otherwise pay for it.
@@ -111,11 +112,18 @@ export function staleFrames(
 
     const drift = scaleDrift(resolved.scale, { mm: ref.mm, depthMm: ref.depthMm ?? 0 })
     const base = baselineDrift(bundle, rig.baselines)
-    if (!drift.stale && !base.stale) continue
+    // A DATUM can move, and so can the MATHS. Only the first was being looked
+    // for, so when solvePsi was corrected the panel went on reporting that every
+    // frame was current — and the redo was eleven manual visits to a button that
+    // is hidden on a frame which already has geometry.
+    const storedVersion = String(stored.annotation.version || '')
+    const oldMaths = !!storedVersion && storedVersion !== SAILTRIM_VERSION
+    if (!drift.stale && !base.stale && !oldMaths) continue
 
     const reasons: string[] = []
     if (drift.stale) reasons.push(`scale ${resolved.scale.key}: ${driftNote(drift.ratio)}`)
     if (base.stale) reasons.push(`baseline ${base.key}: ${base.storedMm} → ${base.currentMm} mm, so ψ moves too`)
+    if (oldMaths) reasons.push(`measured by ${storedVersion}; the geometry is now ${SAILTRIM_VERSION}`)
 
     out.push({
       photo,

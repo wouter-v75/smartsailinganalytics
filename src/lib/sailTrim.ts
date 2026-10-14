@@ -1003,7 +1003,21 @@ export interface SailTrimResult {
   algorithmVersion: string
 }
 
-export const SAILTRIM_VERSION = 'sailtrim-v0.2-horizon'
+/**
+ * The geometry that produced a stored measurement.
+ *
+ * Stamped onto every saved annotation, and BUMPED whenever the maths moves a
+ * number — not when the UI changes. SailTrimRecompute compares it against the
+ * stored frames and offers to put the operator's clicks back through the
+ * current pipeline, so a correction reaches the frames that were measured
+ * before it instead of waiting for somebody to reopen all of them by hand.
+ *
+ *   v0.2-horizon   the horizon-derived camera roll
+ *   v0.3-psi-scale solvePsi divides by the EFFECTIVE separation, so ψ is no
+ *                  longer inflated by the product of its baseline's two depth
+ *                  factors — 45 % at a 25 m range, 1.3 % at 260 m
+ */
+export const SAILTRIM_VERSION = 'sailtrim-v0.3-psi-scale'
 
 export function toCsv(r: SailTrimResult): string {
   const head = [

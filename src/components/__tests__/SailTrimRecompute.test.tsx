@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { describe, it, expect } from 'vitest'
+import { SAILTRIM_VERSION } from '../../lib/sailTrim'
 import { staleFrames, parseStored, boatOf } from '../photos/SailTrimRecompute'
 import { migrateRigModel, type RigModel } from '../../lib/rigModel'
 
@@ -59,7 +60,7 @@ const frame = (over: {
     boat: over.boat ?? 'Northstar 76',
     sailtrim_data: JSON.stringify({
       annotation: {
-        version: 'v', imageSize: { w: 6000, h: 4000 }, defn: 'boat',
+        version: SAILTRIM_VERSION, imageSize: { w: 6000, h: 4000 }, defn: 'boat',
         axis: { low: { x: 1, y: 2 }, high: { x: 3, y: 4 } },
         targets: [{ key: 'boom', label: 'Boom', point: { x: 1, y: 1 }, foot: { x: 0, y: 0 }, mm: 2210, sigmaMm: 10, colour: '#fff' }],
         psiDeg: 0, psiMeasured: true, heelDeg: 20, measuredAt: 1,
@@ -161,5 +162,38 @@ describe('staleFrames — what the panel offers', () => {
   it('carries the before-numbers, so a redo that changed nothing is visible', () => {
     const out = staleFrames([frame({ id: 'a', depthMm: -10_000 })], rigs, '2026-09-27')
     expect(out[0].before).toEqual([{ key: 'boom', mm: 2210 }])
+  })
+})
+
+describe('staleFrames — the MATHS can move, not just the datums', () => {
+  /** A frame that is current on every datum, with its version stamp replaced. */
+  const versioned = (v: string | null) => {
+    const f = frame({ id: 'm', depthMm: -7392 })
+    const d = JSON.parse(f.sailtrim_data as string)
+    if (v === null) delete d.annotation.version
+    else d.annotation.version = v
+    f.sailtrim_data = JSON.stringify(d)
+    return f
+  }
+
+  it('offers a frame measured by an older geometry', () => {
+    // solvePsi was corrected after these frames were saved. No datum moved, so
+    // both drift checks saw a perfectly current frame and the panel stayed
+    // hidden — leaving eleven manual visits to "Edit points…", which is itself
+    // only reachable from the card that replaces the measure button.
+    const out = staleFrames([versioned('sailtrim-v0.2-horizon')], rigs, '2026-09-27')
+    expect(out).toHaveLength(1)
+    expect(out[0].reasons.join(' ')).toContain('sailtrim-v0.2-horizon')
+    expect(out[0].reasons.join(' ')).toContain(SAILTRIM_VERSION)
+  })
+
+  it('leaves a frame measured by the CURRENT geometry alone', () => {
+    expect(staleFrames([versioned(SAILTRIM_VERSION)], rigs, '2026-09-27')).toHaveLength(0)
+  })
+
+  it('does not flag a frame that carries no version at all', () => {
+    // An absent stamp is evidence of nothing, and a redo offered on no evidence
+    // is how a panel that means something becomes a panel people dismiss.
+    expect(staleFrames([versioned(null)], rigs, '2026-09-27')).toHaveLength(0)
   })
 })
