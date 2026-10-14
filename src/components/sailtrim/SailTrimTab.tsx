@@ -2405,7 +2405,7 @@ export default function SailTrimTab(
             </div>
             <div>
               <label style={lbl}>True length (mm)</label>
-              <input style={inp} type="number" value={scaleRef?.mm ?? 0}
+              <input style={inp} type="number" data-testid="scale-true-length" value={scaleRef?.mm ?? 0}
                 onChange={(e) => {
                   // A number typed into a box is an ESTIMATE until somebody says
                   // where it came from — the picker beside it does that. Stamping

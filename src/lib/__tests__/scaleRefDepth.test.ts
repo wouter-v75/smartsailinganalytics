@@ -143,8 +143,11 @@ describe('the rig model’s new references', () => {
   })
 
   it('does not disturb the references that were already there', () => {
+    // Was asserted on spreader2, which has since been retired — its 6000 mm was
+    // a guess nobody measured. The wheels are the athwartships reference that
+    // survived, and the one with a tape and a designer's depth behind it.
     const m = rigModelFor('Northstar 76')
-    expect(m.scaleRefs.find((r) => r.key === 'spreader2')!.mm).toBe(6000)
-    expect(m.scaleRefs.find((r) => r.key === 'spreader2')!.depthMm).toBe(0)
+    expect(m.scaleRefs.find((r) => r.key === 'wheels')!.mm).toBe(3375)
+    expect(m.scaleRefs.find((r) => r.key === 'wheels')!.depthMm).toBe(-7392)
   })
 })

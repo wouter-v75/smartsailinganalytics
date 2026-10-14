@@ -193,9 +193,17 @@ describe('ircCertificate — building a rig model', () => {
     expect(model.notes).toMatch(/IRC cert 50945 \(endorsed\)/)
   })
 
-  it('keeps the spreader options around, still marked as estimates', () => {
-    const spr = model.scaleRefs.find((s) => s.key === 'spreader2')!
-    expect(spr.source).toBe('estimate')
+  it('does not offer the spreaders at all any more', () => {
+    // They used to be kept "around, still marked as estimates". That is the
+    // version of this that costs an afternoon: a reference sitting in the picker
+    // with a plausible 6000 mm beside it, which nobody measured and which
+    // bestScaleKey already refused to choose. A reference you must not pick does
+    // not belong in the list.
+    for (const k of ['spreader1', 'spreader2', 'spreader3', 'mastwidth']) {
+      expect(model.scaleRefs.some((s) => s.key === k), k).toBe(false)
+    }
+    // P is what a certificate actually gives you, and it runs up the rig.
+    expect(model.scaleRefs.some((s) => s.key === 'P')).toBe(true)
   })
 })
 

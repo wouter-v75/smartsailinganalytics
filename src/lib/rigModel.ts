@@ -285,10 +285,6 @@ export function defaultRigModel(boat = ''): RigModel {
     boat,
     updatedAt: new Date().toISOString(),
     scaleRefs: [
-      { key: 'spreader2', label: 'Spreader 2, tip to tip', ...v(6000, 600), depthMm: 0, orientation: 'athwartships' },
-      { key: 'spreader1', label: 'Spreader 1, tip to tip', ...v(7000, 700), depthMm: 0, orientation: 'athwartships' },
-      { key: 'spreader3', label: 'Spreader 3, tip to tip', ...v(5000, 500), depthMm: 0, orientation: 'athwartships' },
-      { key: 'mastwidth', label: 'Mast width, athwartships', ...v(300, 40), depthMm: 0, orientation: 'athwartships' },
       // The one a tape measure can reach. Everything above it is up the rig and
       // has to come off a drawing or a certificate; the wheels are at waist
       // height on the dock, and they are athwartships, which is the direction
@@ -661,6 +657,46 @@ function readStore(): Store {
  * Stored values win wherever they exist, because they are the operator's own
  * edits; the default only fills gaps.
  */
+/**
+ * Scale references that are no longer offered, and are stripped from any model
+ * that still carries one.
+ *
+ * The SPREADERS and the mast width were shipped as plausible-looking defaults
+ * and the spreader distances on this boat were never correct — they are a guess
+ * with a 10 % sigma, which is why `bestScaleKey` already filtered them out. A
+ * reference that is in the list but must not be chosen is a trap, so it is not
+ * in the list.
+ *
+ * Mast width goes for a different reason: at ~300 mm it is far too short to
+ * scale a 30 m rig. Two clicks of ±1.5 px over 300 mm is an order of magnitude
+ * worse than the same two clicks over the stern rail.
+ *
+ * Retiring here rather than only in the defaults is what makes it take effect:
+ * a stored model carries its OWN list, so a key deleted from the defaults would
+ * live on in the cloud for every boat that already had one.
+ */
+export const RETIRED_SCALE_REFS = new Set(['spreader1', 'spreader2', 'spreader3', 'mastwidth'])
+
+/**
+ * Merge a stored list with the shipped one, keeping the stored entry wherever
+ * both know a key, and dropping anything retired.
+ *
+ * NOT `stored.length ? stored : base`, which is what this used to be, and which
+ * meant a reference ADDED in code never reached a boat that already had a
+ * stored model. Baraka's granny bar and stern rail went in, were pushed to her
+ * boats.rig_model by hand, and still did not appear — because her stored list
+ * came from the IRC import and simply replaced the defaults wholesale. A new
+ * reference should show up on every boat the moment it ships.
+ */
+function unionByKey<T extends { key: string }>(stored: T[] | undefined, base: T[]): T[] {
+  const out = (stored ?? []).filter((x) => !RETIRED_SCALE_REFS.has(x.key))
+  for (const b of base) {
+    if (RETIRED_SCALE_REFS.has(b.key)) continue
+    if (!out.some((x) => x.key === b.key)) out.push(b)
+  }
+  return out.length ? out : base.filter((b) => !RETIRED_SCALE_REFS.has(b.key))
+}
+
 export function migrateRigModel(stored: RigModel, boat = stored.boat): RigModel {
   // `withMeasured`, not the bare default: a model stored before a boat's real
   // numbers were known should pick them up, which is the whole point of
@@ -674,8 +710,12 @@ export function migrateRigModel(stored: RigModel, boat = stored.boat): RigModel 
     depths: { ...base.depths, ...stored.depths },
     widths: { ...(base.widths || {}), ...(stored.widths || {}) },
     stationDepths: { ...(base.stationDepths || {}), ...(stored.stationDepths || {}) },
-    scaleRefs: stored.scaleRefs?.length ? stored.scaleRefs : base.scaleRefs,
-    baselines: stored.baselines?.length ? stored.baselines : base.baselines,
+    // Union, not replace — see unionByKey. A stored entry wins on its own key
+    // (it holds the boat's measured numbers); anything the shipped model knows
+    // and the stored one does not is appended, so a new reference appears
+    // without a reseed. Retired keys are dropped from both.
+    scaleRefs: unionByKey(stored.scaleRefs, base.scaleRefs),
+    baselines: unionByKey(stored.baselines, base.baselines),
   })
 }
 

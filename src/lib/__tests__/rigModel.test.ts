@@ -37,10 +37,10 @@ describe('migrateRigModel — a stored model gains fields added since', () => {
   it('keeps the operator’s own edits — the default only fills gaps', () => {
     const stored = defaultRigModel('Northstar 76')
     stored.scaleRefs = stored.scaleRefs.map((r) =>
-      r.key === 'spreader2' ? { ...r, mm: 6240, sigmaMm: 5, source: 'designer' as const } : r)
+      r.key === 'wheels' ? { ...r, mm: 6240, sigmaMm: 5, source: 'designer' as const } : r)
     stored.depths = { ...stored.depths, boom: { mm: -10330, sigmaMm: 150, source: 'measured' } }
     const m = migrateRigModel(stored)
-    expect(m.scaleRefs.find((r) => r.key === 'spreader2')!.mm).toBe(6240)
+    expect(m.scaleRefs.find((r) => r.key === 'wheels')!.mm).toBe(6240)
     expect(m.depths.boom.mm).toBe(-10330)
     expect(m.depths.boom.source).toBe('measured')
   })
@@ -178,11 +178,18 @@ describe('rigModel — handing it to someone else', () => {
   it('fills the gaps when a partial model is imported', () => {
     const partial = JSON.stringify({
       boat: 'Bella',
-      scaleRefs: [{ key: 'spreader2', label: 'Spreader 2', mm: 5800, sigmaMm: 10, source: 'designer', depthMm: 0 }],
+      scaleRefs: [{ key: 'wheels', label: 'Wheels', mm: 5800, sigmaMm: 10, source: 'designer', depthMm: 0 }],
       depths: { clew: { mm: 7400, sigmaMm: 60, source: 'designer' } },
     })
     const m = importRigModel(partial)!
-    expect(m.scaleRefs).toHaveLength(1)
+    // The imported entry wins on its own key, and every OTHER shipped reference
+    // is still offered — an import that stripped the list would leave the boat
+    // with one usable scale.
+    expect(m.scaleRefs.find((r) => r.key === 'wheels')!.mm).toBe(5800)
+    expect(m.scaleRefs.length).toBeGreaterThan(1)
+    // P and HLU come off an IRC certificate, not the shipped defaults, so the
+    // ones to expect here are the shipped athwartships references.
+    expect(m.scaleRefs.some((r) => r.key === 'sternStanchions')).toBe(true)
     expect(m.depths.clew.mm).toBe(7400)
     expect(m.depths.boom.source).toBe('estimate')   // untouched, still a guess
     expect(m.baselines.length).toBeGreaterThan(0)   // filled from the default
@@ -680,5 +687,57 @@ describe('Baraka GP — the dock measurements', () => {
     // And with it, the landmark depths psi needs are now available on this boat.
     expect(baselineLandmarkDepths(m, 'mast-transom'))
       .toEqual({ depthFwdMm: 0, depthAftMm: -7_800 })
+  })
+})
+
+describe('scale references — retired, and reaching a stored model', () => {
+  it('no longer offers the spreaders or the mast width', () => {
+    // The spreader distances on this boat were never correct — a guess with a
+    // 10 % sigma that bestScaleKey already refused to pick. A reference that is
+    // in the list but must not be chosen is a trap. Mast width goes for a
+    // different reason: ~300 mm is far too short to scale a 30 m rig.
+    const keys = defaultRigModel('X').scaleRefs.map((r) => r.key)
+    for (const k of ['spreader1', 'spreader2', 'spreader3', 'mastwidth']) {
+      expect(keys, k).not.toContain(k)
+    }
+  })
+
+  it('STRIPS a retired reference a stored model still carries', () => {
+    // Deleting it from the defaults is not enough: a stored model holds its own
+    // list, so the key would live on in the cloud for every boat that had one.
+    const stored = {
+      ...defaultRigModel('X'),
+      scaleRefs: [
+        { key: 'spreader2', label: 'Spreader 2, tip to tip', mm: 6000, sigmaMm: 600, source: 'estimate' as const, depthMm: 0 },
+        { key: 'P', label: 'P', mm: 31_440, sigmaMm: 20, source: 'measured' as const, depthMm: 0 },
+      ],
+    } as RigModel
+    const m = migrateRigModel(stored)
+    expect(m.scaleRefs.some((r) => r.key === 'spreader2')).toBe(false)
+    expect(m.scaleRefs.find((r) => r.key === 'P')!.mm).toBe(31_440)
+  })
+
+  it('ADDS a shipped reference the stored model has never heard of', () => {
+    // The bug Baraka hit: her stored list came from the IRC import and replaced
+    // the defaults wholesale, so the granny bar and the stern rail were in the
+    // code, pushed to the cloud by hand, and still absent from the picker.
+    const stored = {
+      ...defaultRigModel('Baraka GP'),
+      scaleRefs: [{ key: 'P', label: 'P', mm: 25_000, sigmaMm: 20, source: 'measured' as const, depthMm: 0 }],
+    } as RigModel
+    const m = migrateRigModel(stored, 'Baraka GP')
+    expect(m.scaleRefs.some((r) => r.key === 'sternStanchions')).toBe(true)
+    expect(m.scaleRefs.some((r) => r.key === 'grannyBar')).toBe(true)
+    // …and with this boat's measured lengths, not the zero placeholders.
+    expect(m.scaleRefs.find((r) => r.key === 'sternStanchions')!.mm).toBe(4400)
+    expect(m.scaleRefs.find((r) => r.key === 'grannyBar')!.mm).toBe(1960)
+  })
+
+  it('does not let the shipped default overwrite a stored length', () => {
+    const stored = {
+      ...defaultRigModel('Baraka GP'),
+      scaleRefs: [{ key: 'sternStanchions', label: 'Stern rail', mm: 4455, sigmaMm: 5, source: 'measured' as const, depthMm: -7900 }],
+    } as RigModel
+    expect(migrateRigModel(stored, 'Baraka GP').scaleRefs.find((r) => r.key === 'sternStanchions')!.mm).toBe(4455)
   })
 })
