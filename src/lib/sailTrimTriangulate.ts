@@ -34,6 +34,22 @@ export interface TriangulateView {
   /** The depth that correction ASSUMED, mm — needed to undo it. */
   assumedDepthMm: number
   /**
+   * +1 on port, -1 on starboard: the leeward flip already baked into
+   * `measuredMm`, so it can be taken back out.
+   *
+   * THE BUG. `measuredMm` is LEEWARD-POSITIVE — measureTarget multiplies the
+   * image-signed offset by leewardSign(tack) — while `assumedDepthMm` beside it
+   * is in the model's own convention and is not flipped. Undoing the correction
+   * with one flipped and one not is arithmetic on two different sign
+   * conventions, and on port (flip +1) it happened to be identity, so it was
+   * right half the time and wrong half the time with nothing to show for it:
+   * Baraka's three starboard frames solved her boom to -13155 mm at a 6 mm
+   * residual, where the same three solved properly give -5750 at 5.8 mm.
+   *
+   * Defaults to +1, which is the old behaviour and correct for port.
+   */
+  leewardSign?: number
+  /**
    * Camera→mast range, mm, when the frame knows it (it needs a focal length).
    *
    * With it the solve stops being a LONG-RANGE approximation. A target at depth
@@ -99,10 +115,13 @@ export function triangulate(views: TriangulateView[], minBaselineDeg = 1.5): Tri
     return solveWithScale(views, baseline)
   }
 
-  // Undo each frame's own depth assumption to recover what it actually saw.
+  // Undo each frame's own depth assumption to recover what it actually saw —
+  // and the leeward flip first, so the measurement and the depth are in the
+  // same convention. See `leewardSign`.
+  const flip = sgn(views[0])
   const obs = views.map((v) => {
     const p = v.psiDeg * D2R
-    return { p, raw: v.measuredMm * Math.cos(p) - v.assumedDepthMm * Math.sin(p) }
+    return { p, raw: (v.measuredMm / sgn(v)) * Math.cos(p) - v.assumedDepthMm * Math.sin(p) }
   })
 
   // Normal equations for raw = Y·cos ψ + D·(−sin ψ).
@@ -119,7 +138,8 @@ export function triangulate(views: TriangulateView[], minBaselineDeg = 1.5): Tri
   const residualsMm = obs.map((o) => Y * Math.cos(o.p) - D * Math.sin(o.p) - o.raw)
   const ss = residualsMm.reduce((t, v) => t + v * v, 0)
   return {
-    athwartshipsMm: Y,
+    // Back into the leeward-positive convention the caller reported in.
+    athwartshipsMm: Y * flip,
     depthMm: D,
     rmsMm: Math.sqrt(ss / obs.length),
     views: obs.length,
@@ -130,6 +150,10 @@ export function triangulate(views: TriangulateView[], minBaselineDeg = 1.5): Tri
 
 const cosHeel = (deg: number | null | undefined): number =>
   deg == null || !Number.isFinite(deg) ? 1 : Math.cos(Math.abs(deg) * D2R)
+
+/** The leeward flip a view carries, defaulting to port's +1. */
+const sgn = (v: TriangulateView): number =>
+  v.leewardSign === -1 ? -1 : 1
 
 /**
  * The same solve, without pretending the image scale is independent of depth.
@@ -152,7 +176,8 @@ function solveWithScale(views: TriangulateView[], baselineDeg: number): Triangul
     const p = v.psiDeg * D2R
     const R = v.rangeMm as number
     const ch = cosHeel(v.heelDeg)
-    const pxK = (v.measuredMm * Math.cos(p) - v.assumedDepthMm * Math.sin(p) * ch) * (R / (R + v.assumedDepthMm))
+    const pxK = ((v.measuredMm / sgn(v)) * Math.cos(p) - v.assumedDepthMm * Math.sin(p) * ch)
+      * (R / (R + v.assumedDepthMm))
     return { p, R, ch, pxK }
   })
   if (obs.some((o) => !Number.isFinite(o.pxK))) return null
@@ -188,7 +213,7 @@ function solveWithScale(views: TriangulateView[], baselineDeg: number): Triangul
   const residualsMm = obs.map((o) =>
     best.Y * Math.cos(o.p) - bestD * Math.sin(o.p) * o.ch - o.pxK * ((o.R + bestD) / o.R))
   return {
-    athwartshipsMm: best.Y,
+    athwartshipsMm: best.Y * sgn(views[0]),
     depthMm: bestD,
     rmsMm: best.rms,
     views: obs.length,

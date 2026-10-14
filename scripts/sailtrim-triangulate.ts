@@ -236,6 +236,9 @@ async function main() {
       views.push({
         psiDeg: ann.psiDeg,
         measuredMm: t.mm,
+        // t.mm is leeward-positive; assumedDepthMm is not. The solve takes the
+        // flip back out, and cannot do that unless it is told which it is.
+        leewardSign: (ann as { tack?: string | null }).tack === 'stbd' ? -1 : 1,
         assumedDepthMm,
         rangeMm: ann.scale?.rangeMm ?? null,
         heelDeg: ann.heelDeg ?? null,

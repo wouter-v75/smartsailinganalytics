@@ -198,3 +198,55 @@ describe('worstView — which frame is carrying the disagreement', () => {
     for (const v of r.residualsMm) expect(Math.abs(v)).toBeLessThan(1)
   })
 })
+
+describe('triangulate — the leeward flip must come out before the solve', () => {
+  const D2R = Math.PI / 180
+  /** A starboard frame, reported the way measureTarget reports one. */
+  const stbdView = (psiDeg: number, Y: number, D: number, assumed: number, rangeMm = 34_000) => {
+    const p = psiDeg * D2R
+    const ch = Math.cos(10 * D2R)
+    const pxK = (Y * Math.cos(p) - D * Math.sin(p) * ch) * (rangeMm / (rangeMm + D))
+    const raw = (pxK * ((rangeMm + assumed) / rangeMm) + assumed * Math.sin(p) * ch) / Math.cos(p)
+    // leewardSign(stbd) = -1, applied by measureTarget to the VALUE only.
+    return { psiDeg, measuredMm: -raw, assumedDepthMm: assumed, rangeMm, heelDeg: 10, leewardSign: -1 }
+  }
+
+  it('recovers a starboard boom that the old code put three times too deep', () => {
+    // Baraka's three starboard frames solved her boom to -13155 mm at a 6 mm
+    // residual — against a certificate E of 5700. Un-flipped, the same frames
+    // give -5750. The residual was small either way, which is the whole danger:
+    // the fit was consistent, it was just consistent about the wrong thing.
+    // Yimg is IMAGE-signed, which is what the projection produces. On starboard
+    // measureTarget stores it multiplied by -1, and the answer comes back in
+    // that same leeward-positive convention — so the expectation is -Yimg, and
+    // writing it out is the point: getting this round the wrong way is the bug.
+    const Yimg = 415, D = -5750
+    const views = [stbdView(-0.32, Yimg, D, -10_000, 34_817),
+                   stbdView(0.88, Yimg, D, -10_000, 33_466),
+                   stbdView(3.87, Yimg, D, -10_000, 33_961)]
+    const r = triangulate(views)!
+    expect(r.depthMm).toBeGreaterThan(-6_200)
+    expect(r.depthMm).toBeLessThan(-5_300)
+    expect(r.athwartshipsMm).toBeCloseTo(-Yimg, -1)
+    expect(r.rmsMm).toBeLessThan(5)
+  })
+
+  it('leaves PORT alone, where the flip is +1 and always was', () => {
+    const Y = -662, D = -5590
+    const port = [stbdView(0.81, Y, D, -10_000, 25_548),
+                  stbdView(1.98, Y, D, -10_000, 25_721),
+                  stbdView(6.09, Y, D, -10_000, 31_117)]
+      .map((v) => ({ ...v, measuredMm: -v.measuredMm, leewardSign: 1 }))
+    const r = triangulate(port)!
+    expect(r.depthMm).toBeGreaterThan(-6_000)
+    expect(r.depthMm).toBeLessThan(-5_200)
+    expect(r.athwartshipsMm).toBeCloseTo(Y, -1)
+  })
+
+  it('defaults to port when no sign is given, which is the old behaviour', () => {
+    const v = { psiDeg: 2, measuredMm: -600, assumedDepthMm: -5000 }
+    const w = { ...v, leewardSign: 1 }
+    expect(triangulate([v, { ...v, psiDeg: -2 }])!.depthMm)
+      .toBeCloseTo(triangulate([w, { ...w, psiDeg: -2 }])!.depthMm, 6)
+  })
+})
