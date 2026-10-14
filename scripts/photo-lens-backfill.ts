@@ -73,11 +73,21 @@ async function main() {
 
   const locals = new Map<string, string>()
   for (const dir of DIRS) {
-    for (const f of readdirSync(dir)) {
+    // A folder that is not there is a typo or a placeholder somebody pasted,
+    // and a stack trace from node:fs says neither. Name it and carry on with
+    // the folders that do exist.
+    let entries: string[]
+    try { entries = readdirSync(dir) }
+    catch { console.error(`no such folder: ${dir}`); continue }
+    for (const f of entries) {
       if (!IMG.test(f)) continue
       const p = join(dir, f)
       if (statSync(p).isFile()) locals.set(basename(f).toLowerCase(), p)
     }
+  }
+  if (!locals.size) {
+    console.error('no images found in any of those folders — nothing to read a lens from')
+    process.exit(1)
   }
   console.log(`${locals.size} original(s) on disk\n`)
 
