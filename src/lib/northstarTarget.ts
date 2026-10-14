@@ -50,9 +50,36 @@ export const NORTHSTAR_MAIN_DEFAULT: NsCondition[] = [
 ]
 
 // The mainsail's target: its own override if one has been saved, else the default.
-export function northstarConditions(sail: any): NsCondition[] {
+/**
+ * Is this boat a Northstar?
+ *
+ * The shipped defaults below are NORTHSTAR'S OWN sailmaker sheet — her
+ * designer's reference trim for her mainsail. They are not a generic target and
+ * there is no sense in which another boat should be trimmed to them.
+ */
+export const isNorthstarBoat = (boatName: string | null | undefined): boolean =>
+  /\bnorthstar\b/i.test(String(boatName || ''))
+
+/**
+ * The target shape for this sail, or NOTHING when there is no target for it.
+ *
+ * Returns, in order: the numbers somebody saved onto this sail, else Northstar's
+ * shipped sheet when the boat is a Northstar, else an empty list.
+ *
+ * THE BUG THIS FIXES. The fallback used to be unconditional, so every boat's
+ * mainsail scan was handed Northstar 76's reference trim — and the panel and the
+ * chart legend both label it "Northstar target", so Baraka's scans were shown
+ * another boat's numbers under another boat's name. A target is the thing you
+ * trim against; a wrong one is worse than none.
+ *
+ * `boatName` is OPTIONAL and absent means "no target", not "Northstar's". A
+ * caller that does not know which boat it is holding must not be handed one
+ * boat's sheet by default — that is exactly how this happened.
+ */
+export function northstarConditions(sail: any, boatName?: string | null): NsCondition[] {
   const saved = sail?.specs?.northstar_target?.conditions
-  return Array.isArray(saved) && saved.length ? (saved as NsCondition[]) : NORTHSTAR_MAIN_DEFAULT
+  if (Array.isArray(saved) && saved.length) return saved as NsCondition[]
+  return isNorthstarBoat(boatName) ? NORTHSTAR_MAIN_DEFAULT : []
 }
 
 // ── editing helpers ──────────────────────────────────────────────────────────

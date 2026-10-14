@@ -490,7 +490,12 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
   // Same fallback for the Northstar target: read the override off the tagged sail when
   // there is one, else off the boat's mainsail, else the shipped defaults.
   const nsSail = useMemo(() => targetSail || (isMainScan ? (sails || []).find((x: any) => x?.kind === 'mainsail') : null) || null, [targetSail, isMainScan, sails])
-  useEffect(() => { setNsConds(northstarConditions(nsSail)); setNsEditing(false); setNsMsg('') }, [nsSail, scan?.id])
+  // boatName is what keeps Northstar's sheet on Northstar. Without it every
+  // boat's mainsail scan was handed her reference trim — see northstarConditions.
+  useEffect(() => { setNsConds(northstarConditions(nsSail, boatName)); setNsEditing(false); setNsMsg('') }, [nsSail, boatName, scan?.id])
+  // No target for this boat → no panel, no curve, no legend entry. An empty
+  // green dashed line in the key is a promise the chart does not keep.
+  const hasNsTarget = nsConds.length > 0
   const northstar = useMemo(
     () => (isMainScan && nsConds.length && designTws != null ? interpDesignAtTws(nsConds as any[], Number(designTws)) : null),
     [isMainScan, nsConds, designTws]
@@ -660,7 +665,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
                 axis as the measured exit angle). Editable in place: the values ship
                 as defaults and are persisted onto the mainsail's specs, so updating
                 them never needs a code change. */}
-            {isMainScan && (
+            {isMainScan && hasNsTarget && (
               <>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, margin: '12px 0 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ color: NS_GREEN }}>Northstar target</span>
@@ -865,7 +870,7 @@ export default function SailScanDetail({ scan, teamId, sails = [], canEdit = fal
             // Northstar target — MAIN scans only, same shape/units as the design curve
             // (it goes through interpDesignAtTws), so it maps through the identical
             // dKey/dScale. Blank where the target has no value: never invent a point.
-            const nsSections: any[] = isMainScan && northstar ? (northstar.sections as any[]) : []
+            const nsSections: any[] = isMainScan && hasNsTarget && northstar ? (northstar.sections as any[]) : []
             const overlay2 = nsSections.length
               ? { xs: nsSections.map((s: any) => s.posPct), ys: nsSections.map((s: any) => (s[m.dKey] != null ? s[m.dKey] * m.dScale : null)), color: NS_GREEN }
               : undefined

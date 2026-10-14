@@ -131,6 +131,27 @@ which needs each landmark's own depth (`baselineLandmarkDepths` in
 **Frames measured before this carry the old ψ** and must be re-saved to pick up
 the correction — Photos → frame → Analyse sail geometry → Save.
 
+**A PDF's JPEGs are not always in the file as JPEGs.** `pdfImageExtract`
+scans the raw bytes for `FF D8 FF … FF D9`, which works because North writes
+`/Filter /DCTDecode` and the JPEG sits verbatim. Baraka's Sail Vision reports
+write **`/Filter [ /ASCII85Decode /DCTDecode ]`** — the same JPEGs, ASCII85
+armoured, so there is **no SOI marker anywhere in the file** and the scan
+returned zero. `importScan` swallows an extraction failure on purpose, so twenty
+scans imported with no photos and nothing said why. `extractJpegBytesList` now
+falls back to `extractAscii85JpegList`, which pairs `/ASCII85Decode` with a
+`/DCTDecode` in the same dictionary and checks the decoded bytes really start
+`FF D8 FF`. The images come out in document = PAGE order, which is what maps
+photo *i* onto scan *i* — and the report burns the source filename into each
+picture, so that mapping is checkable by eye.
+
+**A target shape must be scoped to the boat it belongs to.**
+`northstarConditions()` fell back to Northstar 76's sailmaker sheet for ANY sail
+with no override, so Baraka's mainsail scans were drawn against another boat's
+reference trim — under a panel and a chart legend both reading "Northstar
+target". It now needs the boat name and returns nothing for a boat it is not
+sure about: **absent means no target, never Northstar's.** A wrong target is
+worse than none, because a target is the thing you trim against.
+
 **`tsc` does not check a single `.jsx` file here** — `allowJs` without
 `checkJs`. A clean typecheck says nothing about the components. What bites for
 those: `npm run lint:undef` (scope-aware `no-undef`) and `next build` (module
