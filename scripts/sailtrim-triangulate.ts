@@ -198,6 +198,31 @@ async function main() {
     }
   }
 
+  // ψ PAST 30° IS NOT A STERN SHOT, and it must come out BEFORE anything is
+  // solved — not merely be warned about.
+  //
+  // solvePsi clamps its asin at ±90, so a wildly wrong scale does not fail, it
+  // saturates. Northstar's 4 Sept set had two frames at 77.2° and 57.7° from P
+  // declared over marks on the wheels, and the damage was not to those frames:
+  // the SPAN came out at 74.8°, so the depth leverage (1/sin) fell to 1.0, and
+  // main@stripe25 was offered for storage at ±40 mm off a set where nothing was
+  // comparable to anything. A broken scale fakes a wide baseline, and a wide
+  // baseline is exactly what the sigma gate rewards.
+  {
+    const bad = usable.filter((f) => Math.abs((f.st!.annotation as { psiDeg: number }).psiDeg) > 30)
+    if (bad.length) {
+      console.log(`\n  ⚠ DROPPING ${bad.length} frame(s) whose ψ is not a stern shot:`)
+      for (const f of bad) {
+        console.log(`      ${f.at.slice(11, 19)}  ψ ${(f.st!.annotation as { psiDeg: number }).psiDeg.toFixed(1)}°`)
+      }
+      console.log('    ψ is solved FROM the scale, so past 30° it is nearly always the two scale')
+      console.log('    marks and the reference in the picker describing different things. Left in,')
+      console.log('    they widen the span and make every other depth look better than it is.')
+      usable = usable.filter((f) => Math.abs((f.st!.annotation as { psiDeg: number }).psiDeg) <= 30)
+      if (usable.length < 2) { console.log('\n  fewer than two frames left'); return }
+    }
+  }
+
   // DOES THE FRAME FIT THE BOAT? Checked FIRST, because a broken scale does not
   // announce itself as a broken scale — it announces itself as whatever the
   // next guard happens to be. Northstar's three 27 Sep frames were marked on
