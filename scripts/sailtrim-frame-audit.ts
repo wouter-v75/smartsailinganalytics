@@ -75,10 +75,13 @@ async function main() {
     console.log(`── ${f.at} ── ${a.tack ?? 'tack unknown'}`)
     console.log(`   scale      ${s?.key} = ${s?.mm} ±${s?.sigmaMm} mm (${s?.source}), depth ${s?.depthMm} mm`)
     console.log(`              mmPerPxAtMast ${s?.mmPerPxAtMast}   rangeMm ${s?.rangeMm}`)
-    // Same camera and lens ⇒ range/mmPerPx is a constant. A frame that breaks it
-    // has a mis-marked scale, and the range is the loudest symptom.
+    // range/mmPerPx is focal/pitch, so it is constant only at a FIXED focal
+    // length. On a ZOOM it moves with every frame and says nothing — do not
+    // read a spread here as a mis-marked scale. Printed because it is the one
+    // number that pins a prime lens, not because it proves anything on a zoom.
     if (s?.rangeMm && s.mmPerPxAtMast) {
-      console.log(`              range / mmPerPx = ${(s.rangeMm / s.mmPerPxAtMast).toFixed(1)}  ← constant for one lens`)
+      console.log(`              range / mmPerPx = ${(s.rangeMm / s.mmPerPxAtMast).toFixed(1)}`
+        + '  ← = focal/pitch; constant only at a FIXED focal length, not on a zoom')
     }
     console.log(`   heel       geometry used ${a.heelDeg}   log ${f.inst?.heel ?? '—'}`)
     console.log(`   psi        stored ${a.psiDeg}  (${a.psiMeasured ? 'measured' : 'ASSUMED'})   baseline ${b.baselineKey ?? '—'}`)

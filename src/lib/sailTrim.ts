@@ -599,6 +599,24 @@ export interface Calibration {
    * with it.
    */
   scaleRefDepthEstimated?: boolean
+  /**
+   * The boat's longest known baseline, mm — a floor on how far away the camera
+   * can possibly be.
+   *
+   * Used for the one check that catches marking the scale on the WRONG FEATURE,
+   * which nothing else does. The range comes out of the scale and the focal
+   * length, so declaring a 3375 mm reference while clicking the 31440 mm one
+   * shrinks every millimetre on the frame by 9x and the range with it — and the
+   * numbers all stay self-consistent. Northstar's three 27 Sep frames came back
+   * at a 21 m range on a 23.2 m boat, which is not a photograph anyone took.
+   *
+   * It cannot be checked against the lens: range/mmPerPx is focal/pitch, which
+   * is constant only at a FIXED focal length, and these were shot on a zoom.
+   */
+  boatLengthMm?: number
+  /** The image's long edge in pixels, so the frame's own physical extent is
+   *  known: mmPerPxAtMast x this is how much of the world is in the picture. */
+  imageLongEdgePx?: number
   /** A rival, measured from the coach boat. None of our instrument data
    *  describes it — see effectiveHeelDeg. */
   isCompetitor?: boolean
@@ -897,6 +915,39 @@ export function runChecks(cal: Calibration): Check[] {
         : cal.scaleDepthUncorrected
           ? `the reference sits ${where} and there is no focal length, so its scale CANNOT be referred to the mast plane. Every measurement on this frame is biased by depth/range — a few per cent. Enter the focal length, or use a reference at the mast.`
           : `${where}, referred back to the mast plane`,
+    })
+  }
+
+  // THE FRAME HAS TO BE BIG ENOUGH TO HOLD THE BOAT.
+  //
+  // mmPerPxAtMast x the long edge is how much of the world is in the picture,
+  // and the boat is visibly in it, so that extent cannot be smaller than the
+  // boat. It is the one check that catches the scale REFERENCE and the two
+  // marks describing different things — a frame with the wrong reference stays
+  // perfectly self-consistent, every number simply scaled by the ratio of the
+  // two lengths.
+  //
+  // Northstar's three 27 Sep frames: the marks went on P (31440 mm) with the
+  // picker still saying wheels (3375), so the view came out 7.8 m across on a
+  // 23.2 m boat. Correctly scaled the same frames are 46.8 m across.
+  //
+  // It beats checking the RANGE, which only rules out a camera inside the boat
+  // and missed two of those three at 22 m; and it beats range/mmPerPx, which is
+  // focal/pitch and constant only at a FIXED focal length — these were a zoom.
+  if (cal.boatLengthMm && cal.boatLengthMm > 0 && cal.imageLongEdgePx && cal.mmPerPxAtMast > 0) {
+    const extentMm = cal.mmPerPxAtMast * cal.imageLongEdgePx
+    const ok = extentMm > cal.boatLengthMm
+    out.push({
+      key: 'frame-extent',
+      label: 'Does the frame fit the boat',
+      ok,
+      detail: ok
+        ? `the picture is ${(extentMm / 1000).toFixed(0)} m across at the mast, and the boat is `
+          + `${(cal.boatLengthMm / 1000).toFixed(0)} m`
+        : `this scale makes the picture only ${(extentMm / 1000).toFixed(1)} m across at the mast, `
+          + `and the boat in it is at least ${(cal.boatLengthMm / 1000).toFixed(1)} m long. `
+          + 'The two scale marks and the REFERENCE in the picker are describing different '
+          + 'things — every millimetre on this frame is out by the ratio between them.',
     })
   }
 

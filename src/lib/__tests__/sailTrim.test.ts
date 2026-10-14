@@ -885,3 +885,50 @@ describe("sailTrim — a scale reference whose DEPTH nobody has measured", () =>
     expect(c!.detail).toMatch(/never been measured/i)
   })
 })
+
+describe('sailTrim — the frame has to be big enough to hold the boat', () => {
+  const cal = (over: Partial<Calibration>): Calibration => ({
+    axis: mastAxisFromPoints({ x: 100, y: 900 }, { x: 100, y: 100 })!,
+    mmPerPxAtMast: 7.8, scaleRelSigma: 0.002, rangeMm: 130_000,
+    psi: { deg: 0, sigmaDeg: 1, measured: false },
+    heelDeg: 11, heelSigmaDeg: 0.5, clickSigmaPx: 1.5, tack: 'port',
+    boatLengthMm: 21_510, imageLongEdgePx: 6000,
+    ...over,
+  })
+  const fit = (c: Calibration) => runChecks(c, []).find((x) => x.key === 'frame-extent')
+
+  it('catches the scale marked on the WRONG FEATURE', () => {
+    // Northstar's 27 Sep frames: the two marks went on P (31440 mm) with the
+    // picker still saying wheels (3375), so every millimetre came out 9x small
+    // and the view 7.8 m across — on a boat 23.2 m long that is plainly in it.
+    // Nothing else sees this; the frame stays entirely self-consistent.
+    const c = fit(cal({ mmPerPxAtMast: 1.3 }))!
+    expect(c.ok).toBe(false)
+    expect(c.detail).toMatch(/only 7\.8 m across/)
+    expect(c.detail).toMatch(/REFERENCE in the picker/)
+  })
+
+  it('catches ALL THREE, where a range test missed two of them', () => {
+    // Those frames came back at 21, 22 and 22 m of range against a longest
+    // baseline of 21.5 — so "is the camera inside the boat" caught one.
+    for (const mm of [1.3, 1.3, 1.2]) expect(fit(cal({ mmPerPxAtMast: mm }))!.ok).toBe(false)
+  })
+
+  it('is content with a correctly scaled frame', () => {
+    const c = fit(cal({ mmPerPxAtMast: 7.8 }))!
+    expect(c.ok).toBe(true)
+    expect(c.detail).toMatch(/47 m across/)
+  })
+
+  it('does not depend on the lens, which was a zoom', () => {
+    // range/mmPerPx is focal/pitch and moves every frame on a zoom, so it could
+    // not have been the check. This one never looks at the range at all.
+    expect(fit(cal({ mmPerPxAtMast: 7.2, rangeMm: 137_000 }))!.ok).toBe(true)
+    expect(fit(cal({ mmPerPxAtMast: 8.0, rangeMm: 134_000 }))!.ok).toBe(true)
+  })
+
+  it('says nothing without an image size or a boat length', () => {
+    expect(fit(cal({ imageLongEdgePx: undefined }))).toBeUndefined()
+    expect(fit(cal({ boatLengthMm: undefined }))).toBeUndefined()
+  })
+})

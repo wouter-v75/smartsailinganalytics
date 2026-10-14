@@ -1040,6 +1040,12 @@ export default function SailTrimTab(
         // here, and it falls back to source for a reference that never split
         // them — the old behaviour.
         scaleRefDepthEstimated: (scaleRef?.depthSource ?? scaleRef?.source) === 'estimate',
+        // The longest baseline the model knows is a floor on the range: the
+        // camera cannot be nearer than the boat is long. It is the only check
+        // that catches the scale REFERENCE and the two marks describing
+        // different things, which otherwise stays perfectly self-consistent.
+        boatLengthMm: rig.baselines.reduce((m, b) => (b.mm > m ? b.mm : m), 0) || undefined,
+        imageLongEdgePx: imgSize ? Math.max(imgSize.w, imgSize.h) : undefined,
         // Clicked, but the chosen baseline has no length in the model, so ψ
         // quietly fell back to 0 ± 1°. That is not the same as not having
         // bothered, and the checks should not pretend it is.
