@@ -59,6 +59,21 @@ const sb = createClient(env.NEXT_PUBLIC_SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE
  * forward as it rises. The residuals stayed small throughout, because the three
  * views agree with each other about the wrong answer.
  */
+/**
+ * How well attested the model's own depth for a key is.
+ *
+ * The external check is only a check against something ATTESTED. Comparing a
+ * solve with a guess says nothing — and worse, it says it loudly: on Baraka the
+ * boom read "46 % of the model's -10000 mm" while -10000 was the generic maxi
+ * shape and her certificate's E is 5700, against which the same solve is 81 %.
+ * A warning that fires on a number nobody believes teaches people to skip it.
+ */
+const depthSourceFor = (key: string, rig: RigModel): string | null => {
+  if (key === 'boom') return rig.depths?.boom?.source ?? null
+  if (key === 'clew') return rig.depths?.clew?.source ?? null
+  return null
+}
+
 const depthAssumedFor = (key: string, rig: RigModel) => {
   if (key.includes('@')) {
     const [sail, tag] = key.split('@')
@@ -210,12 +225,19 @@ async function main() {
     // which no residual can see: on Baraka the same clicks gave 88 % of E when
     // scaled off the stern rail and 101 % off P, with residuals of 12 and 7 mm.
     // The rail's depth was wrong and only this said so.
-    const expected = depthAssumedFor(key, migrateRigModel((boat.rig_model || {}) as RigModel, boat.name))
-    if ((key === 'boom' || key === 'clew') && Math.abs(expected) > 500) {
+    const rigNow = migrateRigModel((boat.rig_model || {}) as RigModel, boat.name)
+    const expected = depthAssumedFor(key, rigNow)
+    const attested = ['measured', 'designer'].includes(depthSourceFor(key, rigNow) ?? '')
+    if ((key === 'boom' || key === 'clew') && attested && Math.abs(expected) > 500) {
       const pct = (100 * Math.abs(r.depthMm)) / Math.abs(expected)
       const off = Math.abs(pct - 100) > 10
       console.log(`${' '.repeat(19)}${off ? '⚠ ' : ''}${pct.toFixed(0)}% of the model's ${Math.round(expected)} mm`
         + (off ? ' — a ψ error common to every frame looks exactly like this, and no residual can see it' : ''))
+    }
+
+    if ((key === 'boom' || key === 'clew') && !attested) {
+      console.log(`${' '.repeat(19)}no attested depth to check against — the model's`
+        + ` ${Math.round(expected)} mm for ${key} is itself a guess`)
     }
 
     const bad = worstView(views)
