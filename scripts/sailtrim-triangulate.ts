@@ -92,11 +92,20 @@ const depthAssumedFor = (key: string, rig: RigModel) => {
 }
 
 async function main() {
-  const { data: boats } = await sb.from('boats').select('id, name, rig_model')
+  // Check the ERROR, not just the data. Without this a blocked network or a
+  // bad key comes back as data: undefined, and the next line reports "no boat
+  // called Northstar 76" — a sentence about the database that reads like a
+  // sentence about the boat. It sent me looking for a renamed row.
+  const { data: boats, error: bErr } = await sb.from('boats').select('id, name, rig_model')
+  if (bErr) { console.error(`boats: ${bErr.message}`); process.exit(1) }
   const boat = (boats ?? []).find((b) => b.name.toLowerCase() === BOAT!.toLowerCase())
-  if (!boat) { console.error(`no boat called "${BOAT}"`); process.exit(1) }
+  if (!boat) {
+    console.error(`no boat called "${BOAT}". Have: ${(boats ?? []).map((b) => b.name).join(', ') || '(none)'}`)
+    process.exit(1)
+  }
 
-  const { data: photos } = await sb.from('photos').select('taken_utc, analysis_data, subject_boat_ids')
+  const { data: photos, error: pErr } = await sb.from('photos').select('taken_utc, analysis_data, subject_boat_ids')
+  if (pErr) { console.error(`photos: ${pErr.message}`); process.exit(1) }
   const frames = (photos ?? [])
     .filter((p) => (p.taken_utc || '').startsWith(AROUND!))
     .map((p) => {
