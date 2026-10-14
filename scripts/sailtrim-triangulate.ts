@@ -158,9 +158,26 @@ async function main() {
   }
   for (const f of frames) {
     const a = f.st!.annotation as { psiDeg: number; psiMeasured?: boolean }
-    console.log(`  ${f.at.slice(11, 19)}  ψ ${a.psiDeg.toFixed(2).padStart(6)}°  ${a.psiMeasured ? 'measured' : 'ASSUMED — skipped, mark a centreplane baseline on it'}`)
+    const t = f.at.slice(11, 19)
+    console.log(`  ${t}  ψ ${a.psiDeg.toFixed(2).padStart(6)}°  `
+      + (EXCLUDE.includes(t) ? 'EXCLUDED'
+        : a.psiMeasured ? 'measured' : 'ASSUMED — skipped, mark a centreplane baseline on it'))
   }
   if (usable.length < 2) { console.log('\n  fewer than two frames with a measured ψ'); return }
+  {
+    const ps = usable.map((f) => (f.st!.annotation as { psiDeg: number }).psiDeg)
+    const span = Math.max(...ps) - Math.min(...ps)
+    console.log(`\n  solving from ${usable.length} frame(s), ψ spanning ${span.toFixed(1)}°`)
+    // A bare "0 station depth(s)" with no targets listed is what this used to
+    // print when the span fell under triangulate's floor, and it reads like
+    // "nothing to measure" rather than "not enough angle to measure it with".
+    if (span < 1.5) {
+      console.log('  ⚠ under the 1.5° floor — two frames from nearly the same spot say')
+      console.log('    nothing about depth, so every target will be refused. --around matches')
+      console.log('    the CLOCK as a PREFIX, so widen it (…T08:2 covers 08:20–08:29) to reach')
+      console.log('    frames in the neighbouring minute, and exclude what you do not want.')
+    }
+  }
 
   // ONE TACK PER SOLVE, and this one is not a precision argument — pooling two
   // tacks is arithmetically meaningless.
