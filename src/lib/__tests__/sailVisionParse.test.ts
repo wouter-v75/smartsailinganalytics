@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   parseSailScanReport, detectFormat, sailVisionTwistCheck, SAILVISION_STRIPE_PCT,
+  scanIdentityKey,
 } from '../sailScanParse'
 
 // Excerpts from Baraka's 12 Oct 2026 report, verbatim as pdfText extracts it.
@@ -232,5 +233,40 @@ describe('Sail Vision — notes and clocks', () => {
     const s = parse(JIB).scans[0]
     expect(s.summary.maxCamberPct).toBe(16.6)
     expect(s.summary.draftPositionPct).toBe(35.43)
+  })
+})
+
+describe('scanIdentityKey — recognising a scan that is already stored', () => {
+  it('matches the SAME INSTANT however it is spelt', () => {
+    // This is the whole point. The parser makes "….000Z"; PostgREST hands a
+    // timestamptz back as "…+00:00". Compared as text they never match, so the
+    // importer's duplicate check silently stopped working and a backfill
+    // reported twenty scans "not found" while they sat in the table.
+    const mine = scanIdentityKey('IMG_6456.JPEG', '2026-10-11T08:51:00.000Z')
+    for (const stored of [
+      '2026-10-11T08:51:00+00:00',
+      '2026-10-11 08:51:00+00',
+      '2026-10-11T08:51:00Z',
+    ]) {
+      expect(scanIdentityKey('IMG_6456.JPEG', stored), stored).toBe(mine)
+    }
+  })
+
+  it('still tells two different pages apart', () => {
+    const a = scanIdentityKey('IMG_6456.JPEG', '2026-10-11T08:51:00Z')
+    expect(scanIdentityKey('IMG_6455.JPEG', '2026-10-11T08:51:00Z')).not.toBe(a)
+    expect(scanIdentityKey('IMG_6456.JPEG', '2026-10-11T08:50:00Z')).not.toBe(a)
+  })
+
+  it('keeps an unparseable time as text rather than collapsing them together', () => {
+    // Two rows with different nonsense must not look like the same scan.
+    expect(scanIdentityKey('a.jpg', 'not a time')).not.toBe(scanIdentityKey('a.jpg', 'also not'))
+    expect(scanIdentityKey('a.jpg', null)).toBe('a.jpg|')
+  })
+
+  it('copes with a file name full of spaces and brackets', () => {
+    const n = 'WhatsApp Image 2026-10-10 at 4.40.43 PM (1).jpeg'
+    expect(scanIdentityKey(n, '2026-10-10T08:42:00.000Z'))
+      .toBe(scanIdentityKey(n, '2026-10-10T08:42:00+00:00'))
   })
 })

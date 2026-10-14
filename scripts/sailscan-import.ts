@@ -48,7 +48,7 @@
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { extractPdfText } from '../src/lib/pdfText'
-import { parseSailScanReport, sailVisionTwistCheck, type ParsedScan } from '../src/lib/sailScanParse'
+import { parseSailScanReport, sailVisionTwistCheck, scanIdentityKey, type ParsedScan } from '../src/lib/sailScanParse'
 import { matchSailToInventory } from '../src/lib/sailCodeMatch'
 import { extractJpegBytesList } from '../src/lib/pdfImageExtract'
 
@@ -191,8 +191,11 @@ async function main() {
     sb.from('sails').select('id, name, category, kind, retired').eq('boat_id', boat.id),
     sb.from('sail_scans').select('id, report_ref, captured_at, conditions').eq('boat_id', boat.id),
   ])
-  const keyOf = (ref: unknown, at: unknown) => `${ref}|${at}`
-  const byRef = new Map((existing ?? []).map((r) => [keyOf(r.report_ref, r.captured_at), r]))
+  // scanIdentityKey, NOT string concatenation: the stored captured_at comes back
+  // from PostgREST as "…+00:00" and the parser makes "….000Z" — the same instant,
+  // never equal as text. That is what made a backfill report twenty scans "not
+  // found" while they sat in the table.
+  const byRef = new Map((existing ?? []).map((r) => [scanIdentityKey(r.report_ref, r.captured_at), r]))
   const sailName = new Map((sails ?? []).map((s) => [s.id as string, s.name as string]))
   const maps = { ...(DEFAULT_MAPS[String(boat.name).toLowerCase()] || {}), ...MAPS }
 
@@ -210,7 +213,7 @@ async function main() {
     let done = 0, missing = 0, already = 0
     for (let i = 0; i < report.scans.length; i++) {
       const sc = report.scans[i]
-      const row = byRef.get(keyOf(sc.imageName, sc.capturedAt))
+      const row = byRef.get(scanIdentityKey(sc.imageName, sc.capturedAt))
       if (!row) {
         missing++
         console.log(`${String(sc.imageName).padEnd(52)} no matching scan in the table`)
@@ -231,6 +234,21 @@ async function main() {
     }
     console.log(`\n${done} ${WRITE ? 'attached' : 'to attach'}`
       + (already ? ` · ${already} already had one` : '') + (missing ? ` · ${missing} not found` : ''))
+    // Nothing matched at all → show what IS stored, side by side with what we
+    // looked for. "Not found" twenty times out of twenty is never twenty
+    // missing scans; it is one key that does not line up, and the two columns
+    // say which part of it.
+    if (!done && missing) {
+      console.log(`\nNothing matched. ${(existing ?? []).length} scan(s) on this boat; the first few:`)
+      for (const r of (existing ?? []).slice(0, 4)) {
+        console.log(`  stored  ${String(r.report_ref ?? '(no report_ref)').padEnd(52)} ${r.captured_at}`)
+      }
+      for (const sc of report.scans.slice(0, 2)) {
+        console.log(`  wanted  ${String(sc.imageName).padEnd(52)} ${sc.capturedAt}`)
+      }
+      console.log('  A different --tz moves captured_at, and a scan imported through the')
+      console.log('  SailScan tab carries the PDF file name as report_ref, not the page image name.')
+    }
     if (!WRITE) console.log('\nDry run. Add --write to upload and attach.')
     return
   }
@@ -242,7 +260,7 @@ async function main() {
     const s = report.scans[i]
     const alias = maps[String(s.sailName || '').toLowerCase()] || null
     const sailId = matchSailToInventory(sails ?? [], alias, alias || s.sailName, s.sailType)
-    const dup = byRef.has(keyOf(s.imageName, s.capturedAt))
+    const dup = byRef.has(scanIdentityKey(s.imageName, s.capturedAt))
     const status = dup ? 'already in' : !sailId ? 'NO SAIL MATCH' : WRITE ? 'insert' : 'would insert'
     console.log(
       `${(s.capturedLocal || '—').replace('T', ' ').padEnd(20)} `

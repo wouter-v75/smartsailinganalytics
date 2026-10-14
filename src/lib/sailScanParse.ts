@@ -859,6 +859,27 @@ export function sailVisionTwistCheck(scan: ParsedScan): { ok: boolean; reportedD
   return { ok: Math.abs(reportedDeg - accumulatedDeg) <= 0.05, reportedDeg, accumulatedDeg }
 }
 
+/**
+ * A stable identity for "this page of this report", used to recognise a scan
+ * that is already in the table.
+ *
+ * THE TRAP. The obvious key is `report_ref + '|' + captured_at`, and it does not
+ * work, because the two sides are the SAME INSTANT SPELT DIFFERENTLY. The parser
+ * produces `2026-10-11T08:51:00.000Z`; PostgREST hands a timestamptz back as
+ * `2026-10-11T08:51:00+00:00`. Compared as text they never match, so every scan
+ * looks new: the importer's duplicate check silently stopped working, and a
+ * backfill matched nothing at all and reported twenty scans "not found" that
+ * were sitting right there.
+ *
+ * So the time is reduced to epoch milliseconds, which has one spelling. A time
+ * that will not parse falls back to its raw text rather than collapsing every
+ * unparseable row onto one key.
+ */
+export function scanIdentityKey(reportRef: unknown, capturedAt: unknown): string {
+  const t = Date.parse(String(capturedAt ?? ''))
+  return `${String(reportRef ?? '')}|${Number.isNaN(t) ? String(capturedAt ?? '') : t}`
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 export function parseSailScanReport(rawText: string, opts: ParseOpts = {}): ParsedReport {
   const tz = opts.tz || DEFAULT_TZ
