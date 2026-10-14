@@ -131,6 +131,31 @@ async function main() {
   }
   if (usable.length < 2) { console.log('\n  fewer than two frames with a measured ψ'); return }
 
+  // ONE SCALE PER SOLVE. ψ is derived from the frame's mm-per-pixel, so a scale
+  // reference whose own depth or length is off scales ψ — and the solve absorbs
+  // that into the depth. Pooling frames measured against different references
+  // therefore blends two different ψ scalings into one answer that belongs to
+  // neither, and the residual stays small while it does it.
+  //
+  // Baraka's boom, from one set of clicks: 101 % of her certificate E off P,
+  // 88 % off the stern rail, and 74 % off a set that mixed the two. The mixed
+  // answer was the worst of the three and looked no different.
+  const byScale = new Map<string, string[]>()
+  for (const f of usable) {
+    const k = ((f.st!.annotation as { scale?: { key?: string } }).scale?.key) || '(none)'
+    if (!byScale.has(k)) byScale.set(k, [])
+    byScale.get(k)!.push(f.at.slice(11, 19))
+  }
+  if (byScale.size > 1) {
+    console.log('\n  ⚠ MIXED SCALE REFERENCES — these frames are not comparable:')
+    for (const [k, times] of Array.from(byScale)) {
+      console.log(`      ${k.padEnd(18)} ${times.join(', ')}`)
+    }
+    console.log('    A reference whose length or depth is off scales ψ, and the solve absorbs')
+    console.log('    that into the DEPTH. Pooling two of them blends the error and the residual')
+    console.log('    will not show it. Re-measure the odd ones out onto one reference, then re-run.')
+  }
+
   const keys = new Set<string>()
   for (const f of usable) for (const t of (f.st!.annotation as { targets: { key: string }[] }).targets) keys.add(t.key)
 
