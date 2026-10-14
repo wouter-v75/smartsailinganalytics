@@ -301,8 +301,13 @@ export function worstView(
  */
 export function triangulateNote(r: TriangulateResult, clickSigmaMm = 15): string {
   const bits: string[] = []
+  // THE SPAN IS NOT A BAR ANY MORE — depthSigmaMm is. These say what the span
+  // COSTS, so the sigma beside them can be read rather than taken on trust. An
+  // 8° bar used to live here; it was never derived, and it outlived its own
+  // evidence once ψ was corrected. Asserting it alongside a ±250 mm gate was
+  // the note contradicting the thing it sits next to.
   if (r.baselineDeg < 4) {
-    bits.push(`only ${r.baselineDeg.toFixed(1)}° between the views — they agree because they are nearly the same photograph, not because the depth is right; 8° or more is what makes it a measurement`)
+    bits.push(`only ${r.baselineDeg.toFixed(1)}° between the views — they agree because they are nearly the same photograph, not because the depth is right, and 1 mm of marking error becomes ${depthLeverage(r.baselineDeg).toFixed(0)} mm of depth`)
   } else if (r.baselineDeg < 8) {
     // The message below 4° has always said 8° is the bar, and nothing said
     // anything between the two — so a 5.3° set passed in silence while the file
@@ -311,9 +316,9 @@ export function triangulateNote(r: TriangulateResult, clickSigmaMm = 15): string
     // with each other by 350-1100 mm on points that cannot have moved. The
     // residual was never going to say so: it measures marking consistency, and
     // a narrow span makes depth almost free to slide.
-    bits.push(`${r.baselineDeg.toFixed(1)}° between the views, under the 8° that makes a depth a measurement`
-      + ` — the ATHWARTSHIPS figure is pinned by every view and survives this, the DEPTH does not`
-      + ` (1 mm of marking error becomes ${(1 / Math.sin(r.baselineDeg * D2R)).toFixed(0)} mm of depth)`)
+    bits.push(`${r.baselineDeg.toFixed(1)}° between the views`
+      + ` — the ATHWARTSHIPS figure is pinned by every one of them and survives this, the DEPTH does not:`
+      + ` 1 mm of marking error becomes ${depthLeverage(r.baselineDeg).toFixed(0)} mm of depth`)
   }
   if (r.views < 3) bits.push('two views solve it exactly, so there is no residual to check it by — a third is what turns it into a measurement')
   // HOW HARD THE DEPTH AMPLIFIES A MISPLACED CLICK. D comes out of the

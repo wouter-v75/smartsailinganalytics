@@ -265,10 +265,11 @@ describe('triangulateNote — the gap between 4° and 8°', () => {
     // measurement", and nothing covered 4-8. Baraka's two sets span 5.3° and
     // 4.2°, both fitted to 1-6 mm, and their station depths disagree across
     // tacks by up to 1100 mm on points that cannot have moved.
-    expect(at(5.3)).toMatch(/under the 8°/)
-    expect(at(4.2)).toMatch(/under the 8°/)
-    // …and it carries the amplification, so the cost is a number not a mood.
+    // It states the COST, not a bar — depthSigmaMm is the bar now, and the
+    // note asserting 8° beside a ±250 mm gate was contradicting it.
     expect(at(5.3)).toMatch(/becomes 11 mm of depth/)
+    expect(at(4.2)).toMatch(/becomes 14 mm of depth/)
+    expect(at(5.3)).not.toMatch(/8°/)
   })
 
   it('says which number survives a narrow span and which does not', () => {
@@ -298,6 +299,7 @@ describe('triangulateNote — how hard the depth amplifies a bad click', () => {
     // as a measurement several times while the note said only "no residual to
     // check it by". A figure is harder to wave past than a sentence.
     expect(at(7.2, 2)).toMatch(/becomes 8 mm of depth/)
+    expect(at(3)).toMatch(/becomes 19 mm of depth/)   // below 4°, same figure
     // 4.0 is IN the band (the harder note is strictly below 4), and the cost
     // there is 14x — which is the number worth seeing.
     expect(at(4.0)).toMatch(/becomes 14 mm of depth/)

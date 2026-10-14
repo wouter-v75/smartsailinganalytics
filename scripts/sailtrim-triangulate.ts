@@ -378,7 +378,12 @@ async function main() {
     console.log(`${' '.repeat(19)}depth ±${sigma} mm`
       + ` (${r.rmsMm.toFixed(0)} mm residual x ${r.baselineDeg ? (1 / Math.sin(r.baselineDeg * Math.PI / 180)).toFixed(0) : '—'})`
       + (/^(main|jib)@stripe/.test(key)
-        ? storable ? '  → storing' : `  → not stored (over ±${MAX_SIGMA}${r.views < 3 ? ', and two views have no residual' : ''})`
+        ? storable ? '  → storing'
+          // Name the ACTUAL reason. This said "over ±250" on a ±63 mm depth
+          // refused for having two views, which is a false statement about a
+          // true decision — and the next person debugs the wrong number.
+          : r.views < 3 ? '  → not stored: two views, so the residual is zero by construction'
+            : `  → not stored: ±${sigma} mm is over the ±${MAX_SIGMA} mm bar`
         : ''))
     if (storable) {
       solved[key] = { mm: Math.round(r.depthMm), sigmaMm: Math.max(10, sigma), source: 'measured' }
