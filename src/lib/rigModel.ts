@@ -962,6 +962,30 @@ const RANK = SELECTION_RANK
  * on J.
  */
 export function bestBaselineKey(m: RigModel): string | null {
+  // MAST-TRANSOM FIRST, whenever it has a length.
+  //
+  // Not because it is the best-attested — it often is not — but because it is
+  // the pair the operator actually CLICKS. Both ends are unambiguous
+  // centreplane points that stay visible from astern under way; the forestay
+  // tack is frequently behind a sail. ψ is solved as asin(offset / separation),
+  // so marking the mast and the transom while the model thinks the chosen
+  // baseline is the shorter tack-to-mast inflates ψ by the ratio of the two,
+  // and every depth shrinks with it.
+  //
+  // That has now happened twice. On Capricorno the certificate's J (9440, well
+  // attested) was picked for three frames clicked 12600 apart and ψ went from
+  // 4.96° to 7.86°. On Baraka GP, 08:22:02 solved against tack-mast (5000)
+  // where its neighbours used mast-transom (7800): one frame in a set of five,
+  // and it dragged the boom's triangulated depth from 89 % of her certificate E
+  // down to 79 % while tripling the residual.
+  //
+  // Attestation is the wrong tie-breaker for a choice that is really about what
+  // is in the photograph, so it is no longer allowed to decide it.
+  const preferred = m.baselines.find(
+    (b) => b.key === 'mast-transom' && b.mm > 0 && b.sigmaMm > 0 && b.source !== 'estimate',
+  )
+  if (preferred) return preferred.key
+
   const scored = m.baselines
     .filter((b) => b.mm > 0 && b.sigmaMm > 0 && b.source !== 'estimate')
     .map((b) => ({ key: b.key, rank: RANK[b.source ?? 'estimate'] ?? 0, rel: b.sigmaMm / b.mm, mm: b.mm }))

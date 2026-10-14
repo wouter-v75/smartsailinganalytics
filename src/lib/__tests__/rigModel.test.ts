@@ -540,11 +540,32 @@ describe('bestBaselineKey — the separation psi is solved from', () => {
   const base = (key: string, mm: number, sigmaMm: number, source: string) =>
     ({ key, label: key, mm, sigmaMm, source }) as never
 
-  it('takes a certificate J over an arithmetic mast-to-transom', () => {
-    // Capricorno: 12600 +/-2010 is 16 %, and psi's error is proportional to it
-    // at 140 mm per degree on the boom. J is shorter and ten times better.
+  it('takes mast-to-transom even when the certificate J is better attested', () => {
+    // This used to assert the opposite, on the grounds that 12600 ±2010 is 16 %
+    // against J's 2 % and ψ's error is proportional to the separation. That
+    // reasoning is sound and still loses, because it answers the wrong
+    // question: the baseline is not just a number, it is an instruction about
+    // WHICH TWO POINTS to click, and the forestay tack is routinely hidden
+    // behind a sail from astern while the mast and the transom are not.
+    //
+    // Clicking mast-and-transom while the model thinks the key is tack-mast is
+    // the worse error of the two, and it is the one that keeps happening:
+    // Capricorno's three frames (9440 against 12600, ψ 4.96° → 7.86°) and
+    // Baraka's 08:22:02 (5000 against 7800, ~170 mm on her boom). A 16 % sigma
+    // on the right pair costs about half what the wrong pair does.
     const m = { ...defaultRigModel('Capricorno'), baselines: [
       base('mast-transom', 12600, 2010, 'designer'), base('tack-mast', 9440, 200, 'measured'),
+    ] } as never as Parameters<typeof bestBaselineKey>[0]
+    expect(bestBaselineKey(m)).toBe('mast-transom')
+  })
+
+  it('still scores the rest when mast-to-transom has no length', () => {
+    // The preference is "prefer it when it is usable", not "ignore everything
+    // else". A boat whose mast-to-transom is an estimate falls back to the
+    // attestation ordering, which is where J belongs.
+    const m = { ...defaultRigModel('X'), baselines: [
+      base('mast-transom', 0, 0, 'estimate'), base('tack-mast', 9440, 200, 'measured'),
+      base('bow-transom', 21000, 2000, 'derived'),
     ] } as never as Parameters<typeof bestBaselineKey>[0]
     expect(bestBaselineKey(m)).toBe('tack-mast')
   })
