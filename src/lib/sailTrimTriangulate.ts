@@ -273,7 +273,9 @@ export function triangulateNote(r: TriangulateResult, clickSigmaMm = 15): string
     // with each other by 350-1100 mm on points that cannot have moved. The
     // residual was never going to say so: it measures marking consistency, and
     // a narrow span makes depth almost free to slide.
-    bits.push(`${r.baselineDeg.toFixed(1)}° between the views, under the 8° that makes a depth a measurement — the ATHWARTSHIPS figure is pinned by every view and survives this, the DEPTH does not`)
+    bits.push(`${r.baselineDeg.toFixed(1)}° between the views, under the 8° that makes a depth a measurement`
+      + ` — the ATHWARTSHIPS figure is pinned by every view and survives this, the DEPTH does not`
+      + ` (1 mm of marking error becomes ${(1 / Math.sin(r.baselineDeg * D2R)).toFixed(0)} mm of depth)`)
   }
   if (r.views < 3) bits.push('two views solve it exactly, so there is no residual to check it by — a third is what turns it into a measurement')
   // HOW HARD THE DEPTH AMPLIFIES A MISPLACED CLICK. D comes out of the
@@ -284,13 +286,10 @@ export function triangulateNote(r: TriangulateResult, clickSigmaMm = 15): string
   // about +-1100 mm from the marking sigmas alone. A number is easier to
   // discount than a caution.
   //
-  // Only alongside a caution that has already fired. At the 8° bar the leverage
-  // is still 7x, so printing it unconditionally would put a warning on every
-  // good set and teach people to skip the line.
-  if (bits.length) {
-    const lever = 1 / Math.sin(r.baselineDeg * D2R)
-    bits.push(`every 1 mm of marking error moves this DEPTH by ${lever.toFixed(0)} mm (1/sin ${r.baselineDeg.toFixed(1)}°)`)
-  }
+  // The figure rides WITH the span note rather than as a clause of its own. As
+  // a separate push it appeared on every row of a set whose span is under 8° —
+  // which is every row of every set anyone has shot — and nine identical copies
+  // of a caution is how a caution stops being read.
   if (r.rmsMm > 4 * clickSigmaMm) {
     bits.push(`the views disagree by ${r.rmsMm.toFixed(0)} mm, well past marking accuracy — a point is on the wrong feature, or a frame's ψ is wrong`)
   }

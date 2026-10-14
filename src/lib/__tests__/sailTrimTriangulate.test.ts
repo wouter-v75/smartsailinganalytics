@@ -264,6 +264,8 @@ describe('triangulateNote — the gap between 4° and 8°', () => {
     // tacks by up to 1100 mm on points that cannot have moved.
     expect(at(5.3)).toMatch(/under the 8°/)
     expect(at(4.2)).toMatch(/under the 8°/)
+    // …and it carries the amplification, so the cost is a number not a mood.
+    expect(at(5.3)).toMatch(/becomes 11 mm of depth/)
   })
 
   it('says which number survives a narrow span and which does not', () => {
@@ -292,8 +294,10 @@ describe('triangulateNote — how hard the depth amplifies a bad click', () => {
     // marking sigmas of ±135 and ±69 — about ±1100 mm of depth. I read -10557
     // as a measurement several times while the note said only "no residual to
     // check it by". A figure is harder to wave past than a sentence.
-    expect(at(7.2, 2)).toMatch(/moves this DEPTH by 8 mm/)
-    expect(at(4.0)).toMatch(/moves this DEPTH by 14 mm/)
+    expect(at(7.2, 2)).toMatch(/becomes 8 mm of depth/)
+    // 4.0 is IN the band (the harder note is strictly below 4), and the cost
+    // there is 14x — which is the number worth seeing.
+    expect(at(4.0)).toMatch(/becomes 14 mm of depth/)
   })
 
   it('says nothing extra on a set with no other caution', () => {
@@ -309,6 +313,8 @@ describe('triangulateNote — how hard the depth amplifies a bad click', () => {
     // is "the check would have to be very good". A set can need both.
     const n = at(7.2, 2)
     expect(n).toMatch(/two views solve it exactly/)
-    expect(n).toMatch(/moves this DEPTH/)
+    expect(n).toMatch(/becomes 8 mm of depth/)
+    // Once, not twice: it rides with the span note.
+    expect(n.match(/becomes \d+ mm of depth/g)).toHaveLength(1)
   })
 })
