@@ -197,3 +197,39 @@ describe('staleFrames — the MATHS can move, not just the datums', () => {
     expect(staleFrames([versioned(null)], rigs, '2026-09-27')).toHaveLength(0)
   })
 })
+
+describe('staleFrames — a TARGET depth can move, not just a datum', () => {
+  /** A current frame whose boom target records the depth it was measured with. */
+  const withBoomDepth = (depthMm: number) => {
+    const f = frame({ id: 'd', depthMm: -7392 })
+    const d = JSON.parse(f.sailtrim_data as string)
+    d.annotation.targets = [{
+      key: 'boom', label: 'Boom', point: { x: 1, y: 1 }, foot: { x: 0, y: 0 },
+      mm: 2210, sigmaMm: 10, depthMm, colour: '#fff',
+    }]
+    f.sailtrim_data = JSON.stringify(d)
+    return f
+  }
+
+  it('offers a frame measured against a depth the model has since changed', () => {
+    // `sailtrim-triangulate --write` replaces guessed depths with measured ones
+    // several at a time. Nothing watched for it: scale and baseline drift cover
+    // the numbers that scale a whole frame, the version stamp covers the maths,
+    // and the per-target depths had no guard at all — so nine frames carried on
+    // reporting numbers derived from the guess they had just replaced.
+    const current = northstar.depths.boom.mm
+    const out = staleFrames([withBoomDepth(current - 2_000)], rigs, '2026-09-27')
+    expect(out).toHaveLength(1)
+    expect(out[0].reasons.join(' ')).toMatch(/boom depth/)
+  })
+
+  it('leaves a frame measured against the depth still in the model', () => {
+    expect(staleFrames([withBoomDepth(northstar.depths.boom.mm)], rigs, '2026-09-27')).toHaveLength(0)
+  })
+
+  it('ignores a re-derivation of a few millimetres', () => {
+    // The point is to catch a datum being REPLACED, not to chase the last
+    // millimetre and turn the panel into something people dismiss.
+    expect(staleFrames([withBoomDepth(northstar.depths.boom.mm - 40)], rigs, '2026-09-27')).toHaveLength(0)
+  })
+})

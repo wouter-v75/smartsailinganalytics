@@ -19,6 +19,8 @@
 // an unchanged number after a redo is recognisable as the bug it would be.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { depthFor, type RigModel } from './rigModel'
+
 /** The `scale` block an annotation carries, as it was when the frame was saved. */
 export interface StoredScale {
   key: string
@@ -175,4 +177,73 @@ export function driftNote(ratio: number | null): string {
   const pct = (ratio - 1) * 100
   if (Math.abs(pct) < 0.05) return 'no material change'
   return `stored numbers are ${Math.abs(pct).toFixed(1)} % ${pct < 0 ? 'large' : 'small'}`
+}
+
+// ── a target's DEPTH can move too ────────────────────────────────────────────
+
+/**
+ * The depth the model now holds for a measured target's key.
+ *
+ * `boom` and `clew` have their own fields; a leech station reads through
+ * `depthFor`, which prefers a per-station measurement over the sail's single
+ * fallback. Returns null for a key the model says nothing about, which is not
+ * the same as zero.
+ */
+export function modelDepthFor(m: RigModel, key: string): number | null {
+  if (key.includes('@')) {
+    const [sail, tag] = key.split('@')
+    const v = depthFor(m, sail, tag)
+    return v && Number.isFinite(v.mm) ? v.mm : null
+  }
+  if (key === 'boom') return m.depths?.boom?.mm ?? null
+  if (key === 'clew') return m.depths?.clew?.mm ?? null
+  return null
+}
+
+export interface DepthDrift {
+  stale: boolean
+  /** The worst-offending target, when one is stale. */
+  key: string | null
+  storedMm: number | null
+  currentMm: number | null
+}
+
+/**
+ * Has any target been measured against a depth the model has since changed?
+ *
+ * THE GAP THIS CLOSES. `scaleDrift` and `baselineDrift` watch the two numbers
+ * that scale a whole frame, and the version stamp watches the maths. Nothing
+ * watched the per-target DEPTHS — which is exactly what `sailtrim-triangulate
+ * --write` moves, and it moves them by design. Baraka's five leech stations went
+ * from a model guess to a measurement in one command, and the nine frames those
+ * depths came from carried on reporting numbers derived from the guess.
+ *
+ * Depth is not a small correction: it multiplies ψ, so a station that moves a
+ * metre moves every measurement at that station by 17 mm per degree of ψ.
+ *
+ * `tolMm` is deliberately generous. The point is to catch a datum being
+ * REPLACED, not to chase the last millimetre of a re-derivation.
+ */
+export function depthDrift(
+  targets: { key: string; depthMm?: number | null }[] | undefined,
+  m: RigModel | null,
+  tolMm = 100,
+): DepthDrift {
+  const none: DepthDrift = { stale: false, key: null, storedMm: null, currentMm: null }
+  if (!m || !targets?.length) return none
+  let worst: DepthDrift = none
+  let by = tolMm
+  for (const t of targets) {
+    // A frame saved before targets recorded their own depth cannot be compared;
+    // the audit script names those separately rather than guessing.
+    if (t.depthMm == null || !Number.isFinite(t.depthMm)) continue
+    const now = modelDepthFor(m, t.key)
+    if (now == null) continue
+    const gap = Math.abs(now - (t.depthMm as number))
+    if (gap > by) {
+      by = gap
+      worst = { stale: true, key: t.key, storedMm: t.depthMm as number, currentMm: now }
+    }
+  }
+  return worst
 }

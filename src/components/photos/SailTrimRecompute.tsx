@@ -28,7 +28,7 @@ import { photoOriginalUrl } from '../../lib/photoStore'
 import { fetchRigModel, type RigModel } from '../../lib/rigModel'
 import { isAnnotation, type SailTrimAnnotation } from '../../lib/sailTrimOverlay'
 import {
-  resolveStoredScale, scaleDrift, baselineDrift, driftNote,
+  resolveStoredScale, scaleDrift, baselineDrift, driftNote, depthDrift,
   type MarksBundle, type ResultCalibration, type StoredScale,
 } from '../../lib/sailTrimAudit'
 import type { SailTrimSave } from '../sailtrim/SailTrimTab'
@@ -118,12 +118,17 @@ export function staleFrames(
     // is hidden on a frame which already has geometry.
     const storedVersion = String(stored.annotation.version || '')
     const oldMaths = !!storedVersion && storedVersion !== SAILTRIM_VERSION
-    if (!drift.stale && !base.stale && !oldMaths) continue
+    // A per-target DEPTH can move too, and `sailtrim-triangulate --write` moves
+    // several at once by design. Depth multiplies ψ, so a station that shifts a
+    // metre shifts every measurement at it by 17 mm per degree.
+    const dep = depthDrift(stored.annotation.targets, rig)
+    if (!drift.stale && !base.stale && !oldMaths && !dep.stale) continue
 
     const reasons: string[] = []
     if (drift.stale) reasons.push(`scale ${resolved.scale.key}: ${driftNote(drift.ratio)}`)
     if (base.stale) reasons.push(`baseline ${base.key}: ${base.storedMm} → ${base.currentMm} mm, so ψ moves too`)
     if (oldMaths) reasons.push(`measured by ${storedVersion}; the geometry is now ${SAILTRIM_VERSION}`)
+    if (dep.stale) reasons.push(`${dep.key} depth: ${Math.round(dep.storedMm!)} → ${Math.round(dep.currentMm!)} mm`)
 
     out.push({
       photo,
