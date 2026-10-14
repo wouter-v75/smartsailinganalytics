@@ -117,6 +117,48 @@ function exifLocal(file: string): string | null {
   } catch { return null }
 }
 
+/**
+ * The LENS, read from the original while it still has one.
+ *
+ * SailTrim needs a focal length to turn a scale into a range, and the range is
+ * what corrects every target's depth and ψ's effective separation. It has been
+ * typed by hand until now, and typing it has gone wrong twice in a week on one
+ * boat: 100 against 114 mm on two frames a second apart, and five frames out of
+ * six with the box left empty — which silently skips BOTH corrections.
+ *
+ * It has to happen HERE because the cloud copy may not have it. Northstar's
+ * 5 Sept originals were re-exported with the overlay burned in and the EXIF
+ * stripped, so the file SailTrim fetches carries no lens at all. Same lesson as
+ * the instrument data: read it at import or it is gone for everyone but the
+ * person holding the card.
+ *
+ * BOTH focal lengths, never one. They are halves of two different pairs —
+ * FocalLength belongs with the camera's own sensor width, FocalLengthIn35mmFormat
+ * with 36 mm — and `focalForSensor` picks per rig model. Storing only one would
+ * decide that question here, wrongly, for every boat.
+ */
+function exifLens(file: string): {
+  camera: string | null; lensModel: string | null
+  focalMm: number | null; focal35Mm: number | null
+} {
+  const n = (v: string) => {
+    const x = parseFloat(v.replace(/[^\d.]/g, ''))
+    return Number.isFinite(x) && x > 0 ? x : null
+  }
+  try {
+    const out = execFileSync('exiftool',
+      ['-s3', '-Model', '-LensModel', '-FocalLength', '-FocalLengthIn35mmFormat', file],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    const [model, lens, focal, focal35] = out.split('\n').map(x => x.trim())
+    return {
+      camera: model || null,
+      lensModel: lens || null,
+      focalMm: focal ? n(focal) : null,
+      focal35Mm: focal35 ? n(focal35) : null,
+    }
+  } catch { return { camera: null, lensModel: null, focalMm: null, focal35Mm: null } }
+}
+
 /** Local wall clock + venue offset → true UTC ms. */
 function toUtc(local: string, tzMin: number): number {
   const [d, t] = local.split(' ')
@@ -311,7 +353,7 @@ async function uploadPhotos(files: string[], boat: { id: string; team_id: string
         const { error } = await sb.from('photos').insert({
           session_id: sessionId, team_id: boat.team_id, boat_id: boat.id,
           taken_utc: new Date(it.utc).toISOString(),
-          exif_data: { utc: it.utc, camera: null, lat: null, lon: null },
+          exif_data: { utc: it.utc, ...exifLens(it.file), lat: null, lon: null },
           thumbnail_url: tb ? thumbKey : null,
           bunny_storage_path: original,
           bytes: it.bytes,

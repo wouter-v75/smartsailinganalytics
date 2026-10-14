@@ -58,6 +58,44 @@ function fixOf(block) {
 }
 
 /**
+ * The LENS, when the firmware writes it — the one thing a video frame cannot
+ * get from EXIF, because a frame grabbed from video has none.
+ *
+ * SailTrim needs a focal length to turn a scale into a RANGE, and the range is
+ * what corrects every target's depth and ψ's effective separation. Typed by
+ * hand it has twice gone wrong on this boat in a week: 100 against 114 on two
+ * frames a second apart, and five frames out of six with the box left empty, so
+ * two corrections were skipped and a tight spread read as precision.
+ *
+ * TWO TRAPS, and the second is why this returns both numbers.
+ *
+ * DJI writes `focal_len` in TENTHS of a millimetre on every firmware seen here
+ * — 240 is 24.0 mm — so it is divided by 10. A value that is already plausible
+ * as millimetres is left alone rather than turned into 2.4 mm.
+ *
+ * And `dzoom_ratio` is digital zoom in ten-thousandths (10000 = 1.0x). Digital
+ * zoom CROPS, so it multiplies the effective focal length while the glass does
+ * not move: three frames off one 5.1 mm lens on 10 Oct reported 46, 55 and
+ * 93 mm equivalent for exactly this reason. A caller that ignores it will scale
+ * a cropped frame as though it were not.
+ */
+function lensOf(block) {
+  const raw = num(block, 'focal_len')
+  const dz = num(block, 'dzoom_ratio')
+  if (raw == null) return null
+  // Tenths of a mm is DJI's convention; anything under ~60 is already mm.
+  const focalMm = raw > 60 ? raw / 10 : raw
+  const dzoomRatio = dz != null && dz > 0 ? dz / 10000 : null
+  return {
+    focalMm,
+    dzoomRatio,
+    // What the frame was actually shot at, crop included. This is the number
+    // SailTrim wants; focalMm alone describes the glass, not the picture.
+    effectiveFocalMm: dzoomRatio ? Number((focalMm * dzoomRatio).toFixed(2)) : focalMm,
+  }
+}
+
+/**
  * Read a DJI .SRT. Returns null when the text is not a usable sidecar.
  *   startMs / endMs  wall clock of the first / last frame
  *   spanSec          endMs - startMs, in seconds
@@ -66,6 +104,9 @@ function fixOf(block) {
  *                    away from the video's own timebase over the recording
  *   fps              from DiffTime, when present (40ms -> 25)
  *   firstFix/lastFix {lat, lon} when the firmware writes position
+ *   firstLens/lastLens {focalMm, dzoomRatio, effectiveFocalMm} when it writes
+ *                    the lens — see lensOf. Null when captions carry no camera
+ *                    block, which is firmware-dependent.
  */
 export function parseDjiSrt(text) {
   if (!text) return null
@@ -95,6 +136,10 @@ export function parseDjiSrt(text) {
     fps: diff ? Math.round(1000 / Number(diff[1])) : null,
     firstFix: fixOf(first.block),
     lastFix: fixOf(last.block),
+    // The lens at the first and last cue. Both, because a zoom can move during
+    // a clip and a frame grabbed from the middle belongs to neither end.
+    firstLens: lensOf(first.block),
+    lastLens: lensOf(last.block),
   }
 }
 

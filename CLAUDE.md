@@ -21,6 +21,7 @@ Supabase SQL editor. Asking where a path is wastes a round trip — it is here.
 
 | task | how |
 |---|---|
+| Put the LENS on photos already in SSA, so SailTrim stops asking | `npx vite-node scripts/photo-lens-backfill.ts -- "<folder of originals>"` then `--write`. SailTrim turns a scale into a RANGE with the focal length, and the range corrects every target's depth and ψ's effective separation — **without it both are skipped silently**, not applied badly, and the frame still produces numbers that sit happily beside corrected ones. Northstar's 5 Sept set is five frames out of six like that, and its boom agrees to 73 mm across all six, which reads as precision and is agreement between different maths. It cannot come from the cloud copy: those originals were re-exported with the overlay burned in and **the EXIF stripped**, which is also how 100 and 114 mm ended up typed on two frames a second apart. `media:upload` now records it at import, so this is only for what is already up. Stores BOTH focal lengths — the actual pairs with the camera's own sensor width, the 35 mm equivalent with 36 mm, and `focalForSensor` picks per rig model |
 | Upload a day's / a week's photos, and speed-team compilations + documents | `npm run media:upload` — **read [docs/uploading-a-days-media.md](docs/uploading-a-days-media.md) first** |
 | Re-upload cloud logs whose positions were rounded to 2 dp | `npx vite-node scripts/cloud-log-reupload.ts` — use `--mode patch`, never `reduce` |
 | Add lidar from Expedition lidar logs to stored phase stats | `npm run lidar:import` |

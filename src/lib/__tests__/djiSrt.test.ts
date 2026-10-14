@@ -98,3 +98,54 @@ describe('srtCandidates', () => {
     expect(srtCandidates('/x/day.7/clip.MP4')[0]).toBe('/x/day.7/clip.SRT')
   })
 })
+
+describe('parseDjiSrt — the lens, which a video frame cannot get from EXIF', () => {
+  const cue = (n: number, stamp: string, camera: string) =>
+    `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n<font size="28">FrameCnt: ${n}, DiffTime: 40ms\n`
+    + `${stamp}\n${camera} [latitude: 41.12] [longitude: 9.45]</font>\n`
+
+  it('reads focal_len and converts DJI tenths of a millimetre', () => {
+    // 240 is 24.0 mm. A frame grabbed from video has no EXIF at all, so this is
+    // the only place its focal length exists — and SailTrim needs it to turn a
+    // scale into a range, which corrects every depth and ψ on the frame.
+    const srt = cue(1, '2026-09-08 12:11:54.466', '[iso : 100] [shutter : 1/1000.0] [fnum : 280] [focal_len : 240]')
+      + '\n' + cue(2, '2026-09-08 12:11:55.466', '[focal_len : 240]')
+    const r = parseDjiSrt(srt)!
+    expect(r.firstLens!.focalMm).toBe(24)
+  })
+
+  it('leaves a value already in millimetres alone', () => {
+    // Not every firmware uses tenths, and turning 24 into 2.4 mm would put the
+    // range out by ten — worse than having no focal at all.
+    const srt = cue(1, '2026-09-08 12:11:54.466', '[focal_len : 24]')
+      + '\n' + cue(2, '2026-09-08 12:11:55.466', '[focal_len : 24]')
+    expect(parseDjiSrt(srt)!.firstLens!.focalMm).toBe(24)
+  })
+
+  it('multiplies by DIGITAL ZOOM, because a crop is a longer lens', () => {
+    // dzoom_ratio is ten-thousandths; 20000 is 2.0x. The glass does not move,
+    // the picture does — three frames off one 5.1 mm lens reported 46, 55 and
+    // 93 mm equivalent on 10 Oct for exactly this reason.
+    const srt = cue(1, '2026-09-08 12:11:54.466', '[focal_len : 240] [dzoom_ratio: 20000]')
+      + '\n' + cue(2, '2026-09-08 12:11:55.466', '[focal_len : 240] [dzoom_ratio: 20000]')
+    const l = parseDjiSrt(srt)!.firstLens!
+    expect(l.dzoomRatio).toBe(2)
+    expect(l.effectiveFocalMm).toBe(48)
+  })
+
+  it('reports BOTH ends, because a zoom can move during a clip', () => {
+    const srt = cue(1, '2026-09-08 12:11:54.466', '[focal_len : 240]')
+      + '\n' + cue(2, '2026-09-08 12:11:55.466', '[focal_len : 1660]')
+    const r = parseDjiSrt(srt)!
+    expect(r.firstLens!.focalMm).toBe(24)
+    expect(r.lastLens!.focalMm).toBe(166)
+  })
+
+  it('is null when the captions carry no camera block', () => {
+    // Firmware-dependent, and absent is not zero. The caller falls back to
+    // asking, rather than scaling a frame with a focal length of nothing.
+    const srt = cue(1, '2026-09-08 12:11:54.466', '')
+      + '\n' + cue(2, '2026-09-08 12:11:55.466', '')
+    expect(parseDjiSrt(srt)!.firstLens).toBeNull()
+  })
+})
