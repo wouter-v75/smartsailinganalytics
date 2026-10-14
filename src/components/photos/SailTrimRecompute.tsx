@@ -354,6 +354,13 @@ export default function SailTrimRecompute({
           them a zero-sized one. Nothing here is for looking at. */}
       {current && (
         <div aria-hidden style={{ position: 'fixed', left: -20000, top: 0, width: 1200, height: 900, overflow: 'hidden', pointerEvents: 'none' }}>
+          {/* `recordedExif` is load-bearing on THIS path above all others. These
+              frames are being reopened precisely because something about their
+              maths was wrong, and the file fetched for them is a cloud re-export
+              with no EXIF in it — so without the row's recorded lens the redo
+              comes up with an empty focal box, skips the depth correction
+              exactly as the original measurement did, and saves a "corrected"
+              frame that is corrected for nothing. */}
           <SailTrimTab
             key={current.id}
             boatName={current.boat}
@@ -362,6 +369,8 @@ export default function SailTrimRecompute({
             initialFileName={current.name}
             photoLabel={current.name}
             initialResult={current.stored.result as never}
+            recordedExif={(current.photo.exif as { camera?: string | null; lensModel?: string | null;
+                                                   focalMm?: number | null; focal35Mm?: number | null } | null) || null}
             autoSaveWhenReady
             onSaveToPhoto={((save: SailTrimSave) => finish(save)) as never} />
         </div>

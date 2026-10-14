@@ -63,13 +63,19 @@ export interface SailGeometryDialogProps {
   loggedHeelDeg?: number | null
   /** A previously saved measurement, to put the marks back on the picture. */
   initialResult?: unknown
+  /** The lens recorded on the photo row at import. The file this dialog is
+   *  handed is a cloud re-export with its EXIF stripped, so without this the
+   *  focal length box comes up empty and the depth correction is skipped
+   *  silently. See SailTrimTab's own note on the prop. */
+  recordedExif?: { camera?: string | null; lensModel?: string | null;
+                   focalMm?: number | null; focal35Mm?: number | null } | null
   onSaveToPhoto?: (save: unknown) => void | Promise<unknown>
 }
 
 export default function SailGeometryDialog({
   open, onClose, fileUrl, fileName = 'photo.jpg', photoLabel = 'this photo',
   caption = '', boatName, boatId = null, twaDeg = null, loggedHeelDeg = null, initialResult = null,
-  onSaveToPhoto,
+  onSaveToPhoto, recordedExif = null,
 }: SailGeometryDialogProps) {
   // createPortal needs a document, which the server render does not have.
   const [mounted, setMounted] = useState(false)
@@ -107,6 +113,7 @@ export default function SailGeometryDialog({
           twaDeg={twaDeg}
           loggedHeelDeg={loggedHeelDeg}
           initialResult={initialResult as never}
+          recordedExif={recordedExif}
           onSaveToPhoto={onSaveToPhoto as never} />
       </div>
     </div>,

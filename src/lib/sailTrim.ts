@@ -234,6 +234,69 @@ export interface SensorSpec {
   imageLongEdgePx: number
 }
 
+/** Either source of a lens: EXIF read off the file, or the row's recorded copy. */
+export interface LensFacts {
+  camera?: string | null
+  lensModel?: string | null
+  focalMm?: number | null
+  focal35Mm?: number | null
+}
+
+export interface ResolvedLens {
+  mm: number | null
+  from: '35mm-equivalent' | 'actual' | 'none'
+  suspect: boolean
+  /** Which SOURCE it came from, which is not the same question as `from`. */
+  source: 'file' | 'recorded' | 'none'
+  camera: string | null
+  lensModel: string | null
+}
+
+/**
+ * The lens for a frame, from the file's own EXIF if it has any and the photo
+ * row's recorded copy if it does not.
+ *
+ * WHY THERE ARE TWO SOURCES. The file SailTrim is handed is usually not the file
+ * the camera wrote: a cloud copy is a re-export with the EXIF stripped. A focal
+ * length is what turns a scale into a RANGE, and without a range no depth
+ * correction is applied to anything — not applied badly, skipped — while the
+ * frame still produces millimetres that sit beside corrected ones with nothing
+ * to distinguish them. Five of Northstar 76's six measured frames on 5 Sept were
+ * measured exactly that way.
+ *
+ * THE FILE WINS when it carries a focal length, because it is the picture in
+ * front of you and the recorded copy was matched to the row by capture time —
+ * which is only as good as the second it was taken in. A 17 fps burst can hold
+ * a zoom: six originals stamped 12:46:37 on 5 Sept span 114 to 118 mm.
+ *
+ * `source` is reported separately from `from` so the operator can be told which
+ * one was used. They answer different questions: `from` is which EXIF field
+ * (actual against 35 mm equivalent), `source` is which copy of the EXIF.
+ */
+export function resolveLens(
+  file: LensFacts | null | undefined,
+  recorded: LensFacts | null | undefined,
+  sensorWidthMm: number,
+): ResolvedLens {
+  const has = (l: LensFacts | null | undefined) =>
+    !!l && ((Number.isFinite(l.focalMm) && (l.focalMm as number) > 0)
+      || (Number.isFinite(l.focal35Mm) && (l.focal35Mm as number) > 0))
+  const source: 'file' | 'recorded' | 'none' = has(file) ? 'file' : has(recorded) ? 'recorded' : 'none'
+  const lens = source === 'file' ? file! : source === 'recorded' ? recorded! : null
+  const pick = focalForSensor({
+    focalMm: lens?.focalMm, focal35Mm: lens?.focal35Mm, sensorWidthMm,
+  })
+  // Camera and lens NAMES fall back independently of the focal length: a
+  // re-export can keep the model and lose the rest, and a name with no focal
+  // length is still worth showing.
+  return {
+    ...pick,
+    source,
+    camera: file?.camera ?? recorded?.camera ?? null,
+    lensModel: file?.lensModel ?? recorded?.lensModel ?? null,
+  }
+}
+
 /**
  * Which focal length goes with the sensor width the rig model is carrying.
  *

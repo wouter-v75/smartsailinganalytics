@@ -1380,6 +1380,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
         twaDeg={geomFor?.twa ?? null}
         loggedHeelDeg={geomFor?.heel ?? null}
         initialResult={geomFor ? (sailTrimRawOf(geomFor)?.result ?? null) : null}
+        recordedExif={geomFor?.exif || null}
         onSaveToPhoto={(save)=>handleSaveSailTrim(geomFor,save)}/>
     </div>
   );

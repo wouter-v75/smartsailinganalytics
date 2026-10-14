@@ -28,7 +28,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
   mmPerPxFromReference, mmPerPxAtMastFromRef, unbiasAthwartshipsScale,
-  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg, focalSensitivity, focalForSensor,
+  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg, focalSensitivity, focalForSensor, resolveLens,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -271,7 +271,26 @@ export default function SailTrimTab(
   {
     boatName = '', boatId = null, initialFileUrl = '', initialFileName = '', initialResult = null,
     onSaveToPhoto, photoLabel = '', twaDeg = null, loggedHeelDeg = null, autoSaveWhenReady = false,
+    recordedExif = null,
   }: {
+    /**
+     * The lens as recorded on the PHOTO ROW at import (`photos.exif_data`).
+     *
+     * This exists because the file this tab is handed is usually not the file
+     * the camera wrote. A cloud copy is a re-export with the EXIF stripped, so
+     * reading the focal length off it returns nothing — and a focal length is
+     * what turns a scale into a RANGE, without which no depth correction is
+     * applied at all. Five of Northstar's six measured frames on 5 Sept were
+     * measured that way, and they still produced numbers that sat beside
+     * corrected ones without complaint.
+     *
+     * The file's own EXIF still wins when it has any: it is the picture in
+     * front of you. This is the fallback, and the note on screen says which
+     * one was used, because "100 mm" from the wrong frame of a zoom burst is
+     * not better than a blank box.
+     */
+    recordedExif?: { camera?: string | null; lensModel?: string | null;
+                     focalMm?: number | null; focal35Mm?: number | null } | null;
     boatName?: string;
     /** The boat's id, when the caller has one and no name. Two of the three
      *  call sites are like that, and without it the tab silently falls back to
@@ -570,20 +589,19 @@ export default function SailTrimTab(
     setZoom(1);
     setPan({ x: 0, y: 0 });
 
-    try {
-      const exifr = await loadExifr();
-      const d = await exifr.parse(file, { tiff: true, exif: true, ifd0: true });
-      const dt = d?.DateTimeOriginal || d?.DateTime;
-      // EXIF stamps carry no zone and are venue-LOCAL wall clock — shown as
-      // written, never converted here.
-      setCapturedAt(dt instanceof Date ? dt.toISOString().slice(0, 19).replace('T', ' ') : null);
-      // The focal length must MATCH the sensor width the rig model carries, and
-      // EXIF offers both halves of two different pairs. See focalForSensor.
-      const pick = focalForSensor({
-        focalMm: d?.FocalLength,
-        focal35Mm: d?.FocalLengthIn35mmFormat,
-        sensorWidthMm: rig.sensorWidthMm,
-      });
+    // The file's own EXIF first, the row's recorded lens as fallback. Kept as
+    // one function so the path where exifr THROWS still gets the fallback — a
+    // re-export that fails to parse is exactly the case this is for.
+    const applyLens = (d: Record<string, unknown> | null) => {
+      const pick = resolveLens(
+        { camera: d?.Model as string | null, lensModel: d?.LensModel as string | null,
+          focalMm: d?.FocalLength as number | null, focal35Mm: d?.FocalLengthIn35mmFormat as number | null },
+        recordedExif,
+        rig.sensorWidthMm,
+      );
+      const model = pick.camera ?? undefined;
+      const lensName_ = pick.lensModel ?? undefined;
+      const where = pick.source === 'recorded' ? ' · recorded at import from the original' : '';
       if (pick.suspect) {
         // A phone that writes no 35 mm equivalent — the Fairphone 6 writes 5.6 mm
         // and nothing else. Paired with a 36 mm sensor that is a range ~4.6x too
@@ -591,31 +609,44 @@ export default function SailTrimTab(
         // Leaving the box EMPTY is the safe direction: an operator who has to
         // type a number thinks about it, and a number quietly 4x wrong does not
         // announce itself anywhere downstream.
-        setExifNote(`${d.Model || 'This camera'} reports ${d.FocalLength} mm and no 35 mm equivalent. `
+        setExifNote(`${model || 'This camera'} reports ${pick.mm || '—'} mm and no 35 mm equivalent. `
           + `That is the lens's own length, which only pairs with this camera's own sensor width — `
           + `against the ${rig.sensorWidthMm} mm this rig model uses it would make the range several times too short. `
           + `Enter the 35 MM EQUIVALENT instead (a phone's main camera is usually 24–28 mm), `
           + `or scale off a mast-plane reference, where the focal length cannot affect the answer at all.`);
       } else if (pick.mm) {
         setFocalMm(String(Math.round(pick.mm)));
-        setExifNote(`${d.Model || 'camera'} · ${Math.round(pick.mm)} mm`
+        setExifNote(`${model || 'camera'} · ${Math.round(pick.mm)} mm`
           + (pick.from === '35mm-equivalent' ? ' (35 mm equivalent)' : '')
-          + `${d.LensModel ? ` · ${d.LensModel}` : ''}`);
+          + `${lensName_ ? ` · ${lensName_}` : ''}${where}`);
         // Every frame that HAS a focal length teaches the list one, so by the
         // time a stripped export turns up the kit it was shot on is already
         // there to pick. Nothing to configure, and nothing to keep up to date.
         // Remember what was USED, not what EXIF said: an actual focal length
         // picked later against a 36 mm sensor would be wrong all over again.
         void rememberLens({
-          label: lensLabel(d.Model, d.LensModel, pick.mm),
+          label: lensLabel(model, lensName_, pick.mm),
           focalMm: Math.round(pick.mm),
           lastUsed: Date.now(),
         }).then((next) => { if (next.length) setLenses(next); });
       } else {
-        setExifNote('No focal length in this file — it has been re-exported and the EXIF stripped. Enter it by hand, or the depth correction cannot be applied.');
+        setExifNote('No focal length in this file or on the photo — it has been re-exported and the EXIF stripped. '
+          + 'Enter it by hand, or the depth correction cannot be applied.');
       }
+    };
+
+    try {
+      const exifr = await loadExifr();
+      const d = await exifr.parse(file, { tiff: true, exif: true, ifd0: true });
+      const dt = d?.DateTimeOriginal || d?.DateTime;
+      // EXIF stamps carry no zone and are venue-LOCAL wall clock — shown as
+      // written, never converted here.
+      setCapturedAt(dt instanceof Date ? dt.toISOString().slice(0, 19).replace('T', ' ') : null);
+      applyLens(d ?? null);
     } catch {
-      setExifNote('Could not read EXIF.');
+      // Could not parse — a stripped re-export often cannot be. The row's
+      // recorded lens is the whole point of being here, so still try it.
+      applyLens(null);
     }
   };
 
@@ -2063,7 +2094,7 @@ export default function SailTrimTab(
             <div style={{ width: 118 }}>
               <label style={lbl}>Focal length (mm)</label>
               <input style={inp} type="number" inputMode="decimal" data-testid="sailtrim-focal"
-                value={focalMm} onChange={(e) => setFocalMm(e.target.value)} placeholder="254" />
+                value={focalMm} onChange={(e) => setFocalMm(e.target.value)} placeholder="mm, e.g. 100" />
             </div>
             {lenses.length > 0 && (
               <div style={{ flex: 1, minWidth: 190 }}>
