@@ -79,6 +79,27 @@ export interface TriangulateResult {
   depthMm: number
   /** Root-mean-square disagreement between the views, mm. */
   rmsMm: number
+  /**
+   * How well the DEPTH is actually known, mm — the number to store beside it.
+   *
+   * D comes out of the difference between views divided by sin(span), so a
+   * millimetre of marking error becomes 1/sin(span) millimetres of depth: 7x at
+   * 8°, 8x at 7.2°, 14x at 4°. The residual measures the marking; the leverage
+   * turns it into a depth.
+   *
+   * This replaces judging a solve by its SPAN alone, which was the wrong
+   * question twice over. The 8° bar was never derived — it was the spread of
+   * the first set that worked (N76, 27 Sep), and that spread was itself ~10 %
+   * overstated by the ψ inflation, so the set that defined the bar no longer
+   * meets it. And a span says nothing about whether the views agree: 9° fitting
+   * to 40 mm is worse than 5° fitting to 3 mm, and only this tells them apart.
+   *
+   * The residual is floored at MIN_MARK_MM because three views over two
+   * unknowns leave one degree of freedom, so a small rms is as much luck as
+   * accuracy — and claiming a depth known better than the clicking allows is
+   * the kind of confidence this file exists to refuse.
+   */
+  depthSigmaMm: number
   /** How many views went in, and the angle they spanned. */
   views: number
   baselineDeg: number
@@ -95,6 +116,21 @@ export interface TriangulateResult {
 }
 
 const D2R = Math.PI / 180
+
+/**
+ * The best marking accuracy a residual is allowed to imply, mm.
+ *
+ * Three views over two unknowns leave ONE degree of freedom, so an rms of 1 mm
+ * is not evidence of 1 mm marking — it is evidence that three points can be fit
+ * by a line through two of them. 5 mm on a 6000 px frame is tight but real.
+ */
+export const MIN_MARK_MM = 5
+
+/** Marking error → depth error, for a given angular span. 1/sin, and it bites. */
+export const depthLeverage = (baselineDeg: number): number => {
+  const s = Math.sin(Math.abs(baselineDeg) * D2R)
+  return s > 1e-6 ? 1 / s : Infinity
+}
 
 /**
  * Solve one target's position from several views.
@@ -142,6 +178,7 @@ export function triangulate(views: TriangulateView[], minBaselineDeg = 1.5): Tri
     athwartshipsMm: Y * flip,
     depthMm: D,
     rmsMm: Math.sqrt(ss / obs.length),
+    depthSigmaMm: Math.max(Math.sqrt(ss / obs.length), MIN_MARK_MM) * depthLeverage(baseline),
     views: obs.length,
     baselineDeg: baseline,
     residualsMm,
@@ -216,6 +253,7 @@ function solveWithScale(views: TriangulateView[], baselineDeg: number): Triangul
     athwartshipsMm: best.Y * sgn(views[0]),
     depthMm: bestD,
     rmsMm: best.rms,
+    depthSigmaMm: Math.max(best.rms, MIN_MARK_MM) * depthLeverage(baselineDeg),
     views: obs.length,
     baselineDeg,
     residualsMm,

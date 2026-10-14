@@ -32,6 +32,16 @@ const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null
 const WRITE = args.includes('--write')
 const BOAT = flag('--boat')
 const AROUND = flag('--around')
+/**
+ * The most depth uncertainty worth storing, mm. --max-depth-sigma to change it.
+ *
+ * 250 is not a precedent, it is a consequence: a stored depth is used to correct
+ * future frames through d·sinψ, so at ψ up to 6° a 250 mm error contributes
+ * 26 mm to a measurement — about the marking noise, and the point past which it
+ * would dominate. It is also 6-10x better than the ±1500-2500 mm guesses it
+ * replaces, which is the whole reason to store one.
+ */
+const MAX_SIGMA = Number(flag('--max-depth-sigma') ?? 250)
 // Repeatable: --exclude 08:22:06. For a frame that is known bad and cannot be
 // fixed — the scale reference is not IN the photograph (P needs both black
 // bands, and a frame cropped above the masthead has only one), or the target
@@ -353,8 +363,25 @@ async function main() {
     }
     // Only a leech station belongs in stationDepths; the clew and boom already
     // have their own fields, and they are checks rather than inputs.
-    if (/^(main|jib)@stripe/.test(key) && !note) {
-      solved[key] = { mm: Math.round(r.depthMm), sigmaMm: Math.max(10, Math.round(r.rmsMm)), source: 'measured' }
+    //
+    // Stored on its own UNCERTAINTY, not on the span. The span was never a
+    // derived bar — it was the spread of the first set that worked, and that
+    // spread was itself inflated by the ψ bug, so the set that set it no longer
+    // meets it. depthSigmaMm is residual x leverage: it asks how well this
+    // depth is known rather than how far the camera happened to move.
+    //
+    // Two views are still refused outright. Their residual is zero by
+    // construction, so the sigma would come out at the floor and claim to be
+    // the best measurement in the table.
+    const sigma = Math.round(r.depthSigmaMm)
+    const storable = /^(main|jib)@stripe/.test(key) && r.views >= 3 && sigma <= MAX_SIGMA
+    console.log(`${' '.repeat(19)}depth ±${sigma} mm`
+      + ` (${r.rmsMm.toFixed(0)} mm residual x ${r.baselineDeg ? (1 / Math.sin(r.baselineDeg * Math.PI / 180)).toFixed(0) : '—'})`
+      + (/^(main|jib)@stripe/.test(key)
+        ? storable ? '  → storing' : `  → not stored (over ±${MAX_SIGMA}${r.views < 3 ? ', and two views have no residual' : ''})`
+        : ''))
+    if (storable) {
+      solved[key] = { mm: Math.round(r.depthMm), sigmaMm: Math.max(10, sigma), source: 'measured' }
     }
   }
 
@@ -365,7 +392,7 @@ async function main() {
   }
 
   const n = Object.keys(solved).length
-  console.log(`\n  ${n} station depth(s) good enough to store`)
+  console.log(`\n  ${n} station depth(s) known to better than ±${MAX_SIGMA} mm`)
   if (!n) return
   if (WRITE) {
     const current = migrateRigModel((boat.rig_model || {}) as RigModel, boat.name)

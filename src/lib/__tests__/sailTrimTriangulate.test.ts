@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { triangulate, triangulateNote, worstView, type TriangulateView } from '../sailTrimTriangulate'
+import {
+  triangulate, triangulateNote, worstView, depthLeverage, MIN_MARK_MM,
+  type TriangulateView,
+} from '../sailTrimTriangulate'
 
 const D2R = Math.PI / 180
 /** What a frame at this psi would report for a target at (Y, D). */
@@ -316,5 +319,53 @@ describe('triangulateNote — how hard the depth amplifies a bad click', () => {
     expect(n).toMatch(/becomes 8 mm of depth/)
     // Once, not twice: it rides with the span note.
     expect(n.match(/becomes \d+ mm of depth/g)).toHaveLength(1)
+  })
+})
+
+describe('depthSigmaMm — how well the depth is actually known', () => {
+  const D2R = Math.PI / 180
+  /** Views of a known target, with a deliberate error on the middle one. */
+  const set = (spanDeg: number, errMm: number) => {
+    const h = spanDeg / 2
+    return [view(-h, -600, -5000, -10_000), view(0, -600, -5000, -10_000, errMm),
+            view(h, -600, -5000, -10_000)]
+  }
+
+  it('is the residual amplified by 1/sin(span)', () => {
+    const r = triangulate(set(8, 60))!
+    expect(depthLeverage(8)).toBeCloseTo(7.2, 1)
+    expect(r.depthSigmaMm).toBeCloseTo(r.rmsMm * depthLeverage(r.baselineDeg), 6)
+  })
+
+  it('ranks a tight NARROW set above a loose WIDE one', () => {
+    // The point of replacing the span bar. 5° fitting to 3 mm is a better depth
+    // than 9° fitting to 40 mm, and a span test calls it the other way round.
+    const tightNarrow = triangulate(set(5, 4))!
+    const looseWide = triangulate(set(9, 90))!
+    expect(looseWide.baselineDeg).toBeGreaterThan(tightNarrow.baselineDeg)
+    expect(tightNarrow.depthSigmaMm).toBeLessThan(looseWide.depthSigmaMm)
+  })
+
+  it('never claims a depth known better than the clicking allows', () => {
+    // Three views over two unknowns leave ONE degree of freedom, so a 0 mm rms
+    // is as much luck as accuracy. Floored at MIN_MARK_MM before amplifying.
+    const r = triangulate(set(8, 0))!
+    expect(r.rmsMm).toBeLessThan(1)
+    expect(r.depthSigmaMm).toBeCloseTo(MIN_MARK_MM * depthLeverage(r.baselineDeg), 6)
+  })
+
+  it('grows as the camera moves less, by the amount the geometry says', () => {
+    const wide = triangulate(set(16, 20))!
+    const narrow = triangulate(set(4, 20))!
+    // 1/sin(4) / 1/sin(16) = 4.0
+    expect(narrow.depthSigmaMm / wide.depthSigmaMm).toBeCloseTo(
+      depthLeverage(narrow.baselineDeg) / depthLeverage(wide.baselineDeg), 1)
+  })
+
+  it("puts Northstar's boom at about ±130 mm", () => {
+    // Three views at 7.2° fitting to 16 mm: 16 x 8 = 128. E sits 183 mm away,
+    // so the clew is about 1.4 sigma outside her band — which is the honest
+    // answer, and one the old "0 station depths" could not express at all.
+    expect(Math.max(16, MIN_MARK_MM) * depthLeverage(7.2)).toBeCloseTo(128, -1)
   })
 })
