@@ -460,18 +460,23 @@ const MEASURED: Record<string, {
       // Depth from the mast-to-stern tape below: 7800 to the mast's AFT face,
       // plus roughly half a mast section to reach the mast plane the scale is
       // referred to. -7900 is that, and it is the measured number ±a chord.
-      // DEPTH NOT MEASURED, and it is the half that matters. 4400 is a tape;
-      // -7900 was DERIVED here from the mast-to-stern reading on the assumption
-      // that the stanchions stand at the transom, and they do not.
+      // DEPTH NOT MEASURED, and it is the half that matters. 4400 is a tape
+      // across two hard ends and stays `measured`. -7900 was DERIVED here from
+      // the mast-to-stern reading on the assumption that the stanchions stand at
+      // the transom, and they stand forward of it — so it is an estimate, and
+      // the stamp has to say so until somebody tapes mast → stanchion line.
       //
-      // The scale is referred back to the mast plane by R/(R+depth) — a factor
-      // of 1.56 at 25 m — and ψ is solved from that scale, so a wrong depth
-      // scales ψ and every depth solved from it. Measured, not argued: the same
-      // port frames triangulate the boom to 88 % of her certificate E off this
-      // reference and 101 % off P, with residuals of 12 and 7 mm. Nothing but
-      // the certificate could say which was right.
+      // It matters because the scale is referred back to the mast plane by
+      // R/(R+depth) — a factor of 1.56 at 25 m — and ψ is solved from that
+      // scale, so a wrong depth scales ψ and every depth solved from it.
       //
-      // `estimate` so the tool says so until somebody tapes mast → stanchions.
+      // AN EARLIER VERSION OF THIS COMMENT CLAIMED THE TRIANGULATION HAD PROVED
+      // THE NUMBER WRONG: 88 % of her certificate E off this reference against
+      // 101 % off P. It had not. Re-measuring the same port frames onto P gave
+      // 87 %, so the split was by TACK and not by reference, and the depth that
+      // comes out of a four-frame solve is only good to a few hundred
+      // millimetres anyway — port's own minimum is flat from -5330 to -4630.
+      // The honest statement is the one above: nobody has measured this.
       sternStanchions: { mm: 4400, sigmaMm: 30, depthMm: -7900, source: 'measured', depthSource: 'estimate' },
     },
     // ── the boom, from her certificate ───────────────────────────────────────
