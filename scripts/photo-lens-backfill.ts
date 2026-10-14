@@ -22,13 +22,18 @@
 // has no lens at all and the box is left empty or filled from whatever the last
 // frame used. That is how 100 and 114 mm ended up on two frames a second apart.
 //
-// Matching is by FILE NAME against photos.bunny_storage_path, because that is
-// what survives an upload. A name that matches nothing is reported rather than
-// skipped: the whole point is to stop pretending absence is agreement.
+// MATCHING IS BY FILE SIZE, not by name. The upload stores the original at
+// `sessions/<date>/photos/<id>.jpg` — the photographer's filename is never
+// kept, so there is nothing to match on. Byte count is: it survives the upload
+// exactly, and two different JPEGs sharing one to the byte is rare enough that
+// a collision can be detected and refused rather than guessed at.
+//
+// A local file matching nothing is reported, not skipped — the whole point is
+// to stop treating absence as agreement.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { readFileSync, readdirSync, statSync } from 'fs'
-import { join, basename, extname } from 'path'
+import { join, basename } from 'path'
 import { execFileSync } from 'child_process'
 import { createClient } from '@supabase/supabase-js'
 
@@ -71,7 +76,9 @@ async function main() {
   try { execFileSync('exiftool', ['-ver'], { stdio: 'ignore' }) }
   catch { console.error('exiftool not on PATH — brew install exiftool'); process.exit(1) }
 
-  const locals = new Map<string, string>()
+  // size → every local file of that size. More than one and the size is not a
+  // key for those files, which is a thing to say rather than a thing to guess.
+  const bySize = new Map<number, string[]>()
   for (const dir of DIRS) {
     // A folder that is not there is a typo or a placeholder somebody pasted,
     // and a stack trace from node:fs says neither. Name it and carry on with
@@ -82,26 +89,35 @@ async function main() {
     for (const f of entries) {
       if (!IMG.test(f)) continue
       const p = join(dir, f)
-      if (statSync(p).isFile()) locals.set(basename(f).toLowerCase(), p)
+      const st = statSync(p)
+      if (!st.isFile()) continue
+      if (!bySize.has(st.size)) bySize.set(st.size, [])
+      bySize.get(st.size)!.push(p)
     }
   }
+  const locals = new Map<string, string>()
+  for (const [size, paths] of Array.from(bySize)) {
+    if (paths.length === 1) locals.set(String(size), paths[0])
+  }
+  const ambiguous = Array.from(bySize).filter(([, ps]) => ps.length > 1)
   if (!locals.size) {
     console.error('no images found in any of those folders — nothing to read a lens from')
     process.exit(1)
   }
-  console.log(`${locals.size} original(s) on disk\n`)
+  console.log(`${locals.size} original(s) on disk, matched by byte count`
+    + (ambiguous.length ? ` · ${ambiguous.length} size(s) shared by more than one file, skipped` : '') + '\n')
 
   const { data: photos, error } = await sb.from('photos')
-    .select('id, taken_utc, bunny_storage_path, exif_data')
+    .select('id, taken_utc, bunny_storage_path, bytes, exif_data')
   if (error) { console.error(`photos: ${error.message}`); process.exit(1) }
 
   let done = 0, already = 0, noLens = 0, noMatch = 0
   const unmatched: string[] = []
   for (const row of photos ?? []) {
-    const name = basename(String(row.bunny_storage_path || '')).toLowerCase()
-    const local = locals.get(name)
+    const key = String(row.bytes ?? '')
+    const local = locals.get(key)
     if (!local) continue
-    locals.delete(name)
+    locals.delete(key)
     const exif = (row.exif_data || {}) as Record<string, unknown>
     if (exif.focalMm || exif.focal35Mm) { already++; continue }
     const lens = lensOf(local)
@@ -119,7 +135,7 @@ async function main() {
     }
     done++
   }
-  for (const n of Array.from(locals.keys())) { unmatched.push(n); noMatch++ }
+  for (const path of Array.from(locals.values())) { unmatched.push(basename(path)); noMatch++ }
 
   console.log(`\n${done} ${WRITE ? 'written' : 'to write'}`
     + (already ? ` · ${already} already had a lens` : '')
