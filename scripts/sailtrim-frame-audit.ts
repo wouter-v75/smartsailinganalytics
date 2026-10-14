@@ -83,6 +83,16 @@ async function main() {
       console.log(`              range / mmPerPx = ${(s.rangeMm / s.mmPerPxAtMast).toFixed(1)}`
         + '  ← = focal/pitch; constant only at a FIXED focal length, not on a zoom')
     }
+    // The focal length is what turns a scale into a RANGE, and the range drives
+    // the depth correction and ψ's effective separation. On a zoom it changes
+    // every frame, so it cannot be inferred from the others — and it is the one
+    // input nothing else prints.
+    if (s?.rangeMm && s.mmPerPxAtMast) {
+      const pitch = 36 / (a.imageSize?.w && a.imageSize?.h ? Math.max(a.imageSize.w, a.imageSize.h) : 6000)
+      console.log(`   focal      typed ${b.focalMm ?? '—'} mm`
+        + `   implied by range+scale ${(s.rangeMm * pitch / s.mmPerPxAtMast).toFixed(1)} mm`
+        + ' (at a 36 mm sensor)')
+    }
     console.log(`   heel       geometry used ${a.heelDeg}   log ${f.inst?.heel ?? '—'}`)
     console.log(`   psi        stored ${a.psiDeg}  (${a.psiMeasured ? 'measured' : 'ASSUMED'})   baseline ${b.baselineKey ?? '—'}`)
 
