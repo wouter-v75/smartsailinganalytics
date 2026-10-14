@@ -237,6 +237,32 @@ async function main() {
     }
   }
 
+  // ONE SET OF CORRECTIONS PER SOLVE. A frame with no focal length has no
+  // range, and without a range it gets NO depth correction and NO ψ
+  // effective-separation correction. Mixed in with frames that have both, the
+  // solve also drops to the old linear path for ALL of them — triangulate needs
+  // a range on every view to use the real model.
+  //
+  // So a set like Northstar's 5 Sept, two frames without and one with, is not
+  // slightly inconsistent: it is three frames corrected three different ways
+  // and then fitted as though they were one. It produced a boom at 98 % of E
+  // with a 9 mm residual, which is either a good measurement or a coincidence,
+  // and nothing in the output distinguished the two.
+  {
+    const withR = usable.filter((f) => ((f.st!.annotation as { scale?: { rangeMm?: number | null } })
+      .scale?.rangeMm ?? 0) > 0)
+    if (withR.length && withR.length < usable.length) {
+      console.log(`\n  ⚠ MIXED CORRECTIONS — ${usable.length - withR.length} of ${usable.length} frame(s) have no focal length,`)
+      console.log('    so no range, so no depth correction and no ψ correction. The solve also')
+      console.log('    falls back to the long-range model for ALL views when any one lacks a range.')
+      for (const f of usable) {
+        const R = (f.st!.annotation as { scale?: { rangeMm?: number | null } }).scale?.rangeMm ?? 0
+        console.log(`      ${f.at.slice(11, 19)}  ${R > 0 ? `${(R / 1000).toFixed(0)} m` : 'NO RANGE'}`)
+      }
+      console.log('    Enter the focal on the ones missing it and re-save, then this is one set.')
+    }
+  }
+
   // ONE TACK PER SOLVE, and this one is not a precision argument — pooling two
   // tacks is arithmetically meaningless.
   //
