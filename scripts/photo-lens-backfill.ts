@@ -52,7 +52,15 @@ const DATE = flag('--date')
 const TZ_RAW = flag('--tz')
 const TZ_MIN = Number(TZ_RAW ?? 0)   // the sweep re-offsets; 0 keeps stamps as read
 const SWEEP = TZ_RAW == null
-const TOL_S = Number(flag('--tol') ?? 2)
+// EXACT second by default. Both sides of this join came out of the SAME EXIF
+// field — taken_utc was read from DateTimeOriginal at upload — so they should be
+// equal, not merely close, and any slack is pure downside. At 17 fps a 2 s
+// window held 34 candidates on one row and the photographer zoomed 109 → 118 mm
+// across them, which the script then had to report as an ambiguity. It was not
+// ambiguous; the window was too wide. Raise it only if a day's rows turn out to
+// have been stored from a different clock.
+const TOL_S = Number(flag('--tol') ?? 0)
+const ANALYSED = args.includes('--analysed')
 const FLAGGED = new Set(['--date', '--tz', '--tol'])
 const DIRS = args.filter((a, i) => !a.startsWith('--') && !FLAGGED.has(args[i - 1] ?? ''))
 if (!DIRS.length) {
@@ -123,7 +131,7 @@ async function main() {
   if (!shots.length) { console.error('no originals with a readable DateTimeOriginal'); process.exit(1) }
   console.log(`${shots.length} original(s) with a readable DateTimeOriginal`)
 
-  let q = sb.from('photos').select('id, taken_utc, exif_data')
+  let q = sb.from('photos').select('id, taken_utc, exif_data, analysis_data')
   // Range, not `like`: taken_utc is a timestamptz and Postgres refuses ~~ on one.
   // Deliberately a wide day in UTC — the rows and the stamps are being matched on
   // the instant anyway, so a day's edge only has to be loose enough not to clip.
@@ -149,7 +157,37 @@ async function main() {
   // next starts at 11:53 local against a 10:37 row. They cannot both be right,
   // and the answer is a property of the data, not of my recollection.
   const CANDIDATES = SWEEP ? [0, 60, 120, 180, -60] : [TZ_MIN]
-  const rows = (photos ?? []).filter((r) => Number.isFinite(Date.parse(String(r.taken_utc ?? ''))))
+  // ── only the frames that NEED a focal ──────────────────────────────────────
+  //
+  // A focal length does one job here: it turns a scale into a RANGE, and the
+  // range corrects every target's depth and ψ's effective separation. A photo
+  // nobody has measured has no use for one. So --analysed keeps the frames
+  // carrying `sailTrim.annotation` and drops the rest, which is the difference
+  // between 19 rows of which 13 are other cameras, and the six that were
+  // actually analysed.
+  interface Ann { scale?: { rangeMm?: number | null; mmPerPxAtMast?: number }; imageSize?: { w: number; h: number } }
+  const annOf = (r: { analysis_data?: unknown }): Ann | null =>
+    (r.analysis_data as { sailTrim?: { annotation?: Ann } } | null)?.sailTrim?.annotation ?? null
+
+  let rows = (photos ?? []).filter((r) => Number.isFinite(Date.parse(String(r.taken_utc ?? ''))))
+  if (ANALYSED) {
+    const before = rows.length
+    rows = rows.filter((r) => !!annOf(r))
+    console.log(`${rows.length} of those ${before} carry sail geometry — the rest need no focal\n`)
+  }
+
+  /** The focal a frame was MEASURED on, recovered from the range it stored.
+   *
+   *  Not a tautology: the stored range came from a focal somebody TYPED, and the
+   *  EXIF focal is an independent witness. This is what shows a 254 that was
+   *  never a real focal length sitting on a frame beside a correct 100.
+   *  A null range means no focal at all, so no depth correction was applied —
+   *  the frame still produced numbers, which is the whole problem. */
+  function focalUsed(a: Ann | null): number | null {
+    const r = a?.scale?.rangeMm, s = a?.scale?.mmPerPxAtMast, px = a?.imageSize?.w
+    if (r == null || !(r > 0) || !(s && s > 0) || !(px && px > 0)) return null
+    return (r * (36 / px)) / s      // range = mmPerPx · focal ÷ pitch
+  }
 
   interface Hit { row: typeof rows[number]; when: string; shot: Shot; burst: number }
   function tryOffset(tzMin: number): { hits: Hit[]; disagree: string[]; missed: string[] } {
@@ -158,6 +196,7 @@ async function main() {
       const rowMs = Date.parse(String(row.taken_utc))
       const when = String(row.taken_utc).slice(11, 19)
       const near = shots.filter((s) => Math.abs(s.ms - tzMin * 60_000 - rowMs) <= TOL_S * 1000)
+        .sort((a, b) => Math.abs(a.ms - tzMin * 60_000 - rowMs) - Math.abs(b.ms - tzMin * 60_000 - rowMs))
       if (!near.length) { missed.push(when); continue }
       // A BURST IS NOT A PROBLEM. 114 of these instants hold more than one frame,
       // so a second does not identify a file — and it does not need to. This is
@@ -166,8 +205,9 @@ async function main() {
       // says so rather than picking one.
       const distinct = new Set(near.map((s) => `${s.focalMm}|${s.focal35Mm}`))
       if (distinct.size > 1) {
-        disagree.push(`${when}  ${near.length} originals within ${TOL_S}s disagree: `
-          + near.map((s) => `${basename(s.path)} ${s.focalMm}mm`).join(', '))
+        const mm = near.map((s) => s.focalMm).filter((f): f is number => f != null).sort((a, b) => a - b)
+        disagree.push(`${when}  ${near.length} originals within ${TOL_S}s span ${mm[0]}-${mm[mm.length - 1]} mm`
+          + ` — the lens moved inside the window, so narrow --tol rather than trust any of them`)
         continue
       }
       hits.push({ row, when, shot: near[0], burst: near.length })
@@ -204,9 +244,14 @@ async function main() {
     const exif = (h.row.exif_data || {}) as Record<string, unknown>
     if (exif.focalMm || exif.focal35Mm) { already++; continue }
     const s = h.shot
-    console.log(`${h.when}  ${basename(s.path)}${h.burst > 1 ? ` (+${h.burst - 1} in the burst)` : ''}`
-      + `  ${s.camera ?? '—'}  ${s.focalMm ?? '—'} mm`
-      + `${s.focal35Mm ? ` · ${s.focal35Mm} mm at 36 mm` : ' · no 35 mm equivalent, so full frame or unknown'}`)
+    const a = annOf(h.row)
+    const used = focalUsed(a)
+    const verdict = !a ? ''
+      : used == null ? '  ← measured with NO focal, so no depth correction at all'
+      : Math.abs(used - (s.focalMm ?? 0)) < 2 ? '  ✓ already measured on this focal'
+      : `  ← measured on ${used.toFixed(0)} mm, so REDO it`
+    console.log(`${h.when}  ${basename(s.path)}${h.burst > 1 ? ` (+${h.burst - 1} same second)` : ''}`
+      + `  ${s.focalMm ?? '—'} mm${s.focal35Mm ? ` (${s.focal35Mm} at 36 mm)` : ''}${verdict}`)
     if (WRITE && !SWEEP) {
       const { error: uErr } = await sb.from('photos').update({
         exif_data: {
@@ -223,6 +268,15 @@ async function main() {
     + (already ? ` · ${already} already had a lens` : '')
     + (disagree.length ? ` · ${disagree.length} with disagreeing candidates` : '')
     + (missed.length ? ` · ${missed.length} rows with no original within ${TOL_S}s` : ''))
+  if (missed.length) {
+    const span = shots.length
+      ? `${new Date(Math.min(...shots.map((s) => s.ms)) - tz * 60_000).toISOString().slice(11, 19)}`
+        + `-${new Date(Math.max(...shots.map((s) => s.ms)) - tz * 60_000).toISOString().slice(11, 19)}`
+      : '(none)'
+    console.log(`\nNo original for: ${missed.join(', ')}`)
+    console.log(`This folder covers ${span} UTC. A row outside that is another camera`)
+    console.log('or another folder, not a broken join — point the script at that folder too.')
+  }
   if (WRITE && SWEEP) console.log('Nothing written: --write needs an explicit --tz, so the offset is a decision and not a guess.')
 }
 main()
