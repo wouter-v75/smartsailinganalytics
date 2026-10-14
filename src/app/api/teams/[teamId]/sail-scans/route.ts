@@ -244,12 +244,21 @@ export async function POST(
       rake_deg: s.rakeDeg,
       jib_tack_t: s.jibTackT,
       report_format: s.format,
+      // Sail Vision only: the report's own foot-to-head twist, which is also
+      // what checks the parse (sailVisionTwistCheck), and a flag saying the
+      // stripe heights are the boat's convention rather than printed on the page.
+      twist_total_deg: s.twistTotalDeg,
+      stripe_pos_from_convention: !!s.posFromConvention,
       // per-scan photo (comparison: photoKeys[i]); else the single shared key
       photo_key: (photoKeys && photoKeys[i]) || photoKey,
     },
     stripes: s.stripes,
     summary: s.summary,
     report_ref: reportRef || s.imageName,
+    // The trimmer's own notes off the report. Nothing was writing this column,
+    // so a Sail Vision page's "Inhauler car position: 1.5 / eye up/down: 1" was
+    // parsed and then dropped on the floor.
+    notes: s.notes ?? null,
     created_by_user_id: user.id,
   }))
 

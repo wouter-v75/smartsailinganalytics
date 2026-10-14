@@ -37,13 +37,16 @@ export interface ParsedStripe {
   exit: number | null
   fore: number | null // fore (front) camber %
   back: number | null // back camber %
+  /** The stripe as the report NAMED it ("Stripe 1"), when it names rather than
+   *  measures. See `posIsIndex`. */
+  label?: string
 }
 
 export type SailType = 'main' | 'headsail' | null
 
 export interface ParsedScan {
-  source: 'north' | 'thesailcloud'
-  format: 'north-app' | 'north-sailscan' | 'north-comparison' | 'thesailcloud-relative'
+  source: 'north' | 'thesailcloud' | 'sailvision'
+  format: 'north-app' | 'north-sailscan' | 'north-comparison' | 'thesailcloud-relative' | 'sailvision'
   sailName: string | null // best-effort sail code/name from the report
   sailType: SailType // main | headsail (jib) — from the sail/image name
   sailCode: string | null // North "Code:" (e.g. "J1.5 A", "MN A 2026")
@@ -62,12 +65,40 @@ export interface ParsedScan {
   forestayT: number | null
   rakeDeg: number | null
   jibTackT: number | null
+  /**
+   * The report's own total twist, degrees — foot stripe to head stripe.
+   *
+   * Kept as reported rather than recomputed, because it is the one figure that
+   * CHECKS the parse: it equals the sum of the pairwise twists on every page of
+   * the Baraka report, so a mismatch means a stripe row was dropped or misread.
+   */
+  twistTotalDeg: number | null
+  /** The report's free-text trim notes, verbatim and possibly several lines. */
+  notes: string | null
+  /**
+   * TRUE when `stripes[].pos` came from the BOAT'S CONVENTION, not the report.
+   *
+   * North prints each stripe's height in the report ("75%", "50%", "25%"), so
+   * there `pos` is read off the page. Sail Vision prints only "Stripe 1".."Stripe
+   * 4" and states no heights anywhere — but the stripes are a property of the
+   * sail, not of the report, and on Baraka they are counted FROM THE BOTTOM at
+   * 25 / 50 / 75 / 87 % of hoist (Wouter, 2026-10-14). So the heights are known;
+   * they just are not in the file.
+   *
+   * Flagged rather than silently filled because the mapping is index → height by
+   * convention, and a boat whose sails are striped differently would need a
+   * different one. The direction is independently corroborated by the report: the
+   * pairwise twists sum exactly to `Twist (total)` on every page, and twist is
+   * referenced from the foot, so Stripe 1 is the foot-most.
+   */
+  posFromConvention?: boolean
   stripes: ParsedStripe[]
   summary: { maxCamberPct: number | null; draftPositionPct: number | null }
 }
 
 export interface ParsedReport {
-  format: 'north-app' | 'north-sailscan' | 'north-comparison' | 'thesailcloud-relative' | 'unknown'
+  format: 'north-app' | 'north-sailscan' | 'north-comparison' | 'thesailcloud-relative'
+    | 'sailvision' | 'unknown'
   scans: ParsedScan[]
 }
 
@@ -188,6 +219,10 @@ export function detectFormat(text: string): ParsedReport['format'] {
   // both into "LEFT / RIGHT" cells. Check before the single north-app layout
   // (it shares the "Image Time" / "Stripe Draft Camber" markers).
   if (/\bSail\s+Comparison\b/i.test(text)) return 'north-comparison'
+  // Baraka's analyst. Named before the North checks: its stripe header is
+  // "Stripe Draft position Camber …", which the north-app test would not match
+  // today, but "Stripe Draft" is one edit away from matching it by accident.
+  if (/Sail\s+Vision\s+analysis\s+report/i.test(text)) return 'sailvision'
   if (/SailScan:\s*Onboard\s+Sail/i.test(text) || /thesailcloud/i.test(text) || /Draft\s+Stripes/i.test(text)) {
     return 'thesailcloud-relative'
   }
@@ -282,6 +317,9 @@ function parseNorthApp(text: string, tz: string): ParsedScan[] {
       forestayT: foreM ? num(foreM[1]) : null,
       rakeDeg: rakeM ? num(rakeM[1]) : null,
       jibTackT: jibTkM ? num(jibTkM[1]) : null,
+      // Not in this report format.
+      twistTotalDeg: null,
+      notes: null,
       stripes,
       summary: summarise(stripes),
     },
@@ -396,6 +434,9 @@ function parseSailComparison(text: string, tz: string): ParsedScan[] {
       forestayT: fore,
       rakeDeg: rake,
       jibTackT: null,
+      // Not in this report format.
+      twistTotalDeg: null,
+      notes: null,
       stripes,
       summary: summarise(stripes),
     }
@@ -600,11 +641,222 @@ function parseThesailcloud(text: string, tz: string): ParsedScan[] {
       forestayT: null,
       rakeDeg: null,
       jibTackT: null,
+      // Not in this report format.
+      twistTotalDeg: null,
+      notes: null,
       stripes,
       summary: summarise(stripes),
     })
   }
   return scans
+}
+
+// ── Sail Vision ("Sail Vision analysis report") ──────────────────────────────
+// Baraka's analyst exports one A4 PAGE PER SCAN, twenty in a file, in a layout
+// that shares nothing with North's or thesailcloud's:
+//
+//     Sail Vision analysis report Page 1
+//     IMG_6456.JPEG - J1.5 (Jib)
+//     Captured 2026-10-11 09:51
+//     Boat speed 5.6 kn     Wind strength 7.2 kn
+//     Upwind angle 37.0 deg Runner load 1.9 t
+//     Tack load 50.0 kg     Twist (total) 14.59 deg
+//     Sail scan
+//     Stripe Draft position Camber Entry angle Exit angle
+//     Stripe 1 33.65% 13.28% 37.13 deg 17.57 deg
+//     …
+//     Twist: Stripe 1 to Stripe 2: 7.43 deg | Stripe 2 to Stripe 3: 7.16 deg
+//     Notes: Inhauler car position: 1.5
+//     eye up/down: 1
+//
+// FOUR THINGS THE REAL FILE DOES that a tidy reading of one page would miss:
+//
+//   • Any instrument value can be a bare "-". Every main has "Tack load -", and
+//     one page (a dockside scan) has boat speed, wind, angle AND runner all "-".
+//     A dash is NOT zero — 0.0 kn of wind appears elsewhere as a real reading.
+//   • The image name can contain spaces, dots and brackets:
+//     "WhatsApp Image 2026-10-10 at 4.40.43 PM (1).jpeg - Main 2 (Main)". Only
+//     the LAST " - " separates the file from the sail, and the sail itself ends
+//     in a bracketed type.
+//   • The sail may carry no type at all ("IMG_6408.JPEG - Main").
+//   • Notes are free text over several lines, or "None recorded", or the
+//     wonderfully unhelpful "See top section".
+//
+// TWIST IS PAIRWISE, and this schema's per-stripe `twist` is an angle, so the
+// pairs are accumulated from the foot — which is the convention twist is quoted
+// in anyway. That the pairwise values sum EXACTLY to the reported
+// "Twist (total)" on all twenty pages is what makes the accumulation safe, and
+// it doubles as the parse's own check: a dropped stripe row breaks the sum.
+// `twistTotalDeg` keeps the reported figure so a caller can verify rather than
+// trust.
+
+/**
+ * Stripe index (1-based, from the foot) → height as % of hoist.
+ *
+ * NOT in the report — see `ParsedScan.posFromConvention`. Baraka's sails are
+ * striped at 25/50/75 (three-stripe jibs) and 25/50/75/87 (four-stripe main),
+ * counted from the bottom.
+ */
+export const SAILVISION_STRIPE_PCT: Record<number, number[]> = {
+  3: [25, 50, 75],
+  4: [25, 50, 75, 87],
+}
+
+/** "-" and "" mean NOT MEASURED. Never 0: a real 0.0 appears in these reports. */
+const dashNum = (s: string | undefined | null): number | null => {
+  if (s == null) return null
+  const t = String(s).trim()
+  if (!t || t === '-' || t === '—') return null
+  return num(t)
+}
+
+function parseSailVision(text: string, tz: string): ParsedScan[] {
+  // One block per page. The marker line carries the page number and nothing
+  // else worth keeping, so splitting ON it leaves each page's body behind.
+  const blocks = text.split(/^.*Sail Vision analysis report.*$/m).slice(1)
+  const scans: ParsedScan[] = []
+
+  for (const block of blocks) {
+    const lines = block.split('\n')
+
+    // The image/sail line: the first line holding " - ". Split on the LAST one,
+    // because the file name may contain spaces and brackets of its own.
+    const headIdx = lines.findIndex((l) => l.includes(' - '))
+    if (headIdx < 0) continue
+    const head = lines[headIdx].trim()
+    const cut = head.lastIndexOf(' - ')
+    const imageName = head.slice(0, cut).trim() || null
+    const sailRaw = head.slice(cut + 3).trim()
+    // "Main 2 (Main)" → name "Main 2", type from the bracket. "Main" → no bracket.
+    const typed = sailRaw.match(/^(.*?)\s*\(([^)]+)\)\s*$/)
+    const sailName = (typed ? typed[1] : sailRaw).trim() || null
+    const bracket = typed ? typed[2].trim() : null
+
+    const stamp = block.match(/Captured\s+(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)/i)
+    const when = parseStamp(stamp ? stamp[1] : null, stamp ? stamp[2] : null, tz)
+
+    // A number OR a bare dash. The number branch is first so "-19.91" is read as
+    // a value and not as "missing" followed by junk.
+    const V = String.raw`(-?\d+(?:[.,]\d+)?|-)`
+    const grab = (label: string, unit: string) =>
+      dashNum((block.match(new RegExp(label + String.raw`\s+` + V + String.raw`\s*` + unit, 'i')) || [])[1])
+
+    // THE INSTRUMENTS ARE NOT READ FROM THIS REPORT (Wouter, 2026-10-14). Boat
+    // speed, wind strength, upwind angle, runner load and tack load are all
+    // printed on the page and all of them are better in the Expedition log,
+    // which is sampled continuously rather than typed in beside one frame. The
+    // report's own wind shows why: page 17 of the 12 Oct file reads "Boat speed
+    // 8.6 kn Wind strength 0.0 kn".
+    //
+    // Leaving `tws`/`twa` null is the ACTIVE choice, not an omission.
+    // `sail_scans.tws_kn` is what bands a scan for the per-sail media view, so a
+    // wrong wind files the scan under a breeze it was not shot in and it is
+    // never found again; empty, the log supplies it. Same lesson as a photo's
+    // instrument data, which is why that is read from the cloud log too.
+    //
+    // The TOTAL TWIST is not an instrument — it is the sail's shape, and it is
+    // the one figure that CHECKS this parse. It is read.
+    const twistTotalDeg = grab('Twist\\s*\\(total\\)', '(?:deg|$)')
+
+    // Stripe rows, in the order the report prints them (foot first).
+    const rowRe = /^\s*Stripe\s+(\d+)\s+(-?[\d.]+)\s*%\s+(-?[\d.]+)\s*%\s+(-?[\d.]+)\s*deg\s+(-?[\d.]+)\s*deg/
+    const raw: { idx: number; draft: number | null; camber: number | null; entry: number | null; exit: number | null }[] = []
+    for (const line of lines) {
+      const m = line.match(rowRe)
+      if (!m) continue
+      raw.push({ idx: +m[1], draft: num(m[2]), camber: num(m[3]), entry: num(m[4]), exit: num(m[5]) })
+    }
+    if (!raw.length) continue
+    raw.sort((a, b) => a.idx - b.idx)
+
+    // Pairwise twists → twist accumulated from the foot stripe, which is 0 by
+    // definition (everything is measured relative to it).
+    const pair = new Map<number, number>()
+    const twistLine = lines.find((l) => /^\s*Twist:/i.test(l)) || ''
+    const pairRe = /Stripe\s+(\d+)\s+to\s+Stripe\s+(\d+):\s*(-?[\d.]+)\s*deg/gi
+    for (let m = pairRe.exec(twistLine); m; m = pairRe.exec(twistLine)) {
+      pair.set(+m[2], num(m[3]) ?? 0)
+    }
+
+    const pcts = SAILVISION_STRIPE_PCT[raw.length]
+    let cum = 0
+    const stripes: ParsedStripe[] = raw.map((r, i) => {
+      if (i > 0) cum += pair.get(r.idx) ?? 0
+      return {
+        // The convention's height when the stripe count is one we know, and the
+        // index when it is not — a five-stripe sail is a different sail, and
+        // inventing a ladder for it is how incomparable numbers get compared.
+        pos: pcts ? pcts[i] : r.idx,
+        draft: r.draft,
+        camber: r.camber,
+        twist: raw.length > 1 ? Math.round(cum * 100) / 100 : null,
+        entry: r.entry,
+        exit: r.exit,
+        fore: null,
+        back: null,
+        label: `Stripe ${r.idx}`,
+      }
+    })
+
+    // Notes run from "Notes:" to the end of the page, over as many lines as the
+    // trimmer felt like writing. Two phrasings mean "nothing here".
+    const nIdx = lines.findIndex((l) => /^\s*Notes:/i.test(l))
+    let notes: string | null = null
+    if (nIdx >= 0) {
+      const body = [lines[nIdx].replace(/^\s*Notes:\s*/i, ''), ...lines.slice(nIdx + 1)]
+        .join('\n').trim()
+      notes = body && !/^(none recorded|none|n\/a)$/i.test(body) ? body : null
+    }
+
+    scans.push({
+      source: 'sailvision',
+      format: 'sailvision',
+      sailName,
+      // The bracket is the report's own classification and beats guessing from
+      // the name; "Main 2" would classify fine, but a sail called "Code 0 (Jib)"
+      // would not.
+      sailType: classifySailType(bracket) || classifySailType(sailName) || classifySailType(imageName),
+      sailCode: null,
+      oeNumber: null,
+      imageName,
+      capturedAt: when.utc,
+      capturedLocal: when.local,
+      tags: null,
+      venue: null,
+      event: null,
+      // Every instrument null, on purpose — see the block above. The log is the
+      // source for all of these, and this report is the source for the SHAPE.
+      tws: null,
+      twa: null,
+      awa: null,
+      bsp: null,
+      forestayT: null,
+      rakeDeg: null,
+      jibTackT: null,
+      twistTotalDeg,
+      notes,
+      posFromConvention: !!pcts,
+      stripes,
+      summary: summarise(stripes),
+    })
+  }
+  return scans
+}
+
+/**
+ * Does the parse agree with the report's own arithmetic?
+ *
+ * `Twist (total)` is the foot-to-head twist and equals the sum of the pairwise
+ * values, so the head stripe's accumulated twist must equal it. When it does
+ * not, a stripe row or a twist pair was dropped — which is the one failure a
+ * stripe table can suffer without looking wrong.
+ */
+export function sailVisionTwistCheck(scan: ParsedScan): { ok: boolean; reportedDeg: number | null; accumulatedDeg: number | null } {
+  const reportedDeg = scan.twistTotalDeg
+  const head = scan.stripes[scan.stripes.length - 1]
+  const accumulatedDeg = head ? head.twist : null
+  if (reportedDeg == null || accumulatedDeg == null) return { ok: true, reportedDeg, accumulatedDeg }
+  return { ok: Math.abs(reportedDeg - accumulatedDeg) <= 0.05, reportedDeg, accumulatedDeg }
 }
 
 // ── Public entry point ───────────────────────────────────────────────────────
@@ -613,7 +865,8 @@ export function parseSailScanReport(rawText: string, opts: ParseOpts = {}): Pars
   const text = (rawText || '').replace(/ /g, ' ') // nbsp → space
   const format = detectFormat(text)
   let scans: ParsedScan[] = []
-  if (format === 'north-comparison') scans = parseSailComparison(text, tz)
+  if (format === 'sailvision') scans = parseSailVision(text, tz)
+  else if (format === 'north-comparison') scans = parseSailComparison(text, tz)
   else if (format === 'north-app') scans = parseNorthApp(text, tz)
   else if (format === 'thesailcloud-relative') scans = parseThesailcloud(text, tz)
   // Report format follows the actual parsed scan (NS App vs NS Sailscan).
