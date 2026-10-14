@@ -139,12 +139,43 @@ async function main() {
 
   // A frame whose ψ was ASSUMED says nothing about depth: it is the one input
   // this cannot do without, and including it would quietly bias every answer.
-  const usable = frames.filter((f) => (f.st!.annotation as { psiMeasured?: boolean }).psiMeasured)
+  let usable = frames.filter((f) => (f.st!.annotation as { psiMeasured?: boolean }).psiMeasured)
   for (const f of frames) {
     const a = f.st!.annotation as { psiDeg: number; psiMeasured?: boolean }
     console.log(`  ${f.at.slice(11, 19)}  ψ ${a.psiDeg.toFixed(2).padStart(6)}°  ${a.psiMeasured ? 'measured' : 'ASSUMED — skipped, mark a centreplane baseline on it'}`)
   }
   if (usable.length < 2) { console.log('\n  fewer than two frames with a measured ψ'); return }
+
+  // ONE TACK PER SOLVE, and this one is not a precision argument — pooling two
+  // tacks is arithmetically meaningless.
+  //
+  // A target's stored `mm` is LEEWARD-POSITIVE: measureTarget multiplies by
+  // leewardSign(tack), which is +1 on port and -1 on starboard. So the two tacks
+  // store the same physical offset with opposite signs, and the solve, which
+  // reads `measuredMm` straight, is fitting one line through two mirrored sets.
+  //
+  // It is easy to do by accident because --around matches the CLOCK: Baraka's
+  // 08:26 window holds three starboard frames and one port one taken mid-tack,
+  // and the pooled run reported residuals of 110-410 mm on every target while
+  // still offering a depth to store.
+  const tacks = new Map<string, string[]>()
+  for (const f of usable) {
+    const t = (f.st!.annotation as { tack?: string | null }).tack ?? '(unknown)'
+    if (!tacks.has(t)) tacks.set(t, [])
+    tacks.get(t)!.push(f.at.slice(11, 19))
+  }
+  if (tacks.size > 1) {
+    const [keep] = Array.from(tacks).sort((a, b) => b[1].length - a[1].length)
+    console.log('\n  ⚠ TWO TACKS IN ONE WINDOW — the stored millimetres are leeward-positive,')
+    console.log('    so port and starboard carry the same offset with opposite signs and')
+    console.log('    cannot be fitted together. Solving the larger group only:')
+    for (const [t, times] of Array.from(tacks)) {
+      console.log(`      ${t.padEnd(10)} ${times.join(', ')}${t === keep[0] ? '   ← kept' : '   ← DROPPED'}`)
+    }
+    usable = usable.filter((f) =>
+      (((f.st!.annotation as { tack?: string | null }).tack ?? '(unknown)') === keep[0]))
+    if (usable.length < 2) { console.log('\n  fewer than two frames left on one tack'); return }
+  }
 
   // ONE SCALE PER SOLVE. ψ is derived from the frame's mm-per-pixel, so a scale
   // reference whose own depth or length is off scales ψ — and the solve absorbs
