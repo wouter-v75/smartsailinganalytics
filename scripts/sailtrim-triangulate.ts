@@ -32,8 +32,17 @@ const flag = (n: string) => (args.includes(n) ? args[args.indexOf(n) + 1] : null
 const WRITE = args.includes('--write')
 const BOAT = flag('--boat')
 const AROUND = flag('--around')
+// Repeatable: --exclude 08:22:06. For a frame that is known bad and cannot be
+// fixed — the scale reference is not IN the photograph (P needs both black
+// bands, and a frame cropped above the masthead has only one), or the target
+// was clicked on a different feature. Explicit and auditable: the run prints
+// what it dropped, so a set is never quietly smaller than it looks.
+const EXCLUDE = args.reduce<string[]>((acc, a, i) => {
+  if (a === '--exclude' && args[i + 1]) acc.push(args[i + 1].trim())
+  return acc
+}, [])
 if (!BOAT || !AROUND) {
-  console.error('usage: --boat "Northstar 76" --around 2026-09-27T11:43 [--write]')
+  console.error('usage: --boat "Northstar 76" --around 2026-09-27T11:43 [--exclude 08:22:06] [--write]')
   process.exit(1)
 }
 
@@ -140,6 +149,13 @@ async function main() {
   // A frame whose ψ was ASSUMED says nothing about depth: it is the one input
   // this cannot do without, and including it would quietly bias every answer.
   let usable = frames.filter((f) => (f.st!.annotation as { psiMeasured?: boolean }).psiMeasured)
+  if (EXCLUDE.length) {
+    const before = usable.length
+    usable = usable.filter((f) => !EXCLUDE.includes(f.at.slice(11, 19)))
+    console.log(`\n  --exclude dropped ${before - usable.length} frame(s): ${EXCLUDE.join(', ')}`)
+    const unknown = EXCLUDE.filter((e) => !frames.some((f) => f.at.slice(11, 19) === e))
+    if (unknown.length) console.log(`  ⚠ no frame at ${unknown.join(', ')} — check the time`)
+  }
   for (const f of frames) {
     const a = f.st!.annotation as { psiDeg: number; psiMeasured?: boolean }
     console.log(`  ${f.at.slice(11, 19)}  ψ ${a.psiDeg.toFixed(2).padStart(6)}°  ${a.psiMeasured ? 'measured' : 'ASSUMED — skipped, mark a centreplane baseline on it'}`)
