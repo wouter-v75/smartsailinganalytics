@@ -179,6 +179,35 @@ async function main() {
     }
   }
 
+  // DOES THE FRAME FIT THE BOAT? Checked FIRST, because a broken scale does not
+  // announce itself as a broken scale — it announces itself as whatever the
+  // next guard happens to be. Northstar's three 27 Sep frames were marked on
+  // P's bands with the picker still on `wheels`, so every millimetre came out
+  // 9x small, ψ with it, and this script refused them for "0.5° between the
+  // views" and advised widening the window. The camera had not moved at all.
+  //
+  // mmPerPxAtMast x the image's long edge is how much of the world is in the
+  // picture, and the boat is visibly in it.
+  for (const f of usable) {
+    const ann = f.st!.annotation as {
+      scale?: { mmPerPxAtMast?: number; key?: string }
+      imageSize?: { w: number; h: number }
+    }
+    const rigSnap = (f.st!.result as { marks?: { rig?: RigModel } })?.marks?.rig
+    const longest = rigSnap ? migrateRigModel(rigSnap, rigSnap.boat)
+      .baselines.reduce((m, b) => (b.mm > m ? b.mm : m), 0) : 0
+    const edge = ann.imageSize ? Math.max(ann.imageSize.w, ann.imageSize.h) : 0
+    const extent = (ann.scale?.mmPerPxAtMast ?? 0) * edge
+    if (longest > 0 && extent > 0 && extent < longest) {
+      console.log(`\n  ⚠ ${f.at.slice(11, 19)}: this scale makes the picture only`
+        + ` ${(extent / 1000).toFixed(1)} m across at the mast, on a boat at least`
+        + ` ${(longest / 1000).toFixed(1)} m long.`)
+      console.log(`    The two scale marks and the reference "${ann.scale?.key}" describe different`)
+      console.log('    things — every millimetre on that frame is out by the ratio between them,')
+      console.log('    ψ included. Nothing solved from it means anything until the picker is fixed.')
+    }
+  }
+
   // ONE TACK PER SOLVE, and this one is not a precision argument — pooling two
   // tacks is arithmetically meaningless.
   //
