@@ -276,6 +276,21 @@ export function triangulateNote(r: TriangulateResult, clickSigmaMm = 15): string
     bits.push(`${r.baselineDeg.toFixed(1)}° between the views, under the 8° that makes a depth a measurement — the ATHWARTSHIPS figure is pinned by every view and survives this, the DEPTH does not`)
   }
   if (r.views < 3) bits.push('two views solve it exactly, so there is no residual to check it by — a third is what turns it into a measurement')
+  // HOW HARD THE DEPTH AMPLIFIES A MISPLACED CLICK. D comes out of the
+  // DIFFERENCE between views divided by sin(span), so a millimetre of marking
+  // error becomes 1/sin(span) millimetres of depth: 7x at 8°, 8x at 7.2°, 14x
+  // at 4°. Saying "no residual to check it by" was not enough — I read a
+  // two-view boom at 7.2° as a measurement several times over, and it carried
+  // about +-1100 mm from the marking sigmas alone. A number is easier to
+  // discount than a caution.
+  //
+  // Only alongside a caution that has already fired. At the 8° bar the leverage
+  // is still 7x, so printing it unconditionally would put a warning on every
+  // good set and teach people to skip the line.
+  if (bits.length) {
+    const lever = 1 / Math.sin(r.baselineDeg * D2R)
+    bits.push(`every 1 mm of marking error moves this DEPTH by ${lever.toFixed(0)} mm (1/sin ${r.baselineDeg.toFixed(1)}°)`)
+  }
   if (r.rmsMm > 4 * clickSigmaMm) {
     bits.push(`the views disagree by ${r.rmsMm.toFixed(0)} mm, well past marking accuracy — a point is on the wrong feature, or a frame's ψ is wrong`)
   }

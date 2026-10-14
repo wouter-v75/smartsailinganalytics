@@ -280,3 +280,35 @@ describe('triangulateNote — the gap between 4° and 8°', () => {
     expect(at(9)).toBe('')
   })
 })
+
+describe('triangulateNote — how hard the depth amplifies a bad click', () => {
+  const at = (deg: number, views = 3) => triangulateNote({
+    athwartshipsMm: -411, depthMm: -10_557, rmsMm: 0, views,
+    baselineDeg: deg, residualsMm: [],
+  })
+
+  it('puts a NUMBER on it, not just a caution', () => {
+    // Northstar's boom: two views 7.2° apart, 0 mm residual by construction,
+    // marking sigmas of ±135 and ±69 — about ±1100 mm of depth. I read -10557
+    // as a measurement several times while the note said only "no residual to
+    // check it by". A figure is harder to wave past than a sentence.
+    expect(at(7.2, 2)).toMatch(/moves this DEPTH by 8 mm/)
+    expect(at(4.0)).toMatch(/moves this DEPTH by 14 mm/)
+  })
+
+  it('says nothing extra on a set with no other caution', () => {
+    // At the 8° bar the leverage is still 7x, so printing it unconditionally
+    // would put a warning on every good set — and a warning that is always
+    // there is one people stop reading.
+    expect(at(12)).toBe('')
+    expect(at(9)).toBe('')
+  })
+
+  it('fires on a WIDE span that still has only two views', () => {
+    // The two warnings are about different things: one is "no check", the other
+    // is "the check would have to be very good". A set can need both.
+    const n = at(7.2, 2)
+    expect(n).toMatch(/two views solve it exactly/)
+    expect(n).toMatch(/moves this DEPTH/)
+  })
+})
