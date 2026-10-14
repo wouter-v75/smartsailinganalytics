@@ -171,6 +171,20 @@ describe('worstView — which frame is carrying the disagreement', () => {
     expect(worstView(clean)).toBeNull()
   })
 
+  it('says nothing about a set that already fits well', () => {
+    // Baraka's redone 08:22 set fitted every target to better than 7 mm and the
+    // first version of this still offered to discard a frame from six of the
+    // eight — because dropping one ALWAYS improves the residual: four views over
+    // two unknowns leave two degrees of freedom and three leave one, so the rms
+    // falls towards zero by arithmetic. Crying outlier at a good fit is how a
+    // warning gets ignored when it finally means something.
+    const slight = [...clean]
+    slight[2] = view(-1.7, -560, -5050, -10_000, 12) // 12 mm, within marking noise
+    const r = triangulate(slight)!
+    expect(r.rmsMm).toBeLessThan(60)
+    expect(worstView(slight)).toBeNull()
+  })
+
   it('refuses to drop one when only three views are left to judge by', () => {
     // Three minus one is two, which solves exactly and has no residual at all.
     // "Improving" a fit by removing the evidence is not an improvement.

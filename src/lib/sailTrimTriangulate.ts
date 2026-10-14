@@ -207,10 +207,20 @@ function solveWithScale(views: TriangulateView[], baselineDeg: number): Triangul
  * making the number look better.
  */
 export function worstView(
-  views: TriangulateView[], minBaselineDeg = 1.5,
+  views: TriangulateView[], minBaselineDeg = 1.5, minRmsMm = 60,
 ): { index: number; without: TriangulateResult } | null {
   const all = triangulate(views, minBaselineDeg)
   if (!all || views.length < 4 || !all.residualsMm.length) return null
+  // Only when the set is ACTUALLY disagreeing. A 3 mm fit has no outlier worth
+  // naming, and dropping a view from one always "improves" it — four views over
+  // two unknowns leave two degrees of freedom, three leave one, so the residual
+  // falls towards zero by arithmetic rather than by anything being wrong. The
+  // first run of this suggested discarding a frame from six targets out of
+  // eight, every one of them already fitting to better than 7 mm. A tool that
+  // cries outlier at a good fit teaches people to ignore it when it matters.
+  // 60 mm is 4x marking accuracy — the same bar triangulateNote uses to call a
+  // set disagreed.
+  if (!(all.rmsMm > minRmsMm)) return null
   let worst = 0
   all.residualsMm.forEach((v, i) => { if (Math.abs(v) > Math.abs(all.residualsMm[worst])) worst = i })
   const without = triangulate(views.filter((_, i) => i !== worst), minBaselineDeg)
