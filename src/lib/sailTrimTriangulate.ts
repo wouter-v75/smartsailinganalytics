@@ -338,3 +338,93 @@ export function triangulateNote(r: TriangulateResult, clickSigmaMm = 15): string
   }
   return bits.join('; ')
 }
+
+// ── one station, several sets ───────────────────────────────────────────────
+//
+// `depthSigmaMm` is residual × leverage: how consistent the frames WITHIN one
+// set are. It is silent about everything a whole set can get wrong together — a
+// ψ bias, a scale reference, a tack — and those are the errors that actually
+// bite. Measured on Baraka, 15 Oct 2026, three independent solves of the same
+// stations:
+//
+//     main@stripe75   −1676 ±14   −1814 ±34   −1050 ±69
+//     jib@stripe25      568 ±10     262 ±57      −87 ±69
+//     jib@stripe50      655 ±22     299 ±34      277 ±69
+//
+// 400–650 mm apart while each claims ±10–70. The boom settles who is wrong — it
+// is a FIXED point on the spar and cannot have two depths — and it indicts the
+// port set at 81 % of its attested value against starboard's 101 %. But nothing
+// in either set's own residual could have told you that.
+//
+// THE METHOD. Independent estimates of one fixed quantity combine as a weighted
+// mean, and the standard way to report a disagreement is the Birge ratio
+// √(χ²/ν): 1 when they agree, larger when they do not, used to inflate the
+// error. That alone is not enough here. Birge assumes the quoted sigmas are
+// roughly honest, and weights by 1/σ², so a wildly overconfident ±10 both
+// dominates the mean and drags the inflation down — combining 568 ±10 with
+// 262 ±57 gives ±52 for two numbers 306 mm apart.
+//
+// So there is also a FLOOR at half the spread. Two estimates 306 mm apart cannot
+// be known better than ±153 whatever their quoted errors say, because one of
+// them is wrong by at least that much. It is deliberately crude: the point is
+// that it does not depend on believing either sigma, which is the thing that
+// turned out not to be safe.
+//
+// Applied sequentially — each new set against what is stored — it converges on
+// the truth rather than the latest answer, and a station the sets cannot agree
+// about ends up with an honest sigma that the twist gate will then refuse.
+
+export interface DepthEstimate {
+  mm: number
+  sigmaMm: number
+}
+
+export interface CombinedDepth {
+  mm: number
+  sigmaMm: number
+  /** √(χ²/ν). 1 when the estimates agree within their errors. */
+  birge: number
+  /** How far apart the estimates are, mm. 0 with nothing to compare against. */
+  spreadMm: number
+  /** True when they agree within the quadrature sum of their sigmas. */
+  agrees: boolean
+  /** Which term set the sigma, so the number can be argued with. */
+  from: 'single' | 'weighted' | 'birge' | 'half-spread'
+}
+
+/**
+ * One station's depth from a fresh solve and whatever is already stored.
+ *
+ * `prior` null means nothing to compare against, and the fresh sigma stands —
+ * which is the honest answer and not a good one: a single set's sigma has no
+ * way of seeing a systematic error.
+ */
+export function combineDepths(fresh: DepthEstimate, prior: DepthEstimate | null): CombinedDepth {
+  const sf = Math.max(fresh.sigmaMm, 1)
+  if (!prior || !Number.isFinite(prior.mm)) {
+    return { mm: fresh.mm, sigmaMm: sf, birge: 1, spreadMm: 0, agrees: true, from: 'single' }
+  }
+  const sp = Math.max(prior.sigmaMm, 1)
+  const wf = 1 / (sf * sf), wp = 1 / (sp * sp)
+  const mean = (fresh.mm * wf + prior.mm * wp) / (wf + wp)
+  const sigmaW = Math.sqrt(1 / (wf + wp))
+
+  const spreadMm = Math.abs(fresh.mm - prior.mm)
+  // ν = 1: two estimates, one fitted mean.
+  const chi2 = ((fresh.mm - mean) ** 2) / (sf * sf) + ((prior.mm - mean) ** 2) / (sp * sp)
+  const birge = Math.max(1, Math.sqrt(chi2))
+  const agrees = spreadMm <= Math.hypot(sf, sp)
+
+  const inflated = sigmaW * birge
+  const floor = spreadMm / 2
+  const sigmaMm = Math.max(inflated, floor)
+  return {
+    mm: mean,
+    sigmaMm,
+    birge,
+    spreadMm,
+    agrees,
+    from: agrees ? (birge > 1 ? 'birge' : 'weighted')
+      : floor >= inflated ? 'half-spread' : 'birge',
+  }
+}

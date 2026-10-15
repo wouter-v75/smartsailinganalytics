@@ -24,7 +24,7 @@
 
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
-import { triangulate, triangulateNote, worstView, type TriangulateView } from '../src/lib/sailTrimTriangulate'
+import { triangulate, triangulateNote, worstView, combineDepths, type TriangulateView } from '../src/lib/sailTrimTriangulate'
 import { migrateRigModel, depthFor, type RigModel, type RigValue } from '../src/lib/rigModel'
 
 const args = process.argv.slice(2)
@@ -425,8 +425,28 @@ async function main() {
     // Two views are still refused outright. Their residual is zero by
     // construction, so the sigma would come out at the floor and claim to be
     // the best measurement in the table.
-    const sigma = Math.round(r.depthSigmaMm)
-    const storable = /^(main|jib)@stripe/.test(key) && r.views >= 3 && sigma <= MAX_SIGMA
+    // ── and then against the OTHER sets ──────────────────────────────────
+    //
+    // residual x leverage is how consistent the frames within THIS set are. It
+    // is blind to what a whole set gets wrong together — a ψ bias, a scale
+    // reference, a tack — and on Baraka three sets of the same stations came out
+    // 400-650 mm apart while each claimed ±10-70, every residual single-digit.
+    // So a fresh solve is combined with whatever is already stored, and a
+    // disagreement inflates the sigma. See combineDepths.
+    const isStation = /^(main|jib)@stripe/.test(key)
+    const priorVal = isStation ? rigNow.stationDepths?.[key] : null
+    const prior = priorVal && Number.isFinite(priorVal.mm) && priorVal.source === 'measured'
+      ? { mm: priorVal.mm, sigmaMm: priorVal.sigmaMm ?? 10 }
+      : null
+    const comb = combineDepths({ mm: r.depthMm, sigmaMm: r.depthSigmaMm }, prior)
+    const sigma = Math.round(comb.sigmaMm)
+    const ownSigma = Math.round(r.depthSigmaMm)
+    // A disagreement must still be WRITTEN when there is a prior, even when the
+    // combined sigma blows the bar. Refusing would leave the old overconfident
+    // number in place — which is the bug, not the protection: the twist gate
+    // reads this sigma to decide whether an off-axis frame may show twist, so a
+    // stale ±10 silently re-enables the measurement it should block.
+    const storable = isStation && r.views >= 3 && (sigma <= MAX_SIGMA || !!prior)
     // With two views the residual is zero BY CONSTRUCTION, so the sigma is the
     // 5 mm floor times the leverage and nothing else — ±79 mm read like a tight
     // measurement off a set that had measured nothing at all. A sigma needs a
@@ -437,15 +457,26 @@ async function main() {
         : `depth ±${sigma} mm`
           + ` (${r.rmsMm.toFixed(0)} mm residual x ${r.baselineDeg ? (1 / Math.sin(r.baselineDeg * Math.PI / 180)).toFixed(0) : '—'})`)
       + (/^(main|jib)@stripe/.test(key)
-        ? storable ? '  → storing'
+        ? storable ? (sigma > MAX_SIGMA
+          ? `  → storing ±${sigma} mm, OVER the ±${MAX_SIGMA} bar — widening the stored value rather than leaving it overconfident`
+          : '  → storing')
           // Name the ACTUAL reason. This said "over ±250" on a ±63 mm depth
           // refused for having two views, which is a false statement about a
           // true decision — and the next person debugs the wrong number.
           : r.views < 3 ? '  → not stored: two views, so the residual is zero by construction'
             : `  → not stored: ±${sigma} mm is over the ±${MAX_SIGMA} mm bar`
         : ''))
+    if (prior) {
+      console.log(`${' '.repeat(19)}`
+        + (comb.agrees
+          ? `agrees with the stored ${Math.round(prior.mm)} ±${Math.round(prior.sigmaMm)} mm`
+            + ` (${Math.round(comb.spreadMm)} mm apart) → ±${sigma} mm combined`
+          : `DISAGREES with the stored ${Math.round(prior.mm)} ±${Math.round(prior.sigmaMm)} mm`
+            + ` by ${Math.round(comb.spreadMm)} mm — this set alone said ±${ownSigma},`
+            + ` which no residual could have caught. Sigma set by ${comb.from} → ±${sigma} mm`))
+    }
     if (storable) {
-      solved[key] = { mm: Math.round(r.depthMm), sigmaMm: Math.max(10, sigma), source: 'measured' }
+      solved[key] = { mm: Math.round(comb.mm), sigmaMm: Math.max(10, sigma), source: 'measured' }
     }
   }
 
@@ -456,7 +487,9 @@ async function main() {
   }
 
   const n = Object.keys(solved).length
-  console.log(`\n  ${n} station depth(s) known to better than ±${MAX_SIGMA} mm`)
+  const good = Object.values(solved).filter((v) => (v.sigmaMm ?? 0) <= MAX_SIGMA).length
+  console.log(`\n  ${good} station depth(s) known to better than ±${MAX_SIGMA} mm`
+    + (n > good ? `, and ${n - good} widened past it by set-to-set disagreement` : ''))
   if (!n) return
   if (WRITE) {
     const current = migrateRigModel((boat.rig_model || {}) as RigModel, boat.name)
