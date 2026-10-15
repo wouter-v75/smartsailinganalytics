@@ -1343,8 +1343,8 @@ export default function SailTrimTab(
   }, [measurements, rig, rig.widths, defn, tack, calibration]);
 
   const checks: Check[] = useMemo(
-    () => (calibration.cal ? runChecks(calibration.cal) : []),
-    [calibration],
+    () => (calibration.cal ? runChecks(calibration.cal, tack) : []),
+    [calibration, tack],
   );
   const gaps = useMemo(() => missingFrom(rig), [rig]);
 

@@ -36,6 +36,7 @@
 // asymmetry. One frame per tack cannot tell you which you are looking at.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { tackDisagreesWithHeel, tackFromHeel } from '../src/lib/sailTrim'
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { isAnnotation, type SailTrimAnnotation } from '../src/lib/sailTrimOverlay'
@@ -101,7 +102,13 @@ async function main() {
       + `${(a.defn ?? '—').padEnd(6)} `
       + `${(s?.key ?? '—').padEnd(12)} ${f1(s?.mmPerPxAtMast).padStart(10)}  `
       + `${s?.rangeMm != null ? (s.rangeMm / 1000).toFixed(0).padStart(6) : '     —'}`
-      + `  ${f.baseline ?? '—'}`)
+      + `  ${f.baseline ?? '—'}`
+      // The tack comes from ONE TWA sample, and the tack decides which side is
+      // leeward — so a wrong one flips every millimetre on the frame. Heel is
+      // an independent witness and this is where it gets heard.
+      + (tackDisagreesWithHeel(a.tack, a.heelDeg)
+        ? `   ⚠ TACK: labelled ${a.tack} but the heel says ${tackFromHeel(a.heelDeg)} — millimetres FLIPPED`
+        : ''))
   }
 
   // Then the targets, grouped so the within-tack spread is visible.

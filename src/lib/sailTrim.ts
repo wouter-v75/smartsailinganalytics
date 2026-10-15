@@ -562,6 +562,53 @@ export const tackFromTwa = (twaDeg: number | null | undefined): 'port' | 'stbd' 
   twaDeg == null || !Number.isFinite(twaDeg) ? null : (twaDeg >= 0 ? 'stbd' : 'port')
 
 /**
+ * HEEL → tack, as an independent witness to `tackFromTwa`.
+ *
+ * Upwind a boat heels away from the wind, so port tack (wind from port) puts
+ * the starboard side down. In this codebase's sign convention that is POSITIVE
+ * heel — Baraka's port frames on 11 Oct read +11.8° and her starboard ones
+ * −10.3° to −13.8°, which is what fixes the direction.
+ *
+ * Null below `minDeg`, because near upright the sign is noise, and downwind the
+ * relationship weakens anyway. This is a cross-check, not a replacement: TWA
+ * knows which tack you are on when the boat is flat and heel does not.
+ */
+export const tackFromHeel = (
+  heelDeg: number | null | undefined, minDeg = 3,
+): 'port' | 'stbd' | null =>
+  heelDeg == null || !Number.isFinite(heelDeg) || Math.abs(heelDeg) < minDeg
+    ? null
+    : (heelDeg > 0 ? 'port' : 'stbd')
+
+/**
+ * Do the log's TWA and the boat's heel agree about the tack?
+ *
+ * WHY THIS EXISTS. The tack is taken from the sign of one TWA sample, and a
+ * sample taken seconds after a tack has not settled — so it names the tack the
+ * boat has just left. That is not a small error: the tack sets
+ * `leewardSign`, so a wrong one FLIPS the stored millimetres.
+ *
+ * It cost a day on Baraka. 08:26:25 was labelled port on a −8.6° heel while
+ * every genuine port frame that morning read +11.8°, and its boom came out at
+ * +499 mm where all nine others were negative. That one frame widened the port
+ * spread from 184 mm to 1172 mm, made the port/starboard means look 139 mm
+ * apart on a real asymmetry rather than noise, and — because the triangulation
+ * drops the minority tack — got the set cut from four frames spanning 8.7° to
+ * three spanning 4.2°, tripling the depth leverage.
+ *
+ * Heel cannot arbitrate when the boat is near upright, so `null` means "no
+ * opinion", never "agrees".
+ */
+export function tackDisagreesWithHeel(
+  tack: 'port' | 'stbd' | null | undefined,
+  heelDeg: number | null | undefined,
+  minDeg = 3,
+): boolean {
+  const fromHeel = tackFromHeel(heelDeg, minDeg)
+  return !!tack && !!fromHeel && tack !== fromHeel
+}
+
+/**
  * +1 or −1, converting an image-signed athwartships offset into a
  * LEEWARD-POSITIVE one.
  *
@@ -946,11 +993,29 @@ export interface Check { key: string; label: string; ok: boolean; detail: string
  * block a measurement; they are there so a bad frame is obvious rather than
  * quietly producing a confident wrong number.
  */
-export function runChecks(cal: Calibration): Check[] {
+export function runChecks(cal: Calibration, tack?: 'port' | 'stbd' | null): Check[] {
   const out: Check[] = []
   const { source } = horizontalDir(cal.axis, cal.heelDeg, cal.horizon)
   const roll = cal.horizon ? cal.horizon.tiltDeg : cameraRollDeg(cal.axis, cal.heelDeg)
   const imgHeel = imageHeelDeg(cal.axis, cal.horizon)
+
+  if (tack) {
+    const fromHeel = tackFromHeel(cal.heelDeg)
+    const clash = tackDisagreesWithHeel(tack, cal.heelDeg)
+    out.push({
+      key: 'tack-heel',
+      label: 'Tack agrees with heel',
+      ok: !clash,
+      detail: clash
+        ? `the log says ${tack} but ${cal.heelDeg?.toFixed(1)}° of heel says ${fromHeel}. `
+          + 'The tack sets which side is leeward, so a wrong one FLIPS every millimetre on this '
+          + 'frame. A TWA sample taken seconds after a tack names the tack just left — pick the '
+          + 'tack by hand if the heel is right.'
+        : fromHeel
+          ? `${tack}, and ${cal.heelDeg?.toFixed(1)}° of heel agrees`
+          : `${tack} from the log; ${cal.heelDeg == null ? 'no heel' : 'too upright'} for heel to corroborate`,
+    })
+  }
 
   out.push({
     key: 'psi',

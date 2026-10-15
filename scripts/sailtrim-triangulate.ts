@@ -25,6 +25,7 @@
 import { readFileSync } from 'fs'
 import { createClient } from '@supabase/supabase-js'
 import { triangulate, triangulateNote, worstView, combineDepths, type TriangulateView } from '../src/lib/sailTrimTriangulate'
+import { tackDisagreesWithHeel, tackFromHeel } from '../src/lib/sailTrim'
 import { migrateRigModel, depthFor, type RigModel, type RigValue } from '../src/lib/rigModel'
 
 const args = process.argv.slice(2)
@@ -275,6 +276,27 @@ async function main() {
   // 08:26 window holds three starboard frames and one port one taken mid-tack,
   // and the pooled run reported residuals of 110-410 mm on every target while
   // still offering a depth to store.
+  // BEFORE dropping a minority tack, ask whether the LABEL is right. The tack
+  // comes from the sign of one TWA sample, and a sample taken seconds after a
+  // tack names the tack just left — so the "minority tack" can be a mislabelled
+  // frame rather than a frame from the other tack. Dropping it is then the worst
+  // of both: the set loses its widest view AND the asymmetry it was protecting
+  // against was never there.
+  //
+  // Baraka 08:26:25 is the case. Labelled port on a −8.6° heel while every
+  // genuine port frame that morning read +11.8°, so the set went from four
+  // frames spanning 8.7° to three spanning 4.2° — depth leverage 6.6x to 14x —
+  // to exclude a frame that was on the same tack as the rest all along.
+  for (const f of usable) {
+    const ann = f.st!.annotation as { tack?: 'port' | 'stbd' | null; heelDeg?: number | null }
+    if (tackDisagreesWithHeel(ann.tack, ann.heelDeg)) {
+      console.log(`  ⚠ ${f.at.slice(11, 19)} is labelled ${ann.tack} but heels`
+        + ` ${ann.heelDeg?.toFixed(1)}°, which says ${tackFromHeel(ann.heelDeg)}.`)
+      console.log('    The tack sets which side is leeward, so a wrong one FLIPS this frame\'s')
+      console.log('    millimetres — and the tack guard below may drop it as a minority tack when')
+      console.log('    it belongs with the rest. Fix the tack by hand in the tab and re-save it.')
+    }
+  }
   const tacks = new Map<string, string[]>()
   for (const f of usable) {
     const t = (f.st!.annotation as { tack?: string | null }).tack ?? '(unknown)'
