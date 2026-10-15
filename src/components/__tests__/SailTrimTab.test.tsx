@@ -1104,18 +1104,13 @@ describe('SailTrimTab', () => {
     const box = await screen.findByTestId('sailtrim-twist')
     // The jib's column fills in, at all three stations.
     await waitFor(() => expect(within(box).getAllByText(/^\d+\.\d°\*?$/).length).toBe(3))
-    // …and the twist, which is now measured FROM THE CLEW — the boom's end on
-    // the main — because that is what the word means and what keeps the sign
-    // right when the boom sits to windward. No clew is marked in this frame, so
-    // it falls back to the lowest stripe AND says every figure is understated:
-    // the twist between the clew and the 25 % stripe is missing, not zero.
-    expect(box.textContent).toMatch(/Jib leech twist from 25/)
-    expect(box.textContent).toMatch(/no clew mark, so every figure is too small/)
-    // Cumulative from that datum, so 75 reads further open than 50 rather than
-    // reporting only the last step.
-    const figs = (box.textContent!.match(/[+-]\d+\.\d\d°/g) || []).map(Number.parseFloat)
-    expect(figs.length).toBeGreaterThanOrEqual(2)
-    expect(Math.abs(figs[1])).toBeGreaterThan(Math.abs(figs[0]))
+    // …and the between-station twist, which is what gets trimmed: a STEP per
+    // adjacent pair, stripe to stripe, not a running total from the foot.
+    expect(within(box).getByText(/25\u219250/)).toBeTruthy()
+    // No clew/boom is marked in this frame, so the bottom step simply is not
+    // reported — and it says so rather than letting 25→50 look like the lowest
+    // twist in the sail.
+    expect(box.textContent).toMatch(/no clew\/boom mark, so the lowest step is missing/)
     // The main has no stripes marked, so its column is dashes and it says why;
     // the jib's 87.5 % and clew rows are dashed too, neither being marked here.
     // Both DRAFT columns are dashes throughout: one frame cannot give depth.

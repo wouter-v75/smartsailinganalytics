@@ -304,11 +304,12 @@ describe('the 7/8 stripe', () => {
 })
 
 describe('twistBetween — which frame the sign is in', () => {
-  // The distinction that caught me out: normalising to the station furthest from
-  // the centreplane keeps the two tacks reading alike when the sign is merely
-  // athwartships, but it MISREADS a profile that crosses over, because the
-  // furthest station can be the windward one. With a tack the angles are already
-  // leeward-positive and the plain difference is right.
+  // Normalising to the station furthest from the centreplane kept the two tacks
+  // reading alike when the sign is merely athwartships, but it MISREAD a profile
+  // that crosses over, because the furthest station can be the windward one —
+  // and with the boom strapped to windward in light air it usually IS the clew.
+  // The frame now comes off the bottom-to-top TREND instead, which is what
+  // "opening" means, so the fallback gets the crossing case right too.
   const angles = stationAngles('main', MAIN, [
     { tag: 'clew', mm: -688, sigmaMm: 23 },     // to windward, light air
     { tag: 'stripe50', mm: 349, sigmaMm: 22 },  // to leeward
@@ -320,11 +321,14 @@ describe('twistBetween — which frame the sign is in', () => {
     expect(row.twistDeg).toBeCloseTo(angles[1].angle.deg - angles[0].angle.deg, 10)
   })
 
-  it('without a tack, falls back to the guess — and says so by differing', () => {
-    // Documenting the limit rather than pretending it is not there: the fallback
-    // flips this one, because the windward clew is the station furthest out.
+  it('without a tack, gets the crossing case right too', () => {
+    // This used to come out NEGATIVE: the windward clew is the station furthest
+    // from the centreplane, so the old frame was taken off the bottom of the
+    // sail and a normally twisting leech read as closing. Anchoring on the
+    // bottom-to-top trend fixes it, and the two paths now agree.
     const [row] = twistBetween(angles, false)
-    expect(row.twistDeg).toBeLessThan(0)
+    expect(row.twistDeg).toBeGreaterThan(0)
+    expect(row.twistDeg).toBeCloseTo(twistBetween(angles, true)[0].twistDeg, 10)
   })
 
   it('agrees with the fallback when nothing crosses over', () => {

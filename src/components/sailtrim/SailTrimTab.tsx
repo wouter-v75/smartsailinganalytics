@@ -46,7 +46,7 @@ import {
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
-import { stationAngles, twistFromDatum, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
+import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
 import { fitCamber, type CamberFit } from '../../lib/sailCamber';
 import { loadLenses, rememberLens, forgetLens, lensLabel, isZoomLabel, type Lens } from '../../lib/lensPrefs';
 import {
@@ -1229,8 +1229,8 @@ export default function SailTrimTab(
   const twist = useMemo(() => {
     const out: {
       sail: 'main' | 'jib'
-      rows: ReturnType<typeof twistFromDatum>['rows']
-      datumNote: string
+      rows: ReturnType<typeof twistBetween>
+      hasClew: boolean
       angles: ReturnType<typeof stationAngles>
       sag: { tag: string; mm: number; source: 'measured' | 'fitted' | 'assumed-zero' }[]
       haveLuff: boolean
@@ -1303,15 +1303,15 @@ export default function SailTrimTab(
       });
       if (!angles.length) continue;
       out.push({
-        // Twist is measured FROM THE CLEW — the boom's outboard end on the
-        // main — which is both what the word means and what makes the sign
-        // behave: in light air the boom sits to windward and its own chord angle
-        // is negative, so an absolute figure reads negative for a sail twisting
-        // perfectly normally. The tack makes the angles leeward-positive, so the
-        // difference is the answer; without one twistFromDatum picks a frame.
-        sail, angles,
-        ...(() => { const t = twistFromDatum(angles, tack != null);
-                    return { rows: t.rows, datumNote: t.datumNote }; })(),
+        // Twist is RELATIVE, between adjacent stripes. The clew — the boom's
+        // outboard end on the main — is the bottom of that chain and the zero
+        // the SIGN is taken from: in light air the boom sits to windward, so a
+        // frame picked off the furthest station came off the bottom of the sail
+        // and read every step negative on a sail twisting normally. The tack
+        // makes the angles leeward-positive when it is known; without one
+        // twistBetween flips on the bottom-to-top trend.
+        sail, angles, rows: twistBetween(angles, tack != null),
+        hasClew: angles.some((a) => a.tag === 'clew'),
         // Luff offset from the centreplane: for the jib that IS forestay sag,
         // measured from the photograph. Nobody has this for a rival.
         sag: leech.filter((l) => l.luffMm != null)
@@ -2807,21 +2807,20 @@ export default function SailTrimTab(
                 );
               })()}
 
-              {/* Twist at each station FROM THE CLEW, which is the number that
-                  is actually trimmed and the one the literature means: the
-                  chord angle compared with the boom's. Cumulative, so the top
-                  figure is the whole sail's twist rather than the last step. */}
+              {/* The twist BETWEEN adjacent stations — relative, stripe to
+                  stripe, which is the number that is actually trimmed. The clew
+                  anchors the bottom of the chain and sets which way is open. */}
               {LEECH_SAILS.map((sl) => {
                 const t = twist.find((x) => x.sail === sl.key);
                 if (!t || !t.rows.length) return null;
                 return (
                   <div key={`rows-${sl.key}`} style={{ fontSize: 10.5, color: '#94A3B8', fontFamily: 'monospace', marginBottom: 3 }}>
-                    {sl.label} twist from {t.rows[0].from === 'clew' ? 'clew' : t.rows[0].from.replace('stripe', '')}:{' '}
-                    {t.rows.map((r) => `${r.to.replace('stripe', '')} ${r.twistDeg >= 0 ? '+' : ''}${r.twistDeg.toFixed(2)}°`).join(' · ')}
-                    {/* A fallback datum understates every figure, and silently:
-                        the twist below the lowest mark is missing, not zero. */}
-                    {t.rows[0].from !== 'clew' && (
-                      <span style={{ color: '#FCD34D' }}> · no clew mark, so every figure is too small</span>
+                    {sl.label}:{' '}
+                    {t.rows.map((r) => `${r.from.replace('stripe', '')}→${r.to.replace('stripe', '')} ${r.twistDeg >= 0 ? '+' : ''}${r.twistDeg.toFixed(2)}°`).join(' · ')}
+                    {/* Without the clew there is no bottom step — the twist from
+                        the foot to the lowest stripe is simply not reported. */}
+                    {!t.hasClew && (
+                      <span style={{ color: '#FCD34D' }}> · no clew/boom mark, so the lowest step is missing</span>
                     )}
                   </div>
                 );
