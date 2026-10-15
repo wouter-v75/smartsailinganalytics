@@ -191,8 +191,16 @@ async function main() {
    *  A null range means no focal at all, so no depth correction was applied —
    *  the frame still produced numbers, which is the whole problem. */
   function focalUsed(a: Ann | null): number | null {
-    const r = a?.scale?.rangeMm, s = a?.scale?.mmPerPxAtMast, px = a?.imageSize?.w
-    if (r == null || !(r > 0) || !(s && s > 0) || !(px && px > 0)) return null
+    const r = a?.scale?.rangeMm, s = a?.scale?.mmPerPxAtMast
+    // The LONG EDGE, which is what SailTrimTab divides the sensor width by
+    // (`imageLongEdgePx: Math.max(w, h)`). Using `w` instead inflates this by
+    // h/w on a PORTRAIT frame — exactly 1.5 on a 3:2 body — and these stern
+    // shots are portrait, which is how four frames measured on a typed 114 mm
+    // came out of here reported as 171 and 172 and sent off to be redone.
+    const px = Math.max(a?.imageSize?.w ?? 0, a?.imageSize?.h ?? 0)
+    if (r == null || !(r > 0) || !(s && s > 0) || !(px > 0)) return null
+    // 36 mm is the rig model's default sensor width and nothing here has
+    // overridden it; a boat that did would make this read high by 36/its own.
     return (r * (36 / px)) / s      // range = mmPerPx · focal ÷ pitch
   }
 
@@ -288,7 +296,7 @@ async function main() {
     const verdict = !a ? ''
       : used == null ? '  ← measured with NO focal, so no depth correction at all'
       : Math.abs(used - (s.focalMm ?? 0)) < 2 ? '  ✓ already measured on this focal'
-      : `  ← measured on ${used.toFixed(0)} mm, so REDO it`
+      : `  ← measured on ${used.toFixed(0)} mm (${a.imageSize?.w}×${a.imageSize?.h}), so REDO it`
     console.log(`${h.when}  ${basename(s.path)}${h.burst > 1 ? ` (+${h.burst - 1} same second)` : ''}`
       + `  ${s.focalMm ?? '—'} mm${s.focal35Mm ? ` (${s.focal35Mm} at 36 mm)` : ''}${verdict}`)
     if (WRITE && !SWEEP) {
