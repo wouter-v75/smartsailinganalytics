@@ -289,7 +289,12 @@ async function main() {
   let done = 0, already = 0
   for (const h of hits) {
     const exif = (h.row.exif_data || {}) as Record<string, unknown>
-    if (exif.focalMm || exif.focal35Mm) { already++; continue }
+    // A row that already HAS the lens still gets its line. The verdict column
+    // is the redo list, and suppressing it the moment the focal is recorded
+    // meant a second run of a day already written said nothing about which
+    // frames were measured on the wrong one — which is the whole question.
+    const had = !!(exif.focalMm || exif.focal35Mm)
+    if (had) already++
     const s = h.shot
     const a = annOf(h.row)
     const used = focalUsed(a)
@@ -299,6 +304,7 @@ async function main() {
       : `  ← measured on ${used.toFixed(0)} mm (${a.imageSize?.w}×${a.imageSize?.h}), so REDO it`
     console.log(`${h.when}  ${basename(s.path)}${h.burst > 1 ? ` (+${h.burst - 1} same second)` : ''}`
       + `  ${s.focalMm ?? '—'} mm${s.focal35Mm ? ` (${s.focal35Mm} at 36 mm)` : ''}${verdict}`)
+    if (had) continue
     if (WRITE && !SWEEP) {
       const { error: uErr } = await sb.from('photos').update({
         exif_data: {
