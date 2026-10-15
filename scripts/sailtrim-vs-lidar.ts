@@ -106,7 +106,34 @@ async function main() {
     .map((x) => toLogClockMs(x, tzOffsetMin!))
   console.log(`phases   ${hhmm(first)} → ${hhmm(last)}   (log clock)`)
   console.log(`shutters ${hhmm(Math.min(...shutters))} → ${hhmm(Math.max(...shutters))}   (log clock)\n`)
-  if (shutters.every((t) => t < first || t > last)) {
+
+  // ── is this row even THIS DAY'S data? ──────────────────────────────────────
+  //
+  // `hhmm` prints time-of-day, so a row holding ANOTHER DAY's phases looks
+  // perfectly normal here — 27 Sept read "phases 10:35:19 → 13:49:01, shutters
+  // 13:43:30", every shutter apparently inside the window, and then every frame
+  // reported its nearest phase as 161509 s away. That number is 1.87 days and
+  // means exactly what it says: the row filed under 2026-09-27 holds 212 phases
+  // whose epochs are 2026-09-29, identical in count and span to the row filed
+  // under 2026-09-29. A duplicate, not a clock error — 27 Sept has no phase
+  // stats of its own, and shifting the epochs would fabricate a comparison out
+  // of another day's sailing.
+  //
+  // Worth catching here because the day-mismatch is INVISIBLE in every other
+  // symptom: a time-matched lookup simply finds nothing (which reads as "the
+  // camera was out at the wrong time"), while anything that uses the day's
+  // phases WITHOUT time-matching gets the other day's conditions and says
+  // nothing at all.
+  const phaseDay = new Date(first).toISOString().slice(0, 10)
+  if (phaseDay !== DATE) {
+    const days = Math.round((Date.parse(`${phaseDay}T00:00:00Z`) - Date.parse(`${DATE}T00:00:00Z`)) / 86_400_000)
+    console.log(`*** THE STORED PHASES ARE NOT THIS DAY'S. ***`)
+    console.log(`session_phase_stats is filed under ${DATE}, but its phase epochs land on ${phaseDay}`)
+    console.log(`— ${days > 0 ? '+' : ''}${days} day(s) out. Check whether the row for ${phaseDay} holds the same`)
+    console.log(`count and span: if it does, this is a DUPLICATE of that day and ${DATE} has no phase`)
+    console.log(`stats at all. Do not shift the epochs to make it line up — that compares this day's`)
+    console.log(`photographs against another day's sailing. Rebuild the day, or delete the row.\n`)
+  } else if (shutters.every((t) => t < first || t > last)) {
     const shift = Math.round((first - Math.max(...shutters)) / 60_000)
     console.log(`EVERY frame falls outside the phases. If that is not simply when the sailing was,`)
     console.log(`the clocks still disagree: ${shift} more minutes of offset would reach the first phase.\n`)
