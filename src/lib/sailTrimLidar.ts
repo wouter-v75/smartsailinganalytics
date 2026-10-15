@@ -103,23 +103,73 @@ export interface AngleRow {
   lidarDeg: number | null
   /** photo − lidar, degrees. Null when the lidar has nothing at that height. */
   diffDeg: number | null
+  /**
+   * Which quantity `photoDeg` is:
+   *   `foot-stored`  — the annotation's own twistFromFootDeg (v0.5 and later);
+   *   `foot-derived` — angle to the midline MINUS this sail's clew chord angle,
+   *                    recovered from the same annotation, so older frames
+   *                    compare like-for-like without being re-saved;
+   *   `centreline`   — no clew was marked, so only a sheeting angle is available
+   *                    and the diff carries the foot angle as an offset.
+   */
+  basis: 'foot-stored' | 'foot-derived' | 'centreline'
 }
 
-/** Chord angle per stripe, beside the lidar's twist at the same height. */
+/**
+ * This sail's FOOT chord angle on this frame, to convert a midline angle into a
+ * foot-referenced twist.
+ */
+function footAngleDeg(a: SailTrimAnnotation, sail: string): number | null {
+  const foot = (a.chords || []).find((c) => c.sail === sail && c.tag === 'clew')
+  return foot && Number.isFinite(foot.angleDeg) ? foot.angleDeg : null
+}
+
+/**
+ * Each stripe's TWIST, beside the lidar's twist at the same height.
+ *
+ * KND'S ZERO IS THE FOOT, and that is measured rather than assumed. It was the
+ * open question that kept this comparison on midline angles: a constant offset
+ * down the absolute angles means a different zero point, and there was no
+ * documentation of KND's. The 26 Sep 10:25 pair settles it, because one of them
+ * (10:25:33) is shot at ψ = 0.00° where the depth term drops out and the frame
+ * is exact:
+ *
+ *     main clew  -5.15°      stripe25  -2.26°   (angles to the boat's midline)
+ *     foot-referenced twist at 25 %  =  -2.26 - (-5.15)  =  2.89°
+ *     KND lidar at 25 %                                  =  2.87°
+ *
+ * 0.02° apart. Compared as midline angles the same pair is 5.06° apart, and the
+ * gap matches the clew angle to within the same 0.02°. One frame is not proof,
+ * but a 250x improvement in agreement on the best-conditioned frame available
+ * is not a coincidence either — and the ψ = 4.96° frame five seconds earlier
+ * agrees less well (0.43°), which is the direction the twist-eligibility rule
+ * predicts rather than a contradiction.
+ *
+ * So the photo side is converted to the foot basis here, from the annotation's
+ * own stored figure where it has one and from its clew chord otherwise. A frame
+ * with no clew marked falls back to the midline angle and SAYS so in `basis`,
+ * because that diff then carries the whole foot angle as an offset.
+ */
 export function angleRows(a: SailTrimAnnotation, phase: PhaseStat | null): AngleRow[] {
   const out: AngleRow[] = []
   for (const c of a.chords || []) {
     const height = LIDAR_HEIGHT_BY_TAG[c.tag]
     const kind = LIDAR_SAIL_BY_SAIL[c.sail]
     if (height == null || !kind) continue
+    const foot = footAngleDeg(a, c.sail)
+    const basis: AngleRow['basis'] = c.twistFromFootDeg != null ? 'foot-stored'
+      : foot != null ? 'foot-derived' : 'centreline'
+    const photoDeg = c.twistFromFootDeg != null ? c.twistFromFootDeg
+      : foot != null ? c.angleDeg - foot : c.angleDeg
     const lidar = phase ? phase.mean[measKey(kind, 'Tw', height)] ?? null : null
     out.push({
       sail: c.sail,
       height,
-      photoDeg: c.angleDeg,
+      photoDeg,
       photoSigmaDeg: c.angleSigmaDeg,
       lidarDeg: lidar,
-      diffDeg: lidar == null ? null : c.angleDeg - lidar,
+      diffDeg: lidar == null ? null : photoDeg - lidar,
+      basis,
     })
   }
   return out.sort((x, y) => x.sail.localeCompare(y.sail) || x.height - y.height)
