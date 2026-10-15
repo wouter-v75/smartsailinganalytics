@@ -23,7 +23,7 @@ import { computePhaseStats } from '../../../../../../../../lib/phaseStats'
 import { analyseManoeuvres } from '../../../../../../../../lib/manoeuvres'
 import { polarFromData } from '../../../../../../../../lib/polarFile'
 import {
-  STATS_VERSION, compactPhases, compactManoeuvres, medianInterval, shouldReplace, statsAreCurrent, type StoredPhase,
+  STATS_VERSION, compactPhases, compactManoeuvres, medianInterval, phasesNotOfDay, shouldReplace, statsAreCurrent, type StoredPhase,
 } from '../../../../../../../../lib/seasonCurves'
 import { carryLidar } from '../../../../../../../../lib/lidarMerge'
 
@@ -162,6 +162,24 @@ export async function POST(req: NextRequest, { params }: Params) {
       log_rows: rows.length,
       resolution_s: resolution,
     }
+  }
+
+  // THE PHASES MUST BE THIS DAY'S. The date comes from the URL and the phases from
+  // the body (or from the session's own log); nothing else lines the two up, and
+  // three stored days turned out to hold a neighbouring day's array — see
+  // phasesNotOfDay(). Refused here rather than client-side alone, because the guard
+  // has to hold for every device, including ones still running the old bundle.
+  const offDay = phasesNotOfDay(params.date, row.phases as StoredPhase[])
+  if (offDay) {
+    return NextResponse.json(
+      {
+        error: client
+          ? `the log these stats came from is not ${params.date}'s — ${offDay}. Open ${params.date} and let its log load before storing.`
+          : `the cloud log stored on the session for ${params.date} is another day's — ${offDay}. Fix the session, not the stats.`,
+        wrongDay: true,
+      },
+      { status: 409 }
+    )
   }
 
   // Lidar means may have come from another log than these stats (a start-window lidar log,

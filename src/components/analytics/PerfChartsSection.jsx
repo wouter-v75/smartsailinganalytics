@@ -170,6 +170,13 @@ function useStoredStats(boat, activeDate, polarState, rows, xmlData, override) {
   const [stored, setStored] = React.useState(null)
   const [tick, setTick] = React.useState(0)
   const localRes = React.useMemo(() => medianInterval(rows), [rows])
+  // WHICH day's log is in memory, as a value the effect below can depend on. `rows`
+  // itself is deliberately out of its deps (a new array identity every render would
+  // re-run it constantly), and that is what let the upload fire with the previous
+  // day's log still in scope — see phaseStatsUpload. The first row's clock is stable
+  // across renders and changes the moment the day's log is swapped in, so the upload
+  // that the mismatch guard refuses is retried once the right log arrives.
+  const logStart = rows?.length ? rows[0].utc : null
   const base = boat && activeDate ? `/api/teams/${boat.teamId}/boats/${boat.boatId}/phase-stats/${activeDate}` : null
 
   React.useEffect(() => {
@@ -193,7 +200,7 @@ function useStoredStats(boat, activeDate, polarState, rows, xmlData, override) {
       .then(r => { if (alive && r.stored) setTick(t => t + 1) })
       .catch(() => {})
     return () => { alive = false }
-  }, [boat, activeDate, localRes, stored, polarState.loaded, polarState.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [boat, activeDate, localRes, logStart, stored, polarState.loaded, polarState.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const current = override !== undefined ? override : stored
   return {

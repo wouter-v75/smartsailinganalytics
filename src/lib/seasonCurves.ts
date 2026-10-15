@@ -124,6 +124,37 @@ export function shouldReplace(
   return incomingRes != null && incomingRes <= existing.resolution_s * FINER
 }
 
+// ── Do these phases belong to the day they are about to be filed under? ──────
+//
+// A row is keyed by `date`; the phases inside it carry their own epochs. Nothing
+// used to make the two agree, and three times they did not: 2026-09-27 was stored
+// holding 212 phases of the 29th, 2026-10-03 holding 276 of the 2nd, 2026-09-06
+// holding 263 of the 8th — each one a byte-identical copy of the neighbour's row.
+// They came from the browser, which is handed a date and a log as two unconnected
+// arguments (uploadSessionStats): while a date switch or an import is in flight the
+// day on screen and the log in memory are briefly different days, and the upload
+// that fires in that window files one under the other.
+//
+// A mis-filing is silent in BOTH directions. Anything matching on time finds
+// nothing and reads as "the camera was out at the wrong time"; anything taking the
+// day's phases WITHOUT matching on time gets another day's conditions and reports
+// them as this day's. So it is refused here, at the point of writing, where the two
+// are side by side and the contradiction is plain.
+//
+// The epochs are venue-LOCAL wall time in epoch clothing (flatLogParse builds them
+// with Date.UTC), which is the same clock `date` is in — so reading them back as UTC
+// gives the venue's own calendar day. ANY phase starting on `date` is enough: a
+// session running through local midnight is legitimate, and only an array with no
+// phase on the day at all is a mis-filing. Audited over all 37 stored days
+// (scripts/phase-stats-day-audit.ts): 21 clean, 3 wrong, no day spanning midnight.
+export function phasesNotOfDay(date: string, phases: Pick<StoredPhase, 'u'>[] | null | undefined): string | null {
+  const days = new Set<string>()
+  for (const p of phases || []) if (Number.isFinite(p?.u)) days.add(new Date(p.u).toISOString().slice(0, 10))
+  if (!days.size || days.has(date)) return null
+  const list = Array.from(days).sort()
+  return `these phases are ${list.join(' / ')}'s, not ${date}'s`
+}
+
 // Should the charts use the stored stats instead of computing from the log on this
 // device? Only when stored came from clearly finer data with the same polar.
 export function preferStored(

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   compactPhases, expandPhases, compactManoeuvres, medianInterval, shouldReplace, preferStored,
-  seasonCurves, median, statsAreCurrent, STATS_VERSION, type StoredPhase,
+  seasonCurves, median, statsAreCurrent, phasesNotOfDay, STATS_VERSION, type StoredPhase,
 } from '../seasonCurves'
 import type { PhaseStat } from '../phaseStats'
 
@@ -129,5 +129,34 @@ describe('seasonCurves', () => {
     )
     expect(r.curves['2026'].up!.bsp).toEqual([{ x: 20, y: 11, n: 2 }])
     expect(r.phases['2026']).toBe(2)
+  })
+})
+
+// The real incident: three rows stored a neighbouring day's phases, each identical
+// in count and span to that day's own row. 2026-09-27 held 212 of the 29th's,
+// 2026-10-03 held 276 of the 2nd's, 2026-09-06 held 263 of the 8th's — written from
+// a full-resolution log by a browser whose date and log had come apart for a moment.
+describe('phasesNotOfDay', () => {
+  const day = (iso: string, hours: number[]) =>
+    hours.map(h => ({ ...sp('up', 14, 11), u: Date.parse(`${iso}T${String(h).padStart(2, '0')}:00:00Z`) }))
+
+  it('passes phases that are the day they are filed under', () => {
+    expect(phasesNotOfDay('2026-09-29', day('2026-09-29', [10, 11, 13]))).toBeNull()
+  })
+
+  it('names the day when every phase is another day — two days out, and one', () => {
+    expect(phasesNotOfDay('2026-09-27', day('2026-09-29', [10, 13])))
+      .toBe("these phases are 2026-09-29's, not 2026-09-27's")
+    expect(phasesNotOfDay('2026-10-03', day('2026-10-02', [10, 13])))
+      .toBe("these phases are 2026-10-02's, not 2026-10-03's")
+  })
+
+  it('allows a session running through local midnight — one phase on the day is enough', () => {
+    expect(phasesNotOfDay('2026-09-29', [...day('2026-09-29', [22, 23]), ...day('2026-09-30', [0, 1])])).toBeNull()
+  })
+
+  it('has nothing to say about an empty array — a day with no phases is not a mis-filing', () => {
+    expect(phasesNotOfDay('2026-09-27', [])).toBeNull()
+    expect(phasesNotOfDay('2026-09-27', null)).toBeNull()
   })
 })
