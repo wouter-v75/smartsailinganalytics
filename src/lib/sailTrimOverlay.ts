@@ -60,8 +60,24 @@ export interface AnnotationChord {
   /** The sail's width there, m, and where the number came from. */
   widthM: number
   widthSource: 'certificate' | 'interpolated'
+  /** The chord's angle to the BOAT'S MIDLINE. Kept because it is what was
+   *  actually measured and carries no datum error — but it is a SHEETING angle,
+   *  not twist, and must not be presented as one. */
   angleDeg: number
   angleSigmaDeg: number
+  /**
+   * THE STRIPE'S TWIST, in the North / Sail Vision sense: the chord angle
+   * referenced to this sail's own FOOT (the clew-to-tack plane), zero at the
+   * foot and opening positive with height. See `stripeTwists`.
+   *
+   * Absent on frames saved before v0.5, where only `angleDeg` existed and the
+   * table labelled it "Twist" — which it never was.
+   */
+  twistFromFootDeg?: number
+  twistFromFootSigmaDeg?: number
+  /** False when no clew/boom was marked and the lowest stripe stood in as the
+   *  datum, in which case every twist here is understated. */
+  twistDatumIsFoot?: boolean
   /** The luff's own offset from the centreplane — forestay SAG for a jib —
    *  or null when the luff was not marked and the chord assumed it was zero. */
   luffMm: number | null

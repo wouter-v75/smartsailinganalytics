@@ -236,8 +236,10 @@ describe('PhotoDetail — sail geometry', () => {
     expect(within(box).getByText('25 %')).toBeTruthy()
     // Chord angle per station. An interpolated width is starred where it is
     // used — the metres themselves are no longer a column, by request.
-    expect(within(box).getByText('8.3°*')).toBeTruthy()       // interpolated width
-    expect(within(box).getByText('15.0°')).toBeTruthy()       // certificate width
+    // `~` marks a pre-v0.5 annotation, whose only angle was to the boat's
+    // midline — a sheeting angle, not twist. `*` is still the interpolated width.
+    expect(within(box).getByText('~8.3°*')).toBeTruthy()      // interpolated width
+    expect(within(box).getByText('~15.0°')).toBeTruthy()      // certificate width
     expect(within(box).getByText('± 0.18')).toBeTruthy()
     // The twist BETWEEN stations, under the table.
     expect(within(box).getByText(/25→50 \+6\.72°/)).toBeTruthy()

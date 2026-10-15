@@ -209,3 +209,108 @@ describe('whether one frame can carry a twist number', () => {
     expect(e.worstDeg!).toBeGreaterThan(depthTwistErrorDeg({ psiDeg: 2, heelDeg: 18, ...ST }))
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A STRIPE's twist: the North / Sail Vision definition.
+//
+// Referenced to the sail's own FOOT — the clew-to-tack plane — not to the
+// boat's midline. North's SailScan lists "TWIST — how the top opens relative to
+// the boom" and tells the photographer to get the boom's centre in frame
+// because it is needed for the twist profile; Sail Vision's reports accumulate
+// pairwise twists from the foot stripe, which is 0 by definition. Only VSPARS
+// reports an angle to the boat centreline, and that is a SHEETING angle.
+//
+// The midline is the wrong datum because it is not the sail's: ease the
+// traveller three degrees and every centreline-referenced angle moves three
+// degrees while the sail's shape is untouched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { stripeTwists } from '../sailTwist'
+
+describe('stripeTwists', () => {
+  const angles = stationAngles('main', MAIN, [
+    at('clew', 1000), at('stripe25', 1200), at('stripe50', 1400), at('stripe75', 1500),
+  ])
+
+  it('reads ZERO at the foot, which is the datum everything else is against', () => {
+    const foot = stripeTwists(angles, true).find((s) => s.tag === 'clew')!
+    expect(foot.twistDeg).toBe(0)
+    // And it carries no error, because it is zero by definition rather than
+    // by measurement.
+    expect(foot.sigmaDeg).toBe(0)
+    expect(foot.datumIsFoot).toBe(true)
+  })
+
+  it('opens positive with height', () => {
+    const st = stripeTwists(angles, true)
+    const by = (t: string) => st.find((s) => s.tag === t)!.twistDeg
+    expect(by('stripe25')).toBeGreaterThan(0)
+    expect(by('stripe50')).toBeGreaterThan(by('stripe25'))
+    expect(by('stripe75')).toBeGreaterThan(by('stripe50'))
+  })
+
+  it('is the chord angle MINUS the foot’s, not the raw angle to the midline', () => {
+    const st = stripeTwists(angles, true)
+    const foot = angles.find((a) => a.tag === 'clew')!
+    for (const s of st) {
+      const a = angles.find((x) => x.tag === s.tag)!
+      expect(s.twistDeg).toBeCloseTo(a.angle.deg - foot.angle.deg, 9)
+      // The distinction that matters: the stripe's own angle to the boat's
+      // midline is a DIFFERENT number, and bigger.
+      if (s.tag !== 'clew') expect(Math.abs(a.angle.deg)).toBeGreaterThan(Math.abs(s.twistDeg))
+    }
+  })
+
+  it('is EXACTLY unmoved by sheeting the whole sail out, which the midline angle is not', () => {
+    // The argument for the foot datum, as arithmetic — and it has to model
+    // sheeting correctly to make the point. Easing the traveller ROTATES the
+    // sail about the mast, so every chord's angle shifts by the same delta; it
+    // does not add the same millimetres to every station (a rotation moves a
+    // station by its DEPTH times delta, and the stations are at very different
+    // depths). So rotate each station's chord by 4 deg and rebuild its offset.
+    const DELTA = 4
+    const g = { clew: 10.33, stripe25: (10.33 + 7.04) / 2, stripe50: 7.04, stripe75: 4.93 }
+    const rotate = (tag: keyof typeof g, mm: number) => {
+      const width = g[tag] * 1000
+      return Math.sin(Math.asin(mm / width) + (DELTA * Math.PI) / 180) * width
+    }
+    const eased = stationAngles('main', MAIN, [
+      at('clew', rotate('clew', 1000)), at('stripe25', rotate('stripe25', 1200)),
+      at('stripe50', rotate('stripe50', 1400)), at('stripe75', rotate('stripe75', 1500)),
+    ])
+    // Every raw angle to the midline has moved by the full 4 deg...
+    for (const b of angles) {
+      const a = eased.find((x) => x.tag === b.tag)!
+      expect(a.angle.deg - b.angle.deg).toBeCloseTo(DELTA, 6)
+    }
+    // ...and not one twist figure has moved at all. The shape did not change,
+    // and the foot-referenced twist is the only column that says so.
+    const before = stripeTwists(angles, true), after = stripeTwists(eased, true)
+    for (const b of before) {
+      expect(after.find((x) => x.tag === b.tag)!.twistDeg).toBeCloseTo(b.twistDeg, 6)
+    }
+  })
+
+  it('flags a stand-in datum when no clew was marked', () => {
+    const noClew = stationAngles('main', MAIN, [at('stripe25', 1200), at('stripe50', 1400)])
+    const st = stripeTwists(noClew, true)
+    expect(st.every((s) => s.datumIsFoot)).toBe(false)
+    expect(st.find((s) => s.tag === 'stripe25')!.twistDeg).toBe(0)
+  })
+
+  it('agrees with the pairwise rows, since both are differences of the same angles', () => {
+    const st = stripeTwists(angles, true)
+    const rows = twistBetween(angles, true)
+    for (const r of rows) {
+      const lo = st.find((s) => s.tag === r.from)!, hi = st.find((s) => s.tag === r.to)!
+      expect(hi.twistDeg - lo.twistDeg).toBeCloseTo(r.twistDeg, 9)
+    }
+  })
+
+  it('reads the same on both tacks with no tack known', () => {
+    const port = stationAngles('main', MAIN, [at('clew', 400), at('stripe50', 1400)])
+    const stbd = stationAngles('main', MAIN, [at('clew', -400), at('stripe50', -1400)])
+    expect(stripeTwists(port, false).find((s) => s.tag === 'stripe50')!.twistDeg)
+      .toBeCloseTo(stripeTwists(stbd, false).find((s) => s.tag === 'stripe50')!.twistDeg, 9)
+  })
+})

@@ -84,10 +84,14 @@ describe('SailGeometryCard — the Twist box', () => {
     render(<SailGeometryCard annotation={withChords} />)
     const box = screen.getByTestId('sailgeom-twist')
     // An interpolated width is flagged where it is used, not in a footnote.
-    expect(within(box).getByText('10.2°*')).toBeTruthy()
-    expect(within(box).getByText('16.3°')).toBeTruthy()
+    // `~` because this fixture is a pre-v0.5 annotation: it stored only the
+    // chord's angle to the BOAT'S MIDLINE, which is a sheeting angle and not
+    // twist. The figure is shown rather than hidden, marked so nobody reads it
+    // as twist, and a re-save turns it into one. See twistCell.
+    expect(within(box).getByText('~10.2°*')).toBeTruthy()
+    expect(within(box).getByText('~16.3°')).toBeTruthy()
     // The main's clew, on the bottom row, to windward in light air.
-    expect(within(box).getByText('-3.8°')).toBeTruthy()
+    expect(within(box).getByText('~-3.8°')).toBeTruthy()
     expect(within(box).getByText('± 0.13')).toBeTruthy()
     // 5 stations x 6 cells = 30, less 6: each chord fills its angle and its
     // accuracy. The two DRAFT columns stay dashed — depth needs several frames.
@@ -162,7 +166,8 @@ describe('SailGeometryCard — lidar columns', () => {
     expect(screen.getByText(/Lidar Twist Main/)).toBeTruthy()
     const row = screen.getByText('50 %').closest('tr')!
     // Photo beside lidar: 9.9° against 9.4°, and 10.4 % against 11.2 %.
-    expect(within(row).getByText('9.9°')).toBeTruthy()
+    // `~`: pre-v0.5 annotation, so the photo column is still the midline angle.
+    expect(within(row).getByText('~9.9°')).toBeTruthy()
     expect(within(row).getByText('9.4°')).toBeTruthy()
     expect(within(row).getByText('10.4 %')).toBeTruthy()
     expect(within(row).getByText('11.2 %')).toBeTruthy()
@@ -174,7 +179,39 @@ describe('SailGeometryCard — lidar columns', () => {
     mockPhase = { mean: { mnTw25: 3.0 } }
     render(<SailGeometryCard annotation={withChordsAndCamber()} sessionDate="2026-09-26" takenUtc="2026-09-26T10:25:28Z" />)
     const row = screen.getByText('50 %').closest('tr')!
-    expect(within(row).getByText('9.9°')).toBeTruthy()      // the photo is still there
+    expect(within(row).getByText('~9.9°')).toBeTruthy()     // the photo is still there
     expect(screen.getByText(/Lidar Twist Main/)).toBeTruthy()
+  })
+})
+
+describe('SailGeometryCard — a stripe’s twist', () => {
+  // The North / Sail Vision definition: referenced to the sail's own FOOT, the
+  // clew-to-tack plane. A v0.5 annotation carries it, and then the Twist column
+  // shows it unmarked — no tilde, because it really is twist.
+  it('shows the foot-referenced twist when the annotation has one', () => {
+    const ann = base({
+      version: 'sailtrim-v0.5-twist-from-foot',
+      chords: [
+        { sail: 'main', tag: 'clew', fraction: 0, chordMm: 1000, widthM: 10.33,
+          widthSource: 'certificate', angleDeg: 5.6, angleSigmaDeg: 0.2,
+          luffMm: null, twistFromFootDeg: 0, twistFromFootSigmaDeg: 0, twistDatumIsFoot: true },
+        { sail: 'main', tag: 'stripe50', fraction: 0.5, chordMm: 1400, widthM: 7.04,
+          widthSource: 'certificate', angleDeg: 11.5, angleSigmaDeg: 0.3,
+          luffMm: null, twistFromFootDeg: 5.9, twistFromFootSigmaDeg: 0.36, twistDatumIsFoot: true },
+      ] as never,
+    })
+    render(<SailGeometryCard annotation={ann} />)
+    const box = screen.getByTestId('sailgeom-twist')
+    // The stripe's TWIST, not its 11.5° angle to the midline — and the foot
+    // reads 0, which is the datum the 5.9 is against rather than a missing
+    // value. No tilde: this annotation really does carry twist.
+    expect(within(box).getByText('5.9°')).toBeTruthy()
+    expect(within(box).getByText('0.0°')).toBeTruthy()
+    expect(within(box).queryByText('~5.9°')).toBeNull()
+    // The midline angle is NOT on the card. It is a sheeting angle, this card
+    // is the read-only summary of a photo's SHAPE, and showing both in a
+    // four-column strip is how the two got confused in the first place. The
+    // measuring tab carries it under its own heading for anyone who wants it.
+    expect(within(box).queryByText('11.5°')).toBeNull()
   })
 })

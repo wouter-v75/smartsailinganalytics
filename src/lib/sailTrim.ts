@@ -1241,7 +1241,7 @@ export interface SailTrimResult {
  *                  longer inflated by the product of its baseline's two depth
  *                  factors — 45 % at a 25 m range, 1.3 % at 260 m
  */
-export const SAILTRIM_VERSION = 'sailtrim-v0.4-twist-relative'
+export const SAILTRIM_VERSION = 'sailtrim-v0.5-twist-from-foot'
 
 export function toCsv(r: SailTrimResult): string {
   const head = [

@@ -1063,8 +1063,12 @@ describe('SailTrimTab', () => {
       expect(within(box).getByText(station)).toBeTruthy()
     }
     // Every cell is a dash rather than the table being absent: 5 stations
-    // (25/50/75/87.5 % and the clew) x (2 angles + 2 drafts + 2 accuracies).
-    expect(within(box).getAllByText('—').length).toBe(30)
+    // (25/50/75/87.5 % and the clew) x (2 twists + 2 angles to the centreline
+    // + 2 drafts + 2 accuracies). Eight columns, not six: a stripe's TWIST is
+    // referenced to its sail's own foot, and the angle to the boat's MIDLINE —
+    // which used to occupy the twist columns — is a sheeting angle shown
+    // separately under its own name.
+    expect(within(box).getAllByText('—').length).toBe(40)
     // And it says WHY, naming the first thing to fix, per sail.
     expect(within(box).getAllByText(/no boat named/).length).toBe(2)
   })
@@ -1122,10 +1126,12 @@ describe('SailTrimTab', () => {
     // reported — and it says so rather than letting 25→50 look like the lowest
     // twist in the sail.
     expect(box.textContent).toMatch(/no clew\/boom mark, so the lowest step is missing/)
-    // The main has no stripes marked, so its column is dashes and it says why;
+    // The main has no stripes marked, so its columns are dashes and it says why;
     // the jib's 87.5 % and clew rows are dashed too, neither being marked here.
     // Both DRAFT columns are dashes throughout: one frame cannot give depth.
-    expect(within(box).getAllByText('—').length).toBe(24)
+    // 31 and not 24 because of the two new centreline-angle columns — ten more
+    // cells, of which the jib's three marked stations fill in, leaving seven.
+    expect(within(box).getAllByText('—').length).toBe(31)
     expect(within(box).getByText(/no stripe stations marked on this sail/)).toBeTruthy()
   })
 

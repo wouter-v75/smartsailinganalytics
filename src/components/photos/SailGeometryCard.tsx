@@ -102,6 +102,21 @@ export default function SailGeometryCard({
               looked like the new format had not shipped. */}
           {(() => {
             const chords = annotation.chords || []
+            /**
+             * A stripe's TWIST, against its sail's own foot.
+             *
+             * `~` marks a frame saved before v0.5, which stored only the angle
+             * to the boat's midline. That is a sheeting angle, so the figure is
+             * shown rather than hidden but must not be read as twist — re-save
+             * the frame and it becomes one.
+             */
+            const twistCell = (c: { angleDeg: number; widthSource: string; twistFromFootDeg?: number } | null) => {
+              if (!c) return '\u2014'
+              const star = c.widthSource === 'interpolated' ? '*' : ''
+              return c.twistFromFootDeg == null
+                ? `~${c.angleDeg.toFixed(1)}\u00b0${star}`
+                : `${c.twistFromFootDeg.toFixed(1)}\u00b0${star}`
+            }
             const cell = (sail: string, tag: string) =>
               chords.find((c) => c.sail === sail && c.tag === tag) || null
             // Depth, solved across SEVERAL frames and stored on each of them —
@@ -131,6 +146,15 @@ export default function SailGeometryCard({
                 <thead>
                   <tr>
                     <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Stripe</th>
+                    {/* TWIST referenced to each sail's own FOOT — the
+                        clew-to-tack plane — which is the North / Sail Vision
+                        definition. These two columns used to hold the angle to
+                        the BOAT'S MIDLINE under this heading, which is a
+                        sheeting angle and not twist: ease the traveller three
+                        degrees and all of it moved while the sail's shape was
+                        untouched. Frames measured before v0.5 carry no
+                        foot-referenced figure, so they fall back to it and are
+                        marked. */}
                     <th style={th}>Twist Main</th>
                     <th style={th}>Twist Jib</th>
                     {lidar && <th style={thL}>Lidar Twist Main</th>}
@@ -149,8 +173,8 @@ export default function SailGeometryCard({
                     return (
                       <tr key={r.key} style={{ borderTop: '1px solid #123253' }}>
                         <td style={{ fontSize: 10.5, color: '#94A3B8', padding: '2px 0' }}>{r.short}</td>
-                        <td style={td}>{m ? `${m.angleDeg.toFixed(1)}°${m.widthSource === 'interpolated' ? '*' : ''}` : '—'}</td>
-                        <td style={td}>{j ? `${j.angleDeg.toFixed(1)}°${j.widthSource === 'interpolated' ? '*' : ''}` : '—'}</td>
+                        <td style={td}>{twistCell(m)}</td>
+                        <td style={td}>{twistCell(j)}</td>
                         {lidar && <td style={tdL}>{deg(lidarCell(lidar, 'main', r.key, 'twist'))}</td>}
                         {lidar && <td style={tdL}>{deg(lidarCell(lidar, 'jib', r.key, 'twist'))}</td>}
                         <td style={td}>{draft('main', r.key)}</td>

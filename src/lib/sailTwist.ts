@@ -440,3 +440,81 @@ export function twistEligibility(args: {
       + `${worstDeg.toFixed(2)}° of chord angle, against ${maxDeg.toFixed(2)}° allowed. `
       + 'Measure the depths with a three-frame set (sailtrim-triangulate), or shoot it square astern.' }
 }
+
+// ── a STRIPE's twist: the North / Sail Vision definition ────────────────────
+//
+// A stripe's own twist is its chord angle referenced to THE SAIL'S OWN FOOT —
+// the clew-to-tack plane — not to the boat's midline. Zero at the foot, opening
+// positive with height. This is what the trade means and what the reports say:
+//
+//   · North's SailScan lists "TWIST — how the top opens relative to the boom",
+//     and their photo guidance insists the centre of the boom is in frame
+//     BECAUSE it is needed to compute the twist profile.
+//   · Sail Vision's reports (the three formats in sailScanParse) carry pairwise
+//     twists accumulated from the FOOT stripe, which is 0 by definition, plus a
+//     `Twist (total)`. The boat centreline never appears.
+//   · Only VSPARS reports an angle to the boat centreline — and it is not
+//     calling that twist; it is the absolute stripe angle, which is a SHEETING
+//     angle with twist as its difference.
+//
+// WHY THE BOAT'S MIDLINE IS THE WRONG DATUM. It is not the sail's datum. Ease
+// the traveller three degrees and every centreline-referenced angle moves three
+// degrees while the sail's shape is untouched — so a centreline reference mixes
+// SHEETING into what you want to read as SHAPE. It bites harder on the jib,
+// whose foot is sheeted well off the centreline, than on the main.
+//
+// WHAT IT COSTS. The foot plane is itself measured, so its error lands on every
+// stripe. Baraka's boom mark is ±30 mm and her clew ±108 mm, which on a jib foot
+// is about 0.7° added to each absolute figure. That is the price of the right
+// definition, and it is why `angleDeg` — the raw angle to the centreline — is
+// kept alongside rather than replaced: it carries neither the foot's error nor
+// its meaning, and the pairwise twists between stripes carry neither either,
+// since a common datum cancels in a difference.
+
+export interface StripeTwist {
+  sail: 'main' | 'jib'
+  tag: TwistTag
+  fraction: number
+  /** Degrees open relative to this sail's FOOT chord. 0 at the foot itself. */
+  twistDeg: number
+  sigmaDeg: number
+  /** The station the foot was taken from. */
+  datumTag: TwistTag
+  /** False when no clew/boom was marked and the lowest stripe stood in. */
+  datumIsFoot: boolean
+}
+
+/**
+ * Each stripe's twist, referenced to the sail's own foot.
+ *
+ * `leewardPositive` as elsewhere: with a tack known the angles are already in
+ * the boat's frame; without one the profile is flipped on the bottom-to-top
+ * trend so "opening" is positive on either tack.
+ *
+ * With no clew/boom marked the lowest stripe becomes the datum and
+ * `datumIsFoot` is false — every figure is then understated by however much the
+ * sail twists below that stripe, which is not zero, and the caller must say so.
+ */
+export function stripeTwists(angles: StationAngle[], leewardPositive = false): StripeTwist[] {
+  const sorted = [...angles].sort((a, b) => a.fraction - b.fraction)
+  if (!sorted.length) return []
+  const clew = sorted.find((a) => a.tag === 'clew') ?? null
+  const datum = clew ?? sorted[0]
+  const flip = leewardPositive
+    ? 1
+    : (sorted.length < 2 ? 1
+      : (Math.sign(sorted[sorted.length - 1].angle.deg - sorted[0].angle.deg) || 1))
+  return sorted.map((a) => ({
+    sail: a.sail,
+    tag: a.tag,
+    fraction: a.fraction,
+    twistDeg: flip * (a.angle.deg - datum.angle.deg),
+    // At the datum itself the twist is 0 BY DEFINITION, so it carries no error.
+    // Elsewhere the datum's error is common to every stripe — correlated, not
+    // independent — but quoted per stripe it is what a reader of one figure
+    // needs.
+    sigmaDeg: a === datum ? 0 : Math.hypot(a.angle.sigmaDeg, datum.angle.sigmaDeg),
+    datumTag: datum.tag,
+    datumIsFoot: !!clew,
+  }))
+}

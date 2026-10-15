@@ -46,7 +46,7 @@ import {
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
-import { stationAngles, twistBetween, twistEligibility, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
+import { stationAngles, twistBetween, stripeTwists, twistEligibility, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
 import { fitCamber, type CamberFit } from '../../lib/sailCamber';
 import { loadLenses, rememberLens, forgetLens, lensLabel, isZoomLabel, type Lens } from '../../lib/lensPrefs';
 import {
@@ -1230,6 +1230,7 @@ export default function SailTrimTab(
     const out: {
       sail: 'main' | 'jib'
       rows: ReturnType<typeof twistBetween>
+      stripes: ReturnType<typeof stripeTwists>
       hasClew: boolean
       eligible: ReturnType<typeof twistEligibility>
       angles: ReturnType<typeof stationAngles>
@@ -1312,6 +1313,10 @@ export default function SailTrimTab(
         // makes the angles leeward-positive when it is known; without one
         // twistBetween flips on the bottom-to-top trend.
         sail, angles, rows: twistBetween(angles, tack != null),
+        // A stripe's own twist is referenced to THE SAIL'S FOOT, not the boat's
+        // midline — the North / Sail Vision definition. The midline mixes
+        // sheeting angle into what should read as shape.
+        stripes: stripeTwists(angles, tack != null),
         hasClew: angles.some((a) => a.tag === 'clew'),
         // ONE FRAME IS ONLY ENOUGH SQUARE ASTERN. The leech offset carries a
         // d·sinψ term, and d — the station's depth abaft the mast — is the one
@@ -1630,6 +1635,9 @@ export default function SailTrimTab(
         widthM: a.width.m,
         widthSource: a.width.source,
         angleDeg: a.angle.deg,
+        twistFromFootDeg: t.stripes.find((x) => x.tag === a.tag)?.twistDeg,
+        twistFromFootSigmaDeg: t.stripes.find((x) => x.tag === a.tag)?.sigmaDeg,
+        twistDatumIsFoot: t.stripes.find((x) => x.tag === a.tag)?.datumIsFoot,
         angleSigmaDeg: a.angle.sigmaDeg,
         luffMm: a.luffMm ?? null,
         luffSource: a.luffSource ?? 'assumed-zero',
@@ -2778,6 +2786,17 @@ export default function SailTrimTab(
               {(() => {
                 const cell = (sail: string, tag: string) =>
                   twist.find((x) => x.sail === sail)?.angles.find((a) => a.tag === tag) ?? null;
+                // The stripe's TWIST — referenced to this sail's own foot. The
+                // foot reads 0 by definition, so it is shown as 0 rather than
+                // blank: that zero is the datum every other figure is against.
+                const twistCell = (sail: string, tag: string) => {
+                  const st = twist.find((x) => x.sail === sail)?.stripes.find((a) => a.tag === tag);
+                  if (!st) return '\u2014';
+                  const w = cell(sail, tag);
+                  return `${st.twistDeg >= 0 ? '' : '-'}${Math.abs(st.twistDeg).toFixed(1)}\u00b0`
+                    + `${w?.width.source === 'interpolated' ? '*' : ''}`
+                    + `${st.datumIsFoot ? '' : '\u2191'}`;
+                };
                 const draftAt = (sail: string, tag: string) => {
                   const c = camberFits.find((x) => x.sail === sail && x.tag === tag);
                   return c ? `~${(c.fit.camber * 100).toFixed(1)} %${c.fit.spansDraft ? '' : '\u2193'}` : '\u2014';
@@ -2790,8 +2809,18 @@ export default function SailTrimTab(
                     <thead>
                       <tr>
                         <th style={{ ...th, textAlign: 'left', paddingLeft: 0 }}>Stripe</th>
+                        {/* TWIST is referenced to each sail's own FOOT — the
+                            clew-to-tack plane — which is the North / Sail Vision
+                            definition and the only one the trade uses. The angle
+                            to the boat's MIDLINE is a sheeting angle and used to
+                            sit in these two columns under the heading "Twist",
+                            which it never was. It is still shown, named for what
+                            it is, because it is what was measured and it carries
+                            no datum error. */}
                         <th style={th}>Twist Main</th>
                         <th style={th}>Twist Jib</th>
+                        <th style={th}>∠ to c/l Main</th>
+                        <th style={th}>∠ to c/l Jib</th>
                         <th style={th}>Draft Main</th>
                         <th style={th}>Draft Jib</th>
                         <th style={th}>Accuracy Main</th>
@@ -2807,8 +2836,10 @@ export default function SailTrimTab(
                         return (
                           <tr key={t.key} style={{ borderTop: '1px solid #123253' }}>
                             <td style={{ fontSize: 11.5, color: '#94A3B8', padding: '3px 0' }}>{t.short}</td>
-                            <td style={td}>{m ? `${m.angle.deg.toFixed(1)}°${m.width.source === 'interpolated' ? '*' : ''}` : '—'}</td>
-                            <td style={td}>{j ? `${j.angle.deg.toFixed(1)}°${j.width.source === 'interpolated' ? '*' : ''}` : '—'}</td>
+                            <td style={td}>{twistCell('main', t.key)}</td>
+                            <td style={td}>{twistCell('jib', t.key)}</td>
+                            <td style={tdSig}>{m ? `${m.angle.deg.toFixed(1)}°${m.width.source === 'interpolated' ? '*' : ''}` : '—'}</td>
+                            <td style={tdSig}>{j ? `${j.angle.deg.toFixed(1)}°${j.width.source === 'interpolated' ? '*' : ''}` : '—'}</td>
                             {/* DRAFT — the sail's depth as a percentage of chord.
                                 It needs SEVERAL frames: one view gives a dot's
                                 athwartships offset, which mixes how far along the
