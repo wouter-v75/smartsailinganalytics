@@ -315,3 +315,94 @@ export function twistBetween(angles: StationAngle[], leewardPositive = false): T
   }
   return out
 }
+
+// ── twist FROM THE BOOM, which is what the word means ───────────────────────
+//
+// `twistBetween` above gives the opening between each ADJACENT pair, which is
+// what the sailmakers' reports tabulate and what `sailVisionTwistCheck` adds up.
+// It is not what a trimmer means by "twist", and it is not what the literature
+// means either: twist is measured against the BOOM.
+//
+//   Wikipedia, Sail twist: twist is measured by comparing the angle of a
+//   straight line between the luff and the leech with that of the boom.
+//   SailZing's worked example reads 5 deg at the bottom, 10 deg in the middle
+//   and 20 deg at the top — one cumulative figure per station, all positive,
+//   all against the boom.
+//
+// Taking the boom as the zero is also what fixes the sign. The datum's own
+// chord angle can be NEGATIVE — in light air the boom and the lowest stations
+// sit to WINDWARD of the centreline while the head falls away to leeward — and
+// an absolute angle then reads negative for a sail that is twisting perfectly
+// normally. Subtracting the datum removes that entirely: the answer is how far
+// the sail has opened RELATIVE TO ITS OWN FOOT, which is positive whenever the
+// leech opens with height, wherever the boom happens to be.
+//
+// Note what is deliberately NOT done here: the result is not passed through
+// Math.abs. A negative figure after the datum is subtracted is a leech that
+// CLOSES as it rises — a hooked or over-sheeted top — which is a real trim
+// fault and worth seeing. Forcing the sign positive would report the worst
+// leech on the boat as though it were the best.
+//
+// For the main the foot chord IS the boom (mast to clew), so the datum angle is
+// the boom angle and this is the textbook definition exactly. For the jib it is
+// the tack-to-clew chord, which is the same construction one sail along.
+
+export interface TwistProfile {
+  /** The station every twist is measured FROM. Null when none could be had. */
+  datum: StationAngle | null
+  /** Why that station is the datum, for the operator. */
+  datumNote: string
+  rows: TwistRow[]
+}
+
+/**
+ * Twist at every station, measured from the clew/boom.
+ *
+ * Stations come in from `stationAngles`, which only ever returns stations that
+ * were MARKED — see its own note. Nothing here extends the leech above the
+ * highest mark or interpolates a station that was not clicked: a sail marked at
+ * the clew and 25 % yields exactly one twist figure, not four.
+ *
+ * `leewardPositive` as in `twistBetween`: when the tack was known the angles are
+ * already in the boat's frame and the difference is the answer. Without a tack
+ * the sign only says which way round the photograph is, so the profile is
+ * flipped into the frame of whichever station is furthest from the centreplane
+ * — which is the head in any normal trim — before the datum is taken off.
+ */
+export function twistFromDatum(angles: StationAngle[], leewardPositive = false): TwistProfile {
+  const sorted = [...angles].sort((a, b) => a.fraction - b.fraction)
+  if (!sorted.length) return { datum: null, datumNote: 'no stations measured', rows: [] }
+
+  const clew = sorted.find((a) => a.tag === 'clew') ?? null
+  const datum = clew ?? sorted[0]
+  const datumNote = clew
+    ? 'measured from the clew (the boom, for the main), which is twist as it is normally defined'
+    : `no clew mark, so measured from ${datum.tag} — every figure is this much too SMALL, `
+      + 'because the twist below the lowest mark is missing rather than zero'
+
+  // Without a tack, put the profile the same way round on either tack first.
+  const flip = leewardPositive
+    ? 1
+    : (() => {
+      const far = sorted.reduce((m, a) => (Math.abs(a.angle.deg) > Math.abs(m.angle.deg) ? a : m), sorted[0])
+      return Math.sign(far.angle.deg) || 1
+    })()
+
+  const rows: TwistRow[] = []
+  for (const a of sorted) {
+    if (a === datum) continue
+    rows.push({
+      sail: a.sail,
+      from: datum.tag, to: a.tag,
+      fromDeg: datum.angle.deg, toDeg: a.angle.deg,
+      twistDeg: flip * (a.angle.deg - datum.angle.deg),
+      // The datum's own error is COMMON to every row, so the rows are
+      // correlated — they all move together if the boom mark is off. Added in
+      // quadrature anyway, which is right for each row taken alone and is what
+      // a reader comparing one station against another needs.
+      sigmaDeg: Math.hypot(datum.angle.sigmaDeg, a.angle.sigmaDeg),
+      interpolated: datum.width.source === 'interpolated' || a.width.source === 'interpolated',
+    })
+  }
+  return { datum, datumNote, rows }
+}
