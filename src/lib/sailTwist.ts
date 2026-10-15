@@ -333,3 +333,110 @@ export function twistBetween(angles: StationAngle[], leewardPositive = false): T
   }
   return out
 }
+
+// ── when is ONE frame enough? ───────────────────────────────────────────────
+//
+// Wouter, 15 Oct: show twist from a single shot when the picture is taken
+// directly from astern (psi = 0 +/- 1 deg), and require three frames minimum
+// off the centreline. It makes sense, and it is worth writing down WHY, because
+// the reason is a derivative rather than a convention.
+//
+// A leech point's athwartships offset comes off the picture as
+//
+//     Y = (du.s + d.sin psi.cos phi) / cos psi
+//
+// where d is that station's own depth abaft the mast. d is NOT knowable from one
+// photograph — it is exactly what `sailtrim-triangulate` solves from several —
+// so a single frame has to take it from the rig model, where an unmeasured
+// station is a +/-1500-2500 mm guess.
+//
+//     dY/dd = tan psi . cos phi
+//
+// At psi = 0 that is ZERO. The depth guess cannot touch the answer however bad
+// it is, so one frame is not a compromise there — it is exact, and no number of
+// extra frames would improve it. Off the centreline the same guess walks
+// straight into Y, scaled by tan psi, and the only cure is to measure d, which
+// takes three views (two are refused outright: their residual is zero by
+// construction).
+//
+// The 1 deg bar follows from the arithmetic rather than being chosen. With a
+// 2500 mm depth guess on Northstar's main at the 50 % stripe, the depth term is
+// worth about 0.35 deg of chord angle at psi = 1, which sits just under the
+// 0.3-0.9 deg the rest of the twist pipeline already carries — and about
+// 1.8 deg at psi = 5, which is larger than the twist differences anyone is
+// trying to read. So 1 deg is roughly where this error stops being the biggest
+// one in the measurement.
+
+/**
+ * Degrees of chord-angle error a station's DEPTH uncertainty causes, at this ψ.
+ *
+ * Zero at ψ = 0 by construction, not by convention — see above.
+ */
+export function depthTwistErrorDeg(args: {
+  psiDeg: number
+  heelDeg: number | null
+  /** 1σ on the station's depth abaft the mast, mm. */
+  depthSigmaMm: number
+  /** The sail's width at that station, metres. */
+  widthM: number
+  /** The measured leech offset there, mm. */
+  leechMm: number
+}): number {
+  const { psiDeg, heelDeg, depthSigmaMm, widthM, leechMm } = args
+  const g = widthM * 1000
+  if (!(g > 0) || !(depthSigmaMm > 0)) return 0
+  const root = Math.sqrt(Math.max(g * g - leechMm * leechMm, 1))
+  const dYdd = Math.abs(Math.tan(psiDeg * DEG)) * Math.abs(Math.cos((heelDeg ?? 0) * DEG))
+  return (dYdd * depthSigmaMm) / root / DEG
+}
+
+export interface TwistEligibility {
+  ok: boolean
+  code: 'no-psi' | 'astern' | 'depths-measured' | 'needs-frames'
+  note: string
+  /** The worst station's depth-induced error, degrees. Null when unknowable. */
+  worstDeg: number | null
+}
+
+/** Whether this frame alone can carry a twist number. */
+export function twistEligibility(args: {
+  psiDeg: number | null
+  psiMeasured: boolean
+  /** Per station: its depth sigma and where the chord angle came from. */
+  stations: { depthSigmaMm: number; widthM: number; leechMm: number }[]
+  heelDeg?: number | null
+  /** How much depth-induced error is tolerable before three frames are wanted. */
+  maxDeg?: number
+  /** True when the station depths were solved from a multi-frame set. */
+  depthsFromSet?: boolean
+}): TwistEligibility {
+  const { psiDeg, psiMeasured, stations, heelDeg = null, maxDeg = 0.5, depthsFromSet = false } = args
+
+  // An UNMEASURED ψ has no side — `psiFromHeelShortening` documents itself as
+  // indicative only — so it cannot be claimed to be zero either.
+  if (psiDeg == null || !psiMeasured) {
+    return { ok: false, code: 'no-psi', worstDeg: null,
+      note: 'ψ has not been measured off a centreplane baseline, so there is no way to tell whether '
+        + 'this frame is square astern. Mark the baseline, or use a three-frame set.' }
+  }
+
+  const worstDeg = stations.length
+    ? Math.max(...stations.map((st) => depthTwistErrorDeg({ psiDeg, heelDeg, ...st })))
+    : 0
+
+  if (Math.abs(psiDeg) <= 1) {
+    return { ok: true, code: 'astern', worstDeg,
+      note: `square astern (ψ = ${psiDeg.toFixed(2)}°), so the station depths drop out of the geometry `
+        + '— one frame is exact here, not a compromise' }
+  }
+  if (depthsFromSet && worstDeg <= maxDeg) {
+    return { ok: true, code: 'depths-measured', worstDeg,
+      note: `ψ = ${psiDeg.toFixed(2)}° off the centreplane, but the station depths were solved from a `
+        + `set, so the depth term is worth only ${worstDeg.toFixed(2)}°` }
+  }
+  return { ok: false, code: 'needs-frames', worstDeg,
+    note: `ψ = ${psiDeg.toFixed(2)}° off the centreplane. The leech offset then depends on each station's `
+      + `depth abaft the mast, which one photograph cannot give — on the guessed depths that is `
+      + `${worstDeg.toFixed(2)}° of chord angle, against ${maxDeg.toFixed(2)}° allowed. `
+      + 'Measure the depths with a three-frame set (sailtrim-triangulate), or shoot it square astern.' }
+}

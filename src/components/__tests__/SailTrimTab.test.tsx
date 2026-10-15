@@ -1097,6 +1097,14 @@ describe('SailTrimTab', () => {
     fireEvent.click(stepButton('Scale reference'))
     useScale('grannyBar', 2 * SPREADER_HALF)
     click(P(0, -SPREADER_HALF, SPREADER_Z)); click(P(0, SPREADER_HALF, SPREADER_Z))
+    // ψ has to be MEASURED before a single frame may carry a twist number: the
+    // leech offset contains d·sinψ, and d — the station's depth abaft the mast —
+    // is what one photograph cannot give. This fixture shoots square astern, so
+    // the two centreplane landmarks land on the same athwartships position, ψ
+    // solves to ~0, the depth term drops out and the frame is exact.
+    fireEvent.click(stepButton('Centreplane baseline'))
+    click(P(TRANSOM.x, 0, TRANSOM.z)); click(P(TACK.x, 0, TACK.z))
+    selectBaseline('bow-transom')
     for (const [tag, z] of [['25', 10_000], ['50', 15_000], ['75', 20_000]] as const) {
       fireEvent.click(stepButton(`Jib leech \u00b7 ${tag} % stripe`))
       click(P(-400, 1_500, z))
@@ -1107,6 +1115,9 @@ describe('SailTrimTab', () => {
     // …and the between-station twist, which is what gets trimmed: a STEP per
     // adjacent pair, stripe to stripe, not a running total from the foot.
     expect(within(box).getByText(/25\u219250/)).toBeTruthy()
+    // Shown off ONE frame only because it is square astern, and it says so.
+    expect(box.textContent).toMatch(/square astern/)
+    expect(box.textContent).not.toMatch(/twist withheld/)
     // No clew/boom is marked in this frame, so the bottom step simply is not
     // reported — and it says so rather than letting 25→50 look like the lowest
     // twist in the sail.

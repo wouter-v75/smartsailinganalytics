@@ -130,3 +130,82 @@ describe('nothing above the highest mark', () => {
     expect(twistBetween([], true)).toEqual([])
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// When ONE frame is enough. Wouter, 15 Oct: single shot when square astern
+// (ψ = 0 ± 1°), three frames minimum off the centreline.
+//
+// The reason is a derivative, not a convention. Y = (Δu·s + d·sinψ·cosφ)/cosψ,
+// so ∂Y/∂d = tanψ·cosφ — which is ZERO at ψ = 0. The station depth is the one
+// thing a single photograph cannot give, and at ψ = 0 it cannot affect the
+// answer either, however bad the guess.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { depthTwistErrorDeg, twistEligibility } from '../sailTwist'
+
+/** The 50 % stripe on Northstar's main, on an unmeasured depth. */
+const ST = { depthSigmaMm: 2500, widthM: 7.04, leechMm: 1400 }
+
+describe('whether one frame can carry a twist number', () => {
+  it('makes the depth guess IRRELEVANT at ψ = 0, however bad it is', () => {
+    expect(depthTwistErrorDeg({ psiDeg: 0, heelDeg: 20, ...ST })).toBe(0)
+    // Ten metres of depth error, still exactly zero. This is the whole argument
+    // for trusting a single square-astern frame.
+    expect(depthTwistErrorDeg({ psiDeg: 0, heelDeg: 20, ...ST, depthSigmaMm: 10_000 })).toBe(0)
+  })
+
+  it('grows with ψ, which is what sets the 1° bar', () => {
+    const at = (psiDeg: number) => depthTwistErrorDeg({ psiDeg, heelDeg: 20, ...ST })
+    // ~0.35° at 1°: just under the 0.3-0.9° the rest of the pipeline carries.
+    expect(at(1)).toBeGreaterThan(0.2)
+    expect(at(1)).toBeLessThan(0.5)
+    // ~1.8° at 5°: larger than the twist differences anyone is reading.
+    expect(at(5)).toBeGreaterThan(1.4)
+    // Very nearly linear in ψ over this range, since tan ψ ≈ ψ.
+    expect(at(5) / at(1)).toBeGreaterThan(4.8)
+    expect(at(5) / at(1)).toBeLessThan(5.2)
+  })
+
+  it('passes a square-astern frame on its own', () => {
+    const e = twistEligibility({ psiDeg: 0.4, psiMeasured: true, stations: [ST], heelDeg: 18 })
+    expect(e.ok).toBe(true)
+    expect(e.code).toBe('astern')
+    expect(e.note).toMatch(/one frame is exact/)
+  })
+
+  it('refuses an off-centreline frame measured on guessed depths', () => {
+    const e = twistEligibility({ psiDeg: 5, psiMeasured: true, stations: [ST], heelDeg: 18 })
+    expect(e.ok).toBe(false)
+    expect(e.code).toBe('needs-frames')
+    expect(e.note).toMatch(/three-frame set/)
+    expect(e.worstDeg!).toBeGreaterThan(1)
+  })
+
+  it('allows an off-centreline frame once the depths HAVE been solved', () => {
+    // sailtrim-triangulate stores a depth on its own sigma, capped at ±250 mm.
+    // That is 10x better than the guess, and it is what buys back the angle.
+    const solved = { ...ST, depthSigmaMm: 250 }
+    const e = twistEligibility({ psiDeg: 5, psiMeasured: true, stations: [solved], heelDeg: 18, depthsFromSet: true })
+    expect(e.ok).toBe(true)
+    expect(e.code).toBe('depths-measured')
+    expect(e.worstDeg!).toBeLessThan(0.5)
+  })
+
+  it('will not call an INFERRED ψ square astern', () => {
+    // psiFromHeelShortening documents itself as indicative only and has no
+    // side, so a reading near zero is not evidence of being square astern.
+    const e = twistEligibility({ psiDeg: 0.2, psiMeasured: false, stations: [ST] })
+    expect(e.ok).toBe(false)
+    expect(e.code).toBe('no-psi')
+  })
+
+  it('judges on the WORST station, not an average', () => {
+    // The narrow stations aloft are the sensitive ones: the same millimetres of
+    // depth error divide by a smaller width, so an upper stripe can fail while
+    // the foot passes.
+    const narrow = { depthSigmaMm: 2500, widthM: 3.63, leechMm: 900 }
+    const e = twistEligibility({ psiDeg: 2, psiMeasured: true, stations: [ST, narrow], heelDeg: 18 })
+    expect(e.worstDeg).toBeCloseTo(depthTwistErrorDeg({ psiDeg: 2, heelDeg: 18, ...narrow }), 9)
+    expect(e.worstDeg!).toBeGreaterThan(depthTwistErrorDeg({ psiDeg: 2, heelDeg: 18, ...ST }))
+  })
+})

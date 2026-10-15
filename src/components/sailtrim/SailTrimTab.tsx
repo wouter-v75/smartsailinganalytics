@@ -46,7 +46,7 @@ import {
   type RigModel, type Provenance,
 } from '../../lib/rigModel';
 import { parseIrcCertificate, rigModelFromIrc } from '../../lib/ircCertificate';
-import { stationAngles, twistBetween, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
+import { stationAngles, twistBetween, twistEligibility, fitLuffSag, STATION_FRACTION, widthAt } from '../../lib/sailTwist';
 import { fitCamber, type CamberFit } from '../../lib/sailCamber';
 import { loadLenses, rememberLens, forgetLens, lensLabel, isZoomLabel, type Lens } from '../../lib/lensPrefs';
 import {
@@ -1231,6 +1231,7 @@ export default function SailTrimTab(
       sail: 'main' | 'jib'
       rows: ReturnType<typeof twistBetween>
       hasClew: boolean
+      eligible: ReturnType<typeof twistEligibility>
       angles: ReturnType<typeof stationAngles>
       sag: { tag: string; mm: number; source: 'measured' | 'fitted' | 'assumed-zero' }[]
       haveLuff: boolean
@@ -1312,6 +1313,25 @@ export default function SailTrimTab(
         // twistBetween flips on the bottom-to-top trend.
         sail, angles, rows: twistBetween(angles, tack != null),
         hasClew: angles.some((a) => a.tag === 'clew'),
+        // ONE FRAME IS ONLY ENOUGH SQUARE ASTERN. The leech offset carries a
+        // d·sinψ term, and d — the station's depth abaft the mast — is the one
+        // thing a single photograph cannot give. At ψ = 0 it drops out and the
+        // frame is exact; off the centreline the guessed depth walks into every
+        // number, so the depths have to come from a three-frame set first.
+        eligible: twistEligibility({
+          psiDeg: calibration.cal?.psi.deg ?? null,
+          psiMeasured: !!calibration.cal?.psi.measured,
+          heelDeg: calibration.cal?.heelDeg ?? null,
+          stations: angles.map((a) => ({
+            depthSigmaMm: depthFor(rig, a.sail, a.tag).sigmaMm ?? 2500,
+            widthM: a.width.m,
+            leechMm: a.leechMm,
+          })),
+          // 'estimate' is the ±1500-2500 mm model guess; anything else was
+          // either solved from a set or given by the designer.
+          depthsFromSet: angles.length > 0
+            && angles.every((a) => depthFor(rig, a.sail, a.tag).source !== 'estimate'),
+        }),
         // Luff offset from the centreplane: for the jib that IS forestay sag,
         // measured from the photograph. Nobody has this for a rival.
         sag: leech.filter((l) => l.luffMm != null)
@@ -1320,7 +1340,7 @@ export default function SailTrimTab(
       });
     }
     return out;
-  }, [measurements, rig.widths, defn, tack]);
+  }, [measurements, rig, rig.widths, defn, tack, calibration]);
 
   const checks: Check[] = useMemo(
     () => (calibration.cal ? runChecks(calibration.cal) : []),
@@ -2816,7 +2836,17 @@ export default function SailTrimTab(
                 return (
                   <div key={`rows-${sl.key}`} style={{ fontSize: 10.5, color: '#94A3B8', fontFamily: 'monospace', marginBottom: 3 }}>
                     {sl.label}:{' '}
-                    {t.rows.map((r) => `${r.from.replace('stripe', '')}→${r.to.replace('stripe', '')} ${r.twistDeg >= 0 ? '+' : ''}${r.twistDeg.toFixed(2)}°`).join(' · ')}
+                    {t.eligible.ok
+                      ? t.rows.map((r) => `${r.from.replace('stripe', '')}→${r.to.replace('stripe', '')} ${r.twistDeg >= 0 ? '+' : ''}${r.twistDeg.toFixed(2)}°`).join(' · ')
+                      : <span style={{ color: '#FCD34D' }}>twist withheld — {t.eligible.note}</span>}
+                    {/* Say WHY one frame was enough, not just when it was not.
+                        "square astern" is the licence these numbers rest on. */}
+                    {t.eligible.ok && t.eligible.code === 'astern' && (
+                      <span style={{ color: '#4ADE80' }}> · square astern, so one frame is exact</span>
+                    )}
+                    {t.eligible.ok && t.eligible.code === 'depths-measured' && (
+                      <span style={{ color: '#4ADE80' }}> · off-axis, but on solved depths</span>
+                    )}
                     {/* Without the clew there is no bottom step — the twist from
                         the foot to the lowest stripe is simply not reported. */}
                     {!t.hasClew && (
