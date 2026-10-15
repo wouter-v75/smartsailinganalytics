@@ -56,9 +56,11 @@ export interface SailGeometryDialogProps {
    *  typed, and two boats in a programme can be a keystroke apart. */
   boatName?: string
   boatId?: string | null
-  /** TWA from the log at this instant; it fixes the tack, which is what makes
-   *  the sign of a measurement mean something about the boat. */
+  /** TWA from the log at this instant — the FALLBACK for the tack. */
   twaDeg?: number | null
+  /** AWA from the log at this instant, which is what the tack comes from: it is
+   *  read off the vane, where TWA is calculated from it. See `tackFor`. */
+  awaDeg?: number | null
   /** The heel the log recorded, so the box is not blank without a horizon. */
   loggedHeelDeg?: number | null
   /** A previously saved measurement, to put the marks back on the picture. */
@@ -74,7 +76,7 @@ export interface SailGeometryDialogProps {
 
 export default function SailGeometryDialog({
   open, onClose, fileUrl, fileName = 'photo.jpg', photoLabel = 'this photo',
-  caption = '', boatName, boatId = null, twaDeg = null, loggedHeelDeg = null, initialResult = null,
+  caption = '', boatName, boatId = null, twaDeg = null, awaDeg = null, loggedHeelDeg = null, initialResult = null,
   onSaveToPhoto, recordedExif = null,
 }: SailGeometryDialogProps) {
   // createPortal needs a document, which the server render does not have.
@@ -111,6 +113,7 @@ export default function SailGeometryDialog({
           initialFileName={fileName}
           photoLabel={photoLabel}
           twaDeg={twaDeg}
+          awaDeg={awaDeg}
           loggedHeelDeg={loggedHeelDeg}
           initialResult={initialResult as never}
           recordedExif={recordedExif}

@@ -562,7 +562,46 @@ export const tackFromTwa = (twaDeg: number | null | undefined): 'port' | 'stbd' 
   twaDeg == null || !Number.isFinite(twaDeg) ? null : (twaDeg >= 0 ? 'stbd' : 'port')
 
 /**
- * HEEL → tack, as an independent witness to `tackFromTwa`.
+ * AWA → tack, which is the one to use.
+ *
+ * Same sign convention as TWA — wind on the starboard bow is positive — and
+ * Baraka's own rows confirm the two never disagree in sign (twa −53.6 with awa
+ * −25.8; twa +46.7 with awa +20.6).
+ *
+ * WHY AWA RATHER THAN TWA (Wouter, 15 Oct: "keep AWA to identify a tack"). AWA
+ * is read straight off the masthead vane: it is the angle the wind makes with
+ * the boat, which is what "tack" means. TWA is CALCULATED from it — apparent
+ * wind plus boat speed, with a heel correction and the calibration tables on
+ * top — so every error in any of those reaches TWA and none of them reach AWA.
+ * Strictly more ways to be wrong, for a question AWA already answers.
+ *
+ * It is not a cure for a BLANKED feed. When Baraka's instruments went blank on
+ * 11 Oct, awa froze at −25.84 for the same 328 seconds that twa froze at
+ * −53.65 — both come off the same masthead, so they die together. That is what
+ * `tackDisagreesWithHeel` is for: heel is sensed independently and survives.
+ */
+export const tackFromAwa = (awaDeg: number | null | undefined): 'port' | 'stbd' | null =>
+  awaDeg == null || !Number.isFinite(awaDeg) ? null : (awaDeg >= 0 ? 'stbd' : 'port')
+
+/**
+ * The tack, from AWA where there is one and TWA otherwise.
+ *
+ * TWA is the fallback rather than the primary: a frame whose AWA was never
+ * stored still gets a tack, which matters because the tack sets `leewardSign`
+ * and without one a measurement's sign says only which way round the
+ * photograph is.
+ */
+export function tackFor(
+  { awaDeg, twaDeg }: { awaDeg?: number | null; twaDeg?: number | null },
+): { tack: 'port' | 'stbd' | null; from: 'awa' | 'twa' | 'none' } {
+  const fromAwa = tackFromAwa(awaDeg)
+  if (fromAwa) return { tack: fromAwa, from: 'awa' }
+  const fromTwa = tackFromTwa(twaDeg)
+  return fromTwa ? { tack: fromTwa, from: 'twa' } : { tack: null, from: 'none' }
+}
+
+/**
+ * HEEL → tack, as an independent witness to the wind instruments.
  *
  * Upwind a boat heels away from the wind, so port tack (wind from port) puts
  * the starboard side down. In this codebase's sign convention that is POSITIVE

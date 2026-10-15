@@ -28,7 +28,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import {
   mastAxisFromEdges, mastAxisFromPoints, solvePsi, measureTarget, leechTargets,
   mmPerPxFromReference, mmPerPxAtMastFromRef, unbiasAthwartshipsScale,
-  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, effectiveHeelDeg, focalSensitivity, focalForSensor, resolveLens,
+  runChecks, cameraRollDeg, imageHeelDeg, tackFromTwa, tackFor, effectiveHeelDeg, focalSensitivity, focalForSensor, resolveLens,
   toCsv, SAILTRIM_VERSION,
   type Px, type Calibration, type Measurement, type Check, type SailTrimResult, type Horizon,
 } from '../../lib/sailTrim';
@@ -270,7 +270,7 @@ export interface SailTrimSave {
 export default function SailTrimTab(
   {
     boatName = '', boatId = null, initialFileUrl = '', initialFileName = '', initialResult = null,
-    onSaveToPhoto, photoLabel = '', twaDeg = null, loggedHeelDeg = null, autoSaveWhenReady = false,
+    onSaveToPhoto, photoLabel = '', twaDeg = null, awaDeg = null, loggedHeelDeg = null, autoSaveWhenReady = false,
     recordedExif = null,
   }: {
     /**
@@ -298,10 +298,20 @@ export default function SailTrimTab(
      *  no twist, with nothing on screen tying that to the missing boat. */
     boatId?: string | null;
     initialFileUrl?: string;
-    /** TWA from the log at this photo's instant. It fixes the TACK, which is
-     *  what makes the sign of a measurement mean something about the boat
-     *  rather than about which way round the picture is. */
+    /** TWA from the log at this photo's instant. The FALLBACK for the tack —
+     *  see `awaDeg`, which is preferred. */
     twaDeg?: number | null;
+    /**
+     * AWA from the log at this photo's instant, and the tack comes from THIS.
+     *
+     * It fixes the TACK, which is what makes the sign of a measurement mean
+     * something about the boat rather than about which way round the picture
+     * is. AWA is read straight off the masthead vane; TWA is calculated from it
+     * plus boat speed, a heel correction and the calibration tables, so it has
+     * strictly more ways to be wrong about a question AWA already answers.
+     * See `tackFor`.
+     */
+    awaDeg?: number | null;
     /** The photo's own name — `initialFileUrl` is an API path with no filename in it. */
     initialFileName?: string;
     /** A measurement already saved on this photo, to reopen and edit. The marks
@@ -351,8 +361,17 @@ export default function SailTrimTab(
   const [exifNote, setExifNote] = useState('');
   // From the log when the host has it; overridable, because a photo taken on a
   // roll-tack or outside the log's window has no honest row behind it.
-  const [tack, setTack] = useState<'port' | 'stbd' | null>(() => tackFromTwa(twaDeg));
-  useEffect(() => { setTack(tackFromTwa(twaDeg)); }, [twaDeg]);
+  const [tack, setTack] = useState<'port' | 'stbd' | null>(() => tackFor({ awaDeg, twaDeg }).tack);
+  // Only ever SETS a tack, never clears one. The redo panel mounts this with no
+  // wind data at all and restores the saved tack from `initialResult` instead —
+  // including one corrected by hand, which is the whole point of correcting it.
+  // Clearing on a null would throw that away and re-save the frame with no tack,
+  // leaving every millimetre's sign saying which way round the photograph is
+  // rather than which side of the boat.
+  useEffect(() => {
+    const t = tackFor({ awaDeg, twaDeg }).tack;
+    if (t) setTack(t);
+  }, [awaDeg, twaDeg]);
   const [loadError, setLoadError] = useState('');
   const [loadingFrame, setLoadingFrame] = useState(false);
   const cachedImage = useRef<HTMLImageElement | null>(null);
