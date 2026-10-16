@@ -1627,6 +1627,13 @@ export default function SailTrimTab(
       psiMeasured: cal.psi.measured,
       heelDeg: imageHeelDeg(cal.axis, cal.horizon) ?? cal.heelDeg,
       tack,
+      // The two lines every millimetre here depends on, so the viewer's "sail
+      // geometry" view can draw the construction instead of asking a reader to
+      // take the calibration on trust.
+      scalePx: (marks.scale || []).length === 2
+        ? { a: marks.scale[0], b: marks.scale[1] } : null,
+      baselinePx: (marks.baseline || []).length === 2
+        ? { a: marks.baseline[0], b: marks.baseline[1] } : null,
       // What turned pixels into millimetres, INCLUDING whose boat supplied it.
       // Every number above is meaningless without this and it used to be
       // unrecoverable from the annotation: the 26 Sep Capricorno frames were

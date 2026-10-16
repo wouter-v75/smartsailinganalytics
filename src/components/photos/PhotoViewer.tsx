@@ -21,7 +21,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import PhotoCanvasJs from './PhotoCanvas'
 import { renderOverlay } from '../../lib/photoOverlay'
-import { drawSailTrimAnnotation, isAnnotation, type SailTrimAnnotation } from '../../lib/sailTrimOverlay'
+import { drawSailTrimAnnotation, isAnnotation, type SailTrimAnnotation, type OverlayView } from '../../lib/sailTrimOverlay'
 import { FavouriteHeart } from '../FavouriteHeart'
 
 // PhotoCanvas is .jsx, so TypeScript infers its props from their default values
@@ -43,6 +43,12 @@ const SLOW_MS = 12000
 export interface SailTrimPayload {
   annotation: SailTrimAnnotation
   overlay?: boolean
+  /**
+   * Which of the three things to draw. Defaults to `twist`, because that is
+   * what gets trimmed — the millimetres are an intermediate quantity and were
+   * the only thing ever shown.
+   */
+  view?: OverlayView
 }
 
 export default function PhotoViewer({
@@ -85,7 +91,9 @@ export default function PhotoViewer({
 
   // Every value that is DRAWN, so a change to any of them redraws. Cheap: a
   // couple of dozen numbers and one small annotation record.
-  const drawSig = JSON.stringify([inst || null, sailTrim?.overlay ?? null,
+  // `view` belongs here: without it, switching twist/measurements/geometry
+  // changes nothing on screen because the effect never re-runs.
+  const drawSig = JSON.stringify([inst || null, sailTrim?.overlay ?? null, sailTrim?.view ?? null,
     sailTrim?.annotation?.measuredAt ?? null, sailTrim?.annotation?.targets?.length ?? null])
 
   useEffect(() => {
@@ -112,7 +120,7 @@ export default function PhotoViewer({
       try { drawn = renderOverlay(c, img, inst || {}) !== false } catch { drawn = false }
       if (drawn && sailTrim?.overlay && isAnnotation(sailTrim.annotation)) {
         const ctx = c.getContext('2d')
-        if (ctx) drawSailTrimAnnotation(ctx, sailTrim.annotation)
+        if (ctx) drawSailTrimAnnotation(ctx, sailTrim.annotation, { view: sailTrim.view ?? 'twist' })
       }
       setNoCanvas(!drawn)
       if (drawn) {

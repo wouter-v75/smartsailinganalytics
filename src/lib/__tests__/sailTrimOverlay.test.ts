@@ -209,12 +209,21 @@ describe('drawSailTrimAnnotation', () => {
   })
 
   it('labels each measurement with its rounded absolute millimetres', () => {
+    // The MEASUREMENTS view, which has to be asked for now: the default is
+    // twist, because that is what gets trimmed and the millimetres are an
+    // intermediate quantity on the way to it.
     const ctx = fakeCtx(1000, 1000)
-    drawSailTrimAnnotation(ctx, build())
+    drawSailTrimAnnotation(ctx, build(), { view: 'measurements' })
     const t = texts(ctx)
     expect(t).toContain('1479')
     expect(t).toContain('1103')   // −1103 mm reads as 1103 on the picture
     expect(t).toContain('2210')
+  })
+
+  it('shows NO millimetres by default, because the default is twist', () => {
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, build())
+    expect(texts(ctx)).not.toContain('1479')
   })
 
   it('says which definition the numbers are, and whether psi was measured', () => {
@@ -312,5 +321,90 @@ describe('the annotation records what turned pixels into millimetres', () => {
     // absent field is legible as "unknown"; a made-up one is not.
     expect(build().scale).toBeUndefined()
     expect(annotationFields(build()).sailtrim_scale_key).toBeUndefined()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The three views (Wouter, 16 Oct): twist by default, then measurements, then
+// the sail geometry itself.
+//
+// The distinction the twist view has to keep is between a stripe's TWIST —
+// against its own sail's foot — and the SHEETING angle of the boom and the jib
+// clew, which is that foot chord's angle to the boat's centreline. They are
+// different quantities, and a bare degree figure on a photograph is how one
+// comes to be read as the other.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('drawSailTrimAnnotation — the three views', () => {
+  const px = { x: 500, y: 500 }
+  const withChords = (): SailTrimAnnotation => ({
+    version: 'sailtrim-v0.6-overlay-views',
+    imageSize: { w: 1000, h: 1000 },
+    defn: 'boat',
+    axis: { low: { x: 500, y: 900 }, high: { x: 500, y: 100 } },
+    psiDeg: 0.2, psiMeasured: true, heelDeg: 12, tack: 'port', measuredAt: 0,
+    targets: [
+      { key: 'main@stripe50', label: 'Main @ 50 %', point: { x: 620, y: 500 }, foot: px, mm: 1400, sigmaMm: 20, colour: '#38BDF8' },
+      { key: 'boom', label: 'Boom', point: { x: 420, y: 820 }, foot: { x: 500, y: 820 }, mm: -660, sigmaMm: 30, colour: '#F87171' },
+    ],
+    chords: [
+      { sail: 'main', tag: 'stripe50', fraction: 0.5, chordMm: 1400, widthM: 7.04,
+        widthSource: 'certificate', angleDeg: 11.5, angleSigmaDeg: 0.3, luffMm: null,
+        twistFromFootDeg: 5.9, twistFromFootSigmaDeg: 0.4, twistDatumIsFoot: true },
+      { sail: 'main', tag: 'clew', fraction: 0, chordMm: -660, widthM: 10.33,
+        widthSource: 'certificate', angleDeg: -5.6, angleSigmaDeg: 0.2, luffMm: null,
+        twistFromFootDeg: 0, twistFromFootSigmaDeg: 0, twistDatumIsFoot: true },
+    ],
+    scalePx: { a: { x: 300, y: 200 }, b: { x: 300, y: 800 } },
+    baselinePx: { a: { x: 450, y: 850 }, b: { x: 700, y: 870 } },
+  } as unknown as SailTrimAnnotation)
+
+  it('labels a stripe with its TWIST and the boom with its SHEETING angle', () => {
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, withChords(), { view: 'twist' })
+    const t = texts(ctx).join(' ')
+    expect(t).toContain('+5.9° twist')
+    // The boom's own chord has zero twist by definition — what is worth showing
+    // there is where it is SHEETED, which is its angle to the centreline.
+    expect(t).toContain('-5.6° sheet')
+    expect(t).not.toContain('0.0° twist')
+  })
+
+  it('does not put millimetres on the picture in the twist view', () => {
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, withChords(), { view: 'twist' })
+    expect(texts(ctx).join(' ')).not.toContain('1400')
+  })
+
+  it('marks a pre-v0.5 chord `~ to c/l`, never as twist', () => {
+    const a = withChords()
+    a.chords = (a.chords || []).map((c) => ({ ...c, twistFromFootDeg: undefined }))
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, a, { view: 'twist' })
+    const t = texts(ctx).join(' ')
+    expect(t).toContain('to c/l')
+    expect(t).not.toContain('twist')
+  })
+
+  it('draws the scale and baseline lines in the geometry view, and no numbers on the sails', () => {
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, withChords(), { view: 'geometry' })
+    const pts = ctx.ops.filter((o) => o.op === 'lineTo' || o.op === 'moveTo')
+    // The scale's two clicks, which no view drew before: a reference whose
+    // length was typed wrong is invisible in the numbers it produces.
+    expect(pts.some((p) => Math.abs(p.args[0] - 300) < 0.01 && Math.abs(p.args[1] - 200) < 0.01)).toBe(true)
+    expect(pts.some((p) => Math.abs(p.args[0] - 700) < 0.01 && Math.abs(p.args[1] - 870) < 0.01)).toBe(true)
+    const t = texts(ctx).join(' ')
+    expect(t).not.toContain('twist')
+    expect(t).not.toContain('1400')
+  })
+
+  it('still draws the mast axis when the construction was never stored', () => {
+    const a = withChords()
+    a.scalePx = null; a.baselinePx = null
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, a, { view: 'geometry' })
+    // Nothing throws, and the axis is there to orient by.
+    expect(ctx.ops.filter((o) => o.op === 'stroke').length).toBeGreaterThan(0)
   })
 })

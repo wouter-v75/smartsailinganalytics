@@ -344,6 +344,10 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
     extraGauges.map(k=>photo[k]).join(',')].join('|');
   const geom = sailTrimOf(photo);
   const unfinishedGeom = !geom && !!unfinishedSailTrimOf(photo);
+  // WHICH of the three things the overlay draws. Twist by default: it is what
+  // gets trimmed, and the millimetres — the only thing ever shown before — are
+  // an intermediate quantity on the way to it.
+  const [geomView,setGeomView]=useState("twist");
   // The picture itself — loading, both overlays and the viewport — is
   // PhotoViewer's job now, and the timeline uses the same one. What is left here
   // is the instrument VALUES it draws, which only this tab knows how to build.
@@ -382,10 +386,30 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
       )}
       <PhotoViewer
         photoId={photo.id} thumbUrl={photo.objectUrl} fullUrl={photo.fullUrl}
-        inst={inst} sailTrim={geom} favouriteId={photoFavId(photo)}
+        inst={inst} sailTrim={geom?{...geom,view:geomView}:geom} favouriteId={photoFavId(photo)}
         onComposed={(c)=>{composeRef.current=c;setRendered(true);}}>
         {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5,pointerEvents:"none"}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
       </PhotoViewer>
+      {/* WHAT the sail-geometry overlay shows. Only where there is geometry to
+          show it for, and only when the overlay is actually on — three buttons
+          that change nothing are worse than none. */}
+      {geom && !!geom.overlay && (
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          <span style={{fontSize:9,color:"#64748B",letterSpacing:1,textTransform:"uppercase"}}>Show</span>
+          {[["twist","Twist"],["measurements","Measurements"],["geometry","Sail geometry"]].map(([k,label])=>(
+            <button key={k} onClick={()=>setGeomView(k)} data-testid={`geomview-${k}`}
+              style={{background:geomView===k?"#38BDF825":"#0A1929",border:`1px solid ${geomView===k?"#38BDF8":"#1E3A5A"}`,
+                borderRadius:5,padding:"3px 9px",fontSize:10.5,fontWeight:700,
+                color:geomView===k?"#38BDF8":"#94A3B8",cursor:"pointer"}}>{label}</button>
+          ))}
+          <span style={{fontSize:9.5,color:"#64748B"}}>
+            {geomView==="twist"?"each stripe's twist from its sail's foot, and the boom and jib clew's sheeting angle to the centreline"
+              :geomView==="measurements"?"each target's distance from the centreplane"
+              :geom.annotation?.scalePx?"the construction: mast axis, scale reference, ψ baseline"
+                :"mast axis only — this frame predates v0.6, so the scale and baseline lines were not stored. Re-save it to draw them"}
+          </span>
+        </div>
+      )}
       {/* Overlay variables — add extra gauges to the photo overlay, this session only. */}
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
         <span style={{fontSize:9,color:"#64748B",letterSpacing:1,textTransform:"uppercase"}}>Overlay +</span>

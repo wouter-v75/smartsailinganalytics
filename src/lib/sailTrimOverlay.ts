@@ -182,6 +182,19 @@ export interface SailTrimAnnotation {
   /** What turned pixels into millimetres. See AnnotationScale. */
   scale?: AnnotationScale
   /**
+   * The two clicks the SCALE was taken from, and the two the ψ baseline was
+   * solved across, in the same pixel frame as everything else.
+   *
+   * Carried so the "sail geometry" view can DRAW the construction rather than
+   * describe it: without them a reader is shown millimetres and asked to trust
+   * the calibration behind them, and a scale reference whose length was typed
+   * wrong is invisible in the numbers it produces. Absent on anything saved
+   * before v0.6 — the lines were only ever in the measuring tab's own `marks` —
+   * so that view falls back to the mast axis and says what it cannot draw.
+   */
+  scalePx?: { a: Px; b: Px } | null
+  baselinePx?: { a: Px; b: Px } | null
+  /**
    * True when `mm` is LEEWARD POSITIVE — so a boom or main leech above the
    * centreline is negative, and the same trim reads the same on either tack.
    * False (or absent) when the tack was unknown and the sign only says which way
@@ -221,6 +234,9 @@ export function buildAnnotation(args: {
   chords?: AnnotationChord[]
   twist?: AnnotationTwist[]
   scale?: AnnotationScale
+  /** The scale's two clicks and the ψ baseline's two, for the geometry view. */
+  scalePx?: { a: Px; b: Px } | null
+  baselinePx?: { a: Px; b: Px } | null
   measuredAt?: number
 }): SailTrimAnnotation {
   const targets: AnnotationTarget[] = []
@@ -252,6 +268,8 @@ export function buildAnnotation(args: {
     psiMeasured: args.psiMeasured,
     heelDeg: args.heelDeg,
     tack: args.tack ?? null,
+    scalePx: args.scalePx ?? null,
+    baselinePx: args.baselinePx ?? null,
     leewardPositive: args.tack != null,
     chords: args.chords ?? [],
     twist: args.twist ?? [],
@@ -356,10 +374,29 @@ export function annotationFields(a: SailTrimAnnotation): Record<string, string> 
  * invisible against a sunlit sky and a thin dark one is invisible against a
  * navy mainsail, and both are in every one of these frames.
  */
+/**
+ * Which of the three things a reader can be shown.
+ *
+ *   twist        the shape: each stripe's twist against its sail's own foot, and
+ *                the SHEETING angle of the boom and the jib clew (their chord's
+ *                angle to the boat's centreline). The default, because it is
+ *                what gets trimmed.
+ *   measurements the positions: each target's distance from the centreplane.
+ *   geometry     the construction the other two rest on — mast axis, scale
+ *                reference, ψ baseline — with no numbers over the sails.
+ */
+export type OverlayView = 'twist' | 'measurements' | 'geometry'
+
+/** The target whose line carries a chord's label. The main's foot chord is
+ *  marked at the BOOM and the jib's at its clew, so the two differ. */
+function targetKeyForChord(c: AnnotationChord): string {
+  return c.tag === 'clew' ? (c.sail === 'jib' ? 'clew' : 'boom') : `${c.sail}@${c.tag}`
+}
+
 export function drawSailTrimAnnotation(
   ctx: CanvasRenderingContext2D,
   a: SailTrimAnnotation,
-  opts: { labels?: boolean; y?: number } = {},
+  opts: { labels?: boolean; y?: number; view?: OverlayView } = {},
 ): void {
   if (!isAnnotation(a)) return
   const W = ctx.canvas.width, H = ctx.canvas.height
@@ -371,6 +408,9 @@ export function drawSailTrimAnnotation(
   const u = Math.min(W, H) / 1000
   const P = (p: Px): Px => ({ x: p.x * k, y: p.y * k })
   const labels = opts.labels !== false
+  const view: OverlayView = opts.view ?? 'twist'
+  const chords = a.chords || []
+  const chordFor = (key: string) => chords.find((c) => targetKeyForChord(c) === key) ?? null
 
   const stroke = (from: Px, to: Px, colour: string, width: number, dash: number[] = []) => {
     ctx.setLineDash(dash.map((d) => d * u))
@@ -398,9 +438,40 @@ export function drawSailTrimAnnotation(
     )
   }
 
+  // The construction, in the view that is about the construction. These are the
+  // two lines every millimetre on the frame depends on and neither was ever
+  // drawn: a scale reference whose length was typed wrong, or a baseline marked
+  // across the wrong pair of landmarks, is invisible in the numbers it produces.
+  if (view === 'geometry') {
+    if (a.scalePx) stroke(P(a.scalePx.a), P(a.scalePx.b), '#FACC15', 2.2)        // yellow, as in the tool
+    if (a.baselinePx) stroke(P(a.baselinePx.a), P(a.baselinePx.b), '#F472B6', 2.2) // pink
+    if (labels) {
+      ctx.font = `700 ${Math.max(10, 18 * u)}px system-ui, -apple-system, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'bottom'
+      const tag = (at: Px, text: string, colour: string) => {
+        ctx.lineWidth = 3.5 * u
+        ctx.strokeStyle = 'rgba(2,10,20,0.85)'
+        ctx.strokeText(text, at.x, at.y - 6 * u)
+        ctx.fillStyle = colour
+        ctx.fillText(text, at.x, at.y - 6 * u)
+      }
+      if (a.scalePx && a.scale) {
+        const m = { x: (P(a.scalePx.a).x + P(a.scalePx.b).x) / 2, y: (P(a.scalePx.a).y + P(a.scalePx.b).y) / 2 }
+        tag(m, `${a.scale.key} ${(a.scale.mm / 1000).toFixed(2)} m`, '#FACC15')
+      }
+      if (a.baselinePx) {
+        const m = { x: (P(a.baselinePx.a).x + P(a.baselinePx.b).x) / 2, y: (P(a.baselinePx.a).y + P(a.baselinePx.b).y) / 2 }
+        tag(m, `ψ ${a.psiDeg.toFixed(2)}°${a.psiMeasured ? '' : ' ASSUMED'}`, '#F472B6')
+      }
+    }
+  }
+
   for (const t of a.targets) {
     const p = P(t.point), f = P(t.foot)
-    stroke(f, p, t.colour, 2)
+    // In the geometry view the targets are context, not the subject: the lines
+    // show WHERE it was measured without putting numbers over the sails.
+    stroke(f, p, t.colour, view === 'geometry' ? 1.2 : 2)
     // A tick across each end, so the line's ends are unambiguous at a glance.
     const dx = p.x - f.x, dy = p.y - f.y
     const L = Math.hypot(dx, dy) || 1
@@ -409,8 +480,28 @@ export function drawSailTrimAnnotation(
     for (const q of [f, p]) {
       stroke({ x: q.x - n.x * tick, y: q.y - n.y * tick }, { x: q.x + n.x * tick, y: q.y + n.y * tick }, t.colour, 2)
     }
-    if (!labels) continue
-    const text = formatMm(a, t.mm)
+    if (!labels || view === 'geometry') continue
+    // TWIST view labels the SHAPE: a stripe's twist against its sail's own
+    // foot, and for the foot chords themselves — the boom, the jib clew — the
+    // sheeting angle, which is that chord's angle to the boat's centreline.
+    // Those are two different quantities and are marked as such: a bare degree
+    // figure on a photograph is how a sheeting angle comes to be read as twist.
+    let text: string
+    if (view === 'twist') {
+      const c = chordFor(t.key)
+      if (!c) continue
+      if (c.tag === 'clew') {
+        text = `∠ ${c.angleDeg >= 0 ? '+' : ''}${c.angleDeg.toFixed(1)}° sheet`
+      } else if (c.twistFromFootDeg != null) {
+        text = `${c.twistFromFootDeg >= 0 ? '+' : ''}${c.twistFromFootDeg.toFixed(1)}° twist`
+      } else {
+        // Pre-v0.5: only the angle to the midline was stored, which is a
+        // sheeting angle. Shown, marked `~`, never called twist.
+        text = `~${c.angleDeg.toFixed(1)}° to c/l`
+      }
+    } else {
+      text = formatMm(a, t.mm)
+    }
     ctx.font = `700 ${Math.max(11, 22 * u)}px system-ui, -apple-system, sans-serif`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'bottom'
