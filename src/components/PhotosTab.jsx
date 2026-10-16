@@ -18,7 +18,6 @@ import PhotosNext from "./photos/PhotosNext";
 import PhotoViewer from "./photos/PhotoViewer";
 import SailGeometryCard, { MeasureGeometryButton } from "./photos/SailGeometryCard";
 import SailGeometryDialog from "./photos/SailGeometryDialog";
-import PhotoShareButton from "./photos/PhotoShareButton";
 import BoatBadge from "./photos/BoatBadge";
 import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
@@ -387,7 +386,7 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
       )}
       <PhotoViewer
         photoId={photo.id} thumbUrl={photo.objectUrl} fullUrl={photo.fullUrl}
-        inst={inst} sailTrim={geom?{...geom,view:geomView}:geom} favouriteId={photoFavId(photo)}
+        inst={inst} sailTrim={geom?{...geom,view:geomView}:geom} favouriteId={photoFavId(photo)} photoName={photo.name}
         onComposed={(c)=>{composeRef.current=c;setRendered(true);}}>
         {photo.utc&&<div style={{position:"absolute",bottom:8,left:10,background:"rgba(0,0,0,0.75)",borderRadius:4,padding:"3px 8px",fontSize:11,fontWeight:700,color:"#E2E8F0",fontFamily:"monospace",letterSpacing:0.5,pointerEvents:"none"}}>{fmtDate(fmtLocalDate(photo.utc,tzOffset))} {fmtLocalHM(photo.utc,tzOffset)} {TZ_SHORT(tzOffset)}</div>}
       </PhotoViewer>
@@ -533,16 +532,6 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
           tzOffsetMin={tzOffset}/>
       )}
       {!geom && <MeasureGeometryButton unfinished={unfinishedGeom} onClick={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}/>}
-
-      {/* SHARE. Two different things leave the building: the picture, which is
-          a picture, and the picture with the day's instruments and any measured
-          sail geometry burned onto it — which is the programme's own analysis.
-          The gate on the second is in lib/photoShare.ts. */}
-      <div style={{marginBottom:8}}>
-        <PhotoShareButton role={role} photoName={photo.name}
-          originalUrl={photo.fullUrl||photo.objectUrl||null}
-          composed={()=>composeRef.current}/>
-      </div>
 
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button onClick={handleExport} disabled={!rendered} style={{flex:1,background:rendered?"#8B5CF6":"#1E3A5A",border:"none",borderRadius:7,padding:"9px 0",color:rendered?"#fff":"#475569",fontWeight:700,cursor:rendered?"pointer":"default",fontSize:12}}>⬇ Export JPEG</button>

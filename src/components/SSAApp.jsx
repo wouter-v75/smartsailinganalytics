@@ -30,6 +30,7 @@ import { MobileShell } from './mobile/MobileShell';
 import { AdminTab, BoatConfigTab, CampaignTab, PhotosTab, TaggerTab, TimelineTab, ToolsTabs, WeatherTab } from './ssa/LazyTabs';
 import { SrcBadge } from './ssa/SrcBadge';
 import { TzCtx } from './ssa/TzContext';
+import { RoleCtx } from './ssa/RoleContext';
 import { DEFAULT_TZ, ROLES } from './ssa/constants';
 import { fmtDate, fmtT } from './ssa/format';
 import { useIsMobile } from './ssa/useIsMobile';
@@ -1090,6 +1091,7 @@ function SSAApp(){
 
   // ── Mobile render ────────────────────────────────────────────────────────────
   if(isMobile) return(
+    <RoleCtx.Provider value={effectiveRole||null}>
     <TzCtx.Provider value={sessionTzOffset||0}>
     <>{sailDiffModal}{videoModal}<MobileShell
       onRecheckStream={recheckStream}
@@ -1140,9 +1142,11 @@ function SSAApp(){
       videoTotalThumbs={videoTotalThumbs}
     /></>
     </TzCtx.Provider>
+    </RoleCtx.Provider>
   );
 
   return(
+    <RoleCtx.Provider value={effectiveRole||null}>
     <TzCtx.Provider value={sessionTzOffset||0}>
     <>{sailDiffModal}{videoModal}
     <div style={{minHeight:"100vh",width:"100%",maxWidth:"100%",overflowX:"hidden",background:"#030F1A",color:"#E2E8F0",fontFamily:"'Segoe UI',system-ui,sans-serif",display:"flex",flexDirection:"column"}}>
@@ -1940,6 +1944,7 @@ function SSAApp(){
     </div>
     </>
     </TzCtx.Provider>
+    </RoleCtx.Provider>
   );
 }
 

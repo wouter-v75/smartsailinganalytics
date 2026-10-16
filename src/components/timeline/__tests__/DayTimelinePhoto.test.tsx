@@ -162,7 +162,9 @@ describe('DayTimeline — photos', () => {
     photos = [photoRow({ analysis_data: { inst: { tws: 14.2 }, sailTrim: { annotation, overlay: true } } })]
     await show()
     await openLightbox()
-    await waitFor(() => expect(screen.getByText(/Sail geometry/i)).toBeTruthy())
+    // By testid, not by text: "Sail geometry" also names one of the three
+    // overlay view buttons now, so the text matches twice in the same dialog.
+    await waitFor(() => expect(screen.getByTestId('sailgeom-card')).toBeTruthy())
     expect(screen.getByText('1103')).toBeTruthy()        // −1103 mm, shown unsigned
     expect(screen.getByText(/ψ 0.42° measured/)).toBeTruthy()
   })

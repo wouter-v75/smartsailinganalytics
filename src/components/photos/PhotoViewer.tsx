@@ -23,6 +23,7 @@ import PhotoCanvasJs from './PhotoCanvas'
 import { renderOverlay } from '../../lib/photoOverlay'
 import { drawSailTrimAnnotation, isAnnotation, type SailTrimAnnotation, type OverlayView } from '../../lib/sailTrimOverlay'
 import { FavouriteHeart } from '../FavouriteHeart'
+import PhotoShareButton from './PhotoShareButton'
 
 // PhotoCanvas is .jsx, so TypeScript infers its props from their default values
 // and a canvas would not be assignable to a `null` default. The shape is stated
@@ -61,6 +62,7 @@ export default function PhotoViewer({
   children = null,
   onComposed = null,
   favouriteId = null,
+  photoName = null,
 }: {
   photoId?: string
   thumbUrl?: string | null
@@ -75,6 +77,8 @@ export default function PhotoViewer({
   /** The photo's CLOUD id — shows the favourite heart. Every viewer in SSA is
    *  this one, so the heart is here once rather than in each caller. */
   favouriteId?: string | null
+  /** The photographer's filename, for what a shared file is called. */
+  photoName?: string | null
 }) {
   const composeRef = useRef<HTMLCanvasElement | null>(null)
   const haveFull = useRef(false)
@@ -190,6 +194,19 @@ export default function PhotoViewer({
       {/* Under the zoom controls (top right); top left is the full-res notice. */}
       <FavouriteHeart kind="photo" id={favouriteId} size={16}
         style={{ position: 'absolute', top: 46, right: 10, zIndex: 3 }} />
+      {/* SHARE, beside the heart (Wouter, 16 Oct). It lives HERE rather than in
+          the two panels that open a photo, because both of them mount this
+          viewer — the Photos tab had it and the timeline's lightbox did not,
+          which is the kind of gap that gets reported once per place.
+          Anchored by `right`, so the row grows LEFTWARDS as it opens instead of
+          off the edge of the picture. */}
+      <div style={{ position: 'absolute', top: 44, right: 34, zIndex: 3, display: 'flex', justifyContent: 'flex-end' }}>
+        <PhotoShareButton photoName={photoName || photoId}
+          originalUrl={fullUrl || thumbUrl || null}
+          // An empty canvas is worse than none: it shares a blank JPEG. When
+          // compositing failed there is no overlay to share.
+          composed={() => (noCanvas ? null : composeRef.current)} />
+      </div>
     </PhotoCanvas>
   )
 }

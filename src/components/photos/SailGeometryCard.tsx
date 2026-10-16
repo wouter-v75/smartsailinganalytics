@@ -57,7 +57,7 @@ export default function SailGeometryCard({
   return (
     <div style={{ background: '#0A1929', border: '1px solid #38BDF840', borderRadius: 8, padding: compact ? '8px 11px' : '10px 14px', marginBottom: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
-        <div style={{ fontSize: 9, color: '#38BDF8', letterSpacing: 2, textTransform: 'uppercase' }}>📐 Sail geometry</div>
+        <div data-testid="sailgeom-card" style={{ fontSize: 9, color: '#38BDF8', letterSpacing: 2, textTransform: 'uppercase' }}>📐 Sail geometry</div>
         <div style={{ fontSize: 8, color: '#8A97A9', fontFamily: 'monospace' }}>{annotation.version}</div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},1fr)`, gap: 8 }}>

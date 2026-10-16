@@ -19,10 +19,14 @@
 'use client'
 import React, { useState } from 'react'
 import { canShareWithData, shareModeFor, shareFileName, SHARE_DATA_DENIED, type ShareMode } from '../../lib/photoShare'
+import { useRole } from '../ssa/RoleContext'
 
 export default function PhotoShareButton({
-  role, photoName, originalUrl, composed,
+  role: roleProp, photoName, originalUrl, composed,
 }: {
+  /** Omit it and the viewer's effective role comes off RoleContext, which is
+   *  how the timeline's lightbox gets one without DayTimeline, DayMedia and
+   *  SailMediaPanel each having to carry a role they have no other use for. */
   role?: string | null
   photoName?: string | null
   /** The untouched file, for the plain share. */
@@ -30,6 +34,8 @@ export default function PhotoShareButton({
   /** The composed canvas — photo plus both overlays — for the data share. */
   composed?: () => HTMLCanvasElement | null
 }) {
+  const fromCtx = useRole()
+  const role = roleProp ?? fromCtx
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<ShareMode | null>(null)
   const [note, setNote] = useState('')

@@ -24,10 +24,13 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import PhotoViewer from '@/components/photos/PhotoViewer'
 import SailGeometryCard, { MeasureGeometryButton } from '@/components/photos/SailGeometryCard'
 import BoatBadge from '@/components/photos/BoatBadge'
+import type { OverlayView } from '@/lib/sailTrimOverlay'
 import type { SailTrimAnnotation } from '@/lib/sailTrimOverlay'
 
 export interface LightboxPhoto {
   id: string
+  /** The photographer's filename, for what the shared file is called. */
+  name?: string | null
   thumb?: string | null
   /** The full-resolution original. Null when it never reached the cloud — which
    *  is also the reason there is nothing to measure on. */
@@ -62,6 +65,9 @@ export default function PhotoLightbox({
   photo, onClose, height = '68vh', burst = null,
   onToggleOverlay = null, onMeasure = null,
 }: PhotoLightboxProps) {
+  // Which of the three the overlay draws. Twist by default, as in the Photos
+  // tab: the millimetres are an intermediate quantity on the way to it.
+  const [view, setView] = React.useState<OverlayView>('twist')
   return (
     <Dialog open={!!photo} onOpenChange={(o) => { if (!o) onClose() }}>
       {photo && (
@@ -76,9 +82,25 @@ export default function PhotoLightbox({
             thumbUrl={photo.thumb}
             fullUrl={photo.original || null}
             inst={photo.inst || {}}
-            sailTrim={photo.sailTrim || null}
+            sailTrim={photo.sailTrim ? { ...photo.sailTrim, view } : null}
             favouriteId={photo.id}
+            photoName={photo.name || photo.id}
             height={height} />
+
+          {/* WHAT the sail-geometry overlay shows. This was in the Photos tab
+              only, so a photo opened from the timeline had no way to switch
+              views. (Sharing is inside PhotoViewer, beside the heart, which is
+              why it is not repeated here.) */}
+          <div className="mb-2 mt-2 flex flex-wrap items-center gap-2">
+            {photo.sailTrim && !!photo.sailTrim.overlay && (['twist', 'measurements', 'geometry'] as OverlayView[]).map((k) => (
+              <button key={k} onClick={() => setView(k)} data-testid={`lightbox-view-${k}`}
+                className={`rounded-md border px-2 py-1 text-xs ${view === k
+                  ? 'border-[color:var(--accent)] text-[color:var(--accent)]'
+                  : 'border-[color:var(--border)] text-muted'}`}>
+                {k === 'twist' ? 'Twist' : k === 'measurements' ? 'Measurements' : 'Sail geometry'}
+              </button>
+            ))}
+          </div>
 
           {burst && burst.count > 1 && (
             <div className="mb-2 mt-2 flex items-center gap-2">
