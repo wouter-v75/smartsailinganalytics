@@ -18,6 +18,7 @@ import PhotosNext from "./photos/PhotosNext";
 import PhotoViewer from "./photos/PhotoViewer";
 import SailGeometryCard, { MeasureGeometryButton } from "./photos/SailGeometryCard";
 import SailGeometryDialog from "./photos/SailGeometryDialog";
+import PhotoShareButton from "./photos/PhotoShareButton";
 import BoatBadge from "./photos/BoatBadge";
 import { writeKey, SESSION_LEAVES } from "../lib/storageKeys";
 import { currentStorageScope } from "../lib/storageScope";
@@ -327,7 +328,7 @@ function PhotoCard({photo,selected,onClick,onThumbLoad,batchMode,batchSelected,o
 
 // Exported for its own test: it is the whole right-hand pane, it composes the
 // canvas, and a throw in here takes the Photos tab with it.
-export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime,onMeasureGeometry,onToggleGeometryOverlay,sessionDate=null}){
+export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete,onDownloadOriginal,downloadingOriginal,onClose,tzOffset=0,onEditTime,onMeasureGeometry,onToggleGeometryOverlay,sessionDate=null,role=null}){
   const [editTime,setEditTime]=useState(false);
   const [timeVal,setTimeVal]=useState('');
   const [extraGauges,setExtraGauges]=useState([]); // session-only overlay vars
@@ -532,6 +533,16 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
           tzOffsetMin={tzOffset}/>
       )}
       {!geom && <MeasureGeometryButton unfinished={unfinishedGeom} onClick={onMeasureGeometry ? () => onMeasureGeometry(photo) : null}/>}
+
+      {/* SHARE. Two different things leave the building: the picture, which is
+          a picture, and the picture with the day's instruments and any measured
+          sail geometry burned onto it — which is the programme's own analysis.
+          The gate on the second is in lib/photoShare.ts. */}
+      <div style={{marginBottom:8}}>
+        <PhotoShareButton role={role} photoName={photo.name}
+          originalUrl={photo.fullUrl||photo.objectUrl||null}
+          composed={()=>composeRef.current}/>
+      </div>
 
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button onClick={handleExport} disabled={!rendered} style={{flex:1,background:rendered?"#8B5CF6":"#1E3A5A",border:"none",borderRadius:7,padding:"9px 0",color:rendered?"#fff":"#475569",fontWeight:700,cursor:rendered?"pointer":"default",fontSize:12}}>⬇ Export JPEG</button>
@@ -1369,7 +1380,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
       {!isNarrow && (selected
         ?<PhotoDetail photo={selected} onDelete={handleDelete} onUpload={handleUpload} uploading={uploading}
            canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}
-           onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null} sessionDate={activeDate}/>
+           onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null} sessionDate={activeDate} role={role}/>
         :<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#4E5D71"}}>
           <div style={{textAlign:"center"}}><div style={{fontSize:40,marginBottom:12,opacity:0.2}}>📷</div><div style={{fontSize:13,color:"#64748B"}}>Select a photo to view</div></div>
         </div>)}
@@ -1382,7 +1393,7 @@ export default function PhotosTab({role,logData,xmlData,activeDate,sessions=[],l
             onUpload={handleUpload} uploading={uploading}
             canSync={canSync} canDelete={canDelete} onDownloadOriginal={handleDownloadOriginal} downloadingOriginal={downloadingOriginal}
             onClose={()=>setMobileDetailOpen(false)} tzOffset={sessionTzOffset} onEditTime={handleEditPhotoTime}
-            onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null} sessionDate={activeDate}/>
+            onMeasureGeometry={canSync?setGeomFor:null} onToggleGeometryOverlay={canSync?handleToggleSailTrimOverlay:null} sessionDate={activeDate} role={role}/>
         </div>
       )}
 
