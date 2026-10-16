@@ -428,19 +428,19 @@ describe('drawSailTrimAnnotation — which side the twist label sits', () => {
   const at = (ctx: { ops: { op: string; args: number[] }[] }, text: string) =>
     ctx.ops.find((o) => o.op === `fillText:${text}`)!.args
 
-  it('puts the main to the right of its point and the jib to the left, on PORT', () => {
+  it('on PORT puts the main to the LEFT of its point and the jib to the right', () => {
     const ctx = fakeCtx(1000, 1000)
     drawSailTrimAnnotation(ctx, withChords(), { view: 'twist' })
     const main = at(ctx, '+5.9°')      // main @ 50 %, point x = 620
     const jib = at(ctx, '+8.4°')       // jib  @ 50 %, point x = 630
-    expect(main[0]).toBeGreaterThan(620)
-    expect(jib[0]).toBeLessThan(630)
+    // Main to WINDWARD, which on port tack is image-left.
+    expect(main[0]).toBeLessThan(620)
+    expect(jib[0]).toBeGreaterThan(630)
     // The anchors end up on opposite sides of each other even though the two
-    // leech points are only 10 px apart — and the alignment is what actually
-    // keeps the text from colliding: the main is drawn left-aligned so it runs
-    // to the RIGHT of its anchor, the jib right-aligned so it runs to the LEFT
-    // of its own. They move apart rather than into each other.
-    expect(main[0]).toBeGreaterThan(jib[0])
+    // leech points are only 10 px apart — and the alignment is what keeps the
+    // text from colliding: each is drawn running AWAY from its own anchor, so
+    // they move apart rather than into each other.
+    expect(main[0]).toBeLessThan(jib[0])
   })
 
   it('sits them level with the stripe point, not over the middle of the line', () => {
@@ -458,20 +458,20 @@ describe('drawSailTrimAnnotation — which side the twist label sits', () => {
     expect(at(ctx, '1400')[0]).toBeCloseTo(560, 6)
   })
 
-  it('mirrors on starboard, so the main stays on the open side', () => {
-    // The sails are on the other side of the picture on the other tack. From
-    // astern image-right is starboard, so right is leeward on port and WINDWARD
-    // on starboard — a fixed side would put both labels over the mainsail on
-    // one of the two. The rule is main to leeward, jib to windward.
+  it('mirrors on STARBOARD: main to the right, jib to the left', () => {
+    // From astern image-right is starboard, so right is WINDWARD on starboard
+    // tack and leeward on port. The rule is main to windward, jib to leeward,
+    // so the whole arrangement swaps with the tack — a fixed side would put
+    // both labels over the mainsail on one of the two.
     const stbd = withChords()
     stbd.tack = 'stbd'
     const ctx = fakeCtx(1000, 1000)
     drawSailTrimAnnotation(ctx, stbd, { view: 'twist' })
     const main = at(ctx, '+5.9°'), jib = at(ctx, '+8.4°')
-    expect(main[0]).toBeLessThan(620)        // main point x = 620, now to its LEFT
-    expect(jib[0]).toBeGreaterThan(630)      // jib point x = 630, now to its RIGHT
+    expect(main[0]).toBeGreaterThan(620)     // main point x = 620, now to its RIGHT
+    expect(jib[0]).toBeLessThan(630)         // jib point x = 630, now to its LEFT
     // Still on opposite sides of each other, so still no collision.
-    expect(main[0]).toBeLessThan(jib[0])
+    expect(main[0]).toBeGreaterThan(jib[0])
   })
 
   it('draws the port arrangement when no tack is known', () => {
@@ -479,6 +479,6 @@ describe('drawSailTrimAnnotation — which side the twist label sits', () => {
     none.tack = null
     const ctx = fakeCtx(1000, 1000)
     drawSailTrimAnnotation(ctx, none, { view: 'twist' })
-    expect(at(ctx, '+5.9°')[0]).toBeGreaterThan(620)
+    expect(at(ctx, '+5.9°')[0]).toBeLessThan(620)
   })
 })

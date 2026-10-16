@@ -403,7 +403,7 @@ export function PhotoDetail({photo,onDelete,onUpload,uploading,canSync,canDelete
                 color:geomView===k?"#38BDF8":"#94A3B8",cursor:"pointer"}}>{label}</button>
           ))}
           <span style={{fontSize:9.5,color:"#64748B"}}>
-            {geomView==="twist"?"each stripe's twist from its sail's foot, and the boom and jib clew's sheeting angle to the centreline"
+            {geomView==="twist"?"each stripe's twist from its sail's foot, and the boom and jib clew's sheeting angle to the centreline — main's figure to windward, jib's to leeward"
               :geomView==="measurements"?"each target's distance from the centreplane"
               :geom.annotation?.scalePx?"the construction: mast axis, scale reference, ψ baseline"
                 :"mast axis only — this frame predates v0.6, so the scale and baseline lines were not stored. Re-save it to draw them"}

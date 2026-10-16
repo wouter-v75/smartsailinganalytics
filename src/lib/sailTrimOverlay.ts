@@ -496,13 +496,21 @@ export function drawSailTrimAnnotation(
     // main's 25 % stripe and the jib's 50 % land 24 px apart in x and 60 in y,
     // so two centred labels sit on top of each other and neither is readable.
     //
-    // The rule is the main's figure to LEEWARD and the jib's to WINDWARD, which
-    // on port tack is the main to the right and the jib to the left, and mirrors
-    // on starboard. From astern image-right is starboard, so right is leeward on
-    // port and windward on starboard — the sails are on the other side of the
-    // picture on the other tack, and a fixed side would put both labels over the
-    // mainsail on one of them. This way the main's number always falls on the
-    // open side, over sky or water, which is where a figure is most readable.
+    // The rule (Wouter, 16 Oct, explicitly):
+    //
+    //     STARBOARD tack   main to the RIGHT of its point, jib to the LEFT
+    //     PORT tack        main to the LEFT,                jib to the RIGHT
+    //
+    // which is the main's figure to WINDWARD and the jib's to LEEWARD, since
+    // from astern image-right is starboard: right is windward on starboard tack
+    // and leeward on port. It has to follow the tack rather than be fixed,
+    // because the sails are on the other side of the picture on the other tack
+    // and a fixed side puts both labels over the mainsail on one of them.
+    //
+    // I had this inverted first, inferring the baseline tack from where
+    // Baraka's leech points sat relative to her boom. The pixel geometry does
+    // not settle it — both arrangements separate the labels — so it was never
+    // mine to infer.
     //
     // With no tack known it draws the port arrangement. That is a presentation
     // choice and nothing downstream reads it, unlike the leeward sign on a
@@ -524,9 +532,9 @@ export function drawSailTrimAnnotation(
       } else {
         text = `${deg >= 0 ? '+' : ''}${deg.toFixed(1)}°`
       }
-      // +1 when leeward is image-right (port tack), −1 on starboard.
-      const lee = a.tack === 'stbd' ? -1 : 1
-      const side = c.sail === 'jib' ? -lee : lee
+      // +1 when WINDWARD is image-right, which is starboard tack.
+      const windward = a.tack === 'stbd' ? 1 : -1
+      const side = c.sail === 'jib' ? -windward : windward
       at = { x: p.x + side * 11 * u, y: p.y }
       align = side < 0 ? 'right' : 'left'
       baseline = 'middle'
