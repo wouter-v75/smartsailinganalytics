@@ -484,20 +484,25 @@ export function drawSailTrimAnnotation(
     // TWIST view labels the SHAPE: a stripe's twist against its sail's own
     // foot, and for the foot chords themselves — the boom, the jib clew — the
     // sheeting angle, which is that chord's angle to the boat's centreline.
-    // Those are two different quantities and are marked as such: a bare degree
-    // figure on a photograph is how a sheeting angle comes to be read as twist.
+    //
+    // Just the figure, no word for which it is (Wouter, 16 Oct). Where the
+    // label SITS says it: a figure on a stripe is that stripe's twist, one on
+    // the boom or the clew is where the foot is sheeted, and the view is called
+    // Twist on the button that turned it on.
     let text: string
     if (view === 'twist') {
       const c = chordFor(t.key)
       if (!c) continue
-      if (c.tag === 'clew') {
-        text = `∠ ${c.angleDeg >= 0 ? '+' : ''}${c.angleDeg.toFixed(1)}° sheet`
-      } else if (c.twistFromFootDeg != null) {
-        text = `${c.twistFromFootDeg >= 0 ? '+' : ''}${c.twistFromFootDeg.toFixed(1)}° twist`
-      } else {
+      // The foot chord's twist against itself is zero by definition, so what is
+      // worth showing there is the angle to the centreline instead.
+      const deg = c.tag === 'clew' ? c.angleDeg : c.twistFromFootDeg
+      if (deg == null) {
         // Pre-v0.5: only the angle to the midline was stored, which is a
-        // sheeting angle. Shown, marked `~`, never called twist.
-        text = `~${c.angleDeg.toFixed(1)}° to c/l`
+        // sheeting angle rather than a twist. Shown, marked `~`, so a reader
+        // can tell it apart from the real thing without being told which.
+        text = `~${c.angleDeg.toFixed(1)}°`
+      } else {
+        text = `${deg >= 0 ? '+' : ''}${deg.toFixed(1)}°`
       }
     } else {
       text = formatMm(a, t.mm)

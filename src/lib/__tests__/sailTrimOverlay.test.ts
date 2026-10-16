@@ -363,11 +363,15 @@ describe('drawSailTrimAnnotation — the three views', () => {
     const ctx = fakeCtx(1000, 1000)
     drawSailTrimAnnotation(ctx, withChords(), { view: 'twist' })
     const t = texts(ctx).join(' ')
-    expect(t).toContain('+5.9° twist')
-    // The boom's own chord has zero twist by definition — what is worth showing
-    // there is where it is SHEETED, which is its angle to the centreline.
-    expect(t).toContain('-5.6° sheet')
-    expect(t).not.toContain('0.0° twist')
+    // Just the figure — where the label SITS says which it is, and the button
+    // that turned the view on says Twist.
+    expect(t).toContain('+5.9°')
+    // The boom's own chord has zero twist by definition, so what is worth
+    // showing there is where it is SHEETED: its angle to the centreline.
+    expect(t).toContain('-5.6°')
+    expect(t).not.toContain('+0.0°')
+    expect(t).not.toContain('twist')
+    expect(t).not.toContain('sheet')
   })
 
   it('does not put millimetres on the picture in the twist view', () => {
@@ -376,14 +380,14 @@ describe('drawSailTrimAnnotation — the three views', () => {
     expect(texts(ctx).join(' ')).not.toContain('1400')
   })
 
-  it('marks a pre-v0.5 chord `~ to c/l`, never as twist', () => {
+  it('marks a pre-v0.5 chord with `~`, so it reads apart from a real twist', () => {
     const a = withChords()
     a.chords = (a.chords || []).map((c) => ({ ...c, twistFromFootDeg: undefined }))
     const ctx = fakeCtx(1000, 1000)
     drawSailTrimAnnotation(ctx, a, { view: 'twist' })
-    const t = texts(ctx).join(' ')
-    expect(t).toContain('to c/l')
-    expect(t).not.toContain('twist')
+    // The stripe falls back to its angle to the midline, which is a sheeting
+    // angle and not a twist — the tilde is the whole of the warning.
+    expect(texts(ctx).join(' ')).toContain('~11.5°')
   })
 
   it('draws the scale and baseline lines in the geometry view, and no numbers on the sails', () => {
