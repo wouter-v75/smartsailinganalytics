@@ -490,6 +490,26 @@ export function drawSailTrimAnnotation(
     // the boom or the clew is where the foot is sheeted, and the view is called
     // Twist on the button that turned it on.
     let text: string
+    // In the twist view the label sits BESIDE the stripe point rather than over
+    // the middle of its line, and which side depends on the sail AND the tack
+    // (Wouter, 16 Oct). The collision it avoids is real: on Baraka's 08:21:55 the
+    // main's 25 % stripe and the jib's 50 % land 24 px apart in x and 60 in y,
+    // so two centred labels sit on top of each other and neither is readable.
+    //
+    // The rule is the main's figure to LEEWARD and the jib's to WINDWARD, which
+    // on port tack is the main to the right and the jib to the left, and mirrors
+    // on starboard. From astern image-right is starboard, so right is leeward on
+    // port and windward on starboard — the sails are on the other side of the
+    // picture on the other tack, and a fixed side would put both labels over the
+    // mainsail on one of them. This way the main's number always falls on the
+    // open side, over sky or water, which is where a figure is most readable.
+    //
+    // With no tack known it draws the port arrangement. That is a presentation
+    // choice and nothing downstream reads it, unlike the leeward sign on a
+    // measurement, which is refused rather than guessed.
+    let at = { x: (p.x + f.x) / 2, y: (p.y + f.y) / 2 - 5 * u }
+    let align: CanvasTextAlign = 'center'
+    let baseline: CanvasTextBaseline = 'bottom'
     if (view === 'twist') {
       const c = chordFor(t.key)
       if (!c) continue
@@ -504,18 +524,23 @@ export function drawSailTrimAnnotation(
       } else {
         text = `${deg >= 0 ? '+' : ''}${deg.toFixed(1)}°`
       }
+      // +1 when leeward is image-right (port tack), −1 on starboard.
+      const lee = a.tack === 'stbd' ? -1 : 1
+      const side = c.sail === 'jib' ? -lee : lee
+      at = { x: p.x + side * 11 * u, y: p.y }
+      align = side < 0 ? 'right' : 'left'
+      baseline = 'middle'
     } else {
       text = formatMm(a, t.mm)
     }
     ctx.font = `700 ${Math.max(11, 22 * u)}px system-ui, -apple-system, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'bottom'
-    const mid = { x: (p.x + f.x) / 2, y: (p.y + f.y) / 2 - 5 * u }
+    ctx.textAlign = align
+    ctx.textBaseline = baseline
     ctx.lineWidth = 3.5 * u
     ctx.strokeStyle = 'rgba(2,10,20,0.85)'
-    ctx.strokeText(text, mid.x, mid.y)
+    ctx.strokeText(text, at.x, at.y)
     ctx.fillStyle = t.colour
-    ctx.fillText(text, mid.x, mid.y)
+    ctx.fillText(text, at.x, at.y)
   }
 
   if (!labels) return

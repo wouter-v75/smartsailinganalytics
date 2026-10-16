@@ -335,29 +335,36 @@ describe('the annotation records what turned pixels into millimetres', () => {
 // comes to be read as the other.
 // ─────────────────────────────────────────────────────────────────────────────
 
+const px = { x: 500, y: 500 }
+const withChords = (): SailTrimAnnotation => ({
+  version: 'sailtrim-v0.6-overlay-views',
+  imageSize: { w: 1000, h: 1000 },
+  defn: 'boat',
+  axis: { low: { x: 500, y: 900 }, high: { x: 500, y: 100 } },
+  psiDeg: 0.2, psiMeasured: true, heelDeg: 12, tack: 'port', measuredAt: 0,
+  targets: [
+    { key: 'main@stripe50', label: 'Main @ 50 %', point: { x: 620, y: 500 }, foot: px, mm: 1400, sigmaMm: 20, colour: '#38BDF8' },
+    { key: 'boom', label: 'Boom', point: { x: 420, y: 820 }, foot: { x: 500, y: 820 }, mm: -660, sigmaMm: 30, colour: '#F87171' },
+    // At the SAME height as the main's 50 % stripe and only 10 px away: the
+    // collision the side placement exists for.
+    { key: 'jib@stripe50', label: 'Jib @ 50 %', point: { x: 630, y: 500 }, foot: px, mm: 1500, sigmaMm: 20, colour: '#4ADE80' },
+  ],
+  chords: [
+    { sail: 'main', tag: 'stripe50', fraction: 0.5, chordMm: 1400, widthM: 7.04,
+      widthSource: 'certificate', angleDeg: 11.5, angleSigmaDeg: 0.3, luffMm: null,
+      twistFromFootDeg: 5.9, twistFromFootSigmaDeg: 0.4, twistDatumIsFoot: true },
+    { sail: 'main', tag: 'clew', fraction: 0, chordMm: -660, widthM: 10.33,
+      widthSource: 'certificate', angleDeg: -5.6, angleSigmaDeg: 0.2, luffMm: null,
+      twistFromFootDeg: 0, twistFromFootSigmaDeg: 0, twistDatumIsFoot: true },
+    { sail: 'jib', tag: 'stripe50', fraction: 0.5, chordMm: 1500, widthM: 4.9,
+      widthSource: 'certificate', angleDeg: 17.8, angleSigmaDeg: 0.3, luffMm: null,
+      twistFromFootDeg: 8.4, twistFromFootSigmaDeg: 0.4, twistDatumIsFoot: true },
+  ],
+  scalePx: { a: { x: 300, y: 200 }, b: { x: 300, y: 800 } },
+  baselinePx: { a: { x: 450, y: 850 }, b: { x: 700, y: 870 } },
+} as unknown as SailTrimAnnotation)
+
 describe('drawSailTrimAnnotation — the three views', () => {
-  const px = { x: 500, y: 500 }
-  const withChords = (): SailTrimAnnotation => ({
-    version: 'sailtrim-v0.6-overlay-views',
-    imageSize: { w: 1000, h: 1000 },
-    defn: 'boat',
-    axis: { low: { x: 500, y: 900 }, high: { x: 500, y: 100 } },
-    psiDeg: 0.2, psiMeasured: true, heelDeg: 12, tack: 'port', measuredAt: 0,
-    targets: [
-      { key: 'main@stripe50', label: 'Main @ 50 %', point: { x: 620, y: 500 }, foot: px, mm: 1400, sigmaMm: 20, colour: '#38BDF8' },
-      { key: 'boom', label: 'Boom', point: { x: 420, y: 820 }, foot: { x: 500, y: 820 }, mm: -660, sigmaMm: 30, colour: '#F87171' },
-    ],
-    chords: [
-      { sail: 'main', tag: 'stripe50', fraction: 0.5, chordMm: 1400, widthM: 7.04,
-        widthSource: 'certificate', angleDeg: 11.5, angleSigmaDeg: 0.3, luffMm: null,
-        twistFromFootDeg: 5.9, twistFromFootSigmaDeg: 0.4, twistDatumIsFoot: true },
-      { sail: 'main', tag: 'clew', fraction: 0, chordMm: -660, widthM: 10.33,
-        widthSource: 'certificate', angleDeg: -5.6, angleSigmaDeg: 0.2, luffMm: null,
-        twistFromFootDeg: 0, twistFromFootSigmaDeg: 0, twistDatumIsFoot: true },
-    ],
-    scalePx: { a: { x: 300, y: 200 }, b: { x: 300, y: 800 } },
-    baselinePx: { a: { x: 450, y: 850 }, b: { x: 700, y: 870 } },
-  } as unknown as SailTrimAnnotation)
 
   it('labels a stripe with its TWIST and the boom with its SHEETING angle', () => {
     const ctx = fakeCtx(1000, 1000)
@@ -410,5 +417,68 @@ describe('drawSailTrimAnnotation — the three views', () => {
     drawSailTrimAnnotation(ctx, a, { view: 'geometry' })
     // Nothing throws, and the axis is there to orient by.
     expect(ctx.ops.filter((o) => o.op === 'stroke').length).toBeGreaterThan(0)
+  })
+})
+
+describe('drawSailTrimAnnotation — which side the twist label sits', () => {
+  // A main stripe and a jib stripe at the same height put their leech points
+  // within a few pixels of each other, so two centred labels land on top of one
+  // another and neither can be read. The main's goes RIGHT of its point, the
+  // jib's LEFT (Wouter, 16 Oct).
+  const at = (ctx: { ops: { op: string; args: number[] }[] }, text: string) =>
+    ctx.ops.find((o) => o.op === `fillText:${text}`)!.args
+
+  it('puts the main to the right of its point and the jib to the left, on PORT', () => {
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, withChords(), { view: 'twist' })
+    const main = at(ctx, '+5.9°')      // main @ 50 %, point x = 620
+    const jib = at(ctx, '+8.4°')       // jib  @ 50 %, point x = 630
+    expect(main[0]).toBeGreaterThan(620)
+    expect(jib[0]).toBeLessThan(630)
+    // The anchors end up on opposite sides of each other even though the two
+    // leech points are only 10 px apart — and the alignment is what actually
+    // keeps the text from colliding: the main is drawn left-aligned so it runs
+    // to the RIGHT of its anchor, the jib right-aligned so it runs to the LEFT
+    // of its own. They move apart rather than into each other.
+    expect(main[0]).toBeGreaterThan(jib[0])
+  })
+
+  it('sits them level with the stripe point, not over the middle of the line', () => {
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, withChords(), { view: 'twist' })
+    // The point is at y = 500 and the foot at y = 500, so a midpoint label
+    // would be lifted 5u above it; this one is on it.
+    expect(at(ctx, '+5.9°')[1]).toBe(500)
+  })
+
+  it('leaves the measurements view centred over its line', () => {
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, withChords(), { view: 'measurements' })
+    // 1400 mm on the main @ 50 %: point x 620, foot x 500, so centred at 560.
+    expect(at(ctx, '1400')[0]).toBeCloseTo(560, 6)
+  })
+
+  it('mirrors on starboard, so the main stays on the open side', () => {
+    // The sails are on the other side of the picture on the other tack. From
+    // astern image-right is starboard, so right is leeward on port and WINDWARD
+    // on starboard — a fixed side would put both labels over the mainsail on
+    // one of the two. The rule is main to leeward, jib to windward.
+    const stbd = withChords()
+    stbd.tack = 'stbd'
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, stbd, { view: 'twist' })
+    const main = at(ctx, '+5.9°'), jib = at(ctx, '+8.4°')
+    expect(main[0]).toBeLessThan(620)        // main point x = 620, now to its LEFT
+    expect(jib[0]).toBeGreaterThan(630)      // jib point x = 630, now to its RIGHT
+    // Still on opposite sides of each other, so still no collision.
+    expect(main[0]).toBeLessThan(jib[0])
+  })
+
+  it('draws the port arrangement when no tack is known', () => {
+    const none = withChords()
+    none.tack = null
+    const ctx = fakeCtx(1000, 1000)
+    drawSailTrimAnnotation(ctx, none, { view: 'twist' })
+    expect(at(ctx, '+5.9°')[0]).toBeGreaterThan(620)
   })
 })
