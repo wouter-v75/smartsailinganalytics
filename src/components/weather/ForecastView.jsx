@@ -66,6 +66,8 @@ function PillBtn({ active, color = '#06B6D4', onClick, children }) {
 const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
 const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
 // Animated particle-flow wind layer (loaded after Leaflet — it extends L).
+import { obsMarkerHtml, obsTooltipHtml, obsLegend } from '../../lib/windObsMarker'
+
 const VELOCITY_JS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.js'
 const VELOCITY_CSS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.css'
 
@@ -147,6 +149,13 @@ export default function ForecastView({
   const [fieldLoading, setFieldLoading] = useState(false)
   const [fieldErr, setFieldErr] = useState('')
   const velocityLayerRef = useRef(null)
+  // Live observations layer: off by default. It is a different KIND of thing from
+  // the model field underneath it (see docs/wind-observations-2026-10.md), so it
+  // is something you turn on to cross-check, not part of the forecast picture.
+  const obsLayerRef = useRef(null)
+  const [showObs, setShowObs] = useState(false)
+  const [obs, setObs] = useState([])
+  const [obsFailed, setObsFailed] = useState([])
   const velocityKindRef = useRef(null)   // 'wind' | 'current' — recreate the layer when this flips
   const speedOverlayRef = useRef(null)
   const contourOverlayRef = useRef(null) // hpbl contour-line + label SVG overlay
@@ -473,6 +482,43 @@ export default function ForecastView({
     return () => { map.off('mousemove', onMove); map.off('mouseout', onOut) }
   }, [field, fieldHourIdx, mapReady])
 
+  // ── Live observations ────────────────────────────────────────────────
+  // Fetched from /api/obs, not from the browser: several networks need
+  // credentials that must not ship in a bundle, and NOAA asks for one polite
+  // caller rather than one per phone.
+  useEffect(() => {
+    if (!showObs || p1lat == null || p1lon == null) { setObs([]); setObsFailed([]); return undefined }
+    let alive = true
+    const load = async () => {
+      try {
+        const r = await fetch(`/api/obs?lat=${p1lat}&lon=${p1lon}&nm=40`)
+        if (!r.ok) throw new Error(String(r.status))
+        const j = await r.json()
+        if (!alive) return
+        setObs(Array.isArray(j?.obs) ? j.obs : [])
+        setObsFailed(Array.isArray(j?.failed) ? j.failed : [])
+      } catch { if (alive) { setObs([]); setObsFailed(['network']) } }
+    }
+    load()
+    const t = setInterval(load, 300000)      // matches the route's own cache window
+    return () => { alive = false; clearInterval(t) }
+  }, [showObs, p1lat, p1lon])
+
+  useEffect(() => {
+    const map = mapRef.current; const L = window.L
+    if (!map || !L) return undefined
+    if (obsLayerRef.current) { try { map.removeLayer(obsLayerRef.current) } catch { /* */ } obsLayerRef.current = null }
+    if (!showObs || !obs.length) return undefined
+    const now = Date.now()
+    const group = L.layerGroup(obs.map((o) => L.marker([o.lat, o.lon], {
+      icon: L.divIcon({ html: obsMarkerHtml(o, now), className: 'ssa-obs', iconSize: [42, 18], iconAnchor: [9, 9] }),
+      keyboard: false,
+    }).bindTooltip(obsTooltipHtml(o, now), { direction: 'top', opacity: 0.95, sticky: true })))
+    group.addTo(map)
+    obsLayerRef.current = group
+    return () => { try { map.removeLayer(group) } catch { /* */ } }
+  }, [obs, showObs, mapReady])
+
   // ── Map bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
     if (!leafletReady || !mapDivRef.current || mapRef.current) return
@@ -740,6 +786,19 @@ export default function ForecastView({
             {viewMode === '3D' ? '🏔️ 3D wind field' : '📍 Click 3 points'}
           </div>
           <div style={{ flex: 1 }} />
+          {viewMode === '2D' && (
+            <button
+              onClick={() => setShowObs((v) => !v)}
+              title="Live wind observations near point 1 — airports now, more networks as their keys arrive"
+              style={{
+                fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, flexShrink: 0, whiteSpace: 'nowrap',
+                cursor: 'pointer', border: `1px solid ${showObs ? '#0EA5E9' : '#1E3A5A'}`,
+                background: showObs ? '#0EA5E9' : 'transparent', color: showObs ? '#031018' : '#94A3B8',
+              }}
+            >
+              ◉ Obs{showObs && obs.length ? ` ${obs.length}` : ''}
+            </button>
+          )}
           {/* 2D / 3D view toggle */}
           <div style={{ display: 'inline-flex', border: '1px solid #1E3A5A', borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
             {['2D', '3D'].map((m) => (
@@ -781,6 +840,24 @@ export default function ForecastView({
               display: viewMode === '3D' ? 'none' : 'block',
             }}
           />
+          {viewMode === '2D' && showObs && (
+            <div style={{
+              position: 'absolute', left: 8, bottom: 8, zIndex: 500, pointerEvents: 'none',
+              background: 'rgba(3,16,24,.82)', border: '1px solid #1E3A5A', borderRadius: 6,
+              padding: '5px 8px', fontSize: 10, color: '#94A3B8', lineHeight: 1.6, maxWidth: 240,
+            }}>
+              {obsLegend(obs).map((l) => (
+                <div key={l.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: l.colour, flexShrink: 0 }} />
+                  <span>{l.label} ({l.n})</span>
+                </div>
+              ))}
+              {!obs.length && <div>No stations within 40 nm.</div>}
+              {/* An empty map and a network that did not answer look identical otherwise. */}
+              {obsFailed.length > 0 && <div style={{ color: '#FCA5A5' }}>{obsFailed.join(', ')} unavailable</div>}
+              <div style={{ marginTop: 3, opacity: 0.8 }}>Tap a station — land readings run low.</div>
+            </div>
+          )}
           {viewMode === '3D' && (
             (field && field.frames?.length)
               ? <Field3D field={field} frameIdx={Math.min(fieldHourIdx, (field.frames.length - 1))} p1lat={p1lat} p1lon={p1lon} points={fieldPoints} mastHeight={mastHeight} height={mapH} exaggeration={3} />
