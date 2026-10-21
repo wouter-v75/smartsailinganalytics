@@ -285,6 +285,64 @@ is settled**, or the grids will arrive with nothing to run on.
 
 ---
 
+## 4b. Which ICON global run, to be ready by 09:30 local
+
+**Measured, not estimated.** ICON global publication times off the live server (Last-Modified),
+and the compute off Cowes' own August runs — `solent_2km`/`solent_1km` ran 1-8 Aug and San Juan is
+the same footprint, resolution and namelist, so nothing has to be scaled.
+
+| | measured |
+|---|---|
+| ICON global step 000 published | **cycle + 2h41** (00z 02:41:07, 12z 14:40:34) |
+| ICON global complete to +24 h | **cycle + 3h14** (00z 03:13:37, 12z 15:14:56) |
+| IC/BC preprocess | **3m 27s** (Cowes, 3 days, +/-2s) |
+| `solent_2km` +42 h, 7 ranks | **38m 10s** (38:02 / 38:14 on the other two days) |
+| nest IC/BC | **10s** |
+| `solent_1km` +18 h, 7 ranks | **45m 13s** (44:57 / 45:28) |
+
+Chain for San Juan: parent to **+21 h** (an +18 h nest needs the parent to +21), nest **+18 h**.
+The 2 km only needs 21/42 of Cowes' run: **19m**.
+
+```
+  T+2:41  step 000 lands -> streaming fetch starts (overlaps publication)
+  T+3:19  fetch done   (22 BC steps ~77 GB at the measured 2 GB/min; publication itself ends T+3:14)
+  T+3:23  IC/BC built  (+3m27)
+  T+3:42  2 km parent  (+19m)
+  T+3:43  nest IC/BC   (+10s)
+  T+4:28  1 km nest    (+45m13)
+  T+4:29  published
+```
+
+**Cycle + 4h29.** Converted to the venue:
+
+| Cycle | Ready UTC | PDT (UTC−7) | PST (UTC−8) |
+|---|---|---|---|
+| 00z | 04:29 | 21:29 *prev day* | 20:29 *prev day* |
+| 06z | 10:29 | 03:29 | 02:29 |
+| **12z** | **16:29** | **09:29** | **08:29** |
+| 18z | 22:29 | 15:29 | 14:29 |
+
+**Use the 12z.** In PST (which is when Round the County sails) it lands **08:29 local — an hour of
+margin**, off an analysis only 4.5 h old at the briefing. In PDT it lands **09:29, one minute inside
+the deadline**, which is not a margin, it is a coincidence.
+
+Buying margin in PDT, cheapest first:
+- **Trim the levels** (everything above the 21 km LAM top): the fetch becomes publication-bound
+  rather than download-bound, ending T+3:14 → **09:24**.
+- **Nest to +15 h** instead of +18: 45m13 becomes 37m40 → **09:16** with the trim.
+- The parent is already at its minimum (+21 h for an +18 h nest).
+
+Note this is the mirror image of the Med. At Porto Cervo the venue is UTC+2 and only the 00z is
+ever ready in time; here, being 7-8 h west means the **12z finishes during the local morning**.
+That is a structural advantage of a western venue, not a tuning win.
+
+Two numbers in that chain are NOT measured and should be treated as the risk: the ~77 GB fetch
+volume is ICON-EU's measured 2 GB/min applied to an estimated size, and the 3m27 preprocess is a
+regular-lat-lon remap — icosahedral may be slower. Both inflate the same slack the PDT case lacks.
+
+The 2-day outlook is not sacrificed for this: the parent's tail beyond +21 h can run AFTER the nest
+publishes, which is exactly what the existing SPLIT machinery in `daily_pipeline.sh` already does.
+
 ## 5. Two more gaps the venue inherits
 
 **SST has no Pacific product.** `fetch_cmems_sst.sh` offers `med`, `atl` (IFREMER Atlantic) and
