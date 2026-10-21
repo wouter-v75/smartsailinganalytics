@@ -404,6 +404,98 @@ real absence for racing there — a separate piece of work, not a configuration 
 
 ---
 
+## 5b. SST — the machinery is fine, the product is the question
+
+`preprocess_cdo.sh::prep_sst_lam` is already **source-agnostic**, and deliberately so: the header
+records that *"units + variable name were the two things that bit us on the Med, so both are now
+DETECTED, not assumed."* It auto-detects the variable
+(`analysed_sst | thetao | sst | sea_surface_temperature | sosstsst | tos`), auto-detects the units
+(field max < 100 ⇒ degC ⇒ +273.15), takes `seltimestep,1 -sellevidx,1` so a multi-step hourly
+product with a depth axis works, and renames to a canonical `analysed_sst`.
+
+**So a Pacific product is mostly a dataset-id change, not new code.** The one line that must survive
+is already flagged in the source:
+
+```
+  # Land-masked source -> bilinear remap leaves MISSING at near-coast LAM sea cells;
+  # swap_sst's ifthenelse would then write NaN into t_g -> RRTM abort.
+  # THIS WAS THE KEY MED FIX -- do NOT remove.
+  cdo ... remapbil,"${GRIDFILE}" ... ; cdo ... setmisstonn ...
+```
+
+A coastline as convoluted as the San Juans will produce *more* near-coast missing cells than the
+Med, not fewer, so `setmisstonn` matters more here.
+
+**Choosing the product.** Two realistic candidates, and the trade is not the obvious one:
+
+| | resolution | sensors | sovereignty |
+|---|---|---|---|
+| OSTIA (CMEMS) | 0.05° ≈ 5.5 km | **blends IR + microwave** | UKMO — and the README explicitly prefers *"CMEMS Med L4 (Mercator Ocean, FR), **not** OSTIA (UK Met Office)"* |
+| MUR (GHRSST) | 0.01° ≈ 1 km | IR-led | NASA/JPL, US |
+
+The San Juan channels are **2–5 km wide**, so 5.5 km barely resolves them and 1 km does. But the
+Pacific Northwest is cloudy, and IR-derived detail only exists in clear skies — microwave sees
+through cloud but only at ~25 km. MUR's extra detail is therefore least available exactly when the
+sky is overcast, which here is often.
+
+**Before paying for resolution, test the premise.** The Med needs ~1 km SST because the lever there
+is a *sharp coastal SST front*. The Salish Sea is strongly tidally mixed and close to isothermal
+year-round — the sea-breeze forcing is the large, stable land-sea contrast, not a gradient within
+the water. If that holds, 5.5 km is ample and the whole question evaporates. That is a cheap thing
+to check against buoy data and worth doing first.
+
+Whichever is chosen, confirm the dataset-id with `copernicusmarine describe` before wiring it — the
+existing script demands exactly that discipline, because a product id and a dataset id are not the
+same string.
+
+## 5c. The icosahedral grid — four concrete hazards
+
+The good news first: **the codebase already knows how to do this.** `preprocess_nest.sh` remaps ICON
+(unstructured parent) onto ICON (unstructured inner) and already passes `-setgrid` with the parent
+grid. The ICON-global path is therefore much closer to the NEST path than to `preprocess_cdo.sh`,
+whose header says plainly that it takes *"regular-lat-lon GRIB2 fields"*.
+
+1. **ICON GRIB2 carries no horizontal coordinates.** CDO's maintainers are explicit: you must attach
+   them with `setgrid` from DWD's grid file before any interpolation operator will work. That is the
+   937 MB `icon_grid_0026_R03B07_G.nc`, which has to be staged on the box.
+2. **`remapbil` and `remapbic` cannot be used on ICON grids at all** — use `remapdis`, `remapnn` or
+   `remapycon`. The current `REMAP_METHOD="gencon"` (conservative) is safe, and the SST `remapbil`
+   is safe because its *source* is a regular-lat-lon CMEMS product. **The trap is the comment on
+   line 46**, `"remapbil for winds if preferred"` — an invitation to a failure that would not exist
+   on the Med.
+3. **CDO 2.2.0 is broken on DWD global ICON GRIB2** (an eccodes padding error), fixed in 2.2.1. The
+   image currently has **2.1.1, which is safe** — so this is a landmine rather than a blocker: an
+   innocent CDO bump to 2.2.0 breaks ICON-global ingestion *specifically*, and nothing else.
+   **Pin the version.**
+4. **"Reference to source grid not found"** on self-generated weights. DWD's own fix is `selgrid`
+   first, then `setgrid` on a sample GRIB2, then `gennn`.
+
+And one that is already a scar here: **weights must be cached per source→target PAIR, not per
+cycle.** `preprocess_nest.sh` records that riviera_2km driving two nests collided on a shared
+`nest_weights.nc` with *"Size of source grid and weights differ"* — *"single-nest La Spezia never hit
+this."* Generating weights from a 2.9 M-cell global source is expensive enough that it must be done
+once and reused, which is exactly how that collision happened. DWD also publishes prebuilt weights
+and target descriptions for the global grid; use them rather than generating ours.
+
+## 5d. The repeat issues — things this project has already paid for
+
+Every one of these was a day lost somewhere. A new domain re-trips them for free unless they are
+checked off deliberately.
+
+| Trap | How it shows | The rule |
+|---|---|---|
+| An unknown output variable name | ICON **aborts at startup** — the whole cycle, no partial forecast | Prove names on a non-racing day (`smoketest_tke.sh` exists for this) |
+| `SPLITLEAD` too short | "LATBC file not found" **after** the parent has already run | 22, not 20 — the nest needs +21 h |
+| Partial `.bz2` left behind | `wget -nc` exits 0 without refetching, so the retry can **never** heal it | Delete the partial on any failure |
+| `missing_steps` is a RELATIVE test | A whole variable lagging reads as "fetch complete" | Only safe while fetching *after* publication ends |
+| Restart file moved out of the run dir | `-C` continuation **silently cold-starts** the tail | Leave `*_restart_*` in place |
+| Shared remap weights | "Size of source grid and weights differ" | Cache per parent→inner pair |
+| SST units/variable assumed | degC written into `t_g` as Kelvin | Detect both; keep `setmisstonn` |
+| Vertical CFL | Afternoon convection trips CFL > 1 at `dtime = 10 s` | `dtime ≤ 6 s`, and test on a **full-day** run that reaches afternoon convection |
+| MPI transport | `osc/pt2pt` deadlocks ICON's prefetch RMA at the boundary switch | `--ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined`, then `MPI_MCA=""` |
+| `www/` cycle dirs | ~1 GB accumulating on a 9 GB root disk | The archive sweep in `cron_daily.sh` |
+| Grid generated, levels unchecked | A drifted `z_mc` silently changes the whole profile | Dump `z_mc` after grid generation and confirm |
+
 ## 6. Checklist
 
 - [x] Domains created, namelists verified byte-identical to Cowes
