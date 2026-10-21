@@ -614,6 +614,71 @@ Disk is no longer the constraint.
 single file fails to decompress, which is exactly what the first attempt did. `fetch_icon_eu.sh` has
 always run in the container for the same reason.
 
+## 5h. Phase 3 done — preprocessing is source-aware, not forked
+
+`preprocess_cdo.sh` now takes `-S eu|global` and `-G <icosahedral grid>`. **One implementation, two
+roads** — a fork would drift, and this script is the only place that knows how IC/BC are assembled.
+
+| | `-S eu` (default) | `-S global` |
+|---|---|---|
+| file prefix | `icon-eu_*` | `icon_global_*` |
+| before every remap | nothing | `cdo setgrid,<SRCGRID>` |
+| weights file | `remap_weights_<domain>.nc` *(name unchanged)* | `remap_weights_global_<domain>.nc` |
+| invented surface fields | all 8 + `w_so_ice` | **only `snowfrac_lc`, `plantevap`** — the rest are real |
+| renames added | — | `FR_ICE:fr_seaice`, `SNOAG:snow_age`, `W_SO_ICE:w_so_ice` |
+
+Two guards refuse an impossible combination **up front** rather than mid-cycle: `-S global` without
+`-G` (ICON GRIB2 carries no coordinates), and a `remapbil`/`remapbic` method against an ICON source
+(CDO cannot apply either). The second exists because the old line-46 comment actively invited it.
+
+`qr`/`qs` need no zero-fill after all. The baseline EU IC **does not contain them either** — so ICON
+already runs without them and absence is tolerated; `normalise_tracer_levels` only has to fix a
+tracer that is present but SHORT, which is the case that aborts latbc. One less thing invented.
+
+### Proving the Med and Cowes domains are untouched
+
+Not asserted — measured. The 3 Oct ICON-EU fetch is still on disk, so the *current* script was run
+first, then the patch applied, then the same command re-run:
+
+| | before | after | `cdo diffn` |
+|---|---|---|---|
+| `ic_riviera_2km` | 28,308,419 B | 28,308,399 B | **0 differing fields** |
+| `latbc_…00` | 27,616,386 B | 27,616,386 B | **0** |
+| `latbc_…01` | 27,616,386 B | 27,616,386 B | **0** |
+
+Variable set identical (31 fields). The IC's 20-byte difference is the NetCDF `history` attribute,
+which records the CDO command line; the data is identical.
+
+**That test earned its place immediately.** The first patched run built the IC and then failed every
+boundary file with *"no files for step 000"*. `build_bc_one` runs in `xargs` SUBSHELLS, and
+`SRCPREFIX` was not in the `export` list — so the glob became `_*_<stamp>_` and matched nothing. The
+IC (main shell) was fine, the BCs (subshells) were silently empty. Exactly the failure mode that
+would have reached a race morning.
+
+## 5i. The parallel road — what still has to change
+
+The two chains are **naturally separated in time**, which is the thing that makes this viable at
+all: the Med/Cowes 00z chain runs 03:15-05:30 UTC, and the San Juan 12z chain runs ~14:41-16:24 UTC.
+Nine hours apart on one 8-core box, no contention, no queueing. The venue being 7-8 h west is what
+buys that.
+
+Preprocessing is done. These are the remaining single-valued assumptions:
+
+| What | Today | Needs |
+|---|---|---|
+| `daily_pipeline.sh` | `RUN="00"` hardcoded | env-overridable, so the 12z chain can be the same script |
+| fetch | always `fetch_icon_eu.sh` into `icon-eu/` | a `DRIVER` switch to `fetch_icon_global.sh` / `icon-global/` |
+| `EXPECT_PER_STEP` | one constant | read `.expect_per_step`, which the global fetcher already writes |
+| **ICON concurrency** | nothing stops two runs | **a lock** — 7 ranks each on 8 cores if one chain overruns |
+| `publish_status.sh` | writes ONE `status.json` | per-chain, or merged; two chains would overwrite each other |
+| disk hygiene | prunes `icon-eu/20*` | prune `icon-global/` too |
+| `.env` | single `DOMAINS`/`NESTS`/`EVENT_VENUE` | one set per chain |
+| cron | one entry at 03:15 | a second at ~14:41 |
+
+The lock is the one that matters: the time separation makes collision unlikely, not impossible, and
+two ICON runs sharing 8 cores is the kind of failure that produces a late forecast on both roads at
+once.
+
 ## 6. Implementation plan
 
 Ordered so that nothing expensive is built before the thing that gates it, and nothing touches a
