@@ -196,6 +196,12 @@ export const MODELS = {
       // Solent / Cowes, Isle of Wight (UK) — own ICON-EU-driven 2 km parent. W lon is
       // negative. Points grey out until solent_2km's grid publishes:
       { name: 'solent', domain: 'solent_2km', clon: -1.30, clat: 50.76, half: 0.30 },
+      // San Juan Islands, Washington (filed as "seattle"). Same grid geometry,
+      // physics and vertical levels as the Solent pair. NOT yet runnable: the box
+      // is driven by ICON-EU, whose western edge is 23.5W — this is 122.9W, so it
+      // needs ICON GLOBAL driving data first (see the domain's ZONDA_ISSUE).
+      // Points grey out until seattle_2km's grid publishes:
+      { name: 'seattle', domain: 'seattle_2km', clon: -122.8946, clat: 48.5627, half: 0.30 },
       // La Spezia STOPPED 2026-06-27 (domain box removed; training window closed).
       // Porto Cervo (Maxi Worlds, 1-12 Sept) — points grey out until its grid publishes:
       { name: 'porto_cervo', domain: 'porto_cervo_2km', clon: 9.55, clat: 41.13, half: 0.40 },
@@ -223,6 +229,8 @@ export const MODELS = {
       { name: 'st_tropez', domain: 'st_tropez_1km', clon: 6.678, clat: 43.275, half: 0.23 },
       // Solent / Cowes 1 km nest off solent_2km (full-Solent race box, half 0.30):
       { name: 'solent', domain: 'solent_1km', clon: -1.30, clat: 50.76, half: 0.30 },
+      // San Juan Islands 1 km nest off seattle_2km (same footprint as solent_1km):
+      { name: 'seattle', domain: 'seattle_1km', clon: -122.8946, clat: 48.5627, half: 0.30 },
       // Porto Cervo 1 km nest off porto_cervo_2km (Costa Smeralda / Bonifacio gap jet):
       { name: 'porto_cervo', domain: 'porto_cervo_1km', clon: 9.45, clat: 41.22, half: 0.31 },
     ],
