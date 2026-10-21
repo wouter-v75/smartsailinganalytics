@@ -572,6 +572,48 @@ The waiting log line now prints the observed count beside the expectation, and t
 says explicitly when a uniform shortfall looks like a stale expectation rather than a late DWD — so
 a wrong value is visible instead of silently hanging the cycle.
 
+## 5g. `fetch_icon_global.sh` — written, and what the dry run caught
+
+On the box at `scripts/fetch_icon_global.sh`. Levels 45-120, steps 0-MAXLEAD, the extended
+surface set, partial-`.bz2` deletion kept, and `-x CMD` for streaming. `-n` dry-runs the manifest
+against the live server without downloading, which is how the following were found — none of them
+from reading the field list, which looks identical between the two models.
+
+**Four discrepancies, each of which would have produced a silently incomplete IC:**
+
+| | ICON-EU | ICON global |
+|---|---|---|
+| `qr`, `qs` | published | **directories exist and are EMPTY — 0 files** |
+| `snoag`, `hsnow_max` | single-level | **time-invariant** (one token-less file per cycle) |
+| `w` | with the rest | **half-level field — 77 levels where the others have 76** |
+
+**`qr`/`qs` are a real gap, not a difference.** A straight copy of the Med field list yields an IC
+with two tracers missing and nothing says so. They are precipitating hydrometeors that spin up
+within an hour or two, so preprocessing must **zero-fill them in 3D** — the same treatment as the
+surface fields. That has to be an explicit decision in the code, not an omission.
+
+**`snoag`/`hsnow_max` filed as time-invariant** is the nastier one: asked for as single-level they
+return *nothing at all*, which is how a snow field quietly becomes absent in a domain that has real
+snow — exactly the trap §5e is about, arriving by a different door.
+
+**`w` being a half-level field** is a 76-vs-77 error that would hold the completeness gate open for
+ever, since no step would ever reach the expected count.
+
+**The expectation now self-derives and agrees with reality.** The script computes
+`EXPECT_PER_STEP = 7xNKEEP + 1x(NKEEP+1) + 13` from its own field lists and writes it to
+`.expect_per_step`, so the absolute gate in §5f calibrates from the CONFIG rather than from
+whatever the server happens to have listed mid-publication — which is the blind spot the gate exists
+to close. Measured against the live feed: **computed 622, observed 622**, with step 000 at 647 (the
+extra 25 are soil, which is analysis-time only).
+
+**Verified by a real fetch** (step 000, levels 119+, streamed): 61/61 files downloaded,
+decompressed, handed to the hook and deleted, leaving **32 KB** on disk against tens of MB of data.
+Disk is no longer the constraint.
+
+**It must run INSIDE the ICON container.** `bunzip2` is not on the box host — run on the host every
+single file fails to decompress, which is exactly what the first attempt did. `fetch_icon_eu.sh` has
+always run in the container for the same reason.
+
 ## 6. Implementation plan
 
 Ordered so that nothing expensive is built before the thing that gates it, and nothing touches a
