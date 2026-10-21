@@ -22,6 +22,7 @@ import { retryingFetch, why } from './lib/netFetch'
 import { classifyInvite, type InviteState } from '../src/lib/welcome-invite'
 import { describeAuthEvent, isAuthProblem, type AuthEventDetails } from '../src/lib/authEvents'
 import { normaliseEmail } from '../src/lib/provision-member'
+import { describeNearMisses } from '../src/lib/inviteNearMiss'
 
 const args = process.argv.slice(2)
 const val = (f: string) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : undefined }
@@ -156,6 +157,24 @@ const main = async () => {
   }
   if (!relevant.length) {
     blockers.push('no invitation row for this address — the welcome link cannot be verified without one')
+    // "I sent it last week" and "there is no row" cannot both be true, so the
+    // address that was invited is not the address being asked about. One
+    // mistyped character is invisible in a form, in a sent mail and in a
+    // verdict that only says "no row" — so show the team's recent invitations
+    // and mark the near misses. Chris Taylor, 21 Oct 2026, is the case this
+    // was written for.
+    const ids = Array.from(teamName.keys())
+    const { data: recent } = ids.length
+      ? await sb.from('invitations')
+          .select('email, role, created_at')
+          .in('team_id', ids)
+          .not('email', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(20)
+      : { data: [] }
+    for (const line of describeNearMisses(email, recent || [], (iso) => `${when(iso)}${ago(iso)}`)) {
+      console.log(`          ${line}`)
+    }
   } else if (!liveLink) {
     blockers.push('every invitation is used, expired or revoked — press Re-send on the team page, which unspends it and pushes the expiry out')
   }
