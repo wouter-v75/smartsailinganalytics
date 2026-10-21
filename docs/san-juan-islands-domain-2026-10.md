@@ -300,37 +300,55 @@ the same footprint, resolution and namelist, so nothing has to be scaled.
 | nest IC/BC | **10s** |
 | `solent_1km` +18 h, 7 ranks | **45m 13s** (44:57 / 45:28) |
 
-Chain for San Juan: parent to **+21 h** (an +18 h nest needs the parent to +21), nest **+18 h**.
-The 2 km only needs 21/42 of Cowes' run: **19m**.
+Chain for San Juan is the **Sardinia split**, not a short parent run: phase A of the 2 km to
+`SPLITLEAD`, then the 1 km nest, then the 2 km TAIL afterwards. Porto Cervo on 12 Sept:
+
+```
+  03:29:10  phase A (+22 h of 42)
+  04:05:58  phase A finished — nest can start
+  04:06:11  2 km PUBLISHED EARLY at +22 h (full outlook follows)
+  05:03:43  1 km nest delivered (+18 h)
+```
+
+`SPLITLEAD = 22`, and the 22 is deliberate: the comment in `daily_pipeline.sh` records that the nest
+needs +21 h, so 20 aborts it with "LATBC file not found" *after* the parent has already run. BC must
+also reach ~2 h beyond that, because ICON's async latbc prefetcher reads ahead — so **BCLEAD 24**,
+25 steps, not 22.
+
+That is the correction to my first pass: I had the parent at +21 h with no margin and BC at 22
+steps, which is the configuration that was already proven to break.
 
 ```
   T+2:41  step 000 lands -> streaming fetch starts (overlaps publication)
-  T+3:19  fetch done   (22 BC steps ~77 GB at the measured 2 GB/min; publication itself ends T+3:14)
-  T+3:23  IC/BC built  (+3m27)
-  T+3:42  2 km parent  (+19m)
-  T+3:43  nest IC/BC   (+10s)
-  T+4:28  1 km nest    (+45m13)
-  T+4:29  published
+  T+3:25  fetch done    (25 BC steps ~87 GB at the measured 2 GB/min; publication ends T+3:14)
+  T+3:28  IC/BC built   (+3m27)
+  T+3:48  2 km phase A  (+22 h = 22/42 of Cowes' 38m10 = +20m)
+  T+3:49  2 km published early  (+15s)
+  T+3:49  nest IC/BC    (+10s)
+  T+4:34  1 km nest     (+45m13)
+  T+4:35  published
+          ... 2 km phase B (+22->42 h) runs after this, off the critical path
 ```
 
-**Cycle + 4h29.** Converted to the venue:
+**Cycle + 4h35.** Converted to the venue:
 
 | Cycle | Ready UTC | PDT (UTC−7) | PST (UTC−8) |
 |---|---|---|---|
 | 00z | 04:29 | 21:29 *prev day* | 20:29 *prev day* |
 | 06z | 10:29 | 03:29 | 02:29 |
-| **12z** | **16:29** | **09:29** | **08:29** |
-| 18z | 22:29 | 15:29 | 14:29 |
+| **12z** | **16:35** | **09:35** | **08:35** |
+| 18z | 22:35 | 15:35 | 14:35 |
 
-**Use the 12z.** In PST (which is when Round the County sails) it lands **08:29 local — an hour of
-margin**, off an analysis only 4.5 h old at the briefing. In PDT it lands **09:29, one minute inside
-the deadline**, which is not a margin, it is a coincidence.
+**Use the 12z**, and in PDT the level trim stops being optional.
 
-Buying margin in PDT, cheapest first:
-- **Trim the levels** (everything above the 21 km LAM top): the fetch becomes publication-bound
-  rather than download-bound, ending T+3:14 → **09:24**.
-- **Nest to +15 h** instead of +18: 45m13 becomes 37m40 → **09:16** with the trim.
-- The parent is already at its minimum (+21 h for an +18 h nest).
+- **PST** (when Round the County sails): **08:35 local, ~1 h of margin**, off an analysis 4.5 h old
+  at the briefing. Works as-is.
+- **PDT**: **09:35 — five minutes LATE.** Trimming the levels above the 21 km LAM top takes ~30 % off
+  the fetch, which makes it publication-bound (T+3:14) rather than download-bound, and the chain
+  lands **09:24**. That is the difference between missing and six minutes of margin.
+- Further slack if wanted: a **+15 h nest** (45m13 → 37m40) gives **09:16**.
+
+The parent cannot be shortened below +22 h without breaking the nest, as above.
 
 Note this is the mirror image of the Med. At Porto Cervo the venue is UTC+2 and only the 00z is
 ever ready in time; here, being 7-8 h west means the **12z finishes during the local morning**.
@@ -340,8 +358,9 @@ Two numbers in that chain are NOT measured and should be treated as the risk: th
 volume is ICON-EU's measured 2 GB/min applied to an estimated size, and the 3m27 preprocess is a
 regular-lat-lon remap — icosahedral may be slower. Both inflate the same slack the PDT case lacks.
 
-The 2-day outlook is not sacrificed for this: the parent's tail beyond +21 h can run AFTER the nest
-publishes, which is exactly what the existing SPLIT machinery in `daily_pipeline.sh` already does.
+The 2-day outlook costs nothing against the deadline, because phase B is already off the critical
+path — and the 2 km is published early at +22 h, so there is a usable product on screen at T+3:49
+(08:49 PDT / 07:49 PST) while the 1 km is still integrating.
 
 ## 5. Two more gaps the venue inherits
 
