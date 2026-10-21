@@ -679,6 +679,58 @@ The lock is the one that matters: the time separation makes collision unlikely, 
 two ICON runs sharing 8 cores is the kind of failure that produces a late forecast on both roads at
 once.
 
+## 5j. Phase 3b done — the box can now run both roads in one day
+
+**The ICON lock is the important one.** Two chains share 8 cores; if one overruns, 7 ranks each
+makes BOTH forecasts late, which is worse than one waiting. `run_icon.sh` now takes an exclusive
+lock around the single `launch` call.
+
+The lock lives on **`/data`**, which is the only path bind-mounted into every invocation
+(`cron_daily`, `testrun_v2`, `smoketest` all pass `-v /data:/data`). A lock under `${ROOT}` or
+`/tmp` would be private to each container and protect nothing — the two chains are separate
+`docker run`s, not threads. Proven with two separate containers:
+
+```
+  19:06:28 CHAIN-A acquired lock / RUNNING
+  19:06:34 CHAIN-A done
+  19:06:34 CHAIN-B acquired lock      <- waited, did not overlap
+  19:06:36 CHAIN-B done
+
+  19:06:36 LONG-A acquired lock
+  19:06:39 SHORT-B TIMED OUT waiting  -> exit 99, rather than oversubscribing
+```
+
+The wait is bounded (`ICON_LOCK_WAIT`, 3600 s) so a wedged run is an alert, not a hang. Without
+`flock`, or where `/data` is not writable, it logs that it is unserialised and behaves exactly as
+before.
+
+**Everything else is parameterised, with the existing defaults preserved:**
+
+| | default (Med/Cowes) | San Juan |
+|---|---|---|
+| `RUN` | `00` | `12` |
+| `DRIVER` | `eu` | `global` (+ `ICON_GLOBAL_GRID`, refused at startup if unset) |
+| source dir | `icon-eu/` | `icon-global/` |
+| fetcher | `fetch_icon_eu.sh` | `fetch_icon_global.sh` |
+| preprocess args | *(none)* | `-S global -G <grid>` |
+| `EXPECT_PER_STEP` | 619 | **read from `.expect_per_step`**, which the global fetcher writes |
+| `STATUS_NAME` | `status.json` | `status_usa.json` |
+| disk hygiene | prunes `icon-eu/` | **and `icon-global/`** |
+
+Verified: with nothing set it still resolves to `RUN=00 DRIVER=eu SRCDIR=icon-eu
+FETCHER=fetch_icon_eu.sh PPSRC=[]` — so preprocess receives no `-S`/`-G` and falls to its `eu`
+default, which §5h already proved produces identical data. `DRIVER=global` without
+`ICON_GLOBAL_GRID` refuses at startup; with it, it resolves to `icon-global` /
+`fetch_icon_global.sh` / `-S global -G …`.
+
+**Two follow-ups, neither a code change:**
+- **The app shows one chain.** `ModelUpdates.jsx` reads `icon-race/status.json`, so the San Juan
+  chain publishes `status_usa.json` and is simply absent from the Admin table until the component
+  learns to read both. Deliberate: the alternative was two chains overwriting one file and each
+  erasing the other's cycle.
+- **Cron and `.env`** are deployment, not code, and should not be added until there is a grid to
+  run. A second entry at ~14:41 UTC with its own `DOMAINS`/`NESTS`/`EVENT_VENUE`.
+
 ## 6. Implementation plan
 
 Ordered so that nothing expensive is built before the thing that gates it, and nothing touches a
