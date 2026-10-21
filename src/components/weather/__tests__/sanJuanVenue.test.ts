@@ -14,10 +14,10 @@ const venueAt = (modelKey: string, lat: number, lon: number) =>
       Math.abs(lat - v.clat) <= v.half && Math.abs(lon - v.clon) <= v.half,
   )
 
-describe('the Seattle venue', () => {
+describe('the San Juan Islands venue', () => {
   it('is registered on BOTH resolutions, pointing at its own domains', () => {
-    expect(venueAt('ICONRACE', PIN.lat, PIN.lon)).toMatchObject({ name: 'seattle', domain: 'seattle_2km' })
-    expect(venueAt('ICONRACE_1KM', PIN.lat, PIN.lon)).toMatchObject({ name: 'seattle', domain: 'seattle_1km' })
+    expect(venueAt('ICONRACE', PIN.lat, PIN.lon)).toMatchObject({ name: 'san_juan_islands', domain: 'san_juan_islands_2km' })
+    expect(venueAt('ICONRACE_1KM', PIN.lat, PIN.lon)).toMatchObject({ name: 'san_juan_islands', domain: 'san_juan_islands_1km' })
   })
 
   it('matches the half-width the box publishes in venues.csv', () => {
