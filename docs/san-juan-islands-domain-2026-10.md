@@ -208,15 +208,63 @@ is not a parameter change — it is a new preprocessing path. The alternative, r
 venue because HRRR *is* WRF and the nesting is native, means a second model stack to maintain, which
 cuts against everything else SSA has built.
 
+### Verified 21 Oct: ICON global IS affordable, if we stop retaining it
+
+The 150 GB figure assumed we take everything and keep it. Checked against the live server, neither
+has to be true. There is no server-side subsetting (no filter service, and zero regular-lat-lon
+files anywhere in the global tree — both checked), but DWD already splits every field by
+**variable x level x step**, and that split *is* the subsetting API:
+
+| Lever | Saving | Why it is safe |
+|---|---|---|
+| **Steps** | **~56%** | The nest runs +18 h (that is what `solent_1km` does), not +42 h. 19 hourly BC steps instead of 43. |
+| **Levels** | ~30% | The LAM top is `top_height = 21000`. ICON global's top is 75 km, so every level above 21 km is fetched and discarded. The exact cut is readable from the HHL files. |
+| **Variables** | ~20%, optional | `qr`/`qs` could be dropped at the cost of a little spin-up. Riskiest of the three; take it last. |
+
+**But the real unlock is not a lever, it is the order of operations.** The pipeline currently
+fetches everything, *then* preprocesses. Stream it instead — per file: download, decompress, remap
+onto the LAM box, append, delete:
+
+```
+  for each (var, level, step):  GET -> bunzip2 -> cdo remap -> append -> rm
+```
+
+Peak disk becomes a handful of 3.5 MB files plus the remapped output, and the remapped output for a
+170 x 200 km box at 13 km is trivially small. **Disk stops being the constraint at all** — the
+50 GB free becomes irrelevant, and the only question left is transfer TIME.
+
+Which is measurable, and already measured: this box pulls **ICON-EU's 20 GB in 10 minutes**, i.e.
+~2 GB/min. So:
+
+| | volume | transferred in |
+|---|---|---|
+| Naive (everything, +42 h) | ~150 GB | ~75 min |
+| **+18 h only** | **~66 GB** | **~33 min** |
+| +18 h and levels trimmed | ~46 GB | ~23 min |
+
+A 03:15 start finishing the fetch by ~03:50 is inside the existing morning window. One-off cost: the
+remap weights, computed once from the 937 MB R03B07 grid description and reused thereafter.
+
+**So option A is no longer "needs more disk".** It is "restructure the fetch to stream, and trim to
+the lead we actually run" — which is work, but ordinary work, on the chain we already have.
+
+The one thing that cannot be recovered is the SPATIAL waste: each GRIB message is a single global
+field, so we download the planet to use a 170 x 200 km box. HRRR avoids this with `.idx` byte
+ranges; DWD publishes none, and the `.bz2` is whole-file compressed so HTTP ranges do not help
+either. That is the price of staying on ICON, and at ~33 min it is affordable.
+
 ### So, three options
 
 | | Driving data | Volume | Keeps the ICON chain? | Risk |
 |---|---|---|---|---|
-| **A** | ICON global, +18 h, more disk | ~65 GB | yes | icosahedral remap work; needs a bigger `/data` |
+| **A** | ICON global, +18 h, **streamed** | ~66 GB transferred, **<1 GB on disk** | yes | icosahedral remap work; ~33 min fetch |
 | **B** | HRRR → our 1 km | ~12 GB | yes, but a NEW init path | HRRR→ICON initialisation is non-standard |
 | **C** | **None — use HRRR via Open-Meteo, which already works** | 0 | n/a | none |
 
-**Start with C.** SSA already ingests HRRR, so there are 3 km forecasts for this venue *today* with
+**A is now genuinely viable** — the disk objection is gone and the fetch fits the window. It keeps
+one model family, one preprocessing chain and the EU-sovereignty policy intact, which B does not.
+
+**Start with C anyway.** SSA already ingests HRRR, so there are 3 km forecasts for this venue *today* with
 no box work at all. The only thing our own nest adds is 1 km island-scale resolution — and whether
 that is needed is an empirical question that C answers for free. Build the chain once HRRR has been
 shown to miss the island-scale breeze, not before.
