@@ -318,35 +318,63 @@ also reach ~2 h beyond that, because ICON's async latbc prefetcher reads ahead �
 That is the correction to my first pass: I had the parent at +21 h with no margin and BC at 22
 steps, which is the configuration that was already proven to break.
 
+### The level cut, measured
+
+ICON global half-level heights, read off the published HHL files (`grib_get -p average`):
+
+| half-level | height | |
+|---|---|---|
+| 1 | 75,000 m | model top |
+| 30 | 37,159 m | |
+| 40 | 27,998 m | |
+| **45** | **24,170 m** | **the cut** |
+| 50 | 20,795 m | first level *below* the 21 km LAM top |
+| 60 | 15,638 m | |
+| 121 | 236 m | surface |
+
+Spacing near the cut is **675 m per level**, so level 49 is ~21,470 m — the first above the LAM's
+`top_height = 21000`. Cutting there would leave under 500 m of headroom, which is not enough for the
+vertical remap onto the LAM column.
+
+**Cut at full level 45: keep 45..120, drop 1..44.** That is **76 of 120 levels (63.3 %), a 36.7 %
+saving**, with **3,170 m of headroom** above the LAM top. Model-level files are ~97 % of the fetch
+(10 variables x 120 levels against ~19 single/soil files per step), so the saving applies to
+essentially the whole volume: **87.2 GB -> 55.2 GB, 43.6 min -> 27.6 min**.
+
+At 27.6 min the fetch finishes at T+3:09, which is *before* DWD finishes publishing +24 h at T+3:14
+— so the trim moves the fetch from download-bound to **publication-bound**, and no further trimming
+of levels buys anything at all.
+
 ```
   T+2:41  step 000 lands -> streaming fetch starts (overlaps publication)
-  T+3:25  fetch done    (25 BC steps ~87 GB at the measured 2 GB/min; publication ends T+3:14)
-  T+3:28  IC/BC built   (+3m27)
-  T+3:48  2 km phase A  (+22 h = 22/42 of Cowes' 38m10 = +20m)
-  T+3:49  2 km published early  (+15s)
-  T+3:49  nest IC/BC    (+10s)
-  T+4:34  1 km nest     (+45m13)
-  T+4:35  published
+  T+3:14  fetch done    (25 BC steps, levels 45-120, ~55 GB; now PUBLICATION-bound, not download)
+  T+3:18  IC/BC built   (+3m27)
+  T+3:38  2 km phase A  (+22 h = 22/42 of Cowes' 38m10 = +20m)
+  T+3:38  2 km published early  (+15s)
+  T+3:38  nest IC/BC    (+10s)
+  T+4:23  1 km nest     (+45m13)
+  T+4:24  1 km PUBLISHED  <-- the number that matters
           ... 2 km phase B (+22->42 h) runs after this, off the critical path
 ```
 
-**Cycle + 4h35.** Converted to the venue:
+**1 km ready at cycle + 4h24** (4h35 untrimmed). Converted to the venue:
 
 | Cycle | Ready UTC | PDT (UTC−7) | PST (UTC−8) |
 |---|---|---|---|
 | 00z | 04:29 | 21:29 *prev day* | 20:29 *prev day* |
 | 06z | 10:29 | 03:29 | 02:29 |
-| **12z** | **16:35** | **09:35** | **08:35** |
-| 18z | 22:35 | 15:35 | 14:35 |
+| **12z** | **16:24** | **09:24** | **08:24** |
+| 18z | 22:24 | 15:24 | 14:24 |
 
-**Use the 12z**, and in PDT the level trim stops being optional.
+**PDT vs PST** is simply US daylight saving: **PDT = UTC−7**, in force from the second Sunday in
+March to the first Sunday in November; **PST = UTC−8** the rest of the year. The 1 km is ready at a
+fixed 16:24 UTC either way — it is the *local* clock that moves, so the summer season is the harder
+one by an hour. Round the County, the second weekend of November, falls just after the switch and so
+runs in PST.
 
-- **PST** (when Round the County sails): **08:35 local, ~1 h of margin**, off an analysis 4.5 h old
-  at the briefing. Works as-is.
-- **PDT**: **09:35 — five minutes LATE.** Trimming the levels above the 21 km LAM top takes ~30 % off
-  the fetch, which makes it publication-bound (T+3:14) rather than download-bound, and the chain
-  lands **09:24**. That is the difference between missing and six minutes of margin.
-- Further slack if wanted: a **+15 h nest** (45m13 → 37m40) gives **09:16**.
+**Use the 12z.** The 1 km lands **09:24 PDT / 08:24 PST**, off an analysis 4.5 h old at the briefing.
+Untrimmed it is 09:35 / 08:35, which is also inside the deadline — so the trim is margin, not a
+rescue. Further slack if ever needed: a **+15 h nest** (45m13 → 37m40) gives 09:16 PDT.
 
 The parent cannot be shortened below +22 h without breaking the nest, as above.
 
@@ -359,8 +387,8 @@ volume is ICON-EU's measured 2 GB/min applied to an estimated size, and the 3m27
 regular-lat-lon remap — icosahedral may be slower. Both inflate the same slack the PDT case lacks.
 
 The 2-day outlook costs nothing against the deadline, because phase B is already off the critical
-path — and the 2 km is published early at +22 h, so there is a usable product on screen at T+3:49
-(08:49 PDT / 07:49 PST) while the 1 km is still integrating.
+path — and the 2 km is published early at +22 h, so there is a usable product on screen at T+3:38
+(08:38 PDT / 07:38 PST) while the 1 km is still integrating.
 
 ## 5. Two more gaps the venue inherits
 
