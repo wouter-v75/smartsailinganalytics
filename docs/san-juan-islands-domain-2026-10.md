@@ -164,6 +164,63 @@ Against **50 GB free on `/data`** and a fetch that already takes 10 minutes at 1
 means `preprocess_cdo.sh` needs the 937 MB R03B07 grid description plus remap weights — a new
 preprocessing path, not a parameter change.
 
+### Verified 21 Oct: ECMWF open data is NOT usable here
+
+Checked rather than assumed, and it fails on one specific thing: **ECMWF open data publishes no
+model levels.** It carries 14 pressure levels — 1000, 925, 850, 700, 600, 500, 400, 300, 250, 200,
+150, 100, 50, 10 hPa — plus surface/single-level and 4 soil layers. Between the surface and 850 hPa
+there are exactly **two** levels. For a venue whose entire forecast problem is the lowest 100 m,
+that cannot initialise a convection-permitting LAM. (0.25°, with 0.1° added 20 Oct 2026; CC-BY-4.0;
+GRIB2; rolling 12 runs.) It is excellent for POINT forecasts — which is precisely how Open-Meteo
+already uses it in SSA — just not as driving data.
+
+### Verified 21 Oct: HRRR is the better US answer, and it reframes the design
+
+| | value |
+|---|---|
+| Resolution | **3 km, convection-permitting, hourly data assimilation** |
+| Covers the venue? | **Yes** — Open-Meteo's `gfs_hrrr` returns 24/24 non-null hours at 48.5627/−122.8946, elevation 0.0 (a water cell) |
+| Vertical | **native hybrid levels** (`wrfnat`), i.e. the full PBL structure ECMWF open data lacks |
+| Volume | 651 MB/hour; +18 h ≈ **12 GB**, which fits the 50 GB free — and `.idx` files allow byte-range subsetting to cut it much further |
+| Cost | free, no key, on AWS NODD |
+
+**The consequence is that the 2 km domain may not be needed at all.** In the Med the 2 km parent
+exists because the best public model is 7–13 km. In the US it is not:
+
+```
+Med:  ICON-EU 7 km  ->  our 2 km  ->  our 1 km
+US:   HRRR 3 km (free, hourly, radar-assimilating)  ------>  our 1 km
+```
+
+That removes the 150 GB problem, halves the compute, and starts from better data than we could
+produce ourselves at 2 km from a 13 km global model.
+
+**Two honest caveats.** HRRR is NOAA — US-sourced, against the README's EU-sovereignty policy. For a
+US venue that is a judgement call rather than a breach, but it is the user's call, not mine. And
+NOAA is mid-transition to **RRFS**: the dates in circulation disagree (31 Aug vs early Oct 2026) and
+NOAA says HRRR "will remain in operations" while one source says RRFS eventually replaces it with no
+date. RRFS is also 3 km over North America, so the successor is equivalent — but the fetch would
+need re-pointing.
+
+**The engineering risk in option B is real:** ICON-LAM is normally initialised from ICON or IFS.
+HRRR is WRF-ARW on a Lambert grid with hybrid sigma levels, and getting that into `init_mode = 7`
+is not a parameter change — it is a new preprocessing path. The alternative, running WRF for this
+venue because HRRR *is* WRF and the nesting is native, means a second model stack to maintain, which
+cuts against everything else SSA has built.
+
+### So, three options
+
+| | Driving data | Volume | Keeps the ICON chain? | Risk |
+|---|---|---|---|---|
+| **A** | ICON global, +18 h, more disk | ~65 GB | yes | icosahedral remap work; needs a bigger `/data` |
+| **B** | HRRR → our 1 km | ~12 GB | yes, but a NEW init path | HRRR→ICON initialisation is non-standard |
+| **C** | **None — use HRRR via Open-Meteo, which already works** | 0 | n/a | none |
+
+**Start with C.** SSA already ingests HRRR, so there are 3 km forecasts for this venue *today* with
+no box work at all. The only thing our own nest adds is 1 km island-scale resolution — and whether
+that is needed is an empirical question that C answers for free. Build the chain once HRRR has been
+shown to miss the island-scale breeze, not before.
+
 **So I have not shipped a `fetch_icon_global.sh`.** Writing a production fetcher that cannot run
 here would be worse than saying so. The realistic options, in the order I would consider them:
 
