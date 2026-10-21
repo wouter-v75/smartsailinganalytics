@@ -496,7 +496,135 @@ checked off deliberately.
 | `www/` cycle dirs | ~1 GB accumulating on a 9 GB root disk | The archive sweep in `cron_daily.sh` |
 | Grid generated, levels unchecked | A drifted `z_mc` silently changes the whole profile | Dump `z_mc` after grid generation and confirm |
 
-## 6. Checklist
+## 5e. The sea-ice / surface-variable trap — and why it is BETTER here
+
+The Med pipeline **fakes ten surface fields as zero**, because ICON wants a complete first guess and
+DWD's ICON-EU opendata feed omits them:
+
+```
+  ZERO_SFC_2D   = fr_seaice freshsnow h_snow w_i snow_age hsnow_max snowfrac_lc plantevap
+  ZERO_SFC_SOIL = w_so_ice
+  gz0           = a small positive constant (roughness, not zero)
+  #  "All are ~0 in a summer Med."
+```
+
+Two traps are already solved there and must not be re-opened: the zero fields are templated on
+`t_g`/`w_so` so they **inherit the IC's time axis** (a field with no time axis, e.g. `fr_land`, makes
+`cdo merge` fail), and `gz0` is seeded positive rather than zero.
+
+**The trap for us is that comment: "~0 in a summer Med" is not true here.** The Olympics and the
+Cascade foothills sit in and beside the 2 km domain and hold real snow — and Round the County sails
+in **November**. Zeroing `h_snow`, `freshsnw`, `snoag` and `hsnow_max` over snow-covered terrain
+destroys the albedo and surface energy balance, which is the thermal contrast the whole sea-breeze
+forecast rests on. Sea ice itself is a non-issue in the Salish Sea (`fr_seaice` really is 0), but the
+snow fields are not.
+
+**The good news, checked against the live server: ICON global publishes 8 of the 10.**
+
+| ICON name | DWD global directory | |
+|---|---|---|
+| `fr_seaice` | **`fr_ice`** | published — **note the name differs** |
+| `freshsnow` | `freshsnw` | published |
+| `h_snow`, `w_i`, `hsnow_max`, `w_so_ice` | same | published |
+| `snow_age` | **`snoag`** | published — **name differs** |
+| plus `t_ice`, `h_ice`, `t_snow`, `rho_snow`, `w_snow` | | published |
+| `snowfrac_lc`, `plantevap`, `gz0` | — | **still synthesised** |
+
+So on ICON global we **fetch the real snow and ice state instead of inventing it**, and the seasonal
+landmine disappears. The cost is a handful of extra single-level files per step — negligible beside
+55 GB of model levels.
+
+**But two of them need a rename**, and name mismatches are precisely the class of bug that already
+bit this project on the Med (`ICON_RENAME_PAIRS` exists for exactly this reason). Add:
+
+```
+  FR_ICE:fr_seaice     SNOAG:snow_age
+```
+
+`build_chmap` only renames pairs whose source is actually present, so adding them is safe for the
+ICON-EU domains too — they simply never match.
+
+## 5f. Fixed: the fetch completeness test is now absolute
+
+`missing_steps()` in `daily_pipeline.sh` flagged any step holding **fewer files than the fullest
+step**. That is purely relative and cannot see a whole VARIABLE lagging: every step is then short by
+the same amount, no step is shorter than any other, and the fetch declares itself complete with a
+variable missing.
+
+It never bit because cron fired long after publication had finished. **The level trim makes fetching
+during publication the normal case** (trimmed fetch ends ~T+3:09, DWD finishes +24 h at ~T+3:14), so
+it had to be fixed before the ICON-global fetch exists, not after.
+
+Now both tests apply — short against the fullest step, **and** short of an absolute
+`EXPECT_PER_STEP` floor. Verified on the box's bash:
+
+| scenario | per-step counts | result |
+|---|---|---|
+| all present | 619, 619, 619 | complete |
+| one step lagging | 619, **300**, 619 | `001` |
+| **a whole variable lagging** | **559, 559, 559** | **`000 001 002`** |
+| *same, old relative-only test* | 559, 559, 559 | *complete — the bug* |
+| more than expected (global) | 760, 760, 760 | complete |
+
+`EXPECT_PER_STEP` defaults to the measured ICON-EU 619 and is env-overridable. **For ICON global it
+must be recalibrated**: 10 model variables x 76 trimmed levels = 760, plus ~15 single/soil ≈ **775**.
+The waiting log line now prints the observed count beside the expectation, and the deadline path
+says explicitly when a uniform shortfall looks like a stale expectation rather than a late DWD — so
+a wrong value is visible instead of silently hanging the cycle.
+
+## 6. Implementation plan
+
+Ordered so that nothing expensive is built before the thing that gates it, and nothing touches a
+racing morning.
+
+**Phase 0 — decide (done).** ICON global, streamed, levels 45-120, 12z cycle. Everything below
+assumes it.
+
+**Phase 1 — prove the names and the grid, offline.** No racing risk; the box is idle out of season.
+1. Stage `icon_grid_0026_R03B07_G.nc` (937 MB) and check DWD's CDO library for **prebuilt weights**
+   before generating our own.
+2. **Pin CDO at 2.1.1.** 2.2.0 is broken on DWD global ICON GRIB2 (eccodes padding); 2.2.1 fixes it.
+3. Prove `setgrid` + `gencon` on a single global file, following `preprocess_nest.sh` (which already
+   does unstructured->unstructured), not `preprocess_cdo.sh`. Watch for *"Reference to source grid
+   not found"* -> `selgrid` then `setgrid` then `gennn`.
+4. Run `smoketest_tke.sh` against the **new variable names** (`FR_ICE`, `SNOAG`, and the snow set).
+   An unknown output name aborts ICON at startup.
+
+**Phase 2 — the fetch.** `fetch_icon_global.sh`, modelled on `fetch_icon_eu.sh`:
+5. Level filter 45-120; steps 0-24; the extended variable list from 5e.
+6. **Stream**: download -> bunzip2 -> remap -> append -> delete, so peak disk is a few files.
+7. Keep the partial-`.bz2` deletion (a `wget -nc` that finds a corrupt file can never heal it).
+8. Set `EXPECT_PER_STEP` ~775 and confirm it against the first real fetch's observed count.
+
+**Phase 3 — preprocessing.** 
+9. Teach `preprocess_cdo.sh` the unstructured source (`-setgrid`), or branch to a global variant.
+   Its header says "regular-lat-lon" — that assumption is the thing being changed.
+10. **Never `remapbil`/`remapbic` on an ICON source.** Delete the "remapbil for winds if preferred"
+    comment on line 46; it is an invitation to a failure that cannot happen on the Med.
+11. Weights cached **per source->target pair** (riviera driving two nests already collided on a
+    shared file).
+12. Add `FR_ICE:fr_seaice` and `SNOAG:snow_age`; shrink `ZERO_SFC_2D` to the three that remain.
+
+**Phase 4 — grids.** Only now submit the two Zonda requests (§2). They were deliberately held: a
+grid with no driving data runs nothing.
+13. On arrival, place the `.nc`, then **dump `z_mc` and confirm** the level set.
+
+**Phase 5 — SST.** 
+14. Test the premise first (§5b): if the Salish Sea is near-isothermal, 5.5 km is ample and the
+    product question is closed cheaply.
+15. Confirm the dataset-id with `copernicusmarine describe` before wiring. Keep `setmisstonn`.
+
+**Phase 6 — first run and integration.**
+16. Dry run on a past cycle with `REGATTA_ROOT` redirected, exactly as `smoketest_tke.sh` does.
+17. `.env`: `DOMAINS`, `NESTS="san_juan_islands_2km:san_juan_islands_1km:18:4"`, `EVENT_VENUE`.
+18. The app venues are already registered and tested; points stop greying out when the grid
+    publishes.
+
+**Phase 7 — validate.** Against HRRR (free, 3 km, already in SSA) and against the observations
+layer. If HRRR is as good between the islands, Phase 1-6 was the wrong investment and that is worth
+knowing.
+
+## 6b. Checklist
 
 - [x] Domains created, namelists verified byte-identical to Cowes
 - [x] Zonda requests written, CORINE disabled with the ExtPar source checked
