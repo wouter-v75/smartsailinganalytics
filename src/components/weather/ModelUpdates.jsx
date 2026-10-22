@@ -9,7 +9,7 @@
 // The whole table refreshes every 60 s.
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { MODELS, fetchModelMeta, fetchIconRaceStatus, modelCadence } from './openMeteo'
+import { MODELS, fetchModelMeta, fetchIconRaceStatus, modelCadence, ICONRACE_STATUS_FILES } from './openMeteo'
 
 // Order: the self-hosted model first (the headline), then the global/regional
 // models we pull from Open-Meteo.
@@ -73,20 +73,23 @@ function Pill({ text, color }) {
 
 export default function ModelUpdates() {
   const [meta, setMeta] = useState({})      // modelKey -> meta | null
-  const [icon, setIcon] = useState(undefined) // status.json | null | undefined(=loading)
+  //  One entry per CHAIN that answered. undefined = still loading, [] = none.
+  const [chains, setChains] = useState(undefined)
   const [updatedAt, setUpdatedAt] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     const omKeys = ROWS.filter((k) => k !== 'ICONRACE')
-    const [metas, status] = await Promise.all([
+    const [metas, statuses] = await Promise.all([
       Promise.all(omKeys.map((k) => fetchModelMeta(MODELS[k]?.metaModel))),
-      fetchIconRaceStatus(),
+      //  Ask for every chain. A venue that is not running simply 404s, so an absent
+      //  chain costs one failed request and shows nothing — no config to keep in step.
+      Promise.all(ICONRACE_STATUS_FILES.map((f) => fetchIconRaceStatus(f))),
     ])
     const m = {}
     omKeys.forEach((k, i) => { m[k] = metas[i] })
     setMeta(m)
-    setIcon(status)
+    setChains(statuses.map((st, i) => (st ? { file: ICONRACE_STATUS_FILES[i], status: st } : null)).filter(Boolean))
     setUpdatedAt(new Date())
     setLoading(false)
   }, [])
@@ -122,9 +125,15 @@ export default function ModelUpdates() {
             </tr>
           </thead>
           <tbody>
-            {ROWS.map((k) => k === 'ICONRACE'
-              ? <IconRaceRow key={k} status={icon} />
-              : <OpenMeteoRow key={k} modelKey={k} meta={meta[k]} loading={loading} />)}
+            {ROWS.map((k) => {
+              if (k !== 'ICONRACE') return <OpenMeteoRow key={k} modelKey={k} meta={meta[k]} loading={loading} />
+              //  One self-hosted row per CHAIN that answered, each with its own cycle.
+              //  Still loading -> one placeholder row; none answered -> one empty row,
+              //  which is honest: the box publishes nothing when it is not running.
+              if (chains === undefined) return <IconRaceRow key={k} status={undefined} />
+              if (!chains.length) return <IconRaceRow key={k} status={null} />
+              return chains.map((c) => <IconRaceRow key={c.file} status={c.status} file={c.file} />)
+            })}
           </tbody>
         </table>
       </div>
@@ -197,8 +206,13 @@ function OpenMeteoRow({ modelKey, meta, loading }) {
   )
 }
 
-function IconRaceRow({ status }) {
+//  `file` names which chain this row came from. It is only shown when there is more
+//  than one, so the single-chain view is exactly what it was.
+function IconRaceRow({ status, file }) {
   const cfg = MODELS.ICONRACE
+  const chainTag = file && file !== 'status.json'
+    ? file.replace(/^status_/, '').replace(/\.json$/, '').toUpperCase()
+    : null
   if (status === undefined) {
     return (
       <tr style={{ background: '#0B1E33' }}>
@@ -221,7 +235,7 @@ function IconRaceRow({ status }) {
   const domains = Array.isArray(status.domains) ? status.domains : []
   return (
     <tr style={{ background: '#0B1E33' }}>
-      <ModelCell label="Icon-Race" subtitle={cfg.subtitle} color={cfg.color} />
+      <ModelCell label={chainTag ? `Icon-Race ${chainTag}` : 'Icon-Race'} subtitle={cfg.subtitle} color={cfg.color} />
       <td style={td}>{cycleInitHour(status.cycle)}</td>
       <td style={td}>
         {startedSec != null

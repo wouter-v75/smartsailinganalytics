@@ -549,11 +549,17 @@ export function modelCadence(meta, now = Date.now() / 1000) {
 // (scripts/publish_status.sh -> www/icon-race/status.json). Same delivery path
 // as the venue grids: public pull-zone if configured, else the same-origin
 // storage proxy. Returns the parsed status object or null.
-export async function fetchIconRaceStatus() {
+// The box publishes ONE status file per CHAIN, not per domain: the Med/Cowes 00z
+// run writes status.json, and a second chain (San Juan, 12z) writes its own name.
+// They cannot share a file -- each would overwrite the other's cycle and leave the
+// Admin table confidently describing a run that is not happening.
+export const ICONRACE_STATUS_FILES = ['status.json', 'status_usa.json']
+
+export async function fetchIconRaceStatus(name = 'status.json') {
   const base = MODELS.ICONRACE.bunnyBase
   const url = base
-    ? `${base}/status.json`
-    : `/api/bunny/storage?key=${encodeURIComponent('icon-race/status.json')}`
+    ? `${base}/${name}`
+    : `/api/bunny/storage?key=${encodeURIComponent(`icon-race/${name}`)}`
   try {
     const res = await fetch(url, { cache: 'no-store' })
     if (!res.ok) return null
