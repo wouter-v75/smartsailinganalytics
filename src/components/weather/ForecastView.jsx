@@ -852,7 +852,12 @@ export default function ForecastView({
                   <span>{l.label} ({l.n})</span>
                 </div>
               ))}
-              {!obs.length && <div>No stations within 40 nm.</div>}
+              {/* "No stations" and "you have not picked a point yet" are different
+                  things, and the fetch is keyed on point 1 — saying the first when
+                  the second is true sends you looking for a fault that is not there. */}
+              {!obs.length && (p1lat == null || p1lon == null
+                ? <div>Click a point on the map first.</div>
+                : <div>No stations within 40 nm.</div>)}
               {/* An empty map and a network that did not answer look identical otherwise. */}
               {obsFailed.length > 0 && <div style={{ color: '#FCA5A5' }}>{obsFailed.join(', ')} unavailable</div>}
               <div style={{ marginTop: 3, opacity: 0.8 }}>Tap a station — land readings run low.</div>
