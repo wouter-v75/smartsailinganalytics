@@ -39,34 +39,52 @@ describe('obsMarkerHtml', () => {
 })
 
 describe('obsTooltipLines', () => {
-  it('says a 10 m station is directly comparable', () => {
-    const l = obsTooltipLines(metarAt('2026-10-18T08:55:00Z'), NOW)
+  it('is five labelled facts, a header and a prompt — and nothing else', () => {
+    const l = obsTooltipLines(metarAt('2026-10-18T08:30:00Z', { wgst: 21 }), NOW)
+    expect(l).toHaveLength(7)
     expect(l[0]).toContain('Toulon/Hyères')
+    expect(l[1]).toBe('Wind    12.0 kn')
     // True AND magnetic: magnetic is what the boat's compass reads and what a
     // crew calls a shift in. Hyeres is +3.1 E, so 320 true is 317 magnetic.
-    expect(l[1]).toBe('12.0 kn from 320°T / 317°M')
-    expect(l.join('\n')).toContain('directly comparable')
+    expect(l[2]).toBe('Dir     320°T / 317°M')
+    expect(l[3]).toBe('Gust    21.0 kn')
+    expect(l[4]).toBe('Age     30 min')
+    expect(l[5]).toBe('Height  10 m')
+    expect(l[6]).toBe('Click to see data graph')
   })
 
-  it('refuses to imply a correction it could not make', () => {
-    // No published mast height -> no 10 m number, and the tooltip says why.
-    const [beacon] = parseFfvl([{ idbalise: 12, latitude: 43.1, longitude: 6.2, vitesseVentMoy: 18.52, directVentMoy: 315, date: '2026-10-18 09:55:00' }])
-    const l = obsTooltipLines({ ...beacon, t: '2026-10-18T08:55:00Z' }, NOW).join('\n')
-    expect(l).toContain('height not published')
-    expect(l).not.toContain('at 10 m')
-  })
-
-  it('warns when the station is up a hill rather than on the water', () => {
+  it('no longer editorialises', () => {
+    // All of this was true and worth knowing ONCE; none of it was worth
+    // re-reading every time the pointer crossed a barb.
     const hill = obsTooltipLines(metarAt('2026-10-18T08:55:00Z', { elev: 79, icaoId: 'LFMC', name: 'Le Luc' }), NOW).join('\n')
-    expect(hill).toContain('reads the hill, not the course')
-    const coast = obsTooltipLines(metarAt('2026-10-18T08:55:00Z'), NOW).join('\n')
-    expect(coast).toContain('reads low')
+    expect(hill).not.toContain('reads the hill')
+    expect(hill).not.toContain('reads low')
+    expect(hill).not.toContain('directly comparable')
+    expect(hill).not.toContain('not corrected')
   })
 
-  it('reports the gust and the age', () => {
-    const l = obsTooltipLines(metarAt('2026-10-18T08:30:00Z', { wgst: 21 }), NOW).join('\n')
-    expect(l).toContain('gusting 21')
-    expect(l).toContain('30 min old')
+  it('shows -- for a height the network does not publish, not a blank', () => {
+    // The one line that separates "this station disagrees with the model" from
+    // "this station is not measuring the same quantity". A dash is an answer;
+    // an empty space is a missing one.
+    const [beacon] = parseFfvl([{ idbalise: 12, latitude: 43.1, longitude: 6.2, vitesseVentMoy: 18.52, directVentMoy: 315, date: '2026-10-18 09:55:00' }])
+    const l = obsTooltipLines({ ...beacon, t: '2026-10-18T08:55:00Z' }, NOW)
+    expect(l[5]).toBe('Height  --')
+  })
+
+  it('shows -- for a missing gust rather than implying calm', () => {
+    const l = obsTooltipLines(metarAt('2026-10-18T08:55:00Z'), NOW)
+    expect(l[3]).toBe('Gust    --')
+  })
+
+  it('still flags a stale reading in the age line', () => {
+    const l = obsTooltipLines(metarAt('2026-10-18T06:00:00Z'), NOW)
+    expect(l[4]).toContain('stale')
+  })
+
+  it('says variable rather than inventing a bearing', () => {
+    const vrb = metarAt('2026-10-18T08:55:00Z', { wdir: 'VRB' })
+    expect(obsTooltipLines(vrb, NOW)[2]).toBe('Dir     variable')
   })
 })
 

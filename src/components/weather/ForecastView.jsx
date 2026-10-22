@@ -900,7 +900,6 @@ export default function ForecastView({
                   showing {thinForZoom(obs, obsZoom).length} of {obs.length} — zoom in for the rest
                 </div>
               )}
-              <div style={{ marginTop: 3, opacity: 0.8 }}>Click a barb for its last 6 h — land readings run low.</div>
             </div>
           )}
           {viewMode === '2D' && showObs && selectedObs && (

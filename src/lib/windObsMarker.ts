@@ -5,7 +5,7 @@
 // of lib/ is — the arithmetic here (what gets corrected, what does not) is the
 // part worth pinning down, and a JSX file is not typechecked in this repo.
 
-import { OBS_SOURCES, obs10mKn, ageMinutes, OBS_STALE_MIN, type WindObs } from './windObs'
+import { OBS_SOURCES, ageMinutes, OBS_STALE_MIN, type WindObs } from './windObs'
 import { barbSvg, kn1 } from './windBarb'
 import { trueToMagnetic } from './magVar'
 import type { ObsDetail } from './windObsDeclutter'
@@ -50,64 +50,78 @@ export function obsMarkerHtml(o: WindObs, nowMs: number = Date.now(), detail: Ob
   // the helm reads. Omitted rather than defaulted when the variation is
   // unknown — a true bearing under an M is the bug magVar.ts exists to prevent.
   const mag = detail === 'full' && o.twdDeg != null ? trueToMagnetic(o.twdDeg, o.lat, o.lon) : null
-  const text = detail === 'barb' ? ''
-    : detail === 'full' && mag != null ? `${kn1(o.twsKn)}<tspan>&#8201;</tspan>${Math.round(mag)}°M`
-    : kn1(o.twsKn)
 
-  const label = text
-    ? `<span style="font:700 10px/1 system-ui,sans-serif;color:${col};`
-      + `text-shadow:0 0 3px #000,0 0 2px #000;white-space:nowrap">${text}</span>`
+  // STACKED, speed over direction, not side by side. Side by side the two
+  // numbers run together into one wide string and the eye cannot tell which is
+  // which at a glance — and a wide label is also what collides first with the
+  // next station's. Two short lines sit in the barb's own footprint.
+  const rows = detail === 'barb' ? []
+    : mag != null ? [kn1(o.twsKn), `${Math.round(mag)}°M`]
+    : [kn1(o.twsKn)]
+
+  const label = rows.length
+    ? `<span style="display:flex;flex-direction:column;align-items:flex-start;`
+      + `font:700 10px/1.05 system-ui,sans-serif;color:${col};`
+      + `text-shadow:0 0 3px #000,0 0 2px #000;white-space:nowrap">`
+      + rows.map((r) => `<span>${r}</span>`).join('') + '</span>'
     : ''
   return `<div style="display:flex;align-items:center;gap:1px;opacity:${op.toFixed(2)};`
     + `pointer-events:auto;cursor:pointer">${barbSvg(o.twsKn, o.twdDeg, col, 1)}${label}</div>`
 }
 
 /**
- * What the station actually told us, and what we did to it. The height line is
- * the important one: it is the difference between "this reading disagrees with
- * the model" and "this reading is not the same quantity as the model".
+ * Five facts and a prompt. Nothing else.
+ *
+ * It used to editorialise — "rougher surface than the water, so it reads low",
+ * "reads the hill, not the course", "shown as measured, not corrected to 10 m".
+ * All true, all worth knowing ONCE, and none of it worth re-reading every time
+ * the pointer crosses a barb. What a tooltip is for is the numbers you cannot
+ * fit on the map; the reasoning belongs in the panel and in the code.
+ *
+ * ANEMOMETER HEIGHT STAYS, and shows "--" when the network does not publish it.
+ * That is the one line that distinguishes "this station disagrees with the
+ * model" from "this station is not measuring the same quantity as the model",
+ * and a blank is a real answer rather than a missing one.
  */
 export function obsTooltipLines(o: WindObs, nowMs: number = Date.now()): string[] {
   const src = OBS_SOURCES[o.source]
-  const lines: string[] = [`${o.name} · ${src?.label || o.source}`]
 
-  // Direction in MAGNETIC as well as true, because magnetic is what the compass
-  // on the boat reads and what a crew calls a shift in. Magnetic is omitted
-  // rather than defaulted when the variation is unknown — a true bearing under a
-  // magnetic label is the bug magVar.ts exists to prevent.
+  // Direction in MAGNETIC as well as true: magnetic is what the compass on the
+  // boat reads and what a crew calls a shift in. Omitted, never defaulted, when
+  // the variation is unknown — a true bearing under an M is the bug magVar.ts
+  // exists to prevent.
   const mag = o.twdDeg == null ? null : trueToMagnetic(o.twdDeg, o.lat, o.lon)
   const dir = o.twdDeg == null
     ? 'variable'
     : `${Math.round(o.twdDeg)}°T${mag != null ? ` / ${Math.round(mag)}°M` : ''}`
-  const gust = o.gustKn != null ? `, gusting ${kn1(o.gustKn)}` : ''
-  lines.push(`${kn1(o.twsKn)} kn from ${dir}${gust}`)
-
-  const v10 = obs10mKn(o)
-  if (o.heightM == null) {
-    // Not a detail: without a height we cannot put this on the same footing as
-    // the model's 10 m wind, and saying so is the whole point of the line.
-    lines.push('anemometer height not published — shown as measured, not corrected to 10 m')
-  } else if (Math.abs(o.heightM - 10) < 0.5) {
-    lines.push('measured at 10 m — directly comparable')
-  } else if (v10 != null) {
-    lines.push(`measured at ${o.heightM} m; ${kn1(v10)} kn at 10 m`)
-  }
-
-  if (o.surface === 'land') {
-    lines.push(o.elevM != null && o.elevM > 50
-      ? `on land, ${Math.round(o.elevM)} m up — reads the hill, not the course`
-      : 'on land — rougher surface than the water, so it reads low')
-  }
 
   const a = ageMinutes(o, nowMs)
-  if (a != null) lines.push(a < 1 ? 'just now' : a >= OBS_STALE_MIN ? `${Math.round(a)} min old — stale` : `${Math.round(a)} min old`)
-  return lines
+  const age = a == null ? '--'
+    : a < 1 ? 'just now'
+    : a >= OBS_STALE_MIN ? `${Math.round(a)} min — stale`
+    : `${Math.round(a)} min`
+
+  return [
+    `${o.name} · ${src?.label || o.source}`,
+    `Wind    ${kn1(o.twsKn)} kn`,
+    `Dir     ${dir}`,
+    `Gust    ${o.gustKn != null ? `${kn1(o.gustKn)} kn` : '--'}`,
+    `Age     ${age}`,
+    `Height  ${o.heightM != null ? `${o.heightM} m` : '--'}`,
+    'Click to see data graph',
+  ]
 }
 
-export const obsTooltipHtml = (o: WindObs, nowMs: number = Date.now()): string =>
-  obsTooltipLines(o, nowMs).map((l, i) => (i === 0
-    ? `<div style="font-weight:700">${esc(l)}</div>`
-    : `<div style="opacity:.85">${esc(l)}</div>`)).join('')
+export const obsTooltipHtml = (o: WindObs, nowMs: number = Date.now()): string => {
+  const lines = obsTooltipLines(o, nowMs)
+  return lines.map((l, i) => {
+    if (i === 0) return `<div style="font-weight:700">${esc(l)}</div>`
+    // The prompt is not a fact; it should not read like one.
+    if (i === lines.length - 1) return `<div style="opacity:.6;margin-top:3px;font-style:italic">${esc(l)}</div>`
+    // The facts line up, so the eye runs down the values rather than hunting.
+    return `<div style="opacity:.9;white-space:pre;font-family:ui-monospace,Menlo,monospace">${esc(l)}</div>`
+  }).join('')
+}
 
 /** Legend rows for the sources actually on screen — an unused colour is noise. */
 export function obsLegend(obs: WindObs[]): Array<{ key: string; label: string; colour: string; n: number }> {
