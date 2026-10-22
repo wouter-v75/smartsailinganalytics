@@ -1011,6 +1011,122 @@ export function dropDuplicatesOf(stations: WindObs[], known: WindObs[]): WindObs
   }))
 }
 
+// ── Met Office Land Observations ────────────────────────────────────────────
+// data.hub.api.metoffice.gov.uk/observation-land/1/<geohash>  (apikey header)
+//
+// Free plan: 360 calls a day, resetting 00:00 UTC. The data is HOURLY and one
+// call returns 48 ROWS — two days of it — so polling this every 15 minutes
+// would spend the budget four times over for nothing. Hourly is the cadence,
+// and the 48 rows mean a gap is filled in on the next call rather than lost.
+//
+// THREE THINGS MEASURED RATHER THAN READ, none of them in reachable docs:
+//
+//  1. UNITS ARE m/s. Established across 373 paired hours against METAR at
+//     EIGHT UK airports, each against ITS OWN nearest geohash: median
+//     METAR_kn/value 2.045, where m/s predicts 1.94, knots 1.00, mph 0.87.
+//     A first attempt got this BACKWARDS by comparing the geohash nearest
+//     Cowes with the METAR at Southampton — two different places — and reading
+//     the siting difference as a unit. One pair cannot separate the two.
+//  2. `wind_direction` IS A COMPASS POINT STRING ("WSW"), not degrees. So the
+//     resolution is 22.5°, and a parser expecting a number gets NaN.
+//  3. /nearest returns geohashes with NO COORDINATES, so a station's position
+//     has to be decoded from its geohash.
+//
+// WHAT IT IS WORTH. Stations are ~50 km apart and the direction is 16-point,
+// so it is COARSER than the METAR we already have at UK airports. Its value is
+// the 48 hours of history in one call, for places between the airports.
+
+/** The 16-point compass, in the order the API uses them. */
+const COMPASS: Record<string, number> = {
+  N: 360, NNE: 22.5, NE: 45, ENE: 67.5, E: 90, ESE: 112.5, SE: 135, SSE: 157.5,
+  S: 180, SSW: 202.5, SW: 225, WSW: 247.5, W: 270, WNW: 292.5, NW: 315, NNW: 337.5,
+}
+
+/** "WSW" to 247.5. Null for anything not a compass point — including "". */
+export function compassToDeg(v: unknown): number | null {
+  if (typeof v !== 'string') return null
+  const k = v.trim().toUpperCase()
+  return k in COMPASS ? COMPASS[k] : null
+}
+
+/**
+ * Geohash to the centre of its cell.
+ *
+ * Needed because /nearest hands back a geohash and an area name and no
+ * coordinates at all. A six-character hash is about 1.2 km by 0.6 km, which is
+ * finer than the ~50 km spacing of the stations themselves — so the cell
+ * centre is a fair position for a barb, and far better than the area's name.
+ */
+const GEOHASH_B32 = '0123456789bcdefghjkmnpqrstuvwxyz'
+export function geohashDecode(hash: unknown): { lat: number; lon: number } | null {
+  if (typeof hash !== 'string' || !hash) return null
+  let latMin = -90, latMax = 90, lonMin = -180, lonMax = 180
+  let isLon = true
+  for (const ch of hash.toLowerCase()) {
+    const idx = GEOHASH_B32.indexOf(ch)
+    if (idx < 0) return null
+    for (let bit = 4; bit >= 0; bit--) {
+      const on = (idx >> bit) & 1
+      if (isLon) {
+        const mid = (lonMin + lonMax) / 2
+        if (on) lonMin = mid; else lonMax = mid
+      } else {
+        const mid = (latMin + latMax) / 2
+        if (on) latMin = mid; else latMax = mid
+      }
+      isLon = !isLon
+    }
+  }
+  return { lat: (latMin + latMax) / 2, lon: (lonMin + lonMax) / 2 }
+}
+
+export interface MetOfficeSite { geohash: string; name: string }
+
+/**
+ * The 48 hourly rows for one geohash, oldest first.
+ *
+ * Returns EVERY row, not just the newest: that is the point of this source.
+ * The caller takes the last one for the map and stores the rest as history.
+ */
+export function parseMetOfficeLandObs(payload: unknown, site: MetOfficeSite): WindObs[] {
+  const rows = Array.isArray(payload) ? payload : []
+  const pos = geohashDecode(site.geohash)
+  if (!pos) return []
+  const out: WindObs[] = []
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    const ms = num(o.wind_speed)
+    const when = typeof o.datetime === 'string' ? o.datetime : null
+    if (ms == null || !when) continue
+    const t = isoFromMf(when)          // the stamps carry a Z; a zone-less one is refused
+    if (!t) continue
+    const twsKn = ms * 1.943844
+    if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) continue
+    const gustMs = num(o.wind_gust)
+    const gustKn = gustMs == null ? null : gustMs * 1.943844
+    const dir = compassToDeg(o.wind_direction)
+    out.push({
+      id: `mo:${site.geohash}`,
+      source: 'synop',
+      name: site.name,
+      lat: pos.lat, lon: pos.lon,
+      // Met Office land stations are WMO-standard 10 m, which is the one height
+      // in this file we can actually claim — so this reading IS directly
+      // comparable with a model's 10 m wind, and to10m leaves it alone.
+      heightM: 10,
+      elevM: null,
+      surface: 'land',
+      twsKn,
+      twdDeg: ms === 0 ? null : dir,
+      gustKn: gustKn != null && gustKn <= MAX_PLAUSIBLE_KN ? gustKn : null,
+      t,
+      trust: OBS_SOURCES.synop.trust,
+    })
+  }
+  return out.sort((a, b) => Date.parse(a.t) - Date.parse(b.t))
+}
+
 /** Nearest-first, and never show a station from the next sea. */
 export function withinNm(obs: WindObs[], lat: number, lon: number, nm: number): WindObs[] {
   const cos = Math.cos((lat * Math.PI) / 180)

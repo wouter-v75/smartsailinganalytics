@@ -10,7 +10,7 @@
 import {
   parseMetar, parseFfvl, parseNdbc, parseNdbcStations, parsePioupiou,
   parseWeatherLinkEmbed, parseWeatherLinkMapStation, dropDuplicatesOf,
-  withinNm, type WindObs,
+  parseMetOfficeLandObs, withinNm, type WindObs, type MetOfficeSite,
 } from './windObs'
 import { WEATHERLINK_EMBEDS } from './windObsEmbeds'
 import { DAVIS_MAP_STATIONS, type DavisMapStation } from './windObsDavisMap'
@@ -49,6 +49,21 @@ export const VENUES: Array<[string, number, number]> = [
 ]
 export const VENUE_NM = 60
 
+/**
+ * Met Office areas we read, by geohash. UK ONLY — the product covers ~150 land
+ * locations across Britain, about 50 km apart, so this is the Solent and its
+ * approaches and there is nothing to add for the Med or America.
+ *
+ * The geohashes came from /nearest for each venue; the names are the API's own
+ * `area` strings. Positions are decoded from the hash, since /nearest returns
+ * no coordinates at all.
+ */
+export const METOFFICE_SITES: MetOfficeSite[] = [
+  { geohash: 'gbzpdr', name: 'Isle of Wight' },
+  { geohash: 'gcnfur', name: 'Hampshire' },
+  { geohash: 'gcn8yh', name: 'Bournemouth Christchurch and Poole' },
+]
+
 export function bbox(lat: number, lon: number, nm: number): [number, number, number, number] {
   const dLat = nm / 60
   const dLon = nm / (60 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)))
@@ -62,9 +77,9 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return r
 }
 
-export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl'
+export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice'
 
-export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl']
+export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice']
 
 const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   ndbc: async () => {
@@ -121,6 +136,34 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // One small call each, from a list generated against the map's own index —
   // see windObsDavisMap.ts for why the index itself is not fetched here.
   'davis-map': async () => davisMapStations(DAVIS_MAP_STATIONS),
+
+  // Met Office Land Observations — UK only, and HOURLY. The free plan allows
+  // 360 calls a day and one call returns 48 hourly rows, so polling this every
+  // quarter hour would spend the budget four times over to fetch the same
+  // numbers. Three sites at once an hour is 72 calls a day.
+  //
+  // Returns every row it is given; the caller keeps the newest for the map and
+  // the rest become history, which is the reason to have this source at all —
+  // it is coarser than the METAR at the same airports (~50 km spacing, 16-point
+  // direction) but it carries two days of past with it.
+  metoffice: async () => {
+    const key = process.env.METOFFICE_API_KEY
+    if (!key) return []
+    // Only on the hour. The poller runs every 15 minutes; three of those four
+    // would be wasted calls against a small daily budget.
+    if (new Date().getUTCMinutes() >= 15) return []
+    const out: WindObs[] = []
+    for (const site of METOFFICE_SITES) {
+      try {
+        const r = await fetch(`https://data.hub.api.metoffice.gov.uk/observation-land/1/${encodeURIComponent(site.geohash)}`, {
+          headers: { apikey: key, accept: 'application/json', 'User-Agent': UA }, cache: 'no-store',
+        })
+        if (!r.ok) continue
+        out.push(...parseMetOfficeLandObs(await r.json(), site))
+      } catch { /* one area failing is not an outage */ }
+    }
+    return out
+  },
 
   pioupiou: async () => parsePioupiou(await (await get('https://api.pioupiou.fr/v1/live-with-meta/all')).json()),
 

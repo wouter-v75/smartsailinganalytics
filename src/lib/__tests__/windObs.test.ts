@@ -6,6 +6,7 @@ import {
   parseNdbcHistory, toObsPoints, withinHours, parsePioupiou,
   parseWeatherLinkStations, parseWeatherLinkCurrent, parseWeatherLinkEmbed,
   parseWeatherLinkMapIndex, parseWeatherLinkMapStation, dropDuplicatesOf,
+  compassToDeg, geohashDecode, parseMetOfficeLandObs,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -822,5 +823,105 @@ describe('dropDuplicatesOf', () => {
     const fromMap = parseWeatherLinkMapStation(WLMAP_TROPEZ, 'x')!
     const embed = parseWeatherLinkEmbed(WLE_PAYLOAD, { uuid: 'y', name: 'Elsewhere', lat: 50.80063, lon: -1.20316 })!
     expect(dropDuplicatesOf([fromMap], [embed])).toHaveLength(1)
+  })
+})
+
+// ── Met Office Land Observations ────────────────────────────────────────────
+// Captured from observation-land/1/gcnfur (the geohash nearest Southampton
+// airport) on 2026-10-22. Values verbatim.
+const MO_SITE = { geohash: 'gcnfur', name: 'Hampshire' }
+const MO_ROWS = [
+  { datetime: '2026-10-22T16:00:00Z', wind_speed: 3.0, wind_gust: 6.1, wind_direction: 'S', temperature: 14.2, humidity: 66 },
+  { datetime: '2026-10-22T17:00:00Z', wind_speed: 3.1, wind_gust: 6.4, wind_direction: 'SE', temperature: 14.1, humidity: 70 },
+  { datetime: '2026-10-22T15:00:00Z', wind_speed: 3.3, wind_gust: 7.0, wind_direction: 'SSW', temperature: 14.3, humidity: 64 },
+]
+
+describe('compassToDeg', () => {
+  it('reads the 16 points', () => {
+    expect(compassToDeg('WSW')).toBe(247.5)
+    expect(compassToDeg('SSW')).toBe(202.5)
+    expect(compassToDeg('ESE')).toBe(112.5)
+    expect(compassToDeg('sw')).toBe(225)        // case does not matter
+  })
+  it('reports north as 360, like every other direction here', () => {
+    expect(compassToDeg('N')).toBe(360)
+  })
+  it('is null for anything that is not a compass point', () => {
+    // A parser expecting degrees gets NaN from "WSW"; one expecting a point
+    // must not quietly accept a number either.
+    expect(compassToDeg('')).toBeNull()
+    expect(compassToDeg('250')).toBeNull()
+    expect(compassToDeg(250)).toBeNull()
+    expect(compassToDeg(null)).toBeNull()
+  })
+})
+
+describe('geohashDecode', () => {
+  it('puts gcnfur in Hampshire, near Southampton', () => {
+    const p = geohashDecode('gcnfur')!
+    expect(p.lat).toBeGreaterThan(50.5); expect(p.lat).toBeLessThan(51.3)
+    expect(p.lon).toBeGreaterThan(-2.0); expect(p.lon).toBeLessThan(-0.8)
+  })
+  it('puts gbzpdr on the Isle of Wight', () => {
+    const p = geohashDecode('gbzpdr')!
+    expect(p.lat).toBeGreaterThan(50.4); expect(p.lat).toBeLessThan(51.0)
+  })
+  it('gets finer with each character', () => {
+    // Needed because /nearest gives no coordinates at all — the hash is the
+    // only position there is.
+    const a = geohashDecode('gcn')!; const b = geohashDecode('gcnfur')!
+    expect(Math.hypot(a.lat - b.lat, a.lon - b.lon)).toBeGreaterThan(0)
+  })
+  it('refuses junk rather than placing a barb at 0,0', () => {
+    expect(geohashDecode('')).toBeNull()
+    expect(geohashDecode('abc!')).toBeNull()     // '!' is not in the alphabet
+    expect(geohashDecode('ail')).toBeNull()      // a, i, l are excluded from base32
+    expect(geohashDecode(null)).toBeNull()
+  })
+})
+
+describe('parseMetOfficeLandObs', () => {
+  it('converts m/s to knots and returns EVERY hour, oldest first', () => {
+    // Every row, not just the newest: 48 hours in one call is the whole point
+    // of this source against a 360-call day.
+    const o = parseMetOfficeLandObs(MO_ROWS, MO_SITE)
+    expect(o).toHaveLength(3)
+    expect(o[0].t).toBe('2026-10-22T15:00:00.000Z')
+    expect(o[2].t).toBe('2026-10-22T17:00:00.000Z')
+    expect(o[2].twsKn).toBeCloseTo(3.1 * 1.943844, 6)     // 6.0 kn
+    expect(o[2].gustKn!).toBeCloseTo(6.4 * 1.943844, 6)
+  })
+
+  it('reads the compass string, not a number', () => {
+    const o = parseMetOfficeLandObs(MO_ROWS, MO_SITE)
+    expect(o[0].twdDeg).toBe(202.5)      // SSW
+    expect(o[2].twdDeg).toBe(135)        // SE
+  })
+
+  it('claims 10 m, which is the one height here we can actually claim', () => {
+    // WMO standard for land stations — so unlike the buoys and club stations
+    // this IS directly comparable with a model's 10 m wind.
+    const [o] = parseMetOfficeLandObs(MO_ROWS, MO_SITE)
+    expect(o.heightM).toBe(10)
+    expect(obs10mKn(o)).toBeCloseTo(o.twsKn, 6)   // no correction needed
+    expect(o.source).toBe('synop')
+  })
+
+  it('places the station by decoding the geohash', () => {
+    const [o] = parseMetOfficeLandObs(MO_ROWS, MO_SITE)
+    const p = geohashDecode('gcnfur')!
+    expect(o.lat).toBe(p.lat)
+    expect(o.lon).toBe(p.lon)
+  })
+
+  it('returns nothing for an undecodable geohash rather than a barb at 0,0', () => {
+    expect(parseMetOfficeLandObs(MO_ROWS, { geohash: 'ail', name: 'x' })).toHaveLength(0)
+  })
+
+  it('survives junk and skips rows with no wind or no time', () => {
+    expect(parseMetOfficeLandObs(null, MO_SITE)).toHaveLength(0)
+    expect(parseMetOfficeLandObs([null, 7], MO_SITE)).toHaveLength(0)
+    expect(parseMetOfficeLandObs([{ datetime: '2026-10-22T16:00:00Z' }], MO_SITE)).toHaveLength(0)
+    expect(parseMetOfficeLandObs([{ wind_speed: 3 }], MO_SITE)).toHaveLength(0)
   })
 })
