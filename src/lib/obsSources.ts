@@ -29,6 +29,20 @@ export const VENUES: Array<[string, number, number]> = [
   ['La Spezia', 44.10, 9.83],
   ['San Juan Islands', 48.5627, -122.8946],
   ['Long Beach / San Pedro', 33.72, -118.27],
+  // ENSENADA IS THE ONE VENUE WITH NOTHING NEAR IT, and it is not for want of
+  // looking (22 Oct 2026):
+  //   NDBC stops at the border — nothing within 30 nm, nearest wind 50 nm away
+  //     at the Tijuana River.
+  //   MMES, Ensenada's airport, publishes NO METAR at all: asked for five
+  //     Mexican stations by name, four answered and that was the one missing.
+  //     MMTJ (Tijuana), 50 nm north, is the closest METAR there is.
+  //   CONAGUA has an EMA 3 nm away — P. LOPEZ ZAMORA, id 68 — but its public
+  //     feed is DOWN, not merely awkward: GetInfoEMAS_v2 answers `info: null`
+  //     for it, ConsultaCluster.php returns 500, and all 321 stations in the
+  //     country are flagged `emaError`. Worth re-checking in a season; the
+  //     station is there and the endpoints are known.
+  // It stays in the list because the 60 nm filter still catches the Tijuana
+  // stations, which is context even if it is not course wind.
   ['Ensenada', 31.85, -116.62],
 ]
 export const VENUE_NM = 60
