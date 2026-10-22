@@ -6,7 +6,7 @@ import {
   parseNdbcHistory, toObsPoints, withinHours, parsePioupiou,
   parseWeatherLinkStations, parseWeatherLinkCurrent, parseWeatherLinkEmbed,
   parseWeatherLinkMapIndex, parseWeatherLinkMapStation, dropDuplicatesOf,
-  compassToDeg, geohashDecode, parseMetOfficeLandObs,
+  compassToDeg, geohashDecode, parseMetOfficeLandObs, parseFrostObs,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -923,5 +923,77 @@ describe('parseMetOfficeLandObs', () => {
     expect(parseMetOfficeLandObs([null, 7], MO_SITE)).toHaveLength(0)
     expect(parseMetOfficeLandObs([{ datetime: '2026-10-22T16:00:00Z' }], MO_SITE)).toHaveLength(0)
     expect(parseMetOfficeLandObs([{ wind_speed: 3 }], MO_SITE)).toHaveLength(0)
+  })
+})
+
+// ── MET Norway Frost ────────────────────────────────────────────────────────
+// Captured from frost.met.no for SN29950 (Svenner Fyr, the lighthouse south of
+// Larvik) on 2026-10-22. Verbatim, including the level and qualityCode that no
+// other source in this file provides.
+const FROST_SITES = new Map([
+  ['SN29950', { id: 'SN29950', name: 'SVENNER FYR', lat: 58.9688, lon: 10.148 }],
+])
+const lvl = { levelType: 'height_above_ground', unit: 'm', value: 10 }
+const FROST_PAYLOAD = {
+  data: [{
+    sourceId: 'SN29950:0',
+    referenceTime: '2026-10-22T19:00:00.000Z',
+    observations: [
+      { elementId: 'wind_speed', value: 8.4, unit: 'm/s', level: lvl, qualityCode: 0 },
+      { elementId: 'wind_from_direction', value: 181, unit: 'degrees', level: lvl, qualityCode: 0 },
+      { elementId: 'max(wind_speed_of_gust PT1H)', value: 10.2, unit: 'm/s', level: lvl, qualityCode: 0 },
+    ],
+  }],
+}
+
+describe('parseFrostObs', () => {
+  it('reads speed, direction and gust in the units the payload states', () => {
+    const [o] = parseFrostObs(FROST_PAYLOAD, FROST_SITES)
+    expect(o).toMatchObject({ id: 'frost:SN29950', source: 'synop', name: 'SVENNER FYR', twdDeg: 181 })
+    expect(o.twsKn).toBeCloseTo(8.4 * 1.943844, 6)      // 16.3 kn
+    expect(o.gustKn!).toBeCloseTo(10.2 * 1.943844, 6)
+    expect(o.t).toBe('2026-10-22T19:00:00.000Z')
+  })
+
+  it('takes the anemometer height FROM THE READING, not from an assumption', () => {
+    // The only source in this file that publishes it per observation. Every
+    // other one either leaves heightM null or we claim a standard.
+    const [o] = parseFrostObs(FROST_PAYLOAD, FROST_SITES)
+    expect(o.heightM).toBe(10)
+    expect(obs10mKn(o)).toBeCloseTo(o.twsKn, 6)     // already at 10 m
+  })
+
+  it('strips the sensor suffix from sourceId', () => {
+    // "SN29950:0" — the :0 is the sensor number, and keeping it means the
+    // reading matches no station at all.
+    expect(parseFrostObs(FROST_PAYLOAD, FROST_SITES)[0].id).toBe('frost:SN29950')
+  })
+
+  it('DROPS a reading whose qualityCode is not 0', () => {
+    // Frost documents 0 as "the value is correct". The other codes describe
+    // corrections and suspicions we have not studied, and an uncharacterised
+    // reading is worth less than none on a map people trim against.
+    const flagged = { data: [{ ...FROST_PAYLOAD.data[0], observations: FROST_PAYLOAD.data[0].observations.map((o) => ({ ...o, qualityCode: 6 })) }] }
+    expect(parseFrostObs(flagged, FROST_SITES)).toHaveLength(0)
+  })
+
+  it('keeps the speed when only the DIRECTION is flagged', () => {
+    const mixed = { data: [{ ...FROST_PAYLOAD.data[0], observations: FROST_PAYLOAD.data[0].observations.map((o) => (o.elementId === 'wind_from_direction' ? { ...o, qualityCode: 6 } : o)) }] }
+    const [o] = parseFrostObs(mixed, FROST_SITES)
+    expect(o.twsKn).toBeCloseTo(8.4 * 1.943844, 6)
+    expect(o.twdDeg).toBeNull()
+  })
+
+  it('REFUSES an unrecognised unit rather than assuming m/s', () => {
+    const odd = { data: [{ ...FROST_PAYLOAD.data[0], observations: [{ elementId: 'wind_speed', value: 8.4, unit: 'furlongs', level: lvl, qualityCode: 0 }] }] }
+    expect(parseFrostObs(odd, FROST_SITES)).toHaveLength(0)
+  })
+
+  it('ignores a station that is not in our list, and survives junk', () => {
+    const other = { data: [{ ...FROST_PAYLOAD.data[0], sourceId: 'SN99999:0' }] }
+    expect(parseFrostObs(other, FROST_SITES)).toHaveLength(0)
+    expect(parseFrostObs(null, FROST_SITES)).toHaveLength(0)
+    expect(parseFrostObs({ data: [null, 7] }, FROST_SITES)).toHaveLength(0)
+    expect(parseFrostObs({ data: [{ sourceId: 'SN29950:0' }] }, FROST_SITES)).toHaveLength(0)
   })
 })

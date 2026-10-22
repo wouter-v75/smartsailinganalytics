@@ -10,7 +10,8 @@
 import {
   parseMetar, parseFfvl, parseNdbc, parseNdbcStations, parsePioupiou,
   parseWeatherLinkEmbed, parseWeatherLinkMapStation, dropDuplicatesOf,
-  parseMetOfficeLandObs, withinNm, type WindObs, type MetOfficeSite,
+  parseMetOfficeLandObs, parseFrostObs,
+  withinNm, type WindObs, type MetOfficeSite, type FrostSite,
 } from './windObs'
 import { WEATHERLINK_EMBEDS } from './windObsEmbeds'
 import { DAVIS_MAP_STATIONS, type DavisMapStation } from './windObsDavisMap'
@@ -59,6 +60,22 @@ export const VENUE_NM = 60
  * `area` strings. Positions are decoded from the hash, since /nearest returns
  * no coordinates at all.
  */
+/**
+ * MET Norway stations we read. CURATED FROM availableTimeSeries, not from what
+ * is nearest: of twelve sources within 8 nm of Viksfjord only FOUR carry wind
+ * at all, and only Svenner Fyr carries speed, direction AND gust together.
+ * The rest are rain and temperature, or speed with no direction — which is why
+ * "the nearest station" is the wrong question to ask this network.
+ */
+export const FROST_SITES: FrostSite[] = [
+  // The lighthouse south of Larvik: exposed, 10-minute resolution, and the
+  // only one here with a complete wind observation.
+  { id: 'SN29950', name: 'Svenner Fyr', lat: 58.9688, lon: 10.148 },
+  // Speed and gust but NO direction — still worth having for the strength.
+  { id: 'SN27780', name: 'Tjølling', lat: 59.045747, lon: 10.1250557 },
+  { id: 'SN29980', name: 'Brunlanes', lat: 58.9878, lon: 9.96187 },
+]
+
 export const METOFFICE_SITES: MetOfficeSite[] = [
   { geohash: 'gbzpdr', name: 'Isle of Wight' },
   { geohash: 'gcnfur', name: 'Hampshire' },
@@ -78,9 +95,9 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return r
 }
 
-export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice'
+export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost'
 
-export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice']
+export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost']
 
 const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   ndbc: async () => {
@@ -164,6 +181,29 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
       } catch { /* one area failing is not an outage */ }
     }
     return out
+  },
+
+  // MET Norway Frost — the official Norwegian network, and the best-described
+  // source here: it states the unit, the HEIGHT and a quality code per reading.
+  // One call covers every station, so this is cheap; hourly would do, but it is
+  // light enough to leave on the 15-minute cadence.
+  frost: async () => {
+    const id = process.env.FROST_CLIENT_ID
+    if (!id) return []
+    const sites = new Map(FROST_SITES.map((f) => [f.id, f]))
+    const els = 'wind_speed,wind_from_direction,max(wind_speed_of_gust PT1H)'
+    const url = 'https://frost.met.no/observations/v0.jsonld'
+      + `?sources=${FROST_SITES.map((f) => f.id).join(',')}`
+      + `&elements=${encodeURIComponent(els)}&referencetime=latest&maxage=PT3H`
+    // Basic auth with the client id as the user and NO password: the secret is
+    // only for the OAuth2 flow, so it never goes over the wire.
+    const auth = Buffer.from(`${id}:`).toString('base64')
+    const r = await fetch(url, {
+      headers: { Authorization: `Basic ${auth}`, accept: 'application/json', 'User-Agent': UA },
+      cache: 'no-store',
+    })
+    if (!r.ok) throw new Error(`frost ${r.status}`)
+    return parseFrostObs(await r.json(), sites)
   },
 
   pioupiou: async () => parsePioupiou(await (await get('https://api.pioupiou.fr/v1/live-with-meta/all')).json()),

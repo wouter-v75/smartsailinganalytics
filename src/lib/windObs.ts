@@ -1127,6 +1127,113 @@ export function parseMetOfficeLandObs(payload: unknown, site: MetOfficeSite): Wi
   return out.sort((a, b) => Date.parse(a.t) - Date.parse(b.t))
 }
 
+// ── MET Norway Frost ────────────────────────────────────────────────────────
+// frost.met.no/observations/v0.jsonld — the Norwegian official network, CC BY
+// 4.0. HTTP Basic with the CLIENT ID as the username and an EMPTY PASSWORD;
+// the secret is only for the OAuth2 token flow and need never be sent.
+//
+// THE BEST-DESCRIBED SOURCE IN THIS FILE, and it is not close. Every other
+// network leaves us inferring something: Météo-France's units came from a
+// distribution, NDBC publishes no anemometer height, the Davis map gives a
+// rounded integer and no gust, and the Met Office states neither units nor
+// degrees. Frost states, per reading:
+//   the UNIT ("m/s", "degrees"),
+//   the HEIGHT, as level.height_above_ground — so `heightM` is measured here
+//     rather than assumed or left null,
+//   a qualityCode, and an exposureCategory for the siting.
+// Direction is wind_from_direction in DEGREES, matching our convention.
+//
+// NOT EVERY STATION MEASURES WIND. Of twelve sources within 8 nm of Viksfjord
+// only four carry it and only ONE — Svenner Fyr, a lighthouse — carries speed,
+// direction AND gust together, at 10-minute resolution. The rest are rain and
+// temperature, or speed with no direction. So the site list is curated from
+// availableTimeSeries rather than from "what is nearby".
+
+/** Frost says `m/s` and `degrees`; anything else we do not recognise. */
+const FROST_SPEED_TO_KN: Record<string, number> = { 'm/s': 1.943844, 'knot': 1, 'knots': 1, 'km/h': 0.539957 }
+
+export interface FrostSite { id: string; name: string; lat: number; lon: number }
+
+/**
+ * One Frost observation record per station per time, into WindObs.
+ *
+ * `sourceId` arrives as "SN29950:0" — the suffix is the sensor number, and
+ * stripping it is what matches a reading to its station.
+ *
+ * QUALITY: only `qualityCode` 0 is taken, which Frost documents as the value
+ * being correct. The other codes describe corrections and suspicions we have
+ * not studied, and a reading we cannot characterise is worth less than no
+ * reading on a map people trim against.
+ */
+export function parseFrostObs(payload: unknown, sites: Map<string, FrostSite>): WindObs[] {
+  const data = (payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data))
+    ? (payload as { data: unknown[] }).data : []
+  const out: WindObs[] = []
+
+  for (const rec of data) {
+    if (!rec || typeof rec !== 'object') continue
+    const r = rec as Record<string, unknown>
+    const srcId = typeof r.sourceId === 'string' ? r.sourceId.split(':')[0] : null
+    const when = typeof r.referenceTime === 'string' ? r.referenceTime : null
+    if (!srcId || !when) continue
+    const site = sites.get(srcId)
+    if (!site) continue
+    const t = isoFromMf(when)
+    if (!t) continue
+
+    const obs = Array.isArray(r.observations) ? r.observations : []
+    let twsKn: number | null = null
+    let gustKn: number | null = null
+    let dir: number | null = null
+    let heightM: number | null = null
+
+    for (const oRaw of obs) {
+      if (!oRaw || typeof oRaw !== 'object') continue
+      const o = oRaw as Record<string, unknown>
+      if (num(o.qualityCode) !== 0) continue        // see note above
+      const el = typeof o.elementId === 'string' ? o.elementId : ''
+      const v = num(o.value)
+      if (v == null) continue
+      const unit = typeof o.unit === 'string' ? o.unit.trim().toLowerCase() : ''
+
+      // The height comes with the reading, which no other source here does.
+      const lvl = (o.level && typeof o.level === 'object') ? o.level as Record<string, unknown> : null
+      if (lvl && lvl.levelType === 'height_above_ground' && lvl.unit === 'm') {
+        const h = num(lvl.value)
+        if (h != null) heightM = h
+      }
+
+      if (el === 'wind_speed') {
+        const f = FROST_SPEED_TO_KN[unit]
+        if (f != null) twsKn = v * f
+      } else if (el.startsWith('max(wind_speed_of_gust')) {
+        const f = FROST_SPEED_TO_KN[unit]
+        if (f != null) gustKn = v * f
+      } else if (el === 'wind_from_direction' && unit === 'degrees') {
+        dir = v
+      }
+    }
+
+    if (twsKn == null || !(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) continue
+
+    out.push({
+      id: `frost:${srcId}`,
+      source: 'synop',
+      name: site.name,
+      lat: site.lat, lon: site.lon,
+      heightM,
+      elevM: null,
+      surface: 'land',
+      twsKn,
+      twdDeg: twsKn === 0 || dir == null ? null : normDeg(dir),
+      gustKn: gustKn != null && gustKn <= MAX_PLAUSIBLE_KN ? gustKn : null,
+      t,
+      trust: OBS_SOURCES.synop.trust,
+    })
+  }
+  return out.sort((a, b) => Date.parse(a.t) - Date.parse(b.t))
+}
+
 /** Nearest-first, and never show a station from the next sea. */
 export function withinNm(obs: WindObs[], lat: number, lon: number, nm: number): WindObs[] {
   const cos = Math.cos((lat * Math.PI) / 180)
