@@ -64,14 +64,22 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // the cut falls at the end of the id sort order, so foreign stations go
   // first. Measured over SoCal, 22 Oct 2026.
   metar: async () => {
+    // IN PARALLEL, not one after another. Measured on Vercel: eight sequential
+    // boxes took 16.9 s of an 18.8 s run — a quarter of the function's budget
+    // for one source, and it would grow with every venue added. The boxes are
+    // independent and eight at once is nothing against this endpoint's limits.
+    const settled = await Promise.allSettled(VENUES.map(async ([, la, lo]) => {
+      const [a, b, c, d] = bbox(la, lo, VENUE_NM)
+      const r = await get(`https://aviationweather.gov/api/data/metar?bbox=${a},${b},${c},${d}&format=json`)
+      return parseMetar(await r.json())
+    }))
     const out: WindObs[] = []
     const seen = new Set<string>()
-    for (const [, la, lo] of VENUES) {
-      const [a, b, c, d] = bbox(la, lo, VENUE_NM)
-      try {
-        const r = await get(`https://aviationweather.gov/api/data/metar?bbox=${a},${b},${c},${d}&format=json`)
-        for (const o of parseMetar(await r.json())) if (!seen.has(o.id)) { seen.add(o.id); out.push(o) }
-      } catch { /* one venue's box failing must not lose the other seven */ }
+    // One venue's box failing must not lose the other seven; venues overlap, so
+    // the same station arrives more than once.
+    for (const r of settled) {
+      if (r.status !== 'fulfilled') continue
+      for (const o of r.value) if (!seen.has(o.id)) { seen.add(o.id); out.push(o) }
     }
     return out
   },
