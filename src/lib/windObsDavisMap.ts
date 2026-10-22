@@ -94,4 +94,25 @@ export const DAVIS_MAP_STATIONS: DavisMapStation[] = [
   { id: '239cdd9c-f156-422b-a085-a6fe29486c62', name: "Foldvik Familiepark", lat: 59.0015, lon: 9.97251 },  // 5.7 nm
   // Across the fjord mouth, so a different exposure on a sea breeze.
   { id: 'd0bc2b1c-473e-41a1-8dd0-0e7fe7b17f28', name: "Tjøme / Langvika", lat: 59.11737, lon: 10.3858 },  // 9.0 nm
+  // Oslofjord / Horten
+  { id: '235cc94b-bc00-4720-b5ef-0256fd056f5a', name: "Horten Seilforening", lat: 59.39793, lon: 10.48106 },  // 1.3 nm
+  { id: 'eba23279-a798-4040-9aa7-a4a0d8a34da0', name: "Refsnesbakken", lat: 59.44293, lon: 10.62104 },  // 4.5 nm
+  { id: '764d161a-1029-4e41-a8de-cd227703b6d3', name: "Kirkeparken VGS", lat: 59.43459, lon: 10.66305 },  // 5.7 nm
+  { id: '188139f2-d5ac-492d-b2f8-eaa3619a0d66', name: "HSDA", lat: 59.48938, lon: 10.31844 },  // 6.5 nm
+  { id: '03d341f2-3905-4bb6-a600-02b4b6ca8ba7', name: "Solgård Avfallsplass", lat: 59.44186, lon: 10.70759 },  // 7.1 nm
+  { id: 'd82d59ee-e284-4ed7-b381-859ad3fb44fc', name: "Statkraft Tofte NY", lat: 59.54552, lon: 10.57489 },  // 8.1 nm
+  // Oslo
+  { id: '25caa54d-238d-4f1d-8102-9918306cc825', name: "weatherlivelocal", lat: 59.91159, lon: 10.75876 },  // 1.1 nm
+  { id: '2569dae1-11f2-4a9a-bc80-3dcc9f72d737', name: "Kolstadgata 24", lat: 59.91392, lon: 10.77415 },  // 1.6 nm
+  { id: 'e129e354-c600-4985-bb64-a45293c44276', name: "Oslo - Bestum", lat: 59.92062, lon: 10.6699 },  // 2.2 nm
+  { id: '002d79f3-635c-4b57-8a2d-2c7f62515aec', name: "Korallveien", lat: 59.86332, lon: 10.75709 },  // 2.3 nm
+  { id: '7ae6633b-fa60-42ae-b54d-fb3dd5168b7b', name: "Teglverket skole", lat: 59.924, lon: 10.79513 },  // 2.4 nm
+  { id: 'c5cf62e9-2845-4ea1-b527-6557eb32d217', name: "Refstad skole", lat: 59.93801, lon: 10.80618 },  // 3.2 nm
+  // Fredrikstad / Sarpsborg
+  { id: 'dd169c8d-ca0a-44fe-87da-af85b65f68c3', name: "Speiderfjellet", lat: 59.21371, lon: 10.94699 },  // 0.4 nm
+  { id: '7fa14a77-b956-46c5-9669-3d3e01dccd7a', name: "Hannibalveien", lat: 59.21394, lon: 10.96113 },  // 0.5 nm
+  { id: '8db391c8-e539-4fad-84f5-f53dd3a74a7c', name: "Høgskolen i Østfold", lat: 59.21326, lon: 10.92887 },  // 0.8 nm
+  { id: '02317eae-0dd2-4f8c-9e83-3ae553147e21', name: "Sandvika, Kråkerøy", lat: 59.17475, lon: 10.90633 },  // 3 nm
+  { id: '7441b026-d6f2-4864-882f-d87b00f2d102', name: "Holm Torsnes Fredrikstad", lat: 59.18463, lon: 11.06968 },  // 4.2 nm
+  { id: '1b204f20-7d0c-4b2b-a76a-0ec187d0cd7f', name: "Gamle Kongevei, Grålum", lat: 59.29762, lon: 11.04297 },  // 5.5 nm
 ]

@@ -47,7 +47,13 @@ export const VENUES: Array<[string, number, number]> = [
   // It stays in the list because the 60 nm filter still catches the Tijuana
   // stations, which is context even if it is not course wind.
   ['Ensenada', 31.85, -116.62],
+  // The Oslofjord corridor: Larvik up to Oslo, east to Sarpsborg and north to
+  // Gardermoen. Four points rather than one box, because the Davis station
+  // list is picked per venue and one centre would cluster them all together.
   ['Viksfjord / Larvik', 59.03, 10.15],
+  ['Oslofjord / Horten', 59.42, 10.48],
+  ['Oslo', 59.90, 10.73],
+  ['Fredrikstad / Sarpsborg', 59.22, 10.95],
 ]
 export const VENUE_NM = 60
 
@@ -74,6 +80,23 @@ export const FROST_SITES: FrostSite[] = [
   // Speed and gust but NO direction — still worth having for the strength.
   { id: 'SN27780', name: 'Tjølling', lat: 59.045747, lon: 10.1250557 },
   { id: 'SN29980', name: 'Brunlanes', lat: 58.9878, lon: 9.96187 },
+
+  // ── Oslofjord, Sarpsborg and north to Gardermoen ─────────────────────────
+  // Two lighthouses and an island station, which are the ones worth having:
+  // exposed, over water, and nothing like a garden.
+  { id: 'SN17000', name: 'Strømtangen Fyr', lat: 59.15154567, lon: 10.82829919 },
+  { id: 'SN17280', name: 'Gullholmen', lat: 59.4352, lon: 10.578 },
+  { id: 'SN27120', name: 'Horten - Nykirke', lat: 59.4283, lon: 10.3847 },
+  { id: 'SN27161', name: 'Horten - Skoppum', lat: 59.3845, lon: 10.3985 },
+  { id: 'SN27285', name: 'E18 Tveiten', lat: 59.33085, lon: 10.379 },
+  { id: 'SN17050', name: 'Råde - Tomb', lat: 59.3188, lon: 10.8145 },
+  { id: 'SN18700', name: 'Oslo - Blindern', lat: 59.9423, lon: 10.72 },
+  { id: 'SN3190', name: 'Sarpsborg', lat: 59.2850933, lon: 11.1127995 },
+  { id: 'SN3003', name: 'E6 Solbergtårnet Syd', lat: 59.2046108, lon: 11.1780095 },
+  // Speed but no direction — kept for the strength, which is still worth having.
+  { id: 'SN3370', name: 'Øsaker', lat: 59.31933, lon: 11.04217 },
+  { id: 'SN4685', name: 'Gardermoen - Vardåsen', lat: 60.1656, lon: 10.9347 },
+  { id: 'SN4780', name: 'Gardermoen', lat: 60.2065, lon: 11.0802 },
 ]
 
 export const METOFFICE_SITES: MetOfficeSite[] = [
