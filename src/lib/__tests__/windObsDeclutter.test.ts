@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { degPerPixel, better, thinForZoom, detailForZoom } from '../windObsDeclutter'
+import { degPerPixel, better, thinForZoom, detailForZoom, obsViewport, OBS_MIN_ZOOM } from '../windObsDeclutter'
 import type { WindObs } from '../windObs'
 
 const obs = (id: string, lat: number, lon: number, trust = 5, t = '2026-10-22T09:00:00Z'): WindObs => ({
@@ -93,5 +93,46 @@ describe('detailForZoom', () => {
   })
   it('falls back to speed rather than nothing on a bad zoom', () => {
     expect(detailForZoom(NaN)).toBe('speed')
+  })
+})
+
+describe('obsViewport', () => {
+  it('asks for a radius that covers what is on screen', () => {
+    const v = obsViewport(50.76, -1.29, 11, 900, 600)!
+    expect(v.lat).toBe(50.76)
+    expect(v.nm).toBeGreaterThan(5)
+    expect(v.nm).toBeLessThan(40)
+  })
+
+  it('grows as you zoom out and shrinks as you zoom in', () => {
+    const wide = obsViewport(50.76, -1.29, 9, 900, 600)!
+    const tight = obsViewport(50.76, -1.29, 13, 900, 600)!
+    expect(wide.nm).toBeGreaterThan(tight.nm)
+  })
+
+  it('REFUSES a continental view rather than asking for every station on it', () => {
+    // Observations answer a local question. At zoom 5 the map is showing half
+    // of Europe, and an honest "zoom in" beats a map that looks broken.
+    expect(obsViewport(50.76, -1.29, 6, 900, 600)).toBeNull()
+    expect(obsViewport(50.76, -1.29, 3, 900, 600)).toBeNull()
+    expect(obsViewport(50.76, -1.29, OBS_MIN_ZOOM, 900, 600)).not.toBeNull()
+  })
+
+  it('never asks for more than the route will give', () => {
+    // A request that says one thing while the server quietly does another is
+    // worth not writing.
+    expect(obsViewport(50.76, -1.29, 7, 4000, 4000)!.nm).toBeLessThanOrEqual(120)
+  })
+
+  it('rounds the centre, so nudging the map does not mint a new cache key', () => {
+    const a = obsViewport(50.7612, -1.2891, 11, 900, 600)!
+    const b = obsViewport(50.7634, -1.2908, 11, 900, 600)!
+    expect(a.lat).toBe(b.lat)
+    expect(a.lon).toBe(b.lon)
+  })
+
+  it('returns null on junk rather than a request nobody meant', () => {
+    expect(obsViewport(NaN, -1.29, 11, 900, 600)).toBeNull()
+    expect(obsViewport(50.76, -1.29, 11, NaN, 600)).toBeNull()
   })
 })

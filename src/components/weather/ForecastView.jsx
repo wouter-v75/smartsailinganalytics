@@ -68,7 +68,7 @@ const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
 // Animated particle-flow wind layer (loaded after Leaflet — it extends L).
 import { obsMarkerHtml, obsTooltipHtml, obsLegend } from '../../lib/windObsMarker'
 import ObsStationPanel from './ObsStationPanel'
-import { thinForZoom, detailForZoom } from '../../lib/windObsDeclutter'
+import { thinForZoom, detailForZoom, obsViewport } from '../../lib/windObsDeclutter'
 
 const VELOCITY_JS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.js'
 const VELOCITY_CSS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.css'
@@ -159,6 +159,7 @@ export default function ForecastView({
   const [obs, setObs] = useState([])
   const [selectedObs, setSelectedObs] = useState(null)
   const [obsZoom, setObsZoom] = useState(null)
+  const [obsView, setObsView] = useState(null)   // {lat, lon, nm} for the CURRENT view
   const [obsFailed, setObsFailed] = useState([])
   const velocityKindRef = useRef(null)   // 'wind' | 'current' — recreate the layer when this flips
   const speedOverlayRef = useRef(null)
@@ -490,12 +491,16 @@ export default function ForecastView({
   // Fetched from /api/obs, not from the browser: several networks need
   // credentials that must not ship in a bundle, and NOAA asks for one polite
   // caller rather than one per phone.
+  // Keyed on WHERE THE MAP IS LOOKING, not on a forecast point. Observations
+  // answer "what is the breeze doing over there", which is a question you ask
+  // by looking at a place — needing to click a forecast point first made the
+  // map look empty until you had done something unrelated to it.
   useEffect(() => {
-    if (!showObs || p1lat == null || p1lon == null) { setObs([]); setObsFailed([]); return undefined }
+    if (!showObs || !obsView) { setObs([]); setObsFailed([]); return undefined }
     let alive = true
     const load = async () => {
       try {
-        const r = await fetch(`/api/obs?lat=${p1lat}&lon=${p1lon}&nm=40`)
+        const r = await fetch(`/api/obs?lat=${obsView.lat}&lon=${obsView.lon}&nm=${obsView.nm}`)
         if (!r.ok) throw new Error(String(r.status))
         const j = await r.json()
         if (!alive) return
@@ -506,7 +511,7 @@ export default function ForecastView({
     load()
     const t = setInterval(load, 300000)      // matches the route's own cache window
     return () => { alive = false; clearInterval(t) }
-  }, [showObs, p1lat, p1lon])
+  }, [showObs, obsView?.lat, obsView?.lon, obsView?.nm])
 
   // The obs layer redraws on ZOOM as well as on new data: how many barbs to
   // draw and how much to write beside each is a function of zoom, and both
@@ -514,10 +519,28 @@ export default function ForecastView({
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady) return undefined
-    const onZoom = () => setObsZoom(map.getZoom())
-    onZoom()
-    map.on('zoomend', onZoom)
-    return () => { try { map.off('zoomend', onZoom) } catch { /* */ } }
+    let timer = null
+    const read = () => {
+      const z = map.getZoom()
+      setObsZoom(z)
+      const c = map.getCenter()
+      const size = map.getSize()
+      const v = obsViewport(c.lat, c.lng, z, size.x, size.y)
+      // Compare by value: obsViewport rounds, so a nudge that changes nothing
+      // must not re-fire the fetch effect through a new object identity.
+      setObsView((prev) => (
+        prev && v && prev.lat === v.lat && prev.lon === v.lon && prev.nm === v.nm ? prev : v
+      ))
+    }
+    // Debounced: a drag fires moveend once, but a pinch-zoom fires a flurry.
+    const onMove = () => { if (timer) clearTimeout(timer); timer = setTimeout(read, 250) }
+    read()
+    map.on('moveend', onMove)
+    map.on('zoomend', onMove)
+    return () => {
+      if (timer) clearTimeout(timer)
+      try { map.off('moveend', onMove); map.off('zoomend', onMove) } catch { /* */ }
+    }
   }, [mapReady])
 
   useEffect(() => {
@@ -822,7 +845,7 @@ export default function ForecastView({
           {viewMode === '2D' && (
             <button
               onClick={() => setShowObs((v) => !v)}
-              title="Live wind observations near point 1 — airports, buoys, ships and coastal stations. Click a barb for its last 6 hours."
+              title="Live wind observations for whatever the map is showing — airports, buoys, ships, club and private stations. Zoom in to load them; click a barb for its last 6 hours."
               style={{
                 fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 6, flexShrink: 0, whiteSpace: 'nowrap',
                 cursor: 'pointer', border: `1px solid ${showObs ? '#0EA5E9' : '#1E3A5A'}`,
@@ -888,9 +911,9 @@ export default function ForecastView({
               {/* "No stations" and "you have not picked a point yet" are different
                   things, and the fetch is keyed on point 1 — saying the first when
                   the second is true sends you looking for a fault that is not there. */}
-              {!obs.length && (p1lat == null || p1lon == null
-                ? <div>Click a point on the map first.</div>
-                : <div>No stations within 40 nm.</div>)}
+              {!obs.length && (obsView == null
+                ? <div>Zoom in to see observations.</div>
+                : <div>No stations in view.</div>)}
               {/* An empty map and a network that did not answer look identical otherwise. */}
               {obsFailed.length > 0 && <div style={{ color: '#FCA5A5' }}>{obsFailed.join(', ')} unavailable</div>}
               {/* A thinned map and a map with few stations look identical, and

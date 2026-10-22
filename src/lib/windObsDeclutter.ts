@@ -86,3 +86,36 @@ export function detailForZoom(zoom: number): ObsDetail {
   if (zoom >= 8) return 'speed'
   return 'barb'
 }
+
+/**
+ * Below this, the map is showing a continent and asking for every station on
+ * it. Observations are a local question — "what is the breeze doing over
+ * there" — so under this zoom they are simply not fetched, and the legend says
+ * why rather than showing an empty map that looks broken.
+ *
+ * Zoom 7 is roughly a 300 nm view: a whole racing coastline, not a country.
+ */
+export const OBS_MIN_ZOOM = 7
+
+/**
+ * What to ask /api/obs for, given where the map is looking.
+ *
+ * The radius covers the visible half-diagonal plus a margin, so a barb does not
+ * pop in only once its station has crossed the edge. Capped at the route's own
+ * limit — asking for more is silently trimmed there, and a request that says
+ * one thing while the server does another is worth not writing.
+ */
+export function obsViewport(
+  centreLat: number, centreLon: number, zoom: number, widthPx: number, heightPx: number,
+): { lat: number; lon: number; nm: number } | null {
+  if (![centreLat, centreLon, zoom, widthPx, heightPx].every(Number.isFinite)) return null
+  if (zoom < OBS_MIN_ZOOM) return null
+  const degLon = degPerPixel(zoom, centreLat)
+  // Half-diagonal in pixels, converted at the centre's own scale, then to nm.
+  const halfDiagPx = Math.hypot(widthPx, heightPx) / 2
+  const nmPerPx = degLon * 60
+  const nm = Math.min(120, Math.max(10, Math.round(halfDiagPx * nmPerPx * 1.15)))
+  // Rounded so that nudging the map does not mint a new cache key each time.
+  const r = (v: number) => Math.round(v * 100) / 100
+  return { lat: r(centreLat), lon: r(centreLon), nm }
+}
