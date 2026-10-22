@@ -8,6 +8,7 @@
 import { OBS_SOURCES, obs10mKn, ageMinutes, OBS_STALE_MIN, type WindObs } from './windObs'
 import { barbSvg, kn1 } from './windBarb'
 import { trueToMagnetic } from './magVar'
+import type { ObsDetail } from './windObsDeclutter'
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
@@ -38,12 +39,25 @@ export function ageOpacity(o: WindObs, nowMs: number = Date.now()): number {
  * A variable or calm wind gets a ring — it has a speed but no direction, and a
  * barb would invent one.
  */
-export function obsMarkerHtml(o: WindObs, nowMs: number = Date.now()): string {
+export function obsMarkerHtml(o: WindObs, nowMs: number = Date.now(), detail: ObsDetail = 'speed'): string {
   const src = OBS_SOURCES[o.source]
   const col = src?.colour || '#94A3B8'
   const op = ageOpacity(o, nowMs)
-  const label = `<span style="font:700 10px/1 system-ui,sans-serif;color:${col};`
-    + `text-shadow:0 0 3px #000,0 0 2px #000;white-space:nowrap">${kn1(o.twsKn)}</span>`
+
+  // MAGNETIC, not true. The barb already shows direction well enough to read a
+  // shift across a course; a number is for when you have zoomed in to ask a
+  // precise question, and then the useful one is what the compass in front of
+  // the helm reads. Omitted rather than defaulted when the variation is
+  // unknown — a true bearing under an M is the bug magVar.ts exists to prevent.
+  const mag = detail === 'full' && o.twdDeg != null ? trueToMagnetic(o.twdDeg, o.lat, o.lon) : null
+  const text = detail === 'barb' ? ''
+    : detail === 'full' && mag != null ? `${kn1(o.twsKn)}<tspan>&#8201;</tspan>${Math.round(mag)}°M`
+    : kn1(o.twsKn)
+
+  const label = text
+    ? `<span style="font:700 10px/1 system-ui,sans-serif;color:${col};`
+      + `text-shadow:0 0 3px #000,0 0 2px #000;white-space:nowrap">${text}</span>`
+    : ''
   return `<div style="display:flex;align-items:center;gap:1px;opacity:${op.toFixed(2)};`
     + `pointer-events:auto;cursor:pointer">${barbSvg(o.twsKn, o.twdDeg, col, 1)}${label}</div>`
 }
