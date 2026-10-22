@@ -812,6 +812,93 @@ export function parseWeatherLinkCurrent(payload: unknown, stations: Map<string, 
   }
 }
 
+// ── Davis WeatherLink EMBEDDABLE pages ──────────────────────────────────────
+// weatherlink.com/embeddablePage/summaryData/<uuid> — JSON, KEYLESS, no API
+// account and no station share required.
+//
+// This is the good route into Davis, and it is a different thing from the v2
+// API above. An owner who wants their station on their club's website publishes
+// an "embeddable page"; that page is backed by a public JSON endpoint. Reading
+// it is the use it was published for. No key, no share, no Pro upgrade, no
+// per-station fee — which is what makes a Solent full of club stations reachable
+// at all. The v2 API stays for stations actually shared with our account.
+//
+// FOUND VIA Windycator (weather.ianmillard.com/windycator), a Solent wind map
+// that reads 24 stations around the western Solent this way. Its station LIST is
+// its author's own work and is not copied here; what is used is the public
+// technique, and the registry in windObsEmbeds.ts is ours to fill.
+//
+// THE UNITS ARE IN THE PAYLOAD — `unitLabel` on each value, "knots" or "mph" or
+// "m/s" depending on what the OWNER set for display. That is worth dwelling on:
+// every other source in this file made us infer units from a distribution or a
+// doc, and get it wrong by 1.15x or 3.6x if we guessed. Here the feed says. So
+// an unrecognised unit is REFUSED rather than assumed — the one case where
+// refusing costs nothing, because the answer was supposed to be right there.
+
+const UNIT_TO_KN: Record<string, number> = {
+  knots: 1, knot: 1, kn: 1, kts: 1, kt: 1,
+  mph: 0.868976,
+  'm/s': 1.943844, mps: 1.943844,
+  'km/h': 0.539957, kmh: 0.539957, kph: 0.539957,
+}
+
+/** One `currConditionValues` entry to knots, or null if the unit is unknown. */
+function embedKn(v: { value?: unknown; unitLabel?: unknown } | undefined): number | null {
+  if (!v) return null
+  const n = num(v.value)
+  if (n == null) return null
+  const unit = typeof v.unitLabel === 'string' ? v.unitLabel.trim().toLowerCase() : ''
+  const f = UNIT_TO_KN[unit]
+  return f == null ? null : n * f
+}
+
+/** Where the embed station's name and position come from — the feed has neither. */
+export interface EmbedStation { uuid: string; name: string; lat: number; lon: number; source?: ObsSourceKey }
+
+export function parseWeatherLinkEmbed(payload: unknown, station: EmbedStation): WindObs | null {
+  if (!payload || typeof payload !== 'object') return null
+  const o = payload as Record<string, unknown>
+  const vals = Array.isArray(o.currConditionValues) ? o.currConditionValues : []
+  const by = new Map<string, { value?: unknown; unitLabel?: unknown }>()
+  for (const v of vals) {
+    if (!v || typeof v !== 'object') continue
+    const name = (v as Record<string, unknown>).sensorDataName
+    if (typeof name === 'string') by.set(name.toLowerCase(), v as { value?: unknown; unitLabel?: unknown })
+  }
+
+  // A 10-minute mean is the right quantity to compare with a model's 10 m wind;
+  // the bare "Wind Speed" is an instantaneous sample and jumps about.
+  const mean = embedKn(by.get('10 min avg wind speed'))
+    ?? embedKn(by.get('2 min avg wind speed'))
+    ?? embedKn(by.get('wind speed'))
+  if (mean == null || !(mean >= 0) || mean > MAX_PLAUSIBLE_KN) return null
+
+  const gust = embedKn(by.get('10 min high wind speed')) ?? embedKn(by.get('2 min high wind speed'))
+  // Direction has no unit label; it is degrees.
+  const dirRaw = by.get('wind direction')
+  const dir = dirRaw ? num(dirRaw.value) : null
+
+  const ms = num(o.lastReceived)
+  if (ms == null) return null
+  const t = new Date(ms).toISOString()
+
+  const kind: ObsSourceKey = station.source || 'pws'
+  return {
+    id: `wle:${station.uuid}`,
+    source: kind,
+    name: station.name,
+    lat: station.lat, lon: station.lon,
+    heightM: null,          // never published for a club station
+    elevM: null,
+    surface: 'land',
+    twsKn: mean,
+    twdDeg: mean === 0 || dir == null ? null : normDeg(dir),
+    gustKn: gust != null && gust <= MAX_PLAUSIBLE_KN ? gust : null,
+    t,
+    trust: OBS_SOURCES[kind].trust,
+  }
+}
+
 /** Nearest-first, and never show a station from the next sea. */
 export function withinNm(obs: WindObs[], lat: number, lon: number, nm: number): WindObs[] {
   const cos = Math.cos((lat * Math.PI) / 180)

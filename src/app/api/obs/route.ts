@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
+import { WEATHERLINK_EMBEDS } from '@/lib/windObsEmbeds'
 import {
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
   parseNdbc, parseNdbcStations, parsePioupiou,
-  parseWeatherLinkStations, parseWeatherLinkCurrent,
+  parseWeatherLinkStations, parseWeatherLinkCurrent, parseWeatherLinkEmbed,
   latestPerStation, withinNm, type WindObs,
 } from '@/lib/windObs'
 
@@ -240,6 +241,25 @@ async function weatherlinkAround(): Promise<WindObs[]> {
   return settled.flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []))
 }
 
+// Davis WeatherLink EMBEDDABLE pages — KEYLESS. An owner who puts their station
+// on their club's website publishes one of these, and it is backed by public
+// JSON. No API account, no share, no Pro upgrade, no per-station fee, which is
+// what makes a coastline of club stations reachable at all.
+//
+// The feed carries the readings AND THEIR UNITS; the station's name and
+// position come from lib/windObsEmbeds.ts, which is ours to grow.
+async function weatherlinkEmbeds(): Promise<WindObs[]> {
+  if (!WEATHERLINK_EMBEDS.length) return []
+  const settled = await Promise.allSettled(WEATHERLINK_EMBEDS.map(async (st) => {
+    const url = `https://www.weatherlink.com/embeddablePage/summaryData/${encodeURIComponent(st.uuid)}`
+    const r = await fetch(url, { headers: { 'User-Agent': UA }, next: { revalidate: CACHE_S } })
+    if (!r.ok) throw new Error(`wl-embed ${st.uuid} ${r.status}`)
+    return parseWeatherLinkEmbed(await r.json(), st)
+  }))
+  // One club's station going offline must not take the rest of the coast.
+  return settled.flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []))
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireActiveUser()
   if (!gate.ok) return gate.response
@@ -258,6 +278,7 @@ export async function GET(req: NextRequest) {
     ['ndbc', ndbcAround()],
     ['pioupiou', pioupiouAround()],
     ['weatherlink', weatherlinkAround()],
+    ['wl-embed', weatherlinkEmbeds()],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))
 

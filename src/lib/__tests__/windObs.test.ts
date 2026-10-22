@@ -4,7 +4,7 @@ import {
   parseMfCsv, parseMfMarine, parseMfStationList, latestPerStation, isoFromMf,
   parseNdbc, parseNdbcStations, ndbcIsBuoy,
   parseNdbcHistory, toObsPoints, withinHours, parsePioupiou,
-  parseWeatherLinkStations, parseWeatherLinkCurrent,
+  parseWeatherLinkStations, parseWeatherLinkCurrent, parseWeatherLinkEmbed,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -656,5 +656,80 @@ describe('parseWeatherLinkCurrent', () => {
   it('returns null when the station is not in the list, so it has no position', () => {
     expect(parseWeatherLinkCurrent({ station_id: 777, sensors: WL_CURRENT.sensors }, stations)).toBeNull()
     expect(parseWeatherLinkCurrent(null, stations)).toBeNull()
+  })
+})
+
+// ── Davis WeatherLink embeddable pages ──────────────────────────────────────
+// Captured from weatherlink.com/embeddablePage/summaryData/... on 2026-10-22
+// (NCI Lee-on-the-Solent), trimmed to the entries the adapter reads, values and
+// unitLabels untouched. Note this station reports in KNOTS — the owner picked
+// that, and another will say mph. The feed telling us is the whole point.
+const WLE_STATION = { uuid: 'd9d55b9a07e34133a398f6d7ccbcd570', name: 'NCI Lee-on-the-Solent', lat: 50.80063, lon: -1.20316 }
+const WLE_PAYLOAD = {
+  ownerName: null,
+  lastReceived: 1792685545000,
+  currConditionValues: [
+    { sensorDataName: 'Temp', value: 14, unitLabel: '°C' },
+    { sensorDataName: 'Wind Speed', value: 5, unitLabel: 'knots' },
+    { sensorDataName: 'Wind Direction', value: 183, unitLabel: '' },
+    { sensorDataName: '2 Min Avg Wind Speed', value: 5, unitLabel: 'knots' },
+    { sensorDataName: '10 Min Avg Wind Speed', value: 5, unitLabel: 'knots' },
+    { sensorDataName: '2 Min High Wind Speed', value: null, unitLabel: 'knots' },
+    { sensorDataName: '10 Min High Wind Speed', value: 8, unitLabel: 'knots' },
+  ],
+  timeSeriesValues: {},
+}
+
+describe('parseWeatherLinkEmbed', () => {
+  it('reads the live embed, in the units the FEED states', () => {
+    const o = parseWeatherLinkEmbed(WLE_PAYLOAD, WLE_STATION)!
+    expect(o).toMatchObject({ id: 'wle:d9d55b9a07e34133a398f6d7ccbcd570', source: 'pws', name: 'NCI Lee-on-the-Solent', twdDeg: 183 })
+    expect(o.twsKn).toBe(5)        // knots in, knots out — no conversion guessed
+    expect(o.gustKn).toBe(8)
+    expect(o.t).toBe('2026-10-22T16:12:25.000Z')
+  })
+
+  it('converts when the owner set mph instead', () => {
+    // Every other source in this file made us INFER the unit. Here it is stated,
+    // and two stations on the same map can legitimately differ.
+    const mph = { ...WLE_PAYLOAD, currConditionValues: WLE_PAYLOAD.currConditionValues.map((c) =>
+      (c.sensorDataName === '10 Min Avg Wind Speed' ? { ...c, value: 10, unitLabel: 'mph' } : c)) }
+    expect(parseWeatherLinkEmbed(mph, WLE_STATION)!.twsKn).toBeCloseTo(10 * 0.868976, 6)
+  })
+
+  it('REFUSES an unrecognised unit rather than assuming knots', () => {
+    // The one place where refusing costs nothing: the answer was supposed to be
+    // right there in the payload.
+    const odd = { ...WLE_PAYLOAD, currConditionValues: WLE_PAYLOAD.currConditionValues.map((c) =>
+      (/wind speed/i.test(c.sensorDataName) ? { ...c, unitLabel: 'furlongs/fortnight' } : c)) }
+    expect(parseWeatherLinkEmbed(odd, WLE_STATION)).toBeNull()
+  })
+
+  it('prefers the 10-minute mean over the instantaneous sample', () => {
+    const differing = { ...WLE_PAYLOAD, currConditionValues: WLE_PAYLOAD.currConditionValues.map((c) =>
+      (c.sensorDataName === 'Wind Speed' ? { ...c, value: 22 } : c)) }
+    // 22 is the gust-of-the-moment; the 10-minute mean of 5 is the quantity
+    // comparable with a model's 10 m wind.
+    expect(parseWeatherLinkEmbed(differing, WLE_STATION)!.twsKn).toBe(5)
+  })
+
+  it('falls back down the averaging ladder when the longer mean is absent', () => {
+    const only2 = { ...WLE_PAYLOAD, currConditionValues: WLE_PAYLOAD.currConditionValues.filter((c) => c.sensorDataName !== '10 Min Avg Wind Speed') }
+    expect(parseWeatherLinkEmbed(only2, WLE_STATION)!.twsKn).toBe(5)
+    const onlyBare = { ...WLE_PAYLOAD, currConditionValues: WLE_PAYLOAD.currConditionValues.filter((c) => !/min avg/i.test(c.sensorDataName)) }
+    expect(parseWeatherLinkEmbed(onlyBare, WLE_STATION)!.twsKn).toBe(5)
+  })
+
+  it('leaves a null gust null, rather than reading it as calm', () => {
+    const noGust = { ...WLE_PAYLOAD, currConditionValues: WLE_PAYLOAD.currConditionValues.filter((c) => !/high wind/i.test(c.sensorDataName)) }
+    expect(parseWeatherLinkEmbed(noGust, WLE_STATION)!.gustKn).toBeNull()
+  })
+
+  it('returns null for a station reporting no wind at all, and for junk', () => {
+    const noWind = { ...WLE_PAYLOAD, currConditionValues: [{ sensorDataName: 'Temp', value: 14, unitLabel: '°C' }] }
+    expect(parseWeatherLinkEmbed(noWind, WLE_STATION)).toBeNull()
+    expect(parseWeatherLinkEmbed(null, WLE_STATION)).toBeNull()
+    expect(parseWeatherLinkEmbed({ currConditionValues: [] }, WLE_STATION)).toBeNull()
+    expect(parseWeatherLinkEmbed({ ...WLE_PAYLOAD, lastReceived: null }, WLE_STATION)).toBeNull()
   })
 })
