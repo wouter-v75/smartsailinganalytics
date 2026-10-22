@@ -68,6 +68,7 @@ const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
 // Animated particle-flow wind layer (loaded after Leaflet — it extends L).
 import { obsMarkerHtml, obsTooltipHtml, obsLegend } from '../../lib/windObsMarker'
 import ObsStationPanel from './ObsStationPanel'
+import { thinForZoom, detailForZoom } from '../../lib/windObsDeclutter'
 
 const VELOCITY_JS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.js'
 const VELOCITY_CSS = 'https://unpkg.com/leaflet-velocity@1/dist/leaflet-velocity.min.css'
@@ -157,6 +158,7 @@ export default function ForecastView({
   const [showObs, setShowObs] = useState(false)
   const [obs, setObs] = useState([])
   const [selectedObs, setSelectedObs] = useState(null)
+  const [obsZoom, setObsZoom] = useState(null)
   const [obsFailed, setObsFailed] = useState([])
   const velocityKindRef = useRef(null)   // 'wind' | 'current' — recreate the layer when this flips
   const speedOverlayRef = useRef(null)
@@ -506,18 +508,33 @@ export default function ForecastView({
     return () => { alive = false; clearInterval(t) }
   }, [showObs, p1lat, p1lon])
 
+  // The obs layer redraws on ZOOM as well as on new data: how many barbs to
+  // draw and how much to write beside each is a function of zoom, and both
+  // decisions live in lib/windObsDeclutter so they can be tested.
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return undefined
+    const onZoom = () => setObsZoom(map.getZoom())
+    onZoom()
+    map.on('zoomend', onZoom)
+    return () => { try { map.off('zoomend', onZoom) } catch { /* */ } }
+  }, [mapReady])
+
   useEffect(() => {
     const map = mapRef.current; const L = window.L
     if (!map || !L) return undefined
     if (obsLayerRef.current) { try { map.removeLayer(obsLayerRef.current) } catch { /* */ } obsLayerRef.current = null }
     if (!showObs || !obs.length) return undefined
     const now = Date.now()
+    const z = obsZoom ?? map.getZoom()
+    const detail = detailForZoom(z)
+    const shown = thinForZoom(obs, z)
     // iconSize/anchor follow the BARB's 44x44 box: the anchor is its centre, so
     // the shaft grows out of the station's actual position. Anchored anywhere
     // else the barb points from the wrong place, which is the one thing it is
     // there to show.
-    const group = L.layerGroup(obs.map((o) => L.marker([o.lat, o.lon], {
-      icon: L.divIcon({ html: obsMarkerHtml(o, now), className: 'ssa-obs', iconSize: [78, 44], iconAnchor: [22, 22] }),
+    const group = L.layerGroup(shown.map((o) => L.marker([o.lat, o.lon], {
+      icon: L.divIcon({ html: obsMarkerHtml(o, now, detail), className: 'ssa-obs', iconSize: [78, 44], iconAnchor: [22, 22] }),
       keyboard: false,
     })
       .bindTooltip(obsTooltipHtml(o, now), { direction: 'top', opacity: 0.95, sticky: true })
@@ -525,7 +542,7 @@ export default function ForecastView({
     group.addTo(map)
     obsLayerRef.current = group
     return () => { try { map.removeLayer(group) } catch { /* */ } }
-  }, [obs, showObs, mapReady])
+  }, [obs, showObs, mapReady, obsZoom])
 
   // The panel holds a COPY of the station, so a refresh five minutes later would
   // leave it showing a stale reading beside a live trace. Re-point it at the new
@@ -876,6 +893,13 @@ export default function ForecastView({
                 : <div>No stations within 40 nm.</div>)}
               {/* An empty map and a network that did not answer look identical otherwise. */}
               {obsFailed.length > 0 && <div style={{ color: '#FCA5A5' }}>{obsFailed.join(', ')} unavailable</div>}
+              {/* A thinned map and a map with few stations look identical, and
+                  the first is a lie if it is not said. */}
+              {obsZoom != null && obs.length > thinForZoom(obs, obsZoom).length && (
+                <div style={{ opacity: 0.8 }}>
+                  showing {thinForZoom(obs, obsZoom).length} of {obs.length} — zoom in for the rest
+                </div>
+              )}
               <div style={{ marginTop: 3, opacity: 0.8 }}>Click a barb for its last 6 h — land readings run low.</div>
             </div>
           )}
