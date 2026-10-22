@@ -9,9 +9,11 @@
 
 import {
   parseMetar, parseFfvl, parseNdbc, parseNdbcStations, parsePioupiou,
-  parseWeatherLinkEmbed, withinNm, type WindObs,
+  parseWeatherLinkEmbed, parseWeatherLinkMapStation, dropDuplicatesOf,
+  withinNm, type WindObs,
 } from './windObs'
 import { WEATHERLINK_EMBEDS } from './windObsEmbeds'
+import { DAVIS_MAP_STATIONS, type DavisMapStation } from './windObsDavisMap'
 
 export const UA = 'SmartSailingAnalytics/1.0 (+https://ssa.wvsailing.co.uk)'
 
@@ -60,9 +62,9 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return r
 }
 
-export type SourceName = 'ndbc' | 'metar' | 'davis' | 'pioupiou' | 'ffvl'
+export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl'
 
-export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'pioupiou', 'ffvl']
+export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl']
 
 const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   ndbc: async () => {
@@ -115,6 +117,11 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
     return settled.flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []))
   },
 
+  // The public-map stations: private Davis kit their owners chose to publish.
+  // One small call each, from a list generated against the map's own index —
+  // see windObsDavisMap.ts for why the index itself is not fetched here.
+  'davis-map': async () => davisMapStations(DAVIS_MAP_STATIONS),
+
   pioupiou: async () => parsePioupiou(await (await get('https://api.pioupiou.fr/v1/live-with-meta/all')).json()),
 
   ffvl: async () => {
@@ -124,6 +131,42 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
     const [rel, bal] = await Promise.all([get(q('releves')), get(q('list')).catch(() => null)])
     return parseFfvl(await rel.json(), bal ? await bal.json() : [])
   },
+}
+
+/**
+ * Current conditions for a set of public-map Davis stations.
+ *
+ * Sequential on purpose: these are small calls to somebody else's public map,
+ * and the METAR experiment earlier showed that firing a handful at once is not
+ * reliably faster anyway. A station that fails is skipped, not fatal.
+ *
+ * Anything that is really one of our curated embeds is dropped by POSITION —
+ * the two sources id the same station differently, so nothing else connects
+ * them, and the embed is the richer reading (10-minute mean, with a gust).
+ */
+export async function davisMapStations(list: DavisMapStation[]): Promise<WindObs[]> {
+  const out: WindObs[] = []
+  for (const st of list) {
+    try {
+      const r = await get(`https://www.weatherlink.com/map/data/station/${encodeURIComponent(st.id)}`)
+      const o = parseWeatherLinkMapStation(await r.json(), st.id)
+      // The index knows the position and the name; the detail call sometimes
+      // carries a blanker version of both.
+      if (o) out.push({ ...o, name: st.name || o.name, lat: st.lat, lon: st.lon })
+    } catch { /* one garden station being down is not an outage */ }
+  }
+  return out
+}
+
+/** The public-map stations near a point — what the live map needs, and no more. */
+export function davisMapNear(lat: number, lon: number, nm: number, max = 8): DavisMapStation[] {
+  const cos = Math.cos((lat * Math.PI) / 180)
+  return DAVIS_MAP_STATIONS
+    .map((s) => ({ s, d: Math.hypot((s.lat - lat) * 60, (s.lon - lon) * 60 * cos) }))
+    .filter((x) => x.d <= nm)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, max)
+    .map((x) => x.s)
 }
 
 /** Keep only what is near somewhere we sail, de-duplicated by station. */
@@ -158,9 +201,16 @@ export async function collectObservations(
       results.push({ name, total: 0, kept: 0, ms: Date.now() - t0, error: (e as Error).message })
     }
   }
+  // A curated embed and a public-map entry can be the SAME physical station
+  // under two different ids; the embed is richer, so the map copy goes.
+  const embeds = obs.filter((o) => o.id.startsWith('wle:'))
+  const deduped = embeds.length
+    ? [...obs.filter((o) => !o.id.startsWith('wlmap:')), ...dropDuplicatesOf(obs.filter((o) => o.id.startsWith('wlmap:')), embeds)]
+    : obs
+
   // The same station twice in one run is an upstream oddity; newest wins.
   const byKey = new Map<string, WindObs>()
-  for (const o of obs) {
+  for (const o of deduped) {
     const k = `${o.id}|${o.t}`
     const prev = byKey.get(k)
     if (!prev || Date.parse(o.t) > Date.parse(prev.t)) byKey.set(k, o)

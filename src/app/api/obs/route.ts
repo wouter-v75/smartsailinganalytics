@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 import { WEATHERLINK_EMBEDS } from '@/lib/windObsEmbeds'
+import { davisMapNear, davisMapStations } from '@/lib/obsSources'
 import {
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
-  parseNdbc, parseNdbcStations, parsePioupiou,
+  parseNdbc, parseNdbcStations, parsePioupiou, dropDuplicatesOf,
   parseWeatherLinkStations, parseWeatherLinkCurrent, parseWeatherLinkEmbed,
   latestPerStation, withinNm, type WindObs,
 } from '@/lib/windObs'
@@ -260,6 +261,17 @@ async function weatherlinkEmbeds(): Promise<WindObs[]> {
   return settled.flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []))
 }
 
+// Public Davis stations near the clicked point — gardens, marinas, boatyards,
+// a yacht club. KEYLESS, and they are what finally put a reading at the venues
+// no official network reaches: 0.2 nm from Ensenada, 0.7 nm from St Tropez.
+//
+// Only the ones near THIS point, not all 43: one small call each is cheap, but
+// forty of them on a map request is not, and the rest are at other venues.
+async function davisMapAround(lat: number, lon: number, nm: number): Promise<WindObs[]> {
+  const near = davisMapNear(lat, lon, nm)
+  return near.length ? davisMapStations(near) : []
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireActiveUser()
   if (!gate.ok) return gate.response
@@ -279,6 +291,7 @@ export async function GET(req: NextRequest) {
     ['pioupiou', pioupiouAround()],
     ['weatherlink', weatherlinkAround()],
     ['wl-embed', weatherlinkEmbeds()],
+    ['davis-map', davisMapAround(lat, lon, nm)],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))
 
@@ -289,11 +302,20 @@ export async function GET(req: NextRequest) {
     else failed.push(sources[i][0])
   })
 
+  // A curated embed and a public-map entry can be the SAME mast under two
+  // different ids — Gurnard is in both. Position is all that connects them, and
+  // the embed wins because it carries a 10-minute mean and a gust.
+  const embeds = obs.filter((o) => o.id.startsWith('wle:'))
+  const merged = embeds.length
+    ? [...obs.filter((o) => !o.id.startsWith('wlmap:')),
+       ...dropDuplicatesOf(obs.filter((o) => o.id.startsWith('wlmap:')), embeds)]
+    : obs
+
   // Say which networks did not answer rather than passing a short list off as the
   // whole picture — "no stations near this venue" and "NOAA timed out" look
   // identical on a map otherwise.
   return NextResponse.json(
-    { obs: withinNm(obs, lat, lon, nm), failed, at: new Date().toISOString() },
+    { obs: withinNm(merged, lat, lon, nm), failed, at: new Date().toISOString() },
     { headers: { 'Cache-Control': `private, max-age=${CACHE_S}` } },
   )
 }

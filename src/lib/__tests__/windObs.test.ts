@@ -5,6 +5,7 @@ import {
   parseNdbc, parseNdbcStations, ndbcIsBuoy,
   parseNdbcHistory, toObsPoints, withinHours, parsePioupiou,
   parseWeatherLinkStations, parseWeatherLinkCurrent, parseWeatherLinkEmbed,
+  parseWeatherLinkMapIndex, parseWeatherLinkMapStation, dropDuplicatesOf,
 } from '../windObs'
 
 // Captured live from aviationweather.gov on 2026-10-18, bbox around St Tropez.
@@ -731,5 +732,95 @@ describe('parseWeatherLinkEmbed', () => {
     expect(parseWeatherLinkEmbed(null, WLE_STATION)).toBeNull()
     expect(parseWeatherLinkEmbed({ currConditionValues: [] }, WLE_STATION)).toBeNull()
     expect(parseWeatherLinkEmbed({ ...WLE_PAYLOAD, lastReceived: null }, WLE_STATION)).toBeNull()
+  })
+})
+
+// ── Davis public map ────────────────────────────────────────────────────────
+// Captured from weatherlink.com/map/data and /map/data/station/<id> on
+// 2026-10-22, trimmed to the fields the adapter reads, values untouched.
+const WLMAP_INDEX = [
+  { ing: 'mdp', lng: 6.66815, id: '92e78f95-aa6a-407b-969f-c35224e68fad', lat: 43.26634, tb: 8 },
+  { ing: 'mdp', lng: -1.325047127902508, id: 'ba239a3d-ac84-4781-b9bb-ec469549c4be', lat: 50.76035632487685, tb: 7 },
+  { ing: 'bin', lng: null, id: 'broken', lat: 50.1, tb: 7 },
+]
+
+// The Yacht Club de Saint-Tropez, 0.7 nm from the venue.
+const WLMAP_TROPEZ = {
+  sStation: 'Yacht Club de Saint-Tropez',
+  windSpeed: '13', windSpeedUnit: 'mph', windDirection: '314',
+  lastTimestamp: 1792692368, ageInSeconds: 36,
+  lat: 43.26634, lng: 6.66815, isDavisStation: false,
+}
+
+// Gurnard, calm: direction comes back as the STRING "--".
+const WLMAP_GURNARD = {
+  sStation: 'GurnardSC',
+  windSpeed: '0', windSpeedUnit: 'mph', windDirection: '--',
+  lastTimestamp: 1792692403, lat: 50.76035632487685, lng: -1.325047127902508,
+}
+
+describe('parseWeatherLinkMapIndex', () => {
+  it('reads id and position, and skips an entry missing either', () => {
+    const idx = parseWeatherLinkMapIndex(WLMAP_INDEX)
+    expect(idx).toHaveLength(2)
+    expect(idx[0]).toEqual({ id: '92e78f95-aa6a-407b-969f-c35224e68fad', lat: 43.26634, lon: 6.66815 })
+  })
+  it('survives junk', () => {
+    expect(parseWeatherLinkMapIndex(null)).toHaveLength(0)
+    expect(parseWeatherLinkMapIndex([null, 7, 'x'])).toHaveLength(0)
+  })
+})
+
+describe('parseWeatherLinkMapStation', () => {
+  it('reads the station, converting from the unit the FEED states', () => {
+    const o = parseWeatherLinkMapStation(WLMAP_TROPEZ, '92e78f95-aa6a-407b-969f-c35224e68fad')!
+    expect(o).toMatchObject({ id: 'wlmap:92e78f95-aa6a-407b-969f-c35224e68fad', source: 'pws', name: 'Yacht Club de Saint-Tropez', twdDeg: 314 })
+    expect(o.twsKn).toBeCloseTo(13 * 0.868976, 6)       // 11.3 kn
+    expect(o.t).toBe('2026-10-22T18:06:08.000Z')
+  })
+
+  it('does NOT point a "--" direction at north', () => {
+    // Their own no-value marker. Number('--') is NaN, and a NaN that reaches
+    // the map draws a barb pointing somewhere definite and wrong.
+    const o = parseWeatherLinkMapStation(WLMAP_GURNARD, 'ba239a3d')!
+    expect(o.twdDeg).toBeNull()
+    expect(o.twsKn).toBe(0)
+  })
+
+  it('carries no gust, and says so rather than implying none', () => {
+    expect(parseWeatherLinkMapStation(WLMAP_TROPEZ, 'x')!.gustKn).toBeNull()
+  })
+
+  it('REFUSES a reading with no timestamp', () => {
+    // Without one, a station that died last March is indistinguishable from a
+    // calm one reporting right now.
+    expect(parseWeatherLinkMapStation({ ...WLMAP_TROPEZ, lastTimestamp: 0 }, 'x')).toBeNull()
+    expect(parseWeatherLinkMapStation({ ...WLMAP_TROPEZ, lastTimestamp: undefined }, 'x')).toBeNull()
+  })
+
+  it('REFUSES an unrecognised unit rather than assuming mph', () => {
+    expect(parseWeatherLinkMapStation({ ...WLMAP_TROPEZ, windSpeedUnit: 'furlongs' }, 'x')).toBeNull()
+  })
+
+  it('refuses a station with no wind or no position', () => {
+    expect(parseWeatherLinkMapStation({ ...WLMAP_TROPEZ, windSpeed: '--' }, 'x')).toBeNull()
+    expect(parseWeatherLinkMapStation({ ...WLMAP_TROPEZ, lat: undefined }, 'x')).toBeNull()
+    expect(parseWeatherLinkMapStation(null, 'x')).toBeNull()
+  })
+})
+
+describe('dropDuplicatesOf', () => {
+  it('drops a map station that is one of our curated embeds', () => {
+    // Gurnard appears in both, under different ids — a 32-hex one for the embed
+    // and a dashed UUID on the map. Position is the only thing connecting them.
+    const fromMap = parseWeatherLinkMapStation(WLMAP_GURNARD, 'ba239a3d')!
+    const embed = parseWeatherLinkEmbed(WLE_PAYLOAD, { uuid: '9815a6', name: 'Gurnard Sailing Club', lat: 50.76035, lon: -1.32504 })!
+    expect(dropDuplicatesOf([fromMap], [embed])).toHaveLength(0)
+  })
+
+  it('keeps a genuinely different station on the same shore', () => {
+    const fromMap = parseWeatherLinkMapStation(WLMAP_TROPEZ, 'x')!
+    const embed = parseWeatherLinkEmbed(WLE_PAYLOAD, { uuid: 'y', name: 'Elsewhere', lat: 50.80063, lon: -1.20316 })!
+    expect(dropDuplicatesOf([fromMap], [embed])).toHaveLength(1)
   })
 })

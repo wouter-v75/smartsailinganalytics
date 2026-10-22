@@ -899,6 +899,118 @@ export function parseWeatherLinkEmbed(payload: unknown, station: EmbedStation): 
   }
 }
 
+// ── Davis WeatherLink PUBLIC MAP ────────────────────────────────────────────
+// weatherlink.com/map/data — the index behind their public map: 79,522 public
+// stations worldwide, each with an id and a position. Then
+// /map/data/station/<id> gives that station's current conditions. KEYLESS.
+//
+// THIS IS THE ONE THAT SCALES. The embed registry in windObsEmbeds.ts is a
+// hand-made list: every station on it had to be found on some club's website
+// first. This finds them by POSITION, anywhere — 92 within 15 nm of Cowes, 33
+// within 25 nm of St Tropez, the nearest of those being the Yacht Club de
+// Saint-Tropez itself at 0.7 nm.
+//
+// These are stations their owners chose to make public, and this is the data
+// behind the map anyone can open. Still `pws`, the lowest trust: a good
+// instrument in an unknown garden is what the violet tier is for.
+//
+// WHAT IT DOES NOT GIVE: a gust, and the speed is a rounded integer rather than
+// the embed's 10-minute mean to a decimal. So the curated embeds stay — they
+// are richer where we have them, and this fills in everywhere else. A station
+// that appears in both is dropped from this one by POSITION, because the two
+// sources id the same station differently (32-hex for the embed, dashed UUID
+// here) and nothing but the coordinates connects them.
+//
+// UNITS ARE IN THE PAYLOAD again (`windSpeedUnit`), so nothing is assumed.
+
+export interface WlMapStation { id: string; lat: number; lon: number }
+
+/** The index: one entry per public station, position only. */
+export function parseWeatherLinkMapIndex(payload: unknown): WlMapStation[] {
+  const rows = Array.isArray(payload) ? payload : []
+  const out: WlMapStation[] = []
+  for (const r of rows) {
+    if (!r || typeof r !== 'object') continue
+    const o = r as Record<string, unknown>
+    const id = typeof o.id === 'string' ? o.id : null
+    const lat = num(o.lat); const lon = num(o.lng)
+    if (!id || lat == null || lon == null) continue
+    out.push({ id, lat, lon })
+  }
+  return out
+}
+
+/**
+ * One station's current conditions into a WindObs.
+ *
+ * `windDirection` comes back as the STRING "--" when the station is calm or has
+ * no vane, which `Number('--')` turns into NaN and a naive parse into a barb
+ * pointing at north. Same for the speed.
+ */
+export function parseWeatherLinkMapStation(payload: unknown, id: string): WindObs | null {
+  if (!payload || typeof payload !== 'object') return null
+  const o = payload as Record<string, unknown>
+
+  const dash = (v: unknown): number | null => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null
+    if (typeof v !== 'string') return null
+    const t = v.trim()
+    if (!t || t === '--') return null          // their own "no value"
+    const n = Number(t)
+    return Number.isFinite(n) ? n : null
+  }
+
+  const raw = dash(o.windSpeed)
+  const lat = num(o.lat); const lon = num(o.lng)
+  if (raw == null || lat == null || lon == null) return null
+
+  const unit = typeof o.windSpeedUnit === 'string' ? o.windSpeedUnit.trim().toLowerCase() : ''
+  const f = UNIT_TO_KN[unit]
+  // An unrecognised unit is refused, not guessed — the feed states it.
+  if (f == null) return null
+  const twsKn = raw * f
+  if (!(twsKn >= 0) || twsKn > MAX_PLAUSIBLE_KN) return null
+
+  // A reading with no time cannot be told from a station that died last March.
+  const ts = num(o.lastTimestamp)
+  if (ts == null || ts <= 0) return null
+
+  const dir = dash(o.windDirection)
+  const name = typeof o.sStation === 'string' && o.sStation.trim() ? o.sStation.trim() : `Davis ${id.slice(0, 8)}`
+
+  return {
+    id: `wlmap:${id}`,
+    source: 'pws',
+    name,
+    lat, lon,
+    heightM: null,
+    elevM: null,
+    surface: 'land',
+    twsKn,
+    twdDeg: raw === 0 || dir == null ? null : normDeg(dir),
+    gustKn: null,          // the map detail carries none, and null says so
+    t: new Date(ts * 1000).toISOString(),
+    trust: OBS_SOURCES.pws.trust,
+  }
+}
+
+/**
+ * Drop map stations that are really one of our curated embeds.
+ *
+ * The two sources identify the same station differently — a 32-hex id for the
+ * embed, a dashed UUID here — so position is the only thing connecting them.
+ * 100 m is comfortably inside "the same mast" and nowhere near two real
+ * stations on the same shore.
+ */
+export function dropDuplicatesOf(stations: WindObs[], known: WindObs[]): WindObs[] {
+  const M_PER_DEG = 111_320
+  return stations.filter((s) => !known.some((k) => {
+    const dy = (k.lat - s.lat) * M_PER_DEG
+    const dx = (k.lon - s.lon) * M_PER_DEG * Math.cos((s.lat * Math.PI) / 180)
+    return Math.hypot(dx, dy) < 100
+  }))
+}
+
 /** Nearest-first, and never show a station from the next sea. */
 export function withinNm(obs: WindObs[], lat: number, lon: number, nm: number): WindObs[] {
   const cos = Math.cos((lat * Math.PI) / 180)
