@@ -46,6 +46,7 @@ export const VENUES: Array<[string, number, number]> = [
   // It stays in the list because the 60 nm filter still catches the Tijuana
   // stations, which is context even if it is not course wind.
   ['Ensenada', 31.85, -116.62],
+  ['Viksfjord / Larvik', 59.03, 10.15],
 ]
 export const VENUE_NM = 60
 

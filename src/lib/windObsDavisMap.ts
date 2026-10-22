@@ -83,4 +83,15 @@ export const DAVIS_MAP_STATIONS: DavisMapStation[] = [
   { id: 'a7c0bad9-0902-4c6f-a67c-3a6909c6f0e8', name: "SEMAR E.I.O. ENSENADA", lat: 31.84782, lon: -116.61697 },  // 0.2 nm
   { id: 'e41366c7-e23c-4323-88ba-769d0426e92e', name: "[ICAARO] IIO-UABC, Ensenada", lat: 31.86259, lon: -116.66608 },  // 2.5 nm
   { id: 'ef200408-d4d0-4f87-a04a-04cdefe57a32', name: "08 ENSENADA / PROTECCIÓN CIVIL BC", lat: 31.80843, lon: -116.59198 },  // 2.9 nm
+  // Viksfjord / Larvik — Norway. All six verified live 22 Oct 2026; nothing
+  // else reaches here, since NDBC is American and Météo-France is French, and
+  // the nearest METAR (ENTO, Torp) is an inland airport 9.8 nm away.
+  { id: 'b15f275d-74b7-48e0-b12a-4a39d2efd0a4', name: "Lamøya", lat: 59.02793, lon: 10.10611 },  // 1.4 nm
+  { id: '6a2f2510-fe15-48c0-9ae4-2b1fb770a0de', name: "Halsen", lat: 59.03765, lon: 10.06829 },  // 2.6 nm
+  { id: '96e07ee6-f4f9-4c07-be36-69ee511e8c6c', name: "Vittersø", lat: 59.076, lon: 10.136 },  // 2.8 nm
+  { id: 'c1c4d007-25c4-4e5f-923c-f6ee4b7e4fff', name: "Furutoppen", lat: 59.0085, lon: 10.03002 },  // 3.9 nm
+  { id: 'c2beb5ff-3b54-4a1f-9daf-0ab494759aca', name: "Solstadløkka", lat: 59.00601, lon: 10.02186 },  // 4.2 nm
+  { id: '239cdd9c-f156-422b-a085-a6fe29486c62', name: "Foldvik Familiepark", lat: 59.0015, lon: 9.97251 },  // 5.7 nm
+  // Across the fjord mouth, so a different exposure on a sea breeze.
+  { id: 'd0bc2b1c-473e-41a1-8dd0-0e7fe7b17f28', name: "Tjøme / Langvika", lat: 59.11737, lon: 10.3858 },  // 9.0 nm
 ]
