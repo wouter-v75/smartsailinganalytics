@@ -25,8 +25,10 @@
 // and the nearest 24 were all live when measured, so six was discarding a
 // working network while Windycator showed 24 stations over the same water.
 // The limit on going further is the POLLER, not the map: every station here is
-// read every 15 minutes, so each 24 per venue is roughly 19,000 calls a day to
-// somebody else's public endpoint.
+// read on every poll, so at the half-hourly cadence (obsSources POLL_EVERY_MIN)
+// 24 per venue across 12 venues is roughly 11,000 calls a day to somebody
+// else's public endpoint. It was 22,000 at the quarter-hourly cadence, which is
+// most of why the cadence changed.
 //
 // These are private stations their owners chose to publish: gardens, marinas,
 // boatyards, a yacht club. They draw as `pws`, the lowest trust, because a good

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireActiveUser } from '@/lib/supabase/admin-guard'
 import { getServerSupabase } from '@/lib/supabase/server'
 import { WEATHERLINK_EMBEDS } from '@/lib/windObsEmbeds'
-import { davisMapNear, davisMapStations, collectObservations } from '@/lib/obsSources'
+import { davisMapNear, davisMapStations, collectObservations, portlogObs, portlogInReach } from '@/lib/obsSources'
 import {
   OBS_STALE_MIN,
   parseMetar, parseFfvl, parseMfCsv, parseMfMarine, parseMfStationList,
@@ -279,6 +279,20 @@ async function davisMapAround(lat: number, lon: number, nm: number): Promise<Win
 // definition of how to call it, shared with the poller — this route having its
 // own copy is what let frost and metoffice be stored for fifteen minutes at a
 // time while never once appearing on the map.
+/**
+ * ABP Southampton's own met network: ONE call for the whole Solent cluster, so
+ * the live map can afford it the way it affords frost.
+ *
+ * Gated on distance, which frost and ffvl are not — those cover a country, and
+ * this covers one harbour. A viewport over Long Beach has no business fetching
+ * Bramble Bank, and the gate is what stops a pan around California making a
+ * request to a British port authority on every move.
+ */
+async function portlogAround(lat: number, lon: number, nm: number): Promise<WindObs[]> {
+  if (!portlogInReach(lat, lon, nm)) return []
+  return withinNm(await portlogObs(), lat, lon, nm)
+}
+
 async function frostLive(): Promise<WindObs[]> {
   const { obs } = await collectObservations(['frost'])
   return obs
@@ -349,6 +363,7 @@ export async function GET(req: NextRequest) {
     ['davis', weatherlinkEmbeds()],
     ['davis-map', davisMapAround(lat, lon, nm)],
     ['frost', frostLive()],
+    ['portlog', portlogAround(lat, lon, nm)],
     ['stored', storedAround(lat, lon, nm)],
   ]
   const settled = await Promise.allSettled(sources.map(([, p]) => p))

@@ -10,6 +10,7 @@
 import {
   parseMetar, parseFfvl, parseNdbc, parseNdbcStations, parsePioupiou,
   parseWeatherLinkEmbed, parseWeatherLinkMapStation, dropDuplicatesOf,
+  parsePortlog, parsePortlogLatestUrl,
   parseMetOfficeLandObs, parseFrostObs,
   withinNm, type WindObs, type MetOfficeSite, type FrostSite,
 } from './windObs'
@@ -56,6 +57,31 @@ export const VENUES: Array<[string, number, number]> = [
   ['Fredrikstad / Sarpsborg', 59.22, 10.95],
 ]
 export const VENUE_NM = 60
+
+/**
+ * How often the poller is expected to run, in minutes.
+ *
+ * THE CRONTAB ON `regatta` IS THE SOURCE OF TRUTH; this has to match it, and
+ * the only reason it exists in code is that one source has to know. The Met
+ * Office gate below used to read `getUTCMinutes() >= 15`, a bare 15 that was
+ * really this number written down somewhere it could not be found. At the
+ * 0,30 schedule that still fired once an hour by luck — but on a :15,:45
+ * schedule it would have fired NEVER, and the symptom would have been a
+ * source quietly returning nothing with every other check green.
+ */
+export const POLL_EVERY_MIN = 30
+
+/**
+ * Whether this run is the one that starts the hour — for sources whose budget
+ * is daily and whose data is hourly, so three or four polls of the same numbers
+ * is three or four wasted calls.
+ *
+ * Works for any cadence that divides the hour and is aligned to it: exactly one
+ * run per hour lands in the first `everyMin` minutes.
+ */
+export function isHourlySlot(d: Date = new Date(), everyMin: number = POLL_EVERY_MIN): boolean {
+  return d.getUTCMinutes() < everyMin
+}
 
 /**
  * Met Office areas we read, by geohash. UK ONLY — the product covers ~150 land
@@ -118,9 +144,9 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
   return r
 }
 
-export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost'
+export type SourceName = 'ndbc' | 'metar' | 'davis' | 'davis-map' | 'pioupiou' | 'ffvl' | 'metoffice' | 'frost' | 'portlog'
 
-export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost']
+export const SOURCE_NAMES: SourceName[] = ['ndbc', 'metar', 'davis', 'davis-map', 'pioupiou', 'ffvl', 'metoffice', 'frost', 'portlog']
 
 const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   ndbc: async () => {
@@ -178,10 +204,12 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // see windObsDavisMap.ts for why the index itself is not fetched here.
   'davis-map': async () => davisMapStations(DAVIS_MAP_STATIONS),
 
+  portlog: async () => portlogObs(),
+
   // Met Office Land Observations — UK only, and HOURLY. The free plan allows
-  // 360 calls a day and one call returns 48 hourly rows, so polling this every
-  // quarter hour would spend the budget four times over to fetch the same
-  // numbers. Three sites at once an hour is 72 calls a day.
+  // 360 calls a day and one call returns 48 hourly rows, so polling it on every
+  // run would spend the budget several times over to fetch the same numbers.
+  // Three sites once an hour is 72 calls a day.
   //
   // Returns every row it is given; the caller keeps the newest for the map and
   // the rest become history, which is the reason to have this source at all —
@@ -190,9 +218,8 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   metoffice: async () => {
     const key = process.env.METOFFICE_API_KEY
     if (!key) return []
-    // Only on the hour. The poller runs every 15 minutes; three of those four
-    // would be wasted calls against a small daily budget.
-    if (new Date().getUTCMinutes() >= 15) return []
+    // Once an hour, whatever the poll cadence is.
+    if (!isHourlySlot()) return []
     const out: WindObs[] = []
     for (const site of METOFFICE_SITES) {
       try {
@@ -209,7 +236,7 @@ const RUNNERS: Record<SourceName, () => Promise<WindObs[]>> = {
   // MET Norway Frost — the official Norwegian network, and the best-described
   // source here: it states the unit, the HEIGHT and a quality code per reading.
   // One call covers every station, so this is cheap; hourly would do, but it is
-  // light enough to leave on the 15-minute cadence.
+  // light enough to leave on every poll.
   frost: async () => {
     const id = process.env.FROST_CLIENT_ID
     if (!id) return []
@@ -308,6 +335,74 @@ export function davisMapNear(lat: number, lon: number, nm: number, max = 36): Da
     .sort((a, b) => a.d - b.d)
     .slice(0, max)
     .map((x) => x.s)
+}
+
+
+// ---------------------------------------------------------------------------
+// Port-Log (ABP Southampton)
+// ---------------------------------------------------------------------------
+
+/**
+ * The cluster page. It is an ordinary public page — the one southamptonvts.co.uk
+ * embeds in an iframe on its own Live Weather page — and it carries the signed
+ * token for the data call in a `latest_url` assignment.
+ */
+export const PORTLOG_PAGE = 'https://abports.port-log.net/southampton/Latest.php?theme=Day'
+
+/**
+ * The sites that stand in open water rather than inside the docks, by Site_Code.
+ * Bramble is on the bank mid-Solent, Calshot on the spit, Nab Tower at the
+ * eastern approach, No.4 Buoy a quarter of a mile off Cowes. Dock Head, Town
+ * Quay, Marchwood and the berths are all up the Water behind buildings.
+ */
+export const PORTLOG_SEA_SITES: ReadonlySet<string> = new Set([
+  'ABPS-TW06', // Bramble
+  'ABPS-TW01', // Calshot
+  'ABPS-TW04', // Nab Tower
+  'CHC-CM02',  // No.4 Buoy, off Cowes
+])
+
+/**
+ * Cached for the life of the instance. The token is signed, so it changes only
+ * when they rotate the PIN; fetching the page on every poll to re-read a
+ * constant would double the request count for nothing.
+ */
+let portlogToken: string | null = null
+
+/** Where the cluster is, and how far out it is worth asking for it. */
+const PORTLOG_CENTRE: [number, number] = [50.766, -1.288]
+export const PORTLOG_REACH_NM = 60
+
+/**
+ * Whether a viewport is near enough the Solent to be worth a Port-Log call.
+ *
+ * Gated on distance, which frost and ffvl are not — those cover a country and
+ * this covers one harbour. A viewport over Long Beach has no business fetching
+ * Bramble Bank, and the gate is what stops a pan around California making a
+ * request to a British port authority on every move. The viewport's own radius
+ * counts, because a wide view centred inland still has the Solent in frame.
+ */
+export function portlogInReach(lat: number, lon: number, nm: number): boolean {
+  const cos = Math.cos((lat * Math.PI) / 180)
+  const d = Math.hypot((lat - PORTLOG_CENTRE[0]) * 60, (lon - PORTLOG_CENTRE[1]) * 60 * cos)
+  return d <= PORTLOG_REACH_NM + nm
+}
+
+export async function portlogObs(): Promise<WindObs[]> {
+  if (!portlogToken) {
+    const page = await get(PORTLOG_PAGE)
+    const url = parsePortlogLatestUrl(await page.text())
+    if (!url) {
+      // Deliberately loud. The alternative is a hardcoded token that works
+      // until it does not, and then an empty mid-Solent with no reason given.
+      throw new Error('Port-Log: no latest_url on the cluster page — the page layout or the PIN changed')
+    }
+    portlogToken = url
+  }
+  const r = await get(portlogToken)
+  // Served as text/html despite being JSON, so .json() is not safe to trust.
+  const raw = JSON.parse(await r.text()) as unknown
+  return parsePortlog(raw, { seaSites: PORTLOG_SEA_SITES })
 }
 
 /** Keep only what is near somewhere we sail, de-duplicated by station. */

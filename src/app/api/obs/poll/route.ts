@@ -8,7 +8,7 @@ import {
 //
 // WHY A ROUTE AND NOT A SCRIPT ON THE BOX. The regatta box has cron and curl
 // but NO NODE, and its root disk has 2.6 GB free — installing a second Node
-// toolchain and an npm tree there to run one fetch every quarter of an hour is
+// toolchain and an npm tree there to run one fetch every half hour is
 // a poor trade. This way the tested parsers stay in one place, the box needs
 // nothing new, and the cron line is a curl. Vercel Cron can call it instead,
 // and on the same schedule, if you would rather not depend on the box at all.

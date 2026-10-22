@@ -12,7 +12,7 @@
 // one carries its own height, surface and trust, and the map says which.
 // Reasoning behind the whole feature: docs/wind-observations-2026-10.md.
 
-export type ObsSourceKey = 'metar' | 'synop' | 'buoy' | 'ship' | 'beacon' | 'pws' | 'ours'
+export type ObsSourceKey = 'metar' | 'synop' | 'buoy' | 'ship' | 'port' | 'beacon' | 'pws' | 'ours'
 
 export interface WindObs {
   id: string
@@ -48,6 +48,14 @@ export const OBS_SOURCES: Record<ObsSourceKey, {
   // Over the water, at the height the course is. Worth more than anything on land.
   buoy: { label: 'Buoy', colour: '#22D3EE', trust: 9, surface: 'sea', heightM: null },
   ship: { label: 'Ship', colour: '#E2E8F0', trust: 6, surface: 'sea', heightM: null },
+  // A harbour authority's own met network: Bramble, Calshot, Nab Tower and the
+  // dockside masts, published by the people who run the port and relied on by
+  // pilots bringing ships in. Professionally sited, maintained and calibrated,
+  // and — the part no garden station can match — sitting OUT IN THE FAIRWAY
+  // rather than behind a hedge. Below a buoy only because the network does not
+  // publish anemometer heights, so nothing can be corrected to 10 m; above a
+  // METAR because an airport is well-behaved but miles from the water.
+  port: { label: 'Harbour authority', colour: '#84CC16', trust: 8, surface: 'sea', heightM: null },
   // Kite/paraglider spot beacons: close to the water and often the only thing on
   // the right beach, but sited for a sport rather than for measurement.
   beacon: { label: 'Spot beacon', colour: '#F59E0B', trust: 5, surface: 'land', heightM: null },
@@ -1015,7 +1023,7 @@ export function dropDuplicatesOf(stations: WindObs[], known: WindObs[]): WindObs
 // data.hub.api.metoffice.gov.uk/observation-land/1/<geohash>  (apikey header)
 //
 // Free plan: 360 calls a day, resetting 00:00 UTC. The data is HOURLY and one
-// call returns 48 ROWS — two days of it — so polling this every 15 minutes
+// call returns 48 ROWS — two days of it — so polling this on every run
 // would spend the budget four times over for nothing. Hourly is the cadence,
 // and the 48 rows mean a gap is filled in on the next call rather than lost.
 //
@@ -1243,4 +1251,163 @@ export function withinNm(obs: WindObs[], lat: number, lon: number, nm: number): 
     return dLat * dLat + dLon * dLon
   }
   return obs.filter((o) => d2(o) <= nm * nm).sort((a, b) => d2(a) - d2(b))
+}
+
+
+// ---------------------------------------------------------------------------
+// Port-Log — a harbour authority's own met network
+// ---------------------------------------------------------------------------
+//
+// ABP Southampton publish theirs at abports.port-log.net, which is the
+// "portlog" that Windycator carries and the reason Windycator has mid-Solent
+// covered where a map built from garden stations does not. Bramble sits on the
+// bank in the middle of the Solent; Nab Tower is out at the eastern approach.
+//
+// SHAPE. One JSON object, three levels deep and keyed by number at every one:
+//
+//   { "<idSite>": { "<idDataset>": { "<idParameter>": { …the reading… } } } }
+//
+// so a reading is found by parameter id, not by name. The ones that matter:
+//
+//   50002  Wind Speed       50003  Wind Direction      50006  Gust Speed
+//
+// Each record repeats its own site name, position, value, units and time, which
+// is what makes this parseable without a station registry — unlike the Davis
+// map, nothing has to be known in advance except which parameter ids to read.
+//
+// UNITS ARE READ, NEVER ASSUMED. Wind and gust come in Knots at every site
+// today, and it would be easy to hardcode that. But the same feed publishes
+// `Max 15 Minute Gust Speed` in **m/s** while its 5, 10, 20, 30 and 60 minute
+// siblings are all in Knots. One parameter in a family of six disagreeing is
+// exactly how a 20 kn gust becomes 39, so the unit on each record is what
+// converts it and an unrecognised unit is refused.
+//
+// THE CLOCK IS CHECKED AGAINST ITSELF. Every record carries BOTH an absolute
+// `DateTime` and a relative `Age` in seconds, and they are independent — so
+// `now - DateTime` must come out near `Age`, and when it does not, the
+// timestamp is not the thing we think it is. That matters more here than it
+// looks: reading a local-time stamp as UTC is the mistake this project keeps
+// paying for, and it is invisible in a single number. An hour's offset moves
+// the two apart by 3600 s and the record is refused rather than drawn an hour
+// out of date. The tolerance has to clear ordinary caching, which freezes
+// `Age` while `now - DateTime` keeps growing, so it sits at 20 minutes: wide
+// enough for a cached response, far short of an hour.
+//
+// A refused record disappears from the map, which is visible. A record drawn
+// with the wrong hour is not.
+
+const PORTLOG_PID = { wind: '50002', dir: '50003', gust: '50006' } as const
+
+/** Seconds `Age` and `DateTime` may disagree before the record is refused. */
+export const PORTLOG_CLOCK_TOL_SEC = 1200
+
+export interface PortlogOptions {
+  /**
+   * Site codes in open water rather than inside the docks. Presentational
+   * while the network publishes no anemometer heights — with `heightM` null
+   * `to10m` refuses to correct anything, so `surface` changes no number — but
+   * Bramble in the fairway and a mast behind a grain terminal are not the same
+   * reading and the panel should not imply they are.
+   */
+  seaSites?: ReadonlySet<string>
+  nowMs?: number
+  clockTolSec?: number
+}
+
+type PortlogRec = Record<string, unknown>
+
+const portlogRec = (v: unknown): PortlogRec | null =>
+  v && typeof v === 'object' && !Array.isArray(v) ? (v as PortlogRec) : null
+
+/** A record's value in knots, or null when the value or its unit is unusable. */
+function portlogKn(r: PortlogRec | null): number | null {
+  if (!r) return null
+  const n = num(r.Value)
+  if (n == null) return null
+  const unit = typeof r.Units === 'string' ? r.Units.trim().toLowerCase() : ''
+  const f = UNIT_TO_KN[unit]
+  if (f == null) return null
+  const kn = n * f
+  return kn >= 0 && kn <= MAX_PLAUSIBLE_KN ? kn : null
+}
+
+export function parsePortlog(payload: unknown, opts: PortlogOptions = {}): WindObs[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return []
+  const nowSec = (opts.nowMs ?? Date.now()) / 1000
+  const tol = opts.clockTolSec ?? PORTLOG_CLOCK_TOL_SEC
+  const sea = opts.seaSites ?? new Set<string>()
+  const out: WindObs[] = []
+
+  for (const [siteId, datasets] of Object.entries(payload as Record<string, unknown>)) {
+    const ds = portlogRec(datasets)
+    if (!ds) continue
+
+    // The parameter sits under a dataset id we do not care about, so every
+    // dataset is searched for the three ids that matter.
+    let wind: PortlogRec | null = null
+    let dir: PortlogRec | null = null
+    let gust: PortlogRec | null = null
+    for (const group of Object.values(ds)) {
+      const g = portlogRec(group)
+      if (!g) continue
+      wind = wind ?? portlogRec(g[PORTLOG_PID.wind])
+      dir = dir ?? portlogRec(g[PORTLOG_PID.dir])
+      gust = gust ?? portlogRec(g[PORTLOG_PID.gust])
+    }
+    if (!wind) continue
+
+    const twsKn = portlogKn(wind)
+    const lat = num(wind.Latitude)
+    const lon = num(wind.Longitude)
+    if (twsKn == null || lat == null || lon == null) continue
+    if (lat === 0 && lon === 0) continue
+
+    const dt = num(wind.DateTime)
+    if (dt == null || dt <= 0) continue
+    const age = num(wind.Age)
+    if (age != null && Math.abs(nowSec - dt - age) > tol) continue
+
+    // Direction is only taken when the feed says it is in degrees.
+    let twdDeg: number | null = null
+    const dirUnit = dir && typeof dir.Units === 'string' ? dir.Units.trim().toLowerCase() : ''
+    const dirVal = dir ? num(dir.Value) : null
+    if (dirVal != null && dirUnit === 'deg') twdDeg = ((dirVal % 360) + 360) % 360
+
+    const code = typeof wind.Site_Code === 'string' ? wind.Site_Code.trim() : ''
+    const name = typeof wind.Site_Name === 'string' && wind.Site_Name.trim()
+      ? wind.Site_Name.trim()
+      : code || `Port-Log ${siteId}`
+    const surface: 'sea' | 'land' = code && sea.has(code) ? 'sea' : 'land'
+
+    out.push({
+      id: `portlog:${siteId}`,
+      source: 'port',
+      name,
+      lat,
+      lon,
+      heightM: null,
+      elevM: null,
+      surface,
+      twsKn,
+      twdDeg,
+      gustKn: portlogKn(gust),
+      t: new Date(dt * 1000).toISOString(),
+      trust: OBS_SOURCES.port.trust,
+    })
+  }
+  return out
+}
+
+/**
+ * The signed `item` token out of a Port-Log cluster page.
+ *
+ * The endpoint does not take plain parameters: `item` is base64 of
+ * `cluster=…&dataset=All&parameter=Latest&format=JSON&PIN=$F734`, and the PIN
+ * signs the rest, so the token cannot be composed — only used as published.
+ * Reading it from the page each time rather than hardcoding it means a rotated
+ * PIN costs one extra request instead of a silent outage.
+ */
+export function parsePortlogLatestUrl(html: string): string | null {
+  const m = /latest_url\s*=\s*["']([^"']+GetLatest\.php[^"']*)["']/.exec(html)
+  return m ? m[1] : null
 }

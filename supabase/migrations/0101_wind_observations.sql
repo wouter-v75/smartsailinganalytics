@@ -31,8 +31,8 @@
 -- reading was taken, not where the station is today.
 --
 -- RETENTION is enforced by the poller, not by the database: it deletes beyond
--- the window after each run. At ~100 stations every 15 minutes this is about
--- 10k rows a day, so 90 days is a few hundred MB and nothing needs partitioning.
+-- the window after each run. At ~250 stations every 30 minutes this is about
+-- 12k rows a day, so 90 days is a few hundred MB and nothing needs partitioning.
 --
 -- RLS: any signed-in user reads; only the service key writes (the poller runs
 -- on the regatta box with the service key). Public weather is not per-team.
